@@ -88,51 +88,6 @@ const CallArgPolicy *callArgPolicy(Arch A, BinaryFormat F) {
   return nullptr;
 }
 
-/// The offset of address \p V from the stack pointer \p Scan's call sees
-/// (CallArgScan::CallStackPointer), read from the definitions before op
-/// \p Before of \p Ops: through copies, the zero extension that widens an
-/// i386 address to the VA model, and one constant addend.  A push stores at
-/// an earlier version of the stack pointer itself, and its slot is where
-/// that version stands from the call's; one the stack pointer rose above
-/// since, as `call $+5; pop ebx` pops, is at a negative offset.  Empty for
-/// any other address, such as a frame pointer copied before the last
-/// adjustment.
-std::optional<int64_t> callStackOffset(const CallArgScan &Scan,
-                                       const std::vector<MedOp> &Ops,
-                                       int Before, MedVar V) {
-  std::optional<int64_t> Addend;
-  for (int K = Before - 1;; --K) {
-    if (V.Kind == MedVar::Reg && V.RegOff == Scan.SpRegOff) {
-      if (V.Id == Scan.CallStackPointer.Id &&
-          V.SSAVer == Scan.CallStackPointer.SSAVer)
-        return Addend.value_or(0);
-      if (Addend || !Scan.CallStackSlotOf)
-        return std::nullopt;
-      return Scan.CallStackSlotOf(V);
-    }
-    if (V.Kind != MedVar::Temp && V.Kind != MedVar::Reg)
-      return std::nullopt;
-    for (; K >= 0; --K) {
-      const MedVar &Out = Ops[static_cast<size_t>(K)].Output;
-      if (Out.Kind == V.Kind && Out.Id == V.Id && Out.SSAVer == V.SSAVer)
-        break;
-    }
-    if (K < 0)
-      return std::nullopt;
-    const MedOp &Def = Ops[static_cast<size_t>(K)];
-    if ((Def.Opcode == NdOp::COPY || Def.Opcode == NdOp::INT_ZEXT) &&
-        Def.NumInputs >= 1) {
-      V = Def.Inputs[0];
-      continue;
-    }
-    if (Def.Opcode != NdOp::INT_ADD || Addend || Def.NumInputs != 2 ||
-        !Def.Inputs[1].isConst())
-      return std::nullopt;
-    Addend = static_cast<int64_t>(Def.Inputs[1].ConstVal);
-    V = Def.Inputs[0];
-  }
-}
-
 void collectSpilledStackArgs(const CallArgScan &Scan,
                              std::vector<ExprPtr> &Found) {
   const TargetRegInfo &TRI = *Scan.TRI;
@@ -918,23 +873,6 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
                   Ops[CallIdx + 1].Opcode == NdOp::RETURN &&
                   Ops[CallIdx + 1].Addr == Ops[CallIdx].Addr;
   Scan.StoreScanWindow = limits::kCallArgStoreScanWindow;
-  // The stack pointer the call sees: the last version its block defines
-  // before it, else the one reaching the block.  A tail jump's stores are
-  // read at the function's entry offsets instead.
-  if (Policy && Policy->PlacesOutgoingStores && !Scan.TailJump) {
-    bool Known = false;
-    for (size_t J = CallIdx; J-- > 0 && !Known;)
-      if (call_args_detail::writesStackPointer(Ops[J], SpRegOff)) {
-        Scan.CallStackPointer = Ops[J].Output;
-        Known = true;
-      }
-    MedVar LiveIn;
-    if (!Known && reachingRegAtBlockEntry(CurBlock, SpRegOff, LiveIn)) {
-      Scan.CallStackPointer = LiveIn;
-      Known = true;
-    }
-    Scan.PlacesOutgoingStores = Known;
-  }
   Scan.ExtraWindows = ExtraWindows;
   auto ToExpr = [this](const MedVar &V) { return medvarToExpr(V); };
   Scan.ToExpr = ToExpr;
@@ -967,10 +905,12 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     return nullptr;
   };
   Scan.OwnStackParam = OwnStackParam;
-  // The single definition of \p V in this function, or null.
-  auto UniqueDef = [&](const MedVar &V) -> const MedOp * {
-    if (!CurMed)
-      return nullptr;
+  std::function<std::optional<int64_t>(const MedVar &, int)> EntryOffset =
+      [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
+    if (!CurMed || Depth > 8)
+      return std::nullopt;
+    if (V.Kind == MedVar::Reg && V.RegOff == SpRegOff && V.SSAVer == 0)
+      return 0;
     if (EntryOffsetDefsFor != CurMed) {
       EntryOffsetDefs.clear();
       for (const auto &Blk : CurMed->Blocks)
@@ -986,15 +926,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     }
     auto DefIt =
         EntryOffsetDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
-    return DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
-  };
-  std::function<std::optional<int64_t>(const MedVar &, int)> EntryOffset =
-      [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
-    if (!CurMed || Depth > limits::kStackAddressTraceDepth)
-      return std::nullopt;
-    if (V.Kind == MedVar::Reg && V.RegOff == SpRegOff && V.SSAVer == 0)
-      return 0;
-    const MedOp *Def = UniqueDef(V);
+    const MedOp *Def = DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
     if (!Def || Def->NumInputs < 1)
       return std::nullopt;
     // i386 addresses reach memory zero-extended to the 8-byte VA model; a
@@ -1013,32 +945,6 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   };
   auto EntryOffsetOf = [&](const MedVar &V) { return EntryOffset(V, 0); };
   Scan.EntryOffsetOf = EntryOffsetOf;
-  // Walk the call's stack pointer back through its adjustments to \p Slot:
-  // the call's is Slot's plus Adjusted, so the slot stands -Adjusted from it.
-  auto CallStackSlotOf = [&](const MedVar &Slot) -> std::optional<int64_t> {
-    MedVar Cur = Scan.CallStackPointer;
-    int64_t Adjusted = 0;
-    for (int Depth = 0; Depth <= limits::kStackAddressTraceDepth; ++Depth) {
-      if (Cur.Kind == Slot.Kind && Cur.Id == Slot.Id &&
-          Cur.SSAVer == Slot.SSAVer)
-        return -Adjusted;
-      const MedOp *Def = UniqueDef(Cur);
-      if (!Def || Def->NumInputs < 1)
-        return std::nullopt;
-      if (Def->Opcode == NdOp::COPY || Def->Opcode == NdOp::INT_ZEXT) {
-        Cur = Def->Inputs[0];
-        continue;
-      }
-      if ((Def->Opcode != NdOp::INT_ADD && Def->Opcode != NdOp::INT_SUB) ||
-          Def->NumInputs != 2 || !Def->Inputs[1].isConst())
-        return std::nullopt;
-      const int64_t C = static_cast<int64_t>(Def->Inputs[1].ConstVal);
-      Adjusted += Def->Opcode == NdOp::INT_ADD ? C : -C;
-      Cur = Def->Inputs[0];
-    }
-    return std::nullopt;
-  };
-  Scan.CallStackSlotOf = CallStackSlotOf;
   Scan.FrameSize = CurMed ? CurMed->FrameSize : 0;
   if (CurMed && LoadedEntrySlotsFor != CurMed) {
     LoadedEntrySlots.clear();

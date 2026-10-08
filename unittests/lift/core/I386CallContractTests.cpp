@@ -4,10 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// i386 passes every argument on the stack.  MSVC pushes them; GCC stores
-// each at [esp+N] below one adjustment, taking several ops per argument to
-// compute its address and value.  Stores to the function's own locals in
-// between are no arguments.
+// An i386 import thunk `jmp dword ptr [__imp__calloc]` reaches its import
+// and passes on the arguments its caller left on the stack.
 //
 //===----------------------------------------------------------------------===//
 
@@ -33,16 +31,6 @@ constexpr va_t Iat = 0x403000;
 
 /// The slot of import \p Index.
 constexpr va_t slot(size_t Index) { return Iat + 4 * Index; }
-
-/// `call dword ptr [Slot]`.
-std::vector<uint8_t> callThroughSlot(va_t Slot) {
-  return {0xFF,
-          0x15,
-          static_cast<uint8_t>(Slot),
-          static_cast<uint8_t>(Slot >> 8),
-          static_cast<uint8_t>(Slot >> 16),
-          static_cast<uint8_t>(Slot >> 24)};
-}
 
 /// A PE32 image with \p Code at Text, the function `_wrap` there, and the
 /// msvcrt.dll imports \p Imports in consecutive slots at Iat.
@@ -106,64 +94,6 @@ std::string callIn(const BinaryImage &Img, const std::string &Callee) {
   return Source.substr(At, Source.find('\n', At) - At);
 }
 
-TEST(I386CallContract, ArgumentsStoredBelowOneAdjustmentAreAllPassed) {
-  // MinGW's __getmainargs wrapper: GCC stores its fifth parameter for the
-  // call first, then zeroes a local, and computes the other four arguments
-  // in more ops than a fixed window of them reaches.
-  std::vector<uint8_t> Code = {
-      0x55,                                     // push ebp
-      0x89, 0xE5,                               // mov ebp, esp
-      0x53,                                     // push ebx
-      0x83, 0xEC, 0x34,                         // sub esp, 0x34
-      0x8B, 0x45, 0x18,                         // mov eax, [ebp+0x18]
-      0xC7, 0x45, 0xEC, 0xFF, 0xFF, 0xFF, 0xFF, // mov [ebp-0x14], -1
-      0xC7, 0x45, 0xF0, 0x00, 0x00, 0x00, 0x00, // mov [ebp-0x10], 0
-      0x89, 0x44, 0x24, 0x10,                   // mov [esp+0x10], eax
-      0x8B, 0x45, 0x14,                         // mov eax, [ebp+0x14]
-      0xC7, 0x45, 0xF4, 0x00, 0x00, 0x00, 0x00, // mov [ebp-0xc], 0
-      0x89, 0x44, 0x24, 0x0C,                   // mov [esp+0xc], eax
-      0x8D, 0x45, 0xF4,                         // lea eax, [ebp-0xc]
-      0x89, 0x44, 0x24, 0x08,                   // mov [esp+8], eax
-      0x8D, 0x45, 0xF0,                         // lea eax, [ebp-0x10]
-      0x89, 0x44, 0x24, 0x04,                   // mov [esp+4], eax
-      0x8D, 0x45, 0xEC,                         // lea eax, [ebp-0x14]
-      0x89, 0x04, 0x24,                         // mov [esp], eax
-  };
-  for (uint8_t B : callThroughSlot(slot(0)))
-    Code.push_back(B);
-  for (uint8_t B : {0x8B, 0x45, 0xEC, // mov eax, [ebp-0x14]
-                    0x8B, 0x5D, 0xFC, // mov ebx, [ebp-4]
-                    0xC9,             // leave
-                    0xC3})            // ret
-    Code.push_back(B);
-  const std::string Call =
-      callIn(makeImage(Code, {"__getmainargs"}), "__getmainargs");
-  EXPECT_NE(Call.find("arg3, "), std::string::npos) << Call;
-  EXPECT_NE(Call.find("arg4)"), std::string::npos) << Call;
-}
-
-TEST(I386CallContract, AStoreToALocalBetweenPushesIsNoArgument) {
-  // calloc(n, size) pushed from the parameters, with a local written
-  // between the two pushes.
-  std::vector<uint8_t> Code = {
-      0x55,                                     // push ebp
-      0x89, 0xE5,                               // mov ebp, esp
-      0x83, 0xEC, 0x08,                         // sub esp, 8
-      0xFF, 0x75, 0x0C,                         // push [ebp+0xc]
-      0xC7, 0x45, 0xF8, 0x07, 0x00, 0x00, 0x00, // mov [ebp-8], 7
-      0xFF, 0x75, 0x08,                         // push [ebp+8]
-  };
-  for (uint8_t B : callThroughSlot(slot(0)))
-    Code.push_back(B);
-  for (uint8_t B : {0x83, 0xC4, 0x08, // add esp, 8
-                    0xC9,             // leave
-                    0xC3})            // ret
-    Code.push_back(B);
-  const std::string Call = callIn(makeImage(Code, {"calloc"}), "calloc");
-  EXPECT_NE(Call.find("(arg0, arg1)"), std::string::npos) << Call;
-  EXPECT_EQ(Call.find('7'), std::string::npos) << Call;
-}
-
 TEST(I386CallContract, AThunkJumpingThroughTheSlotForwardsItsArguments) {
   // `jmp dword ptr [__imp__calloc]`: the thunk calls calloc, not the value
   // it would load from an address, with the two arguments its caller left
@@ -178,48 +108,6 @@ TEST(I386CallContract, AThunkJumpingThroughTheSlotForwardsItsArguments) {
   EXPECT_NE(Call.find("arg0"), std::string::npos) << Call;
   EXPECT_NE(Call.find("arg1"), std::string::npos) << Call;
   EXPECT_EQ(Call.find("unknown value"), std::string::npos) << Call;
-}
-
-TEST(I386CallContract, APoppedPushIsNoArgument) {
-  // clang's get-PC `call $+5; pop ebx` pushes the return address and pops
-  // it, and `push eax` reserves a slot: a regparm callee that takes ECX gets
-  // neither as its argument.
-  std::vector<uint8_t> Code = {0x53,                         // push ebx
-                               0x50,                         // push eax
-                               0xE8, 0x00, 0x00, 0x00, 0x00, // call $+5
-                               0x5B,                         // pop ebx
-                               0x8D, 0x4C, 0x49, 0x01, // lea ecx, [ecx+ecx*2+1]
-                               0xE8, 0x08, 0x00, 0x00, 0x00, // call helper
-                               0x83, 0xC4, 0x04,             // add esp, 4
-                               0x5B,                         // pop ebx
-                               0xC3,                         // ret
-                               0xCC, 0xCC, 0xCC,             // padding
-                               0x8D, 0x04, 0x09, // helper: lea eax, [ecx+ecx]
-                               0xC3};            // ret
-  BinaryImage Img = makeImage(Code, {});
-  Symbol Helper = Symbol::makeFunc(Text + 0x19);
-  Helper.Name = "_helper";
-  Img.Symbols.push_back(std::move(Helper));
-  llvm::LLVMContext Ctx;
-  PipelineOptions Opts;
-  Opts.EmitDumpOutput = false;
-  Opts.OnlyFunctionEntries = {Text, Text + 0x19};
-  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
-  ASSERT_TRUE(Result.Success) << Result.Error;
-  std::string Source;
-  llvm::raw_string_ostream OS(Source);
-  CEmitterOptions Options;
-  Options.TheArch = Img.Arch;
-  Options.Format = Img.Format;
-  Options.Image = &Img;
-  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
-  const size_t Call = Source.find("helper(", Source.find(" wrap("));
-  ASSERT_NE(Call, std::string::npos) << Source;
-  const std::string Line = Source.substr(Call, Source.find('\n', Call) - Call);
-  // 0x401007 is the address `call $+5` pushes.
-  EXPECT_EQ(Line.find("0x401007"), std::string::npos) << Source;
-  EXPECT_EQ(Line.find("4198407"), std::string::npos) << Source;
-  EXPECT_NE(Line.find("arg0"), std::string::npos) << Source;
 }
 
 } // namespace

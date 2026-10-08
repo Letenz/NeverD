@@ -66,15 +66,6 @@ struct CallArgScan {
   int MaxArgs = 0;
   int FirstStackSlot = 0;
   int StoreScanWindow = 0;
-  /// The push fallback places the stores before the call by where they
-  /// stand from CallStackPointer, the version of the stack pointer the call
-  /// sees (CallArgPolicy::PlacesOutgoingStores).
-  bool PlacesOutgoingStores = false;
-  MedVar CallStackPointer;
-  /// Where an earlier version of the stack pointer stands from
-  /// CallStackPointer, through the adjustments between them (a push's slot);
-  /// nullopt when they do not connect.
-  llvm::function_ref<std::optional<int64_t>(const MedVar &)> CallStackSlotOf;
   /// The call is a tail jump (CFG building rewrote `jmp callee` as a CALL and
   /// a RETURN of the same instruction): the callee enters on this function's
   /// stack, so its stack arguments sit at the callee-entry offsets from the
@@ -163,10 +154,6 @@ struct CallArgPolicy {
   /// A call alone in a block that has one predecessor can take setup
   /// stores from the end of that predecessor.
   bool ReadsPredecessorWindow = false;
-  /// Every stack argument is stored in the call's outgoing area, by a push
-  /// or below the stack pointer the call sees: the push fallback places each
-  /// store by where it stands from that stack pointer and takes no other.
-  bool PlacesOutgoingStores = false;
   /// Takes the register-argument writes at the end of that predecessor.
   void (*TakePredecessorRegisters)(CallArgContext &C,
                                    const MedBlock &Pred) = nullptr;
@@ -198,13 +185,6 @@ struct CallArgPolicy {
 /// The call-argument policy for code of \p A in a \p F image, or null.
 const CallArgPolicy *callArgPolicy(Arch A, BinaryFormat F);
 
-/// The offset of address \p V from the stack pointer \p Scan's call sees,
-/// read from the definitions before op \p Before of \p Ops (defined in
-/// CallArgCollection.cpp).
-std::optional<int64_t> callStackOffset(const CallArgScan &Scan,
-                                       const std::vector<MedOp> &Ops,
-                                       int Before, MedVar V);
-
 /// True only for a same-SSA no-op (`COPY rcx = rcx`).  `COPY rcx.3 = rcx`
 /// restores the entry value into a new SSA version and is a real call-arg
 /// write — MSVC `__GSHandlerCheck_EH` does this after copy-prop replaces
@@ -216,12 +196,6 @@ inline bool isNoopRegisterCopy(const MedOp &Op) {
          Op.Output.Size == Op.Inputs[0].Size &&
          Op.Output.Id == Op.Inputs[0].Id &&
          Op.Output.SSAVer == Op.Inputs[0].SSAVer;
-}
-
-/// True when \p Op gives the stack pointer (\p SpRegOff) a new value.
-inline bool writesStackPointer(const MedOp &Op, uint64_t SpRegOff) {
-  return Op.Output.Kind == MedVar::Reg && Op.Output.Size != 0 &&
-         Op.Output.RegOff == SpRegOff && !isNoopRegisterCopy(Op);
 }
 
 void collectSpilledStackArgs(const CallArgScan &Scan,

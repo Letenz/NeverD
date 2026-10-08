@@ -18,8 +18,6 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
-#include <map>
-#include <optional>
 
 namespace neverd {
 namespace call_args_detail {
@@ -92,15 +90,8 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   // Every i386 `push` stores at the current ESP, so the spilled-slot scan
   // sees StackOff 0 for each of them and keeps only the last push (arg0).
   // Walk STORE values backward (last push is arg0). Call-only IP-map splits
-  // leave the earlier pushes in ExtraWindows.  Where the call's stack pointer
-  // is known, each store instead takes the outgoing slot it stands at from
-  // it (callStackOffset), and a later store to a slot replaces an earlier
-  // one: a local written between the pushes, or a push popped since (the
-  // get-PC `call $+5; pop ebx`), is no argument, and GCC's `mov [esp+N]`
-  // stores need not come in slot order.
+  // leave the earlier pushes in ExtraWindows.
   std::vector<ExprPtr> Pushed;
-  std::map<int64_t, ExprPtr> Slots;
-  const int64_t SlotBytes = Scan.TRI->PointerSize;
   auto walkPushes = [&](const std::vector<MedOp> &Ops, int Before) {
     for (int J = Before; J >= 0; --J) {
       const MedOp &Prev = Ops[static_cast<size_t>(J)];
@@ -112,13 +103,6 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
         continue;
       if (Scan.IsCalleeSave(Prev.Inputs[1]))
         continue;
-      if (Scan.PlacesOutgoingStores) {
-        const std::optional<int64_t> Offset =
-            callStackOffset(Scan, Ops, J, Prev.Inputs[0]);
-        if (Offset && *Offset >= 0 && *Offset % SlotBytes == 0)
-          Slots.try_emplace(*Offset / SlotBytes, Scan.ToExpr(Prev.Inputs[1]));
-        continue;
-      }
       Pushed.push_back(Scan.ToExpr(Prev.Inputs[1]));
       if (static_cast<int>(Pushed.size()) == Scan.MaxArgs)
         return;
@@ -133,12 +117,6 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
         if (static_cast<int>(Pushed.size()) == Scan.MaxArgs)
           break;
       }
-  for (int K = 0; K < Scan.MaxArgs; ++K) {
-    auto Slot = Slots.find(K);
-    if (Slot == Slots.end())
-      break;
-    Pushed.push_back(Slot->second);
-  }
   if (Pushed.size() <= Args.size())
     return;
   for (size_t K = 0; K < Pushed.size() && K < Found.size(); ++K)
@@ -148,13 +126,11 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
 
 /// i386 cdecl and stdcall push their arguments, and a block boundary between
 /// the pushes and a call alone in its block leaves them in its predecessor.
-/// ECX and EDX there are not arguments.  GCC instead stores each argument at
-/// [esp+N] below one adjustment, in several ops apiece.
+/// ECX and EDX there are not arguments.
 extern const CallArgPolicy I386CallArgPolicy;
 const CallArgPolicy I386CallArgPolicy = {
     .TheArch = Arch::X86,
     .ReadsPredecessorWindow = true,
-    .PlacesOutgoingStores = true,
 };
 
 } // namespace call_args_detail
