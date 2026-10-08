@@ -941,6 +941,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_session_input_sha256",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_session_arch_name",
     "const char *",
     ["neverd_session_t"],

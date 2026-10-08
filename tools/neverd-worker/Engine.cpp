@@ -691,10 +691,15 @@ ProjectHistory &Engine::history() {
     const auto arch = folded(ownedString(neverd_session_arch_name(session_)));
     if (arch == "evm" || arch == "sbf")
       analyze();
-    // Hashing lives behind the C ABI; the worker gains no LLVM linkage.
-    const auto dashboard = backendJson(neverd_dashboard_json(session_));
-    const auto hash = dashboard.value("hashes", Json::object())
-                          .value("sha256", std::string());
+    // Hashing lives behind the C ABI; the worker gains no LLVM linkage.  The
+    // loader's own hash costs nothing, where an older engine's dashboard
+    // hashes the whole input again.
+    static const auto inputHash =
+        engineSymbol<SessionJsonFunction>("neverd_session_input_sha256");
+    const auto hash = inputHash ? ownedString(inputHash(session_))
+                                : backendJson(neverd_dashboard_json(session_))
+                                      .value("hashes", Json::object())
+                                      .value("sha256", std::string());
     history_ = std::make_unique<ProjectHistory>(
         utf8Path(ownedString(neverd_session_file_path(session_))), hash,
         version(), readOnly_, atomicWrite);

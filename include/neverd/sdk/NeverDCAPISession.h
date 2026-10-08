@@ -60,6 +60,11 @@ NEVERD_API int neverd_session_analyze(neverd_session_t Sess);
 
 /// Return the caller's input path encoded as UTF-8.
 NEVERD_API const char *neverd_session_file_path(neverd_session_t Sess);
+/// Return the SHA-256 of the input file's bytes as loaded, as 64 lowercase
+/// hexadecimal digits; empty when nothing is loaded or the file cannot be
+/// read.  The loader's own hash costs nothing; otherwise the file is hashed
+/// once per load.  Free with neverd_free_string.
+NEVERD_API const char *neverd_session_input_sha256(neverd_session_t Sess);
 NEVERD_API const char *neverd_session_arch_name(neverd_session_t Sess);
 NEVERD_API const char *neverd_session_format_name(neverd_session_t Sess);
 NEVERD_API int neverd_session_is_64bit(neverd_session_t Sess);
