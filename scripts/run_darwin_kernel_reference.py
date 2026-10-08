@@ -46,14 +46,15 @@ def native_architecture(expected: str) -> str:
 
 def execute_cases(program: Path, cases: list[tuple[str, int, bytes]]) -> list[dict]:
     with (tempfile.TemporaryDirectory(prefix="neverd-darwin-files-") as directory,
-          tempfile.TemporaryDirectory(prefix="neverd-darwin-links-") as links):
+          tempfile.TemporaryDirectory(prefix="neverd-darwin-links-") as links,
+          tempfile.TemporaryDirectory(prefix="neverd-darwin-mixed-links-") as mixed):
         input_file = Path(directory) / "data"
         (Path(directory) / "empty").mkdir()
-        return _execute_cases(program, cases, input_file, Path(links))
+        return _execute_cases(program, cases, input_file, Path(links), Path(mixed))
 
 
 def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_file: Path,
-                   symbolic_root: Path) -> list[dict]:
+                   symbolic_root: Path, mixed_root: Path) -> list[dict]:
     results = []
     for mode, status, output in cases:
         case_input = input_file
@@ -66,6 +67,14 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
                                  ("dirlink", "empty")):
                 (catalogue / name).symlink_to(target)
             case_input = catalogue / "data"
+        if mode == "symbolic-link-mutations":
+            catalogue = mixed_root / "catalogue"
+            (catalogue / "static").mkdir(parents=True)
+            (catalogue / "work").mkdir()
+            for name, target in (("alias", "../work"), ("data-link", "../work/data"),
+                                 ("missing-link", "../work/new")):
+                (catalogue / "static" / name).symlink_to(target)
+            case_input = catalogue / "work" / "data"
         case_input.write_bytes(b"0123456789")
         try:
             result = subprocess.run([str(program), mode, str(case_input)], capture_output=True, timeout=5)

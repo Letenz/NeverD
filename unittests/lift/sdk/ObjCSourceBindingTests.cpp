@@ -426,6 +426,7 @@ TEST(ImmutableNativeCalls, GeneratedSourceMatchesOriginalARM64CallsAtO0AndO2) {
                     .empty());
     CEmitterOptions Options;
     Options.TheArch = Arch::AArch64;
+    Options.Format = F.Image.Format;
     std::string Source;
     llvm::raw_string_ostream OS(Source);
     ASSERT_TRUE(HighCEmitter().emit({Bound.Function, *Functions.at(Target)}, OS,
@@ -946,6 +947,7 @@ TEST(ImmutableNativeCalls, GeneratedLoopFrameSourceMatchesOriginalARM64) {
   ASSERT_TRUE(Limitation.empty()) << Limitation;
   CEmitterOptions Options;
   Options.TheArch = Arch::AArch64;
+  Options.Format = F.Image.Format;
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(HighCEmitter().emit({Bound.Function, *Functions.at(Target)}, OS,
@@ -1269,6 +1271,7 @@ TEST(ImmutableNativeCalls, TailSourceMatchesOriginalARM64ForwardedArguments) {
                   .empty());
   CEmitterOptions Options;
   Options.TheArch = Arch::AArch64;
+  Options.Format = F.Image.Format;
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(HighCEmitter().emit({Bound.Function, *Functions.at(Target)}, OS,
@@ -16448,6 +16451,7 @@ TEST(SwiftValueWitnessCalls, GeneratedFrameWitnessSourceMatchesOriginalARM64) {
     ASSERT_TRUE(Limitation.empty()) << Limitation;
     CEmitterOptions Options;
     Options.TheArch = Arch::AArch64;
+    Options.Format = F.Image.Format;
     std::string Source;
     llvm::raw_string_ostream OS(Source);
     ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
