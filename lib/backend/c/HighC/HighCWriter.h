@@ -585,6 +585,9 @@ public:
   /// declarations say so, as for a routine the name list knows.
   std::set<std::string> NoReturnCallTargets;
   std::map<std::string, std::string> ExternalSourceIdentifiers;
+  /// The identifiers functionIdentifier() spelled for functions no map
+  /// names, and the symbols they stand for (recordSourceNames()).
+  mutable std::map<std::string, std::string> ReferencedFunctionSymbols;
   std::set<va_t> GotoTargets;
   /// How many gotos target each address in the current function.
   std::map<va_t, unsigned> GotoTargetUses;

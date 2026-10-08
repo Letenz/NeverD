@@ -29,6 +29,9 @@ SourceDialectText DialectPrinter::run() {
   for (auto &[Spelled, Identifiers] : ByName)
     if (Identifiers.size() == 1)
       SourceNames[Identifiers.front()] = Spelled;
+  for (const CSourceName &Name : Opts.Names)
+    if (SourceNames.contains(Name.Identifier))
+      NameEntries[Name.Identifier] = &Name;
 
   header();
   size_t PreviousEnd = 0;
@@ -44,10 +47,77 @@ SourceDialectText DialectPrinter::run() {
     PreviousEnd = Item.End;
   }
   SourceDialectText Result;
-  Result.Text = std::move(Buffer);
   Result.Pieces = std::move(Pieces);
   Result.Unread = std::move(Unread);
+  unmark(Result);
   return Result;
+}
+
+namespace {
+// A source name in the printed text is NameOpen, its identifier, NameClose,
+// the name, NameEnd.  Emitted C has no control characters.
+constexpr char NameOpen = '\x01';
+constexpr char NameClose = '\x02';
+constexpr char NameEnd = '\x03';
+} // namespace
+
+void DialectPrinter::unmark(SourceDialectText &Result) {
+  std::string &Text = Result.Text;
+  Text.reserve(Buffer.size());
+  // (offset in Buffer, bytes removed before it) at each mark.
+  std::vector<std::pair<size_t, size_t>> Removed;
+  size_t RemovedBytes = 0;
+  struct Open {
+    std::string Identifier;
+    size_t Begin;
+  };
+  std::vector<Open> Opened;
+  for (size_t I = 0; I < Buffer.size();) {
+    const char C = Buffer[I];
+    if (C == NameOpen) {
+      const size_t Close = Buffer.find(NameClose, I);
+      Opened.push_back({Buffer.substr(I + 1, Close - I - 1), Text.size()});
+      RemovedBytes += Close + 1 - I;
+      I = Close + 1;
+      Removed.push_back({I, RemovedBytes});
+      continue;
+    }
+    if (C == NameEnd && !Opened.empty()) {
+      Open Name = std::move(Opened.back());
+      Opened.pop_back();
+      SourceDialectName Spelled;
+      Spelled.Begin = Name.Begin;
+      Spelled.End = Text.size();
+      if (const CSourceName *Entry = NameEntries.lookup(Name.Identifier)) {
+        Spelled.Symbol = Entry->Symbol;
+        Spelled.Address = Entry->Address;
+      }
+      Spelled.Identifier = std::move(Name.Identifier);
+      Result.Names.push_back(std::move(Spelled));
+      ++RemovedBytes;
+      ++I;
+      Removed.push_back({I, RemovedBytes});
+      continue;
+    }
+    Text += C;
+    ++I;
+  }
+  std::sort(Result.Names.begin(), Result.Names.end(),
+            [](const SourceDialectName &A, const SourceDialectName &B) {
+              return A.Begin < B.Begin;
+            });
+  auto Clean = [&](size_t Offset) {
+    auto It =
+        std::upper_bound(Removed.begin(), Removed.end(), Offset,
+                         [](size_t O, const std::pair<size_t, size_t> &R) {
+                           return O < R.first;
+                         });
+    return It == Removed.begin() ? Offset : Offset - std::prev(It)->second;
+  };
+  for (SourceDialectPiece &P : Result.Pieces) {
+    P.Begin = Clean(P.Begin);
+    P.End = Clean(P.End);
+  }
 }
 
 void DialectPrinter::item(const TopLevel &Item, const TopLevel *Next) {
@@ -179,7 +249,7 @@ Printed DialectPrinter::withComments(const Expr *E, Printed P) const {
 
 std::string DialectPrinter::name(llvm::StringRef Identifier) const {
   if (auto It = SourceNames.find(Identifier); It != SourceNames.end())
-    return It->second;
+    return NameOpen + Identifier.str() + NameClose + It->second + NameEnd;
   return escapeIdentifier(Identifier);
 }
 
@@ -191,8 +261,8 @@ bool DialectPrinter::repeatsName(const TopLevel &Comment,
   llvm::StringRef Text = Comment.TheComment.Text;
   if (!Text.consume_front("/* ") || !Text.consume_back(" */"))
     return false;
-  auto It = SourceNames.find(Next->Decls.front()->Name);
-  return It != SourceNames.end() && It->second == Text;
+  auto Spelled = sourceSpelling(Next->Decls.front()->Name);
+  return Spelled && *Spelled == Text;
 }
 
 namespace {
@@ -447,9 +517,21 @@ const Expr *DialectPrinter::narrowable(const Expr *E, const CType *Want) {
   }
 }
 
-void DialectPrinter::unsupported(const llvm::Twine &Reason) {
+void DialectPrinter::unsupported(const llvm::Twine &Reason) const {
   if (Refusal.empty())
     Refusal = Reason.str();
+}
+
+std::optional<size_t> SourceDialectText::mapOffset(size_t CBegin) const {
+  const SourceDialectPiece *First = nullptr;
+  for (const SourceDialectPiece &P : Pieces)
+    if (P.CBegin >= CBegin &&
+        (!First || P.CBegin < First->CBegin ||
+         (P.CBegin == First->CBegin && P.Begin < First->Begin)))
+      First = &P;
+  if (!First)
+    return std::nullopt;
+  return First->Begin;
 }
 
 std::optional<std::pair<size_t, size_t>>

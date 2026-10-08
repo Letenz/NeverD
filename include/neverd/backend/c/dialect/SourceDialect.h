@@ -63,17 +63,33 @@ struct SourceDialectPiece {
   size_t End = 0;
 };
 
+/// A source language's name in the dialect text, which splitting the text
+/// into identifiers would not find whole: `core::fmt::write`.
+struct SourceDialectName {
+  size_t Begin = 0;
+  size_t End = 0;
+  /// The C identifier the C view spells for it.
+  std::string Identifier;
+  std::string Symbol;
+  std::optional<va_t> Address;
+};
+
 struct SourceDialectText {
   std::string Text;
   /// In text order.
   std::vector<SourceDialectPiece> Pieces;
   /// Why each declaration shown as C could not be spelled, in text order.
   std::vector<std::string> Unread;
+  /// In text order.
+  std::vector<SourceDialectName> Names;
 
   /// The text that spells the C bytes [CBegin, CEnd): the pieces within
   /// them, or the smallest piece around them.
   std::optional<std::pair<size_t, size_t>> map(size_t CBegin,
                                                size_t CEnd) const;
+  /// Where the text spelling the C from \p CBegin on starts: the first
+  /// piece that starts there or after.
+  std::optional<size_t> mapOffset(size_t CBegin) const;
 };
 
 /// \p C, a complete HighC emission, spelled in \p Options.Dialect.

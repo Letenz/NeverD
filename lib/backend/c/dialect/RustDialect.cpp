@@ -115,6 +115,11 @@ private:
       return "f" + std::to_string(Ty->Bits);
     case CType::Kind::Pointer: {
       const CType *Pointee = Ty->Inner;
+      // A segment-relative address is not an address of the flat memory a
+      // Rust pointer reads.
+      if (Pointee->AddressSpace)
+        unsupported("a pointer into address space " +
+                    llvm::Twine(Pointee->AddressSpace));
       if (Pointee->isFunction())
         return functionType(Pointee, {});
       std::string Target =
@@ -563,8 +568,10 @@ private:
       const bool Const = Op->Ty->Const;
       return Printed{(Const ? "&raw const " : "&raw mut ") + P.Text, PrecUnary};
     }
-    if (O == "*")
+    if (O == "*") {
+      refuseVolatile(Op);
       return Printed{"*" + paren(value(Op, nullptr), PrecUnary), PrecUnary};
+    }
     if (O == "++" || O == "--") {
       unsupported("an increment inside an expression");
       return Printed{"_", PrecAtom};
@@ -601,6 +608,13 @@ private:
                          ".wrapping_neg()",
                      PrecAtom};
     return Printed{"-" + paren(P, PrecUnary), PrecUnary};
+  }
+
+  /// A volatile access has no plain dereference in the dialect.
+  void refuseVolatile(const Expr *Pointer) const {
+    const CType *Ty = Pointer->Ty;
+    if (Ty && Ty->isPointer() && Ty->Inner->Volatile)
+      unsupported("a volatile memory access");
   }
 
   bool isNull(const Expr *E) const {
@@ -890,9 +904,11 @@ private:
                      PrecAtom};
     }
     case ExprKind::Unary:
-      if (E->Text == "*")
+      if (E->Text == "*") {
+        refuseVolatile(E->Ops.front());
         return Printed{"*" + paren(value(E->Ops.front(), nullptr), PrecUnary),
                        PrecUnary};
+      }
       break;
     case ExprKind::Subscript: {
       const Expr *Base = E->Ops[0], *Index = E->Ops[1];
@@ -1450,13 +1466,38 @@ private:
     trailingComments(Item.Trailing);
   }
 
+  /// The parameters a body assigns or takes the address of, which Rust
+  /// binds `mut`.
+  llvm::DenseSet<const Decl *> mutatedParameters(const Decl *D) const {
+    llvm::DenseSet<const Decl *> Result;
+    if (!D->Body)
+      return Result;
+    forEachExpr(D->Body, [&](const Expr *E) {
+      const bool Writes =
+          E->Kind == ExprKind::Assign ||
+          (E->Kind == ExprKind::Unary &&
+           (E->Text == "&" || E->Text == "++" || E->Text == "--"));
+      if (!Writes)
+        return;
+      const Expr *Target = skipParens(E->Ops.front());
+      if (Target->Kind == ExprKind::Name && Target->Ref &&
+          Target->Ref->Kind == DeclKind::Parameter)
+        Result.insert(Target->Ref);
+    });
+    return Result;
+  }
+
   std::string signature(const Decl *D, bool Named) {
     const CType *Fn = D->Ty;
+    const llvm::DenseSet<const Decl *> Mutated =
+        Named ? mutatedParameters(D) : llvm::DenseSet<const Decl *>();
     std::string Text = name(D->Name) + "(";
     for (size_t I = 0; I < Fn->Params.size(); ++I) {
       const Decl *P = I < D->Params.size() ? D->Params[I] : nullptr;
-      const std::string ParamName =
+      std::string ParamName =
           Named && P && !P->Name.empty() ? escapeIdentifier(P->Name) : "_";
+      if (P && Mutated.contains(P))
+        ParamName = "mut " + ParamName;
       Text += (I ? ", " : "") + ParamName + ": " + type(Fn->Params[I]);
     }
     if (Fn->Variadic || !Fn->Prototyped)

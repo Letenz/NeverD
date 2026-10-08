@@ -404,8 +404,10 @@ std::string HighCWriter::functionIdentifier(llvm::StringRef SourceName) const {
       It != ExternalFunctionIdentifiers.end())
     return It->second;
   // A reference keeps its symbol's exact C name, which it links by.
-  return canonicalizeCProjectionIdentifier(
+  std::string Identifier = canonicalizeCProjectionIdentifier(
       cNameOfSymbol(SourceName, Opts.Format, Opts.TheArch), "nd_function");
+  ReferencedFunctionSymbols.try_emplace(Identifier, SourceName.str());
+  return Identifier;
 }
 
 std::string HighCWriter::memoryTypeName(const TypeRef &Ty) const {

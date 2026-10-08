@@ -117,6 +117,9 @@ private:
     case CType::Kind::Floating:
       return "float" + std::to_string(Ty->Bits);
     case CType::Kind::Pointer:
+      if (Ty->Inner->AddressSpace)
+        unsupported("a pointer into address space " +
+                    llvm::Twine(Ty->Inner->AddressSpace));
       if (Ty->Inner->isVoid())
         return "unsafe.Pointer";
       if (Ty->Inner->isFunction())
@@ -500,8 +503,10 @@ private:
         return Printed{"new(" + type(Literal->Written) + ")", PrecAtom};
       return Printed{"&" + paren(place(Op), PrecAtom), PrecUnary};
     }
-    if (O == "*")
+    if (O == "*") {
+      refuseVolatile(Op);
       return Printed{"*" + paren(value(Op, nullptr), PrecUnary), PrecUnary};
+    }
     if (O == "++" || O == "--") {
       unsupported("an increment inside an expression");
       return Printed{"_", PrecAtom};
@@ -536,6 +541,13 @@ private:
     if (Init->Kind == ExprKind::InitList)
       return Init->Ops.size() == 1 && isZeroInitializer(Init->Ops.front());
     return Init->Value && *Init->Value == 0;
+  }
+
+  /// A volatile access has no plain dereference in the dialect.
+  void refuseVolatile(const Expr *Pointer) const {
+    const CType *Ty = Pointer->Ty;
+    if (Ty && Ty->isPointer() && Ty->Inner->Volatile)
+      unsupported("a volatile memory access");
   }
 
   bool isNull(const Expr *E) const {
@@ -787,9 +799,11 @@ private:
                      PrecAtom};
     }
     case ExprKind::Unary:
-      if (E->Text == "*")
+      if (E->Text == "*") {
+        refuseVolatile(E->Ops.front());
         return Printed{"*" + paren(value(E->Ops.front(), nullptr), PrecUnary),
                        PrecUnary};
+      }
       break;
     case ExprKind::Subscript: {
       const Expr *Base = E->Ops[0], *Index = E->Ops[1];

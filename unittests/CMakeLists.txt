@@ -87,6 +87,8 @@ add_neverd_unittest(NeverDSourceDialectTests
 )
 target_include_directories(NeverDSourceDialectTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/backend/c/dialect")
+target_compile_definitions(NeverDSourceDialectTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
 add_neverd_unittest(NeverDSessionLLVMTests
   SessionLLVMTests.cpp

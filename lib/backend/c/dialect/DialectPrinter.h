@@ -138,8 +138,16 @@ protected:
 
   //===--- Names ---===//
 
-  /// The dialect's name for a C identifier of the text.
+  /// The dialect's name for a C identifier of the text.  A source name is
+  /// marked so that the finished text can say where it is.
   std::string name(llvm::StringRef Identifier) const;
+  /// The dialect's spelling of a source name, unmarked.
+  std::optional<std::string> sourceSpelling(llvm::StringRef Identifier) const {
+    auto It = SourceNames.find(Identifier);
+    if (It == SourceNames.end())
+      return std::nullopt;
+    return It->second;
+  }
 
   //===--- Facts about C statements ---===//
 
@@ -185,7 +193,7 @@ protected:
                              llvm::function_ref<void(const Expr *)> Visit);
 
   /// Refuses the current declaration: it is shown as C with \p Reason.
-  void unsupported(const llvm::Twine &Reason);
+  void unsupported(const llvm::Twine &Reason) const;
   bool refused() const { return !Refusal.empty(); }
 
   /// The readable name the C writer puts in a comment before a definition
@@ -204,9 +212,15 @@ private:
   std::vector<std::string> Unread;
   unsigned Depth = 0;
   bool AtLineStart = true;
-  std::string Refusal;
+  mutable std::string Refusal;
+  /// Removes the marks name() puts around source names, recording where
+  /// each name and piece ends up.
+  void unmark(SourceDialectText &Result);
+
   /// C identifier to the dialect's spelling of the symbol it stands for.
   llvm::StringMap<std::string> SourceNames;
+  /// C identifier to its entry in Opts.Names.
+  llvm::StringMap<const CSourceName *> NameEntries;
   llvm::DenseSet<const Decl *> LoadScratch;
 };
 

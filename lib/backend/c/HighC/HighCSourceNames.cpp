@@ -21,7 +21,7 @@
 using namespace neverd;
 
 void HighCWriter::recordSourceNames(const std::vector<HighFunc> &Funcs) {
-  if (!Opts.SourceMap)
+  if (!Opts.SourceMap && !Opts.SourceNames)
     return;
   std::map<std::string, CSourceName> ByIdentifier;
   auto Add = [&](CSourceName::Kind Kind, const std::string &Identifier,
@@ -50,11 +50,20 @@ void HighCWriter::recordSourceNames(const std::vector<HighFunc> &Funcs) {
       Add(CSourceName::Kind::Function, It->second, Func.Name, Func.Entry);
   for (const auto &[Source, Identifier] : ExternalSourceIdentifiers)
     Add(CSourceName::Kind::Function, Identifier, Source, std::nullopt);
+  for (const auto &[Source, Identifier] : ExternalFunctionIdentifiers)
+    if (!ByIdentifier.count(Identifier))
+      Add(CSourceName::Kind::Function, Identifier, Source, std::nullopt);
+  for (const auto &[Identifier, Source] : ReferencedFunctionSymbols)
+    if (!ByIdentifier.count(Identifier))
+      Add(CSourceName::Kind::Function, Identifier, Source, std::nullopt);
   for (const auto &[Address, Object] : ImageObjects)
     Add(CSourceName::Kind::Object, Object.Name, Object.Symbol, Address);
-  std::vector<CSourceName> &Names = Opts.SourceMap->Names;
-  Names.clear();
+  std::vector<CSourceName> Names;
   Names.reserve(ByIdentifier.size());
   for (auto &[Identifier, Name] : ByIdentifier)
     Names.push_back(std::move(Name));
+  if (Opts.SourceNames)
+    *Opts.SourceNames = Names;
+  if (Opts.SourceMap)
+    Opts.SourceMap->Names = std::move(Names);
 }
