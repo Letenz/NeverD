@@ -906,8 +906,8 @@ public:
   std::optional<std::string> relocatedSlotTarget(va_t Slot) const;
   /// A pointer-sized object at a relocated slot: the address it holds, as
   /// its initializer.
-  std::optional<std::string> relocatedSlotInitializer(va_t Addr,
-                                                      const ImageObject &Obj) const;
+  std::optional<std::string>
+  relocatedSlotInitializer(va_t Addr, const ImageObject &Obj) const;
   /// Declares the objects whose relocated pointer slots name other objects:
   /// the backings that hold them, as words, and the single slots \p Deferred.
   void writePointerBackings(const std::vector<va_t> &Deferred);

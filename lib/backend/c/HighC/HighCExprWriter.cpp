@@ -3151,9 +3151,8 @@ const HighExpr *HighCWriter::sameWidthVariable(const HighExpr &E) const {
   };
   const uint16_t Width = WidthOf(E);
   const HighExpr *Cur = &E;
-  for (unsigned Depth = 0; Cur && Width &&
-                           Depth < limits::kMaxIntegerViewUnwrapDepth;
-       ++Depth) {
+  for (unsigned Depth = 0;
+       Cur && Width && Depth < limits::kMaxIntegerViewUnwrapDepth; ++Depth) {
     if (Cur->Kind == ExprKind::Var || Cur->Kind == ExprKind::Phi)
       return WidthOf(*Cur) == Width ? Cur : nullptr;
     const bool View =
@@ -3780,11 +3779,11 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       const HighExpr &Address = *Operand.Operands[0];
       return "(" + typeToC(Operand.Type) + " *)(" +
              (Address.Type && Address.Type->Kind == NdTypeKind::Int
-                  ? integerView(Address,
-                                NdType::makeInt(
-                                    getTargetRegInfo(Opts.TheArch).PointerSize,
-                                    false),
-                                0)
+                  ? integerView(
+                        Address,
+                        NdType::makeInt(
+                            getTargetRegInfo(Opts.TheArch).PointerSize, false),
+                        0)
                   : exprStr(Address)) +
              ")";
     }
