@@ -4290,6 +4290,8 @@ static int symbolic_link_rename(const char *input) {
   } while (0)
   u64 dir = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
   RENAME_EXPECT(!error && !secondary && dir >= 3);
+  // F_GETPATH supplies the actual root spelling (e.g. /private/var on macOS).
+  RENAME_EXPECT(call(92, dir, 50, (u64)root, 0, 0, 0, &error) == 0 && !error);
   u64 work = call(463, dir, (u64) "work", 0x100000, 0, 0, 0, &error);
   RENAME_EXPECT(!error && !secondary && work >= 3);
   RENAME_EXPECT(call(13, work, 0, 0, 0, 0, 0, &error) == 0 && !error &&
