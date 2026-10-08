@@ -31,6 +31,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QDropEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -48,6 +49,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -153,6 +155,7 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
       session_(session), mcp_(mcp), broker_(broker), actions_(this) {
   instance_ = this;
   setWindowIcon(icon(QStringLiteral("app")));
+  setAcceptDrops(true);
   // Mouse Back/Forward buttons walk the navigation history anywhere inside.
   qApp->installEventFilter(this);
   buildMenusAndToolbars();
@@ -169,6 +172,52 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+  if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove ||
+      event->type() == QEvent::Drop) {
+    auto *widget = qobject_cast<QWidget *>(object);
+    auto *drop = static_cast<QDropEvent *>(event);
+    const bool quickStart =
+        widget && quickStart_ &&
+        (widget == quickStart_ || quickStart_->isAncestorOf(widget));
+    bool workbench = widget && (widget->window() == this || quickStart);
+    // Floating docks belong to this session, but have their own window.
+    if (widget && !workbench)
+      for (auto *dock : std::as_const(docks_))
+        if (widget == dock || dock->isAncestorOf(widget)) {
+          workbench = true;
+          break;
+        }
+    auto *modal = QApplication::activeModalWidget();
+    if (workbench && (!modal || (quickStart && modal == quickStart_)) &&
+        drop->mimeData()->hasUrls()) {
+      const auto urls = drop->mimeData()->urls();
+      const auto path = urls.size() == 1 && urls.first().isLocalFile()
+                            ? urls.first().toLocalFile()
+                            : QString();
+      // One session holds one file. Opening must never tell the source to
+      // move/delete it, including when Shift proposes a move operation.
+      if (!QFileInfo(path).isAbsolute() || !QFileInfo(path).isFile() ||
+          !(drop->possibleActions() & (Qt::CopyAction | Qt::LinkAction))) {
+        drop->ignore();
+        return true;
+      }
+      drop->setDropAction(drop->possibleActions() & Qt::CopyAction
+                              ? Qt::CopyAction
+                              : Qt::LinkAction);
+      drop->accept();
+      if (event->type() == QEvent::Drop) {
+        // Leave the native drop callback before opening or asking about
+        // unsaved changes. The window owns the queued callback's lifetime.
+        const QPointer<QDialog> start = quickStart ? quickStart_ : nullptr;
+        QTimer::singleShot(0, this, [this, path, start] {
+          if (start)
+            start->reject();
+          openFile(path);
+        });
+      }
+      return true;
+    }
+  }
   if (event->type() == QEvent::MouseButtonPress) {
     auto *widget = qobject_cast<QWidget *>(object);
     const auto button = static_cast<QMouseEvent *>(event)->button();
@@ -320,6 +369,7 @@ MainWindow::Dock *MainWindow::makeDock(const QString &id, const char *title,
                                        const QString &iconName,
                                        QWidget *content) {
   auto *dock = new Dock(id);
+  dock->setAcceptDrops(true);
   if (title) {
     dockTitles_.insert(id, title);
     dock->setTitle(tr(title));
@@ -1832,6 +1882,9 @@ void MainWindow::cycleWindows(bool forward) {
 
 void MainWindow::showQuickStart() {
   QDialog dialog(this);
+  quickStart_ = &dialog;
+  dialog.setObjectName(QStringLiteral("quickStartDialog"));
+  dialog.setAcceptDrops(true);
   dialog.setWindowTitle(tr("NeverD: Quick start"));
   dialog.setWindowIcon(icon(QStringLiteral("app")));
   dialog.resize(560, 380);
