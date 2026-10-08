@@ -859,6 +859,10 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
       for (const RustLandingPad &Pad : Exception->Rust->LandingPads)
         AddExceptionalRoot(Pad.PadVA);
     if (Exception->Registration) {
+      const RegistrationChainInfo &Chain = *Exception->Registration;
+      if (Chain.RegistrationOffset && Chain.ChainInstallVA != 0 &&
+          Chain.ChainInstallVA <= InvalidVA - 7)
+        AddBoundary(Chain.ChainInstallVA + 7);
       for (const RegistrationScopeRecord &Scope :
            Exception->Registration->Scopes) {
         AddExceptionalRoot(Scope.FilterVA);

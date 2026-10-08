@@ -3,6 +3,10 @@ add_neverd_component_library(NeverDIRLowValidation
   X87PartialRemainder.cpp
 )
 
+add_neverd_component_library(NeverDIRRegistrationState
+  RegistrationState.cpp
+)
+
 add_neverd_component_library(NeverDIRLow
   CFGBuilder.cpp
   CFGBuilderBlocks.cpp
@@ -54,6 +58,7 @@ add_neverd_component_library(NeverDIRLow
   LINK_COMPONENTS
   Decode
   IRLowValidation
+  IRRegistrationState
   LibC
   Loader
   Solver

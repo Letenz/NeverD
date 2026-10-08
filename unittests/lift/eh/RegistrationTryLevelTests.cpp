@@ -21,6 +21,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include <string>
 #include <vector>
@@ -44,15 +45,15 @@ void emit32(std::vector<uint8_t> &Out, uint32_t Value) {
 /// frame, push the seed try level, the table, and the handler, then link the
 /// record in front of the one `FS:[0]` names.
 void emitInstall(std::vector<uint8_t> &Out, int8_t Seed, uint32_t TableVA) {
-  Out.insert(Out.end(), {0x55});             // push ebp
-  Out.insert(Out.end(), {0x8B, 0xEC});       // mov ebp, esp
+  Out.insert(Out.end(), {0x55});                             // push ebp
+  Out.insert(Out.end(), {0x8B, 0xEC});                       // mov ebp, esp
   Out.insert(Out.end(), {0x6A, static_cast<uint8_t>(Seed)}); // push seed
-  Out.push_back(0x68);                       // push imm32
+  Out.push_back(0x68);                                       // push imm32
   emit32(Out, TableVA);
-  Out.push_back(0x68);                       // push imm32
+  Out.push_back(0x68); // push imm32
   emit32(Out, static_cast<uint32_t>(kPersonality));
-  Out.insert(Out.end(), {0x64, 0xA1, 0, 0, 0, 0});    // mov eax, fs:[0]
-  Out.push_back(0x50);                                // push eax
+  Out.insert(Out.end(), {0x64, 0xA1, 0, 0, 0, 0});       // mov eax, fs:[0]
+  Out.push_back(0x50);                                   // push eax
   Out.insert(Out.end(), {0x64, 0x89, 0x25, 0, 0, 0, 0}); // mov fs:[0], esp
 }
 
@@ -260,25 +261,26 @@ TEST(RegistrationTryLevel, RejectsALocalThatIsNeverSetToTheSeed) {
   EXPECT_EQ(levels(*Chain), (std::vector<int32_t>{0, 1, 0, -1}));
 }
 
-TEST(RegistrationTryLevel, PublishesNoSlotWhenTwoAreEquallyGood) {
+TEST(RegistrationTryLevel, RegistrationLayoutSeparatesIdenticalStoreSequences) {
   ImageBuilder B;
   B.addScope(-1, kText + 0x40, kText + 0x50);
   B.endScopes();
 
   emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
-  // Two slots carrying the same sequence.  Nothing in the image separates
-  // them, so publishing either would be a guess.
+  // Locals can carry the same sequence. The installed registration layout,
+  // rather than the stored values, identifies the actual state field.
   emitFrameStore(B.Text, -0x04, 0);
-  emitFrameStore(B.Text, -0x08, 0);
+  emitFrameStore(B.Text, -0x24, 0);
   emitFrameStore(B.Text, -0x04, -1);
-  emitFrameStore(B.Text, -0x08, -1);
+  emitFrameStore(B.Text, -0x24, -1);
   B.Text.push_back(0xC3);
 
   const BinaryImage Img = B.build({{"guarded", kText}});
   const RegistrationChainInfo *Chain = chainAt(Img, kText);
   ASSERT_NE(Chain, nullptr);
-  EXPECT_FALSE(Chain->TryLevelOffset.has_value());
-  EXPECT_TRUE(Chain->TryLevelStores.empty());
+  EXPECT_EQ(Chain->RegistrationOffset, -16);
+  EXPECT_EQ(Chain->TryLevelOffset, -4);
+  EXPECT_EQ(levels(*Chain), (std::vector<int32_t>{0, -1}));
 }
 
 TEST(RegistrationTryLevel, ReadsTheHandler4SeedOfMinusTwo) {
@@ -333,7 +335,7 @@ LowFunc liftEntry(BinaryImage &Img, va_t Entry) {
 
 TEST(RegistrationTryLevel, GuardsOnlyTheBlocksTheTryLevelIsCurrentIn) {
   ImageBuilder B;
-  B.addScope(-1, kText + 0x40, kText + 0x50);
+  B.addScope(-2, kText + 0x40, kText + 0x50);
   B.endScopes();
 
   emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
@@ -408,6 +410,8 @@ TEST(RegistrationTryLevel, AddsNoEdgeWhenNoSlotWasProven) {
   B.endScopes();
 
   emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+  // Reading the old chain head without writing the new one is not an install.
+  std::fill(B.Text.end() - 7, B.Text.end(), 0x90);
   // Two indistinguishable slots leave the regions unproven, and an unproven
   // region must not be turned into control flow.
   emitFrameStore(B.Text, -0x04, 0);
@@ -429,6 +433,153 @@ TEST(RegistrationTryLevel, AddsNoEdgeWhenNoSlotWasProven) {
 
   const LowFunc Func = liftEntry(Img, kText);
   EXPECT_TRUE(edgesAt(Func, Body).empty());
+}
+
+void addFlowHandlers(ImageBuilder &B) {
+  B.Text.resize(0xA0, 0xCC);
+  B.addStub();
+  B.Text.resize(0xB0, 0xCC);
+  B.addStub();
+}
+
+TEST(RegistrationTryLevel, IgnoresAStoreInSkippedCode) {
+  ImageBuilder B;
+  B.addScope(-1, kText + 0xA0, kText + 0xB0);
+  B.endScopes();
+  emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+  emitFrameStore(B.Text, -4, 0);
+  B.Text.insert(B.Text.end(), {0xEB, 7}); // skip an unreachable state reset
+  emitFrameStore(B.Text, -4, -1);
+  const va_t Body = B.textVA();
+  B.Text.insert(B.Text.end(), {0x90, 0xC3});
+  addFlowHandlers(B);
+
+  BinaryImage Img = B.build({{"guarded", kText}});
+  const LowFunc Func = liftEntry(Img, kText);
+  EXPECT_EQ(edgesAt(Func, Body),
+            (std::vector<std::string>{"seh-filter@160", "seh-handler@176"}));
+}
+
+TEST(RegistrationTryLevel, UnionsBothReachingLevelsAtAJoin) {
+  ImageBuilder B;
+  B.addScope(-1, kText + 0xA0, kText + 0xB0);
+  B.endScopes();
+  emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+  B.Text.insert(B.Text.end(), {0x85, 0xC9, 0x74, 9}); // test ecx; jz reset
+  emitFrameStore(B.Text, -4, 0);
+  B.Text.insert(B.Text.end(), {0xEB, 7}); // jmp join
+  emitFrameStore(B.Text, -4, -1);
+  const va_t Join = B.textVA();
+  B.Text.insert(B.Text.end(), {0x90, 0xC3});
+  addFlowHandlers(B);
+
+  BinaryImage Img = B.build({{"guarded", kText}});
+  const LowFunc Func = liftEntry(Img, kText);
+  EXPECT_EQ(edgesAt(Func, Join),
+            (std::vector<std::string>{"seh-filter@160", "seh-handler@176"}));
+  ASSERT_TRUE(Func.RegistrationStates);
+  bool Found = false;
+  for (const RegistrationBlockState &Block : Func.RegistrationStates->Blocks) {
+    if (!Block.Range.contains(Join))
+      continue;
+    Found = true;
+    EXPECT_EQ(Block.Levels, (std::vector<int32_t>{-1, 0}));
+  }
+  EXPECT_TRUE(Found);
+  EXPECT_FALSE(registrationRangesWhere(
+      *Func.RegistrationStates, [](int32_t Level) { return Level == 0; }));
+}
+
+TEST(RegistrationTryLevel, ReplaysStateThroughALoopBackedge) {
+  ImageBuilder B;
+  B.addScope(-1, kText + 0xA0, kText + 0xB0);
+  B.endScopes();
+  emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+  const va_t Header = B.textVA();
+  B.Text.insert(B.Text.end(), {0x90, 0x85, 0xC9, 0x74, 9});
+  emitFrameStore(B.Text, -4, 0);
+  B.Text.insert(B.Text.end(), {0xEB, 0xF2}); // back to header, now at state 0
+  emitFrameStore(B.Text, -4, -1);
+  B.Text.push_back(0xC3);
+  addFlowHandlers(B);
+
+  BinaryImage Img = B.build({{"guarded", kText}});
+  const LowFunc Func = liftEntry(Img, kText);
+  EXPECT_EQ(edgesAt(Func, Header),
+            (std::vector<std::string>{"seh-filter@160", "seh-handler@176"}));
+  ASSERT_TRUE(Func.RegistrationStates);
+  for (const RegistrationBlockState &Block : Func.RegistrationStates->Blocks)
+    if (Block.Range.contains(Header))
+      EXPECT_EQ(Block.Levels, (std::vector<int32_t>{-1, 0}));
+}
+
+TEST(RegistrationTryLevel, EntersAnInnerHandlerAtItsEnclosingLevel) {
+  ImageBuilder B;
+  B.addScope(-1, kText + 0xA0, kText + 0xB0);
+  B.addScope(0, kText + 0xA8, kText + 0xB8);
+  B.endScopes();
+  emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+  emitFrameStore(B.Text, -4, 1);
+  B.Text.push_back(0x90);
+  emitFrameStore(B.Text, -4, -1);
+  B.Text.push_back(0xC3);
+  B.Text.resize(0xA0, 0xCC);
+  B.addStub();
+  B.Text.resize(0xA8, 0xCC);
+  B.addStub();
+  B.Text.resize(0xB0, 0xCC);
+  B.addStub();
+  B.Text.resize(0xB8, 0xCC);
+  B.addStub();
+
+  BinaryImage Img = B.build({{"guarded", kText}});
+  const LowFunc Func = liftEntry(Img, kText);
+  EXPECT_EQ(edgesAt(Func, kText + 0xB8),
+            (std::vector<std::string>{"seh-filter@160", "seh-handler@176"}));
+  EXPECT_TRUE(edgesAt(Func, kText + 0xB0).empty());
+}
+
+BinaryImage makeSafeSEHImage(uint32_t Count, std::vector<uint32_t> HandlerRVAs,
+                             uint32_t TableVA = kRData + 0x148) {
+  ImageBuilder B;
+  B.addScope(-1, kText + 0xA0, kText + 0xB0);
+  B.endScopes();
+  emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+  emitFrameStore(B.Text, -4, 0);
+  emitFrameStore(B.Text, -4, -1);
+  B.Text.push_back(0xC3);
+  addFlowHandlers(B);
+  B.RData.resize(0x148, 0);
+  writeLE<uint32_t>(B.RData.data() + 0x100, 0x48);
+  writeLE<uint32_t>(B.RData.data() + 0x140, TableVA);
+  writeLE<uint32_t>(B.RData.data() + 0x144, Count);
+  for (uint32_t RVA : HandlerRVAs)
+    emit32(B.RData, RVA);
+  BinaryImage Img = B.build({{"guarded", kText}});
+  Img.ExceptionMetadata = ExceptionInfo{};
+  Img.DynInfo.LoadConfigRVA = kRData + 0x100 - kBase;
+  Img.DynInfo.LoadConfigSize = 0x48;
+  coff_loader::parseX86RegistrationExceptions(Img);
+  return Img;
+}
+
+TEST(RegistrationTryLevel, AcceptsASortedMappedSafeSEHTable) {
+  const BinaryImage Img = makeSafeSEHImage(1, {kPersonality - kBase});
+  EXPECT_EQ(Img.ExceptionMetadata.ParseStatus, ExceptionParseStatus::Complete);
+  EXPECT_NE(chainAt(Img, kText), nullptr);
+}
+
+TEST(RegistrationTryLevel, MalformedSafeSEHDoesNotBecomeAbsence) {
+  for (auto Img :
+       {makeSafeSEHImage(1, {}, 0), makeSafeSEHImage(1, {}, 0xDEADBEEF),
+        makeSafeSEHImage(4097, {}),
+        makeSafeSEHImage(2, {kPersonality - kBase, kPersonality - kBase}),
+        makeSafeSEHImage(2, {kPersonality - kBase, kText + 0xA0 - kBase})}) {
+    EXPECT_EQ(Img.ExceptionMetadata.ParseStatus,
+              ExceptionParseStatus::Malformed);
+    EXPECT_TRUE(Img.ExceptionMetadata.Functions.empty());
+    EXPECT_FALSE(Img.ExceptionMetadata.Diagnostics.empty());
+  }
 }
 
 } // namespace

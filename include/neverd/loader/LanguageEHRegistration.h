@@ -27,7 +27,7 @@ namespace neverd {
 /// entry naming its enclosing level rather than by containment of ranges,
 /// which is why this model keeps the level graph instead of address ranges.
 struct RegistrationScopeRecord {
-  /// Enclosing try level, or -1 for a scope directly under the frame.
+  /// Enclosing try level, or -1 (EH3) / -2 (EH4) directly under the frame.
   int32_t EnclosingLevel = -1;
   /// Filter expression address; zero marks a `__finally` (termination) scope.
   va_t FilterVA = 0;

@@ -4,7 +4,7 @@
 
 [← Documentation Index](README.md)
 
-NeverD carries Windows table-based exception information through loading,
+NeverD carries Windows exception information through loading,
 lifting, decompilation, and binary rewriting. Exception metadata is part of a
 function's executable contract: a rewrite is rejected when NeverD cannot prove
 that the generated code, runtime-function records, language tables, and guard
@@ -34,7 +34,7 @@ Analysis support does not imply native reconstruction support.
 | `__CxxFrameHandler3` | Unwind map, try map, catches, catch-object/frame offsets, continuations, and IP-to-state map | Reducible state intervals become explicit C++ HighIR with C-compatible typed annotations | Native x64 reconstruction for the deliberately narrow, verifier-clean subset described below |
 | `__CxxFrameHandler4` | Bounded variable-length decoding into the common C++ graph, including action kinds and object offsets | Same HighIR graph with FH4 provenance | Analysis only; a touched function is rejected |
 | `__GSHandlerCheck_SEH/EH/EH4` | Wrapped personality plus checked GS cookie provenance | Base-language graph and wrapper annotation | Analysis only; a touched function is rejected rather than downgraded |
-| x86 registration-chain EH | Kept distinct from table-based EH | Unsupported-form annotation | Not reconstructed |
+| x86 registration-chain EH | EH3/EH4 scope tables and cookie fields, absolute-pointer C++ FuncInfo, and CFG-derived reaching try levels | Reducible, unambiguous regions become explicit EH nodes; ambiguous or incomplete state flow retains native annotations | Analysis and decompilation; native reconstruction is not yet accepted |
 
 Malformed records are never treated as ordinary complete records. A partially
 decoded record remains useful for inspection, but cannot authorize native
@@ -71,6 +71,32 @@ entries therefore cannot multiply parser work beyond the aggregate budget.
 FH3 records that share one `FuncInfo` and personality are decoded as a bounded
 function group, so the parent's IP-to-state map may legally name its catch
 funclets without admitting addresses from unrelated runtime functions.
+
+### x86 registration state
+
+x86 has no runtime-function directory. The loader follows registration
+prologues to EH3/EH4 scope tables or C++ FuncInfo. SafeSEH tables must be mapped,
+strictly sorted and executable; a malformed table cannot become an absent one.
+C++ map counts share one aggregate decode budget.
+
+`analyzeRegistrationStates` is the shared LowIR owner of reaching try levels.
+It follows CFG predecessors and backedges, unions levels at joins and applies a
+recovered state store only after its exact decoded instruction completes.
+Unreachable stores cannot change a reachable block's state. Runtime-entered
+filters and cleanup callbacks are kept outside the parent's lexical interval;
+catch and except entries use their runtime state transfer. MedIR carries these
+derived facts separately from the authenticated loader descriptor. HighIR
+requires every reaching state to agree about region membership before emitting
+a structured region. Unknown transitions retain annotations rather than
+inventing an IP-to-state map.
+Direct MSVC prologues must prove the actual FS:[0] write and the registration
+and state-field offsets; matching integer sequences in locals are insufficient.
+
+This state analysis does not prove ownership of a new physical registration
+frame. Native x86 reconstruction additionally requires callback frame recovery,
+balanced FS:[0] administration, EH4 cookie preservation, generated SafeSEH
+handler membership and absolute-pointer PE base relocations. Patch planning
+continues to reject x86 contracts until those obligations are implemented.
 
 ## IR contract
 
@@ -120,7 +146,7 @@ lowering:
 - function attachment: `neverd.windows.eh`;
 - native-lowering marker: `neverd.windows.eh.native`;
 - module table: `neverd.windows.eh.functions`;
-- current schema version: `3`.
+- current schema version: `8`.
 
 The fixed function record carries parse status, encoding, code range, native
 runtime/unwind RVAs, runtime-record kind and chain provenance, packed-unwind
@@ -240,6 +266,24 @@ IP-to-state map after reloading the patched PE.
 
 For parser changes, also run the existing ARM format cases because ARM packed
 and unpacked xdata share the normalized model and final runtime-entry checks.
+
+The focused registration-state suite and PE32 runtime baseline are:
+
+```bash
+cmake --build build-release --target NeverDRegistrationStateTests --parallel 4
+build-release/bin/NeverDRegistrationStateTests
+python3 -m unittest scripts.tests.test_check_windows_registration_eh -v
+python3 scripts/check_windows_registration_eh.py --output build-registration/evidence
+```
+
+The runner executes the pinned MSVC x86 SEH and C++ probes with `/GS` on/off and
+at O0/O2, using Wine on Linux or the native loader on Windows. Its default
+report is `original-runtime` evidence. `--patched-root` requires all eight
+rewritten counterparts, rejects byte-identical copies and compares outcomes;
+only that mode reports `rewritten-runtime` evidence. Missing runtimes or images
+fail the run. The CI `windows_eh_only` dispatch profile additionally checks
+ARM32 cross-target PE generation and reconstruction. It does not claim execution
+on Windows ARM32.
 
 ## Extending native support
 

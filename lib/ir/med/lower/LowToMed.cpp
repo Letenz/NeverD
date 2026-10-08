@@ -437,6 +437,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   Func.JumpTables = Low.JumpTables;
   Func.UnsafeIndirectBranchAddresses = Low.UnsafeIndirectBranchAddresses;
   Func.ExceptionMetadata = Low.ExceptionMetadata;
+  Func.RegistrationStates = Low.RegistrationStates;
   if (SourceCallHintsEnabled && Image && Fmt == BinaryFormat::MachO &&
       TheArch == Arch::AArch64 && Image->Arch == TheArch) {
     Func.RegisterCopyProjections = sourceRegisterCopies(*Image, Low);

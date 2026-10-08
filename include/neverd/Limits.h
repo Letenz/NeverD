@@ -666,6 +666,10 @@ constexpr int kIfElseNestedArmPasses = 1;
 /// x86 registration-chain prologue helper expansion fixed point.
 constexpr unsigned kMaxRegistrationEHFixedPoint = 16;
 
+/// Total registration-state propagation work, including state/edge pairs.
+/// Exhaustion invalidates the whole result rather than truncating a domain.
+constexpr size_t kMaxRegistrationEHStateWork = 1048576;
+
 /// Default MXCSR value (x86 SSE control/status register).
 constexpr uint64_t kDefaultMXCSR = 0x1F80;
 

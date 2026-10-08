@@ -107,29 +107,40 @@ public:
     const va_t ConfigVA = Img.Base + ConfigRVA;
     auto TableVA = readScalar<uint32_t>(Img, ConfigVA + 0x40);
     auto Count = readScalar<uint32_t>(Img, ConfigVA + 0x44);
-    if (!TableVA || !Count || *TableVA == 0 || *Count == 0 ||
-        *Count > MaxRegistrationRecords)
+    if (!TableVA || !Count) {
+      Invalid = true;
       return;
+    }
+    if (*TableVA == 0 && *Count == 0)
+      return;
+    Present = true;
+    if (*TableVA == 0 || *Count == 0 || *Count > MaxRegistrationRecords) {
+      Invalid = true;
+      return;
+    }
     for (uint32_t I = 0; I < *Count; ++I) {
       auto Entry = readScalar<uint32_t>(Img, va_t(*TableVA) + uint64_t(I) * 4);
-      if (!Entry)
+      if (!Entry || *Entry > InvalidVA - Img.Base ||
+          !isExecutableAddress(Img, Img.Base + *Entry) ||
+          (!Handlers.empty() && Handlers.back() >= Img.Base + *Entry)) {
+        Invalid = true;
         return;
-      if (*Entry > InvalidVA - Img.Base)
-        return;
+      }
       Handlers.push_back(Img.Base + *Entry);
     }
-    std::sort(Handlers.begin(), Handlers.end());
-    Present = true;
   }
 
   bool isPresent() const { return Present; }
+  bool isMalformed() const { return Invalid; }
   bool contains(va_t Address) const {
-    return std::binary_search(Handlers.begin(), Handlers.end(), Address);
+    return !Invalid &&
+           std::binary_search(Handlers.begin(), Handlers.end(), Address);
   }
 
 private:
   std::vector<va_t> Handlers;
   bool Present = false;
+  bool Invalid = false;
 };
 
 /// What a handler address turned out to be once its name and, failing that,

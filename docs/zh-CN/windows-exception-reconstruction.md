@@ -4,7 +4,7 @@
 
 [← 文档索引](README.md)
 
-NeverD 在加载、提升、反编译和二进制重写的全过程中携带 Windows 表驱动异常信息。
+NeverD 在加载、提升、反编译和二进制重写的全过程中携带 Windows 异常信息。
 异常元数据属于函数的可执行契约：只有能够证明生成代码、runtime-function 记录、
 语言表与防护表相互一致时，NeverD 才允许重写。
 
@@ -29,7 +29,7 @@ NeverD 在加载、提升、反编译和二进制重写的全过程中携带 Win
 | `__CxxFrameHandler3` | unwind map、try map、catch、catch-object/frame offset、continuation 与 IP-to-state map | 可规约状态区间变为显式 C++ HighIR，并带 C 兼容类型注释 | 对下文所述严格受限且 verifier-clean 的子集执行原生 x64 重建 |
 | `__CxxFrameHandler4` | 有界变长解码到公共 C++ 图，包括 action kind 与 object offset | 同一 HighIR 图并保留 FH4 来源 | 仅分析；拒绝修改涉及的函数 |
 | `__GSHandlerCheck_SEH/EH/EH4` | 包装后的 personality 与经检查的 GS cookie 来源 | 基础语言图加 wrapper 注释 | 仅分析；拒绝修改涉及的函数，不做降级 |
-| x86 registration-chain EH | 与表驱动 EH 明确区分 | 不支持形式的注释 | 不重建 |
+| x86 registration-chain EH | EH3/EH4 scope table 与 cookie 字段、绝对指针 C++ FuncInfo，以及基于 CFG 的 try-level 状态集合 | 可规约且状态无歧义的区域生成显式 EH 节点；有歧义或不完整的状态保留原生注释 | 支持分析与反编译；尚未开放原生重建 |
 
 畸形记录绝不会按普通完整记录处理。部分解码记录仍可用于检查，但不能授权生成原生
 元数据。如果 ARM xdata header 仍能证明一个有界可执行 fragment 范围，而后续 unwind
@@ -60,6 +60,25 @@ try-map entry 复用同一 handler map，解析工作也不能超过总预算。
 与 personality 的 FH3 记录按有界函数组解码，使父函数的 IP-to-state map 可以合法指向
 其 catch funclet，同时拒绝不相关 runtime function 的地址。
 
+### x86 registration 状态
+
+x86 没有 runtime-function directory。loader 从 registration prologue 找到 EH3/EH4
+scope table 或 C++ FuncInfo。SafeSEH 表必须已映射、严格排序，且目标可执行；损坏的表
+不能降级成“没有表”。C++ 各张表共用一个累计解码预算。
+
+`analyzeRegistrationStates` 是 LowIR 中 try-level 数据流的唯一所有者。它沿 CFG
+前驱与回边传播状态，在汇合点保留所有到达的 level，并仅在已解码的状态写入指令完成后
+应用新状态。不可达代码中的写入不能改变可达块的状态。运行时调用的 filter 与 cleanup
+callback 不属于父函数的词法保护区；catch/except 入口使用对应的运行时状态迁移。
+MedIR 单独携带这些推导结果，不修改 patch 事务认证的 loader 描述符。只有所有到达状态
+对区域归属一致时，HighIR 才生成结构化区域；未知迁移保留注释，不虚构 IP-to-state map。
+直接 MSVC prologue 必须证明实际 FS:[0] 写入与 registration/state 字段的位置；普通局部
+变量中恰好相同的整数序列不能替代这一证据。
+
+状态分析尚不能证明新物理栈帧的 registration 契约。原生 x86 重建还需要 callback
+frame recovery、平衡的 FS:[0] 安装/移除、EH4 cookie 保留、生成 handler 的 SafeSEH
+成员关系，以及绝对指针的 PE base relocation。实现这些条件前，patch 仍拒绝 x86 契约。
+
 ## IR 契约
 
 异常元数据贯穿每种 IR 表示，同时不改变普通 CFG 的含义：
@@ -89,7 +108,7 @@ WinEH lowering：
 - 函数 attachment：`neverd.windows.eh`；
 - 原生 lowering 标记：`neverd.windows.eh.native`；
 - module table：`neverd.windows.eh.functions`；
-- 当前 schema version：`3`。
+- 当前 schema version：`8`。
 
 固定函数记录携带 parse status、encoding、code range、原生 runtime/unwind RVA、
 runtime-record kind 与 chain 来源、packed-unwind word、frame description、规范化和
@@ -181,6 +200,21 @@ IP-to-state map。
 
 修改 parser 时还要运行现有 ARM format case，因为 ARM packed/unpacked xdata 共用规范化
 模型与最终 runtime-entry 检查。
+
+registration 状态与 PE32 运行基线可单独验证：
+
+```bash
+cmake --build build-release --target NeverDRegistrationStateTests --parallel 4
+build-release/bin/NeverDRegistrationStateTests
+python3 -m unittest scripts.tests.test_check_windows_registration_eh -v
+python3 scripts/check_windows_registration_eh.py --output build-registration/evidence
+```
+
+执行器运行固定版本的 MSVC x86 SEH/C++ 样本，覆盖 `/GS` 开关与 O0/O2；Linux 使用 Wine，
+Windows 使用原生 loader。默认报告标记为 `original-runtime`。传入 `--patched-root` 后，
+必须提供全部八份重写样本；字节完全相同的副本会被拒绝，并逐个比较运行结果。只有这一
+模式报告 `rewritten-runtime`。缺少运行环境或样本会失败。CI 的 `windows_eh_only` 手动
+配置还验证 ARM32 交叉目标 PE 生成与重建；这不等于在 Windows ARM32 上执行。
 
 ## 扩展原生支持
 

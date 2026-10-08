@@ -454,6 +454,7 @@ struct MedFunc {
   /// into an indirect call merely because the CFG has no static successors.
   std::set<va_t> UnsafeIndirectBranchAddresses;
   std::optional<ExceptionFunction> ExceptionMetadata;
+  std::optional<RegistrationStateAnalysis> RegistrationStates;
 
   bool hasTypeInfo() const { return ReturnType != nullptr; }
 

@@ -101,6 +101,13 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
     return false;
   }
   Info.MaxState = static_cast<uint32_t>(MaxState);
+  uint32_t TotalRecords = Info.MaxState;
+  if (TryCount > MaxRegistrationRecords - TotalRecords) {
+    diagnose(F, ExceptionParseStatus::Malformed,
+             "x86 C++ FuncInfo graph exceeds aggregate decode budget");
+    return false;
+  }
+  TotalRecords += TryCount;
   // x86 tracks the current state in the frame, not in a table.  A non-empty
   // IP map here means the record is not the x86 form this decoder proved.
   if (IPCount != 0) {
@@ -154,11 +161,12 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
       Try.CatchHigh = readLE<int32_t>(E + 8);
       uint32_t CatchCount = readLE<uint32_t>(E + 12);
       uint32_t HandlerArrayVA = readLE<uint32_t>(E + 16);
-      if (CatchCount > MaxRegistrationRecords) {
+      if (CatchCount > MaxRegistrationRecords - TotalRecords) {
         diagnose(F, ExceptionParseStatus::Malformed,
-                 "x86 C++ catch count exceeds decode budget");
+                 "x86 C++ catch graph exceeds aggregate decode budget");
         return false;
       }
+      TotalRecords += CatchCount;
       uint64_t HandlerBytes = uint64_t(CatchCount) * 16;
       const uint8_t *Handlers =
           CatchCount == 0 ? nullptr
@@ -206,8 +214,8 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
     }
     int32_t SpecCount = readLE<int32_t>(List);
     uint32_t SpecArrayVA = readLE<uint32_t>(List + 4);
-    if (SpecCount < 0 ||
-        static_cast<uint32_t>(SpecCount) > MaxRegistrationRecords) {
+    if (SpecCount < 0 || static_cast<uint32_t>(SpecCount) >
+                             MaxRegistrationRecords - TotalRecords) {
       diagnose(F, ExceptionParseStatus::Malformed,
                "x86 C++ ESTypeList count exceeds decode budget");
       return false;

@@ -30,6 +30,9 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   if (!Func.ExceptionMetadata)
     return;
   const ExceptionFunction &Metadata = *Func.ExceptionMetadata;
+  Func.RegistrationStates.reset();
+  if (Metadata.Registration)
+    Func.RegistrationStates = analyzeRegistrationStates(Func);
 
   auto TargetBlockId = [&](va_t TargetVA) {
     if (LowBlock *Target = Func.blockFor(TargetVA))
@@ -98,6 +101,37 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   if (Metadata.Cxx) {
     const CxxExceptionInfo &Cxx = *Metadata.Cxx;
     for (LowBlock &Block : Func.Blocks) {
+      if (Metadata.Registration) {
+        if (!Func.RegistrationStates)
+          continue;
+        auto It = std::find_if(Func.RegistrationStates->Blocks.begin(),
+                               Func.RegistrationStates->Blocks.end(),
+                               [&](const RegistrationBlockState &State) {
+                                 return State.BlockId == Block.Id;
+                               });
+        if (It == Func.RegistrationStates->Blocks.end() || It->CallbackOnly)
+          continue;
+        for (int32_t State : It->Levels) {
+          int32_t Walk = State;
+          for (size_t Step = 0; Step < Cxx.UnwindMap.size(); ++Step) {
+            if (Walk < 0 || static_cast<size_t>(Walk) >= Cxx.UnwindMap.size())
+              break;
+            const CxxUnwindAction &Cleanup = Cxx.UnwindMap[Walk];
+            AddEdge(Block, Cleanup.ActionVA, ExceptionalEdgeKind::CxxCleanup,
+                    static_cast<uint32_t>(Walk), State);
+            Walk = Cleanup.ToState;
+          }
+          for (size_t I = 0; I < Cxx.TryBlocks.size(); ++I) {
+            const CxxTryBlock &Try = Cxx.TryBlocks[I];
+            if (State < Try.TryLow || State > Try.TryHigh)
+              continue;
+            for (const CxxCatchHandler &Catch : Try.Handlers)
+              AddEdge(Block, Catch.HandlerVA, ExceptionalEdgeKind::CxxCatch,
+                      static_cast<uint32_t>(I), State);
+          }
+        }
+        continue;
+      }
       int32_t State = -1;
       for (const CxxIPState &IPState : Cxx.IPMap) {
         if (IPState.IP > Block.StartAddr)
@@ -130,36 +164,35 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   // an exception arrives the runtime offers it to the current level's scope and
   // then to each enclosing one in turn, so every scope on that chain gets an
   // edge and not just the innermost.
-  if (Metadata.Registration && !Metadata.Registration->TryLevelStores.empty()) {
+  if (Metadata.Registration && Func.RegistrationStates) {
     const RegistrationChainInfo &Chain = *Metadata.Registration;
     const size_t ScopeCount = Chain.Scopes.size();
     for (LowBlock &Block : Func.Blocks) {
-      // The store's own block still runs at the outgoing level, so only a store
-      // that has completed by the time the block is entered counts.
-      int32_t Level = Chain.SeededTryLevel.value_or(-1);
-      for (const RegistrationTryLevelStore &Store : Chain.TryLevelStores) {
-        if (Store.EndVA > Block.StartAddr)
-          break;
-        Level = Store.Level;
-      }
-
-      // A malformed table could name itself as its own enclosing level; the
-      // scope count bounds the walk so such a cycle cannot spin.
-      for (size_t Step = 0; Step < ScopeCount; ++Step) {
-        if (Level < 0 || static_cast<size_t>(Level) >= ScopeCount)
-          break;
-        const RegistrationScopeRecord &Scope = Chain.Scopes[Level];
-        const uint32_t Region = static_cast<uint32_t>(Level);
-        if (Scope.IsFinally) {
-          AddEdge(Block, Scope.HandlerVA, ExceptionalEdgeKind::SEHFinally,
-                  Region, Level);
-        } else {
-          AddEdge(Block, Scope.FilterVA, ExceptionalEdgeKind::SEHFilter, Region,
-                  Level);
-          AddEdge(Block, Scope.HandlerVA, ExceptionalEdgeKind::SEHHandler,
-                  Region, Level);
+      auto It = std::find_if(Func.RegistrationStates->Blocks.begin(),
+                             Func.RegistrationStates->Blocks.end(),
+                             [&](const RegistrationBlockState &State) {
+                               return State.BlockId == Block.Id;
+                             });
+      if (It == Func.RegistrationStates->Blocks.end() || It->CallbackOnly)
+        continue;
+      for (int32_t Level : It->Levels) {
+        // The scope count bounds the walk even for manually supplied cycles.
+        for (size_t Step = 0; Step < ScopeCount; ++Step) {
+          if (Level < 0 || static_cast<size_t>(Level) >= ScopeCount)
+            break;
+          const RegistrationScopeRecord &Scope = Chain.Scopes[Level];
+          const uint32_t Region = static_cast<uint32_t>(Level);
+          if (Scope.IsFinally) {
+            AddEdge(Block, Scope.HandlerVA, ExceptionalEdgeKind::SEHFinally,
+                    Region, Level);
+          } else {
+            AddEdge(Block, Scope.FilterVA, ExceptionalEdgeKind::SEHFilter,
+                    Region, Level);
+            AddEdge(Block, Scope.HandlerVA, ExceptionalEdgeKind::SEHHandler,
+                    Region, Level);
+          }
+          Level = Scope.EnclosingLevel;
         }
-        Level = Scope.EnclosingLevel;
       }
     }
   }
@@ -200,13 +233,14 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
         // The chain is a linked list inside a table the decoder already
         // bounded, so a step budget of the action count both terminates a
         // cycle and cannot cut a well-formed chain short.
-        for (size_t Step = 0; Offset && Step <= Itanium.Actions.size(); ++Step) {
+        for (size_t Step = 0; Offset && Step <= Itanium.Actions.size();
+             ++Step) {
           const ItaniumAction *Action = FindAction(*Offset);
           if (!Action)
             break;
-          AddClause(Action->isCleanup()   ? ExceptionalEdgeKind::ItaniumCleanupPad
-                    : Action->isCatch()   ? ExceptionalEdgeKind::ItaniumCatchPad
-                                          : ExceptionalEdgeKind::ItaniumSpecPad,
+          AddClause(Action->isCleanup() ? ExceptionalEdgeKind::ItaniumCleanupPad
+                    : Action->isCatch() ? ExceptionalEdgeKind::ItaniumCatchPad
+                                        : ExceptionalEdgeKind::ItaniumSpecPad,
                     Action->TypeFilter);
           Offset = Action->NextActionOffset;
         }

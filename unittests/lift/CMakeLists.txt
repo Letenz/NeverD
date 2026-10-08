@@ -1234,6 +1234,13 @@ add_neverd_unittest(NeverDWindowsEHMetadataEncoderTests
   WindowsEHMetadata
 )
 
+add_neverd_unittest(NeverDRegistrationStateTests
+  eh/RegistrationStateTests.cpp
+
+  LINK_COMPONENTS
+  IRRegistrationState
+)
+
 target_include_directories(NeverDWindowsEHMetadataEncoderTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}

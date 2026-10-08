@@ -41,6 +41,39 @@ va_t findNextTableAddress(const std::vector<va_t> &Sorted, va_t TableVA) {
   return It == Sorted.end() ? 0 : *It;
 }
 
+/// Authenticate the direct MSVC frame from its exact entry instruction
+/// sequence. A chain-head read alone does not establish a registration, and
+/// locals containing -1/0 are not evidence of the runtime's state field.
+void proveDirectRegistrationLayout(const BinaryImage &Img,
+                                   const InstallSite &Site,
+                                   RegistrationChainInfo &Chain) {
+  const bool IsCxx = Site.Identity.CxxFuncInfoVA != 0;
+  const size_t Size = IsCxx ? 24 : 29;
+  const uint8_t *P = Img.readVA(Site.Range.Begin, Size);
+  if (!P || Site.Range.size() < Size || P[0] != 0x55 ||
+      !((P[1] == 0x8B && P[2] == 0xEC) || (P[1] == 0x89 && P[2] == 0xE5)) ||
+      P[3] != 0x6A || !Chain.SeededTryLevel ||
+      static_cast<int8_t>(P[4]) != *Chain.SeededTryLevel)
+    return;
+  size_t Cursor = 5;
+  if (!IsCxx) {
+    if (P[Cursor] != 0x68 || readLE<uint32_t>(P + Cursor + 1) != Site.TableVA)
+      return;
+    Cursor += 5;
+  }
+  if (P[Cursor] != 0x68 || readLE<uint32_t>(P + Cursor + 1) != Site.HandlerVA)
+    return;
+  Cursor += 5;
+  if (Site.InstallVA != Site.Range.Begin + Cursor || P[Cursor] != 0x64 ||
+      P[Cursor + 1] != 0xA1 || readLE<uint32_t>(P + Cursor + 2) != 0 ||
+      P[Cursor + 6] != 0x50 || P[Cursor + 7] != 0x64 || P[Cursor + 8] != 0x89 ||
+      P[Cursor + 9] != 0x25 || readLE<uint32_t>(P + Cursor + 10) != 0)
+    return;
+  Chain.RegistrationOffset = IsCxx ? -12 : -16;
+  Chain.TryLevelOffset = -4;
+  Chain.ChainInstallVA = Site.Range.Begin + Cursor + 7;
+}
+
 } // namespace
 
 void parseX86RegistrationExceptions(BinaryImage &Img) {
@@ -49,6 +82,12 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
 
   const FunctionRangeMap Functions(Img);
   const SafeSEHTable SafeSEH(Img);
+  if (SafeSEH.isMalformed()) {
+    Img.ExceptionMetadata.ParseStatus = mergeExceptionParseStatus(
+        Img.ExceptionMetadata.ParseStatus, ExceptionParseStatus::Malformed);
+    Img.ExceptionMetadata.Diagnostics.push_back("malformed x86 SafeSEH table");
+    return;
+  }
   std::vector<InstallSite> Sites = findInstallSites(Img, Functions, SafeSEH);
   expandPrologueHelpers(Img, Functions, Sites);
   if (Sites.empty())
@@ -93,6 +132,7 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
       if (F.Personality == ExceptionPersonality::Unknown)
         F.Personality = ExceptionPersonality::CxxFrameHandlerX86;
       decodeX86FuncInfo(F, Img, Identity.CxxFuncInfoVA);
+      Chain.SeededTryLevel = -1;
     } else if (Site.TableVA != 0 && Img.readVA(Site.TableVA, 12)) {
       // `_except_handler4` seeds -2 as the initial try level and prefixes
       // its table with cookie displacements; `_except_handler3` seeds -1
@@ -147,8 +187,8 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
           Thunks.insert(Scope.HandlerVA);
       }
       bool Grew = true;
-      for (unsigned Guard = 0; Grew && Guard < limits::kMaxRegistrationEHFixedPoint;
-           ++Guard) {
+      for (unsigned Guard = 0;
+           Grew && Guard < limits::kMaxRegistrationEHFixedPoint; ++Guard) {
         Grew = false;
         for (va_t Addr : Thunks) {
           if (!registration_detail::isExecutableAddress(Img, Addr) ||
@@ -165,9 +205,11 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
       }
     }
 
+    proveDirectRegistrationLayout(Img, Site, Chain);
     if (Chain.SeededTryLevel)
       recoverTryLevelStores(Img, F.CodeRange, *Chain.SeededTryLevel,
-                            Chain.Scopes.size(), Chain);
+                            F.Cxx ? F.Cxx->MaxState : Chain.Scopes.size(),
+                            Chain);
 
     F.Registration = std::move(Chain);
     if (F.Personality == ExceptionPersonality::Unknown)

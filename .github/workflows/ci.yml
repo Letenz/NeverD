@@ -28,6 +28,11 @@ on:
         required: true
         type: boolean
         default: false
+      windows_eh_only:
+        description: 'Run x86 registration EH/Wine probes and ARM32 PE exception contracts'
+        required: true
+        type: boolean
+        default: false
       native_cpu_backend:
         description: 'Native x64 transport for the native_cpu_only profile'
         required: true
@@ -52,7 +57,7 @@ concurrency:
 jobs:
   build-and-test:
     name: Build and test (${{ matrix.name }})
-    if: ${{ github.event.action != 'closed' && !inputs.native_cpu_only && !inputs.native_arm64_only }}
+    if: ${{ github.event.action != 'closed' && !inputs.native_cpu_only && !inputs.native_arm64_only && !inputs.windows_eh_only }}
     runs-on: ${{ matrix.runner }}
     env:
       NEVERD_LLVM_PREBUILT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.use_prebuilt_llvm && 'ON' || 'OFF' }}
@@ -1815,7 +1820,7 @@ jobs:
 
   native-cpu:
     name: Native CPU (${{ inputs.native_cpu_backend == 'kvm' && 'Linux x64 KVM' || 'Windows x64 WHP' }})
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.native_cpu_only && !inputs.native_arm64_only }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.native_cpu_only && !inputs.native_arm64_only && !inputs.windows_eh_only }}
     runs-on: ${{ inputs.native_cpu_backend == 'kvm' && 'ubuntu-24.04' || 'windows-latest' }}
     # Include a cold build and the full native instruction/driver inventory.
     timeout-minutes: 60
@@ -1952,7 +1957,7 @@ jobs:
 
   arm64-native-build:
     name: ARM64 native backend build (${{ matrix.backend }})
-    if: ${{ github.event.action != 'closed' }}
+    if: ${{ github.event.action != 'closed' && !inputs.windows_eh_only }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -2026,7 +2031,7 @@ jobs:
 
   windows-context-oracle:
     name: Windows caller context (${{ matrix.arch }})
-    if: ${{ github.event.action != 'closed' }}
+    if: ${{ github.event.action != 'closed' && !inputs.windows_eh_only }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
@@ -2072,5 +2077,85 @@ jobs:
             build-simd-oracle/
             build-exclusive-oracle/
             build-memory-write-oracle/
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-eh-focused:
+    name: Windows EH (x86 Wine and ARM32 PE contracts)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: 'v0.16.0'
+      - name: Initialize pinned compiler, decoder, signatures and binary corpus
+        run: git submodule update --init --depth 1 third_party/llvm-project third_party/capstone signatures unittests/corpus
+      - name: Install cross-target tooling and the PE32 Wine runtime
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install --yes clang lld cmake ninja-build wine wine32:i386
+      - name: Verify runtime evidence admission
+        run: python -m unittest scripts.tests.test_check_windows_registration_eh -v
+      - name: Observe original x86 SEH and C++ EH across GS and optimization modes
+        run: python scripts/check_windows_registration_eh.py --output build-windows-eh/evidence/original-runtime
+      - name: Configure focused loader, IR and rewrite checks
+        run: |
+          cmake -S . -B build-windows-eh -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DNEVERD_LLVM_PREBUILT=ON -DNEVERD_BUILD_GUI=OFF \
+            -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
+            -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_DRIVER_EMULATION=OFF \
+            -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=ON
+      - name: Build x86 and ARM32 exception owners
+        run: |
+          cmake --build build-windows-eh --parallel 4 --target \
+            NeverDRegistrationStateTests NeverDLiftTests \
+            NeverDWindowsEHMetadataEncoderTests NeverDWindowsEHCorpusTests \
+            NeverDCOFFExceptionPatchTests
+      - name: Verify registration state and canonical LLVM metadata
+        run: |
+          build-windows-eh/bin/NeverDRegistrationStateTests --gtest_output=xml:build-windows-eh/evidence/state.xml
+          build-windows-eh/bin/NeverDWindowsEHMetadataEncoderTests --gtest_output=xml:build-windows-eh/evidence/metadata.xml
+          build-windows-eh/bin/NeverDCOFFExceptionPatchTests --gtest_output=xml:build-windows-eh/evidence/planner.xml
+      - name: Verify x86 recovery and ARM32 cross-target PE reconstruction
+        run: |
+          build-windows-eh/bin/NeverDLiftTests \
+            --gtest_filter='RegistrationTryLevel.*:COFFException*:*ARM32*:PatchCOFF_ARM32.*' \
+            --gtest_output=xml:build-windows-eh/evidence/ir-pe.xml
+          build-windows-eh/bin/NeverDWindowsEHCorpusTests \
+            --gtest_filter='WindowsEHCorpus.RecoversX86RegistrationChains:WindowsEHCorpus.MasksThumbBitInARM32LanguageTables:WindowsEHCorpus.DecodesARMUnwindOperations:WindowsEHCorpus.ParsesDeclaredExceptionMetadata' \
+            --gtest_output=xml:build-windows-eh/evidence/corpus.xml
+      - name: Require executed checks without missing-fixture skips
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          root = Path('build-windows-eh/evidence')
+          for name in ('state', 'metadata', 'planner', 'ir-pe', 'corpus'):
+              result = ET.parse(root / (name + '.xml')).getroot()
+              assert int(result.get('tests', '0')) > 0, name
+              assert not result.findall('.//skipped'), name
+          PY
+      - name: Preserve runtime and cross-target evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-eh-x86-runtime-arm32-contracts
+          path: |
+            build-windows-eh/evidence/
+            build-windows-eh/CMakeCache.txt
+            build-windows-eh/unittests/lift/test_patch_coff_arm_seh.exe
           if-no-files-found: error
           retention-days: 14

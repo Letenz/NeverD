@@ -22,9 +22,7 @@ namespace {
 /// are indices into the same table, so a forward or out-of-range reference
 /// would make the nesting graph cyclic or dangling.
 bool isValidEnclosingLevel(int32_t Level, uint32_t Index, bool IsEH4) {
-  if (Level == -1)
-    return true;
-  if (IsEH4 && Level == -2)
+  if (Level == (IsEH4 ? -2 : -1))
     return true;
   return Level >= 0 && static_cast<uint32_t>(Level) < Index;
 }
@@ -41,9 +39,8 @@ struct FrameSlotStore {
 /// Every such store inside a code range.
 ///
 /// This is a byte scan rather than a decode, so it can also match bytes that
-/// are the tail of some other instruction.  Nothing downstream trusts a hit on
-/// its own: a slot is only believed once the whole set of stores into it reads
-/// as a try-level sequence, which arbitrary bytes do not.
+/// are the tail of some other instruction. The CFG owner must authenticate
+/// each hit against its decoded instruction boundary before using it.
 std::vector<FrameSlotStore>
 findFrameSlotStores(const BinaryImage &Img,
                     const ExceptionAddressRange &Range) {
@@ -65,15 +62,15 @@ findFrameSlotStores(const BinaryImage &Img,
     // ModRM /0 with a base of EBP: mod=01 is the byte displacement and mod=10
     // the dword one.  Both take a trailing imm32.
     if (Data[I + 1] == 0x45) {
-      Stores.push_back(
-          {static_cast<va_t>(Seg->VA + I), static_cast<va_t>(Seg->VA + I + 7),
-           static_cast<int8_t>(Data[I + 2]),
-           static_cast<int32_t>(readLE<uint32_t>(Data + I + 3))});
+      Stores.push_back({static_cast<va_t>(Seg->VA + I),
+                        static_cast<va_t>(Seg->VA + I + 7),
+                        static_cast<int8_t>(Data[I + 2]),
+                        static_cast<int32_t>(readLE<uint32_t>(Data + I + 3))});
     } else if (Data[I + 1] == 0x85 && I + 10 <= End) {
-      Stores.push_back(
-          {static_cast<va_t>(Seg->VA + I), static_cast<va_t>(Seg->VA + I + 10),
-           static_cast<int32_t>(readLE<uint32_t>(Data + I + 2)),
-           static_cast<int32_t>(readLE<uint32_t>(Data + I + 6))});
+      Stores.push_back({static_cast<va_t>(Seg->VA + I),
+                        static_cast<va_t>(Seg->VA + I + 10),
+                        static_cast<int32_t>(readLE<uint32_t>(Data + I + 2)),
+                        static_cast<int32_t>(readLE<uint32_t>(Data + I + 6))});
     }
   }
   return Stores;
@@ -128,20 +125,9 @@ uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
   return static_cast<uint32_t>(Scopes.size());
 }
 
-/// Prove which frame slot holds the current try level, and keep the stores
-/// into it.
-///
-/// The scope table is indexed by a level the runtime reads out of the frame,
-/// so the table alone never says which code each scope guards — only the
-/// stores do.  Which slot holds the level is not recorded anywhere either, so
-/// it has to be proven, and the table itself supplies the vocabulary to prove
-/// it with: a try-level slot only ever receives the seed the prologue pushed
-/// or the index of a scope the table declares.  A frame slot qualifies when
-/// every store into it is one of those values, the seed is among them, and so
-/// is at least one real scope index.  Ordinary locals fail on the first count
-/// by holding something outside the range and on the second by never being set
-/// to the seed.  When more than one slot survives, nothing was proven and no
-/// ranges are published.
+/// Collect immediate stores in the prologue-authenticated state slot. For
+/// other prologues retain a unique value-pattern observation for inspection;
+/// that heuristic does not establish registration ownership or CFG states.
 void recoverTryLevelStores(const BinaryImage &Img,
                            const ExceptionAddressRange &Range, int32_t Seed,
                            size_t ScopeCount, RegistrationChainInfo &Chain) {
@@ -160,7 +146,18 @@ void recoverTryLevelStores(const BinaryImage &Img,
 
   const std::vector<FrameSlotStore> *Winner = nullptr;
   int32_t WinningSlot = 0;
+  if (Chain.RegistrationOffset && Chain.TryLevelOffset) {
+    auto It = BySlot.find(*Chain.TryLevelOffset);
+    if (It != BySlot.end()) {
+      Winner = &It->second;
+      WinningSlot = It->first;
+    }
+  }
+  // Legacy observations without an authenticated layout remain inspectable,
+  // but cannot authorize CFG state recovery or native frame ownership.
   for (const auto &[Slot, Stores] : BySlot) {
+    if (Chain.RegistrationOffset)
+      break;
     bool SawSeed = false;
     bool SawScope = false;
     bool AllInRange = true;
@@ -186,11 +183,10 @@ void recoverTryLevelStores(const BinaryImage &Img,
   Chain.TryLevelStores.reserve(Winner->size());
   for (const FrameSlotStore &Store : *Winner)
     Chain.TryLevelStores.push_back({Store.StoreVA, Store.EndVA, Store.Value});
-  std::sort(Chain.TryLevelStores.begin(), Chain.TryLevelStores.end(),
-            [](const RegistrationTryLevelStore &A,
-               const RegistrationTryLevelStore &B) {
-              return A.StoreVA < B.StoreVA;
-            });
+  std::sort(
+      Chain.TryLevelStores.begin(), Chain.TryLevelStores.end(),
+      [](const RegistrationTryLevelStore &A,
+         const RegistrationTryLevelStore &B) { return A.StoreVA < B.StoreVA; });
 }
 
 /// `_except_handler4` prefixes the entry array with the frame displacements of

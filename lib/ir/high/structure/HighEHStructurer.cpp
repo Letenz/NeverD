@@ -432,7 +432,14 @@ bool cxxStateOnUnwindChain(const CxxExceptionInfo &Cxx, int32_t Current,
 template <typename Pred>
 std::vector<ExceptionAddressRange>
 codeRangesMatching(const ExceptionFunction &EH, const CxxExceptionInfo &Cxx,
-                   Pred Live) {
+                   Pred Live,
+                   const RegistrationStateAnalysis *Registration = nullptr) {
+  if (EH.Registration) {
+    if (!Registration)
+      return {};
+    auto Ranges = registrationRangesWhere(*Registration, Live);
+    return Ranges ? std::move(*Ranges) : std::vector<ExceptionAddressRange>{};
+  }
   std::vector<ExceptionAddressRange> Ranges;
   va_t Cursor = EH.CodeRange.Begin;
   int32_t State = -1;
@@ -462,21 +469,28 @@ codeRangesMatching(const ExceptionFunction &EH, const CxxExceptionInfo &Cxx,
 
 std::vector<ExceptionAddressRange>
 codeRangesForStates(const ExceptionFunction &EH, const CxxExceptionInfo &Cxx,
-                    int32_t LowState, int32_t HighState) {
-  return codeRangesMatching(EH, Cxx, [&](int32_t SegmentState) {
-    return SegmentState >= LowState && SegmentState <= HighState;
-  });
+                    int32_t LowState, int32_t HighState,
+                    const RegistrationStateAnalysis *Registration = nullptr) {
+  return codeRangesMatching(
+      EH, Cxx,
+      [&](int32_t SegmentState) {
+        return SegmentState >= LowState && SegmentState <= HighState;
+      },
+      Registration);
 }
 
 /// IPs that would run this cleanup, including child states.  A parent
 /// object whose exact IP fragments are split by nested states still has
 /// one live interval.
-std::vector<ExceptionAddressRange>
-codeRangesWhereStateIsLive(const ExceptionFunction &EH,
-                           const CxxExceptionInfo &Cxx, int32_t Target) {
-  return codeRangesMatching(EH, Cxx, [&](int32_t SegmentState) {
-    return cxxStateOnUnwindChain(Cxx, SegmentState, Target);
-  });
+std::vector<ExceptionAddressRange> codeRangesWhereStateIsLive(
+    const ExceptionFunction &EH, const CxxExceptionInfo &Cxx, int32_t Target,
+    const RegistrationStateAnalysis *Registration = nullptr) {
+  return codeRangesMatching(
+      EH, Cxx,
+      [&](int32_t SegmentState) {
+        return cxxStateOnUnwindChain(Cxx, SegmentState, Target);
+      },
+      Registration);
 }
 
 /// A try whose IP states are interrupted by `state=-1` holes yields more than
@@ -531,6 +545,7 @@ void addSEHCandidates(const ExceptionFunction &EH, Arch TargetArch,
 }
 
 void addRegistrationCandidates(const ExceptionFunction &EH,
+                               const RegistrationStateAnalysis *States,
                                std::vector<RegionCandidate> &Candidates,
                                unsigned &Rejected) {
   if (!EH.Registration)
@@ -538,61 +553,23 @@ void addRegistrationCandidates(const ExceptionFunction &EH,
   const RegistrationChainInfo &Chain = *EH.Registration;
   if (Chain.Scopes.empty())
     return;
-  if (Chain.TryLevelStores.empty()) {
+  if (!States || !States->Complete) {
     Rejected += static_cast<unsigned>(Chain.Scopes.size());
     return;
   }
 
-  struct Interval {
-    va_t Begin = 0;
-    va_t End = 0;
-  };
-  std::vector<std::vector<Interval>> PerScope(Chain.Scopes.size());
-  int32_t Level = Chain.SeededTryLevel.value_or(-1);
-  va_t Cursor = EH.CodeRange.Begin;
-  auto Flush = [&](va_t End) {
-    if (End <= Cursor)
-      return;
-    int32_t Walk = Level;
-    for (size_t Step = 0; Step < Chain.Scopes.size(); ++Step) {
-      if (Walk < 0 || static_cast<size_t>(Walk) >= Chain.Scopes.size())
-        break;
-      PerScope[static_cast<size_t>(Walk)].push_back({Cursor, End});
-      Walk = Chain.Scopes[static_cast<size_t>(Walk)].EnclosingLevel;
-    }
-  };
-  for (const RegistrationTryLevelStore &Store : Chain.TryLevelStores) {
-    va_t Cut = Store.EndVA;
-    if (Cut < EH.CodeRange.Begin)
-      Cut = EH.CodeRange.Begin;
-    if (Cut > EH.CodeRange.End)
-      Cut = EH.CodeRange.End;
-    Flush(Cut);
-    Cursor = Cut;
-    Level = Store.Level;
-  }
-  Flush(EH.CodeRange.End);
-
   for (size_t I = 0; I < Chain.Scopes.size(); ++I) {
-    std::vector<Interval> &Iv = PerScope[I];
-    if (Iv.empty()) {
-      ++Rejected;
-      continue;
-    }
-    std::sort(Iv.begin(), Iv.end(), [](const Interval &A, const Interval &B) {
-      return A.Begin < B.Begin;
-    });
-    ExceptionAddressRange Range{Iv.front().Begin, Iv.front().End};
-    bool Contiguous = true;
-    for (size_t K = 1; K < Iv.size(); ++K) {
-      if (Iv[K].Begin <= Range.End)
-        Range.End = std::max(Range.End, Iv[K].End);
-      else {
-        Contiguous = false;
-        break;
+    auto Ranges = registrationRangesWhere(*States, [&](int32_t Level) {
+      for (size_t Step = 0; Step < Chain.Scopes.size(); ++Step) {
+        if (Level < 0 || static_cast<size_t>(Level) >= Chain.Scopes.size())
+          break;
+        if (static_cast<size_t>(Level) == I)
+          return true;
+        Level = Chain.Scopes[Level].EnclosingLevel;
       }
-    }
-    if (!Contiguous || !Range.isValid()) {
+      return false;
+    });
+    if (!Ranges || Ranges->size() != 1) {
       ++Rejected;
       continue;
     }
@@ -600,7 +577,7 @@ void addRegistrationCandidates(const ExceptionFunction &EH,
     const RegistrationScopeRecord &Scope = Chain.Scopes[I];
     RegionCandidate Candidate;
     Candidate.Kind = StmtKind::SEHTry;
-    Candidate.Range = Range;
+    Candidate.Range = Ranges->front();
     Candidate.NativeRegionCount = 1;
     HighEHClause Clause;
     Clause.Kind = Scope.IsFinally ? HighEHClauseKind::SEHFinally
@@ -613,14 +590,20 @@ void addRegistrationCandidates(const ExceptionFunction &EH,
 }
 
 void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
+                      const RegistrationStateAnalysis *Registration,
                       std::vector<RegionCandidate> &Candidates,
                       unsigned &Rejected) {
   if (!EH.Cxx)
     return;
   const CxxExceptionInfo &Cxx = *EH.Cxx;
   for (const CxxTryBlock &Try : Cxx.TryBlocks) {
-    const ExceptionAddressRange Range = primaryCxxTryRange(
-        codeRangesForStates(EH, Cxx, Try.TryLow, Try.TryHigh));
+    auto Ranges =
+        codeRangesForStates(EH, Cxx, Try.TryLow, Try.TryHigh, Registration);
+    if (EH.Registration && Ranges.size() != 1) {
+      ++Rejected;
+      continue;
+    }
+    const ExceptionAddressRange Range = primaryCxxTryRange(Ranges);
     if (!Range.isValid()) {
       ++Rejected;
       continue;
@@ -684,6 +667,7 @@ void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
 /// prints `__wind`/`__unwind`; HighC keeps `try` + `/* unwind cleanup */`
 /// plus the attached funclet body, which is already the catch-with-dtor shape.
 void addCxxCleanupOnlyCandidates(const ExceptionFunction &EH,
+                                 const RegistrationStateAnalysis *Registration,
                                  std::vector<RegionCandidate> &Candidates,
                                  unsigned &Rejected) {
   if (!EH.Cxx)
@@ -703,14 +687,14 @@ void addCxxCleanupOnlyCandidates(const ExceptionFunction &EH,
     if (Action.ActionVA == 0 || coveredByTry(State))
       continue;
     std::vector<ExceptionAddressRange> Ranges =
-        codeRangesForStates(EH, Cxx, State, State);
+        codeRangesForStates(EH, Cxx, State, State, Registration);
     if (Ranges.size() != 1 || !Ranges.front().isValid()) {
       std::vector<ExceptionAddressRange> Live =
-          codeRangesWhereStateIsLive(EH, Cxx, State);
+          codeRangesWhereStateIsLive(EH, Cxx, State, Registration);
       if (Live.size() == 1 && Live.front().isValid())
         Ranges = std::move(Live);
     }
-    if ((Ranges.size() != 1 || !Ranges.front().isValid()) &&
+    if ((Ranges.size() != 1 || !Ranges.front().isValid()) && !EH.Registration &&
         Cxx.TryBlocks.empty() && Cxx.IPMap.empty() && EH.CodeRange.isValid())
       Ranges = {EH.CodeRange};
     std::vector<ExceptionAddressRange> Cover;
@@ -1468,10 +1452,12 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
   std::vector<RegionCandidate> Candidates;
   unsigned Rejected = 0;
   if (EH.ParseStatus == ExceptionParseStatus::Complete) {
+    const RegistrationStateAnalysis *Registration =
+        Med.RegistrationStates ? &*Med.RegistrationStates : nullptr;
     addSEHCandidates(EH, TargetArch, Candidates, Rejected);
-    addRegistrationCandidates(EH, Candidates, Rejected);
-    addCxxCandidates(EH, Image, Candidates, Rejected);
-    addCxxCleanupOnlyCandidates(EH, Candidates, Rejected);
+    addRegistrationCandidates(EH, Registration, Candidates, Rejected);
+    addCxxCandidates(EH, Image, Registration, Candidates, Rejected);
+    addCxxCleanupOnlyCandidates(EH, Registration, Candidates, Rejected);
     addItaniumCandidates(EH, Candidates, Rejected);
   } else {
     Rejected += EH.SEH ? static_cast<unsigned>(EH.SEH->Scopes.size()) : 0;
