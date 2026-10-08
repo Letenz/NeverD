@@ -1775,8 +1775,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     const bool NoReturn = libc::isNoReturnFunction(Name) ||
                           libc::isNoReturnFunction(Identifier) ||
                           NoReturnCallTargets.count(Name);
-    // An import whose identifier is spelled from its symbol links by the
-    // symbol, which a comment spells as its language does.
+    // An import whose identifier is not its symbol links by the symbol, which
+    // a comment spells as its language does.
     std::string LinkLabel, LinkComment;
     if (auto Sources = ExternalCallSources.find(Name);
         Sources != ExternalCallSources.end()) {
@@ -1785,7 +1785,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       if (Sources->second.size() == 1) {
         const llvm::StringRef CName =
             cNameOfSymbol(*Sources->second.begin(), Opts.Format, Opts.TheArch);
-        if (CName != Identifier && identifierSpelledFromSymbol(CName)) {
+        if (linksByLabel(CName, Identifier)) {
           llvm::raw_string_ostream Label(LinkLabel);
           Label << " __asm__(\"";
           Label.write_escaped(symbolOfCName(CName, Opts.Format, Opts.TheArch));

@@ -184,8 +184,8 @@ symbol keeps the symbol in an `__asm__` label so that the code still links.
 Other names keep every byte of their symbol (`__libc_start_main`), apart from
 the underscore Mach-O and 32-bit Windows add to C names and the start-up
 functions the C runtime defines itself (`_start` reads `start`). A name an
-image spells with spaces or control characters, and that no scheme reads, is
-never copied into a comment.
+image spells with control characters, and that no scheme reads, is never
+copied into a comment.
 
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common

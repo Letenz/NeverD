@@ -500,6 +500,14 @@ canonicalizeCProjectionIdentifier(llvm::StringRef Raw,
   return Result;
 }
 
+/// Whether an `extern` that C names \p Identifier must link to symbol \p CName
+/// by an `__asm__` label: the identifier is not the name, because it is
+/// spelled from it or another symbol took the name first (`foo_2`).  An import
+/// slot's name (`__imp_foo`) never is: it names the slot, not the function.
+inline bool linksByLabel(llvm::StringRef CName, llvm::StringRef Identifier) {
+  return CName != Identifier && stripImportSymbolPrefix(CName) == CName;
+}
+
 /// Whether the C identifier of symbol \p CName is spelled from it rather than
 /// being the name itself: a demangled stem (`QDomNode_nodeType`,
 /// `core_fmt_write`), a name with punctuation (`fmt_pp_doPrintf`) or one C
@@ -520,11 +528,13 @@ inline bool hasMsvcStem(llvm::StringRef CName) {
 }
 
 /// Whether symbol \p Name can stand in a comment as the image spells it:
-/// valid UTF-8 without spaces or control characters.  A name is the image's
-/// choice, and such a name cannot make a comment span lines or read as code.
+/// valid UTF-8 without control characters, such as Go's
+/// `internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.int]).Range`.
+/// A name is the image's choice, and such a name cannot make a comment span
+/// lines.
 inline bool isPlainSymbolText(llvm::StringRef Name) {
   if (llvm::any_of(Name.bytes(),
-                   [](unsigned char Ch) { return Ch <= ' ' || Ch == 0x7F; }))
+                   [](unsigned char Ch) { return Ch < ' ' || Ch == 0x7F; }))
     return false;
   const auto *Begin = reinterpret_cast<const llvm::UTF8 *>(Name.begin());
   return llvm::isLegalUTF8String(

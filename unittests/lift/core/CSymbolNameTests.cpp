@@ -14,17 +14,25 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolDecoration.h"
 
+#include "llvm/ADT/Twine.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <tuple>
+
 #ifndef NEVERD_RUNTIME_FIXTURE_COMPILER
 #define NEVERD_RUNTIME_FIXTURE_COMPILER ""
+#endif
+#ifndef NEVERD_TEST_CLANG
+#define NEVERD_TEST_CLANG ""
 #endif
 
 using namespace neverd;
@@ -690,7 +698,8 @@ TEST(CSymbolNames, AVoidRoutineLeavesNoResult) {
 }
 
 /// main.main calls two instances of one Rust generic, a Go method, an
-/// Objective-C method and a GCC clone.
+/// Objective-C method, a GCC clone, a C function and a C++ function that read
+/// alike, and a symbol C reserves.
 std::vector<HighFunc> otherLanguageCaller() {
   return {function(
       "main.main", 0x1000,
@@ -702,7 +711,9 @@ std::vector<HighFunc> otherLanguageCaller() {
                      0x2010),
        callStatement("fmt.(*pp).doPrintf", 0x2020),
        callStatement("-[NSString length]", 0x2030),
-       callStatement("foo.constprop.0", 0x2040)})};
+       callStatement("foo.constprop.0", 0x2040),
+       callStatement("_Z3foov", 0x2050), callStatement("foo", 0x2060),
+       callStatement("int", 0x2070)})};
 }
 
 TEST(CSymbolNames, OtherLanguagesReadByTheirPathsAndLinkByTheirSymbols) {
@@ -733,6 +744,12 @@ TEST(CSymbolNames, OtherLanguagesReadByTheirPathsAndLinkByTheirSymbols) {
   EXPECT_NE(Source.find("foo_constprop_0() __asm__(\"foo.constprop.0\");\n"),
             NotFound)
       << Source;
+  // The C function keeps its name, and the C++ function that reads like it
+  // and a name C reserves link by their symbols.
+  EXPECT_NE(Source.find("foo_2() __asm__(\"_Z3foov\"); /* foo() */"), NotFound)
+      << Source;
+  EXPECT_NE(Source.find("extern int foo();"), NotFound) << Source;
+  EXPECT_NE(Source.find("nd_int() __asm__(\"int\");\n"), NotFound) << Source;
   // No byte of a name is escaped.
   EXPECT_EQ(Source.find("_x2E_"), NotFound) << Source;
 }
@@ -856,7 +873,10 @@ DEFINE(drop_vec, "_RINvNtCs4NRVxsYgnAr_4core3ptr9drop_glueNtNtCscdodAO9FK5_"
 DEFINE(do_printf, "fmt.(*pp).doPrintf", 4)
 DEFINE(length, "-[NSString length]", 8)
 DEFINE(clone, "foo.constprop.0", 16)
-int main(void) { main_main(); return called == 31 ? 0 : 1; }
+DEFINE(cxx_foo, "_Z3foov", 32)
+DEFINE(c_foo, "foo", 64)
+DEFINE(keyword, "int", 128)
+int main(void) { main_main(); return called == 255 ? 0 : 1; }
 )";
   const std::string Source =
       emitHighC(otherLanguageCaller(), BinaryFormat::ELF, Arch::X64);
@@ -890,6 +910,69 @@ int main(void) { main_main(); return called == 31 ? 0 : 1; }
       << Message << '\n'
       << Source;
 #endif
+}
+
+/// Clang's assembly for \p Source on \p Triple, or an error.
+llvm::Expected<std::string> assemblyForTarget(const std::string &Source,
+                                              llvm::StringRef Triple) {
+  const std::string Compiler = NEVERD_TEST_CLANG;
+  llvm::SmallString<128> SourcePath, AsmPath;
+  if (llvm::sys::fs::createTemporaryFile("neverd-target-names", "c",
+                                         SourcePath) ||
+      llvm::sys::fs::createTemporaryFile("neverd-target-names", "s", AsmPath))
+    return llvm::createStringError("cannot create temporary files");
+  llvm::FileRemover RemoveSource(SourcePath);
+  llvm::FileRemover RemoveAsm(AsmPath);
+  {
+    std::error_code Error;
+    llvm::raw_fd_ostream Out(SourcePath, Error);
+    if (Error)
+      return llvm::createStringError(Error.message());
+    Out << Source;
+  }
+  const std::string Target = ("--target=" + Triple).str();
+  std::string Message;
+  if (llvm::sys::ExecuteAndWait(Compiler,
+                                {Compiler, "-std=gnu17", Target,
+                                 "-ffreestanding", "-w", "-S", SourcePath, "-o",
+                                 AsmPath},
+                                std::nullopt, {}, 60, 0, &Message) != 0)
+    return llvm::createStringError("clang failed: " + Message);
+  auto Assembly = llvm::MemoryBuffer::getFile(AsmPath);
+  if (!Assembly)
+    return llvm::createStringError(Assembly.getError().message());
+  return (*Assembly)->getBuffer().str();
+}
+
+TEST(CSymbolNames, MicrosoftImportsLinkByTheirDecoratedNames) {
+  if (llvm::StringRef(NEVERD_TEST_CLANG).empty())
+    GTEST_SKIP() << "needs clang";
+  // A member function no MSVC rule describes, on 64-bit and 32-bit Windows.
+  // 32-bit Windows decorates C names with an underscore, never C++ names.
+  for (const auto &[Target, Triple, Symbol] :
+       {std::tuple{Arch::X64, "x86_64-pc-windows-msvc",
+                   "?Get@MemManager@Contoso@@QEAAPEAXXZ"},
+        std::tuple{Arch::X86, "i686-pc-windows-msvc",
+                   "?Get@MemManager@Contoso@@QAEPAXXZ"}}) {
+    SCOPED_TRACE(Triple);
+    const std::string Source =
+        emitHighC({function("caller", 0x1000, {callStatement(Symbol, 0x2000)})},
+                  BinaryFormat::COFF, Target);
+    EXPECT_NE(Source.find((llvm::Twine("Contoso_MemManager_Get") +
+                           "() __asm__(\"" + Symbol + "\")")
+                              .str()),
+              NotFound)
+        << Source;
+    EXPECT_NE(Source.find("Contoso::MemManager::Get(void)"), NotFound)
+        << Source;
+    auto Assembly = assemblyForTarget(Source, Triple);
+    ASSERT_TRUE(static_cast<bool>(Assembly))
+        << llvm::toString(Assembly.takeError()) << Source;
+    EXPECT_NE(Assembly->find((llvm::Twine("\"") + Symbol + "\"").str()),
+              NotFound)
+        << *Assembly;
+    EXPECT_EQ(Assembly->find("_?Get"), NotFound) << *Assembly;
+  }
 }
 
 } // namespace

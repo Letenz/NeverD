@@ -806,13 +806,13 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
         OS << ", ...";
     }
     OS << ")";
-    // An import whose identifier is spelled from its symbol links by the
-    // symbol, which a comment spells as its language does.
+    // An import whose identifier is not its symbol links by the symbol, which
+    // a comment spells as its language does.
     std::string Comment;
     if (Fn.isDeclaration()) {
       const llvm::StringRef CName =
           llvm_name::cNameOfLLVMName(RawName, Opts.Format, Opts.TheArch);
-      if (CName != Name && identifierSpelledFromSymbol(CName)) {
+      if (linksByLabel(CName, Name)) {
         std::string Label;
         llvm::raw_string_ostream(Label).write_escaped(
             symbolOfCName(CName, Opts.Format, Opts.TheArch));
