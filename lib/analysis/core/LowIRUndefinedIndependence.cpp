@@ -17,6 +17,7 @@
 #include "FrameOffsets.h"
 #include "LowIRLoopInference.h"
 #include "NativeUndefinedIndependence.h"
+#include "OrderedQuery.h"
 
 #include "neverd/analysis/LowIRRefinement.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -565,7 +566,8 @@ class Checker {
 
   solver::SatResult
   query(SymRef Predicate,
-        std::unique_ptr<solver::BitVectorSolver> *EncodingCache = nullptr) {
+        std::unique_ptr<solver::BitVectorSolver> *EncodingCache = nullptr,
+        SymRef OrderedConjunct = {}) {
     nodes();
     if (Predicate && Predicate == LastCompletedQuery)
       return LastCompletedAnswer;
@@ -590,9 +592,15 @@ class Checker {
     };
     if (EncodingCache && !*EncodingCache)
       *EncodingCache = Fresh();
+    const auto ColdQuery = [&] {
+      if (OrderedConjunct)
+        return detail::checkWithOrderedConjunct(
+            Ctx, Predicate, OrderedConjunct, Limits.Solver,
+            [&] { chargeQuery(); });
+      return solver::checkSat(Ctx, Predicate, nullptr, Limits.Solver);
+    };
     auto Answer = EncodingCache ? (*EncodingCache)->check({Predicate})
-                                : solver::checkSat(Ctx, Predicate, nullptr,
-                                                   Limits.Solver);
+                                : ColdQuery();
     // Accumulated encodings can fill a session although this query alone fits.
     // Charge the second attempt and retry once with an empty encoder. Width,
     // malformed-input and SAT-search exhaustion are never retried here.
@@ -768,8 +776,9 @@ class Checker {
       const auto Bad = *Transition->Rejected;
       const auto L = Left.read(SymSpace::Temporary, Bad.Offset, Bad.Size);
       const auto R = Right.read(SymSpace::Temporary, Bad.Offset, Bad.Size);
-      if (query(Ctx.mkAnd(P.Predicate, Ctx.mkOr(Ctx.mkNe(L, Ctx.mkZero(8)),
-                                                Ctx.mkNe(R, Ctx.mkZero(8))))) !=
+      const auto Violation =
+          Ctx.mkOr(Ctx.mkNe(L, Ctx.mkZero(8)), Ctx.mkNe(R, Ctx.mkZero(8)));
+      if (query(Ctx.mkAnd(P.Predicate, Violation), nullptr, Violation) !=
           solver::SatResult::Unsat)
         fail(Status::ContractViolation,
              "reachable POPFQ image violates the native flags profile");
