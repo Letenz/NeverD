@@ -43428,3 +43428,34 @@ TEST(HighCPointerAddresses, ConditionalReturnOutOfALoopReturnsItsValue) {
 int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 )");
 }
+
+TEST(HighCPointerAddresses, LinkRegisterHoldsAValueOnceSaved) {
+  // After the prologue saves LR, the compiler may use it as any other
+  // register, here as a loop's accumulator; the epilogue then returns
+  // through the saved copy.
+  constexpr va_t Entry = 0x10000;
+  const std::vector<uint8_t> Code = {
+      0x10, 0x40, 0x2d, 0xe9, // push {r4, lr}
+      0x00, 0xe0, 0xa0, 0xe3, // mov lr, #0
+      0x00, 0x20, 0xa0, 0xe3, // mov r2, #0
+      0x00, 0xe0, 0x8e, 0xe0, // loop: add lr, lr, r0
+      0x01, 0x20, 0x82, 0xe2, // add r2, r2, #1
+      0x03, 0x00, 0x52, 0xe3, // cmp r2, #3
+      0xfb, 0xff, 0xff, 0x1a, // bne loop
+      0x0e, 0x00, 0xa0, 0xe1, // mov r0, lr
+      0x10, 0x80, 0xbd, 0xe8, // pop {r4, pc}
+  };
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Img.Arch = Arch::ARM;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Sym = Symbol::makeFunc(Entry);
+  Sym.Name = "triple";
+  Img.Symbols.push_back(Sym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + HighC + R"(
+int main(void) { return triple(14) != 42 || triple(-5) != -15; }
+)");
+}
