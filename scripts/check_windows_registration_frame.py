@@ -27,14 +27,52 @@ else:
 BANNER = "neverd-registration-frame: filters=16 failures=0"
 KERNEL32 = """LIBRARY kernel32.dll
 EXPORTS
-_RaiseException@16 EXPORTAS RaiseException
-_ExitProcess@4 EXPORTAS ExitProcess
+_RaiseException@16
+_ExitProcess@4
 """
 MSVCRT = """LIBRARY msvcrt.dll
 EXPORTS
 _except_handler3
 printf
 """
+
+
+def undecorate_kernel32_imports(library: Path) -> None:
+    """Use the original COFF UNDECORATE import kind, also understood by lld 14.
+
+    Older llvm-lib accepts EXPORTAS in a DEF but silently ignores its mapping.
+    Changing only TypeInfo keeps every archive offset and symbol index intact.
+    """
+    data = bytearray(library.read_bytes())
+    if data[:8] != b"!<arch>\n":
+        raise ValueError("kernel32 import library is not a COFF archive")
+    required = {b"_RaiseException@16", b"_ExitProcess@4"}
+    seen = set()
+    offset = 8
+    while offset < len(data):
+        if offset + 60 > len(data) or data[offset + 58:offset + 60] != b"`\n":
+            raise ValueError("kernel32 import archive has an invalid member header")
+        size = int(data[offset + 48:offset + 58])
+        if size < 0:
+            raise ValueError("kernel32 import archive has a negative member size")
+        begin, end = offset + 60, offset + 60 + size
+        if end > len(data):
+            raise ValueError("kernel32 import archive has a truncated member")
+        if size >= 20 and data[begin:begin + 4] == b"\x00\x00\xff\xff":
+            _, _, version, machine, _, payload, _, kind = struct.unpack_from(
+                "<HHHHIIHH", data, begin)
+            names = bytes(data[begin + 20:end]).split(b"\0")
+            if version != 0 or machine != 0x14c or payload != size - 20 or \
+                    len(names) != 3 or names[1] != b"kernel32.dll" or \
+                    names[0] not in required or names[0] in seen or \
+                    kind & 3 or kind >> 2 not in (1, 3):
+                raise ValueError("kernel32 short import has an unexpected contract")
+            struct.pack_into("<H", data, begin + 18, 3 << 2)
+            seen.add(names[0])
+        offset = end + (size & 1)
+    if seen != required or offset != len(data):
+        raise ValueError("kernel32 stdcall short imports are incomplete")
+    library.write_bytes(data)
 
 
 def build_and_observe(source: Path, output: Path, linker: str,
@@ -59,7 +97,7 @@ def build_and_observe(source: Path, output: Path, linker: str,
              "/subsystem:console", f"/out:{image}", str(source.resolve()),
              str(output / "kernel32.lib"), str(output / "msvcrt.lib")])
         report["link_steps"] = []
-        for command in report["commands"]:
+        for index, command in enumerate(report["commands"]):
             result = subprocess.run(command, capture_output=True, text=True,
                                     errors="replace", timeout=timeout,
                                     check=False)
@@ -68,6 +106,8 @@ def build_and_observe(source: Path, output: Path, linker: str,
                                          "stderr": result.stderr})
             if result.returncode:
                 raise ValueError("callback probe import generation or link failed")
+            if index == 0:
+                undecorate_kernel32_imports(output / "kernel32.lib")
         report["image_sha256"] = image_digest(image)
         report["runtime"] = run_image(image, launcher, environment, timeout)
         runtime = report["runtime"]
