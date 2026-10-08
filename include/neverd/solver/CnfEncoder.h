@@ -99,9 +99,17 @@ public:
   SatLit falseLit() const { return ~True; }
   SatLit constant(bool Value) const { return True.withPolarity(Value); }
 
-  bool isConstant(SatLit L) const { return L.var() == True.var(); }
-  bool isTrueLit(SatLit L) const { return L == True; }
-  bool isFalseLit(SatLit L) const { return L == ~True; }
+  bool isConstant(SatLit L) const {
+    return L.var() == True.var() || Solver.rootValue(L) != SatValue::Unknown;
+  }
+  bool isTrueLit(SatLit L) const {
+    return L.var() == True.var() ? L == True
+                                 : Solver.rootValue(L) == SatValue::True;
+  }
+  bool isFalseLit(SatLit L) const {
+    return L.var() == True.var() ? L == ~True
+                                 : Solver.rootValue(L) == SatValue::False;
+  }
 
   /// A variable nothing yet constrains, as a positive literal.  Used for the
   /// bits of a free bitvector variable, and for any value the caller intends

@@ -721,8 +721,11 @@ TEST(FiniteValues, DomainReplacementAndSeparateContextsRetainExactPredicates) {
 TEST(FiniteValues, FailedProjectionNeverPoisonsThePristineDomain) {
   SymContext Ctx;
   const auto X = Ctx.mkVar("x", 8), Y = Ctx.mkVar("y", 8);
+  const auto Z = Ctx.mkVar("z", 8);
   const auto Predicate = Ctx.mkEq(X, Ctx.mkConst(8, 5));
-  const auto Product = Ctx.mkMul(X, Y);
+  // Both factors remain free after asserting the predicate, so constant
+  // folding cannot remove the deliberately oversized projection circuit.
+  const auto Product = Ctx.mkMul(Y, Z);
   neverd::solver::SolverOptions Settings;
   Settings.Blast.MaxGates = 64;
   FiniteDomainEncoding Encoding(Ctx, Settings);
@@ -741,6 +744,7 @@ TEST(FiniteValues, FailedProjectionNeverPoisonsThePristineDomain) {
     } else {
       EXPECT_EQ(Copy.Status, FiniteValueStatus::Unknown);
       EXPECT_TRUE(Copy.Tuples.empty());
+      EXPECT_EQ(CopyQueries, 0U);
     }
   }
 }

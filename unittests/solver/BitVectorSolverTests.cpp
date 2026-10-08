@@ -18,9 +18,11 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PermanentConjuncts.h"
 #include "gtest/gtest.h"
 
 #include "neverd/solver/BitVectorSolver.h"
+#include "neverd/solver/CnfEncoder.h"
 #include "neverd/solver/SatTypes.h"
 #include "neverd/solver/SymSynthVerifier.h"
 #include "neverd/symbolic/SymExpr.h"
@@ -31,8 +33,10 @@
 #include "llvm/ADT/ArrayRef.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 using namespace neverd::solver;
@@ -1214,3 +1218,330 @@ TEST(BitVectorEncodingClone, WatchMigrationAndGrowthOutliveTheSource) {
   }
 }
 } // namespace
+
+TEST(RootFacts, PermanentImplicationsAreDistinctFromModels) {
+  SatSolver S;
+  const auto A = SatLit::positive(S.newVar());
+  const auto B = SatLit::positive(S.newVar());
+  ASSERT_TRUE(S.addClause(~A, B));
+  EXPECT_EQ(S.rootValue(A), SatValue::Unknown);
+  EXPECT_EQ(S.rootValue(B), SatValue::Unknown);
+  ASSERT_TRUE(S.addClause(A));
+  EXPECT_EQ(S.rootValue(A), SatValue::True);
+  EXPECT_EQ(S.rootValue(~B), SatValue::False);
+  EXPECT_EQ(S.modelValue(A), SatValue::Unknown);
+  EXPECT_EQ(S.rootValue(SatLit{}), SatValue::Unknown);
+  EXPECT_EQ(S.rootValue(SatLit::positive(S.numVars())), SatValue::Unknown);
+  EXPECT_EQ(S.solve({~A}), SatResult::Unsat);
+  EXPECT_EQ(S.rootValue(B), SatValue::True);
+}
+
+TEST(RootFacts, AssumptionsNeverBecomePermanentConstants) {
+  SatSolver S;
+  CnfEncoder E(S);
+  auto A = E.freshLit(), B = E.freshLit();
+  ASSERT_TRUE(S.addClause(A, B));
+  for (auto Choice : {A, ~A, B, ~B}) {
+    ASSERT_EQ(S.solve({Choice}), SatResult::Sat);
+    EXPECT_EQ(S.modelValue(Choice), SatValue::True);
+    EXPECT_EQ(S.rootValue(A), SatValue::Unknown);
+    EXPECT_EQ(S.rootValue(B), SatValue::Unknown);
+    EXPECT_FALSE(E.isConstant(A));
+    EXPECT_FALSE(E.isConstant(B));
+  }
+}
+
+TEST(RootFacts, PermanentConstantsFoldAllGateFamilies) {
+  SatSolver S;
+  CnfEncoder E(S);
+  auto A = E.freshLit(), B = E.freshLit(), C = E.freshLit();
+  ASSERT_TRUE(E.assertTrue(A));
+  EXPECT_TRUE(E.isTrueLit(A));
+  EXPECT_TRUE(E.isFalseLit(~A));
+  EXPECT_EQ(E.mkAnd(A, B), B);
+  EXPECT_EQ(E.mkOr(A, B), E.trueLit());
+  EXPECT_EQ(E.mkXor(A, B), ~B);
+  EXPECT_EQ(E.mkIte(A, B, C), B);
+  EXPECT_EQ(E.mkMajority(A, B, C), E.mkOr(B, C));
+  SatLit Sum, Carry;
+  E.mkFullAdder(A, B, ~B, Sum, Carry);
+  EXPECT_TRUE(E.isFalseLit(Sum));
+  EXPECT_EQ(Carry, E.trueLit());
+}
+
+TEST(RootFacts, PartialGatePolarityDoesNotInventInputFacts) {
+  for (auto Polarity : {GatePolarity::Positive, GatePolarity::Negative}) {
+    SatSolver S;
+    CnfEncoder E(S);
+    auto A = E.freshLit(), B = E.freshLit();
+    const auto G = E.mkAnd(A, B, Polarity);
+    ASSERT_TRUE(E.assertTrue(G));
+    if (Polarity == GatePolarity::Positive) {
+      EXPECT_TRUE(E.isTrueLit(A));
+      EXPECT_TRUE(E.isTrueLit(B));
+    } else {
+      EXPECT_FALSE(E.isConstant(A));
+      EXPECT_FALSE(E.isConstant(B));
+      EXPECT_EQ(S.solve({~A, ~B}), SatResult::Sat);
+    }
+  }
+}
+
+TEST(RootFacts, ClonesOwnIndependentPermanentFacts) {
+  SymContext C;
+  const auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  BitVectorSolver S(C);
+  ASSERT_TRUE(S.assertEqual(X, C.mkConst(8, 42)));
+  auto Copy = S.cloneEncoding();
+  ASSERT_NE(Copy, nullptr);
+  ASSERT_TRUE(S.assertEqual(Y, C.mkZero(8)));
+  auto One = C.mkEq(Y, C.mkOne(8));
+  EXPECT_EQ(S.check({One}), SatResult::Unsat);
+  ASSERT_EQ(Copy->check({One}), SatResult::Sat);
+  ASSERT_TRUE(Copy->model().contains(C.varId(X)));
+  ASSERT_TRUE(Copy->model().contains(C.varId(Y)));
+  EXPECT_EQ(Copy->model().value(C, X)->getZExtValue(), 42U);
+  EXPECT_EQ(Copy->model().value(C, Y)->getZExtValue(), 1U);
+}
+
+TEST(RootFacts, SavedModelDoesNotConstrainLaterEncoding) {
+  SymContext C;
+  const auto X = C.mkVar("x", 1), Y = C.mkVar("y", 1);
+  BitVectorSolver S(C);
+  ASSERT_EQ(S.check({X}), SatResult::Sat);
+  ASSERT_TRUE(S.assertTrue(C.mkXor(X, Y)));
+  ASSERT_EQ(S.check({C.mkNot(X)}), SatResult::Sat);
+  EXPECT_TRUE(S.model().value(C, X)->isZero());
+  EXPECT_TRUE(S.model().value(C, Y)->isOne());
+}
+
+TEST(EntailedConditions, BooleanWrappersRetainEveryAssignment) {
+  for (unsigned Kind = 0; Kind != 8; ++Kind)
+    for (bool Positive : {false, true})
+      for (bool NumberFirst : {false, true}) {
+        SymContext C;
+        const auto X = C.mkVar("x", 1), Y = C.mkVar("y", 1);
+        const auto Z = C.mkVar("z", 1);
+        std::array<SymRef, 8> Forms{C.mkAnd(X, Y),
+                                    C.mkOr(X, Y),
+                                    C.mkNot(C.mkAnd(X, Y)),
+                                    C.mkNot(C.mkOr(X, Y)),
+                                    C.mkOr(X, C.mkAnd(Y, Z)),
+                                    C.mkAnd(C.mkNot(X), C.mkOr(Y, Z)),
+                                    C.mkXor(X, Y),
+                                    C.mkIte(X, Y, Z)};
+        const auto Extended = C.mkZExt(Forms[Kind], 8);
+        const auto Number = C.mkConst(8, Positive);
+        const auto Pred =
+            NumberFirst ? C.mkEq(Number, Extended) : C.mkEq(Extended, Number);
+        BitVectorSolver S(C);
+        ASSERT_TRUE(S.assertTrue(Pred));
+        for (unsigned Bits = 0; Bits != 8; ++Bits) {
+          std::vector<llvm::APInt> Values;
+          llvm::SmallVector<SymRef, 3> Assumptions;
+          unsigned I = 0;
+          for (auto V : {X, Y, Z}) {
+            const bool Set = Bits & (1U << I++);
+            Values.emplace_back(1, Set);
+            Assumptions.push_back(Set ? V : C.mkNot(V));
+          }
+          const auto Expected = C.eval(Pred, Values).isOne();
+          ASSERT_EQ(S.check(Assumptions),
+                    Expected ? SatResult::Sat : SatResult::Unsat);
+          if (Expected) {
+            for (auto V : {X, Y, Z})
+              ASSERT_TRUE(S.model().contains(C.varId(V)));
+            EXPECT_TRUE(C.eval(Pred, S.model().asVarValues(C)).isOne());
+          }
+        }
+      }
+}
+
+TEST(EntailedConditions, WiderBitwiseAndRetainsNonzeroSemantics) {
+  SymContext C;
+  const auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  BitVectorSolver S(C);
+  ASSERT_TRUE(S.assertTrue(C.mkAnd(X, Y)));
+  auto XOne = C.mkEq(X, C.mkOne(8));
+  EXPECT_EQ(S.check({XOne, C.mkEq(Y, C.mkConst(8, 2))}), SatResult::Unsat);
+  EXPECT_EQ(S.check({XOne, C.mkEq(Y, C.mkConst(8, 3))}), SatResult::Sat);
+}
+
+TEST(EntailedConditions, ExtensionKindAndOutOfRangeConstantsStayExact) {
+  for (bool Signed : {false, true})
+    for (unsigned Number : {0U, 1U, 2U, 255U}) {
+      SymContext C;
+      auto X = C.mkVar("x", 1);
+      auto Extended = Signed ? C.mkSExt(X, 8) : C.mkZExt(X, 8);
+      auto Pred = C.mkEq(Extended, C.mkConst(8, Number));
+      BitVectorSolver S(C);
+      ASSERT_TRUE(S.assertTrue(Pred));
+      for (bool Set : {false, true}) {
+        const auto Expected = (Set ? (Signed ? 255U : 1U) : 0U) == Number;
+        EXPECT_EQ(S.check({Set ? X : C.mkNot(X)}),
+                  Expected ? SatResult::Sat : SatResult::Unsat);
+      }
+    }
+}
+
+TEST(EntailedConditions, EncodingAndQueryLimitsStillRefuse) {
+  SymContext C;
+  auto X = C.mkVar("x", 64), Y = C.mkVar("y", 64);
+  SolverOptions O;
+  O.Blast.MaxGates = 1;
+  BitVectorSolver S(C, O);
+  EXPECT_FALSE(S.assertTrue(C.mkEq(C.mkAdd(X, Y), C.mkConst(64, 17))));
+  EXPECT_EQ(S.check(), SatResult::Unknown);
+  EXPECT_EQ(S.cloneEncoding(), nullptr);
+}
+
+TEST(PermanentConjunctPreparation, ExactAndShortWordInspectionBudgets) {
+  SymContext C;
+  const auto X = C.mkVar("x", 1);
+  const auto Pred = C.mkEq(C.mkZExt(X, 128), C.mkOne(128));
+  const auto Before = C.numNodes();
+  // Two node visits, three operand edges and three passes over two words.
+  auto Exact = detail::collectPermanentConjuncts(C, Pred, 11);
+  ASSERT_TRUE(Exact);
+  ASSERT_EQ(Exact->size(), 1U);
+  EXPECT_EQ(Exact->front(), (detail::PermanentConjunct{X, true}));
+  EXPECT_FALSE(detail::collectPermanentConjuncts(C, Pred, 10));
+  EXPECT_FALSE(detail::collectPermanentConjuncts(C, Pred, 0));
+  EXPECT_EQ(C.numNodes(), Before);
+}
+
+TEST(PermanentConjunctPreparation, ExhaustionDiscardsAlreadyCollectedFacts) {
+  SymContext C;
+  const auto A = C.mkVar("a", 1), X = C.mkVar("x", 1);
+  const auto Wrapped = C.mkEq(C.mkZExt(X, 128), C.mkOne(128));
+  const auto Pred = C.mkAnd(A, Wrapped);
+  // The conjunction adds a node, two edges and the other leaf's visit.
+  auto Exact = detail::collectPermanentConjuncts(C, Pred, 15);
+  ASSERT_TRUE(Exact);
+  ASSERT_EQ(Exact->size(), 2U);
+  EXPECT_EQ((*Exact)[0], (detail::PermanentConjunct{A, true}));
+  EXPECT_EQ((*Exact)[1], (detail::PermanentConjunct{X, true}));
+  EXPECT_FALSE(detail::collectPermanentConjuncts(C, Pred, 14));
+}
+
+TEST(PermanentConjunctPreparation, RevisitedLeavesStillConsumeWork) {
+  SymContext C;
+  const auto X = C.mkVar("x", 1);
+  const auto One = C.mkEq(C.mkZExt(X, 128), C.mkOne(128));
+  const auto NotZero = C.mkEq(C.mkZExt(C.mkNot(X), 128), C.mkZero(128));
+  const auto Pred = C.mkAnd(One, NotZero);
+  // Both paths revisit x; the second path also traverses its complement.
+  auto Exact = detail::collectPermanentConjuncts(C, Pred, 27);
+  ASSERT_TRUE(Exact);
+  ASSERT_EQ(Exact->size(), 1U);
+  EXPECT_EQ(Exact->front(), (detail::PermanentConjunct{X, true}));
+  EXPECT_FALSE(detail::collectPermanentConjuncts(C, Pred, 26));
+}
+
+TEST(PermanentConjunctPreparation, WideCopiesRemainBoundedWithLargerRequests) {
+  // Five units cover the node visits and edges; each constant word costs three.
+  constexpr unsigned Words = (detail::MaxPermanentConjunctWork - 5) / 3;
+  for (unsigned Width : {64 * Words, 64 * (Words + 1)}) {
+    SymContext C;
+    const auto X = C.mkVar("x", 1);
+    const auto Pred = C.mkEq(C.mkZExt(X, Width), C.mkOne(Width));
+    const auto Before = C.numNodes();
+    auto Facts = detail::collectPermanentConjuncts(C, Pred, 1000000);
+    EXPECT_EQ(Facts.has_value(), Width == 64 * Words);
+    if (Facts) {
+      ASSERT_EQ(Facts->size(), 1U);
+      EXPECT_EQ(Facts->front(), (detail::PermanentConjunct{X, true}));
+    }
+    EXPECT_EQ(C.numNodes(), Before);
+  }
+}
+
+TEST(PermanentConjunctPreparation, LargeConjunctionRetainsAllInputs) {
+  SymContext C;
+  llvm::SmallVector<SymRef, 600> Inputs;
+  for (unsigned I = 0; I != 600; ++I)
+    Inputs.push_back(C.mkVar("x" + std::to_string(I), 1));
+  const auto Pred = C.mkAnd(Inputs);
+  const auto Before = C.numNodes();
+  EXPECT_FALSE(detail::collectPermanentConjuncts(C, Pred, 512));
+  const auto Facts = detail::collectPermanentConjuncts(C, Pred);
+  ASSERT_TRUE(Facts);
+  EXPECT_EQ(Facts->size(), Inputs.size());
+  EXPECT_EQ(C.numNodes(), Before);
+  BitVectorSolver S(C);
+  ASSERT_TRUE(S.assertTrue(Pred));
+  ASSERT_EQ(S.check(), SatResult::Sat);
+  for (auto X : Inputs) {
+    const auto Value = S.model().value(C, X);
+    ASSERT_TRUE(Value);
+    EXPECT_TRUE(Value->isOne());
+  }
+  EXPECT_EQ(S.check({C.mkNot(Inputs.front())}), SatResult::Unsat);
+}
+
+TEST(PermanentConjunctPreparation, FanoutRefusalRetainsEncodingFailure) {
+  SymContext C;
+  llvm::SmallVector<SymRef, 32> Inputs;
+  // Each child needs one edge and one visit, in addition to the root visit.
+  for (unsigned I = 0; I != detail::MaxPermanentConjunctWork / 2; ++I)
+    Inputs.push_back(C.mkVar("x" + std::to_string(I), 1));
+  const auto Pred = C.mkAnd(Inputs);
+  const auto Before = C.numNodes();
+  EXPECT_FALSE(detail::collectPermanentConjuncts(C, Pred, 1000000));
+  EXPECT_EQ(C.numNodes(), Before);
+  SolverOptions O;
+  O.Blast.MaxGates = 1;
+  BitVectorSolver S(C, O);
+  EXPECT_FALSE(S.assertTrue(Pred));
+  EXPECT_EQ(S.encodeError(), BlastError::TooManyGates);
+  EXPECT_EQ(S.check(), SatResult::Unknown);
+}
+
+TEST(PermanentConjunctPreparation,
+     CollectedBitDoesNotBypassOriginalWidthLimit) {
+  SymContext C;
+  const auto X = C.mkVar("x", 1);
+  const auto Pred = C.mkEq(C.mkZExt(X, 1024), C.mkOne(1024));
+  const auto Facts = detail::collectPermanentConjuncts(C, Pred);
+  ASSERT_TRUE(Facts);
+  ASSERT_EQ(Facts->size(), 1U);
+  EXPECT_EQ(Facts->front(), (detail::PermanentConjunct{X, true}));
+  BitVectorSolver S(C);
+  EXPECT_FALSE(S.assertTrue(Pred));
+  EXPECT_EQ(S.encodeError(), BlastError::WidthTooLarge);
+  EXPECT_EQ(S.check(), SatResult::Unknown);
+}
+
+TEST(PermanentConjunctPreparation, AlternativesRemainOpaque) {
+  SymContext C;
+  const auto X = C.mkVar("x", 1), Y = C.mkVar("y", 1);
+  const auto Either = C.mkOr(X, Y), Both = C.mkAnd(X, Y);
+  auto Positive = detail::collectPermanentConjuncts(C, Either);
+  auto Negative = detail::collectPermanentConjuncts(C, C.mkNot(Both));
+  ASSERT_TRUE(Positive);
+  ASSERT_TRUE(Negative);
+  ASSERT_EQ(Positive->size(), 1U);
+  ASSERT_EQ(Negative->size(), 1U);
+  EXPECT_EQ(Positive->front(), (detail::PermanentConjunct{Either, true}));
+  EXPECT_EQ(Negative->front(), (detail::PermanentConjunct{Both, false}));
+}
+
+TEST(PermanentConjunctPreparation, RefusalRetainsMalformedInputFailure) {
+  SymContext C;
+  EXPECT_FALSE(detail::collectPermanentConjuncts(C, SymRef{}));
+  BitVectorSolver S(C);
+  EXPECT_FALSE(S.assertTrue(SymRef{}));
+  EXPECT_EQ(S.encodeError(), BlastError::Malformed);
+  EXPECT_EQ(S.check(), SatResult::Invalid);
+}
+
+TEST(RootFacts, FalsifiedSolverDoesNotExposeAdditionalConstants) {
+  SatSolver S;
+  CnfEncoder E(S);
+  const auto A = E.freshLit();
+  ASSERT_TRUE(E.assertTrue(A));
+  EXPECT_TRUE(E.isTrueLit(A));
+  EXPECT_FALSE(E.assertTrue(~A));
+  EXPECT_EQ(S.rootValue(A), SatValue::Unknown);
+  EXPECT_FALSE(E.isConstant(A));
+}
