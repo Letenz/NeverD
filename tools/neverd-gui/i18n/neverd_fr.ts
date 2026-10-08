@@ -192,7 +192,7 @@
         <translation>Aller au début de la fonction précédente</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
+        <source>Jump to pseudo&amp;code</source>
         <translation>Aller au pseudo-&amp;code</translation>
     </message>
     <message>
@@ -296,7 +296,7 @@
         <translation>Rechercher une séquence d&apos;octets dans le binaire</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
+        <source>Next se&amp;quence of bytes</source>
         <translation>Séquence d&apos;octets s&amp;uivante</translation>
     </message>
     <message>
@@ -392,7 +392,7 @@
         <translation>Afficher le LLVM IR de la fonction actuelle</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
+        <source>Generate &amp;LLVM C</source>
         <translation>Générer LLVM &amp;C</translation>
     </message>
     <message>
@@ -488,7 +488,7 @@
         <translation>Afficher l&apos;aperçu du graphe</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
+        <source>MCP c&amp;onnections</source>
         <translation>C&amp;onnexions MCP</translation>
     </message>
     <message>
@@ -496,7 +496,7 @@
         <translation>Gérer les connexions MCP et le partage de session</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
+        <source>Ex&amp;tensions</source>
         <translation>Ex&amp;tensions</translation>
     </message>
     <message>
@@ -528,7 +528,7 @@
         <translation>Activer ou désactiver le plein écran</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
+        <source>I&amp;ncrease font size</source>
         <translation>&amp;Augmenter la taille de police</translation>
     </message>
     <message>
@@ -705,7 +705,7 @@
     </message>
     <message>
         <source>String &amp;references</source>
-        <translation>&amp;Références aux chaînes</translation>
+        <translation>Références &amp;aux chaînes</translation>
     </message>
     <message>
         <source>List the instructions that refer to strings</source>

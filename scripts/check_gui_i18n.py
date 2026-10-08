@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Validate the GUI locale matrix, translation coverage, and Qt placeholders."""
+"""Validate the GUI locale matrix, translation coverage, Qt placeholders, and
+menu access keys."""
 from __future__ import annotations
 
 import argparse
@@ -17,12 +18,36 @@ from check_docs_i18n import LOCALES
 REPOSITORY = Path(__file__).resolve().parents[1]
 GUI = REPOSITORY / "tools" / "neverd-gui"
 PLACEHOLDER = re.compile(r"%L?(?:[1-9][0-9]*|n)")
+MENU = r'NEVERD_MENU\((\w+),\s*(\w+),\s*QT_TRANSLATE_NOOP\("Menus",\s*"([^"]*)"\)\)'
+MENU_ITEM = r"NEVERD_MENU_ITEM\((\w+),\s*(\w+)\)"
+ACTION = re.compile(r'NEVERD_(?:VIEW_)?ACTION\(\s*(\w+),\s*QT_TRANSLATE_NOOP\("Actions",\s*((?:"[^"]*"\s*)+)\)')
+ACCESS_KEY = re.compile(r"&(.)")
 
 
 def gui_sources():
     """Every file with translatable strings: C++ sources and the .def tables."""
     return [str(path) for pattern in ("*.cpp", "app/*.cpp", "app/*.def", "mcp/*.cpp")
             for path in sorted(GUI.glob(pattern))]
+
+
+def menu_entries():
+    """Each menu's entries as catalog keys (context, source), from Menus.def
+    and the action texts of Actions.def."""
+    actions = {match[1]: "".join(re.findall(r'"([^"]*)"', match[2]))
+               for match in ACTION.finditer((GUI / "app" / "Actions.def").read_text(encoding="utf-8"))}
+    menus = {}
+    for match in re.finditer(f"{MENU}|{MENU_ITEM}", (GUI / "app" / "Menus.def").read_text(encoding="utf-8")):
+        if match[1]:
+            menus.setdefault(match[2], []).append(("Menus", match[3]))
+        else:
+            menus.setdefault(match[4], []).append(("Actions", actions.get(match[5], match[5])))
+    return menus
+
+
+def access_key(text):
+    """The letter after a menu text's single &, case-folded; None without one."""
+    match = ACCESS_KEY.search(text.replace("&&", ""))
+    return match[1].casefold() if match else None
 
 
 def messages(path):
@@ -60,6 +85,7 @@ def main():
         return 1
     if not reference:
         errors.append("English source catalog is empty")
+    menus = menu_entries()
     for locale in locales:
         path = directory / f"neverd_{locale}.ts"
         if not path.exists():
@@ -92,6 +118,15 @@ def main():
                     errors.append(f"{path.name}: multiline layout mismatch {key[:2]!r}")
                 if locale == "en" and value != source:
                     errors.append(f"{path.name}: English catalog differs from source {key[:2]!r}")
+        # Within a menu, each entry has its own access key.
+        texts = {key[:2]: "".join(translation.itertext()) for key, translation in entries.items()
+                 if translation is not None}
+        for menu, items in menus.items():
+            keys = Counter(access_key(texts.get(item, item[1])) for item in items)
+            keys.pop(None, None)
+            for letter, count in sorted(keys.items()):
+                if count > 1:
+                    errors.append(f"{path.name}: menu {menu} gives access key {letter!r} to {count} entries")
     if args.check_sources or args.lupdate:
         executable = args.lupdate or shutil.which("lupdate") or shutil.which("lupdate6")
         if not executable:
@@ -111,7 +146,8 @@ def main():
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
-    print(f"GUI translations: {len(locales)} locales, {len(reference)} source keys, complete coverage and matching placeholders.")
+    print(f"GUI translations: {len(locales)} locales, {len(reference)} source keys, complete coverage, "
+          f"matching placeholders and unique access keys in {len(menus)} menus.")
     return 0
 
 

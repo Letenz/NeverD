@@ -192,7 +192,7 @@
         <translation>Vai all&apos;inizio della funzione precedente</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
+        <source>Jump to pseudo&amp;code</source>
         <translation>Salta allo ps&amp;eudocodice</translation>
     </message>
     <message>
@@ -296,7 +296,7 @@
         <translation>Cerca una sequenza di byte nel binario</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
+        <source>Next se&amp;quence of bytes</source>
         <translation>Sequenza di byte su&amp;ccessiva</translation>
     </message>
     <message>
@@ -392,7 +392,7 @@
         <translation>Mostra l&apos;LLVM IR della funzione corrente</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
+        <source>Generate &amp;LLVM C</source>
         <translation>Genera LLVM &amp;C</translation>
     </message>
     <message>
@@ -488,7 +488,7 @@
         <translation>Mostra la panoramica del grafo</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
+        <source>MCP c&amp;onnections</source>
         <translation>C&amp;onnessioni MCP</translation>
     </message>
     <message>
@@ -496,7 +496,7 @@
         <translation>Gestisci le connessioni MCP e la condivisione della sessione</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
+        <source>Ex&amp;tensions</source>
         <translation>Es&amp;tensioni</translation>
     </message>
     <message>
@@ -528,7 +528,7 @@
         <translation>Attiva o disattiva lo schermo intero</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
+        <source>I&amp;ncrease font size</source>
         <translation>&amp;Aumenta dimensione carattere</translation>
     </message>
     <message>
@@ -705,7 +705,7 @@
     </message>
     <message>
         <source>String &amp;references</source>
-        <translation>&amp;Riferimenti a stringhe</translation>
+        <translation>Riferi&amp;menti a stringhe</translation>
     </message>
     <message>
         <source>List the instructions that refer to strings</source>

@@ -192,7 +192,7 @@
         <translation>Перейти к началу предыдущей функции</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
+        <source>Jump to pseudo&amp;code</source>
         <translation>Перейти к пс&amp;евдокоду</translation>
     </message>
     <message>
@@ -296,7 +296,7 @@
         <translation>Искать последовательность байтов в двоичном файле</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
+        <source>Next se&amp;quence of bytes</source>
         <translation>&amp;Следующая последовательность байтов</translation>
     </message>
     <message>
@@ -392,7 +392,7 @@
         <translation>Показать LLVM IR текущей функции</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
+        <source>Generate &amp;LLVM C</source>
         <translation>С&amp;генерировать LLVM C</translation>
     </message>
     <message>
@@ -488,7 +488,7 @@
         <translation>Показать обзор графа</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
+        <source>MCP c&amp;onnections</source>
         <translation>Под&amp;ключения MCP</translation>
     </message>
     <message>
@@ -496,7 +496,7 @@
         <translation>Управление подключениями MCP и общим доступом к сеансу</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
+        <source>Ex&amp;tensions</source>
         <translation>&amp;Расширения</translation>
     </message>
     <message>
@@ -528,7 +528,7 @@
         <translation>Включить или выключить полноэкранный режим</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
+        <source>I&amp;ncrease font size</source>
         <translation>&amp;Увеличить размер шрифта</translation>
     </message>
     <message>
@@ -705,7 +705,7 @@
     </message>
     <message>
         <source>String &amp;references</source>
-        <translation>&amp;Ссылки на строки</translation>
+        <translation>Ссы&amp;лки на строки</translation>
     </message>
     <message>
         <source>List the instructions that refer to strings</source>
