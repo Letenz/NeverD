@@ -41,6 +41,11 @@ struct CallArgumentConvention {
   /// A call to a summarized direct callee passes the argument registers the
   /// callee reads at entry (LowToMed publishes them as the CALL's inputs).
   bool RegisterArgumentsFromCalleeSummary = false;
+  /// An import whose libc prototype is fixed reads exactly its argument
+  /// registers, so its stub and the slot the loader binds have that summary,
+  /// and an indirect call through the slot passes them as a call to the stub
+  /// does.
+  bool ImportArgumentsFromPrototype = false;
   /// The callee's entry-read summary is not its parameter list, so the call
   /// passes no summarized arguments (a System V variadic prologue spills
   /// every argument register to its save area).  Null when every summary is.

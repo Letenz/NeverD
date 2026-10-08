@@ -8,7 +8,9 @@
 // AL (the vector registers its caller used) and spills every argument
 // register to its register save area, so its summary lists no parameters.
 // Its stack arguments start at the return address with no home area, which
-// the stack-argument summary does not count.
+// the stack-argument summary does not count.  A libc import with a fixed
+// prototype reads exactly its parameters, through its PLT stub or its GOT
+// slot alike.
 //
 //===----------------------------------------------------------------------===//
 
@@ -30,6 +32,7 @@ const CallArgumentConvention SysVX64CallArguments = {
     .TheArch = Arch::X64,
     .Format = BinaryFormat::ELF,
     .RegisterArgumentsFromCalleeSummary = true,
+    .ImportArgumentsFromPrototype = true,
     .SummaryListsNoParameters = readsVectorCount,
     .IndirectCallsTakePrecedingSetup = true,
 };

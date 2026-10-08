@@ -8,7 +8,8 @@
 // System V): a method passes its incoming `this` on in RDI without writing it,
 // a virtual call takes the object a dominating block loaded into RDI, and a
 // void method returns without writing RAX on one path while it tail-calls on
-// the others.
+// the others.  Also xxd's: wrappers pass their arguments straight to a libc
+// import, and end at a helper that never returns.
 //
 //===----------------------------------------------------------------------===//
 
@@ -26,7 +27,9 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -318,6 +321,188 @@ int main(void) {
   return 0;
 }
 )");
+}
+
+/// An x86-64 ELF image with \p Code at Text, the given function symbols, and
+/// the imports \p Imports bound to consecutive slots at 0x403000, each with
+/// a PLT-style stub `jmp [slot]` at the address paired with it.
+BinaryImage
+makeImportImage(std::vector<uint8_t> Code,
+                const std::vector<std::pair<va_t, const char *>> &Functions,
+                const std::vector<std::pair<va_t, const char *>> &Imports) {
+  constexpr va_t Got = 0x403000;
+  for (size_t I = 0; I < Imports.size(); ++I) {
+    const va_t Stub = Imports[I].first;
+    std::vector<uint8_t> Jump = {0xFF, 0x25}; // jmp [rip + slot]
+    for (uint8_t B : rel32(Stub + 6, Got + 8 * I))
+      Jump.push_back(B);
+    put(Code, Stub, Jump);
+  }
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0x400000;
+  Img.Entry = Text;
+  Segment Seg;
+  Seg.Name = ".text";
+  Seg.VA = Text;
+  Seg.Size = Code.size();
+  Seg.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Seg.Data = std::move(Code);
+  Img.Segments.push_back(std::move(Seg));
+  if (!Imports.empty()) {
+    Segment GotSeg;
+    GotSeg.Name = ".got";
+    GotSeg.VA = Got;
+    GotSeg.Size = GotSeg.FileSz = 8 * Imports.size();
+    GotSeg.Data.resize(GotSeg.Size);
+    GotSeg.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Img.Segments.push_back(std::move(GotSeg));
+  }
+  for (size_t I = 0; I < Imports.size(); ++I) {
+    Import Imp;
+    Imp.Module = "libc.so.6";
+    Imp.Name = Imports[I].second;
+    Imp.IATAddr = Got + 8 * I;
+    Img.Imports.push_back(std::move(Imp));
+    EXPECT_TRUE(Img.recordImportStub(Imports[I].first, I));
+  }
+  for (const auto &[Entry, Name] : Functions) {
+    Symbol Function = Symbol::makeFunc(Entry);
+    Function.Name = Name;
+    Img.Symbols.push_back(std::move(Function));
+  }
+  return Img;
+}
+
+/// HighC for the functions at \p Entries of \p Img.
+std::string liftEntries(const BinaryImage &Img, std::set<va_t> Entries) {
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = std::move(Entries);
+  auto Result = Pipeline().run(Img, Ctx, Opts);
+  EXPECT_TRUE(Result.Success) << Result.Error;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  Options.Image = &Img;
+  EXPECT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+  return Source;
+}
+
+TEST(SysVCallContract, PassThroughArgumentsReachAPrototypedImport) {
+  // wrap(s, f) returns fputs(s, f) + 1 and fwd(s, f) tail-jumps to fputs,
+  // both without writing RDI or RSI.  The prototype says fputs reads both,
+  // so they are the functions' own parameters, and the stub passes them on.
+  constexpr va_t Wrap = Text, Fwd = Text + 0x20, Stub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> WrapCode = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                   0xE8};                  // call fputs
+  for (uint8_t B : rel32(Wrap + 9, Stub))
+    WrapCode.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                    0x83, 0xC0, 0x01,       // add eax, 1
+                    0xC3})                  // ret
+    WrapCode.push_back(B);
+  put(Code, Wrap, WrapCode);
+  std::vector<uint8_t> FwdCode = {0xE9}; // jmp fputs
+  for (uint8_t B : rel32(Fwd + 5, Stub))
+    FwdCode.push_back(B);
+  put(Code, Fwd, FwdCode);
+  const BinaryImage Img = makeImportImage(
+      Code, {{Wrap, "wrap"}, {Fwd, "fwd"}, {Stub, "fputs_stub"}},
+      {{Stub, "fputs"}});
+  const std::string Source = liftEntries(Img, {Wrap, Fwd, Stub});
+  for (const char *Name : {"wrap", "fwd", "fputs_stub"}) {
+    SCOPED_TRACE(Name);
+    const std::string Body = body(Source, Name);
+    ASSERT_FALSE(Body.empty()) << Source;
+    EXPECT_NE(Body.find("fputs(arg0, arg1)"), std::string::npos) << Body;
+    EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+  }
+}
+
+TEST(SysVCallContract, ACallThatEndsItsFunctionDoesNotReturn) {
+  // pfatal(name) calls error(2, 0, NULL, name): error returns only for a
+  // zero status, so GCC places nothing after the call, and pfatal's sized
+  // symbol ends with it.  What follows the 2-byte no-op is next's code.
+  constexpr va_t PFatal = Text, Next = Text + 0x13, ErrorStub = Text + 0x30;
+  std::vector<uint8_t> Code(0x40, 0xCC);
+  std::vector<uint8_t> PFatalCode = {0x48, 0x89, 0xF9, // mov rcx, rdi
+                                     0xBF, 0x02, 0x00, 0x00, 0x00, // mov edi, 2
+                                     0x31, 0xF6, // xor esi, esi
+                                     0x31, 0xD2, // xor edx, edx
+                                     0xE8};      // call error
+  for (uint8_t B : rel32(PFatal + 17, ErrorStub))
+    PFatalCode.push_back(B);
+  PFatalCode.push_back(0x66); // xchg ax, ax
+  PFatalCode.push_back(0x90);
+  put(Code, PFatal, PFatalCode);
+  put(Code, Next,
+      {0x48, 0x8D, 0x47, 0x01, // lea rax, [rdi+1]
+       0xC3});                 // ret
+  BinaryImage Img = makeImportImage(Code, {{PFatal, "pfatal"}, {Next, "next"}},
+                                    {{ErrorStub, "error"}});
+  Img.Symbols.front().Size = 17;
+  ASSERT_EQ(PFatal + static_cast<va_t>(PFatalCode.size()), Next);
+  const std::string Source = liftEntries(Img, {PFatal});
+  const std::string Body = body(Source, "pfatal");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("error("), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("next("), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+}
+
+TEST(SysVCallContract, ErrorCheckingWrapperEndsAtItsExitHelper) {
+  // xxd's shape: put(s, f) returns fputs(s, f) unless it fails, then calls
+  // die(3), which ends in exit.  GCC aligns the next function with no-ops,
+  // and the bytes after them are another function's, not put's.
+  constexpr va_t Die = Text, Put = Text + 0x20, Next = Text + 0x40,
+                 FputsStub = Text + 0x60, ExitStub = Text + 0x70;
+  std::vector<uint8_t> Code(0x80, 0xCC);
+  std::vector<uint8_t> DieCode = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                  0xE8};                  // call exit
+  for (uint8_t B : rel32(Die + 9, ExitStub))
+    DieCode.push_back(B);
+  put(Code, Die, DieCode);
+  std::vector<uint8_t> PutCode = {0x55,             // push rbp
+                                  0x48, 0x89, 0xE5, // mov rbp, rsp
+                                  0xE8};            // call fputs
+  for (uint8_t B : rel32(Put + 9, FputsStub))
+    PutCode.push_back(B);
+  for (uint8_t B : {0x83, 0xF8, 0xFF,             // cmp eax, -1
+                    0x74, 0x02,                   // je fail
+                    0x5D,                         // pop rbp
+                    0xC3,                         // ret
+                    0xBF, 0x03, 0x00, 0x00, 0x00, // fail: mov edi, 3
+                    0xE8})                        // call die
+    PutCode.push_back(B);
+  for (uint8_t B : rel32(Put + 26, Die))
+    PutCode.push_back(B);
+  // nop word ptr [rax+rax*1+0x0] up to Next.
+  for (uint8_t B : {0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00})
+    PutCode.push_back(B);
+  put(Code, Put, PutCode);
+  // next(a, b, c): a function that reads three argument registers.
+  put(Code, Next,
+      {0x48, 0x8D, 0x04, 0x37, // lea rax, [rdi+rsi]
+       0x48, 0x01, 0xD0,       // add rax, rdx
+       0xC3});                 // ret
+  const BinaryImage Img =
+      makeImportImage(Code, {{Die, "die"}, {Put, "put"}, {Next, "next"}},
+                      {{FputsStub, "fputs"}, {ExitStub, "exit"}});
+  ASSERT_EQ(Put + static_cast<va_t>(PutCode.size()), Next);
+  const std::string Source = liftEntries(Img, {Put});
+  const std::string Body = body(Source, "put");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("fputs(arg0, arg1)"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("die(3)"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("next("), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
 }
 
 } // namespace

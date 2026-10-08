@@ -553,9 +553,12 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
       switch (Op.Opcode) {
       case NdOp::INDIR_CALL:
         // A rewritten indirect tail jump (`jmp [iat]` in an import thunk)
-        // passes this function's registers on to its unknown target.
+        // passes this function's registers on to its unknown target, unless
+        // the slot is an import's and its prototype says what that reads.
         Effect.Unknown = true;
         (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
+        if (DirectTarget && Img.findImportAt(Op.Inputs[0].Offset))
+          Step.ImportCallee = Op.Inputs[0].Offset;
         break;
       case NdOp::INDIR_BR:
         // A resolved jump table has successors; an indirect tail jump leaves
@@ -587,6 +590,8 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
           if (!NoReturnCall)
             Effect.Unknown = true;
           (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
+          if (DirectTarget)
+            Step.ImportCallee = Op.Inputs[0].Offset;
         } else {
           Step.Callee = Op.Inputs[0].Offset;
           Step.TailCallee = TailCall;
@@ -600,7 +605,8 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
       default:
         break;
       }
-      Effect.UnknownEntryReads |= Step.UnknownTailCall;
+      Effect.UnknownEntryReads |=
+          Step.UnknownTailCall && Step.ImportCallee == InvalidVA;
       Out.Steps.push_back(Step);
     }
   }
@@ -625,16 +631,25 @@ GPRReadWidths entryLiveWidths(const LocalRegisterEffect &F,
   auto Transfer = [&](const RegisterBlock &Block, GPRReadWidths Live) {
     for (auto It = Block.Steps.rbegin(); It != Block.Steps.rend(); ++It) {
       const RegisterStep &Step = *It;
+      // An import with a prototype reads exactly its parameters.
+      const auto ImportReads = Step.ImportCallee != InvalidVA
+                                   ? EntryReads.find(Step.ImportCallee)
+                                   : EntryReads.end();
       if (Step.Exits)
         Live.fill(0);
       if (Step.UnknownTailCall) {
         Live.fill(0);
-        for (size_t I = 0; I < Live.size(); ++I)
-          if ((ArgumentFamilies >> I) & 1)
-            Live[I] = 8;
+        if (ImportReads != EntryReads.end())
+          joinReads(Live, ImportReads->second);
+        else
+          for (size_t I = 0; I < Live.size(); ++I)
+            if ((ArgumentFamilies >> I) & 1)
+              Live[I] = 8;
       } else if (Step.UnknownCall || (Step.Callee != InvalidVA &&
                                       DispatchThunks.count(Step.Callee))) {
         Clear(Live, VolatileFamilies);
+        if (ImportReads != EntryReads.end())
+          joinReads(Live, ImportReads->second);
       } else if (Step.Callee != InvalidVA) {
         auto W = MayWrite.find(Step.Callee);
         Clear(Live, W != MayWrite.end() ? W->second : VolatileFamilies);
@@ -718,9 +733,18 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   // that tail-calls code whose reads are unknown: that code receives this
   // function's incoming registers.
   std::set<va_t> UnknownReads;
+  auto TailCallsUnknownImport = [&](const LocalRegisterEffect &Effect) {
+    return llvm::any_of(Effect.Blocks, [&](const RegisterBlock &Block) {
+      return llvm::any_of(Block.Steps, [&](const RegisterStep &Step) {
+        return Step.UnknownTailCall && Step.ImportCallee != InvalidVA &&
+               !FixedEntryReads.count(Step.ImportCallee);
+      });
+    });
+  };
   for (const auto &[Entry, Effect] : Funcs)
     if (!FixedEntryReads.count(Entry) &&
-        (Effect.Incomplete || Effect.UnknownEntryReads))
+        (Effect.Incomplete || Effect.UnknownEntryReads ||
+         TailCallsUnknownImport(Effect)))
       UnknownReads.insert(Entry);
   for (bool Changed = true; Changed;) {
     Changed = false;
