@@ -1528,6 +1528,29 @@ TEST_P(DarwinProcess, RuntimeCreatedSymbolicLinksCanBeRemoved) {
     })) << Error;
 }
 
+TEST_P(DarwinProcess, RuntimeCreatedSymbolicLinksCanBeRenamed) {
+  Options.DarwinFiles = darwin_test::mixedSymbolicLinkOptions();
+  Options.Arguments[2] = "/work/data";
+  auto Result = run("symbolic-link-rename");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "R");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {57u, 474u, 128u, 465u, 488u, 473u, 472u, 197u, 73u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Error == false;
+    })) << Number;
+  for (auto Error : {17u, 62u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + 488 && Event.Error == true &&
+             Event.Result == Error;
+    })) << Error;
+}
+
 INSTANTIATE_TEST_SUITE_P(Transports, DarwinProcess,
                          testing::ValuesIn(profiles()),
                          [](const testing::TestParamInfo<Profile> &P) {

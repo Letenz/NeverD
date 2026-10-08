@@ -616,7 +616,9 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                "1032547698badcfeffffffffffffffff")),
                                            ("symbolic-link-creation", b"b"),
                                            ("symbolic-link-unlink", b"U"),
-                                           ("symbolic-link-unlink-protected", b"U")):
+                                           ("symbolic-link-unlink-protected", b"U"),
+                                           ("symbolic-link-rename", b"R"),
+                                           ("symbolic-link-rename-protected", b"R")):
                         if architecture == "x86_64" and mode == "mach-clock-values":
                             continue
                         file_options = json.dumps({
@@ -797,8 +799,10 @@ class ProcessIntegrationTests(unittest.TestCase):
                                 directory.pop("contents", None)
                             file_options = json.dumps(symbolic_options)
                         unlink_links = mode.startswith("symbolic-link-unlink")
-                        protected_link = mode == "symbolic-link-unlink-protected"
-                        if mode in ("symbolic-link-mutations", "symbolic-link-creation") or unlink_links:
+                        rename_links = mode.startswith("symbolic-link-rename")
+                        protected_link = (unlink_links or rename_links) and mode.endswith("-protected")
+                        if (mode in ("symbolic-link-mutations", "symbolic-link-creation")
+                                or unlink_links or rename_links):
                             mixed_options = json.loads(file_options)
                             original = mixed_options["darwin_files"]["files"][0]
                             metadata = dict(original["metadata"], flags=0, link_count=1)
@@ -825,7 +829,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                                     "mutation_policy": mutation}}
                             mixed_options["arguments"][2] = "/work/data"
                             if protected_link:
-                                mixed_options["arguments"][1] = "symbolic-link-unlink"
+                                mixed_options["arguments"][1] = (
+                                    "symbolic-link-rename" if rename_links else "symbolic-link-unlink")
                                 mixed_options["arguments"].append("protected")
                             file_options = json.dumps(mixed_options)
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
@@ -850,6 +855,22 @@ class ProcessIntegrationTests(unittest.TestCase):
                             if protected_link:
                                 self.assertEqual(services[-1]["number"],
                                                  "200000a" if architecture == "x86_64" else "a")
+                                self.assertIsNone(services[-1]["result"])
+                                self.assertNotIn("error", services[-1])
+                        if rename_links:
+                            services = result["services"]
+                            rename_numbers = (("2000080", "20001d1", "20001e8")
+                                              if architecture == "x86_64" else ("80", "1d1", "1e8"))
+                            renames = [event for event in services if event["number"] in rename_numbers]
+                            self.assertTrue(any(event.get("error") is False and event["result"] == "0"
+                                                for event in renames), mode)
+                            flagged = [event for event in renames if event["number"] == rename_numbers[2]]
+                            for code in ("11", "3e"):
+                                self.assertTrue(any(event.get("error") is True and event["result"] == code
+                                                    for event in flagged), mode)
+                            self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+                            if protected_link:
+                                self.assertEqual(services[-1]["number"], rename_numbers[0])
                                 self.assertIsNone(services[-1]["result"])
                                 self.assertNotIn("error", services[-1])
                         if mode.startswith("mach-"):

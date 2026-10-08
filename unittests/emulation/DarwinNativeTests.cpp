@@ -1115,7 +1115,8 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
     }
     if (llvm::StringRef(Test.Mode) == "symbolic-link-mutations" ||
         llvm::StringRef(Test.Mode) == "symbolic-link-creation" ||
-        llvm::StringRef(Test.Mode) == "symbolic-link-unlink") {
+        llvm::StringRef(Test.Mode) == "symbolic-link-unlink" ||
+        llvm::StringRef(Test.Mode) == "symbolic-link-rename") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "static"));
       ASSERT_TRUE(std::filesystem::create_directory(Catalogue / "work"));

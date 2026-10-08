@@ -49,14 +49,16 @@ def execute_cases(program: Path, cases: list[tuple[str, int, bytes]]) -> list[di
           tempfile.TemporaryDirectory(prefix="neverd-darwin-links-") as links,
           tempfile.TemporaryDirectory(prefix="neverd-darwin-mixed-links-") as mixed,
           tempfile.TemporaryDirectory(prefix="neverd-darwin-created-links-") as created,
-          tempfile.TemporaryDirectory(prefix="neverd-darwin-unlinked-links-") as removed):
+          tempfile.TemporaryDirectory(prefix="neverd-darwin-unlinked-links-") as removed,
+          tempfile.TemporaryDirectory(prefix="neverd-darwin-renamed-links-") as renamed):
         input_file = Path(directory) / "data"
         (Path(directory) / "empty").mkdir()
-        return _execute_cases(program, cases, input_file, Path(links), Path(mixed), Path(created), Path(removed))
+        return _execute_cases(program, cases, input_file, Path(links), Path(mixed), Path(created), Path(removed), Path(renamed))
 
 
 def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_file: Path,
-                   symbolic_root: Path, mixed_root: Path, created_root: Path, removed_root: Path) -> list[dict]:
+                   symbolic_root: Path, mixed_root: Path, created_root: Path, removed_root: Path,
+                   renamed_root: Path) -> list[dict]:
     results = []
     for mode, status, output in cases:
         case_input = input_file
@@ -69,10 +71,11 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
                                  ("dirlink", "empty")):
                 (catalogue / name).symlink_to(target)
             case_input = catalogue / "data"
-        if mode in ("symbolic-link-mutations", "symbolic-link-creation", "symbolic-link-unlink"):
+        if mode in ("symbolic-link-mutations", "symbolic-link-creation", "symbolic-link-unlink", "symbolic-link-rename"):
             roots = {"symbolic-link-mutations": mixed_root,
                      "symbolic-link-creation": created_root,
-                     "symbolic-link-unlink": removed_root}
+                     "symbolic-link-unlink": removed_root,
+                     "symbolic-link-rename": renamed_root}
             catalogue = roots[mode] / "catalogue"
             (catalogue / "static").mkdir(parents=True)
             (catalogue / "work").mkdir()

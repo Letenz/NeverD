@@ -463,7 +463,9 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"mach-clock-values", emulation::darwin_test::MachClockHex},
           std::pair{"symbolic-link-creation", "62"},
           std::pair{"symbolic-link-unlink", "55"},
-          std::pair{"symbolic-link-unlink-protected", "55"}}) {
+          std::pair{"symbolic-link-unlink-protected", "55"},
+          std::pair{"symbolic-link-rename", "52"},
+          std::pair{"symbolic-link-rename-protected", "52"}}) {
       const bool X64 = llvm::StringRef(File).ends_with("x86_64");
       if (X64 && llvm::StringRef(Mode) == "mach-clock-values")
         continue;
@@ -487,7 +489,9 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   const auto &[File, Profile, Mode, Expected] = GetParam();
   const llvm::StringRef ModeName(Mode);
   const bool UnlinkLinks = ModeName.starts_with("symbolic-link-unlink");
-  const bool ProtectedLink = ModeName == "symbolic-link-unlink-protected";
+  const bool RenameLinks = ModeName.starts_with("symbolic-link-rename");
+  const bool ProtectedLink =
+      (UnlinkLinks || RenameLinks) && ModeName.ends_with("-protected");
   const bool X64 = llvm::StringRef(File).ends_with("x86_64");
   SCOPED_TRACE(File);
   Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
@@ -657,7 +661,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     Options = llvm::formatv("{0}", Input).str();
   }
   if (ModeName == "symbolic-link-mutations" ||
-      ModeName == "symbolic-link-creation" || UnlinkLinks) {
+      ModeName == "symbolic-link-creation" || UnlinkLinks || RenameLinks) {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto M =
         llvm::cantFail(llvm::json::parse(emulation::darwin_test::MetadataJSON));
@@ -701,7 +705,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     (*Input.getAsObject()->getArray(field::Arguments))[2] = "/work/data";
     if (ProtectedLink) {
       auto *Arguments = Input.getAsObject()->getArray(field::Arguments);
-      (*Arguments)[1] = "symbolic-link-unlink";
+      (*Arguments)[1] =
+          RenameLinks ? "symbolic-link-rename" : "symbolic-link-unlink";
       Arguments->push_back("protected");
     }
     Options = llvm::formatv("{0}", Input).str();
@@ -748,6 +753,42 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       const auto *Last = Services->back().getAsObject();
       ASSERT_NE(Last, nullptr);
       EXPECT_EQ(Last->getString(field::Number), X64 ? "200000a" : "a");
+      ASSERT_NE(Last->get(field::Result), nullptr);
+      EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+      EXPECT_EQ(Last->get(field::Error), nullptr);
+    }
+  }
+  if (RenameLinks) {
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    bool Renamed = false, Exclusive = false, NoExpansion = false;
+    for (const auto &Service : *Services) {
+      const auto *Event = Service.getAsObject();
+      ASSERT_NE(Event, nullptr);
+      const auto Number = Event->getString(field::Number);
+      if (Number != (X64 ? "2000080" : "80") &&
+          Number != (X64 ? "20001d1" : "1d1") &&
+          Number != (X64 ? "20001e8" : "1e8"))
+        continue;
+      Renamed |= Event->getBoolean(field::Error) == false &&
+                 Event->getString(field::Result) == "0";
+      if (Number == (X64 ? "20001e8" : "1e8")) {
+        Exclusive |= Event->getBoolean(field::Error) == true &&
+                     Event->getString(field::Result) == "11";
+        NoExpansion |= Event->getBoolean(field::Error) == true &&
+                       Event->getString(field::Result) == "3e";
+      }
+    }
+    EXPECT_TRUE(Renamed);
+    EXPECT_TRUE(Exclusive);
+    EXPECT_TRUE(NoExpansion);
+    EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    if (ProtectedLink) {
+      ASSERT_FALSE(Services->empty());
+      const auto *Last = Services->back().getAsObject();
+      ASSERT_NE(Last, nullptr);
+      EXPECT_EQ(Last->getString(field::Number), X64 ? "2000080" : "80");
       ASSERT_NE(Last->get(field::Result), nullptr);
       EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
       EXPECT_EQ(Last->get(field::Error), nullptr);

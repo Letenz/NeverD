@@ -4251,7 +4251,269 @@ static int symbolic_link_unlink(const char *input) {
   return 37;
 }
 
+static int renamed_link_bytes(u64 directory, const char *name,
+                              const unsigned char *target, unsigned size) {
+  unsigned error;
+  unsigned char bytes[32];
+  login_fill_canary(bytes, sizeof(bytes));
+  return call(473, directory, (u64)name, (u64)(bytes + 8), 24, 0, 0, &error) ==
+             size &&
+         !error && !secondary && login_equal_bytes(bytes + 8, target, size) &&
+         login_canary_bytes(bytes, 8) &&
+         login_canary_bytes(bytes + 8 + size, 24 - size);
+}
+
+/* Terminal links move as opaque nodes. Relative targets bind at the new
+ * parent; old descriptions, shared cursors and private mappings retain their
+ * original file objects. NOFOLLOW_ANY uses held directory FDs throughout.
+ */
+static int symbolic_link_rename(const char *input) {
+  unsigned error, length = 0;
+  char root[1024];
+  while (length < sizeof(root) - 1 && input[length]) {
+    root[length] = input[length];
+    ++length;
+  }
+  if (input[length] || length < 10 || !equal(input + length - 10, "/work/data"))
+    return 51;
+  if (length == 10) {
+    root[0] = '/';
+    root[1] = 0;
+  } else
+    root[length - 10] = 0;
+  int check = 51;
+#define RENAME_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 dir = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && dir >= 3);
+  u64 work = call(463, dir, (u64) "work", 0x100000, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && work >= 3);
+  RENAME_EXPECT(call(13, work, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  u64 old = call(463, work, (u64) "data", 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && old >= 3);
+  u64 duplicate = call(41, old, 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && duplicate >= 3 && duplicate != old);
+  unsigned char original[144], current[144], victim_before[144], bytes[32];
+  RENAME_EXPECT(call(339, old, (u64)original, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(199, old, 3, 0, 0, 0, 0, &error) == 3 && !error);
+  u64 mapped = call(197, 0, 10, 1, 2, old, 0, &error);
+  RENAME_EXPECT(!error && !secondary);
+  RENAME_EXPECT(call(57, (u64) "data", (u64) "a", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) "missing", work, (u64) "b", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(128, (u64) "a", (u64) "b", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "b", (const unsigned char *)"data", 4));
+  RENAME_EXPECT(call(473, work, (u64) "a", (u64)bytes, 24, 0, 0, &error) == 2 &&
+                error);
+  RENAME_EXPECT(call(474, (u64) "missing", work, (u64) "c", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(
+      call(488, work, (u64) "b", work, (u64) "c", 4, 0, &error) == 17 && error);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "b", (const unsigned char *)"data", 4) &&
+      renamed_link_bytes(work, "c", (const unsigned char *)"missing", 7));
+  RENAME_EXPECT(call(488, work, (u64) "b", work, (u64) "c", 16, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) ".", work, (u64) "dot", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(
+      call(488, work, (u64) "dot/c", work, (u64) "d", 16, 0, &error) == 62 &&
+      error);
+  RENAME_EXPECT(
+      call(488, work, (u64) "c", work, (u64) "dot/d", 16, 0, &error) == 62 &&
+      error);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "c", (const unsigned char *)"data", 4));
+
+  u64 victim = call(463, work, (u64) "victim", 0xa02, 0600, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && victim >= 3);
+  RENAME_EXPECT(call(4, victim, (u64) "klmnopqrst", 10, 0, 0, 0, &error) ==
+                    10 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(339, victim, (u64)victim_before, 0, 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(199, victim, 5, 0, 0, 0, 0, &error) == 5 && !error);
+  u64 victim_map = call(197, 0, 10, 1, 2, victim, 0, &error);
+  RENAME_EXPECT(!error && !secondary);
+  RENAME_EXPECT(
+      call(465, work, (u64) "c", work, (u64) "victim", 0, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "victim", (const unsigned char *)"data", 4));
+  RENAME_EXPECT(call(339, victim, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary && little_integer(current + 6, 2) == 0 &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8));
+  RENAME_EXPECT(call(199, victim, 0, 1, 0, 0, 0, &error) == 5 && !error);
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, victim, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"klmnopqrst", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(call(6, victim, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  u64 regular = call(463, work, (u64) "regular", 0xa02, 0600, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && regular >= 3);
+  RENAME_EXPECT(call(4, regular, (u64) "abcdefghij", 10, 0, 0, 0, &error) ==
+                    10 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(339, regular, (u64)victim_before, 0, 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(488, work, (u64) "regular", work, (u64) "victim", 0, 0,
+                     &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(339, regular, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary && little_integer(current + 6, 2) == 1 &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8));
+  RENAME_EXPECT(call(473, work, (u64) "victim", (u64)bytes, 24, 0, 0, &error) ==
+                    22 &&
+                error);
+  u64 named = call(463, work, (u64) "victim", 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && named >= 3);
+  RENAME_EXPECT(call(339, named, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8));
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, named, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 && !error &&
+      !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"abcdefghij", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(call(6, named, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  RENAME_EXPECT(call(6, regular, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+
+  const unsigned char opaque[][4] = {{0}, {'a', 0}, {0xff, 'x', 0}};
+  const unsigned sizes[] = {0, 1, 2};
+  for (unsigned i = 0; i != 3; ++i) {
+    RENAME_EXPECT(call(474, (u64)opaque[i], work, (u64) "a", 0, 0, 0, &error) ==
+                      0 &&
+                  !error && !secondary);
+    RENAME_EXPECT(
+        call(488, work, (u64) "a", work, (u64) "opaque", 4, 0, &error) == 0 &&
+        !error && !secondary);
+    RENAME_EXPECT(renamed_link_bytes(work, "opaque", opaque[i], sizes[i]));
+    RENAME_EXPECT(call(472, work, (u64) "opaque", 0x800, 0, 0, 0, &error) ==
+                      0 &&
+                  !error && !secondary);
+  }
+  RENAME_EXPECT(call(475, work, (u64) "x", 0700, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(475, work, (u64) "y", 0700, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  u64 x = call(463, work, (u64) "x", 0x100000, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && x >= 3);
+  u64 y = call(463, work, (u64) "y", 0x100000, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && y >= 3);
+  u64 xdata = call(463, x, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && xdata >= 3);
+  u64 ydata = call(463, y, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && ydata >= 3);
+  RENAME_EXPECT(call(4, xdata, (u64) "ABCDEFGHIJ", 10, 0, 0, 0, &error) == 10 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(4, ydata, (u64) "klmnopqrst", 10, 0, 0, 0, &error) == 10 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(339, xdata, (u64)victim_before, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) "data", x, (u64) "a", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) "data", y, (u64) "b", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  u64 held = call(463, x, (u64) "a", 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && held >= 3);
+  RENAME_EXPECT(call(199, held, 3, 0, 0, 0, 0, &error) == 3 && !error);
+  u64 held_map = call(197, 0, 10, 1, 2, held, 0, &error);
+  RENAME_EXPECT(!error && !secondary);
+  RENAME_EXPECT(call(13, x, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  RENAME_EXPECT(call(465, x, (u64) "a", y, (u64) "b", 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(renamed_link_bytes(y, "b", (const unsigned char *)"data", 4));
+  u64 rebound = call(463, y, (u64) "b", 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && rebound >= 3);
+  RENAME_EXPECT(call(339, rebound, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) !=
+                    little_integer(victim_before + 8, 8));
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, rebound, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"klmnopqrst", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  u64 cwd_file = call(5, (u64) "data", 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && cwd_file >= 3);
+  RENAME_EXPECT(call(339, cwd_file, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8));
+  RENAME_EXPECT(call(199, held, 0, 1, 0, 0, 0, &error) == 3 && !error);
+  RENAME_EXPECT(call(199, duplicate, 0, 1, 0, 0, 0, &error) == 3 && !error);
+  RENAME_EXPECT(
+      call(339, old, (u64)current, 0, 0, 0, 0, &error) == 0 && !error &&
+      !secondary &&
+      little_integer(current + 8, 8) == little_integer(original + 8, 8) &&
+      little_integer(current + 6, 2) == little_integer(original + 6, 2));
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, old, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 && !error &&
+      !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"0123456789", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(call(13, work, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  const u64 descriptors[] = {cwd_file, rebound,   held, ydata, xdata, y,
+                             x,        duplicate, old,  work,  dir};
+  for (unsigned i = 0; i != sizeof(descriptors) / sizeof(descriptors[0]); ++i)
+    RENAME_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 &&
+                  !error && !secondary);
+  RENAME_EXPECT(login_equal_bytes((const unsigned char *)mapped,
+                                  (const unsigned char *)"0123456789", 10) &&
+                login_equal_bytes((const unsigned char *)victim_map,
+                                  (const unsigned char *)"klmnopqrst", 10) &&
+                login_equal_bytes((const unsigned char *)held_map,
+                                  (const unsigned char *)"ABCDEFGHIJ", 10));
+  RENAME_EXPECT(call(73, mapped, PAGE, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  RENAME_EXPECT(call(73, victim_map, PAGE, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  RENAME_EXPECT(call(73, held_map, PAGE, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  const char marker = 'R';
+  RENAME_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error &&
+                !secondary);
+#undef RENAME_EXPECT
+  return 37;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
+  if (argc >= 2 && equal(argv[1], "symbolic-link-rename")) {
+    int status = argc < 3 ? 51 : symbolic_link_rename(argv[2]);
+    if (status == 37 && argc >= 4 && equal(argv[3], "protected")) {
+      unsigned error;
+      call(128, (u64) "victim", (u64) "/static/data-link", 0, 0, 0, 0, &error);
+      return 50;
+    }
+    return status;
+  }
   if (argc >= 2 && equal(argv[1], "symbolic-link-unlink")) {
     int status = argc < 3 ? 51 : symbolic_link_unlink(argv[2]);
     if (status == 37 && argc >= 4 && equal(argv[3], "protected")) {

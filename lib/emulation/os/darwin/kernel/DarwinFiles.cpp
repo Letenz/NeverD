@@ -1175,7 +1175,7 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (auto *Reason = std::get_if<const char *>(&*From))
     return unsupported(Result, *Reason);
   auto &Source = std::get<Description>(*From);
-  if (Source.Type == Kind::SymbolicLink)
+  if (Source.Link && Source.Link->Protected)
     return unsupported(Result, diagnostic::SymbolicLinkMutation);
   if (Source.Type == Kind::Directory &&
       (!Source.Directory->Linked ||
@@ -1197,13 +1197,20 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (auto *Reason = std::get_if<const char *>(&*To))
     return unsupported(Result, *Reason);
   auto &Target = std::get<Description>(*To);
-  if (Target.Type == Kind::SymbolicLink)
+  if (Target.Link && Target.Link->Protected)
     return unsupported(Result, diagnostic::SymbolicLinkMutation);
-  if (Mode == RenameMode::Exclusive && (Target.File || Target.Directory)) {
+  // Ordinary leaf replacement is established separately from exchanging
+  // links or mixing a link with an actual directory vnode.
+  if ((Source.Link || Target.Link) &&
+      (Mode == RenameMode::Swap || Source.Directory || Target.Directory))
+    return unsupported(Result, diagnostic::SymbolicLinkMutation);
+  if (Mode == RenameMode::Exclusive &&
+      (Target.File || Target.Directory || Target.Link)) {
     // Same-object exclusive rename depends on filesystem case sensitivity.
     // Exact catalogue keys do not supply that missing filesystem property.
     if ((Source.File && Target.File == Source.File) ||
-        (Source.Directory && Target.Directory == Source.Directory))
+        (Source.Directory && Target.Directory == Source.Directory) ||
+        (Source.Link && Target.Link == Source.Link))
       return unsupported(Result, diagnostic::RenameCaseSensitivity);
     return returned(FileExists, true);
   }
@@ -1227,16 +1234,19 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
           (!Target.Directory->Created && !Target.Directory->Exchangeable))))
       return unsupported(Result, diagnostic::RenameSwapKind);
   }
-  const auto Parent =
-      Source.File ? Source.File->Parent : Source.Directory->Parent;
-  const auto TargetParent = directoryNode(parentPath(Target.Path));
+  const auto Parent = Source.File   ? Source.File->Parent
+                      : Source.Link ? Source.Link->Parent
+                                    : Source.Directory->Parent;
+  const auto TargetParent = Target.Link
+                                ? Target.Link->Parent
+                                : directoryNode(parentPath(Target.Path));
   // Device equality alone does not establish one mount. Only mkdir and
   // declared initial subtrees supply non-mount parent relationships.
   if (Parent->mountAncestor() != TargetParent->mountAncestor())
     return unsupported(Result, diagnostic::RenameMount);
   // Even a same-name native rename performs authorization. The namespace
   // grant excludes known restricted flags, aliases and special parent modes.
-  if (!mutableDirectory(Parent->Path) || !mutableDirectory(TargetParent->Path))
+  if (!Parent->Mutable || !TargetParent->Mutable)
     return unsupported(Result, diagnostic::DirectoryNotMutable);
   std::optional<int32_t> Device;
   auto SameDevice = [&](int32_t D) {
@@ -1306,31 +1316,50 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   }
   // Only Nodes and this lookup may own an immediately reclaimable target.
   // A mapping retains a separate lease even after all descriptors close.
-  const uint64_t Credit = Target.File && Target.File.use_count() == 2 &&
-                                  Target.File->Lease.use_count() == 1
-                              ? Target.bytes().size() + Target.File->PathCharge
-                              : 0;
-  const uint64_t Other = *StorageUsed - Source.File->PathCharge - Credit;
+  const uint64_t FileCredit =
+      Target.File && Target.File.use_count() == 2 &&
+              Target.File->Lease.use_count() == 1
+          ? Target.bytes().size() + Target.File->PathCharge
+          : 0;
+  // Runtime links have no descriptor or mapping lease of their own. Replacing
+  // one releases its entire current name/target charge, regardless of owners
+  // of the referent. Moving a source link changes only its name charge.
+  const uint64_t LinkCredit =
+      Target.Link ? Target.Link->Path.size() + 1 + Target.bytes().size() : 0;
+  const uint64_t OldCharge =
+      Source.Link ? Source.Link->Path.size() + 1 : Source.File->PathCharge;
+  const uint64_t Other = *StorageUsed - OldCharge - FileCredit - LinkCredit;
   const uint64_t Charge = Target.Path.size() + 1;
   if (Target.Path.size() >= limits::Path || Charge > limits::Bytes - Other)
     return unsupported(Result, diagnostic::RenameLimit);
   std::string NewKey = Target.Path, NewIdentity = Target.Path;
   if (Target.File)
     Unlinked.reserve(Unlinked.size() + 1);
-  auto Moved = Nodes.extract(Source.Path);
-  if (Target.File) {
-    updateNamespaceMetadata(*Target.File, true);
-    Unlinked.push_back(Target.File);
-    Nodes.erase(Target.Path);
+  auto Move = [&](auto &Table) {
+    auto Moved = Table.extract(Source.Path);
+    if (Target.File) {
+      updateNamespaceMetadata(*Target.File, true);
+      Unlinked.push_back(Target.File);
+      Nodes.erase(Target.Path);
+    } else if (Target.Link) {
+      Links.erase(Target.Path);
+    }
+    Moved.key().swap(NewKey);
+    Table.insert(std::move(Moved));
+  };
+  if (Source.Link) {
+    Move(Links);
+    Source.Link->Path.swap(NewIdentity);
+    Source.Link->Parent = TargetParent;
+  } else {
+    Move(Nodes);
+    updateNamespaceMetadata(*Source.File, false);
+    Source.File->Path.swap(NewIdentity);
+    Source.File->PathCharge = Charge;
+    Source.File->Parent = TargetParent;
   }
-  Moved.key().swap(NewKey);
-  Nodes.insert(std::move(Moved));
-  updateNamespaceMetadata(*Source.File, false);
-  Source.File->Path.swap(NewIdentity);
-  // Reclaim below deducts Credit exactly once, after the lookup releases it.
-  *StorageUsed = *StorageUsed - Source.File->PathCharge + Charge;
-  Source.File->PathCharge = Charge;
-  Source.File->Parent = TargetParent;
+  // Reclaim below deducts FileCredit once, after the lookup releases it.
+  *StorageUsed = *StorageUsed - OldCharge - LinkCredit + Charge;
   Parent->Changed = TargetParent->Changed = true;
   Target.File.reset();
   reclaimUnlinked();
