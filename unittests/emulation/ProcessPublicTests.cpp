@@ -419,6 +419,7 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"swapped-directory", "73"},
           std::pair{"vectored-io", "7621"},
           std::pair{"file-access", "61"},
+          std::pair{"symbolic-links", "79"},
           std::pair{"directory-mutations", "6d"},
           std::pair{"deleted-directories", "68"},
           std::pair{"initial-directory-removal", "6a"},
@@ -630,6 +631,24 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
             ->getArray(field::Directories)
             ->back()
             .getAsObject())[field::DirectoryRemovable] = true;
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName == "symbolic-links") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
+    auto Links = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::SymbolicLinksJSON));
+    auto M =
+        llvm::cantFail(llvm::json::parse(emulation::darwin_test::MetadataJSON));
+    (*M.getAsObject())[field::FileMode] = 0120777;
+    (*M.getAsObject())[field::FileInode] = 123;
+    (*M.getAsObject())[field::Size] = 4;
+    (*Links.getAsArray()->front().getAsObject())[field::FileMetadata] =
+        std::move(M);
+    (*Files)[field::SymbolicLinks] = std::move(Links);
+    (*Files)[field::WorkingDirectory] = "/";
+    for (auto &D : *Files->getArray(field::Directories))
+      D.getAsObject()->erase(field::DirectoryContents);
     Options = llvm::formatv("{0}", Input).str();
   }
   auto Text = takeString(neverd_emulate_process_json(Session, Path.c_str(),
@@ -1526,6 +1545,38 @@ TEST_F(ProcessPublic, AndroidSyscallNamesMatchSDKAndCLI) {
   ASSERT_TRUE(bool(Bytes));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
 #endif
+}
+
+TEST_F(ProcessPublic, DarwinSymbolicLinksRejectMalformedOptionsBeforeLoading) {
+  for (const char *Target : {"", "00", "61f", "zz"}) {
+    const auto Request =
+        std::string(
+            R"({"darwin_files":{"files":[],"symbolic_links":[{"path":"/link","target_hex":")") +
+        Target + R"("}]}})";
+    for (const char *Profile :
+         {MacOSMachO64, IOSMachO64, IOSSimulatorMachO64}) {
+      EXPECT_EQ(neverd_emulate_process_json(Session,
+                                            "missing-symbolic-link.macho",
+                                            Profile, Request.c_str()),
+                nullptr);
+      const auto Error = takeString(neverd_last_error(Session));
+      EXPECT_TRUE(Error.find("target_hex") != std::string::npos ||
+                  Error.find("symbolic link targets") != std::string::npos)
+          << Error;
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    }
+  }
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(
+        neverd_emulate_process_json(
+            Session, "missing-symbolic-link.macho", Profile,
+            R"({"darwin_files":{"files":[],"symbolic_links":[{"path":"/link","target_hex":"61"}]}})"),
+        nullptr);
+    EXPECT_NE(
+        takeString(neverd_last_error(Session)).find("darwin_files requires"),
+        std::string::npos);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
 }
 
 TEST_F(ProcessPublic, DarwinNiceRejectsMalformedOptionsBeforeLoading) {

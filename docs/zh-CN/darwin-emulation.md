@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
+<!-- i18n-source: 21441b8b14985fbac413a4bb78aa57c696ad5eb07b70d439200550bdc6ce27a4 -->
 
 [← 文档索引](README.md)
 
@@ -134,7 +134,7 @@ DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate
 
 `O_CREAT=0x200` 只在显式 mutable 的直接父目录中创建空普通文件，普通/nocancel open、openat 共用实现。新对象获得内容写授权；已有对象仍使用独立的 WritableFiles 授权。只读 FD 可以创建但不能写入。未提供创建策略时，新对象的 stat64 和稀疏定位仍明确未知；新对象始终不继承同名旧对象的 metadata/mutation_policy。
 
-O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截断、不检查写授权或映射；O_EXCL 单独无效。已有目录可用只读 O_CREAT 打开。顺序为无效访问模式→FD 容量→O_CREAT|O_DIRECTORY 的 EINVAL→路径访问。只能创建原始路径的最后缺失分量；缺失祖先及末尾 `/`、`//`、`/.`、`/..` 仍为 ENOENT。新文件的 O_CREAT|O_TRUNC 不设置 FWASWRITTEN，截断已有文件则设置。
+O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截断、不检查写授权或映射；O_EXCL 单独无效。已有目录可用只读 O_CREAT 打开。经过下述 openat 首字节及目录预检后，顺序为无效访问模式→FD 容量→O_CREAT|O_DIRECTORY 的 EINVAL→路径访问。只能创建原始路径的最后缺失分量；缺失祖先及末尾 `/`、`//`、`/.`、`/..` 仍为 ENOENT。新文件的 O_CREAT|O_TRUNC 不设置 FWASWRITTEN，截断已有文件则设置。
 
 只有实际插入才使父目录 stat/枚举失效。同名重建与仍打开或映射的旧对象拥有独立字节、元数据、描述和映射租约。256 项上限计入固定初始非文件项、具名对象及仍存活的孤立对象；新对象的规范路径/NUL 和当前字节计入 16 MiB，删除且最后 FD/映射释放后才回收动态费用。关闭具名对象不释放名额，初始输入/引用费用仍保留。预算不足或规范路径达到 1024 字节会明确停止，不虚构 ENOSPC 或原生路径错误；失败不留下名称或 FD。
 
@@ -217,7 +217,7 @@ Release Darwin 门禁核对 438 个唯一登记项：210 通过、228 跳过、�
 
 文件条目可添加 `metadata`；提供时，下例全部字段均必填。十进制字符串保留完整整数精度，JSON 数字限于 ±(2^53−1) 内的精确整数。device 为有符号 32 位，mode/link_count 为无符号 16 位，inode 为无符号 64 位，uid/gid/flags/generation 为无符号 32 位；size 必须等于文件字节数，blocks 不超过有符号 64 位上限，block_size 为非负有符号 32 位。四个时间使用有符号 64 位秒和 0–999999999 纳秒，mode 必须匹配文件或目录类型。
 
-`stat64` (338)、`fstat64` (339)、`lstat64` (340) 在 ARM64/x64 返回同一 144 字节 LP64 记录。路径解析与 open 共用；FD 查询遵循复制和关闭，既不分配描述符，也不改变游标。普通文件 rdev、填充和保留字段清零。输入提供初始元数据，可选修改策略决定后续变化；读取不推进时间，mode 不改变目录访问授权。缺少元数据、流状态、符号链接、旧版 stat和扩展安全查询明确不支持。路径/FD 错误先于目标地址检查，部分可写目标在任何写入前停止。原生测试逐字节对比真实文件状态并核对 SDK 布局，同一自编原始程序验证三种系统调用。
+`stat64` (338)、`fstat64` (339)、`lstat64` (340) 在 ARM64/x64 返回同一 144 字节 LP64 记录。路径解析与 open 共用；FD 查询遵循复制和关闭，既不分配描述符，也不改变游标。普通文件 rdev、填充和保留字段清零。输入提供初始元数据，可选修改策略决定后续变化；读取不推进时间，mode 不改变目录访问授权。缺少元数据、流状态、旧版 stat和扩展安全查询明确不支持。路径/FD 错误先于目标地址检查，部分可写目标在任何写入前停止。原生测试逐字节对比真实文件状态并核对 SDK 布局，同一自编原始程序验证三种系统调用。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
@@ -514,7 +514,7 @@ Release Darwin 共937项：553通过、384因后端不可用跳过、零失败�
 
 模式取低32位。R/W/X 使用位0–2，扩展权限使用位9–21；`(mode & 0x003ffe07) == 0` 时是存在性查询，其余位（含符号位）按原生规则忽略，不误报 EINVAL。实际权限请求在成功查找后明确返回 UnsupportedService，即使元数据或修改授权看似允许；已知路径和描述符错误先返回，不猜测权限结果。
 
-Faccessat 接受低位标志 AT_EACCESS(0x10)、AT_SYMLINK_NOFOLLOW(0x20)、AT_SYMLINK_NOFOLLOW_ANY(0x800) 的任意组合。其余标志在访问路径或 FD 前返回 EINVAL，即使未配置目录。当前目录没有符号链接，真实/有效身份固定。绝对路径忽略 dirfd；相对路径沿用配置的 CWD/目录 FD 规则。先复制至首个 NUL，再检查相对 FD；字符串中缺页返回 EFAULT。相对空路径仍检查 FD：未知 FD 为 EBADF、普通文件为 ENOTDIR，其余为 ENOENT。目录未配置或流的目录身份未知时仍明确不支持。
+Faccessat 接受低位标志 AT_EACCESS(0x10)、AT_SYMLINK_NOFOLLOW(0x20)、AT_SYMLINK_NOFOLLOW_ANY(0x800) 的任意组合。其余标志在访问路径或 FD 前返回 EINVAL，即使未配置目录。真实/有效身份固定；固定链接采用下文的解析策略。绝对路径忽略 dirfd；相对路径沿用配置的 CWD/目录 FD 规则。非 AT_FDCWD 的 nameiat 路径先读首字节、检查相对目录 FD，再导入完整字符串；首字节 `/` 跳过 FD。首字节故障为 EFAULT14；相对坏/文件 FD 的 EBADF9/ENOTDIR20 先于后续字节故障。相对空路径仍检查 FD：未知 FD 为 EBADF、普通文件为 ENOTDIR，其余为 ENOENT。目录未配置或流的目录身份未知时仍明确不支持。
 
 独立 `file-access` 工作负载在原生 macOS、五种客户机及 C++、C/CLI/Python 比较两个调用、忽略位、标志组合和查找顺序。原生 NOFOLLOW_ANY 使用相对目录 FD，避免宿主 `/tmp`、`/var` 符号链接影响对照。直接测试覆盖命名空间变化、混合权限位、描述符耗尽、元数据独立性和客户机内存失败。
 
@@ -589,7 +589,7 @@ Release Darwin 共1,051项：631通过、420因后端不可用跳过、零失败
 
 两个直接父目录均需名称空间修改授权；新建目录继承授权及已知 device/GID。重命名保留文件自身的身份、所有者/组、写授权和分配。已知设备冲突仍明确拒绝。实际移动使两个父目录的完整 stat/列举观察失效。已删除初始目录与重用路径始终是不同对象，旧目录 FD/CWD 不会得到替代对象的域。
 
-既有有界替换事务、映射保留、路径/NUL 费用及错误顺序继续适用。EXCL 遇到其他既存目标，仍在域与授权检查之前返回 EEXIST。原始 `renamed-file` 程序现在创建子目录、移入子目录、回到初始父目录覆盖文件，再移入子目录，通过 C++/C/CLI/Python 和原生 macOS 对照。权限强制检查、初始目录重命名及硬/符号链接及真实 APFS 元数据仍未完成。
+既有有界替换事务、映射保留、路径/NUL 费用及错误顺序继续适用。EXCL 遇到其他既存目标，仍在域与授权检查之前返回 EEXIST。原始 `renamed-file` 程序现在创建子目录、移入子目录、回到初始父目录覆盖文件，再移入子目录，通过 C++/C/CLI/Python 和原生 macOS 对照。权限强制检查、初始目录重命名及硬链接、动态符号链接及真实 APFS 元数据仍未完成。
 
 ### 跨父目录验证，2026-10-06
 
@@ -820,3 +820,32 @@ sysctl 沿用原复制阶段。显式 EUID0 的真实写请求在名称/MIB 与 
 ```
 
 [XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).
+
+
+## 禁止跟随标志与目录预检
+
+普通及 nocancel `open` / `openat` 接受低32位无符号 O_NOFOLLOW=0x100 或 O_NOFOLLOW_ANY=0x20000000。这两个查找标志不会出现在 F_GETFL，也不改变访问、追加、截断、创建或 FD 独立的 CLOEXEC 行为。二者同时设置时，先检查 FD 容量，再在完整路径导入前返回 EINVAL22；满表先返回 EMFILE24。未知标志仍明确不支持。
+
+非 AT_FDCWD 的 `openat` 在访问模式和 FD 容量检查前只导入路径首字节。首字节不可读返回 EFAULT14；相对前缀（含 NUL）先验证 FD 持有的目录对象：未知 FD 返回 EBADF9，普通文件返回 ENOTDIR20，未知流 vnode 类型仍不支持。首字节 `/` 跳过 dirfd 验证，之后才按原有 open 顺序导入完整路径。普通 `open` 与 AT_FDCWD 不执行该预检，其他 nameiat 路径共用首字节/相对 FD 预检；AT_FDONLY 绕过路径。拒绝操作不占用 FD 或新 inode，内存传输错误原样传播，不发布命名空间变更。
+
+原始 `file-access` 使用相对目录 FD 检查 NOFOLLOW_ANY，避免宿主 `/var`、`/tmp` 的链接别名。直接测试区分首字节与后续字节故障、斜杠/NUL、用户地址及页边界、满表和已删除目录对象。独立 ARM64 macOS 原始探针在不变的五秒期限内通过30项；最后一项满表绝对路径实际使用有效目录 FD，保留原标签但不扩大其证据范围。物理 iOS 和 Intel 原生验收仍须分别完成。
+
+[XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).
+
+## 固定初始符号链接
+
+C++ `DarwinFileOptions::SymbolicLinks` 与 JSON `darwin_files.symbolic_links` 声明固定链接。条目要求规范绝对 `path` 和原始十六进制 `target_hex`，可选 `metadata` 描述链接自身。目标为1..1023个非 NUL 字节，保留非 UTF-8、重复斜杠与点，可悬空。`files` 仍必填，可为空数组。链接名称不能与文件/目录冲突或成为其他已声明名称的祖先；路径/NUL与目标共同计入256条目、16 MiB限额。元数据要求 S_IFLNK、size等于目标长度；完整目录快照须含 DT_LNK=10 和一致 inode。配置 CWD 必须为实际目录。
+
+统一文件解析器先展开链接再处理点。相对目标从实际包含目录开始，绝对目标从客体根开始；每次重新解析尾斜杠，已消耗的输入斜杠不会变成目标斜杠。最多允许32次展开，第33次返回 ELOOP62；目标、剩余后缀和 NUL 总计超过1024字节返回 ENAMETOOLONG63。描述符、CWD、F_GETPATH、mmap 持有最终目标对象。
+
+stat64、普通 open/access/truncate/chdir 跟随末端链接；lstat64/readlink 保留末端链接。O_NOFOLLOW 保留后返回 ELOOP，叠加 O_DIRECTORY 则先返回 ENOTDIR20。O_NOFOLLOW_ANY 拒绝所需展开；O_CREAT|O_EXCL 对已有末端链接返回 EEXIST17，包括悬空和循环链接。AT0x20 保留末端，AT0x800 同时保留末端并拒绝中间/尾斜杠所需展开，二者可组合。AT_FDONLY 在标志校验后仍忽略路径。
+
+readlink(58) 使用有符号低32位 count；readlinkat(473) 保留完整 size_t。两者返回 int，超过 INT32_MAX 先于路径/FD返回 EINVAL22。仅复制 min(count,目标长度) 字节，不补 NUL，只预检实际前缀。零长度仍验证路径和链接类型，随后忽略输出指针；非链接 EINVAL22，全不可写 EFAULT14，部分可写在复制前明确停止，传输与内存预算错误原样传播。
+
+非空链接全局排除 MutableDirectories、RemovableDirectories、MovableDirectories、ExchangeableDirectories、SwapRenameDirectories、CreationPolicy；固定名称 WritableFiles/MutationPolicies 仍可改变最终普通文件。保留链接的 unlink/rename 在效果前明确停止。动态链接、硬链接、ACL权限和可变链接命名空间仍不支持。独立 ARM64 macOS 探针在原五秒期限内通过189观察、115完整缓冲检查；这不能单独证明物理 iOS、Intel HVF 或完整 OS兼容。
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"symbolic_links":[{"path":"/link","target_hex":"64617461"}],"working_directory":"/"}}
+```
+
+[XNU namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_lookup.c), [XNU readlink / AT](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU open authorization](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_subr.c).

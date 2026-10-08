@@ -486,6 +486,29 @@ TEST_P(DarwinMemoryTest, EmptyFilesHaveNoMappablePageButAllowLegacyZeroLength) {
   EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
   EXPECT_EQ(Space->mappedBytes(), 0u);
 }
+TEST_P(DarwinMemoryTest, SymbolicLinkOpensRetainTheActualTargetMappingLease) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.DarwinFiles->SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
+  const auto Direct = openFile(std::vector<uint8_t>(Page, 'x'), 2);
+  const auto Scratch = allocate(Page);
+  const uint8_t Link[] = {'/', 'l', 'i', 'n', 'k', 0};
+  llvm::cantFail(Space->write(Scratch, Link));
+  const auto Alias = fileCall(ServiceKind::Open, {Scratch, 2});
+  ASSERT_FALSE(Alias.Error);
+  auto A = call(ServiceKind::Mmap, {0, Page, 1, 2, Alias.Value, 0});
+  ASSERT_FALSE(A.Error);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(A.Value, 1)), 'x');
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {Alias.Value}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {Direct, 0}).Value, UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationMapping);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {A.Value, Page}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {Direct, 0}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::ReadLink, {Scratch, Scratch + 64, 4}).Value,
+            4u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Scratch + 64, 4)), 0x61746164u);
+}
+
 INSTANTIATE_TEST_SUITE_P(Pages, DarwinMemoryTest, testing::Values(4096, 16384));
 } // namespace
 } // namespace neverd::emulation::darwin_model

@@ -59,6 +59,32 @@ class DarwinKernelReferenceTests(unittest.TestCase):
         self.assertEqual(results[-1]["error"], "timeout")
         self.assertEqual(results[-1]["stdout_hex"], b"partial".hex())
 
+    def test_symbolic_link_case_has_its_own_catalogue_without_changing_old_modes(self):
+        roots = []
+        def execute(command, **kwargs):
+            path = Path(command[2])
+            roots.append(path.parent)
+            self.assertEqual(path.read_bytes(), b"0123456789")
+            self.assertEqual(kwargs, {"capture_output": True, "timeout": 5})
+            if command[1] == "symbolic-links":
+                self.assertEqual({item.name for item in path.parent.iterdir()},
+                                 {"data", "empty", "link", "chain", "dangling", "cycle", "dirlink"})
+                self.assertEqual((path.parent / "link").readlink(), Path("data"))
+                self.assertTrue((path.parent / "cycle").is_symlink())
+                self.assertEqual((path.parent / "dirlink").readlink(), Path("empty"))
+                self.assertFalse((path.parent / "dangling").exists())
+            else:
+                self.assertEqual({item.name for item in path.parent.iterdir()}, {"data", "empty"})
+            return subprocess.CompletedProcess(command, 37, b"", b"")
+        with mock.patch.object(reference.subprocess, "run", side_effect=execute):
+            results = reference.execute_cases(Path("native"),
+                [("directory-entries", 37, b""), ("symbolic-links", 37, b""),
+                 ("directory-entries", 37, b"")])
+        self.assertTrue(all(result["passed"] for result in results))
+        self.assertEqual(roots[0], roots[2])
+        self.assertNotEqual(roots[0], roots[1])
+        self.assertTrue(all(not path.exists() for path in roots))
+
     def test_native_file_cases_receive_real_isolated_input_bytes(self):
         paths = []
         def execute(command, **kwargs):

@@ -145,12 +145,13 @@ mutationPolicy(const llvm::json::Value &Value) {
     return Time.takeError();
   return DarwinFileMutationPolicy{*Number, *Time};
 }
-llvm::Expected<std::vector<uint8_t>> bytes(const llvm::json::Value &Value,
-                                           uint64_t &Remaining) {
+llvm::Expected<std::vector<uint8_t>>
+bytes(const llvm::json::Value &Value, uint64_t &Remaining,
+      llvm::StringRef Name = field::Bytes) {
   auto Hex = Value.getAsString();
   if (!Hex || Hex->size() % 2 || Hex->size() / 2 > Remaining ||
       !llvm::all_of(*Hex, llvm::isHexDigit))
-    return invalid(field::Bytes);
+    return invalid(Name);
   Remaining -= Hex->size() / 2;
   const auto Data = llvm::fromHex(*Hex);
   return std::vector<uint8_t>(Data.begin(), Data.end());
@@ -289,6 +290,32 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
           Out.DirectoryContents.emplace(Path->str(), std::move(*Parsed));
         }
         if (const auto *M = D->get(field::FileMetadata)) {
+          auto Parsed = metadata(*M);
+          if (!Parsed)
+            return Parsed.takeError();
+          Out.Metadata.emplace(Path->str(), std::move(*Parsed));
+        }
+      }
+    } else if (Name == field::SymbolicLinks) {
+      const auto *Links = V.getAsArray();
+      if (!Links || Links->size() > darwin_file_limits::Files)
+        return invalid(Name);
+      for (const auto &Value : *Links) {
+        const auto *Link = Value.getAsObject();
+        if (!Link || !Link->get(field::SymbolicLinkTarget) ||
+            Link->size() != 2 + unsigned(bool(Link->get(field::FileMetadata))))
+          return invalid(Name);
+        const auto Path = Link->getString(field::Path);
+        if (!Path || Path->size() >= Remaining)
+          return invalid(field::Path);
+        Remaining -= Path->size() + 1;
+        auto Target = bytes(*Link->get(field::SymbolicLinkTarget), Remaining,
+                            field::SymbolicLinkTarget);
+        if (!Target)
+          return Target.takeError();
+        if (!Out.SymbolicLinks.emplace(Path->str(), std::move(*Target)).second)
+          return invalid(field::Path);
+        if (const auto *M = Link->get(field::FileMetadata)) {
           auto Parsed = metadata(*M);
           if (!Parsed)
             return Parsed.takeError();

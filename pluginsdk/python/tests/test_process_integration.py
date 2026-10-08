@@ -548,6 +548,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("swapped-directory", b"s"),
                                            ("vectored-io", b"v!"),
                                            ("file-access", b"a"),
+                                           ("symbolic-links", b"y"),
                                            ("directory-mutations", b"m"),
                                            ("deleted-directories", b"h"),
                                            ("initial-directory-removal", b"j"),
@@ -777,6 +778,20 @@ class ProcessIntegrationTests(unittest.TestCase):
                                 next(d for d in files["directories"]
                                      if d["path"] == "/")["metadata"] = parent
                             file_options = json.dumps(writable_options)
+                        if mode == "symbolic-links":
+                            symbolic_options = json.loads(file_options)
+                            files = symbolic_options["darwin_files"]
+                            files["working_directory"] = "/"
+                            files["symbolic_links"] = [
+                                {"path": "/" + name, "target_hex": target.encode().hex()}
+                                for name, target in (("link", "data"), ("chain", "link"),
+                                                     ("dangling", "missing"), ("cycle", "cycle"),
+                                                     ("dirlink", "empty"))]
+                            files["symbolic_links"][0]["metadata"] = dict(
+                                files["files"][0]["metadata"], mode=0o120777, inode=123, size=4)
+                            for directory in files["directories"]:
+                                directory.pop("contents", None)
+                            file_options = json.dumps(symbolic_options)
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"], "exited", f"{mode}: {result['diagnostic']}")
                         self.assertEqual(result["exit_status"], 37, mode)
