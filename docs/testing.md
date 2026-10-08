@@ -1741,7 +1741,8 @@ for the analysis/native support matrix and the fail-closed patch contract.
 
 PE32 registration changes also require the focused state, frame and native
 targets. Native installation needs a source build of the LLVM fork exposing
-`LLVM_NEVERD_X86_REGISTRATION_EH`; the published r3 compiler has no such receipt.
+`LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
+`LLVM_NEVERD_X86_REGISTRATION_COOKIES`; the published r3 compiler has no such receipt.
 
 ```bash
 cmake --build build --parallel 4 --target neverd \
@@ -1752,7 +1753,7 @@ build/bin/NeverDRegistrationEHTests
 build/bin/NeverDWindowsRegistrationFrameTests
 build/bin/NeverDWindowsRegistrationNativeTests \
   --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract
-for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write; do
+for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter; do
   python scripts/check_windows_registration_rewrite.py \
     --test-binary build/bin/NeverDWindowsRegistrationNativeTests \
     --patch-binary build/bin/neverd --case "$registration_case" \
@@ -1760,7 +1761,7 @@ for registration_case in filter nested-finally continue-search continue-executio
 done
 ```
 
-The runtime runner builds an actual SEH3 source image, lifts its protected
+The runtime runner builds actual SEH3 and no-GS EH4 source images, lifts their protected
 function and executes the original, manual installer, public COFF patcher,
 import-name collision and both CLI modes. Every image runs at its preferred
 base and at a forced relocated base. Assertions cover return values, ordered
@@ -1775,7 +1776,11 @@ compiler receipts or skipped reconstruction cannot count as a pass.
 The `ci.yml` `windows_eh_only` profile runs the x86 original/callback probes
 and ARM32 cross-target PE checks. Supplying `windows_eh_llvm_artifact_run` adds
 all source reconstruction runs using a successful compiler build whose commit,
-archive checksum and BUILDINFO match the checked-out LLVM submodule. ARM32
+archive checksum and BUILDINFO match the checked-out LLVM submodule. It also
+executes strict EH4 cookie probes with and without GS, requiring rejection after
+cookie corruption. A dependent Windows job replays the same hashed EXEs with
+the native CRT. Wine callback execution and native Windows replay are recorded
+as separate evidence. ARM32
 cross-target codegen and PE validation do not establish Windows ARM32 runtime
 execution.
 

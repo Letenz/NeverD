@@ -39,7 +39,9 @@ inline llvm::Error validateFramePrivacy(
         &ExceptionBridges,
     const std::set<const llvm::Instruction *> &IncomingAccesses,
     llvm::ArrayRef<ExceptionAddressRange> CallerPCWrites = {},
-    const std::set<const llvm::Instruction *> &ChainProtocolReads = {}) {
+    const std::set<const llvm::Instruction *> &ChainProtocolReads = {},
+    va_t SecurityCookieVA = 0,
+    llvm::ArrayRef<ExceptionAddressRange> ImmutableImageRanges = {}) {
   const llvm::Instruction *CurrentInstruction = nullptr;
   auto Reject = [&](llvm::StringRef Detail = {}) {
     std::string Message = "coff registration patch: synthetic frame has an "
@@ -103,8 +105,10 @@ inline llvm::Error validateFramePrivacy(
     if (const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(Value))
       return Cell{Slot, 0};
     if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Value);
-        Global && (parseNdDataSymbol(Global->getName()) ||
-                   parseNdCodePtrSymbol(Global->getName())))
+        Global &&
+        (parseNdDataSymbol(Global->getName()) ||
+         parseNdCodePtrSymbol(Global->getName()) ||
+         (SecurityCookieVA && Global->getName() == "__security_cookie")))
       return Cell{Global, 0};
     if (const auto *Call = llvm::dyn_cast<llvm::IntrinsicInst>(Value);
         Call && Call->getIntrinsicID() == llvm::Intrinsic::localrecover &&
@@ -290,6 +294,9 @@ inline llvm::Error validateFramePrivacy(
               auto Base = parseNdDataSymbol(Global->getName());
               if (!Base)
                 Base = parseNdCodePtrSymbol(Global->getName());
+              if (!Base && SecurityCookieVA &&
+                  Global->getName() == "__security_cookie")
+                Base = SecurityCookieVA;
               if (!Base || *Base > UINT32_MAX)
                 return Reject();
               const int64_t Address = int64_t(*Base) + Where->Offset;
@@ -351,6 +358,30 @@ inline llvm::Error validateFramePrivacy(
           if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I)) {
             auto Where = Locate(Store->getPointerOperand(), 0);
             const uint64_t Bytes = Size(Store->getValueOperand()->getType());
+            if (!ImmutableImageRanges.empty() &&
+                !IncomingAccesses.count(Store) &&
+                (!Where || llvm::isa<llvm::GlobalVariable>(Where->Root))) {
+              const auto *Global =
+                  Where ? llvm::dyn_cast<llvm::GlobalVariable>(Where->Root)
+                        : nullptr;
+              auto Base = Global ? parseNdDataSymbol(Global->getName())
+                                 : std::optional<uint64_t>{};
+              if (!Base && Global)
+                Base = parseNdCodePtrSymbol(Global->getName());
+              if (!Base && Global && SecurityCookieVA &&
+                  Global->getName() == "__security_cookie")
+                Base = SecurityCookieVA;
+              if (!Base || *Base > UINT32_MAX)
+                return Reject("unproved EH4 image write");
+              const int64_t Address = int64_t(*Base) + Where->Offset;
+              if (Address < 0 || Address > UINT32_MAX ||
+                  Bytes > uint64_t(UINT32_MAX) + 1 - uint64_t(Address))
+                return Reject("wrapping EH4 image write");
+              for (const auto &Range : ImmutableImageRanges)
+                if (uint64_t(Address) < Range.End &&
+                    Range.Begin < uint64_t(Address) + Bytes)
+                  return Reject("EH4 cookie or scope table is written");
+            }
             if ((Where && llvm::isa<llvm::AllocaInst>(Where->Root) &&
                  (!Bounded(*Where, Bytes) || Store->isAtomic())) ||
                 (!Where && IsAddress(Store->getPointerOperand()) &&

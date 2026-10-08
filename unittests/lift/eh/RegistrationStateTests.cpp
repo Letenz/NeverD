@@ -103,6 +103,116 @@ LowFunc makeBranchingFrame() {
   return F;
 }
 
+LowFunc makeCookieFrame(bool GS = false) {
+  auto F = makeBranchingFrame();
+  auto &EH = *F.ExceptionMetadata;
+  EH.Personality = ExceptionPersonality::ExceptHandler4;
+  EH.Encoding = ExceptionEncoding::X86ScopeTableEH4;
+  auto &Chain = *EH.Registration;
+  Chain.SeededTryLevel = -2;
+  Chain.ScopeTableVA = 0x3000;
+  Chain.EHCookieOffset = -28;
+  Chain.GSCookieOffset = GS ? -36 : -2;
+  Chain.GSCookieXOROffset = GS ? 4 : 0;
+  Chain.HasSecurityCookies = GS;
+  Chain.Scopes.front().EnclosingLevel = -2;
+  Chain.TryLevelStores.back().Level = -2;
+  F.Blocks[2].Ops.back().Inputs[1] = NdVar::cst(uint32_t(-2), 4);
+  auto &Entry = F.Blocks.front();
+  auto Install = Entry.Ops.back();
+  Entry.Ops.pop_back();
+  emitOp(Entry, 0x1000, NdOp::COPY, NdVar::tmp(20, 4),
+         {NdVar::reg(x86reg::RSP, 4)});
+  emitOp(Entry, 0x1000, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+         {NdVar::reg(x86reg::RSP, 4), NdVar::cst(24, 4)});
+  emitOp(Entry, 0x1000, NdOp::LOAD, NdVar::tmp(21, 4), {NdVar::cst(0x4000, 4)});
+  emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(22, 4),
+         {NdVar::tmp(21, 4), NdVar::cst(0x3000, 4)});
+  auto Store = [&](int32_t Slot, NdVar Value) {
+    emitOp(Entry, 0x1000, NdOp::INT_ADD, NdVar::tmp(24, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(Slot), 4)});
+    emitOp(Entry, 0x1000, NdOp::STORE, {}, {NdVar::tmp(24, 4), Value});
+  };
+  Store(-8, NdVar::tmp(22, 4));
+  emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(23, 4),
+         {NdVar::tmp(21, 4), NdVar::reg(x86reg::RBP, 4)});
+  Store(-28, NdVar::tmp(23, 4));
+  if (GS) {
+    emitOp(Entry, 0x1000, NdOp::INT_ADD, NdVar::tmp(25, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(4, 4)});
+    emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(26, 4),
+           {NdVar::tmp(21, 4), NdVar::tmp(25, 4)});
+    Store(-36, NdVar::tmp(26, 4));
+  }
+  Install.Seq = Entry.Ops.size();
+  Install.Inputs[1] = NdVar::tmp(20, 4);
+  Entry.Ops.push_back(Install);
+  auto &Exit = F.Blocks.back();
+  emitOp(Exit, Exit.StartAddr, NdOp::INT_ADD, NdVar::tmp(30, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-16), 4)});
+  emitOp(Exit, Exit.StartAddr, NdOp::LOAD, NdVar::tmp(31, 4),
+         {NdVar::tmp(30, 4)});
+  emitOp(Exit, Exit.StartAddr, NdOp::STORE, {},
+         {NdVar::cst(0, 4), NdVar::tmp(31, 4)}, NdMemoryAddressSpace::X86FS);
+  return F;
+}
+
+TEST(RegistrationState, EH4CookiesUseTheAuthenticatedImageAndRuntimeFrame) {
+  for (bool GS : {false, true}) {
+    auto F = makeCookieFrame(GS);
+    auto Result = analyzeRegistrationStates(F, 0x4000);
+    ASSERT_TRUE(Result.Complete);
+    ASSERT_TRUE(Result.RegistrationLifetimeComplete);
+    EXPECT_TRUE(Result.SecurityCookiesComplete);
+    EXPECT_EQ(Result.SecurityCookieVA, 0x4000u);
+    EXPECT_FALSE(analyzeRegistrationStates(F).SecurityCookiesComplete);
+    EXPECT_FALSE(analyzeRegistrationStates(F, 0x4004).SecurityCookiesComplete);
+  }
+}
+
+TEST(RegistrationState, EH4CookieInitializationCannotBeNarrowOrUnencoded) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    auto F = makeCookieFrame();
+    auto &Ops = F.Blocks.front().Ops;
+    if (Mutation == 0)
+      F.ExceptionMetadata->Registration->EHCookieXOROffset = 4;
+    if (Mutation == 1)
+      F.ExceptionMetadata->Registration->EHCookieOffset = -20;
+    for (auto &Op : Ops) {
+      if (Mutation == 2 && Op.Output == NdVar::tmp(22, 4))
+        Op.Inputs[1] = NdVar::cst(0x3004, 4);
+      if (Mutation == 3 && Op.Output == NdVar::tmp(21, 4))
+        Op.Output.Size = 1;
+      if (Mutation == 4 && Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
+          Op.Inputs[1] == NdVar::tmp(23, 4))
+        Op.Inputs[1].Size = 1;
+    }
+    EXPECT_FALSE(analyzeRegistrationStates(F, 0x4000).SecurityCookiesComplete)
+        << Mutation;
+  }
+}
+
+TEST(RegistrationState, EH4CookiesAndScopeEncodingRemainRuntimePrivate) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    auto F = makeCookieFrame();
+    auto &Block = F.Blocks[1];
+    NdVar Address = NdVar::cst(Mutation == 3 ? 0x4000 : 0x3008, 4);
+    if (Mutation < 3) {
+      emitOp(Block, Block.StartAddr, NdOp::INT_ADD, NdVar::tmp(40, 4),
+             {NdVar::reg(x86reg::RBP, 4),
+              NdVar::cst(uint32_t(Mutation == 0 ? -28 : -8), 4)});
+      Address = NdVar::tmp(40, 4);
+    }
+    if (Mutation == 0)
+      emitOp(Block, Block.StartAddr, NdOp::LOAD, NdVar::tmp(41, 4), {Address});
+    else
+      emitOp(Block, Block.StartAddr, NdOp::STORE, {},
+             {Address, NdVar::cst(0, 4)});
+    EXPECT_FALSE(analyzeRegistrationStates(F, 0x4000).SecurityCookiesComplete)
+        << Mutation;
+  }
+}
+
 TEST(RegistrationState, IncomingCallerFrameUsesTheFinalCFGValue) {
   for (bool Agree : {false, true}) {
     LowFunc F = makeBranchingFrame();

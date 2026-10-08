@@ -87,6 +87,11 @@ struct RegistrationStateAnalysis {
   std::vector<RegistrationFrameValue> FrameValues;
   bool IncomingFrameAccessesComplete = true;
   std::vector<RegistrationIncomingFrameAccess> IncomingFrameAccesses;
+  /// EH4 source initialization, encoding and immutable cookie lifetime have
+  /// been checked across every ordinary and runtime path. This does not prove
+  /// the compiler's physical cookie; native codegen validates that separately.
+  bool SecurityCookiesComplete = false;
+  va_t SecurityCookieVA = 0;
   /// May-read image extents across all reachable ordinary and runtime roots.
   /// Exact frame-relative reads cannot alias these extents. Unknown addresses
   /// make the set incomplete rather than silently omitting a possible alias.
@@ -112,7 +117,8 @@ struct RegistrationStateAnalysis {
 /// Solve ordinary and runtime-dispatch state transfers together. Stores take
 /// effect only after their exact decoded instruction retires. A union at a
 /// join is retained; address order never selects a predecessor's state.
-RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function);
+RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
+                                                    va_t SecurityCookieVA = 0);
 
 /// Return exact address intervals only if every reaching state agrees about
 /// membership. An ambiguous join cannot be flattened into a lexical try range.

@@ -36,6 +36,7 @@ CASES = {"filter": (0, 0), "nested-finally": (1, 123),
          "continue-search": (2, 123), "continue-execution": (3, 1),
          "normal-finally": (4, 2), "cdecl-parameter": (5, 7),
          "cdecl-parameter-write": (6, 177)}
+CASES.update({"eh4-" + name: value for name, value in tuple(CASES.items())})
 
 
 class PE32:
@@ -73,19 +74,19 @@ class PE32:
     def directory(self, index: int) -> tuple[int, int]:
         return struct.unpack_from("<2I", self.data, self.optional + 96 + 8 * index)
 
-    def entry(self) -> int:
+    def entry(self, name: bytes = b"registration_entry") -> int:
         export, _ = self.directory(0)
         table = self.raw(export, 40)
         functions, names, ordinals = struct.unpack_from("<3I", self.data, table + 28)
         for index in range(self.u32(table + 24)):
             name_offset = self.raw(self.u32(self.raw(names + 4 * index)), 1)
             end = self.data.index(0, name_offset)
-            if self.data[name_offset:end] == b"registration_entry":
+            if self.data[name_offset:end] == name:
                 ordinal = self.u16(self.raw(ordinals + 2 * index, 2))
                 if ordinal >= self.u32(table + 20):
                     raise ValueError("export ordinal is out of bounds")
                 return self.u32(self.raw(functions + 4 * ordinal))
-        raise ValueError("registration_entry export is missing")
+        raise ValueError(f"required export is missing: {name!r}")
 
     def relocation_fields(self) -> set[int]:
         reloc, size = self.directory(5)
@@ -187,7 +188,8 @@ def main(argv: list[str] | None = None) -> int:
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     case, expected_trace = CASES[args.case]
-    report = {"schema": 2, "evidence": "reconstructed-source-registration-seh3",
+    eh4 = args.case.startswith("eh4-")
+    report = {"schema": 2, "evidence": f"reconstructed-source-registration-{'seh4' if eh4 else 'seh3'}",
               "case": args.case, "expected_trace": expected_trace,
               "passed": False, "steps": [], "observations": []}
     environment = os.environ.copy()
@@ -205,13 +207,19 @@ def main(argv: list[str] | None = None) -> int:
             prefix.mkdir(parents=True, exist_ok=True)
             environment.update(WINEPREFIX=str(prefix), WINEDEBUG="-all")
         commands = []
-        for name, definition in (("kernel32", KERNEL32), ("msvcrt", MSVCRT)):
+        definitions = (("kernel32", KERNEL32),
+                       ("msvcrt", MSVCRT + ("_except_handler4_common\n" if eh4 else "")))
+        for name, definition in definitions:
             (output / f"{name}.def").write_text(definition, encoding="utf-8")
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
-        for source in ("registration_seh3.s", "registration_observer.c"):
+        sources = (["registration_seh4.s", "registration_eh4_runtime.c"] if eh4
+                   else ["registration_seh3.s"])
+        sources.append("registration_observer.c")
+        for source in sources:
             commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
                              f"-DREGISTRATION_CASE={case}",
+                             "-DREGISTRATION_FORWARD_ONLY=1", "-DREGISTRATION_EXPECT_GS=0",
                              *( ["-x", "assembler-with-cpp"] if source.endswith(".s") else []),
                              "-fno-stack-protector", "-c", str(FIXTURES / source),
                              "-o", str(output / (source + ".obj"))])
@@ -221,9 +229,11 @@ def main(argv: list[str] | None = None) -> int:
                       output / "rewrite.xml"):
             stale.unlink(missing_ok=True)
         commands.append([linker, "/entry:mainCRTStartup", "/nodefaultlib",
-                         "/machine:x86", "/subsystem:console", "/export:registration_entry",
-                         f"/out:{original}", str(output / "registration_seh3.s.obj"),
-                         str(output / "registration_observer.c.obj"),
+                         "/machine:x86", "/subsystem:console", "/dynamicbase:no",
+                         "/export:registration_entry",
+                         *( ["/export:registration_eh4_personality=_except_handler4"] if eh4 else []),
+                         f"/out:{original}",
+                         *(str(output / (name + ".obj")) for name in sources),
                          str(output / "kernel32.lib"), str(output / "msvcrt.lib")])
         environment.update(NEVERD_REGISTRATION_INPUT_PE32=str(original),
                            NEVERD_REGISTRATION_OUTPUT_PE32=str(patched),

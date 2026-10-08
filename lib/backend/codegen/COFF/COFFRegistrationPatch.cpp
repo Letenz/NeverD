@@ -21,6 +21,7 @@
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/object/PELayout.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -1051,6 +1052,24 @@ validateIncomingCallerFrame(const llvm::Function &Parent, const MedFunc &Source,
 #endif
 } // namespace
 
+std::optional<va_t>
+findCOFFRegistrationSecurityCookieVA(const BinaryImage &Image,
+                                     llvm::StringRef Symbol) {
+  if (Image.Arch != Arch::X86 || Image.Format != BinaryFormat::COFF ||
+      Image.Base > UINT32_MAX || Symbol != "___security_cookie" ||
+      !Image.DynInfo.SecurityCookieRVA)
+    return std::nullopt;
+  const va_t Cookie = Image.Base + Image.DynInfo.SecurityCookieRVA;
+  if (Cookie > UINT32_MAX - 3 || !Image.readVA(Cookie, 4))
+    return std::nullopt;
+  for (const auto &EH : Image.ExceptionMetadata.Functions)
+    if (EH.Personality == ExceptionPersonality::ExceptHandler4 &&
+        EH.ParseStatus == ExceptionParseStatus::Complete && EH.Registration &&
+        coff_loader::getCheckedX86EH4CookieCheck(Image, EH.PersonalityVA))
+      return Cookie;
+  return std::nullopt;
+}
+
 llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
                                        const ExceptionFunction &Source,
                                        const BinaryImage &Image) {
@@ -1062,6 +1081,9 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
                                      WindowsEHNativeCapability::IRLowering)
            .canLowerNativeIR())
     return reject("source is not a checked x86 registration SEH function");
+  if (Source.Personality == ExceptionPersonality::ExceptHandler3 &&
+      !coff_loader::isCheckedX86SEH3Personality(Image, Source.PersonalityVA))
+    return reject("SEH3 personality has no checked CRT import forwarding path");
   const auto *Marker = Function.getMetadata(windows_eh_md::NativeAttachment);
   const auto *Version = Marker && Marker->getNumOperands() == 2
                             ? llvm::dyn_cast_or_null<llvm::ConstantAsMetadata>(
@@ -1135,6 +1157,22 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       !Replay.RegistrationStates->ChainOperationsComplete)
     return reject(
         "source registration lifetime or dispatch state is incomplete");
+  if (Source.Personality == ExceptionPersonality::ExceptHandler4) {
+    const auto &States = *Replay.RegistrationStates;
+    const auto *Cookie =
+        Function.getParent()->getNamedGlobal("__security_cookie");
+    if (!States.SecurityCookiesComplete || !States.SecurityCookieVA ||
+        States.SecurityCookieVA !=
+            Image.Base + Image.DynInfo.SecurityCookieRVA ||
+        !coff_loader::getCheckedX86EH4CookieCheck(Image,
+                                                  Source.PersonalityVA) ||
+        !Cookie || !Cookie->getValueType()->isIntegerTy(32) ||
+        !Cookie->isDeclaration() || !Cookie->hasExternalLinkage() ||
+        Cookie->isConstant() || Cookie->isThreadLocal() ||
+        Cookie->getAddressSpace() || Cookie->hasDLLImportStorageClass())
+      return reject(
+          "EH4 cookie frame, image storage or CRT wrapper is unproved");
+  }
   LowToMedConverter Converter;
   Converter.setBinaryImage(&Image);
   MedFunc ReplayMed = Converter.convert(Replay, Arch::X86, BinaryFormat::COFF);
@@ -1454,9 +1492,18 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   if (Chain.size() != States.ChainAccesses.size() ||
       FSReads != ExpectedFSReads || Dispatches.size() != Scopes.size())
     return reject("registration chain or dispatch set is incomplete");
+  std::vector<ExceptionAddressRange> ImmutableImageRanges;
+  if (Source.Personality == ExceptionPersonality::ExceptHandler4) {
+    ImmutableImageRanges.push_back(
+        {States.SecurityCookieVA, States.SecurityCookieVA + 4});
+    ImmutableImageRanges.push_back({Source.Registration->ScopeTableVA,
+                                    Source.Registration->ScopeTableVA + 16 +
+                                        uint64_t(Scopes.size()) * 12});
+  }
   if (llvm::Error Error = coff_registration::validateFramePrivacy(
           Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
-          IncomingAccesses, SourceCallerPCWrites, ChainProtocolReads))
+          IncomingAccesses, SourceCallerPCWrites, ChainProtocolReads,
+          States.SecurityCookieVA, ImmutableImageRanges))
     return Error;
   auto SourceSegments = validateSourceSegments(Function, ReplayMed,
                                                *CallbackMap, NativeFunctions);
@@ -1666,6 +1713,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
               "generated callback has no checked runtime entry protocol");
   LowFunc GeneratedCalleeABI;
   GeneratedCalleeABI.Entry = Source.CodeRange.Begin;
+  GeneratedCalleeABI.ExceptionMetadata = Source;
   GeneratedCalleeABI.Blocks.emplace_back();
   for (const auto *NativeFunction : NativeFunctions)
     for (const auto &Block : *NativeFunction)
@@ -1712,7 +1760,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
                   }))
     if (auto Error = coff_registration::validateFramePrivacy(
             Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
-            IncomingAccesses, GeneratedCallerPCWrites, ChainProtocolReads))
+            IncomingAccesses, GeneratedCallerPCWrites, ChainProtocolReads,
+            States.SecurityCookieVA, ImmutableImageRanges))
       return Error;
   return llvm::Error::success();
 #endif
@@ -1835,9 +1884,10 @@ validateCOFFRegistrationSemanticRows(const llvm::Function &Function,
             "generated EH4 cookie header changed its machine frame offsets");
     const int32_t GS = readLE<int32_t>(Header);
     const int32_t EH = readLE<int32_t>(Header + 8);
-    if ((Chain.GSCookieOffset == -2 ? GS != -2 : GS >= 0 || GS == -2) ||
-        readLE<uint32_t>(Header + 4) || EH >= 0 ||
-        readLE<uint32_t>(Header + 12))
+    if ((Chain.GSCookieOffset == -2
+             ? GS != -2 || readLE<uint32_t>(Header + 4)
+             : GS == -2 || GS % 4 || readLE<int32_t>(Header + 4) % 4) ||
+        EH % 4 || readLE<uint32_t>(Header + 12))
       return reject(
           "generated EH4 cookie header is not compiler frame derived");
   }

@@ -30,7 +30,8 @@ NeverD 在加载、提升、反编译和二进制重写的全过程中携带 Win
 | `__CxxFrameHandler4` | 有界变长解码到公共 C++ 图，包括 action kind 与 object offset | 同一 HighIR 图并保留 FH4 来源 | 仅分析；拒绝修改涉及的函数 |
 | `__GSHandlerCheck_SEH/EH/EH4` | 包装后的 personality 与经检查的 GS cookie 来源 | 基础语言图加 wrapper 注释 | 仅分析；拒绝修改涉及的函数，不做降级 |
 | x86 registration-chain SEH3 | 经检查的 scope 图、实际 FS:[0] 操作、callback root 与基于 CFG 的 try-level 状态集合 | 可规约且无歧义的区域生成显式 EH 节点；其他状态保留原生注释 | 对下文固定栈帧、caller-cleanup 的已证明子集支持原生 PE32 重建 |
-| x86 registration-chain SEH4 与 C++ EH | EH4 cookie 字段、绝对指针 C++ FuncInfo 与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 支持分析与反编译；仍拒绝原生安装 |
+| x86 registration-chain SEH4 | 经检查的 cookie 表达式、编码 scope 指针与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 对下文已认证、无 GS 的直接栈帧子集支持原生 PE32 重建 |
+| x86 registration-chain C++ EH | 绝对指针 FuncInfo 与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 支持分析与反编译；仍拒绝原生安装 |
 
 畸形记录绝不会按普通完整记录处理。部分解码记录仍可用于检查，但不能授权生成原生
 元数据。如果 ARM xdata header 仍能证明一个有界可执行 fragment 范围，而后续 unwind
@@ -76,7 +77,7 @@ MedIR 单独携带这些推导结果，不修改 patch 事务认证的 loader �
 直接 MSVC prologue 必须证明实际 FS:[0] 写入与 registration/state 字段的位置；普通局部
 变量中恰好相同的整数序列不能替代这一证据。
 
-SEH3 原生重建还会证明固定且私有的源栈帧、平衡的 FS:[0] 操作，以及每个普通 CFG
+SEH3/EH4 原生重建还会证明固定且私有的源栈帧、平衡的 FS:[0] 操作，以及每个普通 CFG
 block 唯一的活动状态。LLVM 拥有新的物理 registration；独立 filter 与 termination
 callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有经过认证的源
 链操作才会被替换。每个活动区间都有显式异步 scope 边界，包括内层 handler 进入外层
@@ -95,9 +96,17 @@ PE 事务检查实际字节和 DIR32 fixup，合并 SafeSEH 与 HIGHLOW relocati
 最终映像。新建的 Guard CF/EH continuation 表指针也会获得独立的 base relocation。
 注册链函数在 `section` 与 `inplace` 模式下都使用这个完整事务。
 
+SEH3 要求保留参数的已知 CRT import veneer。EH4 要求精确的转发 wrapper：四个
+dispatcher 参数、load-config cookie 地址、可执行 cookie checker 和 CRT common
+handler import 必须一致；仅凭 handler 名称不能授权重写。共享栈帧分析在 registration
+公开前证明编码 scope 指针与每个 cookie 表达式。源函数及保留的 callee 不能修改映像
+cookie 或 scope table，也不能在安装后观察合成 cookie 栈槽。LLVM 按实际 registration
+record 推导生成 cookie 偏移，包括运行时的虚拟帧基址；安装器再与实际表字节逐项核对。
+
 该路径要求 LLVM fork 提供 `LLVM_NEVERD_X86_REGISTRATION_EH` 契约；旧的已发布 r3
-预编译包会拒绝原生安装。EH4 的 cookie-aware 源重建以及 x86 C++ FuncInfo 的原生
-安装仍是独立的后续要求，不能用已有的分析元数据替代。
+预编译包会拒绝原生安装。EH4 还要求 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`。
+EH4 源 GS epilogue 与 x86 C++ FuncInfo 的原生安装仍是独立的后续要求，不能用已有的
+分析元数据替代。
 
 ## IR 契约
 
@@ -231,7 +240,8 @@ build-release/bin/NeverDRegistrationEHTests
 NEVERD_REGISTRATION_RUNTIME_OBJECT=/tmp/neverd-frame.obj \
   build-release/bin/NeverDWindowsRegistrationFrameTests
 python3 -m unittest scripts.tests.test_check_windows_registration_eh \
-  scripts.tests.test_check_windows_registration_frame -v
+  scripts.tests.test_check_windows_registration_frame \
+  scripts.tests.test_check_windows_registration_cookie -v
 python3 scripts/check_windows_registration_eh.py --output build-registration/evidence
 python3 scripts/check_windows_registration_frame.py --object /tmp/neverd-frame.obj \
   --output build-registration/callback-runtime
@@ -246,8 +256,13 @@ Windows 使用原生 loader。默认报告标记为 `original-runtime`。传入 
 有界异常指针槽、独立回调栈、原子拒绝，以及实际 i386 COFF scope 表的代码生成；
 帧执行器保留链接时的 SafeSEH 检查，执行 16 次真实异常，并要求 filter 调用次数和处理结果
 完全符合预期；报告标记为 `generated-x86-callback-abi`。这些检查本身不授权原生 patch。
-CI 的 `windows_eh_only` 手动
-配置还验证 ARM32 交叉目标 PE 生成与重建；这不等于在 Windows ARM32 上执行。
+源码重建 runner 在首选及强制重定位基址执行原始、手动安装、公开 COFF、符号冲突、
+CLI section 和 CLI inplace 六种映像。严格 EH4 oracle 还要求正常执行，以及分别损坏
+EH 和 GS cookie 后在 dispatch 前拒绝。Wine 的 common EH4 dispatcher 不检查 cookie，
+因此 fixture 会先完成该检查，再由真实 runtime 分派异常。
+CI 的 `windows_eh_only` 手动配置还验证 ARM32 交叉目标 PE 生成与重建；这不等于在
+Windows ARM32 上执行。提供精确 LLVM artifact build 后，下游 Windows job 会用原生
+Windows CRT 复跑同一批经哈希核对的 PE32 映像。
 
 ## 扩展原生支持
 

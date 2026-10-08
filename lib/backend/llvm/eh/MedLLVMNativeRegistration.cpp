@@ -13,6 +13,7 @@
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
 
 #include "llvm/IR/CFG.h"
@@ -99,6 +100,27 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     return false;
   const RegistrationChainInfo &Chain = *EH.Registration;
   const RegistrationStateAnalysis &States = *Func.RegistrationStates;
+  const bool EH4 = EH.Personality == ExceptionPersonality::ExceptHandler4;
+  if (Img && !EH4 &&
+      !coff_loader::isCheckedX86SEH3Personality(*Img, EH.PersonalityVA))
+    return false;
+  if (EH4) {
+    if (!States.SecurityCookiesComplete || !States.SecurityCookieVA ||
+        States.SecurityCookieVA > UINT32_MAX - 3 ||
+        (Img &&
+         (States.SecurityCookieVA !=
+              Img->Base + Img->DynInfo.SecurityCookieRVA ||
+          !coff_loader::getCheckedX86EH4CookieCheck(*Img, EH.PersonalityVA))))
+      return false;
+    if (auto *Value = Mod->getNamedValue("__security_cookie")) {
+      auto *Cookie = llvm::dyn_cast<llvm::GlobalVariable>(Value);
+      if (!Cookie || !Cookie->getValueType()->isIntegerTy(32) ||
+          !Cookie->isDeclaration() || !Cookie->hasExternalLinkage() ||
+          Cookie->isConstant() || Cookie->isThreadLocal() ||
+          Cookie->getAddressSpace() || Cookie->hasDLLImportStorageClass())
+        return false;
+    }
+  }
   if (!States.Complete || !States.CallbackStatesComplete ||
       !States.IncomingFrameAccessesComplete ||
       !States.RegistrationLifetimeComplete || !States.ChainOperationsComplete ||
@@ -675,6 +697,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   }
 
   // Commit. All source occurrences, callbacks and control edges are closed.
+  if (EH4 && !Mod->getNamedValue("__security_cookie"))
+    new llvm::GlobalVariable(*Mod, llvm::Type::getInt32Ty(*Ctx), false,
+                             llvm::GlobalValue::ExternalLinkage, nullptr,
+                             "__security_cookie");
   RegistrationIncomingIR.clear();
   RegistrationMemoryIR.clear();
   std::vector<llvm::Function *> SourceFunctions{&Parent};

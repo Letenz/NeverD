@@ -17,6 +17,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ValueSymbolTable.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/MC/BinaryRewrite.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -534,10 +535,21 @@ TEST(WindowsRegistrationFrame, FinallyTableTargetsTheRuntimeCleanupFunclet) {
   EXPECT_TRUE(HasFinally);
 }
 
-TEST(WindowsRegistrationFrame, EmitsAnExecutableRuntimeFilterFrameProbe) {
+void emitRuntimeFilterFrameProbe(bool EH4, bool GS = false) {
   Fixture F;
   auto *Personality = llvm::cast<llvm::Function>(F.Parent->getPersonalityFn());
-  Personality->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
+  if (EH4) {
+    F.Parent->setPersonalityFn(llvm::cast<llvm::Constant>(
+        F.Module
+            .getOrInsertFunction("_except_handler4",
+                                 Personality->getFunctionType())
+            .getCallee()));
+    Personality->eraseFromParent();
+    F.Parent->addFnAttr("llvm.rewrite.win-x86-registration-state");
+    if (GS)
+      F.Parent->addFnAttr(llvm::Attribute::StackProtectReq);
+  } else
+    Personality->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
   auto *Counter = new llvm::GlobalVariable(
       F.Module, llvm::Type::getInt32Ty(F.Context), false,
       llvm::GlobalValue::InternalLinkage,
@@ -654,7 +666,10 @@ TEST(WindowsRegistrationFrame, EmitsAnExecutableRuntimeFilterFrameProbe) {
   auto Emitted = emitObject(F.Module);
   ASSERT_TRUE(static_cast<bool>(Emitted))
       << llvm::toString(Emitted.takeError());
-  if (const char *Path = std::getenv("NEVERD_REGISTRATION_RUNTIME_OBJECT")) {
+  if (const char *Path =
+          std::getenv(GS    ? "NEVERD_REGISTRATION_EH4_GS_RUNTIME_OBJECT"
+                      : EH4 ? "NEVERD_REGISTRATION_EH4_RUNTIME_OBJECT"
+                            : "NEVERD_REGISTRATION_RUNTIME_OBJECT")) {
     std::error_code Error;
     llvm::raw_fd_ostream Output(Path, Error);
     ASSERT_FALSE(Error) << Error.message();
@@ -663,6 +678,20 @@ TEST(WindowsRegistrationFrame, EmitsAnExecutableRuntimeFilterFrameProbe) {
     ASSERT_FALSE(Output.has_error());
   }
 }
+
+TEST(WindowsRegistrationFrame, EmitsAnExecutableRuntimeFilterFrameProbe) {
+  emitRuntimeFilterFrameProbe(false);
+}
+
+#ifdef LLVM_NEVERD_X86_REGISTRATION_COOKIES
+TEST(WindowsRegistrationFrame, EmitsAnExecutableEH4CookieFrameProbe) {
+  emitRuntimeFilterFrameProbe(true);
+}
+
+TEST(WindowsRegistrationFrame, EmitsAnExecutableEH4GSCookieFrameProbe) {
+  emitRuntimeFilterFrameProbe(true, true);
+}
+#endif
 
 TEST(WindowsRegistrationFrame, RejectsNonlocalValuesBeforeMutatingTheModule) {
   Fixture F;

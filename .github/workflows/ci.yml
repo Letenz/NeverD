@@ -2112,7 +2112,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 \
             install --yes --no-install-recommends lld wine wine32:i386
       - name: Verify runtime evidence admission
-        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame -v
+        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie -v
       - name: Observe original x86 SEH and C++ EH across GS and optimization modes
         run: python scripts/check_windows_registration_eh.py --output build-windows-eh/evidence/original-runtime --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Fetch the exact compiler build for native registration reconstruction
@@ -2148,6 +2148,7 @@ jobs:
               assert re.findall(r'^llvm_commit: (.+)$', buildinfo, re.M) == [revision], buildinfo
               header = package.extractfile('neverd-llvm-linux-x86_64/include/llvm/MC/BinaryRewrite.h').read()
               assert b'#define LLVM_NEVERD_X86_REGISTRATION_EH 1' in header
+              assert b'#define LLVM_NEVERD_X86_REGISTRATION_COOKIES 1' in header
           with open(os.environ['GITHUB_ENV'], 'a') as output:
               output.write(f'REGISTRATION_LLVM_ARCHIVE_DIR={destination}\n')
               output.write(f'REGISTRATION_LLVM_ARCHIVE_SHA256={digest}\n')
@@ -2181,6 +2182,8 @@ jobs:
       - name: Verify registration state and canonical LLVM metadata
         env:
           NEVERD_REGISTRATION_RUNTIME_OBJECT: build-windows-eh/evidence/frame-runtime.obj
+          NEVERD_REGISTRATION_EH4_RUNTIME_OBJECT: build-windows-eh/evidence/eh4-cookie-frame.obj
+          NEVERD_REGISTRATION_EH4_GS_RUNTIME_OBJECT: build-windows-eh/evidence/eh4-gs-cookie-frame.obj
         run: |
           build-windows-eh/bin/NeverDRegistrationStateTests --gtest_output=xml:build-windows-eh/evidence/state.xml
           build-windows-eh/bin/NeverDRegistrationEHTests --gtest_output=xml:build-windows-eh/evidence/registration.xml
@@ -2201,13 +2204,24 @@ jobs:
           build-windows-eh/bin/NeverDWindowsEHCorpusTests \
             --gtest_filter='WindowsEHCorpus.RecoversX86RegistrationChains:WindowsEHCorpus.MasksThumbBitInARM32LanguageTables:WindowsEHCorpus.DecodesARMUnwindOperations:WindowsEHCorpus.ParsesDeclaredExceptionMetadata' \
             --gtest_output=xml:build-windows-eh/evidence/corpus.xml
-      - name: Execute reconstructed SEH3 source through both CLI modes and rebasing
+      - name: Execute strict generated EH4 and GS cookie contracts
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        run: |
+          python scripts/check_windows_registration_cookie.py \
+            --object build-windows-eh/evidence/eh4-cookie-frame.obj \
+            --output build-windows-eh/evidence/eh4-cookie-runtime \
+            --wine-prefix "$RUNNER_TEMP/neverd-wine32"
+          python scripts/check_windows_registration_cookie.py --gs \
+            --object build-windows-eh/evidence/eh4-gs-cookie-frame.obj \
+            --output build-windows-eh/evidence/eh4-gs-cookie-runtime \
+            --wine-prefix "$RUNNER_TEMP/neverd-wine32"
+      - name: Execute reconstructed SEH3 and EH4 source through both CLI modes and rebasing
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         run: |
           build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
             --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract \
             --gtest_output=xml:build-windows-eh/evidence/native.xml
-          for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write; do
+          for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter eh4-nested-finally eh4-continue-search eh4-continue-execution eh4-normal-finally eh4-cdecl-parameter eh4-cdecl-parameter-write; do
             python scripts/check_windows_registration_rewrite.py \
               --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
               --patch-binary build-windows-eh/bin/neverd --case "$registration_case" \
@@ -2234,5 +2248,33 @@ jobs:
             build-windows-eh/evidence/
             build-windows-eh/CMakeCache.txt
             build-windows-eh/unittests/lift/test_patch_coff_arm_seh.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-eh-native-replay:
+    name: Windows EH (native PE32 replay)
+    needs: windows-eh-focused
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_llvm_artifact_run != '' }}
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-eh-x86-runtime-arm32-contracts
+          path: build-windows-eh
+      - name: Execute the exact original and reconstructed images with the Windows CRT
+        run: python scripts/replay_windows_registration.py --evidence-root build-windows-eh/evidence --output build-windows-eh/native-replay.json
+      - name: Preserve native loader evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-eh-native-pe32-runtime
+          path: build-windows-eh/native-replay.json
           if-no-files-found: error
           retention-days: 14

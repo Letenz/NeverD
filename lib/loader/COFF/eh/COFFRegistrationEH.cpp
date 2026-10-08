@@ -66,12 +66,32 @@ void proveDirectRegistrationLayout(const BinaryImage &Img,
   Cursor += 5;
   if (Site.InstallVA != Site.Range.Begin + Cursor || P[Cursor] != 0x64 ||
       P[Cursor + 1] != 0xA1 || readLE<uint32_t>(P + Cursor + 2) != 0 ||
-      P[Cursor + 6] != 0x50 || P[Cursor + 7] != 0x64 || P[Cursor + 8] != 0x89 ||
-      P[Cursor + 9] != 0x25 || readLE<uint32_t>(P + Cursor + 10) != 0)
+      P[Cursor + 6] != 0x50)
     return;
+  size_t Installation = Cursor + 7;
+  if (P[Cursor + 7] != 0x64 || P[Cursor + 8] != 0x89 || P[Cursor + 9] != 0x25 ||
+      readLE<uint32_t>(P + Cursor + 10) != 0) {
+    // Direct EH4 initializes the encoded table and EH cookie before publishing
+    // the record. The state solver independently checks their values/lifetime.
+    P = Img.readVA(Site.Range.Begin, 48);
+    const va_t CookieVA = Img.DynInfo.SecurityCookieRVA
+                              ? Img.Base + Img.DynInfo.SecurityCookieRVA
+                              : 0;
+    if (IsCxx ||
+        Site.Identity.Personality != ExceptionPersonality::ExceptHandler4 ||
+        !P || Site.Range.size() < 48 || !CookieVA || CookieVA > UINT32_MAX ||
+        P[22] != 0x83 || P[23] != 0xec || P[24] != 16 || P[25] != 0xa1 ||
+        readLE<uint32_t>(P + 26) != CookieVA || P[30] != 0x31 ||
+        P[31] != 0x45 || P[32] != 0xf8 || P[33] != 0x31 || P[34] != 0xe8 ||
+        P[35] != 0x89 || P[36] != 0x45 || P[37] != 0xe4 || P[38] != 0x8d ||
+        P[39] != 0x45 || P[40] != 0xf0 || P[41] != 0x64 || P[42] != 0x89 ||
+        P[43] != 0x05 || readLE<uint32_t>(P + 44) != 0)
+      return;
+    Installation = 41;
+  }
   Chain.RegistrationOffset = IsCxx ? -12 : -16;
   Chain.TryLevelOffset = -4;
-  Chain.ChainInstallVA = Site.Range.Begin + Cursor + 7;
+  Chain.ChainInstallVA = Site.Range.Begin + Installation;
 }
 
 } // namespace
@@ -228,9 +248,10 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
     // direct registration prologue supplies that missing instruction evidence.
     if (F.ParseStatus == ExceptionParseStatus::Complete && F.Registration &&
         F.Registration->RegistrationOffset && F.Registration->TryLevelOffset &&
-        Img.hasExecutableCodeOwnerRange(
-            F.CodeRange.Begin,
-            F.Registration->RegistrationOffset == -12 ? 24 : 29))
+        F.CodeRange.contains(F.Registration->ChainInstallVA) &&
+        Img.hasExecutableCodeOwnerRange(F.CodeRange.Begin,
+                                        F.Registration->ChainInstallVA -
+                                            F.CodeRange.Begin + 7))
       Img.VerifiedFunctionEntries.insert(F.CodeRange.Begin);
     Img.ExceptionMetadata.ParseStatus = mergeExceptionParseStatus(
         Img.ExceptionMetadata.ParseStatus, F.ParseStatus);

@@ -35,7 +35,8 @@ Analysis support does not imply native reconstruction support.
 | `__CxxFrameHandler4` | Bounded variable-length decoding into the common C++ graph, including action kinds and object offsets | Same HighIR graph with FH4 provenance | Analysis only; a touched function is rejected |
 | `__GSHandlerCheck_SEH/EH/EH4` | Wrapped personality plus checked GS cookie provenance | Base-language graph and wrapper annotation | Analysis only; a touched function is rejected rather than downgraded |
 | x86 registration-chain SEH3 | Checked scope graph, actual FS:[0] administration, callback roots and CFG-derived reaching try levels | Reducible, unambiguous regions become explicit EH nodes; other state flow retains native annotations | Native PE32 reconstruction for the checked fixed-frame, caller-cleanup subset below |
-| x86 registration-chain SEH4 and C++ EH | EH4 cookie fields, absolute-pointer C++ FuncInfo and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Analysis and decompilation; native installation remains rejected |
+| x86 registration-chain SEH4 | Checked cookie expressions, encoded scope pointer and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the authenticated no-GS direct-frame subset below |
+| x86 registration-chain C++ EH | Absolute-pointer FuncInfo and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Analysis and decompilation; native installation remains rejected |
 
 Malformed records are never treated as ordinary complete records. A partially
 decoded record remains useful for inspection, but cannot authorize native
@@ -93,7 +94,7 @@ inventing an IP-to-state map.
 Direct MSVC prologues must prove the actual FS:[0] write and the registration
 and state-field offsets; matching integer sequences in locals are insufficient.
 
-Native SEH3 reconstruction additionally proves a fixed private source frame,
+Native SEH3/EH4 reconstruction additionally proves a fixed private source frame,
 balanced FS:[0] administration and one active state at each ordinary CFG block.
 LLVM owns the new physical registration. Outlined filters and termination
 callbacks recover source EBP/ESP and exception pointers through its escaped
@@ -121,10 +122,22 @@ and reparses the installed image. A new Guard CF/EH continuation table pointer
 also receives its own base relocation. Both `section` and `inplace` patch modes
 use this complete transaction for registration functions.
 
+SEH3 requires an argument-preserving veneer to the known CRT import. EH4
+requires an exact forwarding wrapper: all four dispatcher arguments, the
+load-config cookie address, the executable cookie checker and the CRT common
+handler import must agree. A handler name alone never authorizes rewriting.
+The shared frame domain proves the encoded scope pointer and every cookie
+expression before the registration becomes visible. Source and preserved
+callees cannot change the image cookie or scope table, or observe synthetic
+cookie storage after installation. LLVM derives the generated cookie offsets
+from its physical registration record, including the runtime's virtual frame
+base; the installer compares those offsets with the exact emitted table bytes.
+
 This path needs the LLVM fork's `LLVM_NEVERD_X86_REGISTRATION_EH` contract;
-the older published r3 package rejects native installation. EH4 cookie-aware
-source reconstruction and native x86 C++ FuncInfo installation are separate
-remaining requirements, even though their metadata is available for analysis.
+EH4 also requires `LLVM_NEVERD_X86_REGISTRATION_COOKIES`. The older published r3
+package rejects native installation. EH4 source GS epilogues and native x86
+C++ FuncInfo installation remain separate requirements, even though their
+metadata is available for analysis.
 
 ## IR contract
 
@@ -305,7 +318,8 @@ build-release/bin/NeverDRegistrationEHTests
 NEVERD_REGISTRATION_RUNTIME_OBJECT=/tmp/neverd-frame.obj \
   build-release/bin/NeverDWindowsRegistrationFrameTests
 python3 -m unittest scripts.tests.test_check_windows_registration_eh \
-  scripts.tests.test_check_windows_registration_frame -v
+  scripts.tests.test_check_windows_registration_frame \
+  scripts.tests.test_check_windows_registration_cookie -v
 python3 scripts/check_windows_registration_eh.py --output build-registration/evidence
 python3 scripts/check_windows_registration_frame.py --object /tmp/neverd-frame.obj \
   --output build-registration/callback-runtime
@@ -324,10 +338,17 @@ private callback stacks, atomic rejection, and actual i386 COFF scope-table
 code generation. The frame runner links the emitted object with SafeSEH checks
 enabled, executes 16 real exceptions, and requires the exact filter count and
 successful outcome. Its report is `generated-x86-callback-abi` evidence. These
-checks alone do not authorize a native patch.
+checks alone do not authorize a native patch. The source reconstruction runner
+executes original, manually installed, public COFF, symbol-collision, CLI
+section and CLI inplace variants at preferred and forced relocation bases.
+The strict EH4 oracle additionally requires valid execution and pre-dispatch
+rejection after separately corrupting EH and GS cookies. Wine's common EH4
+dispatcher does not validate cookies, so a small fixture supplies that check
+before forwarding dispatch to the runtime.
 The CI `windows_eh_only` dispatch profile additionally checks
 ARM32 cross-target PE generation and reconstruction. It does not claim execution
-on Windows ARM32.
+on Windows ARM32. When supplied an exact LLVM artifact build, a dependent
+Windows job replays the same hashed PE32 images with the native Windows CRT.
 
 ## Extending native support
 

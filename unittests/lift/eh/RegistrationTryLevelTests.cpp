@@ -23,6 +23,8 @@
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/Support/Endian.h"
+
 #include <string>
 #include <vector>
 
@@ -155,6 +157,84 @@ const RegistrationChainInfo *chainAt(const BinaryImage &Img, va_t Entry) {
     if (F.CodeRange.Begin == Entry && F.Registration)
       return &*F.Registration;
   return nullptr;
+}
+
+TEST(RegistrationTryLevel, SEH3RequiresAnArgumentPreservingCRTImportVeneer) {
+  ImageBuilder B;
+  B.Text = {0xff, 0x25};
+  emit32(B.Text, kRData + 8);
+  B.Text.resize(64, 0xcc);
+  B.Text.push_back(0xe9);
+  emit32(B.Text, uint32_t(-69));
+  B.RData.resize(16);
+  auto Image = B.build({});
+  Image.Imports.push_back({"msvcrt.dll", "_except_handler3", 0, kRData + 8});
+  EXPECT_TRUE(coff_loader::isCheckedX86SEH3Personality(Image, kText));
+  EXPECT_TRUE(coff_loader::isCheckedX86SEH3Personality(Image, kText + 64));
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    auto Changed = Image;
+    if (Mutation == 0)
+      Changed.Segments.front().Data[0] = 0xc3;
+    if (Mutation == 1)
+      Changed.Imports.front().Module = "custom.dll";
+    if (Mutation == 2)
+      Changed.Imports.front().Name = "other_handler";
+    if (Mutation == 3)
+      Changed.Segments[1].Data.resize(8);
+    if (Mutation == 4)
+      llvm::support::endian::write32le(
+          Changed.Segments.front().Data.data() + 65, uint32_t(-5));
+    EXPECT_FALSE(coff_loader::isCheckedX86SEH3Personality(Changed, kText + 64));
+  }
+}
+
+TEST(RegistrationTryLevel, EH4WrapperRequiresTheExactRuntimeForwardingABI) {
+  ImageBuilder B;
+  B.Text = {0x55, 0x89, 0xe5, 0xff, 0x75, 20,   0xff, 0x75,
+            16,   0xff, 0x75, 12,   0xff, 0x75, 8,    0x68};
+  emit32(B.Text, kText + 64);
+  B.Text.push_back(0x68);
+  emit32(B.Text, kRData);
+  B.Text.insert(B.Text.end(), {0xff, 0x15});
+  emit32(B.Text, kRData + 8);
+  B.Text.insert(B.Text.end(), {0x83, 0xc4, 24, 0x5d, 0xc3});
+  B.Text.resize(64, 0xcc);
+  B.Text.push_back(0xc3);
+  B.RData.resize(16);
+  auto Image = B.build({});
+  Image.DynInfo.SecurityCookieRVA = kRData - kBase;
+  Image.Imports.push_back(
+      {"msvcrt.dll", "_except_handler4_common", 0, kRData + 8});
+  EXPECT_EQ(coff_loader::getCheckedX86EH4CookieCheck(Image, kText), kText + 64);
+  for (const auto *Module :
+       {"ucrtbase.dll", "VCRUNTIME140.dll", "VCRUNTIME140D.dll"}) {
+    auto KnownRuntime = Image;
+    KnownRuntime.Imports.front().Module = Module;
+    EXPECT_EQ(coff_loader::getCheckedX86EH4CookieCheck(KnownRuntime, kText),
+              kText + 64);
+  }
+  for (const auto Offset :
+       {0, 2, 5, 8, 11, 14, 15, 20, 21, 25, 26, 27, 31, 32, 33, 34, 35}) {
+    auto Changed = Image;
+    Changed.Segments.front().Data[Offset] ^= 0x80;
+    EXPECT_FALSE(coff_loader::getCheckedX86EH4CookieCheck(Changed, kText))
+        << Offset;
+  }
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    auto Changed = Image;
+    if (Mutation == 0)
+      Changed.DynInfo.SecurityCookieRVA = 0;
+    if (Mutation == 1)
+      Changed.Imports.front().Module = "custom.dll";
+    if (Mutation == 2)
+      Changed.Imports.front().Name = "other_handler";
+    if (Mutation == 3)
+      Changed.Segments.front().Flags = SegmentFlags::Readable;
+    if (Mutation == 4)
+      llvm::support::endian::write32le(
+          Changed.Segments.front().Data.data() + 16, kRData);
+    EXPECT_FALSE(coff_loader::getCheckedX86EH4CookieCheck(Changed, kText));
+  }
 }
 
 std::vector<int32_t> levels(const RegistrationChainInfo &Chain) {

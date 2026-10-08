@@ -29,6 +29,7 @@
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-emitter"
 #include "neverd/ArchSupport.h"
@@ -1065,6 +1066,11 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
           Mod_->getOrInsertFunction(Name, Type).getCallee());
       rewrite_source::setOriginalVA(*Declaration, Address);
       FuncNames[Address] = Name;
+      if (Img && ((Name == "_except_handler4" &&
+                   coff_loader::getCheckedX86EH4CookieCheck(*Img, Address)) ||
+                  (Name == "_except_handler3" &&
+                   coff_loader::isCheckedX86SEH3Personality(*Img, Address))))
+        EmittedFuncNames[Address] = Name;
     }
 
   // Build every ordinary block skeleton before emitting the first operation.

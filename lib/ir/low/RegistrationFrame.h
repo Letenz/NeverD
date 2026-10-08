@@ -30,6 +30,12 @@ struct FrameValue {
   bool FrameOnlyFromCall = false;
   uint8_t SavedRegister = 0;
   bool ReturnPC = false;
+  /// Exact PE32 cookie expression: Cookie ^ Frame(Offset) ^ Constant, or
+  /// Cookie ^ Constant when the frame offset is absent. Other arithmetic and
+  /// partial-width aliases drop this identity while retaining frame taint.
+  bool SecurityCookie = false;
+  std::optional<int32_t> CookieFrameOffset;
+  uint32_t CookieXOR = 0;
 
   static FrameValue frame(int32_t Offset) { return {Offset, {}, false, true}; }
   static FrameValue constant(uint32_t Value) {
@@ -142,8 +148,10 @@ struct FrameState {
 /// edges; only the lifter's instruction-local temporaries are discarded.
 class FrameTransfer {
 public:
-  FrameTransfer(FrameState &State, int32_t RegistrationOffset)
-      : State(State), RegistrationOffset(RegistrationOffset) {}
+  FrameTransfer(FrameState &State, int32_t RegistrationOffset,
+                va_t SecurityCookieVA = 0)
+      : State(State), RegistrationOffset(RegistrationOffset),
+        SecurityCookieVA(SecurityCookieVA) {}
 
   void beginInstruction(va_t Address) {
     if (Address != Instruction) {
@@ -192,8 +200,12 @@ public:
       }
     }
     if ((Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT) &&
-        Op.NumInputs == 1)
-      return read(Op.Inputs[0]);
+        Op.NumInputs == 1) {
+      const auto Input = read(Op.Inputs[0]);
+      if (Op.Output.Size >= 4 && Op.Inputs[0].Size >= 4)
+        return Input;
+      return {{}, {}, false, Input.MayBeFrame};
+    }
     if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
         Op.Inputs[1].isConst() && Op.Inputs[1].Offset == 0 &&
         Op.Output.Size == 4)
@@ -204,6 +216,13 @@ public:
           Address.Constant == uint32_t{0} && Op.Output.Size == 4)
         return Installed ? FrameValue::frame(RegistrationOffset)
                          : FrameValue::previousChain();
+      if (SecurityCookieVA &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          Address.Constant == SecurityCookieVA && Op.Output.Size == 4) {
+        FrameValue Cookie;
+        Cookie.SecurityCookie = true;
+        return Cookie;
+      }
       if (Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           Address.MayBeFrame) {
         if (Address.Offset && Op.Output.Size == 4)
@@ -218,6 +237,30 @@ public:
             return {{}, {}, false, true};
       }
       return {};
+    }
+    if (Op.Opcode == NdOp::INT_XOR && Op.NumInputs == 2 &&
+        Op.Output.Size == 4 && Op.Inputs[0].Size == 4 &&
+        Op.Inputs[1].Size == 4) {
+      auto Left = read(Op.Inputs[0]);
+      auto Right = read(Op.Inputs[1]);
+      if (!Left.SecurityCookie && Right.SecurityCookie)
+        std::swap(Left, Right);
+      if (Left.SecurityCookie) {
+        if (Right.SecurityCookie &&
+            Left.CookieFrameOffset == Right.CookieFrameOffset)
+          return FrameValue::constant(Left.CookieXOR ^ Right.CookieXOR);
+        if (Right.Constant) {
+          Left.CookieXOR ^= *Right.Constant;
+          return Left;
+        }
+        if (Right.Offset && !Left.CookieFrameOffset) {
+          Left.CookieFrameOffset = Right.Offset;
+          Left.MayBeFrame = true;
+          return Left;
+        }
+      }
+      if (Left.Constant && Right.Constant)
+        return FrameValue::constant(*Left.Constant ^ *Right.Constant);
     }
     if ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
         Op.NumInputs == 2) {
@@ -278,6 +321,7 @@ public:
 private:
   FrameState &State;
   int32_t RegistrationOffset;
+  va_t SecurityCookieVA;
   std::map<uint64_t, FrameValue> Temps;
   va_t Instruction = InvalidVA;
 };

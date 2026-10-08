@@ -24,6 +24,8 @@
 
 #include "neverd/loader/BinaryImage.h"
 
+#include <optional>
+
 namespace neverd::coff_loader {
 
 /// Scan an x86-32 image for `FS:[0]` registration installs and decode the
@@ -34,6 +36,16 @@ namespace neverd::coff_loader {
 /// because a recovered record is attributed to the function that contains its
 /// install site and handler names come from symbols and import veneers.
 void parseX86RegistrationExceptions(BinaryImage &Img);
+
+/// Authenticate an argument-preserving veneer to the known CRT SEH3 import.
+bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA);
+
+/// Authenticate the direct CRT EH4 forwarding wrapper and return its cookie
+/// checker. Names/byte-search observations alone do not authorize rewriting:
+/// all four dispatcher arguments, the exact image cookie and the common CRT
+/// import must occupy the checked cdecl slots on the sole forwarding path.
+std::optional<va_t> getCheckedX86EH4CookieCheck(const BinaryImage &Img,
+                                                va_t HandlerVA);
 
 } // namespace neverd::coff_loader
 

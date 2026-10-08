@@ -34,6 +34,7 @@ struct PrivateFrameState {
 };
 struct ImageFrameEffects {
   std::set<std::pair<va_t, va_t>> Reads;
+  std::set<std::pair<va_t, va_t>> Writes;
   std::set<std::pair<va_t, va_t>> CallerPCWrites;
 };
 bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
@@ -119,6 +120,9 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
         if (Address.Constant && Op.Opcode != NdOp::STORE)
           Effects.Reads.emplace(*Address.Constant,
                                 va_t(*Address.Constant) + Memory.AccessSize);
+        if (Address.Constant && Memory.StoredValue)
+          Effects.Writes.emplace(*Address.Constant,
+                                 va_t(*Address.Constant) + Memory.AccessSize);
         if (Address.Offset) {
           const int64_t End = int64_t(*Address.Offset) + Memory.AccessSize;
           if (End > INT32_MAX)
@@ -345,6 +349,21 @@ bool hasCallerCleanupRegistrationABI(
         if (Pending.size() > 256)
           return false;
       }
+  }
+  if (Function.ExceptionMetadata &&
+      Function.ExceptionMetadata->Personality ==
+          ExceptionPersonality::ExceptHandler4 &&
+      Function.ExceptionMetadata->Registration) {
+    const auto &Chain = *Function.ExceptionMetadata->Registration;
+    const va_t CookieVA = Image.Base + Image.DynInfo.SecurityCookieRVA;
+    const uint64_t TableEnd =
+        Chain.ScopeTableVA + 16 + uint64_t(Chain.Scopes.size()) * 12;
+    if (!Image.DynInfo.SecurityCookieRVA || CookieVA > UINT32_MAX - 3)
+      return false;
+    for (const auto &[Begin, End] : Effects.Writes)
+      if ((Begin < CookieVA + 4 && CookieVA < End) ||
+          (Begin < TableEnd && Chain.ScopeTableVA < End))
+        return false;
   }
   if (Effects.CallerPCWrites.empty())
     return true;

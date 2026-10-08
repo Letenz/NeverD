@@ -21,6 +21,7 @@
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/object/PELayout.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -147,6 +148,48 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
     const auto Message = llvm::toString(std::move(Failure));
     EXPECT_NE(Message.find(Diagnostic.str()), std::string::npos) << Message;
   };
+  if (EH.Personality == ExceptionPersonality::ExceptHandler4) {
+    ASSERT_TRUE(Low.RegistrationStates->SecurityCookiesComplete);
+    EXPECT_EQ(Low.RegistrationStates->SecurityCookieVA,
+              Image.Base + Image.DynInfo.SecurityCookieRVA);
+    for (unsigned Mutation = 0; Mutation != 3; ++Mutation)
+      RejectMutation(
+          "compiler cookie retains the exact external image storage",
+          [Mutation](llvm::Function &F) {
+            auto *Cookie = F.getParent()->getNamedGlobal("__security_cookie");
+            if (!Cookie)
+              return false;
+            if (Mutation == 0)
+              Cookie->setInitializer(llvm::ConstantInt::get(
+                  llvm::Type::getInt32Ty(F.getContext()), 42));
+            if (Mutation == 1)
+              Cookie->setConstant(true);
+            if (Mutation == 2)
+              Cookie->setDLLStorageClass(
+                  llvm::GlobalValue::DLLImportStorageClass);
+            return true;
+          },
+          "cookie frame, image storage or CRT wrapper");
+    for (bool Table : {false, true})
+      RejectMutation(
+          "edited LLVM cannot overwrite the EH4 runtime contract",
+          [&](llvm::Function &F) {
+            auto *Cookie = F.getParent()->getNamedGlobal("__security_cookie");
+            if (!Cookie)
+              return false;
+            llvm::IRBuilder<> B(F.getEntryBlock().getTerminator());
+            llvm::Value *Target = Cookie;
+            if (Table)
+              Target = new llvm::GlobalVariable(
+                  *F.getParent(), B.getInt32Ty(), false,
+                  llvm::GlobalValue::ExternalLinkage, nullptr,
+                  "__nd_data_" +
+                      llvm::utohexstr(EH.Registration->ScopeTableVA));
+            B.CreateStore(B.getInt32(42), Target)->setVolatile(true);
+            return true;
+          },
+          "EH4 cookie or scope table is written");
+  }
   RejectMutation(
       "unmarked image memory read cannot bypass source occurrence checks",
       [](llvm::Function &F) {
@@ -762,6 +805,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   ASSERT_NE(CodeVA, 0u);
   auto Resolve = [&](llvm::StringRef Symbol,
                      uint32_t) -> std::optional<uint64_t> {
+    if (auto Cookie = findCOFFRegistrationSecurityCookieVA(Image, Symbol))
+      return *Cookie;
     if (auto Address = parseNdDataSymbol(Symbol))
       return *Address;
     if (auto Address = parseNdCodePtrSymbol(Symbol))
@@ -1499,6 +1544,8 @@ TEST(WindowsRegistrationNative, AuthenticatesEveryEH4CookieFrameOffset) {
   Chain.EHCookieOffset = -20;
   Chain.Scopes.front().EnclosingLevel = -2;
   Chain.TryLevelStores.back().Level = -2;
+  F.Source.RegistrationStates->SecurityCookiesComplete = true;
+  F.Source.RegistrationStates->SecurityCookieVA = 0x2500;
   for (auto &State : F.Source.RegistrationStates->Blocks)
     for (auto &Level : State.Levels)
       if (Level == -1)

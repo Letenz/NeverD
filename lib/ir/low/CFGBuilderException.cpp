@@ -36,7 +36,10 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   const ExceptionFunction &Metadata = *Func.ExceptionMetadata;
   Func.RegistrationStates.reset();
   if (Metadata.Registration)
-    Func.RegistrationStates = analyzeRegistrationStates(Func);
+    Func.RegistrationStates = analyzeRegistrationStates(
+        Func, CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
+                  ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
+                  : 0);
 
   std::map<va_t, LowBlock *> BlocksByAddress;
   std::map<int, LowBlock *> BlocksById;

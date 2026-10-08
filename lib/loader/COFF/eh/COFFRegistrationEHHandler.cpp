@@ -7,15 +7,88 @@
 #include "COFFRegistrationEHDetail.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/LanguageRuntime.h"
 #include "neverd/support/ISAEncoding.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace neverd::coff_loader {
+
+bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA) {
+  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF)
+    return false;
+  std::set<va_t> Seen;
+  for (unsigned Hop = 0; Hop != 4; ++Hop) {
+    if (!Seen.insert(HandlerVA).second)
+      return false;
+    const auto *Code = Img.readVA(HandlerVA, 5);
+    if (!Code || !Img.hasExecutableCodeOwnerRange(HandlerVA, 5))
+      return false;
+    if (Code[0] == 0xe9) {
+      const int64_t Target = int64_t(HandlerVA) + 5 + readLE<int32_t>(Code + 1);
+      if (Target <= 0 || Target > UINT32_MAX)
+        return false;
+      HandlerVA = va_t(Target);
+      continue;
+    }
+    Code = Img.readVA(HandlerVA, 6);
+    if (!Code || !Img.hasExecutableCodeOwnerRange(HandlerVA, 6) ||
+        Code[0] != 0xff || Code[1] != 0x25)
+      return false;
+    const auto *Import = Img.findImportAt(readLE<uint32_t>(Code + 2));
+    return Import && Import->Name == "_except_handler3" &&
+           Img.readVA(Import->IATAddr, 4) &&
+           (llvm::StringRef(Import->Module).equals_insensitive("msvcrt.dll") ||
+            llvm::StringRef(Import->Module).equals_insensitive("ucrtbase.dll"));
+  }
+  return false;
+}
+
+std::optional<va_t> getCheckedX86EH4CookieCheck(const BinaryImage &Img,
+                                                va_t HandlerVA) {
+  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
+      Img.Base > UINT32_MAX || !Img.DynInfo.SecurityCookieRVA)
+    return std::nullopt;
+  const va_t CookieVA = Img.Base + Img.DynInfo.SecurityCookieRVA;
+  const auto *Code = Img.readVA(HandlerVA, 36);
+  if (!Code || !Img.hasExecutableCodeOwnerRange(HandlerVA, 36) ||
+      CookieVA > UINT32_MAX - 3 || !Img.readVA(CookieVA, 4) ||
+      Code[0] != 0x55 ||
+      !((Code[1] == 0x89 && Code[2] == 0xe5) ||
+        (Code[1] == 0x8b && Code[2] == 0xec)))
+    return std::nullopt;
+  for (unsigned Arg = 0; Arg != 4; ++Arg)
+    if (Code[3 + Arg * 3] != 0xff || Code[4 + Arg * 3] != 0x75 ||
+        Code[5 + Arg * 3] != 20 - Arg * 4)
+      return std::nullopt;
+  if (Code[15] != 0x68 || Code[20] != 0x68 ||
+      readLE<uint32_t>(Code + 21) != CookieVA || Code[25] != 0xff ||
+      Code[26] != 0x15 || Code[31] != 0x83 || Code[32] != 0xc4 ||
+      Code[33] != 24 || Code[34] != 0x5d || Code[35] != 0xc3)
+    return std::nullopt;
+  const va_t CheckVA = readLE<uint32_t>(Code + 16);
+  const auto *Import = Img.findImportAt(readLE<uint32_t>(Code + 27));
+  if (!Img.isCodeAddress(CheckVA) || !Img.readVA(CheckVA, 1) || !Import ||
+      !Img.readVA(Import->IATAddr, 4) ||
+      Import->Name != "_except_handler4_common" ||
+      (!llvm::StringRef(Import->Module).equals_insensitive("msvcrt.dll") &&
+       !llvm::StringRef(Import->Module).equals_insensitive("ucrtbase.dll") &&
+       !llvm::StringRef(Import->Module)
+            .equals_insensitive("vcruntime140.dll") &&
+       !llvm::StringRef(Import->Module)
+            .equals_insensitive("vcruntime140d.dll")))
+    return std::nullopt;
+  return CheckVA;
+}
+
+} // namespace neverd::coff_loader
 
 namespace neverd::coff_loader::registration_detail {
 namespace {

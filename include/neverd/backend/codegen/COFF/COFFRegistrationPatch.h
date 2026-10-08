@@ -9,10 +9,12 @@
 #include "neverd/Common.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -25,6 +27,11 @@ struct BinaryImage;
 struct CompiledImage;
 struct ExceptionFunction;
 struct COFFGuardTableUpdate;
+
+/// Resolve the compiler cookie only to the checked PE32 load-config storage.
+std::optional<va_t>
+findCOFFRegistrationSecurityCookieVA(const BinaryImage &Image,
+                                     llvm::StringRef Symbol);
 
 struct COFFRegistrationPatchUpdate {
   bool Apply = false;
