@@ -21,6 +21,7 @@
 #include "neverd/libc/LibCFenv.h"
 #include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCInttypes.h"
+#include "neverd/libc/LibCLibintl.h"
 #include "neverd/libc/LibCLink.h"
 #include "neverd/libc/LibCLocale.h"
 #include "neverd/libc/LibCMath.h"
@@ -118,6 +119,7 @@ struct Registry {
     registerFunctions(All, ToHeader, kDirentFunctions, kDirentHeader);
     registerFunctions(All, ToHeader, kDlfcnFunctions, kDlfcnHeader);
     registerFunctions(All, ToHeader, kFcntlFunctions, kFcntlHeader);
+    registerFunctions(All, ToHeader, kLibintlFunctions, kLibintlHeader);
     registerFunctions(All, ToHeader, kLinkFunctions, kLinkHeader);
     registerFunctions(All, ToHeader, kNlTypesFunctions, kNlTypesHeader);
     registerFunctions(All, ToHeader, kObjCFunctions, kObjCHeader);
@@ -202,6 +204,7 @@ struct ArityRegistry {
     registerArity(Map, kTimeArity);
     registerArity(Map, kExceptionRuntimeArity);
     registerArity(Map, kSetjmpArity);
+    registerArity(Map, kLibintlArity);
     // The Windows C runtime's names are those of other runtimes' routines
     // once their underscores go (`_lock`, `terminate`): its prototypes apply
     // by object format alone.
