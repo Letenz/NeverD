@@ -84,7 +84,9 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       break;
     Args.push_back(Found[K]);
   }
-  if (Scan.TheArch != Arch::X86 || Scan.TailJump)
+  // Pushes placed against the call's stack pointer are in Found already.
+  if (Scan.TheArch != Arch::X86 || Scan.TailJump ||
+      Scan.WindowReachesStackAdjustment)
     return;
 
   // Every i386 `push` stores at the current ESP, so the spilled-slot scan

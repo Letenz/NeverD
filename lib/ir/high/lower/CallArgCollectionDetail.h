@@ -73,6 +73,10 @@ struct CallArgScan {
   /// at addresses from CallStackPointer, the version the call sees.
   bool WindowReachesStackAdjustment = false;
   MedVar CallStackPointer;
+  /// Where an earlier version of the stack pointer stands from
+  /// CallStackPointer, through the adjustments between them (a push's slot);
+  /// nullopt when they do not connect.
+  llvm::function_ref<std::optional<int64_t>(const MedVar &)> CallStackSlotOf;
   /// The call is a tail jump (CFG building rewrote `jmp callee` as a CALL and
   /// a RETURN of the same instruction): the callee enters on this function's
   /// stack, so its stack arguments sit at the callee-entry offsets from the

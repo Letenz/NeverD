@@ -180,4 +180,46 @@ TEST(I386CallContract, AThunkJumpingThroughTheSlotForwardsItsArguments) {
   EXPECT_EQ(Call.find("unknown value"), std::string::npos) << Call;
 }
 
+TEST(I386CallContract, APoppedPushIsNoArgument) {
+  // clang's get-PC `call $+5; pop ebx` pushes the return address and pops
+  // it, and `push eax` reserves a slot: a regparm callee that takes ECX gets
+  // neither as its argument.
+  std::vector<uint8_t> Code = {0x53,                         // push ebx
+                               0x50,                         // push eax
+                               0xE8, 0x00, 0x00, 0x00, 0x00, // call $+5
+                               0x5B,                         // pop ebx
+                               0x8D, 0x4C, 0x49, 0x01, // lea ecx, [ecx+ecx*2+1]
+                               0xE8, 0x08, 0x00, 0x00, 0x00, // call helper
+                               0x83, 0xC4, 0x04,             // add esp, 4
+                               0x5B,                         // pop ebx
+                               0xC3,                         // ret
+                               0xCC, 0xCC, 0xCC,             // padding
+                               0x8D, 0x04, 0x09, // helper: lea eax, [ecx+ecx]
+                               0xC3};            // ret
+  BinaryImage Img = makeImage(Code, {});
+  Symbol Helper = Symbol::makeFunc(Text + 0x19);
+  Helper.Name = "_helper";
+  Img.Symbols.push_back(std::move(Helper));
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Text, Text + 0x19};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+  const size_t Call = Source.find("helper(", Source.find(" wrap("));
+  ASSERT_NE(Call, std::string::npos) << Source;
+  const std::string Line = Source.substr(Call, Source.find('\n', Call) - Call);
+  // 0x401007 is the address `call $+5` pushes.
+  EXPECT_EQ(Line.find("0x401007"), std::string::npos) << Source;
+  EXPECT_EQ(Line.find("4198407"), std::string::npos) << Source;
+  EXPECT_NE(Line.find("arg0"), std::string::npos) << Source;
+}
+
 } // namespace

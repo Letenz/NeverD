@@ -432,6 +432,11 @@ constexpr unsigned kStackOffsetWideningJoins = 8;
 /// How many stores before a call to scan for stack-passed arguments.
 constexpr int kCallArgStoreScanWindow = 12;
 
+/// How many copies, extensions and constant adjustments a stack address may
+/// pass through back to the entry stack pointer; each i386 push or pop is
+/// one or two of them.
+constexpr int kStackAddressTraceDepth = 64;
+
 /// AArch64 calls with the complete x0-x7 prefix can have an integer argument
 /// at [sp]. Materializing eight constants may expand into several MedIR ops per
 /// register, so keep a larger but finite window once the full bank itself
