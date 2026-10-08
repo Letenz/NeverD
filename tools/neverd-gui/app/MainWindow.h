@@ -106,6 +106,7 @@ private:
   void navigateExpression(const QString &text);
   /// Follow a name double-clicked in the code view \p view.
   void activateCodeName(CodeView *view, const QString &name);
+  void navigateHistory(bool forward);
   void synchronize(Address address, QObject *source);
   /// Show the current function in the code view \p view if it can be seen.
   void followFunction(CodeView *view);
@@ -152,6 +153,7 @@ private:
   // Project state packed into the database.
   QHash<QString, QByteArray> projectState() const;
   void restoreProjectState();
+  void navigateInitialAddress();
   QJsonArray bookmarks() const;
   void setBookmarks(const QJsonArray &rows);
   QString bookmarksKey() const;
@@ -171,6 +173,8 @@ private:
   QHash<QString, Dock *> docks_;
   QHash<int, ChooserView *> choosers_;
   QPointer<CodeView> pseudocode_;
+  std::optional<Address> initialAddress_;
+  bool restoreGraph_ = false;
   QPointer<QDialog> quickStart_;
   QLabel *analysisLabel_ = nullptr, *directionLabel_ = nullptr,
          *diskLabel_ = nullptr, *fileLabel_ = nullptr;
@@ -181,6 +185,8 @@ private:
   QString lastPaletteCommand_;
   bool searchDown_ = true;
   bool synchronizing_ = false;
+  quint64 codeNavigationSerial_ = 0;
+  bool codeHistoryNavigation_ = false;
   bool hexActive_ = false;
   bool quitting_ = false;
   bool defaultSizesPending_ = false;

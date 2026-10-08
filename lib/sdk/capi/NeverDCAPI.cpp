@@ -38,6 +38,7 @@
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
 #include "neverd/sdk/NeverDPlugin.h"
 #include "neverd/support/BinaryLoading.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/Format.h"
@@ -150,9 +151,9 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
     Err = "input path is empty";
     return false;
   }
-  auto Path = std::filesystem::path(InputPath);
+  auto Path = std::filesystem::u8path(InputPath);
   if (!std::filesystem::exists(Path)) {
-    Err = "file not found: " + Path.string();
+    Err = "file not found: " + pathToUTF8(Path);
     return false;
   }
   BinaryLoadOptions LoadOpts;
@@ -271,7 +272,7 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
     Trace.finish(false);
     return 0;
   }
-  auto P = std::filesystem::path(Path);
+  auto P = std::filesystem::u8path(Path);
   if (!std::filesystem::exists(P)) {
     S->setError(std::string("file not found: ") + Path);
     Trace.finish(false);
@@ -365,12 +366,12 @@ int neverd_session_is_loaded(neverd_session_t Sess) {
 
 void neverd_session_set_pdb_path(neverd_session_t Sess, const char *Path) {
   if (auto *S = toSession(Sess))
-    S->DbgRequest.PDBPath = Path ? std::filesystem::path(Path) : "";
+    S->DbgRequest.PDBPath = Path ? std::filesystem::u8path(Path) : "";
 }
 
 void neverd_session_set_map_path(neverd_session_t Sess, const char *Path) {
   if (auto *S = toSession(Sess))
-    S->DbgRequest.MapPath = Path ? std::filesystem::path(Path) : "";
+    S->DbgRequest.MapPath = Path ? std::filesystem::u8path(Path) : "";
 }
 
 void neverd_session_set_debug_info_enabled(neverd_session_t Sess, int Enabled) {
@@ -447,7 +448,7 @@ const char *neverd_session_debug_info_kind(neverd_session_t Sess) {
 
 const char *neverd_session_debug_info_path(neverd_session_t Sess) {
   auto *S = toSession(Sess);
-  return dupStr(S ? S->DbgPath.string() : std::string());
+  return dupStr(S ? pathToUTF8(S->DbgPath) : std::string());
 }
 
 int neverd_session_discover_functions(neverd_session_t Sess) {
@@ -482,7 +483,7 @@ int neverd_session_analyze(neverd_session_t Sess) {
 
 const char *neverd_session_file_path(neverd_session_t Sess) {
   auto *S = toSession(Sess);
-  return S->Loaded ? dupStr(S->FilePath.string()) : dupStr(std::string());
+  return S->Loaded ? dupStr(pathToUTF8(S->FilePath)) : dupStr(std::string());
 }
 
 const char *neverd_session_arch_name(neverd_session_t Sess) {
@@ -637,6 +638,16 @@ neverd_va_t neverd_session_base_addr(neverd_session_t Sess) {
 neverd_va_t neverd_session_entry_addr(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   return S->Loaded ? S->Img.Entry : 0;
+}
+
+const char *neverd_session_load_diagnostics_json(neverd_session_t Sess) {
+  llvm::json::Array Diagnostics;
+  const auto *S = toSession(Sess);
+  if (S && S->Loaded)
+    for (const auto &D : S->Img.LoadDiagnostics)
+      Diagnostics.push_back(
+          llvm::json::Object{{"code", D.Code}, {"message", D.Message}});
+  return dupStr(jsonToString(llvm::json::Value(std::move(Diagnostics))));
 }
 
 int neverd_session_segment_count(neverd_session_t Sess) {

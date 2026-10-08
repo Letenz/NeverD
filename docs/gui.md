@@ -50,6 +50,27 @@ prompt for unsaved changes. Drop one existing file at a time; directories and
 web URLs are not opened. Opening by drag and drop leaves the source file in
 place.
 
+PE browsing tolerates complete legacy relocation layouts and reports unusable
+entry/import metadata in **Output**. An unknown entry opens at a mapped code
+region for browsing; this does not reconstruct the program's OEP. Invalid import
+bindings remain unknown, and fixed-image semantic checks retain their stricter
+requirements. Truncated or unmappable image structures can still prevent loading.
+
+Local file paths passed between the GUI, worker, CLI and C ABI use UTF-8 on
+all platforms. Windows paths are converted to native filesystem paths before
+loading binaries, companion PDB/MAP files, signatures and project sidecars.
+Chinese names, spaces and other Unicode characters are supported without
+changing the Windows system code page.
+
+The default application and code font is Consolas at 10 points when that
+family is installed. Otherwise, the system fixed-width font is used. A saved
+code-font choice continues to override the default for code views.
+
+Double-clicking a function name in a code view follows it in that same window,
+keeping its C or LLVM C representation even when the window is locked. Back and
+forward navigation also stays in the active code window. Imports and global
+objects continue to open at their addresses in the disassembly or hex view.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.
