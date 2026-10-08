@@ -53,6 +53,8 @@ public:
   /// page of rows {"address","length","type","text","encoding"} in address
   /// order, filtered by text, address or type.
   Json strings(const Json &payload);
+  /// The name the listing shows for \p address, automatic or not.
+  std::string nameAt(std::uint64_t address);
   /// Resolve an automatic or listing-local name to its address.
   std::optional<std::uint64_t> resolveName(const std::string &name);
   /// Whether \p address is an import's slot or the entry of its thunk.

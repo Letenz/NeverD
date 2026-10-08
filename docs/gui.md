@@ -227,8 +227,9 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Space | Toggle graph and text view |
 | F5 / Tab | Pseudocode / switch between disassembly and pseudocode |
 | X / Ctrl+X / Ctrl+J | References to the operand / to the item / from the item |
-| N | Rename the function |
+| N | Rename the name under the cursor, or the address: a function at its entry, data, a label in code |
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |
+| D / A / U | Make data (again for the next size) / a string / bytes of the item |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
 | Ctrl+P / Ctrl+L / Ctrl+S / Ctrl+E | Choose a function / name / segment / entry point |
@@ -301,6 +302,15 @@ symbols, the function detector and analysis, and the edits are kept in
 function-edits <input> --create <address>`, `--delete <address>`, `--list`).
 A function edit drops whole-program analysis results: analysis continues
 function by function until **Analyze** runs again.
+
+**Edit → Rename** (N) names any address, as the listing and the pseudocode
+show it: a name under the cursor renames what it denotes, otherwise the item
+the cursor is on. A data name replaces `qword_A410` in its label, every operand
+(`mov rdx, cs:pname`) and the C (`fprintf(stderr, "%s: %s\n", pname, msg)`). A
+name has no spaces, leads to one address and is never an automatic name such
+as `sub_1234`. Names are kept in `<input>.neverd-renames.json`, which the
+command line reads and writes too (`neverd rename <input> --addr <address>
+--to <name>`, `--clear`).
 
 **Edit → Data** (D) makes the item under the cursor a value, and pressing it
 again cycles the value through byte, word, dword and qword; **Edit → String**

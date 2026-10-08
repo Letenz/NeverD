@@ -1082,6 +1082,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         aliases.contains(name))
       name = aliases.at(name);
     result["name"] = std::move(name);
+    // The name of the address itself, which a rename starts from.
+    result["address_name"] = listing().nameAt(address);
     result["comment"] = ownedString(neverd_annotation_get(session_, address));
     result["import"] = listing().isImport(address);
     return result;
@@ -1327,15 +1329,25 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   if (operation == "rename") {
     requireWriter();
     if (dirty_)
-      throw Error(
-          "unsaved_changes",
-          "Save or reload staged annotations before renaming a function");
+      throw Error("unsaved_changes",
+                  "Save or reload staged annotations before renaming");
     const auto name = stringField(p, "name", {}, 4096);
-    if (name.empty())
-      throw Error("invalid_request", "Function name cannot be empty");
+    if (name.empty() || std::any_of(name.begin(), name.end(), [](char c) {
+          return static_cast<unsigned char>(c) <= ' ' || c == 0x7f;
+        }))
+      throw Error(
+          "invalid_request",
+          "A name is not empty and has no spaces or control characters");
+    // A name in an automatic form reads as an address, and a name leads to
+    // one address.
+    if (parseDummyName(name))
+      throw Error("invalid_request",
+                  name + " is an automatic name; choose another");
+    if (const auto other = listing().resolveName(name);
+        other && *other != address)
+      throw Error("invalid_request",
+                  "The name " + name + " is used at " + hexAddress(*other));
     const int index = neverd_func_find_by_addr(session_, address);
-    if (index < 0)
-      throw Error("not_found", "No function begins at that address");
     auto &store = history();
     auto state = store.committedState();
     auto &renames = state["renames"];
@@ -1348,10 +1360,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         found = true;
       }
     if (!found)
-      renames.push_back(
-          {{"addr", hexAddress(address)},
-           {"original", ownedString(neverd_func_name(session_, index))},
-           {"renamed", name}});
+      renames.push_back({{"addr", hexAddress(address)},
+                         {"original", index >= 0 ? ownedString(neverd_func_name(
+                                                       session_, index))
+                                                 : listing().nameAt(address)},
+                         {"renamed", name}});
     Json after;
     for (const auto &item : renames)
       if (parseAddress(item.at("addr").get<std::string>()) == address)

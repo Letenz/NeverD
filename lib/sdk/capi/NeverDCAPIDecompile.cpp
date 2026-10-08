@@ -307,6 +307,7 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
   Opts.TheArch = S->Img.Arch;
   Opts.Format = S->Img.Format;
   Opts.Image = &S->Img;
+  Opts.UserNames = &S->Renames;
   if (SourceMap) {
     SourceMap->Recognitions = &S->PipeResult.LibraryRecognitions;
     SourceMap->HighSources = &S->PipeResult.HighSources;
@@ -374,6 +375,7 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   CEmitterOptions Opts;
   Opts.TheArch = S->Img.Arch;
   Opts.Format = S->Img.Format;
+  Opts.UserNames = &S->Renames;
   if (SourceMap) {
     SourceMap->Recognitions = &S->PipeResult.LibraryRecognitions;
     SourceMap->LLVMSources = Native->Sources.get();
@@ -963,6 +965,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     CEmitterOptions COpts;
     COpts.TheArch = R.Img.Arch;
     COpts.Format = R.Img.Format;
+    COpts.UserNames = S ? &S->Renames : nullptr;
     LLVMCEmitter Emitter;
     Emitter.emit(*R.Result.LlvmModule, OS, COpts, R.Dbg.get(), &R.Img);
   } else {
@@ -970,6 +973,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.TheArch = R.Img.Arch;
     COpts.Format = R.Img.Format;
     COpts.Image = &R.Img;
+    COpts.UserNames = S ? &S->Renames : nullptr;
     HighCEmitter Emitter;
     Emitter.emit(R.Result.HighFuncs, OS, COpts, R.Dbg.get());
   }

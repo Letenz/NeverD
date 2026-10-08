@@ -2494,6 +2494,51 @@ TEST_F(SessionCAPITest, SidecarWritesRespectWorkerOwnership) {
   EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-renames.json"));
 }
 
+TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {
+  // lea rax, [rip + d] to the data, then ret: the code takes the address of
+  // data no symbol names.
+  std::string Code = "\x48\x8d\x05";
+  const auto Displacement =
+      static_cast<uint32_t>(DataELFData - (DataELFEntry + 7));
+  for (unsigned I = 0; I < 4; ++I)
+    Code += static_cast<char>(Displacement >> (8 * I));
+  Code += '\xc3';
+  const auto Input =
+      write("user-names.elf",
+            makeDataELF(std::string_view("\x01\x02\x03\x04", 4), Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const std::string Row = "{\"addr\":\"0x" + llvm::utohexstr(DataELFData) +
+                          "\",\"name\":\"table_base\",\"size\":0}";
+  ASSERT_EQ(neverd_rename_addr(Session, DataELFData, "table_base"), 0)
+      << takeString(neverd_last_error(Session));
+  // The symbols name it, and so does the C.
+  EXPECT_NE(takeString(neverd_data_symbols_json(Session)).find(Row),
+            std::string::npos);
+  ASSERT_GE(neverd_session_discover_functions(Session), 1);
+  EXPECT_NE(
+      takeString(neverd_decompile(Session, DataELFEntry)).find("table_base"),
+      std::string::npos);
+  // The name is saved with the input and comes back with it.
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_NE(takeString(neverd_data_symbols_json(Reopened)).find(Row),
+              std::string::npos);
+    neverd_session_destroy(Reopened);
+  }
+  // A name has no spaces, and names an address in the image.
+  EXPECT_EQ(neverd_rename_addr(Session, DataELFData, "table base"), -1);
+  EXPECT_EQ(neverd_rename_addr(Session, 0x10, "nowhere"), -1);
+  // Taking the name away leaves the data unnamed again.
+  ASSERT_EQ(neverd_rename_addr(Session, DataELFData, nullptr), 0);
+  EXPECT_EQ(takeString(neverd_data_symbols_json(Session)).find("table_base"),
+            std::string::npos);
+  EXPECT_EQ(
+      takeString(neverd_decompile(Session, DataELFEntry)).find("table_base"),
+      std::string::npos);
+}
+
 TEST_F(SessionCAPITest, ReloadingRenamesRestoresNamesRemovedFromTheSidecar) {
   const std::string Original = write("original.evm", "6001600055");
   ASSERT_EQ(neverd_session_load(Session, Original.c_str()), 1);
