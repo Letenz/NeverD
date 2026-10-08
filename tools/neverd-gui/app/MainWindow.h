@@ -106,6 +106,10 @@ private:
   /// Follow a name double-clicked in the code view \p view.
   void activateCodeName(CodeView *view, const QString &name);
   void synchronize(Address address, QObject *source);
+  /// Show the current function in the code view \p view if it can be seen.
+  void followFunction(CodeView *view);
+  /// Whether \p object is a code view that follows the disassembly.
+  bool followsDisassembly(const QObject *object) const;
   void updateActions();
   void updateStatusBar();
   void updateTitle();
@@ -180,6 +184,8 @@ private:
   bool defaultSizesPending_ = false;
   QTimer statusTimer_;
   QStringList pendingCommands_;
+  /// The code view asked for while a jump was still loading.
+  std::optional<QString> pseudocodeAfterJump_;
   QHash<QString, const char *> dockTitles_;
   static inline MainWindow *instance_ = nullptr;
 };

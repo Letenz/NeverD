@@ -4109,7 +4109,10 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     Obj.MemoryWidths.insert(Ty->Size);
   if (Obj.Name.empty()) {
     std::string Raw;
-    if (Dbg) {
+    if (Opts.UserNames)
+      if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
+        Raw = It->second;
+    if (Raw.empty() && Dbg) {
       if (auto Data = Dbg->resolveDataObject(Addr); Data && !Data->Name.empty())
         Raw = Data->Name;
     }

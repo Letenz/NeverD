@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "NativeMobileSession.h"
+#include "SessionImpl.h"
 #include "gtest/gtest.h"
 
 #include "neverd/loader/BinaryImage.h"
@@ -2500,6 +2501,51 @@ TEST_F(SessionCAPITest, SidecarWritesRespectWorkerOwnership) {
   EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-renames.json"));
 }
 
+TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {
+  // lea rax, [rip + d] to the data, then ret: the code takes the address of
+  // data no symbol names.
+  std::string Code = "\x48\x8d\x05";
+  const auto Displacement =
+      static_cast<uint32_t>(DataELFData - (DataELFEntry + 7));
+  for (unsigned I = 0; I < 4; ++I)
+    Code += static_cast<char>(Displacement >> (8 * I));
+  Code += '\xc3';
+  const auto Input =
+      write("user-names.elf",
+            makeDataELF(std::string_view("\x01\x02\x03\x04", 4), Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const std::string Row = "{\"addr\":\"0x" + llvm::utohexstr(DataELFData) +
+                          "\",\"name\":\"table_base\",\"size\":0}";
+  ASSERT_EQ(neverd_rename_addr(Session, DataELFData, "table_base"), 0)
+      << takeString(neverd_last_error(Session));
+  // The symbols name it, and so does the C.
+  EXPECT_NE(takeString(neverd_data_symbols_json(Session)).find(Row),
+            std::string::npos);
+  ASSERT_GE(neverd_session_discover_functions(Session), 1);
+  EXPECT_NE(
+      takeString(neverd_decompile(Session, DataELFEntry)).find("table_base"),
+      std::string::npos);
+  // The name is saved with the input and comes back with it.
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_NE(takeString(neverd_data_symbols_json(Reopened)).find(Row),
+              std::string::npos);
+    neverd_session_destroy(Reopened);
+  }
+  // A name has no spaces, and names an address in the image.
+  EXPECT_EQ(neverd_rename_addr(Session, DataELFData, "table base"), -1);
+  EXPECT_EQ(neverd_rename_addr(Session, 0x10, "nowhere"), -1);
+  // Taking the name away leaves the data unnamed again.
+  ASSERT_EQ(neverd_rename_addr(Session, DataELFData, nullptr), 0);
+  EXPECT_EQ(takeString(neverd_data_symbols_json(Session)).find("table_base"),
+            std::string::npos);
+  EXPECT_EQ(
+      takeString(neverd_decompile(Session, DataELFEntry)).find("table_base"),
+      std::string::npos);
+}
+
 TEST_F(SessionCAPITest, ReloadingRenamesRestoresNamesRemovedFromTheSidecar) {
   const std::string Original = write("original.evm", "6001600055");
   ASSERT_EQ(neverd_session_load(Session, Original.c_str()), 1);
@@ -3166,6 +3212,67 @@ TEST_F(SessionCAPITest, LibrarySourcePagesPreserveTextAndReloadEvidence) {
   ASSERT_NE(Withdrawn.getArray("library_regions"), nullptr);
   EXPECT_TRUE(Withdrawn.getArray("library_regions")->empty());
   EXPECT_EQ(Withdrawn.getString("text"), Before.getString("text"));
+}
+
+TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
+  const auto Path =
+      (std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) / "accessors-inline.o")
+          .string();
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  int Index = neverd_func_find_by_name(Session, "_nd_vector_u32_data_inline");
+  if (Index < 0)
+    Index = neverd_func_find_by_name(Session, "nd_vector_u32_data_inline");
+  ASSERT_GE(Index, 0);
+  const auto Entry = neverd_func_entry(Session, Index);
+  auto &State = *neverd::sdk::toSession(Session);
+  using Route = neverd::sdk::Session::SourceRoute;
+  const auto Decompile = [&](bool HighC) {
+    return takeString(HighC ? neverd_decompile(Session, Entry)
+                            : neverd_decompile_llvm(Session, Entry));
+  };
+  std::string HighCText;
+  for (const bool HighC : {true, false}) {
+    const char *Stage = HighC ? "c" : "llvmc";
+    SCOPED_TRACE(Stage);
+    const Route Kind = HighC ? Route::HighC : Route::LLVMC;
+    const std::string Original = Decompile(HighC);
+    ASSERT_FALSE(Original.empty()) << takeString(neverd_last_error(Session));
+    if (HighC)
+      HighCText = Original;
+    // A decompile keeps its text; the first page adds the map pages need.
+    auto *Kept = State.findFunctionSource(Entry, Kind);
+    ASSERT_NE(Kept, nullptr);
+    EXPECT_EQ(Kept->Text, Original);
+    EXPECT_FALSE(Kept->Map);
+    std::string Assembled;
+    for (size_t Offset = 0;;) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2));
+      ASSERT_TRUE(Page.getString("text"));
+      Assembled += Page.getString("text")->str();
+      if (Page.getBoolean("complete").value_or(false))
+        break;
+      ASSERT_TRUE(Page.getInteger("next_offset"));
+      Offset = *Page.getInteger("next_offset");
+      ASSERT_LT(Offset, 10000u);
+    }
+    EXPECT_EQ(Assembled, Original);
+    Kept = State.findFunctionSource(Entry, Kind);
+    ASSERT_NE(Kept, nullptr);
+    EXPECT_TRUE(Kept->Map);
+    // Later pages and decompiles read the kept text instead of emitting the
+    // function again.
+    Kept->Text = "/* kept */\n";
+    EXPECT_EQ(takeView(neverd_ir_view_json(Session, Entry, Stage, 0, 2))
+                  .getString("text"),
+              "/* kept */\n");
+    EXPECT_EQ(Decompile(HighC), "/* kept */\n");
+  }
+  // A new pipeline emits the source again.
+  neverd_session_restrict_function(Session, 0);
+  EXPECT_TRUE(State.FunctionSources.empty());
+  EXPECT_EQ(Decompile(true), HighCText);
 }
 
 TEST_F(SessionCAPITest, IRViewRejectsInvalidUTF8Representation) {

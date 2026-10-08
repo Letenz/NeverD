@@ -218,8 +218,10 @@ constexpr std::size_t MaxFunctionRows = 1000000;
 // (neverd::strings::MaxMinLength).
 constexpr int DefaultStringMinLength = 4;
 constexpr std::int64_t MaxStringMinLength = 1024;
-/// Lines of one engine code page; longer functions keep engine names.
-constexpr std::size_t MaxNamedViewLines = 2048;
+/// Lines of one engine code page.
+constexpr std::size_t EnginePageLines = 2048;
+/// Text a renamed whole-function view may hold: the engine's source budget.
+constexpr std::size_t MaxNamedViewBytes = 32 * 1024 * 1024;
 
 /// A page of \p items; a filter keeps the rows where one of \p searchFields
 /// contains it, ignoring the case of ASCII letters.
@@ -464,14 +466,39 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
                    std::to_string(listing().generation());
   if (namedViewKey_ != key) {
     namedViewKey_.clear();
-    auto full = backendJson(
-        view(session_, address, representation.c_str(), 0, MaxNamedViewLines),
-        true);
-    // A function longer than one engine page keeps the engine's own pages.
-    if (!full.is_object() || !full.contains("text") ||
-        !full["text"].is_string() || !full.value("complete", false) ||
-        full.value("offset", std::size_t{0}) != 0)
-      return std::nullopt;
+    // The whole function, from as many engine pages as it fills: the engine
+    // emits it once and pages it from there.
+    Json full;
+    for (std::size_t next = 0;;) {
+      auto page = backendJson(view(session_, address, representation.c_str(),
+                                   next, EnginePageLines),
+                              true);
+      if (!page.is_object() || !page.contains("text") ||
+          !page["text"].is_string() || !page.contains("rows") ||
+          !page["rows"].is_array() ||
+          page.value("offset", std::size_t{0}) != next)
+        return std::nullopt;
+      const bool complete = page.value("complete", false);
+      const Json following = page.value("next_offset", Json());
+      if (full.is_null()) {
+        full = std::move(page);
+      } else {
+        full["text"].get_ref<std::string &>() +=
+            page["text"].get_ref<const std::string &>();
+        for (auto &row : page["rows"])
+          full["rows"].push_back(std::move(row));
+      }
+      if (complete)
+        break;
+      if (!following.is_number_unsigned() ||
+          following.get<std::size_t>() <= next ||
+          full["text"].get_ref<const std::string &>().size() >
+              MaxNamedViewBytes)
+        return std::nullopt;
+      next = following.get<std::size_t>();
+    }
+    full["complete"] = true;
+    full["next_offset"] = nullptr;
     std::vector<std::pair<std::size_t, std::ptrdiff_t>> shift;
     full["text"] =
         renameIdentifiers(full["text"].get<std::string>(), aliases, shift);
@@ -1085,6 +1112,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         aliases.contains(name))
       name = aliases.at(name);
     result["name"] = std::move(name);
+    // The name of the address itself, which a rename starts from.
+    result["address_name"] = listing().nameAt(address);
     result["comment"] = ownedString(neverd_annotation_get(session_, address));
     result["import"] = listing().isImport(address);
     return result;
@@ -1330,15 +1359,25 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   if (operation == "rename") {
     requireWriter();
     if (dirty_)
-      throw Error(
-          "unsaved_changes",
-          "Save or reload staged annotations before renaming a function");
+      throw Error("unsaved_changes",
+                  "Save or reload staged annotations before renaming");
     const auto name = stringField(p, "name", {}, 4096);
-    if (name.empty())
-      throw Error("invalid_request", "Function name cannot be empty");
+    if (name.empty() || std::any_of(name.begin(), name.end(), [](char c) {
+          return static_cast<unsigned char>(c) <= ' ' || c == 0x7f;
+        }))
+      throw Error(
+          "invalid_request",
+          "A name is not empty and has no spaces or control characters");
+    // A name in an automatic form reads as an address, and a name leads to
+    // one address.
+    if (parseDummyName(name))
+      throw Error("invalid_request",
+                  name + " is an automatic name; choose another");
+    if (const auto other = listing().resolveName(name);
+        other && *other != address)
+      throw Error("invalid_request",
+                  "The name " + name + " is used at " + hexAddress(*other));
     const int index = neverd_func_find_by_addr(session_, address);
-    if (index < 0)
-      throw Error("not_found", "No function begins at that address");
     auto &store = history();
     auto state = store.committedState();
     auto &renames = state["renames"];
@@ -1351,10 +1390,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         found = true;
       }
     if (!found)
-      renames.push_back(
-          {{"addr", hexAddress(address)},
-           {"original", ownedString(neverd_func_name(session_, index))},
-           {"renamed", name}});
+      renames.push_back({{"addr", hexAddress(address)},
+                         {"original", index >= 0 ? ownedString(neverd_func_name(
+                                                       session_, index))
+                                                 : listing().nameAt(address)},
+                         {"renamed", name}});
     Json after;
     for (const auto &item : renames)
       if (parseAddress(item.at("addr").get<std::string>()) == address)

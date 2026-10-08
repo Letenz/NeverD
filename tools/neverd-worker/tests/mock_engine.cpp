@@ -788,14 +788,27 @@ const char *neverd_sections_json(neverd_session_t) {
                             {"flags", "RW-"}}})
                   .dump());
 }
-const char *neverd_symbols_json(neverd_session_t) {
-  return copy(
-      Json::array(
-          {{{"addr", hexAddress(Base)},
-            {"name", "function_0"},
-            {"type", "function"}},
-           {{"addr", hexAddress(BssBase)}, {"name", "stderr"}, {"size", 8}}})
-          .dump());
+const char *neverd_symbols_json(neverd_session_t s) {
+  Json rows = Json::array(
+      {{{"addr", hexAddress(Base)},
+        {"name", "function_0"},
+        {"type", "function"}},
+       {{"addr", hexAddress(BssBase)}, {"name", "stderr"}, {"size", 8}}});
+  // The user's names of data replace the symbols' or add rows of their own.
+  for (const auto &[address, name] : session(s)->names) {
+    if (neverd_func_find_by_addr(s, address) >= 0)
+      continue;
+    bool replaced = false;
+    for (auto &row : rows)
+      if (parseAddress(row.at("addr").get<std::string>()) == address) {
+        row["name"] = name;
+        replaced = true;
+      }
+    if (!replaced)
+      rows.push_back(
+          {{"addr", hexAddress(address)}, {"name", name}, {"size", 0}});
+  }
+  return copy(rows.dump());
 }
 const char *neverd_imports_json(neverd_session_t) {
   return copy(Json::array().dump());

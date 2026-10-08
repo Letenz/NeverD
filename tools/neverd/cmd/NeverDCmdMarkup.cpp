@@ -276,9 +276,38 @@ int runRename(neverd_session_t Sess) {
     }
     if (Json)
       neverd_free_string(Json);
+  } else if (!RenameAddr.empty()) {
+    const std::optional<uint64_t> Addr = parseAddrArg(RenameAddr);
+    if (!Addr) {
+      WithColor::error() << "invalid rename address\n";
+      return 1;
+    }
+    if (RenameClear == !RenameTo.empty()) {
+      WithColor::error() << "rename --addr takes --to <name> or --clear\n";
+      return 1;
+    }
+    if (neverd_rename_addr(Sess, *Addr,
+                           RenameClear ? nullptr
+                                       : RenameTo.getValue().c_str()) != 0) {
+      WithColor::error() << "rename failed: " << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    if (JsonOutput) {
+      json::Object Result;
+      Result["addr"] = "0x" + utohexstr(*Addr);
+      Result["name"] =
+          RenameClear ? json::Value(nullptr) : json::Value(RenameTo.getValue());
+      outs() << json::Value(std::move(Result)) << "\n";
+    } else if (RenameClear) {
+      outs() << "Cleared the name of 0x" << utohexstr(*Addr) << "\n";
+    } else {
+      outs() << "Named 0x" << utohexstr(*Addr) << " " << RenameTo.getValue()
+             << "\n";
+    }
   } else {
     if (RenameFrom.empty() || RenameTo.empty()) {
-      WithColor::error() << "rename requires --func <old> --to <new>\n";
+      WithColor::error()
+          << "rename requires --func <old> --to <new> or --addr <address>\n";
       return 1;
     }
     int Ret = neverd_rename_func(Sess, RenameFrom.getValue().c_str(),

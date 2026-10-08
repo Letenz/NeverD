@@ -328,7 +328,10 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
   if (auto It = ImageObjectNames.find(Addr); It != ImageObjectNames.end())
     return It->second;
   std::string Raw;
-  if (Dbg) {
+  if (Opts.UserNames)
+    if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
+      Raw = It->second;
+  if (Raw.empty() && Dbg) {
     if (auto Data = Dbg->resolveDataObject(Addr);
         Data && !Data->Name.empty() &&
         !llvm::StringRef(Data->Name).starts_with("??_C@"))

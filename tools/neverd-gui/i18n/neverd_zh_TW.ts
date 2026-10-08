@@ -120,8 +120,8 @@
         <translation>重新命名(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>重新命名目前函式</translation>
+        <source>Rename the current address</source>
+        <translation>重新命名目前位址</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -1729,12 +1729,8 @@ Double-click to go to the declaration.</source>
         <translation> · 唯讀</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 不是函式進入點；只能重新命名函式。</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>重新命名函式</translation>
+        <source>Rename address</source>
+        <translation>重新命名位址</translation>
     </message>
     <message>
         <source>Name of %1:</source>
