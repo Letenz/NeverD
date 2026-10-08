@@ -1220,6 +1220,18 @@
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
     </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
+    </message>
+    <message>
+        <source>Rust</source>
+        <translation>Rust</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Go</translation>
+    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -1342,6 +1354,16 @@ Recognized library operation; click to show its code.</source>
 Double-click to go to the declaration.</source>
         <translation>%1
 按兩下前往宣告。</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>%n 個宣告以 C 顯示</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1855,8 +1877,8 @@ Signed: %4</source>
         <translation>輸入命令</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>建立 C 檔案</translation>
+        <source>Create source file</source>
+        <translation>建立原始碼檔案</translation>
     </message>
     <message>
         <source>Create LST file</source>

@@ -1220,6 +1220,20 @@ private:
     std::string Text = "var " + escapeIdentifier(D->Name) + " " + type(D->Ty);
     if (D->Init) {
       const Expr *Inner = skipParens(D->Init);
+      if (Inner->Kind == ExprKind::Conditional &&
+          !(Inner->Ops[1]->Value && Inner->Ops[2]->Value &&
+            *Inner->Ops[1]->Value == 1 && *Inner->Ops[2]->Value == 0)) {
+        // Go has no conditional expression: the arms assign.
+        const std::string Name = escapeIdentifier(D->Name);
+        line(Text);
+        openBlock("if " + condition(Inner->Ops[0]).Text);
+        line(Name + " = " + value(Inner->Ops[1], D->Ty).Text);
+        dedent();
+        openBlock("} else");
+        line(Name + " = " + value(Inner->Ops[2], D->Ty).Text);
+        closeBlock();
+        return;
+      }
       if (D->Init->Kind != ExprKind::InitList && hoists(Inner)) {
         line(Text);
         hoisted(Inner, [&](const Expr *Last) {

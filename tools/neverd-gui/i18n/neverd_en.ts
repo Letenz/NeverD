@@ -1220,6 +1220,18 @@
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
     </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
+    </message>
+    <message>
+        <source>Rust</source>
+        <translation>Rust</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Go</translation>
+    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -1344,6 +1356,17 @@ Recognized library operation; click to show its code.</translation>
 Double-click to go to the declaration.</source>
         <translation>%1
 Double-click to go to the declaration.</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>%n declarations shown as C</numerusform>
+            <numerusform>%n declarations shown as C</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1858,8 +1881,8 @@ Signed: %4</translation>
         <translation>Type a command</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>Create C file</translation>
+        <source>Create source file</source>
+        <translation>Create source file</translation>
     </message>
     <message>
         <source>Create LST file</source>
