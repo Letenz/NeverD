@@ -2084,7 +2084,7 @@ jobs:
     name: Windows EH (x86 Wine and ARM32 PE contracts)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 150
     env:
       SCCACHE_GHA_ENABLED: 'true'
     steps:
@@ -2100,10 +2100,12 @@ jobs:
       - name: Initialize pinned compiler, decoder, signatures and binary corpus
         run: git submodule update --init --depth 1 third_party/llvm-project third_party/capstone signatures unittests/corpus
       - name: Install cross-target tooling and the PE32 Wine runtime
+        timeout-minutes: 25
         run: |
           sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install --yes clang lld cmake ninja-build wine wine32:i386
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 update
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 \
+            install --yes --no-install-recommends lld wine wine32:i386
       - name: Verify runtime evidence admission
         run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame -v
       - name: Observe original x86 SEH and C++ EH across GS and optimization modes
