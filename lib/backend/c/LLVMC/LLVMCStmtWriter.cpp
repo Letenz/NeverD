@@ -4112,6 +4112,48 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
   AfterCxxThrow = NoReturn;
 }
 
+std::string
+LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
+  const auto *Type = Call.getFunctionType();
+  std::string Convention;
+  switch (Call.getCallingConv()) {
+  case llvm::CallingConv::C:
+    break;
+  case llvm::CallingConv::Win64:
+    Convention = "__attribute__((ms_abi)) ";
+    break;
+  case llvm::CallingConv::X86_64_SysV:
+    Convention = "__attribute__((sysv_abi)) ";
+    break;
+  case llvm::CallingConv::X86_StdCall:
+    Convention = "__attribute__((stdcall)) ";
+    break;
+  case llvm::CallingConv::X86_FastCall:
+    Convention = "__attribute__((fastcall)) ";
+    break;
+  default:
+    throw std::runtime_error("unsupported preserved indirect-call convention");
+  }
+  std::string Parameters;
+  for (auto *Parameter : Type->params()) {
+    if (!Parameters.empty())
+      Parameters += ", ";
+    Parameters += typeToCLLVM(Parameter);
+  }
+  if (Type->isVarArg()) {
+    if (Parameters.empty())
+      throw std::runtime_error(
+          "C variadic indirect call lacks a fixed parameter");
+    Parameters += ", ...";
+  } else if (Parameters.empty()) {
+    Parameters = "void";
+  }
+  // Opaque LLVM pointers do not carry a C function-pointer type. The call
+  // instruction owns the exact result, parameter widths and convention.
+  return "((" + typeToCLLVM(Type->getReturnType()) + " (" + Convention + "*)(" +
+         Parameters + "))(" + valueStr(Call.getCalledOperand()) + "))";
+}
+
 std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
   for (const llvm::CallBase *Pending : RenderingCalls)
     if (Pending == &Call)
@@ -4177,6 +4219,8 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
       CalleeName = CN;
     else
       CalleeName = functionIdentifier(*Callee);
+  } else if (Opts.PreserveLLVMFunctionTypes) {
+    CalleeName = preservedIndirectCalleeStr(Call);
   } else {
     CalleeName = resolveImportCalleeName(Call.getCalledOperand());
     if (CalleeName.empty()) {
