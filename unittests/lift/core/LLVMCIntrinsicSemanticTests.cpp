@@ -9,6 +9,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
+#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -18,6 +19,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/NoFolder.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -1606,6 +1608,172 @@ int main(void) {
 )";
     for (const char *Level : {"-O0", "-O2"})
       compileAndCheck(Program, false, {}, Level, true);
+  }
+}
+
+TEST(LLVMCIntrinsicSemantics, VolatileSegmentLoadsKeepDefinitionsAndReadOrder) {
+  for (bool GS : {false, true}) {
+    for (unsigned Bits : {8u, 16u, 32u, 64u}) {
+      SCOPED_TRACE(GS);
+      SCOPED_TRACE(Bits);
+      llvm::LLVMContext C;
+      llvm::Module M("volatile-segment-loads", C);
+      M.setDataLayout("e-p:64:64");
+      llvm::IRBuilder<llvm::NoFolder> B(C);
+      const unsigned AS = GS ? kLLVMX86GSAddressSpace : kLLVMX86FSAddressSpace;
+      auto *Fn = llvm::Function::Create(
+          llvm::FunctionType::get(B.getInt64Ty(), {B.getInt64Ty()}, false),
+          llvm::GlobalValue::ExternalLinkage, "read_segment_twice", M);
+      B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+      auto *Pointer = B.CreateIntToPtr(Fn->getArg(0), B.getPtrTy(AS));
+      auto *First = B.CreateLoad(B.getIntNTy(Bits), Pointer, "first");
+      First->setVolatile(true);
+      auto *Second = B.CreateLoad(B.getIntNTy(Bits), Pointer, "second");
+      Second->setVolatile(true);
+      B.CreateRet(
+          B.CreateXor(B.CreateZExtOrTrunc(First, B.getInt64Ty()),
+                      B.CreateShl(B.CreateZExtOrTrunc(Second, B.getInt64Ty()),
+                                  B.getInt64(1))));
+      auto *Unused = llvm::Function::Create(
+          llvm::FunctionType::get(B.getVoidTy(), {B.getInt64Ty()}, false),
+          llvm::GlobalValue::ExternalLinkage, "read_segment_unused", M);
+      B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Unused));
+      auto *UnusedLoad =
+          B.CreateLoad(B.getIntNTy(Bits),
+                       B.CreateIntToPtr(Unused->getArg(0), B.getPtrTy(AS)));
+      UnusedLoad->setVolatile(true);
+      B.CreateRetVoid();
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+      const auto Text = emit(M);
+      const char *Suffix = Bits == 8    ? "byte"
+                           : Bits == 16 ? "word"
+                           : Bits == 32 ? "dword"
+                                        : "qword";
+      const std::string Intrinsic =
+          std::string("__read") + (GS ? "gs" : "fs") + Suffix;
+      EXPECT_NE(Text.find(Intrinsic + "("), std::string::npos) << Text;
+      // A declared segment environment permits execution on every host without
+      // reading the host's thread or kernel structures. Each read produces a
+      // distinct value, records its address and advances an observable counter.
+      const std::string Program =
+          "#include <stdint.h>\nstatic unsigned reads;\n"
+          "static uint64_t addresses[3];\nstatic uint64_t observe(uint64_t p) "
+          "{\n"
+          "  if (reads < 3) addresses[reads] = p; return (++reads == 1 ? "
+          "UINT64_C(0xfedcba9876543210) : UINT64_C(0x80000000abcdef71));\n}\n"
+          "#define " +
+          Intrinsic + "(p) ((uint" + std::to_string(Bits) + "_t)observe(p))\n" +
+          Text + R"(
+int main(void) {
+  uint64_t first = (uintBITS_t)UINT64_C(0xfedcba9876543210);
+  uint64_t second = (uintBITS_t)UINT64_C(0x80000000abcdef71);
+  if (read_segment_twice(0x188) != (first ^ (second << 1)) ||
+      reads != 2 || addresses[0] != 0x188 || addresses[1] != 0x188) return 1;
+  read_segment_unused(0x1a0);
+  return reads != 3 || addresses[2] != 0x1a0;
+}
+)";
+      std::string Executable = Program;
+      for (size_t At = 0;
+           (At = Executable.find("BITS", At)) != std::string::npos;)
+        Executable.replace(At, 4, std::to_string(Bits));
+      for (const char *Level : {"-O0", "-O2"})
+        compileAndCheck(Executable, false, {}, Level);
+    }
+  }
+}
+
+TEST(LLVMCIntrinsicSemantics, AtomicSegmentLoadsFailClearly) {
+  for (unsigned AS : {kLLVMX86GSAddressSpace, kLLVMX86FSAddressSpace}) {
+    SCOPED_TRACE(AS);
+    llvm::LLVMContext C;
+    llvm::Module M("atomic-segment-load", C);
+    llvm::IRBuilder<> B(C);
+    auto *Fn = llvm::Function::Create(
+        llvm::FunctionType::get(B.getInt64Ty(), {B.getPtrTy(AS)}, false),
+        llvm::GlobalValue::ExternalLinkage, "read_atomic_segment", M);
+    B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+    auto *Load = B.CreateLoad(B.getInt64Ty(), Fn->getArg(0));
+    Load->setAtomic(llvm::AtomicOrdering::Acquire);
+    Load->setAlignment(llvm::Align(8));
+    B.CreateRet(Load);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    std::string Text;
+    llvm::raw_string_ostream OS(Text);
+    EXPECT_THROW(LLVMCEmitter().emit(M, OS, Options), std::runtime_error);
+  }
+}
+
+TEST(LLVMCIntrinsicSemantics, VolatileSegmentPointerLoadKeepsItsPointerType) {
+  for (bool GS : {false, true}) {
+    SCOPED_TRACE(GS);
+    llvm::LLVMContext C;
+    llvm::Module M("volatile-segment-pointer", C);
+    M.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<> B(C);
+    auto *Fn = llvm::Function::Create(
+        llvm::FunctionType::get(B.getPtrTy(), {B.getInt64Ty()}, false),
+        llvm::GlobalValue::ExternalLinkage, "read_segment_pointer", M);
+    B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+    const unsigned AS = GS ? kLLVMX86GSAddressSpace : kLLVMX86FSAddressSpace;
+    auto *Load = B.CreateLoad(B.getPtrTy(),
+                              B.CreateIntToPtr(Fn->getArg(0), B.getPtrTy(AS)));
+    Load->setVolatile(true);
+    B.CreateRet(Load);
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.EmitIncludes = false;
+    Options.PreserveLLVMFunctionTypes = true;
+    std::string Text;
+    llvm::raw_string_ostream OS(Text);
+    ASSERT_TRUE(LLVMCEmitter().emit(M, OS, Options));
+    const auto Program = std::string(R"(
+#include <stdint.h>
+static uint64_t cell, address;
+static unsigned reads;
+static uint64_t observe(uint64_t offset) {
+  ++reads; address = offset; return (uintptr_t)&cell;
+}
+)") + "#define __read" + (GS ? "gs" : "fs") +
+                         "qword(p) observe(p)\n" + Text + R"(
+int main(void) {
+  return read_segment_pointer(0x188) != &cell || reads != 1 || address != 0x188;
+}
+)";
+    for (const char *Level : {"-O0", "-O2"})
+      compileAndCheck(Program, false, {}, Level);
+  }
+}
+
+TEST(LLVMCIntrinsicSemantics, OrdinarySegmentLoadKeepsItsExistingProjection) {
+  for (bool GS : {false, true}) {
+    SCOPED_TRACE(GS);
+    llvm::LLVMContext C;
+    llvm::Module M("ordinary-segment-load", C);
+    M.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<llvm::NoFolder> B(C);
+    auto *Fn = llvm::Function::Create(
+        llvm::FunctionType::get(B.getInt64Ty(), {B.getInt64Ty()}, false),
+        llvm::GlobalValue::ExternalLinkage, "read_ordinary_segment", M);
+    B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+    const unsigned AS = GS ? kLLVMX86GSAddressSpace : kLLVMX86FSAddressSpace;
+    auto *Load = B.CreateLoad(B.getInt64Ty(),
+                              B.CreateIntToPtr(Fn->getArg(0), B.getPtrTy(AS)));
+    B.CreateRet(B.CreateXor(Load, B.CreateShl(Load, B.getInt64(1))));
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    const auto Text = emit(M);
+    const auto Program = std::string("#include <stdint.h>\n#define __read") +
+                         (GS ? "gs" : "fs") +
+                         "qword(p) UINT64_C(0xfedcba9876543210)\n" + Text + R"(
+int main(void) {
+  const uint64_t value = UINT64_C(0xfedcba9876543210);
+  return read_ordinary_segment(0x188) != (value ^ (value << 1));
+}
+)";
+    for (const char *Level : {"-O0", "-O2"})
+      compileAndCheck(Program, false, {}, Level);
   }
 }
 
