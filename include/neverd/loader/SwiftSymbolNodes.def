@@ -1,5 +1,4 @@
-//===- SwiftSymbolNodes.def - Swift demangle nodes NeverD spells -*- C++
-//-*-===//
+//===- SwiftSymbolNodes.def - Swift nodes NeverD spells ---------*- C++ -*-===//
 //
 // NeverD Decompiler
 //

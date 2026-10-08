@@ -1,4 +1,4 @@
-//===- SymbolSpelling.h - How a symbol name reads -------------*- C++ -*-===//
+//===- SymbolSpelling.h - How a symbol name reads ---------------*- C++ -*-===//
 //
 // NeverD Decompiler
 //

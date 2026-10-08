@@ -1,4 +1,4 @@
-//===- SymbolSpellingDetail.h - One scheme's symbol spellings --*- C++ -*-===//
+//===- SymbolSpellingDetail.h - One scheme's symbol spellings ---*- C++ -*-===//
 //
 // NeverD Decompiler
 //
