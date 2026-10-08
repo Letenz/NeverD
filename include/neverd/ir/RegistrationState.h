@@ -31,12 +31,16 @@ struct RegistrationBlockState {
   /// Runtime-invoked filter/cleanup code has its own dispatch context. Its
   /// instructions must not be included in the parent's lexical try interval.
   bool CallbackOnly = false;
+  /// Finally callbacks can dispatch to outer scopes even though they are not
+  /// lexical parent blocks. Searching filters have a separate runtime context.
+  bool CanDispatch = false;
 };
 
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
   bool CallbackStatesComplete = true;
+  bool RegistrationLifetimeComplete = false;
   std::vector<std::string> Diagnostics;
 };
 

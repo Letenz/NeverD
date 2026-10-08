@@ -335,7 +335,7 @@ LowFunc liftEntry(BinaryImage &Img, va_t Entry) {
 
 TEST(RegistrationTryLevel, GuardsOnlyTheBlocksTheTryLevelIsCurrentIn) {
   ImageBuilder B;
-  B.addScope(-2, kText + 0x40, kText + 0x50);
+  B.addScope(-1, kText + 0x40, kText + 0x50);
   B.endScopes();
 
   emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
@@ -367,6 +367,27 @@ TEST(RegistrationTryLevel, GuardsOnlyTheBlocksTheTryLevelIsCurrentIn) {
   EXPECT_EQ(edgesAt(Func, Leave),
             (std::vector<std::string>{"seh-filter@64", "seh-handler@80"}));
   EXPECT_TRUE(edgesAt(Func, After).empty());
+}
+
+TEST(RegistrationTryLevel, EH3DoesNotAcceptTheEH4EnclosingSentinel) {
+  ImageBuilder B;
+  B.addScope(-2, kText + 0x40, kText + 0x50);
+  B.endScopes();
+  emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+  emitFrameStore(B.Text, -4, 0);
+  const va_t Guarded = B.textVA();
+  B.Text.push_back(0x90);
+  emitFrameStore(B.Text, -4, -1);
+  B.Text.push_back(0xC3);
+  B.Text.resize(0x40, 0xCC);
+  B.addStub();
+  B.Text.resize(0x50, 0xCC);
+  B.addStub();
+  BinaryImage Img = B.build({{"guarded", kText}});
+  const ExceptionFunction *EH = Img.ExceptionMetadata.findFunction(kText);
+  ASSERT_NE(EH, nullptr);
+  EXPECT_EQ(EH->ParseStatus, ExceptionParseStatus::Partial);
+  EXPECT_TRUE(edgesAt(liftEntry(Img, kText), Guarded).empty());
 }
 
 TEST(RegistrationTryLevel, OffersANestedScopeToItsEnclosingLevelToo) {
@@ -580,6 +601,44 @@ TEST(RegistrationTryLevel, MalformedSafeSEHDoesNotBecomeAbsence) {
     EXPECT_TRUE(Img.ExceptionMetadata.Functions.empty());
     EXPECT_FALSE(Img.ExceptionMetadata.Diagnostics.empty());
   }
+}
+
+TEST(RegistrationTryLevel, SafeSEHMembershipDoesNotProveLanguageSemantics) {
+  BinaryImage Img = makeSafeSEHImage(1, {kPersonality - kBase});
+  for (Symbol &Sym : Img.Symbols)
+    if (Sym.Addr == kPersonality)
+      Sym.Name = "custom_exception_handler";
+  Img.ExceptionMetadata = {};
+  coff_loader::parseX86RegistrationExceptions(Img);
+  ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 1u);
+  const ExceptionFunction &EH = Img.ExceptionMetadata.Functions.front();
+  EXPECT_EQ(EH.Personality, ExceptionPersonality::Unknown);
+  EXPECT_EQ(EH.ParseStatus, ExceptionParseStatus::Partial);
+  ASSERT_TRUE(EH.Registration);
+  EXPECT_FALSE(EH.Registration->Scopes.empty());
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  LowFunc F = CFGBuilder().build(Img, Dec, kText);
+  ASSERT_TRUE(F.RegistrationStates);
+  EXPECT_FALSE(F.RegistrationStates->Complete);
+}
+
+TEST(RegistrationTryLevel, ScopeBudgetCannotPublishACompletePrefix) {
+  ImageBuilder B;
+  for (unsigned I = 0; I < 4097; ++I)
+    B.addScope(-1, kText + 0xA0, kText + 0xB0);
+  B.endScopes();
+  emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+  emitFrameStore(B.Text, -4, 0);
+  emitFrameStore(B.Text, -4, -1);
+  B.Text.push_back(0xC3);
+  const BinaryImage Img = B.build({{"guarded", kText}});
+  ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 1u);
+  const ExceptionFunction &EH = Img.ExceptionMetadata.Functions.front();
+  ASSERT_TRUE(EH.Registration);
+  EXPECT_EQ(EH.Registration->Scopes.size(), 4096u);
+  EXPECT_EQ(EH.ParseStatus, ExceptionParseStatus::Partial);
+  EXPECT_FALSE(EH.Diagnostics.empty());
 }
 
 } // namespace

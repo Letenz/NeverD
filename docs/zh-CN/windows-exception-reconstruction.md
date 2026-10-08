@@ -204,8 +204,11 @@ IP-to-state map。
 registration 状态与 PE32 运行基线可单独验证：
 
 ```bash
-cmake --build build-release --target NeverDRegistrationStateTests --parallel 4
+cmake --build build-release --target NeverDRegistrationStateTests \
+  NeverDRegistrationEHTests NeverDWindowsRegistrationFrameTests --parallel 4
 build-release/bin/NeverDRegistrationStateTests
+build-release/bin/NeverDRegistrationEHTests
+build-release/bin/NeverDWindowsRegistrationFrameTests
 python3 -m unittest scripts.tests.test_check_windows_registration_eh -v
 python3 scripts/check_windows_registration_eh.py --output build-registration/evidence
 ```
@@ -213,7 +216,11 @@ python3 scripts/check_windows_registration_eh.py --output build-registration/evi
 执行器运行固定版本的 MSVC x86 SEH/C++ 样本，覆盖 `/GS` 开关与 O0/O2；Linux 使用 Wine，
 Windows 使用原生 loader。默认报告标记为 `original-runtime`。传入 `--patched-root` 后，
 必须提供全部八份重写样本；字节完全相同的副本会被拒绝，并逐个比较运行结果。只有这一
-模式报告 `rewritten-runtime`。缺少运行环境或样本会失败。CI 的 `windows_eh_only` 手动
+模式报告 `changed-image-runtime`，证明修改后的映像运行结果一致。原生重建还需绑定
+源文件、输出文件和替换入口的 patch 回执，以及替换入口实际执行的证据。缺少运行环境
+或样本会失败。回调帧测试覆盖 PE32 filter/finally 的父帧恢复、既有 escape 索引、
+有界异常指针槽、独立回调栈、原子拒绝，以及实际 i386 COFF scope 表的代码生成；
+这些检查本身不授权原生 patch。CI 的 `windows_eh_only` 手动
 配置还验证 ARM32 交叉目标 PE 生成与重建；这不等于在 Windows ARM32 上执行。
 
 ## 扩展原生支持

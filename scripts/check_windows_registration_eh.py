@@ -2,7 +2,8 @@
 """Run the checked-in PE32 EH probes, optionally against rewritten images.
 
 Baseline execution is explicitly separate from reconstruction evidence. A
-differential run requires a changed PE32 image for every original probe.
+differential run requires a changed PE32 image for every original probe. Changed
+bytes alone do not prove EH reconstruction or execution of a replaced function.
 """
 
 from __future__ import annotations
@@ -116,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--timeout must be positive")
     args.output.mkdir(parents=True, exist_ok=True)
     report = {"schema": 1, "platform": platform.platform(),
-              "evidence": "rewritten-runtime" if args.patched_root else "original-runtime",
+              "evidence": "changed-image-runtime" if args.patched_root else "original-runtime",
               "original_root": str(args.original_root.resolve()), "cases": [],
               "passed": False}
     environment = os.environ.copy()

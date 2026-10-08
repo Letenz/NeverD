@@ -119,6 +119,9 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
     F.PersonalityVA = Site.HandlerVA;
     F.PersonalityName = Identity.Name;
     F.Personality = Identity.Personality;
+    if (F.Personality == ExceptionPersonality::Unknown)
+      diagnose(F, ExceptionParseStatus::Partial,
+               "x86 registration handler identity is not proven");
 
     RegistrationChainInfo Chain;
     Chain.HandlerVA = Site.HandlerVA;
@@ -129,15 +132,14 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
       F.Encoding = ExceptionEncoding::X86CxxFuncInfo;
       F.HandlerDataVA = Identity.CxxFuncInfoVA;
       Chain.ScopeTableVA = Identity.CxxFuncInfoVA;
-      if (F.Personality == ExceptionPersonality::Unknown)
-        F.Personality = ExceptionPersonality::CxxFrameHandlerX86;
       decodeX86FuncInfo(F, Img, Identity.CxxFuncInfoVA);
       Chain.SeededTryLevel = -1;
     } else if (Site.TableVA != 0 && Img.readVA(Site.TableVA, 12)) {
       // `_except_handler4` seeds -2 as the initial try level and prefixes
       // its table with cookie displacements; `_except_handler3` seeds -1
       // and starts at the entry array.  When the handler kept its name that
-      // is authoritative, otherwise the sentinel decides.
+      // is authoritative. For an unknown handler the sentinel supplies only
+      // an inspectable layout observation, never runtime semantics.
       bool IsEH4 = F.Personality == ExceptionPersonality::ExceptHandler4 ||
                    (F.Personality != ExceptionPersonality::ExceptHandler3 &&
                     Site.TryLevel && *Site.TryLevel == -2);
@@ -151,21 +153,23 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
           ArrayVA = Site.TableVA + 16;
         }
         F.Encoding = ExceptionEncoding::X86ScopeTableEH4;
-        if (F.Personality == ExceptionPersonality::Unknown)
-          F.Personality = ExceptionPersonality::ExceptHandler4;
       } else {
         F.Encoding = ExceptionEncoding::X86ScopeTableEH3;
-        if (F.Personality == ExceptionPersonality::Unknown)
-          F.Personality = ExceptionPersonality::ExceptHandler3;
       }
       // Both sentinels mean "no scope is current"; which one this frame uses
       // follows from the handler it installed.
       Chain.SeededTryLevel = IsEH4 ? -2 : -1;
       const va_t Limit = findNextTableAddress(TableAddresses, Site.TableVA);
-      if (decodeScopeRecords(Img, ArrayVA, Limit, IsEH4, Chain.Scopes) == 0)
+      bool ScopeBudgetExhausted = false;
+      if (decodeScopeRecords(Img, ArrayVA, Limit, IsEH4, Chain.Scopes,
+                             ScopeBudgetExhausted) == 0)
         diagnose(F, ExceptionParseStatus::Partial,
                  "x86 scope table at 0x" + llvm::utohexstr(ArrayVA) +
                      " declares no usable entry");
+      if (ScopeBudgetExhausted)
+        diagnose(
+            F, ExceptionParseStatus::Partial,
+            "x86 scope-table decode budget exhausted before a proven boundary");
     } else {
       F.Encoding = ExceptionEncoding::X86ScopeTableEH3;
       diagnose(F, ExceptionParseStatus::Partial,

@@ -1241,6 +1241,20 @@ add_neverd_unittest(NeverDRegistrationStateTests
   IRRegistrationState
 )
 
+add_neverd_unittest(NeverDRegistrationEHTests
+  eh/RegistrationTryLevelTests.cpp
+
+  LINK_COMPONENTS
+  IRLow
+)
+
+add_neverd_unittest(NeverDWindowsRegistrationFrameTests
+  eh/WindowsRegistrationFrameTests.cpp
+
+  LINK_COMPONENTS
+  WindowsRegistrationFrame
+)
+
 target_include_directories(NeverDWindowsEHMetadataEncoderTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}

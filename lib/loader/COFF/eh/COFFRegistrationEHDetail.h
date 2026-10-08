@@ -16,6 +16,7 @@
 #ifndef NEVERD_LIB_LOADER_COFF_EH_COFFREGISTRATIONEHDETAIL_H
 #define NEVERD_LIB_LOADER_COFF_EH_COFFREGISTRATIONEHDETAIL_H
 
+#include "neverd/Limits.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -33,7 +34,8 @@ namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE registration_detail {
 
 /// Bound on any single decoded table.  A scope table or `FuncInfo` map larger
 /// than this is a mis-identification, not a program.
-inline constexpr uint32_t MaxRegistrationRecords = 4096;
+inline constexpr uint32_t MaxRegistrationRecords =
+    limits::kMaxRegistrationEHRecords;
 
 void diagnose(ExceptionFunction &F, ExceptionParseStatus Status,
               const std::string &Message);
@@ -177,7 +179,8 @@ void expandPrologueHelpers(const BinaryImage &Img,
 
 uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
                             bool IsEH4,
-                            std::vector<RegistrationScopeRecord> &Scopes);
+                            std::vector<RegistrationScopeRecord> &Scopes,
+                            bool &BudgetExhausted);
 void recoverTryLevelStores(const BinaryImage &Img,
                            const ExceptionAddressRange &Range, int32_t Seed,
                            size_t ScopeCount, RegistrationChainInfo &Chain);

@@ -93,7 +93,9 @@ findFrameSlotStores(const BinaryImage &Img,
 /// in the image, where validation is all there is.
 uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
                             bool IsEH4,
-                            std::vector<RegistrationScopeRecord> &Scopes) {
+                            std::vector<RegistrationScopeRecord> &Scopes,
+                            bool &BudgetExhausted) {
+  BudgetExhausted = false;
   for (uint32_t Index = 0; Index < MaxRegistrationRecords; ++Index) {
     uint64_t Offset = uint64_t(Index) * 12;
     if (Offset > InvalidVA - ArrayVA)
@@ -121,6 +123,11 @@ uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
     Scope.HandlerVA = Handler;
     Scope.IsFinally = Filter == 0;
     Scopes.push_back(Scope);
+  }
+  if (Scopes.size() == MaxRegistrationRecords) {
+    const uint64_t Bytes = uint64_t(MaxRegistrationRecords) * 12;
+    BudgetExhausted =
+        Bytes > InvalidVA - ArrayVA || Limit == 0 || ArrayVA + Bytes != Limit;
   }
   return static_cast<uint32_t>(Scopes.size());
 }

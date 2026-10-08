@@ -10,13 +10,17 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -34,14 +38,52 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   if (Metadata.Registration)
     Func.RegistrationStates = analyzeRegistrationStates(Func);
 
+  std::map<va_t, LowBlock *> BlocksByAddress;
+  std::map<int, LowBlock *> BlocksById;
+  for (LowBlock &Block : Func.Blocks) {
+    BlocksByAddress.emplace(Block.StartAddr, &Block);
+    BlocksById.emplace(Block.Id, &Block);
+  }
   auto TargetBlockId = [&](va_t TargetVA) {
-    if (LowBlock *Target = Func.blockFor(TargetVA))
-      return Target->Id;
+    auto It = BlocksByAddress.upper_bound(TargetVA);
+    if (It != BlocksByAddress.begin()) {
+      const LowBlock &Block = *std::prev(It)->second;
+      if (TargetVA < Block.EndAddr)
+        return Block.Id;
+    }
     return -1;
+  };
+  std::set<std::tuple<int, va_t, ExceptionalEdgeKind, uint32_t, int32_t>> Edges;
+  size_t RegistrationEdgeWork = 0;
+  bool RegistrationEdgesExhausted = false;
+  auto ChargeRegistrationEdge = [&] {
+    if (!Metadata.Registration)
+      return true;
+    if (RegistrationEdgeWork == limits::kMaxRegistrationEHStateWork) {
+      RegistrationEdgesExhausted = true;
+      return false;
+    }
+    ++RegistrationEdgeWork;
+    return true;
+  };
+  auto RejectExhaustedRegistrationEdges = [&] {
+    if (!RegistrationEdgesExhausted)
+      return false;
+    for (LowBlock &Block : Func.Blocks) {
+      Block.ExceptionalSuccs.clear();
+      Block.ExceptionalPreds.clear();
+    }
+    Func.RegistrationStates->Complete = false;
+    Func.RegistrationStates->RegistrationLifetimeComplete = false;
+    Func.RegistrationStates->Blocks.clear();
+    Func.RegistrationStates->Diagnostics.push_back(
+        "registration exceptional-edge expansion budget exhausted");
+    return true;
   };
   auto AddEdge = [&](LowBlock &Source, va_t TargetVA, ExceptionalEdgeKind Kind,
                      uint32_t Region, int32_t State) {
-    if (TargetVA == 0)
+    if (TargetVA == 0 || !ChargeRegistrationEdge() ||
+        !Edges.emplace(Source.Id, TargetVA, Kind, Region, State).second)
       return;
     ExceptionalEdge Edge;
     Edge.BlockId = TargetBlockId(TargetVA);
@@ -49,17 +91,11 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     Edge.Kind = Kind;
     Edge.RegionIndex = Region;
     Edge.State = State;
-    if (std::find(Source.ExceptionalSuccs.begin(),
-                  Source.ExceptionalSuccs.end(),
-                  Edge) == Source.ExceptionalSuccs.end())
-      Source.ExceptionalSuccs.push_back(Edge);
-    if (Edge.BlockId >= 0 &&
-        Edge.BlockId < static_cast<int>(Func.Blocks.size())) {
+    Source.ExceptionalSuccs.push_back(Edge);
+    if (auto It = BlocksById.find(Edge.BlockId); It != BlocksById.end()) {
       ExceptionalEdge Pred = Edge;
       Pred.BlockId = Source.Id;
-      auto &Preds = Func.Blocks[Edge.BlockId].ExceptionalPreds;
-      if (std::find(Preds.begin(), Preds.end(), Pred) == Preds.end())
-        Preds.push_back(Pred);
+      It->second->ExceptionalPreds.push_back(Pred);
     }
   };
   auto ForProtectedBlocks = [&](const ExceptionAddressRange &Range, auto &&Fn) {
@@ -101,6 +137,8 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   if (Metadata.Cxx) {
     const CxxExceptionInfo &Cxx = *Metadata.Cxx;
     for (LowBlock &Block : Func.Blocks) {
+      if (RegistrationEdgesExhausted)
+        break;
       if (Metadata.Registration) {
         if (!Func.RegistrationStates)
           continue;
@@ -109,11 +147,15 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
                                [&](const RegistrationBlockState &State) {
                                  return State.BlockId == Block.Id;
                                });
-        if (It == Func.RegistrationStates->Blocks.end() || It->CallbackOnly)
+        if (It == Func.RegistrationStates->Blocks.end() || !It->CanDispatch)
           continue;
         for (int32_t State : It->Levels) {
+          if (!ChargeRegistrationEdge())
+            break;
           int32_t Walk = State;
           for (size_t Step = 0; Step < Cxx.UnwindMap.size(); ++Step) {
+            if (!ChargeRegistrationEdge())
+              break;
             if (Walk < 0 || static_cast<size_t>(Walk) >= Cxx.UnwindMap.size())
               break;
             const CxxUnwindAction &Cleanup = Cxx.UnwindMap[Walk];
@@ -122,12 +164,17 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
             Walk = Cleanup.ToState;
           }
           for (size_t I = 0; I < Cxx.TryBlocks.size(); ++I) {
+            if (!ChargeRegistrationEdge())
+              break;
             const CxxTryBlock &Try = Cxx.TryBlocks[I];
             if (State < Try.TryLow || State > Try.TryHigh)
               continue;
-            for (const CxxCatchHandler &Catch : Try.Handlers)
+            for (const CxxCatchHandler &Catch : Try.Handlers) {
+              if (!ChargeRegistrationEdge())
+                break;
               AddEdge(Block, Catch.HandlerVA, ExceptionalEdgeKind::CxxCatch,
                       static_cast<uint32_t>(I), State);
+            }
           }
         }
         continue;
@@ -156,6 +203,8 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
       }
     }
   }
+  if (RejectExhaustedRegistrationEdges())
+    return;
 
   // x86-32 registration chain.  This table is indexed by the try level the
   // frame holds rather than by address, so a scope guards exactly those blocks
@@ -168,16 +217,22 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     const RegistrationChainInfo &Chain = *Metadata.Registration;
     const size_t ScopeCount = Chain.Scopes.size();
     for (LowBlock &Block : Func.Blocks) {
+      if (RegistrationEdgesExhausted)
+        break;
       auto It = std::find_if(Func.RegistrationStates->Blocks.begin(),
                              Func.RegistrationStates->Blocks.end(),
                              [&](const RegistrationBlockState &State) {
                                return State.BlockId == Block.Id;
                              });
-      if (It == Func.RegistrationStates->Blocks.end() || It->CallbackOnly)
+      if (It == Func.RegistrationStates->Blocks.end() || !It->CanDispatch)
         continue;
       for (int32_t Level : It->Levels) {
+        if (!ChargeRegistrationEdge())
+          break;
         // The scope count bounds the walk even for manually supplied cycles.
         for (size_t Step = 0; Step < ScopeCount; ++Step) {
+          if (!ChargeRegistrationEdge())
+            break;
           if (Level < 0 || static_cast<size_t>(Level) >= ScopeCount)
             break;
           const RegistrationScopeRecord &Scope = Chain.Scopes[Level];
@@ -196,6 +251,8 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
       }
     }
   }
+  if (RejectExhaustedRegistrationEdges())
+    return;
 
   // Itanium.  A Rust frame is deliberately not walked separately: its landing
   // pads are a reclassification of these same call sites (or, on MSVC targets,

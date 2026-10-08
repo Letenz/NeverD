@@ -110,9 +110,8 @@ bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,
           SlotName = resolveRoutineName(Img, *Bound, *Slot);
       Identity.CxxFuncInfoVA = *FuncInfo;
       ExceptionPersonality Resolved = classifyPersonalityName(SlotName);
-      Identity.Personality = isCxxPersonality(Resolved)
-                                 ? Resolved
-                                 : ExceptionPersonality::CxxFrameHandlerX86;
+      Identity.Personality =
+          isCxxPersonality(Resolved) ? Resolved : ExceptionPersonality::Unknown;
       Identity.Name = std::move(SlotName);
       return true;
     } else {
@@ -128,10 +127,9 @@ bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,
       Identity.Personality = Resolved;
       Identity.Name = TargetName;
     } else {
-      // A statically linked personality can be stripped of its name.  The
-      // thunk shape plus a `FuncInfo` that validates is still proof of the C++
-      // model, so record the x86 spelling and let the table decode confirm it.
-      Identity.Personality = ExceptionPersonality::CxxFrameHandlerX86;
+      // Table-shaped data passed to an unknown target does not prove what
+      // that target will execute. Retain the observation without promoting it.
+      Identity.Personality = ExceptionPersonality::Unknown;
       Identity.Name = TargetName;
     }
     return true;

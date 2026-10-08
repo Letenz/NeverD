@@ -270,8 +270,11 @@ and unpacked xdata share the normalized model and final runtime-entry checks.
 The focused registration-state suite and PE32 runtime baseline are:
 
 ```bash
-cmake --build build-release --target NeverDRegistrationStateTests --parallel 4
+cmake --build build-release --target NeverDRegistrationStateTests \
+  NeverDRegistrationEHTests NeverDWindowsRegistrationFrameTests --parallel 4
 build-release/bin/NeverDRegistrationStateTests
+build-release/bin/NeverDRegistrationEHTests
+build-release/bin/NeverDWindowsRegistrationFrameTests
 python3 -m unittest scripts.tests.test_check_windows_registration_eh -v
 python3 scripts/check_windows_registration_eh.py --output build-registration/evidence
 ```
@@ -280,8 +283,14 @@ The runner executes the pinned MSVC x86 SEH and C++ probes with `/GS` on/off and
 at O0/O2, using Wine on Linux or the native loader on Windows. Its default
 report is `original-runtime` evidence. `--patched-root` requires all eight
 rewritten counterparts, rejects byte-identical copies and compares outcomes;
-only that mode reports `rewritten-runtime` evidence. Missing runtimes or images
-fail the run. The CI `windows_eh_only` dispatch profile additionally checks
+that mode reports `changed-image-runtime` evidence. This establishes runtime
+equivalence for changed images; native reconstruction additionally needs a bound
+patch receipt and evidence that the replaced EH entries executed. Missing
+runtimes or images fail the run. The callback-frame suite checks PE32 filter
+and finally recovery, existing escape indices, bounded exception-pointer cells,
+private callback stacks, atomic rejection, and actual i386 COFF scope-table
+code generation. These checks alone do not authorize a native patch.
+The CI `windows_eh_only` dispatch profile additionally checks
 ARM32 cross-target PE generation and reconstruction. It does not claim execution
 on Windows ARM32.
 
