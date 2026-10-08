@@ -501,11 +501,20 @@ canonicalizeCProjectionIdentifier(llvm::StringRef Raw,
 }
 
 /// Whether an `extern` that C names \p Identifier must link to symbol \p CName
-/// by an `__asm__` label: the identifier is not the name, because it is
-/// spelled from it or another symbol took the name first (`foo_2`).  An import
-/// slot's name (`__imp_foo`) never is: it names the slot, not the function.
+/// by an `__asm__` label: the identifier is the symbol's own but not the name
+/// itself, because it is spelled from it (`core_fmt_write`, `nd_int`) or is
+/// numbered after another symbol took it (`foo_2`, `Get_140002000`).  An
+/// identifier another source names the function by (`probe_filter` for
+/// `sub_1400024E0`) does not link by that symbol, and an import slot's name
+/// (`__imp_foo`) never labels a function.
 inline bool linksByLabel(llvm::StringRef CName, llvm::StringRef Identifier) {
-  return CName != Identifier && stripImportSymbolPrefix(CName) == CName;
+  if (CName == Identifier || stripImportSymbolPrefix(CName) != CName)
+    return false;
+  llvm::StringRef Rest = Identifier;
+  if (!Rest.consume_front(canonicalizeCProjectionIdentifier(CName)))
+    return false;
+  return Rest.empty() || (Rest.consume_front("_") && !Rest.empty() &&
+                          llvm::all_of(Rest, llvm::isHexDigit));
 }
 
 /// Whether the C identifier of symbol \p CName is spelled from it rather than
