@@ -137,18 +137,18 @@ TEST_F(PERebuild, NewImportCellsCannotConsumeProgramZeroFill) {
         ASSERT_EQ(Image.Mapped[At], Before[At]) << llvm::utohexstr(At);
 }
 
-TEST_F(PERebuild, IATDirectoryCoversRecoveredAndAppendedArrays) {
-  ASSERT_GT(Input->regions().size(), 1u);
-  const uint64_t First = Input->regions().front().RVA + 0x100;
+TEST_F(PERebuild, IATProtectionExcludesWritableAndAppendedCells) {
+  ASSERT_GT(Input->regions().size(), 2u);
+  const auto &Region = Input->regions()[1];
+  const uint64_t First = Region.RVA + 0x100;
   const uint64_t Last = Input->regions().back().RVA + 0x100;
   write64le(C.Memory.data() + First, FirstGate);
   write64le(C.Memory.data() + First + 8, 0);
   write64le(C.Memory.data() + Last, SecondGate);
   write64le(C.Memory.data() + Last + 8, 0);
-  const auto &Region = Input->regions().front();
   for (uint64_t Page = Region.RVA / 4096;
        Page < (Region.RVA + Region.MemorySize) / 4096; ++Page)
-    C.PageAccess[Page] = emulation::Read | emulation::Execute;
+    C.PageAccess[Page] = emulation::Read;
   plantCall(Linked.Entry);
   const ExportBinding Added{"third.dll", "third", {}};
   const auto Result = rebuild(
@@ -159,16 +159,53 @@ TEST_F(PERebuild, IATDirectoryCoversRecoveredAndAppendedArrays) {
   ASSERT_FALSE(HasFailure());
   const auto IAT = Image.directory(llvm::COFF::IAT);
   EXPECT_EQ(IAT.RelativeVirtualAddress, First);
-  EXPECT_EQ(uint64_t(IAT.RelativeVirtualAddress) + IAT.Size,
-            Input->extent() + 16);
+  EXPECT_EQ(IAT.Size, 16u);
   for (const auto &Import : Result.Imports) {
-    EXPECT_GE(Import.SlotRVA, IAT.RelativeVirtualAddress);
-    EXPECT_LE(Import.SlotRVA + 16,
-              uint64_t(IAT.RelativeVirtualAddress) + IAT.Size);
     EXPECT_EQ(read64le(Image.Mapped.data() + Import.SlotRVA + 8), 0u);
+    if (Import.SlotRVA != First)
+      EXPECT_GE(Import.SlotRVA,
+                uint64_t(IAT.RelativeVirtualAddress) + IAT.Size);
   }
-  EXPECT_FALSE(Image.Sections.front().Characteristics &
+  EXPECT_FALSE(Image.Sections[1].Characteristics &
                llvm::COFF::IMAGE_SCN_MEM_WRITE);
+  EXPECT_TRUE(Image.Sections.back().Characteristics &
+              llvm::COFF::IMAGE_SCN_MEM_WRITE);
+}
+
+TEST_F(PERebuild, WritableCellsNeedNoNativeIATProtection) {
+  plantCall(Linked.Entry);
+  const auto Result = rebuild({{C.Base + Linked.Entry + 6, FirstBinding, false,
+                                C.Base + Linked.Entry}});
+  ASSERT_FALSE(HasFailure());
+  ASSERT_EQ(Result.Imports.size(), 1u);
+  const auto Image = test::readImage(Result.File);
+  EXPECT_EQ(Image.directory(llvm::COFF::IAT).RelativeVirtualAddress, 0u);
+  EXPECT_EQ(Image.directory(llvm::COFF::IAT).Size, 0u);
+  EXPECT_TRUE(Image.Sections.back().Characteristics &
+              llvm::COFF::IMAGE_SCN_MEM_WRITE);
+}
+
+TEST_F(PERebuild, IATProtectionCannotCoverExecutableOrWritablePages) {
+  ASSERT_GT(Input->regions().size(), 2u);
+  for (bool Executable : {false, true}) {
+    SCOPED_TRACE(Executable);
+    prepare();
+    ASSERT_FALSE(HasFailure());
+    C.Exports.emplace(FirstGate, FirstBinding);
+    for (size_t I : {size_t(0), Input->regions().size() - 1}) {
+      const auto &Region = Input->regions()[I];
+      write64le(C.Memory.data() + Region.RVA + 0x100, FirstGate);
+      write64le(C.Memory.data() + Region.RVA + 0x108, 0);
+      for (uint64_t Page = Region.RVA / 4096;
+           Page < (Region.RVA + Region.MemorySize) / 4096; ++Page)
+        C.PageAccess[Page] =
+            emulation::Read | (Executable ? emulation::Execute : 0);
+    }
+    auto Result = pe::rebuild(*Input, C, {});
+    ASSERT_FALSE(bool(Result));
+    EXPECT_NE(llvm::toString(Result.takeError()).find(pe::text::IATProtection),
+              std::string::npos);
+  }
 }
 
 TEST_F(PERebuild, IATDirectoryUsesOnlyReservedOptionalHeaderSpace) {
@@ -196,7 +233,11 @@ TEST_F(PERebuild, IATDirectoryUsesOnlyReservedOptionalHeaderSpace) {
     prepare();
     ASSERT_FALSE(HasFailure());
     C.Exports.emplace(FirstGate, FirstBinding);
-    const uint64_t Cell = Input->regions().back().RVA + 0x100;
+    const auto &Region = Input->regions().back();
+    const uint64_t Cell = Region.RVA + 0x100;
+    for (uint64_t Page = Region.RVA / 4096;
+         Page < (Region.RVA + Region.MemorySize) / 4096; ++Page)
+      C.PageAccess[Page] = emulation::Read;
     write64le(C.Memory.data() + Cell, FirstGate);
     write64le(C.Memory.data() + Cell + 8, 0);
     auto Result = pe::rebuild(*Input, C, {});
