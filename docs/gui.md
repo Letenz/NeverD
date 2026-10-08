@@ -50,6 +50,12 @@ prompt for unsaved changes. Drop one existing file at a time; directories and
 web URLs are not opened. Opening by drag and drop leaves the source file in
 place.
 
+PE browsing tolerates complete legacy relocation layouts and reports unusable
+entry/import metadata in **Output**. An unknown entry opens at a mapped code
+region for browsing; this does not reconstruct the program's OEP. Invalid import
+bindings remain unknown, and fixed-image semantic checks retain their stricter
+requirements. Truncated or unmappable image structures can still prevent loading.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.

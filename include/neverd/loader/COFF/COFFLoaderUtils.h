@@ -101,10 +101,9 @@ private:
 void parseExceptions(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img,
                      uint64_t ImageBase);
 
-/// Parse a single ordinary imported symbol and append to Img.Imports.
-void addImportedSymbol(const llvm::object::imported_symbol_iterator &SI,
-                       llvm::StringRef ModuleName, va_t IATAddr,
-                       BinaryImage &Img);
+/// Parse complete, bounded ordinary import descriptors. Malformed metadata
+/// contributes diagnostics without publishing guessed or partial bindings.
+void parseImports(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img);
 
 /// Parse the COFF symbol table (.symtab) and populate Img.Symbols.
 /// Applies to object files and some executables with embedded symbols.

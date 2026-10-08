@@ -238,6 +238,13 @@ struct ExactDataObjectExtent {
 // BinaryImage — the unified output of all loaders
 // ===--------------------------------------------------------------------===//
 
+/// Non-fatal metadata problems encountered while mapping an input for analysis.
+/// Diagnostics do not establish semantic facts or repair the original bytes.
+struct LoadDiagnostic {
+  std::string Code;
+  std::string Message;
+};
+
 struct BinaryImage {
   // The type is written fully-qualified so the member's name (`Arch`) does not
   // shadow the enum type `neverd::Arch` inside the struct scope — an
@@ -278,6 +285,16 @@ struct BinaryImage {
   bool LoadsAtLinkAddress = false;
   va_t Base = 0;
   va_t Entry = 0;
+  std::vector<LoadDiagnostic> LoadDiagnostics;
+
+  void addLoadDiagnostic(std::string Code, std::string Message) {
+    constexpr size_t MaxDiagnostics = 64;
+    if (LoadDiagnostics.size() < MaxDiagnostics)
+      LoadDiagnostics.push_back({std::move(Code), std::move(Message)});
+    else if (LoadDiagnostics.size() == MaxDiagnostics)
+      LoadDiagnostics.push_back({"loader.diagnostics_truncated",
+                                 "Further loader diagnostics omitted."});
+  }
   std::vector<Segment> Segments;
   std::vector<Section> Sections;
   std::vector<Import> Imports;

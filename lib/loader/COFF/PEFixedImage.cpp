@@ -279,9 +279,13 @@ struct RelocationInventory {
   std::vector<BaseRelocation> Entries;
   std::vector<Range> Fields;
   bool OnlyDir64 = true;
+  bool WordAlignedBlocks = false;
 };
 
-llvm::Expected<RelocationInventory> relocations(RawImage &Raw) {
+enum class RelocationAlignment { Word, DWord };
+
+llvm::Expected<RelocationInventory>
+relocations(RawImage &Raw, RelocationAlignment BlockAlignment) {
   RelocationInventory Result;
   auto Directory = Raw.directory(BASE_RELOCATION_TABLE);
   if (!Directory)
@@ -289,21 +293,27 @@ llvm::Expected<RelocationInventory> relocations(RawImage &Raw) {
   Result.Directory = *Directory;
   if (!Directory->End)
     return Result;
-  if (Directory->Begin % alignof(uint32_t))
+  const size_t Alignment = BlockAlignment == RelocationAlignment::DWord
+                               ? alignof(uint32_t)
+                               : alignof(uint16_t);
+  if (Directory->Begin % Alignment)
     return invalid("unaligned relocation block address");
+  Result.WordAlignedBlocks = Directory->Begin % alignof(uint32_t);
   auto Data = Raw.read(Directory->Begin, Directory->End - Directory->Begin);
   if (!Data)
     return Data.takeError();
   constexpr size_t HeaderSize = sizeof(coff_base_reloc_block_header);
   size_t Offset = 0;
   while (Offset != Data->size()) {
-    if (Data->size() - Offset < HeaderSize || Offset % alignof(uint32_t))
+    if (Data->size() - Offset < HeaderSize || Offset % Alignment)
       return invalid("truncated or unaligned relocation block");
     const uint32_t Page = read32le(Data->data() + Offset);
     const uint32_t Size = read32le(Data->data() + Offset + sizeof(uint32_t));
     if ((Page & kBaseRelocOffsetMask) || Size < HeaderSize ||
-        Size > Data->size() - Offset || Size % alignof(uint32_t))
+        Size > Data->size() - Offset || Size % Alignment)
       return invalid("invalid relocation block extent");
+    Result.WordAlignedBlocks |=
+        Offset % alignof(uint32_t) || Size % alignof(uint32_t);
     for (size_t I = HeaderSize; I < Size; I += sizeof(uint16_t)) {
       if (auto Error = Raw.account(0))
         return std::move(Error);
@@ -471,9 +481,17 @@ llvm::Error coff_loader::parseBaseRelocations(const COFFObjectFile &Object,
     return invalid("base relocation mapping differs from its header");
   if (auto Error = Raw.initialize())
     return Error;
-  auto Inventory = relocations(Raw);
+  // Older Go linkers omit DWORD padding between complete WORD records.
+  // Ordinary analysis retains those exact records without authenticating a
+  // fixed snapshot; the strict view below still requires DWORD alignment.
+  auto Inventory = relocations(Raw, RelocationAlignment::Word);
   if (!Inventory)
     return Inventory.takeError();
+  if (Inventory->WordAlignedBlocks)
+    Image.addLoadDiagnostic(
+        "pe.relocations_word_aligned",
+        "PE relocation blocks use WORD alignment (legacy linker layout); "
+        "records were retained without changing the input.");
   std::vector<AbsolutePointerRelocation> Pointers;
   for (const auto &R : Inventory->Entries) {
     const uint32_t Width = Image.getPointerSize();
@@ -559,7 +577,7 @@ PEFixedImageView::create(const BinaryImage &Image,
     if (!MatchesBytes(M.Data) || !MatchesBytes(S.Data))
       return invalid("mapped bytes differ from the fixed file snapshot");
   }
-  auto Relocations = relocations(Raw);
+  auto Relocations = relocations(Raw, RelocationAlignment::DWord);
   if (!Relocations)
     return Relocations.takeError();
   if (!Relocations->OnlyDir64)

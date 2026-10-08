@@ -97,6 +97,16 @@ ignores case in any script, by the engine's Unicode simple case folding
 (`neverd_fold_case`; only ASCII letters fold with an engine without it), so
 "ПРИВЕТ" finds "привет"; the rows keep their original text.
 
+Metadata also includes `loader_diagnostics:[{code,message}]`. An older engine
+without the additive query exposes an empty array. The `open` reply includes
+these messages in `warnings`; they describe the currently loaded image without
+repairing its bytes or authorizing inferred semantics. Invalid PE entry metadata
+exposes `entry_address:"0x0"`; clients can choose a mapped browsing position
+without changing that entry. Invalid ordinary import descriptors publish no
+guessed identities/storage bindings, while independent valid descriptors remain
+available. Complete legacy WORD-packed relocation blocks are retained with a
+diagnostic; fixed-image authentication still requires its stricter evidence.
+
 | Operation | Payload and result |
 |---|---|
 | `open` | `{path:string,read_only:false}`. Loads a regular file into a new Session, keeping the old Session on failure; returns metadata plus `warnings:[]`. Project ID changes and revision increases on success. |
