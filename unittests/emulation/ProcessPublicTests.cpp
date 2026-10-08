@@ -768,7 +768,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     ASSERT_NE(Services, nullptr);
     bool Renamed = false, Exclusive = false, NoExpansion = false;
     bool Swapped = false, SwappedNoExpansion = false, SwapMissing = false,
-         SwapInvalid = false;
+         SwapInvalid = false, SubtreeNonempty = false;
     for (const auto &Service : *Services) {
       const auto *Event = Service.getAsObject();
       ASSERT_NE(Event, nullptr);
@@ -779,6 +779,9 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         continue;
       Renamed |= Event->getBoolean(field::Error) == false &&
                  Event->getString(field::Result) == "0";
+      SubtreeNonempty |= Number == (X64 ? "20001d1" : "1d1") &&
+                         Event->getBoolean(field::Error) == true &&
+                         Event->getString(field::Result) == "42";
       if (Number == (X64 ? "20001e8" : "1e8")) {
         const auto *Arguments = Event->getArray(field::Arguments);
         ASSERT_NE(Arguments, nullptr);
@@ -804,6 +807,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     EXPECT_TRUE(SwappedNoExpansion);
     EXPECT_TRUE(SwapMissing);
     EXPECT_TRUE(SwapInvalid);
+    EXPECT_TRUE(SubtreeNonempty);
     EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
     if (ProtectedLink) {

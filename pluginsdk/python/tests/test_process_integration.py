@@ -866,6 +866,9 @@ class ProcessIntegrationTests(unittest.TestCase):
                             renames = [event for event in services if event["number"] in rename_numbers]
                             self.assertTrue(any(event.get("error") is False and event["result"] == "0"
                                                 for event in renames), mode)
+                            self.assertTrue(any(event["number"] == rename_numbers[1]
+                                                and event.get("error") is True and event["result"] == "42"
+                                                for event in renames), mode)
                             flagged = [event for event in renames if event["number"] == rename_numbers[2]]
                             for code in ("11", "3e", "2", "16"):
                                 self.assertTrue(any(event.get("error") is True and event["result"] == code

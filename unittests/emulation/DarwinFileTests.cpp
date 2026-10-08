@@ -8090,8 +8090,7 @@ TEST_P(DarwinFileTest, RuntimeLinksDoNotReuseOldMetadataOrConsumeFileInodes) {
       (std::vector<uint8_t>{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'}));
 }
 
-TEST_P(DarwinFileTest,
-       RuntimeLinksUseHeldParentsAndRefuseTwoSidedSubtreeMoves) {
+TEST_P(DarwinFileTest, RuntimeLinksUseHeldParentsAcrossTwoSidedSubtreeMoves) {
   Options->Files.clear();
   creationPolicy();
   Options->Directories.insert("/");
@@ -8115,30 +8114,21 @@ TEST_P(DarwinFileTest,
   path("/other");
   path("/shift", Base + 128);
   error(ServiceKind::Rename, {Base, Base + 128}, value::DirectoryNotEmpty);
-  for (bool Reverse : {false, true}) {
-    path(Reverse ? "/other" : "/shift");
-    path(Reverse ? "/shift" : "/other", Base + 128);
-    EXPECT_FALSE(
-        invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
-    EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkDirectoryMove);
-    identity(Box, "/shift");
-    identity(Other, "/other");
-    path("/shift/child");
-    EXPECT_EQ(ok(ServiceKind::ReadLink, {Base, Base + Page, 32}), 7u);
+  for (unsigned I = 0; I != 2; ++I) {
+    swapFiles("/shift", "/other");
+    identity(Box, I == 0 ? "/other" : "/shift");
+    identity(Other, I == 0 ? "/shift" : "/other");
+    linkTarget(I == 0 ? "/other/child" : "/shift/child", "../data");
   }
-  path("/shift");
-  path("/moved", Base + 128);
-  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
-  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkDirectoryMove);
+  renameFile("/shift", "/moved");
+  identity(Box, "/moved");
+  linkTarget("/moved/cwd", "../data");
   path("child");
   EXPECT_EQ(ok(ServiceKind::UnlinkAt, {Box, Base, 0}), 0u);
   error(ServiceKind::ReadLinkAt, {Box, Base, Base + Page, 32}, value::NoEntry);
-  path("/shift");
+  path("/moved");
   error(ServiceKind::Rmdir, {Base}, value::DirectoryNotEmpty);
-  path("/moved", Base + 128);
-  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
-  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkDirectoryMove);
-  path("/shift/cwd");
+  path("/moved/cwd");
   path("/other", Base + 128);
   EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
   EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkMutation);
@@ -8150,13 +8140,13 @@ TEST_P(DarwinFileTest,
   const auto Alias = ok(ServiceKind::Open, {Base});
   EXPECT_EQ(status(Alias), status(Created));
   EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
-  renameFile("/shift", "/moved");
-  identity(Box, "/moved");
+  renameFile("/moved", "/shift");
+  identity(Box, "/shift");
   EXPECT_EQ(status(Alias), status(Created));
-  const auto Reused = makeDirectory("/shift");
-  identity(Reused, "/shift");
-  identity(Box, "/moved");
-  path("/moved");
+  const auto Reused = makeDirectory("/moved");
+  identity(Reused, "/moved");
+  identity(Box, "/shift");
+  path("/shift");
   EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
   path("new");
   path("../data", Base + 1024);
@@ -9728,6 +9718,303 @@ TEST_P(DarwinFileTest, RuntimeLinkSwapPropagatesBothOperandTransportFailures) {
   swapFiles("/work/a", "/work/b");
   linkTarget("/work/a", "other");
   linkTarget("/work/b", "data");
+}
+
+TEST_P(DarwinFileTest, RuntimeLinkSubtreesExchangeOpaqueAndMixedDescendants) {
+  for (unsigned Mode : {0u, 4u, 2u, 18u}) {
+    SCOPED_TRACE(Mode);
+    Files.reset();
+    Options.emplace();
+    Options->Directories.insert("/");
+    creationPolicy();
+    Options->SwapRenameDirectories.insert("/");
+    ASSERT_FALSE(bool(validateFileOptions(*Options)));
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    const auto A = makeDirectory("/a");
+    const auto Sub = makeDirectory("/a/sub");
+    const bool Swap = Mode & 2;
+    const auto B = Swap ? makeDirectory("/b") : UINT64_MAX;
+    if (Swap) {
+      const auto BS = makeDirectory("/b/sub");
+      EXPECT_EQ(ok(ServiceKind::Close, {BS}), 0u);
+    }
+    const auto Data = makeFile("/a/sub/data", "ABCDEFGHIJ");
+    const auto Duplicate = ok(ServiceKind::Dup, {Data});
+    const auto Before = status(Data);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Data, 3, 0}), 3u);
+    auto Lease = Files->mappingSource(Data);
+    const auto Mixed = makeFile("/a/sub/mix", "mixed-data");
+    const std::vector<std::string> Raw = {
+        "data", "../sub", "missing", "self", "", std::string("\xffx", 2)};
+    for (unsigned I = 0; I != Raw.size(); ++I)
+      makeLink("/a/sub/l" + std::to_string(I), Raw[I]);
+    makeLink("/a/sub/self", "self");
+    makeLink("/a/top", "sub/data");
+    uint64_t Right = UINT64_MAX;
+    if (Swap) {
+      Right = makeFile("/b/sub/data", "klmnopqrst");
+      makeLink("/b/sub/mix", "data");
+      for (unsigned I = 0; I != Raw.size(); ++I)
+        makeLink("/b/sub/l" + std::to_string(I), "other");
+    }
+    EXPECT_EQ(ok(ServiceKind::Fchdir, {Sub}), 0u);
+    path("/a");
+    path("/b", Base + 128);
+    EXPECT_EQ(ok(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, Mode}),
+              0u);
+    identity(A, "/b");
+    identity(Sub, "/b/sub");
+    identity(Data, "/b/sub/data");
+    identity(Duplicate, "/b/sub/data");
+    identity(Mixed, "/b/sub/mix");
+    for (unsigned I = 0; I != Raw.size(); ++I) {
+      linkTarget("/b/sub/l" + std::to_string(I), Raw[I]);
+      if (Swap)
+        linkTarget("/a/sub/l" + std::to_string(I), "other");
+    }
+    linkTarget("/b/top", "sub/data");
+    if (Swap) {
+      identity(B, "/a");
+      identity(Right, "/a/sub/data");
+      linkTarget("/a/sub/mix", "data");
+    } else {
+      path("/a/sub/l0");
+      error(ServiceKind::ReadLink, {Base, Base + Page, 32}, value::NoEntry);
+    }
+    path("/b/sub/mix");
+    error(ServiceKind::ReadLink, {Base, Base + Page, 32},
+          value::InvalidArgument);
+    path("l0");
+    const auto Alias = ok(ServiceKind::Open, {Base});
+    EXPECT_EQ(status(Alias), Before);
+    EXPECT_EQ(status(Data), Before);
+    EXPECT_EQ(status(Duplicate), Before);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Duplicate, 0, 1}), 3u);
+    path("/b/sub/self");
+    error(ServiceKind::Open, {Base}, value::TooManyLinks);
+    const uint8_t Bytes[] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'};
+    contents(Alias, Bytes);
+    for (uint64_t FD : {Data, Duplicate, Alias})
+      EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+    ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+    EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+              llvm::ArrayRef<uint8_t>(Bytes));
+    std::vector<uint8_t> Canary(144, 0xcc);
+    llvm::cantFail(Space->write(Base + 256, Canary));
+    path("/b/sub/l0");
+    EXPECT_FALSE(invoke(ServiceKind::Lstat64, {Base, Base + 256}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileMetadata);
+    std::vector<uint8_t> Actual(144);
+    llvm::cantFail(Space->read(Base + 256, Actual));
+    EXPECT_EQ(Actual, Canary);
+  }
+}
+
+TEST_P(DarwinFileTest, RuntimeLinkSubtreesRebindRelativeTargetsAcrossParents) {
+  for (bool Swap : {false, true}) {
+    Files.reset();
+    Options.emplace();
+    Options->Directories.insert("/");
+    creationPolicy();
+    Options->SwapRenameDirectories.insert("/");
+    ASSERT_FALSE(bool(validateFileOptions(*Options)));
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    const auto P = makeDirectory("/p"), Q = makeDirectory("/q");
+    const auto A = makeDirectory("/p/a"), B = makeDirectory("/q/b");
+    const auto Left = makeFile("/p/other", "ABCDEFGHIJ");
+    const auto Right = makeFile("/q/other", "klmnopqrst");
+    makeLink("/p/a/up", "../other");
+    makeLink("/q/b/up", "../other");
+    path("/p/a/up");
+    const auto Old = ok(ServiceKind::Open, {Base});
+    const auto Dup = ok(ServiceKind::Dup, {Old});
+    auto Lease = Files->mappingSource(Old);
+    const auto Before = status(Old);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Old, 3, 0}), 3u);
+    EXPECT_EQ(ok(ServiceKind::Fchdir, {A}), 0u);
+    const char *To = Swap ? "/q/b" : "/q/moved";
+    path("/p/a");
+    path(To, Base + 128);
+    EXPECT_EQ(ok(ServiceKind::RenameAtX,
+                 {999, Base, 999, Base + 128, Swap ? 18u : 0u}),
+              0u);
+    identity(A, To);
+    linkTarget(std::string(To) + "/up", "../other");
+    path("up");
+    const auto Now = ok(ServiceKind::Open, {Base});
+    EXPECT_EQ(status(Now), status(Right));
+    EXPECT_EQ(status(Old), Before);
+    EXPECT_EQ(status(Dup), Before);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Dup, 0, 1}), 3u);
+    if (Swap) {
+      identity(B, "/p/a");
+      linkTarget("/p/a/up", "../other");
+      path("/p/a/up");
+      const auto Other = ok(ServiceKind::Open, {Base});
+      EXPECT_EQ(status(Other), status(Left));
+      EXPECT_EQ(ok(ServiceKind::Close, {Other}), 0u);
+    }
+    const uint8_t Bytes[] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'};
+    contents(Old, Bytes);
+    for (uint64_t FD : {Old, Dup, Now, Left, Right, P, Q, A, B})
+      EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+    ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+    EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+              llvm::ArrayRef<uint8_t>(Bytes));
+  }
+}
+
+TEST_P(DarwinFileTest, RuntimeLinkSubtreesReserveNamesAndRefundExactlyOnce) {
+  for (bool Swap : {false, true}) {
+    Files.reset();
+    Options.emplace();
+    Options->Directories = {"/", "/a"};
+    Options->MutableDirectories = {"/", "/a"};
+    Options->MovableDirectories = {"/a"};
+    Options->WritableFiles = {"/data"};
+    // Fixed declarations + /data name: 5 + 5 + 3 + 6 + 6 = 25.
+    // Runtime /a/l owns 5 name bytes and one empty-target NUL.
+    uint64_t Fixed = 25, Needed = 9;
+    if (Swap) {
+      Options->Directories.insert("/long");
+      Options->SwapRenameDirectories = {"/"};
+      Options->ExchangeableDirectories = {"/a", "/long"};
+      Fixed += 6 + 2 + 3 + 6;
+      Needed = 12;
+    }
+    Options->Files["/data"].resize(darwin_file_limits::Bytes - Fixed - 6);
+    ASSERT_FALSE(bool(validateFileOptions(*Options)));
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    makeLink("/a/l", "");
+    path("/data");
+    const auto Data = ok(ServiceKind::Open, {Base, 2});
+    path("/a");
+    const auto Held = ok(ServiceKind::Open, {Base});
+    path("/long", Base + 128);
+    EXPECT_FALSE(invoke(ServiceKind::RenameAtX,
+                        {999, Base, 999, Base + 128, Swap ? 2u : 0u}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+    identity(Held, "/a");
+    linkTarget("/a/l", "");
+    EXPECT_EQ(ok(ServiceKind::Ftruncate,
+                 {Data, Options->Files.at("/data").size() - Needed}),
+              0u);
+    path("/a");
+    path("/long", Base + 128);
+    EXPECT_EQ(ok(ServiceKind::RenameAtX,
+                 {999, Base, 999, Base + 128, Swap ? 2u : 0u}),
+              0u);
+    for (unsigned I = 0; I != 8; ++I) {
+      path("/long");
+      path("/a", Base + 128);
+      EXPECT_EQ(ok(ServiceKind::RenameAtX,
+                   {999, Base, 999, Base + 128, Swap ? 2u : 0u}),
+                0u);
+      path("/a");
+      path("/long", Base + 128);
+      EXPECT_EQ(ok(ServiceKind::RenameAtX,
+                   {999, Base, 999, Base + 128, Swap ? 2u : 0u}),
+                0u);
+    }
+    identity(Held, "/long");
+    linkTarget("/long/l", "");
+    path("/x");
+    EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+    path("/long/l");
+    EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+    makeFile("/credit8"); // Exactly the nine refunded name/target bytes.
+    path("/x");
+    EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+  }
+}
+
+TEST_P(DarwinFileTest, RuntimeLinkSubtreesPreflightUnopenedLinkPaths) {
+  const auto Long = "/a/" + std::string(255, 'x') + '/' +
+                    std::string(255, 'y') + '/' + std::string(255, 'z') + '/' +
+                    std::string(247, 'w') + "/l";
+  ASSERT_EQ(Long.size(), 1020u);
+  Options->Files.clear();
+  Options->Directories = {"/", "/a", Long.substr(0, Long.size() - 2)};
+  Options->MutableDirectories = {"/", Long.substr(0, Long.size() - 2)};
+  Options->MovableDirectories = {"/a"};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  makeLink(Long, "");
+  path("/a");
+  const auto Held = ok(ServiceKind::Open, {Base});
+  path("/longer", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+  identity(Held, "/a");
+  linkTarget(Long, "");
+  path("/longer");
+  error(ServiceKind::Open, {Base}, value::NoEntry);
+}
+
+TEST_P(DarwinFileTest, RuntimeLinkSubtreesNeedNoFreeEntryDescriptorOrInode) {
+  Options->Files.clear();
+  Options->Directories = {"/"};
+  creationPolicy(UINT64_MAX);
+  Options->SwapRenameDirectories = {"/"};
+  Options->DescriptorLimit = 4;
+  for (unsigned I = 0; I != 251; ++I)
+    Options->Files["/f" + std::to_string(I)] = {};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/f0");
+  const auto Held = ok(ServiceKind::Open, {Base});
+  for (const char *Name : {"/a", "/b"}) {
+    path(Name);
+    EXPECT_EQ(ok(ServiceKind::Mkdir, {Base, 0700}), 0u);
+  }
+  makeLink("/a/l", "left");
+  makeLink("/b/l", "right");
+  swapFiles("/a", "/b");
+  linkTarget("/a/l", "right");
+  linkTarget("/b/l", "left");
+  path("/b/l");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Held}), 0u);
+  const auto New = makeFile("/new");
+  EXPECT_EQ(llvm::support::endian::read64le(status(New).data() + 8),
+            UINT64_MAX);
+}
+
+TEST_P(DarwinFileTest, RuntimeLinkSubtreesKeepActualGrantsAndMountsProtected) {
+  Options->Files.clear();
+  Options->Directories = {"/", "/tree", "/tree/work", "/tree/locked"};
+  Options->MutableDirectories = {"/", "/tree/work"};
+  Options->MovableDirectories = {"/tree"};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  const auto Box = makeDirectory("/tree/work/a");
+  makeLink("/tree/work/a/l", "missing");
+  path("/tree/work/a");
+  path("/tree/locked/a", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryNotMutable);
+  identity(Box, "/tree/work/a");
+  linkTarget("/tree/work/a/l", "missing");
+  Files.reset();
+  Options.emplace();
+  Options->Directories = {"/left", "/right"};
+  Options->MutableDirectories = Options->SwapRenameDirectories =
+      Options->Directories;
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto Left = makeDirectory("/left/a"), Right = makeDirectory("/right/b");
+  makeLink("/left/a/l", "missing");
+  makeLink("/right/b/l", "other");
+  for (bool Reverse : {false, true}) {
+    path(Reverse ? "/right/b" : "/left/a");
+    path(Reverse ? "/left/a" : "/right/b", Base + 128);
+    EXPECT_FALSE(
+        invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::RenameMount);
+    identity(Left, "/left/a");
+    identity(Right, "/right/b");
+    linkTarget("/left/a/l", "missing");
+    linkTarget("/right/b/l", "other");
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));

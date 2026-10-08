@@ -1550,6 +1550,10 @@ TEST_P(DarwinProcess, RuntimeCreatedSymbolicLinksCanBeRenamed) {
       return Event.Number == Class + 488 && Event.Error == true &&
              Event.Result == Error;
     })) << Error;
+  EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+    return Event.Number == Class + 465 && Event.Error == true &&
+           Event.Result == 66;
+  }));
   for (auto Flags : {2u, 18u})
     EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
       return Event.Number == Class + 488 && Event.Error == false &&

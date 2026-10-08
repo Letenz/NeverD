@@ -4554,6 +4554,82 @@ static int symbolic_link_rename(const char *input) {
                 !error && !secondary &&
                 little_integer(current + 8, 8) ==
                     little_integer(victim_before + 8, 8));
+  /* Rekey every link descendant with its directory; keep actual CWD/FD owners.
+   */
+  const unsigned char subtree_opaque[] = {0xff, 'x', 0};
+  RENAME_EXPECT(
+      call(474, (u64)subtree_opaque, x, (u64) "opaque", 0, 0, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) "../data", x, (u64) "up", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(465, work, (u64) "x", work, (u64) "moved", 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(directory_path(x, root, "/work/moved") &&
+                directory_path(held, root, "/work/moved/data"));
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "moved/a", (const unsigned char *)"data", 4) &&
+      renamed_link_bytes(work, "moved/opaque", subtree_opaque, 2));
+  RENAME_EXPECT(call(465, work, (u64) "moved", work, (u64) "y", 0, 0, &error) ==
+                    66 &&
+                error);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "moved/a", (const unsigned char *)"data", 4) &&
+      renamed_link_bytes(work, "y/b", (const unsigned char *)"./data", 6));
+  RENAME_EXPECT(call(488, work, (u64) "moved", work, (u64) "y", 2, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(directory_path(x, root, "/work/y") &&
+                directory_path(y, root, "/work/moved") &&
+                directory_path(held, root, "/work/y/data"));
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "y/a", (const unsigned char *)"data", 4) &&
+      renamed_link_bytes(work, "moved/b", (const unsigned char *)"./data", 6));
+  RENAME_EXPECT(
+      call(488, work, (u64) "y", work, (u64) "moved", 18, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(directory_path(x, root, "/work/moved") &&
+                directory_path(y, root, "/work/y"));
+  RENAME_EXPECT(
+      call(465, work, (u64) "moved", y, (u64) "nested", 0, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(directory_path(x, root, "/work/y/nested") &&
+                directory_path(held, root, "/work/y/nested/data"));
+  RENAME_EXPECT(renamed_link_bytes(work, "y/nested/a",
+                                   (const unsigned char *)"data", 4) &&
+                renamed_link_bytes(work, "y/nested/up",
+                                   (const unsigned char *)"../data", 7) &&
+                renamed_link_bytes(work, "y/nested/opaque", subtree_opaque, 2));
+  u64 parent_rebound = call(5, (u64) "up", 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && parent_rebound >= 3);
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, parent_rebound, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"klmnopqrst", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(
+      call(488, work, (u64) "y", work, (u64) "victim", 2, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(directory_path(y, root, "/work/victim") &&
+                directory_path(x, root, "/work/victim/nested") &&
+                directory_path(held, root, "/work/victim/nested/data"));
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "victim/nested/a", (const unsigned char *)"data",
+                         4) &&
+      renamed_link_bytes(work, "victim/nested/opaque", subtree_opaque, 2));
+  RENAME_EXPECT(
+      call(488, work, (u64) "y", work, (u64) "victim", 18, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(directory_path(y, root, "/work/y") &&
+                directory_path(x, root, "/work/y/nested") &&
+                directory_path(held, root, "/work/y/nested/data"));
+  RENAME_EXPECT(call(339, held, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8) &&
+                little_integer(current + 6, 2) == 1);
   RENAME_EXPECT(call(199, held, 0, 1, 0, 0, 0, &error) == 3 && !error);
   RENAME_EXPECT(call(199, duplicate, 0, 1, 0, 0, 0, &error) == 3 && !error);
   RENAME_EXPECT(
@@ -4570,8 +4646,9 @@ static int symbolic_link_rename(const char *input) {
   RENAME_EXPECT(call(13, work, 0, 0, 0, 0, 0, &error) == 0 && !error &&
                 !secondary);
   const u64 descriptors[] = {
-      exchanged, exchanged_dup, cwd_file, rebound, held, ydata, xdata, y,
-      x,         duplicate,     old,      work,    dir};
+      parent_rebound, exchanged, exchanged_dup, cwd_file, rebound,
+      held,           ydata,     xdata,         y,        x,
+      duplicate,      old,       work,          dir};
   for (unsigned i = 0; i != sizeof(descriptors) / sizeof(descriptors[0]); ++i)
     RENAME_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 &&
                   !error && !secondary);

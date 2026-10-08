@@ -315,9 +315,9 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     SymbolicLinkCreationLimit,
     "Darwin symbolic link creation exceeds catalogue limits")
-NEVERD_DARWIN_DIAGNOSTIC(
-    SymbolicLinkDirectoryMove,
-    "Darwin directory movement containing symbolic links is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(SymbolicLinkDirectoryMove,
+                         "Darwin directory movement containing protected "
+                         "symbolic links is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileOptionPath,
                          "invalid or conflicting Darwin catalogue path")
 NEVERD_DARWIN_DIAGNOSTIC(FileAccessPermissions,
