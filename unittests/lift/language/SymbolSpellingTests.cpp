@@ -30,6 +30,37 @@ TEST(SymbolSpelling, CxxNamesReadAsTheirDemanglersPrintThem) {
   EXPECT_TRUE(readableSymbolName("_Zebra").empty());
 }
 
+TEST(SymbolSpelling, CxxNamesReadWithoutDefaultTemplateArguments) {
+  // libstdc++'s C++11 ABI namespace, the string's default arguments and its
+  // standard name, and the destructor named after it.
+  EXPECT_EQ(readableSymbolName(
+                "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEED1Ev"),
+            "std::string::~string()");
+  EXPECT_EQ(readableSymbolName("_ZNSt6vectorIiSaIiEE9push_backERKi"),
+            "std::vector<int>::push_back(int const&)");
+  // Arguments inside arguments, and parameter types.
+  EXPECT_EQ(readableSymbolName("_ZNSt3mapIiSt6vectorIiSaIiEESt4lessIiESaISt4pa"
+                               "irIKiS2_EEEixERS6_"),
+            "std::map<int, std::vector<int>>::operator[](int const&)");
+  EXPECT_EQ(readableSymbolName("_ZSt4endlIcSt11char_traitsIcEERSt13basic_ostre"
+                               "amIT_T0_ES6_"),
+            "std::ostream& std::endl<char, std::char_traits<char>>("
+            "std::ostream&)");
+  // The operator comes before a function template's arguments, which a
+  // space keeps apart from it.
+  EXPECT_EQ(readableSymbolName("_ZStlsISt11char_traitsIcEERSt13basic_ostreamIc"
+                               "T_ES5_PKc"),
+            "std::ostream& std::operator<< <std::char_traits<char>>("
+            "std::ostream&, char const*)");
+  // An argument that differs from its default stays.
+  EXPECT_EQ(readableSymbolName("_ZNSt6vectorIi7MyAllocIiEE5clearEv"),
+            "std::vector<int, MyAlloc<int>>::clear()");
+  // Microsoft's class keywords in template arguments go too.
+  EXPECT_EQ(readableSymbolName("?push_back@?$vector@HV?$allocator@H@std@@@std@@"
+                               "QEAAXAEBH@Z"),
+            "void __cdecl std::vector<int>::push_back(int const &)");
+}
+
 TEST(SymbolSpelling, LegacyRustReadsWithoutItsHash) {
   constexpr const char *Write = "_ZN4core3fmt5write17h0123456789abcdefE";
   EXPECT_EQ(symbolScheme(Write), SymbolScheme::RustLegacy);
