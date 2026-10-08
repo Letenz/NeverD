@@ -15,6 +15,7 @@
 
 #include "neverd/evm/bytecode/EVMBytecode.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
+#include "neverd/loader/ExceptionCommon.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/loader/SymbolDecoration.h"
@@ -656,6 +657,24 @@ const char *neverd_headers_json(neverd_session_t Sess) {
 
   if (S->Img.EVM)
     Root["evm"] = describeEVMImage(*S->Img.EVM);
+
+  // The language whose runtime built the image, which decides how its names
+  // read.  Evidence comes from LanguageRuntime.def, the version from the
+  // image's own release string.
+  const LanguageRuntimeInfo &Language = S->Img.ExceptionMetadata.Runtime;
+  llvm::json::Object LanguageInfo;
+  LanguageInfo["runtime"] = getSourceLanguageRuntimeName(Language.Runtime);
+  if (!Language.Version.empty())
+    LanguageInfo["version"] = jsonSafeText(Language.Version);
+  llvm::json::Array Secondary;
+  for (SourceLanguageRuntime Runtime : Language.SecondaryRuntimes)
+    Secondary.push_back(getSourceLanguageRuntimeName(Runtime));
+  LanguageInfo["secondary"] = std::move(Secondary);
+  llvm::json::Array Evidence;
+  for (const std::string &Item : Language.Evidence)
+    Evidence.push_back(jsonSafeText(Item));
+  LanguageInfo["evidence"] = std::move(Evidence);
+  Root["language"] = std::move(LanguageInfo);
 
   llvm::json::Object Dyn;
   const auto &DI = S->Img.DynInfo;

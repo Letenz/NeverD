@@ -656,6 +656,8 @@ Json Engine::metadata() const {
   const auto arch = ownedString(neverd_session_arch_name(session_));
   const bool deferred =
       !analyzed_ && (folded(arch) == "evm" || folded(arch) == "sbf");
+  // The language whose runtime built the image, as the engine read it.
+  const auto headers = backendJson(neverd_headers_json(session_));
   return {{"path", ownedString(neverd_session_file_path(session_))},
           {"architecture", arch},
           {"format", ownedString(neverd_session_format_name(session_))},
@@ -670,6 +672,7 @@ Json Engine::metadata() const {
           {"import_count", neverd_session_import_count(session_)},
           {"export_count", neverd_session_export_count(session_)},
           {"symbol_count", neverd_session_symbol_count(session_)},
+          {"language", headers.value("language", Json::object())},
           {"analyzed", analyzed_},
           {"analysis_state", analyzed_ ? "complete" : "not_analyzed"},
           {"read_only", readOnly_},
