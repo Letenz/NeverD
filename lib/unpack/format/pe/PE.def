@@ -60,6 +60,8 @@ NEVERD_UNPACK_PE_TEXT(TLSState,
                       "TLS restoration requires a matching live TLS snapshot")
 NEVERD_UNPACK_PE_TEXT(TLSCallbacks,
                       "TLS restoration exceeds the supported callback count")
+NEVERD_UNPACK_PE_TEXT(TLSDirectory, "original TLS directory is invalid and no "
+                                    "witnessed replacement is available")
 NEVERD_UNPACK_PE_TEXT(ImportRange,
                       "a repaired import cell is outside relative-call range")
 NEVERD_UNPACK_PE_TEXT(

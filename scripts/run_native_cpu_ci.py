@@ -201,13 +201,21 @@ def run(
     )
     if len(output_limits) != 1:
         raise ValueError("expected one native test output limit")
-    configured = {
-        Path(line.replace("\\", "/")).name.removesuffix(".dir")
-        for line in (build / "CMakeFiles" / "TargetDirectories.txt")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if "/unittests/emulation/CMakeFiles/" in line.replace("\\", "/")
-    }
+    unit_directory = (build / "unittests").resolve()
+    configured = set()
+    for line in (build / "CMakeFiles" / "TargetDirectories.txt").read_text(
+            encoding="utf-8").splitlines():
+        target = Path(line.replace("\\", "/"))
+        if not target.is_absolute():
+            continue
+        target = target.resolve()
+        if (not target.is_relative_to(unit_directory)
+                or target.parent.name != "CMakeFiles" or target.suffix != ".dir"
+                or target.stem not in owners):
+            continue
+        if target.stem in configured:
+            raise ValueError(f"ambiguous native CPU owner: {target.stem}")
+        configured.add(target.stem)
     missing = set(owners) - configured
     if missing:
         raise ValueError(f"unconfigured native CPU owners: {sorted(missing)}")
@@ -221,7 +229,7 @@ def run(
     )
     labels = "^(" + "|".join(re.escape(owner) for owner in owners) + ")$"
     base = [
-        "ctest", "--test-dir", str(build / "unittests" / "emulation"),
+        "ctest", "--test-dir", str(unit_directory),
         "--build-config", "Release", "-L", labels,
     ]
     inventory = subprocess.check_output([*base, "--show-only=json-v1"], text=True)

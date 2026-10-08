@@ -261,6 +261,12 @@ are restored from the database, and a database that describes a different
 version of the file is reported and left unused until the next save replaces
 it. Closing the window updates the saved location of an existing database.
 
+Every database carries the SQLite application id `NDDB` (`0x4E444442`) in its
+header, so a renamed database still opens as a project and `file` tells it from
+other SQLite files (`application id 1313096770`). Another application's SQLite
+file is never read or written, even when it is named `.nddb`; it is reported as
+not a NeverD database.
+
 ## Edits, history and analysis
 
 Comments are staged and saved explicitly; renames and function edits commit at

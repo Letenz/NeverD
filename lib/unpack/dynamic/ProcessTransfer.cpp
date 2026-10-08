@@ -373,13 +373,13 @@ TransferObserver::watched(ProcessView &Process, uint64_t PC) {
   Observed.Baseline = std::move(Images.front());
   Observed.Transfers = Seen;
   Observed.CompletedCalls = CompletedCalls;
-  if (Process.programInvocation()) {
-    Observed.Initializers = Process.completedInitializers();
-    auto ThreadLocal = Process.threadLocalMemory();
-    if (!ThreadLocal)
-      return ThreadLocal.takeError();
-    Observed.ThreadLocal = std::move(*ThreadLocal);
-  }
+  // An explicit transfer may stop inside initialization. Its snapshot still
+  // needs the effects of earlier initializers and the current thread's TLS.
+  Observed.Initializers = Process.completedInitializers();
+  auto ThreadLocal = Process.threadLocalMemory();
+  if (!ThreadLocal)
+    return ThreadLocal.takeError();
+  Observed.ThreadLocal = std::move(*ThreadLocal);
   // Several identities may share one address. Keep a named one, in a stable
   // order, so the rebuilt directory does not depend on enumeration order.
   for (auto &Export : Process.exports()) {

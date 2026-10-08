@@ -27,7 +27,10 @@ public:
   uint64_t SP = 0x8000;
   bool MemoryUnchanged = false;
   bool InputPresent = true, EntryInvocation = true;
+  bool FailTLS = false;
   unsigned Reads = 0;
+  std::vector<uint64_t> Initializers;
+  std::optional<std::vector<uint8_t>> TLS;
   std::optional<ProcessCallFrame> Frame;
   GuestArchitecture architecture() const override {
     return GuestArchitecture::X64;
@@ -55,6 +58,15 @@ public:
   }
   std::vector<ProcessExportView> exports() override { return {}; }
   bool programInvocation() const override { return EntryInvocation; }
+  std::vector<uint64_t> completedInitializers() const override {
+    return Initializers;
+  }
+  llvm::Expected<std::optional<std::vector<uint8_t>>>
+  threadLocalMemory() override {
+    if (FailTLS)
+      return llvm::createStringError("test TLS snapshot failed");
+    return TLS;
+  }
   llvm::Expected<std::optional<ProcessCallFrame>> callFrame() override {
     return Frame;
   }
@@ -176,6 +188,44 @@ TEST_F(ProcessTransfer, GeneratedCallsNeedTheirReturnedStackAtTheContinuation) {
       EXPECT_EQ(Captured->CompletedCalls.front().Entry, 64u);
       EXPECT_EQ(Captured->CompletedCalls.front().Arguments[1], 1u);
     }
+  }
+}
+
+TEST_F(ProcessTransfer, SelectedTransfersCaptureInitializerAndThreadState) {
+  for (bool ProgramInvocation : {false, true}) {
+    SCOPED_TRACE(ProgramInvocation);
+    TransferProcess P;
+    TransferObserver O{Image, {CPURegister::X64SP, 15}, 1};
+    P.EntryInvocation = ProgramInvocation;
+    P.instruction(64, {0xb8, 0, 0, 0, 0});
+    llvm::cantFail(O.started(P));
+    P.Initializers = {512};
+    P.TLS = std::vector<uint8_t>{0x42, 0, 0x7b};
+    P.Bytes[65] = 1;
+    EXPECT_FALSE(llvm::cantFail(O.watched(P, 64)));
+    auto Captured = O.take();
+    ASSERT_TRUE(Captured);
+    EXPECT_EQ(Captured->Initializers, P.Initializers);
+    EXPECT_EQ(Captured->ThreadLocal, P.TLS);
+    ASSERT_EQ(Captured->Transfers.size(), 1u);
+    EXPECT_EQ(Captured->Transfers.front().ProgramInvocation, ProgramInvocation);
+  }
+}
+
+TEST_F(ProcessTransfer, SelectedTransfersRejectFailedThreadStateCapture) {
+  for (bool ProgramInvocation : {false, true}) {
+    SCOPED_TRACE(ProgramInvocation);
+    TransferProcess P;
+    TransferObserver O{Image, {CPURegister::X64SP, 15}, 1};
+    P.EntryInvocation = ProgramInvocation;
+    P.instruction(64, {0xb8, 0, 0, 0, 0});
+    llvm::cantFail(O.started(P));
+    P.Bytes[65] = 1;
+    P.FailTLS = true;
+    auto Result = O.watched(P, 64);
+    ASSERT_FALSE(bool(Result));
+    EXPECT_EQ(llvm::toString(Result.takeError()), "test TLS snapshot failed");
+    EXPECT_FALSE(O.take());
   }
 }
 

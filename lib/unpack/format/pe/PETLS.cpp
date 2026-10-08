@@ -61,7 +61,7 @@ llvm::Expected<std::optional<uint64_t>> recoverTLSDirectory(const Image &In,
     }
     return true;
   };
-  auto Matches = [&](uint64_t RVA, bool Generated) {
+  auto Matches = [&](uint64_t RVA, bool Generated, bool RequireWitness = true) {
     if (!Accessible(C.Base + RVA, sizeof(coff_tls_directory64),
                     emulation::Read))
       return false;
@@ -87,7 +87,7 @@ llvm::Expected<std::optional<uint64_t>> recoverTLSDirectory(const Image &In,
                                     Begin == Loaded.StartAddressOfRawData &&
                                     End == Loaded.EndAddressOfRawData;
     if (!Record.AddressOfCallBacks)
-      return OriginalAllocation;
+      return !RequireWitness || OriginalAllocation;
     uint64_t At = Record.AddressOfCallBacks;
     bool Witnessed = false;
     for (uint64_t I = 0; I <= value::MaxTLSCallbacks; ++I) {
@@ -95,7 +95,7 @@ llvm::Expected<std::optional<uint64_t>> recoverTLSDirectory(const Image &In,
         return false;
       const uint64_t Target = read64le(Memory.data() + At - C.Base);
       if (!Target)
-        return Witnessed || (!I && OriginalAllocation);
+        return !RequireWitness || Witnessed || (!I && OriginalAllocation);
       if (I == value::MaxTLSCallbacks ||
           !Accessible(Target, 1, emulation::Execute) ||
           (In.architecture() == emulation::GuestArchitecture::AArch64 &&
@@ -143,7 +143,18 @@ llvm::Expected<std::optional<uint64_t>> recoverTLSDirectory(const Image &In,
   auto Found = Find(true);
   if (!Found || *Found)
     return Found;
-  return Find(false);
+  Found = Find(false);
+  if (!Found || *Found)
+    return Found;
+  // Without replacement evidence the output retains the original directory.
+  // Its live record must still describe a valid allocation and callback list;
+  // preserving invalid metadata would publish an image the loader rejects.
+  // Only this original record may be retained without execution evidence.
+  if (!Matches(Original, false, false))
+    return failure(text::TLSDirectory);
+  // Retaining its directory still requires validating and restoring the
+  // captured thread state through the same path as a witnessed directory.
+  return Original;
 }
 
 llvm::Expected<TLSRebuild> rebuildTLS(const Image &In, const Capture &C,

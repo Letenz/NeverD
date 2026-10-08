@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "PEImage.h"
 
+#include "neverd/object/PELayout.h"
+
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -114,10 +116,8 @@ Image::read(llvm::ArrayRef<uint8_t> File) {
     R.FileOffset = R.FileSize ? uint32_t(Raw.PointerToRawData) &
                                     ~uint32_t(value::MinFileAlignment - 1)
                               : 0;
-    // The loader maps a section up to the next section alignment boundary.
-    R.MemorySize = llvm::alignTo(
-        uint64_t(Raw.VirtualSize ? Raw.VirtualSize : Raw.SizeOfRawData),
-        uint64_t(PE.SectionAlignment));
+    R.MemorySize = getPEUserSectionMappedSize(
+        Raw.VirtualSize, Raw.SizeOfRawData, unpack::value::PageSize);
     if (!R.MemorySize || R.RVA % PE.SectionAlignment || R.RVA < Next ||
         R.RVA >= PE.SizeOfImage || R.MemorySize > PE.SizeOfImage - R.RVA)
       return failure(text::Sections);
