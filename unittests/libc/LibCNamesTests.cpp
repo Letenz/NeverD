@@ -426,15 +426,15 @@ TEST(LibCPrototype, WindowsRuntimeNamesStayInPE) {
   EXPECT_FALSE(libcArityForSymbol("terminate").has_value());
 }
 
-TEST(LibCPrototype, PointerParameters) {
-  EXPECT_TRUE(isPointerParameter("void *"));
-  EXPECT_TRUE(isPointerParameter("const unsigned short **"));
-  EXPECT_TRUE(isPointerParameter("int (*)(int, char **, char **)"));
-  EXPECT_TRUE(isPointerParameter("void (**)(void)"));
-  EXPECT_TRUE(isPointerParameter("int32_t (WINAPI *)(void *)"));
-  EXPECT_FALSE(isPointerParameter("int"));
-  EXPECT_FALSE(isPointerParameter("uintptr_t"));
-  EXPECT_FALSE(isPointerParameter("size_t"));
+TEST(LibCPrototype, PointerTypes) {
+  EXPECT_TRUE(isPointerType("void *"));
+  EXPECT_TRUE(isPointerType("const unsigned short **"));
+  EXPECT_TRUE(isPointerType("int (*)(int, char **, char **)"));
+  EXPECT_TRUE(isPointerType("void (**)(void)"));
+  EXPECT_TRUE(isPointerType("int32_t (WINAPI *)(void *)"));
+  EXPECT_FALSE(isPointerType("int"));
+  EXPECT_FALSE(isPointerType("uintptr_t"));
+  EXPECT_FALSE(isPointerType("size_t"));
 }
 
 TEST(VarArgFixedCount, IsoAliasesTakeTheStandardRoutinesArguments) {

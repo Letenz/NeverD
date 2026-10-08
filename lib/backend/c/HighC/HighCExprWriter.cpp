@@ -1038,6 +1038,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                            DefinedParam->Size <= Op->Type->Size)))
       if (auto Carrier = unsignedCarrierText(*Op, 0))
         Arg = *Carrier;
+    // An integer narrower than a pointer widens before it converts to one, as
+    // does the int an unknown value prints as.
+    const bool WidensToPointer =
+        !PointerArgument && Op->Type &&
+        ((Op->Type->Kind == NdTypeKind::Int &&
+          Op->Type->Size < pointerBytes(Opts.TheArch)) ||
+         isUnknownCallOperand(Op));
     // A routine with a known prototype takes its pointer parameters through
     // casts of the values the machine passed; C converts its integer
     // parameters itself.
@@ -1046,18 +1053,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       const HighExpr *Value = unwrapIntegerView(Op);
       const bool Null =
           Value && Value->Kind == ExprKind::Const && Value->ConstVal == 0;
-      // A narrow string literal is the `char *` C converts to a character
-      // or untyped pointer itself.
-      const bool Converts = !Arg.empty() && Arg.front() == '"' &&
-                            (Param == "char *" || Param == "const char *" ||
-                             Param == "void *" || Param == "const void *");
-      if (libc::isPointerParameter(Param)) {
-        // An integer narrower than a pointer widens first, as does the int
-        // an unknown value prints as.
-        const bool Narrow = !PointerArgument && Op->Type &&
-                            ((Op->Type->Kind == NdTypeKind::Int &&
-                              Op->Type->Size < pointerBytes(Opts.TheArch)) ||
-                             isUnknownCallOperand(Op));
+      const bool Converts =
+          !Arg.empty() && Arg.front() == '"' && libc::takesStringLiteral(Param);
+      if (libc::isPointerType(Param)) {
         // An address its integer view carries passes as the pointer it is.
         llvm::StringRef Address(Arg);
         if (Address.consume_front("(uintptr_t)") && Address.starts_with("&") &&
@@ -1065,7 +1063,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           Arg = Param == "const void *" ? Address.str()
                                         : "(" + Param + ")" + Address.str();
         else if (!Null && !Converts)
-          Arg = "(" + Param + ")" + (Narrow ? "(uintptr_t)" : "") +
+          Arg = "(" + Param + ")" + (WidensToPointer ? "(uintptr_t)" : "") +
                 castOperand(Arg);
       } else if (Op->Type && Op->Type->Kind == NdTypeKind::Ptr) {
         Arg = "(" + Param + ")(uintptr_t)" + castOperand(Arg);
@@ -1078,13 +1076,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (const auto Type = libc::functionPointerParameter(
               HeaderCallee, static_cast<unsigned>(I))) {
         const HighExpr *Value = unwrapIntegerView(Op);
-        const bool Narrow = !PointerArgument && Op->Type &&
-                            ((Op->Type->Kind == NdTypeKind::Int &&
-                              Op->Type->Size < pointerBytes(Opts.TheArch)) ||
-                             isUnknownCallOperand(Op));
         if (!Value || Value->Kind != ExprKind::Const || Value->ConstVal != 0)
-          Arg = "(" + std::string(*Type) + ")" + (Narrow ? "(uintptr_t)" : "") +
-                castOperand(Arg);
+          Arg = "(" + std::string(*Type) + ")" +
+                (WidensToPointer ? "(uintptr_t)" : "") + castOperand(Arg);
       }
     // A callee printed in this file has a prototype: convert between pointer
     // and integer arguments the way the machine passed them, in a register.
@@ -1206,12 +1200,11 @@ HighCWriter::externalPrototype(const std::string &Name) const {
 }
 
 std::string HighCWriter::prototypeType(std::string_view Type) const {
-  constexpr std::string_view Winapi = "WINAPI ";
   std::string Text(Type);
-  const size_t At = Text.find(Winapi);
+  const size_t At = Text.find(libc::kWinapiMarker);
   if (At == std::string::npos)
     return Text;
-  return Text.replace(At, Winapi.size(),
+  return Text.replace(At, libc::kWinapiMarker.size(),
                       Opts.TheArch == Arch::X86 ? "__attribute__((stdcall)) "
                                                 : "");
 }
@@ -1233,7 +1226,7 @@ bool HighCWriter::takesPointerArgument(const HighExpr &E, size_t Index,
   // and its variadic arguments any pointer.
   if (const libc::LibCPrototype *Prototype = calleePrototype(E))
     return Index < Prototype->ParamCount
-               ? libc::isPointerParameter(Prototype->Params[Index])
+               ? libc::isPointerType(Prototype->Params[Index])
                : Prototype->Variadic;
   // A known C function is declared by its header: a variadic argument takes
   // any pointer, a function-pointer parameter a function and a string
@@ -3669,7 +3662,7 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     // bytes.  A call assigned to a variable has the variable's type.
     if (&E != StatementCall && (!E.Type || E.Type->Kind == NdTypeKind::Int))
       if (const libc::LibCPrototype *Prototype = calleePrototype(E);
-          Prototype && libc::isPointerParameter(Prototype->Return))
+          Prototype && libc::isPointerType(Prototype->Return))
         return E.Type && (E.Type->Size != pointerBytes(Opts.TheArch) ||
                           E.Type->IsSigned)
                    ? "(" + typeToC(E.Type) + ")(uintptr_t)" + Text

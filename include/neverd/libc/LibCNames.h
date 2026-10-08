@@ -87,8 +87,8 @@ struct LibCPrototype {
   /// The C name the routine links by.
   std::string_view Name;
   std::string_view Return;
-  /// Each parameter's C type.  `WINAPI` in one names the Windows API calling
-  /// convention of the function pointer it spells.
+  /// Each parameter's C type.  kWinapiMarker in one names the Windows API
+  /// calling convention of the function pointer it spells.
   std::array<std::string_view, 8> Params{};
   uint8_t ParamCount = 0;
   /// Further arguments follow the parameters (`...`).
@@ -122,12 +122,23 @@ makeLibCPrototype(std::string_view Name, std::string_view Return,
   return Prototype;
 }
 
-/// Whether a parameter of C type \p Type takes a pointer: an object or a
-/// function pointer, or a pointer to one.
-constexpr bool isPointerParameter(std::string_view Type) {
+/// Whether C type \p Type is a pointer: to an object or to a function, or to
+/// a pointer to one.
+constexpr bool isPointerType(std::string_view Type) {
   return !Type.empty() &&
          (Type.back() == '*' || Type.find("*)") != std::string_view::npos);
 }
+
+/// Whether a parameter of C type \p Type takes a narrow string literal as it
+/// is: C converts its `char *` to a character or untyped pointer.
+constexpr bool takesStringLiteral(std::string_view Type) {
+  return Type == "char *" || Type == "const char *" || Type == "void *" ||
+         Type == "const void *";
+}
+
+/// The marker a prototype's function-pointer type carries for the Windows
+/// API calling convention, which is stdcall on 32-bit x86.
+inline constexpr std::string_view kWinapiMarker = "WINAPI ";
 
 /// The prototype of the routine C name \p Name links to in an image of object
 /// format \p Format, or null.
