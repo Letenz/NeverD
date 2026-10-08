@@ -254,6 +254,9 @@ private:
   void neutralizeStackProbeCalls(MedFunc &Func);
   /// Record which GPRs a direct call's callee never writes.
   void applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp);
+  /// The import slot the register an INDIR_CALL being converted goes
+  /// through was loaded from, else 0.
+  va_t RegisterCallSlot = 0;
   void buildSsa(MedFunc &Func, const LowFunc &Low);
   void runDce(MedFunc &Func);
   void propagate(MedFunc &Func);
