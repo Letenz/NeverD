@@ -4092,7 +4092,10 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
            !Type->Pointee->SourceName.empty();
   };
-  if (Ty) {
+  if (Ty && Obj.WeakType) {
+    Obj.Type = Ty;
+    Obj.WeakType = false;
+  } else if (Ty) {
     if (!Obj.Type)
       Obj.Type = Ty;
     else if (NamedDisplayPointer(Ty) && !NamedDisplayPointer(Obj.Type) &&
@@ -4104,6 +4107,23 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
   if (!Obj.Type)
     Obj.Type = NdType::makeInt(4);
   Obj.Written |= Written;
+}
+
+void HighCWriter::noteImageAddress(va_t Addr) {
+  if (!isImageDataAddress(Addr))
+    return;
+  if (auto It = ImageObjects.find(Addr);
+      It != ImageObjects.end() && It->second.Type)
+    return;
+  // The address alone stands in with an integer as wide as the object its
+  // symbol sizes, which the type of any access replaces.
+  const uint64_t Size = Opts.Image ? Opts.Image->dataObjectSizeAt(Addr) : 0;
+  noteImageObject(
+      Addr,
+      NdType::makeInt(Size == 1 || Size == 2 || Size == 4 || Size == 8 ? Size
+                                                                       : 2),
+      false);
+  ImageObjects[Addr].WeakType = true;
 }
 
 bool HighCWriter::isParamCopy(const HighExpr &E) const {
