@@ -1445,6 +1445,9 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   // the same headers and prototypes.
   for (auto &F : Funcs)
     collectCallTargets(F.Body, CallTargets);
+  // A function whose address the code takes is declared as a callee is.
+  CallTargets.insert(AddressTakenFunctions.begin(),
+                     AddressTakenFunctions.end());
 
   for (auto &Name : CallTargets) {
     if (isOwnFunctionName(Name, Funcs))
@@ -1506,6 +1509,9 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // the same headers and prototypes.
   for (auto &F : Funcs)
     collectCallTargets(F.Body, CallTargets);
+  // A function whose address the code takes is declared as a callee is.
+  CallTargets.insert(AddressTakenFunctions.begin(),
+                     AddressTakenFunctions.end());
 
   for (const auto &[Name, Identifier] : SourceRuntimeDataIdentifiers) {
     if (ConflictingSourceRuntimeDataIdentities.count(Name))
@@ -1881,26 +1887,37 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       DeclareSyntheticThis(Identifier);
       OS << debugExternPrototype(FunctionSym{}, Identifier) << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name)) {
-      OS << "extern int " << Identifier << "(";
       // The calls print as many arguments (debugCallArgLimit).
       const auto Sources = ExternalCallSources.find(Name);
       const llvm::StringRef Symbol =
           Sources != ExternalCallSources.end() && Sources->second.size() == 1
               ? llvm::StringRef(*Sources->second.begin())
               : llvm::StringRef(Name);
-      if (auto Arity = knownArity(Symbol, Name);
-          Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
-        // Each argument fills one integer register: an int64_t on a 32-bit
-        // target would take two, and the arguments after it would move.
-        const std::string Register =
-            "int" + std::to_string(pointerBytes(Opts.TheArch) * 8) + "_t";
-        if (Arity->IntArgs == 0)
+      // A routine no header declares takes the prototype the C library tables
+      // give it; its calls convert their arguments to its parameter types.
+      if (const libc::LibCPrototype *Prototype =
+              libc::libcPrototypeForSymbol(Symbol)) {
+        OS << "extern " << Prototype->Return << " " << Identifier << "(";
+        for (unsigned I = 0; I < Prototype->ParamCount; ++I)
+          OS << (I ? ", " : "") << Prototype->Params[I];
+        if (!Prototype->ParamCount)
           OS << "void";
-        else {
-          for (int I = 0; I < Arity->IntArgs; ++I) {
-            if (I)
-              OS << ", ";
-            OS << Register;
+      } else {
+        OS << "extern int " << Identifier << "(";
+        if (auto Arity = knownArity(Symbol, Name);
+            Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
+          // Each argument fills one integer register: an int64_t on a 32-bit
+          // target would take two, and the arguments after it would move.
+          const std::string Register =
+              "int" + std::to_string(pointerBytes(Opts.TheArch) * 8) + "_t";
+          if (Arity->IntArgs == 0)
+            OS << "void";
+          else {
+            for (int I = 0; I < Arity->IntArgs; ++I) {
+              if (I)
+                OS << ", ";
+              OS << Register;
+            }
           }
         }
       }
@@ -1918,6 +1935,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
 void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   ImageObjects.clear();
   ImageBackings.clear();
+  FunctionAddressNames.clear();
+  AddressTakenFunctions.clear();
   if (!Opts.Image)
     return;
   VarKeyMap<va_t> ImageLoadVars;
@@ -1947,6 +1966,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         ImageLoadVars[varKey(S.Dst->Var)] = *VA;
     });
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+    if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
+      noteFunctionAddress(E.ConstVal, Funcs);
     if (E.Kind == ExprKind::Const && isImageDataAddress(E.ConstVal) &&
         !imageStringLiteral(Opts.Image, E.ConstVal)) {
       bool Named = false;
@@ -2114,6 +2135,25 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       NeedsBacking |= Width && (Width & (Width - 1)) != 0;
   }
   FinishGroup();
+}
+
+void HighCWriter::noteFunctionAddress(va_t Addr,
+                                      const std::vector<HighFunc> &Funcs) {
+  if (FunctionAddressNames.count(Addr))
+    return;
+  for (const HighFunc &Func : Funcs)
+    if (Func.Entry == Addr && !Func.Name.empty()) {
+      FunctionAddressNames.emplace(Addr, functionIdentifier(Func));
+      return;
+    }
+  // A function the image names; this output declares it.
+  for (const Symbol &Sym : Opts.Image->Symbols)
+    if (Sym.Addr == Addr && Sym.IsFunc && !Sym.Name.empty()) {
+      FunctionAddressNames.emplace(
+          Addr, functionIdentifier(llvm::StringRef(Sym.Name)));
+      AddressTakenFunctions.insert(Sym.Name);
+      return;
+    }
 }
 
 void HighCWriter::writeImageObjects() {

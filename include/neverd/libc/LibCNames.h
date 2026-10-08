@@ -77,6 +77,28 @@ struct LibCArityEntry {
   LibCArity Arity;
 };
 
+/// The C declaration of a routine no standard header declares, such as the one
+/// the start files enter a program through (LibCStartup.h): its return type
+/// and each parameter's C type.  Its arity is derived from it.
+struct LibCPrototype {
+  /// The name without leading underscores, as the arity tables key it.
+  std::string_view Name;
+  std::string_view Return;
+  std::array<std::string_view, 8> Params{};
+  uint8_t ParamCount = 0;
+};
+
+/// Whether a parameter of C type \p Type takes a pointer: an object or a
+/// function pointer.
+constexpr bool isPointerParameter(std::string_view Type) {
+  return !Type.empty() &&
+         (Type.back() == '*' || Type.find("(*)") != std::string_view::npos);
+}
+
+/// The prototype of the routine a symbol \p Name links to, leading
+/// underscores ignored, or null.
+const LibCPrototype *libcPrototypeForSymbol(std::string_view Name);
+
 /// The fixed argument arity of a known NON-variadic libc function (e.g. fputs
 /// -> {2,0}, sqrt -> {0,1}), used to bound the heuristic argument recovery for
 /// an external call whose true signature is otherwise unknown.  Returns nullopt

@@ -4,12 +4,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolDecoration.h"
 
 #include "llvm/AsmParser/Parser.h"
@@ -212,7 +214,11 @@ TEST(CSymbolNames, TheEntryStackPointerIsAValue) {
                {Copy, callStatement("__libc_start_main", 0x2000, Args)});
   Start.FrameSize = 16;
   const std::string Source = emitHighC({Start}, BinaryFormat::ELF, Arch::X64);
-  EXPECT_NE(Source.find("__libc_start_main(0, 1, 2, 3, 4, 5, "), NotFound)
+  // Its prototype's pointer parameters take the values through casts.
+  EXPECT_NE(
+      Source.find("__libc_start_main(0, 1, (char **)2, (void (*)(void))3, "
+                  "(void (*)(void))4, (void (*)(void))5, (void *)"),
+      NotFound)
       << Source;
   EXPECT_EQ(Source.find("unknown"), NotFound) << Source;
 }
@@ -334,6 +340,94 @@ int main(void) { Foo_run(); return called == 15 ? 0 : 1; }
       << Message << '\n'
       << Source;
 #endif
+}
+
+/// An executable image whose text holds `main` at 0x1150 and a handler.
+BinaryImage startupImage() {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = 0x200;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(0x200, 0xC3);
+  Img.Segments.push_back(std::move(Text));
+  for (const auto &[Name, Addr] :
+       {std::pair<const char *, va_t>{"main", 0x1150},
+        {"on_exit_hook", 0x1180}}) {
+    Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Sym.IsFunc = true;
+    Img.Symbols.push_back(std::move(Sym));
+  }
+  return Img;
+}
+
+std::string emitWithImage(const std::vector<HighFunc> &Funcs,
+                          const BinaryImage &Img) {
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  EXPECT_TRUE(HighCEmitter().emit(Funcs, OS, Options));
+  return Text;
+}
+
+ExprPtr address(va_t Addr) {
+  return HighExpr::makeConst(Addr, 8, ConstantAddressProvenance::Address);
+}
+
+TEST(CSymbolNames, StartupPassesMainThroughItsPrototype) {
+  const BinaryImage Img = startupImage();
+  std::vector<ExprPtr> Args{address(0x1150),
+                            HighExpr::makeConst(1, 8),
+                            HighExpr::makeConst(0x7000, 8),
+                            HighExpr::makeConst(0, 8),
+                            HighExpr::makeConst(0, 8),
+                            HighExpr::makeConst(0, 8),
+                            HighExpr::makeConst(0, 8)};
+  const std::string Source = emitWithImage(
+      {function("_start", 0x1000,
+                {callStatement("__libc_start_main", 0x2000, Args)})},
+      Img);
+  // The routine no header declares has its C library prototype, and the
+  // address of main reads as main, converted to the parameter's type.
+  EXPECT_NE(Source.find("extern int __libc_start_main(int (*)(int, char **, "
+                        "char **), int, char **, void (*)(void), void "
+                        "(*)(void), void (*)(void), void *)"),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("extern int main();"), NotFound) << Source;
+  EXPECT_NE(Source.find("__libc_start_main((int (*)(int, char **, char "
+                        "**))main, 1, (char **)0x7000, 0, 0, 0, 0);"),
+            NotFound)
+      << Source;
+  EXPECT_EQ(Source.find("0x1150"), NotFound) << Source;
+  source_call_execution_test::compileAndRun(
+      Source + "int main(void) { return 0; }\n",
+      {"-Werror=int-conversion", "-Werror=incompatible-pointer-types"});
+}
+
+TEST(CSymbolNames, FunctionAddressesReadAsTheirFunctions) {
+  const BinaryImage Img = startupImage();
+  // An unprototyped callee takes the function's pointer as it is; a number
+  // equal to its address stays a number.
+  std::vector<HighFunc> Funcs{function(
+      "install", 0x1000,
+      {callStatement("register_hook", 0x2000, {address(0x1180)}),
+       callStatement("register_hook", 0x2000,
+                     {HighExpr::makeConst(
+                         0x1180, 8, ConstantAddressProvenance::Scalar)})})};
+  const std::string Source = emitWithImage(Funcs, Img);
+  EXPECT_NE(Source.find("extern int on_exit_hook();"), NotFound) << Source;
+  EXPECT_NE(Source.find("register_hook(on_exit_hook);"), NotFound) << Source;
+  EXPECT_NE(Source.find("register_hook(0x1180);"), NotFound) << Source;
 }
 
 } // namespace

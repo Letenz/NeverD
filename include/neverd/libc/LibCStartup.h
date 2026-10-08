@@ -13,9 +13,22 @@ namespace neverd::libc {
 /// rtld_fini and stack_end, the signature the Linux Standard Base specifies
 /// and glibc implements.  musl's routine declares the first six; the seventh
 /// argument it does not read changes nothing for it.
-inline constexpr auto kStartupArity = std::to_array<LibCArityEntry>({
-    {"libc_start_main", {7, 0}},
+inline constexpr auto kStartupPrototypes = std::to_array<LibCPrototype>({
+    {"libc_start_main",
+     "int",
+     {"int (*)(int, char **, char **)", "int", "char **", "void (*)(void)",
+      "void (*)(void)", "void (*)(void)", "void *"},
+     7},
 });
+
+/// Their arities, which their integer and pointer parameters give.
+inline constexpr auto kStartupArity = [] {
+  std::array<LibCArityEntry, kStartupPrototypes.size()> Arity{};
+  for (size_t I = 0; I < kStartupPrototypes.size(); ++I)
+    Arity[I] = {kStartupPrototypes[I].Name,
+                {kStartupPrototypes[I].ParamCount, 0}};
+  return Arity;
+}();
 
 } // namespace neverd::libc
 
