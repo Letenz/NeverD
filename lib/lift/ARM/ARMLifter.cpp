@@ -61,8 +61,11 @@ bool isExplicitExceptionReturn(unsigned Id) {
   }
 }
 
-bool hasA32UserRegisterTransferBit(const cs_insn *Insn) {
-  if (!Insn || Insn->size != 4)
+bool hasA32UserRegisterTransferBit(const cs_insn *Insn, InstructionMode Mode) {
+  // T32 has no user-register form of a multiple transfer, and the two
+  // halfwords of a 32-bit T32 instruction read as one A32 word can set the
+  // same bits: a Thumb `bl` would look like an exception return.
+  if (!Insn || Insn->size != 4 || Mode != InstructionMode::ARM)
     return false;
   const uint32_t Encoding =
       uint32_t{Insn->bytes[0]} | (uint32_t{Insn->bytes[1]} << 8) |
@@ -137,7 +140,7 @@ void ARMLifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops) {
 
   const ControlInfo Control = classifyControl(Insn, SourceMode);
   if (Control.Kind == ControlKind::ExceptionReturn ||
-      hasA32UserRegisterTransferBit(Insn)) {
+      hasA32UserRegisterTransferBit(Insn, SourceMode)) {
     // TODO: introduce a typed LowIR exception-return operation that restores
     // CPSR/SPSR and derives the destination mode from the restored T bit.  A
     // normal RETURN or INDIR_BR would silently discard privileged state, so
@@ -416,7 +419,7 @@ ARMLifter::ControlInfo ARMLifter::classifyControl(const cs_insn *I,
     const unsigned FirstLoadedReg = IsPop ? 0 : 1;
     if (!anyOperandIsPC(ARM, FirstLoadedReg))
       return Result;
-    if (ARM.usermode || hasA32UserRegisterTransferBit(I)) {
+    if (ARM.usermode || hasA32UserRegisterTransferBit(I, SourceMode)) {
       Result.Kind = ControlKind::ExceptionReturn;
       return Result;
     }
