@@ -2024,7 +2024,12 @@ std::string
 HighCWriter::debugExternPrototype(const FunctionSym &FS,
                                   const std::string &Identifier,
                                   llvm::StringRef ExternName) const {
-  TypeRef ReturnType = cDisplayType(FS.ReturnType);
+  // A symbol the debug information names without a type returns what its
+  // register holds, whole: a narrower type would drop the upper bytes of a
+  // pointer or a 64-bit result at every call.
+  TypeRef ReturnType = FS.ReturnType
+                           ? cDisplayType(FS.ReturnType)
+                           : NdType::makeInt(pointerBytes(Opts.TheArch), false);
   TypeRef SretPtr;
   const bool Indirect = debugExternUsesHiddenSret(
       FS, ExternName.empty() ? Identifier : ExternName);

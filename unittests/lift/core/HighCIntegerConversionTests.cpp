@@ -326,6 +326,40 @@ int main(void) {
 )");
 }
 
+TEST(HighCIntegerConversion, AnUntypedDebugCalleeReturnsItsWholeRegister) {
+  // A public symbol names a function without its type.  Its result is the
+  // whole return register: a 64-bit pointer keeps its upper half.
+  class CalleeDbg : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "lookup";
+      FS.Addr = Addr;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+  const TypeRef U64 = integer(8, false);
+  HighFunc F =
+      function("probe", U64,
+               {assign(local(1, U64), HighExpr::makeCall("lookup", 0x2000, {})),
+                result(op(NdOp::INT_ADD, local(1, U64), constant(1), U64))});
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options, &Dbg));
+  Out.flush();
+  EXPECT_NE(Source.find("extern uint64_t lookup();"), std::string::npos)
+      << Source;
+  compileAndRun(Source + R"(
+uint64_t lookup(void) { return 0xFFFF800012345678ull; }
+int main(void) { return probe(0) == 0xFFFF800012345679ull ? 0 : 1; }
+)");
+}
+
 TEST(HighCIntegerConversion, ALandingPadDeclaresWhatTheUnwinderSets) {
   // A landing pad reads the exception object the unwinder hands it; no C
   // statement assigns it, and the name is declared all the same.
