@@ -326,6 +326,22 @@ int main(void) {
 )");
 }
 
+TEST(HighCIntegerConversion, ALandingPadDeclaresWhatTheUnwinderSets) {
+  // A landing pad reads the exception object the unwinder hands it; no C
+  // statement assigns it, and the name is declared all the same.
+  const TypeRef U64 = integer(8, false);
+  MedVar Exception;
+  Exception.Kind = MedVar::EHException;
+  Exception.Size = 8;
+  Exception.TheArch = Arch::X64;
+  HighFunc F =
+      function("pad", U64,
+               {result(op(NdOp::INT_ADD, HighExpr::makeVar(Exception, U64),
+                          input(), U64))});
+  const std::string Source = emit(F);
+  EXPECT_NE(Source.find(" eh_exception;"), std::string::npos) << Source;
+}
+
 TEST(HighCIntegerConversion, ATruthValueWidensWithoutAByteView) {
   // return (uint64_t)(-(uint32_t)(x == 5)) + (x < 3): a comparison is 0 or
   // 1 already, so neither extension needs the 1-byte view in between.
