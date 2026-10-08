@@ -88,6 +88,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_mapping_test.py"
                 "$<TARGET_FILE:neverd-worker>")
       set_tests_properties(NeverDWorkerNativeMapping PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+      add_test(NAME NeverDWorkerImportNames
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/import_names_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerImportNames PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
       set(NEVERD_WORKER_CLI_EXECUTABLE "" CACHE FILEPATH "Optional real CLI for cross-process writer tests")
       if(TARGET neverd)
         set(_neverd_worker_test_cli "$<TARGET_FILE:neverd>")

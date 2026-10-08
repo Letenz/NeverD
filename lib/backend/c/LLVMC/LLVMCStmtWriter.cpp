@@ -3426,7 +3426,8 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
   }
   emitIndent(Indent);
   if (UnalignedTypesWritten) {
-    if (auto Alias = c_memory::alias(typeToCLLVM(Type)); !Alias.empty()) {
+    if (auto Alias = c_memory::alias(typeToCLLVM(Type), Opts.ScalarPointers);
+        !Alias.empty()) {
       if (Load)
         OS << getName(Load) << " = " << c_memory::access(Alias, Pointer)
            << ";\n";

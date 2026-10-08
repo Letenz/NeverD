@@ -223,12 +223,14 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
             HasCIntrinsics = true;
           NeedsUnalignedTypes |=
               LI->isSimple() && LI->getPointerAddressSpace() == 0 &&
-              !c_memory::alias(typeToCLLVM(LI->getType())).empty();
+              !c_memory::alias(typeToCLLVM(LI->getType()), Opts.ScalarPointers)
+                   .empty();
         }
         if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst))
           NeedsUnalignedTypes |=
               SI->isSimple() && SI->getPointerAddressSpace() == 0 &&
-              !c_memory::alias(typeToCLLVM(SI->getValueOperand()->getType()))
+              !c_memory::alias(typeToCLLVM(SI->getValueOperand()->getType()),
+                               Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
           if (llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand()))
@@ -289,11 +291,11 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
       OS << "#include <" << H << ">\n";
     OS << "\n";
   }
-  // The aliases are declared only when an access can use one; without the
-  // declarations every access keeps its portable byte copy.
+  // The accesses' types or assumptions are written only when an access can
+  // name a type; otherwise every access keeps its portable byte copy.
   UnalignedTypesWritten = Opts.UseUnalignedPointers && NeedsUnalignedTypes;
   if (UnalignedTypesWritten)
-    c_memory::writeTypes(OS);
+    c_memory::writeTypes(OS, Opts.ScalarPointers);
   for (const auto &[Name, Shape] : ScalarUnaries) {
     const unsigned CarrierBits = Shape.carrierBits();
     const std::string Type = CarrierBits == 128

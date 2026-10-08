@@ -82,11 +82,14 @@ SourceCallTypeHint native(llvm::StringRef Name, TypeRef Return,
 }
 
 std::string emit(const std::vector<HighFunc> &Functions, bool Includes = true,
-                 Arch Architecture = Arch::X64) {
+                 Arch Architecture = Arch::X64,
+                 CEmitterOptions::ScalarPointerSpelling Spelling =
+                     CEmitterOptions::ScalarPointerSpelling::StandardTypes) {
   std::string Result;
   llvm::raw_string_ostream OS(Result);
   CEmitterOptions Options;
   Options.TheArch = Architecture;
+  Options.ScalarPointers = Spelling;
   // Source calls are Apple-platform calls: their symbols carry Mach-O's
   // decoration underscore.
   Options.Format = BinaryFormat::MachO;
@@ -1100,7 +1103,7 @@ TEST(HighCSourceCalls,
     }
     Functions.push_back(std::move(F));
   }
-  const auto Source = emit(Functions) + R"(
+  const std::string Check = R"(
 int main(void) {
   _Alignas(16) unsigned char bytes[32];
   uint64_t (*stores[])(uint64_t, uint64_t) = {raw_store_0, raw_store_1, raw_store_2};
@@ -1116,10 +1119,16 @@ int main(void) {
   return 0;
 }
 )";
-  // Traps exercise alignment without requiring a sanitizer runtime library.
-  for (const llvm::StringRef Opt : {"-O0", "-O2"})
-    compileAndRun(Source,
+  using Spelling = CEmitterOptions::ScalarPointerSpelling;
+  for (const llvm::StringRef Opt : {"-O0", "-O2"}) {
+    // The standard types read scalars at any address, as the targets do.
+    compileAndRun(emit(Functions) + Check, {Opt});
+    // The alias types keep the bytes exact even where alignment is checked;
+    // traps exercise that without a sanitizer runtime library.
+    compileAndRun(emit(Functions, true, Arch::X64, Spelling::AliasTypes) +
+                      Check,
                   {Opt, "-fsanitize=alignment", "-fsanitize-trap=alignment"});
+  }
 }
 
 TEST(HighCSourceCalls, UnusedCallsAfterPredicatesPreserveSideEffects) {

@@ -265,9 +265,13 @@ void executeSource(const std::string &Source) {
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
   for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
+    // Decompiled C reads and writes scalars through plain pointer casts and
+    // is built as it documents: without strict aliasing.
     llvm::SmallVector<llvm::StringRef> Args{
-        Compiler,  "-x",       "c",  "-std=gnu11", Optimization,
-        "-Werror", SourcePath, "-o", BinaryPath};
+        Compiler,     "-x",         "c",
+        "-std=gnu11", Optimization, "-fno-strict-aliasing",
+        "-Werror",    SourcePath,   "-o",
+        BinaryPath};
     std::string Error;
     const auto Status = llvm::sys::ExecuteAndWait(Compiler, Args, std::nullopt,
                                                   Redirects, 30, 0, &Error);

@@ -483,6 +483,10 @@ TEST_F(BytecodeSourceTest,
       Options.Format = BinaryFormat::ELF;
       Options.PreserveLLVMFunctionTypes = true;
       Options.UseUnalignedPointers = Pointers;
+      // Bytecode state views overlap; compiled at -O2 they need the
+      // alias types that recovered sources use.
+      Options.ScalarPointers =
+          CEmitterOptions::ScalarPointerSpelling::AliasTypes;
       std::string Source;
       llvm::raw_string_ostream OS(Source);
       if (LLVM) {
@@ -712,6 +716,10 @@ TEST_F(BytecodeSourceTest, FloatingConversionsKeepArchitectureResultPolicies) {
         CEmitterOptions Options;
         Options.TheArch = A;
         Options.UseUnalignedPointers = Pointers;
+        // Bytecode state views overlap; compiled at -O2 they need the
+        // alias types that recovered sources use.
+        Options.ScalarPointers =
+            CEmitterOptions::ScalarPointerSpelling::AliasTypes;
         if (LLVM) {
           llvm::LLVMContext Context;
           auto Module =

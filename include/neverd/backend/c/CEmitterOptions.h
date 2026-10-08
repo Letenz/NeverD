@@ -32,12 +32,25 @@ struct CEmitterOptions {
   /// function types and request prototypes for definitions as well as imports.
   /// Disables inferred-void and debug-signature projections in that route.
   bool PreserveLLVMFunctionTypes = false;
-  /// Spell ordinary scalar byte accesses with Clang/GCC aligned(1), may_alias
-  /// pointer types. This preserves unaligned and overlapping storage without
-  /// asserting an effective type. Ordered and unusual-width accesses retain
-  /// their existing exact semantics. This is the default; clear it for
-  /// portable byte copies, which any C compiler accepts.
+  /// Spell ordinary scalar byte accesses through pointers, as
+  /// ScalarPointers says. Ordered and unusual-width accesses retain their
+  /// existing exact semantics. This is the default; clear it for portable
+  /// byte copies, which any C compiler accepts.
   bool UseUnalignedPointers = true;
+  /// How UseUnalignedPointers spells an access.
+  enum class ScalarPointerSpelling : uint8_t {
+    /// The standard scalar types, `*(uint64_t *)p`, as decompiled code reads
+    /// best. The C assumes a target that accesses scalars at any alignment
+    /// (x86, AArch64) and -fno-strict-aliasing; 16-byte accesses, which
+    /// compilers move with aligned vector instructions, stay byte copies.
+    StandardTypes,
+    /// Clang/GCC aligned(1), may_alias alias types, `*(_QWORD *)p`, which
+    /// keep unaligned and overlapping storage exact under any GCC/Clang
+    /// build without asserting an effective type. Generated sources that
+    /// promise byte semantics to their compilers use these.
+    AliasTypes,
+  };
+  ScalarPointerSpelling ScalarPointers = ScalarPointerSpelling::StandardTypes;
   Arch TheArch = Arch::X64;
   BinaryFormat Format = BinaryFormat::Unknown;
   /// When set, HighC can fold rdata integer loads, print printable
