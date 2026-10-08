@@ -240,6 +240,32 @@ std::string missingHighFunctionReason(const PipelineResult &Result,
 }
 } // namespace
 
+/// The source \p Route emitted for \p Entry under the current pipeline, if it
+/// holds what the caller needs: a map when \p SourceMap asks for one.
+static const char *cachedSource(Session &S, va_t Entry,
+                                Session::SourceRoute Route,
+                                CSourceMap *SourceMap) {
+  const Session::FunctionSource *Source = S.findFunctionSource(Entry, Route);
+  if (!Source || (SourceMap && !Source->Map))
+    return nullptr;
+  if (SourceMap) {
+    *SourceMap = *Source->Map;
+    SourceMap->Recognitions = &S.PipeResult.LibraryRecognitions;
+  }
+  return dupStr(Source->Text);
+}
+
+/// Keep what an emission of \p Entry's source produced and return a copy for
+/// the caller.  Empty output is a refusal and is not kept.
+static const char *keptSource(Session &S, va_t Entry,
+                              Session::SourceRoute Route, std::string Text,
+                              const CSourceMap *SourceMap) {
+  const char *Result = dupStr(Text);
+  if (!Text.empty())
+    S.rememberFunctionSource(Entry, Route, std::move(Text), SourceMap);
+  return Result;
+}
+
 static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
                                   CSourceMap *SourceMap) {
   auto *S = toSession(Sess);
@@ -282,6 +308,10 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     return dupStr(*Output);
   }
 
+  if (const char *Cached = cachedSource(*S, FuncEntry,
+                                        Session::SourceRoute::HighC, SourceMap))
+    return Cached;
+
   const HighFunc *HF = S->findHighFunc(FuncEntry);
   if (!HF) {
     S->setError(missingHighFunctionReason(S->PipeResult, FuncEntry));
@@ -315,7 +345,8 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
   HighCEmitter Emitter;
   Emitter.emit(Single, OS, Opts, S->Dbg.get());
 
-  return dupStr(Out);
+  return keptSource(*S, FuncEntry, Session::SourceRoute::HighC, std::move(Out),
+                    SourceMap);
 }
 
 const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
@@ -362,6 +393,11 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
     return dupStr(std::string());
   }
 
+  const auto Route = NoOpt ? Session::SourceRoute::LLVMCNoOpt
+                           : Session::SourceRoute::LLVMC;
+  if (const char *Cached = cachedSource(*S, FuncEntry, Route, SourceMap))
+    return Cached;
+
   const auto *Native = S->ensureFunctionLlvmModule(FuncEntry, NoOpt != 0);
   if (!Native)
     return dupStr(std::string());
@@ -381,7 +417,7 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   }
   LLVMCEmitter Emitter;
   Emitter.emit(*Native->Module, OS, Opts, S->Dbg.get(), &S->Img, LF);
-  return dupStr(Out);
+  return keptSource(*S, FuncEntry, Route, std::move(Out), SourceMap);
 }
 
 const char *neverd_decompile_llvm_ex(neverd_session_t Sess,

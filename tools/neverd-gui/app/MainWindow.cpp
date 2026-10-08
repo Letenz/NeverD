@@ -181,6 +181,14 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
       return true;
     }
   }
+  // A code view shown again follows the function it missed while hidden,
+  // after whatever showed it has chosen its own.
+  if (event->type() == QEvent::Show && followsDisassembly(object))
+    QTimer::singleShot(
+        0, this,
+        [this, view = QPointer<CodeView>(static_cast<CodeView *>(object))] {
+          followFunction(view);
+        });
   return KDDockWidgets::QtWidgets::MainWindow::eventFilter(object, event);
 }
 
@@ -748,19 +756,32 @@ void MainWindow::synchronize(Address address, QObject *source) {
     hex_->setCurrent(address, 1);
   const auto function = currentFunction();
   session_.publishSelection(address, function, QStringLiteral("disassembly"));
-  if (!synchronizing_ && function && pseudocode_ && !pseudocode_->locked() &&
-      docks_.value(PseudocodeDock) && docks_.value(PseudocodeDock)->isOpen() &&
-      pseudocode_->text()->function() != function)
-    pseudocode_->showFunction(*function);
+  followFunction(pseudocode_);
   if (auto *ir = docks_.value(RepresentationDock); ir && ir->isOpen()) {
     auto *view = static_cast<CodeView *>(ir->widget());
     if (function && view->text()->function() != function && !synchronizing_ &&
         !view->locked())
-      view->showFunction(*function);
+      followFunction(view);
     else
       view->text()->revealAddress(address);
   }
   updateActions();
+}
+
+void MainWindow::followFunction(CodeView *view) {
+  // A view hidden behind another tab catches up when it is shown (see
+  // eventFilter): reading the listing must not wait for a decompile that
+  // no one sees.
+  if (synchronizing_ || !view || view->locked() || !view->isVisible())
+    return;
+  if (const auto function = currentFunction();
+      function && view->text()->function() != function)
+    view->showFunction(*function);
+}
+
+bool MainWindow::followsDisassembly(const QObject *object) const {
+  const auto *ir = docks_.value(RepresentationDock);
+  return object && (object == pseudocode_ || (ir && object == ir->widget()));
 }
 
 //===----------------------------------------------------------------------===//
@@ -1239,6 +1260,20 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
 }
 
 void MainWindow::showPseudocode(const QString &representation) {
+  // A jump still loading decides the function, as it does for the graph:
+  // decompile once it lands, not the function the cursor is leaving.
+  if (disassembly_ && disassembly_->listing()->jumpPending()) {
+    if (!pseudocodeAfterJump_)
+      connect(
+          disassembly_->listing(), &ListingView::jumpSettled, this,
+          [this] {
+            if (const auto pending = std::exchange(pseudocodeAfterJump_, {}))
+              showPseudocode(*pending);
+          },
+          Qt::SingleShotConnection);
+    pseudocodeAfterJump_ = representation;
+    return;
+  }
   const auto function = currentFunction();
   if (!function) {
     output_->append(tr("Place the cursor inside a function to decompile it."),

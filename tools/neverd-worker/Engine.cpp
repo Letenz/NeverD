@@ -224,8 +224,10 @@ constexpr std::size_t MaxFunctionRows = 1000000;
 // (neverd::strings::MaxMinLength).
 constexpr int DefaultStringMinLength = 4;
 constexpr std::int64_t MaxStringMinLength = 1024;
-/// Lines of one engine code page; longer functions keep engine names.
-constexpr std::size_t MaxNamedViewLines = 2048;
+/// Lines of one engine code page.
+constexpr std::size_t EnginePageLines = 2048;
+/// Text a renamed whole-function view may hold: the engine's source budget.
+constexpr std::size_t MaxNamedViewBytes = 32 * 1024 * 1024;
 
 /// A page of \p items; a filter keeps the rows where one of \p searchFields
 /// contains it, ignoring the case of ASCII letters.
@@ -471,14 +473,39 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
                    std::to_string(listing().generation());
   if (namedViewKey_ != key) {
     namedViewKey_.clear();
-    auto full = backendJson(
-        view(session_, address, representation.c_str(), 0, MaxNamedViewLines),
-        true);
-    // A function longer than one engine page keeps the engine's own pages.
-    if (!full.is_object() || !full.contains("text") ||
-        !full["text"].is_string() || !full.value("complete", false) ||
-        full.value("offset", std::size_t{0}) != 0)
-      return std::nullopt;
+    // The whole function, from as many engine pages as it fills: the engine
+    // emits it once and pages it from there.
+    Json full;
+    for (std::size_t next = 0;;) {
+      auto page = backendJson(view(session_, address, representation.c_str(),
+                                   next, EnginePageLines),
+                              true);
+      if (!page.is_object() || !page.contains("text") ||
+          !page["text"].is_string() || !page.contains("rows") ||
+          !page["rows"].is_array() ||
+          page.value("offset", std::size_t{0}) != next)
+        return std::nullopt;
+      const bool complete = page.value("complete", false);
+      const Json following = page.value("next_offset", Json());
+      if (full.is_null()) {
+        full = std::move(page);
+      } else {
+        full["text"].get_ref<std::string &>() +=
+            page["text"].get_ref<const std::string &>();
+        for (auto &row : page["rows"])
+          full["rows"].push_back(std::move(row));
+      }
+      if (complete)
+        break;
+      if (!following.is_number_unsigned() ||
+          following.get<std::size_t>() <= next ||
+          full["text"].get_ref<const std::string &>().size() >
+              MaxNamedViewBytes)
+        return std::nullopt;
+      next = following.get<std::size_t>();
+    }
+    full["complete"] = true;
+    full["next_offset"] = nullptr;
     std::vector<std::pair<std::size_t, std::ptrdiff_t>> shift;
     full["text"] =
         renameIdentifiers(full["text"].get<std::string>(), aliases, shift);

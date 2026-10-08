@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "NativeMobileSession.h"
+#include "SessionImpl.h"
 #include "gtest/gtest.h"
 
 #include "neverd/loader/BinaryImage.h"
@@ -3133,6 +3134,67 @@ TEST_F(SessionCAPITest, LibrarySourcePagesPreserveTextAndReloadEvidence) {
   ASSERT_NE(Withdrawn.getArray("library_regions"), nullptr);
   EXPECT_TRUE(Withdrawn.getArray("library_regions")->empty());
   EXPECT_EQ(Withdrawn.getString("text"), Before.getString("text"));
+}
+
+TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
+  const auto Path =
+      (std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) / "accessors-inline.o")
+          .string();
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  int Index = neverd_func_find_by_name(Session, "_nd_vector_u32_data_inline");
+  if (Index < 0)
+    Index = neverd_func_find_by_name(Session, "nd_vector_u32_data_inline");
+  ASSERT_GE(Index, 0);
+  const auto Entry = neverd_func_entry(Session, Index);
+  auto &State = *neverd::sdk::toSession(Session);
+  using Route = neverd::sdk::Session::SourceRoute;
+  const auto Decompile = [&](bool HighC) {
+    return takeString(HighC ? neverd_decompile(Session, Entry)
+                            : neverd_decompile_llvm(Session, Entry));
+  };
+  std::string HighCText;
+  for (const bool HighC : {true, false}) {
+    const char *Stage = HighC ? "c" : "llvmc";
+    SCOPED_TRACE(Stage);
+    const Route Kind = HighC ? Route::HighC : Route::LLVMC;
+    const std::string Original = Decompile(HighC);
+    ASSERT_FALSE(Original.empty()) << takeString(neverd_last_error(Session));
+    if (HighC)
+      HighCText = Original;
+    // A decompile keeps its text; the first page adds the map pages need.
+    auto *Kept = State.findFunctionSource(Entry, Kind);
+    ASSERT_NE(Kept, nullptr);
+    EXPECT_EQ(Kept->Text, Original);
+    EXPECT_FALSE(Kept->Map);
+    std::string Assembled;
+    for (size_t Offset = 0;;) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2));
+      ASSERT_TRUE(Page.getString("text"));
+      Assembled += Page.getString("text")->str();
+      if (Page.getBoolean("complete").value_or(false))
+        break;
+      ASSERT_TRUE(Page.getInteger("next_offset"));
+      Offset = *Page.getInteger("next_offset");
+      ASSERT_LT(Offset, 10000u);
+    }
+    EXPECT_EQ(Assembled, Original);
+    Kept = State.findFunctionSource(Entry, Kind);
+    ASSERT_NE(Kept, nullptr);
+    EXPECT_TRUE(Kept->Map);
+    // Later pages and decompiles read the kept text instead of emitting the
+    // function again.
+    Kept->Text = "/* kept */\n";
+    EXPECT_EQ(takeView(neverd_ir_view_json(Session, Entry, Stage, 0, 2))
+                  .getString("text"),
+              "/* kept */\n");
+    EXPECT_EQ(Decompile(HighC), "/* kept */\n");
+  }
+  // A new pipeline emits the source again.
+  neverd_session_restrict_function(Session, 0);
+  EXPECT_TRUE(State.FunctionSources.empty());
+  EXPECT_EQ(Decompile(true), HighCText);
 }
 
 TEST_F(SessionCAPITest, IRViewRejectsInvalidUTF8Representation) {

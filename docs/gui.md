@@ -98,7 +98,12 @@ shows the whole function and the visible area.
 
 **Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
 MedIR, HighIR or LLVM IR of the current function and follow the disassembly
-unless their lock is set. The LLVM views translate the current function alone,
+unless their lock is set. A window hidden behind another tab catches up when it
+is shown, so moving through the disassembly never waits for a decompile no one
+sees, and F5 pressed while a jump is loading decompiles the function the jump
+lands in. The engine emits a function's source once and pages it from there; a
+function longer than one page keeps the listing's names, such as `main`. The
+LLVM views translate the current function alone,
 with the others declared, so a function the engine refuses to translate shows
 its reason without affecting other functions. Rows mapped to instructions move
 the disassembly cursor. C opens at the function: the includes, support types and
