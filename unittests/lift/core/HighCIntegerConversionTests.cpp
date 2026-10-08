@@ -381,6 +381,63 @@ int main(void) { return probe(0) == 0x7FFF80001234567Dull ? 0 : 1; }
 )");
 }
 
+TEST(HighCIntegerConversion, BitCountsCountInTheOperandsWidth) {
+  // The machine counts a 32-bit register's leading zeros in 32 bits, and a
+  // zero's as 32; C's builtins count in unsigned int or unsigned long long
+  // and leave a zero's count undefined.  A negative 32-bit value has 32 bits
+  // to count ones in, not 64.
+  const TypeRef U64 = integer(8, false), U32 = integer(4, false);
+  const TypeRef I32 = integer(4, true), U16 = integer(2, false);
+  auto Count = [&](NdOp Op, ExprPtr Operand) {
+    return extend(NdOp::INT_ZEXT,
+                  typed(HighExpr::makeUnary(Op, std::move(Operand)), U32), U64);
+  };
+  auto Scaled = [&](ExprPtr Value, uint64_t Factor) {
+    return op(NdOp::INT_MULT, std::move(Value), constant(Factor), U64);
+  };
+  HighFunc F = function(
+      "counts", U64,
+      {result(
+          op(NdOp::INT_ADD,
+             op(NdOp::INT_ADD, Count(NdOp::LZCOUNT, lowPart(input(), I32)),
+                Scaled(Count(NdOp::LZCOUNT, lowPart(input(), U16)), 100), U64),
+             op(NdOp::INT_ADD,
+                Scaled(Count(NdOp::POPCOUNT, lowPart(input(), I32)), 10000),
+                Scaled(typed(HighExpr::makeUnary(NdOp::LZCOUNT, input()), U64),
+                       1000000),
+                U64),
+             U64))});
+  const std::string Source = emit(F);
+  compileAndRun(Source + R"(
+static uint64_t leading(uint64_t v, int bits) {
+  uint64_t n = 0;
+  for (int i = bits - 1; i >= 0 && !((v >> i) & 1); --i)
+    ++n;
+  return n;
+}
+static uint64_t ones(uint64_t v) {
+  uint64_t n = 0;
+  for (; v; v >>= 1)
+    n += v & 1;
+  return n;
+}
+int main(void) {
+  const uint64_t xs[] = {0, 1, 0x80000000ull, 0xFFFFFFFFull, 0x12345678ull,
+                         0x8000000000000000ull, 0xFFFF0000FFFFull, 0x10000ull};
+  for (unsigned i = 0; i < sizeof xs / sizeof xs[0]; ++i) {
+    const uint64_t x = xs[i];
+    const uint64_t want = leading(x & 0xFFFFFFFF, 32) +
+                          100 * leading(x & 0xFFFF, 16) +
+                          10000 * ones(x & 0xFFFFFFFF) +
+                          1000000 * leading(x, 64);
+    if (counts(x) != want)
+      return 1;
+  }
+  return 0;
+}
+)");
+}
+
 TEST(HighCIntegerConversion, ASelectHasItsOwnSignedness) {
   // x / (d == 0 ? 1 : d), signed, with d an unsigned local: C would convert
   // both arms to uint64_t and divide unsigned.  Each arm takes the select's

@@ -427,6 +427,7 @@ HighCWriter::floatToIntegerConversion(const HighExpr &E) const {
 void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   std::set<std::string> Names;
   FloatToIntegerHelpers.clear();
+  LeadingZeroHelpers.clear();
   PartialIntegerBytes.clear();
   SegmentedMemoryTypes.clear();
   AtomicLoadTypes.clear();
@@ -457,6 +458,14 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       return;
     CollectWideType(E.Type);
     CollectWideType(E.CastTo);
+    if (E.Kind == ExprKind::UnaryOp && E.Op == NdOp::LZCOUNT &&
+        !E.Operands.empty() && E.Operands[0]) {
+      const unsigned Bits = countedBits(*E.Operands[0]);
+      auto [It, Inserted] = LeadingZeroHelpers.try_emplace(Bits);
+      if (Inserted && Bits)
+        It->second = GlobalIdentifierAllocator.allocate(
+            "neverd_clz" + std::to_string(Bits), "nd_clz");
+    }
     if (auto Shape = floatToIntegerConversion(E)) {
       auto [It, Inserted] = FloatToIntegerHelpers.try_emplace(Shape->key());
       if (Inserted) {
@@ -599,6 +608,17 @@ void HighCWriter::writeMemoryHelpers() {
     auto [Bits, FloatBits, Signed] = Key;
     c_float::writeConversion(
         OS, Name, {Bits, FloatBits, Signed, fpToIntegerPolicy(Opts.TheArch)});
+  }
+  // The machine counts a zero's leading zeros as its width; C's builtins
+  // leave that count undefined.
+  for (const auto &[Bits, Name] : LeadingZeroHelpers) {
+    if (Name.empty())
+      continue;
+    const std::string Type = "uint" + std::to_string(Bits) + "_t";
+    OS << "static inline int " << Name << "(" << Type << " value) {\n"
+       << "    return value ? "
+       << (Bits == 32 ? "__builtin_clz" : "__builtin_clzll")
+       << "(value) : " << Bits << ";\n}\n\n";
   }
   // The accesses' types or assumptions are written only when an access can
   // name a type; otherwise every access keeps its portable byte copy.

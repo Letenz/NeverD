@@ -653,9 +653,33 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
                : Call;
   }
   case NdOp::POPCOUNT:
-    return "__builtin_popcountll(" + exprStr(*E.Operands[0]) + ")";
-  case NdOp::LZCOUNT:
-    return "__builtin_clzll(" + exprStr(*E.Operands[0]) + ")";
+  case NdOp::LZCOUNT: {
+    // The machine counts in the operand's own width; C's builtins count in
+    // unsigned int or unsigned long long.  The operand converts to that
+    // type through its unsigned view, so no sign extension adds ones, and
+    // a narrower operand's extra leading zeros are taken off.
+    const HighExpr &Operand = *E.Operands[0];
+    const unsigned Bits = countedBits(Operand);
+    const unsigned Width = countedBytes(Operand) * 8u;
+    if (!Bits)
+      throw std::runtime_error("HighC cannot count the bits of a " +
+                               std::to_string(Width) + "-bit value");
+    const std::string Value =
+        integerView(Operand, NdType::makeInt(Width / 8, false), 0);
+    std::string Text;
+    if (E.Op == NdOp::POPCOUNT)
+      Text = (Bits == 32 ? "__builtin_popcount(" : "__builtin_popcountll(") +
+             Value + ")";
+    else {
+      const auto Helper = LeadingZeroHelpers.find(Bits);
+      if (Helper == LeadingZeroHelpers.end() || Helper->second.empty())
+        throw std::runtime_error("HighC leading-zero count was not collected");
+      Text = Helper->second + "(" + Value + ")";
+      if (Width < Bits)
+        Text = "(" + Text + " - " + std::to_string(Bits - Width) + ")";
+    }
+    return typedText(E, std::move(Text), sizeof(int32_t), true);
+  }
   case NdOp::FLOAT_NEG:
     return "-" + exprStr(*E.Operands[0], 99);
   case NdOp::FLOAT_ABS:
