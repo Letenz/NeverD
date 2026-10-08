@@ -1041,13 +1041,13 @@ TEST(LLVMCIntrinsicSemantics, ObservableReadonlyImageLoadKeepsDeclaration) {
       Options.EmitIncludes = false;
       ASSERT_TRUE(LLVMCEmitter().emit(M, OS, Options, nullptr, &Image,
                                       Only ? Fn : nullptr));
-      EXPECT_NE(Text.find("extern uint32_t g_2000;"), std::string::npos)
+      EXPECT_NE(Text.find("extern uint32_t dword_2000;"), std::string::npos)
           << Text;
       // The snapshot says 17, but the retained read must observe the actual
       // C object's value rather than silently substituting that snapshot.
       compileAndCheck(
           "#include <stdint.h>\n" + Text +
-          "uint32_t g_2000=29;int main(void){return read_image()!=29;}\n");
+          "uint32_t dword_2000=29;int main(void){return read_image()!=29;}\n");
     }
   }
 }
@@ -1522,12 +1522,12 @@ TEST(LLVMCIntrinsicSemantics, X87OperandsShareOverlappingImageByteArray) {
   B.CreateRetVoid();
 
   const std::string Text = emit(M);
-  EXPECT_NE(Text.find("uint8_t g_402000[32] = {0};"), std::string::npos)
+  EXPECT_NE(Text.find("uint8_t unk_402000[32] = {0};"), std::string::npos)
       << Text;
-  EXPECT_EQ(Text.find("g_402008"), std::string::npos) << Text;
-  EXPECT_EQ(Text.find("g_402012"), std::string::npos) << Text;
-  EXPECT_NE(Text.find("g_402000 + 10"), std::string::npos) << Text;
-  EXPECT_NE(Text.find("g_402000 + 30"), std::string::npos) << Text;
+  EXPECT_EQ(Text.find("_402008"), std::string::npos) << Text;
+  EXPECT_EQ(Text.find("_402012"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("unk_402000 + 10"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("unk_402000 + 30"), std::string::npos) << Text;
   std::string OnlyText;
   llvm::raw_string_ostream OnlyOS(OnlyText);
   CEmitterOptions OnlyOptions;
@@ -1535,27 +1535,28 @@ TEST(LLVMCIntrinsicSemantics, X87OperandsShareOverlappingImageByteArray) {
   OnlyOptions.EmitIncludes = false;
   EXPECT_TRUE(
       LLVMCEmitter().emit(M, OnlyOS, OnlyOptions, nullptr, nullptr, Fn));
-  EXPECT_NE(OnlyText.find("uint8_t g_402000[32] = {0};"), std::string::npos)
+  EXPECT_NE(OnlyText.find("uint8_t unk_402000[32] = {0};"), std::string::npos)
       << OnlyText;
-  EXPECT_EQ(OnlyText.find("g_402008"), std::string::npos) << OnlyText;
+  EXPECT_EQ(OnlyText.find("_402008"), std::string::npos) << OnlyText;
 #if defined(__x86_64__) && defined(__linux__)
-  compileAndCheck("#include <stdint.h>\n" + Text +
-                  "int main(void) {\n"
-                  "  unsigned char large[10] = {0}, small[10] = {0};\n"
-                  "  const unsigned char want_large[10] = "
-                  "{1,0,0,0,0,0,0,0x80,0xfe,0x7f};\n"
-                  "  const unsigned char want_small[10] = "
-                  "{3,0,0,0,0,0,0,0x80,0xbe,0xff};\n"
-                  "  copy_x87_operands(large, small);\n"
-                  "  for (unsigned i = 0; i < 10; ++i) {\n"
-                  "    if (large[i] != want_large[i] || "
-                  "g_402000[i] != want_large[i]) return 1;\n"
-                  "    if (small[i] != want_small[i] || "
-                  "g_402000[10 + i] != want_small[i] || "
-                  "g_402000[20 + i] != want_small[i]) return 2;\n"
-                  "  }\n"
-                  "  return g_402000[30] == 0 && g_402000[31] == 4 ? 0 : 3;\n"
-                  "}\n");
+  compileAndCheck(
+      "#include <stdint.h>\n" + Text +
+      "int main(void) {\n"
+      "  unsigned char large[10] = {0}, small[10] = {0};\n"
+      "  const unsigned char want_large[10] = "
+      "{1,0,0,0,0,0,0,0x80,0xfe,0x7f};\n"
+      "  const unsigned char want_small[10] = "
+      "{3,0,0,0,0,0,0,0x80,0xbe,0xff};\n"
+      "  copy_x87_operands(large, small);\n"
+      "  for (unsigned i = 0; i < 10; ++i) {\n"
+      "    if (large[i] != want_large[i] || "
+      "unk_402000[i] != want_large[i]) return 1;\n"
+      "    if (small[i] != want_small[i] || "
+      "unk_402000[10 + i] != want_small[i] || "
+      "unk_402000[20 + i] != want_small[i]) return 2;\n"
+      "  }\n"
+      "  return unk_402000[30] == 0 && unk_402000[31] == 4 ? 0 : 3;\n"
+      "}\n");
 #endif
 }
 

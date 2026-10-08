@@ -30,6 +30,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -1429,6 +1430,11 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
 
   std::set<std::string> Headers;
   Headers.insert("stdint.h");
+  // char16_t and char32_t strings.
+  for (const auto &[Addr, Obj] : ImageObjects)
+    for (const auto &String : {Obj.String, Obj.PointsTo})
+      if (String && String->UnitBytes > 1 && !imageBackingAddress(Addr))
+        Headers.insert("uchar.h");
   if (NeedsBool)
     Headers.insert("stdbool.h");
   if (!MemoryTypes.empty())
@@ -1984,11 +1990,15 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (auto VA = constAddress(*E.Operands[0]->Operands[0]))
         noteImageObject(*VA, E.Operands[0]->Type, false);
     }
-    for (const ExprPtr &Op : E.Operands)
-      if (Op)
-        Visit(*Op);
+    // An indirect callee is no printed operand, but the slot it loads is
+    // image data all the same, named as the slot the code calls through.
+    E.forEachChildExpr([&](const ExprPtr &Op) { Visit(*Op); });
     if (E.Kind != ExprKind::Call)
       return;
+    if (E.IndirectTarget)
+      if (auto VA = imageLoadVA(*E.IndirectTarget))
+        if (auto It = ImageObjects.find(*VA); It != ImageObjects.end())
+          It->second.CallSlot = true;
     const auto Callee = debugCallee(E);
     if (!Callee)
       return;
@@ -2018,6 +2028,55 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       });
     });
 
+  // A string the code reaches by its address is declared as its array, and a
+  // pointer slot the code only loads, holding the address of a read-only
+  // string, as that string's pointer.
+  const unsigned PointerBytes = pointerBytes(Opts.TheArch);
+  for (auto &[Addr, Obj] : ImageObjects) {
+    if (Obj.Written || (Obj.Type && Obj.Type->Kind != NdTypeKind::Int &&
+                        Obj.Type->Kind != NdTypeKind::Ptr))
+      continue;
+    // Without includes nothing declares char16_t and char32_t.
+    auto Declarable = [&](const std::optional<ImageCString> &String) {
+      return String && (String->UnitBytes == 1 || Opts.EmitIncludes);
+    };
+    if (Obj.MemoryWidths.empty()) {
+      auto String = imageCString(Opts.Image, Addr);
+      if (!Declarable(String))
+        continue;
+      // The object's own extent holds the string; bytes after it are zero,
+      // as the array's initializer leaves them.
+      uint64_t Bytes = String->Bytes;
+      if (const uint64_t Declared = Opts.Image->dataObjectSizeAt(Addr)) {
+        if (Declared < Bytes || Declared % String->UnitBytes)
+          continue;
+        const uint8_t *Tail =
+            Opts.Image->readVA(Addr + Bytes, Declared - Bytes);
+        if (Declared > Bytes &&
+            (!Tail || !std::all_of(Tail, Tail + (Declared - Bytes),
+                                   [](uint8_t Byte) { return Byte == 0; })))
+          continue;
+        Bytes = Declared;
+      }
+      Obj.String = std::move(String);
+      Obj.ArrayBytes = Bytes;
+    } else if (Obj.MemoryWidths.size() == 1 &&
+               *Obj.MemoryWidths.begin() == PointerBytes &&
+               (!Obj.Type || Obj.Type->Kind == NdTypeKind::Int ||
+                !Obj.Type->Pointee || Obj.Type->Pointee->SourceName.empty())) {
+      const uint8_t *Slot = Opts.Image->readVA(Addr, PointerBytes);
+      if (!Slot)
+        continue;
+      const va_t Target =
+          PointerBytes == 8 ? readLE<uint64_t>(Slot) : readLE<uint32_t>(Slot);
+      const Segment *Seg = Opts.Image->getSegmentFor(Target);
+      if (!Seg || Seg->isWritable())
+        continue;
+      if (auto String = imageCString(Opts.Image, Target); Declarable(String))
+        Obj.PointsTo = std::move(String);
+    }
+  }
+
   // A C _BitInt(80) object can occupy 16 bytes while the guest x87 value
   // occupies 10. Also, independently declared globals cannot represent two
   // image accesses whose guest address ranges overlap. Project each connected
@@ -2033,7 +2092,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                makeSyntheticGlobalName(GroupBase) + "_bytes", "g")});
   };
   for (const auto &[Addr, Obj] : ImageObjects) {
-    const unsigned Size = Obj.Type ? Obj.Type->Size : 0;
+    const uint64_t Size =
+        Obj.String ? Obj.ArrayBytes : (Obj.Type ? Obj.Type->Size : 0);
     if (!Size || Addr > std::numeric_limits<va_t>::max() - Size)
       llvm::report_fatal_error("HighC image object has invalid extent");
     const va_t End = Addr + Size;
@@ -2084,16 +2144,86 @@ void HighCWriter::writeImageObjects() {
   for (auto &[Addr, Obj] : ImageObjects) {
     if (imageBackingAddress(Addr))
       continue;
-    if (Obj.Name.empty())
+    if (Obj.Name.empty()) {
+      const bool PointerSlot = Obj.CallSlot ||
+                               Opts.Image->CodePtrRelocSlots.count(Addr) ||
+                               Opts.Image->DataPtrRelocSlots.count(Addr);
+      std::optional<uint64_t> AccessBytes;
+      if (Obj.MemoryWidths.size() == 1)
+        AccessBytes = *Obj.MemoryWidths.begin();
       Obj.Name = GlobalIdentifierAllocator.allocate(
-          makeSyntheticGlobalName(Addr), "g");
+          makeDataName(Addr, PointerSlot, AccessBytes), "g");
+    }
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Addr) << " */\n";
-    // Tentative definition so standalone HighC can link.  LLVMC keeps
-    // `extern` because it projects LLVM `external global`.
-    OS << declarationToC(Obj.Type, Obj.Name) << ";\n";
+    // A definition so standalone HighC can link, with the value the image
+    // holds.  LLVMC keeps `extern` because it projects LLVM `external global`.
+    std::string Note;
+    if (Obj.String) {
+      const Segment *Seg = Opts.Image->getSegmentFor(Addr);
+      OS << (Seg && !Seg->isWritable() ? "const " : "") << Obj.String->Element
+         << " " << Obj.Name << "[";
+      // The literal sizes an array that ends with the string.
+      if (Obj.ArrayBytes != Obj.String->Bytes)
+        OS << Obj.ArrayBytes / Obj.String->UnitBytes;
+      OS << "] = " << Obj.String->Literal;
+      Note = Obj.String->Note;
+    } else if (Obj.PointsTo) {
+      OS << "const " << Obj.PointsTo->Element << " *" << Obj.Name << " = "
+         << Obj.PointsTo->Literal;
+      Note = Obj.PointsTo->Note;
+    } else {
+      OS << declarationToC(Obj.Type, Obj.Name);
+      if (auto Value = imageObjectInitializer(Addr, Obj))
+        OS << " = " << *Value;
+    }
+    OS << ";";
+    if (Opts.EmitComments && !Note.empty())
+      OS << " /* " << Note << " */";
+    OS << "\n";
   }
   OS << "\n";
+}
+
+std::optional<std::string>
+HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
+  const TypeRef &Type = Obj.Type;
+  if (!Type || (Type->Size != 1 && Type->Size != 2 && Type->Size != 4 &&
+                Type->Size != 8))
+    return std::nullopt;
+  // Bytes the image does not hold are zero, as static storage starts.
+  const uint8_t *Bytes = Opts.Image->readVA(Addr, Type->Size);
+  if (!Bytes)
+    return std::nullopt;
+  uint64_t Value = 0;
+  for (unsigned I = 0; I < Type->Size; ++I)
+    Value |= static_cast<uint64_t>(Bytes[I]) << (8 * I);
+  if (!Value)
+    return std::nullopt;
+  switch (Type->Kind) {
+  case NdTypeKind::Int:
+    return Type->IsEnum ? std::nullopt
+                        : std::optional<std::string>(constStr(Value, Type));
+  case NdTypeKind::Ptr:
+    return "(" + typeToC(Type) + ")" + constStr(Value);
+  case NdTypeKind::Float: {
+    if (Type->Size != 4 && Type->Size != 8)
+      return std::nullopt;
+    const llvm::APFloat Float(Type->Size == 4 ? llvm::APFloat::IEEEsingle()
+                                              : llvm::APFloat::IEEEdouble(),
+                              llvm::APInt(Type->Size * 8, Value));
+    // A hexadecimal floating constant is exact; C has none for infinities
+    // and NaNs.
+    if (!Float.isFinite())
+      return std::nullopt;
+    char Text[64];
+    Float.convertToHexString(Text, 0, /*UpperCase=*/false,
+                             llvm::APFloat::rmNearestTiesToEven);
+    return std::string(Text) + (Type->Size == 4 ? "f" : "");
+  }
+  default:
+    return std::nullopt;
+  }
 }
 
 void HighCWriter::writeX87FpremHelpers() {

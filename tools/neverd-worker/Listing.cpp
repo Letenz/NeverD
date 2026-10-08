@@ -194,11 +194,12 @@ bool isBranch(Flow flow) {
   constexpr std::string_view Id = Spelling;
 #define NEVERD_FRAME_NAME_PREFIX(Id, Prefix)                                   \
   constexpr std::string_view Id = Prefix;
-#define NEVERD_ITEM_NAME_PREFIX(Id, Prefix)                                    \
-  constexpr std::string_view Id = Prefix;
 #define NEVERD_SWITCH_TEXT(Id, Spelling)                                       \
   constexpr std::string_view Id = Spelling;
 #include "ListingVocabulary.def"
+#define NEVERD_DATA_ITEM_NAME(Id, Prefix)                                      \
+  constexpr std::string_view Id = Prefix;
+#include "neverd/DataNames.def"
 
 struct Region {
   std::uint64_t start = 0, end = 0, initializedEnd = 0, linear = 0;
@@ -1688,13 +1689,13 @@ struct Listing::Impl {
     if (regions[region].exec) {
       const int f = functionIndex(address);
       if (use == NameUse::Transfer || f >= 0)
-        return {(f < 0                   ? "unk_"
-                 : returnsAt(f, address) ? "locret_"
-                                         : "loc_") +
+        return {(f < 0                   ? std::string(UnknownNamePrefix)
+                 : returnsAt(f, address) ? std::string("locret_")
+                                         : std::string("loc_")) +
                     upperHex(address),
                 ListingRole::DummyCodeName, address};
     }
-    std::string prefix = "unk_";
+    std::string prefix(UnknownNamePrefix);
     if (use == NameUse::Slot)
       prefix = PointerNamePrefix;
     else if (use == NameUse::Data)

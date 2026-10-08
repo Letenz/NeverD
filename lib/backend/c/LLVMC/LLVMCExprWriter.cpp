@@ -339,8 +339,19 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
         llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0)
       Raw = stripLeadingUnderscores(Sym->Name).str();
   }
-  if (Raw.empty())
-    Raw = makeSyntheticGlobalName(Addr);
+  if (Raw.empty()) {
+    // As the listing names it: a pointer slot, or the size of its accesses.
+    const auto Use = ImageDataUses.find(Addr);
+    const bool PointerSlot =
+        (Img && (Img->CodePtrRelocSlots.count(Addr) ||
+                 Img->DataPtrRelocSlots.count(Addr))) ||
+        (Use != ImageDataUses.end() && Use->second.CallSlot);
+    std::optional<uint64_t> AccessBytes;
+    if (Use != ImageDataUses.end() && Use->second.AccessBytes.size() == 1)
+      AccessBytes = *Use->second.AccessBytes.begin();
+    Raw = makeDataName(Addr, PointerSlot, AccessBytes);
+    SynthesizedImageObjects.insert(Addr);
+  }
   std::string Name = ImageIdentifierAllocator.allocate(Raw, "g");
   ImageObjectNames[Addr] = Name;
   return Name;

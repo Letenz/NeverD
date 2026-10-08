@@ -159,41 +159,15 @@ NEVERD_OPERAND_KEYWORD("uxtx")
 NEVERD_OPERAND_KEYWORD("sxtx")
 #undef NEVERD_OPERAND_KEYWORD
 
-// NEVERD_DATA_NAME_PREFIX(SizeKeyword, Prefix): automatic name of an unnamed
-// data location reached through a sized memory operand, as listings show it.
-#ifndef NEVERD_DATA_NAME_PREFIX
-#define NEVERD_DATA_NAME_PREFIX(SizeKeyword, Prefix)
-#endif
-NEVERD_DATA_NAME_PREFIX("byte", "byte_")
-NEVERD_DATA_NAME_PREFIX("word", "word_")
-NEVERD_DATA_NAME_PREFIX("dword", "dword_")
-NEVERD_DATA_NAME_PREFIX("fword", "fword_")
-NEVERD_DATA_NAME_PREFIX("qword", "qword_")
-NEVERD_DATA_NAME_PREFIX("tbyte", "tbyte_")
-NEVERD_DATA_NAME_PREFIX("xmmword", "xmmword_")
-NEVERD_DATA_NAME_PREFIX("ymmword", "ymmword_")
-NEVERD_DATA_NAME_PREFIX("zmmword", "zmmword_")
-#undef NEVERD_DATA_NAME_PREFIX
-
 // NEVERD_DUMMY_NAME_PREFIX(Prefix): automatic name prefixes that resolve back
-// to the hexadecimal address that follows them.
+// to the hexadecimal address that follows them, besides the data prefixes of
+// neverd/DataNames.def that the decompiled C shares.
 #ifndef NEVERD_DUMMY_NAME_PREFIX
 #define NEVERD_DUMMY_NAME_PREFIX(Prefix)
 #endif
 NEVERD_DUMMY_NAME_PREFIX("sub_")
 NEVERD_DUMMY_NAME_PREFIX("loc_")
 NEVERD_DUMMY_NAME_PREFIX("locret_")
-NEVERD_DUMMY_NAME_PREFIX("off_")
-NEVERD_DUMMY_NAME_PREFIX("unk_")
-NEVERD_DUMMY_NAME_PREFIX("byte_")
-NEVERD_DUMMY_NAME_PREFIX("word_")
-NEVERD_DUMMY_NAME_PREFIX("dword_")
-NEVERD_DUMMY_NAME_PREFIX("fword_")
-NEVERD_DUMMY_NAME_PREFIX("qword_")
-NEVERD_DUMMY_NAME_PREFIX("tbyte_")
-NEVERD_DUMMY_NAME_PREFIX("xmmword_")
-NEVERD_DUMMY_NAME_PREFIX("ymmword_")
-NEVERD_DUMMY_NAME_PREFIX("zmmword_")
 NEVERD_DUMMY_NAME_PREFIX("asc_")
 NEVERD_DUMMY_NAME_PREFIX("stru_")
 NEVERD_DUMMY_NAME_PREFIX("j_")
@@ -428,14 +402,6 @@ NEVERD_FUNCTION_ATTRIBUTE(FrameAttribute, "bp-based frame")
 #endif
 NEVERD_MARKED_UNWIND_ENCODING("dwarf-fde")
 #undef NEVERD_MARKED_UNWIND_ENCODING
-
-// NEVERD_ITEM_NAME_PREFIX(Id, Prefix): automatic names by what a data item
-// holds, when no size names it.
-#ifndef NEVERD_ITEM_NAME_PREFIX
-#define NEVERD_ITEM_NAME_PREFIX(Id, Prefix)
-#endif
-NEVERD_ITEM_NAME_PREFIX(PointerNamePrefix, "off_")
-#undef NEVERD_ITEM_NAME_PREFIX
 
 // NEVERD_SWITCH_TEXT(Id, Spelling): how a classic listing marks a switch: the
 // prefix of its jump table's name (followed by the dispatch's address), the

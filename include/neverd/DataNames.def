@@ -1,0 +1,41 @@
+//===- DataNames.def - Automatic names of unnamed data ----------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// The automatic names of unnamed data, which the listing and the decompiled C
+// share so that a reader finds one name in both: a prefix, then the address in
+// upper-case hexadecimal (`qword_3FB8`).
+//
+// NEVERD_DATA_SIZE_NAME(SizeKeyword, Bytes, Prefix): data read or written by
+// an access of Bytes bytes, which a listing operand calls SizeKeyword.
+//
+// NEVERD_DATA_ITEM_NAME(Id, Prefix): data named by what it holds or by how the
+// code reaches it, whatever the size of the access.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_DATA_SIZE_NAME
+#define NEVERD_DATA_SIZE_NAME(SizeKeyword, Bytes, Prefix)
+#endif
+NEVERD_DATA_SIZE_NAME("byte", 1, "byte_")
+NEVERD_DATA_SIZE_NAME("word", 2, "word_")
+NEVERD_DATA_SIZE_NAME("dword", 4, "dword_")
+NEVERD_DATA_SIZE_NAME("fword", 6, "fword_")
+NEVERD_DATA_SIZE_NAME("qword", 8, "qword_")
+NEVERD_DATA_SIZE_NAME("tbyte", 10, "tbyte_")
+NEVERD_DATA_SIZE_NAME("xmmword", 16, "xmmword_")
+NEVERD_DATA_SIZE_NAME("ymmword", 32, "ymmword_")
+NEVERD_DATA_SIZE_NAME("zmmword", 64, "zmmword_")
+#undef NEVERD_DATA_SIZE_NAME
+
+#ifndef NEVERD_DATA_ITEM_NAME
+#define NEVERD_DATA_ITEM_NAME(Id, Prefix)
+#endif
+// A slot the loader relocated to hold a pointer, or one the code calls or
+// jumps through.
+NEVERD_DATA_ITEM_NAME(PointerNamePrefix, "off_")
+// Data the code reaches by its address alone, with no access that sizes it.
+NEVERD_DATA_ITEM_NAME(UnknownNamePrefix, "unk_")
+#undef NEVERD_DATA_ITEM_NAME

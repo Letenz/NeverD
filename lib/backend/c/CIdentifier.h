@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -483,12 +484,43 @@ inline std::string cNamedTypeSpelling(llvm::StringRef Raw) {
   return canonicalizeCProjectionIdentifier(Stripped, "nd_type");
 }
 
-/// Unnamed image data in C: `g_<hex VA>`.  The C type is already in the
-/// declaration (`int32_t g_1400050E0`), so IDA listing dummy names
-/// (`byte_`/`word_`/`dword_`/`qword_`) would only repeat width and go stale
-/// if the object is later a struct, an array, or a different access size.
-/// HighC emits a tentative definition so standalone C can link; LLVMC emits
-/// `extern` for LLVM `external global`.
+/// Unnamed image data in C is named as the listing names it
+/// (neverd/DataNames.def), so the reader finds the disassembly operand's name
+/// in the C: `off_3FC0` for a slot that holds a pointer or that the code calls
+/// through, the size of its accesses otherwise (`qword_3FB8`), and `unk_` for
+/// data reached by its address alone.
+#define NEVERD_DATA_ITEM_NAME(Id, Prefix)                                      \
+  inline constexpr llvm::StringLiteral k##Id(Prefix);
+#include "neverd/DataNames.def"
+
+/// The automatic name prefix of data accessed \p Bytes at a time; empty when
+/// no access size names it.
+inline llvm::StringRef dataSizeNamePrefix(uint64_t Bytes) {
+#define NEVERD_DATA_SIZE_NAME(SizeKeyword, Size, Prefix)                       \
+  if (Bytes == Size)                                                           \
+    return Prefix;
+#include "neverd/DataNames.def"
+  return {};
+}
+
+/// The automatic name of the data at \p Addr: one name for it whether the
+/// code reads it as a pointer slot (\p PointerSlot), through accesses of the
+/// one size \p AccessBytes, or by address alone.
+inline std::string makeDataName(uint64_t Addr, bool PointerSlot,
+                                std::optional<uint64_t> AccessBytes) {
+  llvm::StringRef Prefix = kUnknownNamePrefix;
+  if (PointerSlot)
+    Prefix = kPointerNamePrefix;
+  else if (AccessBytes)
+    if (const llvm::StringRef Sized = dataSizeNamePrefix(*AccessBytes);
+        !Sized.empty())
+      Prefix = Sized;
+  return (Prefix + llvm::utohexstr(Addr)).str();
+}
+
+/// The byte array that projects overlapping image objects in HighC:
+/// `g_<hex VA>_bytes`.  HighC emits a tentative definition so standalone C
+/// can link; LLVMC emits `extern` for LLVM `external global`.
 inline constexpr llvm::StringLiteral kSyntheticGlobalPrefix("g_");
 
 inline std::string makeSyntheticGlobalName(uint64_t Addr) {
