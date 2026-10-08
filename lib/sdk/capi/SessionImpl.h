@@ -670,8 +670,7 @@ inline char *dupStr(const std::string &S) { return strdup(S.c_str()); }
 /// How a name reads in identities and listings: as its source language spells
 /// it when it is a mangled name (SymbolSpelling.h), else as it is.
 inline std::string demangledName(llvm::StringRef Name) {
-  std::string Readable = readableSymbolName(Name);
-  return Readable.empty() ? Name.str() : Readable;
+  return displaySymbolName(Name);
 }
 
 inline std::string vaHex(va_t Addr) { return "0x" + llvm::utohexstr(Addr); }

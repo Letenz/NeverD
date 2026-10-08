@@ -94,6 +94,11 @@ std::string neverd::readableSymbolName(llvm::StringRef Name) {
   return {};
 }
 
+std::string neverd::displaySymbolName(llvm::StringRef Name) {
+  std::string Readable = readableSymbolName(Name);
+  return Readable.empty() ? Name.str() : Readable;
+}
+
 std::string neverd::symbolIdentifierStem(llvm::StringRef Name) {
   const auto [Scheme, Mangled] = classify(Name);
   switch (Scheme) {

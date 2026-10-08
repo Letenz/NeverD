@@ -52,6 +52,10 @@ llvm::StringRef symbolSchemeLanguage(SymbolScheme Scheme);
 /// spells it rather than as a partial reading.
 std::string readableSymbolName(llvm::StringRef Name);
 
+/// The name a list, an identity or a summary shows for \p Name: its readable
+/// spelling when it has one, else \p Name as it is.
+std::string displaySymbolName(llvm::StringRef Name);
+
 /// The stem of the C identifier that names \p Name, for Rust, Swift, D and
 /// Objective-C methods: their path's words joined with underscores
 /// (`core_fmt_write`; `String_Write_write_fmt` for a trait's method), and an
