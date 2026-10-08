@@ -2277,6 +2277,27 @@ void HighCWriter::writeImageObjects() {
 std::optional<std::string>
 HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
   const TypeRef &Type = Obj.Type;
+  // C has no 128-bit literal; the two halves make a constant expression.
+  if (Type && Type->Kind == NdTypeKind::Int && !Type->IsEnum &&
+      Type->Size == 16) {
+    const uint8_t *Bytes = Opts.Image->readVA(Addr, 16);
+    if (!Bytes)
+      return std::nullopt;
+    uint64_t Low = 0, High = 0;
+    for (unsigned I = 0; I < 8; ++I) {
+      Low |= static_cast<uint64_t>(Bytes[I]) << (8 * I);
+      High |= static_cast<uint64_t>(Bytes[8 + I]) << (8 * I);
+    }
+    if (!Low && !High)
+      return std::nullopt;
+    std::string Value = "0x" + llvm::utohexstr(Low) + "ull";
+    if (High)
+      Value = "(unsigned __int128)0x" + llvm::utohexstr(High) + "ull << 64 | " +
+              Value;
+    return Type->IsSigned ? "__builtin_bit_cast(" + typeToC(Type) + ", " +
+                                "(unsigned __int128)(" + Value + "))"
+                          : Value;
+  }
   if (!Type || (Type->Size != 1 && Type->Size != 2 && Type->Size != 4 &&
                 Type->Size != 8))
     return std::nullopt;
@@ -2302,9 +2323,10 @@ HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
                                               : llvm::APFloat::IEEEdouble(),
                               llvm::APInt(Type->Size * 8, Value));
     // A hexadecimal floating constant is exact; C has none for infinities
-    // and NaNs.
+    // and NaNs, which take their bits.
     if (!Float.isFinite())
-      return std::nullopt;
+      return "__builtin_bit_cast(" + typeToC(Type) + ", 0x" +
+             llvm::utohexstr(Value) + (Type->Size == 4 ? "u" : "ull") + ")";
     char Text[64];
     Float.convertToHexString(Text, 0, /*UpperCase=*/false,
                              llvm::APFloat::rmNearestTiesToEven);
