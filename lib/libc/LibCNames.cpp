@@ -33,6 +33,7 @@
 #include "neverd/libc/LibCSetjmp.h"
 #include "neverd/libc/LibCSignal.h"
 #include "neverd/libc/LibCSpawn.h"
+#include "neverd/libc/LibCStartup.h"
 #include "neverd/libc/LibCStdbit.h"
 #include "neverd/libc/LibCStdfix.h"
 #include "neverd/libc/LibCStdio.h"
@@ -186,6 +187,7 @@ struct ArityRegistry {
     registerArity(Map, kTimeArity);
     registerArity(Map, kExceptionRuntimeArity);
     registerArity(Map, kSetjmpArity);
+    registerArity(Map, kStartupArity);
   }
 };
 

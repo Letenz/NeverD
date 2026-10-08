@@ -711,6 +711,22 @@
         <source>List the instructions that refer to strings</source>
         <translation>سرد التعليمات التي تشير إلى سلاسل نصية</translation>
     </message>
+    <message>
+        <source>Create &amp;function</source>
+        <translation>إنشاء دالة(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Start a function at the current address</source>
+        <translation>ابدأ دالة عند العنوان الحالي</translation>
+    </message>
+    <message>
+        <source>&amp;Delete function</source>
+        <translation>حذف الدالة(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Stop treating the current function as one</source>
+        <translation>التوقف عن معاملة الدالة الحالية كدالة</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1074,6 +1090,10 @@
     <message>
         <source>&amp;Help</source>
         <translation>مساعدة(&amp;H)</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>الدوال(&amp;F)</translation>
     </message>
 </context>
 <context>
@@ -2106,6 +2126,14 @@ Signed: %4</source>
     <message>
         <source>Strings: %1, %2 first, at least %3 columns</source>
         <translation>السلاسل النصية: %1، %2 أولًا، على الأقل %3 عمودًا</translation>
+    </message>
+    <message>
+        <source>Created a function at %1</source>
+        <translation>أُنشئت دالة عند %1</translation>
+    </message>
+    <message>
+        <source>Deleted the function at %1</source>
+        <translation>حُذفت الدالة عند %1</translation>
     </message>
 </context>
 </TS>

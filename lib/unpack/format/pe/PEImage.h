@@ -79,10 +79,12 @@ recoverTLSDirectory(const Image &Input, const Capture &Observed);
 
 struct TLSRebuild {
   uint64_t DirectoryRVA = 0, MaterializedCallbacks = 0;
+  /// Restoration can need executable code even without a completed callback.
+  bool HasCode = false;
 };
-/// Validate and recover TLS metadata, then append adapters for initializers
-/// whose process-attach effects are already in the snapshot. Other TLS reasons
-/// still tail-call the original callback.
+/// Validate and recover TLS metadata, then restore captured main-thread bytes
+/// and adapt initializers whose process-attach effects are already captured.
+/// Other TLS reasons retain the original callback and loader template.
 llvm::Expected<TLSRebuild> rebuildTLS(const Image &Input,
                                       const Capture &Observed,
                                       uint64_t MetadataRVA,

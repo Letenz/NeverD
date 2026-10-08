@@ -31,8 +31,8 @@ NEVERD_UNPACK_PE_MACHINE(IMAGE_FILE_MACHINE_ARM64, AArch64)
 // Directories that describe the file layout or the load address of the input.
 // Bound imports and certificates name replaced file contents, and the input's
 // relocations cannot be shown to cover generated content. The rebuilt file
-// names a new import directory over the same cells, so it has no separate
-// address table.
+// names a new import directory. Its IAT protection range must be recovered
+// from the cells and section permissions instead of retaining the old range.
 #ifdef NEVERD_UNPACK_PE_STALE_DIRECTORY
 NEVERD_UNPACK_PE_STALE_DIRECTORY(BOUND_IMPORT)
 NEVERD_UNPACK_PE_STALE_DIRECTORY(CERTIFICATE_TABLE)
@@ -56,8 +56,13 @@ NEVERD_UNPACK_PE_TEXT(ImageSize,
                       "rebuilt image exceeds the PE32+ address range")
 NEVERD_UNPACK_PE_TEXT(AmbiguousTLS,
                       "multiple TLS directories match the observed callbacks")
-NEVERD_UNPACK_PE_TEXT(
-    TLSState, "completed TLS startup requires a matching live TLS snapshot")
+NEVERD_UNPACK_PE_TEXT(TLSState,
+                      "TLS restoration requires a matching live TLS snapshot")
+NEVERD_UNPACK_PE_TEXT(TLSCallbacks,
+                      "TLS restoration exceeds the supported callback count")
 NEVERD_UNPACK_PE_TEXT(ImportRange,
                       "a repaired import cell is outside relative-call range")
+NEVERD_UNPACK_PE_TEXT(
+    IATProtection,
+    "read-only import cells cannot share a safe native IAT protection range")
 #endif

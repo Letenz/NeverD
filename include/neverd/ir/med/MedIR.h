@@ -395,6 +395,10 @@ struct MedFunc {
   /// from the function name or from an unexplained missing return.
   bool DoesNotReturn = false;
 
+  /// How execution reaches Entry, which fixes the alignment of the stack
+  /// pointer there (functionEntryKind).
+  StackEntryKind EntryKind = StackEntryKind::Call;
+
   /// A variadic function (`f(fixed..., ...)`): its prologue spills the argument
   /// registers to a register save area and `va_arg` walks that area then the
   /// caller's overflow (incoming-stack) area.  The register save area

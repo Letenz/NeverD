@@ -2469,9 +2469,16 @@ void executeC(const std::string &Source, bool Math = false) {
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
   for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
-    llvm::SmallVector<llvm::StringRef, 16> Arguments{
-        Compiler,   "-std=c11", Optimization, "-Werror=return-type",
-        SourcePath, "-o",       BinaryPath};
+    // Decompiled C reads and writes scalars through plain pointer casts and
+    // is built as it documents: without strict aliasing.
+    llvm::SmallVector<llvm::StringRef, 16> Arguments{Compiler,
+                                                     "-std=c11",
+                                                     Optimization,
+                                                     "-fno-strict-aliasing",
+                                                     "-Werror=return-type",
+                                                     SourcePath,
+                                                     "-o",
+                                                     BinaryPath};
     (void)Math;
 #ifndef _WIN32
     if (Math)

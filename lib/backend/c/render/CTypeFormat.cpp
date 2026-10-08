@@ -15,10 +15,12 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -156,6 +158,251 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
       return std::nullopt;
   }
   return std::nullopt;
+}
+
+namespace {
+/// How a comment beside code reads a string: its encoding's name unless that
+/// is ASCII or UTF-8 (`GBK "你好"`), then its text in quotes with controls
+/// escaped, `*` and `/` kept apart and long text cut.
+std::string quotedStringText(strings::Encoding Kind, llvm::StringRef Text) {
+  std::string Comment;
+  if (Kind != strings::Encoding::UTF8)
+    if (const llvm::StringRef Name = strings::encodingSpelling(Kind);
+        !Name.empty())
+      Comment += Name.str() + " ";
+  Comment += '"';
+  // Characters shown before the text is cut; UTF-8 continuation bytes
+  // belong to the character before them.
+  constexpr unsigned MaxCharacters = 64;
+  unsigned Characters = 0;
+  for (size_t I = 0; I < Text.size(); ++I) {
+    const unsigned char Ch = Text[I];
+    if ((Ch & 0xC0) != 0x80 && Characters++ == MaxCharacters) {
+      Comment += "\xE2\x80\xA6"; // U+2026, the ellipsis, in UTF-8
+      break;
+    }
+    switch (Ch) {
+    case '\n':
+      Comment += "\\n";
+      break;
+    case '\t':
+      Comment += "\\t";
+      break;
+    case '\r':
+      Comment += "\\r";
+      break;
+    case '"':
+      Comment += "\\\"";
+      break;
+    case '\\':
+      Comment += "\\\\";
+      break;
+    case '/':
+      // `*/` would end the comment.
+      if (!Comment.empty() && Comment.back() == '*')
+        Comment += ' ';
+      Comment += '/';
+      break;
+    default:
+      if (Ch < 0x20 || Ch == 0x7F) {
+        Comment += "\\x";
+        Comment += llvm::hexdigit(Ch >> 4, /*LowerCase=*/true);
+        Comment += llvm::hexdigit(Ch & 15, /*LowerCase=*/true);
+      } else {
+        Comment += static_cast<char>(Ch);
+      }
+      break;
+    }
+  }
+  return Comment + '"';
+}
+
+/// The first string the scan finds in \p Bytes when it starts at their first
+/// byte.
+std::optional<strings::FoundString>
+stringAtStart(llvm::ArrayRef<uint8_t> Bytes,
+              const strings::ScanOptions &Options) {
+  std::optional<strings::FoundString> First;
+  strings::scan(Bytes, Options, [&](strings::FoundString &&Found) {
+    if (!First)
+      First = std::move(Found);
+  });
+  if (!First || First->Offset != 0)
+    return std::nullopt;
+  return First;
+}
+
+/// The readable, non-executable bytes from \p Addr, at most \p Window of
+/// them; none when the image holds no such bytes there.
+std::optional<llvm::ArrayRef<uint8_t>>
+readableDataBytes(const BinaryImage *Img, va_t Addr, size_t Window) {
+  if (!Img || Addr == 0 || Addr == InvalidVA)
+    return std::nullopt;
+  const Segment *Seg = Img->getSegmentFor(Addr);
+  if (!Seg || !Seg->isReadable() || Seg->isExecutable() || Addr < Seg->VA)
+    return std::nullopt;
+  const uint64_t Off = Addr - Seg->VA;
+  if (Off >= Seg->Data.size())
+    return std::nullopt;
+  return llvm::ArrayRef<uint8_t>(
+      Seg->Data.data() + Off,
+      std::min<size_t>(Window, Seg->Data.size() - static_cast<size_t>(Off)));
+}
+
+/// A string that does not end within this many bytes is not read.
+constexpr size_t StringWindow = 4096;
+
+/// Writes the characters of a C string literal in UTF-8 source text.
+class CLiteralWriter {
+public:
+  explicit CLiteralWriter(std::string &Out) : Out(Out) {}
+
+  /// The character \p Code: itself, a simple escape, or else the escapes of
+  /// \p Units, its bytes or code units in the literal's element width.
+  void character(uint32_t Code, llvm::ArrayRef<uint32_t> Units) {
+    switch (Code) {
+    case '\\':
+      return text("\\\\");
+    case '"':
+      return text("\\\"");
+    case '\n':
+      return text("\\n");
+    case '\t':
+      return text("\\t");
+    case '\r':
+      return text("\\r");
+    case '?':
+      // `??` begins a trigraph for a consumer that still reads them.
+      text(LastQuestion ? "\\?" : "?");
+      LastQuestion = true;
+      return;
+    default:
+      break;
+    }
+    if (Code >= 0x20 && Code < 0x7F)
+      return text(std::string(1, static_cast<char>(Code)));
+    if (Code >= 0xA0 && Code <= 0x10FFFF && (Code < 0xD800 || Code > 0xDFFF) &&
+        strings::isShownCharacter(Code)) {
+      char Encoded[UNI_MAX_UTF8_BYTES_PER_CODE_POINT];
+      char *End = Encoded;
+      llvm::ConvertCodePointToUTF8(Code, End);
+      return text(llvm::StringRef(Encoded, End - Encoded));
+    }
+    for (uint32_t Unit : Units)
+      escape(Unit);
+  }
+
+  /// A byte or code unit as a hexadecimal escape.
+  void escape(uint32_t Unit) {
+    Out += "\\x";
+    Out += llvm::utohexstr(Unit);
+    PendingHex = true;
+    LastQuestion = false;
+  }
+
+private:
+  void text(llvm::StringRef Text) {
+    // A hexadecimal escape takes every hexadecimal digit after it.
+    if (PendingHex && !Text.empty() && llvm::isHexDigit(Text.front()))
+      Out += "\" \"";
+    PendingHex = false;
+    LastQuestion = false;
+    Out += Text;
+  }
+
+  std::string &Out;
+  bool PendingHex = false;
+  bool LastQuestion = false;
+};
+} // namespace
+
+std::optional<std::string> imageStringComment(const BinaryImage *Img,
+                                              va_t Addr) {
+  const auto Bytes = readableDataBytes(Img, Addr, StringWindow);
+  if (!Bytes)
+    return std::nullopt;
+  const auto First = stringAtStart(*Bytes, strings::ScanOptions());
+  if (!First)
+    return std::nullopt;
+  return quotedStringText(First->Kind, First->Text);
+}
+
+std::optional<ImageCString> imageCString(const BinaryImage *Img, va_t Addr) {
+  if (Img && Img->findImportAt(Addr))
+    return std::nullopt;
+  const auto Bytes = readableDataBytes(Img, Addr, StringWindow);
+  if (!Bytes)
+    return std::nullopt;
+  // The literal stands for the bytes, so a short string reads too.
+  strings::ScanOptions Options;
+  Options.MinLength = 1;
+  const auto First = stringAtStart(*Bytes, Options);
+  if (!First)
+    return std::nullopt;
+  const unsigned UnitBytes = strings::encodingUnitBytes(First->Kind);
+  ImageCString Result;
+  Result.UnitBytes = UnitBytes;
+  Result.Bytes = First->Bytes + UnitBytes;
+  if (!UnitBytes || Result.Bytes > Bytes->size() ||
+      Result.Bytes > InvalidVA - Addr)
+    return std::nullopt;
+  // Bytes a relocation writes are an address, not text.
+  for (va_t Byte = Addr >= 7 ? Addr - 7 : 0; Byte < Addr + Result.Bytes; ++Byte)
+    if (Img->hasRelocationProvenanceAt(Byte))
+      return std::nullopt;
+  const llvm::ArrayRef<uint8_t> Text = Bytes->take_front(First->Bytes);
+  std::string Body;
+  CLiteralWriter Writer(Body);
+  llvm::StringRef Prefix;
+  auto Units = [&](const strings::DecodedCharacter &Character) {
+    llvm::SmallVector<uint32_t, 4> Result;
+    for (uint64_t Offset = Character.Offset;
+         Offset + UnitBytes <= Character.Offset + Character.Bytes;
+         Offset += UnitBytes)
+      Result.push_back(UnitBytes == 1 ? Text[Offset]
+                       : UnitBytes == 2
+                           ? readLE<uint16_t>(Text.data() + Offset)
+                           : readLE<uint32_t>(Text.data() + Offset));
+    return Result;
+  };
+  switch (First->Kind) {
+  case strings::Encoding::UTF16BE:
+  case strings::Encoding::UTF32BE:
+    return std::nullopt;
+  case strings::Encoding::ASCII:
+  case strings::Encoding::UTF8:
+  case strings::Encoding::UTF16LE:
+  case strings::Encoding::UTF32LE:
+    Result.Element = UnitBytes == 1   ? "char"
+                     : UnitBytes == 2 ? "char16_t"
+                                      : "char32_t";
+    Prefix = UnitBytes == 1 ? "" : UnitBytes == 2 ? "u" : "U";
+    strings::decode(Text, First->Kind,
+                    [&](const strings::DecodedCharacter &Character) {
+                      const auto CodeUnits = Units(Character);
+                      if (Character.Codes == 1)
+                        Writer.character(Character.Code[0], CodeUnits);
+                      else
+                        for (uint32_t Unit : CodeUnits)
+                          Writer.escape(Unit);
+                    });
+    break;
+  default:
+    // A legacy code page: its ASCII shows, its other bytes are escaped and
+    // the comment reads them.
+    Result.Element = "char";
+    for (uint8_t Byte : Text) {
+      const uint32_t Unit = Byte;
+      if (Byte < 0x80)
+        Writer.character(Byte, Unit);
+      else
+        Writer.escape(Byte);
+    }
+    Result.Note = quotedStringText(First->Kind, First->Text);
+    break;
+  }
+  Result.Literal = (Prefix + "\"" + Body + "\"").str();
+  return Result;
 }
 
 namespace {

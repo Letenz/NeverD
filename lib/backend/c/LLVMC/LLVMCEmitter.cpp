@@ -163,6 +163,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   OnlyFunction = Only;
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
+  collectImageDataUses(Mod);
   writeIncludes(Mod);
   OS << "\n";
   writeStructDefs(Mod);
@@ -223,12 +224,14 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
             HasCIntrinsics = true;
           NeedsUnalignedTypes |=
               LI->isSimple() && LI->getPointerAddressSpace() == 0 &&
-              !c_memory::alias(typeToCLLVM(LI->getType())).empty();
+              !c_memory::alias(typeToCLLVM(LI->getType()), Opts.ScalarPointers)
+                   .empty();
         }
         if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst))
           NeedsUnalignedTypes |=
               SI->isSimple() && SI->getPointerAddressSpace() == 0 &&
-              !c_memory::alias(typeToCLLVM(SI->getValueOperand()->getType()))
+              !c_memory::alias(typeToCLLVM(SI->getValueOperand()->getType()),
+                               Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
           if (llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand()))
@@ -289,11 +292,11 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
       OS << "#include <" << H << ">\n";
     OS << "\n";
   }
-  // The aliases are declared only when an access can use one; without the
-  // declarations every access keeps its portable byte copy.
+  // The accesses' types or assumptions are written only when an access can
+  // name a type; otherwise every access keeps its portable byte copy.
   UnalignedTypesWritten = Opts.UseUnalignedPointers && NeedsUnalignedTypes;
   if (UnalignedTypesWritten)
-    c_memory::writeTypes(OS);
+    c_memory::writeTypes(OS, Opts.ScalarPointers);
   for (const auto &[Name, Shape] : ScalarUnaries) {
     const unsigned CarrierBits = Shape.carrierBits();
     const std::string Type = CarrierBits == 128
@@ -665,6 +668,43 @@ bool usedInFunction(const llvm::Value &Value, const llvm::Function &Function) {
   return false;
 }
 } // namespace
+
+void LLVMCWriter::collectImageDataUses(llvm::Module &Mod) {
+  // Image data is named by its address, from the image or from the module's
+  // data globals.
+  ImageDataUses.clear();
+  const llvm::DataLayout &Layout = Mod.getDataLayout();
+  for (const llvm::Function &Fn : Mod)
+    for (const llvm::BasicBlock &Block : Fn)
+      for (const llvm::Instruction &Inst : Block) {
+        const llvm::Value *Pointer = nullptr;
+        llvm::Type *Type = nullptr;
+        if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
+          Pointer = Load->getPointerOperand();
+          Type = Load->getType();
+        } else if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
+          Pointer = Store->getPointerOperand();
+          Type = Store->getValueOperand()->getType();
+        } else if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
+          // A call through a pointer the image holds.
+          if (Call->getCalledFunction())
+            continue;
+          const llvm::Value *Callee =
+              Call->getCalledOperand()->stripPointerCasts();
+          if (const auto *Cast = llvm::dyn_cast<llvm::IntToPtrInst>(Callee))
+            Callee = Cast->getOperand(0);
+          if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Callee))
+            if (auto VA = imageDataVA(Load->getPointerOperand()))
+              ImageDataUses[*VA].CallSlot = true;
+          continue;
+        }
+        if (!Pointer || !Type || !Type->isSized())
+          continue;
+        if (auto VA = imageDataVA(Pointer))
+          ImageDataUses[*VA].AccessBytes.insert(
+              Layout.getTypeStoreSize(Type).getFixedValue());
+      }
+}
 
 void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
   for (auto &Fn : Mod) {

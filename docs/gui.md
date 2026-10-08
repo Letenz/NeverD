@@ -103,13 +103,32 @@ operations in C can fold into one-line summaries too. Click a summary or press
 Keypad + on it to expand it; Keypad - folds the declarations again, and the
 context menu expands or collapses either kind. Hovering a type or macro the code
 declares, such as an unaligned access type, shows its declaration, and
-double-clicking it goes there. Memory reads and writes print as a classic
-decompiler shows them, `*(_QWORD *)p`: `_BYTE`, `_WORD`, `_DWORD`, `_QWORD` and
-`_OWORD` access unsigned integers of their sizes, `_SBYTE` to `_SOWORD` signed
-ones, and `_FLOAT` and `_DOUBLE` floating-point values. Unlike those of such a
-decompiler, the types are declared one byte aligned and allowed to alias any
-object, so the code compiles to the same accesses. Copy and export always use
-the complete code.
+double-clicking it goes there. Double-clicking a function's name shows that
+function's pseudocode in place; an import's name opens its thunk, or its slot
+when it has none, in the disassembly, as do other names of data. Memory reads
+and writes print through the standard scalar types, `*(uint64_t *)p`. That C
+reads scalars at any address and through any type, so it is built for a target
+that allows unaligned access and with `-fno-strict-aliasing`, as its prelude
+notes; recovered bytecode and devirtualized sources, which are compiled to run,
+declare one-byte-aligned, `may_alias` types instead. A call argument that points
+to a string, directly or through a pointer the image holds, shows the string
+beside it, after its encoding unless that is ASCII or UTF-8:
+`puts(u8s /* "你好" */)`, `/* GBK "中文" */`. Copy and export always use the
+complete code.
+
+Global data is declared the way C source declares it, with the value the image
+holds: a string the code reaches by its address is its array
+(`const char gbk[] = "\xD6\xD0\xCE\xC4"; /* GBK "中文" */`), a pointer the code
+only reads that holds a read-only string's address is that string's pointer
+(`const char *u8s = "你好";`, `const char16_t *w = u"宽字";`), and a scalar
+shows its initial value (`int32_t counter = 5;`). Every initializer spells the
+image's bytes exactly: text another encoding than UTF-8 holds is escaped, with
+the decoded text in a comment beside it. Unnamed data is named as the listing
+names it, so a name in the pseudocode matches the disassembly operand and
+double-clicking it goes there: `off_3FC0` for a slot holding a pointer or one
+the code calls through, the size of its accesses otherwise (`qword_3FB8`,
+`dword_4010`), and `unk_` for data reached by its address alone. The command
+line's `neverd decompile` prints the same declarations.
 
 C++ names read as a classic disassembler shows them: the listing keeps the
 linkage name an instruction uses and adds its demangled form as a comment
@@ -187,6 +206,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | F5 / Tab | Pseudocode / switch between disassembly and pseudocode |
 | X / Ctrl+X / Ctrl+J | References to the operand / to the item / from the item |
 | N | Rename the function |
+| P | Create a function at the address (**Edit → Functions** also deletes the current one) |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
 | Ctrl+P / Ctrl+L / Ctrl+S / Ctrl+E | Choose a function / name / segment / entry point |
@@ -218,11 +238,11 @@ under Wayland the compositor is not told which dialogs are modal
 
 **File → Save** (Ctrl+W) packs the project into a NeverD database next to the
 input: `ls` saves to `ls.nddb`. A database is one SQLite file holding the input
-itself, its comments, renames and edit history, and the workbench state
-(location, graph mode, bookmarks and desktop). Each save is a single
-transaction, so a database is never left half written; the input is stored in
-independently compressed chunks that compress and expand in parallel, and an
-unchanged input is not rewritten.
+itself, its comments, renames, function edits and edit history, and the
+workbench state (location, graph mode, bookmarks and desktop). Each save is a
+single transaction, so a database is never left half written; the input is
+stored in independently compressed chunks that compress and expand in parallel,
+and an unchanged input is not rewritten.
 
 Open a `.nddb` file directly to continue a project anywhere, even without the
 original binary: the input is unpacked into a per-database working directory
@@ -235,15 +255,24 @@ it. Closing the window updates the saved location of an existing database.
 
 ## Edits, history and analysis
 
-Comments are staged and saved explicitly; renames commit at once (staged
-comments are saved first). Opening another file, restarting the worker or
-quitting with unsaved comments offers Save, Discard and Cancel. Edits prepared
-for a session that has since closed are refused, never applied to the new one.
-Annotation and rename commands have bounded undo/redo history bound to the input
-hash and sidecar contents; a write-ahead journal recovers an interrupted save,
-and foreign edits disable replay instead of silently applying commands to
-another state. One worker owns a writable input through an operating-system
-advisory lock.
+Comments are staged and saved explicitly; renames and function edits commit at
+once (staged comments are saved first). Opening another file, restarting the
+worker or quitting with unsaved comments offers Save, Discard and Cancel. Edits
+prepared for a session that has since closed are refused, never applied to the
+new one. Annotation, rename and function edit commands have bounded undo/redo
+history bound to the input hash and sidecar contents; a write-ahead journal
+recovers an interrupted save, and foreign edits disable replay instead of
+silently applying commands to another state. One worker owns a writable input
+through an operating-system advisory lock.
+
+**Edit → Functions → Create function** (P) starts a function at the cursor,
+inside another function or in code nothing reaches; **Delete function** stops
+treating the current function as one. The last edit at an address decides over
+symbols, the function detector and analysis, and the edits are kept in
+`<input>.neverd-functions.json`, which the command line reads too (`neverd
+function-edits <input> --create <address>`, `--delete <address>`, `--list`).
+A function edit drops whole-program analysis results: analysis continues
+function by function until **Analyze** runs again.
 
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a

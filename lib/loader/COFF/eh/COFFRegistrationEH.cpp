@@ -10,6 +10,7 @@
 
 #include "neverd/Limits.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 
 #include <algorithm>
@@ -183,6 +184,19 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
     Img.ExceptionMetadata.Functions.push_back(std::move(F));
   }
   Img.ExceptionMetadata.rebuildIndex();
+
+  // The data-pointer scan ran before this parse and took each relocated
+  // scope-table pointer for a function.  The thunks are code of the function
+  // that installed the record, as FuncDetector treats them: a guess goes, and
+  // a stated symbol stays as a label.
+  const std::set<va_t> Thunks = Img.ExceptionMetadata.registrationScopeThunks();
+  llvm::erase_if(Img.Symbols, [&](const Symbol &Sym) {
+    return Sym.IsFunc && Sym.Origin == NameOrigin::Synthesized &&
+           Thunks.count(Sym.Addr);
+  });
+  for (Symbol &Sym : Img.Symbols)
+    if (Sym.IsFunc && Thunks.count(Sym.Addr))
+      Sym.IsFunc = false;
 }
 
 } // namespace neverd::coff_loader

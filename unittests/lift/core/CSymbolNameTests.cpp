@@ -8,6 +8,7 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/loader/SymbolDecoration.h"
 
@@ -178,6 +179,42 @@ TEST(CSymbolNames, KnownArgumentsFillOneRegisterEach) {
       << Source;
   EXPECT_NE(Source.find("__intrinsic_setjmpex(1, 2);"), NotFound) << Source;
   EXPECT_NE(Source.find("longjmp(1, 4);"), NotFound) << Source;
+}
+
+TEST(CSymbolNames, TheEntryStackPointerIsAValue) {
+  // `_start` passes the stack pointer it was entered with to
+  // __libc_start_main as stack_end.  No statement assigns frame_base, and it
+  // is a known value all the same.
+  MedVar EntrySP;
+  EntrySP.Kind = MedVar::Reg;
+  EntrySP.TheArch = Arch::X64;
+  EntrySP.Size = 8;
+  EntrySP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
+  // The value reaches the call through a copy, as `push rsp` leaves it.
+  MedVar StackEnd;
+  StackEnd.Kind = MedVar::Temp;
+  StackEnd.TheArch = Arch::X64;
+  StackEnd.Id = 7;
+  StackEnd.SSAVer = 1;
+  StackEnd.Size = 8;
+  StackEnd.RenameTag = 0;
+  const TypeRef U64 = NdType::makeInt(8, false);
+  HighStmt Copy;
+  Copy.Kind = StmtKind::Assign;
+  Copy.Dst = HighExpr::makeVar(StackEnd, U64);
+  Copy.Val = HighExpr::makeVar(EntrySP, U64);
+  std::vector<ExprPtr> Args;
+  for (uint64_t I = 0; I < 6; ++I)
+    Args.push_back(HighExpr::makeConst(I, 8));
+  Args.push_back(HighExpr::makeVar(StackEnd, U64));
+  HighFunc Start =
+      function("_start", 0x1000,
+               {Copy, callStatement("__libc_start_main", 0x2000, Args)});
+  Start.FrameSize = 16;
+  const std::string Source = emitHighC({Start}, BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("__libc_start_main(0, 1, 2, 3, 4, 5, "), NotFound)
+      << Source;
+  EXPECT_EQ(Source.find("unknown"), NotFound) << Source;
 }
 
 TEST(CSymbolNames, UndeterminedKnownArgumentsAreUnknown) {

@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -231,6 +232,33 @@ struct ExceptionInfo {
   ExceptionFunction *findFunction(va_t Address) {
     return const_cast<ExceptionFunction *>(
         static_cast<const ExceptionInfo *>(this)->findFunction(Address));
+  }
+
+  /// Scope filters and handlers of registration records that are code of the
+  /// function installing the record rather than functions of their own: an
+  /// x86 filter runs in that function's frame, and its handler continues the
+  /// function after the unwind.  An address a primary record begins at stays a
+  /// function.
+  std::set<va_t> registrationScopeThunks() const {
+    std::set<va_t> Entries;
+    std::set<va_t> Thunks;
+    for (const ExceptionFunction &F : Functions) {
+      // A frame can begin after its function's first instruction.
+      const va_t Entry =
+          F.FunctionEntry != 0 ? F.FunctionEntry : F.CodeRange.Begin;
+      if (F.Kind == RuntimeFunctionKind::Primary && F.CodeRange.isValid() &&
+          Entry != 0)
+        Entries.insert(Entry);
+      if (!F.Registration)
+        continue;
+      for (const RegistrationScopeRecord &Scope : F.Registration->Scopes)
+        for (const va_t Thunk : {Scope.FilterVA, Scope.HandlerVA})
+          if (Thunk != 0 && Thunk != F.CodeRange.Begin)
+            Thunks.insert(Thunk);
+    }
+    for (const va_t Entry : Entries)
+      Thunks.erase(Entry);
+    return Thunks;
   }
 
   /// First runtime-function record whose range starts exactly at Address.

@@ -376,6 +376,17 @@ enum class BinaryFormat : uint8_t { ELF, COFF, MachO, EVM, Unknown };
 
 enum class Bitness : uint8_t { Bits32, Bits64, Bits256, Unknown };
 
+/// How execution reaches a function's first instruction, which decides what
+/// the ABI guarantees about the stack pointer there.
+enum class StackEntryKind : uint8_t {
+  /// A call.  On x86 the return address it pushed is on the stack.
+  Call,
+  /// The kernel starting a System V process at its entry point (an ELF
+  /// `e_entry` such as `_start`): the stack pointer addresses argc, 16-byte
+  /// aligned, with no return address.
+  ProcessEntry,
+};
+
 inline constexpr unsigned getBitnessValue(Bitness B) {
   switch (B) {
   case Bitness::Bits32:

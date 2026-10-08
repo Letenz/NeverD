@@ -34,9 +34,28 @@ Json read(const fs::path &path, std::size_t limit = MaxHistoryBytes) {
     throw Error("history_invalid", "User state file is not valid bounded JSON");
   }
 }
+/// The fields of a row of \p table besides its address.
+void validateRow(std::string_view table, const Json &row) {
+  if (table == "annotations") {
+    if (!row.contains("text"))
+      throw Error("history_invalid", "Annotation text is missing");
+    (void)stringField(row, "text", {}, 65536);
+  } else if (table == "renames") {
+    if (!row.contains("original") || !row.contains("renamed"))
+      throw Error("history_invalid", "Rename text is missing");
+    (void)stringField(row, "original", {}, 4096);
+    (void)stringField(row, "renamed", {}, 4096);
+  } else {
+    const auto state = stringField(row, "state", {}, 16);
+    if (state != "created" && state != "deleted")
+      throw Error("history_invalid", "Function edit state is invalid");
+  }
+}
+
 void validateCommand(const Json &command) {
   const auto kind = stringField(command, "kind", {}, 32);
-  if (kind != "annotation" && kind != "rename")
+  const char *table = ProjectHistory::tableOfKind(kind);
+  if (!table)
     throw Error("history_invalid", "Unsupported history command kind");
   parseAddress(stringField(command, "address"));
   if (!command.contains("before") || !command.contains("after"))
@@ -49,24 +68,37 @@ void validateCommand(const Json &command) {
         throw Error("history_invalid", "Annotation history value is invalid");
       (void)stringField(command, field, {}, 65536);
     } else if (!value.is_null()) {
-      if (!value.is_object() || !value.contains("addr") ||
-          !value.contains("renamed") || !value.contains("original"))
-        throw Error("history_invalid", "Rename history value is invalid");
+      if (!value.is_object() || !value.contains("addr"))
+        throw Error("history_invalid", "History row value is invalid");
       if (parseAddress(stringField(value, "addr")) !=
           parseAddress(command["address"].get<std::string>()))
         throw Error("history_invalid",
-                    "Rename history address does not match its command");
-      (void)stringField(value, "renamed", {}, 4096);
-      (void)stringField(value, "original", {}, 4096);
+                    "History row address does not match its command");
+      validateRow(table, value);
     }
   }
 }
 } // namespace
 
+const char *ProjectHistory::tableOfKind(std::string_view kind) {
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Suffix, Optional)                 \
+  if (kind == Kind)                                                            \
+    return Table;
+#include "UserStateTables.def"
+  return nullptr;
+}
+
 Json ProjectHistory::normalizedState(Json state) {
   if (!state.is_object())
     throw Error("history_invalid", "User state must be an object");
-  for (const auto *name : {"annotations", "renames"}) {
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Suffix, Optional)                 \
+  {Table, Optional},
+  static constexpr std::pair<const char *, bool> Tables[] = {
+#include "UserStateTables.def"
+  };
+  for (const auto &[name, optional] : Tables) {
+    if (optional && !state.contains(name))
+      state[name] = Json::array();
     if (!state.contains(name) || !state[name].is_array())
       throw Error("history_invalid", "User state table is missing");
     auto &items = state[name];
@@ -74,16 +106,7 @@ Json ProjectHistory::normalizedState(Json state) {
       if (!item.is_object())
         throw Error("history_invalid", "User state item must be an object");
       item["addr"] = hexAddress(parseAddress(stringField(item, "addr")));
-      if (std::string_view(name) == "annotations") {
-        if (!item.contains("text"))
-          throw Error("history_invalid", "Annotation text is missing");
-        (void)stringField(item, "text", {}, 65536);
-      } else {
-        if (!item.contains("original") || !item.contains("renamed"))
-          throw Error("history_invalid", "Rename text is missing");
-        (void)stringField(item, "original", {}, 4096);
-        (void)stringField(item, "renamed", {}, 4096);
-      }
+      validateRow(name, item);
     }
     std::sort(items.begin(), items.end(), [](const Json &a, const Json &b) {
       return a.at("addr").get<std::string>() < b.at("addr").get<std::string>();
@@ -143,11 +166,20 @@ ProjectHistory::ProjectHistory(fs::path binary, std::string sourceHash,
 }
 
 Json ProjectHistory::diskState() const {
-  auto annotations = read(sidecar(binary_, ".neverd-annotations.json"));
-  auto renames = read(sidecar(binary_, ".neverd-renames.json"));
-  return normalizedState(
-      {{"annotations", annotations.is_null() ? Json::array() : annotations},
-       {"renames", renames.is_null() ? Json::array() : renames}});
+  Json state = Json::object();
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Suffix, Optional)                 \
+  if (auto rows = read(sidecar(binary_, Suffix)); rows.is_null())              \
+    state[Table] = Json::array();                                              \
+  else                                                                         \
+    state[Table] = std::move(rows);
+#include "UserStateTables.def"
+  return normalizedState(std::move(state));
+}
+
+void ProjectHistory::writeSidecars(const Json &state) const {
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Suffix, Optional)                 \
+  writer_(sidecar(binary_, Suffix), state.at(Table));
+#include "UserStateTables.def"
 }
 
 void ProjectHistory::verifyLoadedState(const Json &state) {
@@ -263,9 +295,7 @@ void ProjectHistory::persist(const Json &state) {
     throw Error("history_budget_exceeded", "Recovery journal exceeds 24 MiB");
   writer_(journalPath_, journal);
   // From this point any failure leaves a recoverable write-ahead journal.
-  writer_(sidecar(binary_, ".neverd-annotations.json"),
-          after.at("annotations"));
-  writer_(sidecar(binary_, ".neverd-renames.json"), after.at("renames"));
+  writeSidecars(after);
   writer_(historyPath_, nextDocument);
   std::error_code ec;
   if (!fs::remove(journalPath_, ec) || ec)
@@ -289,9 +319,8 @@ void ProjectHistory::recover() {
     const auto before = normalizedState(journal.at("before"));
     const auto after = normalizedState(journal.at("after"));
     const auto current = diskState();
-    for (const auto *table : {"annotations", "renames"})
-      if (current.at(table) != before.at(table) &&
-          current.at(table) != after.at(table))
+    for (const auto &[table, rows] : current.items())
+      if (rows != before.at(table) && rows != after.at(table))
         throw Error("foreign_edits",
                     "User sidecars changed after the interrupted transaction; "
                     "automatic recovery refused");
@@ -314,9 +343,7 @@ void ProjectHistory::recover() {
     (void)sizeField(history, "cursor", 0, commands.size());
     for (const auto &command : commands)
       validateCommand(command);
-    writer_(sidecar(binary_, ".neverd-annotations.json"),
-            after.at("annotations"));
-    writer_(sidecar(binary_, ".neverd-renames.json"), after.at("renames"));
+    writeSidecars(after);
     writer_(historyPath_, history);
     std::error_code ec;
     if (!fs::remove(journalPath_, ec) || ec)

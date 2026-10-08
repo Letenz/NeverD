@@ -59,6 +59,11 @@ llvm::Expected<std::vector<Slot>> findSlots(const Image &In, const Capture &C,
     // requires it. A cell is consumed whole, so matches cannot overlap.
     for (uint64_t RVA = R.RVA; RVA + value::PointerSize <= End; ++RVA) {
       const uint64_t Pointer = endian::read64le(Memory.data() + RVA);
+      // An address inside the image remains an internal pointer even when
+      // that function or datum is exported. Binding it as an import would
+      // create a new self-dependency and change the loader's initialization.
+      if (Pointer >= C.Base && Pointer - C.Base < In.extent())
+        continue;
       auto Export = C.Exports.find(Pointer);
       if (Export == C.Exports.end())
         continue;
@@ -276,7 +281,96 @@ uint32_t observedAccess(const Capture &C, const ImageRegion &R) {
   return Flags;
 }
 
-/// Debug records name their payload by file offset as well as by RVA.
+/// Import descriptors name each address array independently. The optional
+/// IAT directory also tells the native loader which pages it may protect.
+/// Writable cells, including appended cells, need no such protection range.
+/// Including their intervening data or code would change program semantics.
+llvm::Expected<data_directory>
+iatProtection(const Image &In, llvm::ArrayRef<uint32_t> Permissions,
+              llvm::ArrayRef<Slot> Slots) {
+  data_directory Directory{};
+  const auto Regions = In.regions();
+  uint64_t Begin = In.extent(), End = 0;
+  for (const auto &S : Slots) {
+    const auto *Region = In.regionAt(S.RVA);
+    if (!Region || (Permissions[Region - Regions.data()] &
+                    llvm::COFF::IMAGE_SCN_MEM_WRITE))
+      continue;
+    Begin = std::min(Begin, S.RVA);
+    End = std::max(End, S.RVA + 2 * value::PointerSize);
+  }
+  if (!End)
+    return Directory;
+  uint64_t Covered = Begin;
+  for (size_t I = 0; I < Regions.size(); ++I) {
+    const auto &Region = Regions[I];
+    if (Region.RVA + Region.MemorySize <= Covered)
+      continue;
+    const uint32_t Access = Permissions[I];
+    if (Region.RVA > Covered || !(Access & llvm::COFF::IMAGE_SCN_MEM_READ) ||
+        (Access &
+         (llvm::COFF::IMAGE_SCN_MEM_WRITE | llvm::COFF::IMAGE_SCN_MEM_EXECUTE)))
+      return failure(text::IATProtection);
+    Covered = Region.RVA + Region.MemorySize;
+    if (Covered >= End) {
+      Directory.RelativeVirtualAddress = Begin;
+      Directory.Size = End - Begin;
+      return Directory;
+    }
+  }
+  return failure(text::IATProtection);
+}
+
+/// Keep complete debug records and mapped payloads in the file. A zero suffix
+/// still belongs to the record or payload; trimming it before rewriting file
+/// offsets could discard the rewritten field or truncate an all-zero payload.
+void retainDebugStorage(const Image &In,
+                        std::vector<data_directory> &Directories,
+                        llvm::ArrayRef<uint8_t> Memory,
+                        std::vector<uint64_t> &Required) {
+  if (llvm::COFF::DEBUG_DIRECTORY >= Directories.size())
+    return;
+  auto &Debug = Directories[llvm::COFF::DEBUG_DIRECTORY];
+  const uint64_t RVA = Debug.RelativeVirtualAddress, Size = Debug.Size;
+  const uint64_t Records = Size / sizeof(debug_directory);
+  if (!Size)
+    return;
+  if (Size % sizeof(debug_directory) || Records > value::MaxDebugRecords ||
+      RVA > In.extent() || Size > In.extent() - RVA) {
+    Debug = data_directory{};
+    return;
+  }
+  const auto Regions = In.regions();
+  uint64_t End = RVA;
+  while (End < RVA + Size) {
+    const auto *Region = In.regionAt(End);
+    if (!Region) {
+      Debug = data_directory{};
+      return;
+    }
+    End = std::min(RVA + Size, Region->RVA + Region->MemorySize);
+  }
+  for (const auto &Region : Regions) {
+    const uint64_t Begin = std::max(RVA, Region.RVA);
+    End = std::min(RVA + Size, Region.RVA + Region.MemorySize);
+    if (Begin < End)
+      Required[&Region - Regions.data()] = End - Region.RVA;
+  }
+  for (uint64_t I = 0; I < Records; ++I) {
+    const auto Record =
+        fetch<debug_directory>(Memory, RVA + I * sizeof(debug_directory));
+    const uint64_t Payload = Record.AddressOfRawData;
+    const auto *Region = In.regionAt(Payload);
+    if (!Payload || !Region ||
+        Record.SizeOfData > Region->MemorySize - (Payload - Region->RVA))
+      continue;
+    auto &Minimum = Required[Region - Regions.data()];
+    Minimum = std::max(Minimum, Payload - Region->RVA + Record.SizeOfData);
+  }
+}
+
+/// Debug records name their payload by file offset as well as by RVA. Their
+/// validated storage requirements have already participated in placement.
 void relocateDebugRecords(const Image &In, llvm::ArrayRef<Placement> Placed,
                           std::vector<data_directory> &Directories,
                           std::vector<uint8_t> &Memory) {
@@ -295,12 +389,6 @@ void relocateDebugRecords(const Image &In, llvm::ArrayRef<Placement> Placed,
   auto &Debug = Directories[llvm::COFF::DEBUG_DIRECTORY];
   const uint64_t RVA = Debug.RelativeVirtualAddress, Size = Debug.Size;
   const uint64_t Records = Size / sizeof(debug_directory);
-  if (Size &&
-      (Size % sizeof(debug_directory) || Records > value::MaxDebugRecords ||
-       RVA > In.extent() || Size > In.extent() - RVA)) {
-    Debug = data_directory{};
-    return;
-  }
   for (uint64_t I = 0; I < Records; ++I) {
     const uint64_t At = RVA + I * sizeof(debug_directory);
     auto Record = fetch<debug_directory>(Memory, At);
@@ -331,6 +419,13 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   auto Repairs = planTailImports(In, C, Plan.TailImports, Memory, *Slots);
   if (!Repairs)
     return Repairs.takeError();
+  std::vector<uint32_t> Permissions;
+  Permissions.reserve(Regions.size());
+  for (const auto &Region : Regions)
+    Permissions.push_back(observedAccess(C, Region));
+  auto IAT = iatProtection(In, Permissions, *Slots);
+  if (!IAT)
+    return IAT.takeError();
   redirectTailImports(*Repairs, *Slots, Memory);
   const auto Groups = groupSlots(*Slots);
 
@@ -368,12 +463,17 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   if (Count > value::MaxSections || HeaderBytes > Regions.front().RVA)
     return failure(text::HeaderRoom);
 
+  auto Directories = H.Directories;
+  std::vector<uint64_t> Required(Regions.size());
+  retainDebugStorage(In, Directories, Memory, Required);
+
   // Section bytes are the observed memory without its trailing zero fill.
   std::vector<Placement> Placed;
   uint64_t Cursor = HeaderBytes;
-  auto Place = [&](llvm::ArrayRef<uint8_t> Bytes, uint64_t VirtualSize) {
+  auto Place = [&](llvm::ArrayRef<uint8_t> Bytes, uint64_t VirtualSize,
+                   uint64_t Minimum) {
     uint64_t Used = Bytes.size();
-    while (Used && !Bytes[Used - 1])
+    while (Used > Minimum && !Bytes[Used - 1])
       --Used;
     const uint64_t Size = llvm::alignTo(Used, uint64_t(H.FileAlignment));
     Placed.push_back({Size ? uint32_t(Cursor) : 0, uint32_t(Size),
@@ -395,10 +495,11 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
         return failure(text::ImageSize);
       ExtentInSection = std::max(ExtentInSection, Terminator - R.RVA);
     }
-    Place(llvm::ArrayRef(Memory).slice(R.RVA, R.MemorySize), ExtentInSection);
+    Place(llvm::ArrayRef(Memory).slice(R.RVA, R.MemorySize), ExtentInSection,
+          Required[I]);
   }
   if (AddSection)
-    Place(Metadata, Metadata.size());
+    Place(Metadata, Metadata.size(), 0);
   uint64_t InputEnd = H.SizeOfHeaders;
   for (const auto &R : Regions)
     InputEnd = std::max(InputEnd, R.FileOffset + R.FileSize);
@@ -407,7 +508,16 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   if (Cursor + Overlay.size() > UINT32_MAX)
     return failure(text::ImageSize);
 
-  auto Directories = H.Directories;
+  if (IAT->Size && Directories.size() <= llvm::COFF::IAT) {
+    // An input can leave trailing directory entries undeclared while still
+    // reserving them in the optional header. Use that space without moving
+    // the section table or overwriting an original section header.
+    const uint64_t End = H.OptionalHeaderOffset + sizeof(pe32plus_header) +
+                         (llvm::COFF::IAT + 1) * sizeof(data_directory);
+    if (End > H.SectionTableOffset)
+      return failure(text::HeaderRoom);
+    Directories.resize(llvm::COFF::IAT + 1);
+  }
   relocateDebugRecords(In, Placed, Directories, Memory);
   if (RebuiltTLS->DirectoryRVA) {
     Directories[llvm::COFF::TLS_TABLE].RelativeVirtualAddress =
@@ -428,6 +538,8 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
         MetadataRVA + Repairs->CellBytes;
     Directories[llvm::COFF::IMPORT_TABLE].Size = DirectoryBytes;
   }
+  if (IAT->Size)
+    Directories[llvm::COFF::IAT] = *IAT;
 
   RebuiltImage Out;
   for (const auto &Site : Repairs->Sites)
@@ -449,6 +561,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   PE.ImageBase = C.Base;
   PE.SizeOfImage = NewImageSize;
   PE.SizeOfHeaders = HeaderBytes;
+  PE.NumberOfRvaAndSize = Directories.size();
   PE.CheckSum = 0;
   PE.DLLCharacteristics =
       PE.DLLCharacteristics &
@@ -472,7 +585,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
                               llvm::COFF::IMAGE_SCN_MEM_WRITE |
                               llvm::COFF::IMAGE_SCN_MEM_EXECUTE;
       uint32_t Flags =
-          (H.Sections[I].Characteristics & ~Access) | observedAccess(C, R);
+          (H.Sections[I].Characteristics & ~Access) | Permissions[I];
       if (Placed[I].Size) {
         Flags &= ~uint32_t(llvm::COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA);
         if (!(Flags & llvm::COFF::IMAGE_SCN_CNT_CODE))
@@ -495,13 +608,14 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
                                llvm::COFF::IMAGE_SCN_MEM_READ;
       if (Repairs->CellBytes)
         Header.Characteristics |= llvm::COFF::IMAGE_SCN_MEM_WRITE;
-      if (RebuiltTLS->MaterializedCallbacks)
+      if (RebuiltTLS->HasCode)
         Header.Characteristics |=
             llvm::COFF::IMAGE_SCN_MEM_EXECUTE | llvm::COFF::IMAGE_SCN_CNT_CODE;
       Out.Sections.push_back(
           {Name.str(), MetadataRVA, Placed[I].VirtualSize, Placed[I].Size, 0});
-      std::copy(Metadata.begin(), Metadata.end(),
-                Out.File.begin() + Placed[I].Offset);
+      std::copy_n(Metadata.begin(),
+                  std::min<uint64_t>(Metadata.size(), Placed[I].Size),
+                  Out.File.begin() + Placed[I].Offset);
     }
     Header.SizeOfRawData = Placed[I].Size;
     Header.PointerToRawData = Placed[I].Offset;

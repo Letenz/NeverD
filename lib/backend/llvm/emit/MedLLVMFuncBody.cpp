@@ -353,7 +353,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
       uint64_t AlignedFrameSize = alignSyntheticStack(
           Func.FrameSize > 0 ? static_cast<uint64_t>(Func.FrameSize) : 0);
       uint64_t EntryResidue =
-          syntheticEntryStackResidue(TargetArch, TargetFormat);
+          syntheticEntryStackResidue(TargetArch, TargetFormat, Func.EntryKind);
       uint64_t FrameBaseOffset =
           checkedSyntheticStackAdd(AlignedFrameSize, EntryResidue);
       // A variadic function reads its overflow (incoming-stack) arguments at

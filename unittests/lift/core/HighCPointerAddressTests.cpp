@@ -360,10 +360,21 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
          Source.substr(Address, Source.find(';', Address) - Address),
          Source.substr(Value, Source.find(';', Value) - Value)});
   }
-  // `*(_DWORD *)ADDRESS = VALUE;`, the aligned(1), may_alias spelling of a
-  // scalar store, parenthesized as a whole inside an expression.  ADDRESS
-  // is a name, a parenthesized expression, or `(uintptr_t)(&OBJECT)`.
+  // `*(uint32_t *)ADDRESS = VALUE;`, a scalar store through a pointer, or
+  // `*(_DWORD *)ADDRESS = VALUE;` in the aligned(1), may_alias spelling,
+  // parenthesized as a whole inside an expression.  ADDRESS is a name, a
+  // parenthesized expression, or `(uintptr_t)(&OBJECT)`.
   static constexpr std::pair<std::string_view, std::string_view> Aliases[] = {
+      {"uint8_t", "uint8_t"},
+      {"int8_t", "int8_t"},
+      {"uint16_t", "uint16_t"},
+      {"int16_t", "int16_t"},
+      {"uint32_t", "uint32_t"},
+      {"int32_t", "int32_t"},
+      {"uint64_t", "uint64_t"},
+      {"int64_t", "int64_t"},
+      {"float", "float"},
+      {"double", "double"},
       {"_BYTE", "uint8_t"},
       {"_SBYTE", "int8_t"},
       {"_WORD", "uint16_t"},
@@ -910,7 +921,7 @@ TEST(HighCPointerAddresses, InlinedSignedIncrementKeepsModularExpression) {
   EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
   // The increment wraps in an unsigned carrier; the int32_t store converts
   // it back.
-  EXPECT_NE(Source.find("= (uint32_t)(*(_SDWORD *)"), std::string::npos)
+  EXPECT_NE(Source.find("= (uint32_t)(*(int32_t *)"), std::string::npos)
       << Source;
   EXPECT_NE(Source.find(" + 1;"), std::string::npos) << Source;
 }
@@ -1147,9 +1158,9 @@ TEST(HighCPointerAddresses, NumericConstantsDoNotAcquireImageObjectIdentity) {
     const auto Source = emitFunctions(Functions, Arch::X64, &Img);
     // Actual memory uses still materialize the named object or shared byte
     // backing. Only the two independent numeric occurrences stay guest bits.
-    ASSERT_NE(Source.find("g_140003580"), std::string::npos) << Source;
-    if (Overlapping)
-      EXPECT_NE(Source.find("g_140003580_bytes"), std::string::npos) << Source;
+    // The object is named as the listing names a four-byte access.
+    const char *Object = Overlapping ? "g_140003580_bytes" : "dword_140003580";
+    ASSERT_NE(Source.find(Object), std::string::npos) << Source;
     for (const char *Name :
          {"return_scalar_number", "return_address_fragment"}) {
       const auto Start = Source.find(Name);
@@ -1158,7 +1169,7 @@ TEST(HighCPointerAddresses, NumericConstantsDoNotAcquireImageObjectIdentity) {
       ASSERT_NE(End, std::string::npos) << Source;
       const auto Body = Source.substr(Start, End - Start);
       EXPECT_NE(Body.find("return 0x140003580"), std::string::npos) << Source;
-      EXPECT_EQ(Body.find("g_140003580"), std::string::npos) << Source;
+      EXPECT_EQ(Body.find("_140003580"), std::string::npos) << Source;
     }
   }
 }
@@ -8029,11 +8040,12 @@ TEST(HighCPointerAddresses, NamesWritableImageDataStore) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("int32_t g_1400050E0;"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("g_1400050E0 = 41;"), std::string::npos) << Source;
+  // The object is named as the listing names the four-byte store's operand.
+  EXPECT_NE(Source.find("int32_t dword_1400050E0;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("dword_1400050E0 = 41;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(int32_t *)(0x1400050E0)"), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("dword_"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("data_1400050E0"), std::string::npos) << Source;
 }
 
@@ -8059,11 +8071,10 @@ TEST(LLVMCPointerAddresses, NamesWritableNdDataGlobal) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("g_1400050E0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("extern uint32_t g_1400050E0;"), std::string::npos)
+  // Named as the listing names the four-byte store's operand.
+  EXPECT_NE(Source.find("extern uint32_t dword_1400050E0;"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("data_1400050E0"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("dword_"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, DeclaresLiveTempsAndPreservesUnusedCallResults) {
@@ -34706,9 +34717,9 @@ TEST(LLVMCPointerAddresses, AllocaImmediateImageLoadPrintsSyntheticGlobal) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
   OS.flush();
-  EXPECT_NE(Source.find("extern uint64_t g_1400050E0;"), std::string::npos)
+  // Named as the listing names the eight-byte load's operand.
+  EXPECT_NE(Source.find("extern uint64_t qword_1400050E0;"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("g_1400050E0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint64_t*)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("5368754400"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("0x1400050E0"), std::string::npos) << Source;
@@ -34947,10 +34958,11 @@ TEST(LLVMCPointerAddresses, NdDataGepPrintsSyntheticGlobalNotNullLoad) {
       LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_EQ(Source.find("*(uint64_t*)0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("uint8_t g_140005000[256] = {0};"), std::string::npos)
+  // An array reached at an offset has no access of its own size.
+  EXPECT_NE(Source.find("uint8_t unk_140005000[256] = {0};"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("g_140005000 + 64"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("g_140005040"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("unk_140005000 + 64"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("_140005040"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, StaleAllocaZeroDoesNotFoldLaterComputedLoad) {
@@ -39791,6 +39803,35 @@ TEST(HighCPointerAddresses, FuncLoadUsesDebugFunctionNameOnSynthesizedEntry) {
   EXPECT_NE(Source.find("probe_plain_seh"), std::string::npos) << Source;
   EXPECT_NE(Source.find("probe_filter"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("sub_140001050"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, CorpusFuncLoadX86FilterThunksPrintTheirValue) {
+  // An `_except_handler3` filter thunk runs in the frame of the function that
+  // installed it, entered with that frame's EBP: `mov eax, 1; ret` is
+  // EXCEPTION_EXECUTE_HANDLER, and `mov eax, [ebp-1Ch]; ret` reads the local
+  // the body counts in.  Neither is a function to call.
+  if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
+    GTEST_SKIP() << "windows-eh corpus root is not configured";
+  const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                    "corpus/windows-eh/msvc/vs2019/x86/native/no-gs/o0/"
+                    "windows-seh-tests/xcpt4-msvc-x86-native-no-gs-o0.exe";
+  if (!std::filesystem::exists(Path))
+    GTEST_SKIP() << Path.string() << " is missing";
+
+  constexpr va_t Entry = 0x401580;
+  BinaryLoadOptions FuncOpts;
+  FuncOpts.OnlyFunctionEntries.insert(Entry);
+  auto Img = loadBinary(Path, FuncOpts);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
+  bool ReadsTheLocal = false;
+  for (llvm::StringRef Line : llvm::split(Source, '\n'))
+    ReadsTheLocal |= Line.contains("__except (*(") &&
+                     Line.ends_with(" *)(frame_base - 32)) {");
+  EXPECT_TRUE(ReadsTheLocal) << Source;
+  // 0x4029BD is `mov eax, 1; ret`, 0x401683 the frame read.
+  EXPECT_EQ(Source.find("sub_4029BD"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("sub_401683"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {

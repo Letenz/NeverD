@@ -321,6 +321,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runAnnotate(Sess);
   if (RenameCmd)
     return runRename(Sess);
+  if (FunctionEditsCmd)
+    return runFunctionEdits(Sess);
   if (SearchCmd)
     return runSearch(Sess);
   if (SigsCmd)

@@ -169,7 +169,6 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   }
 
   std::set<va_t> ExceptionEntries;
-  std::set<va_t> ExceptionThunks;
   for (const ExceptionFunction &EH : Img.ExceptionMetadata.Functions) {
     // A frame can begin after its function's first instruction.
     const va_t EHEntry =
@@ -177,15 +176,9 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     if (EH.Kind == RuntimeFunctionKind::Primary && EH.CodeRange.isValid() &&
         EHEntry != 0 && Img.hasExecutableCodeOwnerAt(EHEntry))
       ExceptionEntries.insert(EHEntry);
-    if (!EH.Registration)
-      continue;
-    for (const RegistrationScopeRecord &Scope : EH.Registration->Scopes) {
-      if (Scope.FilterVA && Scope.FilterVA != EH.CodeRange.Begin)
-        ExceptionThunks.insert(Scope.FilterVA);
-      if (Scope.HandlerVA && Scope.HandlerVA != EH.CodeRange.Begin)
-        ExceptionThunks.insert(Scope.HandlerVA);
-    }
   }
+  const std::set<va_t> ExceptionThunks =
+      Img.ExceptionMetadata.registrationScopeThunks();
 
   for (const auto &Sym : Img.Symbols) {
     if (!Sym.IsFunc)
@@ -198,7 +191,7 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       continue;
     if (SkipAddrs.count(Sym.Addr))
       continue;
-    if (ExceptionThunks.count(Sym.Addr) && !ExceptionEntries.count(Sym.Addr))
+    if (ExceptionThunks.count(Sym.Addr))
       continue;
     if (Img.hasExecutableCodeOwnerAt(Sym.Addr)) {
       Entries.insert(Sym.Addr);
@@ -279,8 +272,7 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   }
 
   for (va_t Thunk : ExceptionThunks)
-    if (!ExceptionEntries.count(Thunk))
-      Entries.erase(Thunk);
+    Entries.erase(Thunk);
 
   auto IsCoveredMachODirectCallTarget = [&](va_t Addr) {
     return Img.Format == BinaryFormat::MachO &&
@@ -295,7 +287,7 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   for (auto &[A, _] : Results)
     Already.insert(A);
   for (va_t Addr : Entries) {
-    if (ExceptionThunks.count(Addr) && !ExceptionEntries.count(Addr))
+    if (ExceptionThunks.count(Addr))
       continue;
     if (Already.insert(Addr).second)
       Results.push_back(

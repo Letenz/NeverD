@@ -889,9 +889,13 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         bool Complete = true;
         // CFGBuilder owns registration try-level interpretation. Reuse its
         // exceptional predecessor set rather than inventing x86 scope ranges.
+        // The personality calls a filter and a finally block with the frame's
+        // EBP as well, and resumes at an except handler with it.
         if (HasX86SEHFrame) {
           for (const ExceptionalEdge &Edge : Func.Blocks[Root].ExceptionalPreds)
-            if (Edge.Kind == ExceptionalEdgeKind::SEHHandler) {
+            if (Edge.Kind == ExceptionalEdgeKind::SEHHandler ||
+                Edge.Kind == ExceptionalEdgeKind::SEHFilter ||
+                Edge.Kind == ExceptionalEdgeKind::SEHFinally) {
               if (Edge.BlockId < 0 || Edge.BlockId >= N) {
                 Complete = false;
                 break;
@@ -924,12 +928,17 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         }
       }
       std::vector<MedOp> InitOps;
+      // An x86 filter or finally block is entered by the personality too, with
+      // no callee-saved register of the faulting code.
       const bool IsSEHHandlerRoot =
           Root != 0 &&
           std::any_of(Func.Blocks[Root].ExceptionalPreds.begin(),
                       Func.Blocks[Root].ExceptionalPreds.end(),
-                      [](const ExceptionalEdge &E) {
-                        return E.Kind == ExceptionalEdgeKind::SEHHandler;
+                      [&](const ExceptionalEdge &E) {
+                        return E.Kind == ExceptionalEdgeKind::SEHHandler ||
+                               (HasX86SEHFrame &&
+                                (E.Kind == ExceptionalEdgeKind::SEHFilter ||
+                                 E.Kind == ExceptionalEdgeKind::SEHFinally));
                       });
       if (IsSEHHandlerRoot)
         SEHHandlerRoots.insert(Root);

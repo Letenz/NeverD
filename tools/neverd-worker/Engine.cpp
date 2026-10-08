@@ -68,6 +68,24 @@ const Json &stringEncodings() {
   }();
   return encodings;
 }
+// Additive C ABI capability: the user's function edits.
+using FunctionEditFunction = int (*)(neverd_session_t, neverd_va_t);
+using SessionJsonFunction = const char *(*)(neverd_session_t);
+using SessionLoadFunction = int (*)(neverd_session_t);
+struct FunctionEditFunctions {
+  FunctionEditFunction create, remove;
+  SessionJsonFunction rows;
+  SessionLoadFunction load;
+  explicit operator bool() const { return create && remove && rows && load; }
+};
+const FunctionEditFunctions &functionEdits() {
+  static const FunctionEditFunctions functions{
+      engineSymbol<FunctionEditFunction>("neverd_func_create"),
+      engineSymbol<FunctionEditFunction>("neverd_func_delete"),
+      engineSymbol<SessionJsonFunction>("neverd_functions_json"),
+      engineSymbol<SessionLoadFunction>("neverd_functions_load")};
+  return functions;
+}
 IRViewFunction irViewFunction() {
   // Additive C ABI capability: an older matching engine can still run the GUI.
   static const auto function =
@@ -360,8 +378,37 @@ void Engine::requireWriter() const {
   if (readOnly_ || !lock_)
     throw Error("read_only", "This session is read-only");
 }
+bool Engine::keepsFunctionEdits() { return static_cast<bool>(functionEdits()); }
+bool Engine::reloadUserState() {
+  const bool annotations = neverd_annotations_load(session_) == 0;
+  const bool renames = neverd_renames_load(session_) == 0;
+  const bool functions = reloadFunctionEdits();
+  return annotations && renames && functions;
+}
+bool Engine::reloadFunctionEdits() {
+  const auto &edits = functionEdits();
+  if (!edits)
+    return true;
+  const auto before = functionEditRows();
+  if (edits.load(session_) != 0)
+    return false;
+  if (functionEditRows() != before)
+    functionsChanged();
+  return true;
+}
+Json Engine::functionEditRows() const {
+  const auto &edits = functionEdits();
+  return edits ? backendJson(edits.rows(session_)) : Json::array();
+}
+void Engine::functionsChanged() {
+  analyzed_ = false;
+  preparedFunction_.reset();
+  if (listing_)
+    listing_->reindex();
+  invalidate();
+}
 void Engine::invalidate() {
-  graph_.reset();
+  graphs_.clear();
   if (listing_)
     listing_->invalidate();
   stringsCache_ = nullptr;
@@ -484,7 +531,6 @@ void Engine::prepareFunction(std::uint64_t address) {
   // replaces a previous restriction; IR, CFG and LLVM views then read it.
   (void)ownedString(neverd_decompile(session_, address));
   preparedFunction_ = address;
-  graph_.reset();
   textKey_.clear();
 }
 Listing &Engine::newListing() {
@@ -554,8 +600,7 @@ ProjectHistory &Engine::history() {
         utf8Path(ownedString(neverd_session_file_path(session_))), hash,
         version(), readOnly_, atomicWrite);
     if (history_->recovered()) {
-      if (neverd_annotations_load(session_) != 0 ||
-          neverd_renames_load(session_) != 0)
+      if (!reloadUserState())
         throw Error("recovery_required",
                     "Recovered files could not be reloaded into the Session");
       dirty_ = false;
@@ -564,7 +609,8 @@ ProjectHistory &Engine::history() {
     }
     history_->verifyLoadedState(
         {{"annotations", backendJson(neverd_annotations_json(session_))},
-         {"renames", backendJson(neverd_renames_json(session_))}});
+         {"renames", backendJson(neverd_renames_json(session_))},
+         {"functions", functionEditRows()}});
   }
   return *history_;
 }
@@ -757,6 +803,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       warnings.push_back("Annotations sidecar could not be loaded");
     if (neverd_renames_load(session_) != 0)
       warnings.push_back("Renames sidecar could not be loaded");
+    if (!reloadFunctionEdits())
+      warnings.push_back("Function edits sidecar could not be loaded");
     auto result = metadata();
     result["warnings"] = warnings;
     return result;
@@ -796,8 +844,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       throw Error("unsaved_changes",
                   "Save or reload staged annotations before resetting history");
     history().reset();
-    if (neverd_annotations_load(session_) != 0 ||
-        neverd_renames_load(session_) != 0)
+    if (!reloadUserState())
       throw Error("reload_failed",
                   "History was reset but user state could not be reloaded",
                   {{"saved", true}});
@@ -819,21 +866,22 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       dirty_ = true;
     } else {
       if (dirty_)
-        throw Error(
-            "unsaved_changes",
-            "Save or reload staged annotations before undoing a rename");
+        throw Error("unsaved_changes",
+                    "Save or reload staged annotations before undoing a "
+                    "rename or a function edit");
+      // The row the command changed goes back to its value on this side.
       auto state = store.committedState();
-      auto &renames = state["renames"];
-      renames.erase(
-          std::remove_if(renames.begin(), renames.end(),
-                         [&](const Json &row) {
-                           return parseAddress(
-                                      row.at("addr").get<std::string>()) ==
-                                  address;
-                         }),
-          renames.end());
+      auto &rows = state[ProjectHistory::tableOfKind(
+          command.at("kind").get<std::string>())];
+      rows.erase(std::remove_if(
+                     rows.begin(), rows.end(),
+                     [&](const Json &row) {
+                       return parseAddress(row.at("addr").get<std::string>()) ==
+                              address;
+                     }),
+                 rows.end());
       if (!value.is_null())
-        renames.push_back(value);
+        rows.push_back(value);
       const auto checkpoint = store;
       store.advance(redo);
       try {
@@ -842,7 +890,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         store = checkpoint;
         throw;
       }
-      if (neverd_renames_load(session_) != 0)
+      if (!reloadUserState())
         throw Error("reload_failed",
                     "History operation was saved but cannot be reloaded",
                     {{"saved", true}});
@@ -996,6 +1044,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       name = aliases.at(name);
     result["name"] = std::move(name);
     result["comment"] = ownedString(neverd_annotation_get(session_, address));
+    result["import"] = listing().isImport(address);
     return result;
   }
   if (operation == "strings") {
@@ -1133,22 +1182,26 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   if (operation == "reload") {
     const bool annotationsLoaded = neverd_annotations_load(session_) == 0;
     const bool renamesLoaded = neverd_renames_load(session_) == 0;
+    const bool functionsLoaded = reloadFunctionEdits();
     // Each existing API can change its own table independently. Publish a new
     // revision even on partial failure so clients cannot retain stale pages.
     invalidate();
     ++revision_;
     history_.reset();
-    if (!annotationsLoaded || !renamesLoaded)
+    if (!annotationsLoaded || !renamesLoaded || !functionsLoaded)
       throw Error("load_failed",
-                  "Could not reload annotations or renames sidecar",
+                  "Could not reload the annotations, renames or function "
+                  "edits sidecar",
                   {{"annotations_loaded", annotationsLoaded},
                    {"renames_loaded", renamesLoaded},
+                   {"functions_loaded", functionsLoaded},
                    {"state_changed", true}});
     dirty_ = false;
     return metadata();
   }
   if (operation != "disasm" && operation != "bytes" &&
       operation != "annotation_set" && operation != "rename" &&
+      operation != "function_create" && operation != "function_delete" &&
       operation != "decompile" && operation != "cfg" &&
       operation != "cfg_summary" && operation != "cfg_viewport" &&
       operation != "xrefs")
@@ -1301,6 +1354,48 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     ++revision_;
     return {{"address", hexAddress(address)}, {"name", name}, {"saved", true}};
   }
+  if (operation == "function_create" || operation == "function_delete") {
+    requireWriter();
+    const auto &edits = functionEdits();
+    if (!edits)
+      throw Error("unsupported", "This engine keeps no function edits");
+    if (dirty_)
+      throw Error("unsaved_changes", "Save or reload staged annotations "
+                                     "before creating or deleting a function");
+    auto &store = history();
+    const bool create = operation == "function_create";
+    // The engine checks the edit; the rows it then holds are the new table.
+    if ((create ? edits.create : edits.remove)(session_, address) != 0)
+      throw Error("invalid_request", error());
+    const auto rowAt = [&](const Json &rows) -> Json {
+      for (const auto &row : rows)
+        if (parseAddress(row.at("addr").get<std::string>()) == address)
+          return row;
+      return nullptr;
+    };
+    auto state = store.committedState();
+    const Json before = rowAt(state.at("functions"));
+    state["functions"] = functionEditRows();
+    const Json after = rowAt(state.at("functions"));
+    const auto checkpoint = store;
+    store.stage({{"kind", "function"},
+                 {"address", hexAddress(address)},
+                 {"before", before},
+                 {"after", after}});
+    try {
+      store.persist(state);
+    } catch (...) {
+      store = checkpoint;
+      // The sidecar still holds the edits before this one.
+      (void)edits.load(session_);
+      functionsChanged();
+      throw;
+    }
+    functionsChanged();
+    ++revision_;
+    return {
+        {"address", hexAddress(address)}, {"created", create}, {"saved", true}};
+  }
   if (operation == "decompile") {
     const auto representation = stringField(p, "representation", "c", 16);
     if (representation != "c" && representation != "llvmc" &&
@@ -1389,7 +1484,6 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         {"revision", revision()}};
   }
   if (operation == "cfg_summary") {
-    prepareFunction(address);
     const auto key = hexAddress(address);
     // Client text metrics size each node to its formatted listing rows.
     GraphMetrics metrics;
@@ -1413,25 +1507,36 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                             std::to_string(metrics.lineHeight) + "/" +
                             std::to_string(metrics.padding) + "/" +
                             std::to_string(metrics.titleHeight);
-    if (!graph_ || graph_->address() != key || graphMetrics_ != metricsKey) {
-      auto snapshot = std::make_unique<GraphSnapshot>(
-          backendJson(neverd_cfg_json(session_, address), true), key,
-          projectId_ + ":" + revision() + ":" + key + ":" + metricsKey, metrics,
-          metrics.valid()
-              ? GraphRows([this](std::uint64_t start, std::uint64_t end) {
-                  return listing().blockLines(start, end);
-                })
-              : GraphRows());
-      graph_ = std::move(snapshot);
-      graphMetrics_ = metricsKey;
-    }
-    return graph_->summary();
+    for (auto it = graphs_.begin(); it != graphs_.end(); ++it)
+      if (it->address == key && it->metrics == metricsKey) {
+        graphs_.splice(graphs_.begin(), graphs_, it);
+        return graphs_.front().snapshot->summary();
+      }
+    prepareFunction(address);
+    const auto layout =
+        projectId_ + ":" + revision() + ":" + key + ":" + metricsKey;
+    auto snapshot = std::make_unique<GraphSnapshot>(
+        backendJson(neverd_cfg_json(session_, address), true), key, layout,
+        metrics,
+        metrics.valid()
+            ? GraphRows([this](std::uint64_t start, std::uint64_t end) {
+                return listing().blockLines(start, end);
+              })
+            : GraphRows());
+    graphs_.push_front({key, metricsKey, layout, std::move(snapshot)});
+    if (graphs_.size() > MaxGraphs)
+      graphs_.pop_back();
+    return graphs_.front().snapshot->summary();
   }
   if (operation == "cfg_viewport") {
-    if (!graph_ || graph_->address() != hexAddress(address))
-      throw Error("stale_layout",
-                  "No matching graph snapshot; request cfg_summary first");
-    return graph_->viewport(p);
+    // The layout the client names, else the function's newest.
+    const auto key = hexAddress(address);
+    const auto layout = stringField(p, "layout_revision", {}, 256);
+    for (const auto &graph : graphs_)
+      if (graph.address == key && (layout.empty() || graph.revision == layout))
+        return graph.snapshot->viewport(p);
+    throw Error("stale_layout",
+                "No matching graph snapshot; request cfg_summary first");
   }
   if (operation == "cfg") {
     prepareFunction(address);

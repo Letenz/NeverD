@@ -711,6 +711,22 @@
         <source>List the instructions that refer to strings</source>
         <translation>列出引用字符串的指令</translation>
     </message>
+    <message>
+        <source>Create &amp;function</source>
+        <translation>创建函数(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Start a function at the current address</source>
+        <translation>在当前地址开始一个函数</translation>
+    </message>
+    <message>
+        <source>&amp;Delete function</source>
+        <translation>删除函数(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Stop treating the current function as one</source>
+        <translation>不再将当前函数视为函数</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1074,6 +1090,10 @@
     <message>
         <source>&amp;Help</source>
         <translation>帮助(&amp;H)</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>函数(&amp;F)</translation>
     </message>
 </context>
 <context>
@@ -2091,6 +2111,14 @@ Signed: %4</source>
     <message>
         <source>Strings: %1, %2 first, at least %3 columns</source>
         <translation>字符串：%1，优先 %2，至少 %3 列</translation>
+    </message>
+    <message>
+        <source>Created a function at %1</source>
+        <translation>已在 %1 创建函数</translation>
+    </message>
+    <message>
+        <source>Deleted the function at %1</source>
+        <translation>已删除 %1 处的函数</translation>
     </message>
 </context>
 </TS>

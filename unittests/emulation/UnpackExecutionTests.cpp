@@ -9,6 +9,7 @@
 #include "neverd/unpack/Unpack.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 
@@ -116,6 +117,7 @@ std::set<Image::Import> runtimeImports(const UnpackResult &Result) {
 class LinkedEntrySnapshot final : public emulation::ProcessObserver {
 public:
   explicit LinkedEntrySnapshot(Image &Program) : Program(Program) {}
+  std::optional<std::vector<uint8_t>> ThreadLocal;
   llvm::Expected<std::vector<emulation::ExecutionWatch>>
   started(emulation::ProcessView &Process) override {
     return std::vector<emulation::ExecutionWatch>{
@@ -128,6 +130,10 @@ public:
                                 llvm::MutableArrayRef(Program.Mapped)
                                     .slice(S.RVA, S.VirtualSize)))
         return std::move(E);
+    auto TLS = Process.threadLocalMemory();
+    if (!TLS)
+      return TLS.takeError();
+    ThreadLocal = std::move(*TLS);
     return std::nullopt;
   }
 
@@ -351,18 +357,87 @@ TEST_P(Unpack, StubCallIntoTheProgramIsNotItsEntry) {
   EXPECT_EQ(Result->Transfers.back().RVA, Original.Entry);
   EXPECT_EQ(Result->Source, EntrySource::Transfer);
   EXPECT_EQ(Result->EntryRVA, Original.Entry);
-  // An image that starts at the program must name the program's own TLS
-  // directory again, or its callbacks would never run.
-  const Image Rebuilt = readImage(Result->Image);
+  // The stub already completed the program's callbacks. Preserve the original
+  // allocation and callback storage, with adapters that skip repeated attach.
+  Image Rebuilt = readImage(Result->Image);
   const auto Expected = Original.directory(llvm::COFF::TLS_TABLE);
   const auto Actual = Rebuilt.directory(llvm::COFF::TLS_TABLE);
   ASSERT_NE(Expected.RelativeVirtualAddress, 0u);
-  EXPECT_EQ(Actual.RelativeVirtualAddress, Expected.RelativeVirtualAddress);
   EXPECT_EQ(Actual.Size, Expected.Size);
   EXPECT_NE(readImage(fixture(RuntimePacked))
                 .directory(llvm::COFF::TLS_TABLE)
                 .RelativeVirtualAddress,
             Expected.RelativeVirtualAddress);
+  const auto *Metadata = Rebuilt.section(MetadataSection);
+  ASSERT_NE(Metadata, nullptr);
+  EXPECT_GE(Actual.RelativeVirtualAddress, Metadata->RVA);
+  EXPECT_LT(Actual.RelativeVirtualAddress,
+            Metadata->RVA + Metadata->VirtualSize);
+  using llvm::object::coff_tls_directory64;
+  coff_tls_directory64 Before, After;
+  ASSERT_LE(uint64_t(Expected.RelativeVirtualAddress) + sizeof(Before),
+            Original.Mapped.size());
+  ASSERT_LE(uint64_t(Actual.RelativeVirtualAddress) + sizeof(After),
+            Rebuilt.Mapped.size());
+  std::memcpy(&Before, Original.Mapped.data() + Expected.RelativeVirtualAddress,
+              sizeof(Before));
+  std::memcpy(&After, Rebuilt.Mapped.data() + Actual.RelativeVirtualAddress,
+              sizeof(After));
+  EXPECT_EQ(After.StartAddressOfRawData, Before.StartAddressOfRawData);
+  EXPECT_EQ(After.EndAddressOfRawData, Before.EndAddressOfRawData);
+  EXPECT_EQ(After.AddressOfIndex, Before.AddressOfIndex);
+  EXPECT_EQ(After.SizeOfZeroFill, Before.SizeOfZeroFill);
+  EXPECT_EQ(After.Characteristics, Before.Characteristics);
+  EXPECT_EQ(std::memcmp(&Before,
+                        Rebuilt.Mapped.data() + Expected.RelativeVirtualAddress,
+                        sizeof(Before)),
+            0);
+  const uint64_t OldArray = uint64_t(Before.AddressOfCallBacks) - Original.Base;
+  const uint64_t NewArray = uint64_t(After.AddressOfCallBacks) - Rebuilt.Base;
+  ASSERT_LE(OldArray, Original.Mapped.size());
+  ASSERT_LE(NewArray, Rebuilt.Mapped.size());
+  uint64_t Callbacks = 0;
+  for (;; ++Callbacks) {
+    const uint64_t Offset = Callbacks * PointerBytes;
+    ASSERT_LE(Offset + PointerBytes, Original.Mapped.size() - OldArray);
+    ASSERT_LE(Offset + PointerBytes, Rebuilt.Mapped.size() - NewArray);
+    const uint64_t Target = llvm::support::endian::read64le(
+        Original.Mapped.data() + OldArray + Offset);
+    const uint64_t Adapter = llvm::support::endian::read64le(
+        Rebuilt.Mapped.data() + NewArray + Offset);
+    if (!Target) {
+      EXPECT_EQ(Adapter, 0u);
+      break;
+    }
+    EXPECT_GE(Adapter, Rebuilt.Base + Metadata->RVA);
+    EXPECT_LT(Adapter, Rebuilt.Base + Metadata->RVA + Metadata->VirtualSize);
+  }
+  EXPECT_GT(Callbacks, 0u);
+  EXPECT_EQ(Result->MaterializedTLSCallbacks, Callbacks);
+
+  Image Initialized = Original;
+  LinkedEntrySnapshot OriginalState(Initialized), RebuiltState(Rebuilt);
+  UnpackOptions Options;
+  Options.Process.Backend = GetParam().Kind;
+  Options.Process.Contract = emulation::ExecutionContract::DirectUserX64;
+  auto OriginalRun = emulation::observeProcess(
+      fixture(RuntimeOriginal), emulation::ProcessProfile::WindowsPE64,
+      Options.Process, OriginalState);
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(ScratchPrefix, Directory));
+  const auto Path = std::filesystem::path(Directory.str().str()) / Plain;
+  writeFile(Path, Result->Image);
+  auto RebuiltRun =
+      emulation::observeProcess(Path, emulation::ProcessProfile::WindowsPE64,
+                                Options.Process, RebuiltState);
+  std::filesystem::remove_all(std::filesystem::path(Directory.str().str()));
+  ASSERT_TRUE(bool(OriginalRun)) << llvm::toString(OriginalRun.takeError());
+  ASSERT_TRUE(bool(RebuiltRun)) << llvm::toString(RebuiltRun.takeError());
+  EXPECT_EQ(OriginalRun->Stop, emulation::ProcessStopReason::Observer);
+  EXPECT_EQ(RebuiltRun->Stop, emulation::ProcessStopReason::Observer);
+  EXPECT_EQ(OriginalState.ThreadLocal, RebuiltState.ThreadLocal);
+  for (const auto &S : Initialized.Sections)
+    EXPECT_EQ(differingBytes(Initialized, Rebuilt, S), 0u) << S.Name;
 }
 
 TEST_P(Unpack, ExplicitTransferOverridesTheEntryStack) {

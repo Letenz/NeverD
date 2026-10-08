@@ -841,11 +841,19 @@ TEST(MedSEHHandlerEntry, ArgumentLiveIntoTheHandlerStaysAParameter) {
 }
 
 TEST(MedSEHHandlerEntry, X86RegistrationRestoresOnlyTheProvenFramePointer) {
+  // The personality resumes at an except handler with the frame's EBP, and
+  // calls a filter and a finally block with it as well.
   const auto &TRI = getTargetRegInfo(Arch::X86);
   for (auto Encoding : {ExceptionEncoding::X86ScopeTableEH3,
                         ExceptionEncoding::X86ScopeTableEH4}) {
-    for (bool WritesFrame : {false, true}) {
-      SCOPED_TRACE(WritesFrame);
+    for (auto [WritesFrame, Kind] :
+         {std::pair{false, ExceptionalEdgeKind::SEHHandler},
+          std::pair{true, ExceptionalEdgeKind::SEHHandler},
+          std::pair{false, ExceptionalEdgeKind::SEHFilter},
+          std::pair{true, ExceptionalEdgeKind::SEHFilter},
+          std::pair{false, ExceptionalEdgeKind::SEHFinally},
+          std::pair{true, ExceptionalEdgeKind::SEHFinally}}) {
+      SCOPED_TRACE(static_cast<int>(Kind) * 2 + WritesFrame);
       LowFunc Low;
       Low.Entry = 0x1000;
       Low.Name = "x86_registration_frame";
@@ -861,10 +869,8 @@ TEST(MedSEHHandlerEntry, X86RegistrationRestoresOnlyTheProvenFramePointer) {
       Low.Blocks[1].Succs = {3};
       Low.Blocks[2].Succs = {3};
       Low.Blocks[3].Preds = {1, 2};
-      Low.Blocks[1].ExceptionalSuccs.push_back(
-          {2, 0x1020, ExceptionalEdgeKind::SEHHandler});
-      Low.Blocks[2].ExceptionalPreds.push_back(
-          {1, 0x1020, ExceptionalEdgeKind::SEHHandler});
+      Low.Blocks[1].ExceptionalSuccs.push_back({2, 0x1020, Kind});
+      Low.Blocks[2].ExceptionalPreds.push_back({1, 0x1020, Kind});
       ExceptionFunction EH;
       EH.CodeRange = {0x1000, 0x1040};
       EH.Encoding = Encoding;

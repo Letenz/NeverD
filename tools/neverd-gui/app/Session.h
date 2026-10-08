@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <functional>
 #include <optional>
 
@@ -89,6 +90,14 @@ public:
   void save();
   /// Update only the workbench state of an existing database.
   void saveDatabaseState();
+  /// Whether the worker's engine keeps function edits.
+  bool keepsFunctionEdits() const {
+    return capabilities_.contains(QStringLiteral("function_create"));
+  }
+  /// Start a function at \p address, or stop treating the function at
+  /// \p entry as one.  Each commits at once, like a rename.
+  void createFunction(Address address, std::optional<quint64> epoch = {});
+  void deleteFunction(Address entry, std::optional<quint64> epoch = {});
   void rename(Address function, const QString &name,
               std::optional<quint64> epoch = {});
   void setComment(Address address, const QString &text,
@@ -155,6 +164,8 @@ signals:
   void stringOptionsChanged();
 
 private:
+  /// The operations the worker offers (its hello).
+  QSet<QString> capabilities_;
   using Callback = std::function<void(const QJsonObject &payload)>;
   void command(const QString &operation, const QJsonObject &payload,
                Callback done, Failure failed = {});

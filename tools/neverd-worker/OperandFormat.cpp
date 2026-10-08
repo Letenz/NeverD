@@ -900,10 +900,10 @@ bool isOperandKeyword(std::string_view name) {
 }
 
 std::string_view dataNamePrefix(std::string_view sizeKeyword) {
-#define NEVERD_DATA_NAME_PREFIX(SizeKeyword, Prefix)                           \
+#define NEVERD_DATA_SIZE_NAME(SizeKeyword, Bytes, Prefix)                      \
   if (sizeKeyword == SizeKeyword)                                              \
     return Prefix;
-#include "ListingVocabulary.def"
+#include "neverd/DataNames.def"
   return {};
 }
 
@@ -911,6 +911,10 @@ std::optional<std::uint64_t> parseDummyName(std::string_view name) {
   static constexpr std::array prefixes = {
 #define NEVERD_DUMMY_NAME_PREFIX(Prefix) std::string_view(Prefix),
 #include "ListingVocabulary.def"
+#define NEVERD_DATA_SIZE_NAME(SizeKeyword, Bytes, Prefix)                      \
+  std::string_view(Prefix),
+#define NEVERD_DATA_ITEM_NAME(Id, Prefix) std::string_view(Prefix),
+#include "neverd/DataNames.def"
   };
   for (std::string_view prefix : prefixes) {
     if (!name.starts_with(prefix) || name.size() == prefix.size() ||
