@@ -68,7 +68,6 @@ private:
   bool readOnly_ = false;
   std::uintmax_t loadedSize_ = 0;
   std::filesystem::file_time_type loadedTime_;
-  Json stringsCache_;
   /// neverd_strings_ex_json options as JSON text, empty for the defaults; a
   /// workbench preference that outlives the open file.
   std::string stringOptions_;

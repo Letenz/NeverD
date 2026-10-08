@@ -676,6 +676,27 @@ const char *neverd_strings_ex_json(neverd_session_t, const char *options) {
                      {"value", "Wide"}});
   return copy(items.dump());
 }
+// The rows neverd_strings_ex_json lists, a page at a time.
+const char *neverd_strings_page_json(neverd_session_t s, const char *options,
+                                     neverd_va_t firstAddress, int maxRows) {
+  const char *raw = neverd_strings_ex_json(s, options);
+  if (!raw)
+    return nullptr;
+  const auto rows = Json::parse(raw);
+  std::free(const_cast<char *>(raw));
+  Json strings = Json::array();
+  Json next = nullptr;
+  for (const auto &row : rows) {
+    if (parseAddress(row.at("addr").get<std::string>()) < firstAddress)
+      continue;
+    if (static_cast<int>(strings.size()) >= std::max(1, maxRows)) {
+      next = row.at("addr");
+      break;
+    }
+    strings.push_back(row);
+  }
+  return copy(Json{{"next_addr", next}, {"strings", strings}}.dump());
+}
 const char *neverd_decode_text_json(const unsigned char *bytes, int size,
                                     const char *encoding) {
   // ASCII shows printable bytes; UTF-16LE shows printable ASCII units at

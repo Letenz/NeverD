@@ -46,16 +46,10 @@ namespace fs = std::filesystem;
 namespace {
 using IRViewFunction = const char *(*)(neverd_session_t, neverd_va_t,
                                        const char *, std::size_t, std::size_t);
-using StringsExFunction = const char *(*)(neverd_session_t, const char *);
 using StringEncodingsFunction = const char *(*)();
 using DecodeTextFunction = const char *(*)(const unsigned char *, int,
                                            const char *);
 // Additive C ABI capabilities for strings in more than ASCII.
-StringsExFunction stringsExFunction() {
-  static const auto function =
-      engineSymbol<StringsExFunction>("neverd_strings_ex_json");
-  return function;
-}
 /// The engine's string encodings, or an empty array from an older engine.
 const Json &stringEncodings() {
   static const Json encodings = [] {
@@ -451,7 +445,6 @@ void Engine::invalidate() {
   graphs_.clear();
   if (listing_)
     listing_->invalidate();
-  stringsCache_ = nullptr;
   textKey_.clear();
   textCache_.clear();
   textLines_.clear();
@@ -761,7 +754,6 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       stringOptions_ = options.dump();
       if (listing_)
         listing_->setStringOptions(stringOptions_);
-      stringsCache_ = nullptr;
       ++revision_;
     }
     Json current =
@@ -1121,30 +1113,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     result["import"] = listing().isImport(address);
     return result;
   }
-  if (operation == "strings") {
-    if (stringsCache_.is_null()) {
-      const auto stringsEx = stringsExFunction();
-      stringsCache_ = backendJson(
-          stringsEx ? stringsEx(session_, stringOptions_.empty()
-                                              ? nullptr
-                                              : stringOptions_.c_str())
-                    : neverd_strings_json(session_, DefaultStringMinLength));
-      for (auto &item : stringsCache_) {
-        item["address"] = item.at("addr");
-        item["text"] = item.at("value");
-        item.erase("addr");
-        // The classic type column: C for plain bytes, else the encoding.
-        const auto encoding = item.value("encoding", std::string("ascii"));
-        std::string type = "C";
-        for (const auto &known : stringEncodings())
-          if (known.value("name", std::string()) == encoding &&
-              !known.value("spelling", std::string()).empty())
-            type = known.value("spelling", std::string());
-        item["type"] = type;
-      }
-    }
-    return page(stringsCache_, p, {"text", "address", "type"});
-  }
+  if (operation == "strings")
+    return listing().strings(p);
   if (operation == "segments") {
     auto items = backendJson(neverd_segments_json(session_));
     for (auto &item : items) {
