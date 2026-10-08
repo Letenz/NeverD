@@ -84,8 +84,16 @@ TEST(OrderedQuery, CompleteUnsatRetriesExactlyOnce) {
   EXPECT_EQ(P.RetryCharges, 1u);
 }
 
+TEST(OrderedQuery, CompleteSatRetriesExactlyOnce) {
+  OrderedProblem P(6, 1);
+  ASSERT_EQ(checkSat(P.Ctx, P.Full, nullptr, P.Options), SatResult::Unknown);
+  EXPECT_EQ(P.check(P.First), SatResult::Sat);
+  EXPECT_EQ(P.RetryCharges, 1u);
+}
+
 TEST(OrderedQuery, UndecidedSatisfiableQuestionRemainsUnknown) {
   OrderedProblem P(6, 1);
+  P.Options.Sat.MaxPropagations = 1;
   ASSERT_EQ(checkSat(P.Ctx, P.Full, nullptr, P.Options), SatResult::Unknown);
   EXPECT_EQ(P.check(P.First), SatResult::Unknown);
   EXPECT_EQ(P.RetryCharges, 1u);
