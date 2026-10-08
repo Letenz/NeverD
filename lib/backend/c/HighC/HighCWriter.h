@@ -579,6 +579,7 @@ public:
   /// GetExceptionCode() into, for each handler whose code is read.
   std::map<va_t, std::string> SEHExceptionCodeNames;
   void writeSEHExceptionCodeCapture(va_t HandlerVA, int Indent);
+  std::string sehFilterValueText(const HighExpr &Value);
   bool NeedsX87FpremHelpers = false;
   bool NeedsX64SyscallHelper = false;
   bool NeedsX64WindowsSyscallHelper = false;

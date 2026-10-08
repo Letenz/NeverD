@@ -237,6 +237,27 @@ void HighCWriter::emitRenderedStatement(int Indent, llvm::StringRef Text) {
   }
 }
 
+// A filter's disposition prints under the name <excpt.h> gives it.
+std::string HighCWriter::sehFilterValueText(const HighExpr &Value) {
+  const HighExpr *Inner = unwrapIntegerView(&Value);
+  if (Inner && Inner->Kind == ExprKind::Const) {
+    const uint64_t Width = Inner->Type && Inner->Type->Size < 8
+                               ? (uint64_t{1} << (Inner->Type->Size * 8)) - 1
+                               : ~uint64_t{0};
+    switch (Inner->ConstVal & Width) {
+    case 1:
+      return "EXCEPTION_EXECUTE_HANDLER";
+    case 0:
+      return "EXCEPTION_CONTINUE_SEARCH";
+    default:
+      if ((Inner->ConstVal & Width) == Width)
+        return "EXCEPTION_CONTINUE_EXECUTION";
+      break;
+    }
+  }
+  return exprStr(Value);
+}
+
 void HighCWriter::writeCxxThrowExpr(const HighStmt &Stmt,
                                     const HighExpr &ThrowCall) {
   OS << "throw";
@@ -1173,6 +1194,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       OS << "} __except (";
       if (Clause.FilterOrActionVA == 0) {
         OS << "EXCEPTION_EXECUTE_HANDLER";
+      } else if (Clause.FilterValue) {
+        OS << sehFilterValueText(*Clause.FilterValue);
       } else {
         std::string FilterName;
         if (auto It = DefinedFunctionsByAddress.find(Clause.FilterOrActionVA);

@@ -9,6 +9,8 @@
 
 #include "neverd/ir/med/MedIR.h"
 
+#include <optional>
+
 namespace neverd {
 
 /// In source mode, simplify an alignment mask only when its operand is an
@@ -17,6 +19,14 @@ namespace neverd {
 void simplifyProvenStackAlignment(MedFunc &Func, Arch Architecture,
                                   BinaryFormat Format,
                                   StackEntryKind Entry = StackEntryKind::Call);
+
+/// The offset of \p Value from the authenticated entry stack pointer, when
+/// copies, constant additions and proven alignment masks define it from that
+/// pointer.
+std::optional<int64_t>
+entryStackOffset(const MedFunc &Func, const MedVar &Value, Arch Architecture,
+                 BinaryFormat Format,
+                 StackEntryKind Entry = StackEntryKind::Call);
 
 } // namespace neverd
 

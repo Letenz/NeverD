@@ -241,6 +241,11 @@ struct HighEHClause {
       CxxUnwindAction::ActionKind::None;
   int32_t UnwindObjectOffset = 0;
   std::vector<va_t> ContinuationVAs;
+  /// x86 registration EH: the value the filter thunk at \ref FilterOrActionVA
+  /// returns, an expression in the function's frame, when the thunk computes
+  /// nothing else.  The thunk runs inside the exception dispatch rather than
+  /// at the try, so no HighIR pass reads or rewrites this as code of the body.
+  ExprPtr FilterValue;
 
   /// Itanium: position of this clause's action in the call-site action chain,
   /// which is the order the personality tests the clauses in and therefore the
