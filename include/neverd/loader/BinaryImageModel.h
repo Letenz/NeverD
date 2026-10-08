@@ -1315,8 +1315,9 @@ struct BinaryImage {
     return getSectionByName(section_names::elf::Data);
   }
 
-  /// How execution reaches the function at \p FunctionEntry: the kernel
-  /// starts an ELF program at its entry point, and calls reach the rest.
+  /// How the kernel would enter \p FunctionEntry: it starts an ELF program at
+  /// its entry point, and calls reach the rest.  functionEntryKind checks the
+  /// code there is not a function that returns.
   StackEntryKind stackEntryKindAt(va_t FunctionEntry) const {
     return Format == BinaryFormat::ELF && !IsRelocatable && Entry != 0 &&
                    FunctionEntry == Entry

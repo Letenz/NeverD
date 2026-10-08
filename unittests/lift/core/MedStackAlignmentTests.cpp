@@ -207,6 +207,23 @@ TEST(MedStackAlignment, TheKernelEntersAProcessAligned) {
   }
 }
 
+TEST(MedStackAlignment, AnEntryPointThatReturnsWasCalled) {
+  // `_start` cannot return: the kernel left no return address.  A test
+  // harness linking a function to the image's entry calls it, and it returns.
+  MedFunc Start = frameWithEntrySP(Arch::X64);
+  MedFunc Called = frameWithEntrySP(Arch::X64);
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Called.Blocks[0].Ops.push_back(Return);
+
+  EXPECT_EQ(functionEntryKind(Start, StackEntryKind::ProcessEntry),
+            StackEntryKind::ProcessEntry);
+  EXPECT_EQ(functionEntryKind(Called, StackEntryKind::ProcessEntry),
+            StackEntryKind::Call);
+  EXPECT_EQ(functionEntryKind(Start, StackEntryKind::Call),
+            StackEntryKind::Call);
+}
+
 TEST(MedStackAlignment, AJoinHoldsTheOffsetEveryWayInAgreesOn) {
   // An x86 filter reads its frame through the EBP a join merges.  The join
   // holds an offset when every way in brings it, a way back through the join

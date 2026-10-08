@@ -236,6 +236,16 @@ private:
 
 } // namespace
 
+StackEntryKind functionEntryKind(const MedFunc &Func, StackEntryKind AtEntry) {
+  if (AtEntry != StackEntryKind::ProcessEntry)
+    return AtEntry;
+  for (const MedBlock &Block : Func.Blocks)
+    for (const MedOp &Op : Block.Ops)
+      if (Op.Opcode == NdOp::RETURN)
+        return StackEntryKind::Call;
+  return StackEntryKind::ProcessEntry;
+}
+
 std::optional<int64_t> entryStackOffset(const MedFunc &Func,
                                         const MedVar &Value, Arch Architecture,
                                         BinaryFormat Format,

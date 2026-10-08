@@ -2896,9 +2896,7 @@ std::optional<int64_t> HighCWriter::frameDisplacement(const HighExpr &E) const {
       if (!BaseDisp || *BaseDisp < -CurrentFunc->FrameSize || *BaseDisp > 0)
         return std::nullopt;
       const int64_t Residue = static_cast<int64_t>(syntheticEntryStackResidue(
-          Opts.TheArch, Opts.Format,
-          Opts.Image ? Opts.Image->stackEntryKindAt(CurrentFunc->Entry)
-                     : StackEntryKind::Call));
+          Opts.TheArch, Opts.Format, CurrentFunc->EntryKind));
       const int64_t Position = *BaseDisp + Residue;
       const int64_t Remainder = (Position % static_cast<int64_t>(Alignment) +
                                  static_cast<int64_t>(Alignment)) %

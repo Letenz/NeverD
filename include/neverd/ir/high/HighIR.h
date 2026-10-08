@@ -552,6 +552,8 @@ struct HighFunc {
   std::string SourceFile;
   uint32_t SourceLine = 0;
   bool DoesNotReturn = false;
+  /// How execution reaches Entry (MedFunc::EntryKind).
+  StackEntryKind EntryKind = StackEntryKind::Call;
   TypeRef ReturnType;
   std::optional<SourceFunctionTypeHint> SourceTypeHint;
   /// Source-only projection of Swift's in/out error register. The entry value

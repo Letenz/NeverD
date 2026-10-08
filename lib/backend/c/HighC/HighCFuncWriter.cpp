@@ -5416,10 +5416,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         Func.FrameSize > 0 ? static_cast<uint64_t>(Func.FrameSize) : 0);
     uint64_t UpperSize = checkedStackAlign(
         Func.FrameHeadroom > 0 ? static_cast<uint64_t>(Func.FrameHeadroom) : 0);
-    uint64_t EntryResidue = syntheticEntryStackResidue(
-        Opts.TheArch, Opts.Format,
-        Opts.Image ? Opts.Image->stackEntryKindAt(Func.Entry)
-                   : StackEntryKind::Call);
+    uint64_t EntryResidue =
+        syntheticEntryStackResidue(Opts.TheArch, Opts.Format, Func.EntryKind);
     uint64_t FrameBaseOffset = checkedStackAdd(LowerSize, EntryResidue);
     uint64_t StorageSize = checkedStackAdd(FrameBaseOffset, UpperSize);
     emitIndent(1);
