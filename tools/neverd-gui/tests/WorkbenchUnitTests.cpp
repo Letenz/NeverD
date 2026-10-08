@@ -289,6 +289,89 @@ private slots:
         directory.filePath(QStringLiteral("missing.nddb")), &error));
   }
 
+  void projectDatabaseIdentity() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto write = [](const QString &path, const QByteArray &bytes) {
+      QFile file(path);
+      return file.open(QIODevice::WriteOnly) &&
+             file.write(bytes) == bytes.size();
+    };
+    const auto contents = [](const QString &path) {
+      QFile file(path);
+      return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    const auto applicationId = [&](const QString &path) {
+      return contents(path).mid(68, 4);
+    };
+    // Statements run on a SQLite file the way another application would.
+    const auto sql = [](const QString &path, const QStringList &statements) {
+      bool ok = false;
+      {
+        auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                            QStringLiteral("identity"));
+        db.setDatabaseName(path);
+        ok = db.open();
+        for (const auto &statement : statements)
+          ok = ok && QSqlQuery(db).exec(statement);
+        db.close();
+      }
+      QSqlDatabase::removeDatabase(QStringLiteral("identity"));
+      return ok;
+    };
+    // GeoPackage's application id, "GPKG".
+    const auto otherId =
+        QStringLiteral("PRAGMA application_id = %1").arg(0x47504B47);
+    const auto binary = directory.filePath(QStringLiteral("sample.bin"));
+    QVERIFY(write(binary, QByteArray(4096, '\x90')));
+    const auto database = ProjectDatabase::pathFor(binary);
+    QCOMPARE(ProjectDatabase::save(database, binary, {}), QString());
+    QCOMPARE(applicationId(database), QByteArray("NDDB"));
+
+    // The header, not the name, makes a database.
+    const auto renamed = directory.filePath(QStringLiteral("project.sqlite"));
+    QVERIFY(QFile::copy(database, renamed));
+    QVERIFY(ProjectDatabase::isDatabase(renamed));
+    QVERIFY(!ProjectDatabase::isDatabase(binary));
+    QString error;
+    QVERIFY2(ProjectDatabase::read(renamed, &error), qPrintable(error));
+    const auto other = directory.filePath(QStringLiteral("other.sqlite"));
+    QVERIFY(sql(other, {otherId, QStringLiteral("CREATE TABLE t(x)")}));
+    QVERIFY(!ProjectDatabase::isDatabase(other));
+
+    // A database written before the id was stamped still reads, and its next
+    // write stamps the id.
+    QVERIFY(sql(database, {QStringLiteral("PRAGMA application_id = 0")}));
+    QCOMPARE(applicationId(database), QByteArray(4, '\0'));
+    QVERIFY2(ProjectDatabase::read(database, &error), qPrintable(error));
+    QCOMPARE(ProjectDatabase::saveState(database, {}), QString());
+    QCOMPARE(applicationId(database), QByteArray("NDDB"));
+
+    // Another application's SQLite file is neither read nor written, even
+    // with a NeverD format row and the .nddb suffix.
+    const auto foreign = directory.filePath(QStringLiteral("foreign.nddb"));
+    QVERIFY(sql(foreign, {otherId,
+                          QStringLiteral("CREATE TABLE meta(key TEXT PRIMARY "
+                                         "KEY, value TEXT NOT NULL)"),
+                          QStringLiteral("INSERT INTO meta VALUES('format', "
+                                         "'1')")}));
+    const auto foreignBytes = contents(foreign);
+    QVERIFY(!ProjectDatabase::read(foreign, &error));
+    QCOMPARE(error,
+             QStringLiteral("%1 is not a NeverD database.").arg(foreign));
+    QVERIFY(!ProjectDatabase::saveState(foreign, {}).isEmpty());
+    QVERIFY(!ProjectDatabase::save(foreign, binary, {}).isEmpty());
+    QCOMPARE(contents(foreign), foreignBytes);
+
+    // Nor is a SQLite file without an id that NeverD did not write.
+    const auto plain = directory.filePath(QStringLiteral("plain.nddb"));
+    QVERIFY(sql(plain, {QStringLiteral("CREATE TABLE t(x)")}));
+    const auto plainBytes = contents(plain);
+    QCOMPARE(ProjectDatabase::save(plain, binary, {}),
+             QStringLiteral("%1 is not a NeverD database.").arg(plain));
+    QCOMPARE(contents(plain), plainBytes);
+  }
+
   void themesDefineEveryColor() {
     auto &theme = Theme::instance();
     for (const auto mode : {Theme::Mode::Dark, Theme::Mode::Light}) {

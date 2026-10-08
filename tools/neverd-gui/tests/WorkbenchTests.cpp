@@ -634,25 +634,29 @@ private slots:
       QTRY_VERIFY(!bench.session.dirty());
     }
     // The database alone reopens the project: input, comment and location.
-    QTemporaryDir moved;
-    const auto copy = moved.filePath(QStringLiteral("moved.nddb"));
-    QVERIFY(QFile::copy(database, copy));
-    Workbench bench;
-    bench.window->openFile(copy);
-    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
-    QCOMPARE(bench.session.projectPath(), copy);
-    QCOMPARE(bench.session.databasePath(), copy);
-    QVERIFY(bench.session.filePath() != path);
-    QTRY_COMPARE_WITH_TIMEOUT(bench.window->disassembly()->currentItem(),
-                              std::optional<Address>(Base + 0x140),
-                              OpenTimeoutMs);
-    QString comment;
-    bench.session.read(QStringLiteral("resolve"),
-                       {{"query", hexAddress(Base + 0x140)}}, &bench.session,
-                       [&](const QJsonObject &payload) {
-                         comment = payload.value("comment").toString();
-                       });
-    QTRY_COMPARE(comment, QStringLiteral("packed comment"));
+    // Its header identifies it, so a copy without the suffix opens too.
+    for (const auto &name :
+         {QStringLiteral("moved.nddb"), QStringLiteral("moved.db")}) {
+      QTemporaryDir moved;
+      const auto copy = moved.filePath(name);
+      QVERIFY(QFile::copy(database, copy));
+      Workbench bench;
+      bench.window->openFile(copy);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      QCOMPARE(bench.session.projectPath(), copy);
+      QCOMPARE(bench.session.databasePath(), copy);
+      QVERIFY(bench.session.filePath() != path);
+      QTRY_COMPARE_WITH_TIMEOUT(bench.window->disassembly()->currentItem(),
+                                std::optional<Address>(Base + 0x140),
+                                OpenTimeoutMs);
+      QString comment;
+      bench.session.read(QStringLiteral("resolve"),
+                         {{"query", hexAddress(Base + 0x140)}}, &bench.session,
+                         [&](const QJsonObject &payload) {
+                           comment = payload.value("comment").toString();
+                         });
+      QTRY_COMPARE(comment, QStringLiteral("packed comment"));
+    }
   }
 
   void contributionsRegisterRunAndUnload() {
