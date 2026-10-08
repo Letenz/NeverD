@@ -104,10 +104,27 @@ void TransferObserver::refreshWatches() {
     if (Begin < End)
       Watches.push_back({Begin, End - Begin});
   }
+  for (const auto &Call : Calls) {
+    const uint64_t PC = Call.Frame.ReturnAddress;
+    auto I = llvm::lower_bound(
+        Watches, PC, [](const auto &W, uint64_t PC) { return W.Address < PC; });
+    if (I != Watches.end() && I->Address == PC)
+      continue;
+    if (I != Watches.begin()) {
+      const auto &Previous = *std::prev(I);
+      if (PC - Previous.Address < Previous.Size)
+        continue;
+    }
+    Watches.insert(I, {PC, 1});
+  }
 }
 
 void TransferObserver::removeInstructionWatch(uint64_t Offset) {
   const uint64_t PC = Base + Offset;
+  if (llvm::any_of(Calls, [&](const auto &Call) {
+        return Call.Frame.ReturnAddress == PC;
+      }))
+    return;
   auto I = llvm::upper_bound(
       Watches, PC, [](uint64_t PC, const auto &W) { return PC < W.Address; });
   if (I == Watches.begin())
@@ -212,14 +229,13 @@ uint64_t TransferObserver::generation(llvm::ArrayRef<uint8_t> Bytes,
 
 llvm::Expected<std::vector<ExecutionWatch>>
 TransferObserver::started(ProcessView &Process) {
-  const auto Modules = Process.modules();
-  const auto Main =
-      llvm::find_if(Modules, [](const ProcessModuleView &M) { return M.Main; });
-  if (Main == Modules.end())
-    return failure(text::MainImage);
+  const auto Main = Process.inputModule();
+  if (!Main)
+    return std::vector<ExecutionWatch>();
   if (Main->Size != Extent)
     return failure(text::ImageChanged);
   Base = Main->Base;
+  Initialized = true;
   if (auto E = snapshot(Process, Images.emplace_back()))
     return std::move(E);
   auto SP = Process.readRegister(Traits.StackPointer);
@@ -237,6 +253,12 @@ TransferObserver::started(ProcessView &Process) {
 
 llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
 TransferObserver::invoking(ProcessView &Process) {
+  if (!Initialized) {
+    auto Initial = started(Process);
+    if (!Initial)
+      return Initial.takeError();
+    return std::move(*Initial);
+  }
   if (!EnteredProgram && Process.programInvocation()) {
     auto SP = Process.readRegister(Traits.StackPointer);
     if (!SP)
@@ -254,8 +276,32 @@ TransferObserver::invoking(ProcessView &Process) {
 
 llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
 TransferObserver::watched(ProcessView &Process, uint64_t PC) {
-  if (PC < Base || PC - Base >= Extent)
+  bool Returning = false;
+  if (llvm::any_of(Calls, [&](const auto &Call) {
+        return Call.Frame.ReturnAddress == PC;
+      })) {
+    Returning = true;
+    auto SP = Process.readRegister(Traits.StackPointer);
+    if (!SP)
+      return SP.takeError();
+    for (size_t I = Calls.size(); I; --I) {
+      const auto &Call = Calls[I - 1];
+      if (Call.Frame.ReturnAddress != PC ||
+          Call.Frame.ReturnStackPointer != (*SP)[0])
+        continue;
+      CompletedCalls.push_back({Call.Entry, Call.Frame.Arguments});
+      // A matching outer continuation also retires abandoned inner frames;
+      // those frames have no completion witness of their own.
+      Calls.erase(Calls.begin() + I - 1, Calls.end());
+      refreshWatches();
+      break;
+    }
+  }
+  if (PC < Base || PC - Base >= Extent) {
+    if (Returning)
+      return Watches;
     return failure(text::WatchOutside);
+  }
   const uint64_t Offset = PC - Base;
   auto Size = Process.instructionSize(PC);
   if (!Size)
@@ -307,6 +353,15 @@ TransferObserver::watched(ProcessView &Process, uint64_t PC) {
       Wanted ? Seen.size() == Wanted
              : Seen.back().StackBalanced && Seen.back().ProgramInvocation;
   if (!Accepted) {
+    auto Frame = Process.callFrame();
+    if (!Frame)
+      return Frame.takeError();
+    if (*Frame) {
+      llvm::erase_if(CompletedCalls, [&](const auto &Call) {
+        return Call.Entry == PC && Call.Arguments == (**Frame).Arguments;
+      });
+      Calls.push_back({PC, **Frame});
+    }
     Images.push_back(std::move(Observed.Memory));
     Current = Images.back();
     Running = Images.size() - 1;
@@ -317,6 +372,7 @@ TransferObserver::watched(ProcessView &Process, uint64_t PC) {
   }
   Observed.Baseline = std::move(Images.front());
   Observed.Transfers = Seen;
+  Observed.CompletedCalls = CompletedCalls;
   if (Process.programInvocation()) {
     Observed.Initializers = Process.completedInitializers();
     auto ThreadLocal = Process.threadLocalMemory();

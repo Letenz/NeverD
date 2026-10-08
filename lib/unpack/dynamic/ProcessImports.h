@@ -23,24 +23,19 @@ public:
     uint64_t ReturnAddress, Gate;
   };
   llvm::Expected<std::vector<emulation::ExecutionWatch>>
-  started(emulation::ProcessView &) override {
-    return std::vector<emulation::ExecutionWatch>();
-  }
+  started(emulation::ProcessView &Process) override;
   llvm::Expected<std::optional<std::vector<emulation::ExecutionWatch>>>
-  watched(emulation::ProcessView &, uint64_t) override {
-    return std::optional(std::vector<emulation::ExecutionWatch>());
-  }
+  watched(emulation::ProcessView &Process, uint64_t PC) override;
+  llvm::Expected<std::optional<std::vector<emulation::ExecutionWatch>>>
+  invoking(emulation::ProcessView &Process) override;
   llvm::Error exporting(emulation::ProcessView &,
                         const emulation::ProcessExportView &Export,
-                        std::optional<uint64_t> ReturnAddress) override {
-    if (ReturnAddress)
-      Calls.push_back({*ReturnAddress, Export.Address});
-    return llvm::Error::success();
-  }
+                        std::optional<uint64_t> ReturnAddress) override;
   llvm::ArrayRef<Call> calls() const { return Calls; }
 
 private:
   std::vector<Call> Calls;
+  std::vector<emulation::ExecutionWatch> Watches;
 };
 
 /// Watches bounded helpers near previously observed export continuations.
@@ -58,10 +53,7 @@ public:
   llvm::Expected<std::optional<std::vector<emulation::ExecutionWatch>>>
   watched(emulation::ProcessView &Process, uint64_t PC) override;
   llvm::Expected<std::optional<std::vector<emulation::ExecutionWatch>>>
-  invoking(emulation::ProcessView &) override {
-    rejectActive();
-    return std::nullopt;
-  }
+  invoking(emulation::ProcessView &Process) override;
   std::vector<TailImport> takeImports();
 
 private:
@@ -91,6 +83,7 @@ private:
   void rejectActive();
   llvm::Error complete(emulation::ProcessView &Process, uint64_t PC);
   uint64_t Base = 0;
+  bool Initialized = false;
   std::vector<uint64_t> Continuations, Gates;
   std::vector<uint8_t> Code;
   std::vector<Candidate> Candidates;

@@ -1236,7 +1236,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `4975 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5337`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `4987 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5349`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1356,6 +1356,12 @@ Windows ring3 は独立したネイティブ観測に従い、checked x64 の `o
 `WindowsLifetimeTests.cpp` は固定トレースを独立したネイティブ Windows プロセスと KVM/WHP/Unicorn で照合します。通常終了、入口 return、両 DLL の初期化失敗、4 箇所の早期終了、入口なし DLL を含みます。回呼障害、共通予算、再配置 TLS フィールド、TLS 総容量も検証します。ネイティブ入口 return のプローブは初期スレッドのハンドルを保持し、終了コードと正確なスレッド／プロセス通知列を 64 回検証します。残る子スレッドは観測後に終了させ、プロセス終了値を入口の戻り値として扱いません。
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests`、`NeverDUnpackPublicTests` はパックされたイメージの復元を対象とします。[アンパック](unpack.md)を参照してください。`UnpackGeneratedTests.cpp` は、テスト自身がパックしたプログラムを使って、x86-64 と ARM64 でエントリの規則を検査します。`X64ReturnPrefixTests.cpp` は 2 バイトの近リターンをすべてのトランスポートで検査し、それ以外のプレフィックス付きリターンが拒否されたままであることを確認します。`WindowsDeferredTests.cpp` は不透明なエントリと停止したプロセスの観測を、`ExecutionSessionTests.cpp` は実行ウォッチを検査します。 `DirectX64Tests.cpp` は部分ページの監視、ページ境界の命令取得、一度だけの再開、サービス境界、無効命令とタイムアウト時の状態も検証します。
+
+`UnpackLibraryTests.cpp` は独立した x64/ARM64 DLL をテスト内でパックし、依存順序、通常・生成 TLS コールバック、アタッチ失敗の後処理、入力とホストの識別、自身のファイルアクセス、名前・序数・データ・転送エクスポート、自己インポートの不在を確認します。ネイティブ Windows は別 EXE で元の DLL と再構築 DLL をロードし、宣言済みエクスポートを呼びます。検査付き・直接 WHP ケースは必須です。`CompletedGeneratedTLSCallsRequireTheAttachABI` は入口・引数の変更を拒否し、`GeneratedCallsNeedTheirReturnedStackAtTheContinuation` は誤った戻りスタックを拒否します。対象はアンパックであり、仮想化解除ではありません。
+
+`ExportObserver` は常駐ゲスト依存モジュールの実行可能エクスポートも監視します。モデル化プロバイダーはサービス分配で観測し、入力自身のエクスポートは除外します。モジュール変更で監視を更新し、修復には現在のエクスポート識別を必要とします。記録数は宣言済みインポート上限以内です。DLL テストはシステム API とゲスト依存関数の両ヘルパーを修復し、ネイティブロードでエミュレートされたアドレスが残らないことを検証します。
+
+`WrappedEntriesRequireExplicitTransferEvidence` は DLL ラッパーが深いスタックで復元入口を呼ぶ場合を扱います。既定は `no_entry` のままです。観測済み呼び出しを `transfer` で選ぶとロード可能な DLL を再構築できます。深い呼び出しだけでは入口と初期化処理を区別できません。
 
 `WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback` は、`IMAGE_SCN_CNT_UNINITIALIZED_DATA` を持つ独立した `.gentls` セクションを要求し、宣言されたバッファ範囲との完全一致と、生データのサイズおよびポインターがゼロであることを確認します。`WindowsDeferredCases.def` が記憶域とアセンブリを定義し、通常の `.data` は独立します。生成コールバックと生成エントリーの両ケースで、x64/ARM64 の厳密な拒否および遅延実行チェックを維持します。
 

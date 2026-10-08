@@ -39,6 +39,78 @@ size_t registerIndex(CPURegister R) {
 }
 } // namespace
 
+llvm::Expected<std::vector<ExecutionWatch>>
+ExportObserver::started(ProcessView &Process) {
+  Watches.clear();
+  const auto Input = Process.inputModule();
+  auto Mappings = Process.mappings();
+  if (!Mappings)
+    return Mappings.takeError();
+  const auto Modules = Process.modules();
+  for (const auto &Export : Process.exports()) {
+    const uint64_t PC = Export.Address;
+    if (Input && PC >= Input->Base && PC - Input->Base < Input->Size)
+      continue;
+    // Modeled providers already publish exporting() before service dispatch.
+    // Guest dependencies need an execution stop at their actual code export.
+    if (!llvm::any_of(Modules,
+                      [&](const auto &M) {
+                        return !M.Modeled && PC >= M.Base &&
+                               PC - M.Base < M.Size;
+                      }) ||
+        !llvm::any_of(*Mappings, [&](const auto &M) {
+          return !M.Device && (M.Permissions & Execute) && PC >= M.Address &&
+                 PC - M.Address < M.Size;
+        }))
+      continue;
+    Watches.push_back({PC, 1});
+  }
+  llvm::sort(Watches, [](const auto &A, const auto &B) {
+    return A.Address < B.Address;
+  });
+  Watches.erase(std::unique(Watches.begin(), Watches.end(),
+                            [](const auto &A, const auto &B) {
+                              return A.Address == B.Address;
+                            }),
+                Watches.end());
+  return Watches;
+}
+
+llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+ExportObserver::invoking(ProcessView &Process) {
+  auto Next = started(Process);
+  if (!Next)
+    return Next.takeError();
+  return std::move(*Next);
+}
+
+llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+ExportObserver::watched(ProcessView &Process, uint64_t PC) {
+  auto Frame = Process.callFrame();
+  if (!Frame)
+    return Frame.takeError();
+  if (*Frame)
+    for (const auto &Export : Process.exports()) {
+      if (Export.Address != PC)
+        continue;
+      if (auto E = exporting(Process, Export, (**Frame).ReturnAddress))
+        return std::move(E);
+      break;
+    }
+  return Watches;
+}
+
+llvm::Error ExportObserver::exporting(ProcessView &,
+                                      const ProcessExportView &Export,
+                                      std::optional<uint64_t> ReturnAddress) {
+  if (!ReturnAddress)
+    return llvm::Error::success();
+  if (Calls.size() == defaults::Imports)
+    return failure(text::ImportLimit);
+  Calls.push_back({*ReturnAddress, Export.Address});
+  return llvm::Error::success();
+}
+
 void ImportObserver::reject(size_t Index) {
   auto &C = Candidates[Index];
   C.Rejected = true;
@@ -97,12 +169,11 @@ llvm::Expected<std::vector<ExecutionWatch>>
 ImportObserver::started(ProcessView &Process) {
   if (Process.architecture() != GuestArchitecture::X64)
     return Watches;
-  const auto Modules = Process.modules();
-  const auto Main =
-      llvm::find_if(Modules, [](const auto &M) { return M.Main; });
-  if (Main == Modules.end())
-    return failure(text::ImageChanged);
+  const auto Main = Process.inputModule();
+  if (!Main)
+    return Watches;
   Base = Main->Base;
+  Initialized = true;
   Code.assign(Main->Size, 0);
   auto &Memory = Code;
   auto Layout = Process.mappings();
@@ -162,6 +233,17 @@ ImportObserver::started(ProcessView &Process) {
       Watches.push_back({Gate, 1});
 
   return Watches;
+}
+
+llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+ImportObserver::invoking(ProcessView &Process) {
+  rejectActive();
+  if (Initialized)
+    return std::nullopt;
+  auto Initial = started(Process);
+  if (!Initial)
+    return Initial.takeError();
+  return std::move(*Initial);
 }
 
 llvm::Error ImportObserver::complete(ProcessView &Process, uint64_t PC) {
