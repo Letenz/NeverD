@@ -624,6 +624,49 @@ int main(void) {
 )");
 }
 
+TEST(HighValueForward, AForwardedConversionComparesInItsOwnType) {
+  // t1 = (int8_t)wide, a byte of a 128-bit vector, declared uint8_t: its
+  // definition prints in place as a signed byte, and the unsigned compare
+  // `x < t1` (pmaxub's) must still compare unsigned bytes.
+  MedVar Wide;
+  Wide.Kind = MedVar::Param;
+  Wide.Id = 0;
+  Wide.Size = 16;
+  Wide.TheArch = Arch::X64;
+  MedVar Byte;
+  Byte.Kind = MedVar::Param;
+  Byte.Id = 1;
+  Byte.Size = 1;
+  Byte.TheArch = Arch::X64;
+  const TypeRef U8 = NdType::makeInt(1, false);
+  auto Lane = std::make_shared<HighExpr>();
+  Lane->Kind = ExprKind::Cast;
+  Lane->Type = Lane->CastTo = NdType::makeInt(1, true);
+  Lane->Operands = {HighExpr::makeVar(Wide, NdType::makeInt(16, false))};
+  MedVar T;
+  T.Kind = MedVar::Temp;
+  T.Id = 1;
+  T.Size = 1;
+  T.TheArch = Arch::X64;
+  auto Less = HighExpr::makeBinop(NdOp::INT_LESS, HighExpr::makeVar(Byte, U8),
+                                  HighExpr::makeVar(T, U8));
+  Less->Type = NdType::makeInt(1, false);
+  auto Result = HighExpr::makeUnary(NdOp::INT_ZEXT, Less);
+  Result->Type = NdType::makeInt(8, false);
+  HighFunc F = function("byte_below",
+                        {assign(HighExpr::makeVar(T, U8), Lane), result(Result)});
+  F.Params = {{"arg0", NdType::makeInt(16, false)}, {"arg1", U8}};
+  const std::string Source = emit({F});
+  compileAndRun(Source + R"(
+int main(void) {
+  const unsigned __int128 lanes = (unsigned __int128)0xA0A0A0A0A0A0A0A0ull;
+  if (byte_below(lanes, 5) != 1 || byte_below(lanes, 0xB0) != 0)
+    return 1;
+  return byte_below(lanes, 0x9F) != 1;
+}
+)");
+}
+
 TEST(HighValueForward, AnExtendedLowByteKeepsItsConversion) {
   // t1 = (int64_t)(int8_t)x is read once: the use reads the sign-extended
   // low byte, not x, which the views around it merely surround.

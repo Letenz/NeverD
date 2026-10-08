@@ -3736,8 +3736,12 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (isPlainInteger(To) && isPlainInteger(E.Operands[0]->Type))
       return typedText(E, integerView(*E.Operands[0], To, ParentPrec), To->Size,
                        To->IsSigned);
-    std::string Ty = typeToC(To);
-    return "(" + Ty + ")" + exprStr(*E.Operands[0], 99);
+    std::string Text = "(" + typeToC(To) + ")" + exprStr(*E.Operands[0], 99);
+    // A conversion's text has its type, whatever it converts: `(int8_t)v`
+    // of a 128-bit v is a signed byte wherever it is printed in place.
+    if (isPlainInteger(To))
+      return typedText(E, std::move(Text), To->Size, To->IsSigned);
+    return Text;
   }
   case ExprKind::BitCast: {
     if (E.Operands.size() != 1 || !E.Operands[0] || !E.Type ||
