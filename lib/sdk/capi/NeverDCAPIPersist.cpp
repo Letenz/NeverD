@@ -22,6 +22,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -628,12 +629,34 @@ int neverd_item_set(neverd_session_t Sess, neverd_va_t Addr,
     S->setError(Error);
     return -1;
   }
-  // An item replaces the one at its address and shares no byte with another.
-  if (const auto Other =
-          overlappingItem(S->DataItems, Addr, Item->Size, Addr)) {
-    S->setError(vaHex(Addr) + " overlaps the item at " + vaHex(*Other));
-    return -1;
+  // An item replaces the one at its address. Bytes the user undefined give
+  // way to it and stay undefined around it; it shares no byte with any other
+  // item.
+  const va_t End = Addr + Item->Size;
+  std::vector<va_t> Carved;
+  std::vector<std::pair<va_t, uint64_t>> Pieces;
+  auto It = S->DataItems.upper_bound(Addr);
+  if (It != S->DataItems.begin() &&
+      std::prev(It)->first + std::prev(It)->second.Size > Addr)
+    --It;
+  for (; It != S->DataItems.end() && It->first < End; ++It) {
+    const auto &[At, Other] = *It;
+    if (Other.Kind != UndefinedItemKind) {
+      if (At == Addr)
+        continue;
+      S->setError(vaHex(Addr) + " overlaps the item at " + vaHex(At));
+      return -1;
+    }
+    Carved.push_back(At);
+    if (At < Addr)
+      Pieces.emplace_back(At, Addr - At);
+    if (At + Other.Size > End)
+      Pieces.emplace_back(End, At + Other.Size - End);
   }
+  for (const va_t At : Carved)
+    S->DataItems.erase(At);
+  for (const auto &[At, Size] : Pieces)
+    S->DataItems[At] = {std::string(UndefinedItemKind), Size, {}};
   S->DataItems[Addr] = std::move(*Item);
   return 0;
 }

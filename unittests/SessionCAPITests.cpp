@@ -3495,7 +3495,19 @@ TEST_F(SessionCAPITest, UserDataItemsDefineBytesAndPersist) {
             std::string::npos);
   EXPECT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"dword\"}"), 0);
   ASSERT_EQ(
-      neverd_item_set(Session, Word, "{\"kind\":\"undefined\",\"size\":2}"), 0);
+      neverd_item_set(Session, Word, "{\"kind\":\"undefined\",\"size\":4}"), 0);
+  // Undefined bytes give way to an item and stay undefined around it.
+  ASSERT_EQ(neverd_item_set(Session, Word + 1, "{\"kind\":\"byte\"}"), 0)
+      << takeString(neverd_last_error(Session));
+  const std::string ByteHex = "0x" + llvm::utohexstr(Word + 1);
+  const std::string RestHex = "0x" + llvm::utohexstr(Word + 2);
+  EXPECT_EQ(takeString(neverd_items_json(Session)),
+            "[{\"addr\":\"" + TextHex +
+                "\",\"encoding\":\"utf-8\",\"kind\":\"string\","
+                "\"size\":6},{\"addr\":\"" +
+                WordHex + "\",\"kind\":\"undefined\",\"size\":1},{\"addr\":\"" +
+                ByteHex + "\",\"kind\":\"byte\",\"size\":1},{\"addr\":\"" +
+                RestHex + "\",\"kind\":\"undefined\",\"size\":2}]");
 
   // Saved, the items come back with the input.
   ASSERT_EQ(neverd_items_save(Session), 0)
