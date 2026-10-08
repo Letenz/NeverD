@@ -192,7 +192,7 @@
         <translation>Zum Anfang der vorherigen Funktion wechseln</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
+        <source>Jump to pseudo&amp;code</source>
         <translation>Zum &amp;Pseudocode springen</translation>
     </message>
     <message>
@@ -296,7 +296,7 @@
         <translation>Binärdatei nach einer Bytefolge durchsuchen</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
+        <source>Next se&amp;quence of bytes</source>
         <translation>Nächste Byte&amp;folge</translation>
     </message>
     <message>
@@ -392,7 +392,7 @@
         <translation>LLVM IR der aktuellen Funktion anzeigen</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
+        <source>Generate &amp;LLVM C</source>
         <translation>LLVM &amp;C erzeugen</translation>
     </message>
     <message>
@@ -488,7 +488,7 @@
         <translation>Graphübersicht anzeigen</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
+        <source>MCP c&amp;onnections</source>
         <translation>&amp;MCP-Verbindungen</translation>
     </message>
     <message>
@@ -496,7 +496,7 @@
         <translation>MCP-Verbindungen und Sitzungsfreigabe verwalten</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
+        <source>Ex&amp;tensions</source>
         <translation>&amp;Erweiterungen</translation>
     </message>
     <message>
@@ -528,7 +528,7 @@
         <translation>Vollbild ein-/ausschalten</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
+        <source>I&amp;ncrease font size</source>
         <translation>Schrift &amp;vergrößern</translation>
     </message>
     <message>

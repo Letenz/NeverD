@@ -192,8 +192,8 @@
         <translation>الانتقال إلى بداية الدالة السابقة</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>الانتقال إلى الشيفرة الزائفة(&amp;E)</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>الانتقال إلى الشيفرة الزائفة(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>البحث عن تسلسل بايتات في الملف الثنائي</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>تسلسل البايتات التالي(&amp;U)</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>تسلسل البايتات التالي(&amp;Q)</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>إظهار LLVM IR للدالة الحالية</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>توليد LLVM C(&amp;C)</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>توليد LLVM C(&amp;L)</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>إظهار النظرة العامة على الرسم البياني</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>اتصالات MCP(&amp;C)</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>اتصالات MCP(&amp;O)</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>إدارة اتصالات MCP ومشاركة الجلسة</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>الإضافات(&amp;X)</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>الإضافات(&amp;T)</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>تبديل وضع ملء الشاشة</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>تكبير حجم الخط(&amp;I)</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>تكبير حجم الخط(&amp;N)</translation>
     </message>
     <message>
         <source>Increase the code font size</source>

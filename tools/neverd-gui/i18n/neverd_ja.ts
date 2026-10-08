@@ -192,8 +192,8 @@
         <translation>前の関数の先頭へ移動します</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>疑似コードへジャンプ(&amp;E)</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>疑似コードへジャンプ(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>バイナリ内のバイト列を検索します</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>次のバイト列(&amp;U)</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>次のバイト列(&amp;Q)</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>現在の関数の LLVM IR を表示します</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>LLVM C を生成(&amp;C)</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>LLVM C を生成(&amp;L)</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>グラフ概要を表示します</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>MCP 接続(&amp;C)</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>MCP 接続(&amp;O)</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>MCP 接続とセッション共有を管理します</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>拡張機能(&amp;X)</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>拡張機能(&amp;T)</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>全画面表示を切り替えます</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>フォントサイズを拡大(&amp;I)</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>フォントサイズを拡大(&amp;N)</translation>
     </message>
     <message>
         <source>Increase the code font size</source>

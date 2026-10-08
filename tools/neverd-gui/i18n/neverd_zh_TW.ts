@@ -192,8 +192,8 @@
         <translation>移至上一個函式的起始處</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>跳至偽代碼(&amp;E)</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>跳至偽代碼(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>在二進位檔案中搜尋位元組序列</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>下一個位元組序列(&amp;U)</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>下一個位元組序列(&amp;Q)</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>顯示目前函式的 LLVM IR</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>產生 LLVM C(&amp;C)</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>產生 LLVM C(&amp;L)</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>顯示圖形概覽</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>MCP 連線(&amp;C)</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>MCP 連線(&amp;O)</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>管理 MCP 連線與工作階段共用</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>擴充功能(&amp;X)</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>擴充功能(&amp;T)</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>切換全螢幕</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>放大字型(&amp;I)</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>放大字型(&amp;N)</translation>
     </message>
     <message>
         <source>Increase the code font size</source>

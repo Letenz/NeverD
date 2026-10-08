@@ -192,7 +192,7 @@
         <translation>Ir al inicio de la función anterior</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
+        <source>Jump to pseudo&amp;code</source>
         <translation>Saltar al &amp;pseudocódigo</translation>
     </message>
     <message>
@@ -296,7 +296,7 @@
         <translation>Buscar una secuencia de bytes en el binario</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
+        <source>Next se&amp;quence of bytes</source>
         <translation>Secuencia de bytes s&amp;iguiente</translation>
     </message>
     <message>
@@ -392,7 +392,7 @@
         <translation>Mostrar el LLVM IR de la función actual</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
+        <source>Generate &amp;LLVM C</source>
         <translation>Generar LLVM &amp;C</translation>
     </message>
     <message>
@@ -457,7 +457,7 @@
     </message>
     <message>
         <source>&amp;Cross references</source>
-        <translation>&amp;Referencias cruzadas</translation>
+        <translation>Referencias cr&amp;uzadas</translation>
     </message>
     <message>
         <source>Show references to the current item</source>
@@ -488,7 +488,7 @@
         <translation>Mostrar la vista general del grafo</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
+        <source>MCP c&amp;onnections</source>
         <translation>C&amp;onexiones MCP</translation>
     </message>
     <message>
@@ -496,7 +496,7 @@
         <translation>Gestionar las conexiones MCP y el uso compartido de la sesión</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
+        <source>Ex&amp;tensions</source>
         <translation>E&amp;xtensiones</translation>
     </message>
     <message>
@@ -528,7 +528,7 @@
         <translation>Activar o desactivar la pantalla completa</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
+        <source>I&amp;ncrease font size</source>
         <translation>&amp;Aumentar tamaño de fuente</translation>
     </message>
     <message>
@@ -697,7 +697,7 @@
     </message>
     <message>
         <source>S&amp;tring literals...</source>
-        <translation>Literales de &amp;cadena...</translation>
+        <translation>&amp;Literales de cadena...</translation>
     </message>
     <message>
         <source>Choose the encodings and minimum length of the strings the listing shows</source>

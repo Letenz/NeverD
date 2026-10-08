@@ -192,8 +192,8 @@
         <translation>이전 함수의 시작 위치로 이동합니다</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>의사 코드로 이동(&amp;E)</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>의사 코드로 이동(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>바이너리에서 바이트 시퀀스를 검색합니다</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>다음 바이트 시퀀스(&amp;U)</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>다음 바이트 시퀀스(&amp;Q)</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>현재 함수의 LLVM IR을 표시합니다</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>LLVM C 생성(&amp;C)</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>LLVM C 생성(&amp;L)</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>그래프 개요를 표시합니다</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>MCP 연결(&amp;C)</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>MCP 연결(&amp;O)</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>MCP 연결과 세션 공유를 관리합니다</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>확장 기능(&amp;X)</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>확장 기능(&amp;T)</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>전체 화면 모드를 켜거나 끕니다</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>글꼴 크기 늘리기(&amp;I)</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>글꼴 크기 늘리기(&amp;N)</translation>
     </message>
     <message>
         <source>Increase the code font size</source>
