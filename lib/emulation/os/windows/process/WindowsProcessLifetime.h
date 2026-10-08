@@ -16,6 +16,7 @@ public:
     CallKind Kind;
     uint64_t PC, ReturnGate;
     std::vector<uint64_t> Arguments;
+    bool Input = false;
   };
   enum class Mode { Startup, Load, Unload, Rollback, Exit };
   explicit Lifetime(Program &Program);

@@ -482,7 +482,7 @@ CodeView *MainWindow::codeView(const QString &representation) {
     synchronizing_ = false;
   });
   connect(view->text(), &CodeText::nameActivated, this,
-          [this](const QString &name) { navigateExpression(name); });
+          [this, view](const QString &name) { activateCodeName(view, name); });
   connect(view->text(), &CodeText::contextMenuRequested, this,
           &MainWindow::contextMenu);
   if (c)
@@ -702,6 +702,32 @@ void MainWindow::jump(Address address) {
   hex_->setFocus();
 }
 
+void MainWindow::activateCodeName(CodeView *view, const QString &name) {
+  // A function opens in the code view itself, which follows the disassembly,
+  // as a classic decompiler stays in its pseudocode.  Anything else shows in
+  // the disassembly: an import, whose thunk only jumps through its slot, other
+  // data, and every target of a locked view.
+  QPointer<CodeView> origin(view);
+  session_.read(
+      QStringLiteral("resolve"), {{"query", name}}, this,
+      [this, name, origin](const QJsonObject &payload) {
+        const auto address = addressValue(payload.value("address"));
+        if (!address) {
+          navigateExpression(name);
+          return;
+        }
+        if (payload.value("function_address").isNull() ||
+            payload.value("import").toBool() || !origin || origin->locked()) {
+          jump(*address);
+          return;
+        }
+        disassembly_->navigate(*address, true);
+      },
+      [this, name](const QString &, const QString &) {
+        navigateExpression(name);
+      });
+}
+
 void MainWindow::navigateExpression(const QString &text) {
   resolveExpression(
       session_, this, text, currentAddress(),
@@ -796,6 +822,14 @@ void MainWindow::connectActions() {
   on(ActionId::JumpNewWindow, [this] {
     if (const auto target = disassembly_->operandTarget())
       navigate(*target);
+  });
+  on(ActionId::EditCreateFunction, [this] {
+    if (const auto address = currentAddress())
+      session_.createFunction(*address);
+  });
+  on(ActionId::EditDeleteFunction, [this] {
+    if (const auto function = currentFunction())
+      session_.deleteFunction(*function);
   });
   on(ActionId::JumpBack, [this] { disassembly_->goBack(); });
   on(ActionId::JumpForward, [this] { disassembly_->goForward(); });
@@ -1035,6 +1069,15 @@ void MainWindow::updateActions() {
   actions_.action(ActionId::FileSave)->setEnabled(loaded && session_.dirty());
   actions_.action(ActionId::EditRename)
       ->setEnabled(location && !session_.readOnly());
+  // A function starts where none starts yet; the one the cursor is in can
+  // stop being one.
+  const bool functionEdits =
+      location && !session_.readOnly() && session_.keepsFunctionEdits();
+  const auto function = functionEdits ? currentFunction() : std::nullopt;
+  actions_.action(ActionId::EditCreateFunction)
+      ->setEnabled(functionEdits && function != currentAddress());
+  actions_.action(ActionId::EditDeleteFunction)
+      ->setEnabled(functionEdits && function.has_value());
   actions_.action(ActionId::EditComment)
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::EditRepeatableComment)
@@ -1708,6 +1751,10 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   for (const auto id :
        {ActionId::EditRename, ActionId::EditComment, ActionId::EditBookmark})
     menu.addAction(actions_.action(id));
+  for (const auto id :
+       {ActionId::EditCreateFunction, ActionId::EditDeleteFunction})
+    if (auto *action = actions_.action(id); action->isEnabled())
+      menu.addAction(action);
   menu.addSeparator();
   for (const auto id : {ActionId::ViewToggleGraph, ActionId::ViewPseudocode,
                         ActionId::ViewMedIR})

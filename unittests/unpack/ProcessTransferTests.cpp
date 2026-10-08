@@ -26,7 +26,9 @@ public:
   std::map<uint64_t, uint32_t> Sizes;
   uint64_t SP = 0x8000;
   bool MemoryUnchanged = false;
+  bool InputPresent = true, EntryInvocation = true;
   unsigned Reads = 0;
+  std::optional<ProcessCallFrame> Frame;
   GuestArchitecture architecture() const override {
     return GuestArchitecture::X64;
   }
@@ -48,8 +50,14 @@ public:
   std::vector<ProcessModuleView> modules() override {
     return {{"independent.exe", 0, Bytes.size(), 0, true, false}};
   }
+  std::optional<ProcessModuleView> inputModule() override {
+    return InputPresent ? ProcessView::inputModule() : std::nullopt;
+  }
   std::vector<ProcessExportView> exports() override { return {}; }
-  bool programInvocation() const override { return true; }
+  bool programInvocation() const override { return EntryInvocation; }
+  llvm::Expected<std::optional<ProcessCallFrame>> callFrame() override {
+    return Frame;
+  }
   bool watchedMemoryUnchanged() const override { return MemoryUnchanged; }
   llvm::Expected<uint32_t> instructionSize(uint64_t A) override {
     auto I = Sizes.find(A);
@@ -113,6 +121,62 @@ TEST_F(ProcessTransfer, ReusesWholeInstructionsWithUnchangedOpcodeBytes) {
   observe(128);
   ASSERT_EQ(Observer.transfers().size(), 2u);
   EXPECT_EQ(Observer.transfers().back().Generation, 2u);
+}
+
+TEST_F(ProcessTransfer, ADelayedInputUsesItsOwnInvocationStackAndBaseline) {
+  Process.InputPresent = false;
+  Process.EntryInvocation = false;
+  EXPECT_TRUE(llvm::cantFail(Observer.started(Process)).empty());
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  Process.InputPresent = true;
+  auto Initial = llvm::cantFail(Observer.invoking(Process));
+  ASSERT_TRUE(Initial);
+  EXPECT_TRUE(watched(*Initial, 64));
+  Process.SP -= 64;
+  Process.EntryInvocation = true;
+  llvm::cantFail(Observer.invoking(Process));
+  Process.Bytes[65] = 42;
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  EXPECT_EQ(Captured->EntryRVA, 64u);
+  EXPECT_EQ(Captured->Baseline[65], 0);
+  EXPECT_EQ(Captured->Memory[65], 42);
+  ASSERT_EQ(Observer.transfers().size(), 1u);
+  EXPECT_TRUE(Observer.transfers().front().StackBalanced);
+  EXPECT_TRUE(Observer.transfers().front().ProgramInvocation);
+}
+
+TEST_F(ProcessTransfer, GeneratedCallsNeedTheirReturnedStackAtTheContinuation) {
+  for (bool Returns : {false, true}) {
+    SCOPED_TRACE(Returns);
+    TransferProcess P;
+    TransferObserver O{Image, {CPURegister::X64SP, 15}, 0};
+    P.instruction(64, {0xb8, 0, 0, 0, 0});
+    P.instruction(256, {0xb8, 0, 0, 0, 0});
+    llvm::cantFail(O.started(P));
+    P.SP -= 64;
+    P.Frame = ProcessCallFrame{0x20000, 0x8000, {0, 1, 0}};
+    P.Bytes[65] = 1;
+    auto Entry = llvm::cantFail(O.watched(P, 64));
+    ASSERT_TRUE(Entry);
+    EXPECT_TRUE(watched(*Entry, 0x20000));
+    if (Returns)
+      P.SP = 0x8000;
+    auto Returned = llvm::cantFail(O.watched(P, 0x20000));
+    ASSERT_TRUE(Returned);
+    P.SP = 0x8000;
+    P.Frame.reset();
+    P.Bytes[257] = 42;
+    EXPECT_FALSE(llvm::cantFail(O.watched(P, 256)));
+    auto Captured = O.take();
+    ASSERT_TRUE(Captured);
+    EXPECT_EQ(Captured->CompletedCalls.size(), Returns ? 1u : 0u);
+    if (Returns) {
+      EXPECT_EQ(Captured->CompletedCalls.front().Entry, 64u);
+      EXPECT_EQ(Captured->CompletedCalls.front().Arguments[1], 1u);
+    }
+  }
 }
 
 TEST_F(ProcessTransfer, CrossPageOperandWritesRearmAnObservedInstruction) {

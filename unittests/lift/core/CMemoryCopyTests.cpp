@@ -73,7 +73,12 @@ void compileAndRun(const std::string &Source,
   if (CheckUndefinedBehavior) {
     Arguments.push_back("-fsanitize=undefined");
     Arguments.push_back("-fsanitize-trap=all");
+    // Plain pointer casts read scalars at any address, as the targets do.
+    Arguments.push_back("-fno-sanitize=alignment");
   }
+  // Decompiled C reads and writes scalars through plain pointer casts and is
+  // built as it documents: without strict aliasing.
+  Arguments.push_back("-fno-strict-aliasing");
   std::string Error;
   int Result = llvm::sys::ExecuteAndWait(Compiler, Arguments, std::nullopt,
                                          Redirects, 30, 0, &Error);

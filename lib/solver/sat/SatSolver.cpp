@@ -394,6 +394,17 @@ SatValue SatSolver::modelValue(SatLit L) const {
   return L.isNegated() ? negate(V) : V;
 }
 
+SatValue SatSolver::rootValue(SatLit L) const {
+  if (!Engine || !L.isValid() || L.var() >= Engine->Value.size() ||
+      Engine->Falsified)
+    return SatValue::Unknown;
+  const int8_t Value = Engine->Value[L.var()];
+  if (!Value || Engine->Level[L.var()] != 0)
+    return SatValue::Unknown;
+  const SatValue Result = Value > 0 ? SatValue::True : SatValue::False;
+  return L.isNegated() ? negate(Result) : Result;
+}
+
 llvm::ArrayRef<SatLit> SatSolver::failedAssumptions() const {
   return Engine->FailedAssumptions;
 }

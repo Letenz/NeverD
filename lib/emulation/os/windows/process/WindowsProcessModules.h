@@ -58,10 +58,22 @@ struct Program {
   ImageReadBudget Reads{0, 0};
   /// WindowsProcessOptions::DeferUnmodeled for this process.
   bool DeferUnmodeled = false;
-  /// Host path of the main image. ZwOpenFile accepts only this file.
+  /// Host path of the input image. ZwOpenFile accepts only this file.
   std::filesystem::path ImagePath;
+  /// An executable is its own input. A DLL is loaded by the modeled host's
+  /// LoadLibrary call, and becomes observable after its mappings are published.
+  std::optional<size_t> InputModule = 0;
+  std::string InputName;
+  /// Root admission decodes the input once. The first dynamic load consumes
+  /// these bytes under the same preparation budget; later reloads reread it.
+  std::optional<Image> PreparedInput;
   uint64_t OpaqueEntries = 0;
 };
+/// A resident identity for the caller's input, independent of the process EXE.
+std::optional<size_t> inputModule(const Program &P);
+/// A minimal mapped PE host that loads and frees the input through ordinary
+/// guest APIs. It never calls an export with a guessed function signature.
+llvm::Expected<Image> makeLibraryHost(Program &P, const Image &Input);
 inline constexpr uint64_t ModuleCapacity =
     windows_process_limits::Modules + value::SystemModuleCount + 1;
 llvm::Error prepareSystemModules(Program &P, VirtualMemory &Memory,

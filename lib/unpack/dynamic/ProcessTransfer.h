@@ -59,6 +59,7 @@ private:
   const ArchitectureTraits Traits;
   const uint64_t Wanted;
   uint64_t Base = 0, InitialSP = 0;
+  bool Initialized = false;
   bool EnteredProgram = false;
   bool RefreshNeeded = true;
   /// Images[0] is the loaded image; Images[N] is the image at transfer N.
@@ -74,6 +75,12 @@ private:
   // Only an observed start is exempted, never alternative entries inside its
   // bytes. A resume revalidates the complete decoded extent after writes.
   std::map<uint64_t, std::vector<uint8_t>> Instructions;
+  struct PendingCall {
+    uint64_t Entry;
+    emulation::ProcessCallFrame Frame;
+  };
+  std::vector<PendingCall> Calls;
+  std::vector<Capture::CompletedCall> CompletedCalls;
   std::vector<emulation::ExecutionWatch> Watches;
   std::vector<UnpackTransfer> Seen;
   std::optional<Capture> Captured;

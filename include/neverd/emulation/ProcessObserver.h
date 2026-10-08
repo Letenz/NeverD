@@ -18,6 +18,7 @@
 #include "neverd/emulation/ExecutionSession.h"
 #include "neverd/emulation/ProcessSession.h"
 
+#include <array>
 #include <optional>
 #include <string>
 #include <vector>
@@ -47,6 +48,14 @@ struct ProcessStackView {
   uint64_t Base, Size;
 };
 
+/// Integer ABI facts at a stopped entry boundary. They describe the current
+/// return location and first three arguments, not a function signature or
+/// evidence that a call instruction executed.
+struct ProcessCallFrame {
+  uint64_t ReturnAddress, ReturnStackPointer;
+  std::array<uint64_t, 3> Arguments;
+};
+
 /// A stopped process. The view is valid only during the observer callback
 /// that receives it and must not be retained.
 class ProcessView {
@@ -62,13 +71,22 @@ public:
   virtual llvm::Expected<std::vector<AddressMapping>> mappings() = 0;
   /// Resident images in loader registration order; the process image first.
   virtual std::vector<ProcessModuleView> modules() = 0;
+  /// The caller's input image. A library workload has a separate modeled
+  /// process image; its input is absent until the loader maps the library.
+  /// The default selects the main image for ordinary process workloads.
+  virtual std::optional<ProcessModuleView> inputModule();
+  /// Absent when no accessible ABI return frame can be read. Observation
+  /// must separately witness the matching continuation before using it.
+  virtual llvm::Expected<std::optional<ProcessCallFrame>> callFrame() {
+    return std::nullopt;
+  }
   /// Every export identity currently bound to an OS-model entry address.
   virtual std::vector<ProcessExportView> exports() = 0;
-  /// Execution belongs to the main program's entry invocation, including
-  /// calls it makes. False for OS-owned initialization and teardown calls,
-  /// or when the profile supplies no invocation provenance.
+  /// Execution belongs to the input's entry invocation, including calls it
+  /// makes. A library uses its process-attach entry. False for other OS-owned
+  /// initialization and teardown calls, or without invocation provenance.
   virtual bool programInvocation() const { return false; }
-  /// Main-image initializers whose OS-owned startup calls returned normally.
+  /// Input-image initializers whose OS-owned startup calls returned normally.
   /// These addresses are execution evidence, not predicted callback targets.
   virtual std::vector<uint64_t> completedInitializers() const { return {}; }
   /// The current thread's stack allocation, if the profile owns it.
@@ -78,7 +96,7 @@ public:
   virtual std::optional<uint64_t> nativeCallCount() const {
     return std::nullopt;
   }
-  /// Live main-image static TLS bytes of the current thread, excluding
+  /// Live input-image static TLS bytes of the current thread, excluding
   /// allocation padding. An empty vector means no data; std::nullopt means
   /// the profile supplies no TLS snapshot contract.
   virtual llvm::Expected<std::optional<std::vector<uint8_t>>>

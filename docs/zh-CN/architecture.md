@@ -1185,6 +1185,10 @@ Windows 进程时间策略归 `os/windows/process/` 中的 `WindowsProcessTime.c
 
 `lib/unpack` 分四层恢复加壳镜像。`core` 负责编排和格式注册表。`format/pe` 校验容器并重建观察到的内存、导入和元数据；`PETLS.cpp` 依据加载器分配信息和实际观察到的回调校验替换的 TLS 记录。不使用保护器注册表或静态外壳签名选择入口。`dynamic` 通过 `observeProcess` 观察来宾进程：`Observation.def` 把每种容器与指令集映射到一个进程配置，并给出每种指令集的栈指针和指令窗口。新增一个目标只需一行表项和一个模块目录，表中没有对应行的输入会被按名称拒绝。`ExecutionSession` 负责执行监视；`ProcessObserver` 读取已停止的进程并选择下一个停止点，但不能改变来宾状态。模拟层只知道 `defer_unmodeled`，它把未建模的导入绑定到一旦执行就停止的不透明入口。参见[脱壳](unpack.md)。 延迟加载允许可执行回调或入口目标位于零填充内存，由先前的初始化器生成其代码。回调数组和 TLS 分配元数据仍要求经过校验的文件内容；普通严格加载保留文件覆盖检查。操作系统模型提供调用归属，并在准备调用或恢复挂起的调用者时通知观察器。转移监视在这些边界重新布置，覆盖回调与生成入口同处一页的情况。
 
+`WindowsLibraryHost.cpp` 负责 DLL 宿主构造，Windows 加载器负责普通加载与卸载生命周期。`ProcessView::inputModule()` 区分观察输入与宿主 EXE，允许延后建立初始快照。`ProcessView::callFrame()` 通过 `IntegerABI` 读取整数参数和返回事实；`dynamic/ProcessTransfer` 负责匹配返回地址与栈的完成证据。仅 `PETLS.cpp` 决定该证据是否完成进程附加回调。
+
+`ExportObserver` 也观察驻留来宾依赖的可执行导出；建模提供者仍通过服务分派观察。输入镜像自身导出被排除。模块变化会刷新观察点，每次修复仍须由实时导出身份授权。发现记录不超过声明的导入上限。DLL 夹具同时要求修复系统 API 与来宾依赖的跳板，并通过原生加载验证不残留模拟地址。
+
 `MemoryProjection` 负责物理 RAM 写入失效记录，`ExecutionSession` 负责相应的停止和续接。x64 页表构建器为直接执行施加临时写保护，不包含镜像或保护器策略。Windows 进程观察在恢复执行前重新检查服务期间的写入。只有 `dynamic/ProcessTransfer` 依据实际解码的指令字节判定代际，并保持对混合代际页面的观察。
 
 `arch/x86_64/X64Watch.cpp` 负责控制流计划和标志敏感指令的续接；`X64PageTables.cpp` 与 `X64WatchTables.cpp` 负责投影构建和监视权限更新。传输层只安装执行停止点并保存实际 CPU 状态。 传输观察器只在已观察到的指令起点复用代际证据，并要求完整解码字节保持一致。操作数和跨页写入会重新布防；返回旧代码时会撤销上一代的执行证据。

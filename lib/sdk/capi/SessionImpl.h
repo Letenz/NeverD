@@ -264,6 +264,7 @@ struct Session {
     Opts.SBFProfile = SBFProfile;
     Opts.SBFIdl = SBFIdl ? &*SBFIdl : nullptr;
     Opts.OnlyFunctionEntries = OnlyFunctionEntries;
+    Opts.FunctionEdits = FunctionEdits;
   }
 
   /// Snapshot the enabled cosmetic transforms without touching observable
@@ -307,6 +308,15 @@ struct Session {
     LastBitMaskCount = Counts.BitMask;
   }
 
+  /// The user's function edits (neverd_func_create, neverd_func_delete): an
+  /// address made the entry of a function (true) or no longer one (false).
+  std::map<va_t, bool> FunctionEdits;
+
+  bool isDeletedFunction(va_t Entry) const {
+    const auto Edit = FunctionEdits.find(Entry);
+    return Edit != FunctionEdits.end() && !Edit->second;
+  }
+
   void resetFunctionsFromImage() {
     Functions.clear();
     OriginalNames.clear();
@@ -321,11 +331,39 @@ struct Session {
         Name = Rename->second;
       const NameOrigin Origin =
           Renames.contains(Symbol->Addr) ? NameOrigin::User : Symbol->Origin;
-      Functions.push_back({Symbol->Addr, Symbol->Size, std::move(Name), Origin,
-                           Symbol->Name, Symbol->Origin});
+      if (!isDeletedFunction(Symbol->Addr))
+        Functions.push_back({Symbol->Addr, Symbol->Size, std::move(Name),
+                             Origin, Symbol->Name, Symbol->Origin});
     }
     appendDiscoveredFunctions();
+    appendCreatedFunctions();
     refreshFunctionNames();
+  }
+
+  /// Add the functions the user made that the list does not hold yet.
+  void appendCreatedFunctions() {
+    std::unordered_set<va_t> Known;
+    Known.reserve(Functions.size());
+    for (const FuncInfo &F : Functions)
+      Known.insert(F.Entry);
+    bool Added = false;
+    for (const auto &[Entry, Created] : FunctionEdits) {
+      if (!Created || !Known.insert(Entry).second)
+        continue;
+      const std::string Name = (kAutoFuncPrefix + llvm::utohexstr(Entry)).str();
+      OriginalNames.try_emplace(Entry, Name);
+      const auto Rename = Renames.find(Entry);
+      const bool Renamed = Rename != Renames.end();
+      Functions.push_back({Entry, 0, Renamed ? Rename->second : Name,
+                           Renamed ? NameOrigin::User : NameOrigin::Analysis,
+                           Name, NameOrigin::Analysis});
+      Added = true;
+    }
+    if (Added)
+      std::stable_sort(Functions.begin(), Functions.end(),
+                       [](const FuncInfo &Left, const FuncInfo &Right) {
+                         return Left.Entry < Right.Entry;
+                       });
   }
 
   /// Add the detector's entries the list does not hold yet, keeping it in
@@ -339,7 +377,7 @@ struct Session {
       Known.insert(F.Entry);
     bool Added = false;
     for (const auto &[Entry, Name] : *DiscoveredFunctions) {
-      if (!Known.insert(Entry).second)
+      if (isDeletedFunction(Entry) || !Known.insert(Entry).second)
         continue;
       OriginalNames.try_emplace(Entry, Name);
       const auto Rename = Renames.find(Entry);

@@ -115,6 +115,12 @@ void ListingView::jumpTo(Address address) {
   request(Fetch::Jump, address, 0, JumpContextBefore, PageLines);
 }
 
+std::optional<Address> ListingView::topItem() const {
+  if (lines_.empty())
+    return std::nullopt;
+  return lines_[std::clamp<std::size_t>(top_, 0, lines_.size() - 1)].item;
+}
+
 void ListingView::refresh() {
   if (!session_.loaded())
     return;
@@ -126,19 +132,23 @@ void ListingView::refresh() {
   if (lines_.empty())
     return;
   const auto &top = lines_[std::clamp<std::size_t>(top_, 0, lines_.size() - 1)];
-  std::optional<Address> cursorItem;
-  int cursorSub = 0;
+  std::optional<CursorPlace> cursor;
   if (const auto *line = cursorLine()) {
-    cursorItem = line->item;
-    cursorSub = line->sub;
+    cursor = CursorPlace{line->item, line->sub};
+    cursor->visible =
+        cursorLine_ >= top_ && cursorLine_ < top_ + visibleLines();
+    if (contentKind(line->kind)) {
+      cursor->content = 0;
+      for (int i = cursorLine_ - 1; i >= 0 && lines_[i].item == line->item; --i)
+        cursor->content += contentKind(lines_[i].kind);
+    }
   }
   request(Fetch::Refresh, top.item, top.sub, JumpContextBefore, PageLines,
-          cursorItem, cursorSub);
+          cursor);
 }
 
 void ListingView::request(Fetch kind, Address address, int sub, int before,
-                          int after, std::optional<Address> cursorItem,
-                          int cursorSub) {
+                          int after, std::optional<CursorPlace> cursor) {
   if (!session_.loaded())
     return;
   if (kind == Fetch::Jump || kind == Fetch::Refresh) {
@@ -158,9 +168,8 @@ void ListingView::request(Fetch kind, Address address, int sub, int before,
     payload["opcode_bytes"] = opcodeBytes_;
   session_.read(
       QStringLiteral("listing"), payload, this,
-      [this, kind, serial, cursorItem, cursorSub,
-       address](const QJsonObject &result) {
-        accept(kind, result, serial, cursorItem, cursorSub, address);
+      [this, kind, serial, cursor, address](const QJsonObject &result) {
+        accept(kind, result, serial, cursor, address);
       },
       [this, kind, serial](const QString &, const QString &message) {
         if (serial != serial_)
@@ -178,7 +187,7 @@ void ListingView::request(Fetch kind, Address address, int sub, int before,
 }
 
 void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
-                         std::optional<Address> cursorItem, int cursorSub,
+                         std::optional<CursorPlace> cursor,
                          Address jumpAddress) {
   if (serial != serial_)
     return;
@@ -242,12 +251,24 @@ void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
     } else {
       top_ = std::min(anchor, int(lines_.size()) - 1);
       cursorLine_ = top_;
-      if (cursorItem)
-        for (int i = 0; i < int(lines_.size()); ++i)
-          if (lines_[i].item == *cursorItem && lines_[i].sub == cursorSub) {
-            cursorLine_ = i;
-            break;
-          }
+      if (cursor) {
+        std::optional<int> bySub, byContent;
+        for (int i = 0, content = 0; i < int(lines_.size()); ++i) {
+          if (lines_[i].item != cursor->item)
+            continue;
+          if (lines_[i].sub == cursor->sub && !bySub)
+            bySub = i;
+          if (contentKind(lines_[i].kind) && content++ == cursor->content)
+            byContent = i;
+        }
+        if (const auto line = byContent ? byContent : bySub) {
+          cursorLine_ = *line;
+          if (cursor->visible && cursorLine_ < top_)
+            top_ = cursorLine_;
+          else if (cursor->visible && cursorLine_ >= top_ + visibleLines())
+            top_ = cursorLine_ - visibleLines() + 1;
+        }
+      }
     }
     break;
   }
@@ -522,9 +543,11 @@ void ListingView::ensureCursorVisible() {
 
 void ListingView::emitLocation() {
   const auto address = currentAddress();
-  if (!address || address == lastEmitted_)
+  const auto function = currentFunction();
+  if (!address || (address == lastEmitted_ && function == lastFunction_))
     return;
   lastEmitted_ = address;
+  lastFunction_ = function;
   emit locationChanged(*address);
 }
 

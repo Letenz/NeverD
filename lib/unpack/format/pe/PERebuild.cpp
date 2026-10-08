@@ -59,6 +59,11 @@ llvm::Expected<std::vector<Slot>> findSlots(const Image &In, const Capture &C,
     // requires it. A cell is consumed whole, so matches cannot overlap.
     for (uint64_t RVA = R.RVA; RVA + value::PointerSize <= End; ++RVA) {
       const uint64_t Pointer = endian::read64le(Memory.data() + RVA);
+      // An address inside the image remains an internal pointer even when
+      // that function or datum is exported. Binding it as an import would
+      // create a new self-dependency and change the loader's initialization.
+      if (Pointer >= C.Base && Pointer - C.Base < In.extent())
+        continue;
       auto Export = C.Exports.find(Pointer);
       if (Export == C.Exports.end())
         continue;

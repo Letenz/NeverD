@@ -3,6 +3,7 @@
 # that the native CPU inventory can require them.
 add_neverd_unittest(NeverDUnpackTests
   PERebuildTests.cpp
+  ProcessImportsTests.cpp
   ProcessTransferTests.cpp
   UnpackIdentifyTests.cpp
   LINK_COMPONENTS Unpack)

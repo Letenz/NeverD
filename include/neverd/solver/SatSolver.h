@@ -218,6 +218,9 @@ public:
   SatValue modelValue(SatVar V) const;
   SatValue modelValue(SatLit L) const;
 
+  /// Value fixed at level zero by permanent clauses; not a saved model.
+  SatValue rootValue(SatLit L) const;
+
   /// The subset of the last call's assumptions that were enough to make it
   /// unsatisfiable.  Empty unless the last \c solve returned
   /// \c SatResult::Unsat with a nonempty assumption list.

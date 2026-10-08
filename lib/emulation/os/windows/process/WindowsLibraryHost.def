@@ -1,0 +1,51 @@
+//===- WindowsLibraryHost.def - DLL workload host layout -----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WINDOWS_PROCESS_VALUE
+NEVERD_WINDOWS_PROCESS_VALUE(LibraryHostBase, 0x400000)
+NEVERD_WINDOWS_PROCESS_VALUE(LibraryHostSize, 0x3000)
+NEVERD_WINDOWS_PROCESS_VALUE(LibraryHostCode, 0x1000)
+NEVERD_WINDOWS_PROCESS_VALUE(LibraryHostData, 0x2000)
+NEVERD_WINDOWS_PROCESS_VALUE(LibraryHostIAT, 0x2100)
+NEVERD_WINDOWS_PROCESS_VALUE(LibraryHostLookup, 0x2140)
+NEVERD_WINDOWS_PROCESS_VALUE(LibraryHostImports, 0x2180)
+NEVERD_WINDOWS_PROCESS_VALUE(LibraryHostHints, 0x2200)
+NEVERD_WINDOWS_PROCESS_VALUE(LibraryHostProvider, 0x2300)
+#endif
+#ifdef NEVERD_WINDOWS_PROCESS_TEXT
+NEVERD_WINDOWS_PROCESS_TEXT(LibraryHostName, "neverd-dll-host.exe")
+NEVERD_WINDOWS_PROCESS_TEXT(LibraryHostCodeSection, ".text")
+NEVERD_WINDOWS_PROCESS_TEXT(LibraryHostDataSection, ".data")
+#endif
+#ifdef NEVERD_WINDOWS_LIBRARY_HOST_API
+NEVERD_WINDOWS_LIBRARY_HOST_API(LoadLibraryA)
+NEVERD_WINDOWS_LIBRARY_HOST_API(FreeLibrary)
+NEVERD_WINDOWS_LIBRARY_HOST_API(GetLastError)
+NEVERD_WINDOWS_LIBRARY_HOST_API(ExitProcess)
+#endif
+#ifdef NEVERD_WINDOWS_PROCESS_BYTES
+// sub rsp, 40; LoadLibraryA(name); on success FreeLibrary(handle).
+// ExitProcess(0), or ExitProcess(GetLastError()) after either failure.
+// All addresses are relative to the fixed RVAs above; UD2 guards API return.
+NEVERD_WINDOWS_PROCESS_BYTES(LibraryHostX64, 0x48, 0x83, 0xec, 0x28, 0x48, 0x8d,
+                             0x0d, 0xf5, 0x0f, 0x00, 0x00, 0xff, 0x15, 0xef,
+                             0x10, 0x00, 0x00, 0x48, 0x85, 0xc0, 0x74, 0x11,
+                             0x48, 0x89, 0xc1, 0xff, 0x15, 0xe9, 0x10, 0x00,
+                             0x00, 0x85, 0xc0, 0x74, 0x04, 0x31, 0xc9, 0xeb,
+                             0x08, 0xff, 0x15, 0xe3, 0x10, 0x00, 0x00, 0x89,
+                             0xc1, 0xff, 0x15, 0xe3, 0x10, 0x00, 0x00, 0x0f,
+                             0x0b)
+// stp x29, x30, [sp, -16]!; mov x29, sp; adr x0, name.
+// The same four calls and failure branches, with literal IAT loads.
+NEVERD_WINDOWS_PROCESS_BYTES(LibraryHostAArch64, 0xfd, 0x7b, 0xbf, 0xa9, 0xfd,
+                             0x03, 0x00, 0x91, 0xc0, 0x7f, 0x00, 0x10, 0xa8,
+                             0x87, 0x00, 0x58, 0x00, 0x01, 0x3f, 0xd6, 0xc0,
+                             0x00, 0x00, 0xb4, 0x88, 0x87, 0x00, 0x58, 0x00,
+                             0x01, 0x3f, 0xd6, 0x60, 0x00, 0x00, 0x34, 0x00,
+                             0x00, 0x80, 0x52, 0x03, 0x00, 0x00, 0x14, 0x28,
+                             0x87, 0x00, 0x58, 0x00, 0x01, 0x3f, 0xd6, 0x28,
+                             0x87, 0x00, 0x58, 0x00, 0x01, 0x3f, 0xd6, 0x00,
+                             0x00, 0x20, 0xd4)
+#endif

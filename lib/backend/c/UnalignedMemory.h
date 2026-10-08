@@ -7,6 +7,8 @@
 #ifndef NEVERD_BACKEND_C_UNALIGNEDMEMORY_H
 #define NEVERD_BACKEND_C_UNALIGNEDMEMORY_H
 
+#include "neverd/backend/c/CEmitterOptions.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -16,9 +18,12 @@
 
 namespace neverd::c_memory {
 
-/// A scalar type and the alias that reads or writes it at any address: one
-/// byte aligned and allowed to alias every object.  The names follow the
-/// sizes a classic decompiler prints (`*(_QWORD *)p`); signed integers add
+using ScalarPointerSpelling = CEmitterOptions::ScalarPointerSpelling;
+
+/// A scalar type an access can name directly (`*(uint64_t *)p`), and the
+/// alias that reads or writes it at any address under any GCC/Clang build:
+/// one byte aligned and allowed to alias every object.  The alias names follow
+/// the sizes a classic decompiler prints (`*(_QWORD *)p`); signed integers add
 /// `S`.  They are not the identically named types of such a decompiler's
 /// headers, which carry neither attribute.
 struct Scalar {
@@ -45,10 +50,17 @@ inline constexpr Scalar Scalars[] = {
     {"double", "_DOUBLE", "f64", 8, false},
 };
 
-inline std::string alias(llvm::StringRef Type) {
-  for (const auto &S : Scalars)
-    if (Type == S.Type)
+/// The type an access to \p Type names in \p Spelling, or empty if such an
+/// access is a byte copy instead.
+inline std::string alias(llvm::StringRef Type, ScalarPointerSpelling Spelling) {
+  for (const auto &S : Scalars) {
+    if (Type != S.Type)
+      continue;
+    if (Spelling == ScalarPointerSpelling::AliasTypes)
       return S.Alias;
+    // Compilers move a 16-byte scalar with aligned vector instructions.
+    return S.Bytes < 16 ? S.Type : std::string();
+  }
   return {};
 }
 
@@ -60,18 +72,30 @@ inline std::string suffix(llvm::StringRef Type) {
   return {};
 }
 
-/// Whether \p Text is an access through an integer alias, parenthesized or
-/// not: `*(_QWORD *)p`.
+/// Whether \p Text is an integer access in either spelling, parenthesized or
+/// not: `*(uint64_t *)p`, `*(_QWORD *)p`.
 inline bool integerAccess(llvm::StringRef Text) {
   if (!Text.consume_front("(*("))
     Text.consume_front("*(");
+  const auto Names = [&](llvm::StringRef Name) {
+    return Text.starts_with(Name) &&
+           Text.drop_front(Name.size()).starts_with(" *)");
+  };
   return llvm::any_of(Scalars, [&](const Scalar &S) {
-    return S.Integer && Text.starts_with(S.Alias) &&
-           Text.drop_front(llvm::StringRef(S.Alias).size()).starts_with(" *)");
+    return S.Integer && (Names(S.Alias) || Names(S.Type));
   });
 }
 
-template <typename Stream> inline void writeTypes(Stream &OS) {
+/// What accesses in \p Spelling need before the code that uses them: the
+/// alias types, or a note of what the standard types assume.
+template <typename Stream>
+inline void writeTypes(Stream &OS, ScalarPointerSpelling Spelling) {
+  if (Spelling == ScalarPointerSpelling::StandardTypes) {
+    OS << "/* Scalars are read and written through plain pointer casts at any "
+          "address:\n   build for a target with unaligned access, with "
+          "-fno-strict-aliasing. */\n\n";
+    return;
+  }
   OS << "#ifndef NEVERD_UNALIGNED_SCALARS\n"
         "#define NEVERD_UNALIGNED_SCALARS\n"
         "#if !defined(__clang__) && !defined(__GNUC__)\n"

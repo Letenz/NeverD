@@ -8,6 +8,7 @@
 
 #include "UnpackInternal.h"
 
+#include <array>
 #include <map>
 #include <tuple>
 
@@ -52,6 +53,14 @@ struct Capture {
   /// Main-image OS initializers that returned before the program invocation.
   /// Their memory effects are already present in this entry snapshot.
   std::vector<uint64_t> Initializers;
+  struct CompletedCall {
+    uint64_t Entry;
+    std::array<uint64_t, 3> Arguments;
+  };
+  /// Entries into generated code whose ABI return PC and returned stack were
+  /// subsequently observed. Container metadata decides whether they are TLS
+  /// callbacks; an entry address alone cannot establish completed execution.
+  std::vector<CompletedCall> CompletedCalls;
   /// Live main-thread TLS outside the image, when the profile can capture it.
   std::optional<std::vector<uint8_t>> ThreadLocal;
   /// Entry addresses of every export the guest loader can bind.

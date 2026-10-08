@@ -17,13 +17,13 @@
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/pipeline/Pipeline.h"
 
-#include <algorithm>
-#include <set>
-
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <algorithm>
+#include <set>
 
 #define DEBUG_TYPE "neverd-pipeline"
 
@@ -118,9 +118,8 @@ void Pipeline::detectThunkStubs(const std::vector<LowFunc> &LowFuncs,
       }
       if (Ops[I].Opcode == NdOp::LOAD &&
           Ops[I].MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-          I + 1 < Ops.size() &&
-          Ops[I + 1].Opcode == NdOp::INDIR_BR && Ops[I].NumInputs >= 1 &&
-          Ops[I].Inputs[0].isConst()) {
+          I + 1 < Ops.size() && Ops[I + 1].Opcode == NdOp::INDIR_BR &&
+          Ops[I].NumInputs >= 1 && Ops[I].Inputs[0].isConst()) {
         auto It = AllFuncNames.find(Ops[I].Inputs[0].Offset);
         if (It != AllFuncNames.end())
           AllFuncNames[LF.Entry] = It->second;
@@ -164,8 +163,7 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
                           Opts.OnlyFunctionEntries.end());
     std::vector<va_t> Work(Wanted.begin(), Wanted.end());
     for (size_t I = 0; I < Work.size(); ++I) {
-      const ExceptionFunction *EH =
-          Img.ExceptionMetadata.findFunction(Work[I]);
+      const ExceptionFunction *EH = Img.ExceptionMetadata.findFunction(Work[I]);
       if (!EH)
         continue;
       // Interior VAs inherit a containing pdata.  A huge or merged owner
@@ -184,8 +182,7 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
             Img.ExceptionMetadata.findFunction(Addr);
         if (Owner && Owner->CodeRange.Begin != Addr)
           return;
-        const uint64_t Dist =
-            Addr >= Work[I] ? Addr - Work[I] : Work[I] - Addr;
+        const uint64_t Dist = Addr >= Work[I] ? Addr - Work[I] : Work[I] - Addr;
         if (HugeOwner && Dist > limits::kMaxOverlapDistance)
           return;
         if (Owner &&
@@ -251,18 +248,39 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
     }
     if (!DebugRanges.empty()) {
       FuncEntries.erase(
-          std::remove_if(
-              FuncEntries.begin(), FuncEntries.end(),
-              [&](const std::pair<va_t, std::string> &Entry) {
-                if (DebugStarts.count(Entry.first))
-                  return false;
-                for (const auto &[Start, End] : DebugRanges)
-                  if (Entry.first > Start && Entry.first < End)
-                    return true;
-                return false;
-              }),
+          std::remove_if(FuncEntries.begin(), FuncEntries.end(),
+                         [&](const std::pair<va_t, std::string> &Entry) {
+                           if (DebugStarts.count(Entry.first))
+                             return false;
+                           for (const auto &[Start, End] : DebugRanges)
+                             if (Entry.first > Start && Entry.first < End)
+                               return true;
+                           return false;
+                         }),
           FuncEntries.end());
     }
+  }
+
+  // The user's function edits decide over detection and debug information.
+  if (Opts.OnlyFunctionEntries.empty() && !Opts.FunctionEdits.empty()) {
+    llvm::erase_if(FuncEntries, [&](const std::pair<va_t, std::string> &Entry) {
+      const auto Edit = Opts.FunctionEdits.find(Entry.first);
+      return Edit != Opts.FunctionEdits.end() && !Edit->second;
+    });
+    for (const auto &[Entry, Created] : Opts.FunctionEdits) {
+      const Segment *Code = Img.getSegmentFor(Entry);
+      if (!Created || !Code || !Code->isExecutable() ||
+          llvm::any_of(FuncEntries,
+                       [&](const std::pair<va_t, std::string> &Known) {
+                         return Known.first == Entry;
+                       }))
+        continue;
+      FuncEntries.emplace_back(
+          Entry, (kAutoFuncPrefix + llvm::utohexstr(Entry)).str());
+    }
+    llvm::stable_sort(FuncEntries, [](const auto &Left, const auto &Right) {
+      return Left.first < Right.first;
+    });
   }
 
   // The loader tags ELF e_entry as a runtime function so normal CRT startup

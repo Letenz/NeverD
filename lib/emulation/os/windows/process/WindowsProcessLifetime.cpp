@@ -109,7 +109,11 @@ Lifetime::next(ExecutionBackend &CPU) {
     }
     Running = true;
     if (N.Kind == CallKind::Entry)
-      return std::optional<Call>({N.Kind, M.Entry, ReturnGate, {PEB}});
+      return std::optional<Call>({N.Kind,
+                                  M.Entry,
+                                  ReturnGate,
+                                  {PEB},
+                                  Program.InputModule == N.Module.Index});
     if (N.Kind == CallKind::DLL && !detaching())
       Module.State = ModuleState::Initializing;
     return std::optional<Call>(
@@ -120,7 +124,9 @@ Lifetime::next(ExecutionBackend &CPU) {
           N.Kind == CallKind::TLS ||
                   (Kind != Mode::Startup && Kind != Mode::Exit)
               ? 0
-              : StartupReserved}});
+              : StartupReserved},
+         N.Kind == CallKind::DLL && N.Reason == DLLProcessAttach &&
+             Program.InputModule == N.Module.Index});
   }
   return std::optional<Call>();
 }

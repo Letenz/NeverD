@@ -5,6 +5,7 @@ add_neverd_component_library(NeverDEmulationWindowsProcess
   WindowsProcessExceptions.cpp
   WindowsProcessSEH.cpp
   WindowsProcessImage.cpp
+  WindowsLibraryHost.cpp
   WindowsProcessModules.cpp
   WindowsSystemModules.cpp
   WindowsProcessExports.cpp

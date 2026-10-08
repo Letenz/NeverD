@@ -339,8 +339,7 @@ private slots:
     QApplication::clipboard()->clear();
     QTest::keyClick(code, Qt::Key_C, Qt::ControlModifier);
     const QString declaration =
-        QStringLiteral("typedef uint64_t _QWORD "
-                       "__attribute__((aligned(1), may_alias));");
+        QStringLiteral("typedef struct QDomNode QDomNode;");
     const QString linked = QStringLiteral(
         "extern int Bar_ctor() __asm__(\"_ZN3BarC1Ev\"); /* Bar::Bar() */");
     QCOMPARE(QApplication::clipboard()->text(),
@@ -354,18 +353,18 @@ private slots:
 
     // A type the prelude declares opens at its declaration, expanding the
     // prelude; C's own types are not declarations.
-    QCOMPARE(code->declarationLine(QStringLiteral("_QWORD")),
+    QCOMPARE(code->declarationLine(QStringLiteral("QDomNode")),
              std::optional<int>(1));
     QVERIFY(!code->declarationLine(QStringLiteral("uint64_t")));
-    QVERIFY(code->goToDeclaration(QStringLiteral("_QWORD")));
+    QVERIFY(code->goToDeclaration(QStringLiteral("QDomNode")));
     QVERIFY(!code->preludeFolded());
     QCOMPARE(code->lineCount(), 705);
     // A C++ function links by the mangled symbol its label names, which is
     // what navigation looks up.
     QCOMPARE(code->linkedSymbol(QStringLiteral("Bar_ctor")),
              std::optional<QString>(QStringLiteral("_ZN3BarC1Ev")));
-    QVERIFY(!code->linkedSymbol(QStringLiteral("_QWORD")));
-    QCOMPARE(code->currentToken(), QStringLiteral("_QWORD"));
+    QVERIFY(!code->linkedSymbol(QStringLiteral("QDomNode")));
+    QCOMPARE(code->currentToken(), QStringLiteral("QDomNode"));
     code->setPreludeFolded(true);
     QCOMPARE(code->lineCount(), 702);
 
@@ -418,6 +417,38 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(
         functions->model().rowObject(20).value("name").toString(),
         QStringLiteral("function_20"), OpenTimeoutMs);
+
+    // P starts a function inside another; the cursor stays on its
+    // instruction under the new function's header.
+    const Address loose = Base + 0x148;
+    disassembly->navigate(loose);
+    QTRY_COMPARE(disassembly->currentItem(), std::optional<Address>(loose));
+    QTRY_VERIFY(bench.action(ActionId::EditCreateFunction)->isEnabled());
+    bench.action(ActionId::EditCreateFunction)->trigger();
+    const QString looseName = QStringLiteral("sub_FFFF800012340148");
+    QTRY_COMPARE_WITH_TIMEOUT(
+        functions->model().rowObject(21).value("name").toString(), looseName,
+        OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentFunction(),
+                              std::optional<Address>(loose), OpenTimeoutMs);
+    QCOMPARE(disassembly->currentItem(), std::optional<Address>(loose));
+    QTRY_VERIFY(bench.action(ActionId::EditDeleteFunction)->isEnabled());
+    QVERIFY(!bench.action(ActionId::EditCreateFunction)->isEnabled());
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(path + ".neverd-functions.json"),
+                             OpenTimeoutMs);
+    // Deleting it gives the instruction back to the function around it, and
+    // undo brings the new function back.
+    bench.action(ActionId::EditDeleteFunction)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        functions->model().rowObject(21).value("name").toString(),
+        QStringLiteral("function_21"), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentFunction(),
+                              std::optional<Address>(Base + 0x140),
+                              OpenTimeoutMs);
+    bench.session.undo();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        functions->model().rowObject(21).value("name").toString(), looseName,
+        OpenTimeoutMs);
 
     // A restarted worker reopens the file where its database left it.
     bench.session.restart();

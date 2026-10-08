@@ -51,17 +51,16 @@ readInput(const std::filesystem::path &Path) {
 #ifdef NEVERD_UNPACK_EXECUTION
 /// Run the recovered image and collect witnessed export calls and address
 /// loads. Failure leaves the image as the entry snapshot already rebuilt it.
-llvm::Expected<std::vector<TailImport>>
-observeTailImports(llvm::ArrayRef<uint8_t> Image,
-                   emulation::ProcessProfile Profile,
-                   const emulation::ProcessOptions &Options,
-                   UnpackResult::ImportRepairReport &Report) {
+llvm::Expected<std::vector<TailImport>> observeTailImports(
+    llvm::ArrayRef<uint8_t> Image, const std::filesystem::path &Input,
+    emulation::ProcessProfile Profile, const emulation::ProcessOptions &Options,
+    UnpackResult::ImportRepairReport &Report) {
   llvm::SmallString<128> Directory;
   if (std::error_code Error =
           llvm::sys::fs::createUniqueDirectory("neverd-unpack", Directory))
     return failure(text::ReadFailed + Error.message());
   const auto Path =
-      std::filesystem::path(Directory.str().str()) / "unpacked.exe";
+      std::filesystem::path(Directory.str().str()) / Input.filename();
   auto Finish = [&](llvm::Expected<std::vector<TailImport>> Result) {
     llvm::sys::fs::remove_directories(Directory);
     return Result;
@@ -159,8 +158,8 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
   // The entry snapshot still has protector import calls. Running it shows
   // which export each one reaches, and a second rebuild turns those sites
   // into ordinary import calls when the container recognizes them.
-  auto Tails = observeTailImports(Rebuilt->File, *Profile, Options.Process,
-                                  Result.ImportRepair);
+  auto Tails = observeTailImports(Rebuilt->File, Input, *Profile,
+                                  Options.Process, Result.ImportRepair);
   if (Tails && !Tails->empty()) {
     Plan.TailImports = std::move(*Tails);
     auto Repaired = Container->rebuild(Image, *Observed, Plan);

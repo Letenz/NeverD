@@ -40,13 +40,16 @@ extern "C" {
 /// Imports as [{"module","name","ordinal","iat_addr","stubs"}].  "iat_addr"
 /// is the format-native data slot; "stubs" lists the executable veneers (ELF
 /// PLT entries, Mach-O stubs, import thunks) known to forward to the import,
-/// in ascending address order.
+/// in ascending address order.  "c_name", present when it differs from
+/// "name", is what C code calls the import: the symbol without the underscore
+/// its format adds (Mach-O, i386 COFF).
 NEVERD_API const char *neverd_imports_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_exports_json(neverd_session_t Sess);
 /// Exact pointer slots that hold an imported symbol's address, from every
 /// format's binding metadata (ELF GLOB_DAT and JUMP_SLOT GOT entries, PE IAT
-/// entries, Mach-O bindings): [{"addr","name","addend"}] in address order.
-/// Slots whose metadata names conflicting symbols are omitted.
+/// entries, Mach-O bindings): [{"addr","name","addend"}] in address order,
+/// with "c_name" as for neverd_imports_json.  Slots whose metadata names
+/// conflicting symbols are omitted.
 NEVERD_API const char *neverd_import_slots_json(neverd_session_t Sess);
 /// The unwind record whose code range contains \p Address, as
 /// {"begin","end","encoding","personality"?,"language_data"}, or null.

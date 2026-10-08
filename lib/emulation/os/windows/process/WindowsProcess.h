@@ -26,6 +26,7 @@ namespace value {
 #define NEVERD_WINDOWS_PROCESS_BYTES(Name, ...)                                \
   inline constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "WindowsContextCapture.def"
+#include "WindowsLibraryHost.def"
 #include "WindowsProcess.def"
 #include "WindowsProcessExceptions.def"
 #include "WindowsProcessModules.def"
@@ -37,6 +38,7 @@ namespace text {
 #define NEVERD_WINDOWS_PROCESS_TEXT(Name, Text)                                \
   inline constexpr char Name[] = Text;
 #include "WindowsContextCapture.def"
+#include "WindowsLibraryHost.def"
 #include "WindowsProcess.def"
 #include "WindowsProcessExceptions.def"
 #include "WindowsProcessModules.def"
@@ -100,6 +102,7 @@ struct Image {
   std::vector<uint64_t> Relocations;
   PEProgramExports Exports;
   bool Relocatable = false;
+  bool DLL = false;
   uint64_t PreferredBase = 0;
   std::shared_ptr<const ExceptionInfo> Exceptions;
   std::vector<PEMetadataRange> ExceptionMetadata;
@@ -131,7 +134,8 @@ struct Environment {
 llvm::Expected<Image> loadImage(const std::filesystem::path &Path,
                                 uint64_t MemoryLimit);
 llvm::Expected<Image> loadProgramImage(const std::filesystem::path &Path,
-                                       ImageReadBudget &Budget, bool DLL,
+                                       ImageReadBudget &Budget,
+                                       std::optional<bool> DLL,
                                        bool DeferUnmodeled = false);
 llvm::Error relocateImage(Image &Image, uint64_t Base, ImageReadBudget &Budget);
 /// A null observer runs unobserved, without execution watches.

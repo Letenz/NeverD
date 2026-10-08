@@ -679,6 +679,10 @@ static const char *devirtualizeSource(
     CEmitterOptions EmitOptions;
     EmitOptions.TheArch = S->Img.Arch;
     EmitOptions.Format = S->Img.Format;
+    // Devirtualized source is compiled to run: its accesses must keep byte
+    // semantics under any GCC/Clang build.
+    EmitOptions.ScalarPointers =
+        CEmitterOptions::ScalarPointerSpelling::AliasTypes;
     // The machine-state ABI preserves guest virtual addresses and accesses
     // their original mappings. Image-backed source objects would silently
     // change both observable register values and guest memory identity.
