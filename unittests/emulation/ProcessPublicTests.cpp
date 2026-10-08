@@ -420,6 +420,7 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"vectored-io", "7621"},
           std::pair{"file-access", "61"},
           std::pair{"symbolic-links", "79"},
+          std::pair{"symbolic-link-mutations", "7a"},
           std::pair{"directory-mutations", "6d"},
           std::pair{"deleted-directories", "68"},
           std::pair{"initial-directory-removal", "6a"},
@@ -649,6 +650,50 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     (*Files)[field::WorkingDirectory] = "/";
     for (auto &D : *Files->getArray(field::Directories))
       D.getAsObject()->erase(field::DirectoryContents);
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName == "symbolic-link-mutations") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    auto M =
+        llvm::cantFail(llvm::json::parse(emulation::darwin_test::MetadataJSON));
+    (*M.getAsObject())[field::FileFlags] = 0;
+    (*M.getAsObject())[field::FileLinkCount] = 1;
+    auto Parent = M;
+    (*Parent.getAsObject())[field::FileMode] = 0040755;
+    (*Parent.getAsObject())[field::FileInode] = 41;
+    (*Parent.getAsObject())[field::Size] = 0;
+    (*Parent.getAsObject())[field::FileBlocks] = 0;
+    auto Link = M;
+    (*Link.getAsObject())[field::FileMode] = 0120777;
+    (*Link.getAsObject())[field::FileInode] = 123;
+    (*Link.getAsObject())[field::Size] = 12;
+    auto Links = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::MixedSymbolicLinksJSON));
+    (*(*Links.getAsArray())[1].getAsObject())[field::FileMetadata] =
+        std::move(Link);
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::json::Object{
+        {field::Files,
+         llvm::json::Array{llvm::json::Object{
+             {field::Path, "/work/data"},
+             {field::Bytes, "30313233343536373839"},
+             {field::FileMetadata, std::move(M)},
+             {field::FileWritable, true},
+             {field::FileMutationPolicy,
+              llvm::cantFail(llvm::json::parse(
+                  emulation::darwin_test::MutationPolicyJSON))}}}},
+        {field::Directories,
+         llvm::json::Array{
+             llvm::json::Object{{field::Path, "/static"}},
+             llvm::json::Object{{field::Path, "/work"},
+                                {field::DirectoryMutable, true},
+                                {field::FileMetadata, std::move(Parent)}}}},
+        {field::SymbolicLinks, std::move(Links)},
+        {field::WorkingDirectory, "/"},
+        {field::FileUmask, 0027},
+        {field::FileCreationPolicy,
+         llvm::cantFail(
+             llvm::json::parse(emulation::darwin_test::CreationPolicyJSON))}};
+    (*Input.getAsObject()->getArray(field::Arguments))[2] = "/work/data";
     Options = llvm::formatv("{0}", Input).str();
   }
   auto Text = takeString(neverd_emulate_process_json(Session, Path.c_str(),
@@ -1576,6 +1621,25 @@ TEST_F(ProcessPublic, DarwinSymbolicLinksRejectMalformedOptionsBeforeLoading) {
         takeString(neverd_last_error(Session)).find("darwin_files requires"),
         std::string::npos);
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+}
+
+TEST_F(ProcessPublic, DarwinMixedLinksRejectMutableAncestorsBeforeLoading) {
+  for (const char *Parent : {"/", "/static", "/static/implicit"}) {
+    const auto Request =
+        std::string(R"({"darwin_files":{"files":[],"directories":[{"path":")") +
+        Parent +
+        R"(","mutable":true}],"symbolic_links":[{"path":"/static/implicit/link","target_hex":"2f776f726b"}]}})";
+    for (const char *Profile :
+         {MacOSMachO64, IOSMachO64, IOSSimulatorMachO64}) {
+      EXPECT_EQ(neverd_emulate_process_json(Session, "missing-mixed-link.macho",
+                                            Profile, Request.c_str()),
+                nullptr);
+      EXPECT_NE(takeString(neverd_last_error(Session))
+                    .find("mutable directories cannot contain"),
+                std::string::npos);
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    }
   }
 }
 

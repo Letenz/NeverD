@@ -49,12 +49,24 @@ public:
   /// `string_references`: every instruction that refers to a string, directly
   /// or through a pointer slot, as a filtered and sorted table page.
   Json stringReferences(const Json &payload);
+  /// `strings`: the strings the listing shows, the user's among them, as a
+  /// page of rows {"address","length","type","text","encoding"} in address
+  /// order, filtered by text, address or type.
+  Json strings(const Json &payload);
+  /// The name the listing shows for \p address, automatic or not.
+  std::string nameAt(std::uint64_t address);
   /// Resolve an automatic or listing-local name to its address.
   std::optional<std::uint64_t> resolveName(const std::string &name);
   /// Whether \p address is an import's slot or the entry of its thunk.
   bool isImport(std::uint64_t address);
   /// Build the reference index again, as for a changed function list.
   void reindex();
+  /// The item at \p address as the listing shows it: {"start","size","kind"}
+  /// and "user", the kind of the user's data item there; null outside the
+  /// image.
+  Json item(std::uint64_t address);
+  /// The options strings are searched with (JSON), empty for the defaults.
+  const std::string &stringOptions() const;
   /// Formatted instruction lines (no prefixes) of [start, end), for graph
   /// nodes.  Each element is {address, text, spans}.
   Json blockLines(std::uint64_t start, std::uint64_t end);

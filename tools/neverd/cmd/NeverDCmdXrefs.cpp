@@ -38,6 +38,8 @@ constexpr int ReferencePageSlots = 65536;
 struct Reference {
   uint64_t From = 0;
   std::string Kind;
+  /// The bytes a read or write accesses, 0 when the engine names none.
+  int64_t Bytes = 0;
 };
 
 /// The classic one-letter type of a reference kind (ReferenceKinds.def).
@@ -70,14 +72,17 @@ std::optional<uint64_t> collectPage(const char *Page, StringRef NextKey,
   const json::Object &Object = *Parsed->getAsObject();
   if (const json::Array *Rows = Object.getArray("refs"))
     for (const auto &Row : *Rows) {
+      // A read or write may carry the bytes it accesses.
       const json::Array *Fields = Row.getAsArray();
       uint64_t From = 0, To = 0;
-      if (!Fields || Fields->size() != 3 ||
+      if (!Fields || Fields->size() < 3 || Fields->size() > 4 ||
           (*Fields)[0].getAsString().value_or("").getAsInteger(0, From) ||
           (*Fields)[1].getAsString().value_or("").getAsInteger(0, To) ||
           To != Target)
         continue;
-      Out.push_back({From, (*Fields)[2].getAsString().value_or("").str()});
+      Out.push_back(
+          {From, (*Fields)[2].getAsString().value_or("").str(),
+           Fields->size() == 4 ? (*Fields)[3].getAsInteger().value_or(0) : 0});
     }
   uint64_t Next = 0;
   if (const auto Cursor = Object.getString(NextKey);
@@ -107,12 +112,16 @@ int runDirectXrefs(neverd_session_t Sess, neverd_va_t Target) {
   const FunctionLocator Functions(Sess);
   if (JsonOutput) {
     json::Array Out;
-    for (const Reference &R : Refs)
-      Out.push_back(json::Object{{"from", "0x" + utohexstr(R.From)},
-                                 {"to", "0x" + utohexstr(Target)},
-                                 {"kind", R.Kind},
-                                 {"type", std::string(1, kindLetter(R.Kind))},
-                                 {"function", Functions.locate(R.From)}});
+    for (const Reference &R : Refs) {
+      json::Object Row{{"from", "0x" + utohexstr(R.From)},
+                       {"to", "0x" + utohexstr(Target)},
+                       {"kind", R.Kind},
+                       {"type", std::string(1, kindLetter(R.Kind))},
+                       {"function", Functions.locate(R.From)}};
+      if (R.Bytes)
+        Row["size"] = R.Bytes;
+      Out.push_back(std::move(Row));
+    }
     outs() << json::Value(std::move(Out)) << "\n";
     return 0;
   }

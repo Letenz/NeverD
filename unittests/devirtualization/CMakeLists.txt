@@ -40,6 +40,14 @@ add_neverd_unittest(NeverDPEFixedImageTests
   LINK_COMPONENTS InterpreterLLVMRefinement Loader
 )
 
+if(TARGET neverd_shared)
+  add_neverd_unittest(NeverDPEBrowseCompatibilityTests
+    PEBrowseCompatibilityTests.cpp
+    LINK_COMPONENTS Loader CodeGen
+    LINK_LIBS neverd_shared
+  )
+endif()
+
 add_neverd_unittest(NeverDLowIRRefinementTests
   LowIRRefinementTests.cpp
   LowIRLoopAlignmentTests.cpp

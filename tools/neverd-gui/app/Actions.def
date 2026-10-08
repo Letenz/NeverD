@@ -81,7 +81,7 @@ NEVERD_VIEW_ACTION(EditCopyAddress,
                    QT_TRANSLATE_NOOP("Actions", "Copy the current address"))
 NEVERD_VIEW_ACTION(EditRename, QT_TRANSLATE_NOOP("Actions", "Re&name..."), "N",
                    "rename",
-                   QT_TRANSLATE_NOOP("Actions", "Rename the current function"))
+                   QT_TRANSLATE_NOOP("Actions", "Rename the current address"))
 NEVERD_VIEW_ACTION(EditCreateFunction,
                    QT_TRANSLATE_NOOP("Actions", "Create &function"), "P",
                    "function_create",
@@ -91,6 +91,20 @@ NEVERD_VIEW_ACTION(
     EditDeleteFunction, QT_TRANSLATE_NOOP("Actions", "&Delete function"), "",
     "function_delete",
     QT_TRANSLATE_NOOP("Actions", "Stop treating the current function as one"))
+NEVERD_VIEW_ACTION(EditDefineData, QT_TRANSLATE_NOOP("Actions", "&Data"), "D",
+                   "data_item",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Define a value at the current address; "
+                                     "again for the next size"))
+NEVERD_VIEW_ACTION(EditDefineString, QT_TRANSLATE_NOOP("Actions", "&String"),
+                   "A", "string_item",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Define the string that "
+                                     "starts at the current address"))
+NEVERD_VIEW_ACTION(EditUndefine, QT_TRANSLATE_NOOP("Actions", "Undef&ine"), "U",
+                   "undefine",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Show the current item's bytes as bytes"))
 NEVERD_VIEW_ACTION(EditComment,
                    QT_TRANSLATE_NOOP("Actions", "Enter &comment..."), ":",
                    "comment",

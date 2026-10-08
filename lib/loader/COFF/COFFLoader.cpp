@@ -97,24 +97,13 @@ COFFLoader::load(const std::filesystem::path &Path) {
   }
 
   uint64_t ImageBase = Obj.getImageBase();
+  uint32_t EntryRVA = 0;
   bool IsRelocatable = false;
   if (const auto *PE32Plus = Obj.getPE32PlusHeader()) {
-    if (PE32Plus->AddressOfEntryPoint > InvalidVA - ImageBase)
-      return llvm::make_error<llvm::StringError>(
-          "coff: entry point address overflows",
-          llvm::inconvertibleErrorCode());
-    Img.Entry = PE32Plus->AddressOfEntryPoint == 0
-                    ? 0
-                    : ImageBase + PE32Plus->AddressOfEntryPoint;
+    EntryRVA = PE32Plus->AddressOfEntryPoint;
     Img.Bits = Bitness::Bits64;
   } else if (const auto *PE32 = Obj.getPE32Header()) {
-    if (PE32->AddressOfEntryPoint > InvalidVA - ImageBase)
-      return llvm::make_error<llvm::StringError>(
-          "coff: entry point address overflows",
-          llvm::inconvertibleErrorCode());
-    Img.Entry = PE32->AddressOfEntryPoint == 0
-                    ? 0
-                    : ImageBase + PE32->AddressOfEntryPoint;
+    EntryRVA = PE32->AddressOfEntryPoint;
     Img.Bits = Bitness::Bits32;
   } else {
     IsRelocatable = true;
@@ -124,6 +113,16 @@ COFFLoader::load(const std::filesystem::path &Path) {
                    : Bitness::Bits32;
   }
   Img.IsRelocatable = IsRelocatable;
+  if (EntryRVA) {
+    if (EntryRVA > InvalidVA - ImageBase ||
+        (Img.Bits == Bitness::Bits32 && ImageBase + EntryRVA > UINT32_MAX))
+      Img.addLoadDiagnostic(
+          "pe.entry_out_of_range",
+          "PE entry RVA 0x" + llvm::utohexstr(EntryRVA) +
+              " exceeds the target address range; the entry is unknown.");
+    else
+      Img.Entry = ImageBase + EntryRVA;
+  }
   // A linked image without base relocations runs at its preferred base: the
   // loader has nothing to rebase it with.
   if (!IsRelocatable) {
@@ -789,29 +788,15 @@ COFFLoader::load(const std::filesystem::path &Path) {
   }
 
   // --- Imports ---
-  uint32_t PtrSize = Img.getPointerSize();
-  for (auto I = Obj.import_directory_begin(), E = Obj.import_directory_end();
-       I != E; ++I) {
-    llvm::StringRef DLLName;
-    if (auto Err = I->getName(DLLName)) {
-      llvm::consumeError(std::move(Err));
-      continue;
-    }
-    uint32_t IATRVA = 0;
-    if (auto Err = I->getImportAddressTableRVA(IATRVA)) {
-      llvm::consumeError(std::move(Err));
-      continue;
-    }
-    uint32_t Idx = 0;
-    for (auto SI = I->imported_symbol_begin(), SE = I->imported_symbol_end();
-         SI != SE; ++SI) {
-      uint64_t IATOffset =
-          static_cast<uint64_t>(IATRVA) + static_cast<uint64_t>(Idx) * PtrSize;
-      if (IATOffset > InvalidVA - ImageBase)
-        break;
-      coff_loader::addImportedSymbol(SI, DLLName, ImageBase + IATOffset, Img);
-      ++Idx;
-    }
+  coff_loader::parseImports(Obj, Img);
+
+  if (Img.Entry &&
+      (!Img.isCodeAddress(Img.Entry) || !Img.readVA(Img.Entry, 1))) {
+    Img.addLoadDiagnostic("pe.entry_unmapped",
+                          "PE entry RVA 0x" + llvm::utohexstr(EntryRVA) +
+                              " has no mapped executable byte; the entry is "
+                              "unknown.");
+    Img.Entry = 0;
   }
 
   // --- Exports ---

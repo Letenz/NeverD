@@ -120,8 +120,8 @@
         <translation>重新命名(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>重新命名目前函式</translation>
+        <source>Rename the current address</source>
+        <translation>重新命名目前位址</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -726,6 +726,30 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>不再將目前函式視為函式</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>資料(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>在目前位址定義一個數值；再按一次換成下一個大小</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>字串(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>定義從目前位址開始的字串</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>取消定義(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>將目前項目顯示為原始位元組</translation>
     </message>
 </context>
 <context>
@@ -1705,12 +1729,8 @@ Double-click to go to the declaration.</source>
         <translation> · 唯讀</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 不是函式進入點；只能重新命名函式。</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>重新命名函式</translation>
+        <source>Rename address</source>
+        <translation>重新命名位址</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -2119,6 +2139,18 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>已刪除 %1 處的函式</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>%1 處的位元組已經是未定義的</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>已取消 %1 處的定義</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>已在 %2 定義 %1</translation>
     </message>
 </context>
 </TS>

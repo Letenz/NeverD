@@ -308,8 +308,11 @@ void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
   trim();
   updateScrollBar();
   viewport()->update();
-  emitLocation();
+  // The next page goes out before the work of views that follow the
+  // location: decompiling a long function must not hold the listing at the
+  // end of its first page.
   ensureLoaded();
+  emitLocation();
   if (settledJump)
     emit jumpSettled();
 }

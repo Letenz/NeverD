@@ -4929,7 +4929,14 @@ TEST(HighCPointerAddresses, SplitAddFieldLoadPrintsNestedMember) {
   EXPECT_NE(Source.find("GetData("), std::string::npos) << Source;
   EXPECT_NE(Source.find("this->m_pRecordData.p->m_core.id"), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("t94"), std::string::npos) << Source;
+  // Keeping the loaded value in a local is valid; both forms must retain the
+  // typed member path and pass the same value to the call.
+  if (Source.find("t94") != std::string::npos) {
+    EXPECT_NE(Source.find("t94 = this->m_pRecordData.p->m_core.id;"),
+              std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find(", t94);"), std::string::npos) << Source;
+  }
 }
 
 TEST(HighCPointerAddresses, WidenedFieldLoadPrintsNestedMember) {
@@ -6148,7 +6155,7 @@ TEST(HighCPointerAddresses, SingleUseCallKeepsForwardedFrameBacking) {
 #include <string.h>
 static uintptr_t saved_home;
 static int step, bad;
-int CRecord_GetRecordName(int64_t self, uint64_t home) {
+int64_t CRecord_GetRecordName(int64_t self, uint64_t home) {
     uint64_t value = UINT64_C(0x9172635445362718);
     if (step++ != 0 || self != 19 || !home) bad = 1;
     saved_home = home;
@@ -6387,7 +6394,7 @@ TEST(HighCPointerAddresses, PostIfElseCallKeepsEarlierValueAndEvaluationPoint) {
       << Source;
   compileAndRunCallOrdering(Source + R"(
 static int step, bad, then_path;
-int old_format(int64_t name) {
+int64_t old_format(int64_t name) {
     if (step++ != 0 || name != 23) bad = 1;
     return -17;
 }
@@ -6399,7 +6406,7 @@ int format_value(int64_t name, int64_t format) {
     if (step++ != 1 || then_path || name != 23 || format != -17) bad = 1;
     return 0;
 }
-int next_format(int64_t name) {
+int64_t next_format(int64_t name) {
     if (step++ != 2 || name != 23) bad = 1;
     return 41;
 }
@@ -6899,13 +6906,22 @@ TEST(HighCPointerAddresses, UnusedFieldLoadViewAssignComposesIntoCondAndStore) {
   Guard.ElseBody = {Inner};
   Func.Body = {Load, Slice, Guard};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("if (this->m_completedCount)"), std::string::npos)
+  // This legacy undefined-register recovery fixture checks display composition.
+  // The defined view must retain its snapshot across the potentially mutating
+  // GetLength call; valid-IR execution is covered by HighValueForward tests.
+  EXPECT_NE(Source.find("if (t97)"), std::string::npos) << Source;
+  const auto Snapshot = Source.find("t97 = (int32_t)(this->m_completedCount);");
+  const auto Call = Source.find("GetLength(this)");
+  ASSERT_NE(Snapshot, std::string::npos) << Source;
+  ASSERT_NE(Call, std::string::npos) << Source;
+  EXPECT_LT(Snapshot, Call) << Source;
+  expectPortableStore(Source, "int32_t", "0x140008000", "t97");
+  EXPECT_EQ(Source.find("GetLength(this)", Call + 1), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("this->m_completedCount"), std::string::npos) << Source;
   expectPortableStore(Source, "int64_t", "0x140008008", "GetLength(this)");
   EXPECT_EQ(Source.find("\n    GetLength("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v97 ="), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("t97"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v97"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t94"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v98"), std::string::npos) << Source;
@@ -22967,7 +22983,7 @@ TEST(HighCPointerAddresses, EmptyIfCallReturnDoesNotLeaveUninitOrUnknownArgs) {
   // have to return their own defined value, and only one path calls out.
   compileAndRunCallOrdering(Source + R"(
 static int calls, bad, result;
-int CxxFrameHandler3(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
+int64_t CxxFrameHandler3(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
     ++calls;
     if (a != 13 || b != 17 || c != 19 || d != 23) bad = 1;
     return result;
@@ -25546,7 +25562,7 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   Setup.Id = 1;
   Setup.StartAddr = 0x140001010;
   Setup.Preds = {0};
-  Setup.Succs = {2, 3};
+  Setup.Succs = {3, 2};
   MedOp Lea;
   Lea.Opcode = NdOp::INT_ADD;
   Lea.Output = R81;
@@ -25554,12 +25570,12 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   Lea.addInput(MedVar::makeConst(0x40, 8));
   Lea.Addr = 0x140001010;
   Setup.Ops.push_back(std::move(Lea));
+  // Both arms run, depending on the first argument, and join at the call.
   MedOp Jcc;
   Jcc.Opcode = NdOp::COND_BR;
   Jcc.Addr = 0x140001018;
-  Jcc.addInput(MedVar::makeConst(1, 4));
   Jcc.addInput(MedVar::makeConst(0x140001030, 8));
-  Jcc.addInput(MedVar::makeConst(0x140001020, 8));
+  Jcc.addInput(Med.Params.front());
   Setup.Ops.push_back(std::move(Jcc));
   Med.Blocks.push_back(std::move(Setup));
 
@@ -32973,7 +32989,7 @@ TEST(HighCPointerAddresses, BareSiblingReturnMakesATailCallingFunctionVoid) {
   EXPECT_EQ(Source.find("unknown return value"), std::string::npos) << Source;
   compileAndRunCallOrdering(Source + R"(
 static int calls;
-int sub_14000173C(int64_t input) {
+int64_t sub_14000173C(int64_t input) {
     ++calls;
     return (int)input;
 }
@@ -38981,10 +38997,11 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
   const std::string Source = highcOnlyFunction(std::move(*Img), 0x140001050);
   EXPECT_NE(Source.find("RaiseException(0xE0421001"), std::string::npos)
       << Source;
-  EXPECT_NE(
-      Source.find(
-          "extern int RaiseException(int64_t, int64_t, int64_t, int64_t);"),
-      std::string::npos)
+  // kernel32 declares it with these parameters, whose upper halves the
+  // callee does not read.
+  EXPECT_NE(Source.find("extern void RaiseException(uint32_t, uint32_t, "
+                        "uint32_t, const uintptr_t *);"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("t22_1"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v36_0"), std::string::npos) << Source;
@@ -43055,7 +43072,7 @@ TEST(HighCPointerAddresses, ImageFunctionNamedLikeLibcIsNotLibc) {
   Img.Symbols.push_back(GSym);
   const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
   EXPECT_EQ(HighC.find("<setjmp.h>"), std::string::npos) << HighC;
-  EXPECT_NE(HighC.find("extern int setjmp()"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("extern int64_t setjmp()"), std::string::npos) << HighC;
 }
 
 namespace {
@@ -43383,4 +43400,31 @@ TEST(HighCPointerAddresses, ArmEndingInAnEnteredLabelStillFallsThrough) {
   std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), endlessLoop({Arms})};
   EXPECT_FALSE(unwrapLoopsThatNeverRepeat(Body));
   EXPECT_EQ(Body[1].Kind, StmtKind::While);
+}
+
+TEST(HighCPointerAddresses, ConditionalReturnOutOfALoopReturnsItsValue) {
+  // ARM32 `bxgt lr` leaves the loop with the value r0 carries around it.
+  // The return block defines no r0; the join heading the loop does.
+  constexpr va_t Entry = 0x10000;
+  const std::vector<uint8_t> Code = {
+      0x00, 0x10, 0xa0, 0xe3, //       mov r1, #0
+      0x0a, 0x00, 0x51, 0xe3, // loop: cmp r1, #10
+      0x1e, 0xff, 0x2f, 0xc1, //       bxgt lr
+      0x01, 0x00, 0x80, 0xe0, //       add r0, r0, r1
+      0x01, 0x10, 0x81, 0xe2, //       add r1, r1, #1
+      0xfa, 0xff, 0xff, 0xea, //       b loop
+  };
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Img.Arch = Arch::ARM;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Sym = Symbol::makeFunc(Entry);
+  Sym.Name = "sum_to_ten";
+  Img.Symbols.push_back(Sym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("void sum_to_ten"), std::string::npos) << HighC;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + HighC + R"(
+int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
+)");
 }

@@ -589,14 +589,13 @@ TEST(HighCStoreForwarding,
   EXPECT_NE(Body.find("frame_base = (uintptr_t)(stack_storage +"),
             std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("= (uintptr_t)((uintptr_t)(frame_base) - 8);"),
+  EXPECT_NE(Body.find("memory_address = (uintptr_t)(frame_base - 8);"),
             std::string::npos)
       << Body;
   EXPECT_NE(Body.find("= arg0;"), std::string::npos) << Body;
   EXPECT_NE(Body.find("__builtin_memcpy((void *)"), std::string::npos) << Body;
   EXPECT_NE(Body.find("return (int32_t *)"), std::string::npos) << Body;
-  EXPECT_NE(Body.find("(uint64_t)(frame_base) - (uint64_t)(8)"),
-            std::string::npos)
+  EXPECT_NE(Body.find("(uint64_t)frame_base - 8));"), std::string::npos)
       << Body;
 }
 
@@ -732,8 +731,18 @@ TEST(HighCStoreForwarding,
   Func.Body.push_back(ret(HighExpr::makeConst(0, 4)));
   const auto Body = emitBody(Func);
   EXPECT_GE(countPointerDerefStores(Body), 1u) << Body;
-  EXPECT_NE(Body.find("arg0 ="), std::string::npos) << Body;
-  EXPECT_LT(Body.find("42"), Body.find("arg0 =")) << Body;
+  size_t Assignment = std::string::npos;
+  llvm::StringRef Remaining(Body);
+  while (!Remaining.empty()) {
+    const auto [Line, Rest] = Remaining.split('\n');
+    if (Line.trim().starts_with("arg0 = ")) {
+      Assignment = Line.data() - Body.data();
+      break;
+    }
+    Remaining = Rest;
+  }
+  ASSERT_NE(Assignment, std::string::npos) << Body;
+  EXPECT_LT(Body.find("42"), Assignment) << Body;
 }
 
 TEST(HighCStoreForwarding, ReinterpretsEachIntegerLoadAfterStoreTruncation) {
@@ -817,24 +826,39 @@ TEST(HighCStoreForwarding, KeepsNonIntegerReinterpretationInMemory) {
   }
 }
 
-TEST(HighCStoreForwarding, KeepsStoreWhenOneAliasWouldRemainUnsubstituted) {
+TEST(HighCStoreForwarding, EquivalentFrameAddressesKeepStoresForPartialReads) {
   const auto I32 = NdType::makeInt(4);
-  auto Subtracted = frameSlot(8);
-  auto Added =
-      HighExpr::makeBinop(NdOp::INT_ADD, frameSlot(0)->Operands[0],
-                          HighExpr::makeConst(static_cast<uint64_t>(-8), 8));
-  HighFunc Func;
-  Func.Name = "forward_address_alias";
-  Func.FrameSize = 8;
-  Func.ReturnType = I32;
-  Func.Body.push_back(store(Subtracted, HighExpr::makeConst(42, 4)));
-  Func.Body.push_back(ret(
-      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeLoad(Subtracted, I32),
-                          HighExpr::makeLoad(Added, I32))));
-  const auto Body = emitBody(Func);
-  EXPECT_GE(countPointerDerefStores(Body), 1u) << Body;
-  EXPECT_GE(countPointerDerefLoads(Body) + countOccurrences(Body, "var_"), 1u)
-      << Body;
+  for (bool PartialRead : {false, true}) {
+    SCOPED_TRACE(PartialRead);
+    auto Subtracted = frameSlot(8);
+    auto Added =
+        HighExpr::makeBinop(NdOp::INT_ADD, frameSlot(0)->Operands[0],
+                            HighExpr::makeConst(static_cast<uint64_t>(-8), 8));
+    HighFunc Func;
+    Func.Name = "forward_address_alias";
+    Func.FrameSize = 8;
+    Func.ReturnType = I32;
+    Func.Body.push_back(store(Subtracted, HighExpr::makeConst(42, 4)));
+    Func.Body.push_back(ret(HighExpr::makeBinop(
+        NdOp::INT_ADD, HighExpr::makeLoad(Subtracted, I32),
+        HighExpr::makeLoad(Added,
+                           PartialRead ? NdType::makeInt(1, false) : I32))));
+    const auto Body = emitBody(Func);
+    if (PartialRead) {
+      // One full-width reader cannot erase the bytes needed by a narrow one.
+      EXPECT_GE(countPointerDerefStores(Body), 1u) << Body;
+      EXPECT_GE(countPointerDerefLoads(Body) + countOccurrences(Body, "var_"),
+                1u)
+          << Body;
+    } else {
+      // Both spellings denote the same private slot and may share its value.
+      EXPECT_EQ(countPointerDerefStores(Body), 0u) << Body;
+      EXPECT_EQ(countPointerDerefLoads(Body) + countOccurrences(Body, "var_"),
+                0u)
+          << Body;
+      EXPECT_EQ(countOccurrences(Body, "42"), 2u) << Body;
+    }
+  }
 }
 
 TEST(HighCStoreForwarding, IncludesStoreAndLoadCastsInExpressionBudget) {

@@ -245,6 +245,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.Annotations.clear();
   S.Renames.clear();
   S.FunctionEdits.clear();
+  S.DataItems.clear();
   S.SigDB.clear();
   S.DiscoveredFunctions.reset();
   S.ImageStrings.reset();
@@ -253,6 +254,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   neverd_annotations_load(Sess);
   neverd_renames_load(Sess);
   neverd_functions_load(Sess);
+  neverd_items_load(Sess);
 
   return 1;
 }
@@ -636,6 +638,16 @@ neverd_va_t neverd_session_base_addr(neverd_session_t Sess) {
 neverd_va_t neverd_session_entry_addr(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   return S->Loaded ? S->Img.Entry : 0;
+}
+
+const char *neverd_session_load_diagnostics_json(neverd_session_t Sess) {
+  llvm::json::Array Diagnostics;
+  const auto *S = toSession(Sess);
+  if (S && S->Loaded)
+    for (const auto &D : S->Img.LoadDiagnostics)
+      Diagnostics.push_back(
+          llvm::json::Object{{"code", D.Code}, {"message", D.Message}});
+  return dupStr(jsonToString(llvm::json::Value(std::move(Diagnostics))));
 }
 
 int neverd_session_segment_count(neverd_session_t Sess) {

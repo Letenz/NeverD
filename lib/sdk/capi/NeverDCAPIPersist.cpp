@@ -14,12 +14,17 @@
 #include "neverd/support/AtomicOutput.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectWriteLock.h"
+#include "neverd/support/StringScan.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/JSON.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <map>
 #include <optional>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -234,6 +239,52 @@ int neverd_rename_func(neverd_session_t Sess, const char *OldName,
   }
   S->setError("function not found: " + std::string(OldName));
   return -1;
+}
+
+int neverd_rename_addr(neverd_session_t Sess, neverd_va_t Addr,
+                       const char *Name) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  const llvm::StringRef NewName = Name ? Name : "";
+  constexpr size_t MaxNameBytes = 4096;
+  if (NewName.size() > MaxNameBytes ||
+      llvm::any_of(NewName,
+                   [](unsigned char C) { return C <= ' ' || C == 0x7f; })) {
+    S->setError("a name has at most 4096 bytes and no spaces or control "
+                "characters");
+    return -1;
+  }
+  if (!S->Img.readVA(Addr, 1)) {
+    S->setError(vaHex(Addr) + " is not in the image");
+    return -1;
+  }
+  (void)neverd_func_count(Sess);
+  const auto PreviousRenames = S->Renames;
+  const auto PreviousOriginals = S->OriginalNames;
+  if (NewName.empty()) {
+    S->Renames.erase(Addr);
+  } else {
+    // What the address was called before the user named it.
+    if (!S->OriginalNames.count(Addr))
+      if (const Symbol *Sym = S->Img.findSymbolAt(Addr); Sym && !Sym->IsFunc)
+        S->OriginalNames[Addr] = Sym->Name;
+    S->Renames[Addr] = NewName.str();
+  }
+  // A function entry takes the name in the function list too.
+  S->refreshFunctionNames();
+  if (neverd_renames_save(Sess) != 0) {
+    S->Renames = PreviousRenames;
+    S->OriginalNames = PreviousOriginals;
+    S->refreshFunctionNames();
+    return -1;
+  }
+  return 0;
 }
 
 const char *neverd_renames_json(neverd_session_t Sess) {
@@ -486,5 +537,268 @@ int neverd_functions_load(neverd_session_t Sess) {
     return 0;
   S->FunctionEdits = std::move(Edits);
   S->invalidatePipeline();
+  return 0;
+}
+
+// ===--------------------------------------------------------------------===//
+// Data items
+// ===--------------------------------------------------------------------===//
+
+namespace {
+#define NEVERD_DATA_ITEM_KIND(Id, Spelling)                                    \
+  constexpr llvm::StringLiteral Id(Spelling);
+#include "neverd/DataNames.def"
+
+/// The bytes of a value of the size \p Kind names (`qword`), or 0.
+uint64_t sizedItemBytes(llvm::StringRef Kind) {
+#define NEVERD_DATA_SIZE_NAME(SizeKeyword, Bytes, Prefix)                      \
+  if (Kind == SizeKeyword)                                                     \
+    return Bytes;
+#include "neverd/DataNames.def"
+  return 0;
+}
+
+std::string itemsPath(const Session *S) {
+  return S->FilePath.string() + ".neverd-items.json";
+}
+
+/// The item \p Row describes at \p Addr, checked against the image; none
+/// with \p Error.
+std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
+                                               const llvm::json::Object &Row,
+                                               std::string &Error) {
+  Session::DataItem Item;
+  const auto Kind = Row.getString("kind");
+  if (!Kind) {
+    Error = "a data item needs a kind";
+    return std::nullopt;
+  }
+  Item.Kind = Kind->str();
+  const auto Size = Row.getInteger("size");
+  std::optional<strings::Encoding> Encoding;
+  if (const uint64_t Bytes = sizedItemBytes(*Kind)) {
+    if (Size && static_cast<uint64_t>(*Size) != Bytes) {
+      Error = Item.Kind + " takes " + std::to_string(Bytes) + " bytes";
+      return std::nullopt;
+    }
+    Item.Size = Bytes;
+  } else if (*Kind == StringItemKind) {
+    const auto Name = Row.getString("encoding");
+    Encoding = Name ? strings::encodingNamed(*Name) : std::nullopt;
+    if (!Encoding) {
+      Error = "a string item needs a known encoding";
+      return std::nullopt;
+    }
+    Item.Encoding = strings::encodingName(*Encoding).str();
+    const unsigned Unit = strings::encodingUnitBytes(*Encoding);
+    if (!Size || *Size < Unit || *Size % Unit) {
+      Error = "a string item needs its size in whole units, its terminator "
+              "included";
+      return std::nullopt;
+    }
+    Item.Size = static_cast<uint64_t>(*Size);
+  } else if (*Kind == UndefinedItemKind) {
+    if (!Size || *Size < 1) {
+      Error = "an undefined item needs its size";
+      return std::nullopt;
+    }
+    Item.Size = static_cast<uint64_t>(*Size);
+  } else {
+    Error = "unknown data item kind '" + Item.Kind + "'";
+    return std::nullopt;
+  }
+  const Segment *Seg = S.Img.getSegmentFor(Addr);
+  if (!Seg || Addr < Seg->VA || Item.Size > Seg->VA + Seg->Size - Addr) {
+    Error = vaHex(Addr) + " to " + vaHex(Addr + Item.Size) +
+            " is not in one segment";
+    return std::nullopt;
+  }
+  if (Encoding) {
+    // The string's last code unit is its terminator.
+    const unsigned Unit = strings::encodingUnitBytes(*Encoding);
+    const uint8_t *Last = S.Img.readVA(Addr + Item.Size - Unit, Unit);
+    if (!Last || !std::all_of(Last, Last + Unit,
+                              [](uint8_t Byte) { return Byte == 0; })) {
+      Error = "the string at " + vaHex(Addr) + " does not end in a zero unit";
+      return std::nullopt;
+    }
+  }
+  return Item;
+}
+
+/// The address of an item in \p Items other than \p Except that shares a
+/// byte with [\p Addr, \p Addr + \p Size).
+std::optional<va_t>
+overlappingItem(const std::map<va_t, Session::DataItem> &Items, va_t Addr,
+                uint64_t Size, va_t Except) {
+  auto It = Items.upper_bound(Addr);
+  if (It != Items.begin()) {
+    const auto Before = std::prev(It);
+    if (Before->first != Except && Before->first + Before->second.Size > Addr)
+      return Before->first;
+  }
+  for (; It != Items.end() && It->first < Addr + Size; ++It)
+    if (It->first != Except)
+      return It->first;
+  return std::nullopt;
+}
+
+llvm::json::Array dataItemRows(const Session *S) {
+  llvm::json::Array Rows;
+  for (const auto &[Addr, Item] : S->DataItems) {
+    llvm::json::Object Row{{"addr", vaHex(Addr)},
+                           {"kind", Item.Kind},
+                           {"size", static_cast<int64_t>(Item.Size)}};
+    if (!Item.Encoding.empty())
+      Row["encoding"] = Item.Encoding;
+    Rows.push_back(std::move(Row));
+  }
+  return Rows;
+}
+} // namespace
+
+int neverd_item_set(neverd_session_t Sess, neverd_va_t Addr,
+                    const char *RowJson) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  auto Parsed = llvm::json::parse(RowJson ? RowJson : "");
+  if (!Parsed) {
+    llvm::consumeError(Parsed.takeError());
+    S->setError("a data item is a JSON object");
+    return -1;
+  }
+  const auto *Row = Parsed->getAsObject();
+  if (!Row) {
+    S->setError("a data item is a JSON object");
+    return -1;
+  }
+  std::string Error;
+  auto Item = parseDataItem(*S, Addr, *Row, Error);
+  if (!Item) {
+    S->setError(Error);
+    return -1;
+  }
+  // An item replaces the one at its address. Bytes the user undefined give
+  // way to it and stay undefined around it; it shares no byte with any other
+  // item.
+  const va_t End = Addr + Item->Size;
+  std::vector<va_t> Carved;
+  std::vector<std::pair<va_t, uint64_t>> Pieces;
+  auto It = S->DataItems.upper_bound(Addr);
+  if (It != S->DataItems.begin() &&
+      std::prev(It)->first + std::prev(It)->second.Size > Addr)
+    --It;
+  for (; It != S->DataItems.end() && It->first < End; ++It) {
+    const auto &[At, Other] = *It;
+    if (Other.Kind != UndefinedItemKind) {
+      if (At == Addr)
+        continue;
+      S->setError(vaHex(Addr) + " overlaps the item at " + vaHex(At));
+      return -1;
+    }
+    Carved.push_back(At);
+    if (At < Addr)
+      Pieces.emplace_back(At, Addr - At);
+    if (At + Other.Size > End)
+      Pieces.emplace_back(End, At + Other.Size - End);
+  }
+  for (const va_t At : Carved)
+    S->DataItems.erase(At);
+  for (const auto &[At, Size] : Pieces)
+    S->DataItems[At] = {std::string(UndefinedItemKind), Size, {}};
+  S->DataItems[Addr] = std::move(*Item);
+  return 0;
+}
+
+int neverd_item_clear(neverd_session_t Sess, neverd_va_t Addr) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->DataItems.erase(Addr)) {
+    S->setError("no data item starts at " + vaHex(Addr));
+    return -1;
+  }
+  return 0;
+}
+
+const char *neverd_items_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  return dupStr(jsonToString(llvm::json::Value(dataItemRows(S))));
+}
+
+int neverd_items_save(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded)
+    return -1;
+  ProjectWriteLock Lock(S->FilePath);
+  if (!Lock) {
+    S->setError("project writer unavailable: " + Lock.error());
+    return -1;
+  }
+  return saveSidecar(S, itemsPath(S), dataItemRows(S), "data items") ? 0 : -1;
+}
+
+int neverd_items_load(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded)
+    return -1;
+  const auto Path = itemsPath(S);
+  std::error_code EC;
+  const bool Exists = std::filesystem::exists(Path, EC);
+  if (EC) {
+    S->setError("cannot inspect data items: " + EC.message());
+    return -1;
+  }
+  std::map<va_t, Session::DataItem> Items;
+  if (Exists) {
+    std::ifstream In(Path);
+    if (!In.is_open()) {
+      S->setError("cannot read data items");
+      return -1;
+    }
+    const std::string Content((std::istreambuf_iterator<char>(In)),
+                              std::istreambuf_iterator<char>());
+    auto Parsed = llvm::json::parse(Content);
+    if (!Parsed) {
+      llvm::consumeError(Parsed.takeError());
+      S->setError("data items sidecar is not valid JSON");
+      return -1;
+    }
+    const auto *Rows = Parsed->getAsArray();
+    if (!Rows) {
+      S->setError("data items sidecar is not an array");
+      return -1;
+    }
+    for (const auto &Value : *Rows) {
+      const auto *Row = Value.getAsObject();
+      const llvm::json::Value *Address = Row ? Row->get("addr") : nullptr;
+      const auto Addr =
+          Address ? parsePersistedAddress(*Address) : std::optional<va_t>();
+      std::string Error;
+      auto Item = Addr ? parseDataItem(*S, *Addr, *Row, Error) : std::nullopt;
+      if (!Item || overlappingItem(Items, *Addr, Item->Size, InvalidVA)) {
+        S->setError("data items sidecar has an invalid row" +
+                    (Error.empty() ? std::string() : ": " + Error));
+        return -1;
+      }
+      Items[*Addr] = std::move(*Item);
+    }
+  }
+  S->DataItems = std::move(Items);
   return 0;
 }
