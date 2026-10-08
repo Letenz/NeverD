@@ -274,9 +274,13 @@ cmake --build build-release --target NeverDRegistrationStateTests \
   NeverDRegistrationEHTests NeverDWindowsRegistrationFrameTests --parallel 4
 build-release/bin/NeverDRegistrationStateTests
 build-release/bin/NeverDRegistrationEHTests
-build-release/bin/NeverDWindowsRegistrationFrameTests
-python3 -m unittest scripts.tests.test_check_windows_registration_eh -v
+NEVERD_REGISTRATION_RUNTIME_OBJECT=/tmp/neverd-frame.obj \
+  build-release/bin/NeverDWindowsRegistrationFrameTests
+python3 -m unittest scripts.tests.test_check_windows_registration_eh \
+  scripts.tests.test_check_windows_registration_frame -v
 python3 scripts/check_windows_registration_eh.py --output build-registration/evidence
+python3 scripts/check_windows_registration_frame.py --object /tmp/neverd-frame.obj \
+  --output build-registration/callback-runtime
 ```
 
 The runner executes the pinned MSVC x86 SEH and C++ probes with `/GS` on/off and
@@ -289,7 +293,10 @@ patch receipt and evidence that the replaced EH entries executed. Missing
 runtimes or images fail the run. The callback-frame suite checks PE32 filter
 and finally recovery, existing escape indices, bounded exception-pointer cells,
 private callback stacks, atomic rejection, and actual i386 COFF scope-table
-code generation. These checks alone do not authorize a native patch.
+code generation. The frame runner links the emitted object with SafeSEH checks
+enabled, executes 16 real exceptions, and requires the exact filter count and
+successful outcome. Its report is `generated-x86-callback-abi` evidence. These
+checks alone do not authorize a native patch.
 The CI `windows_eh_only` dispatch profile additionally checks
 ARM32 cross-target PE generation and reconstruction. It does not claim execution
 on Windows ARM32.

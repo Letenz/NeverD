@@ -2105,9 +2105,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes clang lld cmake ninja-build wine wine32:i386
       - name: Verify runtime evidence admission
-        run: python -m unittest scripts.tests.test_check_windows_registration_eh -v
+        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame -v
       - name: Observe original x86 SEH and C++ EH across GS and optimization modes
-        run: python scripts/check_windows_registration_eh.py --output build-windows-eh/evidence/original-runtime
+        run: python scripts/check_windows_registration_eh.py --output build-windows-eh/evidence/original-runtime --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Configure focused loader, IR and rewrite checks
         run: |
           cmake -S . -B build-windows-eh -G Ninja \
@@ -2126,12 +2126,20 @@ jobs:
             NeverDWindowsEHMetadataEncoderTests NeverDWindowsEHCorpusTests \
             NeverDCOFFExceptionPatchTests
       - name: Verify registration state and canonical LLVM metadata
+        env:
+          NEVERD_REGISTRATION_RUNTIME_OBJECT: build-windows-eh/evidence/frame-runtime.obj
         run: |
           build-windows-eh/bin/NeverDRegistrationStateTests --gtest_output=xml:build-windows-eh/evidence/state.xml
           build-windows-eh/bin/NeverDRegistrationEHTests --gtest_output=xml:build-windows-eh/evidence/registration.xml
           build-windows-eh/bin/NeverDWindowsRegistrationFrameTests --gtest_output=xml:build-windows-eh/evidence/frame.xml
           build-windows-eh/bin/NeverDWindowsEHMetadataEncoderTests --gtest_output=xml:build-windows-eh/evidence/metadata.xml
           build-windows-eh/bin/NeverDCOFFExceptionPatchTests --gtest_output=xml:build-windows-eh/evidence/planner.xml
+      - name: Execute generated x86 callback frames with real exceptions
+        run: |
+          python scripts/check_windows_registration_frame.py \
+            --object build-windows-eh/evidence/frame-runtime.obj \
+            --output build-windows-eh/evidence/callback-runtime \
+            --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Verify x86 recovery and ARM32 cross-target PE reconstruction
         run: |
           build-windows-eh/bin/NeverDLiftTests \

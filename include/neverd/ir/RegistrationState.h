@@ -36,11 +36,32 @@ struct RegistrationBlockState {
   bool CanDispatch = false;
 };
 
+/// An exact LowIR operation that accesses the runtime chain head. Native
+/// lowering may replace chain administration only by matching these source
+/// occurrence identities; a function-wide completeness bit is insufficient.
+struct RegistrationChainAccess {
+  enum class Kind : uint8_t {
+    ReadPreviousHead,
+    ReadInstalledHead,
+    Install,
+    Remove,
+  };
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int OpSeq = -1;
+  Kind AccessKind = Kind::ReadPreviousHead;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
   bool CallbackStatesComplete = true;
   bool RegistrationLifetimeComplete = false;
+  /// Complete chain access ownership, including decoded boundaries and
+  /// operation identities, available only with a complete registration
+  /// lifetime and callback state proof. This is not a native output receipt.
+  bool ChainOperationsComplete = false;
+  std::vector<RegistrationChainAccess> ChainAccesses;
   std::vector<std::string> Diagnostics;
 };
 

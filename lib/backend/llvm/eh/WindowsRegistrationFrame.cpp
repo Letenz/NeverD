@@ -26,6 +26,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
+#include <deque>
 #include <functional>
 #include <limits>
 #include <map>
@@ -45,7 +46,8 @@ bool isStaticEntryAlloca(const llvm::AllocaInst &Slot,
                          const llvm::Function &Parent) {
   return Slot.getFunction() == &Parent && Slot.isStaticAlloca() &&
          Slot.getParent() == &Parent.getEntryBlock() &&
-         Slot.getAddressSpace() == 0;
+         Slot.getAddressSpace() == 0 && !Slot.isSwiftError() &&
+         !Slot.isUsedWithInAlloca();
 }
 
 bool hasBlockAddress(const llvm::Constant *Value,
@@ -114,27 +116,44 @@ llvm::Error checkPrivateStack(
   };
   std::map<llvm::Instruction *, ScratchAccess> Accesses;
   bool Invalid = false;
+  bool Exhausted = false;
+  auto Charge = [&](size_t Amount) {
+    if (Amount > limits::kMaxRegistrationEHStateWork - WorkUsed) {
+      Exhausted = true;
+      return false;
+    }
+    WorkUsed += Amount;
+    return true;
+  };
   auto Add = [&](llvm::Value *Value, int64_t Offset) {
+    if (!Charge(1))
+      return;
     auto [It, Inserted] = Offsets.emplace(Value, Offset);
     Invalid |= !Inserted && It->second != Offset;
     if (Inserted)
       Work.push_back(Value);
   };
   auto Loads = [&](llvm::AllocaInst *Slot) {
-    for (llvm::User *User : Slot->users())
+    for (llvm::User *User : Slot->users()) {
+      if (!Charge(1))
+        break;
       if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(User))
         Add(Load, 0);
+    }
   };
   for (const auto &[Definition, Kind] : Seeds)
     if (Kind == X86RegistrationRootKind::StackPointer)
       Loads(llvm::cast<llvm::AllocaInst>(Definition->getPointerOperand()));
-  auto CheckAccess = [&](llvm::Type *Type, int64_t Offset) {
+  auto CheckAccess = [&](llvm::Type *Type, int64_t Offset, llvm::Align Align) {
     const llvm::TypeSize Size = Layout.getTypeStoreSize(Type);
     return !Size.isScalable() && Offset < 0 &&
            Offset >= -int64_t(*Frame.StackPointerOffset) &&
-           Size.getFixedValue() <= uint64_t(-Offset);
+           Size.getFixedValue() <= uint64_t(-Offset) && Align.value() <= 16 &&
+           (int64_t(*Frame.StackPointerOffset) + Offset) % Align.value() == 0;
   };
-  while (!Work.empty() && !Invalid) {
+  while (!Work.empty() && !Invalid && !Exhausted) {
+    if (!Charge(1))
+      break;
     llvm::Value *Value = Work.back();
     Work.pop_back();
     const int64_t Offset = Offsets.at(Value);
@@ -148,6 +167,7 @@ llvm::Error checkPrivateStack(
         const auto *Constant =
             llvm::dyn_cast<llvm::ConstantInt>(Binary->getOperand(1));
         if (!Constant || Use.getOperandNo() != 0 ||
+            Binary->hasPoisonGeneratingFlags() ||
             (Binary->getOpcode() != llvm::Instruction::Add &&
              Binary->getOpcode() != llvm::Instruction::Sub) ||
             Constant->getBitWidth() > 64)
@@ -166,9 +186,14 @@ llvm::Error checkPrivateStack(
         continue;
       }
       if (auto *Cast = llvm::dyn_cast<llvm::CastInst>(User)) {
-        if (!Cast->getType()->isIntegerTy(32) &&
-            !Cast->getType()->isIntegerTy(64) &&
-            !Cast->getType()->isPointerTy())
+        auto IsFullAddress = [](llvm::Type *Type) {
+          if (const auto *Pointer = llvm::dyn_cast<llvm::PointerType>(Type))
+            return Pointer->getAddressSpace() == 0;
+          return Type->isIntegerTy(32) || Type->isIntegerTy(64);
+        };
+        if (Cast->hasPoisonGeneratingFlags() ||
+            !IsFullAddress(Cast->getSrcTy()) ||
+            !IsFullAddress(Cast->getDestTy()))
           return reject(
               "private callback stack has an unsupported address cast");
         Add(User, Offset);
@@ -176,17 +201,24 @@ llvm::Error checkPrivateStack(
       }
       if (auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(User)) {
         llvm::APInt Delta(32, 0);
-        if (Use.getOperandNo() != 0 ||
+        if (Use.getOperandNo() != 0 || GEP->getPointerAddressSpace() != 0 ||
             !GEP->accumulateConstantOffset(Layout, Delta))
           return reject("private callback stack has an unproved GEP");
         const int64_t Next = Offset + Delta.getSExtValue();
         if (Next < -int64_t(Frame.StackBytes) || Next > Frame.StackBytes)
           return reject("private callback stack GEP is out of bounds");
+        if (GEP->hasNoUnsignedWrap() ||
+            ((GEP->isInBounds() || GEP->hasNoUnsignedSignedWrap()) &&
+             (int64_t(*Frame.StackPointerOffset) + Next < 0 ||
+              int64_t(*Frame.StackPointerOffset) + Next > Frame.StackBytes)))
+          return reject(
+              "private callback stack GEP has unproved no-wrap bounds");
         Add(User, Next);
         continue;
       }
       if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(User)) {
-        if (Use.getOperandNo() != 0 || !CheckAccess(Load->getType(), Offset))
+        if (Use.getOperandNo() != 0 ||
+            !CheckAccess(Load->getType(), Offset, Load->getAlign()))
           return reject("private callback stack reads an unproved entry cell");
         Accesses.emplace(
             Load, ScratchAccess{
@@ -197,7 +229,8 @@ llvm::Error checkPrivateStack(
       }
       if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(User)) {
         if (Use.getOperandNo() == 1) {
-          if (!CheckAccess(Store->getValueOperand()->getType(), Offset))
+          if (!CheckAccess(Store->getValueOperand()->getType(), Offset,
+                           Store->getAlign()))
             return reject("private callback stack write is out of bounds");
           Accesses.emplace(
               Store,
@@ -215,13 +248,18 @@ llvm::Error checkPrivateStack(
              !Slot->getAllocatedType()->isIntegerTy(64) &&
              !Slot->getAllocatedType()->isPointerTy()) ||
             !llvm::cast<llvm::ConstantInt>(Slot->getArraySize())->isOne() ||
+            Store->getValueOperand()->getType() != Slot->getAllocatedType() ||
             Store->isVolatile() || Store->isAtomic())
           return reject("private callback stack address is stored externally");
         for (llvm::User *SlotUser : Slot->users()) {
+          if (!Charge(1))
+            return reject(
+                "private callback stack SSA uses exceed the work budget");
           auto *Load = llvm::dyn_cast<llvm::LoadInst>(SlotUser);
           if (SlotUser == Store)
             continue;
-          if (!Load || !Body.count(Load->getParent()) || Load->isVolatile() ||
+          if (!Load || Load->getType() != Slot->getAllocatedType() ||
+              !Body.count(Load->getParent()) || Load->isVolatile() ||
               Load->isAtomic() ||
               (Store->getParent() != &Entry &&
                Store->getParent() != Load->getParent()) ||
@@ -236,6 +274,8 @@ llvm::Error checkPrivateStack(
       return reject("private callback stack address has an observable use");
     }
   }
+  if (Exhausted)
+    return reject("private callback stack values exceed the work budget");
   if (Invalid)
     return reject("private callback stack has inconsistent SSA offsets");
 
@@ -249,70 +289,98 @@ llvm::Error checkPrivateStack(
         return reject("private callback scratch proof exceeds the work budget");
       Universe.insert(Access.Offset + I);
     }
+  std::vector<llvm::BasicBlock *> OrderedBlocks;
+  std::map<llvm::BasicBlock *, std::vector<ScratchAccess>> OrderedAccesses;
   std::map<llvm::BasicBlock *, std::set<int64_t>> Incoming, Outgoing;
-  for (llvm::BasicBlock *Block : Body) {
-    if (Universe.size() > limits::kMaxRegistrationEHStateWork - WorkUsed)
+  std::deque<llvm::BasicBlock *> Pending;
+  std::set<llvm::BasicBlock *> Queued;
+  for (llvm::BasicBlock &Block : *Entry.getParent()) {
+    if (!Charge(1))
+      return reject(
+          "private callback scratch block scan exceeds the work budget");
+    if (!Body.count(&Block))
+      continue;
+    OrderedBlocks.push_back(&Block);
+    for (llvm::Instruction &Instruction : Block) {
+      if (!Charge(1))
+        return reject("private callback scratch instruction scan exceeds the "
+                      "work budget");
+      if (auto It = Accesses.find(&Instruction); It != Accesses.end())
+        OrderedAccesses[&Block].push_back(It->second);
+    }
+    if (!Charge(Universe.size()))
       return reject("private callback scratch state exceeds the work budget");
-    WorkUsed += Universe.size();
-    Outgoing[Block] = Universe;
+    Outgoing[&Block] = Universe;
+    Pending.push_back(&Block);
+    Queued.insert(&Block);
   }
-  bool Changed = true;
-  while (Changed) {
-    Changed = false;
-    // Source order makes the proof and its budget deterministic.
-    for (llvm::BasicBlock &Block : *Entry.getParent()) {
-      if (!Body.count(&Block))
-        continue;
-      std::set<int64_t> In;
-      if (&Block != &Entry) {
-        In = Universe;
-        for (llvm::BasicBlock *Pred : llvm::predecessors(&Block))
-          for (auto It = In.begin(); It != In.end();) {
-            if (++WorkUsed > limits::kMaxRegistrationEHStateWork)
-              return reject(
-                  "private callback scratch flow exceeds the work budget");
-            if (!Outgoing.at(Pred).count(*It))
-              It = In.erase(It);
-            else
-              ++It;
-          }
-      }
-      Incoming[&Block] = In;
-      for (llvm::Instruction &Instruction : Block) {
-        auto It = Accesses.find(&Instruction);
-        if (It == Accesses.end() || !It->second.Write)
-          continue;
-        const auto &Access = It->second;
-        for (uint64_t I = 0; I < Access.Size; ++I) {
-          if (++WorkUsed > limits::kMaxRegistrationEHStateWork)
+  while (!Pending.empty()) {
+    if (!Charge(1))
+      return reject(
+          "private callback scratch worklist exceeds the work budget");
+    llvm::BasicBlock *Block = Pending.front();
+    Pending.pop_front();
+    Queued.erase(Block);
+    std::set<int64_t> In;
+    if (Block != &Entry) {
+      if (!Charge(Universe.size()))
+        return reject(
+            "private callback scratch state copy exceeds the work budget");
+      In = Universe;
+      for (llvm::BasicBlock *Pred : llvm::predecessors(Block)) {
+        if (!Charge(1))
+          return reject(
+              "private callback scratch predecessors exceed the work budget");
+        for (auto It = In.begin(); It != In.end();) {
+          if (!Charge(1))
             return reject(
-                "private callback scratch stores exceed the work budget");
-          In.insert(Access.Offset + I);
+                "private callback scratch flow exceeds the work budget");
+          if (!Outgoing.at(Pred).count(*It))
+            It = In.erase(It);
+          else
+            ++It;
         }
       }
-      if (Outgoing[&Block] != In) {
-        Outgoing[&Block] = std::move(In);
-        Changed = true;
+    }
+    if (!Charge(In.size()))
+      return reject(
+          "private callback scratch incoming copy exceeds the work budget");
+    Incoming[Block] = In;
+    for (const ScratchAccess &Access : OrderedAccesses[Block]) {
+      if (!Charge(1 + (Access.Write ? Access.Size : 0)))
+        return reject("private callback scratch stores exceed the work budget");
+      if (Access.Write)
+        for (uint64_t I = 0; I < Access.Size; ++I)
+          In.insert(Access.Offset + I);
+    }
+    if (!Charge(In.size() + Outgoing[Block].size()))
+      return reject(
+          "private callback scratch comparison exceeds the work budget");
+    if (Outgoing[Block] != In) {
+      Outgoing[Block] = std::move(In);
+      for (llvm::BasicBlock *Successor : llvm::successors(Block)) {
+        if (!Charge(1))
+          return reject(
+              "private callback scratch successors exceed the work budget");
+        if (Queued.insert(Successor).second)
+          Pending.push_back(Successor);
       }
     }
   }
-  for (llvm::BasicBlock *Block : Body) {
+  for (llvm::BasicBlock *Block : OrderedBlocks) {
+    if (!Charge(1 + Incoming.at(Block).size()))
+      return reject(
+          "private callback scratch final state exceeds the work budget");
     auto Initialized = Incoming.at(Block);
-    for (llvm::Instruction &Instruction : *Block) {
-      auto It = Accesses.find(&Instruction);
-      if (It == Accesses.end())
-        continue;
-      const auto &Access = It->second;
-      for (uint64_t I = 0; I < Access.Size; ++I) {
-        if (++WorkUsed > limits::kMaxRegistrationEHStateWork)
-          return reject(
-              "private callback scratch reads exceed the work budget");
+    for (const ScratchAccess &Access : OrderedAccesses[Block]) {
+      if (!Charge(1 + Access.Size))
+        return reject("private callback scratch reads exceed the work budget");
+      for (uint64_t I = 0; I < Access.Size; ++I)
         if (Access.Write)
           Initialized.insert(Access.Offset + I);
         else if (!Initialized.count(Access.Offset + I))
           return reject(
               "private callback scratch read is not definitely initialized");
-      }
     }
   }
   return llvm::Error::success();
@@ -335,6 +403,8 @@ prepareCallback(llvm::Function &Parent,
   llvm::Module *Module = Parent.getParent();
   if (!Module || Parent.empty() || !Parent.getEntryBlock().getTerminator())
     return reject("parent has no complete entry block");
+  if (Parent.hasGC())
+    return reject("callback depends on a parent GC strategy");
   const llvm::Triple Triple(Module->getTargetTriple());
   const llvm::DataLayout &Layout = Module->getDataLayout();
   if (Triple.getArch() != llvm::Triple::x86 || !Triple.isOSWindows() ||
@@ -347,17 +417,25 @@ prepareCallback(llvm::Function &Parent,
           ? llvm::dyn_cast<llvm::Function>(
                 Parent.getPersonalityFn()->stripPointerCasts())
           : nullptr;
-  if (!Personality || (Personality->getName() != "_except_handler3" &&
-                       Personality->getName() != "_except_handler4"))
+  if (!Personality ||
+      (Personality->getName() != "_except_handler3" &&
+       Personality->getName() != "_except_handler4") ||
+      !Personality->isDeclaration() || !Personality->hasExternalLinkage() ||
+      Personality->getCallingConv() != llvm::CallingConv::C ||
+      !Personality->getReturnType()->isIntegerTy(32) ||
+      !Personality->isVarArg() || Personality->arg_size() != 0)
     return reject("parent has no authenticated EH3/EH4 personality");
   if (Blocks.empty() || Blocks.size() > limits::kMaxRegistrationEHStateWork)
     return reject("callback block set is empty or exceeds the work budget");
   std::set<llvm::BasicBlock *> Body;
-  for (llvm::BasicBlock *Block : Blocks)
+  for (llvm::BasicBlock *Block : Blocks) {
+    if (++WorkUsed > limits::kMaxRegistrationEHStateWork)
+      return reject("callback block identities exceed the work budget");
     if (!Block || Block->getParent() != &Parent ||
         Block == &Parent.getEntryBlock() || !Block->getTerminator() ||
         !Body.insert(Block).second)
       return reject("callback blocks do not have unique parent identities");
+  }
   if (!Body.count(&Entry))
     return reject("callback entry is outside its body");
   for (llvm::BasicBlock *Block : Blocks) {
@@ -397,7 +475,11 @@ prepareCallback(llvm::Function &Parent,
   std::set<llvm::AllocaInst *> PrivateSlots;
   bool NeedsFP = false;
   bool NeedsSP = false;
+  if (Frame.RootSeeds.size() > limits::kMaxRegistrationEHRecords)
+    return reject("callback runtime seeds exceed the work budget");
   for (const X86RegistrationRootSeed &Seed : Frame.RootSeeds) {
+    if (++WorkUsed > limits::kMaxRegistrationEHStateWork)
+      return reject("callback runtime seed checks exceed the work budget");
     llvm::StoreInst *Definition = Seed.Definition;
     if (!Definition || Definition->getParent() != &Entry ||
         Definition->isVolatile() || Definition->isAtomic() ||
@@ -414,10 +496,13 @@ prepareCallback(llvm::Function &Parent,
     if (!PrivateSlots.insert(Slot).second)
       return reject("runtime register seeds share a destination slot");
     for (llvm::User *User : Slot->users()) {
+      if (++WorkUsed > limits::kMaxRegistrationEHStateWork)
+        return reject("callback runtime seed uses exceed the work budget");
       if (User == Definition)
         continue;
       auto *Load = llvm::dyn_cast<llvm::LoadInst>(User);
-      if (!Load || !Body.count(Load->getParent()) || Load->isVolatile() ||
+      if (!Load || Load->getType() != Slot->getAllocatedType() ||
+          !Body.count(Load->getParent()) || Load->isVolatile() ||
           Load->isAtomic() ||
           (Load->getParent() == &Entry && !Definition->comesBefore(Load)))
         return reject(
@@ -532,14 +617,34 @@ prepareCallback(llvm::Function &Parent,
       if (Instruction.isEHPad() || llvm::isa<llvm::InvokeInst>(Instruction) ||
           llvm::isa<llvm::CallBrInst>(Instruction) ||
           llvm::isa<llvm::IndirectBrInst>(Instruction) ||
+          llvm::isa<llvm::ResumeInst>(Instruction) ||
           llvm::isa<llvm::AllocaInst>(Instruction))
         return reject("callback contains an unsupported entry or control form");
       if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction))
         if ((llvm::isa<llvm::CallInst>(Call) &&
              llvm::cast<llvm::CallInst>(Call)->isMustTailCall()) ||
-            Call->hasOperandBundles() ||
+            Call->isInlineAsm() || Call->hasOperandBundles() ||
             Call->hasFnAttr(llvm::Attribute::ReturnsTwice))
           return reject("callback call depends on its original ABI context");
+      if (const auto *Intrinsic =
+              llvm::dyn_cast<llvm::IntrinsicInst>(&Instruction))
+        switch (Intrinsic->getIntrinsicID()) {
+        case llvm::Intrinsic::frameaddress:
+        case llvm::Intrinsic::returnaddress:
+        case llvm::Intrinsic::localaddress:
+        case llvm::Intrinsic::localescape:
+        case llvm::Intrinsic::localrecover:
+        case llvm::Intrinsic::stacksave:
+        case llvm::Intrinsic::stackrestore:
+        case llvm::Intrinsic::vastart:
+        case llvm::Intrinsic::vaend:
+        case llvm::Intrinsic::vacopy:
+        case llvm::Intrinsic::experimental_deoptimize:
+          return reject(
+              "callback intrinsic depends on its original frame or signature");
+        default:
+          break;
+        }
       if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(&Instruction)) {
         HasReturn = true;
         if (Kind == X86RegistrationCallbackKind::Filter &&
@@ -591,6 +696,14 @@ commitCallback(llvm::Function &Parent, const CallbackPlan &Plan,
       CallbackTy, llvm::GlobalValue::InternalLinkage, Name, Module);
   Callback->addFnAttr(llvm::Attribute::NoInline);
   Callback->addFnAttr(llvm::Attribute::OptimizeNone);
+  for (llvm::Attribute::AttrKind Kind :
+       {llvm::Attribute::NullPointerIsValid, llvm::Attribute::StrictFP})
+    if (Parent.hasFnAttribute(Kind))
+      Callback->addFnAttr(Kind);
+  for (llvm::StringRef Name : {"target-cpu", "target-features", "tune-cpu",
+                               "denormal-fp-math", "denormal-fp-math-f32"})
+    if (Parent.hasFnAttribute(Name))
+      Callback->addFnAttr(Parent.getFnAttribute(Name));
   Callback->addFnAttr("frame-pointer", "all");
   Parent.addFnAttr("frame-pointer", "all");
   auto *Setup = llvm::BasicBlock::Create(Context, "recover.frame", Callback);

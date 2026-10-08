@@ -208,9 +208,13 @@ cmake --build build-release --target NeverDRegistrationStateTests \
   NeverDRegistrationEHTests NeverDWindowsRegistrationFrameTests --parallel 4
 build-release/bin/NeverDRegistrationStateTests
 build-release/bin/NeverDRegistrationEHTests
-build-release/bin/NeverDWindowsRegistrationFrameTests
-python3 -m unittest scripts.tests.test_check_windows_registration_eh -v
+NEVERD_REGISTRATION_RUNTIME_OBJECT=/tmp/neverd-frame.obj \
+  build-release/bin/NeverDWindowsRegistrationFrameTests
+python3 -m unittest scripts.tests.test_check_windows_registration_eh \
+  scripts.tests.test_check_windows_registration_frame -v
 python3 scripts/check_windows_registration_eh.py --output build-registration/evidence
+python3 scripts/check_windows_registration_frame.py --object /tmp/neverd-frame.obj \
+  --output build-registration/callback-runtime
 ```
 
 执行器运行固定版本的 MSVC x86 SEH/C++ 样本，覆盖 `/GS` 开关与 O0/O2；Linux 使用 Wine，
@@ -220,7 +224,9 @@ Windows 使用原生 loader。默认报告标记为 `original-runtime`。传入 
 源文件、输出文件和替换入口的 patch 回执，以及替换入口实际执行的证据。缺少运行环境
 或样本会失败。回调帧测试覆盖 PE32 filter/finally 的父帧恢复、既有 escape 索引、
 有界异常指针槽、独立回调栈、原子拒绝，以及实际 i386 COFF scope 表的代码生成；
-这些检查本身不授权原生 patch。CI 的 `windows_eh_only` 手动
+帧执行器保留链接时的 SafeSEH 检查，执行 16 次真实异常，并要求 filter 调用次数和处理结果
+完全符合预期；报告标记为 `generated-x86-callback-abi`。这些检查本身不授权原生 patch。
+CI 的 `windows_eh_only` 手动
 配置还验证 ARM32 交叉目标 PE 生成与重建；这不等于在 Windows ARM32 上执行。
 
 ## 扩展原生支持

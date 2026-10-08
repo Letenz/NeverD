@@ -148,6 +148,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
 
   std::vector<Domain> Incoming(Function.Blocks.size());
   bool ProvenInstallation = false;
+  bool CompleteChainOperations = true;
+  std::map<std::pair<va_t, int>, RegistrationChainAccess> ChainAccesses;
   std::deque<size_t> Work;
   std::vector<bool> Queued(Function.Blocks.size());
   size_t WorkUsed = 0;
@@ -159,6 +161,50 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
     }
     WorkUsed += Amount;
     return true;
+  };
+  std::map<va_t, std::pair<int, LowInstructionBoundary>> Boundaries;
+  std::set<std::pair<va_t, int>> ChainOccurrences;
+  for (const LowBlock &Block : Function.Blocks) {
+    for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries) {
+      if (!Charge(1))
+        break;
+      if (Boundary.Size == 0 || Boundary.Address < Block.StartAddr ||
+          Boundary.Address >= Block.EndAddr ||
+          Boundary.Size > Block.EndAddr - Boundary.Address ||
+          !Boundaries
+               .emplace(Boundary.Address, std::make_pair(Block.Id, Boundary))
+               .second)
+        CompleteChainOperations = false;
+    }
+    for (const LowOp &Op : Block.Ops) {
+      if (!Charge(1))
+        break;
+      if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS &&
+          (Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE) &&
+          (Op.Seq < 0 || !ChainOccurrences.emplace(Op.Addr, Op.Seq).second))
+        CompleteChainOperations = false;
+    }
+    if (Exhausted)
+      break;
+  }
+  auto RecordChainAccess = [&](const LowOp &Op, const LowBlock &Block,
+                               RegistrationChainAccess::Kind Kind) {
+    if (!Charge(1))
+      return;
+    auto Boundary = Boundaries.find(Op.Addr);
+    if (Op.Seq < 0 || Boundary == Boundaries.end() ||
+        Boundary->second.first != Block.Id) {
+      CompleteChainOperations = false;
+      return;
+    }
+    const RegistrationChainAccess Access{
+        Op.Addr, Boundary->second.second.Address + Boundary->second.second.Size,
+        Op.Seq, Kind};
+    auto [It, Inserted] =
+        ChainAccesses.emplace(std::make_pair(Op.Addr, Op.Seq), Access);
+    if (!Inserted && (It->second.AccessKind != Kind ||
+                      It->second.EndAddress != Access.EndAddress))
+      CompleteChainOperations = false;
   };
   auto Merge = [&](size_t Target, const Domain &Source) {
     if (Exhausted || !Charge(Source.Levels.size() + Source.Frame.Cells.size() +
@@ -255,6 +301,22 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
         break;
       Transfer.beginInstruction(Op.Addr);
       const FrameValue Value = Transfer.evaluate(Op, After.Installed);
+      if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1 &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS) {
+        const FrameValue Address = Transfer.read(Op.Inputs[0]);
+        if (!Address.Constant ||
+            overlaps(int32_t(*Address.Constant), Op.Output.Size, 0, 4)) {
+          if (Address.Constant == uint32_t{0} && Op.Output.Size == 4 &&
+              After.Installed != After.Uninstalled)
+            RecordChainAccess(
+                Op, Block,
+                After.Installed
+                    ? RegistrationChainAccess::Kind::ReadInstalledHead
+                    : RegistrationChainAccess::Kind::ReadPreviousHead);
+          else
+            CompleteChainOperations = false;
+        }
+      }
       if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2) {
         const FrameValue Address = Transfer.read(Op.Inputs[0]);
         const FrameValue Stored = Transfer.read(Op.Inputs[1]);
@@ -280,6 +342,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
             After.Uninstalled = false;
             After.Installed = true;
             ProvenInstallation = true;
+            RecordChainAccess(Op, Block,
+                              RegistrationChainAccess::Kind::Install);
           } else if (Address.Constant == uint32_t{0} && Width == 4 && AtEnd &&
                      Stored.PreviousChain && After.Installed &&
                      !After.Uninstalled) {
@@ -287,7 +351,9 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
             After.Unknown = false;
             After.Uninstalled = true;
             After.Installed = false;
+            RecordChainAccess(Op, Block, RegistrationChainAccess::Kind::Remove);
           } else {
+            CompleteChainOperations = false;
             Invalidate();
             After.Installed = After.Uninstalled = true;
           }
@@ -430,6 +496,12 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
   if (!Result.Complete)
     Result.Diagnostics.push_back(
         "registration state has an unproven transition");
+  Result.ChainOperationsComplete = CompleteChainOperations && Result.Complete &&
+                                   Result.CallbackStatesComplete &&
+                                   Result.RegistrationLifetimeComplete;
+  if (Result.ChainOperationsComplete)
+    for (const auto &[Identity, Access] : ChainAccesses)
+      Result.ChainAccesses.push_back(Access);
   return Result;
 }
 

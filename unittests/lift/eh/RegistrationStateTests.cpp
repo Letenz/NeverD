@@ -19,6 +19,7 @@ void emitOp(LowBlock &Block, va_t Address, NdOp Opcode, NdVar Output,
             NdMemoryAddressSpace Space = NdMemoryAddressSpace::Default) {
   LowOp Op;
   Op.Opcode = Opcode;
+  Op.Seq = Block.Ops.size();
   Op.Output = Output;
   Op.Addr = Address;
   Op.MemoryAddressSpace = Space;
@@ -73,6 +74,7 @@ LowFunc makeBranchingFrame() {
                   NdMemoryAddressSpace Space = NdMemoryAddressSpace::Default) {
     LowOp Op;
     Op.Opcode = Opcode;
+    Op.Seq = F.Blocks[0].Ops.size();
     Op.Output = Output;
     Op.Addr = 0x1000;
     Op.MemoryAddressSpace = Space;
@@ -90,6 +92,7 @@ LowFunc makeBranchingFrame() {
   Emit(NdOp::STORE, {}, {NdVar::reg(x86reg::RSP, 4), NdVar::tmp(8, 4)});
   LowOp Install;
   Install.Opcode = NdOp::STORE;
+  Install.Seq = F.Blocks[0].Ops.size();
   Install.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
   Install.addInput(NdVar::cst(0, 8));
   Install.addInput(NdVar::reg(x86reg::RSP, 4));
@@ -324,7 +327,7 @@ TEST(RegistrationState, ReassignedEBPDoesNotKeepTheOriginalSlotIdentity) {
   EXPECT_FALSE(Result.Complete);
 }
 
-TEST(RegistrationState, UnlinkEndsTheLiveRegistration) {
+LowFunc makeUnlinkedFrame() {
   LowFunc F = makeBranchingFrame();
   F.Blocks[0].Succs = {1};
   emitOp(F.Blocks[3], 0x1030, NdOp::INT_ADD, NdVar::tmp(8, 4),
@@ -340,11 +343,55 @@ TEST(RegistrationState, UnlinkEndsTheLiveRegistration) {
   Exit.StartAddr = 0x1040;
   Exit.EndAddr = 0x1041;
   F.Blocks.push_back(Exit);
+  return F;
+}
+
+TEST(RegistrationState, UnlinkEndsTheLiveRegistration) {
+  LowFunc F = makeUnlinkedFrame();
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
   EXPECT_TRUE(Result.RegistrationLifetimeComplete);
+  ASSERT_TRUE(Result.ChainOperationsComplete);
+  ASSERT_EQ(Result.ChainAccesses.size(), 3u);
+  EXPECT_EQ(Result.ChainAccesses[0].AccessKind,
+            RegistrationChainAccess::Kind::ReadPreviousHead);
+  EXPECT_EQ(Result.ChainAccesses[1].AccessKind,
+            RegistrationChainAccess::Kind::Install);
+  EXPECT_EQ(Result.ChainAccesses[2].AccessKind,
+            RegistrationChainAccess::Kind::Remove);
+  EXPECT_EQ(Result.ChainAccesses[2].Address, 0x1030u);
+  EXPECT_EQ(Result.ChainAccesses[2].EndAddress, 0x1037u);
+  EXPECT_EQ(Result.ChainAccesses[2].OpSeq, F.Blocks[3].Ops.back().Seq);
   EXPECT_TRUE(Result.Blocks.back().Levels.empty());
   EXPECT_FALSE(Result.Blocks.back().CanDispatch);
+}
+
+TEST(RegistrationState, MissingLifetimeCannotAuthorizeChainReplacement) {
+  auto Result = analyzeRegistrationStates(makeBranchingFrame());
+  ASSERT_TRUE(Result.Complete);
+  EXPECT_FALSE(Result.RegistrationLifetimeComplete);
+  EXPECT_FALSE(Result.ChainOperationsComplete);
+  EXPECT_TRUE(Result.ChainAccesses.empty());
+}
+
+TEST(RegistrationState, ChainOwnershipRequiresUniqueOperationOccurrences) {
+  LowFunc F = makeUnlinkedFrame();
+  F.Blocks[0].Ops.back().Seq = 3; // Same address/seq as the previous-head load.
+  auto Result = analyzeRegistrationStates(F);
+  ASSERT_TRUE(Result.Complete);
+  ASSERT_TRUE(Result.RegistrationLifetimeComplete);
+  EXPECT_FALSE(Result.ChainOperationsComplete);
+  EXPECT_TRUE(Result.ChainAccesses.empty());
+}
+
+TEST(RegistrationState, ChainOwnershipRequiresUniqueDecodedBoundaries) {
+  LowFunc F = makeUnlinkedFrame();
+  F.Blocks[0].InstructionBoundaries.push_back({0x1000, 6});
+  auto Result = analyzeRegistrationStates(F);
+  ASSERT_TRUE(Result.Complete);
+  ASSERT_TRUE(Result.RegistrationLifetimeComplete);
+  EXPECT_FALSE(Result.ChainOperationsComplete);
+  EXPECT_TRUE(Result.ChainAccesses.empty());
 }
 
 TEST(RegistrationState, AnUnknownChainHeadWriteCannotKeepTheOldScope) {
