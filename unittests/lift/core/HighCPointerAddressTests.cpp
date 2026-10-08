@@ -32683,8 +32683,7 @@ TEST(HighCPointerAddresses, FrameAddressValueDeclaresSlot) {
   Func.Body.push_back(std::move(Ret));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return (uint64_t)frame_base - 8;"), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("return frame_base - 8;"), std::string::npos) << Source;
   expectPortableStore(Source, "int64_t", "- 8", "arg0");
 }
 
@@ -34070,8 +34069,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   // The prologue's -104 and the reload's +112 address the arg0 home at +8.
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
   expectPortableStore(Source, "int32_t", "frame_base + 8", "arg0");
-  EXPECT_NE(Source.find("(uint64_t)frame_base - 104"), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("frame_base - 104"), std::string::npos) << Source;
   const auto Condition = sourceLineContaining(Source, "if ((__builtin_memcpy(");
   EXPECT_NE(Condition.find("v0 + 112"), std::string_view::npos) << Source;
   EXPECT_NE(Condition.find(" == 7)"), std::string_view::npos) << Source;
