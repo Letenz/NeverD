@@ -285,14 +285,16 @@ uint32_t observedAccess(const Capture &C, const ImageRegion &R) {
 /// IAT directory also tells the native loader which pages it may protect.
 /// Writable cells, including appended cells, need no such protection range.
 /// Including their intervening data or code would change program semantics.
-llvm::Expected<data_directory> iatProtection(const Image &In, const Capture &C,
-                                             llvm::ArrayRef<Slot> Slots) {
+llvm::Expected<data_directory>
+iatProtection(const Image &In, llvm::ArrayRef<uint32_t> Permissions,
+              llvm::ArrayRef<Slot> Slots) {
   data_directory Directory{};
+  const auto Regions = In.regions();
   uint64_t Begin = In.extent(), End = 0;
   for (const auto &S : Slots) {
     const auto *Region = In.regionAt(S.RVA);
-    if (!Region ||
-        (observedAccess(C, *Region) & llvm::COFF::IMAGE_SCN_MEM_WRITE))
+    if (!Region || (Permissions[Region - Regions.data()] &
+                    llvm::COFF::IMAGE_SCN_MEM_WRITE))
       continue;
     Begin = std::min(Begin, S.RVA);
     End = std::max(End, S.RVA + 2 * value::PointerSize);
@@ -300,10 +302,11 @@ llvm::Expected<data_directory> iatProtection(const Image &In, const Capture &C,
   if (!End)
     return Directory;
   uint64_t Covered = Begin;
-  for (const auto &Region : In.regions()) {
+  for (size_t I = 0; I < Regions.size(); ++I) {
+    const auto &Region = Regions[I];
     if (Region.RVA + Region.MemorySize <= Covered)
       continue;
-    const uint32_t Access = observedAccess(C, Region);
+    const uint32_t Access = Permissions[I];
     if (Region.RVA > Covered || !(Access & llvm::COFF::IMAGE_SCN_MEM_READ) ||
         (Access &
          (llvm::COFF::IMAGE_SCN_MEM_WRITE | llvm::COFF::IMAGE_SCN_MEM_EXECUTE)))
@@ -373,7 +376,11 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   auto Repairs = planTailImports(In, C, Plan.TailImports, Memory, *Slots);
   if (!Repairs)
     return Repairs.takeError();
-  auto IAT = iatProtection(In, C, *Slots);
+  std::vector<uint32_t> Permissions;
+  Permissions.reserve(Regions.size());
+  for (const auto &Region : Regions)
+    Permissions.push_back(observedAccess(C, Region));
+  auto IAT = iatProtection(In, Permissions, *Slots);
   if (!IAT)
     return IAT.takeError();
   redirectTailImports(*Repairs, *Slots, Memory);
@@ -530,7 +537,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
                               llvm::COFF::IMAGE_SCN_MEM_WRITE |
                               llvm::COFF::IMAGE_SCN_MEM_EXECUTE;
       uint32_t Flags =
-          (H.Sections[I].Characteristics & ~Access) | observedAccess(C, R);
+          (H.Sections[I].Characteristics & ~Access) | Permissions[I];
       if (Placed[I].Size) {
         Flags &= ~uint32_t(llvm::COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA);
         if (!(Flags & llvm::COFF::IMAGE_SCN_CNT_CODE))
