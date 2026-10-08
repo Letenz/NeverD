@@ -4090,7 +4090,8 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
   AfterCxxThrow = NoReturn;
 }
 
-std::string LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
+std::string
+LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
   const auto *Type = Call.getFunctionType();
   std::string Convention;
   switch (Call.getCallingConv()) {
