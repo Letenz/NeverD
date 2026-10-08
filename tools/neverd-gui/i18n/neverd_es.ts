@@ -2057,6 +2057,10 @@ Con signo: %4</translation>
         <source>Collapse library operations</source>
         <translation>Plegar operaciones de biblioteca</translation>
     </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>Se desconoce cómo cargar %1: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2222,6 +2226,116 @@ Con signo: %4</translation>
     <message>
         <source>Defined %1 at %2</source>
         <translation>%1 definido en %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>Cargar un archivo nuevo</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>Cargar el archivo %1 &amp;como</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>El archivo de entrada puede tener alguno de los formatos de la lista</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>&amp;Tipo de procesador</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>La cabecera del archivo determina el procesador</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>Análisis</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>&amp;Activado</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>Si se desactiva, NeverD no analiza el programa en los tiempos de inactividad</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>In&amp;dicador activado</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>Mostrar el progreso del análisis en la línea de estado</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Opciones</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>Car&amp;gar información de depuración</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>Leer el PDB, DWARF o mapa del enlazador que corresponde a la entrada</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>NeverD no puede cargar este archivo: %1</translation>
+    </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>Aparece solo por el nombre del archivo; su contenido no muestra este formato</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>Solo el nombre del archivo sugiere un formato; elija una fila para cargarlo así</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>Procesador: %1</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>Procesadores Intel 80x86</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>Procesadores ARM</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>Máquinas virtuales</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 y posteriores (32 bits)</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 e Intel 64 (64 bits)</translation>
+    </message>
+    <message>
+        <source>ARM and Thumb (AArch32)</source>
+        <translation>ARM y Thumb (AArch32)</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64 (AArch64)</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>Máquina virtual de Ethereum</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
     </message>
 </context>
 </TS>

@@ -104,6 +104,9 @@ cl::SubCommand DecompileCmd("decompile",
                             "Decompile binary to C, Rust, or Solidity");
 cl::SubCommand PatchCmd("patch", "Patch binary with modified IR");
 cl::SubCommand InfoCmd("info", "Show binary metadata summary");
+cl::SubCommand IdentifyCmd("identify",
+                           "List the ways NeverD can load a file, as the load "
+                           "dialog does");
 cl::SubCommand StringsCmd("strings", "Scan binary for strings");
 cl::SubCommand XrefsCmd("xrefs", "Show cross-references for address");
 cl::SubCommand FuncsCmd("funcs", "List discovered functions");
@@ -184,20 +187,19 @@ cl::SubCommand TranslateObjectCmd(
 // Common options (registered with all subcommands)
 //===----------------------------------------------------------------------===//
 
-cl::opt<std::string>
-    InputFile(cl::Positional, cl::desc("<binary>"), cl::Required,
-              cl::sub(LiftCmd), cl::sub(DecompileCmd), cl::sub(PatchCmd),
-              cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd),
-              cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd),
-              cl::sub(HexCmd), cl::sub(ImportsCmd), cl::sub(ExportsCmd),
-              cl::sub(SegmentsCmd), cl::sub(ExportCmd), cl::sub(BookmarksCmd),
-              cl::sub(AnnotateCmd), cl::sub(CallGraphCmd), cl::sub(RenameCmd),
-              cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
-              cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
-              cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
-              cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
-              cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
-              cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd));
+cl::opt<std::string> InputFile(
+    cl::Positional, cl::desc("<binary>"), cl::Required, cl::sub(LiftCmd),
+    cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
+    cl::sub(IdentifyCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd),
+    cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
+    cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
+    cl::sub(ExportCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
+    cl::sub(CallGraphCmd), cl::sub(RenameCmd), cl::sub(FunctionEditsCmd),
+    cl::sub(ItemsCmd), cl::sub(OperandsCmd), cl::sub(SearchCmd),
+    cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
+    cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
+    cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
+    cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd));
 
 cl::opt<std::string> OutputFile("o", cl::desc("Output file"), cl::init(""),
                                 cl::sub(LiftCmd), cl::sub(DecompileCmd),
@@ -797,11 +799,11 @@ ConcolicStringList ConcolicSolverGates(
 
 cl::opt<bool>
     JsonOutput("json", cl::desc("Output as JSON"), cl::sub(InfoCmd),
-               cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd),
-               cl::sub(HexCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd),
-               cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
-               cl::sub(PluginsCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
-               cl::sub(CallGraphCmd), cl::sub(RenameCmd),
+               cl::sub(IdentifyCmd), cl::sub(FuncsCmd), cl::sub(DisasmCmd),
+               cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(StringsCmd),
+               cl::sub(XrefsCmd), cl::sub(ImportsCmd), cl::sub(ExportsCmd),
+               cl::sub(SegmentsCmd), cl::sub(PluginsCmd), cl::sub(BookmarksCmd),
+               cl::sub(AnnotateCmd), cl::sub(CallGraphCmd), cl::sub(RenameCmd),
                cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
                cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
                cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),

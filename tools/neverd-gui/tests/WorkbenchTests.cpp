@@ -6,6 +6,7 @@
 #include "GraphView.h"
 #include "HexView.h"
 #include "ListingView.h"
+#include "LoadFileDialog.h"
 #include "MainWindow.h"
 #include "OutputWindow.h"
 #include "ProjectDatabase.h"
@@ -98,6 +99,27 @@ QByteArray readAll(const QString &path) {
   QFile file(path);
   return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
+/// Accepts every "Load a new file" dialog with its defaults while it lives,
+/// as pressing Enter does.
+class LoadDialogAcceptor {
+public:
+  LoadDialogAcceptor() {
+    QObject::connect(&timer_, &QTimer::timeout, [this] {
+      if (auto *dialog = qobject_cast<LoadFileDialog *>(
+              QApplication::activeModalWidget())) {
+        ++accepted_;
+        dialog->accept();
+      }
+    });
+    timer_.start(10);
+  }
+  int accepted() const { return accepted_; }
+
+private:
+  QTimer timer_;
+  int accepted_ = 0;
+};
+
 bool dropFile(QWidget *target, const QString &path) {
   QMimeData mime;
   mime.setUrls({QUrl::fromLocalFile(path)});
@@ -429,9 +451,12 @@ private slots:
       QVERIFY(target->window() != bench.window.get());
     }
     QVERIFY(target);
+    // A new file asks how to load it first.
+    LoadDialogAcceptor loadDialogs;
     QVERIFY(dropFile(target, path));
     QTRY_COMPARE_WITH_TIMEOUT(bench.session.filePath(), path, OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(loadDialogs.accepted(), 1);
     QVERIFY(QFileInfo::exists(path));
     if (targetName == QLatin1String("command"))
       QVERIFY(static_cast<QLineEdit *>(target)->text().isEmpty());
@@ -475,6 +500,7 @@ private slots:
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
     Workbench bench;
+    LoadDialogAcceptor loadDialogs;
     QTimer drag;
     bool accepted = false;
     connect(&drag, &QTimer::timeout, this, [&] {
@@ -503,6 +529,7 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     bench.session.setComment(Base, QStringLiteral("unsaved comment"));
     QTRY_VERIFY(bench.session.dirty());
+    LoadDialogAcceptor loadDialogs;
     QTimer cancel;
     bool prompted = false;
     connect(&cancel, &QTimer::timeout, this, [&] {

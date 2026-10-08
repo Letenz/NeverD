@@ -895,3 +895,226 @@ TEST(NativeUndefinedIndependence,
 }
 
 } // namespace
+
+namespace {
+void copyInstruction(NativeProvider &P, va_t Address, NdVar Output,
+                     NdVar Input) {
+  SpecializationInstruction I;
+  LowOp O;
+  O.Opcode = NdOp::COPY;
+  O.Addr = Address;
+  O.Output = Output;
+  O.addInput(Input);
+  I.Ops.push_back(O);
+  I.Origin.Address = Address;
+  I.Origin.Size = 1;
+  I.Origin.OpCount = 1;
+  I.Fallthrough.Address = Address + 1;
+  // Synthetic provider evidence; these tests isolate the executor contract.
+  I.NativeBytes = {0x90};
+  I.UndefinedEffects.Coverage = LowUndefinedCoverage::Complete;
+  I.UndefinedEffects.OpCount = 1;
+  I.UndefinedEffects.OperationDigest = lowUndefinedOperationDigest(I.Ops);
+  P.Instructions[Address] = std::move(I);
+}
+} // namespace
+
+TEST(NativeTraceBlocks, StraightLineChunksKeepInstructionAndOperationBudgets) {
+  NativeProvider P;
+  for (unsigned I = 0; I != 97; ++I)
+    copyInstruction(P, 0x100 + I, NdVar::reg(0, 8), NdVar::scalar(I, 8));
+  P.ret(0x161);
+  auto C = contract();
+  C.ReturnRegisters = {{0, 8}};
+  LowIRIndependenceLimits L;
+  const auto Check = [&] {
+    return detail::checkNativeUndefinedIndependence(P, {0x100}, C, L);
+  };
+  auto Good = Check();
+  ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.Instructions, 98U);
+  EXPECT_EQ(Good.Instructions.size(), 98U);
+  EXPECT_EQ(Good.Proof.Certificate->Instructions.size(), 98U);
+  EXPECT_EQ(Good.Proof.BlockVisits, 5U);
+
+  L.MaxPaths = Good.Proof.BlockVisits;
+  ASSERT_TRUE(Check().Proof.proved());
+  --L.MaxPaths;
+  EXPECT_EQ(Check().Proof.Status, LowIRIndependenceStatus::BudgetExceeded);
+  L = {};
+  L.MaxInstructions = 98;
+  ASSERT_TRUE(Check().Proof.proved());
+  --L.MaxInstructions;
+  EXPECT_EQ(Check().Proof.Status, LowIRIndependenceStatus::BudgetExceeded);
+  L = {};
+  L.MaxOperations = Good.Proof.Operations;
+  ASSERT_TRUE(Check().Proof.proved());
+  --L.MaxOperations;
+  EXPECT_EQ(Check().Proof.Status, LowIRIndependenceStatus::BudgetExceeded);
+  L = {};
+  L.MaxBlockVisits = 97; // All original metadata still needs admission.
+  EXPECT_EQ(Check().Proof.Status, LowIRIndependenceStatus::BudgetExceeded);
+}
+
+TEST(NativeTraceBlocks, FinalConditionalUsesItsOwnFallthroughAddress) {
+  for (bool Taken : {false, true}) {
+    SCOPED_TRACE(Taken);
+    NativeProvider P;
+    copyInstruction(P, 0x100, NdVar::reg(0, 8), NdVar::scalar(3, 8));
+    copyInstruction(P, 0x101, NdVar::reg(8, 8), NdVar::scalar(5, 8));
+    P.conditional(0x102, 0x200, Taken);
+    copyInstruction(P, 0x104, NdVar::reg(0, 8), NdVar::scalar(7, 8));
+    P.ret(0x105);
+    copyInstruction(P, 0x200, NdVar::reg(0, 8), NdVar::scalar(11, 8));
+    P.ret(0x201);
+    auto C = contract();
+    C.ReturnRegisters = {{0, 8}};
+    auto R = detail::checkNativeUndefinedIndependence(P, {0x100}, C, {});
+    ASSERT_TRUE(R.Proof.proved()) << R.Proof.Diagnostic;
+    EXPECT_EQ(R.Proof.Instructions, 5U);
+    EXPECT_EQ(R.Proof.Paths, 1U);
+    EXPECT_EQ(R.Proof.BlockVisits, 3U);
+  }
+}
+
+TEST(NativeTraceBlocks, ScratchDefinednessResetsAtEveryInstruction) {
+  NativeProvider P;
+  copyInstruction(P, 0x100, NdVar::tmp(0, 8), NdVar::scalar(7, 8));
+  copyInstruction(P, 0x101, NdVar::reg(0, 8), NdVar::tmp(0, 8));
+  P.ret(0x102);
+  auto C = contract();
+  C.ReturnRegisters = {{0, 8}};
+  auto R = detail::checkNativeUndefinedIndependence(P, {0x100}, C, {});
+  EXPECT_EQ(R.Proof.Status, LowIRIndependenceStatus::Invalid)
+      << R.Proof.Diagnostic;
+  EXPECT_FALSE(R.Proof.Certificate);
+  EXPECT_EQ(R.Proof.InstructionAddress, 0x101U);
+}
+
+TEST(NativeTraceBlocks, EveryInstructionKeepsItsOwnUndefinedEffects) {
+  for (unsigned After : {0U, 1U}) {
+    NativeProvider P;
+    copyInstruction(P, 0x100, NdVar::reg(0, 8), NdVar::scalar(7, 8));
+    copyInstruction(P, 0x101, NdVar::reg(16, 8), NdVar::scalar(11, 8));
+    P.Instructions.at(0x101).UndefinedEffects.Effects.push_back(
+        {After, NdVar::reg(8, 8), 0, 64, {}});
+    copyInstruction(P, 0x102, NdVar::reg(0, 8), NdVar::reg(8, 8));
+    P.ret(0x103);
+    auto C = contract();
+    C.ReturnRegisters = {{0, 8}};
+    auto R = detail::checkNativeUndefinedIndependence(P, {0x100}, C, {});
+    EXPECT_EQ(R.Proof.Status, LowIRIndependenceStatus::Dependent)
+        << R.Proof.Diagnostic;
+    EXPECT_FALSE(R.Proof.Certificate);
+    copyInstruction(P, 0x102, NdVar::reg(0, 8), NdVar::scalar(13, 8));
+    R = detail::checkNativeUndefinedIndependence(P, {0x100}, C, {});
+    ASSERT_TRUE(R.Proof.proved()) << R.Proof.Diagnostic;
+    EXPECT_EQ(R.Proof.Producers, 1U);
+  }
+}
+
+TEST(NativeTraceBlocks, InteriorProjectionUsesItsOwnInstructionEvidence) {
+  NativeProvider P;
+  P.rdssp();
+  copyInstruction(P, 0xff, NdVar::reg(0, 8), NdVar::scalar(7, 8));
+  auto C = contract();
+  C.X64FlagsProfile = InterpreterMachineStateProfile::UserX64NoFaultV1;
+  C.ReturnRegisters = {{0, 8}};
+  auto R = detail::checkNativeUndefinedIndependence(P, {0xff}, C, {});
+  ASSERT_TRUE(R.Proof.proved()) << R.Proof.Diagnostic;
+  EXPECT_EQ(R.Proof.Instructions, 3U);
+  ASSERT_EQ(R.Proof.Certificate->NativeProfileProjections.size(), 1U);
+  EXPECT_EQ(R.Proof.Certificate->NativeProfileProjections[0].InstructionAddress,
+            0x100U);
+}
+
+TEST(NativeTraceBlocks, InteriorLoopCutsStopBeforeGroupedInstructions) {
+  for (bool Guarded : {false, true}) {
+    SCOPED_TRACE(Guarded);
+    NativeProvider P;
+    // A harmless prefix precedes the cut, which is inside the same native
+    // straight-line span as this prefix and the final conditional branch.
+    copyInstruction(P, 0x100, NdVar::reg(8, 8), NdVar::reg(8, 8));
+    P.conditional(0x101, 0x200, false);
+    auto &Condition = P.Instructions.at(0x101);
+    LowOp IsZero;
+    IsZero.Opcode = NdOp::INT_EQUAL;
+    IsZero.Addr = 0x101;
+    IsZero.Output = NdVar::tmp(0, 1);
+    IsZero.addInput(NdVar::reg(0, 8));
+    IsZero.addInput(NdVar::scalar(0, 8));
+    Condition.Ops[0].Inputs[1] = IsZero.Output;
+    Condition.Ops[0].Seq = 1;
+    Condition.Ops.insert(Condition.Ops.begin(), IsZero);
+    Condition.Origin.OpCount = Condition.UndefinedEffects.OpCount = 2;
+    Condition.UndefinedEffects.OperationDigest =
+        lowUndefinedOperationDigest(Condition.Ops);
+    copyInstruction(P, 0x103, NdVar::reg(0, 8), NdVar::reg(0, 8));
+    auto &Decrement = P.Instructions.at(0x103);
+    Decrement.Ops[0].Opcode = NdOp::INT_SUB;
+    Decrement.Ops[0].addInput(NdVar::scalar(1, 8));
+    Decrement.UndefinedEffects.OperationDigest =
+        lowUndefinedOperationDigest(Decrement.Ops);
+    P.indirect(0x104, 0x100);
+    P.ret(0x200);
+
+    LowFunc Candidate;
+    Candidate.Entry = 0x100;
+    for (const auto &[Address, Instruction] : P.Instructions) {
+      LowBlock B;
+      B.Id = Address;
+      B.StartAddr = Address;
+      B.EndAddr = Instruction.Fallthrough.Address;
+      B.Ops = Instruction.Ops;
+      B.InstructionBoundaries.push_back(Instruction.Origin);
+      if (Address == 0x100)
+        B.Succs = {0x101};
+      else if (Address == 0x101)
+        B.Succs = {0x200, 0x103};
+      else if (Address == 0x103)
+        B.Succs = {0x104};
+      else if (Address == 0x104) {
+        B.Succs = {0x100};
+        // Static LowIR identifies an exact CFG edge with BRANCH.
+        B.Ops[0].Opcode = NdOp::BRANCH;
+        B.InstructionBoundaries[0].ControlFlags =
+            LowInstructionControlFlag::Branch;
+        B.InstructionBoundaries[0].Immediate = 0x100;
+      }
+      Candidate.Blocks.push_back(std::move(B));
+    }
+    auto C = contract();
+    C.ReturnRegisters = {{0, 8}};
+    LowIRLoopRefinementPlan Plan;
+    LowIRLoopCutpoint Cut;
+    Cut.OriginalAddress = Cut.CandidateAddress = 0x101;
+    const LowIRLoopLocation Counter{LowIRLoopSpace::Register, 0, 8};
+    const auto Parameter = NdVar::tmp(0, 8);
+    Cut.Inputs.push_back({LowIRLoopSide::Original, Counter, Parameter});
+    Cut.OriginalState.push_back({Counter, Parameter});
+    Cut.CandidateState.push_back({Counter, Parameter});
+    Cut.Predicate = NdVar::scalar(1, 1);
+    Cut.Rank = {Parameter};
+    if (Guarded) {
+      C.EntryConstants.push_back({NdVar::reg(8, 8), 1});
+      Cut.OriginalGuards = {{{LowIRLoopSpace::Register, 8, 8}, 1, 1}};
+      Cut.CandidateGuards = Cut.OriginalGuards;
+    }
+    Plan.Cutpoints.push_back(std::move(Cut));
+    const auto Check = [&] {
+      return detail::checkNativeLowIRRefinement(
+          P, {0x100}, Candidate, C, LowIRRefinementWitness::LiftedBits, {},
+          &Plan);
+    };
+    const auto Good = Check();
+    ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+    EXPECT_GT(Good.Proof.LoopInitiations, 0U);
+    EXPECT_GT(Good.Proof.RankingChecks, 0U);
+    ASSERT_EQ(Candidate.Blocks[2].StartAddr, 0x103U);
+    Candidate.Blocks[2].Ops[0].Inputs[1] = NdVar::scalar(2, 8);
+    const auto Wrong = Check();
+    EXPECT_EQ(Wrong.Proof.Status, LowIRRefinementStatus::Different)
+        << Wrong.Proof.Diagnostic;
+    EXPECT_FALSE(Wrong.Proof.Certificate);
+  }
+}

@@ -308,6 +308,30 @@ free-standing: under X11 a modal dialog takes the utility window type, and
 under Wayland the compositor is not told which dialogs are modal
 (`xdg-dialog-v1`). A modal dialog still blocks the workbench until it closes.
 
+## Loading a new file
+
+Opening a binary NeverD keeps no project for (no `.nddb` beside it and no
+sidecar files) with **File → Open** or by dropping it on the window first shows
+**Load a new file**, as IDA does. The list names every way the engine can read
+the file, the way IDA writes it: `ELF64 for x86-64 (Shared object) [elf]`,
+`Portable executable for AMD64 (PE) [pe]` (listed first), `Mach-O file
+(EXECUTE). ARM64 [macho]`, a row per slice of a universal Mach-O file, `EVM
+bytecode [evm]`, and `Binary file` last. A row NeverD cannot load is shown greyed
+with the reason in its tooltip: a processor NeverD has no lifter for (`NeverD has
+no MIPS processor`), a big-endian ELF file, the other slices of a universal file
+(NeverD loads the host's slice, else the first), or a binary file, which NeverD
+cannot load yet. The first row loadable for the file's contents is chosen, so
+Enter opens the file as before. A row a loader took for the file's name alone
+(EVM bytecode for a `.bin` file whose bytes are not bytecode) is listed but
+never chosen by default. **Processor type** shows the processor the header states; it cannot be
+changed, since every loader takes it from the header. **Analysis → Enabled**
+turns idle-time analysis (function discovery and the reference index) on or off
+for the file, **Indicator enabled** shows or hides the status line's analysis
+indicator, and **Options → Load debug information** reads the PDB, DWARF or
+linker map that belongs to the input. Projects, recent files and files opened
+from the command line skip the dialog. The command line lists the same rows with
+`neverd identify <input>` (`--json` for the engine's `neverd_identify_json`).
+
 ## Databases
 
 **File → Save** (Ctrl+W) packs the project into a NeverD database next to the

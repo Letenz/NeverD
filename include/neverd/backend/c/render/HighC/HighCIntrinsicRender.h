@@ -11,6 +11,7 @@
 ///   HighCIntrinsicRender.cpp      — dispatch: MultiOutputRender,
 ///                                   renderIntrinsicCall
 ///   HighCIntrinsicRenderX86.cpp   — x86 multi-output & intrinsic rendering,
+///                                   vector intrinsics by element kind,
 ///                                   `__fastfail`, GS/FS reads,
 ///                                   hiloCollapseExpr
 ///   HighCIntrinsicRenderARM.cpp   — ARM/AArch64 intrinsic rendering

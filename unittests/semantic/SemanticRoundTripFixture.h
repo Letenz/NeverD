@@ -52,6 +52,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string_view>
 #include <system_error>
@@ -292,6 +293,10 @@ private:
   /// or "" when the source references no mem* builtin.  Linked into both the
   /// original and recompiled images (see compileMemHelper / linkAndExtract).
   std::string MemHelperObj;
+
+  /// The function the link places first in the text, or "" for the inputs'
+  /// own order.
+  std::string LinkFirst;
 
   /// Removes the per-test working directory on every exit path of roundTripImpl
   /// (including GTEST_SKIP / ASSERT early returns).
@@ -582,6 +587,7 @@ private:
     // The output's build contract: plain pointer casts at any address.
     const std::string CompileCmd =
         "clang -target " + EffTarget + " -nostdlib -c -O2 -w" +
+        " -ffunction-sections" +
         " -fno-strict-aliasing -fno-stack-protector -fno-exceptions"
         " -fno-unwind-tables -fno-asynchronous-unwind-tables" +
         ArchFlags + " -o " + neverd::test::shellQuote(HighCObj) + " " +
@@ -597,10 +603,13 @@ private:
     if (!Linkage.Externals.empty())
       GTEST_SKIP() << "HighC output calls " << Linkage.Externals.front()
                    << ", which the test does not link\n  Test: " << TC.Name;
+    // Each function has its own section; the link puts the tested one
+    // first, where emulation starts.
     const std::string Entry = objectLinkage(ObjPath).Entry;
-    if (Entry.empty() || Linkage.Entry != Entry)
-      GTEST_SKIP() << "HighC output does not begin with " << Entry
-                   << " but with " << Linkage.Entry << "\n  Test: " << TC.Name;
+    if (Entry.empty() || !Linkage.Functions.count(Entry))
+      GTEST_SKIP() << "HighC output does not define " << Entry
+                   << "\n  Test: " << TC.Name;
+    LinkFirst = Entry;
     if (MemHelperObj.empty() && objReferencesMemBuiltins(HighCObj))
       MemHelperObj =
           compileMemHelper(EffTarget, IsARM32, TC.ClangTargetOverride);
@@ -949,6 +958,7 @@ private:
   struct ObjectLinkage {
     std::vector<std::string> Externals;
     std::string Entry;
+    std::set<std::string> Functions;
   };
   static ObjectLinkage objectLinkage(const std::string &Path) {
     ObjectLinkage Result;
@@ -981,6 +991,8 @@ private:
       auto Type = Sym.getType();
       auto Value = Sym.getValue();
       auto Section = Sym.getSection();
+      if (Type && *Type == llvm::object::SymbolRef::ST_Function)
+        Result.Functions.insert(N.str());
       if (FirstText && Type && *Type == llvm::object::SymbolRef::ST_Function &&
           Value && *Value == 0 && Section &&
           *Section != (*ObjOrErr)->section_end() && **Section == *FirstText)
@@ -1094,6 +1106,11 @@ private:
                           neverd::test::shellQuote(ObjPath);
     if (!MemHelperObj.empty())
       LinkCmd += " " + neverd::test::shellQuote(MemHelperObj);
+    if (!LinkFirst.empty()) {
+      const auto Order = (Work / (Tag + "_order.txt")).string();
+      std::ofstream(Order) << LinkFirst << "\n";
+      LinkCmd += " --symbol-ordering-file=" + neverd::test::shellQuote(Order);
+    }
     Result.Command = LinkCmd;
     // Preserve bounded recovery from temporary process disruption, but retain
     // the final command result rather than assuming any failure is transient.

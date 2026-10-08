@@ -594,8 +594,8 @@ TEST(HighCStoreForwarding,
       << Body;
   EXPECT_NE(Body.find("= arg0;"), std::string::npos) << Body;
   EXPECT_NE(Body.find("__builtin_memcpy((void *)"), std::string::npos) << Body;
-  EXPECT_NE(Body.find("return (int32_t *)"), std::string::npos) << Body;
-  EXPECT_NE(Body.find("(uint64_t)frame_base - 8));"), std::string::npos)
+  EXPECT_NE(Body.find("return (int32_t *)(frame_base - 8);"),
+            std::string::npos)
       << Body;
 }
 

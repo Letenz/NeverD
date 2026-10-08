@@ -2054,6 +2054,10 @@ Signed: %4</source>
         <source>Collapse library operations</source>
         <translation>摺疊函式庫操作</translation>
     </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>無法確定 %1 的載入方式：%2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2219,6 +2223,116 @@ Signed: %4</source>
     <message>
         <source>Defined %1 at %2</source>
         <translation>已在 %2 定義 %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>載入新檔案</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>將檔案 %1 載入為(&amp;A)</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>輸入檔案可能屬於列出的這些格式</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>處理器類型(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>處理器由檔案標頭決定</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>分析</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>啟用(&amp;E)</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>關閉後，NeverD 不會在閒置時分析程式</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>顯示指示器(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>在狀態列顯示分析進度</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>選項</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>載入除錯資訊(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>讀取屬於輸入檔案的 PDB、DWARF 或連結器對應檔</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>NeverD 無法載入此檔案：%1</translation>
+    </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>僅因檔名而列出；檔案內容並不符合此格式</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>只有檔名提示了格式；如需以該方式載入，請選擇對應的列</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>處理器：%1</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>Intel 80x86 處理器</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>ARM 處理器</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>虛擬機器</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 及更新版本（32 位元）</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 與 Intel 64（64 位元）</translation>
+    </message>
+    <message>
+        <source>ARM and Thumb (AArch32)</source>
+        <translation>ARM 與 Thumb（AArch32）</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64（AArch64）</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>以太坊虛擬機</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
     </message>
 </context>
 </TS>

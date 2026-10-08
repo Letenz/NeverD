@@ -264,13 +264,14 @@ void Session::resetState() {
   functionCount_ = -1;
 }
 
-void Session::open(const QString &path) {
+void Session::open(const QString &path, LoadOptions options) {
   const QFileInfo file(path);
   if (!file.isFile()) {
     setError(tr("Select an existing binary file."));
     return;
   }
   pendingFile_ = file.absoluteFilePath();
+  pendingOptions_ = options;
   if (dirty()) {
     requestTransition(QStringLiteral("open"));
     return;
@@ -352,39 +353,47 @@ void Session::openPending() {
   if (pendingFile_.isEmpty() || opening_ || !connected_)
     return;
   const auto requested = std::exchange(pendingFile_, {});
+  const auto options = std::exchange(pendingOptions_, {});
   opening_ = true;
   error_.clear();
   emit message(tr("Loading %1…").arg(QFileInfo(requested).fileName()), 0);
   emit stateChanged();
   auto *watcher = new QFutureWatcher<PreparedOpen>(this);
-  connect(
-      watcher, &QFutureWatcherBase::finished, this, [this, watcher, requested] {
-        const PreparedOpen prepared = watcher->result();
-        watcher->deleteLater();
-        for (const auto &warning : prepared.warnings)
-          emit message(warning, 1);
-        if (!prepared.error.isEmpty()) {
-          opening_ = false;
-          setError(prepared.error);
-          emit stateChanged();
-          if (!pendingFile_.isEmpty())
-            openPending();
-          return;
-        }
-        sendOpen(requested, prepared.input, prepared.database, prepared.state);
-      });
+  connect(watcher, &QFutureWatcherBase::finished, this,
+          [this, watcher, requested, options] {
+            const PreparedOpen prepared = watcher->result();
+            watcher->deleteLater();
+            for (const auto &warning : prepared.warnings)
+              emit message(warning, 1);
+            if (!prepared.error.isEmpty()) {
+              opening_ = false;
+              setError(prepared.error);
+              emit stateChanged();
+              if (!pendingFile_.isEmpty())
+                openPending();
+              return;
+            }
+            sendOpen(requested, prepared.input, prepared.database,
+                     prepared.state, options);
+          });
   watcher->setFuture(
       QtConcurrent::run([requested] { return prepareOpen(requested); }));
 }
 
 void Session::sendOpen(const QString &requested, const QString &path,
                        const QString &database,
-                       const QHash<QString, QByteArray> &state) {
+                       const QHash<QString, QByteArray> &state,
+                       LoadOptions options) {
   command(
-      QStringLiteral("open"), {{"path", path}},
-      [this, requested, path, database, state](const QJsonObject &payload) {
+      QStringLiteral("open"),
+      {{"path", path},
+       {"debug_info", options.debugInfo},
+       {"analysis", options.analysis}},
+      [this, requested, path, database, state,
+       options](const QJsonObject &payload) {
         opening_ = false;
         resetState();
+        loadOptions_ = options;
         metadata_ = payload;
         filePath_ = path;
         projectPath_ = requested;
@@ -431,6 +440,7 @@ void Session::closeFile() {
   pendingFile_.clear();
   resetState();
   filePath_.clear();
+  loadOptions_ = {};
   emit unloaded();
   restartPending_ = true;
   client_.stop();
@@ -457,6 +467,7 @@ void Session::restart() {
     return;
   }
   pendingFile_ = filePath_;
+  pendingOptions_ = loadOptions_;
   resetState();
   emit unloaded();
   restartPending_ = true;

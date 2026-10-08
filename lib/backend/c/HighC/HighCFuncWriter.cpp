@@ -1117,6 +1117,10 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
     for (const ExprPtr &Op : E.Operands)
       if (Op)
         Walk(*Op, AsAddress);
+    // An indirect call's target is read like an operand: a function pointer
+    // kept in a frame slot is that slot.
+    if (E.IndirectTarget)
+      Walk(*E.IndirectTarget, false);
   };
   std::function<void(const std::vector<HighStmt> &, bool)> WalkNotes;
   WalkNotes = [&](const std::vector<HighStmt> &Stmts, bool InHandler) {
@@ -3932,9 +3936,11 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       if (ReadsState || Assigns(UseStmt->Body) || Assigns(UseStmt->ElseBody))
         continue;
     }
+    // A reinterpretation of one variable at its own width reads as that
+    // variable; a narrowed or extended view keeps its conversion.
     const HighExpr *Fwd = C.Stmt->Val.get();
     if (Fwd && (isParamCopy(*Fwd) || isIntegerViewOfScalar(*Fwd)))
-      if (const HighExpr *Inner = peelIntegerViewOps(Fwd); Inner)
+      if (const HighExpr *Inner = sameWidthVariable(*Fwd))
         Fwd = Inner;
     ValueForward[C.Name] = Fwd;
     // A field value is not a frame-address alias, but that alone must not
@@ -5628,6 +5634,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       for (const ExprPtr &Op : N.Operands)
         if (Op)
           Walk(*Op, AsAddress);
+      // An indirect call reads its target as a value.
+      if (N.IndirectTarget)
+        Walk(*N.IndirectTarget, false);
     };
     Walk(Root, AsAddress);
   };

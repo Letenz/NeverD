@@ -207,8 +207,9 @@ std::string memoryPointerCast(llvm::StringRef Type, llvm::StringRef Address,
                  std::to_string(cMemoryAddressSpace(AddressSpace)) + ")))";
   // addrStr already emits `(uintptr_t)base + imm` for typed pointer offsets.
   // Another integer round-trip is `*(T *)(uintptr_t)((uintptr_t)p + 8)`.
-  // `&member` is already a typed object address; do not recast it.
-  if (Address.starts_with("&"))
+  // `&member` is already a typed object address; do not recast it.  An
+  // element of a byte backing (`&table[8]`) is a byte's address.
+  if (Address.starts_with("&") && !Address.contains('['))
     return Address.str();
   if (Address.contains("(uintptr_t)"))
     return "(" + Qualified + " *)(" + Address.str() + ")";
@@ -442,10 +443,14 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   NeedsUnalignedTypes = false;
   Has256BitInteger = false;
   Has512BitInteger = false;
+  Int128AsBitInt = false;
   // Native AArch64 vector carriers are projected to SVE ACLE types.  x86
   // vector intrinsics use scalar integer carriers at the HighIR boundary.
   const bool ProjectsScalarWideIntegers =
       Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64;
+  // C compilers provide __int128 on targets with 64-bit pointers only.
+  const bool TargetHasInt128 =
+      pointerBytes(Opts.TheArch) >= sizeof(uint64_t);
   auto CollectWideType = [&](const TypeRef &Type) {
     if (const unsigned Bytes = partialIntegerBytes(Type))
       PartialIntegerBytes.emplace(typeToC(Type), Bytes);
@@ -453,6 +458,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
                         Type->Kind == NdTypeKind::Int && Type->Size == 32;
     Has512BitInteger |= ProjectsScalarWideIntegers && Type &&
                         Type->Kind == NdTypeKind::Int && Type->Size == 64;
+    Int128AsBitInt |= !TargetHasInt128 && Type &&
+                      Type->Kind == NdTypeKind::Int && Type->Size == 16;
   };
   std::set<const HighExpr *> Seen;
   bool HideEHRuntimeMemory = false;
@@ -1442,7 +1449,14 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
       forEachExpr(Statement, CheckExpr);
     });
   }
+  // Every spelling of a 16-byte integer, in types and in the intrinsics'
+  // casts alike, takes the C23 type a 32-bit target has.
+  auto WriteInt128Spelling = [&] {
+    if (Int128AsBitInt)
+      OS << "#define __int128 _BitInt(128)\n\n";
+  };
   if (!Opts.EmitIncludes) {
+    WriteInt128Spelling();
     if (NeedsBlockObject)
       OS << "typedef struct _Block_object _Block_object;\n\n";
     if (Has256BitInteger)
@@ -1509,6 +1523,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   if (NeedsFEnvAccess)
     OS << "#pragma STDC FENV_ACCESS ON\n";
   OS << "\n";
+  WriteInt128Spelling();
   if (NeedsBlockObject)
     OS << "typedef struct _Block_object _Block_object;\n\n";
   if (Has256BitInteger)
@@ -1540,8 +1555,9 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   for (auto &F : Funcs)
     collectCallTargets(F.Body, CallTargets);
   // How many bytes of each callee's result the code reads: a call a
-  // statement assigns, its destination's; a call inside an expression may be
-  // read whole.  A function whose address the code only takes reads none.
+  // statement assigns, its destination's; a call inside an expression, its
+  // own type's, or all of it.  A function whose address the code only takes
+  // reads none.
   std::map<std::string, uint16_t> ResultBytes;
   const uint16_t RegisterBytes = pointerBytes(Opts.TheArch);
   for (const HighFunc &F : Funcs)
@@ -1552,7 +1568,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::None) {
           uint16_t &Bytes = ResultBytes[callIdentifier(E)];
           if (&E != Top)
-            Bytes = RegisterBytes;
+            Bytes = std::max<uint16_t>(Bytes,
+                                       E.Type ? E.Type->Size : RegisterBytes);
           else if (S.Kind == StmtKind::Assign && S.Dst)
             Bytes = std::max<uint16_t>(Bytes, S.Dst->Type ? S.Dst->Type->Size
                                                           : S.Dst->Var.Size);
@@ -2037,9 +2054,54 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (auto VA = imageLoadVA(*S.Val))
         ImageLoadVars[varKey(S.Dst->Var)] = *VA;
     });
+  // Symbols size the objects; the largest one at an address is the object.
+  SizedObjects.clear();
+  SizedObjectReach.clear();
+  for (const Symbol &Sym : Opts.Image->Symbols)
+    if (!Sym.IsFunc && Sym.Size && isImageDataAddress(Sym.Addr) &&
+        Sym.Size <= std::numeric_limits<va_t>::max() - Sym.Addr)
+      SizedObjects.emplace_back(Sym.Addr, Sym.Size);
+  llvm::sort(SizedObjects, [](const auto &A, const auto &B) {
+    return A.first != B.first ? A.first < B.first : A.second > B.second;
+  });
+  SizedObjects.erase(std::unique(SizedObjects.begin(), SizedObjects.end(),
+                                 [](const auto &A, const auto &B) {
+                                   return A.first == B.first;
+                                 }),
+                     SizedObjects.end());
+  for (const auto &[Addr, Size] : SizedObjects)
+    SizedObjectReach.push_back(std::max(
+        SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
+        Addr + Size));
+  // The code reaches all of an object through an address that varies or
+  // points into it: the object is declared whole, as bytes.
+  auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written) {
+    const auto Object = sizedObjectAt(Addr);
+    if (!Object)
+      return;
+    noteImageObject(Object->first, Access, Written, Access != nullptr);
+    ImageObject &Obj = ImageObjects[Object->first];
+    Obj.IndexedBytes = std::max(Obj.IndexedBytes, Object->second);
+  };
+  // The constant addresses the code reads or writes at, as opposed to those
+  // it uses as values.
+  std::set<const HighExpr *> AccessAddresses;
+  auto NoteAccessAddress = [&](const HighExpr *Address) {
+    if (const HighExpr *Inner = unwrapIntegerView(Address);
+        Inner && Inner->Kind == ExprKind::Const)
+      AccessAddresses.insert(Inner);
+  };
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
     if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
       noteFunctionAddress(E.ConstVal, Funcs);
+    // An address into an object, not at its start, that the code keeps as a
+    // value is a pointer it walks over the object (`p = &sig[2]; p++`).
+    if (E.Kind == ExprKind::Const && !AccessAddresses.count(&E) &&
+        (E.ConstProvenance == ConstantAddressProvenance::Address ||
+         E.ConstProvenance == ConstantAddressProvenance::DataAddress))
+      if (const auto Object = sizedObjectAt(E.ConstVal);
+          Object && Object->first != E.ConstVal)
+        NoteWhole(E.ConstVal, nullptr, false);
     if (E.Kind == ExprKind::Const && isImageDataAddress(E.ConstVal) &&
         !imageStringLiteral(Opts.Image, E.ConstVal)) {
       bool Named = Opts.UserNames && Opts.UserNames->count(E.ConstVal);
@@ -2057,21 +2119,38 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       }
       // Empty/non-ASCII rdata stays a named object (`&pwstr`), not a hex
       // immediate. Printable C/wchar literals still fold at the call site.
-      if (Named)
+      if (Named) {
         noteImageAddress(E.ConstVal);
+        if (!AccessAddresses.count(&E))
+          ImageObjects[E.ConstVal].AddressTaken = true;
+      }
     }
     if (E.Kind == ExprKind::Load &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         !E.Operands.empty() && E.Operands[0]) {
+      NoteAccessAddress(E.Operands[0].get());
       if (auto VA = constAddress(*E.Operands[0])) {
         const uint16_t Size = E.Type ? E.Type->Size : 0;
         if (!foldReadonlyScalar(*VA, Size))
           noteImageObject(*VA, E.Type, false, true);
       }
     }
+    // A table read or written at a variable offset is the whole table.
+    if ((E.Kind == ExprKind::Load || E.Kind == ExprKind::Store) &&
+        E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        !E.Operands.empty() && E.Operands[0])
+      if (const HighExpr *Base = indexedImageBase(*E.Operands[0]))
+        NoteWhole(Base->ConstVal,
+                  E.Kind == ExprKind::Load
+                      ? E.Type
+                      : (E.Operands.size() > 1 && E.Operands[1]
+                             ? E.Operands[1]->Type
+                             : nullptr),
+                  E.Kind == ExprKind::Store);
     if (E.Kind == ExprKind::Store &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         E.Operands.size() >= 2 && E.Operands[0]) {
+      NoteAccessAddress(E.Operands[0].get());
       if (auto VA = constAddress(*E.Operands[0]))
         noteImageObject(*VA, E.Operands[1] ? E.Operands[1]->Type : nullptr,
                         true, true);
@@ -2080,8 +2159,10 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         E.Operands[0]->Kind == ExprKind::Load &&
         E.Operands[0]->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         !E.Operands[0]->Operands.empty() && E.Operands[0]->Operands[0]) {
-      if (auto VA = constAddress(*E.Operands[0]->Operands[0]))
+      if (auto VA = constAddress(*E.Operands[0]->Operands[0])) {
         noteImageObject(*VA, E.Operands[0]->Type, false);
+        ImageObjects[*VA].AddressTaken = true;
+      }
     }
     // An indirect callee is no printed operand, but the slot it loads is
     // image data all the same, named as the slot the code calls through.
@@ -2111,9 +2192,14 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (S.Kind == StmtKind::Store &&
           S.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           S.StoreAddr) {
+        NoteAccessAddress(S.StoreAddr.get());
         if (auto VA = constAddress(*S.StoreAddr))
           noteImageObject(*VA, S.StoreVal ? S.StoreVal->Type : nullptr, true,
                           true);
+        // A table written at a variable offset is the whole table too.
+        if (const HighExpr *Base = indexedImageBase(*S.StoreAddr))
+          NoteWhole(Base->ConstVal, S.StoreVal ? S.StoreVal->Type : nullptr,
+                    true);
       }
       forEachExpr(S, [&](const ExprPtr &E) {
         if (E)
@@ -2121,10 +2207,57 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       });
     });
 
+  // A pointer slot the image relocates holds an address, not a number: a
+  // table of functions or of data the code reaches through it.  Each target
+  // is declared, data whole, so the slot can name it; a string stays its
+  // literal.  A target table may hold slots of its own.
+  const unsigned PointerBytes = pointerBytes(Opts.TheArch);
+  std::set<va_t> PointerSlots(Opts.Image->CodePtrRelocSlots.begin(),
+                              Opts.Image->CodePtrRelocSlots.end());
+  PointerSlots.insert(Opts.Image->DataPtrRelocSlots.begin(),
+                      Opts.Image->DataPtrRelocSlots.end());
+  auto Extent = [](const ImageObject &Obj) -> uint64_t {
+    return std::max<uint64_t>(
+        Obj.IndexedBytes,
+        Obj.String ? Obj.ArrayBytes : (Obj.Type ? Obj.Type->Size : 0));
+  };
+  std::set<va_t> NotedSlots;
+  for (bool Changed = !PointerSlots.empty(); Changed;) {
+    Changed = false;
+    for (auto &[Addr, Obj] : ImageObjects) {
+      const uint64_t Size = Extent(Obj);
+      for (auto Slot = PointerSlots.lower_bound(Addr);
+           Slot != PointerSlots.end() && *Slot - Addr < Size &&
+           *Slot - Addr + PointerBytes <= Size;
+           ++Slot) {
+        if (!NotedSlots.insert(*Slot).second)
+          continue;
+        Changed = true;
+        const uint8_t *Bytes = Opts.Image->readVA(*Slot, PointerBytes);
+        if (!Bytes)
+          continue;
+        const va_t Target = PointerBytes == 8 ? readLE<uint64_t>(Bytes)
+                                              : readLE<uint32_t>(Bytes);
+        if (Opts.Image->CodePtrRelocSlots.count(*Slot)) {
+          noteFunctionAddress(Target, Funcs);
+          noteFunctionAddress(Target & ~va_t{1}, Funcs);
+        } else if (sizedObjectAt(Target)) {
+          NoteWhole(Target, nullptr, false);
+        }
+        // Only a slot whose target C names gains from holding its address.
+        Obj.HoldsPointers |=
+            Opts.Image->CodePtrRelocSlots.count(*Slot)
+                ? FunctionAddressNames.count(Target) ||
+                      FunctionAddressNames.count(Target & ~va_t{1})
+                : sizedObjectAt(Target) || ImageObjects.count(Target) ||
+                      imageStringLiteral(Opts.Image, Target).has_value();
+      }
+    }
+  }
+
   // A string the code reaches by its address is declared as its array, and a
   // pointer slot the code only loads, holding the address of a read-only
   // string, as that string's pointer.
-  const unsigned PointerBytes = pointerBytes(Opts.TheArch);
   for (auto &[Addr, Obj] : ImageObjects) {
     if (Obj.Written || (Obj.Type && Obj.Type->Kind != NdTypeKind::Int &&
                         Obj.Type->Kind != NdTypeKind::Ptr))
@@ -2170,6 +2303,15 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     }
   }
 
+  // An object whose address the code uses as a value is reached whole
+  // through it, unless its string or pointer declaration holds it already:
+  // the integer that stands in for it holds at most eight of its bytes.
+  for (auto &[Addr, Obj] : ImageObjects)
+    if (Obj.AddressTaken && !Obj.String && !Obj.PointsTo && Obj.Type)
+      if (const auto Object = sizedObjectAt(Addr);
+          Object && Object->first == Addr && Object->second > Obj.Type->Size)
+        Obj.IndexedBytes = std::max(Obj.IndexedBytes, Object->second);
+
   // A C _BitInt(80) object can occupy 16 bytes while the guest x87 value
   // occupies 10. Also, independently declared globals cannot represent two
   // image accesses whose guest address ranges overlap. Project each connected
@@ -2177,16 +2319,39 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   va_t GroupBase = 0, GroupEnd = 0;
   unsigned GroupCount = 0;
   bool NeedsBacking = false;
+  // A backing that starts at a named object takes its name; the object is
+  // only ever printed through the backing.  One that holds word-aligned
+  // relocated pointer slots is words, so each slot can hold an address.
   auto FinishGroup = [&] {
-    if (GroupCount && NeedsBacking)
-      ImageBackings.push_back(
-          {GroupBase, GroupEnd,
-           GlobalIdentifierAllocator.allocate(
-               makeSyntheticGlobalName(GroupBase) + "_bytes", "g")});
+    if (!GroupCount || !NeedsBacking)
+      return;
+    const auto First = ImageObjects.find(GroupBase);
+    ImageBacking Backing{
+        GroupBase, GroupEnd,
+        First != ImageObjects.end() && !First->second.Name.empty()
+            ? First->second.Name
+            : GlobalIdentifierAllocator.allocate(
+                  makeSyntheticGlobalName(GroupBase) + "_bytes", "g"),
+        {}, {}};
+    for (auto Slot = PointerSlots.lower_bound(GroupBase);
+         Slot != PointerSlots.end() && *Slot < GroupEnd; ++Slot) {
+      if ((*Slot - GroupBase) % PointerBytes ||
+          *Slot + PointerBytes > GroupEnd) {
+        Backing.PointerSlots.clear();
+        break;
+      }
+      Backing.PointerSlots.push_back(*Slot);
+    }
+    if (!Backing.PointerSlots.empty()) {
+      Backing.Words = Backing.Name;
+      Backing.Name += ".b";
+    }
+    ImageBackings.push_back(std::move(Backing));
   };
   for (const auto &[Addr, Obj] : ImageObjects) {
-    const uint64_t Size =
-        Obj.String ? Obj.ArrayBytes : (Obj.Type ? Obj.Type->Size : 0);
+    const uint64_t Size = std::max<uint64_t>(
+        Obj.IndexedBytes,
+        Obj.String ? Obj.ArrayBytes : (Obj.Type ? Obj.Type->Size : 0));
     if (!Size || Addr > std::numeric_limits<va_t>::max() - Size)
       llvm::report_fatal_error("HighC image object has invalid extent");
     const va_t End = Addr + Size;
@@ -2202,7 +2367,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       NeedsBacking = true;
     GroupEnd = std::max(GroupEnd, End);
     ++GroupCount;
-    NeedsBacking |= Obj.MemoryWidths.size() > 1;
+    NeedsBacking |= Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes ||
+                    (Obj.HoldsPointers && !Obj.PointsTo &&
+                     Size > PointerBytes);
     for (uint16_t Width : Obj.MemoryWidths)
       NeedsBacking |= Width && (Width & (Width - 1)) != 0;
   }
@@ -2233,6 +2400,8 @@ void HighCWriter::writeImageObjects() {
   if (ImageObjects.empty())
     return;
   for (const ImageBacking &Backing : ImageBackings) {
+    if (!Backing.Words.empty())
+      continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"
          << llvm::utohexstr(Backing.End) << " */\n";
@@ -2254,18 +2423,28 @@ void HighCWriter::writeImageObjects() {
       OS << " }";
     OS << ";\n";
   }
+  // Every object has its name before any initializer names it.
+  for (auto &[Addr, Obj] : ImageObjects) {
+    if (imageBackingAddress(Addr) || !Obj.Name.empty())
+      continue;
+    const bool PointerSlot = Obj.CallSlot ||
+                             Opts.Image->CodePtrRelocSlots.count(Addr) ||
+                             Opts.Image->DataPtrRelocSlots.count(Addr);
+    std::optional<uint64_t> AccessBytes;
+    if (Obj.MemoryWidths.size() == 1)
+      AccessBytes = *Obj.MemoryWidths.begin();
+    Obj.Name = GlobalIdentifierAllocator.allocate(
+        makeDataName(Addr, PointerSlot, AccessBytes), "g");
+  }
+  // A pointer slot that names another object comes after the declarations
+  // of everything it can name.
+  std::vector<va_t> Deferred;
   for (auto &[Addr, Obj] : ImageObjects) {
     if (imageBackingAddress(Addr))
       continue;
-    if (Obj.Name.empty()) {
-      const bool PointerSlot = Obj.CallSlot ||
-                               Opts.Image->CodePtrRelocSlots.count(Addr) ||
-                               Opts.Image->DataPtrRelocSlots.count(Addr);
-      std::optional<uint64_t> AccessBytes;
-      if (Obj.MemoryWidths.size() == 1)
-        AccessBytes = *Obj.MemoryWidths.begin();
-      Obj.Name = GlobalIdentifierAllocator.allocate(
-          makeDataName(Addr, PointerSlot, AccessBytes), "g");
+    if (!Obj.String && !Obj.PointsTo && relocatedSlotInitializer(Addr, Obj)) {
+      Deferred.push_back(Addr);
+      continue;
     }
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Addr)
@@ -2296,7 +2475,109 @@ void HighCWriter::writeImageObjects() {
       OS << " /* " << Note << " */";
     OS << "\n";
   }
+  writePointerBackings(Deferred);
   OS << "\n";
+}
+
+void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
+  // Slots that hold addresses come last: they name the objects above, and
+  // each other by the declarations that come first.
+  const unsigned PointerBytes = pointerBytes(Opts.TheArch);
+  auto WordCount = [&](const ImageBacking &Backing) {
+    return (Backing.End - Backing.Base + PointerBytes - 1) / PointerBytes;
+  };
+  for (const ImageBacking &Backing : ImageBackings) {
+    if (Backing.Words.empty())
+      continue;
+    OS << "union " << Backing.Words << "_words { uintptr_t w["
+       << WordCount(Backing) << "]; unsigned char b["
+       << WordCount(Backing) * PointerBytes << "]; };\n"
+       << "extern union " << Backing.Words << "_words " << Backing.Words
+       << ";\n";
+  }
+  for (const va_t Addr : Deferred) {
+    const ImageObject &Obj = ImageObjects.at(Addr);
+    OS << "extern " << declarationToC(Obj.Type, Obj.Name) << ";\n";
+  }
+  for (const va_t Addr : Deferred) {
+    const ImageObject &Obj = ImageObjects.at(Addr);
+    if (Opts.EmitComments)
+      OS << "/* neverd.image: 0x" << llvm::utohexstr(Addr) << " */\n";
+    OS << declarationToC(Obj.Type, Obj.Name) << " = "
+       << *relocatedSlotInitializer(Addr, Obj) << ";\n";
+  }
+  for (const ImageBacking &Backing : ImageBackings) {
+    if (Backing.Words.empty())
+      continue;
+    if (Opts.EmitComments)
+      OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"
+         << llvm::utohexstr(Backing.End) << " */\n";
+    OS << "union " << Backing.Words << "_words " << Backing.Words
+       << " = { .w = {";
+    for (uint64_t I = 0; I < WordCount(Backing); ++I) {
+      const va_t Slot = Backing.Base + I * PointerBytes;
+      OS << (I ? ", " : " ");
+      if (llvm::is_contained(Backing.PointerSlots, Slot))
+        if (auto Target = relocatedSlotTarget(Slot)) {
+          OS << *Target;
+          continue;
+        }
+      // Bytes past the image's data, and past the group, are zero.
+      uint64_t Value = 0;
+      for (unsigned Byte = 0; Byte < PointerBytes; ++Byte)
+        if (Slot + Byte < Backing.End)
+          if (const uint8_t *Data = Opts.Image->readVA(Slot + Byte, 1))
+            Value |= uint64_t{*Data} << (8 * Byte);
+      OS << (Value ? "0x" + llvm::utohexstr(Value) +
+                         (PointerBytes == 8 ? "ull" : "u")
+                   : std::string("0"));
+    }
+    OS << " } };\n";
+  }
+}
+
+std::optional<std::string>
+HighCWriter::relocatedSlotTarget(va_t Slot) const {
+  const unsigned PointerBytes = pointerBytes(Opts.TheArch);
+  const uint8_t *Bytes = Opts.Image->readVA(Slot, PointerBytes);
+  if (!Bytes)
+    return std::nullopt;
+  const va_t Target =
+      PointerBytes == 8 ? readLE<uint64_t>(Bytes) : readLE<uint32_t>(Bytes);
+  if (Opts.Image->CodePtrRelocSlots.count(Slot)) {
+    // A Thumb function's address carries its mode in bit 0.
+    for (const va_t Entry : {Target, Target & ~va_t{1}})
+      if (auto It = FunctionAddressNames.find(Entry);
+          It != FunctionAddressNames.end())
+        return "(uintptr_t)&" + It->second + (Entry != Target ? " + 1" : "");
+    return std::nullopt;
+  }
+  if (!Opts.Image->DataPtrRelocSlots.count(Slot))
+    return std::nullopt;
+  if (auto Backed = imageBackingAddress(Target))
+    return "(uintptr_t)" + *Backed;
+  if (auto Name = imageObjectName(Target)) {
+    const auto Obj = ImageObjects.find(Target);
+    const bool Array = Obj != ImageObjects.end() && Obj->second.String;
+    return "(uintptr_t)" + std::string(Array ? "" : "&") + *Name;
+  }
+  if (auto Literal = imageStringLiteral(Opts.Image, Target))
+    return "(uintptr_t)" + *Literal;
+  return std::nullopt;
+}
+
+std::optional<std::string>
+HighCWriter::relocatedSlotInitializer(va_t Addr, const ImageObject &Obj) const {
+  const TypeRef &Type = Obj.Type;
+  if (!Type || Type->Size != pointerBytes(Opts.TheArch) ||
+      (Type->Kind != NdTypeKind::Int && Type->Kind != NdTypeKind::Ptr) ||
+      (!Opts.Image->CodePtrRelocSlots.count(Addr) &&
+       !Opts.Image->DataPtrRelocSlots.count(Addr)))
+    return std::nullopt;
+  auto Target = relocatedSlotTarget(Addr);
+  if (!Target || Type->Kind == NdTypeKind::Int)
+    return Target;
+  return "(" + typeToC(Type) + ")" + *Target;
 }
 
 std::optional<std::string>
@@ -2319,9 +2600,14 @@ HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
     if (High)
       Value = "(unsigned __int128)0x" + llvm::utohexstr(High) + "ull << 64 | " +
               Value;
-    return Type->IsSigned ? "__builtin_bit_cast(" + typeToC(Type) + ", " +
-                                "(unsigned __int128)(" + Value + "))"
-                          : Value;
+    if (!Type->IsSigned)
+      return Value;
+    // A _BitInt(128) standing in for __int128 takes no __builtin_bit_cast in
+    // a constant initializer; its conversion wraps the same bits.
+    if (Int128AsBitInt)
+      return "(" + typeToC(Type) + ")(" + Value + ")";
+    return "__builtin_bit_cast(" + typeToC(Type) + ", (unsigned __int128)(" +
+           Value + "))";
   }
   if (!Type || (Type->Size != 1 && Type->Size != 2 && Type->Size != 4 &&
                 Type->Size != 8))

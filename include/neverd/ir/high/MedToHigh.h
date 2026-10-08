@@ -295,6 +295,18 @@ private:
   ExprPtr medOpToExpr(const MedOp &Op);
   ExprPtr medOpToExprImpl(const MedOp &Op);
   ExprPtr medvarToExpr(const MedVar &V);
+  /// i386 ELF PIC (I386PicAddresses.cpp): the values the CFG proved to be the
+  /// GOT base of an unlinked object, at address zero, and the sums of the
+  /// base and terms that are no constants.
+  void collectI386GotBase(const MedFunc &Med);
+  /// The input of \p Op that is the GOT-relative displacement it adds to
+  /// the base, if any.
+  std::optional<unsigned> i386GotDisplacement(const MedOp &Op) const;
+  /// \p Op, which adds its input \p Displacement to the GOT base: the
+  /// address of the data that displacement names.
+  ExprPtr i386GotRelativeAddress(const MedOp &Op, unsigned Displacement);
+  VarKeySet I386GotBase;
+  VarKeySet I386GotRooted;
   /// Recover a target-width memory address from the wider LowIR VA carrier
   /// only when an explicit zero extension proves that no high bits are lost.
   ExprPtr memoryAddressExpr(const MedVar &V, bool InlineDefinition = true);

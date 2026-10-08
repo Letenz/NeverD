@@ -45,6 +45,8 @@ public:
   static bool keepsDataItems();
   /// Whether the engine keeps how the user shows operands' numbers.
   static bool keepsOperandFormats();
+  /// Whether the engine lists the ways it can load a file (identify).
+  static bool identifiesFiles();
 
 private:
   neverd_session_t session_ = nullptr;
@@ -68,6 +70,9 @@ private:
   bool analyzed_ = false;
   bool dirty_ = false;
   bool readOnly_ = false;
+  /// Whether idle time analyzes the open file: function discovery and the
+  /// reference index.  A cross-reference request still builds the index.
+  bool backgroundAnalysis_ = true;
   std::uintmax_t loadedSize_ = 0;
   std::filesystem::file_time_type loadedTime_;
   /// neverd_strings_ex_json options as JSON text, empty for the defaults; a
