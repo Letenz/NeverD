@@ -6155,7 +6155,7 @@ TEST(HighCPointerAddresses, SingleUseCallKeepsForwardedFrameBacking) {
 #include <string.h>
 static uintptr_t saved_home;
 static int step, bad;
-int CRecord_GetRecordName(int64_t self, uint64_t home) {
+int64_t CRecord_GetRecordName(int64_t self, uint64_t home) {
     uint64_t value = UINT64_C(0x9172635445362718);
     if (step++ != 0 || self != 19 || !home) bad = 1;
     saved_home = home;
@@ -6394,7 +6394,7 @@ TEST(HighCPointerAddresses, PostIfElseCallKeepsEarlierValueAndEvaluationPoint) {
       << Source;
   compileAndRunCallOrdering(Source + R"(
 static int step, bad, then_path;
-int old_format(int64_t name) {
+int64_t old_format(int64_t name) {
     if (step++ != 0 || name != 23) bad = 1;
     return -17;
 }
@@ -6406,7 +6406,7 @@ int format_value(int64_t name, int64_t format) {
     if (step++ != 1 || then_path || name != 23 || format != -17) bad = 1;
     return 0;
 }
-int next_format(int64_t name) {
+int64_t next_format(int64_t name) {
     if (step++ != 2 || name != 23) bad = 1;
     return 41;
 }
@@ -22983,7 +22983,7 @@ TEST(HighCPointerAddresses, EmptyIfCallReturnDoesNotLeaveUninitOrUnknownArgs) {
   // have to return their own defined value, and only one path calls out.
   compileAndRunCallOrdering(Source + R"(
 static int calls, bad, result;
-int CxxFrameHandler3(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
+int64_t CxxFrameHandler3(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
     ++calls;
     if (a != 13 || b != 17 || c != 19 || d != 23) bad = 1;
     return result;
@@ -32989,7 +32989,7 @@ TEST(HighCPointerAddresses, BareSiblingReturnMakesATailCallingFunctionVoid) {
   EXPECT_EQ(Source.find("unknown return value"), std::string::npos) << Source;
   compileAndRunCallOrdering(Source + R"(
 static int calls;
-int sub_14000173C(int64_t input) {
+int64_t sub_14000173C(int64_t input) {
     ++calls;
     return (int)input;
 }
@@ -38997,10 +38997,11 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
   const std::string Source = highcOnlyFunction(std::move(*Img), 0x140001050);
   EXPECT_NE(Source.find("RaiseException(0xE0421001"), std::string::npos)
       << Source;
-  EXPECT_NE(
-      Source.find(
-          "extern int RaiseException(int64_t, int64_t, int64_t, int64_t);"),
-      std::string::npos)
+  // kernel32 declares it with these parameters, whose upper halves the
+  // callee does not read.
+  EXPECT_NE(Source.find("extern void RaiseException(uint32_t, uint32_t, "
+                        "uint32_t, const uintptr_t *);"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("t22_1"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v36_0"), std::string::npos) << Source;
@@ -43071,7 +43072,7 @@ TEST(HighCPointerAddresses, ImageFunctionNamedLikeLibcIsNotLibc) {
   Img.Symbols.push_back(GSym);
   const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
   EXPECT_EQ(HighC.find("<setjmp.h>"), std::string::npos) << HighC;
-  EXPECT_NE(HighC.find("extern int setjmp()"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("extern int64_t setjmp()"), std::string::npos) << HighC;
 }
 
 namespace {
@@ -43399,4 +43400,31 @@ TEST(HighCPointerAddresses, ArmEndingInAnEnteredLabelStillFallsThrough) {
   std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), endlessLoop({Arms})};
   EXPECT_FALSE(unwrapLoopsThatNeverRepeat(Body));
   EXPECT_EQ(Body[1].Kind, StmtKind::While);
+}
+
+TEST(HighCPointerAddresses, ConditionalReturnOutOfALoopReturnsItsValue) {
+  // ARM32 `bxgt lr` leaves the loop with the value r0 carries around it.
+  // The return block defines no r0; the join heading the loop does.
+  constexpr va_t Entry = 0x10000;
+  const std::vector<uint8_t> Code = {
+      0x00, 0x10, 0xa0, 0xe3, //       mov r1, #0
+      0x0a, 0x00, 0x51, 0xe3, // loop: cmp r1, #10
+      0x1e, 0xff, 0x2f, 0xc1, //       bxgt lr
+      0x01, 0x00, 0x80, 0xe0, //       add r0, r0, r1
+      0x01, 0x10, 0x81, 0xe2, //       add r1, r1, #1
+      0xfa, 0xff, 0xff, 0xea, //       b loop
+  };
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Img.Arch = Arch::ARM;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Sym = Symbol::makeFunc(Entry);
+  Sym.Name = "sum_to_ten";
+  Img.Symbols.push_back(Sym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("void sum_to_ten"), std::string::npos) << HighC;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + HighC + R"(
+int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
+)");
 }

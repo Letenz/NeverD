@@ -391,6 +391,16 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     return Result + ")";
   }
   if (E.Op == NdOp::SELECT && E.Operands.size() == 3) {
+    // C converts both arms to the type their printed types share, which an
+    // unsigned local would make unsigned under a signed select: each integer
+    // arm takes the select's own type.
+    if (E.Type && E.Type->Kind == NdTypeKind::Int && !E.Type->IsEnum &&
+        E.Operands[1] && E.Operands[2])
+      return typedText(E,
+                       "(" + exprStr(*E.Operands[0]) + " ? " +
+                           integerView(*E.Operands[1], E.Type, 3) + " : " +
+                           integerView(*E.Operands[2], E.Type, 3) + ")",
+                       E.Type->Size, E.Type->IsSigned);
     return "(" + exprStr(*E.Operands[0]) + " ? " + exprStr(*E.Operands[1]) +
            " : " + exprStr(*E.Operands[2]) + ")";
   }
@@ -1104,6 +1114,15 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                ")" + exprStr(*Op, 99);
       if (Op->Kind == ExprKind::Const && Op->ConstVal == 0)
         return std::string("0");
+      // What the text certainly prints as decides over the IR's type: a
+      // declared local or parameter can read in the other signedness.
+      if (Op->Kind == ExprKind::Var || Op->Kind == ExprKind::Phi) {
+        std::string Text = exprStr(*Op, 99);
+        if (const auto Printed = printedIntegerType(*Op))
+          return Printed->first == CmpSize && Printed->second == NeedsSignedCast
+                     ? Text
+                     : "(" + UTy + ")" + Text;
+      }
       if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&
           Op->Type->Size == CmpSize && Op->Type->IsSigned == NeedsSignedCast)
         return exprStr(*Op, 99);
