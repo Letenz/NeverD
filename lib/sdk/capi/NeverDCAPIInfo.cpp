@@ -19,6 +19,7 @@
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
+#include "neverd/support/FilePath.h"
 #include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -354,6 +355,18 @@ const char *neverd_strings_json(neverd_session_t Sess, int MinLength) {
   return dupStr(Buf);
 }
 
+/// One row of neverd_strings_ex_json(), keys in the order a json::Object
+/// prints them.
+static void writeStringRow(llvm::json::OStream &J, const ImageString &String) {
+  J.object([&] {
+    J.attribute("addr", vaHex(String.Address));
+    J.attribute("chars", static_cast<int64_t>(String.Chars));
+    J.attribute("encoding", strings::encodingName(String.Kind));
+    J.attribute("length", static_cast<int64_t>(String.Bytes));
+    J.attribute("value", String.Text);
+  });
+}
+
 const char *neverd_strings_ex_json(neverd_session_t Sess,
                                    const char *OptionsJson) {
   auto *S = toSession(Sess);
@@ -373,16 +386,102 @@ const char *neverd_strings_ex_json(neverd_session_t Sess,
   llvm::json::OStream J(OS);
   J.array([&] {
     for (const ImageString &String : imageStrings(*S, Options))
-      J.object([&] {
-        J.attribute("addr", vaHex(String.Address));
-        J.attribute("chars", static_cast<int64_t>(String.Chars));
-        J.attribute("encoding", strings::encodingName(String.Kind));
-        J.attribute("length", static_cast<int64_t>(String.Bytes));
-        J.attribute("value", String.Text);
-      });
+      writeStringRow(J, String);
   });
   OS.flush();
   return dupStr(Buf);
+}
+
+const char *neverd_strings_page_json(neverd_session_t Sess,
+                                     const char *OptionsJson,
+                                     neverd_va_t FirstAddr, int MaxRows) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  strings::ScanOptions Options;
+  if (const auto Error = parseStringOptions(OptionsJson, Options);
+      !Error.empty()) {
+    S->setError(Error);
+    return nullptr;
+  }
+  constexpr int MaxRowsPerPage = 65536;
+  const size_t Limit =
+      static_cast<size_t>(std::clamp(MaxRows, 1, MaxRowsPerPage));
+  // The scan runs once per options; a page reads it from its cursor.
+  static const std::vector<ImageString> None;
+  const auto &Strings = S->Loaded ? imageStrings(*S, Options) : None;
+  const auto Begin =
+      std::lower_bound(Strings.begin(), Strings.end(), FirstAddr,
+                       [](const ImageString &String, va_t Value) {
+                         return String.Address < Value;
+                       });
+  // A page never splits the strings that start at one address.
+  auto End = Begin;
+  for (size_t Count = 0; End != Strings.end(); ++End, ++Count)
+    if (Count >= Limit && End->Address != std::prev(End)->Address)
+      break;
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  J.object([&] {
+    J.attribute("next_addr", End != Strings.end()
+                                 ? llvm::json::Value(vaHex(End->Address))
+                                 : llvm::json::Value(nullptr));
+    J.attributeArray("strings", [&] {
+      for (auto It = Begin; It != End; ++It)
+        writeStringRow(J, *It);
+    });
+  });
+  OS.flush();
+  return dupStr(Buf);
+}
+
+const char *neverd_string_at(neverd_session_t Sess, neverd_va_t Addr,
+                             const char *OptionsJson) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return nullptr;
+  }
+  strings::ScanOptions Options;
+  Options.MinLength = 1;
+  if (const auto Error = parseStringOptions(OptionsJson, Options);
+      !Error.empty()) {
+    S->setError(Error);
+    return nullptr;
+  }
+  // A string that does not end within this many bytes is not read.
+  constexpr size_t Window = 65536;
+  const Segment *Seg = S->Img.getSegmentFor(Addr);
+  const uint64_t Offset = Seg && Addr >= Seg->VA ? Addr - Seg->VA : 0;
+  if (!Seg || Addr < Seg->VA || Offset >= Seg->Data.size()) {
+    S->setError("no initialized data at " + vaHex(Addr));
+    return nullptr;
+  }
+  const llvm::ArrayRef<uint8_t> Bytes(
+      Seg->Data.data() + Offset,
+      std::min<size_t>(Window, Seg->Data.size() - static_cast<size_t>(Offset)));
+  std::optional<strings::FoundString> First;
+  strings::scan(Bytes, Options, [&](strings::FoundString &&Found) {
+    if (!First)
+      First = std::move(Found);
+  });
+  if (!First || First->Offset != 0) {
+    S->setError("no string starts at " + vaHex(Addr));
+    return nullptr;
+  }
+  llvm::json::Object Row{
+      {"addr", vaHex(Addr)},
+      {"chars", static_cast<int64_t>(First->Chars)},
+      {"encoding", strings::encodingName(First->Kind)},
+      {"length", static_cast<int64_t>(First->Bytes)},
+      {"unit", static_cast<int64_t>(strings::encodingUnitBytes(First->Kind))},
+      {"value", std::move(First->Text)}};
+  return dupStr(jsonToString(llvm::json::Value(std::move(Row))));
 }
 
 const char *neverd_string_encodings_json(void) {
@@ -485,46 +584,59 @@ const char *neverd_sections_json(neverd_session_t Sess) {
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
+/// The symbols as rows, streamed in the sorted key order a json::Object
+/// prints (building an object tree per symbol costs more than reading the
+/// symbols).  The user's names replace the symbols' and name, in a row of
+/// their own, an address no symbol names; \p Data keeps data alone.
+static const char *symbolRows(Session &S, bool Data) {
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  const auto Row = [&](va_t Addr, llvm::StringRef Name, uint64_t Size) {
+    J.object([&] {
+      J.attribute("addr", vaHex(Addr));
+      J.attribute("name", jsonSafeText(Name));
+      J.attribute("size", static_cast<int64_t>(Size));
+    });
+  };
+  std::set<va_t> Renamed;
+  J.array([&] {
+    for (const auto &Sym : S.Img.Symbols) {
+      if (Data && Sym.IsFunc)
+        continue;
+      const auto Rename = S.Renames.find(Sym.Addr);
+      if (Rename == S.Renames.end()) {
+        Row(Sym.Addr, Sym.Name, Sym.Size);
+        continue;
+      }
+      Renamed.insert(Sym.Addr);
+      Row(Sym.Addr, Rename->second, Sym.Size);
+    }
+    for (const auto &[Addr, Name] : S.Renames) {
+      if (Renamed.count(Addr) ||
+          (Data && llvm::any_of(S.Functions, [&](const auto &F) {
+             return F.Entry == Addr;
+           })))
+        continue;
+      Row(Addr, Name, 0);
+    }
+  });
+  OS.flush();
+  return dupStr(Buf);
+}
+
 const char *neverd_symbols_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S->Loaded)
     return dupStr("[]");
-
-  // Streamed in the sorted key order a json::Object prints: building an
-  // object tree per symbol costs more than reading the symbols.
-  std::string Buf;
-  llvm::raw_string_ostream OS(Buf);
-  llvm::json::OStream J(OS);
-  J.array([&] {
-    for (const auto &Sym : S->Img.Symbols)
-      J.object([&] {
-        J.attribute("addr", vaHex(Sym.Addr));
-        J.attribute("name", jsonSafeText(Sym.Name));
-        J.attribute("size", static_cast<int64_t>(Sym.Size));
-      });
-  });
-  OS.flush();
-  return dupStr(Buf);
+  return symbolRows(*S, false);
 }
 
 const char *neverd_data_symbols_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S->Loaded)
     return dupStr("[]");
-  std::string Buf;
-  llvm::raw_string_ostream OS(Buf);
-  llvm::json::OStream J(OS);
-  J.array([&] {
-    for (const auto &Sym : S->Img.Symbols)
-      if (!Sym.IsFunc)
-        J.object([&] {
-          J.attribute("addr", vaHex(Sym.Addr));
-          J.attribute("name", jsonSafeText(Sym.Name));
-          J.attribute("size", static_cast<int64_t>(Sym.Size));
-        });
-  });
-  OS.flush();
-  return dupStr(Buf);
+  return symbolRows(*S, true);
 }
 
 const char *neverd_relocs_json(neverd_session_t Sess) {
@@ -559,7 +671,7 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   Root["instruction_mode"] = getInstructionModeName(S->Img.Mode);
   Root["format"] = S->Img.getFormatName();
   Root["bits"] = S->Img.is64Bit() ? 64 : 32;
-  Root["file_path"] = jsonSafeText(S->FilePath.string());
+  Root["file_path"] = jsonSafeText(pathToUTF8(S->FilePath));
 
   std::error_code EC;
   auto FileSz = std::filesystem::file_size(S->FilePath, EC);
@@ -710,8 +822,8 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
   llvm::json::Object Root;
 
   llvm::json::Object File;
-  File["path"] = jsonSafeText(S->FilePath.string());
-  File["name"] = jsonSafeText(S->FilePath.filename().string());
+  File["path"] = jsonSafeText(pathToUTF8(S->FilePath));
+  File["name"] = jsonSafeText(pathToUTF8(S->FilePath.filename()));
   File["format"] = S->Img.getFormatName();
   File["arch"] = getArchName(S->Img.Arch);
   File["instruction_mode"] = getInstructionModeName(S->Img.Mode);

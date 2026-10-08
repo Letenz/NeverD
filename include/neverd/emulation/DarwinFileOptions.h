@@ -171,8 +171,9 @@ struct DarwinFileOptions {
   std::set<std::string> ExchangeableDirectories;
   /// Fixed initial symbolic-link names and exact nonempty, non-NUL target
   /// bytes. Targets need not exist and are never normalized at admission.
-  /// Namespace mutation grants cannot coexist with a nonempty link catalogue;
-  /// regular-file content mutations remain owned by the actual target file.
+  /// Mutable directories cannot contain fixed link names. Separate mutable
+  /// domains may contain their targets; lookup observes current target names.
+  /// Content mutations, descriptors and mappings retain the actual target.
   std::map<std::string, std::vector<uint8_t>> SymbolicLinks;
 };
 } // namespace neverd::emulation

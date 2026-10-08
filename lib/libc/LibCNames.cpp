@@ -19,6 +19,7 @@
 #include "neverd/libc/LibCExceptionRuntime.h"
 #include "neverd/libc/LibCFcntl.h"
 #include "neverd/libc/LibCFenv.h"
+#include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCInttypes.h"
 #include "neverd/libc/LibCLink.h"
 #include "neverd/libc/LibCLocale.h"
@@ -48,6 +49,7 @@
 #include "neverd/libc/LibCUtime.h"
 #include "neverd/libc/LibCWchar.h"
 #include "neverd/libc/LibCWctype.h"
+#include "neverd/libc/WindowsCRT.h"
 #include "neverd/libc/arpa/LibCInet.h"
 #include "neverd/libc/sys/LibCAuxv.h"
 #include "neverd/libc/sys/LibCEpoll.h"
@@ -164,6 +166,19 @@ void registerArity(std::unordered_map<std::string_view, LibCArity> &Map,
     Map.emplace(E.Name, E.Arity);
 }
 
+/// The arity of each non-variadic routine of \p Prototypes, keyed as the
+/// arity tables key a name: without its leading underscores.  Every parameter
+/// fills an integer or pointer argument.
+template <size_t N>
+void registerPrototypeArity(
+    std::unordered_map<std::string_view, LibCArity> &Map,
+    const std::array<LibCPrototype, N> &Prototypes) {
+  for (const LibCPrototype &Prototype : Prototypes)
+    if (!Prototype.Variadic)
+      Map.emplace(std::string_view(stripLeadingUnderscores(Prototype.Name)),
+                  LibCArity{static_cast<int>(Prototype.ParamCount), 0});
+}
+
 // Curated arity table for common NON-variadic libc functions whose signature is
 // fixed and well known.  Used to bound argument recovery for an external call
 // (the heuristic register/FP/stack scans otherwise over-collect: a dead
@@ -187,12 +202,42 @@ struct ArityRegistry {
     registerArity(Map, kTimeArity);
     registerArity(Map, kExceptionRuntimeArity);
     registerArity(Map, kSetjmpArity);
-    registerArity(Map, kStartupArity);
+    // The Windows C runtime's names are those of other runtimes' routines
+    // once their underscores go (`_lock`, `terminate`): its prototypes apply
+    // by object format alone.
+    registerPrototypeArity(Map, kStartupPrototypes);
+    registerPrototypeArity(Map, kItaniumRuntimePrototypes);
+    registerPrototypeArity(Map, kFortifyPrototypes);
   }
 };
 
 const ArityRegistry &getArityRegistry() {
   static const ArityRegistry Instance;
+  return Instance;
+}
+
+template <size_t N>
+void registerPrototypes(
+    std::unordered_map<std::string_view, const LibCPrototype *> &Map,
+    const std::array<LibCPrototype, N> &Prototypes) {
+  for (const LibCPrototype &Prototype : Prototypes)
+    Map.emplace(Prototype.Name, &Prototype);
+}
+
+/// The prototypes of the routines no standard header declares, by C name.
+struct PrototypeRegistry {
+  std::unordered_map<std::string_view, const LibCPrototype *> Map;
+
+  PrototypeRegistry() {
+    registerPrototypes(Map, kStartupPrototypes);
+    registerPrototypes(Map, kItaniumRuntimePrototypes);
+    registerPrototypes(Map, kFortifyPrototypes);
+    registerPrototypes(Map, kWindowsCRTPrototypes);
+  }
+};
+
+const PrototypeRegistry &getPrototypeRegistry() {
+  static const PrototypeRegistry Instance;
   return Instance;
 }
 
@@ -218,13 +263,16 @@ std::optional<LibCArity> libcArity(std::string_view Name) {
   return It->second;
 }
 
-const LibCPrototype *libcPrototypeForSymbol(std::string_view Name) {
-  while (!Name.empty() && Name.front() == '_')
-    Name.remove_prefix(1);
-  for (const LibCPrototype &Prototype : kStartupPrototypes)
-    if (Prototype.Name == Name)
-      return &Prototype;
-  return nullptr;
+const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format) {
+  const auto &Map = getPrototypeRegistry().Map;
+  const auto It = Map.find(Name);
+  if (It == Map.end())
+    return nullptr;
+  const LibCPrototype *Prototype = It->second;
+  return Prototype->Format == BinaryFormat::Unknown ||
+                 Prototype->Format == Format
+             ? Prototype
+             : nullptr;
 }
 
 std::optional<LibCArity> libcArityForSymbol(std::string_view Name) {

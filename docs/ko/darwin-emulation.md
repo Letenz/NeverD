@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 21441b8b14985fbac413a4bb78aa57c696ad5eb07b70d439200550bdc6ce27a4 -->
+<!-- i18n-source: fab8f746a3afad0cc7aeaee21f82d848bf0bad20c33a1f8140b1f3c821e75281 -->
 
 [← 문서 목록](README.md)
 
@@ -740,7 +740,9 @@ stat64/open/access/truncate/chdir는 끝 링크를 따르고 lstat64/readlink는
 
 readlink(58)는 부호 있는 하위32비트count, readlinkat(473)는 전체size_t이며int를 반환합니다. INT32_MAX 초과는 경로/FD보다 먼저EINVAL22. min(count,대상 길이)만 복사하고NUL을 추가하지 않으며 실제 범위만 검사합니다.0길이도 경로/유형 검사 후 출력 포인터를 무시합니다. 비링크EINVAL22, 모두 쓰기 불가EFAULT14, 부분 쓰기는 복사 전에 중지합니다. 전송/메모리 예산 오류를 전달합니다.
 
-비어 있지 않은 링크는 MutableDirectories/RemovableDirectories/MovableDirectories/ExchangeableDirectories/SwapRenameDirectories/CreationPolicy와 전역적으로 함께 사용할 수 없습니다. 고정 WritableFiles/MutationPolicies는 최종 일반 파일을 변경할 수 있습니다. 링크unlink/rename은 효과 전에 중지합니다. 동적/하드 링크,ACL,가변 링크 이름 공간은 미지원입니다. ARM64 macOS 독립 프로브는 기존5초 내189관찰/115전체 버퍼를 통과했으며 물리iOS/Intel HVF/전체OS를 입증하지 않습니다.
+고정 링크 이름과 원시 대상 바이트는 변하지 않습니다. MutableDirectories는 루트 또는 고정 링크 이름의 경로 구간 조상이 될 수 없으며 /work는 /workspace/link를 포함하지 않습니다. 별도의 가변 디렉터리에서 대상 이름을 실행 중 생성, 이동, 삭제, 교체할 수 있습니다. 기존 부모, 마운트, 별칭, 플래그, SWAP 지원, 생성 정책 검증은 유지되며 새 inode는 보호 링크를 포함한 모든 메타데이터/스냅샷 inode보다 커야 합니다. 고정 WritableFiles/MutationPolicies는 최종 일반 파일을 변경할 수 있습니다. 링크unlink/rename은 효과 전에 중지합니다. 동적/하드 링크,ACL,가변 링크 이름 공간은 미지원입니다. ARM64 macOS 독립 프로브는 기존5초 내189관찰/115전체 버퍼를 통과했으며 물리iOS/Intel HVF/전체OS를 입증하지 않습니다.
+
+추가 ARM64 macOS DELETE/RENAME 60개 제어는 기존5초 내 전체 stat 버퍼, 변경 전후 이름 공간과 유지 FD/CWD 식별을 기록합니다. 끝 슬래시는 링크를 펼쳐 실제 대상을 변경할 수 있고 NOFOLLOW_ANY는 필요한 펼침을 ELOOP로 거부합니다. SDK 없는 symbolic-link-mutations는 생성, 없는 대상, 이동/삭제/교체, 유지 CWD 부모, FD 종료 전 원래 파일10바이트 전체와 종료 후에도 유지된 매핑10바이트 전체를 검사합니다. 물리 iOS나 네이티브 Intel 증거는 아닙니다.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"symbolic_links":[{"path":"/link","target_hex":"64617461"}],"working_directory":"/"}}

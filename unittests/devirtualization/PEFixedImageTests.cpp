@@ -385,6 +385,39 @@ TEST_F(PEFixedImageTest, MalformedRelocationTailNeverPublishesAPrefix) {
   EXPECT_TRUE(Image.DataPtrRelocSlots.empty());
 }
 
+TEST_F(PEFixedImageTest, LegacyWordPackedBlocksLoadWithoutFixedImageProof) {
+  auto Bytes = fixture();
+  // Two ten-byte blocks have complete DIR64 records, but the second block
+  // starts at a WORD boundary, as in older Go linker output.
+  directory(Bytes, BASE_RELOCATION_TABLE, 0x4000, 20);
+  put32(Bytes, Reloc + 4, 10);
+  put32(Bytes, Reloc + 10, 0x2000);
+  put32(Bytes, Reloc + 14, 10);
+  put16(Bytes, Reloc + 18, (IMAGE_REL_BASED_DIR64 << 12) | 0x40);
+  auto Loaded = load(Bytes);
+  ASSERT_TRUE(static_cast<bool>(Loaded)) << llvm::toString(Loaded.takeError());
+  EXPECT_EQ(Loaded->Raw, Bytes);
+  ASSERT_EQ(Loaded->BaseRelocations.size(), 2u);
+  EXPECT_EQ(Loaded->BaseRelocations[0].Address, Base + 0x1002);
+  EXPECT_EQ(Loaded->BaseRelocations[1].Address, Base + 0x2040);
+  ASSERT_EQ(Loaded->LoadDiagnostics.size(), 1u);
+  EXPECT_EQ(Loaded->LoadDiagnostics[0].Code, "pe.relocations_word_aligned");
+  auto View = PEFixedImageView::create(*Loaded);
+  ASSERT_FALSE(static_cast<bool>(View));
+  EXPECT_NE(llvm::toString(View.takeError()).find("relocation"),
+            std::string::npos);
+}
+
+TEST_F(PEFixedImageTest, WordPackingDoesNotAdmitOddOrTruncatedBlocks) {
+  for (const uint32_t Size : {9u, 25u}) {
+    auto Bytes = fixture();
+    put32(Bytes, Reloc + 12 + 4, Size);
+    auto Loaded = load(Bytes);
+    ASSERT_FALSE(static_cast<bool>(Loaded));
+    llvm::consumeError(Loaded.takeError());
+  }
+}
+
 TEST_F(PEFixedImageTest, HighAdjPayloadIsNeverMisreadAsAnotherRelocation) {
   auto Bytes = fixture();
   directory(Bytes, BASE_RELOCATION_TABLE, 0x4000, 12);

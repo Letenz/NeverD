@@ -18,6 +18,8 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/LLVMName.h"
+#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
@@ -1528,6 +1530,27 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
     } else {
       OS << getName(Load) << " = *(" << Pointer << ");\n";
     }
+    return;
+  }
+  if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
+      Load && !Load->isSimple() &&
+      isLLVMX86SegmentedAddressSpace(Load->getPointerAddressSpace())) {
+    if (Load->isAtomic())
+      throw std::runtime_error("unsupported atomic segmented C load");
+    auto Segment = renderX86SegmentedLoad(
+        Opts.TheArch, *Load,
+        [this](const llvm::Value *Value) { return valueStr(Value); });
+    if (Segment.empty())
+      throw std::runtime_error(
+          "unsupported segmented C load width or architecture");
+    if (Load->getType()->isPointerTy())
+      Segment =
+          "(" + typeToCLLVM(Load->getType()) + ")(uintptr_t)(" + Segment + ")";
+    // Ordered loads receive a materialized ValueTexts name. That name is
+    // their future use, not a replacement for the effect defining it.
+    emitIndent(Indent);
+    OS << getName(Load) << " = " << Segment << ";\n";
+    HasCIntrinsics = true;
     return;
   }
   if (Analysis.Inlinable.count(&Inst))
@@ -4090,6 +4113,48 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
   AfterCxxThrow = NoReturn;
 }
 
+std::string
+LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
+  const auto *Type = Call.getFunctionType();
+  std::string Convention;
+  switch (Call.getCallingConv()) {
+  case llvm::CallingConv::C:
+    break;
+  case llvm::CallingConv::Win64:
+    Convention = "__attribute__((ms_abi)) ";
+    break;
+  case llvm::CallingConv::X86_64_SysV:
+    Convention = "__attribute__((sysv_abi)) ";
+    break;
+  case llvm::CallingConv::X86_StdCall:
+    Convention = "__attribute__((stdcall)) ";
+    break;
+  case llvm::CallingConv::X86_FastCall:
+    Convention = "__attribute__((fastcall)) ";
+    break;
+  default:
+    throw std::runtime_error("unsupported preserved indirect-call convention");
+  }
+  std::string Parameters;
+  for (auto *Parameter : Type->params()) {
+    if (!Parameters.empty())
+      Parameters += ", ";
+    Parameters += typeToCLLVM(Parameter);
+  }
+  if (Type->isVarArg()) {
+    if (Parameters.empty())
+      throw std::runtime_error(
+          "C variadic indirect call lacks a fixed parameter");
+    Parameters += ", ...";
+  } else if (Parameters.empty()) {
+    Parameters = "void";
+  }
+  // Opaque LLVM pointers do not carry a C function-pointer type. The call
+  // instruction owns the exact result, parameter widths and convention.
+  return "((" + typeToCLLVM(Type->getReturnType()) + " (" + Convention + "*)(" +
+         Parameters + "))(" + valueStr(Call.getCalledOperand()) + "))";
+}
+
 std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
   for (const llvm::CallBase *Pending : RenderingCalls)
     if (Pending == &Call)
@@ -4155,6 +4220,8 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
       CalleeName = CN;
     else
       CalleeName = functionIdentifier(*Callee);
+  } else if (Opts.PreserveLLVMFunctionTypes) {
+    CalleeName = preservedIndirectCalleeStr(Call);
   } else {
     CalleeName = resolveImportCalleeName(Call.getCalledOperand());
     if (CalleeName.empty()) {
@@ -5715,6 +5782,13 @@ LLVMCWriter::resolveImportCalleeName(const llvm::Value *Callee) const {
   if (!Callee)
     return {};
   const llvm::Value *Op = Callee->stripPointerCasts();
+  // A call to a symbol the module declares as data, such as an import its
+  // GOT mirror names, calls that import.
+  if (const auto *GV = llvm::dyn_cast<llvm::GlobalVariable>(Op);
+      GV && GV->isDeclaration() && !GV->getName().empty())
+    return canonicalizeCProjectionIdentifier(
+        llvm_name::cNameOfLLVMName(GV->getName(), Opts.Format, Opts.TheArch),
+        "nd_import");
   for (unsigned Depth = 0; Op && Depth < 6; ++Depth) {
     if (const auto *Fn = llvm::dyn_cast<llvm::Function>(Op))
       return functionIdentifier(*Fn);

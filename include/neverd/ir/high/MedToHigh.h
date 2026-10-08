@@ -187,6 +187,11 @@ void reportUnprotectedGuardedCode(const HighFunc &Func, const char *Stage);
 /// opens with L becomes `if (!c && b)`.  L must start exactly one statement,
 /// and nothing but the first test may jump to the second if.
 bool mergeJumpsIntoNextIfArms(HighFunc &Func);
+/// Declares a register or temporary local only as wide as its reads take,
+/// when every read takes at most its low N bytes and every definition is an
+/// extension from at most N bytes, a call or a constant.  The upper bytes no
+/// read sees leave the program, and with them a narrowing at every read.
+bool narrowLocals(HighFunc &Func);
 /// Declares each register or temporary local signed or unsigned by what most
 /// of its uses read, so that wrapping arithmetic, logical shifts and
 /// unsigned comparisons print without casts.  Value bits do not change.

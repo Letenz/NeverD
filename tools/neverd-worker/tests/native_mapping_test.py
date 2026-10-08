@@ -35,7 +35,7 @@ def run(executable):
                 for stage in ("low", "med"):
                     full = client.call("decompile", {"address": hex(entry), "representation": stage, "limit": 2048})
                     assert full["status"] == "ok", full
-                    assert full["analysis_state"] == "complete", full
+                    assert full["analysis_state"] == "not_analyzed", full
                     result = full["payload"]
                     if result["mapping_status"] == "unavailable_engine_api":
                         print("SKIP: matching engine predates additive instruction mapping API")
@@ -59,8 +59,12 @@ def run(executable):
                         assert page["next_offset"] > offset
                         offset = page["next_offset"]
                     assert text == result["text"] and rows == result["rows"]
-                # Analysis discovers the entry of this stripped fixture. The
-                # same shared session must publish it to navigation and lists.
+                # Function views prepare only their requested entry. The
+                # explicit whole-image pipeline publishes complete analysis.
+                analyzed = client.call("analyze")
+                assert analyzed["status"] == "ok", analyzed
+                assert analyzed["analysis_state"] == "complete", analyzed
+                # The shared session publishes its discovered function to lists.
                 functions = client.call("functions")
                 assert functions["status"] == "ok", functions
                 assert functions["revision"] != opened["revision"]

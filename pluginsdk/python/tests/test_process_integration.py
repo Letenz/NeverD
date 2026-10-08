@@ -549,6 +549,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("vectored-io", b"v!"),
                                            ("file-access", b"a"),
                                            ("symbolic-links", b"y"),
+                                           ("symbolic-link-mutations", b"z"),
                                            ("directory-mutations", b"m"),
                                            ("deleted-directories", b"h"),
                                            ("initial-directory-removal", b"j"),
@@ -792,6 +793,33 @@ class ProcessIntegrationTests(unittest.TestCase):
                             for directory in files["directories"]:
                                 directory.pop("contents", None)
                             file_options = json.dumps(symbolic_options)
+                        if mode == "symbolic-link-mutations":
+                            mixed_options = json.loads(file_options)
+                            original = mixed_options["darwin_files"]["files"][0]
+                            metadata = dict(original["metadata"], flags=0, link_count=1)
+                            mutation = {"allocation_unit": 4096,
+                                        "mutation_time": {"seconds": -7, "nanoseconds": 123456789}}
+                            links = [{"path": "/static/" + name, "target_hex": target.encode().hex()}
+                                     for name, target in (("alias", "../work"),
+                                                          ("data-link", "../work/data"),
+                                                          ("missing-link", "../work/new"))]
+                            links[1]["metadata"] = dict(metadata, mode=0o120777, inode=123, size=12)
+                            mixed_options["darwin_files"] = {
+                                "files": [{"path": "/work/data", "bytes_hex": original["bytes_hex"],
+                                           "metadata": metadata, "writable": True,
+                                           "mutation_policy": mutation}],
+                                "directories": [{"path": "/static"},
+                                                {"path": "/work", "mutable": True,
+                                                 "metadata": dict(metadata, mode=0o40755, inode=41,
+                                                                  size=0, blocks=0)}],
+                                "symbolic_links": links, "working_directory": "/", "umask": 0o27,
+                                "creation_policy": {
+                                    "first_inode": "18364758544493064721", "block_size": 8192,
+                                    "generation": 2309737967,
+                                    "creation_time": {"seconds": -19, "nanoseconds": 987654321},
+                                    "mutation_policy": mutation}}
+                            mixed_options["arguments"][2] = "/work/data"
+                            file_options = json.dumps(mixed_options)
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"], "exited", f"{mode}: {result['diagnostic']}")
                         self.assertEqual(result["exit_status"], 37, mode)

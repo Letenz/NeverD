@@ -17,6 +17,7 @@
 #include "neverd/Common.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
 
@@ -327,7 +328,10 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
   if (auto It = ImageObjectNames.find(Addr); It != ImageObjectNames.end())
     return It->second;
   std::string Raw;
-  if (Dbg) {
+  if (Opts.UserNames)
+    if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
+      Raw = It->second;
+  if (Raw.empty() && Dbg) {
     if (auto Data = Dbg->resolveDataObject(Addr);
         Data && !Data->Name.empty() &&
         !llvm::StringRef(Data->Name).starts_with("??_C@"))
@@ -671,6 +675,13 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     std::string Resolved = resolveNdDataName(N);
     if (!Resolved.empty())
       return Resolved;
+
+    // A symbol defined elsewhere keeps its C name: `__cxa_atexit` is not
+    // `_cxa_atexit`.
+    if (GV->isDeclaration())
+      return canonicalizeCProjectionIdentifier(
+          llvm_name::cNameOfLLVMName(N, Opts.Format, Opts.TheArch),
+          "nd_symbol");
 
     if (N[0] == '_')
       N = N.substr(1);

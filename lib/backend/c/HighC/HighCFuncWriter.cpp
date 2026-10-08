@@ -230,6 +230,27 @@ uint16_t pointerBytes(Arch A) {
   return (A == Arch::X86 || A == Arch::ARM) ? 4 : 8;
 }
 
+uint16_t countedBytes(const HighExpr &Operand) {
+  if (Operand.Type)
+    return Operand.Type->Kind == NdTypeKind::Int ? Operand.Type->Size : 0;
+  return Operand.Kind == ExprKind::Var || Operand.Kind == ExprKind::Phi
+             ? Operand.Var.Size
+             : 0;
+}
+
+unsigned countedBits(const HighExpr &Operand) {
+  switch (countedBytes(Operand)) {
+  case 1:
+  case 2:
+  case 4:
+    return 32;
+  case 8:
+    return 64;
+  default:
+    return 0;
+  }
+}
+
 TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
   // A bound source ABI is authoritative even when optional debug information
   // disagrees. Debug-only projections still use one type for their declaration,
@@ -1733,10 +1754,73 @@ void HighCWriter::overlayPackedValueHomes(const HighFunc &Func) {
   }
 }
 
+namespace {
+// FieldForward prints only the projected member/index. Keep any narrowing in
+// the original assignment, including narrowing followed by a later widening.
+bool fieldProjectionDoesNotNarrow(const HighExpr *Expr,
+                                  const HighExpr *Source) {
+  unsigned Depth = 0;
+  while (Expr && Expr != Source &&
+         Depth++ < limits::kMaxIntegerViewUnwrapDepth) {
+    if (Expr->Operands.empty() || !Expr->Operands[0])
+      return false;
+    const HighExpr *Inner = Expr->Operands[0].get();
+    const TypeRef &ViewType = Expr->Kind == ExprKind::Cast && Expr->CastTo
+                                  ? Expr->CastTo
+                                  : Expr->Type;
+    if (!ViewType || !ViewType->Size || !Inner->Type || !Inner->Type->Size ||
+        ViewType->Size < Inner->Type->Size)
+      return false;
+    Expr = Inner;
+  }
+  return Expr == Source;
+}
+} // namespace
+
+void HighCWriter::collectFieldLoadTypes(const HighFunc &Func) {
+  FieldForwardTypes.clear();
+  // A cursor can acquire its pointer type through bins[i] and a copy before
+  // its fields become recognizable. Discover those types without replacing
+  // any value: the forwarding proof below must see the original definitions.
+  bool Changed = true;
+  unsigned Iteration = 0;
+  while (Changed && Iteration++ < limits::kMaxIntegerViewUnwrapDepth) {
+    Changed = false;
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
+          (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi))
+        return;
+      const std::string Name = varName(S.Dst->Var);
+      if (JoinPhiNames.count(Name) || FieldForwardTypes.count(Name))
+        return;
+      const HighExpr *Val = peelIntegerViewOps(S.Val.get());
+      if (!Val || !fieldProjectionDoesNotNarrow(S.Val.get(), Val))
+        return;
+      TypeRef Type;
+      if (Val->Kind == ExprKind::Load && !Val->Operands.empty() &&
+          Val->Operands[0] && Val->MemoryOrdering == NdMemoryOrdering::None &&
+          Val->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+        const uint16_t Size = Val->Type ? Val->Type->Size : 0;
+        Type = typedMemberType(*Val->Operands[0], Size);
+        if (!Type)
+          if (auto Index = typedIndexAccess(*Val->Operands[0]))
+            Type = Index->ElemType;
+      } else if (Val->Kind == ExprKind::Var || Val->Kind == ExprKind::Phi) {
+        if (auto It = FieldForwardTypes.find(varName(Val->Var));
+            It != FieldForwardTypes.end())
+          Type = It->second;
+      }
+      if (Type) {
+        FieldForwardTypes.emplace(Name, std::move(Type));
+        Changed = true;
+      }
+    });
+  }
+}
+
 void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
   FieldForward.clear();
   FieldForwardSources.clear();
-  FieldForwardTypes.clear();
   std::map<std::string, unsigned> AssignCount;
   walkStmts(Func.Body, [&](const HighStmt &S) {
     if (S.Kind != StmtKind::Assign || !S.Dst)
@@ -1762,12 +1846,18 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
     if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
       return;
     const HighExpr *Val = peelIntegerViewOps(S.Val.get());
-    if (!Val)
+    if (!Val || !fieldProjectionDoesNotNarrow(S.Val.get(), Val))
       return;
     const std::string DestName = varName(S.Dst->Var);
     if (JoinPhiNames.count(DestName))
       return;
-    const bool ForwardName = AssignCount[DestName] <= 1;
+    // Live definitions may move to their uses only after the common proof
+    // checks address dependencies, intervening writes and all use regions.
+    // Dead loads retain display metadata for the legacy undefined-register
+    // recovery below; they do not authorize replacing a live definition.
+    const bool ForwardName =
+        AssignCount[DestName] <= 1 &&
+        (ValueForward.count(DestName) || Analysis.DeadStmts.count(&S));
     if (Val->Kind == ExprKind::Load && !Val->Operands.empty() &&
         Val->Operands[0] && Val->MemoryOrdering == NdMemoryOrdering::None) {
       const uint16_t AccessSize = Val->Type ? Val->Type->Size : 0;
@@ -1812,10 +1902,12 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
       return;
     const std::string DestName = varName(S.Dst->Var);
     if (JoinPhiNames.count(DestName) || FieldForward.count(DestName) ||
-        AssignCount[DestName] > 1)
+        AssignCount[DestName] > 1 ||
+        (!ValueForward.count(DestName) && !Analysis.DeadStmts.count(&S)))
       return;
     const HighExpr *Val = peelIntegerViewOps(S.Val.get());
-    if (!Val || Val->Kind != ExprKind::Load || Val->Operands.empty() ||
+    if (!Val || !fieldProjectionDoesNotNarrow(S.Val.get(), Val) ||
+        Val->Kind != ExprKind::Load || Val->Operands.empty() ||
         !Val->Operands[0] || Val->MemoryOrdering != NdMemoryOrdering::None)
       return;
     const uint16_t AccessSize = Val->Type ? Val->Type->Size : 0;
@@ -1919,10 +2011,12 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
         const std::string Dest = varName(S.Dst->Var);
         if (Dest.empty() || FieldForward.count(Dest))
           return;
-        if (AssignCount[Dest] > 1)
+        if (AssignCount[Dest] > 1 ||
+            (!ValueForward.count(Dest) && !Analysis.DeadStmts.count(&S)))
           return;
         const HighExpr *Val = peelIntegerViewOps(S.Val.get());
-        if (!Val || (Val->Kind != ExprKind::Var && Val->Kind != ExprKind::Phi))
+        if (!Val || !fieldProjectionDoesNotNarrow(S.Val.get(), Val) ||
+            (Val->Kind != ExprKind::Var && Val->Kind != ExprKind::Phi))
           return;
         auto It = FieldForward.find(varName(Val->Var));
         if (It == FieldForward.end())
@@ -2547,6 +2641,15 @@ bool HighCWriter::isTypedMemberLoad(const HighExpr &E) const {
       Cur->MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   return typedMemberAccess(*Cur->Operands[0]).has_value();
+}
+
+bool HighCWriter::isTypedIndexLoad(const HighExpr &E) {
+  const HighExpr *Cur = peelIntegerViewOps(&E);
+  if (!Cur || Cur->Kind != ExprKind::Load || Cur->Operands.empty() ||
+      !Cur->Operands[0] || Cur->MemoryOrdering != NdMemoryOrdering::None ||
+      Cur->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  return typedIndexAccess(*Cur->Operands[0]).has_value();
 }
 
 bool HighCWriter::isCxxCatchObjectName(llvm::StringRef Name) const {
@@ -3208,14 +3311,21 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     if (Info.Handler)
       InEHClauseBody = true;
     const bool Fwdable = isForwardableValueExpr(*Stmt->Val) ||
+                         isTypedIndexLoad(*Stmt->Val) ||
                          callResultReturnedNext(*Stmt, Info) ||
                          callResultTestedNext(*Stmt, Info);
     const HighExpr *Src = peelIntegerViewOps(Stmt->Val.get());
+    const bool LosesFieldNarrowing =
+        Src && !fieldProjectionDoesNotNarrow(Stmt->Val.get(), Src) &&
+        (Src->Kind == ExprKind::Load ||
+         ((Src->Kind == ExprKind::Var || Src->Kind == ExprKind::Phi) &&
+          FieldForwardTypes.count(varName(Src->Var))));
     const bool NamedSlotLoad = Src && Src->Kind == ExprKind::Load &&
                                !Src->Operands.empty() && Src->Operands[0] &&
                                namedFrameSlot(*Src->Operands[0]);
     InEHClauseBody = SavedEH;
-    if (Analysis.OmittedCallResults.count(Stmt) || !Fwdable)
+    if (Analysis.OmittedCallResults.count(Stmt) || !Fwdable ||
+        LosesFieldNarrowing)
       continue;
     if (Info.Cleanup) {
       if (!Src || (Src->Kind != ExprKind::Var && Src->Kind != ExprKind::Phi &&
@@ -3415,12 +3525,27 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     {
       std::set<std::string> Reads;
       bool ReadsMemory = false;
+      bool EffectfulLoadAddress = false;
+      auto ExprWrites = [&](const HighExpr &E, const auto &Self) -> bool {
+        if (E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
+            E.MemoryOrdering != NdMemoryOrdering::None)
+          return true;
+        bool Hit = false;
+        E.forEachChildExpr(
+            [&](const ExprPtr &Child) { Hit = Hit || Self(*Child, Self); });
+        return Hit;
+      };
       std::function<void(const HighExpr &, unsigned)> Collect =
           [&](const HighExpr &E, unsigned Depth) {
             if (Depth > 64) {
               ReadsMemory = true;
+              EffectfulLoadAddress = true;
               return;
             }
+            if (E.Kind == ExprKind::Load)
+              E.forEachChildExpr([&](const ExprPtr &Address) {
+                EffectfulLoadAddress |= ExprWrites(*Address, ExprWrites);
+              });
             if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
               const std::string Read = varName(E.Var);
               if (!Reads.insert(Read).second)
@@ -3439,6 +3564,11 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
                 [&](const ExprPtr &Child) { Collect(*Child, Depth + 1); });
           };
       Collect(*C.Stmt->Val, 0);
+      // A snapshot cannot replay calls, stores or ordered loads embedded in
+      // its address, even when no statement between the definition and use
+      // changes memory. This also checks loads reached through candidates.
+      if (EffectfulLoadAddress)
+        continue;
       const HighExpr *Load = peelIntegerViewOps(C.Stmt->Val.get());
       if (!Load || Load->Kind != ExprKind::Load || Load->Operands.empty() ||
           !Load->Operands[0])
@@ -3454,15 +3584,6 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       const int64_t Width = Load && Load->Type ? Load->Type->Size : 8;
       auto Overlaps = [&](int64_t Disp, int64_t Size) {
         return Disp < *Slot + Width && *Slot < Disp + Size;
-      };
-      auto ExprWrites = [&](const HighExpr &E, const auto &Self) -> bool {
-        if (E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
-            E.MemoryOrdering != NdMemoryOrdering::None)
-          return true;
-        bool Hit = false;
-        E.forEachChildExpr(
-            [&](const ExprPtr &Child) { Hit = Hit || Self(*Child, Self); });
-        return Hit;
       };
       std::function<bool(const HighStmt &)> Changes =
           [&](const HighStmt &S) -> bool {
@@ -3816,6 +3937,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       if (const HighExpr *Inner = peelIntegerViewOps(Fwd); Inner)
         Fwd = Inner;
     ValueForward[C.Name] = Fwd;
+    // A field value is not a frame-address alias, but that alone must not
+    // force its definition to print after this proof has folded every use.
+    // Otherwise the forwarded member would become the assignment's lvalue.
+    AmbiguousFrameAliases.erase(C.Name);
   }
 }
 
@@ -5003,6 +5128,10 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   propagateFrameSlotCopyTypes(Func);
   hideInteriorRecordFieldSlots();
   overlayPackedValueHomes(Func);
+  // Reviving a merged definition after proving a fold would omit a write
+  // that the generated C still executes. Settle visibility before the proof.
+  collectFieldLoadTypes(Func);
+  invalidateJoinPhiFrameAliases(Func);
   // Display-only: one mention of `x` so ValueForward can compose GetLength.
   foldSignedJleConds(const_cast<std::vector<HighStmt> &>(Func.Body));
   collectValueForward(Func);
@@ -5012,7 +5141,6 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   collectFieldLoadForward(Func);
   collectEnumConstForward(Func);
   collectTypedPointerArgDests(Func);
-  invalidateJoinPhiFrameAliases(Func);
   foldCxxThrowConstructors(Func);
   nameCxxCatchObjects(Func);
   simulateCatchReaching(Func);
@@ -5319,8 +5447,13 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     auto emitParam = [&](TypeRef Ty, std::string Name) {
       if (Emitted > 0)
         Declarator += ", ";
-      Declarator +=
-          declarationToC(Ty, ParameterIdentifiers.allocate(Name, "nd_arg"));
+      const std::string Identifier =
+          ParameterIdentifiers.allocate(Name, "nd_arg");
+      Declarator += declarationToC(Ty, Identifier);
+      // A parameter's name has its declared type, as a local's has.
+      if (const TypeRef Display = cDisplayType(Ty);
+          Display && Display->Kind == NdTypeKind::Int && !Display->IsEnum)
+        DeclaredCTypes.emplace(Identifier, Display);
       ++Emitted;
     };
     const bool HighIRIncludesSret =
