@@ -956,6 +956,12 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
 
   EmittedFuncNames.clear();
   FuncNames.clear();
+  // A lifted function named like an import (MinGW's `calloc: jmp
+  // [__imp_calloc]` thunk) is not that import, which keeps its name for the
+  // external declaration the import's slot and its calls refer to.
+  std::set<std::string> ImportNames;
+  for (const auto &[Addr, Name] : Imports)
+    ImportNames.insert(llvm_name::fromObjectSymbol(Name, Fmt).str());
   for (const MedFunc &F : Funcs) {
     std::string EmittedName = F.Name;
     auto Personality = NativePersonalityNames.find(F.Entry);
@@ -967,6 +973,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       EmittedName = (kAutoFuncPrefix + llvm::utohexstr(F.Entry)).str();
     else if (hasObjectFunctionNameAt(Img, Fmt, F.Entry, F.Name))
       EmittedName = llvm_name::fromObjectSymbol(F.Name, Fmt).str();
+    if (ImportNames.count(EmittedName))
+      EmittedName += "_" + llvm::utohexstr(F.Entry);
     EmittedFuncNames[F.Entry] = EmittedName;
     FuncNames[F.Entry] = std::move(EmittedName);
   }
