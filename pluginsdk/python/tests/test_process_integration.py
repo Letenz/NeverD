@@ -543,6 +543,18 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("unlinked-file", b"u"),
                                            ("created-file", b"c"),
                                            ("created-file-metadata", b"q"),
+                                           ("created-namespace-metadata", b"N"),
+                                           ("virtual-created-namespace-metadata", bytes.fromhex(
+                                               "85ffffffe84102001132547698badcfee803000098badcfe0000000000000000"
+                                               "edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000"
+                                               "f9ffffffffffffff15cd5b0700000000edffffffffffffffb168de3a00000000"
+                                               "400000000000000007000000000000000020000000000000efcdab8900000000"
+                                               "0000000000000000000000000000000085ffffffe8a101001232547698badcfe"
+                                               "e803000098badcfe0000000000000000edffffffffffffffb168de3a00000000"
+                                               "edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000"
+                                               "edffffffffffffffb168de3a0000000004000000000000000100000000000000"
+                                               "0020000000000000efcdab890000000000000000000000000000000000000000"
+                                               )),
                                            ("renamed-file", b"r"),
                                            ("renamed-directory", b"d"),
                                            ("swapped-directory", b"s"),
@@ -784,6 +796,27 @@ class ProcessIntegrationTests(unittest.TestCase):
                                 next(d for d in files["directories"]
                                      if d["path"] == "/")["metadata"] = parent
                             file_options = json.dumps(writable_options)
+                        if mode in ("created-namespace-metadata", "virtual-created-namespace-metadata"):
+                            namespace_options = json.loads(file_options)
+                            namespace_options["instruction_quantum"] = 1024
+                            namespace_options["timeout_microseconds"] = 5_000_000
+                            files = namespace_options["darwin_files"]
+                            files["umask"] = 0o27
+                            files["creation_policy"] = {
+                                "first_inode": "18364758544493064721",
+                                "block_size": 8192, "generation": 2309737967,
+                                "creation_time": {"seconds": -19, "nanoseconds": 987654321},
+                                "mutation_policy": {"allocation_unit": 4096,
+                                                    "mutation_time": {"seconds": -7, "nanoseconds": 123456789}},
+                                "namespace_policy": {"symbolic_link_allocation_unit": 512,
+                                                     "directory_entry_size": 32, "directory_blocks": 7}}
+                            original = files["files"][0]["metadata"]
+                            original["flags"] = 0
+                            original["link_count"] = 1
+                            parent = dict(original, inode=41, mode=0o40755, size=0, blocks=0)
+                            root = next(d for d in files["directories"] if d["path"] == "/")
+                            root.update(mutable=True, swap_rename=True, metadata=parent)
+                            file_options = json.dumps(namespace_options)
                         if mode == "symbolic-links":
                             symbolic_options = json.loads(file_options)
                             files = symbolic_options["darwin_files"]

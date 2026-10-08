@@ -323,6 +323,42 @@ TEST_P(DarwinProcess, CreationMetadataUsesExplicitIdentityUmaskAndParentGroup) {
   }
 }
 
+TEST_P(DarwinProcess,
+       NamespaceCreationMetadataPreservesObjectIdentityAndVirtualRecords) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options.DarwinFiles->Directories.insert("/");
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.DarwinFiles->SwapRenameDirectories.insert("/");
+  Options.DarwinFiles->InitialUmask = 0027;
+  Options.DarwinFiles->CreationPolicy = darwin_test::NamespaceCreationPolicy;
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode :
+       {"created-namespace-metadata", "virtual-created-namespace-metadata"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "created-namespace-metadata"
+                  ? "4e"
+                  : darwin_test::NamespaceMetadataHex);
+    EXPECT_TRUE(Result->StandardError.empty());
+    EXPECT_TRUE(llvm::any_of(Result->Services, [](const auto &E) {
+      return (uint32_t(E.Number) & 0x00ffffff) == 474 && E.Result == 17 &&
+             E.Error == true;
+    }));
+    EXPECT_TRUE(llvm::any_of(Result->Services, [](const auto &E) {
+      return (uint32_t(E.Number) & 0x00ffffff) == 488 && E.Arguments[4] == 18 &&
+             E.Result == 0 && E.Error == false;
+    }));
+  }
+}
+
 TEST_P(DarwinProcess, CreatePreservesExclusiveChecksAndReusedNameLifetime) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',

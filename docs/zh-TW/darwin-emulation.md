@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 78e6754f811bc16b1a89770eb1987a7d484301f161646eba212d6fd496e19372 -->
+<!-- i18n-source: d6cf4a9eaef62161ba5aacaeaef8e029255bd713e98ca8101443ca888ec07871 -->
 
 [← 文件索引](README.md)
 
@@ -136,7 +136,7 @@ O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般
 
 可選 `darwin_files.umask`（C++ `InitialUmask`）獨立宣告初始程序遮罩，範圍為八進位 0..07777，不要求建立授權。`umask(60)` 回傳舊遮罩並保存輸入的低 07777 位，不存取來賓記憶體，也不需要空閒 FD。省略代表未知，不讀取主機或猜測預設值。遮罩只初始化一次，只影響後續建立，不修改呼叫者輸入。下例十進位 18 即八進位 0022。
 
-可選 `darwin_files.creation_policy`（C++ `CreationPolicy`）為新物件提供完整中繼資料。嚴格物件恰含 `first_inode`、`block_size`、`generation`、`creation_time`、`mutation_policy`，時間與修改策略沿用既有格式。必須明確提供 umask、至少一個 mutable 父目錄，以及每個授權父目錄的完整 metadata。block_size 為 1..INT32_MAX、generation 為 uint32；配置單元是 512..16 MiB 的二次方，獨立於區塊大小和 VM 頁，奈秒須在 [0,1000000000)。first_inode 是非零 uint64，嚴格大於所有 stat/快照 inode，包含其他裝置；超過 JSON 精確整數範圍時使用十進位字串。
+未設定 `namespace_policy` 時，可選 `darwin_files.creation_policy`（C++ `CreationPolicy`）為新物件提供完整中繼資料。嚴格物件恰含 `first_inode`、`block_size`、`generation`、`creation_time`、`mutation_policy`，時間與修改策略沿用既有格式。必須明確提供 umask、至少一個 mutable 父目錄，以及每個授權父目錄的完整 metadata。block_size 為 1..INT32_MAX、generation 為 uint32；配置單元是 512..16 MiB 的二次方，獨立於區塊大小和 VM 頁，奈秒須在 [0,1000000000)。first_inode 是非零 uint64，嚴格大於所有 stat/快照 inode，包含其他裝置；超過 JSON 精確整數範圍時使用十進位字串。
 
 只有成功插入新名稱才消耗全域遞增 inode；成功使用 UINT64_MAX 後永久耗盡，關閉、刪除、名稱重用、umask 或後續查找不能重置。排他、FD、路徑、項目或位元組預算失敗不留下名稱、FD 或編號增量；既有 O_CREAT 不消耗編號。新 stat64 的 device/GID 繼承直接父目錄，UID 為設定選取的來賓有效使用者 ID（預設 1000），mode 為 `S_IFREG | (mode & 0777 & ~umask)`，nlink=1，size/blocks/flags=0；區塊大小、generation 及四個初始固定時間由策略提供。父目錄完整 stat/列舉失效後，仍可使用不變的 device/GID，但不恢復完整記錄。
 
@@ -795,3 +795,15 @@ readlink(58)使用有符號低32位count，readlinkat(473)保留完整size_t；�
 連結保留實際父目錄物件，父目錄路徑移動後，相對目標按新路徑解析；舊描述符、共用游標、CWD、已刪除節點與映射租約繼續保有原物件。受保護初始連結與所在樹仍不可變，根節點目錄/連結組合、執行時連結完整中繼資料、硬連結及ACL仍不支援。獨立ARM64 macOS的25項對照在原五秒期限內記錄5次移動、10次交換、2次同物件成功及8次保留命名空間的拒絕；跨父目錄案例檢查原文不變與相對目標重新綁定。擴充 `symbolic-link-rename` 覆蓋C++/SDK/CLI/Python，這些觀察不證明實體iOS、原生Intel或完整OS相容。
 
 [XNU rename / namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c).
+
+## 新建連結與目錄的中繼資料
+
+可選 `creation_policy.namespace_policy`（C++ `DarwinFileCreationPolicy::Namespace`）在原有五個必需欄位之外新增嚴格物件，僅含 `symbolic_link_allocation_unit`、`directory_entry_size`、`directory_blocks`。連結分配單位為512至16 MiB的2次冪；目錄項目大小為正值且不超過16 MiB；區塊數為不超過INT64_MAX的uint64，可用十進位字串。父目錄中繼資料、初始umask與新inode條件不變。省略擴充時，前文連結/目錄資料未知、僅一般檔案消耗建立inode的行為仍為預設。
+
+啟用後，一般檔案、symlink與mkdir成功插入共用一條inode序列，UINT64_MAX永久耗盡；失敗與開啟既有名稱不消耗inode。Device/GID來自實際父物件，UID來自有效來賓身分。連結模式為S_IFLNK加 `0777 & ~umask`，nlink=1，size為原始目標位元組數（含空目標與非UTF-8），blocks按宣告單位向上取整後以512位元組計。目錄模式為S_IFDIR加 `mode & 0777 & ~umask`，nlink為2加所有直接具名子項，size為nlink乘宣告項目大小，blocks固定；持有的已刪除空目錄也保留此規則。這是明示虛擬策略，不推斷APFS分配行為。
+
+初始時間用creation_time；子名稱成功變更更新新建父目錄mtime/ctime，直接移動連結/目錄僅用mutation_time更新其ctime；移動祖先保留後代資料。完整記錄隨物件經過dup、CWD、替換、SWAP、刪除與名稱重用。初始父目錄記錄及固定快照仍失效；動態列舉、ACL、可變初始連結與一般目錄/連結根交易仍未完成。原生 `created-namespace-metadata` 檢查模式、擁有者、身分與生命週期；`virtual-created-namespace-metadata` 經C++/SDK/CLI/Python對照完整144位元組目錄與連結常數記錄。定向驗證通過11項模型/准入、1項嚴格JSON、43項原生工作負載（仍限5秒）、8項客體組合（12項後端不可用略過，3項必需HVF皆執行）及10項公共入口。保留指標表造成的客體失敗及修正後ARM64靜態封裝；原生Intel與實體iOS尚未驗證。
+
+```json
+{"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
+```

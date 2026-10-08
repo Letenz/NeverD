@@ -4677,6 +4677,219 @@ static int symbolic_link_rename(const char *input) {
   return 37;
 }
 
+/* Original raw-syscall metadata workload; virtual allocation/times are separate
+ * from the native common identity, mode, ownership and lifecycle observations.
+ */
+static int created_namespace_metadata(const char *input, int virtual_record) {
+  unsigned error, length = 0, slash = 0;
+  char root[1024];
+  while (length < sizeof(root) - 1 && input[length]) {
+    root[length] = input[length];
+    if (input[length] == '/')
+      slash = length;
+    ++length;
+  }
+  if (input[length] || !length || input[0] != '/')
+    return 51;
+  root[slash ? slash : 1] = 0;
+  int check = 51;
+#define NAMESPACE_EXPECT(expression)                                           \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 parent = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error && parent >= 3);
+  unsigned char parent_stat[144], initial[144], current[144], before[144],
+      link_stat[144], after[144], final_dir[144], child_stat[144];
+  NAMESPACE_EXPECT(
+      call(339, parent, (u64)parent_stat, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 uid = call(25, 0, 0, 0, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  u64 saved_mask = call(60, 0027, 0, 0, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error && saved_mask <= 07777);
+  NAMESPACE_EXPECT(call(475, parent, (u64) "namespace-meta",
+                        0xffffffff00000fffUL, 0, 0, 0, &error) == 0 &&
+                   !error);
+  u64 dir =
+      call(463, parent, (u64) "namespace-meta", 0x100000, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  NAMESPACE_EXPECT(call(339, dir, (u64)initial, 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  u64 inode = little_integer(initial + 8, 8);
+  NAMESPACE_EXPECT(inode && little_integer(initial + 4, 2) == 0040750 &&
+                   little_integer(initial + 6, 2) == 2);
+  NAMESPACE_EXPECT(
+      little_integer(initial, 4) == little_integer(parent_stat, 4) &&
+      little_integer(initial + 20, 4) == little_integer(parent_stat + 20, 4) &&
+      little_integer(initial + 16, 4) == uid);
+  if (virtual_record)
+    NAMESPACE_EXPECT(little_integer(initial + 96, 8) == 64 &&
+                     little_integer(initial + 104, 8) == 7);
+  NAMESPACE_EXPECT(
+      call(474, (u64) "data", dir, (u64) "leaf", 0, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(
+      call(470, dir, (u64) "leaf", (u64)link_stat, 0x20, 0, 0, &error) == 0 &&
+      !error);
+  u64 link_inode = little_integer(link_stat + 8, 8);
+  NAMESPACE_EXPECT(link_inode && link_inode != inode &&
+                   little_integer(link_stat + 4, 2) == 0120750 &&
+                   little_integer(link_stat + 6, 2) == 1 &&
+                   little_integer(link_stat + 96, 8) == 4);
+  NAMESPACE_EXPECT(little_integer(link_stat, 4) == little_integer(initial, 4) &&
+                   little_integer(link_stat + 20, 4) ==
+                       little_integer(initial + 20, 4) &&
+                   little_integer(link_stat + 16, 4) == uid);
+  if (virtual_record)
+    NAMESPACE_EXPECT(little_integer(link_stat + 104, 8) == 1);
+  const char raw[] = {(char)0xff, 'x', 0};
+  NAMESPACE_EXPECT(
+      call(474, (u64) "", dir, (u64) "empty", 0, 0, 0, &error) == 0 && !error);
+  NAMESPACE_EXPECT(
+      call(474, (u64)raw, dir, (u64) "raw", 0, 0, 0, &error) == 0 && !error);
+  NAMESPACE_EXPECT(
+      call(470, dir, (u64) "empty", (u64)current, 0x20, 0, 0, &error) == 0 &&
+      !error && little_integer(current + 96, 8) == 0 &&
+      little_integer(current + 104, 8) == 0);
+  NAMESPACE_EXPECT(
+      call(470, dir, (u64) "raw", (u64)current, 0x20, 0, 0, &error) == 0 &&
+      !error && little_integer(current + 96, 8) == 2);
+  u64 file = call(463, dir, (u64) "data", 0xa02, 0666, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  NAMESPACE_EXPECT(call(4, file, (u64) "abc", 3, 0, 0, 0, &error) == 3 &&
+                   !error);
+  NAMESPACE_EXPECT(call(475, dir, (u64) "child", 0700, 0, 0, 0, &error) == 0 &&
+                   !error);
+  u64 child = call(463, dir, (u64) "child", 0x100000, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  NAMESPACE_EXPECT(call(339, child, (u64)child_stat, 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  u64 duplicate = call(41, dir, 0, 0, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  NAMESPACE_EXPECT(call(339, duplicate, (u64)before, 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  if (virtual_record)
+    NAMESPACE_EXPECT(little_integer(before + 6, 2) == 7 &&
+                     little_integer(before + 96, 8) == 224 &&
+                     little_integer(before + 104, 8) == 7);
+  NAMESPACE_EXPECT(
+      call(474, (u64) "other", dir, (u64) "leaf", 0, 0, 0, &error) == 17 &&
+      error);
+  NAMESPACE_EXPECT(call(339, dir, (u64)after, 0, 0, 0, 0, &error) == 0 &&
+                   !error && login_equal_bytes(before, after, sizeof(before)));
+  NAMESPACE_EXPECT(
+      call(488, dir, (u64) "leaf", dir, (u64) "moved", 4, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(call(13, dir, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  NAMESPACE_EXPECT(call(465, parent, (u64) "namespace-meta", parent,
+                        (u64) "namespace-moved", 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(340, (u64) "moved", (u64)current, 0, 0, 0, 0, &error) ==
+                       0 &&
+                   !error && little_integer(current + 8, 8) == link_inode);
+  NAMESPACE_EXPECT(call(58, (u64) "raw", (u64)after, 2, 0, 0, 0, &error) == 2 &&
+                   !error && after[0] == 0xff && after[1] == 'x');
+  NAMESPACE_EXPECT(
+      call(470, dir, (u64) "moved", (u64)link_stat, 0x20, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(
+      call(475, parent, (u64) "namespace-other", 0700, 0, 0, 0, &error) == 0 &&
+      !error);
+  u64 other =
+      call(463, parent, (u64) "namespace-other", 0x100000, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  u64 victim = call(463, other, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  NAMESPACE_EXPECT(call(4, victim, (u64) "xyz", 3, 0, 0, 0, &error) == 3 &&
+                   !error);
+  NAMESPACE_EXPECT(
+      call(488, dir, (u64) "moved", other, (u64) "data", 18, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(
+      call(470, other, (u64) "data", (u64)after, 0x20, 0, 0, &error) == 0 &&
+      !error && little_integer(after + 8, 8) == link_inode);
+  if (virtual_record)
+    NAMESPACE_EXPECT(login_equal_bytes(link_stat, after, sizeof(after)));
+  for (unsigned i = 0; i != sizeof(link_stat); ++i)
+    link_stat[i] = after[i];
+  NAMESPACE_EXPECT(call(472, dir, (u64) "child", 0x80, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(
+      call(339, child, (u64)current, 0, 0, 0, 0, &error) == 0 && !error &&
+      little_integer(current + 8, 8) == little_integer(child_stat + 8, 8) &&
+      little_integer(current + 6, 2) == 2);
+  NAMESPACE_EXPECT(call(60, 0022, 0, 0, 0, 0, 0, &error) == 0027 && !error);
+  NAMESPACE_EXPECT(call(475, dir, (u64) "child", 07777, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(
+      call(470, dir, (u64) "child", (u64)current, 0, 0, 0, &error) == 0 &&
+      !error &&
+      little_integer(current + 8, 8) != little_integer(child_stat + 8, 8) &&
+      little_integer(current + 4, 2) == 0040755);
+  // Keep the freestanding image free of relocatable constant pointer tables.
+  NAMESPACE_EXPECT(call(472, dir, (u64) "data", 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(472, dir, (u64) "moved", 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(472, dir, (u64) "raw", 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(472, dir, (u64) "empty", 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(472, dir, (u64) "child", 0x80, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(472, other, (u64) "data", 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(339, file, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                   !error && little_integer(current + 6, 2) == 0 &&
+                   little_integer(current + 96, 8) == 3);
+  NAMESPACE_EXPECT(call(339, victim, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                   !error && little_integer(current + 6, 2) == 0 &&
+                   little_integer(current + 96, 8) == 3);
+  NAMESPACE_EXPECT(call(13, parent, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  NAMESPACE_EXPECT(
+      call(472, parent, (u64) "namespace-moved", 0x80, 0, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(
+      call(472, parent, (u64) "namespace-other", 0x80, 0, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(call(339, duplicate, (u64)final_dir, 0, 0, 0, 0, &error) ==
+                       0 &&
+                   !error && little_integer(final_dir + 8, 8) == inode &&
+                   little_integer(final_dir + 6, 2) == 2 &&
+                   little_integer(final_dir + 4, 2) == 0040750);
+  NAMESPACE_EXPECT(
+      call(475, parent, (u64) "namespace-moved", 07777, 0, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(call(470, parent, (u64) "namespace-moved", (u64)current, 0,
+                        0, 0, &error) == 0 &&
+                   !error && little_integer(current + 8, 8) != inode &&
+                   little_integer(current + 4, 2) == 0040755);
+  NAMESPACE_EXPECT(
+      call(472, parent, (u64) "namespace-moved", 0x80, 0, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(call(60, saved_mask, 0, 0, 0, 0, 0, &error) == 0022 &&
+                   !error);
+  const u64 descriptors[] = {child, duplicate, dir,   other,
+                             file,  victim,    parent};
+  for (unsigned i = 0; i != sizeof(descriptors) / sizeof(descriptors[0]); ++i)
+    NAMESPACE_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 &&
+                     !error);
+  if (virtual_record) {
+    NAMESPACE_EXPECT(call(4, 1, (u64)final_dir, sizeof(final_dir), 0, 0, 0,
+                          &error) == sizeof(final_dir) &&
+                     !error);
+    NAMESPACE_EXPECT(call(4, 1, (u64)link_stat, sizeof(link_stat), 0, 0, 0,
+                          &error) == sizeof(link_stat) &&
+                     !error);
+  } else {
+    NAMESPACE_EXPECT(call(4, 1, (u64) "N", 1, 0, 0, 0, &error) == 1 && !error);
+  }
+#undef NAMESPACE_EXPECT
+  return 37;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "symbolic-link-rename")) {
     int status = argc < 3 ? 51 : symbolic_link_rename(argv[2]);
@@ -4825,6 +5038,12 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return argc < 3 ? 79 : renamed_directory(argv[2]);
   if (equal(argv[1], "swapped-directory"))
     return argc < 3 ? 79 : swapped_directory(argv[2]);
+  if (equal(argv[1], "created-namespace-metadata") ||
+      equal(argv[1], "virtual-created-namespace-metadata"))
+    return argc < 3 ? 79
+                    : created_namespace_metadata(
+                          argv[2],
+                          equal(argv[1], "virtual-created-namespace-metadata"));
   if (equal(argv[1], "created-file-metadata") ||
       equal(argv[1], "virtual-created-metadata"))
     return argc < 3 ? 79

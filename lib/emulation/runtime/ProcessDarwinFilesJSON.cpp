@@ -159,7 +159,9 @@ bytes(const llvm::json::Value &Value, uint64_t &Remaining,
 llvm::Expected<DarwinFileCreationPolicy>
 creationPolicy(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
-  if (!Object || Object->size() != 5)
+  if (!Object ||
+      Object->size() !=
+          5 + unsigned(Object->get(field::FileNamespacePolicy) != nullptr))
     return invalid(field::FileCreationPolicy);
   DarwinFileCreationPolicy Out;
   auto Number = [&](llvm::StringRef Name, auto &Destination) -> llvm::Error {
@@ -189,6 +191,20 @@ creationPolicy(const llvm::json::Value &Value) {
   if (!Parsed)
     return Parsed.takeError();
   Out.Mutation = *Parsed;
+  if (const auto *Value = Object->get(field::FileNamespacePolicy)) {
+    const auto *Namespace = Value->getAsObject();
+    if (!Namespace || Namespace->size() != 3)
+      return invalid(field::FileNamespacePolicy);
+    auto Unit = Namespace->get(field::SymbolicLinkAllocationUnit);
+    auto Size = Namespace->get(field::DirectoryEntrySize);
+    auto Blocks = Namespace->get(field::DirectoryBlocks);
+    auto U = Unit ? process_json::integer<uint32_t>(*Unit) : std::nullopt;
+    auto S = Size ? process_json::integer<uint32_t>(*Size) : std::nullopt;
+    auto B = Blocks ? process_json::integer<uint64_t>(*Blocks) : std::nullopt;
+    if (!U || !S || !B)
+      return invalid(field::FileNamespacePolicy);
+    Out.Namespace = DarwinNamespaceCreationPolicy{*U, *S, *B};
+  }
   return Out;
 }
 } // namespace

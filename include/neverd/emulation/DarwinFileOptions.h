@@ -65,19 +65,40 @@ struct DarwinFileMutationPolicy {
   DarwinFileTime Time;
 };
 
-/// Opt-in metadata for new regular files in the explicit virtual filesystem.
+/// Explicit virtual metadata rules for new links and directories. Link blocks
+/// round raw-target bytes up to SymbolicLinkAllocationUnit (in 512-byte
+/// blocks). Directory nlink is two plus its immediate linked names of every
+/// kind; size is nlink * DirectoryEntrySize, even while an empty removed
+/// directory is held. Directory blocks stay fixed. These rules are not inferred
+/// APFS observations.
+struct DarwinNamespaceCreationPolicy {
+  /// Independent of st_blksize and page size. Power of two, 512..16 MiB.
+  uint32_t SymbolicLinkAllocationUnit = 0;
+  /// Positive, at most 16 MiB; does not charge virtual stat size as file bytes.
+  uint32_t DirectoryEntrySize = 0;
+  uint64_t DirectoryBlocks = 0;
+};
+
+/// Opt-in metadata for new objects in the explicit virtual filesystem.
 /// Every mutable parent must have metadata; its Device/GID remain unchanged
 /// by namespace mutations. UID is the profile's effective guest user ID.
 /// This supplies neither permission enforcement nor native APFS observations.
 struct DarwinFileCreationPolicy {
   /// Nonzero and greater than every supplied stat/directory inode. Successful
-  /// creations advance this global sequence; UINT64_MAX exhausts it forever.
+  /// regular creations, and link/directory creations when Namespace is present,
+  /// advance this global sequence; UINT64_MAX exhausts it forever.
   uint64_t FirstInode = 0;
   uint32_t BlockSize = 0;
   uint32_t Generation = 0;
   /// Fixed initial atime/mtime/ctime/birthtime, not a host-clock sample.
   DarwinFileTime Time;
   DarwinFileMutationPolicy Mutation;
+  /// Omission preserves unknown new-link/directory metadata and consumes no
+  /// inode for those kinds. When present, mkdir and symlink use ordinary mode
+  /// bits masked by umask; child namespace changes set parent mtime/ctime and
+  /// direct moves set object ctime to Mutation.Time. Other fields are
+  /// preserved.
+  std::optional<DarwinNamespaceCreationPolicy> Namespace;
 };
 
 /// One observed directory record. NextOffset is the enumeration cursor after
@@ -130,9 +151,10 @@ struct DarwinFileOptions {
   /// Explicit authority to change immediate names in these directories.
   /// Newly created files have writable contents; new directories inherit
   /// namespace mutation authority. Existing objects retain their separate
-  /// grants. Namespace changes invalidate the parent's metadata and snapshot.
-  /// New directory and runtime-created symbolic-link metadata stay unknown.
-  /// Link creation leaves the regular-file inode policy unchanged.
+  /// grants. Namespace changes invalidate initial parent metadata and
+  /// snapshots; created parents use explicit Namespace metadata when supplied.
+  /// New link and directory metadata stay unknown without that policy, and
+  /// their creations then leave the regular-file inode sequence unchanged.
   /// Removed directories retain their object and original parent while held
   /// by directory FDs, CWD or children.
   /// Regular-file rename may cross these created descendants of one initial
@@ -150,9 +172,9 @@ struct DarwinFileOptions {
   /// Omission remains unknown; matching devices or mutable grants alone do not
   /// supply filesystem support. Each reference has a fixed path+NUL charge.
   std::set<std::string> SwapRenameDirectories;
-  /// Optional virtual regular-file creation metadata; requires InitialUmask.
-  /// New directories inherit only the parent's known device/group and do not
-  /// consume regular-file inode values. Never applies to existing objects or
+  /// Optional virtual creation metadata; requires InitialUmask. Without its
+  /// Namespace extension, directories inherit only known device/group and
+  /// links/directories consume no inode. Never applies to initial objects or
   /// reads any host environment. Input stays unchanged.
   std::optional<DarwinFileCreationPolicy> CreationPolicy;
   /// Initial process mask, including all 07777 bits returned by Darwin umask.

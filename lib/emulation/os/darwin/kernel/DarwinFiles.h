@@ -72,6 +72,9 @@ private:
     std::shared_ptr<DirectoryNode> Parent;
     std::optional<DirectoryIdentity> Identity;
     const DarwinFileMetadata *Metadata = nullptr;
+    std::optional<DarwinFileMetadata> CurrentMetadata;
+    const DarwinNamespaceCreationPolicy *Policy = nullptr;
+    const DarwinFileTime *MutationTime = nullptr;
     const DarwinDirectoryContents *Snapshot = nullptr;
     uint64_t PathCharge = 0;
     bool Created = false;
@@ -121,6 +124,8 @@ private:
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> CreatedTarget;
     const DarwinFileMetadata *Metadata = nullptr;
+    std::optional<DarwinFileMetadata> CurrentMetadata;
+    const DarwinFileTime *MutationTime = nullptr;
     std::string Path;
     std::shared_ptr<DirectoryNode> Parent;
     bool Protected = false;
@@ -200,6 +205,7 @@ private:
          ProcessResult &Result, LinkPolicy Links = {true, false});
   llvm::Expected<std::optional<ServiceResult>>
   status(const Description &File, uint64_t Address, ProcessResult &Result);
+  const DarwinFileMetadata *metadata(const Description &File) const;
   llvm::Expected<std::optional<ServiceResult>>
   statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
              ProcessResult &Result, LinkPolicy Links = {true, false});
@@ -215,7 +221,8 @@ private:
                                                       ProcessResult &Result,
                                                       bool NoExpansion = false);
   llvm::Expected<std::optional<ServiceResult>>
-  makeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
+  makeDirectory(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
+                ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   removeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result,
                   bool NoExpansion = false);
@@ -229,6 +236,13 @@ private:
                  const std::shared_ptr<DirectoryNode> &TargetParent, bool Swap,
                  ProcessResult &Result);
   void updateNamespaceMetadata(Contents &Node, bool Removed);
+  void updateNamespaceMetadata(LinkNode &Node);
+  void updateDirectoryMetadata(DirectoryNode &Node, bool ContentsChanged);
+  DarwinFileMetadata createdMetadata(const DirectoryIdentity &Parent,
+                                     uint16_t Mode, uint16_t LinkCount,
+                                     uint64_t Size = 0,
+                                     uint64_t Blocks = 0) const;
+  void consumeCreatedInode();
   llvm::Expected<std::optional<ServiceResult>>
   create(Description &File, uint32_t Mode, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>

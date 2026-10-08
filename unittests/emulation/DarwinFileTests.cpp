@@ -351,6 +351,26 @@ protected:
     Options->CreationPolicy = darwin_test::CreationPolicy;
     Options->CreationPolicy->FirstInode = First;
   }
+  void
+  namespacePolicy(uint64_t First = darwin_test::CreationPolicy.FirstInode) {
+    creationPolicy(First);
+    Options->CreationPolicy->Namespace = darwin_test::NamespacePolicy;
+  }
+  std::array<uint8_t, 144> namespaceStatus(llvm::StringRef Name) {
+    path(Name);
+    std::array<uint8_t, 160> Canary;
+    Canary.fill(0xa5);
+    llvm::cantFail(Space->write(Base + Page, Canary));
+    EXPECT_EQ(ok(ServiceKind::Lstat64, {Base, Base + Page + 8}), 0u);
+    llvm::cantFail(Space->read(Base + Page, Canary));
+    EXPECT_TRUE(llvm::all_of(llvm::ArrayRef<uint8_t>(Canary).take_front(8),
+                             [](uint8_t B) { return B == 0xa5; }));
+    EXPECT_TRUE(llvm::all_of(llvm::ArrayRef<uint8_t>(Canary).take_back(8),
+                             [](uint8_t B) { return B == 0xa5; }));
+    std::array<uint8_t, 144> Out;
+    std::copy_n(Canary.begin() + 8, Out.size(), Out.begin());
+    return Out;
+  }
   std::array<uint8_t, 144> status(uint64_t FD) {
     EXPECT_EQ(ok(ServiceKind::Fstat64, {FD, Base + 256}), 0u);
     std::array<uint8_t, 144> Bytes;
@@ -4573,6 +4593,350 @@ TEST_P(DarwinFileTest, CreationMetadataOwnsIdentityAndUsesCurrentUmask) {
   EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
   EXPECT_EQ(Options->CreationPolicy->FirstInode, 0xfedcba9876543211ULL);
   EXPECT_EQ(*Options->InitialUmask, 0027u);
+}
+
+// Independent LP64 stat64 record oracle. Reserved bytes must remain zero.
+std::array<uint8_t, 144> namespaceRecord(uint64_t Inode, uint16_t Mode,
+                                         uint16_t Count, uint64_t Size,
+                                         uint64_t Blocks, bool Changed = false,
+                                         bool ContentsChanged = false,
+                                         uint32_t UID = 1000) {
+  std::array<uint8_t, 144> B{};
+  llvm::support::endian::write32le(B.data(), uint32_t(-123));
+  llvm::support::endian::write16le(B.data() + 4, Mode);
+  llvm::support::endian::write16le(B.data() + 6, Count);
+  llvm::support::endian::write64le(B.data() + 8, Inode);
+  llvm::support::endian::write32le(B.data() + 16, UID);
+  llvm::support::endian::write32le(B.data() + 20, 0xfedcba98);
+  for (unsigned Offset : {32u, 48u, 64u, 80u}) {
+    const bool Mutation =
+        (Offset == 64 && Changed) || (Offset == 48 && ContentsChanged);
+    llvm::support::endian::write64le(B.data() + Offset,
+                                     uint64_t(Mutation ? -7 : -19));
+    llvm::support::endian::write64le(B.data() + Offset + 8,
+                                     Mutation ? 123456789 : 987654321);
+  }
+  llvm::support::endian::write64le(B.data() + 96, Size);
+  llvm::support::endian::write64le(B.data() + 104, Blocks);
+  llvm::support::endian::write32le(B.data() + 112, 8192);
+  llvm::support::endian::write32le(B.data() + 120, 0x89abcdef);
+  return B;
+}
+
+TEST_P(DarwinFileTest, NamespaceCreationMetadataUsesActualOwnerAndRawTargets) {
+  namespacePolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options, 4096, 9001);
+  const auto First = darwin_test::CreationPolicy.FirstInode;
+  path("/d");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base, 0xffffffff000077ffULL}), 0u);
+  const auto D = ok(ServiceKind::Open, {Base});
+  // Only the low ordinary permission bits participate, just as in mkdirat.
+  EXPECT_EQ(status(D),
+            namespaceRecord(First, 0040750, 2, 64, 7, false, false, 9001));
+  const std::string Raw(1, char(0xff));
+  const std::vector<std::string> Targets = {"", Raw + "x", "missing",
+                                            std::string(513, 'z')};
+  for (unsigned I = 0; I != Targets.size(); ++I) {
+    const auto Name = "/d/l" + std::to_string(I);
+    makeLink(Name, Targets[I]);
+    const uint64_t Blocks = (Targets[I].size() + 511) / 512;
+    const auto Expected =
+        namespaceRecord(First + I + 1, 0120750, 1, Targets[I].size(), Blocks,
+                        false, false, 9001);
+    EXPECT_EQ(namespaceStatus(Name), Expected);
+    linkTarget(Name, Targets[I]);
+    path(Name);
+    error(ServiceKind::Stat64, {Base, UINT64_MAX},
+          I == 3 ? value::NameTooLong : value::NoEntry);
+    EXPECT_EQ(namespaceStatus(Name), Expected);
+    EXPECT_EQ(status(D), namespaceRecord(First, 0040750, I + 3, (I + 3) * 32, 7,
+                                         true, true, 9001));
+  }
+  path("l1");
+  EXPECT_EQ(
+      ok(ServiceKind::FstatAt64, {D, Base, Base + Page, value::AtNoFollow}),
+      0u);
+  path("/d/l1");
+  error(ServiceKind::Lstat64, {Base, Base + Page * 3}, value::BadAddress);
+  EXPECT_EQ(namespaceStatus("/d/l1"),
+            namespaceRecord(First + 2, 0120750, 1, 2, 1, false, false, 9001));
+  EXPECT_EQ(ok(ServiceKind::Umask, {07777}), 0027u);
+  path("zero");
+  EXPECT_EQ(ok(ServiceKind::MkdirAt, {D, Base, 07777}), 0u);
+  EXPECT_EQ(namespaceStatus("/d/zero"),
+            namespaceRecord(First + 5, 0040000, 2, 64, 7, false, false, 9001));
+  makeLink("/d/zero/l", "");
+  EXPECT_EQ(namespaceStatus("/d/zero/l"),
+            namespaceRecord(First + 6, 0120000, 1, 0, 0, false, false, 9001));
+  EXPECT_EQ(*Options->InitialUmask, 0027u);
+  EXPECT_EQ(Options->CreationPolicy->FirstInode, First);
+  EXPECT_EQ(Options->Metadata.at("/").Inode, 41u);
+}
+
+TEST_P(DarwinFileTest, NamespaceCreationSharesInodesAndPermanentExhaustion) {
+  for (unsigned LastKind = 0; LastKind != 3; ++LastKind) {
+    SCOPED_TRACE(LastKind);
+    Options.emplace();
+    namespacePolicy(UINT64_MAX - 1);
+    Options->WorkingDirectory = "/";
+    Options->Directories.insert("/");
+    Options->SwapRenameDirectories.insert("/");
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    auto Create = [&](unsigned K, llvm::StringRef Name) {
+      if (K == 0) {
+        const auto FD = makeFile(Name);
+        EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+      } else if (K == 1) {
+        makeLink(Name, "missing");
+      } else {
+        path(Name);
+        EXPECT_EQ(ok(ServiceKind::Mkdir, {Base, 0777}), 0u);
+      }
+    };
+    Create((LastKind + 1) % 3, "/first");
+    path("/first");
+    error(ServiceKind::Mkdir, {Base, 0777}, value::FileExists);
+    path("x", Base + 1024);
+    error(ServiceKind::Symlink, {Base + 1024, Base}, value::FileExists);
+    error(ServiceKind::Symlink, {UINT64_MAX, Base}, value::BadAddress);
+    Create(LastKind, "/last");
+    EXPECT_EQ(
+        llvm::support::endian::read64le(namespaceStatus("/first").data() + 8),
+        UINT64_MAX - 1);
+    const auto Last = namespaceStatus("/last");
+    EXPECT_EQ(llvm::support::endian::read64le(Last.data() + 8), UINT64_MAX);
+    for (const auto Kind :
+         {ServiceKind::Open, ServiceKind::Mkdir, ServiceKind::Symlink}) {
+      path("/missing");
+      path("x", Base + 1024);
+      auto Out = Kind == ServiceKind::Symlink
+                     ? invoke(Kind, {Base + 1024, Base})
+                     : invoke(Kind, {Base, Kind == ServiceKind::Open ? 0x202u
+                                                                     : 0777u});
+      EXPECT_FALSE(Out);
+      EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationInode);
+      error(ServiceKind::Lstat64, {Base, Base + Page}, value::NoEntry);
+    }
+    renameFile("/last", "/moved");
+    auto Moved = Last;
+    llvm::support::endian::write64le(Moved.data() + 64, uint64_t(-7));
+    llvm::support::endian::write64le(Moved.data() + 72, 123456789);
+    EXPECT_EQ(namespaceStatus("/moved"), Moved);
+    path("/moved");
+    EXPECT_EQ(
+        ok(LastKind == 2 ? ServiceKind::Rmdir : ServiceKind::Unlink, {Base}),
+        0u);
+    path("/last");
+    EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base, 0700}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationInode);
+    EXPECT_EQ(Options->CreationPolicy->FirstInode, UINT64_MAX - 1);
+  }
+}
+
+TEST_P(DarwinFileTest, NamespaceMetadataCommitsAcrossMixedAndSubtreeMoves) {
+  namespacePolicy();
+  Options->Directories.insert("/");
+  Options->SwapRenameDirectories.insert("/");
+  Options->WorkingDirectory = "/";
+  const auto First = darwin_test::CreationPolicy.FirstInode;
+  const auto P = makeDirectory("/p");
+  const auto Q = makeDirectory("/q");
+  const auto D = makeDirectory("/p/d");
+  makeLink("/p/d/link", "../other");
+  const auto ChildLink = namespaceStatus("/p/d/link");
+  const auto Held = makeFile("/p/other", "abc");
+  const auto Duplicate = ok(ServiceKind::Dup, {Held});
+  const auto Referent = status(Held);
+  auto Mapping = Files->mappingSource(Held);
+  const auto Target = makeFile("/q/other", "xyz");
+  makeLink("/p/leaf", "other");
+  const auto Leaf = namespaceStatus("/p/leaf");
+  const auto Before = status(P);
+  renameFile("/p/leaf", "/p/leaf");
+  EXPECT_EQ(namespaceStatus("/p/leaf"), Leaf);
+  EXPECT_EQ(status(P), Before);
+  path("leaf");
+  path("other", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::RenameAtX, {P, Base, Q, Base + 128, 2}), 0u);
+  auto ChangedLeaf = Leaf;
+  llvm::support::endian::write64le(ChangedLeaf.data() + 64, uint64_t(-7));
+  llvm::support::endian::write64le(ChangedLeaf.data() + 72, 123456789);
+  EXPECT_EQ(namespaceStatus("/q/other"), ChangedLeaf);
+  EXPECT_EQ(status(P), namespaceRecord(First, 0040700, 5, 160, 7, true, true));
+  EXPECT_EQ(status(Q),
+            namespaceRecord(First + 1, 0040700, 3, 96, 7, true, true));
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {D}), 0u);
+  renameFile("/p/d", "/q/moved");
+  EXPECT_EQ(namespaceStatus("/q/moved/link"), ChildLink);
+  EXPECT_EQ(status(D),
+            namespaceRecord(First + 2, 0040700, 3, 96, 7, true, true));
+  identity(D, "/q/moved");
+  identity(Held, "/p/other");
+  path("link");
+  error(ServiceKind::Stat64, {Base, Base + Page}, value::TooManyLinks);
+  // The moved raw ../other now follows /q/other -> other, which is cyclic.
+  // ELOOP occurs only when the referent is actually expanded.
+  path("/q/other");
+  error(ServiceKind::Stat64, {Base, Base + Page}, value::TooManyLinks);
+  EXPECT_EQ(status(Duplicate), Referent);
+  contents(Duplicate, llvm::ArrayRef<uint8_t>({'a', 'b', 'c'}));
+  path("/q/moved");
+  path("/p/leaf", Base + 128);
+  EXPECT_EQ(
+      ok(ServiceKind::RenameAtX, {value::AtCurrentDirectory, Base,
+                                  value::AtCurrentDirectory, Base + 128, 18}),
+      0u);
+  EXPECT_EQ(namespaceStatus("/p/leaf/link"), ChildLink);
+  identity(D, "/p/leaf");
+  identity(Target, "/q/moved");
+  EXPECT_EQ(status(P), namespaceRecord(First, 0040700, 4, 128, 7, true, true));
+  EXPECT_EQ(status(Q),
+            namespaceRecord(First + 1, 0040700, 4, 128, 7, true, true));
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Mapping).Bytes.vec(),
+            (std::vector<uint8_t>{'a', 'b', 'c'}));
+}
+
+TEST_P(DarwinFileTest, NamespaceDirectoryCountsExcludeHeldAndReusedOrphans) {
+  namespacePolicy();
+  Options->WorkingDirectory = "/";
+  const auto First = darwin_test::CreationPolicy.FirstInode;
+  const auto Parent = makeDirectory("/p");
+  const auto Old = makeDirectory("/p/d");
+  const auto Duplicate = ok(ServiceKind::Dup, {Old});
+  const auto Data = makeFile("/p/data", "abc");
+  auto Mapping = Files->mappingSource(Data);
+  EXPECT_EQ(status(Parent),
+            namespaceRecord(First, 0040700, 4, 128, 7, true, true));
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Old}), 0u);
+  path("/p/d");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  const auto Orphan = namespaceRecord(First + 1, 0040700, 2, 64, 7, true);
+  EXPECT_EQ(status(Old), Orphan);
+  EXPECT_EQ(status(Duplicate), Orphan);
+  EXPECT_EQ(status(Parent),
+            namespaceRecord(First, 0040700, 3, 96, 7, true, true));
+  const auto Fresh = makeDirectory("/p/d");
+  EXPECT_EQ(status(Fresh), namespaceRecord(First + 3, 0040700, 2, 64, 7));
+  path(".");
+  EXPECT_EQ(ok(ServiceKind::Stat64, {Base, Base + Page}), 0u);
+  EXPECT_EQ(namespaceStatus("."), Orphan);
+  path("new");
+  error(ServiceKind::Mkdir, {Base, 0777}, value::NoEntry);
+  EXPECT_EQ(status(Old), Orphan);
+  path("/p/data");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(status(Parent),
+            namespaceRecord(First, 0040700, 3, 96, 7, true, true));
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Parent}), 0u);
+  const auto Source = makeDirectory("/p/s");
+  renameFile("/p/s", "/p/d");
+  EXPECT_EQ(status(Fresh), namespaceRecord(First + 3, 0040700, 2, 64, 7, true));
+  EXPECT_EQ(status(Source),
+            namespaceRecord(First + 4, 0040700, 2, 64, 7, true));
+  EXPECT_EQ(status(Parent),
+            namespaceRecord(First, 0040700, 3, 96, 7, true, true));
+  path("/p/d");
+  error(ServiceKind::Lstat64, {Base, Base + Page * 3}, value::BadAddress);
+  EXPECT_EQ(status(Source),
+            namespaceRecord(First + 4, 0040700, 2, 64, 7, true));
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Parent, 0, 2}), 96u);
+  EXPECT_EQ(ok(ServiceKind::FstatAt64,
+               {Old, UINT64_MAX, Base + Page, value::AtFDOnly}),
+            0u);
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Mapping).Bytes.vec(),
+            (std::vector<uint8_t>{'a', 'b', 'c'}));
+}
+
+TEST_P(DarwinFileTest, NamespaceRefusalsDoNotConsumeNamesMetadataOrInodes) {
+  for (unsigned Limit = 0; Limit != 3; ++Limit) {
+    SCOPED_TRACE(Limit);
+    Options.emplace();
+    Options->Files["/data"] = {'a', 'b', 0, 0xff, 'e', 'f'};
+    namespacePolicy(UINT64_MAX);
+    if (Limit == 0)
+      Options->Files["/pad"] =
+          std::vector<uint8_t>(darwin_file_limits::Bytes - 21);
+    if (Limit == 1)
+      for (unsigned I = 0; I != 254; ++I)
+        Options->Files["/f" + std::to_string(I)] = {};
+    if (Limit == 2)
+      Options->DescriptorLimit = 3;
+    ASSERT_FALSE(bool(validateFileOptions(*Options)));
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    path("/new");
+    if (Limit < 2) {
+      EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base, 0777}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryCreationLimit);
+      path("x", Base + 1024);
+      EXPECT_FALSE(invoke(ServiceKind::Symlink, {Base + 1024, Base}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkCreationLimit);
+      error(ServiceKind::Lstat64, {Base, Base + Page}, value::NoEntry);
+      path(Limit == 0 ? "/pad" : "/f0");
+      EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+    } else {
+      error(ServiceKind::Open, {Base, 0x202, 0666}, value::TooManyFiles);
+    }
+    makeLink("/new", "x");
+    EXPECT_EQ(namespaceStatus("/new"),
+              namespaceRecord(UINT64_MAX, 0120750, 1, 1, 1));
+    if (Limit == 1) {
+      path("/dir");
+      EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base, 0777}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryCreationLimit);
+      path("/new");
+      EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+    }
+    path("/dir");
+    EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base, 0777}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationInode);
+    error(ServiceKind::Lstat64, {Base, Base + Page}, value::NoEntry);
+    EXPECT_EQ(Options->CreationPolicy->FirstInode, UINT64_MAX);
+  }
+}
+
+TEST(DarwinFileOptions, NamespaceCreationPolicyRequiresExplicitVirtualFields) {
+  DarwinFileOptions Good;
+  Good.Metadata["/"] = darwin_test::creationParentMetadata();
+  Good.MutableDirectories.insert("/");
+  Good.InitialUmask = 0027;
+  Good.CreationPolicy = darwin_test::NamespaceCreationPolicy;
+  ASSERT_FALSE(bool(validateFileOptions(Good)));
+  for (unsigned Case = 0; Case != 8; ++Case) {
+    auto Bad = Good;
+    auto &P = *Bad.CreationPolicy->Namespace;
+    switch (Case) {
+    case 0:
+      P.SymbolicLinkAllocationUnit = 0;
+      break;
+    case 1:
+      P.SymbolicLinkAllocationUnit = 513;
+      break;
+    case 2:
+      P.SymbolicLinkAllocationUnit = darwin_file_limits::Bytes + 1;
+      break;
+    case 3:
+      P.DirectoryEntrySize = 0;
+      break;
+    case 4:
+      P.DirectoryEntrySize = darwin_file_limits::Bytes + 1;
+      break;
+    case 5:
+      P.DirectoryBlocks = uint64_t(INT64_MAX) + 1;
+      break;
+    case 6:
+      Bad.Metadata.clear();
+      break;
+    case 7:
+      Bad.CreationPolicy->FirstInode = 41;
+      break;
+    }
+    auto E = validateFileOptions(Bad);
+    EXPECT_TRUE(bool(E)) << Case;
+    llvm::consumeError(std::move(E));
+  }
+  Good.CreationPolicy->Namespace = {darwin_file_limits::Bytes,
+                                    darwin_file_limits::Bytes, INT64_MAX};
+  EXPECT_FALSE(bool(validateFileOptions(Good)));
 }
 
 TEST_P(DarwinFileTest, CreationPolicySharesSparseMutationAndUnlinkState) {

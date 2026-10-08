@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 78e6754f811bc16b1a89770eb1987a7d484301f161646eba212d6fd496e19372 -->
+<!-- i18n-source: d6cf4a9eaef62161ba5aacaeaef8e029255bd713e98ca8101443ca888ec07871 -->
 
 [← 문서 목록](README.md)
 
@@ -136,7 +136,7 @@ O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전
 
 선택적 `darwin_files.umask`(C++ `InitialUmask`)는 초기 마스크를 8진수 0..07777로 지정하며 생성 권한과 독립적입니다. `umask(60)`은 이전 마스크를 반환하고 입력의 하위 07777 비트를 저장합니다. 게스트 메모리나 빈 FD가 필요하지 않습니다. 생략은 미상이며 호스트 값이나 기본값을 추측하지 않습니다. 한 번만 초기화하고 이후 생성에만 영향을 주며 호출자 입력은 바꾸지 않습니다. 아래 10진수 18은 8진수 0022입니다.
 
-선택적 `darwin_files.creation_policy`(C++ `CreationPolicy`)는 새 객체에 완전한 메타데이터를 제공합니다. 엄격한 객체는 `first_inode`, `block_size`, `generation`, `creation_time`, `mutation_policy` 다섯 필드만 포함하며 시간과 변경 정책은 기존 형식을 사용합니다. 명시적 umask, 하나 이상의 mutable 부모와 모든 해당 부모의 완전한 metadata가 필요합니다. block_size는 1..INT32_MAX, generation은 uint32입니다. 할당 단위는 512..16 MiB 범위의 2의 거듭제곱이며 블록 크기/VM 페이지와 독립적이고 나노초는 [0,1000000000)입니다. first_inode는 0이 아닌 uint64로 다른 장치를 포함한 모든 stat/스냅샷 inode보다 커야 합니다. JSON의 정확한 정수 범위를 넘으면 10진수 문자열을 사용합니다.
+`namespace_policy`를 생략하면 선택적 `darwin_files.creation_policy`(C++ `CreationPolicy`)는 새 객체에 완전한 메타데이터를 제공합니다. 엄격한 객체는 `first_inode`, `block_size`, `generation`, `creation_time`, `mutation_policy` 다섯 필드만 포함하며 시간과 변경 정책은 기존 형식을 사용합니다. 명시적 umask, 하나 이상의 mutable 부모와 모든 해당 부모의 완전한 metadata가 필요합니다. block_size는 1..INT32_MAX, generation은 uint32입니다. 할당 단위는 512..16 MiB 범위의 2의 거듭제곱이며 블록 크기/VM 페이지와 독립적이고 나노초는 [0,1000000000)입니다. first_inode는 0이 아닌 uint64로 다른 장치를 포함한 모든 stat/스냅샷 inode보다 커야 합니다. JSON의 정확한 정수 범위를 넘으면 10진수 문자열을 사용합니다.
 
 성공한 새 삽입만 전역 inode 순서를 진행합니다. UINT64_MAX 사용 후 영구 소진되며 close/unlink/이름 재사용/umask/이후 조회로 초기화되지 않습니다. 배타·FD·경로·항목·바이트 예산 실패는 이름/FD/번호 증가를 남기지 않고 기존 O_CREAT도 번호를 쓰지 않습니다. 새 stat64는 직계 부모 device/GID, 선택한 게스트 유효 UID（기본1000）, mode `S_IFREG | (mode & 0777 & ~umask)`, nlink=1, size/blocks/flags=0을 사용합니다. 블록 크기, generation, 네 초기 고정 시간은 정책에서 얻습니다. 부모 전체 stat/열거가 무효화되어도 불변 device/GID를 쓸 수 있지만 전체 기록은 복원하지 않습니다.
 
@@ -795,3 +795,15 @@ ARM64 macOS의150개 원시 기록은 관측기 실패4개를 유지하며 별�
 링크는 이동하는 실제 부모 객체를 유지하며 상대 대상은 새 경로에서 해석합니다. 설명자, 공유 커서, CWD, 삭제된 노드와 매핑 임대는 원래 객체를 유지합니다. 보호된 초기 링크와 해당 트리, 루트 디렉터리/링크 조합, 링크 전체 메타데이터, 하드 링크, ACL은 미지원입니다. ARM64 macOS25대조는 기존5초 제한에서5이동·10교환·같은 객체2성공·이름 변경 없는8거부를 기록했습니다. 부모 간 대조는 원시 바이트 유지와 새 상대 해석을 확인하고 `symbolic-link-rename`가C++/SDK/CLI/Python을 검사합니다. 실제 iOS·네이티브 Intel·전체 OS를 입증하지 않습니다.
 
 [XNU rename / namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c).
+
+## 새 링크와 디렉터리의 메타데이터
+
+선택적 `creation_policy.namespace_policy`（C++ `DarwinFileCreationPolicy::Namespace`）는 기존 필수5필드에 엄격한 객체를 추가합니다. `symbolic_link_allocation_unit`, `directory_entry_size`, `directory_blocks`만 허용합니다. 링크 단위는512..16 MiB의2의 거듭제곱, 항목 크기는 양수이며 최대16 MiB, 블록 수는INT64_MAX 이하 uint64입니다. 십진 문자열도 허용합니다. 부모 메타데이터, 초기umask, 새inode 조건은 유지됩니다. 생략하면 앞 절의 링크/디렉터리 메타데이터 미확인과 일반 파일만 inode를 소비하는 기본 동작을 유지합니다.
+
+활성화하면 일반 파일,symlink,mkdir의 성공 삽입이 하나의inode 순서를 공유하고 UINT64_MAX에서 영구 고갈됩니다. 거부와 기존 이름open은 소비하지 않습니다. Device/GID는 실제 부모, UID는 유효 게스트 ID에서 옵니다. 링크mode는S_IFLNK와 `0777 & ~umask`, nlink=1, size는 빈 대상/비UTF-8을 포함한 원시 바이트 수이며 blocks는 선언 단위로 올림한512바이트 블록 수입니다. 디렉터리mode는S_IFDIR와 `mode & 0777 & ~umask`, nlink는2와 모든 종류의 직접 연결 이름 수의 합, size는nlink와 선언 항목 크기의 곱, blocks는 고정입니다. 유지된 삭제된 빈 디렉터리에도 적용하는 명시적 가상 계약이며 APFS 추론이 아닙니다.
+
+초기 시간은creation_time입니다. 자식 이름 변경은 새 부모mtime/ctime을, 직접 이동은 링크/디렉터리ctime만 mutation_time으로 갱신합니다. 조상 이동은 후손 기록을 유지하며 dup/CWD/교체/SWAP/삭제/이름 재사용에서 기록은 객체에 속합니다. 초기 부모와 고정 스냅샷은 무효화하며 동적 열거,ACL,가변 초기 링크,일반 디렉터리/링크 루트 거래는 미지원입니다. 원래 `created-namespace-metadata`는 공통mode/소유자/정체성/수명을, `virtual-created-namespace-metadata`는C++/SDK/CLI/Python에서 전체144바이트 상수 기록을 확인합니다. 대상 검증은 모델/준입11,엄격JSON1,기존5초의 원래43,실행 가능한 게스트8（불가12건 건너뜀,필수HVF3실행）,공개10을 통과했습니다. 포인터 표의 실패와 수정된 정적ARM64 기록을 보존합니다. 실제iOS/네이티브Intel은 미검증입니다。
+
+```json
+{"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
+```

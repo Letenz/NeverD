@@ -48,6 +48,28 @@ inline constexpr char CreationPolicyJSON[] = R"({
   "creation_time":{"seconds":-19,"nanoseconds":987654321},
   "mutation_policy":{"allocation_unit":4096,
     "mutation_time":{"seconds":-7,"nanoseconds":123456789}}})";
+inline constexpr DarwinNamespaceCreationPolicy NamespacePolicy{512, 32, 7};
+inline constexpr DarwinFileCreationPolicy NamespaceCreationPolicy{
+    0xfedcba9876543211ULL, 8192,           0x89abcdef,
+    {-19, 987654321},      MutationPolicy, NamespacePolicy};
+inline constexpr char NamespaceCreationPolicyJSON[] = R"({
+  "first_inode":"18364758544493064721","block_size":8192,
+  "generation":2309737967,
+  "creation_time":{"seconds":-19,"nanoseconds":987654321},
+  "mutation_policy":{"allocation_unit":4096,
+    "mutation_time":{"seconds":-7,"nanoseconds":123456789}},
+  "namespace_policy":{"symbolic_link_allocation_unit":512,
+    "directory_entry_size":32,"directory_blocks":7}})";
+inline constexpr char NamespaceMetadataHex[] =
+    "85ffffffe84102001132547698badcfee803000098badcfe0000000000000000"
+    "edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000"
+    "f9ffffffffffffff15cd5b0700000000edffffffffffffffb168de3a00000000"
+    "400000000000000007000000000000000020000000000000efcdab8900000000"
+    "0000000000000000000000000000000085ffffffe8a101001232547698badcfe"
+    "e803000098badcfe0000000000000000edffffffffffffffb168de3a00000000"
+    "edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000"
+    "edffffffffffffffb168de3a0000000004000000000000000100000000000000"
+    "0020000000000000efcdab890000000000000000000000000000000000000000";
 inline constexpr char CreationMetadataHex[] =
     "85ffffffe88100001132547698badcfee803000098badcfe0000000000000000"
     "edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000"

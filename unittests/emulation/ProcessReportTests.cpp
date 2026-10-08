@@ -324,6 +324,70 @@ TEST(ProcessReport, DarwinCreationPolicyIsStrictAndPreservesUnsignedInodes) {
   llvm::consumeError(Extra.takeError());
 }
 
+TEST(ProcessReport, DarwinNamespaceCreationPolicyIsStrictAndLossless) {
+  auto Parent = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  auto *M = Parent.getAsObject();
+  (*M)["inode"] = 41;
+  (*M)["mode"] = 0040755;
+  (*M)["flags"] = 0;
+  (*M)["size"] = 0;
+  (*M)["blocks"] = 0;
+  auto Parse = [&](const llvm::json::Value &Policy) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[],"umask":23,"directories":[{"path":"/","mutable":true,"metadata":)" +
+        llvm::formatv("{0}", Parent).str() + R"(}],"creation_policy":)" +
+        llvm::formatv("{0}", Policy).str() + "}}");
+  };
+  const auto Good = llvm::cantFail(
+      llvm::json::parse(darwin_test::NamespaceCreationPolicyJSON));
+  auto Parsed = Parse(Good);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  const auto &P = *Parsed->DarwinFiles->CreationPolicy->Namespace;
+  EXPECT_EQ(P.SymbolicLinkAllocationUnit, 512u);
+  EXPECT_EQ(P.DirectoryEntrySize, 32u);
+  EXPECT_EQ(P.DirectoryBlocks, 7u);
+  auto Refused = [&](const llvm::json::Value &V) {
+    auto Out = Parse(V);
+    EXPECT_FALSE(bool(Out)) << llvm::formatv("{0}", V).str();
+    llvm::consumeError(Out.takeError());
+  };
+  for (const char *Key : {"symbolic_link_allocation_unit",
+                          "directory_entry_size", "directory_blocks"}) {
+    auto V = Good;
+    auto *N = V.getAsObject()->getObject("namespace_policy");
+    N->erase(Key);
+    Refused(V);
+    for (const char *Bad :
+         {"null", "true", "-1", "1.5", "\"18446744073709551616\""}) {
+      (*N)[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      Refused(V);
+    }
+  }
+  for (const char *Bad : {"null", "[]", "{}", "false", "1"}) {
+    auto V = Good;
+    (*V.getAsObject())["namespace_policy"] =
+        llvm::cantFail(llvm::json::parse(Bad));
+    Refused(V);
+  }
+  auto V = Good;
+  (*V.getAsObject()->getObject("namespace_policy"))["extra"] = 1;
+  Refused(V);
+  V = Good;
+  (*V.getAsObject())["extra"] = 1;
+  Refused(V);
+  V = Good;
+  auto *N = V.getAsObject()->getObject("namespace_policy");
+  (*N)["symbolic_link_allocation_unit"] = "16777216";
+  (*N)["directory_entry_size"] = "16777216";
+  (*N)["directory_blocks"] = "9223372036854775807";
+  auto Max = Parse(V);
+  ASSERT_TRUE(bool(Max)) << llvm::toString(Max.takeError());
+  EXPECT_EQ(Max->DarwinFiles->CreationPolicy->Namespace->DirectoryBlocks,
+            uint64_t(INT64_MAX));
+  (*N)["directory_blocks"] = "9223372036854775808";
+  Refused(V);
+}
+
 TEST(ProcessReport, DarwinDirectoriesAndWorkingDirectoryAreExplicitAndStrict) {
   auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[],
     "directories":[{"path":"/empty/deep"}],"working_directory":"/empty"}})");
