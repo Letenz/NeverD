@@ -50,6 +50,17 @@ static int equal(const char *a, const char *b) {
   return *a == *b;
 }
 static u64 little_integer(const unsigned char *p, unsigned width) {
+  /* Fixed ABI widths avoid byte-at-a-time guest loops without requiring
+   * aligned pointers or native byte order. Other widths keep the same decoder.
+   */
+  if (width == 2)
+    return (u64)p[0] | ((u64)p[1] << 8);
+  if (width == 4)
+    return (u64)p[0] | ((u64)p[1] << 8) | ((u64)p[2] << 16) | ((u64)p[3] << 24);
+  if (width == 8)
+    return (u64)p[0] | ((u64)p[1] << 8) | ((u64)p[2] << 16) |
+           ((u64)p[3] << 24) | ((u64)p[4] << 32) | ((u64)p[5] << 40) |
+           ((u64)p[6] << 48) | ((u64)p[7] << 56);
   u64 value = 0;
   for (unsigned i = 0; i != width; ++i)
     value |= (u64)p[i] << (i * 8);
@@ -1174,8 +1185,13 @@ static int enumeration_view(u64 fd, const struct enumeration_member *members,
   unsigned error = 0;
   u64 guarded_words[130];
   unsigned char *guarded = (unsigned char *)guarded_words;
-  for (unsigned i = 0; i != 130; ++i)
-    guarded_words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  const u64 canary = 0xa5a5a5a5a5a5a5a5UL;
+  for (unsigned i = 0; i != 128; i += 8) {
+    guarded_words[i] = guarded_words[i + 1] = guarded_words[i + 2] =
+        guarded_words[i + 3] = guarded_words[i + 4] = guarded_words[i + 5] =
+            guarded_words[i + 6] = guarded_words[i + 7] = canary;
+  }
+  guarded_words[128] = guarded_words[129] = canary;
   u64 position = (u64)-1;
   if (call(199, fd, 0, 0, 0, 0, 0, &error) || error)
     return 0;
@@ -1189,9 +1205,18 @@ static int enumeration_view(u64 fd, const struct enumeration_member *members,
       guarded_words[129] != 0xa5a5a5a5a5a5a5a5UL ||
       guarded_words[128] != 0x00000001a5a5a5a5UL)
     return 0;
-  for (u64 i = 1 + size / 8; i != 128; ++i)
-    if (guarded_words[i] != 0xa5a5a5a5a5a5a5a5UL)
-      return 0;
+  /* Check every untouched byte; batching only reduces guest loop overhead. */
+  u64 corrupt = 0, i = 1 + size / 8;
+  for (; i + 8 <= 128; i += 8)
+    corrupt |=
+        (guarded_words[i] ^ canary) | (guarded_words[i + 1] ^ canary) |
+        (guarded_words[i + 2] ^ canary) | (guarded_words[i + 3] ^ canary) |
+        (guarded_words[i + 4] ^ canary) | (guarded_words[i + 5] ^ canary) |
+        (guarded_words[i + 6] ^ canary) | (guarded_words[i + 7] ^ canary);
+  for (; i != 128; ++i)
+    corrupt |= guarded_words[i] ^ canary;
+  if (corrupt)
+    return 0;
   if (capture)
     for (u64 i = 0; i != size; ++i)
       capture[i] = guarded[8 + i];
@@ -1253,7 +1278,7 @@ static int directory_enumeration_mutations(const char *path,
                                             {"d", d_inode, 4},
                                             {"f", f_inode, 8},
                                             {"l", l_inode, 10}};
-  ENUM_EXPECT(enumeration_view(a, a_members, 5, captured));
+  ENUM_EXPECT(enumeration_view(a, a_members, 5, virtual_bytes ? captured : 0));
   u64 copy = call(41, a, 0, 0, 0, 0, 0, &error);
   ENUM_EXPECT(!error);
   u64 terminal = call(199, copy, 0, 1, 0, 0, 0, &error);
