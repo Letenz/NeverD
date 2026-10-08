@@ -308,7 +308,8 @@ llvm::Error readTLS(const View &R, Image &Out, bool DeferredCallbacks = false) {
   return failure(text::TLS);
 }
 llvm::Expected<Image> readImage(const std::filesystem::path &Path,
-                                ImageReadBudget &Budget, bool DLL,
+                                ImageReadBudget &Budget,
+                                std::optional<bool> ExpectedDLL,
                                 bool GuestImports, bool Deferred = false) {
   std::error_code EC;
   const uint64_t FileSize = std::filesystem::file_size(Path, EC);
@@ -347,10 +348,11 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
       sizeof(PE) + uint64_t(PE.NumberOfRvaAndSize) * sizeof(data_directory) >
           COFF.SizeOfOptionalHeader)
     return failure(text::Headers);
+  const bool DLL = COFF.Characteristics & llvm::COFF::IMAGE_FILE_DLL;
   if ((COFF.Machine != llvm::COFF::IMAGE_FILE_MACHINE_AMD64 &&
        COFF.Machine != llvm::COFF::IMAGE_FILE_MACHINE_ARM64) ||
       !(COFF.Characteristics & llvm::COFF::IMAGE_FILE_EXECUTABLE_IMAGE) ||
-      bool(COFF.Characteristics & llvm::COFF::IMAGE_FILE_DLL) != DLL ||
+      (ExpectedDLL && DLL != *ExpectedDLL) ||
       (COFF.Characteristics & llvm::COFF::IMAGE_FILE_SYSTEM) ||
       // No window station is modeled. A deferred graphical image still
       // loads; it stops if it reaches a graphical service.
@@ -381,6 +383,7 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
   // need not have a relocation directory at all.
   Out.Relocatable =
       !(COFF.Characteristics & llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED);
+  Out.DLL = DLL;
   Budget.MappedBytes -= Size;
   uint64_t Table = OptionalOffset + COFF.SizeOfOptionalHeader;
   if (Table > PE.SizeOfHeaders ||
@@ -677,7 +680,8 @@ llvm::Expected<Image> loadImage(const std::filesystem::path &Path,
   return readImage(Path, Budget, false, false);
 }
 llvm::Expected<Image> loadProgramImage(const std::filesystem::path &Path,
-                                       ImageReadBudget &Budget, bool DLL,
+                                       ImageReadBudget &Budget,
+                                       std::optional<bool> DLL,
                                        bool DeferUnmodeled) {
   return readImage(Path, Budget, DLL, true, DeferUnmodeled);
 }

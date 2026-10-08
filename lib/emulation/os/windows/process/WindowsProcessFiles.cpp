@@ -198,8 +198,8 @@ Services::openImage(const Service &S, const NativeCallEvent &Event) {
   const auto Slash = Narrow.find_last_of("\\/");
   const llvm::StringRef Base = llvm::StringRef(Narrow).substr(
       Slash == std::string::npos ? 0 : Slash + 1);
-  if (Modules.Identities.empty() ||
-      !Base.equals_insensitive(Modules.Identities.front().Name))
+  const auto Input = inputModule(Modules);
+  if (!Input || !Base.equals_insensitive(Modules.Identities[*Input].Name))
     return Refuse(Narrow);
   std::error_code EC;
   const auto Size = std::filesystem::file_size(Modules.ImagePath, EC);
@@ -1027,9 +1027,21 @@ Services::crt(const Service &S, const NativeCallEvent &Event) {
   }
 
   if (S.Kind == API::GetModuleFileNameA) {
-    if (A[0] || Modules.Identities.empty())
-      return Refuse(A[0] ? "module" : "name");
-    const std::string &Name = Modules.Identities.front().Name;
+    if (Modules.Identities.empty())
+      return Refuse("name");
+    const ModuleIdentity *Identity = &Modules.Identities.front();
+    if (A[0]) {
+      Identity = nullptr;
+      for (size_t I = 0; I < Modules.Modules.size(); ++I)
+        if (resident(Modules.Modules[I]) &&
+            Modules.Modules[I].Loaded.Base == A[0]) {
+          Identity = &Modules.Identities[I];
+          break;
+        }
+      if (!Identity)
+        return Refuse("module");
+    }
+    const std::string &Name = Identity->Name;
     const uint32_t Cap = uint32_t(A[2]);
     if (!A[1] || !Cap)
       return WinError(ErrorInsufficientBuffer, 0);

@@ -15,6 +15,16 @@
 #include <iterator>
 
 namespace neverd::unpack::pe {
+namespace {
+bool completedCallback(const Capture &C, uint64_t Target) {
+  if (llvm::is_contained(C.Initializers, Target))
+    return true;
+  return llvm::any_of(C.CompletedCalls, [&](const auto &Call) {
+    return Call.Entry == Target && Call.Arguments[0] == C.Base &&
+           uint32_t(Call.Arguments[1]) == 1 && !Call.Arguments[2];
+  });
+}
+} // namespace
 llvm::Expected<std::optional<uint64_t>> recoverTLSDirectory(const Image &In,
                                                             const Capture &C) {
   using llvm::object::coff_tls_directory64;
@@ -150,7 +160,7 @@ llvm::Expected<TLSRebuild> rebuildTLS(const Image &In, const Capture &C,
     if (!Target)
       break;
     Callbacks.push_back(Target);
-    Result.MaterializedCallbacks += llvm::is_contained(C.Initializers, Target);
+    Result.MaterializedCallbacks += completedCallback(C, Target);
   }
   if (!Result.MaterializedCallbacks)
     return Result;
@@ -187,7 +197,7 @@ llvm::Expected<TLSRebuild> rebuildTLS(const Image &In, const Capture &C,
   for (size_t I = 0; I < Callbacks.size(); ++I) {
     const uint64_t Target = Callbacks[I];
     uint64_t Callback = Target;
-    if (llvm::is_contained(C.Initializers, Target)) {
+    if (completedCallback(C, Target)) {
       Callback = C.Base + MetadataRVA + Next;
       if (RestoreTLS && X64) {
         // Restore the captured main-thread block only on process attach.

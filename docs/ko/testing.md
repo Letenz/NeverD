@@ -1226,7 +1226,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 48개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `4975 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5337`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `4987 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5349`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1346,6 +1346,12 @@ Windows ring3는 독립적인 네이티브 관측에 따라 checked x64의 `oper
 `WindowsLifetimeTests.cpp`는 고정된 추적을 독립 네이티브 Windows 프로세스 및 KVM/WHP/Unicorn 실행과 비교합니다. 정상 종료, 진입점 반환, 두 DLL의 초기화 실패, 네 곳의 조기 종료와 진입점 없는 DLL을 포함합니다. 콜백 오류, 공용 예산, 재배치 TLS 필드와 TLS 총용량도 확인합니다. 네이티브 진입점 반환 프로브는 초기 스레드 핸들을 보존하고 종료 코드와 정확한 스레드/프로세스 통지 순서를 64회 검증합니다. 남은 자식 스레드는 관찰 후 종료하며 프로세스 종료 코드를 진입점 반환값으로 취급하지 않습니다.
 
 `NeverDUnpackTests`, `NeverDUnpackExecutionTests`, `NeverDUnpackPublicTests`는 패킹된 이미지의 복구를 다룹니다. [언패킹](unpack.md)을 참고하십시오. `UnpackGeneratedTests.cpp`는 테스트가 직접 패킹한 프로그램으로 x86-64와 ARM64에서 진입점 규칙을 검사합니다. `X64ReturnPrefixTests.cpp`는 2바이트 근거리 복귀를 모든 전송 계층에서 검사하고, 그 밖의 접두사 붙은 복귀가 계속 거부되는지 확인합니다. `WindowsDeferredTests.cpp`는 불투명 진입점과 멈춘 프로세스의 관찰을, `ExecutionSessionTests.cpp`는 실행 감시를 검사합니다. `DirectX64Tests.cpp`는 부분 페이지 감시, 페이지 경계를 넘는 명령 가져오기, 한 번만 재개, 서비스 경계, 잘못된 명령과 시간 제한 시 상태를 검증합니다.
+
+`UnpackLibraryTests.cpp`는 독립 x64/ARM64 DLL을 테스트 내부에서 패킹하여 의존 순서, 일반·생성 TLS 콜백, 연결 실패 정리, 입력/호스트 식별, 자체 파일 접근, 이름/서수/데이터/전달 내보내기 및 자체 가져오기 부재를 확인합니다. 네이티브 Windows는 별도 EXE에서 원본과 재구성 DLL을 로드하고 선언된 내보내기를 호출합니다. 검사 및 직접 WHP 사례는 필수입니다. `CompletedGeneratedTLSCallsRequireTheAttachABI`는 변경된 진입점/인수를 거부하고 `GeneratedCallsNeedTheirReturnedStackAtTheContinuation`는 잘못된 반환 스택을 거부합니다. 검증 범위는 언패킹이며 비가상화는 포함하지 않습니다.
+
+`ExportObserver`는 상주 게스트 의존성의 실행 가능한 내보내기도 관측합니다. 모델링된 제공자는 서비스 디스패치로 관측하며 입력 자체 내보내기는 제외합니다. 모듈 변경 시 관측점을 갱신하고 현재 내보내기 식별로만 수정합니다. 기록 수는 선언된 가져오기 한도 이내입니다. DLL 테스트는 시스템 API와 게스트 의존성 헬퍼 모두를 수정하고 네이티브 로드로 에뮬레이션 주소가 남지 않음을 검증합니다.
+
+`WrappedEntriesRequireExplicitTransferEvidence`는 DLL 래퍼가 깊은 스택으로 복원 진입점을 호출하는 경우를 다룹니다. 기본 결과는 `no_entry`입니다. 관측된 호출을 `transfer`로 선택하면 로드 가능한 DLL을 재구성합니다. 깊은 호출만으로 진입점과 초기화 함수를 구별할 수 없습니다.
 
 `WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback`는 `IMAGE_SCN_CNT_UNINITIALIZED_DATA`를 가진 독립 `.gentls` 섹션, 선언된 버퍼 범위와 정확히 일치하는 크기, 원시 데이터 크기와 포인터가 모두 0임을 요구합니다. `WindowsDeferredCases.def`가 저장소와 어셈블리를 정의하며 일반 `.data`는 분리됩니다. 생성 콜백과 생성 진입점 모두 x64/ARM64의 엄격한 거부 및 지연 실행 검사를 유지합니다.
 

@@ -154,6 +154,20 @@ TEST_F(PERebuild, ExportPointerWithoutAnArrayTerminatorIsNotAnImportCell) {
                          Image.Mapped.begin() + Cell));
 }
 
+TEST_F(PERebuild, InternalExportPointersCannotCreateASelfImport) {
+  const uint64_t Cell = Input->regions().back().RVA + 0x41;
+  const uint64_t Pointer = C.Base + Linked.Entry;
+  C.Exports.emplace(Pointer, ExportBinding{"input.dll", "Query", {}});
+  write64le(C.Memory.data() + Cell, Pointer);
+  write64le(C.Memory.data() + Cell + 8, 0);
+  const auto Result = rebuild({});
+  ASSERT_FALSE(HasFailure());
+  EXPECT_TRUE(Result.Imports.empty());
+  const auto Image = test::readImage(Result.File);
+  EXPECT_EQ(read64le(Image.Mapped.data() + Cell), Pointer);
+  EXPECT_EQ(read64le(Image.Mapped.data() + Cell + 8), 0u);
+}
+
 TEST_F(PERebuild, AdjacentProvidersCannotBorrowEachOthersImportTerminator) {
   const uint64_t Cell = Input->regions().back().RVA + 0x40;
   write64le(C.Memory.data() + Cell, FirstGate);
@@ -494,6 +508,33 @@ TEST_F(PERebuild, CompletedTLSStartupGetsAnAdapterOutsideOriginalStorage) {
                            Image.Mapped.begin() + R.RVA));
   EXPECT_TRUE(Image.Sections.back().Characteristics &
               llvm::COFF::IMAGE_SCN_MEM_EXECUTE);
+}
+
+TEST_F(PERebuild, CompletedGeneratedTLSCallsRequireTheAttachABI) {
+  prepareTLS();
+  ASSERT_FALSE(HasFailure());
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    C.CompletedCalls = {{C.Base + Callback, {C.Base, 1, 0}}};
+    auto &Call = C.CompletedCalls.front();
+    switch (Mutation) {
+    case 1:
+      ++Call.Entry;
+      break;
+    case 2:
+      ++Call.Arguments[0];
+      break;
+    case 3:
+      Call.Arguments[1] = 2;
+      break;
+    case 4:
+      Call.Arguments[2] = 1;
+      break;
+    }
+    const auto Result = rebuild({});
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(Result.MaterializedTLSCallbacks, Mutation == 0 ? 1u : 0u);
+  }
 }
 
 TEST_F(PERebuild, ARM64TLSAdaptersKeepTheOriginalCallbackTarget) {
