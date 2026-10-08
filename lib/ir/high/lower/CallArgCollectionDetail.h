@@ -65,13 +65,11 @@ struct CallArgScan {
   const CallArgumentConvention *Convention = nullptr;
   int MaxArgs = 0;
   int FirstStackSlot = 0;
-  /// How many ops before the call the stack-argument scan reads, or how many
-  /// stores when WindowReachesStackAdjustment.
   int StoreScanWindow = 0;
-  /// The scan reads the stores since the last stack pointer adjustment
-  /// before the call (CallArgPolicy::OutgoingStoresFollowStackAdjustment),
-  /// at addresses from CallStackPointer, the version the call sees.
-  bool WindowReachesStackAdjustment = false;
+  /// The push fallback places the stores before the call by where they
+  /// stand from CallStackPointer, the version of the stack pointer the call
+  /// sees (CallArgPolicy::PlacesOutgoingStores).
+  bool PlacesOutgoingStores = false;
   MedVar CallStackPointer;
   /// Where an earlier version of the stack pointer stands from
   /// CallStackPointer, through the adjustments between them (a push's slot);
@@ -165,10 +163,10 @@ struct CallArgPolicy {
   /// A call alone in a block that has one predecessor can take setup
   /// stores from the end of that predecessor.
   bool ReadsPredecessorWindow = false;
-  /// Every argument is stored relative to the stack pointer the last
-  /// adjustment before the call left, however many ops computing them
-  /// takes: the stack-argument scan reads the stores since then.
-  bool OutgoingStoresFollowStackAdjustment = false;
+  /// Every stack argument is stored in the call's outgoing area, by a push
+  /// or below the stack pointer the call sees: the push fallback places each
+  /// store by where it stands from that stack pointer and takes no other.
+  bool PlacesOutgoingStores = false;
   /// Takes the register-argument writes at the end of that predecessor.
   void (*TakePredecessorRegisters)(CallArgContext &C,
                                    const MedBlock &Pred) = nullptr;
@@ -199,6 +197,13 @@ struct CallArgPolicy {
 
 /// The call-argument policy for code of \p A in a \p F image, or null.
 const CallArgPolicy *callArgPolicy(Arch A, BinaryFormat F);
+
+/// The offset of address \p V from the stack pointer \p Scan's call sees,
+/// read from the definitions before op \p Before of \p Ops (defined in
+/// CallArgCollection.cpp).
+std::optional<int64_t> callStackOffset(const CallArgScan &Scan,
+                                       const std::vector<MedOp> &Ops,
+                                       int Before, MedVar V);
 
 /// True only for a same-SSA no-op (`COPY rcx = rcx`).  `COPY rcx.3 = rcx`
 /// restores the entry value into a new SSA version and is a real call-arg
