@@ -2631,25 +2631,30 @@ HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
                         : std::optional<std::string>(constStr(Value, Type));
   case NdTypeKind::Ptr:
     return "(" + typeToC(Type) + ")" + constStr(Value);
-  case NdTypeKind::Float: {
-    if (Type->Size != 4 && Type->Size != 8)
-      return std::nullopt;
-    const llvm::APFloat Float(Type->Size == 4 ? llvm::APFloat::IEEEsingle()
-                                              : llvm::APFloat::IEEEdouble(),
-                              llvm::APInt(Type->Size * 8, Value));
-    // A hexadecimal floating constant is exact; C has none for infinities
-    // and NaNs, which take their bits.
-    if (!Float.isFinite())
-      return "__builtin_bit_cast(" + typeToC(Type) + ", 0x" +
-             llvm::utohexstr(Value) + (Type->Size == 4 ? "u" : "ull") + ")";
-    char Text[64];
-    Float.convertToHexString(Text, 0, /*UpperCase=*/false,
-                             llvm::APFloat::rmNearestTiesToEven);
-    return std::string(Text) + (Type->Size == 4 ? "f" : "");
-  }
+  case NdTypeKind::Float:
+    return floatConstantText(Value, Type);
   default:
     return std::nullopt;
   }
+}
+
+std::optional<std::string>
+HighCWriter::floatConstantText(uint64_t Value, const TypeRef &Type) const {
+  if (!Type || Type->Kind != NdTypeKind::Float ||
+      (Type->Size != 4 && Type->Size != 8))
+    return std::nullopt;
+  const llvm::APFloat Float(Type->Size == 4 ? llvm::APFloat::IEEEsingle()
+                                            : llvm::APFloat::IEEEdouble(),
+                            llvm::APInt(Type->Size * 8, Value));
+  // A hexadecimal floating constant is exact; C has none for infinities
+  // and NaNs, which take their bits.
+  if (!Float.isFinite())
+    return "__builtin_bit_cast(" + typeToC(Type) + ", 0x" +
+           llvm::utohexstr(Value) + (Type->Size == 4 ? "u" : "ull") + ")";
+  char Text[64];
+  Float.convertToHexString(Text, 0, /*UpperCase=*/false,
+                           llvm::APFloat::rmNearestTiesToEven);
+  return std::string(Text) + (Type->Size == 4 ? "f" : "");
 }
 
 void HighCWriter::writeX64SyscallHelper() {

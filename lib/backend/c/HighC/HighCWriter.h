@@ -833,6 +833,9 @@ public:
   /// cannot spell exactly.
   std::optional<std::string> imageObjectInitializer(va_t Addr,
                                                     const ImageObject &Obj);
+  /// The exact C constant for the float with bits \p Value.
+  std::optional<std::string> floatConstantText(uint64_t Value,
+                                               const TypeRef &Type) const;
   /// The address constant of a sized image object that \p Address indexes
   /// by a variable byte offset (`i + &table`), or null.  The constant may
   /// point into the object (`i + &table[2]`).

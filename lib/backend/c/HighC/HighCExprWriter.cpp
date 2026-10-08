@@ -3694,8 +3694,13 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return *Slot;
       if (auto VA = constAddress(*E.Operands[0])) {
         const uint16_t Size = E.Type ? E.Type->Size : 0;
-        if (auto Imm = foldReadonlyScalar(*VA, Size))
+        if (auto Imm = foldReadonlyScalar(*VA, Size)) {
+          // A float read from constant data is its value: the bits printed
+          // as an integer would convert to another one.
+          if (const auto Float = floatConstantText(*Imm, E.Type))
+            return *Float;
           return constStr(*Imm);
+        }
         if (auto Name = imageObjectName(*VA)) {
           // A string's pointer reads as the integer the machine loads where
           // no parameter takes it as the pointer it is.
