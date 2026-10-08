@@ -3215,10 +3215,12 @@ TEST_F(SessionCAPITest, LibrarySourcePagesPreserveTextAndReloadEvidence) {
 }
 
 TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
-  const auto Path =
-      (std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) / "accessors-inline.o")
-          .string();
-  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+  // A copy: renaming writes its sidecar beside the input.
+  const auto Input = Directory / "kept-emission.o";
+  std::filesystem::copy_file(std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) /
+                                 "accessors-inline.o",
+                             Input);
+  ASSERT_EQ(neverd_session_load(Session, Input.string().c_str()), 1)
       << takeString(neverd_last_error(Session));
   int Index = neverd_func_find_by_name(Session, "_nd_vector_u32_data_inline");
   if (Index < 0)
@@ -3269,7 +3271,20 @@ TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
               "/* kept */\n");
     EXPECT_EQ(Decompile(HighC), "/* kept */\n");
   }
+  // The user's names are the emitters' input too (data and labels take them,
+  // UserNamesNameDataInSymbolsAndC): naming anything emits the source again.
+  const std::string Old = takeString(
+      neverd_func_name(Session, neverd_func_find_by_addr(Session, Entry)));
+  ASSERT_EQ(neverd_rename_func(Session, Old.c_str(), "kept_accessor"), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_TRUE(State.FunctionSources.empty());
+  EXPECT_EQ(Decompile(true).find("/* kept */"), std::string::npos);
+  Decompile(false);
+  ASSERT_EQ(neverd_rename_addr(Session, Entry, nullptr), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_TRUE(State.FunctionSources.empty());
   // A new pipeline emits the source again.
+  Decompile(true);
   neverd_session_restrict_function(Session, 0);
   EXPECT_TRUE(State.FunctionSources.empty());
   EXPECT_EQ(Decompile(true), HighCText);

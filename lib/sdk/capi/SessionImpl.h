@@ -115,8 +115,9 @@ struct Session {
   /// The C route that emitted a function's source.
   enum class SourceRoute : uint8_t { HighC, LLVMC, LLVMCNoOpt };
   /// One function's emitted C.  A view pages through the whole text, and the
-  /// text stays the same until the pipeline changes, so every page after the
-  /// first reads it here instead of emitting the function again.
+  /// text stays the same until the pipeline or an input of the emitter
+  /// outside it changes (forgetEmittedSources), so every page after the first
+  /// reads it here instead of emitting the function again.
   struct FunctionSource {
     va_t Entry = 0;
     SourceRoute Route = SourceRoute::HighC;
@@ -428,6 +429,12 @@ struct Session {
   /// Recompute display identity from current evidence. No IR or image names
   /// are modified, and a failed/withdrawn match cannot leave a stale label.
   void refreshFunctionNames();
+
+  /// Drop the kept C of every function.  A change to anything the C emitters
+  /// read beyond the pipeline, such as the user's names
+  /// (CEmitterOptions::UserNames), must call this, or a view keeps showing
+  /// what was emitted before it.
+  void forgetEmittedSources() { FunctionSources.clear(); }
 
   /// The source \p Route emitted for \p Entry under this pipeline, made the
   /// newest; null if it has not emitted one.
