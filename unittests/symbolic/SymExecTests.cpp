@@ -21,6 +21,7 @@
 #include "neverd/symbolic/SymParse.h"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <string>
 #include <vector>
@@ -681,6 +682,171 @@ TEST(SymState, ACallPreservedRangeKeepsExactlyItsDeclaredBytes) {
   ASSERT_TRUE(Ctx.isConst(Low));
   EXPECT_EQ(Ctx.constValue(Low).getZExtValue(), 0x55667788u);
   EXPECT_FALSE(Ctx.isConst(State.read(SymSpace::Register, kRax + 4, 4)));
+}
+
+TEST(SymState, WholeScalarOverwritesDoNotBuildUnusedByteExpressions) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    for (auto Space : {SymSpace::Register, SymSpace::Temporary}) {
+      for (unsigned Width : {64u, 256u, 512u}) {
+        SymContext Ctx;
+        SymState State(Ctx, Order);
+        const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+        std::vector<SymRef> Words;
+        for (unsigned I = 0; I != 32; ++I)
+          Words.push_back(Ctx.mkUDiv(Ctx.mkAdd(X, Ctx.mkConst(Width, I)), Y));
+        const size_t Before = Ctx.numNodes();
+        for (auto Word : Words) {
+          State.write(Space, 17, Word);
+          EXPECT_EQ(State.read(Space, 17, Width / 8), Word);
+        }
+        EXPECT_EQ(State.numLiveBytes(), Width / 8);
+        EXPECT_EQ(Ctx.numNodes(), Before);
+      }
+    }
+  }
+}
+
+TEST(SymState, OverlappingScalarViewsMatchAnIndependentByteStore) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    for (auto Space : {SymSpace::Register, SymSpace::Temporary}) {
+      SymContext Ctx;
+      SymState State(Ctx, Order);
+      const auto Whole = Ctx.mkVar("whole", 128);
+      const auto Patch = Ctx.mkVar("patch", 32);
+      State.write(Space, 9, Whole);
+      State.write(Space, 12, Patch);
+      State.write(Space, 17, Ctx.mkExtract(Whole, 40, 16));
+      struct Read {
+        unsigned Offset, Bytes;
+        SymRef Value;
+      };
+      std::vector<Read> Reads;
+      for (unsigned Offset = 0; Offset != 16; ++Offset)
+        for (unsigned Bytes = 1; Bytes <= 16 - Offset; ++Bytes)
+          Reads.push_back(
+              {Offset, Bytes, State.read(Space, 9 + Offset, Bytes)});
+
+      for (uint64_t Seed = 0; Seed != 32; ++Seed) {
+        const uint64_t Raw[] = {0x1b5d739af024c681ULL * (Seed + 1),
+                                0xf097b43a261dc85eULL ^ (Seed << 41)};
+        const llvm::APInt Input(128, Raw);
+        const llvm::APInt Replacement(
+            32, static_cast<uint32_t>(0x31a7c95dULL * (Seed + 3)));
+        const std::vector<llvm::APInt> Values{Input, Replacement};
+        std::array<uint8_t, 16> Bytes{};
+        const auto Write = [&](unsigned Offset, const llvm::APInt &Value) {
+          const unsigned Size = Value.getBitWidth() / 8;
+          for (unsigned I = 0; I != Size; ++I) {
+            const unsigned Lane =
+                Order == llvm::endianness::little ? I : Size - I - 1;
+            Bytes[Offset + I] = Value.extractBitsAsZExtValue(8, Lane * 8);
+          }
+        };
+        Write(0, Input);
+        Write(3, Replacement);
+        Write(8, Input.extractBits(16, 40));
+        for (const auto &Read : Reads) {
+          llvm::APInt Expected(Read.Bytes * 8, 0);
+          for (unsigned I = 0; I != Read.Bytes; ++I) {
+            const unsigned Lane =
+                Order == llvm::endianness::little ? I : Read.Bytes - I - 1;
+            Expected |= llvm::APInt(Read.Bytes * 8, Bytes[Read.Offset + I])
+                        << (Lane * 8);
+          }
+          EXPECT_EQ(Ctx.eval(Read.Value, Values), Expected)
+              << "offset " << Read.Offset << " bytes " << Read.Bytes;
+        }
+      }
+    }
+  }
+}
+
+TEST(SymState, ForkedClobbersShareDeferredOverlappingScalarInputs) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    for (auto Space : {SymSpace::Register, SymSpace::Temporary}) {
+      SymContext Ctx;
+      SymState Left(Ctx, Order);
+      Left.clobberRegistersExcept({});
+      auto Right = Left;
+      const auto Whole = Left.read(Space, 17, 8);
+      const unsigned Low = Order == llvm::endianness::little ? 16 : 24;
+      EXPECT_EQ(Right.read(Space, 19, 3), Ctx.mkExtract(Whole, Low, 24));
+      const auto Changed = Ctx.mkFreshVar(8, "changed");
+      Right.write(Space, 20, Changed);
+      EXPECT_EQ(Right.read(Space, 20, 1), Changed);
+      EXPECT_EQ(Left.read(Space, 17, 8), Whole);
+      EXPECT_NE(Right.read(Space, 17, 8), Whole);
+      EXPECT_FALSE(Left.mergeIdentical(Right));
+      Right.clobberRegistersExcept({});
+      EXPECT_NE(Right.read(Space, 17, 8), Whole);
+    }
+  }
+}
+
+TEST(SymState, StateMergeComparesByteValuesAcrossDifferentScalarViews) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    for (auto Space : {SymSpace::Register, SymSpace::Temporary}) {
+      SymContext Ctx;
+      SymState WholeState(Ctx, Order), ByteState(Ctx, Order);
+      const auto Whole = Ctx.mkVar("whole", 256);
+      WholeState.write(Space, 17, Whole);
+      for (unsigned I = 0; I != 32; ++I) {
+        const unsigned Lane = Order == llvm::endianness::little ? I : 31 - I;
+        ByteState.write(Space, 17 + I, Ctx.mkExtract(Whole, Lane * 8, 8));
+      }
+      EXPECT_TRUE(WholeState.mergeIdentical(ByteState));
+      ByteState.write(Space, 29, Ctx.mkFreshVar(8, "different"));
+      EXPECT_FALSE(WholeState.mergeIdentical(ByteState));
+      EXPECT_EQ(WholeState.read(Space, 17, 32), Whole);
+    }
+  }
+}
+
+TEST(SymState, PreservedScalarViewsKeepOnlyTheRequestedLanes) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    SymContext Ctx;
+    SymState State(Ctx, Order);
+    const auto Whole = Ctx.mkVar("whole", 64);
+    State.write(SymSpace::Register, 17, Whole);
+    State.clobberRegistersExcept({SymRegisterRange{19, 3}});
+    const unsigned Low = Order == llvm::endianness::little ? 16 : 24;
+    EXPECT_EQ(State.read(SymSpace::Register, 19, 3),
+              Ctx.mkExtract(Whole, Low, 24));
+    const auto Before = State.read(SymSpace::Register, 17, 2);
+    const auto After = State.read(SymSpace::Register, 22, 3);
+    ASSERT_TRUE(Ctx.isVar(Before));
+    ASSERT_TRUE(Ctx.isVar(After));
+    EXPECT_TRUE(Ctx.varInfo(Ctx.varId(Before)).Fresh);
+    EXPECT_TRUE(Ctx.varInfo(Ctx.varId(After)).Fresh);
+    EXPECT_NE(Ctx.varId(Before), Ctx.varId(After));
+    EXPECT_NE(State.read(SymSpace::Register, 17, 8), Whole);
+  }
+}
+
+TEST(SymState, StateMergeDistinguishesDifferentSlicesOfOneSource) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    for (auto Space : {SymSpace::Register, SymSpace::Temporary}) {
+      SymContext Ctx;
+      SymState Left(Ctx, Order), Right(Ctx, Order);
+      const auto Word = Ctx.mkVar("word", 128);
+      Left.write(Space, 17, Word);
+      Left.write(Space, 25, Word);
+      Right.write(Space, 25, Word);
+      Right.write(Space, 17, Word);
+      // Every byte refers to the same word and both banks cover [17, 41),
+      // but the overlapping eight bytes retain different slices of it.
+      EXPECT_FALSE(Left.mergeIdentical(Right));
+      EXPECT_NE(Left.read(Space, 25, 8), Right.read(Space, 25, 8));
+    }
+  }
+}
+
+TEST(SymState, StateMergeRejectsForeignContextReferences) {
+  SymContext LeftContext, RightContext;
+  SymState Left(LeftContext), Right(RightContext);
+  Left.write(SymSpace::Register, 0, LeftContext.mkVar("left", 64));
+  Right.write(SymSpace::Register, 0, RightContext.mkVar("right", 64));
+  EXPECT_FALSE(Left.mergeIdentical(Right));
 }
 
 //===----------------------------------------------------------------------===//

@@ -240,11 +240,20 @@ public:
   size_t numMemoryRegions() const { return Regions.size(); }
 
 private:
+  /// One exact byte view. Scalar writes retain the source word until a read
+  /// needs a slice, avoiding dead extracts for overwritten whole words.
+  struct ByteView {
+    SymRef Value;
+    uint32_t Low = 0;
+
+    friend bool operator==(const ByteView &, const ByteView &) = default;
+  };
+
   /// Lazily materialised bytes belonging to one forgetting event.  States
   /// copied after that event share the set, so they agree on what an untouched
   /// location holds; forks that forget independently afterwards do not.
   struct UnknownBytes {
-    std::map<uint64_t, SymRef> Values;
+    std::map<uint64_t, ByteView> Values;
   };
 
   /// Defaults for regions first touched after one memory effect.  Copies share
@@ -256,7 +265,7 @@ private:
   /// One byte-addressed store: the register file, the temporaries, absolute
   /// memory, or one memory region.
   struct Bank {
-    std::map<uint64_t, SymRef> Bytes;
+    std::map<uint64_t, ByteView> Bytes;
     /// Null until this bank has been forgotten once — while an untouched byte
     /// can still be named for where it is rather than for when it was read.
     std::shared_ptr<UnknownBytes> Unknowns;
@@ -284,7 +293,7 @@ private:
   Bank &bank(SymSpace Space);
 
   /// One byte of a bank, minting a named input for it when it has none.
-  SymRef byteAt(Bank &B, uint64_t Offset);
+  ByteView byteAt(Bank &B, uint64_t Offset);
   SymRef readBank(Bank &B, uint64_t Offset, uint16_t Bytes);
   bool writeBank(Bank &B, uint64_t Offset, SymRef Value);
 
@@ -295,7 +304,7 @@ private:
   /// spares nothing.
   void forgetRegions(SymRef Except);
 
-  static bool holdsSameBytes(const Bank &A, const Bank &B);
+  bool holdsSameBytes(const Bank &A, const Bank &B) const;
 
   /// Add one fact to a value's load provenance without making insertion order
   /// observable.
