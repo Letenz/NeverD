@@ -129,6 +129,12 @@ constexpr bool isPointerType(std::string_view Type) {
          (Type.back() == '*' || Type.find("*)") != std::string_view::npos);
 }
 
+/// Whether C type \p Type is a real floating type, which the calling
+/// conventions pass in a vector register.
+constexpr bool isFloatingType(std::string_view Type) {
+  return Type == "float" || Type == "double" || Type == "long double";
+}
+
 /// Whether a parameter of C type \p Type takes a narrow string literal as it
 /// is: C converts its `char *` to a character or untyped pointer.
 constexpr bool takesStringLiteral(std::string_view Type) {

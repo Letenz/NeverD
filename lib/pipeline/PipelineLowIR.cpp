@@ -2849,10 +2849,11 @@ bool forwardsToGuardDispatch(const BinaryImage &Img, const LowFunc &F) {
 /// import by: an executable stub or a slot the loader binds, listed in the
 /// import directory or not (importCalleeName).  A stub lifted as a function
 /// is keyed too.  A call in a function whose own summary is incomplete still
-/// passes its import's parameters.  Only a routine the arity tables give a
-/// fixed prototype (LibCNames.h), with every integer and pointer argument in
-/// a register and none in a vector register, is listed; each argument is
-/// read pointer-wide.
+/// passes its import's parameters.  Only a routine with a fixed prototype is
+/// listed: one of the image format's own runtime (LibCPrototype, such as the
+/// Windows C runtime's `_initterm`), else one the arity tables give
+/// (LibCNames.h).  Every integer and pointer argument must be in a register
+/// and none in a vector register; each is read pointer-wide.
 std::map<va_t, GPRReadWidths>
 importPrototypeEntryReads(const BinaryImage &Img,
                           const std::vector<LowFunc> &Funcs,
@@ -2860,6 +2861,23 @@ importPrototypeEntryReads(const BinaryImage &Img,
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const llvm::ArrayRef<uint64_t> Registers =
       TRI.integerArgumentLayout(Img.Format).Registers;
+  // A runtime's own prototype names its routine exactly, where stripping
+  // leading underscores for the arity tables could reach another runtime's.
+  auto IntegerArguments = [&](const std::string &Name) -> std::optional<int> {
+    if (const libc::LibCPrototype *Prototype =
+            libc::libcPrototype(Name, Img.Format)) {
+      if (Prototype->Variadic ||
+          llvm::any_of(llvm::ArrayRef(Prototype->Params.data(),
+                                      Prototype->ParamCount),
+                       libc::isFloatingType))
+        return std::nullopt;
+      return Prototype->ParamCount;
+    }
+    const auto Arity = libc::libcArityForSymbol(Name);
+    if (!Arity || Arity->FpArgs != 0 || Arity->IntArgs < 0)
+      return std::nullopt;
+    return Arity->IntArgs;
+  };
   std::map<va_t, GPRReadWidths> Reads;
   std::set<va_t> Seen;
   auto Classify = [&](va_t Addr) {
@@ -2868,12 +2886,11 @@ importPrototypeEntryReads(const BinaryImage &Img,
     const std::string Name = importCalleeName(Img, Addr);
     if (Name.empty())
       return;
-    const auto Arity = libc::libcArityForSymbol(Name);
-    if (!Arity || Arity->FpArgs != 0 || Arity->IntArgs < 0 ||
-        static_cast<size_t>(Arity->IntArgs) > Registers.size())
+    const std::optional<int> Count = IntegerArguments(Name);
+    if (!Count || static_cast<size_t>(*Count) > Registers.size())
       return;
     GPRReadWidths Widths{};
-    for (int K = 0; K < Arity->IntArgs; ++K)
+    for (int K = 0; K < *Count; ++K)
       if (const auto Family = gprFamilyOf(Img.Arch, Registers[K]))
         Widths[*Family] = static_cast<uint8_t>(TRI.PointerSize);
     Reads[Addr] = Widths;
@@ -2997,11 +3014,16 @@ void computeCallRegisterEffects(
       Classify(Entry, Img.getFunctionNameAt(Entry));
     for (const Import &Imp : Img.Imports)
       Classify(Imp.IATAddr, Imp.Name);
-  } else if (const CallArgumentConvention *Convention =
-                 callArgumentConvention(Img.Arch, Img.Format);
-             Convention && Convention->ImportArgumentsFromPrototype) {
-    FixedEntryReads = importPrototypeEntryReads(Img, Result.LowFuncs, Effects);
   }
+  // A libc import with a fixed prototype reads its parameters however the
+  // code reaches it; a documented contract above decides first.
+  if (const CallArgumentConvention *Convention =
+          callArgumentConvention(Img.Arch, Img.Format);
+      Convention && Convention->ImportArgumentsFromPrototype)
+    for (auto &[Addr, Widths] :
+         importPrototypeEntryReads(Img, Result.LowFuncs, Effects))
+      if (!DispatchThunks.count(Addr))
+        FixedEntryReads.try_emplace(Addr, Widths);
   CallRegisterSummaries Summaries = solveCallRegisterEffects(
       Effects, Volatile, Arguments, DispatchThunks, FixedEntryReads);
   Result.CallDispatchThunks = std::move(DispatchThunks);
