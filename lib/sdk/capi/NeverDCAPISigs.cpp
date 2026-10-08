@@ -27,6 +27,8 @@ using namespace neverd;
 using namespace neverd::sdk;
 
 void Session::refreshFunctionNames() {
+  // C emitted so far names data as the user named it then.
+  FunctionSources.clear();
   const auto Names = SigDB.buildNameMap();
   for (auto &F : Functions) {
     if (F.LinkageName.empty()) {
