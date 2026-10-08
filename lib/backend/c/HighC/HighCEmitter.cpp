@@ -436,10 +436,14 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   NeedsUnalignedTypes = false;
   Has256BitInteger = false;
   Has512BitInteger = false;
+  Int128AsBitInt = false;
   // Native AArch64 vector carriers are projected to SVE ACLE types.  x86
   // vector intrinsics use scalar integer carriers at the HighIR boundary.
   const bool ProjectsScalarWideIntegers =
       Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64;
+  // C compilers provide __int128 on targets with 64-bit pointers only.
+  const bool TargetHasInt128 =
+      pointerBytes(Opts.TheArch) >= sizeof(uint64_t);
   auto CollectWideType = [&](const TypeRef &Type) {
     if (const unsigned Bytes = partialIntegerBytes(Type))
       PartialIntegerBytes.emplace(typeToC(Type), Bytes);
@@ -447,6 +451,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
                         Type->Kind == NdTypeKind::Int && Type->Size == 32;
     Has512BitInteger |= ProjectsScalarWideIntegers && Type &&
                         Type->Kind == NdTypeKind::Int && Type->Size == 64;
+    Int128AsBitInt |= !TargetHasInt128 && Type &&
+                      Type->Kind == NdTypeKind::Int && Type->Size == 16;
   };
   std::set<const HighExpr *> Seen;
   bool HideEHRuntimeMemory = false;
@@ -1436,7 +1442,14 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
       forEachExpr(Statement, CheckExpr);
     });
   }
+  // Every spelling of a 16-byte integer, in types and in the intrinsics'
+  // casts alike, takes the C23 type a 32-bit target has.
+  auto WriteInt128Spelling = [&] {
+    if (Int128AsBitInt)
+      OS << "#define __int128 _BitInt(128)\n\n";
+  };
   if (!Opts.EmitIncludes) {
+    WriteInt128Spelling();
     if (NeedsBlockObject)
       OS << "typedef struct _Block_object _Block_object;\n\n";
     if (Has256BitInteger)
@@ -1503,6 +1516,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   if (NeedsFEnvAccess)
     OS << "#pragma STDC FENV_ACCESS ON\n";
   OS << "\n";
+  WriteInt128Spelling();
   if (NeedsBlockObject)
     OS << "typedef struct _Block_object _Block_object;\n\n";
   if (Has256BitInteger)

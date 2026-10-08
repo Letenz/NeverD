@@ -664,6 +664,9 @@ public:
   bool UnalignedTypesWritten = false;
   bool Has256BitInteger = false;
   bool Has512BitInteger = false;
+  /// A 16-byte integer on a target whose C has no __int128, which the
+  /// prelude then spells as the C23 _BitInt(128).
+  bool Int128AsBitInt = false;
 
   HighCAnalysisState Analysis;
   bool InferredVoid = false;

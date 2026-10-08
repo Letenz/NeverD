@@ -1286,6 +1286,60 @@ static std::optional<std::string> compileForTarget(const std::string &Source,
   return Errors ? (*Errors)->getBuffer().str() : std::string("failed");
 }
 
+TEST(HighCIntegerWidths, A32BitTargetSpellsA128BitIntegerAsBitInt) {
+  // Four ARM32 registers moved as one 16-byte value: C has no __int128 on a
+  // target with 32-bit pointers, but _BitInt(128) holds the same bits.
+  auto Param = [] {
+    MedVar V;
+    V.Kind = MedVar::Param;
+    V.Id = 0;
+    V.Size = 4;
+    V.TheArch = Arch::ARM;
+    return HighExpr::makeVar(V, NdType::makeInt(4, false));
+  };
+  MedVar Wide;
+  Wide.Kind = MedVar::Temp;
+  Wide.Id = 1;
+  Wide.Size = 16;
+  Wide.TheArch = Arch::ARM;
+  auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, Param());
+  Extended->Type = NdType::makeInt(16, false);
+  auto Shifted = HighExpr::makeBinop(
+      NdOp::INT_LEFT, HighExpr::makeVar(Wide, NdType::makeInt(16, false)),
+      HighExpr::makeConst(96, 4));
+  Shifted->Type = NdType::makeInt(16, false);
+  auto Top =
+      HighExpr::makeBinop(NdOp::SUBBYTES, Shifted, HighExpr::makeConst(12, 4));
+  Top->Type = NdType::makeInt(4, false);
+  HighFunc Func;
+  Func.Name = "top_word";
+  Func.ReturnType = NdType::makeInt(4, false);
+  Func.Params = {{"arg0", NdType::makeInt(4, false)}};
+  HighStmt Define;
+  Define.Kind = StmtKind::Assign;
+  Define.Dst = HighExpr::makeVar(Wide, NdType::makeInt(16, false));
+  Define.Val = Extended;
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = Top;
+  Func.Body = {std::move(Define), std::move(Return)};
+  for (const Arch Target : {Arch::ARM, Arch::X64}) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Target;
+    ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+    OS.flush();
+    const bool Mapped =
+        Source.find("#define __int128 _BitInt(128)") != std::string::npos;
+    EXPECT_EQ(Mapped, Target == Arch::ARM) << Source;
+    if (Target == Arch::ARM) {
+      const auto Errors = compileForTarget(Source, "armv7-linux-gnueabihf");
+      EXPECT_FALSE(Errors) << *Errors << Source;
+    }
+  }
+}
+
 TEST(HighCIntegerWidths, WindowsX64SyscallUsesTheServiceConvention) {
   // return (uint64_t)syscall(0x55, 1, 2, 3, 4) under the NT convention: the
   // helper runs SYSCALL with the service number in RAX and the arguments in
