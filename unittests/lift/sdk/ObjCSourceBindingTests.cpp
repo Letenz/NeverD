@@ -2020,6 +2020,182 @@ TEST(ObjCSourceInputs, EntrySnapshotUsesRuntimeOffsetWithoutChangingNativeABI) {
   }
 }
 
+TEST(ObjCSourceInputs, AdjacentLoadInliningPreservesSingleEntryReadProof) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Width : {4U, 8U}) {
+      SCOPED_TRACE(unsigned(Architecture));
+      SCOPED_TRACE(Width);
+      EntryInputFixture F(Architecture, Width);
+      ASSERT_TRUE(entryScalarLoadInput(F.Callee, 0));
+      // A fix may preserve the proven entry load or recognize its safe folded
+      // representation. Neither strategy may lose this existing contract.
+      inlineAdjacentLoads(F.Callee);
+      ASSERT_TRUE(entryScalarLoadInput(F.Callee, 0));
+      auto Projected = F.project();
+      ASSERT_EQ(Projected.Body.size(), 2U);
+      ASSERT_EQ(Projected.Body[0].Val->Kind, ExprKind::Load);
+      EXPECT_EQ(Projected.Body[0].Val->Type->Size, Width);
+      const auto Address = Projected.Body[1].RetVal->Operands[0];
+      ASSERT_EQ(Address->Kind, ExprKind::Addr);
+      EXPECT_TRUE(Address->Operands[0]->structuralEq(*Projected.Body[0].Dst));
+      EXPECT_EQ(Projected.Body[1].RetVal->SourceCallHint, F.Hint);
+      const auto Bound = bindObjCSourceReferences(Projected, F.Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      ASSERT_TRUE(Bound.Function.Body[0].Val->SourceCallHint);
+      EXPECT_EQ(Bound.Function.Body[0].Val->SourceCallHint->CallKind,
+                SourceCallTypeHint::Kind::RuntimeIvarOffset);
+    }
+  }
+}
+
+TEST(ObjCSourceInputs, AdjacentLoadInliningKeepsEntryReadRejections) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Case : {0U, 1U, 2U}) {
+      SCOPED_TRACE(unsigned(Architecture));
+      SCOPED_TRACE(Case);
+      EntryInputFixture F(Architecture, 4);
+      if (Case == 0) {
+        // Preserve the existing case-0 double read: assignment plus return.
+        F.Callee.Body[1].RetVal = F.Load;
+      } else if (Case == 1) {
+        HighStmt Effect;
+        Effect.Kind = StmtKind::ExprStmt;
+        Effect.Val = HighExpr::makeCall("effect", 0x3000, {});
+        F.Callee.Body.insert(F.Callee.Body.begin(), Effect);
+      } else {
+        // The current proof intentionally has no alias-definition tracing.
+        MedVar Temporary;
+        Temporary.Kind = MedVar::Temp;
+        Temporary.Id = 99;
+        Temporary.Size = 8;
+        auto Alias = HighExpr::makeVar(Temporary, NdType::makeInt(8, false));
+        HighStmt Copy;
+        Copy.Kind = StmtKind::Assign;
+        Copy.Dst = Alias;
+        Copy.Val = F.Pointer;
+        F.Load->Operands[0] = Alias;
+        F.Callee.Body.insert(F.Callee.Body.begin(), Copy);
+      }
+      EXPECT_FALSE(entryScalarLoadInput(F.Callee, 0));
+      inlineAdjacentLoads(F.Callee);
+      EXPECT_FALSE(entryScalarLoadInput(F.Callee, 0));
+      const auto Projected = F.project();
+      ASSERT_EQ(Projected.Body.size(), 1U);
+      EXPECT_EQ(Projected.Body[0].RetVal, F.Call);
+    }
+  }
+}
+
+TEST(ObjCSourceInputs, FoldedFieldReadPrecedesTheConsumingCall) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Width : {4U, 8U}) {
+      for (unsigned Conversion : {0U, 1U, 2U}) {
+        SCOPED_TRACE(unsigned(Architecture));
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(Conversion);
+        EntryInputFixture F(Architecture, Width);
+        auto Offset = std::make_shared<HighExpr>();
+        Offset->Kind = Conversion == 0 ? ExprKind::Cast : ExprKind::UnaryOp;
+        Offset->Op = Conversion == 2 ? NdOp::INT_SEXT : NdOp::INT_ZEXT;
+        Offset->Type = NdType::makeInt(8, false);
+        Offset->Operands = {F.Callee.Body[0].Dst};
+        auto Field = HighExpr::makeLoad(
+            HighExpr::makeBinop(NdOp::INT_ADD, Offset,
+                                HighExpr::makeConst(0x4000, 8)),
+            NdType::makeInt(8, false));
+        auto Call = HighExpr::makeCall("consumeField", 0x3000, {Field});
+        Call->Type = F.Callee.ReturnType;
+        F.Callee.Body[1].RetVal = Call;
+        ASSERT_TRUE(entryScalarLoadInput(F.Callee, 0));
+        ASSERT_TRUE(inlineAdjacentLoads(F.Callee));
+        ASSERT_EQ(F.Callee.Body.size(), 1U);
+        const auto Type = entryScalarLoadInput(F.Callee, 0);
+        ASSERT_TRUE(Type);
+        EXPECT_EQ(Type->Size, Width);
+        auto Projected = F.project();
+        ASSERT_EQ(Projected.Body.size(), 2U);
+        EXPECT_EQ(Projected.Body[0].Val->Kind, ExprKind::Load);
+        EXPECT_EQ(Projected.Body[0].Val->Type->Size, Width);
+        EXPECT_EQ(Projected.Body[1].RetVal->SourceCallHint, F.Hint);
+        const auto Bound = bindObjCSourceReferences(Projected, F.Image);
+        ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        ASSERT_TRUE(Bound.Function.Body[0].Val->SourceCallHint);
+        EXPECT_EQ(Bound.Function.Body[0].Val->SourceCallHint->CallKind,
+                  SourceCallTypeHint::Kind::RuntimeIvarOffset);
+      }
+    }
+  }
+}
+
+TEST(ObjCSourceInputs, FoldedEntryReadRejectsCompetingEffectsAndControl) {
+  for (unsigned Case = 0; Case < 13; ++Case) {
+    SCOPED_TRACE(Case);
+    EntryInputFixture F;
+    F.Callee.Body.erase(F.Callee.Body.begin());
+    auto Other = HighExpr::makeConst(1, 4);
+    auto Read = F.Load;
+    if (Case < 2) {
+      Other = Case == 0 ? HighExpr::makeCall("effect", 0x3000, {})
+                        : HighExpr::makeLoad(HighExpr::makeConst(0x4000, 8),
+                                             NdType::makeInt(4));
+      Other->Type = NdType::makeInt(4);
+      F.Callee.Body[0].RetVal = HighExpr::makeBinop(NdOp::INT_ADD, Read, Other);
+    } else if (Case < 4) {
+      F.Callee.Body[0].RetVal = HighExpr::makeBinop(
+          Case == 2 ? NdOp::BOOL_AND : NdOp::BOOL_OR, Other, Read);
+    } else {
+      auto Call = HighExpr::makeCall("consume", 0x3000, {Read, Other});
+      Call->Type = F.Callee.ReturnType;
+      if (Case == 4)
+        Call->Operands[1] = F.Load;
+      if (Case == 5)
+        Call->Operands[1] = HighExpr::makeCall("effect", 0x4000, {});
+      if (Case == 6) {
+        Call->IsIndirectCall = true;
+        Call->IndirectTarget = HighExpr::makeConst(0x4000, 8);
+      }
+      if (Case == 7)
+        Read->MemoryOrdering = NdMemoryOrdering::Acquire;
+      if (Case == 8)
+        Read->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      if (Case == 9)
+        Call->IntrinsicOutputs = {F.Pointer->Var};
+      if (Case == 10)
+        F.Callee.Body[0].Cond = HighExpr::makeConst(1, 1);
+      if (Case == 11)
+        Call->Operands[1] = nullptr;
+      if (Case == 12) {
+        Call->Operands.assign(2000, HighExpr::makeConst(0, 4));
+        Call->Operands.push_back(Read);
+      }
+      F.Callee.Body[0].RetVal = Call;
+    }
+    EXPECT_FALSE(entryScalarLoadInput(F.Callee, 0));
+    inlineAdjacentLoads(F.Callee);
+    EXPECT_FALSE(entryScalarLoadInput(F.Callee, 0));
+    EXPECT_EQ(F.project().Body.size(), 1U);
+  }
+}
+
+TEST(ObjCSourceInputs, EntryReadRejectsLaterIndirectCalleeOccurrences) {
+  for (unsigned Case = 0; Case < 3; ++Case) {
+    SCOPED_TRACE(Case);
+    EntryInputFixture F;
+    auto Call = HighExpr::makeCall("indirect", 0, {});
+    Call->IsIndirectCall = true;
+    Call->Type = F.Callee.ReturnType;
+    if (Case == 0)
+      Call->IndirectTarget = F.Pointer;
+    if (Case == 1)
+      Call->IndirectTarget = F.Load;
+    if (Case == 2)
+      Call->IndirectParamIdx = 0;
+    F.Callee.Body[1].RetVal = Call;
+    EXPECT_FALSE(entryScalarLoadInput(F.Callee, 0));
+    EXPECT_EQ(F.project().Body.size(), 1U);
+  }
+}
+
 namespace {
 struct MergedIvarOffsetFixture {
   BinaryImage Image;
