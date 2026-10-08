@@ -1,6 +1,8 @@
 #ifndef NEVERD_LIBC_LIBCPTHREAD_H
 #define NEVERD_LIBC_LIBCPTHREAD_H
 
+#include "neverd/libc/LibCNames.h"
+
 #include <array>
 #include <string_view>
 
@@ -94,6 +96,83 @@ inline constexpr std::array kPthreadFunctions = {
     "pthread_getname_np",
     "pthread_setname_np",
 };
+
+/// Fixed arity of the pthread.h functions.  {IntArgs, FpArgs}.
+inline constexpr auto kPthreadArity = std::to_array<LibCArityEntry>({
+    {"pthread_create", {4, 0}},
+    {"pthread_detach", {1, 0}},
+    {"pthread_equal", {2, 0}},
+    {"pthread_exit", {1, 0}},
+    {"pthread_join", {2, 0}},
+    {"pthread_self", {0, 0}},
+    {"pthread_atfork", {3, 0}},
+    {"pthread_attr_destroy", {1, 0}},
+    {"pthread_attr_getdetachstate", {2, 0}},
+    {"pthread_attr_getguardsize", {2, 0}},
+    {"pthread_attr_getschedparam", {2, 0}},
+    {"pthread_attr_getstack", {3, 0}},
+    {"pthread_attr_getstacksize", {2, 0}},
+    {"pthread_attr_init", {1, 0}},
+    {"pthread_attr_setdetachstate", {2, 0}},
+    {"pthread_attr_setguardsize", {2, 0}},
+    {"pthread_attr_setschedparam", {2, 0}},
+    {"pthread_attr_setstack", {3, 0}},
+    {"pthread_attr_setstacksize", {2, 0}},
+    {"pthread_mutex_destroy", {1, 0}},
+    {"pthread_mutex_init", {2, 0}},
+    {"pthread_mutex_lock", {1, 0}},
+    {"pthread_mutex_trylock", {1, 0}},
+    {"pthread_mutex_unlock", {1, 0}},
+    {"pthread_mutexattr_destroy", {1, 0}},
+    {"pthread_mutexattr_getpshared", {2, 0}},
+    {"pthread_mutexattr_getrobust", {2, 0}},
+    {"pthread_mutexattr_gettype", {2, 0}},
+    {"pthread_mutexattr_init", {1, 0}},
+    {"pthread_mutexattr_setpshared", {2, 0}},
+    {"pthread_mutexattr_setrobust", {2, 0}},
+    {"pthread_mutexattr_settype", {2, 0}},
+    {"pthread_cond_broadcast", {1, 0}},
+    {"pthread_cond_destroy", {1, 0}},
+    {"pthread_cond_init", {2, 0}},
+    {"pthread_cond_signal", {1, 0}},
+    {"pthread_cond_timedwait", {3, 0}},
+    {"pthread_cond_wait", {2, 0}},
+    {"pthread_condattr_destroy", {1, 0}},
+    {"pthread_condattr_getclock", {2, 0}},
+    {"pthread_condattr_getpshared", {2, 0}},
+    {"pthread_condattr_init", {1, 0}},
+    {"pthread_condattr_setclock", {2, 0}},
+    {"pthread_condattr_setpshared", {2, 0}},
+    {"pthread_rwlock_destroy", {1, 0}},
+    {"pthread_rwlock_init", {2, 0}},
+    {"pthread_rwlock_rdlock", {1, 0}},
+    {"pthread_rwlock_timedrdlock", {2, 0}},
+    {"pthread_rwlock_timedwrlock", {2, 0}},
+    {"pthread_rwlock_tryrdlock", {1, 0}},
+    {"pthread_rwlock_trywrlock", {1, 0}},
+    {"pthread_rwlock_unlock", {1, 0}},
+    {"pthread_rwlock_wrlock", {1, 0}},
+    {"pthread_rwlockattr_destroy", {1, 0}},
+    {"pthread_rwlockattr_getpshared", {2, 0}},
+    {"pthread_rwlockattr_init", {1, 0}},
+    {"pthread_rwlockattr_setpshared", {2, 0}},
+    {"pthread_barrier_destroy", {1, 0}},
+    {"pthread_barrier_init", {3, 0}},
+    {"pthread_barrier_wait", {1, 0}},
+    {"pthread_once", {2, 0}},
+    {"pthread_getspecific", {1, 0}},
+    {"pthread_key_create", {2, 0}},
+    {"pthread_key_delete", {1, 0}},
+    {"pthread_setspecific", {2, 0}},
+    {"pthread_spin_destroy", {1, 0}},
+    {"pthread_spin_init", {2, 0}},
+    {"pthread_spin_lock", {1, 0}},
+    {"pthread_spin_trylock", {1, 0}},
+    {"pthread_spin_unlock", {1, 0}},
+    {"pthread_getattr_np", {2, 0}},
+    {"pthread_getname_np", {3, 0}},
+    {"pthread_setname_np", {2, 0}},
+});
 
 } // namespace neverd::libc
 
