@@ -65,6 +65,17 @@ struct DarwinFileMutationPolicy {
   DarwinFileTime Time;
 };
 
+/// Explicit virtual mutation of an initial directory's observed stat record.
+/// A committed child-name change sets nlink to two plus all linked immediate
+/// names, size to nlink * DirectoryEntrySize, and mtime/ctime to Time. Direct
+/// moves/removal set only ctime; other observed fields stay object-owned.
+/// This does not infer APFS allocation or enforce permissions.
+struct DarwinDirectoryMutationPolicy {
+  /// Positive and at most 16 MiB; projected stat size is not stored file bytes.
+  uint32_t DirectoryEntrySize = 0;
+  DarwinFileTime Time;
+};
+
 /// Explicit virtual metadata rules for new links and directories. Link blocks
 /// round raw-target bytes up to SymbolicLinkAllocationUnit (in 512-byte
 /// blocks). Directory nlink is two plus its immediate linked names of every
@@ -219,6 +230,13 @@ struct DarwinFileOptions {
   /// cannot also declare an immutable DirectoryContents snapshot.
   std::map<std::string, DarwinDirectoryEnumerationPolicy>
       DirectoryEnumerationPolicies;
+  /// Optional mutation authority for admitted initial directory metadata with
+  /// a nonzero inode. Retain the complete initial record until a genuine
+  /// committed change. This follows the object through moves/name reuse and
+  /// is independent of namespace grants, creation and enumeration policies.
+  /// mkdir descendants use their separately declared creation policy.
+  std::map<std::string, DarwinDirectoryMutationPolicy>
+      DirectoryMutationPolicies;
 };
 } // namespace neverd::emulation
 #endif

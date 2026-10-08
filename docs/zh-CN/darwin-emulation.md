@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 09a9f57ffaed31cda991a96fbaf04406bf26bedbcaf0214f6db5a6d6c28ac35a -->
+<!-- i18n-source: 9553588d9792a9f22ea6a9d595406637472b0122514d854a6ed41e9c90f43414 -->
 
 [← 文档索引](README.md)
 
@@ -904,7 +904,7 @@ readlink(58) 使用有符号低32位 count；readlinkat(473) 保留完整 size_t
 
 启用后，普通文件、symlink和mkdir成功插入共用一条inode序列，UINT64_MAX永久耗尽；失败和打开已有名称不消耗inode。Device/GID来自实际父对象，UID来自有效来宾身份。链接模式为S_IFLNK加 `0777 & ~umask`，nlink=1，size为原始目标字节数（含空目标和非UTF-8），blocks按声明单位向上取整后以512字节计。目录模式为S_IFDIR加 `mode & 0777 & ~umask`，nlink为2加所有仍在命名空间内的直接子项，size为nlink乘声明条目大小，blocks固定；持有的已删除空目录也保留此规则。这是显式虚拟策略，不推断APFS分配行为。
 
-初始时间用creation_time；子名称成功变化更新新建父目录mtime/ctime，直接移动链接/目录仅用mutation_time更新其ctime；移动祖先保留后代元数据。完整记录随对象经过dup、CWD、替换、SWAP、删除和名称重用。初始父目录记录及固定快照仍失效；动态枚举、ACL、可变初始链接和一般目录/链接根事务仍未完成。原生 `created-namespace-metadata` 检查模式、所有者、身份和生命周期；`virtual-created-namespace-metadata` 经C++/SDK/CLI/Python对照目录与链接的完整144字节常量记录。定向验证通过11项模型/准入、1项严格JSON、43项原生工作负载（仍限5秒）、8项可执行客体组合（12项后端不可用跳过，3项必需HVF均已执行）及10项公共入口。指针表导致的客体失败和修正后的ARM64静态封装证据已保留；原生Intel和实体iOS尚未验证。
+初始时间用creation_time；子名称成功变化更新新建父目录mtime/ctime，直接移动链接/目录仅用mutation_time更新其ctime；移动祖先保留后代元数据。完整记录随对象经过dup、CWD、替换、SWAP、删除和名称重用。仅创建扩展不会保留初始父目录完整 stat 或固定快照；下文独立目录策略提供 stat 与实时枚举依据。ACL、可变初始链接和一般目录/链接根事务仍未支持。原生 `created-namespace-metadata` 检查模式、所有者、身份和生命周期；`virtual-created-namespace-metadata` 经C++/SDK/CLI/Python对照目录与链接的完整144字节常量记录。定向验证通过11项模型/准入、1项严格JSON、43项原生工作负载（仍限5秒）、8项可执行客体组合（12项后端不可用跳过，3项必需HVF均已执行）及10项公共入口。指针表导致的客体失败和修正后的ARM64静态封装证据已保留；原生Intel和实体iOS尚未验证。
 
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
@@ -916,4 +916,18 @@ readlink(58) 使用有符号低32位 count；readlinkat(473) 保留完整 size_t
 
 虚拟顺序明确为 `.`、`..`，再按无符号字节排序的直接链接名称。inode 来自已观察或进程创建的对象，`..` 沿实际保留父对象；任何子项或父对象身份缺失/为零，都在输出前停止。初始完整 stat 失效后仅保留 inode 身份，不复用其他过期字段。游标为从1开始的局部序号，d_seekoff 使用声明常量；dup 共享游标，独立 open 分开。成功修改成员或直接移动目录后，非零旧游标须先回绕到零；拒绝和同对象无操作不失效，祖先移动保留后代游标。版本耗尽明确停止，不回绕复用。保留的已删除空目录输出零条记录，名称复用也不会接管旧对象。
 
-沿用既有记录编码、完整记录装包、缓冲下限、负载上限、EOF 后缀和数据/游标/位置/标志的有序效果。初始父目录完整 stat 与不可变快照仍失效；缺少新策略时保留原有不支持行为，虚拟顺序和游标不模拟 APFS 世代。独立 ARM64 原生准备在原五秒期限内记录25个事件、16次枚举。`directory-enumeration-mutations` 核对原生名称/类型/inode 与保留对象；`virtual-directory-enumeration` 经客体、C/CLI 和 Python 核对160字节固定视图。Intel 原生、iOS 真机、ACL 执行、硬链接、初始目录可变 stat 与完整系统/框架仍未验证或不支持。
+本段描述仅配置枚举策略、尚未配置下文初始目录 stat 策略的行为。 沿用既有记录编码、完整记录装包、缓冲下限、负载上限、EOF 后缀和数据/游标/位置/标志的有序效果。初始父目录完整 stat 与不可变快照仍失效；缺少新策略时保留原有不支持行为，虚拟顺序和游标不模拟 APFS 世代。独立 ARM64 原生准备在原五秒期限内记录25个事件、16次枚举。`directory-enumeration-mutations` 核对原生名称/类型/inode 与保留对象；`virtual-directory-enumeration` 经客体、C/CLI 和 Python 核对160字节固定视图。Intel 原生、iOS 真机、ACL 执行、硬链接与完整系统/框架仍未验证或不支持。
+
+## 初始目录的显式 stat 修改策略
+
+可选 `directories[].mutation_policy` 让已准入的初始目录在名称空间变化后保留完整 stat。C++ 使用 `DarwinDirectoryMutationPolicy` 与 `DarwinFileOptions::DirectoryMutationPolicies`。严格对象恰含 `directory_entry_size` 和 `mutation_time`：条目大小为正且不超过 16 MiB，时间采用无损有符号 64 位秒数及 [0,1000000000) 范围纳秒。目录须提供自身完整 metadata 和非零 inode。策略引用计入一次路径加 NUL 的费用；投影 size 不分配文件字节。策略不授予名称空间操作或权限，也不要求创建或枚举策略。
+
+首次真正提交修改前，完整观察记录保持原样；首次修改把标量字段复制到目录对象，无需分配。子名称变化令 nlink 为 2 加所有类型的直接关联名称数，size 为 nlink 乘 directory_entry_size，mtime/ctime 为 mutation_time。直接移动、SWAP 或删除仅改 ctime；移动祖先保留后代记录。拒绝和同一对象无操作均不修改记录。Device、inode、mode、所有者、blocks、块大小、flags、generation、atime 和 birthtime 保持观察值。这是显式虚拟规则，不推断 APFS 分配、链接数或时钟。
+
+记录与策略随原对象经过 dup、保留 FD、CWD、替换、删除和名称复用。新 mkdir 对象使用独立创建策略（若提供），不继承父目录或同名旧对象的初始目录 stat 策略。不可变目录快照在修改后仍未知；独立 enumeration_policy 可提供实时视图。省略本 stat 策略时，已修改初始目录的完整元数据仍未知。
+
+独立 ARM64 原生准备在不变的 5 秒期限内保留 27 个带保护的原始 stat 视图和 15 项操作，核对 144 字节 SDK ABI 及保留身份，不推广原生时间戳或分配规律。原创 `initial-directory-metadata` 检查原生共同观察；`virtual-initial-directory-metadata` 经 guest、C/CLI 和 Python 对照完整 144 字节常量记录。模型另覆盖首次删除、缺少修改授权、省略创建策略及快照/枚举独立性。原生 Intel、实体 iOS、ACL 执行、硬链接、可变初始链接及完整 OS/框架仍未验证或未支持。
+
+```json
+{"mutation_policy":{"directory_entry_size":17,"mutation_time":{"seconds":-11,"nanoseconds":321}}}
+```

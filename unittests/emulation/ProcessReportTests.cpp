@@ -388,6 +388,54 @@ TEST(ProcessReport, DarwinNamespaceCreationPolicyIsStrictAndLossless) {
   Refused(V);
 }
 
+TEST(ProcessReport, DarwinInitialDirectoryMutationPolicyIsStrictAndLossless) {
+  auto Parent = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  (*Parent.getAsObject())["inode"] = 41;
+  (*Parent.getAsObject())["mode"] = 0040755;
+  (*Parent.getAsObject())["size"] = 0;
+  auto Parse = [&](const llvm::json::Value &Policy) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[],"directories":[{"path":"/","metadata":)" +
+        llvm::formatv("{0}", Parent).str() + R"(,"mutation_policy":)" +
+        llvm::formatv("{0}", Policy).str() + "}]}}");
+  };
+  const auto Good = llvm::cantFail(llvm::json::parse(
+      R"({"directory_entry_size":"17","mutation_time":{"seconds":"-9223372036854775808","nanoseconds":999999999}})"));
+  auto Out = Parse(Good);
+  ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+  const auto &P = Out->DarwinFiles->DirectoryMutationPolicies.at("/");
+  EXPECT_EQ(P.DirectoryEntrySize, 17u);
+  EXPECT_EQ(P.Time.Seconds, INT64_MIN);
+  EXPECT_EQ(P.Time.Nanoseconds, 999999999);
+  auto Refused = [&](const llvm::json::Value &V) {
+    auto Bad = Parse(V);
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  };
+  for (const char *Key : {"directory_entry_size", "mutation_time"}) {
+    auto V = Good;
+    V.getAsObject()->erase(Key);
+    Refused(V);
+    for (const char *Bad : {"null", "true", "[]", "-1", "1.5"}) {
+      (*V.getAsObject())[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      Refused(V);
+    }
+  }
+  auto V = Good;
+  (*V.getAsObject())["extra"] = 1;
+  Refused(V);
+  V = Good;
+  (*V.getAsObject())["directory_entry_size"] = 16777217;
+  Refused(V);
+  V = Good;
+  (*V.getAsObject()->getObject("mutation_time"))["nanoseconds"] = 1000000000;
+  Refused(V);
+  V = Good;
+  (*V.getAsObject()->getObject("mutation_time"))["seconds"] =
+      "-9223372036854775809";
+  Refused(V);
+}
+
 TEST(ProcessReport, DarwinVirtualEnumerationPolicyIsStrictAndLossless) {
   auto Parent = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
   auto *M = Parent.getAsObject();

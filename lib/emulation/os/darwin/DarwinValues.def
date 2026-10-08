@@ -450,6 +450,9 @@ NEVERD_DARWIN_DIAGNOSTIC(DirectoryContents,
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryContentsOption,
                          "invalid or incoherent Darwin directory contents")
 NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryMetadataMutationOption,
+    "invalid Darwin initial-directory metadata mutation policy or identity")
+NEVERD_DARWIN_DIAGNOSTIC(
     DirectoryEnumerationOption,
     "invalid Darwin virtual directory enumeration policy or identity")
 NEVERD_DARWIN_DIAGNOSTIC(

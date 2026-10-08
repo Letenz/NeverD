@@ -257,6 +257,16 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     if (auto E = PathInput(Path, true))
       return E;
   }
+  for (const auto &[Path, Policy] : Options.DirectoryMutationPolicies) {
+    const auto M = Options.Metadata.find(Path);
+    if (pathKind(Options, Path) != PathKind::Directory ||
+        M == Options.Metadata.end() || !M->second.Inode ||
+        !Policy.DirectoryEntrySize ||
+        Policy.DirectoryEntrySize > limits::Bytes || !validTime(Policy.Time))
+      return failure(diagnostic::DirectoryMetadataMutationOption);
+    if (auto E = PathInput(Path, true))
+      return E;
+  }
   if (Options.WorkingDirectory) {
     const auto &Path = *Options.WorkingDirectory;
     if (pathKind(Options, Path) != PathKind::Directory)
@@ -548,6 +558,11 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
   const auto Enumeration = Options->DirectoryEnumerationPolicies.find(Path);
   if (Enumeration != Options->DirectoryEnumerationPolicies.end())
     Node->EnumerationPolicy = &Enumeration->second;
+  const auto Mutation = Options->DirectoryMutationPolicies.find(Path);
+  if (Mutation != Options->DirectoryMutationPolicies.end()) {
+    Node->DirectoryEntrySize = Mutation->second.DirectoryEntrySize;
+    Node->MutationTime = &Mutation->second.Time;
+  }
   Node->Mutable = Options->MutableDirectories.contains(Path);
   Node->Removable = Options->RemovableDirectories.contains(Path);
   Node->Movable = Options->MovableDirectories.contains(Path);
@@ -1108,12 +1123,12 @@ DarwinFiles::makeDirectory(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
   Node->SwapSupport = Node->Parent->SwapSupport;
   Node->EnumerationPolicy = Node->Parent->EnumerationPolicy;
   if (Policy) {
-    Node->Policy = &*Policy->Namespace;
+    Node->DirectoryEntrySize = Policy->Namespace->DirectoryEntrySize;
     Node->MutationTime = &Policy->Mutation.Time;
     Node->CurrentMetadata = createdMetadata(
         *ParentIdentity, FileDirectoryMode | (Mode & 0777 & ~CurrentUmask), 2,
-        uint64_t(2) * Node->Policy->DirectoryEntrySize,
-        Node->Policy->DirectoryBlocks);
+        uint64_t(2) * Node->DirectoryEntrySize,
+        Policy->Namespace->DirectoryBlocks);
   }
   Directories.emplace(File.Path, std::move(Node));
   *StorageUsed += Charge;
@@ -1247,6 +1262,10 @@ void DarwinFiles::updateDirectoryMetadata(DirectoryNode &Node,
   // allocates nothing after the namespace transaction has been published.
   if (Node.EnumerationPolicy && Node.EnumerationVersion != UINT64_MAX)
     ++Node.EnumerationVersion;
+  // Only the explicit initial-directory policy authorizes keeping the full
+  // observed record. Copying its scalar fields allocates nothing after commit.
+  if (!Node.CurrentMetadata && Node.DirectoryEntrySize)
+    Node.CurrentMetadata = *Node.Metadata;
   if (!Node.CurrentMetadata)
     return;
   auto &M = *Node.CurrentMetadata;
@@ -1258,7 +1277,7 @@ void DarwinFiles::updateDirectoryMetadata(DirectoryNode &Node,
   uint16_t Count = 2;
   forEachDirectoryChild(Node, [&](const auto &) { ++Count; });
   M.LinkCount = Count;
-  M.Size = uint64_t(Count) * Node.Policy->DirectoryEntrySize;
+  M.Size = uint64_t(Count) * Node.DirectoryEntrySize;
   M.ModificationTime = *Node.MutationTime;
 }
 

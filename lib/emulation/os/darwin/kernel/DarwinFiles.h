@@ -74,7 +74,7 @@ private:
     std::optional<DirectoryIdentity> Identity;
     const DarwinFileMetadata *Metadata = nullptr;
     std::optional<DarwinFileMetadata> CurrentMetadata;
-    const DarwinNamespaceCreationPolicy *Policy = nullptr;
+    uint32_t DirectoryEntrySize = 0;
     const DarwinFileTime *MutationTime = nullptr;
     const DarwinDirectoryContents *Snapshot = nullptr;
     const DarwinDirectoryEnumerationPolicy *EnumerationPolicy = nullptr;

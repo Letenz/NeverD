@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 09a9f57ffaed31cda991a96fbaf04406bf26bedbcaf0214f6db5a6d6c28ac35a -->
+<!-- i18n-source: 9553588d9792a9f22ea6a9d595406637472b0122514d854a6ed41e9c90f43414 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -802,7 +802,7 @@ ARM64 macOS の独立40例は元の5秒期限で28削除成功、12エラー、1
 
 有効時は通常ファイル、symlink、mkdirの成功挿入が一つのinode列を共有し、UINT64_MAXで永久に枯渇します。失敗や既存名openは消費しません。Device/GIDは実際の親、UIDは実効ゲストIDから得ます。リンクのmodeはS_IFLNKと `0777 & ~umask`、nlinkは1、sizeは空や非UTF-8を含む対象の生バイト数、blocksは宣言単位で切り上げた512バイトブロック数です。ディレクトリmodeはS_IFDIRと `mode & 0777 & ~umask`、nlinkは2と全種類の直下の連結名数の和、sizeはnlinkと宣言エントリサイズの積、blocksは固定です。保持された削除済み空ディレクトリにも適用します。これは明示仮想契約でAPFSの推測ではありません。
 
-初期時刻はcreation_time。子の名前変更は作成親のmtime/ctimeを、直接移動はリンク/ディレクトリのctimeのみをmutation_timeで更新します。祖先移動は子孫のメタデータを保持し、dup/CWD/置換/SWAP/削除/名前再利用でも記録は物体に属します。初期親と固定スナップショットは無効化され、動的列挙、ACL、可変初期リンク、一般のディレクトリ/リンク根トランザクションは未対応です。ネイティブ `created-namespace-metadata` は共通のmode/所有者/同一性/寿命を確認し、`virtual-created-namespace-metadata` はC++/SDK/CLI/Pythonで144バイトの完全な定数記録を比較します。対象検証はモデル/受入11、厳密JSON1、元の5秒制限のネイティブ43、実行可能ゲスト8（利用不能12スキップ、必須HVF3実行）、公開10が成功。ポインタ表による失敗と修正後の静的ARM64記録は保持。ネイティブIntelと実機iOSは未検証です。
+初期時刻はcreation_time。子の名前変更は作成親のmtime/ctimeを、直接移動はリンク/ディレクトリのctimeのみをmutation_timeで更新します。祖先移動は子孫のメタデータを保持し、dup/CWD/置換/SWAP/削除/名前再利用でも記録は物体に属します。作成拡張だけでは初期親の完全な stat と固定スナップショットは保持されません。下記の独立方針が stat とライブ列挙を提供します。ACL、可変初期リンク、一般のディレクトリ/リンク根トランザクションは未対応です。ネイティブ `created-namespace-metadata` は共通のmode/所有者/同一性/寿命を確認し、`virtual-created-namespace-metadata` はC++/SDK/CLI/Pythonで144バイトの完全な定数記録を比較します。対象検証はモデル/受入11、厳密JSON1、元の5秒制限のネイティブ43、実行可能ゲスト8（利用不能12スキップ、必須HVF3実行）、公開10が成功。ポインタ表による失敗と修正後の静的ARM64記録は保持。ネイティブIntelと実機iOSは未検証です。
 
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
@@ -814,4 +814,18 @@ ARM64 macOS の独立40例は元の5秒期限で28削除成功、12エラー、1
 
 仮想順序は `.`、`..`、符号なしバイト順の直接リンク名です。inode は観測済みまたはプロセス生成のオブジェクトから取得し、`..` は保持された実際の親に従います。子/親の識別情報が不明またはゼロなら出力前に停止します。完全な初期 stat が無効でも inode のみ保持し、他の古いフィールドは再利用しません。カーソルは1からのローカル序数、d_seekoff は宣言定数です。dup は共有、open は独立です。確定したメンバー変更と直接移動後はゼロへの巻き戻しが必要で、拒否と同一物体の無操作は無効化しません。祖先移動は子孫カーソルを保持し、版の枯渇は明示停止します。保持された削除済み空ディレクトリは名前再利用後も0レコードです。
 
-既存の記録符号化、完全レコードの格納、バッファ下限、ペイロード上限、EOF末尾とデータ/カーソル/位置/フラグの順序を再利用します。初期親の完全 stat と固定スナップショットは無効化され、方針省略時は従来の未対応動作です。APFSの世代は再現しません。独立ARM64準備は変更のない5秒期限内に25イベント/16ビューを記録しました。`directory-enumeration-mutations` はネイティブ識別と保持物体、`virtual-directory-enumeration` は客体、C/CLI、Python経由の160バイト定数ビューを検証します。Intelネイティブ、実機iOS、ACL、ハードリンク、初期ディレクトリの可変 stat、完全OS/フレームワークは未検証または未対応です。
+この段落は列挙方針のみを指定し、下記の初期 stat 方針を指定しない場合の記録です。 既存の記録符号化、完全レコードの格納、バッファ下限、ペイロード上限、EOF末尾とデータ/カーソル/位置/フラグの順序を再利用します。初期親の完全 stat と固定スナップショットは無効化され、方針省略時は従来の未対応動作です。APFSの世代は再現しません。独立ARM64準備は変更のない5秒期限内に25イベント/16ビューを記録しました。`directory-enumeration-mutations` はネイティブ識別と保持物体、`virtual-directory-enumeration` は客体、C/CLI、Python経由の160バイト定数ビューを検証します。Intelネイティブ、実機iOS、ACL、ハードリンク、完全OS/フレームワークは未検証または未対応です。
+
+## 初期ディレクトリの明示的な stat 変更方針
+
+任意の `directories[].mutation_policy` は、受け入れた初期ディレクトリの完全な stat を名前空間変更後も保持します。C++ は `DarwinDirectoryMutationPolicy` と `DarwinFileOptions::DirectoryMutationPolicies` を使います。厳密なオブジェクトのフィールドは `directory_entry_size` と `mutation_time` のみです。項目サイズは正で最大 16 MiB、時刻は損失のない符号付き 64 ビット秒と [0,1000000000) のナノ秒です。ディレクトリ自身の完全な metadata と非ゼロ inode が必要です。参照ごとにパスと NUL の費用を一度計上し、投影 size はファイルのバイトを確保しません。この方針は名前空間操作や権限を付与せず、作成・列挙方針も要求しません。
+
+最初の実際の変更確定までは観測記録全体を保持し、確定時にスカラーをディレクトリへ割り当てなしでコピーします。子の名前変更では nlink を 2 と全種類の直接リンク名の数の和、size を nlink と directory_entry_size の積、mtime/ctime を mutation_time に設定します。直接の移動、SWAP、削除では ctime のみ変更し、祖先の移動は子孫を保持します。拒否と同一オブジェクトへの無操作は変更しません。Device、inode、mode、所有者、blocks、ブロックサイズ、flags、generation、atime、birthtime は観測値のままです。明示的な仮想規則であり、APFS の割り当て、リンク数、時計の推測ではありません。
+
+記録と方針は dup、保持 FD、CWD、置換、削除、名前再利用でも元のオブジェクトに属します。新しい mkdir は、指定された場合は別の作成方針を使い、親や同名の旧オブジェクトの初期 stat 方針を継承しません。不変スナップショットは変更後も不明となり、独立した enumeration_policy がライブビューを提供できます。本方針を省略すると、変更された初期ディレクトリの完全なメタデータは不明のままです。
+
+独立した ARM64 ネイティブ準備では、変更のない 5 秒制限内で保護付き生 stat ビュー 27 件と操作 15 件を保存し、144 バイト SDK ABI と保持された同一性を確認しました。時刻や割り当ての一般規則は導きません。独自の `initial-directory-metadata` は共通ネイティブ観測を、`virtual-initial-directory-metadata` は guest、C/CLI、Python の完全な 144 バイト定数記録を検証します。モデルは初回削除、変更許可の欠如、作成方針の省略、スナップショットと列挙の独立性も扱います。ネイティブ Intel、実機 iOS、ACL、ハードリンク、可変初期リンク、完全な OS/フレームワークは未検証または未対応です。
+
+```json
+{"mutation_policy":{"directory_entry_size":17,"mutation_time":{"seconds":-11,"nanoseconds":321}}}
+```

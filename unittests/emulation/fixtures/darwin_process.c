@@ -1042,6 +1042,96 @@ static unsigned directory_names(const unsigned char *bytes, u64 size,
   }
   return seen;
 }
+/* Common native identity checks and a separate literal virtual stat view. */
+static int initial_directory_identity(u64 fd, const unsigned char *before,
+                                      unsigned char *after) {
+  unsigned error = 0;
+  if (call(339, fd, (u64)after, 0, 0, 0, 0, &error) || error)
+    return 0;
+  return little_integer(before, 4) == little_integer(after, 4) &&
+         little_integer(before + 4, 2) == little_integer(after + 4, 2) &&
+         little_integer(before + 8, 8) == little_integer(after + 8, 8) &&
+         little_integer(before + 16, 4) == little_integer(after + 16, 4) &&
+         little_integer(before + 20, 4) == little_integer(after + 20, 4);
+}
+static int initial_directory_metadata(const char *path, int virtual_bytes) {
+  unsigned error = 0;
+  int check = 150;
+#define INITIAL_EXPECT(expression)                                             \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024];
+  unsigned last = 0, length = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  INITIAL_EXPECT(path[0] == '/' && !path[length] && length > last + 1);
+  parent[last ? last : 1] = 0;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  INITIAL_EXPECT(!error);
+  unsigned char before[144], after[144], captured[144], refused[144];
+  INITIAL_EXPECT(call(339, root, (u64)before, 0, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(call(475, root, (u64) "s", 0700, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(initial_directory_identity(root, before, captured));
+  u64 copy = call(41, root, 0, 0, 0, 0, 0, &error);
+  INITIAL_EXPECT(!error);
+  INITIAL_EXPECT(initial_directory_identity(copy, before, refused));
+  INITIAL_EXPECT(call(475, root, (u64) "s", 0700, 0, 0, 0, &error) == 17 &&
+                 error);
+  INITIAL_EXPECT(initial_directory_identity(copy, before, after));
+  ++check;
+  for (unsigned i = 0; i != sizeof(after); ++i)
+    if (after[i] != refused[i])
+      return check;
+  u64 s = call(463, root, (u64) "s", 0x100000, 0, 0, 0, &error);
+  INITIAL_EXPECT(!error);
+  u64 f = call(463, s, (u64) "f", 0xa02, 0600, 0, 0, &error);
+  INITIAL_EXPECT(!error);
+  INITIAL_EXPECT(initial_directory_identity(root, before, after));
+  if (virtual_bytes) {
+    ++check;
+    for (unsigned i = 0; i != sizeof(after); ++i)
+      if (after[i] != captured[i])
+        return check;
+  }
+  INITIAL_EXPECT(
+      call(488, root, (u64) "s", root, (u64) "t", 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(initial_directory_identity(root, before, after));
+  INITIAL_EXPECT(call(472, s, (u64) "f", 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(472, root, (u64) "t", 0x80, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(initial_directory_identity(copy, before, after));
+  INITIAL_EXPECT(call(475, root, (u64) "s", 0700, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(initial_directory_identity(root, before, after));
+  INITIAL_EXPECT(call(339, s, (u64)refused, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(470, root, (u64) "s", (u64)after, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(little_integer(refused + 8, 8) !=
+                 little_integer(after + 8, 8));
+  INITIAL_EXPECT(call(472, root, (u64) "s", 0x80, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(initial_directory_identity(root, before, after));
+  INITIAL_EXPECT(call(6, s, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(6, f, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(6, copy, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(6, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(4, 1, virtual_bytes ? (u64)captured : (u64) "I",
+                      virtual_bytes ? sizeof(captured) : 1, 0, 0, 0,
+                      &error) == (virtual_bytes ? sizeof(captured) : 1) &&
+                 !error);
+#undef INITIAL_EXPECT
+  return 37;
+}
+
 /* Original live-namespace workload. Native order and cookies are not predicted;
  * every record is checked against independently observed retained identities.
  */
@@ -5261,6 +5351,12 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
     return argc < 3 ? 139
                     : file_calls(argv[2], equal(argv[1], "files-nocancel"));
+  if (equal(argv[1], "initial-directory-metadata") ||
+      equal(argv[1], "virtual-initial-directory-metadata"))
+    return argc < 3 ? 79
+                    : initial_directory_metadata(
+                          argv[2],
+                          equal(argv[1], "virtual-initial-directory-metadata"));
   if (equal(argv[1], "directory-enumeration-mutations") ||
       equal(argv[1], "virtual-directory-enumeration"))
     return argc < 3

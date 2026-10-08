@@ -105,6 +105,21 @@ llvm::Expected<DarwinFileTime> fileTime(const llvm::json::Value *Value,
     return invalid(Name);
   return DarwinFileTime{*Seconds, *Nanoseconds};
 }
+llvm::Expected<DarwinDirectoryMutationPolicy>
+directoryMutationPolicy(const llvm::json::Value &Value) {
+  const auto *Object = Value.getAsObject();
+  if (!Object || Object->size() != 2)
+    return invalid(field::DirectoryMutationPolicy);
+  const auto *V = Object->get(field::DirectoryEntrySize);
+  auto Size = V ? process_json::integer<uint32_t>(*V) : std::nullopt;
+  if (!Size)
+    return invalid(field::DirectoryEntrySize);
+  auto Time =
+      fileTime(Object->get(field::FileMutationTime), field::FileMutationTime);
+  if (!Time)
+    return Time.takeError();
+  return DarwinDirectoryMutationPolicy{*Size, *Time};
+}
 llvm::Expected<DarwinFileMetadata> metadata(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
   if (!Object || Object->size() != 15)
@@ -279,6 +294,7 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
                 1 + unsigned(bool(D->get(field::FileMetadata))) +
                     unsigned(bool(D->get(field::DirectoryContents))) +
                     unsigned(bool(D->get(field::DirectoryEnumerationPolicy))) +
+                    unsigned(bool(D->get(field::DirectoryMutationPolicy))) +
                     unsigned(bool(D->get(field::DirectoryMutable))) +
                     unsigned(bool(D->get(field::DirectoryRemovable))) +
                     unsigned(bool(D->get(field::DirectoryMovable))) +
@@ -330,6 +346,12 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
           if (!Parsed)
             return Parsed.takeError();
           Out.DirectoryContents.emplace(Path->str(), std::move(*Parsed));
+        }
+        if (const auto *P = D->get(field::DirectoryMutationPolicy)) {
+          auto Parsed = directoryMutationPolicy(*P);
+          if (!Parsed)
+            return Parsed.takeError();
+          Out.DirectoryMutationPolicies.emplace(Path->str(), *Parsed);
         }
         if (const auto *P = D->get(field::DirectoryEnumerationPolicy)) {
           auto Parsed = enumerationPolicy(*P);

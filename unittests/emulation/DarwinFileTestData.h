@@ -60,6 +60,16 @@ inline constexpr char NamespaceCreationPolicyJSON[] = R"({
     "mutation_time":{"seconds":-7,"nanoseconds":123456789}},
   "namespace_policy":{"symbolic_link_allocation_unit":512,
     "directory_entry_size":32,"directory_blocks":7}})";
+inline constexpr DarwinDirectoryMutationPolicy InitialDirectoryMutationPolicy{
+    17, {-11, 321}};
+inline constexpr char InitialDirectoryMutationPolicyJSON[] = R"({
+  "directory_entry_size":17,"mutation_time":{"seconds":-11,"nanoseconds":321}})";
+inline constexpr char InitialDirectoryMetadataHex[] =
+    "85ffffffed4105002900000000000000efcdab8998badcfe0000000000000000"
+    "01000000000000800100000000000000f5ffffffffffffff4101000000000000"
+    "f5ffffffffffffff4101000000000000fbffffffffffffff0600000000000000"
+    "550000000000000000000000000000000010000000000000efcdab8900000000"
+    "00000000000000000000000000000000";
 inline constexpr DarwinDirectoryEnumerationPolicy EnumerationPolicy{1, 64, 0};
 inline constexpr char EnumerationPolicyJSON[] = R"({
   "minimum_buffer_size":1,"initial_minimum_buffer_size":64,"seek_offset":0})";

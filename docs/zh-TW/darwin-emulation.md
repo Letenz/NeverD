@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 09a9f57ffaed31cda991a96fbaf04406bf26bedbcaf0214f6db5a6d6c28ac35a -->
+<!-- i18n-source: 9553588d9792a9f22ea6a9d595406637472b0122514d854a6ed41e9c90f43414 -->
 
 [← 文件索引](README.md)
 
@@ -802,7 +802,7 @@ readlink(58)使用有符號低32位count，readlinkat(473)保留完整size_t；�
 
 啟用後，一般檔案、symlink與mkdir成功插入共用一條inode序列，UINT64_MAX永久耗盡；失敗與開啟既有名稱不消耗inode。Device/GID來自實際父物件，UID來自有效來賓身分。連結模式為S_IFLNK加 `0777 & ~umask`，nlink=1，size為原始目標位元組數（含空目標與非UTF-8），blocks按宣告單位向上取整後以512位元組計。目錄模式為S_IFDIR加 `mode & 0777 & ~umask`，nlink為2加所有直接具名子項，size為nlink乘宣告項目大小，blocks固定；持有的已刪除空目錄也保留此規則。這是明示虛擬策略，不推斷APFS分配行為。
 
-初始時間用creation_time；子名稱成功變更更新新建父目錄mtime/ctime，直接移動連結/目錄僅用mutation_time更新其ctime；移動祖先保留後代資料。完整記錄隨物件經過dup、CWD、替換、SWAP、刪除與名稱重用。初始父目錄記錄及固定快照仍失效；動態列舉、ACL、可變初始連結與一般目錄/連結根交易仍未完成。原生 `created-namespace-metadata` 檢查模式、擁有者、身分與生命週期；`virtual-created-namespace-metadata` 經C++/SDK/CLI/Python對照完整144位元組目錄與連結常數記錄。定向驗證通過11項模型/准入、1項嚴格JSON、43項原生工作負載（仍限5秒）、8項客體組合（12項後端不可用略過，3項必需HVF皆執行）及10項公共入口。保留指標表造成的客體失敗及修正後ARM64靜態封裝；原生Intel與實體iOS尚未驗證。
+初始時間用creation_time；子名稱成功變更更新新建父目錄mtime/ctime，直接移動連結/目錄僅用mutation_time更新其ctime；移動祖先保留後代資料。完整記錄隨物件經過dup、CWD、替換、SWAP、刪除與名稱重用。僅建立擴充不會保留初始父目錄完整 stat 或固定快照；下文獨立目錄策略提供 stat 與即時列舉依據。ACL、可變初始連結與一般目錄/連結根交易仍未支援。原生 `created-namespace-metadata` 檢查模式、擁有者、身分與生命週期；`virtual-created-namespace-metadata` 經C++/SDK/CLI/Python對照完整144位元組目錄與連結常數記錄。定向驗證通過11項模型/准入、1項嚴格JSON、43項原生工作負載（仍限5秒）、8項客體組合（12項後端不可用略過，3項必需HVF皆執行）及10項公共入口。保留指標表造成的客體失敗及修正後ARM64靜態封裝；原生Intel與實體iOS尚未驗證。
 
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
@@ -814,4 +814,18 @@ readlink(58)使用有符號低32位count，readlinkat(473)保留完整size_t；�
 
 虛擬順序為 `.`、`..`，再按無符號位元組排序的直接連結名稱。inode 來自已觀察或行程建立的物件，`..` 沿實際保留父物件；子項或父身分缺失/為零會在輸出前停止。完整初始 stat 失效後只保留 inode 身分，不重用其他過期欄位。游標為從1開始的區域序號，d_seekoff 為宣告常數；dup 共用游標，open 各自獨立。成功成員變更或直接目錄移動後須先回捲到零，拒絕及同物件無操作不使游標失效，祖先移動保留後代游標。版本耗盡明確停止。保留的已刪除空目錄輸出零筆記錄，名稱重用不取代舊物件。
 
-沿用記錄編碼、完整記錄封裝、緩衝下限、負載上限、EOF 後綴及資料/游標/位置/旗標順序。初始父目錄完整 stat 與固定快照仍失效；省略策略維持先前不支援行為，並不模擬 APFS 世代。ARM64 原生準備在不變的五秒期限內記錄25個事件、16個視圖。`directory-enumeration-mutations` 核對原生身分與物件保留；`virtual-directory-enumeration` 經客體、C/CLI、Python 核對160位元組固定視圖。Intel 原生、iOS 實機、ACL、硬連結、初始目錄可變 stat 與完整系統/框架仍未驗證或不支援。
+本段描述僅設定列舉策略、尚未設定下文初始目錄 stat 策略的行為。 沿用記錄編碼、完整記錄封裝、緩衝下限、負載上限、EOF 後綴及資料/游標/位置/旗標順序。初始父目錄完整 stat 與固定快照仍失效；省略策略維持先前不支援行為，並不模擬 APFS 世代。ARM64 原生準備在不變的五秒期限內記錄25個事件、16個視圖。`directory-enumeration-mutations` 核對原生身分與物件保留；`virtual-directory-enumeration` 經客體、C/CLI、Python 核對160位元組固定視圖。Intel 原生、iOS 實機、ACL、硬連結與完整系統/框架仍未驗證或不支援。
+
+## 初始目錄的顯式 stat 修改策略
+
+可選 `directories[].mutation_policy` 讓已准入的初始目錄在名稱空間變更後保留完整 stat。C++ 使用 `DarwinDirectoryMutationPolicy` 與 `DarwinFileOptions::DirectoryMutationPolicies`。嚴格物件恰含 `directory_entry_size` 和 `mutation_time`：項目大小為正且不超過 16 MiB，時間採無損有號 64 位元秒數及 [0,1000000000) 範圍奈秒。目錄須提供自身完整 metadata 和非零 inode。策略參照計入一次路徑加 NUL 的費用；投影 size 不配置檔案位元組。策略不授予名稱空間操作或權限，也不要求建立或列舉策略。
+
+首次真正提交修改前，完整觀察記錄保持原樣；首次修改將純量欄位複製到目錄物件，無需配置。子名稱變更令 nlink 為 2 加所有類型的直接連結名稱數，size 為 nlink 乘 directory_entry_size，mtime/ctime 為 mutation_time。直接移動、SWAP 或刪除僅改 ctime；移動祖先保留後代記錄。拒絕與同一物件無操作均不修改記錄。Device、inode、mode、擁有者、blocks、區塊大小、flags、generation、atime 和 birthtime 保持觀察值。這是顯式虛擬規則，不推論 APFS 配置、連結數或時鐘。
+
+記錄與策略隨原物件經過 dup、保留 FD、CWD、替換、刪除和名稱重用。新 mkdir 物件使用獨立建立策略（若提供），不繼承父目錄或同名舊物件的初始目錄 stat 策略。不可變目錄快照在修改後仍未知；獨立 enumeration_policy 可提供即時檢視。省略本 stat 策略時，已修改初始目錄的完整中繼資料仍未知。
+
+獨立 ARM64 原生準備在不變的 5 秒期限內保留 27 個受保護原始 stat 檢視和 15 項操作，核對 144 位元組 SDK ABI 及保留身分，不推廣原生時間戳或配置規律。原創 `initial-directory-metadata` 檢查原生共同觀察；`virtual-initial-directory-metadata` 經 guest、C/CLI 和 Python 對照完整 144 位元組常數記錄。模型另涵蓋首次刪除、缺少修改授權、省略建立策略及快照/列舉獨立性。原生 Intel、實體 iOS、ACL 執行、硬連結、可變初始連結及完整 OS/框架仍未驗證或未支援。
+
+```json
+{"mutation_policy":{"directory_entry_size":17,"mutation_time":{"seconds":-11,"nanoseconds":321}}}
+```

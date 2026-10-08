@@ -100,4 +100,6 @@ NEVERD_NATIVE_DARWIN_CASE(
     NamespaceCreationMetadataPreservesObjectIdentityAndVirtualRecords)
 NEVERD_NATIVE_DARWIN_CASE(
     VirtualEnumerationTracksNamespaceChangesAndRetainedDirectories)
+NEVERD_NATIVE_DARWIN_CASE(
+    InitialDirectoryMutationKeepsFullStatAndIndependentCreationRules)
 #endif

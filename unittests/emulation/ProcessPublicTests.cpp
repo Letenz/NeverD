@@ -414,6 +414,9 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"unlinked-file", "75"},
           std::pair{"created-file", "63"},
           std::pair{"created-file-metadata", "71"},
+          std::pair{"initial-directory-metadata", "49"},
+          std::pair{"virtual-initial-directory-metadata",
+                    emulation::darwin_test::InitialDirectoryMetadataHex},
           std::pair{"directory-enumeration-mutations", "45"},
           std::pair{"virtual-directory-enumeration",
                     emulation::darwin_test::EnumerationMetadataHex},
@@ -649,7 +652,9 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     Options = llvm::formatv("{0}", Input).str();
   }
   if (ModeName == "created-namespace-metadata" ||
-      ModeName == "virtual-created-namespace-metadata") {
+      ModeName == "virtual-created-namespace-metadata" ||
+      ModeName == "initial-directory-metadata" ||
+      ModeName == "virtual-initial-directory-metadata") {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
     (*Input.getAsObject())[field::Quantum] = 1024;
@@ -675,6 +680,19 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     (*Directory)[field::DirectoryMutable] = true;
     (*Directory)[field::DirectorySwapRename] = true;
     (*Directory)[field::FileMetadata] = std::move(Parent);
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName == "initial-directory-metadata" ||
+      ModeName == "virtual-initial-directory-metadata") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    auto *Directory = Input.getAsObject()
+                          ->getObject(field::DarwinFiles)
+                          ->getArray(field::Directories)
+                          ->front()
+                          .getAsObject();
+    (*Directory)[field::DirectoryMutationPolicy] =
+        llvm::cantFail(llvm::json::parse(
+            emulation::darwin_test::InitialDirectoryMutationPolicyJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
   if (ModeName == "directory-enumeration-mutations" ||

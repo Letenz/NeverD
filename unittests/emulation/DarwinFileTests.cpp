@@ -7194,6 +7194,264 @@ virtualDirectoryRecords(llvm::ArrayRef<uint8_t> Bytes) {
   return Out;
 }
 
+// SDK-verified stat64 offsets; independent of the model's serializer.
+static std::array<uint8_t, 144>
+initialDirectoryRecord(std::array<uint8_t, 144> Initial, DarwinFileTime Time,
+                       std::optional<uint16_t> Count = std::nullopt,
+                       uint32_t EntrySize = 17) {
+  llvm::support::endian::write64le(Initial.data() + 64, uint64_t(Time.Seconds));
+  llvm::support::endian::write32le(Initial.data() + 72, Time.Nanoseconds);
+  if (Count) {
+    llvm::support::endian::write16le(Initial.data() + 6, *Count);
+    llvm::support::endian::write64le(Initial.data() + 96,
+                                     uint64_t(*Count) * EntrySize);
+    llvm::support::endian::write64le(Initial.data() + 48,
+                                     uint64_t(Time.Seconds));
+    llvm::support::endian::write32le(Initial.data() + 56, Time.Nanoseconds);
+  }
+  return Initial;
+}
+
+TEST_P(DarwinFileTest, InitialDirectoryMetadataProjectsCommittedMembership) {
+  namespacePolicy();
+  Options->Directories.insert("/");
+  Options->Metadata["/data"] = darwin_test::mutationMetadata(6);
+  auto &M = Options->Metadata["/"];
+  M.LinkCount = 7;
+  M.Size = 777;
+  M.Blocks = 55;
+  const DarwinFileTime Time{-11, 321};
+  Options->DirectoryMutationPolicies["/"] = {17, Time};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  const auto Before = status(Root);
+  const auto Copy = ok(ServiceKind::Dup, {Root});
+  makeFile("/f");
+  EXPECT_EQ(status(Root), initialDirectoryRecord(Before, Time, 4));
+  makeLink("/l", "f");
+  EXPECT_EQ(status(Copy), initialDirectoryRecord(Before, Time, 5));
+  const auto Created = makeDirectory("/d");
+  EXPECT_EQ(status(Root), initialDirectoryRecord(Before, Time, 6));
+  // Created children keep the separate global namespace policy (32 bytes).
+  EXPECT_EQ(llvm::support::endian::read64le(status(Created).data() + 96), 64u);
+  path("/d");
+  error(ServiceKind::Mkdir, {Base, 0700}, 17);
+  error(ServiceKind::Mkdir, {UINT64_MAX, 0700}, 14);
+  renameFile("/f", "/f");
+  EXPECT_EQ(status(Root), initialDirectoryRecord(Before, Time, 6));
+  error(ServiceKind::Fstat64, {Root, UINT64_MAX}, 14);
+  EXPECT_EQ(status(Root), initialDirectoryRecord(Before, Time, 6));
+  path("/l");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(status(Root), initialDirectoryRecord(Before, Time, 5));
+  path("/d");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(status(Root), initialDirectoryRecord(Before, Time, 4));
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 2}), 68u);
+  EXPECT_EQ(M.Size, 777u);
+  EXPECT_EQ(M.LinkCount, 7u);
+  EXPECT_EQ(M.Blocks, 55u);
+}
+
+TEST_P(DarwinFileTest, InitialDirectoryMetadataFollowsMovedObjectsAndPolicies) {
+  namespacePolicy();
+  Options->Directories = {"/", "/a", "/a/child", "/b"};
+  Options->Metadata["/data"] = darwin_test::mutationMetadata(6);
+  Options->MutableDirectories = {"/", "/a", "/b"};
+  Options->SwapRenameDirectories.insert("/");
+  Options->ExchangeableDirectories.insert("/a");
+  Options->MovableDirectories.insert("/a/child");
+  Options->MovableDirectories.insert("/b");
+  for (auto [Name, Inode] : {std::pair{"/a", 43u}, std::pair{"/b", 44u},
+                             std::pair{"/a/child", 45u}}) {
+    auto M = darwin_test::creationParentMetadata();
+    M.Inode = Inode;
+    M.Size = 777;
+    M.LinkCount = 7;
+    Options->Metadata[Name] = M;
+  }
+  const DarwinFileTime ATime{-11, 321}, BTime{-12, 654}, ChildTime{-13, 987};
+  Options->DirectoryMutationPolicies["/a"] = {23, ATime};
+  Options->DirectoryMutationPolicies["/b"] = {37, BTime};
+  Options->DirectoryMutationPolicies["/a/child"] = {41, ChildTime};
+  path("/a");
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/b");
+  const auto B = ok(ServiceKind::Open, {Base});
+  path("/a/child");
+  const auto Child = ok(ServiceKind::Open, {Base});
+  const auto ABefore = status(A), BBefore = status(B),
+             ChildBefore = status(Child);
+  makeFile("/g");
+  swapFiles("/a", "/g");
+  EXPECT_EQ(status(A), initialDirectoryRecord(ABefore, ATime));
+  EXPECT_EQ(status(Child), ChildBefore);
+  renameFile("/g/child", "/b/child");
+  EXPECT_EQ(status(A), initialDirectoryRecord(ABefore, ATime, 2, 23));
+  EXPECT_EQ(status(B), initialDirectoryRecord(BBefore, BTime, 3, 37));
+  EXPECT_EQ(status(Child), initialDirectoryRecord(ChildBefore, ChildTime));
+  makeFile("/g/new");
+  EXPECT_EQ(status(A), initialDirectoryRecord(ABefore, ATime, 3, 23));
+  identity(A, "/g");
+  identity(Child, "/b/child");
+}
+
+TEST_P(DarwinFileTest, InitialDirectoryMetadataRetainsRemovedAndReusedNames) {
+  namespacePolicy();
+  Options->Directories = {"/", "/old"};
+  Options->Metadata["/data"] = darwin_test::mutationMetadata(6);
+  Options->Metadata["/old"] = darwin_test::creationParentMetadata();
+  Options->Metadata["/old"].Inode = 43;
+  Options->MutableDirectories.insert("/old");
+  Options->RemovableDirectories.insert("/old");
+  const DarwinFileTime Time{-11, 321};
+  Options->DirectoryMutationPolicies["/old"] = {17, Time};
+  path("/old");
+  const auto Old = ok(ServiceKind::Open, {Base});
+  const auto Before = status(Old);
+  makeFile("/old/f");
+  path("/old/f");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  const auto Empty = initialDirectoryRecord(Before, Time, 2);
+  EXPECT_EQ(status(Old), Empty);
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Old}), 0u);
+  path("/old");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(status(Old), Empty);
+  const auto Fresh = makeDirectory("/old");
+  EXPECT_NE(llvm::support::endian::read64le(status(Fresh).data() + 8), 43u);
+  EXPECT_EQ(llvm::support::endian::read64le(status(Fresh).data() + 96), 64u);
+  EXPECT_EQ(status(Old), Empty);
+  path("no");
+  error(ServiceKind::MkdirAt, {Old, Base, 0700}, 2);
+  EXPECT_EQ(status(Old), Empty);
+  path(".");
+  const auto CWD = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(status(CWD), Empty);
+}
+
+TEST_P(DarwinFileTest, InitialDirectoryMetadataAndEnumerationStayIndependent) {
+  enumerationPolicy(0);
+  const DarwinFileTime Time{-11, 321};
+  Options->DirectoryMutationPolicies["/"] = {17, Time};
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  const auto Before = status(Root);
+  EXPECT_EQ(directoryBytes(Root).size(), 96u);
+  makeFile("/f");
+  EXPECT_EQ(status(Root), initialDirectoryRecord(Before, Time, 4));
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64,
+                      {Root, Base + 256, 1024, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryEnumerationVersion);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 0}), 0u);
+  EXPECT_EQ(directoryBytes(Root).size(), 128u);
+  EXPECT_EQ(status(Root), initialDirectoryRecord(Before, Time, 4));
+}
+
+TEST_P(DarwinFileTest,
+       InitialDirectoryMetadataWithoutCreationInvalidatesOnlySnapshot) {
+  Options->Directories = {"/", "/empty"};
+  Options->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options->MutableDirectories.insert("/");
+  Options->DirectoryContents["/"] = darwin_test::directoryContents();
+  const DarwinFileTime Time{-11, 321};
+  Options->DirectoryMutationPolicies["/"] = {17, Time};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  ASSERT_FALSE(Options->CreationPolicy.has_value());
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  const auto Before = status(Root);
+  EXPECT_EQ(directoryBytes(Root).size(), 128u);
+  makeFile("/f");
+  EXPECT_EQ(status(Root), initialDirectoryRecord(Before, Time, 5));
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 0}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64,
+                      {Root, Base + 256, 1024, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_EQ(status(Root), initialDirectoryRecord(Before, Time, 5));
+}
+
+TEST_P(DarwinFileTest,
+       InitialDirectoryMetadataDoesNotGrantMutationOrFollowReusedNames) {
+  Options->Directories = {"/", "/empty"};
+  Options->MutableDirectories.insert("/");
+  Options->RemovableDirectories.insert("/empty");
+  auto &M = Options->Metadata["/empty"];
+  M = darwin_test::creationParentMetadata();
+  M.Inode = 42;
+  M.LinkCount = 7;
+  M.Size = 777;
+  M.Blocks = 55;
+  const DarwinFileTime Time{-11, 321};
+  Options->DirectoryMutationPolicies["/empty"] = {17, Time};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/empty");
+  const auto Old = ok(ServiceKind::Open, {Base});
+  const auto Before = status(Old);
+  path("/empty/child");
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base, 0700}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryNotMutable);
+  EXPECT_EQ(status(Old), Before);
+  path("/empty");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  // Removal as the first mutation changes only ctime, not observed counts.
+  EXPECT_EQ(status(Old), initialDirectoryRecord(Before, Time));
+  const auto Fresh = makeDirectory("/empty");
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Fresh, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMetadata);
+  EXPECT_EQ(status(Old), initialDirectoryRecord(Before, Time));
+}
+
+TEST(DarwinFileOptions,
+     InitialDirectoryMetadataRequiresExplicitIdentityAndLimits) {
+  DarwinFileOptions O;
+  O.Directories.insert("/");
+  O.Metadata["/"] = darwin_test::creationParentMetadata();
+  O.DirectoryMutationPolicies["/"] = {17, {-11, 321}};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  for (unsigned Case = 0; Case != 6; ++Case) {
+    auto Bad = O;
+    switch (Case) {
+    case 0:
+      Bad.DirectoryMutationPolicies["/"].DirectoryEntrySize = 0;
+      break;
+    case 1:
+      Bad.DirectoryMutationPolicies["/"].DirectoryEntrySize = 16777217;
+      break;
+    case 2:
+      Bad.DirectoryMutationPolicies["/"].Time.Nanoseconds = -1;
+      break;
+    case 3:
+      Bad.Metadata.clear();
+      break;
+    case 4:
+      Bad.Metadata["/"].Inode = 0;
+      break;
+    case 5:
+      Bad.DirectoryMutationPolicies["/missing"] = {17, {-11, 321}};
+      break;
+    }
+    EXPECT_EQ(llvm::toString(validateFileOptions(Bad)),
+              diagnostic::DirectoryMetadataMutationOption);
+  }
+  O.DirectoryMutationPolicies["/"] = {16777216, {INT64_MIN, 999999999}};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+}
+
+TEST(DarwinFileOptions, InitialDirectoryMetadataChargesOneFixedReference) {
+  DarwinFileOptions O;
+  O.Directories.insert("/");
+  O.Metadata["/"] = darwin_test::creationParentMetadata();
+  O.DirectoryMutationPolicies["/"] = {17, {-11, 321}};
+  // Root declaration2 + policy reference2 + file name/NUL3.
+  O.Files["/a"] = std::vector<uint8_t>((16u << 20) - 7);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/a"].push_back(0);
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileOptionsLimit);
+}
+
 TEST_P(DarwinFileTest, VirtualEnumerationUsesExactIdentityAndUnsignedOrder) {
   enumerationPolicy(UINT64_MAX);
   ASSERT_FALSE(bool(validateFileOptions(*Options)));
