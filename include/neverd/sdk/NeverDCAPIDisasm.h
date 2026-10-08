@@ -76,8 +76,9 @@ enum {
   /// for an instruction the lifter cannot model.  "target" is the direct
   /// transfer target when the lift names one.  "refs" lists {"to","kind"} for
   /// constant addresses the instruction reads ("read"), writes ("write") or
-  /// takes the address of ("offset").  EVM and SBF rows never carry these
-  /// fields.
+  /// takes the address of ("offset"); a read or write adds "size", the bytes
+  /// it accesses, when the lift names them.  EVM and SBF rows never carry
+  /// these fields.
   NEVERD_DISASM_FLOW = 1u,
   /// Add how each native instruction moves the stack pointer, from the same
   /// lift.  "sp" is the constant the instruction adds to the stack pointer, 0
@@ -108,7 +109,9 @@ NEVERD_API const char *neverd_disasm_json_ex(neverd_session_t Sess,
 /// "write" or "offset", or "icall"/"ijump" for a call or jump through a pointer
 /// slot the loader relocated to code: such a reference names the slot's
 /// pointer as loaded, which the program may still overwrite unless the slot
-/// is read-only after relocation.  MaxFunctions is clamped to 1..4096.  EVM and
+/// is read-only after relocation.  A "read" or "write" row has a fourth
+/// element, the bytes it accesses, when the lift names them:
+/// ["from","to","read",8].  MaxFunctions is clamped to 1..4096.  EVM and
 /// SBF images return NULL with an error, because their analyzers own a
 /// different instruction model.  This query never starts analysis.
 NEVERD_API const char *neverd_code_refs_json(neverd_session_t Sess,

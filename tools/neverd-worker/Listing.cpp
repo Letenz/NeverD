@@ -49,6 +49,8 @@ constexpr std::size_t NameColumnWidth = 16;
 constexpr std::size_t MnemonicWidth = 8;
 constexpr std::size_t CommentColumn = 40;
 constexpr std::size_t MaxXrefLines = 2;
+/// The widest access a reference may name: a zmmword.
+constexpr std::uint64_t MaxAccessWidth = 64;
 constexpr std::size_t MaxPageLines = 2000;
 constexpr std::size_t MaxOpcodeBytes = 12;
 constexpr std::size_t MaxDecodeChunk = 2048;
@@ -282,6 +284,8 @@ struct ImportSlot {
 struct Reference {
   std::uint64_t to = 0, from = 0;
   RefKind kind = RefKind::Offset;
+  /// The bytes a read or write accesses; 0 when the engine names none.
+  std::uint8_t width = 0;
 };
 /// A jump table whole-program analysis recovered (neverd_switches_json).
 struct SwitchTable {
@@ -335,6 +339,12 @@ struct Item {
   int region = -1, function = -1;
   std::size_t index = 0;
   std::uint64_t alignment = 0;
+};
+/// An item the listing lays out from what it knows besides the bytes: a
+/// named object as large as its symbol says, or data the code reads or
+/// writes, as wide as those accesses.
+struct AutoData {
+  std::uint64_t size = 0;
 };
 
 struct Line {
@@ -548,6 +558,16 @@ struct Listing::Impl {
   Json functionRowsCache;
   std::uint64_t functionRowsGeneration = 0;
   std::vector<std::uint64_t> namedData;
+  /// The size each named object's symbol gives, where it gives one.
+  std::unordered_map<std::uint64_t, std::uint64_t> dataSizes;
+  /// The width of every read and write of each address the code reads or
+  /// writes, by address; 0 where those widths differ.  Built with the index.
+  std::vector<std::pair<std::uint64_t, unsigned>> accessWidths;
+  /// The automatic data items by start; none overlaps another item.
+  std::map<std::uint64_t, AutoData> autoData;
+  /// Where a run of unwritten bytes stops: named data and the automatic
+  /// items' starts and ends, sorted.
+  std::vector<std::uint64_t> dataBounds;
   std::unordered_map<std::uint64_t, std::uint64_t> alignCache;
 
   std::unordered_map<std::uint64_t, DecodedFunction> decoded;
@@ -1005,6 +1025,7 @@ struct Listing::Impl {
     strings.clear();
     listingNames.clear();
     namedData.clear();
+    dataSizes.clear();
     // Only names of data matter here; functions are listed already.
     if (const auto rows = takeJson(dataSymbols ? dataSymbols(session)
                                                : neverd_symbols_json(session));
@@ -1012,8 +1033,12 @@ struct Listing::Impl {
       for (const auto &row : rows) {
         const auto address = jsonAddress(row.value("addr", Json()));
         auto name = row.value("name", std::string());
-        if (address && !name.empty() && !functionAtEntry(address))
-          dataNames.emplace(address, std::move(name));
+        if (!address || name.empty() || functionAtEntry(address))
+          continue;
+        // The largest symbol at an address sizes its object.
+        if (const auto size = jsonCount(row.value("size", Json())))
+          dataSizes[address] = std::max(dataSizes[address], size);
+        dataNames.emplace(address, std::move(name));
       }
     if (const auto rows = takeJson(neverd_imports_json(session));
         rows.is_array())
@@ -1108,6 +1133,120 @@ struct Listing::Impl {
     for (const auto &entry : slots)
       namedData.push_back(entry.first);
     std::sort(namedData.begin(), namedData.end());
+    layoutAutoData();
+  }
+
+  /// Whether an item other than an automatic one covers a byte of
+  /// [start, end): a switch slot, an import slot, a relocated pointer or a
+  /// string, as autoItemAt finds them.
+  bool coveredByItem(std::uint64_t start, std::uint64_t end) const {
+    for (std::uint64_t at = start > pointerSize ? start - pointerSize + 1 : 0;
+         at < end; ++at)
+      if (slots.contains(at) || (at >= start && switchSlotAt(at)))
+        return true;
+    // A pointer is a slot wide, so one covering a byte covers an end.
+    if (pointerAt(start) || pointerAt(end - 1) || stringAt(start))
+      return true;
+    const auto string =
+        std::lower_bound(strings.begin(), strings.end(), start,
+                         [](const StringItem &s, std::uint64_t value) {
+                           return s.address < value;
+                         });
+    return string != strings.end() && string->address < end;
+  }
+
+  /// The widths of the code's reads and writes, from the index.
+  void noteAccessWidths() {
+    accessWidths.clear();
+    for (const auto &reference : references) {
+      if ((reference.kind != RefKind::Read &&
+           reference.kind != RefKind::Write) ||
+          !reference.width)
+        continue;
+      if (accessWidths.empty() || accessWidths.back().first != reference.to)
+        accessWidths.emplace_back(reference.to, reference.width);
+      else if (accessWidths.back().second != reference.width)
+        accessWidths.back().second = 0;
+    }
+  }
+
+  /// The width of every access to \p address, 0 where they differ, or none
+  /// when the code reads and writes no data there.
+  std::optional<unsigned> accessWidthAt(std::uint64_t address) const {
+    const auto it =
+        std::lower_bound(accessWidths.begin(), accessWidths.end(), address,
+                         [](const auto &entry, std::uint64_t value) {
+                           return entry.first < value;
+                         });
+    if (it == accessWidths.end() || it->first != address)
+      return std::nullopt;
+    return it->second;
+  }
+
+  /// Lays out the automatic data items. A named object is as large as its
+  /// symbol says, and data the code reads or writes as wide as those
+  /// accesses. Written data holds only a value a directive spells, since an
+  /// array's bytes show one by one; no item crosses another item or another
+  /// name.
+  void layoutAutoData() {
+    autoData.clear();
+    const auto fits = [&](std::uint64_t start, std::uint64_t size) {
+      const int r = regionIndex(start);
+      if (r < 0 || regions[r].exec || !size)
+        return false;
+      const Region &region = regions[r];
+      const bool unwritten = start >= region.initializedEnd;
+      if (!unwritten && dataDirective(static_cast<unsigned>(size)).empty())
+        return false;
+      const std::uint64_t end = start + size;
+      if (end < start || end > (unwritten ? region.end : region.initializedEnd))
+        return false;
+      const auto named =
+          std::upper_bound(namedData.begin(), namedData.end(), start);
+      if (named != namedData.end() && *named < end)
+        return false;
+      const auto next = autoData.lower_bound(start);
+      if (next != autoData.end() && next->first < end)
+        return false;
+      if (next != autoData.begin() &&
+          std::prev(next)->first + std::prev(next)->second.size > start)
+        return false;
+      return unwritten || !coveredByItem(start, end);
+    };
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> sized(
+        dataSizes.begin(), dataSizes.end());
+    std::sort(sized.begin(), sized.end());
+    for (const auto &[address, size] : sized)
+      if (fits(address, size))
+        autoData.emplace(address, AutoData{size});
+    for (const auto &[address, width] : accessWidths) {
+      // Accesses of different widths take the widest.
+      unsigned widest = width;
+      if (!widest)
+        for (auto [b, e] = referencesTo(address); b != e; ++b)
+          if (b->kind == RefKind::Read || b->kind == RefKind::Write)
+            widest = std::max<unsigned>(widest, b->width);
+      if (!autoData.contains(address) && fits(address, widest))
+        autoData.emplace(address, AutoData{widest});
+    }
+    dataBounds = namedData;
+    for (const auto &[start, data] : autoData) {
+      dataBounds.push_back(start);
+      dataBounds.push_back(start + data.size);
+    }
+    std::sort(dataBounds.begin(), dataBounds.end());
+    dataBounds.erase(std::unique(dataBounds.begin(), dataBounds.end()),
+                     dataBounds.end());
+  }
+
+  /// The automatic data item covering \p address.
+  const std::pair<const std::uint64_t, AutoData> *
+  autoDataAt(std::uint64_t address) const {
+    auto it = autoData.upper_bound(address);
+    if (it == autoData.begin())
+      return nullptr;
+    --it;
+    return address < it->first + it->second.size ? &*it : nullptr;
   }
 
   /// Read the user's data items. Their strings join the scan's, and replace
@@ -1610,21 +1749,28 @@ struct Listing::Impl {
   }
 
   /// Alignment of a gap filled only by padding, or zero.
-  std::uint64_t paddingAlignment(std::uint64_t start, std::uint64_t end) {
+  /// The boundary a gap of [start, end) pads to: the largest power of two
+  /// that end is a multiple of and the gap is shorter than; 0 when none.
+  static std::uint64_t gapAlignment(std::uint64_t start, std::uint64_t end) {
     if (end <= start)
       return 0;
-    if (auto it = alignCache.find(start); it != alignCache.end())
-      return it->second;
-    std::uint64_t alignment = 0;
     const std::uint64_t length = end - start;
     std::uint64_t limit = ClassicAlignmentLimit;
     while (limit <= length && limit < MaxAlignment)
       limit *= 2;
     for (std::uint64_t candidate = limit; candidate >= 2; candidate /= 2)
-      if (end % candidate == 0 && length < candidate) {
-        alignment = candidate;
-        break;
-      }
+      if (end % candidate == 0 && length < candidate)
+        return candidate;
+    return 0;
+  }
+
+  std::uint64_t paddingAlignment(std::uint64_t start, std::uint64_t end) {
+    if (end <= start)
+      return 0;
+    if (auto it = alignCache.find(start); it != alignCache.end())
+      return it->second;
+    std::uint64_t alignment = gapAlignment(start, end);
+    const std::uint64_t length = end - start;
     if (alignment) {
       std::vector<unsigned char> bytes(length);
       const int read = neverd_read_bytes(session, start, bytes.data(),
@@ -1715,15 +1861,38 @@ struct Listing::Impl {
     item.region = r;
     item.start = address;
     if (address >= region.initializedEnd) {
+      if (const auto *data = autoDataAt(address)) {
+        item.kind =
+            dataDirective(static_cast<unsigned>(data->second.size)).empty()
+                ? ItemKind::Uninitialized
+                : ItemKind::Data;
+        item.start = data->first;
+        item.size = data->second.size;
+        return item;
+      }
+      // Unwritten bytes run from one named or laid out item to the next.
       std::uint64_t start = region.initializedEnd, end = region.end;
-      auto next = std::upper_bound(namedData.begin(), namedData.end(), address);
-      if (next != namedData.end() && *next < end)
+      auto next =
+          std::upper_bound(dataBounds.begin(), dataBounds.end(), address);
+      if (next != dataBounds.end() && *next < end)
         end = *next;
-      if (next != namedData.begin() && *(next - 1) >= start)
+      if (next != dataBounds.begin() && *(next - 1) >= start)
         start = *(next - 1);
       item.kind = ItemKind::Uninitialized;
       item.start = start;
       item.size = end - start;
+      // A short run nothing refers to between two laid out items aligns
+      // the second.
+      if (const auto *before = start ? autoDataAt(start - 1) : nullptr;
+          before && before->first + before->second.size == start &&
+          end < region.end) {
+        auto [b, e] = referencesTo(start);
+        if (b == e)
+          if (const auto alignment = gapAlignment(start, end)) {
+            item.kind = ItemKind::Align;
+            item.alignment = alignment;
+          }
+      }
       return item;
     }
     if (region.exec) {
@@ -1779,6 +1948,12 @@ struct Listing::Impl {
       item.kind = ItemKind::Pointer;
       item.start = pointer->slot;
       item.size = pointerSize;
+      return item;
+    }
+    if (const auto *data = autoDataAt(address)) {
+      item.kind = ItemKind::Data;
+      item.start = data->first;
+      item.size = data->second.size;
       return item;
     }
     if (const auto *string = stringAt(address);
@@ -1856,11 +2031,19 @@ struct Listing::Impl {
                 ListingRole::DummyCodeName, address};
     }
     std::string prefix(UnknownNamePrefix);
-    if (use == NameUse::Slot)
+    if (use == NameUse::Slot) {
       prefix = PointerNamePrefix;
-    else if (use == NameUse::Data)
+    } else if (const auto width = accessWidthAt(address)) {
+      // Data the code reads or writes takes one name wherever it appears,
+      // as decompiled C names it: the width of those accesses, or unknown
+      // where they differ.
+      if (const auto sized = dataNamePrefix(sizeKeywordOf(*width));
+          !sized.empty())
+        prefix = std::string(sized);
+    } else if (use == NameUse::Data) {
       if (const auto sized = dataNamePrefix(sizeKeyword); !sized.empty())
         prefix = std::string(sized);
+    }
     return {prefix + upperHex(address), ListingRole::DummyDataName, address};
   }
 
@@ -2528,7 +2711,9 @@ struct Listing::Impl {
       head.padTo(base + 3);
       unsigned char bytes[8] = {};
       const int size = static_cast<int>(std::min<std::uint64_t>(item.size, 8));
-      if (neverd_read_bytes(session, item.start, bytes, size) == size) {
+      // Bytes past the region's written part hold no value yet.
+      if (item.start < regions[item.region].initializedEnd &&
+          neverd_read_bytes(session, item.start, bytes, size) == size) {
         std::uint64_t value = 0;
         for (int i = 0; i < size; ++i)
           value |= static_cast<std::uint64_t>(bytes[i]) << (8 * i);
@@ -2671,6 +2856,7 @@ struct Listing::Impl {
       indexDone = 0;
       indexTotal = functions.size();
       references.clear();
+      accessWidths.clear();
     }
     if (indexState != IndexState::Building)
       return;
@@ -2684,12 +2870,17 @@ struct Listing::Impl {
     const auto page = takeJson(raw);
     if (const auto rows = page.value("refs", Json()); rows.is_array())
       for (const auto &row : rows) {
-        if (!row.is_array() || row.size() != 3)
+        // A read or write may carry the bytes it accesses.
+        if (!row.is_array() || row.size() < 3 || row.size() > 4 ||
+            !row[2].is_string())
           continue;
         const auto kind = parseRefKind(row[2].get<std::string>());
         if (!kind)
           continue;
-        references.push_back({jsonAddress(row[1]), jsonAddress(row[0]), *kind});
+        const auto width = row.size() == 4 ? jsonCount(row[3]) : 0;
+        references.push_back(
+            {jsonAddress(row[1]), jsonAddress(row[0]), *kind,
+             static_cast<std::uint8_t>(width <= MaxAccessWidth ? width : 0)});
       }
     const auto next = page.value("next_entry", Json());
     const auto previous = *indexCursor;
@@ -2727,6 +2918,9 @@ struct Listing::Impl {
                       switchReferences.end());
     sortReferences();
     indexDone = indexTotal;
+    // Data the code reads or writes now takes its width.
+    noteAccessWidths();
+    layoutAutoData();
     // Labels and reference comments are now available.
     decoded.clear();
     decodedOrder.clear();
@@ -3407,6 +3601,7 @@ const std::string &Listing::stringOptions() const {
 void Listing::reindex() {
   impl_->indexState = Impl::IndexState::Idle;
   impl_->references.clear();
+  impl_->accessWidths.clear();
   invalidate();
 }
 

@@ -143,6 +143,8 @@ bool isRegisterName(OperandDialect dialect, std::string_view name);
 bool isOperandKeyword(std::string_view name);
 /// Automatic data-name prefix for a size keyword, or empty.
 std::string_view dataNamePrefix(std::string_view sizeKeyword);
+/// The size keyword of an access \p bytes wide (`qword`), or empty.
+std::string_view sizeKeywordOf(std::uint64_t bytes);
 /// Parse an automatic name such as `loc_F2329` back to its address.
 std::optional<std::uint64_t> parseDummyName(std::string_view name);
 bool isPaddingMnemonic(std::string_view mnemonic);

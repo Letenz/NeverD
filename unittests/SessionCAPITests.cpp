@@ -1806,23 +1806,25 @@ TEST_F(SessionCAPITest, DisassemblyStatesHowEachInstructionMovesTheStack) {
 
 TEST_F(SessionCAPITest, DisassemblyStatesTheMemoryEachInstructionReaches) {
   // Each row: its bytes and the reference it states, as an offset from the
-  // next instruction or an absolute address, with its kind.
+  // next instruction or an absolute address, with its kind and, for a read
+  // or write, the bytes it accesses.
   struct Row {
     std::string_view Bytes;
     std::optional<int64_t> Relative;
     std::optional<uint64_t> Absolute;
     std::string_view Kind;
+    int64_t Size = 0;
   };
   using namespace std::string_view_literals;
   const Row Rows[] = {
       // mov rdi, qword ptr [rip + 0x100]
-      {"\x48\x8b\x3d\x00\x01\x00\x00"sv, 0x100, {}, "read"},
+      {"\x48\x8b\x3d\x00\x01\x00\x00"sv, 0x100, {}, "read", 8},
       // mov dword ptr [rip + 0x200], eax
-      {"\x89\x05\x00\x02\x00\x00"sv, 0x200, {}, "write"},
+      {"\x89\x05\x00\x02\x00\x00"sv, 0x200, {}, "write", 4},
       // mov rax, qword ptr fs:[0x28]: an offset in a segment, not an address
       {"\x64\x48\x8b\x04\x25\x28\x00\x00\x00"sv, {}, {}, {}},
       // mov eax, dword ptr [0x404000]
-      {"\x8b\x04\x25\x00\x40\x40\x00"sv, {}, 0x404000, "read"},
+      {"\x8b\x04\x25\x00\x40\x40\x00"sv, {}, 0x404000, "read", 4},
       // lea rax, [rip + 0x10]
       {"\x48\x8d\x05\x10\x00\x00\x00"sv, 0x10, {}, "offset"},
       // mov rax, qword ptr [rbx + 8]
@@ -1864,7 +1866,38 @@ TEST_F(SessionCAPITest, DisassemblyStatesTheMemoryEachInstructionReaches) {
         << I << ": " << Text;
     EXPECT_EQ(Ref->getString("kind").value_or("").str(), Rows[I].Kind)
         << I << ": " << Text;
+    EXPECT_EQ(Ref->getInteger("size").value_or(0), Rows[I].Size)
+        << I << ": " << Text;
   }
+  // The function's direct references carry the same widths, as a fourth
+  // element of a read or write.
+  ASSERT_GE(neverd_session_discover_functions(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Page = takeString(neverd_code_refs_json(Session, Entry, 1));
+  auto PageJson = llvm::json::parse(Page);
+  ASSERT_TRUE(static_cast<bool>(PageJson)) << Page;
+  const auto *PageRefs = PageJson->getAsObject()->getArray("refs");
+  ASSERT_TRUE(PageRefs) << Page;
+  size_t Accesses = 0;
+  for (const auto &Value : *PageRefs) {
+    const auto &Fields = *Value.getAsArray();
+    const auto Kind = Fields[2].getAsString().value_or("");
+    if (Kind != "read" && Kind != "write") {
+      EXPECT_EQ(Fields.size(), 3u) << Page;
+      continue;
+    }
+    ASSERT_EQ(Fields.size(), 4u) << Page;
+    const uint64_t From =
+        std::stoull(Fields[0].getAsString().value_or("0").str(), nullptr, 16);
+    uint64_t At = Entry;
+    for (const Row &R : Rows) {
+      if (At == From)
+        EXPECT_EQ(Fields[3].getAsInteger().value_or(0), R.Size) << Page;
+      At += R.Bytes.size();
+    }
+    ++Accesses;
+  }
+  EXPECT_EQ(Accesses, 3u) << Page;
 }
 
 // The code a data executable's entry runs, and where it and the data start.
