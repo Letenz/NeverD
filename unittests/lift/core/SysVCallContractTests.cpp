@@ -427,6 +427,36 @@ TEST(SysVCallContract, PassThroughArgumentsReachAPrototypedImport) {
   }
 }
 
+TEST(SysVCallContract, ACallThroughALoaderBoundSlotPassesThePrototype) {
+  // Built with -fno-plt, wrap(s, f) calls fputs through the GOT slot that a
+  // GLOB_DAT relocation binds, which no import directory entry lists.
+  constexpr va_t Wrap = Text, Slot = 0x403000;
+  std::vector<uint8_t> Code(0x20, 0xCC);
+  std::vector<uint8_t> WrapCode = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                   0xFF, 0x15};            // call [rip+slot]
+  for (uint8_t B : rel32(Wrap + 10, Slot))
+    WrapCode.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                    0xC3})                  // ret
+    WrapCode.push_back(B);
+  put(Code, Wrap, WrapCode);
+  BinaryImage Img = makeImportImage(Code, {{Wrap, "wrap"}}, {});
+  Segment Got;
+  Got.Name = ".got";
+  Got.VA = Slot;
+  Got.Size = Got.FileSz = 8;
+  Got.Data.resize(8);
+  Got.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Img.Segments.push_back(std::move(Got));
+  ASSERT_TRUE(Img.recordImportStorageSlot(Slot, "fputs", 0,
+                                          ImportStorageEvidence::LoaderBind));
+  const std::string Source = liftEntries(Img, {Wrap});
+  const std::string Body = body(Source, "wrap");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("fputs(arg0, arg1)"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+}
+
 TEST(SysVCallContract, AnArgumentOnlyTheCallSiteScanReadsKeepsItsValue) {
   // parse(o): s = o->text + 1 in RDI, tested by a load through it; the call
   // to an import with no prototype in the next block passes it on.  Only

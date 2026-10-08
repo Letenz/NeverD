@@ -18,6 +18,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
@@ -2845,12 +2846,13 @@ bool forwardsToGuardDispatch(const BinaryImage &Img, const LowFunc &F) {
 
 /// The argument registers the libc imports that \p Funcs and the callees
 /// \p Effects summarizes call read, keyed by the address each call names its
-/// import by: an executable stub or the slot the loader binds.  A stub lifted
-/// as a function is keyed too.  A call in a function whose own summary is
-/// incomplete still passes its import's parameters.  Only a routine the arity
-/// tables give a fixed prototype (LibCNames.h), with every integer and pointer
-/// argument in a register and none in a vector register, is listed; each
-/// argument is read pointer-wide.
+/// import by: an executable stub or a slot the loader binds, listed in the
+/// import directory or not (importCalleeName).  A stub lifted as a function
+/// is keyed too.  A call in a function whose own summary is incomplete still
+/// passes its import's parameters.  Only a routine the arity tables give a
+/// fixed prototype (LibCNames.h), with every integer and pointer argument in
+/// a register and none in a vector register, is listed; each argument is
+/// read pointer-wide.
 std::map<va_t, GPRReadWidths>
 importPrototypeEntryReads(const BinaryImage &Img,
                           const std::vector<LowFunc> &Funcs,
@@ -2863,10 +2865,10 @@ importPrototypeEntryReads(const BinaryImage &Img,
   auto Classify = [&](va_t Addr) {
     if (!Seen.insert(Addr).second)
       return;
-    const Import *Imp = Img.findImportAt(Addr);
-    if (!Imp)
+    const std::string Name = importCalleeName(Img, Addr);
+    if (Name.empty())
       return;
-    const auto Arity = libc::libcArityForSymbol(Imp->Name);
+    const auto Arity = libc::libcArityForSymbol(Name);
     if (!Arity || Arity->FpArgs != 0 || Arity->IntArgs < 0 ||
         static_cast<size_t>(Arity->IntArgs) > Registers.size())
       return;

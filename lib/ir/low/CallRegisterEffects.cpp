@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -708,7 +709,7 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
         // the slot is an import's and its prototype says what that reads.
         Effect.Unknown = true;
         (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
-        if (DirectTarget && Img.findImportAt(Op.Inputs[0].Offset))
+        if (DirectTarget && !importCalleeName(Img, Op.Inputs[0].Offset).empty())
           Step.ImportCallee = Op.Inputs[0].Offset;
         break;
       case NdOp::INDIR_BR:
