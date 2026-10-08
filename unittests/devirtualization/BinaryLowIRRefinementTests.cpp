@@ -2398,4 +2398,91 @@ TEST(BinaryLowIRRefinement, CandidateMustRestoreStackAndOriginalReturnSlot) {
   ASSERT_TRUE(Changed);
   refused(P.check(Candidate), Status::ContractViolation);
 }
+Program partitionedNativeTargets(unsigned Branches) {
+  Program P({});
+  auto &Code = P.Image.Segments.front();
+  const auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Code.Data.insert(Code.Data.end(), Bytes);
+  };
+  const auto Imm = [&](uint32_t V) {
+    for (unsigned I = 0; I < 4; ++I)
+      Code.Data.push_back(V >> (8 * I));
+  };
+  const auto Pad = [&](unsigned Offset) { Code.Data.resize(Offset, 0xcc); };
+  const unsigned First = 0x100, Leaves = 0x400;
+  Emit({0x89, 0xf8, 0x83, 0xe0, static_cast<uint8_t>(Branches - 1), 0x48, 0xc1,
+        0xe0, 7, 0x48, 0x05});
+  Imm(Entry + First);
+  Emit({0xff, 0xe0});
+  for (unsigned I = 0; I < Branches; ++I) {
+    Pad(First + 128 * I);
+    Emit({static_cast<uint8_t>(I == 3 ? 0x4c : 0x48), 0x89,
+          static_cast<uint8_t>(I == 0   ? 0xf0
+                               : I == 1 ? 0xd0
+                               : I == 2 ? 0xc8
+                                        : 0xc0),
+          0x48, 0x8d, 0x04, 0x40});
+    Emit({0x48, 0x31, 0xf8, 0x48, 0xc1, 0xc0, static_cast<uint8_t>(I + 3), 0x83,
+          0xe0, 1, 0x48, 0xc1, 0xe0, 5, 0x48, 0x05});
+    Imm(Entry + Leaves + 64 * I);
+    Emit({0xff, 0xe0});
+  }
+  for (unsigned I = 0; I < 2 * Branches; ++I) {
+    Pad(Leaves + 32 * I);
+    Emit({0xb8, 7, 0, 0, 0, 0xc3});
+  }
+  Code.Size = Code.FileSz = Code.Data.size();
+  P.Options.ControlRegisters = {{x86reg::RAX, 8}};
+  return P;
+}
+
+TEST(BinaryLowIRRefinement, PartitionedCoverageKeepsAllNativeAndCandidateArms) {
+  for (unsigned Branches : {2U, 4U}) {
+    SCOPED_TRACE(Branches);
+    auto P = partitionedNativeTargets(Branches);
+    const auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    LowIRRefinementLimits Limits;
+    Limits.Execution.Solver.Blast.MaxGates = 512;
+    const auto Good = P.check(Recovery.Residual, Witness::LiftedBits, Limits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    const auto Paths = 2 * Branches;
+    EXPECT_EQ(Good.Proof.OriginalPaths, Paths);
+    EXPECT_EQ(Good.Proof.CandidatePaths, Paths);
+    EXPECT_EQ(Good.Proof.TerminalPairs, Paths * Paths);
+    EXPECT_EQ(Good.Proof.SolverQueries, Branches == 2 ? 88U : 270U);
+    Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+    ASSERT_TRUE(
+        P.check(Recovery.Residual, Witness::LiftedBits, Limits).proved());
+    --Limits.Execution.MaxSolverQueries;
+    refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+            Status::BudgetExceeded);
+    Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+    Limits.MaxTerminalPairs = Good.Proof.TerminalPairs - 1;
+    refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+            Status::BudgetExceeded);
+    Limits.MaxTerminalPairs = Good.Proof.TerminalPairs;
+    Limits.Execution.MaxIndirectTargets = 1;
+    refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+            Status::BudgetExceeded);
+    Limits.Execution.MaxIndirectTargets = 8;
+    // The lowest target is visited last by the native worklist. Earlier
+    // successful coverage and state pairs cannot certify this changed return.
+    auto &Bytes = P.Image.Segments.front().Data;
+    Bytes[0x401] = 9;
+    const auto Wrong = P.check(Recovery.Residual, Witness::LiftedBits, Limits);
+    refused(Wrong, Status::Different);
+    EXPECT_GT(Wrong.Proof.TerminalPairs, (Paths - 1) * Paths);
+    Bytes[0x401] = 7;
+    // A missing reached target must not shrink the certified input domain.
+    Bytes.resize(0x400 + 32 * (Paths - 1));
+    P.Image.Segments.front().Size = P.Image.Segments.front().FileSz =
+        Bytes.size();
+    const auto Missing =
+        P.check(Recovery.Residual, Witness::LiftedBits, Limits);
+    EXPECT_FALSE(Missing.proved());
+    EXPECT_FALSE(Missing.Certificate);
+    EXPECT_FALSE(Missing.Proof.Certificate);
+  }
+}
 } // namespace

@@ -304,7 +304,9 @@ static FiniteValues enumerateFiniteValuesImpl(
     SymContext &Ctx, SymRef Predicate, llvm::ArrayRef<SymRef> Values,
     uint32_t Limit, SolverOptions Settings, uint64_t MaxQueries,
     uint64_t MaxSymbolicNodes, uint64_t &Queries, FiniteValueObserver Observe,
-    FiniteDomainEncoding *Encoding) {
+    FiniteDomainEncoding *Encoding, BlastError *EncodingError = nullptr) {
+  if (EncodingError)
+    *EncodingError = BlastError::None;
   const auto Valid = [&](SymRef Value) {
     return Value && Value.index() < Ctx.numNodes() && Ctx.width(Value);
   };
@@ -346,6 +348,8 @@ static FiniteValues enumerateFiniteValuesImpl(
                          : std::make_unique<BitVectorSolver>(Ctx, Settings);
   BitVectorSolver &Solver = *OwnedSolver;
   const auto EncodingFailure = [&] {
+    if (EncodingError)
+      *EncodingError = Solver.encodeError();
     return FiniteValues{Solver.encodeError() == BlastError::Malformed
                             ? FiniteValueStatus::Invalid
                             : FiniteValueStatus::Unknown,
@@ -425,6 +429,19 @@ FiniteValues enumerateFiniteValues(FiniteDomainEncoding &Encoding,
   return enumerateFiniteValuesImpl(
       Encoding.context(), Predicate, Values, Limit, Encoding.settings(),
       MaxQueries, MaxSymbolicNodes, Queries, Observe, &Encoding);
+}
+
+FiniteValues enumerateFiniteValues(FiniteDomainEncoding &Encoding,
+                                   SymRef Predicate,
+                                   llvm::ArrayRef<SymRef> Values,
+                                   uint32_t Limit, uint64_t MaxQueries,
+                                   uint64_t MaxSymbolicNodes, uint64_t &Queries,
+                                   BlastError &EncodingError,
+                                   FiniteValueObserver Observe) {
+  return enumerateFiniteValuesImpl(Encoding.context(), Predicate, Values, Limit,
+                                   Encoding.settings(), MaxQueries,
+                                   MaxSymbolicNodes, Queries, Observe,
+                                   &Encoding, &EncodingError);
 }
 
 } // namespace neverd::analysis::detail

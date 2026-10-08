@@ -50,6 +50,10 @@ endif()
 
 add_neverd_unittest(NeverDLowIRRefinementTests
   LowIRRefinementTests.cpp
+  CompleteModelTests.cpp
+  CompletedTargetFactsTests.cpp
+  ConditionalImplicationTests.cpp
+  DomainCoverageTests.cpp
   LowIRLoopAlignmentTests.cpp
   InterpreterMachineStateModelTests.cpp
   BinaryLowIRRefinementTests.cpp

@@ -4247,4 +4247,59 @@ TEST(LowIRLoopInference, TransferredCountersKeepProofBoundaries) {
         }
       }
 }
+Program conditionalProducts(bool Candidate, unsigned Change = 0) {
+  Program P;
+  P.Contract.ReturnRegisters = {{0, 8}, {32, 8}};
+  P.Function.Blocks[0].Succs = {1, 2};
+  P.instruction({op(Change == 2 ? NdOp::INT_NOTEQUAL : NdOp::INT_EQUAL,
+                    NdVar::tmp(0, 1), {r(8), r(16)}),
+                 op(NdOp::COND_BR, {}, {n(0x300), NdVar::tmp(0, 1)})});
+  P.block(1, 0x200);
+  P.instruction({op(NdOp::COPY, r(0), {n(0)}), op(NdOp::COPY, r(32), {n(0)})});
+  P.finish();
+  P.block(2, 0x300);
+  auto Input = r(Candidate ? 16 : 8);
+  P.instruction({op(NdOp::INT_MULT, r(0), {Input, Input}),
+                 op(NdOp::INT_MULT, r(32), {Input, r(40)})});
+  if (Change == 1)
+    P.instruction({op(NdOp::INT_XOR, r(32), {r(32), n(uint64_t{1} << 63)})});
+  P.finish();
+  return P;
+}
+
+TEST(LowIRRefinement, ConditionalProductsKeepEveryObservationAndDomain) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (auto Choice : {Witness::LiftedBits, Witness::ZeroBits}) {
+      auto A = conditionalProducts(false), B = conditionalProducts(true);
+      A.Contract.ByteOrder = Order;
+      LowIRRefinementLimits Limits;
+      Limits.Execution.Solver.Blast.MaxGates = 128;
+      const auto Good = A.check(B, Choice, Limits);
+      ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+      EXPECT_EQ(Good.OriginalPaths, 2U);
+      EXPECT_EQ(Good.CandidatePaths, 2U);
+      EXPECT_EQ(Good.TerminalPairs, 4U);
+      EXPECT_EQ(Good.SolverQueries, 14U);
+      Limits.Execution.MaxSolverQueries = Good.SolverQueries;
+      ASSERT_TRUE(A.check(B, Choice, Limits).proved());
+      --Limits.Execution.MaxSolverQueries;
+      expect(A, B, Status::BudgetExceeded, Choice, Limits);
+      Limits.Execution.MaxSolverQueries = Good.SolverQueries;
+      Limits.MaxTerminalPairs = Good.TerminalPairs - 1;
+      expect(A, B, Status::BudgetExceeded, Choice, Limits);
+      Limits = {};
+      Limits.Execution.Solver.Blast.MaxGates = 128;
+      for (unsigned Change : {1U, 2U}) {
+        // Keep an earlier true observation, then change a high output bit or
+        // give the candidate an unrelated branch domain.
+        const auto Wrong =
+            A.check(conditionalProducts(true, Change), Choice, Limits);
+        EXPECT_FALSE(Wrong.proved());
+        EXPECT_FALSE(Wrong.Certificate);
+        EXPECT_EQ(Wrong.Status, Status::BudgetExceeded);
+      }
+      Limits.Execution.Solver.Blast.MaxWidth = 32;
+      expect(A, B, Status::BudgetExceeded, Choice, Limits);
+    }
+}
 } // namespace
