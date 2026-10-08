@@ -42,6 +42,7 @@ NEVERD_API void neverd_session_destroy(neverd_session_t Sess);
 /// Returns 0 when preparation fails; a previously loaded session remains
 /// usable with its existing image, analysis, and edits. See
 /// neverd_last_error().
+/// Path is UTF-8 on every platform, including Windows.
 NEVERD_API int neverd_session_load(neverd_session_t Sess, const char *Path);
 NEVERD_API int neverd_session_is_loaded(neverd_session_t Sess);
 
@@ -57,6 +58,7 @@ NEVERD_API int neverd_session_discover_functions(neverd_session_t Sess);
 /// Returns 1 on success, 0 on failure.  Thread-safe if called once.
 NEVERD_API int neverd_session_analyze(neverd_session_t Sess);
 
+/// Return the caller's input path encoded as UTF-8.
 NEVERD_API const char *neverd_session_file_path(neverd_session_t Sess);
 NEVERD_API const char *neverd_session_arch_name(neverd_session_t Sess);
 NEVERD_API const char *neverd_session_format_name(neverd_session_t Sess);
@@ -78,6 +80,7 @@ NEVERD_API int neverd_session_bitness(neverd_session_t Sess);
 /// Load debug symbols from \p Path instead of searching for a companion file.
 /// The named file is authoritative: neverd_session_load() fails if it cannot be
 /// read or holds no function symbols.  Pass NULL or "" to resume searching.
+/// Path is UTF-8 on every platform.
 NEVERD_API void neverd_session_set_pdb_path(neverd_session_t Sess,
                                             const char *Path);
 
@@ -165,6 +168,11 @@ NEVERD_API void neverd_free_string(const char *Str);
 NEVERD_API unsigned long long neverd_session_file_size(neverd_session_t Sess);
 NEVERD_API neverd_va_t neverd_session_base_addr(neverd_session_t Sess);
 NEVERD_API neverd_va_t neverd_session_entry_addr(neverd_session_t Sess);
+
+/// Non-fatal loader metadata diagnostics as [{code,message}]. No input bytes
+/// are repaired. Returns [] for an unloaded/null session. Caller frees.
+NEVERD_API const char *
+neverd_session_load_diagnostics_json(neverd_session_t Sess);
 NEVERD_API int neverd_session_segment_count(neverd_session_t Sess);
 NEVERD_API int neverd_session_section_count(neverd_session_t Sess);
 NEVERD_API int neverd_session_import_count(neverd_session_t Sess);

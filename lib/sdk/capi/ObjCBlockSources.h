@@ -1131,7 +1131,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
     unsigned Index = 0, Width = 0;
   };
   struct ConstructionFacts {
-    Values::Facts Values;
+    objc_block_source_detail::Values::Facts Values;
     std::map<int64_t, Byte> Memory;
     bool SawIsa = false;
     size_t size() const { return Values.size() + Memory.size() + 1; }

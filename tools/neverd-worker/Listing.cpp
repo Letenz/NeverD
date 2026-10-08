@@ -3637,6 +3637,18 @@ Json Listing::stringReferences(const Json &payload) {
   return d.stringReferenceTable.page(payload, source);
 }
 
+std::string Listing::nameAt(std::uint64_t address) {
+  auto &d = *impl_;
+  d.build();
+  const int region = d.regionIndex(address);
+  return d
+      .nameOf(address,
+              region >= 0 && d.regions[region].exec ? NameUse::Transfer
+                                                    : NameUse::Data,
+              {})
+      .text;
+}
+
 std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
   auto &d = *impl_;
   d.build();

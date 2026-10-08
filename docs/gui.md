@@ -43,6 +43,34 @@ set `NEVERD_ENGINE_LIBRARY` to the runtime DLL and `NEVERD_ENGINE_IMPLIB` to its
 matching import `.lib`; make runtime dependencies available alongside the
 worker.
 
+Open a binary or a project with **File → Open**, or drag one file from
+the system file manager onto the quick-start dialog, workbench or a floating
+view. File drops use the same open workflow, including the save/discard/cancel
+prompt for unsaved changes. Drop one existing file at a time; directories and
+web URLs are not opened. Opening by drag and drop leaves the source file in
+place.
+
+PE browsing tolerates complete legacy relocation layouts and reports unusable
+entry/import metadata in **Output**. An unknown entry opens at a mapped code
+region for browsing; this does not reconstruct the program's OEP. Invalid import
+bindings remain unknown, and fixed-image semantic checks retain their stricter
+requirements. Truncated or unmappable image structures can still prevent loading.
+
+Local file paths passed between the GUI, worker, CLI and C ABI use UTF-8 on
+all platforms. Windows paths are converted to native filesystem paths before
+loading binaries, companion PDB/MAP files, signatures and project sidecars.
+Chinese names, spaces and other Unicode characters are supported without
+changing the Windows system code page.
+
+The default application and code font is Consolas at 10 points when that
+family is installed. Otherwise, the system fixed-width font is used. A saved
+code-font choice continues to override the default for code views.
+
+Double-clicking a function name in a code view follows it in that same window,
+keeping its C or LLVM C representation even when the window is locked. Back and
+forward navigation also stays in the active code window. Imports and global
+objects continue to open at their addresses in the disassembly or hex view.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.
@@ -98,7 +126,12 @@ shows the whole function and the visible area.
 
 **Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
 MedIR, HighIR or LLVM IR of the current function and follow the disassembly
-unless their lock is set. The LLVM views translate the current function alone,
+unless their lock is set. A window hidden behind another tab catches up when it
+is shown, so moving through the disassembly never waits for a decompile no one
+sees, and F5 pressed while a jump is loading decompiles the function the jump
+lands in. The engine emits a function's source once and pages it from there; a
+function longer than one page keeps the listing's names, such as `main`. The
+LLVM views translate the current function alone,
 with the others declared, so a function the engine refuses to translate shows
 its reason without affecting other functions. Rows mapped to instructions move
 the disassembly cursor. C opens at the function: the includes, support types and
@@ -227,8 +260,9 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Space | Toggle graph and text view |
 | F5 / Tab | Pseudocode / switch between disassembly and pseudocode |
 | X / Ctrl+X / Ctrl+J | References to the operand / to the item / from the item |
-| N | Rename the function |
+| N | Rename the name under the cursor, or the address: a function at its entry, data, a label in code |
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |
+| D / A / U | Make data (again for the next size) / a string / bytes of the item |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
 | Ctrl+P / Ctrl+L / Ctrl+S / Ctrl+E | Choose a function / name / segment / entry point |
@@ -301,6 +335,15 @@ symbols, the function detector and analysis, and the edits are kept in
 function-edits <input> --create <address>`, `--delete <address>`, `--list`).
 A function edit drops whole-program analysis results: analysis continues
 function by function until **Analyze** runs again.
+
+**Edit → Rename** (N) names any address, as the listing and the pseudocode
+show it: a name under the cursor renames what it denotes, otherwise the item
+the cursor is on. A data name replaces `qword_A410` in its label, every operand
+(`mov rdx, cs:pname`) and the C (`fprintf(stderr, "%s: %s\n", pname, msg)`). A
+name has no spaces, leads to one address and is never an automatic name such
+as `sub_1234`. Names are kept in `<input>.neverd-renames.json`, which the
+command line reads and writes too (`neverd rename <input> --addr <address>
+--to <name>`, `--clear`).
 
 **Edit → Data** (D) makes the item under the cursor a value, and pressing it
 again cycles the value through byte, word, dword and qword; **Edit → String**

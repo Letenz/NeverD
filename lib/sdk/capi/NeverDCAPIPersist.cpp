@@ -12,9 +12,11 @@
 #include "SessionImpl.h"
 
 #include "neverd/support/AtomicOutput.h"
+#include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectWriteLock.h"
 #include "neverd/support/StringScan.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
@@ -31,14 +33,17 @@ using namespace neverd::sdk;
 // Annotations
 // ===--------------------------------------------------------------------===//
 
-static std::string annotationPath(const Session *S) {
-  return S->FilePath.string() + ".neverd-annotations.json";
+static std::filesystem::path annotationPath(const Session *S) {
+  auto Path = S->FilePath;
+  Path += ".neverd-annotations.json";
+  return Path;
 }
 
-static bool saveSidecar(Session *S, llvm::StringRef Path,
+static bool saveSidecar(Session *S, const std::filesystem::path &Path,
                         llvm::json::Array Values, llvm::StringRef Kind) {
+  const auto UTF8Path = pathToUTF8(Path);
   auto Temporary = llvm::sys::fs::TempFile::create(
-      (Path + ".tmp-%%%%%%").str(),
+      UTF8Path + ".tmp-%%%%%%",
       llvm::sys::fs::owner_read | llvm::sys::fs::owner_write);
   if (!Temporary) {
     S->setError("cannot create " + Kind.str() +
@@ -62,7 +67,7 @@ static bool saveSidecar(Session *S, llvm::StringRef Path,
     return false;
   }
   if (auto Error = support::atomic_output::closeAndCommitTemporaryOutput(
-          *Temporary, Path)) {
+          *Temporary, UTF8Path)) {
     S->setError("cannot save " + Kind.str() + ": " +
                 llvm::toString(std::move(Error)));
     return false;
@@ -236,6 +241,52 @@ int neverd_rename_func(neverd_session_t Sess, const char *OldName,
   return -1;
 }
 
+int neverd_rename_addr(neverd_session_t Sess, neverd_va_t Addr,
+                       const char *Name) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  const llvm::StringRef NewName = Name ? Name : "";
+  constexpr size_t MaxNameBytes = 4096;
+  if (NewName.size() > MaxNameBytes ||
+      llvm::any_of(NewName,
+                   [](unsigned char C) { return C <= ' ' || C == 0x7f; })) {
+    S->setError("a name has at most 4096 bytes and no spaces or control "
+                "characters");
+    return -1;
+  }
+  if (!S->Img.readVA(Addr, 1)) {
+    S->setError(vaHex(Addr) + " is not in the image");
+    return -1;
+  }
+  (void)neverd_func_count(Sess);
+  const auto PreviousRenames = S->Renames;
+  const auto PreviousOriginals = S->OriginalNames;
+  if (NewName.empty()) {
+    S->Renames.erase(Addr);
+  } else {
+    // What the address was called before the user named it.
+    if (!S->OriginalNames.count(Addr))
+      if (const Symbol *Sym = S->Img.findSymbolAt(Addr); Sym && !Sym->IsFunc)
+        S->OriginalNames[Addr] = Sym->Name;
+    S->Renames[Addr] = NewName.str();
+  }
+  // A function entry takes the name in the function list too.
+  S->refreshFunctionNames();
+  if (neverd_renames_save(Sess) != 0) {
+    S->Renames = PreviousRenames;
+    S->OriginalNames = PreviousOriginals;
+    S->refreshFunctionNames();
+    return -1;
+  }
+  return 0;
+}
+
 const char *neverd_renames_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   llvm::json::Array Arr;
@@ -260,7 +311,8 @@ int neverd_renames_save(neverd_session_t Sess) {
     S->setError("project writer unavailable: " + Lock.error());
     return -1;
   }
-  auto Path = S->FilePath.string() + ".neverd-renames.json";
+  auto Path = S->FilePath;
+  Path += ".neverd-renames.json";
   llvm::json::Array Arr;
   for (const auto &[Addr, NewName] : S->Renames) {
     llvm::json::Object Obj;
@@ -278,7 +330,8 @@ int neverd_renames_load(neverd_session_t Sess) {
   S->clearError();
   if (!S->Loaded)
     return -1;
-  auto Path = S->FilePath.string() + ".neverd-renames.json";
+  auto Path = S->FilePath;
+  Path += ".neverd-renames.json";
   auto Reset = [&] {
     for (auto &F : S->Functions) {
       if (S->Renames.find(F.Entry) == S->Renames.end())
@@ -344,8 +397,10 @@ int neverd_renames_load(neverd_session_t Sess) {
 // Function edits
 // ===--------------------------------------------------------------------===//
 
-static std::string functionsPath(const Session *S) {
-  return S->FilePath.string() + ".neverd-functions.json";
+static std::filesystem::path functionsPath(const Session *S) {
+  auto Path = S->FilePath;
+  Path += ".neverd-functions.json";
+  return Path;
 }
 
 static llvm::json::Array functionEditRows(const Session *S) {
@@ -503,8 +558,10 @@ uint64_t sizedItemBytes(llvm::StringRef Kind) {
   return 0;
 }
 
-std::string itemsPath(const Session *S) {
-  return S->FilePath.string() + ".neverd-items.json";
+std::filesystem::path itemsPath(const Session *S) {
+  auto Path = S->FilePath;
+  Path += ".neverd-items.json";
+  return Path;
 }
 
 /// The item \p Row describes at \p Addr, checked against the image; none

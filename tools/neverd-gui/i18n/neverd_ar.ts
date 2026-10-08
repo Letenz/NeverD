@@ -120,8 +120,8 @@
         <translation>إعادة تسمية(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>إعادة تسمية الدالة الحالية</translation>
+        <source>Rename the current address</source>
+        <translation>إعادة تسمية العنوان الحالي</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -1744,12 +1744,8 @@ Double-click to go to the declaration.</source>
         <translation> · للقراءة فقط</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 ليس بداية دالة؛ يمكن إعادة تسمية الدوال فقط.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>إعادة تسمية الدالة</translation>
+        <source>Rename address</source>
+        <translation>إعادة تسمية العنوان</translation>
     </message>
     <message>
         <source>Name of %1:</source>
