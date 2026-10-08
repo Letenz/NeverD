@@ -3309,6 +3309,82 @@ TEST(MedTypePass, X86X87CleanupDoesNotOverrideExplicitIntegerReturn) {
   EXPECT_FALSE(Func.FPReturnViaX87);
 }
 
+TEST(MedTypePass, AnX87ValueBeforeALoopExitIsNoResult) {
+  constexpr Arch TheArch = Arch::X86;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+
+  // The loop writes EAX, then an x87 value the exit block pops before `ret`:
+  // the x87 write is closer to the RETURN but holds no result.
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "x87_loop_with_integer_return";
+  Func.Blocks.resize(2);
+  MedBlock &Body = Func.Blocks[0];
+  Body.Id = 0;
+  MedBlock &Exit = Func.Blocks[1];
+  Exit.Id = 1;
+  Exit.Preds = {0};
+
+  const MedVar IntResult =
+      reg(30, 1, TRI.PointerSize, TRI.IntReturnReg, TheArch);
+  Body.Ops.push_back(
+      unary(NdOp::COPY, IntResult, MedVar::makeConst(0x1234, 4)));
+  const MedVar Scalar = temp(10, 0, 4, TheArch);
+  Body.Ops.push_back(binary(NdOp::FLOAT_INT2FLOAT, Scalar,
+                            MedVar::makeConst(42, 4), MedVar::makeConst(4, 4)));
+  const MedVar Carrier = temp(11, 0, x86reg::FPURegSize, TheArch);
+  Body.Ops.push_back(unary(NdOp::FLOAT_FLOAT2FLOAT, Carrier, Scalar));
+  Body.Ops.push_back(unary(NdOp::COPY,
+                           reg(20, 0, x86reg::FPURegSize, x86reg::ST7, TheArch),
+                           Carrier));
+
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(IntResult);
+  Exit.Ops.push_back(Return);
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Func.ReturnType->Size, TRI.PointerSize);
+  EXPECT_FALSE(Func.FPReturnViaX87);
+}
+
+TEST(MedTypePass, AZeroExtendingWriteBeforeALoopExitKeepsTheWholeRegister) {
+  constexpr Arch TheArch = Arch::AArch64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+
+  // `add w0, w17, w16` ends the loop and `ret` stands alone: the 32-bit write
+  // zero-extends into x0, which a `long` result returns whole.
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "zero_extended_loop_result";
+  Func.Blocks.resize(2);
+  MedBlock &Body = Func.Blocks[0];
+  Body.Id = 0;
+  MedBlock &Exit = Func.Blocks[1];
+  Exit.Id = 1;
+  Exit.Preds = {0};
+
+  const MedVar Low = reg(30, 1, 4, TRI.IntReturnReg, TheArch);
+  Body.Ops.push_back(binary(NdOp::INT_ADD, Low, MedVar::makeConst(1, 4),
+                            MedVar::makeConst(2, 4)));
+  const MedVar Whole = reg(30, 2, 8, TRI.IntReturnReg, TheArch);
+  Body.Ops.push_back(unary(NdOp::INT_ZEXT, Whole, Low));
+
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(Whole);
+  Exit.Ops.push_back(Return);
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Func.ReturnType->Size, 8u);
+}
+
 TEST(MedTypePass, X86IntermediateX87DoesNotOverrideXMMReturnConvention) {
   constexpr Arch TheArch = Arch::X86;
   const TargetRegInfo &TRI = getTargetRegInfo(TheArch);

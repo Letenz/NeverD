@@ -652,6 +652,11 @@ static TypeRef inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI,
       bool FloatViaPhi = false;
       const MedOp *FPRegWriteOp =
           nullptr; // closest FP-return-reg write (any op)
+      // An integer write before the RETURN's own block decides between an
+      // integer and a floating result, but not the integer's width: a loop
+      // that computes a `long` in a zero-extending 32-bit write returns all
+      // of the register.
+      const MedOp *EarlierInt = nullptr;
 
       int Dist = 0;
       // A RETURN alone in its block reads the values written before it: a
@@ -683,10 +688,19 @@ static TypeRef inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI,
               isReturnRegRestore(Defs, *ScanBlk, *Rit2, TRI))) {
           if (IntDist < 0)
             IntDist = OpDist;
-          if (!WidestInt || Rit2->Output.Size > WidestInt->Output.Size)
+          if (ScanBlk != &Blk) {
+            if (!EarlierInt)
+              EarlierInt = &*Rit2;
+          } else if (!WidestInt || Rit2->Output.Size > WidestInt->Output.Size) {
             WidestInt = &*Rit2;
+          }
         }
 
+        // The x87 stack may be popped between an earlier block's write and
+        // the RETURN (an integer function's cleanup `fstp`), so only the
+        // RETURN's own block shows which x87 slot holds a result.
+        if (ScanBlk != &Blk && TRI.isX87ReturnReg(Rit2->Output.RegOff))
+          continue;
         const bool IsFPRegReturn =
             TRI.hasFPReturnReg() && Rit2->Output.RegOff == TRI.FPReturnReg;
         // The x87 TOP rotates, so the physical slot carrying the logical ST0
@@ -780,12 +794,13 @@ static TypeRef inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI,
       // When both registers hold a value, the one a branch decides on is
       // the loop's control value, and the other the result: computed, and
       // read by nothing but the loop's merge.
-      if (FirstFloat && WidestInt) {
-        const bool IntTested = TestedByBranch(WidestInt);
+      const MedOp *IntWrite = WidestInt ? WidestInt : EarlierInt;
+      if (FirstFloat && IntWrite) {
+        const bool IntTested = TestedByBranch(IntWrite);
         const bool FloatTested = TestedByBranch(FirstFloat);
         if (IntTested && !FloatTested && OnlyReturned(FirstFloat))
           UseFloat = true;
-        else if (FloatTested && !IntTested && OnlyReturned(WidestInt))
+        else if (FloatTested && !IntTested && OnlyReturned(IntWrite))
           UseFloat = false;
       }
       if (UseFloat) {

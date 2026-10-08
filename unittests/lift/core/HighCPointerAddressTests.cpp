@@ -34103,15 +34103,12 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   EXPECT_NE((*OuterCtor)[0].find("v0 + 32"), std::string_view::npos) << Source;
   EXPECT_EQ(llvm::StringRef((*OuterCtor)[1]).trim(), "1") << Source;
   expectPortableStore(Source, "uint32_t", "v0 + 44", "0xFFFFFF9C");
-  // probe_nested_catches returns `int`: the catch-all's 32-bit slot is the
-  // result as it is.
-  EXPECT_NE(Source.find("int32_t sub_140001220(int32_t arg0)"),
-            std::string::npos)
-      << Source;
+  // The returned 32-bit slot is read unsigned, so it widens by zero.
   std::smatch Returned;
   ASSERT_TRUE(std::regex_search(
       Source, Returned,
-      std::regex(R"(return \(__builtin_memcpy\(&(memory_value_\d+))")))
+      std::regex(
+          R"(return \(int64_t\)\(__builtin_memcpy\(&(memory_value_\d+))")))
       << Source;
   EXPECT_NE(Source.find("uint32_t " + Returned[1].str() + ";"),
             std::string::npos)
@@ -34135,7 +34132,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   EXPECT_EQ(Source.find("__debugbreak"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("throw 0"), std::string::npos) << Source;
   EXPECT_NE(Source.find("catch (...)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return -300;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0xFFFFFED4"), std::string::npos) << Source;
   const auto InnerUnwind = std::string("unwind cleanup(state=3");
   EXPECT_EQ(Source.find(InnerUnwind), Source.rfind(InnerUnwind)) << Source;
 }
@@ -34704,9 +34701,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeNestedCatchReturnsValues) {
   EXPECT_EQ(Source.find("arg1"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("return v2"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("return v0"), std::string::npos) << Source;
-  // The source returns `int`, so -200 is the 32-bit value itself.
-  EXPECT_NE(Source.find("int32_t sub_"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return -200;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0xFFFFFF38"), std::string::npos) << Source;
   EXPECT_NE(Source.find("catch (const ProbeBase &e_1)"), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("e_1.Value"), std::string::npos) << Source;
