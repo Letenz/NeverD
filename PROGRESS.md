@@ -1,5 +1,97 @@
 # NeverD Daily Progress
 
+Last verified: **2026-10-08 10:11 Asia/Shanghai (UTC+08:00)** / **2026-10-08 02:11 UTC**
+
+This is a bounded static source review and a snapshot of existing GitHub evidence. Priorities are suggestions, not delivery commitments. The complete previous tracker is preserved below.
+
+## Current snapshot
+
+- Reviewed dev: [4320d15e](https://github.com/NeverSight/NeverD/commit/4320d15ed24b52c4e631836e440f340b2d5c45a5).
+- Previous source baseline: [db18af34](https://github.com/NeverSight/NeverD/commit/db18af34bbac577289a83896c142eebaa4ac108d).
+- Activity window: October 7 01:01:56 UTC through October 8 02:11 UTC. Before this report's proposal: **18 ordinary open issues**, unchanged; **2 open PRs**, #643 and #645, replacing yesterday's #589 and #605. No ordinary issue was updated, opened or closed in the window.
+- **38 PRs merged**, including yesterday's actual HighC repair #610; **0 PRs closed without merge** in the window. There were 37 newly opened PRs in the window. The new [draft #648](https://github.com/NeverSight/NeverD/pull/648) is additional tracking/repair work and is excluded from those pre-publication counts.
+- Raw comparison inventory: **280 commits**, **862 changed paths** (298 added, 59 removed, 505 modified). One changed gitlink is third_party/capstone. These are inventory counts, not reviewed-file or implementation-only counts.
+- The pure report commit [550608ad](https://github.com/NeverSight/NeverD/commit/550608adac98c28597b36272aedccdad3df2adff) and PROGRESS.md are excluded from substantive advancement: 279 non-report-only commits and 861 other paths remain. #610 also contains a real bug fix, so its entire merge must not be discarded as report-only.
+- **One statically confirmed optional-fixture compilation defect repaired**, in [786f9d57](https://github.com/NeverSight/NeverD/commit/786f9d57fb89e4bc54221aab5fddaa178096a504), proposed through draft #648; no merge performed.
+
+## Changes since the prior snapshot
+
+- [#610](https://github.com/NeverSight/NeverD/pull/610), the captured HighC load repair, merged October 7 13:29 UTC. [#605](https://github.com/NeverSight/NeverD/pull/605) finite-proof reuse and [#589](https://github.com/NeverSight/NeverD/pull/589) Darwin observations also merged. Their former unmerged status is resolved; this does not establish combined-head runtime acceptance.
+- [#614](https://github.com/NeverSight/NeverD/pull/614) added completed model-free query reuse; [#646](https://github.com/NeverSight/NeverD/pull/646) added bounded full-query ordering retries. Those changed boundaries are the focused correctness sample below.
+- [#622](https://github.com/NeverSight/NeverD/pull/622) added Windows multiple-object waits, including the optional fixture catalogue that exposed today's compiler defect.
+- Other delivered source includes GUI/listing/string work, [#611](https://github.com/NeverSight/NeverD/pull/611) unpack import-tail repair, [#633](https://github.com/NeverSight/NeverD/pull/633) ARM64 backend build coverage, and [#641](https://github.com/NeverSight/NeverD/pull/641) Windows process writes. Their full implementations were not audited here.
+
+## Bounded static review and repair
+
+Read root AGENTS.md, CONTRIBUTING.md, relevant architecture/testing guidance, and the complete tree inventory; no nested AGENTS.md exists in this tree. The user's static-only restriction overrides instructions to build or run tests. Followed the topic-branch/draft-PR contribution workflow despite dev being reported unprotected.
+
+### Optional WDM multiple-wait fixture compilation
+
+**Trigger:** Configure without either optional genuine WDK multiple-wait fixture, as allowed by CMake.
+
+**Evidence and cause:**
+- [CMakeLists.txt:530–533,838–861](https://github.com/NeverSight/NeverD/blob/4320d15ed24b52c4e631836e440f340b2d5c45a5/unittests/emulation/CMakeLists.txt#L838-L861) declares optional paths and emits compiler definitions only for existing files. Lines 1263–1302 forward those definitions to NeverDNativeDriverTests.
+- [DriverBackendParityCases.def:6–13](https://github.com/NeverSight/NeverD/blob/4320d15ed24b52c4e631836e440f340b2d5c45a5/unittests/emulation/DriverBackendParityCases.def#L6-L13) used NEVERD_WDM_MULTIPLE_WAIT_FIXTURE and NEVERD_WDM_MULTIPLE_WAIT_CFG_FIXTURE unconditionally without the empty defaults used by other optional entries.
+- DriverNativeExecutionTests.cpp:21–24 and DriverBackendParityTests.cpp:20–23 expand catalogue paths into constant character arrays. Missing macros therefore become undeclared identifiers, rather than optional unavailable fixtures.
+- Existing exact-head [macOS CI](https://github.com/NeverSight/NeverD/actions/runs/37712812675/job/113102816237) independently reports both undeclared identifiers at October 8 01:59:30 UTC. That is a pre-test compile failure.
+
+**Minimal repair:** Six lines add independent guarded empty-string defaults in the shared catalogue. Supplied compiler definitions remain unchanged; both workload registrations remain. The two consuming suites already check is_regular_file and report unavailable fixtures with GTEST_SKIP. DriverMultipleWaitTests.cpp uses its separate compile-time guards and does not include this catalogue; its execution gating is untouched.
+
+**Static verification:** Re-read the target branch's latest blob before writing, then read the remote commit and exact six-line diff. No dependency, workflow, permission, production behavior or test budget was changed. Existing open #643 and #645 touch neither repaired file nor this fixture contract; no related unmerged proposal existed to reuse. This source-level repair is not a claim that builds or tests now pass. No new regression executable was added or run; the existing two consuming targets exercise the formerly uncompilable configuration when normal CI builds them.
+
+### Completed answers and ordered full-query retry
+
+Reviewed full lib/analysis/core/CompletedQueryCache.h and OrderedQuery.h; LowIRUndefinedIndependence.cpp:341–392,549–627,745–800,2369–2420; full CompletedQueryCacheTests.cpp and OrderedQueryTests.cpp; BitVectorSolver.h assertion/check contracts and BitVectorSolver.cpp:145–250; the changed regression/target registration hunks in #614/#646.
+
+- CompletedQueryCache validates the actual context address, nonzero/in-range one-bit references and node ceiling before access. Packed shifts range from 0 to 62; geometric allocation remains bounded, value-initialized and retains previous words. Conflicting completed answers and Unknown/Invalid stores are refused.
+- Checker construction binds caches after its actual session-or-owned context is selected. Node limits precede cache hits; non-immediate hits retain the logical query charge. Unknown/Invalid answers fail before insertion, while checker-local ownership prevents carrying evidence into a new independent checker.
+- Ordered retry first asks the complete original predicate. It retries only a search-Unknown without an encoding error and an original direct nonconstant Boolean conjunct, with at most 64 operands inspected. The retry charges the same caller allowance and asserts both the preferred conjunct and the entire original predicate; it cannot accept a partial condition. Solver options remain fixed except model construction is disabled.
+- Source tests specify packed-slot/context/budget isolation, conflicting stores, complete SAT/UNSAT versus unknown results, exact retry accounting and malformed/oversized shape refusal. These are descriptions of test code, not results produced by this review.
+
+**Result:** No second statically proven correctness defect in this bounded sample. Solver internals, all native refinement paths and complete symbolic-context mutation invariants are not exhaustively audited. No speculative repair was made.
+
+## Existing CI and review evidence
+
+Sampled October 8 02:09 UTC, pinned dev 4320d15e:
+- Four workflows: main CI and Mobile Decompilation still in progress; LLVM Style failed; Mobile Real Applications skipped.
+- 21 exact-head checks: **5 success, 3 failure, 3 in progress, 10 skipped**.
+- Main macOS failed on the two missing optional fixture macros described above. Main Linux and Windows remained running.
+- [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/37712812679) failed clang-format checks in the changed HighIR/C source range. The existing [format evidence artifact](https://github.com/NeverSight/NeverD/actions/runs/37712812679/artifacts/11522591295) is available. Formatting was not run or changed by this review.
+- [Mobile macOS](https://github.com/NeverSight/NeverD/actions/runs/37712812668/job/113102718100) failed with an incomplete Objective-C scalar execution matrix: 2/4 completed, x86_64-classic and x86_64-default missing. This log establishes incomplete acceptance, not the underlying root cause. Mobile Ubuntu succeeded; Windows remained running.
+- Both ARM64 native-backend **build** jobs (KVM and WHP) succeeded, as did both Windows caller-context jobs. Build coverage is not native runtime acceptance. All nine real-application qualification checks were skipped.
+
+Open proposals, sampled October 8 02:09–02:11 UTC:
+- [#643](https://github.com/NeverSight/NeverD/pull/643), head 953c369601605f3f9661489a26ccd8057dc3f1b6, non-draft: 12 checks, 8 success, 3 failures (main Linux/macOS/Windows), 1 skipped. Metadata mergeability was unknown; do not call it conflicting solely from that response.
+- [#645](https://github.com/NeverSight/NeverD/pull/645), head 92f6fdc50eed2d2bd70c5da272647e3c98e000ff, non-draft: 19 checks, 14 success, 3 failures (main Linux/macOS/Windows), 2 skipped. It depends on #643; metadata reported mergeable but unstable. All three mobile jobs passed on this PR head, which cannot be transferred to dev.
+- Both had no submitted reviews, inline review comments, conversation comments or requested reviewers in the returned collections. Their local/native validation claims remain author reports; their complete code and failed main-job causes were not audited here.
+
+## Suggested next priorities
+
+1. **Review the optional-fixture repair and complete exact-head compile evidence.** Dependency: draft #648 and the existing CI pipeline. Acceptance: both catalogue consumers compile with neither/one/both fixtures configured; supplied fixture paths retain their values and absent fixtures remain explicit skips. No execution is authorized as part of this static task.
+2. **Resolve current integration blockers without weakening coverage.** Dependencies: current HighIR formatting ownership, missing Objective-C x86_64 evidence, #643 before #645. Acceptance: a named candidate has terminal platform results, complete intended mobile matrices and actual application qualification; skips/running jobs/local claims are not counted as acceptance.
+3. **Keep performance planning correctness-qualified.** Dependency: [#580](https://github.com/NeverSight/NeverD/issues/580), pinned corpus and one coherent Release candidate. Acceptance: load-to-final-output latency, process-tree memory and scaling include completion denominators and raw source/hardware identities. New caches/retries are not evidence of measured improvement.
+
+## Daily log
+
+### 2026-10-08 — Optional-fixture compile repair and complete-query boundaries
+
+- Inventoried 280 commits and 862 paths; excluded the pure report-only commit/path from substantive advancement. Reviewed the bounded files/ranges above, not the entire diff or repository.
+- Committed the statically proved six-line optional-fixture default fix as 786f9d57; proposed it in draft #648. No merge, issue-status, label or assignee change.
+- Reconciled yesterday's #610/#589/#605 merges; 18 ordinary issues remain open. Captured the two pre-existing open Darwin proposals separately from this report's draft.
+- Read existing CI results only. No build, test, benchmark, project execution, repository script, formatter, dynamic analysis, workflow dispatch or rerun was performed.
+- Preserved the previous tracker verbatim below; this proposal does not imply PROGRESS.md has already changed on dev.
+
+## Coverage and counting limits
+
+The compare endpoint was paginated 100 + 100 + 80 + 0 commits. Its capped 300-file list was not used as a complete file inventory: complete recursive trees (6,278 and 6,517 entries, neither truncated) were compared by path/blob identity; renames count as deletion/addition. Open issues/PRs and updated activity were each followed by empty pages. The updated collection contained 41 PR records and no ordinary issues; merged/closed timestamps were reconciled with closed-PR metadata (100 newest updated records, extending earlier than the window), not inferred from closed_at alone. Open-PR review/comment collections were empty. Exact dev workflow/check collections and both PR check collections had explicitly empty second pages. No claim is made about all external checks, all historical CI or full source coverage. The broad remaining 861 non-tracker changed paths were not all audited; only the explicitly listed source/configuration ranges were.
+
+## Previous snapshot (preserved)
+
+<details>
+<summary>2026-10-07 snapshot and all earlier history</summary>
+
+# NeverD Daily Progress
+
 Last verified: **2026-10-07 09:01:56 Asia/Shanghai (UTC+08:00)** / **2026-10-07 01:01:56 UTC**
 
 This is a bounded, point-in-time source and existing-evidence review. The [roadmap](docs/roadmap.md), [architecture](docs/architecture.md), [testing guide](docs/testing.md) and [contribution guidance](CONTRIBUTING.md) remain authoritative. No completion percentage or release-readiness claim is implied.
@@ -1368,6 +1460,8 @@ them are author reports unless separately confirmed by linked workflow results.
 - GitHub search and Actions may change after this timestamp. This document is a
   point-in-time record, not a claim of continuous monitoring or a committed
   delivery schedule
+
+</details>
 
 </details>
 
