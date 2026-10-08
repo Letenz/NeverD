@@ -426,6 +426,36 @@ TEST(SysVCallContract, PassThroughArgumentsReachAPrototypedImport) {
   }
 }
 
+TEST(SysVCallContract, ARegisterTheCalleeLeavesAloneIsNoReturnedField) {
+  // add(a, b): rdx = b; eax = inc(a); return eax + edx.  inc never writes
+  // RDX, so GCC keeps b there across the call; EDX after it is b, not a
+  // second eightbyte that inc returns.
+  constexpr va_t Add = Text, Inc = Text + 0x10;
+  std::vector<uint8_t> Code(0x20, 0xCC);
+  std::vector<uint8_t> AddCode = {0x48, 0x89, 0xF2, // mov rdx, rsi
+                                  0xE8};            // call inc
+  for (uint8_t B : rel32(Add + 8, Inc))
+    AddCode.push_back(B);
+  for (uint8_t B : {0x01, 0xD0, // add eax, edx
+                    0xC3})      // ret
+    AddCode.push_back(B);
+  put(Code, Add, AddCode);
+  put(Code, Inc,
+      {0x8D, 0x47, 0x01, // lea eax, [rdi+1]
+       0xC3});           // ret
+  const BinaryImage Img =
+      makeImportImage(Code, {{Add, "add"}, {Inc, "inc"}}, {});
+  const std::string Source = liftEntries(Img, {Add, Inc});
+  const std::string Body = body(Source, "add");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_EQ(Body.find(">> 32"), std::string::npos) << Body;
+  compileAndRun(Source + R"(
+int main(void) {
+  return (uint32_t)add(5, 7) == 13 && (uint32_t)add(-3, 40) == 38 ? 0 : 1;
+}
+)");
+}
+
 TEST(SysVCallContract, ACallThatEndsItsFunctionDoesNotReturn) {
   // pfatal(name) calls error(2, 0, NULL, name): error returns only for a
   // zero status, so GCC places nothing after the call, and pfatal's sized
