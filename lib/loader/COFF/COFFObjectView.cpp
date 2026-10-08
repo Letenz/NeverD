@@ -30,9 +30,13 @@ llvm::Expected<COFFObjectView>
 COFFObjectView::create(llvm::MemoryBufferRef Input) {
   COFFObjectView View;
   const auto Bytes = llvm::arrayRefFromStringRef(Input.getBuffer());
+  // Only DOS images have linked PE section sizes. Relocatable objects may
+  // contain arbitrary PE-shaped data that must retain its original bytes.
   // Header inspection is read-only. Mutations below use owned storage only.
   const auto Headers =
-      locatePEHeaders(const_cast<uint8_t *>(Bytes.data()), Bytes.size());
+      Input.getBuffer().starts_with("MZ")
+          ? locatePEHeaders(const_cast<uint8_t *>(Bytes.data()), Bytes.size())
+          : PEHeaderPtrs{};
   bool NeedsProjection = false;
   forEachPESection(Headers, [&](const PESectionFields &S, uint16_t) {
     NeedsProjection |= !S.VirtualSize && S.SizeOfRawData;

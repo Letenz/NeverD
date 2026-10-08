@@ -293,6 +293,40 @@ TEST_F(PEFixedImageTest, ReaderProjectionCannotChangeFileOnlyDebugIdentity) {
   }
 }
 
+TEST_F(PEFixedImageTest, EmbeddedPEHeadersCannotChangeRelocatableCOFFData) {
+  for (bool MalformedEmbeddedPE : {false, true}) {
+    SCOPED_TRACE(MalformedEmbeddedPE);
+    auto Bytes = fixture();
+    for (unsigned I = 0; I != 4; ++I)
+      put32(Bytes, SectionTable + I * 40 + 8, 0);
+    if (MalformedEmbeddedPE)
+      put32(Bytes, SectionTable + 40 + 20, SectionTable);
+    // A valid relocatable object can contain arbitrary PE-shaped data. Keep
+    // e_lfanew at file offset 0x3c pointing at that data, without a DOS magic.
+    constexpr size_t Data = sizeof(llvm::object::coff_file_header) +
+                            sizeof(llvm::object::coff_section);
+    static_assert(Data == 0x3c);
+    std::fill_n(Bytes.begin(), Data, 0);
+    put16(Bytes, 0, IMAGE_FILE_MACHINE_AMD64);
+    put16(Bytes, 2, 1);
+    constexpr size_t Section = sizeof(llvm::object::coff_file_header);
+    putName(Bytes, Section, ".rdata");
+    put32(Bytes, Section + 16, Bytes.size() - Data);
+    put32(Bytes, Section + 20, Data);
+    put32(Bytes, Section + 36,
+          IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ);
+    auto Loaded = load(Bytes);
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    EXPECT_TRUE(Loaded->IsRelocatable);
+    EXPECT_EQ(Loaded->Raw, Bytes);
+    ASSERT_EQ(Loaded->Segments.size(), 1u);
+    ASSERT_EQ(Loaded->Sections.size(), 1u);
+    const std::vector<uint8_t> Contents(Bytes.begin() + Data, Bytes.end());
+    EXPECT_EQ(Loaded->Segments.front().Data, Contents);
+    EXPECT_EQ(Loaded->Sections.front().Data, Contents);
+  }
+}
+
 TEST_F(PEFixedImageTest, RecoveryAndNativeProofUseTheSameInstructionEvidence) {
   const auto Recovery =
       specializeBinaryInterpreter(Image, Base + 0x1000, Options);
