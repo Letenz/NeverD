@@ -202,14 +202,16 @@ private:
   std::vector<Gate> Gates;
   std::vector<SatLit> OperandPool;
 
-  /// Flat open-addressed storage avoids one allocation per gate. Full hashes
-  /// and exact operands resolve collisions; slots never define gate identity
-  /// or encoding order. Gate indices remain stable when the table grows.
+  /// Compact open-addressed slots hold a placement fingerprint and index.
+  /// Kind, arity and exact operands resolve collisions; fingerprints and
+  /// slots never define gate identity or encoding order. Gate indices remain
+  /// stable when the table grows.
   struct GateBucket {
-    uint64_t Hash = 0;
+    uint32_t Hash = 0;
     // Zero is empty; otherwise this is one plus the gate's stable index.
     uint32_t Index = 0;
   };
+  static_assert(sizeof(GateBucket) == 8);
   std::vector<GateBucket> GateTable;
   void growGateTable();
 };
