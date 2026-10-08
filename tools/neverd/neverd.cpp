@@ -82,6 +82,10 @@ static int realMain(int Argc, char *Argv[]) {
   // reads textual LLVM IR.
   if (PluginsCmd)
     return runPlugins(Argv[0]);
+  // identify reads the input's headers only; a file NeverD cannot load still
+  // gets its rows.
+  if (IdentifyCmd)
+    return runIdentify();
   if (DiffCmd)
     return runDiff();
   if (SimplifyCmd)

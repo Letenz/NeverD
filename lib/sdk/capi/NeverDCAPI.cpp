@@ -24,6 +24,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "JSONText.h"
 #include "NativeMobileSession.h"
 #include "NativePhaseTrace.h"
 #include "SessionImpl.h"
@@ -261,6 +262,35 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   return 1;
 }
 } // namespace
+
+const char *neverd_identify_json(const char *Path) {
+  llvm::json::Array Rows;
+  llvm::json::Object Root;
+  std::error_code EC;
+  const auto Input = std::filesystem::u8path(Path ? Path : "");
+  if (!Path || !std::filesystem::is_regular_file(Input, EC)) {
+    Root["rows"] = std::move(Rows);
+    Root["error"] =
+        jsonSafeText(std::string("not a regular file: ") + (Path ? Path : ""));
+    return dupStr(jsonToString(llvm::json::Value(std::move(Root))));
+  }
+  for (const LoadCandidate &Row : identifyFile(Input)) {
+    llvm::json::Object Entry{{"loader", getLoadRowLoader(Row.Row)},
+                             {"text", jsonSafeText(Row.Description)},
+                             {"processor", Row.TheArch == Arch::Unknown
+                                               ? std::string()
+                                               : getArchName(Row.TheArch)},
+                             {"bits", Row.Bits},
+                             {"endian", Row.BigEndian ? "big" : "little"},
+                             {"loadable", Row.Loadable},
+                             {"by_name", Row.ByName}};
+    if (!Row.Reason.empty())
+      Entry["reason"] = jsonSafeText(Row.Reason);
+    Rows.push_back(std::move(Entry));
+  }
+  Root["rows"] = std::move(Rows);
+  return dupStr(jsonToString(llvm::json::Value(std::move(Root))));
+}
 
 int neverd_session_load(neverd_session_t Sess, const char *Path) {
   auto *S = toSession(Sess);

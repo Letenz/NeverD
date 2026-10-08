@@ -2076,6 +2076,10 @@ Signed: %4</source>
         <source>Collapse library operations</source>
         <translation>라이브러리 연산 접기</translation>
     </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>%1을(를) 불러오는 방법을 알 수 없습니다: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2241,6 +2245,116 @@ Signed: %4</source>
     <message>
         <source>Defined %1 at %2</source>
         <translation>%2에 %1을(를) 정의했습니다</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>새 파일 불러오기</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>파일 %1 불러오기 형식(&amp;A)</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>입력 파일은 나열된 형식 중 하나일 수 있습니다</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>프로세서 종류(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>프로세서는 파일 헤더로 정해집니다</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>분석</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>사용(&amp;E)</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>끄면 NeverD가 유휴 시간에 프로그램을 분석하지 않습니다</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>표시기 사용(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>상태 줄에 분석 진행 상황을 표시합니다</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>옵션</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>디버그 정보 불러오기(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>입력에 속한 PDB, DWARF 또는 링커 맵을 읽습니다</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>NeverD가 이 파일을 불러올 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>파일 이름만으로 나열되었습니다. 내용은 이 형식이 아닙니다</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>파일 이름만 형식을 암시합니다. 그 방식으로 불러오려면 행을 선택하세요</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>프로세서: %1</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>Intel 80x86 프로세서</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>ARM 프로세서</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>가상 머신</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 이후(32비트)</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 및 Intel 64(64비트)</translation>
+    </message>
+    <message>
+        <source>ARM and Thumb (AArch32)</source>
+        <translation>ARM 및 Thumb(AArch32)</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64(AArch64)</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>이더리움 가상 머신</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
     </message>
 </context>
 </TS>

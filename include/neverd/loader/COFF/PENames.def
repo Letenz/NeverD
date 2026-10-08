@@ -1,0 +1,29 @@
+//===- PENames.def - How the load dialog names PE and COFF machines -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// NEVERD_PE_MACHINE(Value, Name): a COFF file header Machine value.  Display
+// names only: whether NeverD loads a machine is the loader's own decision.
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_PE_MACHINE
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_I386, "80386")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_AMD64, "AMD64")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_ARM64, "ARM64")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_ARM64EC, "ARM64EC")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_ARM64X, "ARM64X")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_ARMNT, "ARMNT")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_ARM, "ARM")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_THUMB, "Thumb")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_IA64, "IA64")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_R4000, "R4000")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_MIPS16, "MIPS16")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_POWERPC, "PowerPC")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_SH4, "SH4")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_EBC, "EFI byte code")
+NEVERD_PE_MACHINE(llvm::COFF::IMAGE_FILE_MACHINE_RISCV64, "RISCV64")
+#undef NEVERD_PE_MACHINE
+#endif

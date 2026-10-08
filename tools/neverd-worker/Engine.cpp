@@ -117,6 +117,12 @@ const OperandFormatFunctions &operandFormats() {
       engineSymbol<SessionLoadFunction>("neverd_operand_formats_load")};
   return functions;
 }
+using IdentifyFunction = const char *(*)(const char *);
+IdentifyFunction identifyFunction() {
+  static const auto function =
+      engineSymbol<IdentifyFunction>("neverd_identify_json");
+  return function;
+}
 IRViewFunction irViewFunction() {
   // Additive C ABI capability: an older matching engine can still run the GUI.
   static const auto function =
@@ -413,6 +419,7 @@ void Engine::requireWriter() const {
 }
 bool Engine::keepsFunctionEdits() { return static_cast<bool>(functionEdits()); }
 bool Engine::keepsDataItems() { return static_cast<bool>(dataItems()); }
+bool Engine::identifiesFiles() { return identifyFunction() != nullptr; }
 bool Engine::keepsOperandFormats() {
   return static_cast<bool>(operandFormats());
 }
@@ -673,8 +680,8 @@ Listing &Engine::listing() {
   return *listing_;
 }
 bool Engine::hasIdleWork() const {
-  return listing_ && neverd_session_is_loaded(session_) &&
-         listing_->hasIdleWork();
+  return backgroundAnalysis_ && listing_ &&
+         neverd_session_is_loaded(session_) && listing_->hasIdleWork();
 }
 void Engine::idleStep() {
   if (hasIdleWork())
@@ -786,6 +793,17 @@ Json Engine::metadata() const {
 }
 
 Json Engine::execute(const std::string &operation, const Json &p) {
+  if (operation == "identify") {
+    // How each loader would read a file, before it is opened.
+    const auto identify = identifyFunction();
+    if (!identify)
+      throw Error("unsupported", "This engine cannot identify files");
+    const auto path = stringField(p, "path", {}, 32768);
+    auto result = backendJson(identify(path.c_str()));
+    if (result.contains("error"))
+      throw Error("invalid_request", result.value("error", std::string()));
+    return result;
+  }
   if (operation == "string_encodings") {
     if (stringEncodings().empty())
       throw Error("unsupported", "The engine finds only ASCII strings");
@@ -887,8 +905,9 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     const auto path = fs::canonical(utf8Path(pathText), ec);
     if (ec || !fs::is_regular_file(path, ec))
       throw Error("load_failed", "Input is not an accessible regular file");
-    if (p.contains("read_only") && !p["read_only"].is_boolean())
-      throw Error("invalid_request", "read_only must be boolean");
+    for (const char *flag : {"read_only", "debug_info", "analysis"})
+      if (p.contains(flag) && !p[flag].is_boolean())
+        throw Error("invalid_request", std::string(flag) + " must be boolean");
     const bool readOnly = p.value("read_only", false);
     auto currentPath =
         utf8Path(ownedString(neverd_session_file_path(session_)));
@@ -914,6 +933,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
               (*Sink)(Phase, Done, Total, Detail);
           },
           &loadProgress_);
+    // The load dialog's choices: the debug information beside the input, and
+    // idle-time analysis.
+    if (!p.value("debug_info", true))
+      neverd_session_set_debug_info_enabled(next.get(), 0);
     if (!neverd_session_load(next.get(), loadPath.c_str()))
       throw Error("load_failed", ownedString(neverd_last_error(next.get())));
     if (fs::file_size(path) != fileSize ||
@@ -926,6 +949,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (!reuseLock)
       lock_ = std::move(nextLock);
     readOnly_ = readOnly;
+    backgroundAnalysis_ = p.value("analysis", true);
     dirty_ = false;
     analyzed_ = false;
     loadedSize_ = fileSize;

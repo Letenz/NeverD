@@ -920,6 +920,12 @@ _declare("neverd_session_create", "neverd_session_t", [])
 _declare("neverd_session_destroy", "void", ["neverd_session_t"])
 _declare("neverd_session_load", "int", ["neverd_session_t", "const char *"])
 _declare(
+    "neverd_identify_json",
+    "const char *",
+    ["const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_session_restrict_function",
     "void",
     ["neverd_session_t", "neverd_va_t"],
