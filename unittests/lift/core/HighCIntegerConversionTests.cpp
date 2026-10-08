@@ -326,6 +326,38 @@ int main(void) {
 )");
 }
 
+TEST(HighCIntegerConversion, ATruthValueWidensWithoutAByteView) {
+  // return (uint64_t)(-(uint32_t)(x == 5)) + (x < 3): a comparison is 0 or
+  // 1 already, so neither extension needs the 1-byte view in between.
+  const TypeRef U64 = integer(8, false), U32 = integer(4, false);
+  const TypeRef U8 = integer(1, false);
+  auto Mask = op(NdOp::INT_SUB, constant(0, 4),
+                 extend(NdOp::INT_ZEXT,
+                        op(NdOp::INT_EQUAL, input(), constant(5), U8), U32),
+                 U32);
+  HighFunc F = function(
+      "truth", U64,
+      {result(op(NdOp::INT_ADD, extend(NdOp::INT_ZEXT, Mask, U64),
+                 extend(NdOp::INT_ZEXT,
+                        op(NdOp::INT_LESS, input(), constant(3), U8), U64),
+                 U64))});
+  const std::string Source = emit(F);
+  EXPECT_EQ(Source.find("(uint8_t)("), std::string::npos) << Source;
+  compileAndRun(Source + Inputs + R"(
+int main(void) {
+  for (unsigned i = 0; i < sizeof xs / sizeof xs[0]; ++i) {
+    const uint64_t x = xs[i];
+    const uint64_t want = (uint64_t)(uint32_t)(0u - (uint32_t)(x == 5)) + (x < 3);
+    if (truth(x) != want)
+      return 1;
+  }
+  if (truth(5) != 0xFFFFFFFFull || truth(1) != 1)
+    return 2;
+  return 0;
+}
+)");
+}
+
 TEST(HighCIntegerConversion, ACarryPrintsEachOperandOnce) {
   // return carry(x * 3, x + 5): the carry out of the 64-bit sum.  Each
   // operand prints once, so a chain of carries does not double per link.

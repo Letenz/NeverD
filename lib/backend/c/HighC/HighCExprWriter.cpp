@@ -211,7 +211,31 @@ bool isPlainInteger(const TypeRef &T) {
   return T && T->Kind == NdTypeKind::Int && !T->IsEnum &&
          (T->Size == 1 || T->Size == 2 || T->Size == 4 || T->Size == 8);
 }
+
 } // anonymous namespace
+
+bool printsTruthValue(const HighExpr &E) {
+  if (E.Kind == ExprKind::UnaryOp)
+    return E.Op == NdOp::BOOL_NOT;
+  if (E.Kind != ExprKind::BinOp)
+    return false;
+  switch (E.Op) {
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_NOTEQUAL:
+  case NdOp::INT_LESS:
+  case NdOp::INT_LESSEQUAL:
+  case NdOp::INT_SLESS:
+  case NdOp::INT_SLESSEQUAL:
+  case NdOp::BOOL_AND:
+  case NdOp::BOOL_OR:
+  case NdOp::INT_CARRY:
+  case NdOp::INT_SOVF:
+  case NdOp::INT_SBOR:
+    return true;
+  default:
+    return false;
+  }
+}
 
 std::optional<std::pair<uint16_t, bool>>
 HighCWriter::printedIntegerType(const HighExpr &E) const {
@@ -542,6 +566,9 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
       return exprStr(Inner, ParentPrec);
     if (Inner.Type && E.Type && Inner.Type->Size == E.Type->Size)
       return exprStr(Inner, ParentPrec);
+    if (isPlainInteger(E.Type) && printsTruthValue(Inner))
+      return typedText(E, "(" + typeToC(E.Type) + ")" + exprStr(Inner, 99),
+                       E.Type->Size, E.Type->IsSigned);
     // Zero extension converts the source's unsigned view.
     if (isPlainInteger(Inner.Type) && isPlainInteger(E.Type))
       return typedText(
@@ -569,6 +596,9 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     auto &Inner = *E.Operands[0];
     if (Inner.Type && E.Type && Inner.Type->Size == E.Type->Size)
       return exprStr(Inner, ParentPrec);
+    if (isPlainInteger(E.Type) && printsTruthValue(Inner))
+      return typedText(E, "(" + typeToC(E.Type) + ")" + exprStr(Inner, 99),
+                       E.Type->Size, E.Type->IsSigned);
     // Sign extension converts the source's signed view.
     if (isPlainInteger(Inner.Type) && isPlainInteger(E.Type))
       return typedText(
