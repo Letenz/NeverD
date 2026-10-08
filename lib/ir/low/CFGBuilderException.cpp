@@ -12,6 +12,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/ADT/SmallVector.h"
 
@@ -35,11 +36,23 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     return;
   const ExceptionFunction &Metadata = *Func.ExceptionMetadata;
   Func.RegistrationStates.reset();
-  if (Metadata.Registration)
+  if (Metadata.Registration) {
+    va_t CookieCheckVA = 0;
+    if (CurrentImg &&
+        Metadata.Personality == ExceptionPersonality::ExceptHandler4 &&
+        Metadata.Registration->GSCookieOffset != -2)
+      if (auto Check = coff_loader::getCheckedX86EH4CookieCheck(
+              *CurrentImg, Metadata.PersonalityVA);
+          Check &&
+          coff_loader::hasCheckedX86CookieCheckSuccessPath(*CurrentImg, *Check))
+        CookieCheckVA = *Check;
     Func.RegistrationStates = analyzeRegistrationStates(
-        Func, CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
-                  ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
-                  : 0);
+        Func,
+        CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
+            ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
+            : 0,
+        CookieCheckVA);
+  }
 
   std::map<va_t, LowBlock *> BlocksByAddress;
   std::map<int, LowBlock *> BlocksById;

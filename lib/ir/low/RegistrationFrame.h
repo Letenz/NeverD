@@ -258,6 +258,11 @@ public:
           Left.MayBeFrame = true;
           return Left;
         }
+        if (Right.Offset && Left.CookieFrameOffset == Right.Offset) {
+          Left.CookieFrameOffset.reset();
+          Left.MayBeFrame = false;
+          return Left;
+        }
       }
       if (Left.Constant && Right.Constant)
         return FrameValue::constant(*Left.Constant ^ *Right.Constant);
@@ -281,7 +286,24 @@ public:
     return Result;
   }
 
-  void write(const LowOp &Op, FrameValue Value) {
+  bool isCookieCheck(const LowOp &Op, va_t CookieCheckVA) const {
+    const auto &Cookie =
+        State.Registers[x86reg::RCX / x86reg::GeneralRegStride];
+    return CookieCheckVA && Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+           Op.Inputs[0].isConst() && Op.Inputs[0].Size == 4 &&
+           Op.Inputs[0].Offset == CookieCheckVA && Cookie.SecurityCookie &&
+           !Cookie.CookieFrameOffset && !Cookie.MayBeFrame &&
+           Cookie.CookieXOR == 0;
+  }
+
+  void write(const LowOp &Op, FrameValue Value, va_t CookieCheckVA = 0) {
+    if (isCookieCheck(Op, CookieCheckVA)) {
+      // The authenticated success path changes flags, but no GPR or stack
+      // cell. In particular the lifter's generic EAX result is not a write.
+      State.OtherRegisterBytes.clear();
+      State.OtherRegistersMayBeFrame = true;
+      return;
+    }
     if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
       State.Registers[x86reg::RAX / x86reg::GeneralRegStride] = {
           {}, {}, false, true, true};

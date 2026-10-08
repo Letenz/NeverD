@@ -472,6 +472,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     uint8_t Kind;
   };
   std::vector<SourceOperation> SourceOperations;
+  std::set<llvm::CallInst *> CookieCheckCalls;
   size_t MemoryOperations = 0;
   for (const MedBlock &Block : Func.Blocks)
     for (const MedOp &Op : Block.Ops) {
@@ -494,7 +495,16 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
           }
         if (!Instruction)
           return false;
-        Kind = 2;
+        Kind = States.cookieCheck(Op.Addr, Op.OriginSeq) ? 3 : 2;
+        if (Kind == 3) {
+          auto *Call = llvm::cast<llvm::CallInst>(Instruction);
+          if (!States.SecurityCookiesComplete || !States.CookieCheckVA ||
+              Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
+              Op.Inputs[0].ConstVal != States.CookieCheckVA ||
+              !Call->use_empty() || Call->isMustTailCall())
+            return false;
+          CookieCheckCalls.insert(Call);
+        }
       } else
         continue;
       if (Op.OriginSeq < 0 ||
@@ -503,6 +513,8 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       SourceOperations.push_back({Instruction, &Op, Block.Id, Kind});
     }
   if (MemoryOperations != RegistrationMemoryIR.size())
+    return false;
+  if (CookieCheckCalls.size() != States.CookieChecks.size())
     return false;
 
   // Each scope must actually participate in the proven dispatch graph.
@@ -531,6 +543,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     for (llvm::BasicBlock *Block : Request.Blocks)
       if (!AllCallbackBlocks.insert(Block).second)
         return false;
+  for (auto *Call : CookieCheckCalls)
+    if (AllCallbackBlocks.count(Call->getParent()))
+      return false;
   // Callback frame recovery changes EBP while the compiler owns FS:[0]. A
   // source callback which observes that chain needs a separate remap proof.
   for (llvm::Instruction *Instruction : ChainInstructions)
@@ -539,6 +554,8 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   std::vector<CallPlan> Calls;
   std::vector<llvm::Instruction *> DeadFinallyResults;
   for (const auto &[Call, Address] : CallSiteAddrs) {
+    if (CookieCheckCalls.count(const_cast<llvm::CallInst *>(Call)))
+      continue;
     auto *CallBlock = const_cast<llvm::BasicBlock *>(Call->getParent());
     if (AllCallbackBlocks.count(CallBlock))
       continue;
@@ -838,6 +855,16 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     Instruction->eraseFromParent();
   }
   RegistrationChainIR.clear();
+
+  for (auto *Call : CookieCheckCalls) {
+    llvm::IRBuilder<> B(Call);
+    auto *Event = B.CreateCall(SideEffect);
+    Event->setMetadata(
+        windows_eh_md::RegistrationOperationAttachment,
+        Call->getMetadata(windows_eh_md::RegistrationOperationAttachment));
+    CallSiteAddrs.erase(Call);
+    Call->eraseFromParent();
+  }
 
   for (auto *Instruction : llvm::reverse(DeadFinallyResults))
     Instruction->eraseFromParent();

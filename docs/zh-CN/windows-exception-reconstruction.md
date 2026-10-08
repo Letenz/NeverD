@@ -100,7 +100,7 @@ SEH3 要求保留参数的已知 CRT import veneer。EH4 要求精确的转发 w
 dispatcher 参数、load-config cookie 地址、可执行 cookie checker 和 CRT common
 handler import 必须一致；仅凭 handler 名称不能授权重写。共享栈帧分析在 registration
 公开前证明编码 scope 指针与每个 cookie 表达式。源函数及保留的 callee 不能修改映像
-cookie 或 scope table，也不能在安装后观察合成 cookie 栈槽。LLVM 按实际 registration
+cookie 或 scope table；合成 cookie 值不能逸出私有栈帧。LLVM 按实际 registration
 record 推导生成 cookie 偏移，包括运行时的虚拟帧基址；安装器再与实际表字节逐项核对。
 直接初始化的 GS 栈槽由编译器生成 stack protector。GS 编码与退出校验使用同一虚拟
 基址，栈重新对齐时也保持一致。校验函数必须保留精确的 fastcall ABI 和原 wrapper
@@ -108,10 +108,15 @@ record 推导生成 cookie 偏移，包括运行时的虚拟帧基址；安装�
 校验函数的经检查成功路径只将 ECX 与 load-config cookie 比较并返回，不修改栈存储
 或其他寄存器。LLVM 重新对齐栈时，回调引用的参数副本仍保留在可恢复的局部帧中。
 
+显式源 GS 校验要求在精确解码的调用发生处证明完整位宽的 ECX cookie 表达式，并认证
+校验函数身份。原生 lowering 只将该已证明的调用替换为带索引的执行事件，LLVM 再发射
+物理 stack protector 校验。公开安装器独立重放源证明，拒绝删除、复制、去标记或改变
+顺序的事件。独立 callback 内的源校验仍不属于这一子集。
+
 该路径要求 LLVM fork 提供 `LLVM_NEVERD_X86_REGISTRATION_EH` 契约；旧的已发布 r3
 预编译包会拒绝原生安装。EH4 还要求 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`，
-GS 初始化还要求 `LLVM_NEVERD_X86_REGISTRATION_GS`。显式 EH4 源 GS epilogue 与
-x86 C++ FuncInfo 的原生安装仍是独立的后续要求，不能用已有的分析元数据替代。
+GS 初始化还要求 `LLVM_NEVERD_X86_REGISTRATION_GS`。x86 C++ FuncInfo 的原生安装
+仍是独立的后续要求，不能用已有的分析元数据替代。
 
 ## IR 契约
 

@@ -45,6 +45,11 @@ the physical registration and callback frame recovery. The COFF transaction
 authenticates emitted scope rows, SafeSEH and absolute relocations before
 installing the complete module through either patch mode. Analysis facts alone
 cannot authorize native installation.
+The same LowIR frame domain owns EH4 cookie initialization and exact source
+checker occurrences. Native lowering may replace an authenticated pure check
+with a source-indexed execution event while LLVM owns the physical GS check.
+The public writer replays that ownership and the complete event order against
+immutable input; metadata alone cannot authorize removing a source call.
 
 Library feature recognition reads the shared MedIR boundary before the source
 routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;

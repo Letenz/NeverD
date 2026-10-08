@@ -128,8 +128,8 @@ load-config cookie address, the executable cookie checker and the CRT common
 handler import must agree. A handler name alone never authorizes rewriting.
 The shared frame domain proves the encoded scope pointer and every cookie
 expression before the registration becomes visible. Source and preserved
-callees cannot change the image cookie or scope table, or observe synthetic
-cookie storage after installation. LLVM derives the generated cookie offsets
+callees cannot change the image cookie or scope table. Synthetic cookie values
+cannot escape the private frame. LLVM derives the generated cookie offsets
 from its physical registration record, including the runtime's virtual frame
 base; the installer compares those offsets with the exact emitted table bytes.
 A directly initialized GS slot gets a compiler-owned stack protector. GS encoding
@@ -140,12 +140,18 @@ Its checked success path compares ECX with the load-config cookie and returns
 without touching stack storage or other registers. An escaped argument copy
 stays in the recovered local frame when LLVM realigns the stack.
 
+An explicit source GS check requires an exact full-width ECX cookie expression
+at the decoded call occurrence and the authenticated checker identity. Native
+lowering replaces only that proved call with an indexed execution event; LLVM
+emits the physical stack-protector check. The public installer independently
+replays the source proof and rejects removed, duplicated, unmarked or reordered
+events. Checks inside outlined callbacks remain outside this subset.
+
 This path needs the LLVM fork's `LLVM_NEVERD_X86_REGISTRATION_EH` contract;
 EH4 also requires `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS initialization
 requires `LLVM_NEVERD_X86_REGISTRATION_GS`. The older published r3 package
-rejects native installation. Explicit EH4 source GS epilogues and native x86
-C++ FuncInfo installation remain separate requirements, even though their
-metadata is available for analysis.
+rejects native installation. Native x86 C++ FuncInfo installation remains a
+separate requirement, even though its metadata is available for analysis.
 
 ## IR contract
 

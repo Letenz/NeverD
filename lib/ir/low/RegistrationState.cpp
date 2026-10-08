@@ -50,7 +50,8 @@ bool overlaps(int32_t Offset, uint16_t Width, int32_t Slot,
 } // namespace
 
 RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
-                                                    va_t SecurityCookieVA) {
+                                                    va_t SecurityCookieVA,
+                                                    va_t CookieCheckVA) {
   RegistrationStateAnalysis Result;
   if (!Function.ExceptionMetadata || !Function.ExceptionMetadata->Registration)
     return Result;
@@ -187,6 +188,11 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
   const auto GSCookieSlot = Chain.GSCookieOffset != -2
                                 ? CookieSlot(Chain.GSCookieOffset)
                                 : std::optional<int32_t>{};
+  if (!EH4 || !GSCookieSlot || CookieCheckVA > UINT32_MAX)
+    CookieCheckVA = 0;
+  std::map<va_t, int> CookieCheckOccurrences;
+  std::map<std::pair<va_t, int>, RegistrationCookieCheck> CookieChecks;
+  bool ReadsGSCookie = false;
   CompleteCookies &= EHCookieSlot.has_value() &&
                      (Chain.GSCookieOffset == -2 || GSCookieSlot.has_value());
   auto CookiesReady = [&](const FrameState &Frame) {
@@ -227,6 +233,10 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
       if (!Charge(1))
         break;
       const auto Memory = lowMemoryOperands(Op);
+      if (CookieCheckVA && Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+          Op.Inputs[0].isConst() && Op.Inputs[0].Offset == CookieCheckVA &&
+          !CookieCheckOccurrences.emplace(Op.Addr, Op.Seq).second)
+        CompleteCookies = false;
       if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS) {
         if (!Memory.Complete ||
             (Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE) ||
@@ -397,7 +407,12 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
           // Source cookie storage is owned only by its checked initialization
           // and the native runtime. Reads or writes after installation would
           // observe or change a synthetic cookie instead of the physical one.
-          if (Touches(EHCookieSlot) || Touches(GSCookieSlot) ||
+          const bool CheckedGSRead = CookieCheckVA && Op.Opcode == NdOp::LOAD &&
+                                     Address.Offset == GSCookieSlot &&
+                                     Memory.AccessSize == 4;
+          ReadsGSCookie |= CheckedGSRead;
+          if (Touches(EHCookieSlot) ||
+              (Touches(GSCookieSlot) && !CheckedGSRead) ||
               overlaps(*Address.Offset, Memory.AccessSize,
                        *Chain.RegistrationOffset + 8, 4))
             CompleteCookies = false;
@@ -415,6 +430,18 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
                     uint64_t(*Address.Constant) + Memory.AccessSize)))
             CompleteCookies = false;
         }
+      }
+      if (CookieCheckVA && Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+          Op.Inputs[0].isConst() && Op.Inputs[0].Offset == CookieCheckVA) {
+        const auto Boundary = Boundaries.find(Op.Addr);
+        if (!Transfer.isCookieCheck(Op, CookieCheckVA) || Op.Seq < 0 ||
+            Boundary == Boundaries.end() || Boundary->second.first != Block.Id)
+          CompleteCookies = false;
+        else
+          CookieChecks.emplace(
+              std::make_pair(Op.Addr, Op.Seq),
+              RegistrationCookieCheck{
+                  Op.Addr, Op.Addr + Boundary->second.second.Size, Op.Seq});
       }
       if (Op.Opcode == NdOp::INTRINSIC)
         CompleteImageReads = false;
@@ -551,7 +578,7 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
           }
         }
       }
-      Transfer.write(Op, Value);
+      Transfer.write(Op, Value, CookieCheckVA);
     }
     for (auto It = Stores.lower_bound(Block.StartAddr);
          It != Stores.end() && It->first < Block.EndAddr; ++It)
@@ -671,9 +698,15 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
                               CompleteImageReads && !Exhausted;
   Result.SecurityCookiesComplete =
       CompleteCookies && Result.Complete && Result.CallbackStatesComplete &&
-      Result.RegistrationLifetimeComplete && Result.ChainOperationsComplete;
-  if (Result.SecurityCookiesComplete)
+      Result.RegistrationLifetimeComplete && Result.ChainOperationsComplete &&
+      CookieChecks.size() == CookieCheckOccurrences.size() &&
+      (!ReadsGSCookie || !CookieChecks.empty());
+  if (Result.SecurityCookiesComplete) {
     Result.SecurityCookieVA = SecurityCookieVA;
+    Result.CookieCheckVA = CookieCheckVA;
+    for (const auto &[Identity, Check] : CookieChecks)
+      Result.CookieChecks.push_back(Check);
+  }
   if (Result.ImageReadsComplete)
     for (const auto &[Begin, End] : ImageReads)
       Result.ImageReads.push_back({Begin, End});
@@ -690,6 +723,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
       Result.Complete = Result.ChainOperationsComplete =
           Result.ImageReadsComplete = Result.SecurityCookiesComplete = false;
       Result.SecurityCookieVA = 0;
+      Result.CookieCheckVA = 0;
+      Result.CookieChecks.clear();
       Result.ChainAccesses.clear();
       Result.Diagnostics.push_back(
           "registration-frame output budget exhausted");

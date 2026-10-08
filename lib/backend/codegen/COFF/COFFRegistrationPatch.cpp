@@ -742,7 +742,13 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
         Expected[Block.Id].push_back(
             {{Op.Addr, Op.OriginSeq}, uint8_t(Op.Opcode == NdOp::STORE)});
       else if (Op.Opcode == NdOp::CALL)
-        Expected[Block.Id].push_back({{Op.Addr, Op.OriginSeq}, 2});
+        Expected[Block.Id].push_back(
+            {{Op.Addr, Op.OriginSeq},
+             uint8_t(Source.RegistrationStates &&
+                             Source.RegistrationStates->cookieCheck(
+                                 Op.Addr, Op.OriginSeq)
+                         ? 3
+                         : 2)});
     }
   }
   std::set<int> CallbackBlocks;
@@ -827,6 +833,7 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
         const auto *Load = llvm::dyn_cast<llvm::LoadInst>(I);
         const auto *Store = llvm::dyn_cast<llvm::StoreInst>(I);
         const auto *Call = llvm::dyn_cast<llvm::CallBase>(I);
+        const auto *CookieCheck = llvm::dyn_cast<llvm::IntrinsicInst>(I);
         if (MD->getNumOperands() != 5 ||
             metadataInteger(*MD, 0, 64) != Source.Entry ||
             metadataInteger(*MD, 3, 32) != uint32_t(Id) || !Address || !Seq ||
@@ -839,6 +846,11 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
              (!Store || Store->isAtomic() || !Store->isVolatile() ||
               Store->getAlign() != llvm::Align(1))) ||
             (*Kind == 2 && (!Call || Call->isInlineAsm())) ||
+            (*Kind == 3 &&
+             (!CookieCheck ||
+              CookieCheck->getIntrinsicID() != llvm::Intrinsic::sideeffect ||
+              CookieCheck->arg_size() ||
+              CookieCheck->getNumOperandBundles())) ||
             !SeenEvents.insert(I).second)
           return reject("source memory or call changed its execution segment "
                         "or occurrence order");

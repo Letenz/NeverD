@@ -214,6 +214,49 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
               return true;
             },
             "EH4 GS cookie checker");
+      if (!Low.RegistrationStates->CookieChecks.empty())
+        for (unsigned Mutation = 0; Mutation != 4; ++Mutation)
+          RejectMutation(
+              "source GS check replacement retains its exact occurrence",
+              [Mutation](llvm::Function &F) {
+                for (auto &Block : F)
+                  for (auto &I : Block)
+                    if (auto *MD = I.getMetadata(
+                            windows_eh_md::RegistrationOperationAttachment);
+                        MD && MD->getNumOperands() == 5) {
+                      const auto *Kind =
+                          llvm::dyn_cast<llvm::ConstantAsMetadata>(
+                              MD->getOperand(4));
+                      const auto *Number =
+                          Kind ? llvm::dyn_cast<llvm::ConstantInt>(
+                                     Kind->getValue())
+                               : nullptr;
+                      if (!Number || Number->getZExtValue() != 3)
+                        continue;
+                      if (Mutation == 0)
+                        I.eraseFromParent();
+                      if (Mutation == 1)
+                        I.setMetadata(
+                            windows_eh_md::RegistrationOperationAttachment,
+                            nullptr);
+                      if (Mutation == 2)
+                        I.clone()->insertBefore(I.getIterator());
+                      if (Mutation == 3) {
+                        llvm::SmallVector<llvm::Metadata *, 5> Fields;
+                        for (unsigned N = 0; N != 4; ++N)
+                          Fields.push_back(MD->getOperand(N));
+                        Fields.push_back(llvm::ConstantAsMetadata::get(
+                            llvm::ConstantInt::get(
+                                llvm::Type::getInt8Ty(F.getContext()), 2)));
+                        I.setMetadata(
+                            windows_eh_md::RegistrationOperationAttachment,
+                            llvm::MDNode::get(F.getContext(), Fields));
+                      }
+                      return true;
+                    }
+                return false;
+              },
+              "execution");
     }
   }
   RejectMutation(

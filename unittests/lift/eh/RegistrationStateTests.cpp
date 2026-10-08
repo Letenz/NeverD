@@ -170,6 +170,66 @@ TEST(RegistrationState, EH4CookiesUseTheAuthenticatedImageAndRuntimeFrame) {
   }
 }
 
+LowFunc makeCheckedCookieExit() {
+  auto F = makeCookieFrame(true);
+  auto &Exit = F.Blocks.back();
+  auto Unlink = std::move(Exit.Ops);
+  Exit.Ops.clear();
+  Exit.EndAddr = Exit.StartAddr + 12;
+  Exit.InstructionBoundaries = {{Exit.StartAddr, 5}, {Exit.StartAddr + 5, 7}};
+  emitOp(Exit, Exit.StartAddr, NdOp::INT_ADD, NdVar::tmp(40, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-36), 4)});
+  emitOp(Exit, Exit.StartAddr, NdOp::LOAD, NdVar::reg(x86reg::RCX, 4),
+         {NdVar::tmp(40, 4)});
+  emitOp(Exit, Exit.StartAddr, NdOp::INT_ADD, NdVar::tmp(41, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(4, 4)});
+  emitOp(Exit, Exit.StartAddr, NdOp::INT_XOR, NdVar::reg(x86reg::RCX, 4),
+         {NdVar::reg(x86reg::RCX, 4), NdVar::tmp(41, 4)});
+  emitOp(Exit, Exit.StartAddr, NdOp::CALL, NdVar::reg(x86reg::RAX, 4),
+         {NdVar::cst(0x5000, 4)});
+  for (auto Op : Unlink) {
+    Op.Addr += 5;
+    Op.Seq = Exit.Ops.size();
+    Exit.Ops.push_back(Op);
+  }
+  return F;
+}
+
+TEST(RegistrationState, EH4ExitCheckRequiresTheExactDecodedCookie) {
+  auto F = makeCheckedCookieExit();
+  auto Result = analyzeRegistrationStates(F, 0x4000, 0x5000);
+  ASSERT_TRUE(Result.SecurityCookiesComplete);
+  ASSERT_EQ(Result.CookieChecks.size(), 1u);
+  EXPECT_EQ(Result.CookieCheckVA, 0x5000u);
+  EXPECT_NE(Result.cookieCheck(0x1030, 4), nullptr);
+  EXPECT_EQ(Result.cookieCheck(0x1030, 3), nullptr);
+  EXPECT_EQ(Result.CookieChecks.front().EndAddress, 0x1035u);
+  EXPECT_FALSE(analyzeRegistrationStates(F, 0x4000).SecurityCookiesComplete);
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    auto Changed = F;
+    auto &Exit = Changed.Blocks.back();
+    if (Mutation == 0)
+      Exit.Ops[2].Inputs[1] = NdVar::cst(8, 4);
+    if (Mutation == 1)
+      Exit.Ops[1].Output.Size = 1;
+    if (Mutation == 2)
+      Exit.Ops[3].Opcode = NdOp::INT_ADD;
+    if (Mutation == 3)
+      Exit.Ops[4].Inputs[0] = NdVar::cst(0x5010, 4);
+    if (Mutation == 4)
+      Exit.Ops[4].Seq = -1;
+    if (Mutation == 5)
+      Exit.InstructionBoundaries.erase(Exit.InstructionBoundaries.begin());
+    if (Mutation == 6)
+      Exit.Ops[4].Inputs[0].Size = 1;
+    if (Mutation == 7)
+      Exit.Ops[3].Output = NdVar::reg(x86reg::RDX, 4);
+    auto Invalid = analyzeRegistrationStates(Changed, 0x4000, 0x5000);
+    EXPECT_FALSE(Invalid.SecurityCookiesComplete) << Mutation;
+    EXPECT_TRUE(Invalid.CookieChecks.empty()) << Mutation;
+  }
+}
+
 TEST(RegistrationState, EH4CookieInitializationCannotBeNarrowOrUnencoded) {
   for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
     auto F = makeCookieFrame();

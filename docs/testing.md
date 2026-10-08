@@ -1742,7 +1742,8 @@ for the analysis/native support matrix and the fail-closed patch contract.
 PE32 registration changes also require the focused state, frame and native
 targets. Native installation needs a source build of the LLVM fork exposing
 `LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
-`LLVM_NEVERD_X86_REGISTRATION_COOKIES`; the published r3 compiler has no such receipt.
+`LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need
+`LLVM_NEVERD_X86_REGISTRATION_GS`. The published r3 compiler has no such receipt.
 
 ```bash
 cmake --build build --parallel 4 --target neverd \
@@ -1761,7 +1762,8 @@ for registration_case in filter nested-finally continue-search continue-executio
 done
 ```
 
-The runtime runner builds actual SEH3 and no-GS EH4 source images, lifts their protected
+The runtime runner builds actual SEH3, no-GS EH4 and initialized-GS EH4 source
+images, including explicit source exit checks, lifts their protected
 function and executes the original, manual installer, public COFF patcher,
 import-name collision and both CLI modes. Every image runs at its preferred
 base and at a forced relocated base. Assertions cover return values, ordered
@@ -1770,6 +1772,11 @@ restored FS:[0], SafeSEH and a newly installed Guard CF table-pointer relocation
 The cdecl cases additionally read and write the actual caller-owned parameter
 slot through exceptional callbacks; synthetic frame initialization alone cannot
 satisfy those observations.
+State tests mutate the GS decode expression, target, width and instruction
+identity. Native input tests remove, duplicate and alter the indexed source
+check event and require the public patcher to reject it. Strict generated-only
+cookie probes vary caller stack alignment and corrupt EH and GS slots
+independently; they remain separate evidence from source reconstruction.
 Original-corpus and callback-only runs remain distinct evidence. Missing Wine,
 compiler receipts or skipped reconstruction cannot count as a pass.
 

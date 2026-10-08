@@ -90,6 +90,11 @@
   mov eax,7
 #endif
 .Lfinish:
+#if REGISTRATION_EXPECT_GS
+  mov ecx, dword ptr [ebp - 32]
+  xor ecx, ebp
+  call "@__security_check_cookie@4"
+#endif
   mov ecx,[ebp-16]
   mov fs:[0],ecx
   mov esp,ebp

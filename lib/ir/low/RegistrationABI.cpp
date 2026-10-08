@@ -11,6 +11,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include <deque>
 #include <set>
@@ -261,6 +262,15 @@ bool hasCallerCleanupRegistrationABI(
           !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
           !Image.isCodeAddress(Op.Inputs[0].Offset))
         return false;
+      if (Function.RegistrationStates &&
+          Function.RegistrationStates->SecurityCookiesComplete &&
+          Function.RegistrationStates->cookieCheck(Op.Addr, Op.Seq)) {
+        const va_t Check = Function.RegistrationStates->CookieCheckVA;
+        if (Check != Op.Inputs[0].Offset ||
+            !coff_loader::hasCheckedX86CookieCheckSuccessPath(Image, Check))
+          return false;
+        continue;
+      }
       if (Function.ExceptionMetadata &&
           Function.ExceptionMetadata->Registration &&
           Function.RegistrationStates)

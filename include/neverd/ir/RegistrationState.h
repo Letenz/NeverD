@@ -74,6 +74,15 @@ struct RegistrationIncomingFrameAccess {
   bool operator==(const RegistrationIncomingFrameAccess &) const = default;
 };
 
+/// A source call whose authenticated leaf checker receives the exact decoded
+/// image cookie in ECX on every reaching path. Only this occurrence may be
+/// replaced by a compiler-owned physical cookie check.
+struct RegistrationCookieCheck {
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int OpSeq = -1;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
@@ -92,12 +101,27 @@ struct RegistrationStateAnalysis {
   /// the compiler's physical cookie; native codegen validates that separately.
   bool SecurityCookiesComplete = false;
   va_t SecurityCookieVA = 0;
+  va_t CookieCheckVA = 0;
+  std::vector<RegistrationCookieCheck> CookieChecks;
   /// May-read image extents across all reachable ordinary and runtime roots.
   /// Exact frame-relative reads cannot alias these extents. Unknown addresses
   /// make the set incomplete rather than silently omitting a possible alias.
   bool ImageReadsComplete = false;
   std::vector<ExceptionAddressRange> ImageReads;
   std::vector<std::string> Diagnostics;
+
+  const RegistrationCookieCheck *cookieCheck(va_t Address, int Seq) const {
+    const auto Key = std::make_pair(Address, Seq);
+    auto It = std::lower_bound(CookieChecks.begin(), CookieChecks.end(), Key,
+                               [](const auto &Check, auto Identity) {
+                                 return std::make_pair(Check.Address,
+                                                       Check.OpSeq) < Identity;
+                               });
+    return It != CookieChecks.end() &&
+                   std::make_pair(It->Address, It->OpSeq) == Key
+               ? &*It
+               : nullptr;
+  }
 
   const RegistrationIncomingFrameAccess *incomingFrameAccess(va_t Address,
                                                              int Seq) const {
@@ -118,7 +142,8 @@ struct RegistrationStateAnalysis {
 /// effect only after their exact decoded instruction retires. A union at a
 /// join is retained; address order never selects a predecessor's state.
 RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
-                                                    va_t SecurityCookieVA = 0);
+                                                    va_t SecurityCookieVA = 0,
+                                                    va_t CookieCheckVA = 0);
 
 /// Return exact address intervals only if every reaching state agrees about
 /// membership. An ambiguous join cannot be flattened into a lexical try range.

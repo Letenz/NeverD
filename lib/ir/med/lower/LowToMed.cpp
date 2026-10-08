@@ -670,6 +670,13 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
       }
       DispatchCallDefinedArgs = DispatchDefined;
       applyCallRegisterEffect(MOp, LOp);
+      if (TheArch == Arch::X86 && Low.RegistrationStates &&
+          Low.RegistrationStates->SecurityCookiesComplete &&
+          Low.RegistrationStates->cookieCheck(LOp.Addr, LOp.Seq)) {
+        MOp.Output = MedVar{};
+        MOp.Output.Id = -1;
+        MOp.CallPreservedGPRs = 0xff;
+      }
       if (TrackDispatchArgs)
         DispatchDefined = StepDefined(DispatchDefined, LOp);
 
