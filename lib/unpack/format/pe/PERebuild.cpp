@@ -281,6 +281,43 @@ uint32_t observedAccess(const Capture &C, const ImageRegion &R) {
   return Flags;
 }
 
+/// Import descriptors name each address array independently. The optional
+/// IAT directory also tells the native loader which pages it may protect.
+/// Writable cells, including appended cells, need no such protection range.
+/// Including their intervening data or code would change program semantics.
+llvm::Expected<data_directory> iatProtection(const Image &In, const Capture &C,
+                                             llvm::ArrayRef<Slot> Slots) {
+  data_directory Directory{};
+  uint64_t Begin = In.extent(), End = 0;
+  for (const auto &S : Slots) {
+    const auto *Region = In.regionAt(S.RVA);
+    if (!Region ||
+        (observedAccess(C, *Region) & llvm::COFF::IMAGE_SCN_MEM_WRITE))
+      continue;
+    Begin = std::min(Begin, S.RVA);
+    End = std::max(End, S.RVA + 2 * value::PointerSize);
+  }
+  if (!End)
+    return Directory;
+  uint64_t Covered = Begin;
+  for (const auto &Region : In.regions()) {
+    if (Region.RVA + Region.MemorySize <= Covered)
+      continue;
+    const uint32_t Access = observedAccess(C, Region);
+    if (Region.RVA > Covered || !(Access & llvm::COFF::IMAGE_SCN_MEM_READ) ||
+        (Access &
+         (llvm::COFF::IMAGE_SCN_MEM_WRITE | llvm::COFF::IMAGE_SCN_MEM_EXECUTE)))
+      return failure(text::IATProtection);
+    Covered = Region.RVA + Region.MemorySize;
+    if (Covered >= End) {
+      Directory.RelativeVirtualAddress = Begin;
+      Directory.Size = End - Begin;
+      return Directory;
+    }
+  }
+  return failure(text::IATProtection);
+}
+
 /// Debug records name their payload by file offset as well as by RVA.
 void relocateDebugRecords(const Image &In, llvm::ArrayRef<Placement> Placed,
                           std::vector<data_directory> &Directories,
@@ -336,6 +373,9 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   auto Repairs = planTailImports(In, C, Plan.TailImports, Memory, *Slots);
   if (!Repairs)
     return Repairs.takeError();
+  auto IAT = iatProtection(In, C, *Slots);
+  if (!IAT)
+    return IAT.takeError();
   redirectTailImports(*Repairs, *Slots, Memory);
   const auto Groups = groupSlots(*Slots);
 
@@ -413,7 +453,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
     return failure(text::ImageSize);
 
   auto Directories = H.Directories;
-  if (!Slots->empty() && Directories.size() <= llvm::COFF::IAT) {
+  if (IAT->Size && Directories.size() <= llvm::COFF::IAT) {
     // An input can leave trailing directory entries undeclared while still
     // reserving them in the optional header. Use that space without moving
     // the section table or overwriting an original section header.
@@ -442,16 +482,9 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
     Directories[llvm::COFF::IMPORT_TABLE].RelativeVirtualAddress =
         MetadataRVA + Repairs->CellBytes;
     Directories[llvm::COFF::IMPORT_TABLE].Size = DirectoryBytes;
-    // The native loader uses this range to make IAT pages writable while
-    // binding imports. With no IAT directory it falls back to the section
-    // containing the import descriptors, which is now separate from the
-    // original cells. Include each array's zero terminator, keep cells at
-    // their observed RVAs, and preserve the original section permissions.
-    const uint64_t Begin = Slots->front().RVA;
-    const uint64_t End = Slots->back().RVA + 2 * value::PointerSize;
-    Directories[llvm::COFF::IAT].RelativeVirtualAddress = Begin;
-    Directories[llvm::COFF::IAT].Size = End - Begin;
   }
+  if (IAT->Size)
+    Directories[llvm::COFF::IAT] = *IAT;
 
   RebuiltImage Out;
   for (const auto &Site : Repairs->Sites)
