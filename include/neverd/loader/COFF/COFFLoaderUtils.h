@@ -140,7 +140,8 @@ llvm::Error parseBaseRelocations(const llvm::object::COFFObjectFile &Obj,
 /// entries to one typed build identity.  The path is retained only as a
 /// discovery hint.
 void parseDebugDirectory(const llvm::object::COFFObjectFile &Obj,
-                         BinaryImage &Img);
+                         BinaryImage &Img,
+                         llvm::ArrayRef<uint8_t> OriginalBytes = {});
 
 /// Parse the PE Load Configuration directory and extract security cookie
 /// and CF Guard check function RVAs.  Handles both PE32 and PE32+.

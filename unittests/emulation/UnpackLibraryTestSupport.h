@@ -17,6 +17,22 @@ namespace neverd::unpack::test::library {
 #undef NEVERD_LIBRARY_TEXT
 #undef NEVERD_LIBRARY_VALUE
 
+/// Exercise the native zero-VirtualSize fallback without losing any declared
+/// content. Preserve genuine virtual tails and BSS, which have no raw fallback.
+inline std::vector<uint8_t> withZeroVirtualSizes(const Image &Original,
+                                                 std::vector<uint8_t> Bytes) {
+  for (size_t I = 0; I < Original.Sections.size(); ++I) {
+    const auto &S = Original.Sections[I];
+    if (S.FileSize && S.VirtualSize <= S.FileSize)
+      llvm::support::endian::write32le(
+          Bytes.data() + Original.SectionTableOffset +
+              I * sizeof(llvm::object::coff_section) +
+              offsetof(llvm::object::coff_section, VirtualSize),
+          0);
+  }
+  return Bytes;
+}
+
 /// Encode the independently linked code, then make the ordinary loader or TLS
 /// callback responsible for restoring it. No production packing logic is used.
 inline std::vector<uint8_t> pack(const Image &Original, uint32_t Mode) {

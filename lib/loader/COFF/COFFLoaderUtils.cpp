@@ -582,7 +582,8 @@ void parseTLSDirectory(const COFFObjectFile &Obj, BinaryImage &Img,
                           << " callbacks\n");
 }
 
-void parseDebugDirectory(const COFFObjectFile &Obj, BinaryImage &Img) {
+void parseDebugDirectory(const COFFObjectFile &Obj, BinaryImage &Img,
+                         llvm::ArrayRef<uint8_t> OriginalBytes) {
   Img.DynInfo.PDBPath.clear();
   Img.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
   Img.DynInfo.CodeViewPDBIdentity.reset();
@@ -605,9 +606,11 @@ void parseDebugDirectory(const COFFObjectFile &Obj, BinaryImage &Img) {
     return;
   }
 
-  llvm::StringRef FileData = Obj.getData();
-  const llvm::ArrayRef<uint8_t> FileBytes(
-      reinterpret_cast<const uint8_t *>(FileData.data()), FileData.size());
+  // File-only records can name header bytes. Read their original occurrence,
+  // including on restricted loads that do not retain BinaryImage::Raw.
+  const auto FileBytes = OriginalBytes.empty()
+                             ? llvm::arrayRefFromStringRef(Obj.getData())
+                             : OriginalBytes;
   std::vector<detail::RawBackedSectionRange> Sections;
   Sections.reserve(Obj.getNumberOfSections());
   for (const SectionRef &SectionRef : Obj.sections()) {

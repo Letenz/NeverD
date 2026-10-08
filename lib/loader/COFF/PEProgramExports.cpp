@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/loader/COFF/PEProgramExports.h"
 
+#include "neverd/object/PELayout.h"
+
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/Endian.h"
 
@@ -24,7 +26,7 @@ llvm::Error invalid(llvm::StringRef Reason) {
                                  llvm::Twine(text::Prefix) + Reason);
 }
 struct Section {
-  uint64_t RVA, VirtualSize, Offset, FileSize;
+  uint64_t RVA, ContentSize, Offset, FileSize;
 };
 class Reader {
   llvm::ArrayRef<uint8_t> File;
@@ -129,19 +131,18 @@ public:
       auto H = fileRecord<coff_section>(*End + I * sizeof(coff_section));
       if (!H)
         return H.takeError();
-      Section S{H->VirtualAddress, H->VirtualSize, H->PointerToRawData,
-                H->SizeOfRawData};
-      if (!S.VirtualSize)
-        S.VirtualSize = S.FileSize;
-      if (S.RVA > ImageSize || S.VirtualSize > ImageSize - S.RVA ||
+      Section S{H->VirtualAddress,
+                getPESectionContentSize(H->VirtualSize, H->SizeOfRawData),
+                H->PointerToRawData, H->SizeOfRawData};
+      if (S.RVA > ImageSize || S.ContentSize > ImageSize - S.RVA ||
           (S.FileSize &&
            (S.Offset > File.size() || S.FileSize > File.size() - S.Offset)))
         return invalid(text::Sections);
-      if (S.VirtualSize)
-        Virtual.emplace_back(S.RVA, S.RVA + S.VirtualSize);
+      if (S.ContentSize)
+        Virtual.emplace_back(S.RVA, S.RVA + S.ContentSize);
       if (S.FileSize)
         Physical.emplace_back(S.Offset, S.Offset + S.FileSize);
-      if (S.VirtualSize)
+      if (S.ContentSize)
         Sections.push_back(S);
     }
     auto Disjoint = [](auto Ranges) {
@@ -169,7 +170,7 @@ public:
         return invalid(text::Mapping);
       --I;
       const uint64_t Delta = RVA - I->RVA;
-      if (Delta >= I->VirtualSize || Size > I->VirtualSize - Delta ||
+      if (Delta >= I->ContentSize || Size > I->ContentSize - Delta ||
           Delta >= I->FileSize || Size > I->FileSize - Delta)
         return invalid(text::Mapping);
       Offset = I->Offset + Delta;

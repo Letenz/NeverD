@@ -124,7 +124,8 @@ std::vector<uint8_t> fixture() {
   return Bytes;
 }
 
-llvm::Expected<BinaryImage> load(llvm::ArrayRef<uint8_t> Bytes) {
+llvm::Expected<BinaryImage> load(llvm::ArrayRef<uint8_t> Bytes,
+                                 bool Restricted = false) {
   int FD = -1;
   llvm::SmallString<128> Path;
   if (const auto Error = llvm::sys::fs::createTemporaryFile(
@@ -135,6 +136,8 @@ llvm::Expected<BinaryImage> load(llvm::ArrayRef<uint8_t> Bytes) {
   File.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
   File.close();
   COFFLoader Loader;
+  if (Restricted)
+    Loader.restrictFunctions({Base + 0x1000});
   return Loader.load(std::string(Path));
 }
 
@@ -199,6 +202,95 @@ TEST_F(PEFixedImageTest, CompleteFieldsAdmitCodeAndDataButExcludeLoaderWrites) {
   EXPECT_FALSE(View->read(Base + 0x21fd, 4, false));
   EXPECT_FALSE(View->read(InvalidVA, 2, false));
   EXPECT_FALSE(View->read(Base, 0, false));
+}
+
+TEST_F(PEFixedImageTest, ZeroVirtualSizesRetainOriginalBytesAndMetadata) {
+  auto Bytes = fixture();
+  for (unsigned I = 0; I != 4; ++I)
+    put32(Bytes, SectionTable + I * 40 + 8, 0);
+  auto Loaded = load(Bytes);
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  EXPECT_EQ(Loaded->Raw, Bytes);
+  ASSERT_EQ(Loaded->Segments.size(), 4u);
+  ASSERT_EQ(Loaded->Sections.size(), 4u);
+  for (unsigned I = 0; I != 4; ++I) {
+    EXPECT_EQ(Loaded->Segments[I].Size, SectionBytes);
+    EXPECT_EQ(Loaded->Sections[I].Size, SectionBytes);
+    EXPECT_EQ(Loaded->Segments[I].Data.size(), SectionBytes);
+  }
+  ASSERT_EQ(Loaded->Imports.size(), 1u);
+  EXPECT_EQ(Loaded->Imports.front().IATAddr, Base + 0x3080);
+  EXPECT_EQ(Loaded->Imports.front().Ordinal, 1u);
+  EXPECT_EQ(Loaded->BaseRelocations.size(), 2u);
+  auto View = PEFixedImageView::create(*Loaded);
+  ASSERT_TRUE(bool(View)) << llvm::toString(View.takeError());
+  const auto Field = View->read(Base + 0x1002, 8, true);
+  ASSERT_TRUE(Field);
+  EXPECT_EQ(llvm::support::endian::read64le(Field->data()), Value);
+  EXPECT_TRUE(View->read(Base + 0x2040, 8, false));
+  EXPECT_FALSE(View->read(Base + 0x3080, 8, false));
+  EXPECT_FALSE(View->read(Base + 0x2200, 1, false));
+}
+
+TEST_F(PEFixedImageTest, ZeroVirtualSizesCannotHideMalformedSectionOwners) {
+  for (unsigned Case = 0; Case != 5; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Bytes = fixture();
+    for (unsigned I = 0; I != 4; ++I)
+      put32(Bytes, SectionTable + I * 40 + 8, 0);
+    switch (Case) {
+    case 0:
+      put32(Bytes, SectionTable + 40 + 20, SectionTable);
+      break;
+    case 1:
+      put32(Bytes, SectionTable + 40 + 12, UINT32_MAX - 0x100);
+      break;
+    case 2:
+      Bytes.pop_back();
+      break;
+    case 3:
+      put32(Bytes, SectionTable + 40 + 12, 0x1100);
+      break;
+    case 4:
+      put32(Bytes, SectionTable + 40 + 20, Text);
+      break;
+    }
+    auto Loaded = load(Bytes);
+    ASSERT_FALSE(bool(Loaded));
+    EXPECT_NE(llvm::toString(Loaded.takeError()).find("extents"),
+              std::string::npos);
+  }
+}
+
+TEST_F(PEFixedImageTest, ReaderProjectionCannotChangeFileOnlyDebugIdentity) {
+  auto Bytes = fixture();
+  for (unsigned I = 0; I != 4; ++I)
+    put32(Bytes, SectionTable + I * 40 + 8, 0);
+  // A bounded file-only RSDS record overlaps a section header. Its GUID
+  // includes the original zero VirtualSize; the reader's private projection
+  // must never become the debug artifact, even without retained Raw bytes.
+  putName(Bytes, SectionTable, "RSDS");
+  directory(Bytes, DEBUG_DIRECTORY, 0x2100,
+            sizeof(llvm::object::debug_directory));
+  llvm::object::debug_directory Debug{};
+  Debug.Type = IMAGE_DEBUG_TYPE_CODEVIEW;
+  Debug.SizeOfData = 25;
+  Debug.PointerToRawData = SectionTable;
+  std::memcpy(Bytes.data() + RData + 0x100, &Debug, sizeof(Debug));
+  PDBBuildIdentity Identity;
+  std::copy_n(Bytes.begin() + SectionTable + 4, Identity.Guid.size(),
+              Identity.Guid.begin());
+  Identity.Age = Text;
+  for (bool Restricted : {false, true}) {
+    SCOPED_TRACE(Restricted);
+    auto Loaded = load(Bytes, Restricted);
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    EXPECT_EQ(Loaded->Raw.empty(), Restricted);
+    EXPECT_EQ(Loaded->DynInfo.CodeViewPDBIdentityState,
+              PDBIdentityState::Unique);
+    ASSERT_TRUE(Loaded->DynInfo.CodeViewPDBIdentity);
+    EXPECT_EQ(*Loaded->DynInfo.CodeViewPDBIdentity, Identity);
+  }
 }
 
 TEST_F(PEFixedImageTest, RecoveryAndNativeProofUseTheSameInstructionEvidence) {
