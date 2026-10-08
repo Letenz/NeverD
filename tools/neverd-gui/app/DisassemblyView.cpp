@@ -129,10 +129,11 @@ void DisassemblyView::remember(Address address) {
   emit historyChanged();
 }
 
-void DisassemblyView::navigate(Address address, bool record) {
+void DisassemblyView::navigate(Address address, bool record,
+                               std::optional<Address> from) {
   if (record) {
     // Record where we were, then where we go, so Esc returns here.
-    if (const auto current = currentAddress()) {
+    if (const auto current = from ? from : currentAddress()) {
       if (history_.empty() || history_[historyIndex_] != *current)
         remember(*current);
     }
@@ -205,6 +206,10 @@ QString DisassemblyView::currentFunctionName() const {
 
 std::optional<Address> DisassemblyView::operandTarget() const {
   return graphMode() ? graph_->operandTarget() : listing_->operandTarget();
+}
+
+std::optional<int> DisassemblyView::currentOperand() const {
+  return graphMode() ? std::nullopt : listing_->currentOperand();
 }
 
 QString DisassemblyView::currentToken() const {

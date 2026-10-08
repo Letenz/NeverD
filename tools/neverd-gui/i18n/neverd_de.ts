@@ -120,8 +120,8 @@
         <translation>&amp;Umbenennen...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>Aktuelle Funktion umbenennen</translation>
+        <source>Rename the current address</source>
+        <translation>Die aktuelle Adresse umbenennen</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,7 +136,7 @@
         <translation>&amp;Wiederholbaren Kommentar eingeben...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Position &amp;markieren...</translation>
     </message>
     <message>
@@ -192,7 +192,7 @@
         <translation>Zum Anfang der vorherigen Funktion wechseln</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
+        <source>Jump to pseudo&amp;code</source>
         <translation>Zum &amp;Pseudocode springen</translation>
     </message>
     <message>
@@ -296,7 +296,7 @@
         <translation>Binärdatei nach einer Bytefolge durchsuchen</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
+        <source>Next se&amp;quence of bytes</source>
         <translation>Nächste Byte&amp;folge</translation>
     </message>
     <message>
@@ -392,7 +392,7 @@
         <translation>LLVM IR der aktuellen Funktion anzeigen</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
+        <source>Generate &amp;LLVM C</source>
         <translation>LLVM &amp;C erzeugen</translation>
     </message>
     <message>
@@ -488,7 +488,7 @@
         <translation>Graphübersicht anzeigen</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
+        <source>MCP c&amp;onnections</source>
         <translation>&amp;MCP-Verbindungen</translation>
     </message>
     <message>
@@ -496,7 +496,7 @@
         <translation>MCP-Verbindungen und Sitzungsfreigabe verwalten</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
+        <source>Ex&amp;tensions</source>
         <translation>&amp;Erweiterungen</translation>
     </message>
     <message>
@@ -528,7 +528,7 @@
         <translation>Vollbild ein-/ausschalten</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
+        <source>I&amp;ncrease font size</source>
         <translation>Schrift &amp;vergrößern</translation>
     </message>
     <message>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>Die aktuelle Funktion nicht mehr als Funktion behandeln</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>&amp;Daten</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>Einen Wert an der aktuellen Adresse definieren; erneut für die nächste Größe</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>&amp;Zeichenkette</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>Die Zeichenkette definieren, die an der aktuellen Adresse beginnt</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>Definition auf&amp;heben</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>Die Bytes des aktuellen Elements als Bytes anzeigen</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>&amp;Zahl</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>Die Zahl des Operanden so zeigen, wie die Liste sie wählt</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>&amp;Hexadezimal</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>Die Zahl des Operanden hexadezimal zeigen</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>&amp;Dezimal</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>Die Zahl des Operanden dezimal zeigen</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>&amp;Binär</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>Die Zahl des Operanden binär zeigen</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>Zei&amp;chen</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>Die Zahl des Operanden als Zeichen zeigen</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>&amp;Offset</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>Die Zahl des Operanden als die Adresse zeigen, die sie benennt</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>&amp;Vorzeichen wechseln</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>Die Zahl des Operanden mit gewechseltem Vorzeichen zeigen</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>Bitweise ne&amp;gieren</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>Die Zahl des Operanden mit invertierten Bits zeigen</translation>
     </message>
 </context>
 <context>
@@ -1094,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>&amp;Funktionen</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>Operanden&amp;typ</translation>
     </message>
 </context>
 <context>
@@ -1708,12 +1800,8 @@ Doppelklicken springt zur Deklaration.</translation>
         <translation> · schreibgeschützt</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 ist kein Funktionsanfang; nur Funktionen können umbenannt werden.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>Funktion umbenennen</translation>
+        <source>Rename address</source>
+        <translation>Adresse umbenennen</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -2122,6 +2210,18 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>Deleted the function at %1</source>
         <translation>Funktion bei %1 gelöscht</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>Die Bytes bei %1 sind bereits undefiniert</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>Definition des Elements bei %1 aufgehoben</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%1 bei %2 definiert</translation>
     </message>
 </context>
 </TS>

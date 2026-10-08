@@ -120,8 +120,8 @@
         <translation>이름 바꾸기(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>현재 함수의 이름을 바꿉니다</translation>
+        <source>Rename the current address</source>
+        <translation>현재 주소의 이름을 바꿉니다</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,8 +136,8 @@
         <translation>반복 주석 입력(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>위치 표시(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>위치 표시(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>
@@ -192,8 +192,8 @@
         <translation>이전 함수의 시작 위치로 이동합니다</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>의사 코드로 이동(&amp;E)</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>의사 코드로 이동(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>바이너리에서 바이트 시퀀스를 검색합니다</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>다음 바이트 시퀀스(&amp;U)</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>다음 바이트 시퀀스(&amp;Q)</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>현재 함수의 LLVM IR을 표시합니다</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>LLVM C 생성(&amp;C)</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>LLVM C 생성(&amp;L)</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>그래프 개요를 표시합니다</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>MCP 연결(&amp;C)</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>MCP 연결(&amp;O)</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>MCP 연결과 세션 공유를 관리합니다</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>확장 기능(&amp;X)</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>확장 기능(&amp;T)</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>전체 화면 모드를 켜거나 끕니다</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>글꼴 크기 늘리기(&amp;I)</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>글꼴 크기 늘리기(&amp;N)</translation>
     </message>
     <message>
         <source>Increase the code font size</source>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>현재 함수를 더 이상 함수로 취급하지 않습니다</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>데이터(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>현재 주소에 값을 정의합니다. 다시 누르면 다음 크기로 바뀝니다</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>문자열(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>현재 주소에서 시작하는 문자열을 정의합니다</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>정의 해제(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>현재 항목을 바이트로 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>숫자(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>피연산자의 숫자를 목록의 기본 형식으로 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>16진수(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>피연산자의 숫자를 16진수로 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>10진수(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>피연산자의 숫자를 10진수로 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>2진수(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>피연산자의 숫자를 2진수로 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>문자(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>피연산자의 숫자를 문자로 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>오프셋(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>피연산자의 숫자를 가리키는 주소의 이름으로 표시합니다</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>부호 바꾸기(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>피연산자의 숫자를 부호를 바꿔 표시합니다</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>비트 반전(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>피연산자의 숫자를 비트를 반전하여 표시합니다</translation>
     </message>
 </context>
 <context>
@@ -1094,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>함수(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>피연산자 형식(&amp;T)</translation>
     </message>
 </context>
 <context>
@@ -1705,12 +1797,8 @@ Double-click to go to the declaration.</source>
         <translation> · 읽기 전용</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1은(는) 함수 시작 주소가 아닙니다. 함수만 이름을 바꿀 수 있습니다.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>함수 이름 바꾸기</translation>
+        <source>Rename address</source>
+        <translation>주소 이름 바꾸기</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -2119,6 +2207,18 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>%1의 함수를 삭제했습니다</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>%1의 바이트는 이미 정의되지 않은 상태입니다</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>%1의 항목 정의를 해제했습니다</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%2에 %1을(를) 정의했습니다</translation>
     </message>
 </context>
 </TS>

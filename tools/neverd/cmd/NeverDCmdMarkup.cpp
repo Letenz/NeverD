@@ -276,9 +276,38 @@ int runRename(neverd_session_t Sess) {
     }
     if (Json)
       neverd_free_string(Json);
+  } else if (!RenameAddr.empty()) {
+    const std::optional<uint64_t> Addr = parseAddrArg(RenameAddr);
+    if (!Addr) {
+      WithColor::error() << "invalid rename address\n";
+      return 1;
+    }
+    if (RenameClear == !RenameTo.empty()) {
+      WithColor::error() << "rename --addr takes --to <name> or --clear\n";
+      return 1;
+    }
+    if (neverd_rename_addr(Sess, *Addr,
+                           RenameClear ? nullptr
+                                       : RenameTo.getValue().c_str()) != 0) {
+      WithColor::error() << "rename failed: " << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    if (JsonOutput) {
+      json::Object Result;
+      Result["addr"] = "0x" + utohexstr(*Addr);
+      Result["name"] =
+          RenameClear ? json::Value(nullptr) : json::Value(RenameTo.getValue());
+      outs() << json::Value(std::move(Result)) << "\n";
+    } else if (RenameClear) {
+      outs() << "Cleared the name of 0x" << utohexstr(*Addr) << "\n";
+    } else {
+      outs() << "Named 0x" << utohexstr(*Addr) << " " << RenameTo.getValue()
+             << "\n";
+    }
   } else {
     if (RenameFrom.empty() || RenameTo.empty()) {
-      WithColor::error() << "rename requires --func <old> --to <new>\n";
+      WithColor::error()
+          << "rename requires --func <old> --to <new> or --addr <address>\n";
       return 1;
     }
     int Ret = neverd_rename_func(Sess, RenameFrom.getValue().c_str(),
@@ -365,6 +394,223 @@ int runFunctionEdits(neverd_session_t Sess) {
                          Obj->getString("addr").value_or("").str().c_str(),
                          Obj->getString("state").value_or("").str().c_str());
         ++Count;
+      }
+    }
+    if (Count == 0)
+      outs() << "  (none)\n";
+  }
+  neverd_free_string(Json);
+  return 0;
+}
+
+namespace {
+#define NEVERD_DATA_ITEM_KIND(Id, Spelling)                                    \
+  constexpr StringLiteral Id(Spelling);
+#include "neverd/DataNames.def"
+
+/// The kind of a value item \p Bytes wide: its size keyword, for the widths
+/// a value item has (1, 2, 4 or 8); empty otherwise.
+StringRef valueItemKind(unsigned Bytes) {
+  if (Bytes > 8 || (Bytes & (Bytes - 1)) != 0)
+    return {};
+#define NEVERD_DATA_SIZE_NAME(SizeKeyword, Size, Prefix)                       \
+  if (Bytes == Size)                                                           \
+    return SizeKeyword;
+#include "neverd/DataNames.def"
+  return {};
+}
+
+/// The row that makes the bytes at \p Addr the item the options ask for, or
+/// an error message.
+Expected<json::Object> itemRow(neverd_session_t Sess, uint64_t Addr) {
+  if (!ItemData.empty()) {
+    const StringRef Kind = valueItemKind(ItemSize);
+    if (Kind.empty())
+      return createStringError(inconvertibleErrorCode(),
+                               "a value is 1, 2, 4 or 8 bytes");
+    return json::Object{{"kind", Kind}};
+  }
+  if (!ItemUndefine.empty()) {
+    if (!ItemSize)
+      return createStringError(inconvertibleErrorCode(),
+                               "undefined bytes are at least one byte");
+    return json::Object{{"kind", UndefinedItemKind},
+                        {"size", static_cast<int64_t>(ItemSize)}};
+  }
+  // The string the scan reads there, from its first character.
+  std::string Options;
+  if (!ItemEncoding.empty())
+    Options = formatv("{0}", json::Value(json::Object{
+                                 {"encodings", json::Array{ItemEncoding}}}));
+  const char *Found =
+      neverd_string_at(Sess, Addr, Options.empty() ? nullptr : Options.c_str());
+  if (!Found)
+    return createStringError(inconvertibleErrorCode(),
+                             "no string starts at 0x" + utohexstr(Addr) + ": " +
+                                 takeLastError(Sess));
+  auto Parsed = json::parse(Found);
+  neverd_free_string(Found);
+  const json::Object *String = Parsed ? Parsed->getAsObject() : nullptr;
+  if (!String) {
+    if (!Parsed)
+      consumeError(Parsed.takeError());
+    return createStringError(inconvertibleErrorCode(),
+                             "the engine read no string");
+  }
+  return json::Object{{"kind", StringItemKind},
+                      {"encoding", String->getString("encoding").value_or("")},
+                      {"size", String->getInteger("length").value_or(0) +
+                                   String->getInteger("unit").value_or(0)}};
+}
+} // namespace
+
+int runItems(neverd_session_t Sess) {
+  const std::string *Edits[] = {&ItemData.getValue(), &ItemString.getValue(),
+                                &ItemUndefine.getValue(),
+                                &ItemClear.getValue()};
+  const auto Chosen =
+      llvm::count_if(Edits, [](const std::string *E) { return !E->empty(); });
+  if (Chosen > 1) {
+    WithColor::error()
+        << "--data, --string, --undefine and --clear edit one item at a time\n";
+    return 1;
+  }
+  if (Chosen == 1) {
+    const auto *Text =
+        *llvm::find_if(Edits, [](const std::string *E) { return !E->empty(); });
+    const std::optional<uint64_t> Addr = parseAddrArg(*Text);
+    if (!Addr) {
+      WithColor::error() << "invalid item address\n";
+      return 1;
+    }
+    if (!ItemClear.empty()) {
+      if (neverd_item_clear(Sess, *Addr) != 0) {
+        WithColor::error() << "clear failed: " << takeLastError(Sess) << "\n";
+        return 1;
+      }
+    } else {
+      auto Row = itemRow(Sess, *Addr);
+      if (!Row) {
+        WithColor::error() << toString(Row.takeError()) << "\n";
+        return 1;
+      }
+      const std::string Text = formatv("{0}", json::Value(std::move(*Row)));
+      if (neverd_item_set(Sess, *Addr, Text.c_str()) != 0) {
+        WithColor::error() << "define failed: " << takeLastError(Sess) << "\n";
+        return 1;
+      }
+    }
+    if (neverd_items_save(Sess) != 0) {
+      WithColor::error() << "data items save failed: " << takeLastError(Sess)
+                         << "\n";
+      return 1;
+    }
+    if (!JsonOutput)
+      outs() << (ItemClear.empty() ? "Defined the item at 0x"
+                                   : "Cleared the item at 0x")
+             << utohexstr(*Addr) << "\n";
+  }
+  // The items, after any edit.
+  const char *Json = neverd_items_json(Sess);
+  if (JsonOutput) {
+    outs() << (Json ? Json : "[]") << "\n";
+  } else {
+    outs() << "\nData items:\n";
+    outs() << format("  %-18s %-10s %8s  %s\n", "Address", "Kind", "Size",
+                     "Encoding");
+    outs() << "  " << std::string(50, '-') << "\n";
+    size_t Count = 0;
+    auto Parsed = json::parse(Json ? Json : "[]");
+    if (!Parsed) {
+      consumeError(Parsed.takeError());
+    } else if (const json::Array *Arr = Parsed->getAsArray()) {
+      for (const json::Value &V : *Arr) {
+        const json::Object *Obj = V.getAsObject();
+        if (!Obj)
+          continue;
+        outs() << format(
+            "  %-18s %-10s %8lld  %s\n",
+            Obj->getString("addr").value_or("").str().c_str(),
+            Obj->getString("kind").value_or("").str().c_str(),
+            static_cast<long long>(Obj->getInteger("size").value_or(0)),
+            Obj->getString("encoding").value_or("").str().c_str());
+        ++Count;
+      }
+    }
+    if (Count == 0)
+      outs() << "  (none)\n";
+  }
+  neverd_free_string(Json);
+  return 0;
+}
+
+int runOperands(neverd_session_t Sess) {
+  if (!OperandAddr.empty()) {
+    const std::optional<uint64_t> Addr = parseAddrArg(OperandAddr);
+    if (!Addr) {
+      WithColor::error() << "invalid instruction address\n";
+      return 1;
+    }
+    std::string Format;
+    if (!OperandClear)
+      Format = formatv("{0}", json::Value(json::Object{
+                                  {"base", OperandBase.getValue()},
+                                  {"negate", OperandNegate.getValue()},
+                                  {"invert", OperandInvert.getValue()}}))
+                   .str();
+    if (neverd_operand_format_set(Sess, *Addr, static_cast<int>(OperandIndex),
+                                  OperandClear ? nullptr : Format.c_str()) !=
+        0) {
+      WithColor::error() << "format failed: " << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    if (neverd_operand_formats_save(Sess) != 0) {
+      WithColor::error() << "operand formats save failed: "
+                         << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    if (!JsonOutput)
+      outs() << (OperandClear ? "Cleared operand " : "Formatted operand ")
+             << OperandIndex << " at 0x" << utohexstr(*Addr) << "\n";
+  }
+  // The formats, after any edit.
+  const char *Json = neverd_operand_formats_json(Sess);
+  if (JsonOutput) {
+    outs() << (Json ? Json : "[]") << "\n";
+  } else {
+    outs() << "\nOperand formats:\n";
+    outs() << format("  %-18s %-8s %-10s %s\n", "Address", "Operand", "Base",
+                     "Changes");
+    outs() << "  " << std::string(50, '-') << "\n";
+    size_t Count = 0;
+    auto Parsed = json::parse(Json ? Json : "[]");
+    if (!Parsed) {
+      consumeError(Parsed.takeError());
+    } else if (const json::Array *Rows = Parsed->getAsArray()) {
+      for (const json::Value &Row : *Rows) {
+        const json::Object *Object = Row.getAsObject();
+        const json::Array *Operands =
+            Object ? Object->getArray("operands") : nullptr;
+        if (!Operands)
+          continue;
+        for (const json::Value &Entry : *Operands) {
+          const json::Object *Operand = Entry.getAsObject();
+          if (!Operand)
+            continue;
+          std::string Changes;
+          if (Operand->getBoolean("negate").value_or(false))
+            Changes += "sign ";
+          if (Operand->getBoolean("invert").value_or(false))
+            Changes += "bits ";
+          outs() << format(
+              "  %-18s %-8lld %-10s %s\n",
+              Object->getString("addr").value_or("").str().c_str(),
+              static_cast<long long>(
+                  Operand->getInteger("operand").value_or(0)),
+              Operand->getString("base").value_or("").str().c_str(),
+              Changes.c_str());
+          ++Count;
+        }
       }
     }
     if (Count == 0)

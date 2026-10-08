@@ -120,8 +120,8 @@
         <translation>名前の変更(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>現在の関数の名前を変更します</translation>
+        <source>Rename the current address</source>
+        <translation>現在のアドレスの名前を変更します</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,8 +136,8 @@
         <translation>リピータブルコメントを入力(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>位置をマーク(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>位置をマーク(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>
@@ -192,8 +192,8 @@
         <translation>前の関数の先頭へ移動します</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>疑似コードへジャンプ(&amp;E)</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>疑似コードへジャンプ(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>バイナリ内のバイト列を検索します</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>次のバイト列(&amp;U)</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>次のバイト列(&amp;Q)</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>現在の関数の LLVM IR を表示します</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>LLVM C を生成(&amp;C)</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>LLVM C を生成(&amp;L)</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>グラフ概要を表示します</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>MCP 接続(&amp;C)</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>MCP 接続(&amp;O)</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>MCP 接続とセッション共有を管理します</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>拡張機能(&amp;X)</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>拡張機能(&amp;T)</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>全画面表示を切り替えます</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>フォントサイズを拡大(&amp;I)</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>フォントサイズを拡大(&amp;N)</translation>
     </message>
     <message>
         <source>Increase the code font size</source>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>現在の関数を関数として扱わないようにします</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>データ(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>現在のアドレスに値を定義します。もう一度押すと次のサイズになります</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>文字列(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>現在のアドレスから始まる文字列を定義します</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>定義解除(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>現在の項目をバイトとして表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>数値(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>オペランドの数値をリストの既定の形式で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>16 進数(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>オペランドの数値を 16 進数で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>10 進数(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>オペランドの数値を 10 進数で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>2 進数(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>オペランドの数値を 2 進数で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>文字(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>オペランドの数値を文字で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>オフセット(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>オペランドの数値を指すアドレスの名前で表示します</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>符号を反転(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>オペランドの数値を符号を反転して表示します</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>ビット反転(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>オペランドの数値をビット反転して表示します</translation>
     </message>
 </context>
 <context>
@@ -1094,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>関数(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>オペランドの型(&amp;T)</translation>
     </message>
 </context>
 <context>
@@ -1705,12 +1797,8 @@ Double-click to go to the declaration.</source>
         <translation> · 読み取り専用</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 は関数の先頭ではありません。名前を変更できるのは関数のみです。</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>関数名の変更</translation>
+        <source>Rename address</source>
+        <translation>アドレスの名前を変更</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -2119,6 +2207,18 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>%1 の関数を削除しました</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>%1 のバイトはすでに未定義です</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>%1 の項目の定義を解除しました</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%2 に %1 を定義しました</translation>
     </message>
 </context>
 </TS>

@@ -43,6 +43,34 @@ set `NEVERD_ENGINE_LIBRARY` to the runtime DLL and `NEVERD_ENGINE_IMPLIB` to its
 matching import `.lib`; make runtime dependencies available alongside the
 worker.
 
+Open a binary or a project with **File → Open**, or drag one file from
+the system file manager onto the quick-start dialog, workbench or a floating
+view. File drops use the same open workflow, including the save/discard/cancel
+prompt for unsaved changes. Drop one existing file at a time; directories and
+web URLs are not opened. Opening by drag and drop leaves the source file in
+place.
+
+PE browsing tolerates complete legacy relocation layouts and reports unusable
+entry/import metadata in **Output**. An unknown entry opens at a mapped code
+region for browsing; this does not reconstruct the program's OEP. Invalid import
+bindings remain unknown, and fixed-image semantic checks retain their stricter
+requirements. Truncated or unmappable image structures can still prevent loading.
+
+Local file paths passed between the GUI, worker, CLI and C ABI use UTF-8 on
+all platforms. Windows paths are converted to native filesystem paths before
+loading binaries, companion PDB/MAP files, signatures and project sidecars.
+Chinese names, spaces and other Unicode characters are supported without
+changing the Windows system code page.
+
+The default application and code font is Consolas at 10 points when that
+family is installed. Otherwise, the system fixed-width font is used. A saved
+code-font choice continues to override the default for code views.
+
+Double-clicking a function name in a code view follows it in that same window,
+keeping its C or LLVM C representation even when the window is locked. Back and
+forward navigation also stays in the active code window. Imports and global
+objects continue to open at their addresses in the disassembly or hex view.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.
@@ -98,7 +126,12 @@ shows the whole function and the visible area.
 
 **Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
 MedIR, HighIR or LLVM IR of the current function and follow the disassembly
-unless their lock is set. The LLVM views translate the current function alone,
+unless their lock is set. A window hidden behind another tab catches up when it
+is shown, so moving through the disassembly never waits for a decompile no one
+sees, and F5 pressed while a jump is loading decompiles the function the jump
+lands in. The engine emits a function's source once and pages it from there; a
+function longer than one page keeps the listing's names, such as `main`. The
+LLVM views translate the current function alone,
 with the others declared, so a function the engine refuses to translate shows
 its reason without affecting other functions. Rows mapped to instructions move
 the disassembly cursor. C opens at the function: the includes, support types and
@@ -152,22 +185,40 @@ a routine returns keeps the integer the machine reads,
 converts to the type its header declares: `qsort(base, n, 4, (int (*)(const
 void *, const void *))compare)`.
 
-C++ names read as a classic disassembler shows them: the listing keeps the
-linkage name an instruction uses and adds its demangled form as a comment
+Mangled names read as their language spells them: the listing keeps the
+linkage name an instruction uses and adds the readable form as a comment
 (`call _ZN8QDomNodeC1Ev ; QDomNode::QDomNode()`), a function with a mangled
-name has the demangled one above its header, and the Functions window lists
-every function demangled, PLT entries included, with the filter matching
-either spelling. Itanium, Microsoft, Rust and D names are demangled.
+name has the readable one above its header, and the Functions window lists
+every function that way, PLT entries included, with the filter matching
+either spelling. Itanium and Microsoft C++, Rust (legacy and v0), Swift and D
+names are read. C++ names are as short as they can be without naming anything
+else: `std::__cxx11::basic_string<char, std::char_traits<char>,
+std::allocator<char>>::~basic_string()` reads `std::string::~string()` and
+`std::vector<int, std::allocator<int>>` reads `std::vector<int>`. A legacy
+Rust name loses its `::h<hash>`, and a Swift name reads as a declaration path
+with its argument labels (`Demo.Box.update(with:)`).
 
-C has no `::`, so in C pseudocode a C++ function reads by its scopes joined
-with underscores: `QDomNode_nodeType`, constructors and destructors as
-`QDomNode_ctor` and `QDomNode_dtor`, operators by name (`QString_assign`).
-Its complete demangled signature is a comment above its definition, overloads
-sharing a name are numbered (`QDomNodeList_ctor_2`), and an imported C++
-function keeps its mangled symbol in an `__asm__` label so that the code still
-links. Other names keep every byte of their symbol (`__libc_start_main`), apart
-from the underscore Mach-O and 32-bit Windows add to C names and the start-up
-functions the C runtime defines itself (`_start` reads `start`).
+The pseudocode is C that compiles, so a name C cannot spell reads by a C
+identifier made from it, with its readable form in a comment: above a
+definition, after an `extern` declaration and on the `neverd.image` line of a
+global. A C++ function reads by its scopes joined with underscores:
+`QDomNode_nodeType`, constructors and destructors as `QDomNode_ctor` and
+`QDomNode_dtor`, operators by name (`QString_assign`), and the objects the C++
+ABI emits by what they are (`QDomNode_vtable`). Rust and D paths read the same
+way (`core_fmt_write`; a trait's method keeps the trait,
+`String_Write_write_fmt`), Swift by its declaration path
+(`Demo_Box_count_getter`) and an Objective-C method as the GNU runtime names it
+(`-[NSString length]` is `_i_NSString__length`). Punctuation in other names
+separates words: Go's `fmt.(*pp).doPrintf` is `fmt_pp_doPrintf` and GCC's
+`foo.constprop.0` is `foo_constprop_0`. Distinct symbols that read alike are
+numbered (`QDomNodeList_ctor_2`), except MSVC C++ stems, which the MSVC rules
+share between overloads. An imported function whose identifier is not its
+symbol keeps the symbol in an `__asm__` label so that the code still links.
+Other names keep every byte of their symbol (`__libc_start_main`), apart from
+the underscore Mach-O and 32-bit Windows add to C names and the start-up
+functions the C runtime defines itself (`_start` reads `start`). A name an
+image spells with control characters, and that no scheme reads, is never
+copied into a comment.
 
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
@@ -227,8 +278,9 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Space | Toggle graph and text view |
 | F5 / Tab | Pseudocode / switch between disassembly and pseudocode |
 | X / Ctrl+X / Ctrl+J | References to the operand / to the item / from the item |
-| N | Rename the function |
+| N | Rename the name under the cursor, or the address: a function at its entry, data, a label in code |
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |
+| D / A / U | Make data (again for the next size) / a string / bytes of the item |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
 | Ctrl+P / Ctrl+L / Ctrl+S / Ctrl+E | Choose a function / name / segment / entry point |
@@ -283,11 +335,11 @@ not a NeverD database.
 
 ## Edits, history and analysis
 
-Comments are staged and saved explicitly; renames and function edits commit at
-once (staged comments are saved first). Opening another file, restarting the
+Comments are staged and saved explicitly; renames, function edits and data
+items commit at once (staged comments are saved first). Opening another file, restarting the
 worker or quitting with unsaved comments offers Save, Discard and Cancel. Edits
 prepared for a session that has since closed are refused, never applied to the
-new one. Annotation, rename and function edit commands have bounded undo/redo
+new one. Annotation, rename, function edit and data item commands have bounded undo/redo
 history bound to the input hash and sidecar contents; a write-ahead journal
 recovers an interrupted save, and foreign edits disable replay instead of
 silently applying commands to another state. One worker owns a writable input
@@ -301,6 +353,41 @@ symbols, the function detector and analysis, and the edits are kept in
 function-edits <input> --create <address>`, `--delete <address>`, `--list`).
 A function edit drops whole-program analysis results: analysis continues
 function by function until **Analyze** runs again.
+
+**Edit → Rename** (N) names any address, as the listing and the pseudocode
+show it: a name under the cursor renames what it denotes, otherwise the item
+the cursor is on. A data name replaces `qword_A410` in its label, every operand
+(`mov rdx, cs:pname`) and the C (`fprintf(stderr, "%s: %s\n", pname, msg)`). A
+name has no spaces, leads to one address and is never an automatic name such
+as `sub_1234`. Names are kept in `<input>.neverd-renames.json`, which the
+command line reads and writes too (`neverd rename <input> --addr <address>
+--to <name>`, `--clear`).
+
+**Edit → Data** (D) makes the item under the cursor a value, and pressing it
+again cycles the value through byte, word, dword and qword; **Edit → String**
+(A) makes the string that starts there an item, read as the string scan reads
+one; **Edit → Undefine** (U) shows the item's bytes as bytes, whatever
+analysis reads in them. D or A inside undefined bytes takes just the bytes the
+new item needs and leaves the rest undefined, and each press is one step of
+undo history. Code belongs to its function and is never made data. The items
+are kept in `<input>.neverd-items.json`, which the command line reads and
+writes too (`neverd items <input> --data <address> --size 4`, `--string
+<address>`, `--undefine <address> --size <n>`, `--clear <address>`).
+
+**Edit → Operand type** shows an instruction operand's number the way the user
+picks, as IDA's keys do: **Hexadecimal** (Q), **Decimal** (H), **Binary** (B),
+**Character** (R, `'ABCD'` when every byte is printable), **Offset** (O, the
+name of the address the number points at), **Change sign** (`_`, the two's
+complement with a minus) and **Bitwise negate** (`~`); **Number** (`#`) goes
+back to the listing's own choice. The number under the cursor changes; with
+the cursor elsewhere on the line, the line's last number does, and a line
+without one is refused. Only x86 instructions show operand types so far. A form
+the value cannot take, such as characters for unprintable bytes or an offset to
+an address with no name, leaves the listing's number. Each change is one step
+of undo history and is kept in `<input>.neverd-operands.json`, which the command
+line reads and writes too (`neverd operands <input> --addr <address> --operand 1
+--base decimal`, `--negate`, `--invert`, `--clear`; the address lies in
+executable code).
 
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a

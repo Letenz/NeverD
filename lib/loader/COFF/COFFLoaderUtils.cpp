@@ -375,36 +375,6 @@ void detail::CodeViewIdentityRegistry::observeMalformed() {
   Identity.reset();
 }
 
-void addImportedSymbol(const llvm::object::imported_symbol_iterator &SI,
-                       llvm::StringRef ModuleName, va_t IATAddr,
-                       BinaryImage &Img) {
-  Import Imp;
-  Imp.Module = ModuleName.str();
-  Imp.IATAddr = IATAddr;
-
-  bool ByOrd = false;
-  if (auto Err = SI->isOrdinal(ByOrd))
-    llvm::consumeError(std::move(Err));
-
-  if (ByOrd) {
-    uint16_t Ord = 0;
-    if (auto Err = SI->getOrdinal(Ord))
-      llvm::consumeError(std::move(Err));
-    Imp.Ordinal = Ord;
-    Imp.Name = (kOrdinalPrefix + llvm::Twine(Ord)).str();
-  } else {
-    llvm::StringRef SymName;
-    if (auto Err = SI->getSymbolName(SymName))
-      llvm::consumeError(std::move(Err));
-    else
-      Imp.Name = SymName.str();
-  }
-
-  Img.recordImportStorageSlot(IATAddr, Imp.Name, 0,
-                              ImportStorageEvidence::ImportDirectory);
-  Img.Imports.push_back(std::move(Imp));
-}
-
 size_t
 parseDelayImportDescriptor(const delay_import_directory_table_entry &Desc,
                            BinaryImage &Img) {
@@ -460,6 +430,16 @@ parseDelayImportDescriptor(const delay_import_directory_table_entry &Desc,
 }
 
 void parseDelayImports(const COFFObjectFile &Obj, BinaryImage &Img) {
+  const auto *Directory = Obj.getDataDirectory(DELAY_IMPORT_DESCRIPTOR);
+  if (!Directory || (!Directory->RelativeVirtualAddress && !Directory->Size))
+    return;
+  if (!Directory->RelativeVirtualAddress ||
+      Directory->Size < sizeof(delay_import_directory_table_entry)) {
+    Img.addLoadDiagnostic("pe.delay_import_directory_invalid",
+                          "PE delay-import directory is incomplete; "
+                          "delay imports were ignored.");
+    return;
+  }
   [[maybe_unused]] size_t Added = 0;
   for (auto I = Obj.delay_import_directory_begin(),
             E = Obj.delay_import_directory_end();
@@ -582,7 +562,8 @@ void parseTLSDirectory(const COFFObjectFile &Obj, BinaryImage &Img,
                           << " callbacks\n");
 }
 
-void parseDebugDirectory(const COFFObjectFile &Obj, BinaryImage &Img) {
+void parseDebugDirectory(const COFFObjectFile &Obj, BinaryImage &Img,
+                         llvm::ArrayRef<uint8_t> OriginalBytes) {
   Img.DynInfo.PDBPath.clear();
   Img.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
   Img.DynInfo.CodeViewPDBIdentity.reset();
@@ -605,9 +586,11 @@ void parseDebugDirectory(const COFFObjectFile &Obj, BinaryImage &Img) {
     return;
   }
 
-  llvm::StringRef FileData = Obj.getData();
-  const llvm::ArrayRef<uint8_t> FileBytes(
-      reinterpret_cast<const uint8_t *>(FileData.data()), FileData.size());
+  // File-only records can name header bytes. Read their original occurrence,
+  // including on restricted loads that do not retain BinaryImage::Raw.
+  const auto FileBytes = OriginalBytes.empty()
+                             ? llvm::arrayRefFromStringRef(Obj.getData())
+                             : OriginalBytes;
   std::vector<detail::RawBackedSectionRange> Sections;
   Sections.reserve(Obj.getNumberOfSections());
   for (const SectionRef &SectionRef : Obj.sections()) {

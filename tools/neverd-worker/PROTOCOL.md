@@ -97,10 +97,20 @@ ignores case in any script, by the engine's Unicode simple case folding
 (`neverd_fold_case`; only ASCII letters fold with an engine without it), so
 "ПРИВЕТ" finds "привет"; the rows keep their original text.
 
+Metadata also includes `loader_diagnostics:[{code,message}]`. An older engine
+without the additive query exposes an empty array. The `open` reply includes
+these messages in `warnings`; they describe the currently loaded image without
+repairing its bytes or authorizing inferred semantics. Invalid PE entry metadata
+exposes `entry_address:"0x0"`; clients can choose a mapped browsing position
+without changing that entry. Invalid ordinary import descriptors publish no
+guessed identities/storage bindings, while independent valid descriptors remain
+available. Complete legacy WORD-packed relocation blocks are retained with a
+diagnostic; fixed-image authentication still requires its stricter evidence.
+
 | Operation | Payload and result |
 |---|---|
 | `open` | `{path:string,read_only:false}`. Loads a regular file into a new Session, keeping the old Session on failure; returns metadata plus `warnings:[]`. Project ID changes and revision increases on success. |
-| `metadata` | Returns `path,architecture,format,bitness,file_size` (decimal string), `base_address,entry_address,function_count,segment_count,section_count,import_count,export_count,symbol_count,analyzed,analysis_state,read_only,dirty`. `function_count` is null before EVM/SBF analysis where a quick list is unavailable. |
+| `metadata` | Returns `path,architecture,format,bitness,file_size` (decimal string), `base_address,entry_address,function_count,segment_count,section_count,import_count,export_count,symbol_count,language,analyzed,analysis_state,read_only,dirty`. `function_count` is null before EVM/SBF analysis where a quick list is unavailable. `language` is `neverd_headers_json`'s: `{runtime,version?,secondary:[],evidence:[]}`, the runtime that built the image (`c`, `c++-itanium`, `c++-msvc`, `rust`, `go`, `objective-c`, `swift`, `delphi`, `ada`, `d` or `unknown`). |
 | `functions` | Standard page in address order, filtered by display name, engine name, the name demangled or hex address and optionally sorted by `{sort:field,descending}`. Items carry `{name,address,size,library,thunk,exported}` under the workbench display name (see Listing below) plus `engine_name` when that differs, and may add `display_name,linkage_name,name_origin,display_origin,linkage_origin,recognition_state,library_annotations` from the shared session identity. A function the workbench names, such as a PLT entry `__ZN10QByteArrayC1EPKcx`, shows its name demangled (`neverd_demangle`) as `display_name`. The order is cached per filter, sort and listing generation; a table beyond one million functions is refused explicitly. |
 | `resolve` | `{query:"0x..."}` or exact symbol name. Returns `{address,function_address:hex|null,name,comment,import}`. Optional display/linkage/evidence fields share the function-list identity. For an interior VA, containing function discovery uses engine sizes. An unmapped numeric VA remains an exact navigation address. An import's name, as its symbol or as C calls it (`c_name` from the engine), resolves to its thunk where it has one and otherwise to its slot; `import` says whether the address is an import's slot or thunk. |
 | `disasm` | `{address,limit:128}`; limit 1–512 instructions. Returns `{items,address,next_address:hex|null,complete}`. Rows `{address,size,bytes,mnemonic,operands,comment}` may include backend decode status. `next_address` is computed from the last decoded instruction's size, with overflow checks. A full page's successor is a continuation candidate; an empty following page means decoding ended. |
@@ -127,10 +137,13 @@ ignores case in any script, by the engine's Unicode simple case folding
 | `annotations` | Standard page by text; rows `{address,text}`. |
 | `annotation_set` | `{address,text}`; an empty string removes the comment. Stages an edit, increments revision, returns `{address,text,dirty:true,saved:false}`. Requires the writer lock. |
 | `save` | Commits staged annotations and their command-history cursor through the recovery journal; returns `{saved:true,dirty:false}` after flushing. Requires the writer lock. |
-| `rename` | `{address,name}`; address must be a function entry. Requires clean annotations; never autosaves staged notes. Commits the rename plus history through the journal, reloads through the public C ABI, invalidates caches and increments revision. Returns `{address,name,saved:true}`. Requires the writer lock. |
-| `reload` | Explicitly reloads both sidecars, discards staged annotations, clears dirty state, invalidates caches and increments revision. Returns metadata. |
-| `history` | Standard `offset/limit` page. Returns `{schema_version:1,items,total,cursor,offset,next_offset,complete,can_undo,can_redo,available,blocked_reason,source_sha256}`. Items contain `{kind:"annotation"|"rename",address,before,after,index,applied}`. Hashing is lazy and runs on the Session execution thread; the existing dashboard API can require VM analysis. |
-| `undo` / `redo` | No payload. Annotation changes/cursor movement remain dirty until Save. Rename history changes require clean annotations and commit immediately. Return the history listing plus `{dirty,saved,address}`. All operations require the writer lock. |
+| `rename` | `{address,name}`; any address: a function, data or a label. The name is not empty, has no spaces or control characters, is not an automatic form such as `sub_1234`, and is not used at another address. Requires clean annotations; never autosaves staged notes. Commits the rename plus history through the journal, reloads through the public C ABI, invalidates caches and increments revision. Returns `{address,name,saved:true}`. Requires the writer lock. |
+| `function_create` / `function_delete` | `{address}`. Capability present only with an engine that keeps function edits. Creates a function at the address, or deletes the one that starts there, as the engine allows (`<binary>.neverd-functions.json`). Requires clean annotations; commits the edit plus history, restarts function-level analysis and the reference index, and increments revision. Returns `{address,created,saved:true}`. Requires the writer lock. |
+| `item_define` | `{address,action,size?}`. Capability present only with an engine that keeps data items. `action:"data"` makes the item at the address a value of `size` 1, 2, 4 or 8 bytes, or without a size the next of byte, word, dword and qword after the current one; `"string"` makes the string that starts there an item, read with the `string_options` encodings; `"undefine"` shows the item's bytes as undefined bytes. Refused on instructions. Commits the items (`<binary>.neverd-items.json`) plus one history command, invalidates caches and increments revision. Returns `{address,kind,size,saved}`, `saved:false` when nothing changed. Requires clean annotations and the writer lock. |
+| `operand_format` | `{address,operand?:0-7,action}`. Capability present only with an engine that keeps operand formats. The address must start an instruction whose listing shows formats (x86 so far; other dialects are `unsupported`). A format changes an operand that is a plain number: `operand` when it is one, otherwise (or without `operand`) the instruction's last number; an instruction without one is `invalid_request`. `action` is a base of `include/neverd/OperandFormats.def` (`number`, `hex`, `decimal`, `binary`, `char`, `offset`; `number` also clears both flags), or `negate`/`invert` to toggle the sign change or the bitwise complement. Commits the formats (`<binary>.neverd-operands.json`) plus one history command; listing lines show the change without the listing being built again. Increments revision and returns `{address,operand,format:{base,negate,invert},saved}` with the operand that took the format, `saved:false` when nothing changed. Requires clean annotations and the writer lock. |
+| `reload` | Explicitly reloads the sidecars, discards staged annotations, clears dirty state, invalidates caches and increments revision. Returns metadata. |
+| `history` | Standard `offset/limit` page. Returns `{schema_version:1,items,total,cursor,offset,next_offset,complete,can_undo,can_redo,available,blocked_reason,source_sha256}`. Items contain `{kind:"annotation"|"rename"|"function"|"item"|"operand",address,before,after,index,applied}`. Hashing is lazy and runs on the Session execution thread; the existing dashboard API can require VM analysis. |
+| `undo` / `redo` | No payload. Annotation changes/cursor movement remain dirty until Save. Rename, function, item and operand history changes require clean annotations and commit immediately. Return the history listing plus `{dirty,saved,address}`. All operations require the writer lock. |
 | `history_reset` | Explicitly starts empty history from the current sidecars, preserving comments/renames. Requires clean annotations and the writer lock, then reloads their state. It never resolves a pending recovery journal or maps comments to a changed binary. |
 | `contributions` | Available before opening a file. Returns `{schema_version:1,registry_revision:string,revision:string,items,complete:true}`. Each item has `{id,title,kind,namespace,version,query}` and optional table `columns`. The payload revision belongs to the registry, independently of the envelope's image revision. |
 | `contribution_register` | `{path}`. Validates a local manifest completely before adding or replacing its namespace; returns the new contributions listing. Registration never executes a query or loads scripts/QML. |
@@ -259,7 +272,11 @@ an additive metadata/block-text C ABI and remains separate work.
 ## Storage and practical limits
 
 The binary is never modified. Existing `<binary>.neverd-annotations.json` and
-`<binary>.neverd-renames.json` stay compatible with the CLI. The worker also owns
+`<binary>.neverd-renames.json` stay compatible with the CLI, as do the optional
+`<binary>.neverd-functions.json`, `<binary>.neverd-items.json` and
+`<binary>.neverd-operands.json` of engines that keep function edits, data items
+and operand formats (`neverd function-edits`, `neverd items`,
+`neverd operands`). The worker also owns
 `<binary>.neverd-history.json` and the temporary recovery record
 `<binary>.neverd-journal.json`. History contains schema version, source SHA-256,
 engine version, command cursor, before/after values and committed sidecar state.

@@ -31,6 +31,7 @@
 #include "neverd/loader/LanguageRuntime.h"
 #include "neverd/loader/ObjC/ObjCEH.h"
 #include "neverd/loader/Rust/RustEH.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/ELF.h"
@@ -284,7 +285,7 @@ llvm::Expected<BinaryImage> ELFLoader::load(const std::filesystem::path &Path) {
   // Frame extents are function boundaries the discovery heuristics must not
   // guess inside, as PE .pdata ranges already are when they run.
   dwarf_eh::recordFrameExtents(Img);
-  runPostLoadDiscovery(Img, "elf: loaded " + Path.filename().string());
+  runPostLoadDiscovery(Img, "elf: loaded " + pathToUTF8(Path.filename()));
   // Classified before any table is read: a decoder that finds an Itanium LSDA
   // cannot tell from the table alone whether its cleanup pads are C++
   // destructors or Rust drop glue, and the evidence that settles it is the

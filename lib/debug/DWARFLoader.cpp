@@ -12,6 +12,7 @@
 #include "neverd/debug/DWARFLoader.h"
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/support/FilePath.h"
 
 #define DEBUG_TYPE "neverd-dwarf-loader"
 #include "llvm/DebugInfo/DWARF/DWARFAbbreviationDeclaration.h"
@@ -318,12 +319,12 @@ static std::filesystem::path findDSYM(const std::filesystem::path &BinPath) {
   auto Parent = BinPath.parent_path();
   if (Parent.empty())
     Parent = ".";
-  auto Stem = BinPath.stem().string();
+  auto Stem = BinPath.stem();
   if (!std::filesystem::exists(Parent))
     return {};
   for (auto &Entry : std::filesystem::directory_iterator(Parent)) {
     if (Entry.path().extension() == ".dSYM" && Entry.is_directory()) {
-      auto DSYMStem = Entry.path().stem().string();
+      auto DSYMStem = Entry.path().stem();
       if (DSYMStem != Stem)
         continue;
       auto Inner = Entry.path() / "Contents" / "Resources" / "DWARF";
@@ -452,10 +453,10 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   auto Ctx = std::unique_ptr<DWARFDebugContext>(new DWARFDebugContext());
   Ctx->PImpl = std::make_unique<Impl>();
 
-  auto BufOr = llvm::MemoryBuffer::getFile(BinaryPath.string());
+  auto BufOr = llvm::MemoryBuffer::getFile(pathToUTF8(BinaryPath));
   if (!BufOr) {
     llvm::WithColor::warning()
-        << "debug: cannot open " << BinaryPath.string() << "\n";
+        << "debug: cannot open " << pathToUTF8(BinaryPath) << "\n";
     return Ctx;
   }
   Ctx->PImpl->BinaryBuf = std::move(*BufOr);
@@ -464,7 +465,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
                                  ExpectedImageBytes);
   if (!Obj) {
     llvm::WithColor::warning()
-        << "debug: cannot parse object file " << BinaryPath.string() << "\n";
+        << "debug: cannot parse object file " << pathToUTF8(BinaryPath) << "\n";
     return Ctx;
   }
 
@@ -478,7 +479,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   Ctx->PImpl->DwarfCtx = llvm::DWARFContext::create(*Obj);
   if (!Ctx->PImpl->DwarfCtx) {
     llvm::WithColor::warning() << "debug: cannot create DWARFContext for "
-                               << BinaryPath.string() << "\n";
+                               << pathToUTF8(BinaryPath) << "\n";
     return Ctx;
   }
 
@@ -489,9 +490,9 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   if (!HasDwarf && Format == BinaryFormat::MachO) {
     auto DSYMPath = findDSYM(BinaryPath);
     if (!DSYMPath.empty()) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "debug: loading dSYM from " << DSYMPath.string() << "\n");
-      auto DSYMBufOr = llvm::MemoryBuffer::getFile(DSYMPath.string());
+      LLVM_DEBUG(llvm::dbgs() << "debug: loading dSYM from "
+                              << pathToUTF8(DSYMPath) << "\n");
+      auto DSYMBufOr = llvm::MemoryBuffer::getFile(pathToUTF8(DSYMPath));
       if (DSYMBufOr) {
         Ctx->PImpl->DSYMBuf = std::move(*DSYMBufOr);
         auto DSYMObj = getObjectFromBuffer(*Ctx->PImpl->DSYMBuf, MainArch);
@@ -515,7 +516,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
 
   if (!HasDwarf) {
     LLVM_DEBUG(llvm::dbgs() << "debug: no DWARF info found for "
-                            << BinaryPath.string() << "\n");
+                            << pathToUTF8(BinaryPath) << "\n");
     return Ctx;
   }
 

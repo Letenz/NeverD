@@ -43,7 +43,7 @@ neverd unpack packed.exe -o unpacked.exe \
 
 各節保留 RVA、觀察到的記憶體（包含已執行初始化的效果）及頁面權限。新增 `.neverd` 節保存導入目錄和修復導出呼叫與位址載入所需的新 IAT 單元，保留原有零填充資料。`imports` 的 `origin` 區分輸入目錄綁定的 `static` 單元，以及來賓寫入或修復新增的 `runtime` 單元。生成內容的重定位未經觀察，因此固定於觀察基址，移除重定位目錄並設定 `IMAGE_FILE_RELOCS_STRIPPED`。
 
-使用者態節範圍將 `VirtualSize`（為零時取 `SizeOfRawData`）向上對齊至來賓頁；`SectionAlignment` 只定位 RVA。最後一個有效頁內的節原始資料尾部保留，超出此範圍的位元組不映射。重建保留 `FileAlignment`，檔案對齊填補補零，不從節間隙借讀。此規則的原生證據僅涵蓋 x64 Windows DLL。執行時仍拒絕零 `VirtualSize`，驅動程式映射不在此規則範圍內。
+使用者態節範圍將 `VirtualSize`（為零時取 `SizeOfRawData`）向上對齊至來賓頁；`SectionAlignment` 只定位 RVA。最後一個有效頁內的節原始資料尾部保留，超出此範圍的位元組不映射。重建保留 `FileAlignment`，檔案對齊填補補零，不從節間隙借讀。此規則的原生證據僅涵蓋 x64 Windows DLL。執行時准入、中繼資料讀取和固定映像驗證共用未按頁對齊的邏輯範圍。零 `VirtualSize` 使用 `SizeOfRawData`，非零值仍限制中繼資料。載入器使用私有讀取檢視相容 LLVM，並為執行、偵錯身分和位元組驗證保留原始資料。驅動程式映射不在使用者態分頁規則範圍內。
 
 只有偵錯目錄和每個保留的資料區塊皆有完整的檔案支撐，才會重定位偵錯資料的檔案偏移。當 `AddressOfRawData == 0` 且資料完整位於保留的 overlay 中時，保留其在 overlay 內的相對偏移，並重新定位至 overlay 的新檔案位置。非零但無效的 RVA 不能退回 overlay。
 

@@ -59,6 +59,10 @@ struct MockSession {
   std::string path, error;
   std::map<std::uint64_t, std::string> annotations, names;
   std::map<std::uint64_t, bool> functionEdits;
+  /// The user's data items, as neverd_items_json lists them.
+  std::map<std::uint64_t, Json> items;
+  /// The user's operand formats by address and operand index.
+  std::map<std::uint64_t, std::map<int, Json>> operandFormats;
   std::vector<std::uint64_t> functions = listedFunctions({});
   neverd_load_progress_fn progress = nullptr;
   void *progressUser = nullptr;
@@ -137,7 +141,16 @@ const char *neverd_session_format_name(neverd_session_t) { return copy("ELF"); }
 int neverd_session_bitness(neverd_session_t) { return 64; }
 unsigned long long neverd_session_file_size(neverd_session_t) { return 8192; }
 neverd_va_t neverd_session_base_addr(neverd_session_t) { return Base; }
-neverd_va_t neverd_session_entry_addr(neverd_session_t) { return Base; }
+neverd_va_t neverd_session_entry_addr(neverd_session_t s) {
+  return session(s)->path.find("unknown-entry") == std::string::npos ? Base : 0;
+}
+const char *neverd_session_load_diagnostics_json(neverd_session_t s) {
+  if (s && session(s)->path.find("unknown-entry") != std::string::npos)
+    return copy(Json::array({{{"code", "pe.entry_unmapped"},
+                              {"message", "Fixture PE entry is unknown."}}})
+                    .dump());
+  return copy("[]");
+}
 int neverd_session_segment_count(neverd_session_t) { return 2; }
 int neverd_session_section_count(neverd_session_t) { return 2; }
 int neverd_session_import_count(neverd_session_t) { return 0; }
@@ -150,6 +163,10 @@ void neverd_free_string(const char *value) {
   std::free(const_cast<char *>(value));
 }
 const char *neverd_version_number() { return copy("test-1.0"); }
+const char *neverd_headers_json(neverd_session_t) {
+  return copy(R"({"language":{"runtime":"c","secondary":[],"evidence":[]}})");
+}
+
 const char *neverd_dashboard_json(neverd_session_t s) {
   // Deterministic fixture-only identity. The real engine uses SHA-256; the
   // production real-engine test verifies that digest against Python hashlib.
@@ -191,6 +208,9 @@ int neverd_func_size(neverd_session_t s, int index) {
 const char *neverd_func_name(neverd_session_t s, int index) {
   const auto address = neverd_func_entry(s, index);
   auto it = session(s)->names.find(address);
+  if (it == session(s)->names.end() && address == Base + 0x150 &&
+      session(s)->path.ends_with("pseudocode-navigation.bin"))
+    return copy("_ZN3BarC1Ev");
   if (it != session(s)->names.end())
     return copy(it->second);
   if ((address - Base) % 16 == 0)
@@ -208,6 +228,12 @@ int neverd_func_find_by_addr(neverd_session_t s, neverd_va_t address) {
              : -1;
 }
 int neverd_func_find_by_name(neverd_session_t s, const char *name) {
+  if (std::string(name).starts_with("delayed_")) {
+    std::puts("fixture delayed lookup started");
+    std::fflush(stdout);
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    return std::string(name) == "delayed_function" ? 22 : -1;
+  }
   for (int i = 0, count = neverd_func_count(s); i < count; ++i) {
     const auto *value = neverd_func_name(s, i);
     const bool match = std::string(value) == name;
@@ -483,7 +509,20 @@ const char *neverd_unwind_frame_json(neverd_session_t, neverd_va_t address) {
          true}}.dump());
   return copy("null");
 }
-const char *neverd_decompile(neverd_session_t, neverd_va_t) {
+const char *neverd_decompile(neverd_session_t s, neverd_va_t address) {
+  if (session(s)->path.ends_with("pseudocode-import.bin"))
+    return copy("int caller(void) {\n  return function_22();\n}\n");
+  if (session(s)->path.ends_with("pseudocode-global.bin"))
+    return copy("extern int global_value; /* 0xffff800012343000 */\n"
+                "int caller(void) {\n  return global_value;\n}\n");
+  if (session(s)->path.ends_with("pseudocode-delayed.bin"))
+    return copy("int caller(void) {\n  return delayed_function();\n}\n");
+  if (session(s)->path.ends_with("pseudocode-delayed-error.bin"))
+    return copy("int caller(void) {\n  return delayed_missing();\n}\n");
+  if (session(s)->path.ends_with("pseudocode-navigation.bin"))
+    return copy(address == Base + 0x140
+                    ? "int function_20(void) {\n  return function_22();\n}\n"
+                    : "int called(void) {\n  return 42;\n}\n");
   std::string text;
   for (int i = 0; i < 700; ++i)
     text += "// code line " + std::to_string(i) + "\n";
@@ -528,8 +567,19 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
         "extern uint64_t qword_10; /* 0x10 */\n",
         "\n",
         "/* neverd.entry */\n"};
-    for (int i = 0; i < 700; ++i)
-      lines.push_back("// code line " + std::to_string(i) + "\n");
+    for (int i = 0; i < 700; ++i) {
+      if (session(s)->path.ends_with("pseudocode-navigation.bin") && i < 3) {
+        if (i == 0)
+          lines.push_back("int caller(void) {\n");
+        else if (i == 1)
+          lines.push_back(address == Base + 0x140 ? "  return Bar_ctor();\n"
+                                                  : "  return 42;\n");
+        else
+          lines.push_back("}\n");
+      } else {
+        lines.push_back("// code line " + std::to_string(i) + "\n");
+      }
+    }
     const auto total = lines.size();
     const auto first = std::min(offset, total);
     const auto end = first + std::min(limit, total - first);
@@ -674,6 +724,27 @@ const char *neverd_strings_ex_json(neverd_session_t, const char *options) {
                      {"value", "Wide"}});
   return copy(items.dump());
 }
+// The rows neverd_strings_ex_json lists, a page at a time.
+const char *neverd_strings_page_json(neverd_session_t s, const char *options,
+                                     neverd_va_t firstAddress, int maxRows) {
+  const char *raw = neverd_strings_ex_json(s, options);
+  if (!raw)
+    return nullptr;
+  const auto rows = Json::parse(raw);
+  std::free(const_cast<char *>(raw));
+  Json strings = Json::array();
+  Json next = nullptr;
+  for (const auto &row : rows) {
+    if (parseAddress(row.at("addr").get<std::string>()) < firstAddress)
+      continue;
+    if (static_cast<int>(strings.size()) >= std::max(1, maxRows)) {
+      next = row.at("addr");
+      break;
+    }
+    strings.push_back(row);
+  }
+  return copy(Json{{"next_addr", next}, {"strings", strings}}.dump());
+}
 const char *neverd_decode_text_json(const unsigned char *bytes, int size,
                                     const char *encoding) {
   // ASCII shows printable bytes; UTF-16LE shows printable ASCII units at
@@ -761,16 +832,34 @@ const char *neverd_sections_json(neverd_session_t) {
                             {"flags", "RW-"}}})
                   .dump());
 }
-const char *neverd_symbols_json(neverd_session_t) {
-  return copy(
-      Json::array(
-          {{{"addr", hexAddress(Base)},
-            {"name", "function_0"},
-            {"type", "function"}},
-           {{"addr", hexAddress(BssBase)}, {"name", "stderr"}, {"size", 8}}})
-          .dump());
+const char *neverd_symbols_json(neverd_session_t s) {
+  Json rows = Json::array(
+      {{{"addr", hexAddress(Base)},
+        {"name", "function_0"},
+        {"type", "function"}},
+       {{"addr", hexAddress(BssBase)}, {"name", "stderr"}, {"size", 8}}});
+  // The user's names of data replace the symbols' or add rows of their own.
+  for (const auto &[address, name] : session(s)->names) {
+    if (neverd_func_find_by_addr(s, address) >= 0)
+      continue;
+    bool replaced = false;
+    for (auto &row : rows)
+      if (parseAddress(row.at("addr").get<std::string>()) == address) {
+        row["name"] = name;
+        replaced = true;
+      }
+    if (!replaced)
+      rows.push_back(
+          {{"addr", hexAddress(address)}, {"name", name}, {"size", 0}});
+  }
+  return copy(rows.dump());
 }
-const char *neverd_imports_json(neverd_session_t) {
+const char *neverd_imports_json(neverd_session_t s) {
+  if (session(s)->path.ends_with("pseudocode-import.bin"))
+    return copy(Json::array({{{"name", "function_22"},
+                              {"module", "fixture"},
+                              {"iat_addr", hexAddress(Base + 0x160)}}})
+                    .dump());
   return copy(Json::array().dump());
 }
 const char *neverd_exports_json(neverd_session_t) {
@@ -950,5 +1039,156 @@ int neverd_functions_load(neverd_session_t s) {
   } catch (...) {
     return 1;
   }
+}
+// Data items as the engine keeps them: values, strings and undefined runs
+// that share no byte.
+int neverd_item_set(neverd_session_t s, neverd_va_t address, const char *text) {
+  auto &state = *session(s);
+  try {
+    const auto row = Json::parse(text);
+    const auto kind = row.at("kind").get<std::string>();
+    std::uint64_t size = kind == "byte"    ? 1
+                         : kind == "word"  ? 2
+                         : kind == "dword" ? 4
+                         : kind == "qword" ? 8
+                                           : 0;
+    if (!size && kind != "string" && kind != "undefined") {
+      state.error = "unknown data item kind " + kind;
+      return -1;
+    }
+    if (!size)
+      size = row.at("size").get<std::uint64_t>();
+    // Undefined bytes give way and stay undefined around the item.
+    std::map<std::uint64_t, Json> items;
+    for (const auto &[at, item] : state.items) {
+      const auto end = at + item.at("size").get<std::uint64_t>();
+      if (end <= address || at >= address + size) {
+        items[at] = item;
+        continue;
+      }
+      if (item.at("kind") != "undefined") {
+        if (at == address)
+          continue;
+        state.error = "the item shares bytes with the one at " + hexAddress(at);
+        return -1;
+      }
+      if (at < address)
+        items[at] = {{"addr", hexAddress(at)},
+                     {"kind", "undefined"},
+                     {"size", address - at}};
+      if (end > address + size)
+        items[address + size] = {{"addr", hexAddress(address + size)},
+                                 {"kind", "undefined"},
+                                 {"size", end - address - size}};
+    }
+    state.items = std::move(items);
+    Json stored{{"addr", hexAddress(address)}, {"kind", kind}, {"size", size}};
+    if (row.contains("encoding"))
+      stored["encoding"] = row["encoding"];
+    state.items[address] = std::move(stored);
+    return 0;
+  } catch (const Json::exception &) {
+    state.error = "invalid data item";
+    return -1;
+  }
+}
+int neverd_item_clear(neverd_session_t s, neverd_va_t address) {
+  if (!session(s)->items.erase(address)) {
+    session(s)->error = "no data item starts at " + hexAddress(address);
+    return -1;
+  }
+  return 0;
+}
+const char *neverd_items_json(neverd_session_t s) {
+  Json result = Json::array();
+  for (const auto &[address, item] : session(s)->items)
+    result.push_back(item);
+  return copy(result.dump());
+}
+int neverd_items_load(neverd_session_t s) {
+  try {
+    std::map<std::uint64_t, Json> items;
+    for (const auto &item : read(session(s)->path + ".neverd-items.json"))
+      items[parseAddress(item.at("addr").get<std::string>())] = item;
+    session(s)->items = std::move(items);
+    return 0;
+  } catch (...) {
+    return 1;
+  }
+}
+// Operand formats as the engine keeps them.
+int neverd_operand_format_set(neverd_session_t s, neverd_va_t address,
+                              int operand, const char *text) {
+  auto &state = *session(s);
+  if (operand < 0 || operand > 7) {
+    state.error = "an operand index is 0 to 7";
+    return -1;
+  }
+  auto &operands = state.operandFormats[address];
+  try {
+    const auto format = text ? Json::parse(text) : Json(nullptr);
+    const auto base = format.is_null() ? std::string("number")
+                                       : format.at("base").get<std::string>();
+    const bool negate = format.is_object() && format.value("negate", false);
+    const bool invert = format.is_object() && format.value("invert", false);
+    if (base == "number" && !negate && !invert)
+      operands.erase(operand);
+    else
+      operands[operand] = {{"operand", operand},
+                           {"base", base},
+                           {"negate", negate},
+                           {"invert", invert}};
+  } catch (const Json::exception &) {
+    state.error = "invalid operand format";
+    return -1;
+  }
+  if (operands.empty())
+    state.operandFormats.erase(address);
+  return 0;
+}
+const char *neverd_operand_formats_json(neverd_session_t s) {
+  Json rows = Json::array();
+  for (const auto &[address, operands] : session(s)->operandFormats) {
+    Json list = Json::array();
+    for (const auto &[index, format] : operands)
+      list.push_back(format);
+    rows.push_back({{"addr", hexAddress(address)}, {"operands", list}});
+  }
+  return copy(rows.dump());
+}
+int neverd_operand_formats_load(neverd_session_t s) {
+  try {
+    std::map<std::uint64_t, std::map<int, Json>> formats;
+    for (const auto &row : read(session(s)->path + ".neverd-operands.json"))
+      for (const auto &format : row.at("operands"))
+        formats[parseAddress(row.at("addr").get<std::string>())]
+               [format.at("operand").get<int>()] = format;
+    session(s)->operandFormats = std::move(formats);
+    return 0;
+  } catch (...) {
+    return 1;
+  }
+}
+// The strings neverd_strings_ex_json lists, read from their first byte.
+const char *neverd_string_at(neverd_session_t s, neverd_va_t address,
+                             const char *) {
+  if (address == RodataBase)
+    return copy(Json{{"addr", hexAddress(address)},
+                     {"length", 6},
+                     {"chars", 2},
+                     {"encoding", "utf-8"},
+                     {"value", "\xe4\xb8\xad\xe6\x96\x87"},
+                     {"unit", 1}}
+                    .dump());
+  if (address == RodataBase + 8)
+    return copy(Json{{"addr", hexAddress(address)},
+                     {"length", 8},
+                     {"chars", 4},
+                     {"encoding", "utf-16le"},
+                     {"value", "Wide"},
+                     {"unit", 2}}
+                    .dump());
+  session(s)->error = "no string starts at " + hexAddress(address);
+  return nullptr;
 }
 }

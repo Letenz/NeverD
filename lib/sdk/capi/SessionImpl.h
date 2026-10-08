@@ -17,6 +17,7 @@
 #include "ImageStrings.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
@@ -29,12 +30,12 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/SymbolSpelling.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/sbf/emit/SBFLLVMEmitter.h"
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/sigs/SignatureDB.h"
 
-#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -111,6 +112,24 @@ struct Session {
   /// The modules of the functions shown last, the newest first.
   std::list<FunctionLlvmModule> FunctionLlvmModules;
   static constexpr size_t MaxFunctionLlvmModules = 8;
+  /// The C route that emitted a function's source.
+  enum class SourceRoute : uint8_t { HighC, LLVMC, LLVMCNoOpt };
+  /// One function's emitted C.  A view pages through the whole text, and the
+  /// text stays the same until the pipeline or an input of the emitter
+  /// outside it changes (forgetEmittedSources), so every page after the first
+  /// reads it here instead of emitting the function again.
+  struct FunctionSource {
+    va_t Entry = 0;
+    SourceRoute Route = SourceRoute::HighC;
+    std::string Text;
+    /// The text's library regions and definitions, once a view asked for
+    /// them.  Its recognitions live in PipeResult, which clearPipeline()
+    /// drops together with this.
+    std::optional<CSourceMap> Map;
+  };
+  /// The sources of the functions shown last, the newest first.
+  std::list<FunctionSource> FunctionSources;
+  static constexpr size_t MaxFunctionSources = 8;
   /// Whether every native function's call ABI was recovered for this
   /// pipeline's LLVM emission.
   bool NativeCallAbiRecovered = false;
@@ -323,6 +342,16 @@ struct Session {
     bool operator==(const DataItem &) const = default;
   };
   std::map<va_t, DataItem> DataItems;
+  /// How the user shows an instruction operand's number
+  /// (neverd_operand_format_set): a base of OperandFormats.def, with its sign
+  /// changed or its bits inverted.
+  struct OperandFormat {
+    std::string Base;
+    bool Negate = false, Invert = false;
+    bool operator==(const OperandFormat &) const = default;
+  };
+  /// The user's operand formats by instruction address and operand index.
+  std::map<va_t, std::map<unsigned, OperandFormat>> OperandFormats;
 
   bool isDeletedFunction(va_t Entry) const {
     const auto Edit = FunctionEdits.find(Entry);
@@ -411,9 +440,47 @@ struct Session {
   /// are modified, and a failed/withdrawn match cannot leave a stale label.
   void refreshFunctionNames();
 
+  /// Drop the kept C of every function.  A change to anything the C emitters
+  /// read beyond the pipeline, such as the user's names
+  /// (CEmitterOptions::UserNames), must call this, or a view keeps showing
+  /// what was emitted before it.
+  void forgetEmittedSources() { FunctionSources.clear(); }
+
+  /// The source \p Route emitted for \p Entry under this pipeline, made the
+  /// newest; null if it has not emitted one.
+  FunctionSource *findFunctionSource(va_t Entry, SourceRoute Route) {
+    for (auto It = FunctionSources.begin(); It != FunctionSources.end(); ++It)
+      if (It->Entry == Entry && It->Route == Route) {
+        FunctionSources.splice(FunctionSources.begin(), FunctionSources, It);
+        return &FunctionSources.front();
+      }
+    return nullptr;
+  }
+
+  /// Keep the source \p Route emitted for \p Entry, with its \p Map if the
+  /// emission recorded one.
+  void rememberFunctionSource(va_t Entry, SourceRoute Route, std::string Text,
+                              const CSourceMap *Map) {
+    FunctionSource *Source = findFunctionSource(Entry, Route);
+    if (!Source) {
+      FunctionSources.push_front({Entry, Route, {}, std::nullopt});
+      if (FunctionSources.size() > MaxFunctionSources)
+        FunctionSources.pop_back();
+      Source = &FunctionSources.front();
+    }
+    Source->Text = std::move(Text);
+    if (!Map)
+      return;
+    Source->Map = *Map;
+    // Only an emission reads these; a page reads regions and definitions.
+    Source->Map->HighSources = nullptr;
+    Source->Map->LLVMSources = nullptr;
+  }
+
   void clearPipeline() {
     // Every module lives in the context.
     FunctionLlvmModules.clear();
+    FunctionSources.clear();
     NativeCallAbiRecovered = false;
     PipeResult = {};
     LLVMCtx.reset();
@@ -667,10 +734,10 @@ inline Session *toSession(neverd_session_t Sess) {
 
 inline char *dupStr(const std::string &S) { return strdup(S.c_str()); }
 
-/// How a name reads in identities and listings: demangled when it is a
-/// mangled name, else as it is.
+/// How a name reads in identities and listings: as its source language spells
+/// it when it is a mangled name (SymbolSpelling.h), else as it is.
 inline std::string demangledName(llvm::StringRef Name) {
-  return llvm::demangle(Name);
+  return displaySymbolName(Name);
 }
 
 inline std::string vaHex(va_t Addr) { return "0x" + llvm::utohexstr(Addr); }

@@ -12,9 +12,11 @@
 #include "SessionImpl.h"
 
 #include "neverd/support/AtomicOutput.h"
+#include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectWriteLock.h"
 #include "neverd/support/StringScan.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
@@ -22,6 +24,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -30,14 +33,17 @@ using namespace neverd::sdk;
 // Annotations
 // ===--------------------------------------------------------------------===//
 
-static std::string annotationPath(const Session *S) {
-  return S->FilePath.string() + ".neverd-annotations.json";
+static std::filesystem::path annotationPath(const Session *S) {
+  auto Path = S->FilePath;
+  Path += ".neverd-annotations.json";
+  return Path;
 }
 
-static bool saveSidecar(Session *S, llvm::StringRef Path,
+static bool saveSidecar(Session *S, const std::filesystem::path &Path,
                         llvm::json::Array Values, llvm::StringRef Kind) {
+  const auto UTF8Path = pathToUTF8(Path);
   auto Temporary = llvm::sys::fs::TempFile::create(
-      (Path + ".tmp-%%%%%%").str(),
+      UTF8Path + ".tmp-%%%%%%",
       llvm::sys::fs::owner_read | llvm::sys::fs::owner_write);
   if (!Temporary) {
     S->setError("cannot create " + Kind.str() +
@@ -61,7 +67,7 @@ static bool saveSidecar(Session *S, llvm::StringRef Path,
     return false;
   }
   if (auto Error = support::atomic_output::closeAndCommitTemporaryOutput(
-          *Temporary, Path)) {
+          *Temporary, UTF8Path)) {
     S->setError("cannot save " + Kind.str() + ": " +
                 llvm::toString(std::move(Error)));
     return false;
@@ -220,6 +226,7 @@ int neverd_rename_func(neverd_session_t Sess, const char *OldName,
       const auto PreviousOrigin = F.Origin;
       const auto PreviousRenames = S->Renames;
       S->Renames[F.Entry] = NewName;
+      S->forgetEmittedSources();
       F.Name = NewName;
       F.Origin = NameOrigin::User;
       if (neverd_renames_save(Sess) != 0) {
@@ -233,6 +240,53 @@ int neverd_rename_func(neverd_session_t Sess, const char *OldName,
   }
   S->setError("function not found: " + std::string(OldName));
   return -1;
+}
+
+int neverd_rename_addr(neverd_session_t Sess, neverd_va_t Addr,
+                       const char *Name) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  const llvm::StringRef NewName = Name ? Name : "";
+  constexpr size_t MaxNameBytes = 4096;
+  if (NewName.size() > MaxNameBytes ||
+      llvm::any_of(NewName,
+                   [](unsigned char C) { return C <= ' ' || C == 0x7f; })) {
+    S->setError("a name has at most 4096 bytes and no spaces or control "
+                "characters");
+    return -1;
+  }
+  if (!S->Img.readVA(Addr, 1)) {
+    S->setError(vaHex(Addr) + " is not in the image");
+    return -1;
+  }
+  (void)neverd_func_count(Sess);
+  const auto PreviousRenames = S->Renames;
+  const auto PreviousOriginals = S->OriginalNames;
+  if (NewName.empty()) {
+    S->Renames.erase(Addr);
+  } else {
+    // What the address was called before the user named it.
+    if (!S->OriginalNames.count(Addr))
+      if (const Symbol *Sym = S->Img.findSymbolAt(Addr); Sym && !Sym->IsFunc)
+        S->OriginalNames[Addr] = Sym->Name;
+    S->Renames[Addr] = NewName.str();
+  }
+  S->forgetEmittedSources();
+  // A function entry takes the name in the function list too.
+  S->refreshFunctionNames();
+  if (neverd_renames_save(Sess) != 0) {
+    S->Renames = PreviousRenames;
+    S->OriginalNames = PreviousOriginals;
+    S->refreshFunctionNames();
+    return -1;
+  }
+  return 0;
 }
 
 const char *neverd_renames_json(neverd_session_t Sess) {
@@ -259,7 +313,8 @@ int neverd_renames_save(neverd_session_t Sess) {
     S->setError("project writer unavailable: " + Lock.error());
     return -1;
   }
-  auto Path = S->FilePath.string() + ".neverd-renames.json";
+  auto Path = S->FilePath;
+  Path += ".neverd-renames.json";
   llvm::json::Array Arr;
   for (const auto &[Addr, NewName] : S->Renames) {
     llvm::json::Object Obj;
@@ -277,7 +332,8 @@ int neverd_renames_load(neverd_session_t Sess) {
   S->clearError();
   if (!S->Loaded)
     return -1;
-  auto Path = S->FilePath.string() + ".neverd-renames.json";
+  auto Path = S->FilePath;
+  Path += ".neverd-renames.json";
   auto Reset = [&] {
     for (auto &F : S->Functions) {
       if (S->Renames.find(F.Entry) == S->Renames.end())
@@ -287,6 +343,7 @@ int neverd_renames_load(neverd_session_t Sess) {
         F.Name = Original->second;
     }
     S->Renames.clear();
+    S->forgetEmittedSources();
     S->refreshFunctionNames();
   };
   std::error_code EC;
@@ -343,8 +400,10 @@ int neverd_renames_load(neverd_session_t Sess) {
 // Function edits
 // ===--------------------------------------------------------------------===//
 
-static std::string functionsPath(const Session *S) {
-  return S->FilePath.string() + ".neverd-functions.json";
+static std::filesystem::path functionsPath(const Session *S) {
+  auto Path = S->FilePath;
+  Path += ".neverd-functions.json";
+  return Path;
 }
 
 static llvm::json::Array functionEditRows(const Session *S) {
@@ -502,8 +561,71 @@ uint64_t sizedItemBytes(llvm::StringRef Kind) {
   return 0;
 }
 
-std::string itemsPath(const Session *S) {
-  return S->FilePath.string() + ".neverd-items.json";
+std::filesystem::path itemsPath(const Session *S) {
+  auto Path = S->FilePath;
+  Path += ".neverd-items.json";
+  return Path;
+}
+
+#define NEVERD_OPERAND_BASE(Id, Spelling)                                      \
+  constexpr llvm::StringLiteral k##Id##Base(Spelling);
+#include "neverd/OperandFormats.def"
+
+/// The operands of one instruction a format may name.
+constexpr int MaxFormattedOperands = 8;
+
+std::filesystem::path operandsPath(const Session *S) {
+  auto Path = S->FilePath;
+  Path += ".neverd-operands.json";
+  return Path;
+}
+
+bool isOperandBase(llvm::StringRef Base) {
+#define NEVERD_OPERAND_BASE(Id, Spelling)                                      \
+  if (Base == Spelling)                                                        \
+    return true;
+#include "neverd/OperandFormats.def"
+  return false;
+}
+
+/// The format \p Object describes, or none with \p Error.
+std::optional<Session::OperandFormat>
+parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
+  Session::OperandFormat Format;
+  const auto Base = Object.getString("base");
+  if (!Base || !isOperandBase(*Base)) {
+    Error = "an operand's base is number, hex, decimal, binary, char or "
+            "offset";
+    return std::nullopt;
+  }
+  Format.Base = Base->str();
+  for (const auto &[Key, Field] : {std::pair{"negate", &Format.Negate},
+                                   std::pair{"invert", &Format.Invert}})
+    if (const llvm::json::Value *Value = Object.get(Key)) {
+      const auto Flag = Value->getAsBoolean();
+      if (!Flag) {
+        Error = std::string(Key) + " is true or false";
+        return std::nullopt;
+      }
+      *Field = *Flag;
+    }
+  return Format;
+}
+
+llvm::json::Array operandFormatRows(const Session *S) {
+  llvm::json::Array Rows;
+  for (const auto &[Addr, Operands] : S->OperandFormats) {
+    llvm::json::Array List;
+    for (const auto &[Index, Format] : Operands)
+      List.push_back(
+          llvm::json::Object{{"operand", static_cast<int64_t>(Index)},
+                             {"base", Format.Base},
+                             {"negate", Format.Negate},
+                             {"invert", Format.Invert}});
+    Rows.push_back(llvm::json::Object{{"addr", vaHex(Addr)},
+                                      {"operands", std::move(List)}});
+  }
+  return Rows;
 }
 
 /// The item \p Row describes at \p Addr, checked against the image; none
@@ -628,12 +750,34 @@ int neverd_item_set(neverd_session_t Sess, neverd_va_t Addr,
     S->setError(Error);
     return -1;
   }
-  // An item replaces the one at its address and shares no byte with another.
-  if (const auto Other =
-          overlappingItem(S->DataItems, Addr, Item->Size, Addr)) {
-    S->setError(vaHex(Addr) + " overlaps the item at " + vaHex(*Other));
-    return -1;
+  // An item replaces the one at its address. Bytes the user undefined give
+  // way to it and stay undefined around it; it shares no byte with any other
+  // item.
+  const va_t End = Addr + Item->Size;
+  std::vector<va_t> Carved;
+  std::vector<std::pair<va_t, uint64_t>> Pieces;
+  auto It = S->DataItems.upper_bound(Addr);
+  if (It != S->DataItems.begin() &&
+      std::prev(It)->first + std::prev(It)->second.Size > Addr)
+    --It;
+  for (; It != S->DataItems.end() && It->first < End; ++It) {
+    const auto &[At, Other] = *It;
+    if (Other.Kind != UndefinedItemKind) {
+      if (At == Addr)
+        continue;
+      S->setError(vaHex(Addr) + " overlaps the item at " + vaHex(At));
+      return -1;
+    }
+    Carved.push_back(At);
+    if (At < Addr)
+      Pieces.emplace_back(At, Addr - At);
+    if (At + Other.Size > End)
+      Pieces.emplace_back(End, At + Other.Size - End);
   }
+  for (const va_t At : Carved)
+    S->DataItems.erase(At);
+  for (const auto &[At, Size] : Pieces)
+    S->DataItems[At] = {std::string(UndefinedItemKind), Size, {}};
   S->DataItems[Addr] = std::move(*Item);
   return 0;
 }
@@ -647,6 +791,149 @@ int neverd_item_clear(neverd_session_t Sess, neverd_va_t Addr) {
     S->setError("no data item starts at " + vaHex(Addr));
     return -1;
   }
+  return 0;
+}
+
+int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
+                              int Operand, const char *FormatJson) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  if (Operand < 0 || Operand >= MaxFormattedOperands) {
+    S->setError("an operand index is 0 to 7");
+    return -1;
+  }
+  if (!S->Img.readVA(Addr, 1)) {
+    S->setError(vaHex(Addr) + " is not in the image");
+    return -1;
+  }
+  // Formats belong to instructions, which lie in executable code.
+  if (llvm::none_of(S->Img.Segments, [&](const Segment &Seg) {
+        return Seg.isExecutable() && Seg.contains(Addr);
+      })) {
+    S->setError(vaHex(Addr) + " is not in executable code");
+    return -1;
+  }
+  std::optional<Session::OperandFormat> Format;
+  if (FormatJson) {
+    auto Parsed = llvm::json::parse(FormatJson);
+    const auto *Object = Parsed ? Parsed->getAsObject() : nullptr;
+    if (!Object) {
+      if (!Parsed)
+        llvm::consumeError(Parsed.takeError());
+      S->setError("an operand format is a JSON object");
+      return -1;
+    }
+    std::string Error;
+    Format = parseOperandFormat(*Object, Error);
+    if (!Format) {
+      S->setError(Error);
+      return -1;
+    }
+  }
+  // The listing's own spelling is no format of the user's.
+  auto &Operands = S->OperandFormats[Addr];
+  if (!Format ||
+      (Format->Base == kNumberBase && !Format->Negate && !Format->Invert))
+    Operands.erase(static_cast<unsigned>(Operand));
+  else
+    Operands[static_cast<unsigned>(Operand)] = std::move(*Format);
+  if (Operands.empty())
+    S->OperandFormats.erase(Addr);
+  return 0;
+}
+
+const char *neverd_operand_formats_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  return dupStr(jsonToString(llvm::json::Value(operandFormatRows(S))));
+}
+
+int neverd_operand_formats_save(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded)
+    return -1;
+  ProjectWriteLock Lock(S->FilePath);
+  if (!Lock) {
+    S->setError("project writer unavailable: " + Lock.error());
+    return -1;
+  }
+  return saveSidecar(S, operandsPath(S), operandFormatRows(S),
+                     "operand formats")
+             ? 0
+             : -1;
+}
+
+int neverd_operand_formats_load(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded)
+    return -1;
+  const auto Path = operandsPath(S);
+  std::error_code EC;
+  const bool Exists = std::filesystem::exists(Path, EC);
+  if (EC) {
+    S->setError("cannot inspect operand formats: " + EC.message());
+    return -1;
+  }
+  std::map<va_t, std::map<unsigned, Session::OperandFormat>> Formats;
+  if (Exists) {
+    std::ifstream In(Path);
+    if (!In.is_open()) {
+      S->setError("cannot read operand formats");
+      return -1;
+    }
+    const std::string Content((std::istreambuf_iterator<char>(In)),
+                              std::istreambuf_iterator<char>());
+    auto Parsed = llvm::json::parse(Content);
+    if (!Parsed) {
+      llvm::consumeError(Parsed.takeError());
+      S->setError("operand formats sidecar is not valid JSON");
+      return -1;
+    }
+    const auto *Rows = Parsed->getAsArray();
+    if (!Rows) {
+      S->setError("operand formats sidecar is not an array");
+      return -1;
+    }
+    for (const auto &Value : *Rows) {
+      const auto *Row = Value.getAsObject();
+      const llvm::json::Value *Address = Row ? Row->get("addr") : nullptr;
+      const auto Addr =
+          Address ? parsePersistedAddress(*Address) : std::optional<va_t>();
+      const auto *Operands = Row ? Row->getArray("operands") : nullptr;
+      if (!Addr || !Operands) {
+        S->setError("operand formats sidecar has an invalid row");
+        return -1;
+      }
+      for (const auto &Entry : *Operands) {
+        const auto *Object = Entry.getAsObject();
+        const auto Index =
+            Object ? Object->getInteger("operand") : std::nullopt;
+        std::string Error;
+        auto Format =
+            Object ? parseOperandFormat(*Object, Error) : std::nullopt;
+        if (!Index || *Index < 0 || *Index >= MaxFormattedOperands || !Format) {
+          S->setError("operand formats sidecar has an invalid operand" +
+                      (Error.empty() ? std::string() : ": " + Error));
+          return -1;
+        }
+        Formats[*Addr][static_cast<unsigned>(*Index)] = std::move(*Format);
+      }
+    }
+  }
+  S->OperandFormats = std::move(Formats);
   return 0;
 }
 

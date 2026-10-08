@@ -8,9 +8,9 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/SymbolSpelling.h"
 
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/Demangle/Demangle.h"
 
 #include <map>
 #include <set>
@@ -703,7 +703,7 @@ std::optional<LibraryRecognition> neverd::recognizeMedComLibraryOperation(
   Result.IdentityEvidence = Whole ? "stated-member-symbol+com-lifetime"
                                   : ReceiverEvidence + "+com-lifetime";
   if (Whole)
-    Result.DisplayName = llvm::demangle(Symbol);
+    Result.DisplayName = displaySymbolName(Symbol);
   Result.Occurrences = Matcher.occurrences();
   Result.Isolated = Whole;
   if (!Whole)

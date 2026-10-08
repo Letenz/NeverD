@@ -120,8 +120,8 @@
         <translation>Re&amp;name...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>Rename the current function</translation>
+        <source>Rename the current address</source>
+        <translation>Rename the current address</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,8 +136,8 @@
         <translation>Enter re&amp;peatable comment...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>&amp;Mark position...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>Mar&amp;k position...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>
@@ -192,8 +192,8 @@
         <translation>Move to the start of the previous function</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>Jump to ps&amp;eudocode</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>Jump to pseudo&amp;code</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>Search the binary for a byte sequence</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>Next seq&amp;uence of bytes</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>Next se&amp;quence of bytes</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>Show the current function&apos;s LLVM IR</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>Generate LLVM &amp;C</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>Generate &amp;LLVM C</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>Show the graph overview</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>MCP &amp;connections</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>MCP c&amp;onnections</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>Manage MCP connections and session sharing</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>E&amp;xtensions</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>Ex&amp;tensions</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>Toggle full screen</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>&amp;Increase font size</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>I&amp;ncrease font size</translation>
     </message>
     <message>
         <source>Increase the code font size</source>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>Stop treating the current function as one</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>&amp;Data</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>Define a value at the current address; again for the next size</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>&amp;String</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>Define the string that starts at the current address</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>Undef&amp;ine</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>Show the current item&apos;s bytes as bytes</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>&amp;Number</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>Show the operand&apos;s number as the listing chooses</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>&amp;Hexadecimal</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>Show the operand&apos;s number in hexadecimal</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>&amp;Decimal</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>Show the operand&apos;s number in decimal</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>&amp;Binary</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>Show the operand&apos;s number in binary</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>&amp;Character</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>Show the operand&apos;s number as characters</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>&amp;Offset</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>Show the operand&apos;s number as the address it names</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>Change &amp;sign</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>Show the operand&apos;s number with its sign changed</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>Bitwise ne&amp;gate</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>Show the operand&apos;s number with its bits inverted</translation>
     </message>
 </context>
 <context>
@@ -1094,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>&amp;Functions</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>Operand &amp;type</translation>
     </message>
 </context>
 <context>
@@ -1708,12 +1800,8 @@ Double-click to go to the declaration.</translation>
         <translation> · read-only</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 is not a function entry; only functions can be renamed.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>Rename function</translation>
+        <source>Rename address</source>
+        <translation>Rename address</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -2122,6 +2210,18 @@ Signed: %4</translation>
     <message>
         <source>Deleted the function at %1</source>
         <translation>Deleted the function at %1</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>The bytes at %1 are already undefined</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>Undefined the item at %1</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>Defined %1 at %2</translation>
     </message>
 </context>
 </TS>

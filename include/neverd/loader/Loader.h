@@ -17,6 +17,7 @@
 #include "neverd/Common.h"
 #include "neverd/loader/BinaryImageModel.h"
 #include "neverd/loader/InputDigest.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -71,10 +72,10 @@ protected:
   static llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>>
   readFileInto(const std::filesystem::path &Path, BinaryImage &Img,
                BinaryFormat Fmt, bool CopyRaw = true) {
-    auto BufOrErr = llvm::MemoryBuffer::getFile(Path.string());
+    auto BufOrErr = llvm::MemoryBuffer::getFile(pathToUTF8(Path));
     if (!BufOrErr)
       return llvm::make_error<llvm::StringError>(
-          std::string(getFormatTag(Fmt)) + ": cannot open " + Path.string(),
+          std::string(getFormatTag(Fmt)) + ": cannot open " + pathToUTF8(Path),
           llvm::inconvertibleErrorCode());
     auto &Buf = *BufOrErr;
     Img.Format = Fmt;

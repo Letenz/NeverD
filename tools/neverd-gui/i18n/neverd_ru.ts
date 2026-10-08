@@ -120,8 +120,8 @@
         <translation>Пере&amp;именовать...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>Переименовать текущую функцию</translation>
+        <source>Rename the current address</source>
+        <translation>Переименовать текущий адрес</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,7 +136,7 @@
         <translation>Ввести &amp;повторяемый комментарий...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Отметить по&amp;зицию...</translation>
     </message>
     <message>
@@ -192,7 +192,7 @@
         <translation>Перейти к началу предыдущей функции</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
+        <source>Jump to pseudo&amp;code</source>
         <translation>Перейти к пс&amp;евдокоду</translation>
     </message>
     <message>
@@ -296,7 +296,7 @@
         <translation>Искать последовательность байтов в двоичном файле</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
+        <source>Next se&amp;quence of bytes</source>
         <translation>&amp;Следующая последовательность байтов</translation>
     </message>
     <message>
@@ -392,7 +392,7 @@
         <translation>Показать LLVM IR текущей функции</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
+        <source>Generate &amp;LLVM C</source>
         <translation>С&amp;генерировать LLVM C</translation>
     </message>
     <message>
@@ -488,7 +488,7 @@
         <translation>Показать обзор графа</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
+        <source>MCP c&amp;onnections</source>
         <translation>Под&amp;ключения MCP</translation>
     </message>
     <message>
@@ -496,7 +496,7 @@
         <translation>Управление подключениями MCP и общим доступом к сеансу</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
+        <source>Ex&amp;tensions</source>
         <translation>&amp;Расширения</translation>
     </message>
     <message>
@@ -528,7 +528,7 @@
         <translation>Включить или выключить полноэкранный режим</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
+        <source>I&amp;ncrease font size</source>
         <translation>&amp;Увеличить размер шрифта</translation>
     </message>
     <message>
@@ -705,7 +705,7 @@
     </message>
     <message>
         <source>String &amp;references</source>
-        <translation>&amp;Ссылки на строки</translation>
+        <translation>Ссы&amp;лки на строки</translation>
     </message>
     <message>
         <source>List the instructions that refer to strings</source>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>Перестать считать текущую функцию функцией</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>&amp;Данные</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>Определить значение по текущему адресу; повторно — следующий размер</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>&amp;Строка</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>Определить строку, начинающуюся по текущему адресу</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>Отменить опр&amp;еделение</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>Показать байты текущего элемента как байты</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>&amp;Число</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>Показать число операнда так, как выбирает листинг</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>&amp;Шестнадцатеричное</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>Показать число операнда в шестнадцатеричном виде</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>&amp;Десятичное</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>Показать число операнда в десятичном виде</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>Д&amp;воичное</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>Показать число операнда в двоичном виде</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>&amp;Символ</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>Показать число операнда как символы</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>С&amp;мещение</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>Показать число операнда как адрес, на который оно указывает</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>Сменить &amp;знак</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>Показать число операнда со сменённым знаком</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>Побитовое отрицани&amp;е</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>Показать число операнда с инвертированными битами</translation>
     </message>
 </context>
 <context>
@@ -1094,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>&amp;Функции</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>&amp;Тип операнда</translation>
     </message>
 </context>
 <context>
@@ -1711,12 +1803,8 @@ Double-click to go to the declaration.</source>
         <translation> · только чтение</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 не является началом функции; переименовывать можно только функции.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>Переименовать функцию</translation>
+        <source>Rename address</source>
+        <translation>Переименовать адрес</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -2125,6 +2213,18 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>Удалена функция по адресу %1</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>Байты по адресу %1 уже не определены</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>Определение элемента по адресу %1 отменено</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%1 определено по адресу %2</translation>
     </message>
 </context>
 </TS>

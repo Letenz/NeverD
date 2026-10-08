@@ -4202,15 +4202,28 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     Obj.MemoryWidths.insert(Ty->Size);
   if (Obj.Name.empty()) {
     std::string Raw;
-    if (Dbg) {
+    if (Opts.UserNames)
+      if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
+        Raw = It->second;
+    if (Raw.empty() && Dbg) {
       if (auto Data = Dbg->resolveDataObject(Addr); Data && !Data->Name.empty())
         Raw = Data->Name;
     }
     if (Raw.empty() && Opts.Image) {
       if (const Symbol *Sym = Opts.Image->findSymbolAt(Addr);
           Sym && !Sym->IsFunc && !Sym->Name.empty() &&
-          llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0)
-        Raw = stripLeadingUnderscores(Sym->Name).str();
+          llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0) {
+        // A mangled name keeps the underscores its scheme starts with
+        // (`_ZTV8QDomNode` is `QDomNode_vtable`).  A comment reads a name the
+        // identifier is spelled from: `vtable for QDomNode`, Go's
+        // `main.Flags`.
+        const llvm::StringRef CName =
+            cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
+        Raw = symbolScheme(CName) != SymbolScheme::None
+                  ? CName.str()
+                  : stripLeadingUnderscores(Sym->Name).str();
+        Obj.Readable = demangledComment(CName);
+      }
     }
     if (!Raw.empty())
       Obj.Name = GlobalIdentifierAllocator.allocate(Raw, "g");

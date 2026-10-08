@@ -52,6 +52,16 @@ NEVERD_API int neverd_annotations_load(neverd_session_t Sess);
 
 NEVERD_API int neverd_rename_func(neverd_session_t Sess, const char *OldName,
                                   const char *NewName);
+/// Give \p Addr the user's name \p Name, or take the user's name away when
+/// \p Name is NULL or empty.  The name replaces a function's, a symbol's or
+/// an automatic name wherever the session names the address: the function
+/// list, neverd_symbols_json() and neverd_data_symbols_json() (a row of its
+/// own where no symbol names the address) and decompiled C, where it names
+/// image data.  A name has at most 4096 bytes and no spaces or control
+/// characters.  Saved at once to the renames sidecar; returns 0, or -1 with
+/// neverd_last_error.
+NEVERD_API int neverd_rename_addr(neverd_session_t Sess, neverd_va_t Addr,
+                                  const char *Name);
 NEVERD_API const char *neverd_renames_json(neverd_session_t Sess);
 NEVERD_API int neverd_renames_save(neverd_session_t Sess);
 NEVERD_API int neverd_renames_load(neverd_session_t Sess);
@@ -79,8 +89,9 @@ NEVERD_API int neverd_functions_load(neverd_session_t Sess);
 /// {"kind":"string","encoding":E,"size":N} for a string of N bytes in
 /// encoding E (a name of neverd_string_encodings_json()), its zero terminator
 /// included, or {"kind":"undefined","size":N} for N bytes shown as bytes,
-/// whatever analysis reads there.  An item replaces the one at its address
-/// and may share no byte with another.  Returns 0, or -1 with
+/// whatever analysis reads there.  An item replaces the one at its address;
+/// undefined bytes it covers give way to it and stay undefined around it,
+/// and it may share no byte with another item.  Returns 0, or -1 with
 /// neverd_last_error.  neverd_items_save keeps the items.
 NEVERD_API int neverd_item_set(neverd_session_t Sess, neverd_va_t Addr,
                                const char *Row);
@@ -94,6 +105,25 @@ NEVERD_API const char *neverd_items_json(neverd_session_t Sess);
 /// neverd_session_load reads too.  Return 0, or -1 with neverd_last_error.
 NEVERD_API int neverd_items_save(neverd_session_t Sess);
 NEVERD_API int neverd_items_load(neverd_session_t Sess);
+
+/// Show operand \p Operand (0 to 7) of the instruction at \p Addr as the JSON
+/// object \p FormatJson says: {"base": a base of OperandFormats.def ("number"
+/// is the listing's own choice, "hex", "decimal", "binary", "char", "offset"),
+/// "negate"?: true to change the sign, "invert"?: true to invert the bits}.
+/// NULL, or the "number" base unchanged, forgets the operand's format.
+/// \p Addr lies in executable code.  Returns 0, or -1 with
+/// neverd_last_error.  neverd_operand_formats_save keeps the formats.
+NEVERD_API int neverd_operand_format_set(neverd_session_t Sess,
+                                         neverd_va_t Addr, int Operand,
+                                         const char *FormatJson);
+/// The user's operand formats, [{"addr","operands":[{"operand","base",
+/// "negate","invert"},...]},...] in address order.  Free with
+/// neverd_free_string.
+NEVERD_API const char *neverd_operand_formats_json(neverd_session_t Sess);
+/// Write or read the formats as `<input>.neverd-operands.json`, which
+/// neverd_session_load reads too.  Return 0, or -1 with neverd_last_error.
+NEVERD_API int neverd_operand_formats_save(neverd_session_t Sess);
+NEVERD_API int neverd_operand_formats_load(neverd_session_t Sess);
 
 #ifdef __cplusplus
 }

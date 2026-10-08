@@ -1153,6 +1153,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_strings_page_json",
+    "const char *",
+    ["neverd_session_t", "const char *", "neverd_va_t", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_string_encodings_json",
     "const char *",
     [],
@@ -1346,6 +1352,12 @@ _declare("neverd_free_string", "void", ["const char *"])
 _declare("neverd_session_file_size", "unsigned long long", ["neverd_session_t"])
 _declare("neverd_session_base_addr", "neverd_va_t", ["neverd_session_t"])
 _declare("neverd_session_entry_addr", "neverd_va_t", ["neverd_session_t"])
+_declare(
+    "neverd_session_load_diagnostics_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
 _declare("neverd_session_segment_count", "int", ["neverd_session_t"])
 _declare("neverd_session_section_count", "int", ["neverd_session_t"])
 _declare("neverd_session_import_count", "int", ["neverd_session_t"])
@@ -1397,6 +1409,9 @@ _declare(
     "neverd_rename_func", "int", ["neverd_session_t", "const char *", "const char *"]
 )
 _declare(
+    "neverd_rename_addr", "int", ["neverd_session_t", "neverd_va_t", "const char *"]
+)
+_declare(
     "neverd_renames_json",
     "const char *",
     ["neverd_session_t"],
@@ -1426,6 +1441,19 @@ _declare(
 )
 _declare("neverd_items_save", "int", ["neverd_session_t"])
 _declare("neverd_items_load", "int", ["neverd_session_t"])
+_declare(
+    "neverd_operand_format_set",
+    "int",
+    ["neverd_session_t", "neverd_va_t", "int", "const char *"],
+)
+_declare(
+    "neverd_operand_formats_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare("neverd_operand_formats_save", "int", ["neverd_session_t"])
+_declare("neverd_operand_formats_load", "int", ["neverd_session_t"])
 _declare(
     "neverd_callgraph_json",
     "const char *",

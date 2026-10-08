@@ -209,10 +209,15 @@ Json hello() {
                "queued_requests_stop; "
                "synchronous_engine_requires_completion_or_process_restart"},
               {"storage", "existing_json_sidecars"}};
-  // Function edits need an engine that keeps them.
+  // Function edits, data items and operand formats need an engine that keeps
+  // them.
   if (Engine::keepsFunctionEdits())
     for (const char *operation : {"function_create", "function_delete"})
       result["capabilities"].push_back(operation);
+  if (Engine::keepsDataItems())
+    result["capabilities"].push_back("item_define");
+  if (Engine::keepsOperandFormats())
+    result["capabilities"].push_back("operand_format");
   return result;
 }
 

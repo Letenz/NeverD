@@ -81,7 +81,7 @@ NEVERD_VIEW_ACTION(EditCopyAddress,
                    QT_TRANSLATE_NOOP("Actions", "Copy the current address"))
 NEVERD_VIEW_ACTION(EditRename, QT_TRANSLATE_NOOP("Actions", "Re&name..."), "N",
                    "rename",
-                   QT_TRANSLATE_NOOP("Actions", "Rename the current function"))
+                   QT_TRANSLATE_NOOP("Actions", "Rename the current address"))
 NEVERD_VIEW_ACTION(EditCreateFunction,
                    QT_TRANSLATE_NOOP("Actions", "Create &function"), "P",
                    "function_create",
@@ -91,6 +91,54 @@ NEVERD_VIEW_ACTION(
     EditDeleteFunction, QT_TRANSLATE_NOOP("Actions", "&Delete function"), "",
     "function_delete",
     QT_TRANSLATE_NOOP("Actions", "Stop treating the current function as one"))
+NEVERD_VIEW_ACTION(EditDefineData, QT_TRANSLATE_NOOP("Actions", "&Data"), "D",
+                   "data_item",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Define a value at the current address; "
+                                     "again for the next size"))
+NEVERD_VIEW_ACTION(EditDefineString, QT_TRANSLATE_NOOP("Actions", "&String"),
+                   "A", "string_item",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Define the string that "
+                                     "starts at the current address"))
+NEVERD_VIEW_ACTION(EditOperandNumber, QT_TRANSLATE_NOOP("Actions", "&Number"),
+                   "#", "operand_number",
+                   QT_TRANSLATE_NOOP("Actions", "Show the operand's number as "
+                                                "the listing chooses"))
+NEVERD_VIEW_ACTION(
+    EditOperandHex, QT_TRANSLATE_NOOP("Actions", "&Hexadecimal"), "Q",
+    "operand_hex",
+    QT_TRANSLATE_NOOP("Actions", "Show the operand's number in hexadecimal"))
+NEVERD_VIEW_ACTION(EditOperandDecimal, QT_TRANSLATE_NOOP("Actions", "&Decimal"),
+                   "H", "operand_decimal",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Show the operand's number in decimal"))
+NEVERD_VIEW_ACTION(EditOperandBinary, QT_TRANSLATE_NOOP("Actions", "&Binary"),
+                   "B", "operand_binary",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Show the operand's number in binary"))
+NEVERD_VIEW_ACTION(EditOperandChar, QT_TRANSLATE_NOOP("Actions", "&Character"),
+                   "R", "operand_char",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Show the operand's number as characters"))
+NEVERD_VIEW_ACTION(EditOperandOffset, QT_TRANSLATE_NOOP("Actions", "&Offset"),
+                   "O", "operand_offset",
+                   QT_TRANSLATE_NOOP("Actions", "Show the operand's number as "
+                                                "the address it names"))
+NEVERD_VIEW_ACTION(EditOperandNegate,
+                   QT_TRANSLATE_NOOP("Actions", "Change &sign"), "_",
+                   "operand_negate",
+                   QT_TRANSLATE_NOOP("Actions", "Show the operand's number "
+                                                "with its sign changed"))
+NEVERD_VIEW_ACTION(EditOperandInvert,
+                   QT_TRANSLATE_NOOP("Actions", "Bitwise ne&gate"), "~",
+                   "operand_invert",
+                   QT_TRANSLATE_NOOP("Actions", "Show the operand's number "
+                                                "with its bits inverted"))
+NEVERD_VIEW_ACTION(EditUndefine, QT_TRANSLATE_NOOP("Actions", "Undef&ine"), "U",
+                   "undefine",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Show the current item's bytes as bytes"))
 NEVERD_VIEW_ACTION(EditComment,
                    QT_TRANSLATE_NOOP("Actions", "Enter &comment..."), ":",
                    "comment",
@@ -100,7 +148,7 @@ NEVERD_VIEW_ACTION(EditRepeatableComment,
                    ";", "comment",
                    QT_TRANSLATE_NOOP("Actions", "Comment the current address"))
 NEVERD_VIEW_ACTION(EditBookmark,
-                   QT_TRANSLATE_NOOP("Actions", "&Mark position..."), "Alt+M",
+                   QT_TRANSLATE_NOOP("Actions", "Mar&k position..."), "Alt+M",
                    "bookmark",
                    QT_TRANSLATE_NOOP("Actions", "Bookmark the current address"))
 
@@ -131,7 +179,7 @@ NEVERD_VIEW_ACTION(
     "Ctrl+Shift+Up", "back",
     QT_TRANSLATE_NOOP("Actions", "Move to the start of the previous function"))
 NEVERD_VIEW_ACTION(
-    JumpPseudocode, QT_TRANSLATE_NOOP("Actions", "Jump to ps&eudocode"), "Tab",
+    JumpPseudocode, QT_TRANSLATE_NOOP("Actions", "Jump to pseudo&code"), "Tab",
     "pseudocode",
     QT_TRANSLATE_NOOP("Actions", "Switch between disassembly and pseudocode"))
 NEVERD_VIEW_ACTION(JumpAnywhere,
@@ -186,7 +234,7 @@ NEVERD_ACTION(SearchBytes,
               QT_TRANSLATE_NOOP("Actions",
                                 "Search the binary for a byte sequence"))
 NEVERD_ACTION(SearchNextBytes,
-              QT_TRANSLATE_NOOP("Actions", "Next seq&uence of bytes"), "Ctrl+B",
+              QT_TRANSLATE_NOOP("Actions", "Next se&quence of bytes"), "Ctrl+B",
               "search_next",
               QT_TRANSLATE_NOOP("Actions", "Repeat the last byte search"))
 NEVERD_ACTION(SearchStringReferences,
@@ -241,7 +289,7 @@ NEVERD_ACTION(ViewLLVMIR, QT_TRANSLATE_NOOP("Actions", "Generate LLVM &IR"), "",
               "ir",
               QT_TRANSLATE_NOOP("Actions",
                                 "Show the current function's LLVM IR"))
-NEVERD_ACTION(ViewLLVMC, QT_TRANSLATE_NOOP("Actions", "Generate LLVM &C"), "",
+NEVERD_ACTION(ViewLLVMC, QT_TRANSLATE_NOOP("Actions", "Generate &LLVM C"), "",
               "pseudocode",
               QT_TRANSLATE_NOOP("Actions",
                                 "Decompile the current function through LLVM"))
@@ -278,11 +326,11 @@ NEVERD_ACTION(ViewGraphOverview,
               QT_TRANSLATE_NOOP("Actions", "Graph &overview"), "",
               "graph_overview",
               QT_TRANSLATE_NOOP("Actions", "Show the graph overview"))
-NEVERD_ACTION(ViewConnections, QT_TRANSLATE_NOOP("Actions", "MCP &connections"),
+NEVERD_ACTION(ViewConnections, QT_TRANSLATE_NOOP("Actions", "MCP c&onnections"),
               "", "mcp",
               QT_TRANSLATE_NOOP("Actions",
                                 "Manage MCP connections and session sharing"))
-NEVERD_ACTION(ViewExtensions, QT_TRANSLATE_NOOP("Actions", "E&xtensions"), "",
+NEVERD_ACTION(ViewExtensions, QT_TRANSLATE_NOOP("Actions", "Ex&tensions"), "",
               "extensions",
               QT_TRANSLATE_NOOP("Actions", "Manage declarative extensions"))
 NEVERD_ACTION(ViewUndoHistory, QT_TRANSLATE_NOOP("Actions", "&Undo history"),
@@ -295,7 +343,7 @@ NEVERD_ACTION(ViewCalculator, QT_TRANSLATE_NOOP("Actions", "&Calculator..."),
 NEVERD_ACTION(ViewFullScreen, QT_TRANSLATE_NOOP("Actions", "F&ull screen"),
               "F11", "maximize",
               QT_TRANSLATE_NOOP("Actions", "Toggle full screen"))
-NEVERD_ACTION(ViewZoomIn, QT_TRANSLATE_NOOP("Actions", "&Increase font size"),
+NEVERD_ACTION(ViewZoomIn, QT_TRANSLATE_NOOP("Actions", "I&ncrease font size"),
               "Ctrl+=", "zoom_in",
               QT_TRANSLATE_NOOP("Actions", "Increase the code font size"))
 NEVERD_ACTION(ViewZoomOut, QT_TRANSLATE_NOOP("Actions", "&Decrease font size"),

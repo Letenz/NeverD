@@ -27,6 +27,8 @@ bool isEdit(const QString &operation) {
                                    QStringLiteral("rename"),
                                    QStringLiteral("function_create"),
                                    QStringLiteral("function_delete"),
+                                   QStringLiteral("item_define"),
+                                   QStringLiteral("operand_format"),
                                    QStringLiteral("undo"),
                                    QStringLiteral("redo"),
                                    QStringLiteral("save")};
@@ -605,6 +607,47 @@ bool Session::acceptsEdit(std::optional<quint64> epoch) {
     return false;
   }
   return true;
+}
+
+void Session::defineItem(Address address, const QString &action,
+                         std::optional<quint64> epoch) {
+  if (!acceptsEdit(epoch))
+    return;
+  // Like a rename, a data item commits at once over saved comments.
+  if (dirty_)
+    save();
+  command(
+      QStringLiteral("item_define"),
+      {{"address", hexAddress(address)}, {"action", action}},
+      [this, address, action](const QJsonObject &result) {
+        refreshHistory();
+        // The item the cursor was in starts at the address answered.
+        const auto at = displayAddress(
+            addressValue(result.value("address")).value_or(address));
+        if (!result.value("saved").toBool())
+          emit message(tr("The bytes at %1 are already undefined").arg(at), 0);
+        else if (action == QLatin1String("undefine"))
+          emit message(tr("Undefined the item at %1").arg(at), 0);
+        else
+          emit message(
+              tr("Defined %1 at %2").arg(result.value("kind").toString(), at),
+              0);
+      });
+}
+
+void Session::formatOperand(Address address, std::optional<int> operand,
+                            const QString &action,
+                            std::optional<quint64> epoch) {
+  if (!acceptsEdit(epoch))
+    return;
+  // Like a rename, an operand format commits at once over saved comments.
+  if (dirty_)
+    save();
+  QJsonObject payload{{"address", hexAddress(address)}, {"action", action}};
+  if (operand)
+    payload.insert(QStringLiteral("operand"), *operand);
+  command(QStringLiteral("operand_format"), payload,
+          [this](const QJsonObject &) { refreshHistory(); });
 }
 
 void Session::createFunction(Address address, std::optional<quint64> epoch) {

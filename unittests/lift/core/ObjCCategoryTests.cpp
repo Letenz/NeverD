@@ -130,6 +130,25 @@ TEST(ObjCCategories, RecoversInstanceAndClassMethodsWithCategoryIdentityOnce) {
   EXPECT_EQ(Fixture.Image.ObjCMethods.size(), 2U);
 }
 
+TEST(ObjCCategories, NamesImplementationsAsClangDoes) {
+  // A stripped image's implementations take the names clang gives them.
+  CategoryImage Fixture;
+  parseObjCMethods(Fixture.Image);
+  const Symbol *Instance = Fixture.Image.findSymbolAt(0x1100);
+  const Symbol *ClassMethod = Fixture.Image.findSymbolAt(0x1110);
+  ASSERT_TRUE(Instance && ClassMethod);
+  EXPECT_EQ(Instance->Name, "-[Container(Extra) step:]");
+  EXPECT_EQ(ClassMethod->Name, "+[Container(Extra) classStep:]");
+
+  // A selector that is no Objective-C name keeps the address name.
+  CategoryImage Hostile;
+  Hostile.string(0x2540, "s(){x;}:");
+  parseObjCMethods(Hostile.Image);
+  const Symbol *Placeholder = Hostile.Image.findSymbolAt(0x1100);
+  ASSERT_TRUE(Placeholder);
+  EXPECT_EQ(Placeholder->Name, "objc_imp_1100");
+}
+
 TEST(ObjCCategories, DiscoversLocalOwnerWithoutAClassListEntry) {
   CategoryImage Fixture;
   Fixture.pointer(0x2000, 0);

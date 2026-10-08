@@ -101,10 +101,9 @@ private:
 void parseExceptions(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img,
                      uint64_t ImageBase);
 
-/// Parse a single ordinary imported symbol and append to Img.Imports.
-void addImportedSymbol(const llvm::object::imported_symbol_iterator &SI,
-                       llvm::StringRef ModuleName, va_t IATAddr,
-                       BinaryImage &Img);
+/// Parse complete, bounded ordinary import descriptors. Malformed metadata
+/// contributes diagnostics without publishing guessed or partial bindings.
+void parseImports(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img);
 
 /// Parse the COFF symbol table (.symtab) and populate Img.Symbols.
 /// Applies to object files and some executables with embedded symbols.
@@ -140,7 +139,8 @@ llvm::Error parseBaseRelocations(const llvm::object::COFFObjectFile &Obj,
 /// entries to one typed build identity.  The path is retained only as a
 /// discovery hint.
 void parseDebugDirectory(const llvm::object::COFFObjectFile &Obj,
-                         BinaryImage &Img);
+                         BinaryImage &Img,
+                         llvm::ArrayRef<uint8_t> OriginalBytes = {});
 
 /// Parse the PE Load Configuration directory and extract security cookie
 /// and CF Guard check function RVAs.  Handles both PE32 and PE32+.

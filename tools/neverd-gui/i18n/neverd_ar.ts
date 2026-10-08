@@ -120,8 +120,8 @@
         <translation>إعادة تسمية(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>إعادة تسمية الدالة الحالية</translation>
+        <source>Rename the current address</source>
+        <translation>إعادة تسمية العنوان الحالي</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,8 +136,8 @@
         <translation>إدخال تعليق متكرر(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>وضع علامة على الموضع(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>وضع علامة على الموضع(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>
@@ -192,8 +192,8 @@
         <translation>الانتقال إلى بداية الدالة السابقة</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>الانتقال إلى الشيفرة الزائفة(&amp;E)</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>الانتقال إلى الشيفرة الزائفة(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>البحث عن تسلسل بايتات في الملف الثنائي</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>تسلسل البايتات التالي(&amp;U)</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>تسلسل البايتات التالي(&amp;Q)</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>إظهار LLVM IR للدالة الحالية</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>توليد LLVM C(&amp;C)</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>توليد LLVM C(&amp;L)</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>إظهار النظرة العامة على الرسم البياني</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>اتصالات MCP(&amp;C)</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>اتصالات MCP(&amp;O)</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>إدارة اتصالات MCP ومشاركة الجلسة</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>الإضافات(&amp;X)</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>الإضافات(&amp;T)</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>تبديل وضع ملء الشاشة</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>تكبير حجم الخط(&amp;I)</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>تكبير حجم الخط(&amp;N)</translation>
     </message>
     <message>
         <source>Increase the code font size</source>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>التوقف عن معاملة الدالة الحالية كدالة</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>بيانات(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>تعريف قيمة عند العنوان الحالي؛ مرة أخرى للحجم التالي</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>سلسلة نصية(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>تعريف السلسلة النصية التي تبدأ عند العنوان الحالي</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>إلغاء التعريف(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>عرض بايتات العنصر الحالي كبايتات</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>رقم(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>عرض رقم المعامل كما تختاره القائمة</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>ست عشري(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>عرض رقم المعامل بالنظام الست عشري</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>عشري(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>عرض رقم المعامل بالنظام العشري</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>ثنائي(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>عرض رقم المعامل بالنظام الثنائي</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>حرف(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>عرض رقم المعامل كأحرف</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>إزاحة(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>عرض رقم المعامل كالعنوان الذي يشير إليه</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>تغيير الإشارة(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>عرض رقم المعامل بإشارة معكوسة</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>النفي على مستوى البت(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>عرض رقم المعامل مع عكس البتات</translation>
     </message>
 </context>
 <context>
@@ -1094,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>الدوال(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>نوع المعامل(&amp;T)</translation>
     </message>
 </context>
 <context>
@@ -1720,12 +1812,8 @@ Double-click to go to the declaration.</source>
         <translation> · للقراءة فقط</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 ليس بداية دالة؛ يمكن إعادة تسمية الدوال فقط.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>إعادة تسمية الدالة</translation>
+        <source>Rename address</source>
+        <translation>إعادة تسمية العنوان</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -2134,6 +2222,18 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>حُذفت الدالة عند %1</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>البايتات عند %1 غير معرّفة بالفعل</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>أُلغي تعريف العنصر عند %1</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>عُرِّف %1 عند %2</translation>
     </message>
 </context>
 </TS>

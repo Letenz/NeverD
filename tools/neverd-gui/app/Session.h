@@ -94,6 +94,25 @@ public:
   bool keepsFunctionEdits() const {
     return capabilities_.contains(QStringLiteral("function_create"));
   }
+  /// Whether the worker's engine keeps how the user shows operands' numbers.
+  bool keepsOperandFormats() const {
+    return capabilities_.contains(QStringLiteral("operand_format"));
+  }
+  /// Show a number operand of the instruction at \p address as \p action
+  /// says: a base of OperandFormats.def, "negate" or "invert" to toggle the
+  /// sign or the bits.  The worker formats \p operand if it is a number, and
+  /// else the instruction's last number.  Commits at once, like a rename.
+  void formatOperand(Address address, std::optional<int> operand,
+                     const QString &action, std::optional<quint64> epoch = {});
+  /// Whether the worker's engine keeps the user's data items.
+  bool keepsDataItems() const {
+    return capabilities_.contains(QStringLiteral("item_define"));
+  }
+  /// Define the item at \p address: \p action "data" makes a value, the
+  /// next size each time; "string" the string that starts there; "undefine"
+  /// shows the item's bytes as bytes.  Each commits at once, like a rename.
+  void defineItem(Address address, const QString &action,
+                  std::optional<quint64> epoch = {});
   /// Start a function at \p address, or stop treating the function at
   /// \p entry as one.  Each commits at once, like a rename.
   void createFunction(Address address, std::optional<quint64> epoch = {});

@@ -43,6 +43,8 @@ public:
   static bool keepsFunctionEdits();
   /// Whether the engine keeps the user's data items.
   static bool keepsDataItems();
+  /// Whether the engine keeps how the user shows operands' numbers.
+  static bool keepsOperandFormats();
 
 private:
   neverd_session_t session_ = nullptr;
@@ -68,7 +70,6 @@ private:
   bool readOnly_ = false;
   std::uintmax_t loadedSize_ = 0;
   std::filesystem::file_time_type loadedTime_;
-  Json stringsCache_;
   /// neverd_strings_ex_json options as JSON text, empty for the defaults; a
   /// workbench preference that outlives the open file.
   std::string stringOptions_;
@@ -100,6 +101,14 @@ private:
   bool reloadDataItems();
   /// The user's data items as rows; none from an older engine.
   Json dataItemRows() const;
+  /// Read the operand formats sidecar: true when it loaded or the engine
+  /// keeps no operand formats.  Changed formats show in the listing.
+  bool reloadOperandFormats();
+  /// The user's operand formats as rows; none from an older engine.
+  Json operandFormatRows() const;
+  /// The user's operand formats changed: instruction text shows them at
+  /// once, without building the listing again.
+  void operandFormatsChanged();
   /// The function list changed: analysis restarts function by function and
   /// the reference index is built again.
   void functionsChanged();

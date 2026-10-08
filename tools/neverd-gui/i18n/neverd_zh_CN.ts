@@ -120,8 +120,8 @@
         <translation>重命名(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>重命名当前函数</translation>
+        <source>Rename the current address</source>
+        <translation>重命名当前地址</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,8 +136,8 @@
         <translation>输入可重复注释(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>标记位置(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>标记位置(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>
@@ -192,8 +192,8 @@
         <translation>移动到上一个函数的起始处</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>跳转到伪代码(&amp;E)</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>跳转到伪代码(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>在二进制文件中搜索字节序列</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>下一个字节序列(&amp;U)</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>下一个字节序列(&amp;Q)</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>显示当前函数的 LLVM IR</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>生成 LLVM C(&amp;C)</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>生成 LLVM C(&amp;L)</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>显示图形概览</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>MCP 连接(&amp;C)</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>MCP 连接(&amp;O)</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>管理 MCP 连接与会话共享</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>扩展(&amp;X)</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>扩展(&amp;T)</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>切换全屏</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>增大字号(&amp;I)</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>增大字号(&amp;N)</translation>
     </message>
     <message>
         <source>Increase the code font size</source>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>不再将当前函数视为函数</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>数据(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>在当前地址定义一个数值；再按一次换成下一个大小</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>字符串(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>定义从当前地址开始的字符串</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>取消定义(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>将当前项显示为原始字节</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>数字(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>按列表的默认方式显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>十六进制(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>以十六进制显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>十进制(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>以十进制显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>二进制(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>以二进制显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>字符(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>以字符显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>偏移(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>以其指向地址的名字显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>改变符号(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>以相反的符号显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>按位取反(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>以按位取反的形式显示操作数的数字</translation>
     </message>
 </context>
 <context>
@@ -1094,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>函数(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>操作数类型(&amp;T)</translation>
     </message>
 </context>
 <context>
@@ -1705,12 +1797,8 @@ Double-click to go to the declaration.</source>
         <translation> · 只读</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 不是函数入口；只能重命名函数。</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>重命名函数</translation>
+        <source>Rename address</source>
+        <translation>重命名地址</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -2119,6 +2207,18 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>已删除 %1 处的函数</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>%1 处的字节已经是未定义的</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>已取消 %1 处的定义</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>已在 %2 定义 %1</translation>
     </message>
 </context>
 </TS>

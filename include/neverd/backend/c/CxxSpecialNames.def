@@ -1,0 +1,37 @@
+//===- CxxSpecialNames.def - C names of Itanium special objects -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The objects and thunks the Itanium C++ ABI emits for a class, a variable
+/// or a function, as LLVM's demangler prints them, and the word their C
+/// identifier ends in: `vtable for QDomNode` is `QDomNode_vtable`.
+///
+///   NEVERD_CXX_SPECIAL_NAME(Prefix, Stem)
+///       a demangled name that starts with Prefix and then names what the
+///       object belongs to
+///
+/// Longer prefixes come first: `typeinfo name for ` before `typeinfo for `.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_CXX_SPECIAL_NAME
+#define NEVERD_CXX_SPECIAL_NAME(Prefix, Stem)
+#endif
+
+NEVERD_CXX_SPECIAL_NAME("construction vtable for ", "construction_vtable")
+NEVERD_CXX_SPECIAL_NAME("vtable for ", "vtable")
+NEVERD_CXX_SPECIAL_NAME("VTT for ", "VTT")
+NEVERD_CXX_SPECIAL_NAME("typeinfo name for ", "typeinfo_name")
+NEVERD_CXX_SPECIAL_NAME("typeinfo for ", "typeinfo")
+NEVERD_CXX_SPECIAL_NAME("guard variable for ", "guard")
+NEVERD_CXX_SPECIAL_NAME("non-virtual thunk to ", "thunk")
+NEVERD_CXX_SPECIAL_NAME("virtual thunk to ", "virtual_thunk")
+NEVERD_CXX_SPECIAL_NAME("covariant return thunk to ", "covariant_thunk")
+NEVERD_CXX_SPECIAL_NAME("thread-local wrapper routine for ", "tls_wrapper")
+NEVERD_CXX_SPECIAL_NAME("thread-local initialization routine for ", "tls_init")
+NEVERD_CXX_SPECIAL_NAME("reference temporary for ", "reference_temporary")
+
+#undef NEVERD_CXX_SPECIAL_NAME
