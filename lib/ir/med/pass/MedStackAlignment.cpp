@@ -31,20 +31,6 @@ bool sameOccurrence(const MedVar &A, const MedVar &B) {
          (A.Kind != MedVar::Reg || A.RegOff == B.RegOff);
 }
 
-// ARM AAPCS requires an eight-byte-aligned public interface stack.  The
-// source emitter's larger synthetic buffer alignment is not itself an ABI
-// guarantee, so never use it to erase a real low bit of a machine value.
-constexpr uint64_t guaranteedEntryAlignment(Arch Architecture,
-                                            BinaryFormat Format) {
-  if (Architecture == Arch::ARM)
-    return 8;
-  if (Architecture == Arch::AArch64 || Architecture == Arch::X64)
-    return 16;
-  if (Architecture == Arch::X86 && Format == BinaryFormat::MachO)
-    return 16;
-  return 4;
-}
-
 struct AlignmentResult {
   unsigned BaseIndex = 0;
   uint64_t Remainder = 0;
@@ -53,9 +39,10 @@ struct AlignmentResult {
 
 class StackOffsetProof {
 public:
-  StackOffsetProof(const MedFunc &Func, Arch Architecture, BinaryFormat Format)
+  StackOffsetProof(const MedFunc &Func, Arch Architecture, BinaryFormat Format,
+                   StackEntryKind Entry)
       : Func(Func), TRI(getTargetRegInfo(Architecture)),
-        Architecture(Architecture), Format(Format) {
+        Architecture(Architecture), Format(Format), Entry(Entry) {
     for (const MedBlock &Block : Func.Blocks) {
       for (const PhiNode &Phi : Block.Phis)
         Ambiguous.insert(key(Phi.Output));
@@ -90,7 +77,8 @@ public:
       const uint64_t Cleared = ~Mask.ConstVal & WidthMask;
       const uint64_t Alignment = Cleared + 1;
       if (!Cleared || !Alignment ||
-          Alignment > guaranteedEntryAlignment(Architecture, Format) ||
+          Alignment >
+              guaranteedEntryStackAlignment(Architecture, Format, Entry) ||
           (Alignment & (Alignment - 1)) != 0)
         continue;
       auto Offset = resolve(Base, Depth + 1);
@@ -98,7 +86,7 @@ public:
         continue;
       const uint64_t Remainder =
           (uint64_t(*Offset) +
-           syntheticEntryStackResidue(Architecture, Format)) &
+           syntheticEntryStackResidue(Architecture, Format, Entry)) &
           (Alignment - 1);
       auto Aligned = safety::detail::checkedStackOffset(
           *Offset, static_cast<int64_t>(Remainder), true);
@@ -166,6 +154,7 @@ private:
   const TargetRegInfo &TRI;
   Arch Architecture;
   BinaryFormat Format;
+  StackEntryKind Entry;
   std::map<Key, const MedOp *> Definitions;
   std::set<Key> Ambiguous;
   std::set<Key> Active;
@@ -174,11 +163,11 @@ private:
 } // namespace
 
 void simplifyProvenStackAlignment(MedFunc &Func, Arch Architecture,
-                                  BinaryFormat Format) {
+                                  BinaryFormat Format, StackEntryKind Entry) {
   const auto &TRI = getTargetRegInfo(Architecture);
   if ((TRI.PointerSize != 4 && TRI.PointerSize != 8) || Func.Blocks.empty())
     return;
-  StackOffsetProof Proof(Func, Architecture, Format);
+  StackOffsetProof Proof(Func, Architecture, Format, Entry);
   for (MedBlock &Block : Func.Blocks)
     for (MedOp &Op : Block.Ops)
       if (const auto Aligned = Proof.alignment(Op)) {

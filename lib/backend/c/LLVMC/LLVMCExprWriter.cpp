@@ -1086,8 +1086,10 @@ void LLVMCWriter::discoverSyntheticFrame(llvm::Function &Fn) {
   SpLocalAmbiguousNames.clear();
   if (!Dbg || !FunctionEntry || !SyntheticFrame || FrameBaseOffset == 0)
     return;
-  const uint64_t Residue =
-      syntheticEntryStackResidue(Opts.TheArch, Opts.Format);
+  const uint64_t Residue = syntheticEntryStackResidue(
+      Opts.TheArch, Opts.Format,
+      Opts.Image ? Opts.Image->stackEntryKindAt(FunctionEntry)
+                 : StackEntryKind::Call);
   if (FrameBaseOffset <= Residue)
     return;
   const int64_t Aligned = static_cast<int64_t>(FrameBaseOffset - Residue);
@@ -1206,8 +1208,10 @@ std::optional<VariableSym> LLVMCWriter::debugFrameVariable(int64_t Disp) const {
       Found = std::nullopt;
   }
   if (!Found && Dbg && FunctionEntry && FrameBaseOffset) {
-    const uint64_t Residue =
-        syntheticEntryStackResidue(Opts.TheArch, Opts.Format);
+    const uint64_t Residue = syntheticEntryStackResidue(
+        Opts.TheArch, Opts.Format,
+        Opts.Image ? Opts.Image->stackEntryKindAt(FunctionEntry)
+                   : StackEntryKind::Call);
     const int64_t Aligned = static_cast<int64_t>(
         FrameBaseOffset > Residue ? FrameBaseOffset - Residue : 0);
     // MedLLVM aligns FrameSize; PDB S_LOCAL RSP offsets use the unaligned

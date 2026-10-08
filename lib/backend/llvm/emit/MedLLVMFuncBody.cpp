@@ -352,8 +352,9 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
       // x86-64 is 8 mod 16, and Darwin i386 is 12 mod 16.
       uint64_t AlignedFrameSize = alignSyntheticStack(
           Func.FrameSize > 0 ? static_cast<uint64_t>(Func.FrameSize) : 0);
-      uint64_t EntryResidue =
-          syntheticEntryStackResidue(TargetArch, TargetFormat);
+      uint64_t EntryResidue = syntheticEntryStackResidue(
+          TargetArch, TargetFormat,
+          Img ? Img->stackEntryKindAt(Func.Entry) : StackEntryKind::Call);
       uint64_t FrameBaseOffset =
           checkedSyntheticStackAdd(AlignedFrameSize, EntryResidue);
       // A variadic function reads its overflow (incoming-stack) arguments at

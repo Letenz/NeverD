@@ -167,6 +167,46 @@ TEST(MedStackAlignment, HonorsEntryResiduesOnOtherArchitectures) {
   }
 }
 
+TEST(MedStackAlignment, TheKernelEntersAProcessAligned) {
+  // x86-64 `_start` pops argc and aligns the stack under argv.  A call would
+  // have entered at 8 mod 16, where that mask clears nothing; the kernel
+  // enters a System V process 16-byte aligned, where it clears eight bytes.
+  // i386 code is only promised sixteen at that entry.
+  struct Case {
+    Arch Architecture;
+    StackEntryKind Entry;
+    NdOp Simplified;
+  };
+  const Case Cases[] = {
+      {Arch::X64, StackEntryKind::Call, NdOp::COPY},
+      {Arch::X64, StackEntryKind::ProcessEntry, NdOp::INT_SUB},
+      {Arch::X86, StackEntryKind::Call, NdOp::INT_AND},
+      {Arch::X86, StackEntryKind::ProcessEntry, NdOp::INT_SUB},
+  };
+  for (const Case &C : Cases) {
+    SCOPED_TRACE(static_cast<int>(C.Architecture) * 2 +
+                 static_cast<int>(C.Entry));
+    MedFunc Func = frameWithEntrySP(C.Architecture);
+    auto &Ops = Func.Blocks[0].Ops;
+    const uint16_t Width = getTargetRegInfo(C.Architecture).PointerSize;
+    const uint64_t Mask =
+        Width == 8 ? UINT64_C(0xfffffffffffffff0) : UINT64_C(0xfffffff0);
+    Ops.push_back(op(NdOp::INT_ADD, temp(2, C.Architecture),
+                     reg(0, C.Architecture), MedVar::makeConst(Width, Width)));
+    Ops.push_back(op(NdOp::INT_AND, temp(3, C.Architecture),
+                     temp(2, C.Architecture), MedVar::makeConst(Mask, Width)));
+
+    simplifyProvenStackAlignment(Func, C.Architecture, BinaryFormat::ELF,
+                                 C.Entry);
+
+    EXPECT_EQ(Ops[2].Opcode, C.Simplified);
+    if (C.Simplified == NdOp::INT_SUB) {
+      EXPECT_EQ(Ops[2].Inputs[0], temp(2, C.Architecture));
+      EXPECT_EQ(Ops[2].Inputs[1].ConstVal, Width);
+    }
+  }
+}
+
 TEST(MedStackAlignment, ZeroMasksDoNotProveStackAlignment) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
     SCOPED_TRACE(static_cast<int>(Architecture));

@@ -1315,6 +1315,15 @@ struct BinaryImage {
     return getSectionByName(section_names::elf::Data);
   }
 
+  /// How execution reaches the function at \p FunctionEntry: the kernel
+  /// starts an ELF program at its entry point, and calls reach the rest.
+  StackEntryKind stackEntryKindAt(va_t FunctionEntry) const {
+    return Format == BinaryFormat::ELF && !IsRelocatable && Entry != 0 &&
+                   FunctionEntry == Entry
+               ? StackEntryKind::ProcessEntry
+               : StackEntryKind::Call;
+  }
+
   /// Get all function symbols, sorted by address.
   std::vector<const Symbol *> getFunctionSymbols() const {
     std::vector<const Symbol *> Result;

@@ -13,9 +13,10 @@ namespace neverd {
 
 /// In source mode, simplify an alignment mask only when its operand is an
 /// exact offset from an authenticated entry stack pointer and the target ABI
-/// fixes every bit discarded by the mask.
+/// fixes every bit discarded by the mask for a function entered as \p Entry.
 void simplifyProvenStackAlignment(MedFunc &Func, Arch Architecture,
-                                  BinaryFormat Format);
+                                  BinaryFormat Format,
+                                  StackEntryKind Entry = StackEntryKind::Call);
 
 } // namespace neverd
 
