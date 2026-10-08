@@ -170,6 +170,7 @@ add_neverd_unittest(NeverDLiftTests
   core/HighCPointerAddressTests.cpp
   core/HighCIntegerWidthTests.cpp
   core/CSourceDefinitionTests.cpp
+  core/CStringCommentTests.cpp
   core/CSymbolNameTests.cpp
   sdk/ObjCSourceProjectionTests.cpp
   sdk/ObjCSourceBindingTests.cpp

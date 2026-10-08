@@ -304,6 +304,10 @@ public:
   /// How many arguments the plain declaration of the external function \p E
   /// calls gives it (writeForwardDecls), when its arity is known.
   std::optional<size_t> plainDeclarationArity(const HighExpr &E) const;
+  /// A comment showing the string the call argument \p Arg points to, as an
+  /// address or as a pointer the image holds; empty when it points to none
+  /// or prints as a literal already.
+  std::string stringArgumentNote(const HighExpr &Arg);
   void collectUnknownOnlyNames(const HighFunc &Func);
   void collectCtorSourceNames(const HighFunc &Func);
   bool isUnknownCallOperand(const HighExpr *Op) const;

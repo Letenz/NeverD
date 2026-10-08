@@ -15,6 +15,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -156,6 +157,82 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
       return std::nullopt;
   }
   return std::nullopt;
+}
+
+std::optional<std::string> imageStringComment(const BinaryImage *Img,
+                                              va_t Addr) {
+  if (!Img || Addr == 0 || Addr == InvalidVA)
+    return std::nullopt;
+  const Segment *Seg = Img->getSegmentFor(Addr);
+  if (!Seg || !Seg->isReadable() || Seg->isExecutable() || Addr < Seg->VA)
+    return std::nullopt;
+  const uint64_t Off = Addr - Seg->VA;
+  if (Off >= Seg->Data.size())
+    return std::nullopt;
+  // A string that does not end within this many bytes has no comment.
+  constexpr size_t Window = 4096;
+  const llvm::ArrayRef<uint8_t> Bytes(
+      Seg->Data.data() + Off,
+      std::min<size_t>(Window, Seg->Data.size() - static_cast<size_t>(Off)));
+  std::optional<strings::FoundString> First;
+  strings::scan(Bytes, strings::ScanOptions(),
+                [&](strings::FoundString &&Found) {
+                  if (!First)
+                    First = std::move(Found);
+                });
+  if (!First || First->Offset != 0)
+    return std::nullopt;
+  std::string Comment;
+  if (First->Kind != strings::Encoding::UTF8)
+    if (const llvm::StringRef Name = strings::encodingSpelling(First->Kind);
+        !Name.empty())
+      Comment += Name.str() + " ";
+  Comment += '"';
+  // Characters shown before the text is cut; UTF-8 continuation bytes
+  // belong to the character before them.
+  constexpr unsigned MaxCharacters = 64;
+  unsigned Characters = 0;
+  const llvm::StringRef Text = First->Text;
+  for (size_t I = 0; I < Text.size(); ++I) {
+    const unsigned char Ch = Text[I];
+    if ((Ch & 0xC0) != 0x80 && Characters++ == MaxCharacters) {
+      Comment += "\xE2\x80\xA6"; // U+2026, the ellipsis, in UTF-8
+      break;
+    }
+    switch (Ch) {
+    case '\n':
+      Comment += "\\n";
+      break;
+    case '\t':
+      Comment += "\\t";
+      break;
+    case '\r':
+      Comment += "\\r";
+      break;
+    case '"':
+      Comment += "\\\"";
+      break;
+    case '\\':
+      Comment += "\\\\";
+      break;
+    case '/':
+      // `*/` would end the comment.
+      if (!Comment.empty() && Comment.back() == '*')
+        Comment += ' ';
+      Comment += '/';
+      break;
+    default:
+      if (Ch < 0x20 || Ch == 0x7F) {
+        Comment += "\\x";
+        Comment += llvm::hexdigit(Ch >> 4, /*LowerCase=*/true);
+        Comment += llvm::hexdigit(Ch & 15, /*LowerCase=*/true);
+      } else {
+        Comment += static_cast<char>(Ch);
+      }
+      break;
+    }
+  }
+  return Comment + '"';
 }
 
 namespace {
