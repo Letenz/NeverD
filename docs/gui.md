@@ -43,6 +43,10 @@ set `NEVERD_ENGINE_LIBRARY` to the runtime DLL and `NEVERD_ENGINE_IMPLIB` to its
 matching import `.lib`; make runtime dependencies available alongside the
 worker.
 
+The default application and code font is Consolas at 10 points when that
+family is installed. Otherwise, the system fixed-width font is used. A saved
+code-font choice continues to override the default for code views.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.
