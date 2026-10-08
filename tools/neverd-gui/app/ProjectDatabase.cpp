@@ -12,6 +12,7 @@
 #include <QStandardPaths>
 #include <QUuid>
 #include <QtConcurrent/QtConcurrentMap>
+#include <QtEndian>
 #include <vector>
 
 namespace neverd::gui {
@@ -22,6 +23,11 @@ constexpr int CompressionLevel = 6;
 constexpr char InputBlob[] = "input";
 constexpr char JournalSuffix[] = ".neverd-journal.json";
 constexpr char DatabasesDirectory[] = "databases";
+// A SQLite header starts with this string and its terminating NUL, and holds
+// the big-endian application id at ApplicationIdOffset.
+constexpr char SqliteMagic[] = "SQLite format 3";
+constexpr qint64 ApplicationIdOffset = 68;
+constexpr qint64 HeaderPrefixBytes = ApplicationIdOffset + sizeof(qint32);
 
 // Schema of format 1.  Text keys keep the file inspectable with any SQLite
 // browser.
@@ -94,6 +100,28 @@ QString metaValue(QSqlDatabase &database, const QString &key) {
   query.prepare(QStringLiteral("SELECT value FROM meta WHERE key = ?"));
   query.addBindValue(key);
   return query.exec() && query.next() ? query.value(0).toString() : QString();
+}
+
+/// The format of \p database, or an empty string when it is not a NeverD
+/// database: its header carries another application's id, or it has no
+/// format row.  A database written before the id was stamped carries none and
+/// is known by its format row; its next write stamps the id.
+QString databaseFormat(QSqlDatabase &database) {
+  QSqlQuery query(database);
+  if (!query.exec(QStringLiteral("PRAGMA application_id")) || !query.next())
+    return {};
+  const qint64 id = query.value(0).toLongLong();
+  if (id != ProjectDatabase::ApplicationId && id != 0)
+    return {};
+  return metaValue(database, QStringLiteral("format"));
+}
+
+/// Stamp the application id into the header within the open transaction.
+bool writeApplicationId(QSqlDatabase &database, QString &error) {
+  return exec(database,
+              QStringLiteral("PRAGMA application_id = %1")
+                  .arg(ProjectDatabase::ApplicationId),
+              error);
 }
 
 bool writeMeta(QSqlDatabase &database, const QString &key, const QString &value,
@@ -174,7 +202,16 @@ QString ProjectDatabase::pathFor(const QString &binary) {
 }
 
 bool ProjectDatabase::isDatabase(const QString &path) {
-  return path.endsWith(QLatin1String(Extension), Qt::CaseInsensitive);
+  if (path.endsWith(QLatin1String(Extension), Qt::CaseInsensitive))
+    return true;
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly))
+    return false;
+  const QByteArray header = file.read(HeaderPrefixBytes);
+  return header.size() == HeaderPrefixBytes &&
+         header.startsWith(QByteArrayView(SqliteMagic, sizeof(SqliteMagic))) &&
+         qFromBigEndian<qint32>(header.constData() + ApplicationIdOffset) ==
+             ApplicationId;
 }
 
 QString ProjectDatabase::workingDirectory(const QString &database) {
@@ -205,15 +242,22 @@ QString ProjectDatabase::save(const QString &database, const QString &binary,
     if (!connection.error().isEmpty())
       return connection.error();
     auto db = connection.database();
+    // Never add NeverD tables to a file that is not a NeverD database.
+    if (!fresh) {
+      const QString format = databaseFormat(db);
+      if (format.isEmpty())
+        return QCoreApplication::translate("ProjectDatabase",
+                                           "%1 is not a NeverD database.")
+            .arg(database);
+      if (format.toInt() != FormatVersion)
+        return QCoreApplication::translate("ProjectDatabase",
+                                           "%1 uses database format %2, which "
+                                           "this NeverD cannot update.")
+            .arg(database, format);
+    }
     for (const char *statement : Schema)
       if (!exec(db, QString::fromLatin1(statement), error))
         return error;
-    const QString format = metaValue(db, QStringLiteral("format"));
-    if (!format.isEmpty() && format.toInt() != FormatVersion)
-      return QCoreApplication::translate("ProjectDatabase",
-                                         "%1 uses database format %2, which "
-                                         "this NeverD cannot update.")
-          .arg(database, format);
     const bool inputCurrent =
         metaValue(db, QStringLiteral("input_sha256")) == digest;
     std::optional<std::vector<Chunk>> chunks;
@@ -264,7 +308,8 @@ QString ProjectDatabase::save(const QString &database, const QString &binary,
         return fail(lastError(insert));
     }
     const QFileInfo input(binary);
-    if (!writeMeta(db, QStringLiteral("format"), QString::number(FormatVersion),
+    if (!writeApplicationId(db, error) ||
+        !writeMeta(db, QStringLiteral("format"), QString::number(FormatVersion),
                    error) ||
         !writeMeta(db, QStringLiteral("generator"),
                    QStringLiteral("NeverD ") +
@@ -298,13 +343,13 @@ QString ProjectDatabase::saveState(const QString &database,
     return connection.error();
   auto db = connection.database();
   QString error;
-  if (metaValue(db, QStringLiteral("format")).toInt() != FormatVersion)
+  if (databaseFormat(db).toInt() != FormatVersion)
     return QCoreApplication::translate("ProjectDatabase",
                                        "%1 is not a NeverD database.")
         .arg(database);
   if (!db.transaction())
     return db.lastError().text();
-  if (!writeState(db, state, error)) {
+  if (!writeApplicationId(db, error) || !writeState(db, state, error)) {
     db.rollback();
     return error;
   }
@@ -326,7 +371,7 @@ ProjectDatabase::read(const QString &database, QString *error) {
   if (!connection.error().isEmpty())
     return failed(connection.error());
   auto db = connection.database();
-  const QString format = metaValue(db, QStringLiteral("format"));
+  const QString format = databaseFormat(db);
   if (format.toInt() != FormatVersion)
     return failed(format.isEmpty()
                       ? QCoreApplication::translate(
