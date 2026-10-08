@@ -980,6 +980,49 @@ TEST(CSymbolNames, AWrapperNamedLikeItsImportCallsTheSlotTheImageNames) {
   EXPECT_NE(Unnamed.find("return __getmainargs_3000("), NotFound) << Unnamed;
 }
 
+TEST(CSymbolNames, ACallToAVariadicImportsStubKeepsItsArguments) {
+  // MinGW's `fprintf: jmp [__imp_fprintf]` has no C signature that passes
+  // `...` on, so it is defined without parameters; report(f, fmt, n) calls
+  // it through the slot it jumps through and passes all three.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::COFF;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = 0x200;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(0x200, 0xC3);
+  Img.Segments.push_back(std::move(Text));
+  Import Imp;
+  Imp.Module = "msvcrt.dll";
+  Imp.Name = "fprintf";
+  Imp.IATAddr = 0x3000;
+  Img.Imports.push_back(std::move(Imp));
+  ASSERT_TRUE(Img.recordImportStub(0x1000, 0));
+  std::vector<ExprPtr> Arguments;
+  for (int I = 0; I < 3; ++I) {
+    MedVar Var;
+    Var.Kind = MedVar::Param;
+    Var.Id = I;
+    Var.Size = 8;
+    Var.TheArch = Arch::X64;
+    Arguments.push_back(HighExpr::makeVar(Var, NdType::makeInt(8)));
+  }
+  HighFunc Report =
+      function("report", 0x1100, {callStatement("fprintf", 0x1000, Arguments)});
+  Report.Params = {{"arg0", NdType::makeInt(8)},
+                   {"arg1", NdType::makeInt(8)},
+                   {"arg2", NdType::makeInt(8)}};
+  const std::string Source = emitFor(
+      {function("fprintf", 0x1000, {callStatement("fprintf", 0x3000)}), Report},
+      BinaryFormat::COFF, Arch::X64, &Img);
+  const size_t Body = Source.find(" report(");
+  ASSERT_NE(Body, NotFound) << Source;
+  EXPECT_NE(Source.find("__imp_fprintf(arg0, arg1, arg2)", Body), NotFound)
+      << Source;
+}
+
 TEST(CSymbolNames, ObjectsReadByTheirPathsWithTheirSymbolsBeside) {
   constexpr va_t Text = 0x1000, Data = 0x4000;
   BinaryImage Img;

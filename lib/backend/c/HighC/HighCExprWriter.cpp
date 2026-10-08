@@ -717,8 +717,20 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
     return Name;
   auto It = DefinedFunctionsByIdentifier.find(Name);
   if (It == DefinedFunctionsByIdentifier.end() || !It->second ||
-      !It->second->Entry || It->second->Entry == E.CallAddr)
+      !It->second->Entry)
     return Name;
+  if (It->second->Entry == E.CallAddr) {
+    // A variadic import's stub (`fprintf: jmp [__imp_fprintf]`) has no C
+    // signature that passes `...` on, so its definition takes none of the
+    // call's arguments; the call goes through the slot it jumps through.
+    if (isVariadicImportStub(*It->second))
+      if (std::string Slot = importSlotIdentifier(E); !Slot.empty()) {
+        auto Declared = ExternalFunctionIdentifiers.find(Slot);
+        return Declared == ExternalFunctionIdentifiers.end() ? Slot
+                                                             : Declared->second;
+      }
+    return Name;
+  }
   // A thunk named like the import it jumps to (`calloc: jmp [__imp_calloc]`)
   // calls through the import's slot, as IDA prints it, by the identifier its
   // declaration holds.
@@ -728,6 +740,23 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
                                                          : Declared->second;
   }
   return Name + "_" + llvm::utohexstr(E.CallAddr);
+}
+
+bool HighCWriter::isVariadicImportStub(const HighFunc &Func) const {
+  if (!Opts.Image || !Func.Entry)
+    return false;
+  const Import *Imp = Opts.Image->findImportAt(Func.Entry);
+  if (!Imp || Imp->IATAddr == Func.Entry || Imp->Name.empty())
+    return false;
+  // A PE import entry is the C name; other formats name the symbol.
+  const std::string Name =
+      importNamesAreCNames(Opts.Format)
+          ? Imp->Name
+          : cNameOfSymbol(Imp->Name, Opts.Format, Opts.TheArch).str();
+  if (const libc::LibCPrototype *Prototype =
+          libc::libcPrototype(Name, Opts.Format))
+    return Prototype->Variadic;
+  return libc::isKnownFunction(Name) && libc::varArgFixedCount(Name) > 0;
 }
 
 const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {

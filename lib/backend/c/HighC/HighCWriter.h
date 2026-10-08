@@ -258,6 +258,9 @@ public:
   /// The function this file defines that call \p E runs, or null: one named
   /// like it at another address is a different function.
   const HighFunc *calledDefinition(const HighExpr &E) const;
+  /// Whether \p Func is the stub of a variadic C library import, which a
+  /// call runs as a call through the import's slot.
+  bool isVariadicImportStub(const HighFunc &Func) const;
   std::string renderCallExpr(const HighExpr &E);
   std::string renderSourceCallExpr(const HighExpr &E);
   const HighFunc *sourceCallDefinition(const SourceCallTypeHint &Hint,
