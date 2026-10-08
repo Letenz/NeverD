@@ -242,6 +242,9 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
   Options.Format = BinaryFormat::ELF;
   Options.PreserveLLVMFunctionTypes = true;
   Options.UseUnalignedPointers = UnalignedPointers;
+  // Recovered handlers are compiled to run: their state views must keep
+  // byte semantics under any GCC/Clang build.
+  Options.ScalarPointers = CEmitterOptions::ScalarPointerSpelling::AliasTypes;
   llvm::raw_string_ostream OS(Result.Source);
   if (LLVMRoute) {
     llvm::LLVMContext Context;

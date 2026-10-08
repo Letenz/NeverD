@@ -522,6 +522,10 @@ struct Listing::Impl {
   std::map<std::string, std::uint64_t, std::less<>> listingNames;
   /// Executable import veneers and the import each forwards to.
   std::map<std::uint64_t, std::string> stubImports;
+  /// Where an import's name leads, as its symbol and as code calls it: its
+  /// thunk where it has one, else its slot.  Kept apart from listingNames,
+  /// whose names display names must not take.
+  std::map<std::string, std::uint64_t, std::less<>> importTargets;
   /// Engine function name -> display name, where they differ.
   std::unordered_map<std::string, std::string> aliases;
   Json functionRowsCache;
@@ -642,8 +646,10 @@ struct Listing::Impl {
           !isStubRegion(regions[region].name))
         continue;
       if (const auto import = slotJumpTarget(static_cast<int>(index)))
-        if (rename(function, thunkName(*import)))
+        if (rename(function, thunkName(*import))) {
           function.thunk = true;
+          importTargets.insert_or_assign(*import, function.entry);
+        }
     }
     // Loader-run initialization and termination code.
     for (const auto &region : regions)
@@ -674,6 +680,14 @@ struct Listing::Impl {
         listingNames.emplace(function.name, function.entry);
         aliases.emplace(function.engineName, function.name);
       }
+  }
+
+  /// Record where the import \p row names leads, under its symbol and its C
+  /// name; an earlier target stays.
+  void noteImportTarget(const Json &row, std::uint64_t target) {
+    for (const char *field : {"name", "c_name"})
+      if (auto name = row.value(field, std::string()); !name.empty())
+        importTargets.emplace(std::move(name), target);
   }
 
   /// The executable name of an import's veneer: ELF PLT entries take a
@@ -968,6 +982,7 @@ struct Listing::Impl {
     dataNames.clear();
     slots.clear();
     stubImports.clear();
+    importTargets.clear();
     strings.clear();
     listingNames.clear();
     namedData.clear();
@@ -988,9 +1003,15 @@ struct Listing::Impl {
         auto name = row.value("name", std::string());
         if (!address || name.empty())
           continue;
+        // Stubs come sorted; the first is the import's thunk.
+        std::uint64_t thunk = 0;
         for (const auto &stub : row.value("stubs", Json::array()))
-          if (const auto at = jsonAddress(stub))
+          if (const auto at = jsonAddress(stub)) {
             stubImports.emplace(at, name);
+            if (!thunk)
+              thunk = at;
+          }
+        noteImportTarget(row, thunk ? thunk : address);
         ImportSlot slot{name, row.value("module", std::string()),
                         elf ? name + "_ptr" : name};
         listingNames.emplace(slot.label, address);
@@ -1006,6 +1027,7 @@ struct Listing::Impl {
           if (!address || name.empty() || slots.contains(address) ||
               functionAtEntry(address))
             continue;
+          noteImportTarget(row, address);
           ImportSlot slot{name, std::string(), elf ? name + "_ptr" : name};
           listingNames.emplace(slot.label, address);
           slots.emplace(address, std::move(slot));
@@ -3148,10 +3170,21 @@ std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
   d.build();
   if (auto it = d.listingNames.find(name); it != d.listingNames.end())
     return it->second;
+  if (auto it = d.importTargets.find(name); it != d.importTargets.end())
+    return it->second;
   if (auto address = parseDummyName(name);
       address && d.regionIndex(*address) >= 0)
     return address;
   return std::nullopt;
+}
+
+bool Listing::isImport(std::uint64_t address) {
+  auto &d = *impl_;
+  d.build();
+  if (d.slots.contains(address))
+    return true;
+  const auto *function = d.functionAtEntry(address);
+  return function && function->thunk;
 }
 
 Json Listing::blockLines(std::uint64_t start, std::uint64_t end) {

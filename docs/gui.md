@@ -103,13 +103,18 @@ operations in C can fold into one-line summaries too. Click a summary or press
 Keypad + on it to expand it; Keypad - folds the declarations again, and the
 context menu expands or collapses either kind. Hovering a type or macro the code
 declares, such as an unaligned access type, shows its declaration, and
-double-clicking it goes there. Memory reads and writes print as a classic
-decompiler shows them, `*(_QWORD *)p`: `_BYTE`, `_WORD`, `_DWORD`, `_QWORD` and
-`_OWORD` access unsigned integers of their sizes, `_SBYTE` to `_SOWORD` signed
-ones, and `_FLOAT` and `_DOUBLE` floating-point values. Unlike those of such a
-decompiler, the types are declared one byte aligned and allowed to alias any
-object, so the code compiles to the same accesses. Copy and export always use
-the complete code.
+double-clicking it goes there. Double-clicking a function's name shows that
+function's pseudocode in place; an import's name opens its thunk, or its slot
+when it has none, in the disassembly, as do other names of data. Memory reads
+and writes print through the standard scalar types, `*(uint64_t *)p`. That C
+reads scalars at any address and through any type, so it is built for a target
+that allows unaligned access and with `-fno-strict-aliasing`, as its prelude
+notes; recovered bytecode and devirtualized sources, which are compiled to run,
+declare one-byte-aligned, `may_alias` types instead. A call argument that points
+to a string, directly or through a pointer the image holds, shows the string
+beside it, after its encoding unless that is ASCII or UTF-8:
+`puts(u8s /* "你好" */)`, `/* GBK "中文" */`. Copy and export always use the
+complete code.
 
 C++ names read as a classic disassembler shows them: the listing keeps the
 linkage name an instruction uses and adds its demangled form as a comment

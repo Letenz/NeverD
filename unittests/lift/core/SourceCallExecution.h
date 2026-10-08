@@ -40,10 +40,13 @@ inline void compileAndRun(const std::string &Source,
   }
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
+  // Decompiled C reads and writes scalars through plain pointer casts and is
+  // built as it documents: without strict aliasing.
   llvm::SmallVector<llvm::StringRef, 12> Arguments{
       Compiler,
       "-std=c11",
       "-O1",
+      "-fno-strict-aliasing",
       "-fno-inline",
       "-fblocks",
       "-Werror=implicit-function-declaration",

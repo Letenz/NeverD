@@ -40,6 +40,14 @@ std::string typeToC(const TypeRef &Ty);
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
                                               bool AllowEmpty = false);
 
+/// The string that starts at \p Addr in readable, non-executable image bytes,
+/// as a comment beside a reference to it reads it: its text in quotes, after
+/// its encoding's name unless that is ASCII or UTF-8 (`GBK "你好"`), with
+/// controls escaped, `*` and `/` kept apart and long text cut.  None when no
+/// string starts there.
+std::optional<std::string> imageStringComment(const BinaryImage *Img,
+                                              va_t Addr);
+
 /// Named class/struct returned by value.  MSVC x64 passes that object through
 /// a hidden pointer in RCX.  Enums stay in RAX.  Forward-ref classes may
 /// have Size 0.

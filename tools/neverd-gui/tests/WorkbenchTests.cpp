@@ -339,8 +339,7 @@ private slots:
     QApplication::clipboard()->clear();
     QTest::keyClick(code, Qt::Key_C, Qt::ControlModifier);
     const QString declaration =
-        QStringLiteral("typedef uint64_t _QWORD "
-                       "__attribute__((aligned(1), may_alias));");
+        QStringLiteral("typedef struct QDomNode QDomNode;");
     const QString linked = QStringLiteral(
         "extern int Bar_ctor() __asm__(\"_ZN3BarC1Ev\"); /* Bar::Bar() */");
     QCOMPARE(QApplication::clipboard()->text(),
@@ -354,18 +353,18 @@ private slots:
 
     // A type the prelude declares opens at its declaration, expanding the
     // prelude; C's own types are not declarations.
-    QCOMPARE(code->declarationLine(QStringLiteral("_QWORD")),
+    QCOMPARE(code->declarationLine(QStringLiteral("QDomNode")),
              std::optional<int>(1));
     QVERIFY(!code->declarationLine(QStringLiteral("uint64_t")));
-    QVERIFY(code->goToDeclaration(QStringLiteral("_QWORD")));
+    QVERIFY(code->goToDeclaration(QStringLiteral("QDomNode")));
     QVERIFY(!code->preludeFolded());
     QCOMPARE(code->lineCount(), 705);
     // A C++ function links by the mangled symbol its label names, which is
     // what navigation looks up.
     QCOMPARE(code->linkedSymbol(QStringLiteral("Bar_ctor")),
              std::optional<QString>(QStringLiteral("_ZN3BarC1Ev")));
-    QVERIFY(!code->linkedSymbol(QStringLiteral("_QWORD")));
-    QCOMPARE(code->currentToken(), QStringLiteral("_QWORD"));
+    QVERIFY(!code->linkedSymbol(QStringLiteral("QDomNode")));
+    QCOMPARE(code->currentToken(), QStringLiteral("QDomNode"));
     code->setPreludeFolded(true);
     QCOMPARE(code->lineCount(), 702);
 
