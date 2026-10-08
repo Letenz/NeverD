@@ -448,6 +448,112 @@ TEST(TargetRegInfo, Win64QueriesMatchItsEnumeratedPreservation) {
             0);
 }
 
+TEST(TargetRegInfo, Win64APXPreservationMatchesCompleteByteViews) {
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  for (auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    const auto Ranges = TRI.callPreservedRanges(Format);
+    for (unsigned Index = 0; Index != 16; ++Index) {
+      const auto Reg = x86reg::extendedGeneralReg(Index);
+      const bool Expected = Format == BinaryFormat::COFF && Index >= 14;
+      const auto Count = std::count_if(
+          Ranges.begin(), Ranges.end(), [&](const TargetRegisterRange &Range) {
+            return Range.Offset == Reg && Range.Bytes == 8;
+          });
+      EXPECT_EQ(Count, Expected ? 1 : 0) << Index;
+      for (uint16_t Size = 1; Size <= 8; ++Size)
+        for (unsigned Byte = 0; Byte + Size <= 8; ++Byte) {
+          SCOPED_TRACE(::testing::Message()
+                       << Index << ':' << Byte << ':' << Size);
+          EXPECT_EQ(TRI.callPreservedPrefixSize(Reg + Byte, Size, Format),
+                    Expected ? Size : 0);
+          EXPECT_EQ(TRI.isCallPreserved(Reg + Byte, Size, Format), Expected);
+        }
+    }
+  }
+  const auto &X86 = getTargetRegInfo(Arch::X86);
+  for (auto Reg : {x86reg::R30, x86reg::R31}) {
+    EXPECT_FALSE(X86.isCallPreserved(Reg, 4, BinaryFormat::COFF));
+    EXPECT_FALSE(TRI.isCallPreserved(Reg, 8));
+  }
+}
+
+TEST(TargetRegInfo, Win64ExtraPreservationRejectsCrossSlotAndWrappedViews) {
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  for (auto Reg : {x86reg::RSI, x86reg::RDI, x86reg::R30, x86reg::R31}) {
+    EXPECT_EQ(TRI.callPreservedPrefixSize(Reg, 9, BinaryFormat::COFF), 0);
+    EXPECT_EQ(TRI.callPreservedPrefixSize(Reg + 7, 2, BinaryFormat::COFF), 0);
+    EXPECT_EQ(TRI.callPreservedPrefixSize(Reg + 7, 1, BinaryFormat::COFF), 1);
+  }
+  EXPECT_EQ(TRI.callPreservedPrefixSize(x86reg::R29, 8, BinaryFormat::COFF), 0);
+  EXPECT_EQ(
+      TRI.callPreservedPrefixSize(x86reg::TileBase, 8, BinaryFormat::COFF), 0);
+  for (unsigned Delta = 0; Delta != 16; ++Delta)
+    for (uint16_t Size = 1; Size <= 16; ++Size) {
+      const auto Offset = UINT64_MAX - Delta;
+      SCOPED_TRACE(::testing::Message() << Delta << ':' << Size);
+      EXPECT_EQ(TRI.callPreservedPrefixSize(Offset, Size, BinaryFormat::COFF),
+                0);
+      EXPECT_FALSE(TRI.isCallPreserved(Offset, Size, BinaryFormat::COFF));
+    }
+}
+
+TEST(LowToMedX64CallingConv, APXPreservationTracksTheSelectedCallABI) {
+  for (auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (auto Reg : {x86reg::R29, x86reg::R30, x86reg::R31}) {
+      SCOPED_TRACE(::testing::Message() << unsigned(Format) << ':' << Reg);
+      const bool Preserved = Format == BinaryFormat::COFF && Reg != x86reg::R29;
+      constexpr uint64_t Value = UINT64_C(0x1122334455667788);
+      LowFunc Low;
+      Low.Entry = 0x1000;
+      Low.Name = "apx_call_preservation";
+      Low.Blocks.resize(1);
+      auto &Block = Low.Blocks[0];
+      Block.Id = 0;
+      Block.StartAddr = 0x1000;
+      Block.EndAddr = 0x1010;
+      auto Copy = [&](NdVar Dst, NdVar Src, va_t Address) {
+        LowOp Op;
+        Op.Opcode = NdOp::COPY;
+        Op.Addr = Address;
+        Op.Output = Dst;
+        Op.addInput(Src);
+        Block.Ops.push_back(Op);
+      };
+      Copy(NdVar::reg(Reg, 8), NdVar::cst(Value, 8), 0x1000);
+      LowOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = 0x1004;
+      Call.addInput(NdVar::cst(0x2000, 8));
+      Block.Ops.push_back(Call);
+      Copy(NdVar::reg(x86reg::RAX, 8), NdVar::reg(Reg, 8), 0x1008);
+      LowOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = 0x100C;
+      Return.addInput(NdVar::reg(x86reg::RAX, 8));
+      Block.Ops.push_back(Return);
+      auto Med = LowToMedConverter().convert(Low, Arch::X64, Format);
+      const MedOp *Use = nullptr;
+      for (const auto &B : Med.Blocks)
+        for (const auto &Op : B.Ops)
+          if (Op.Opcode == NdOp::COPY && Op.Output.Kind == MedVar::Reg &&
+              Op.Output.RegOff == x86reg::RAX && Op.NumInputs == 1)
+            Use = &Op;
+      ASSERT_NE(Use, nullptr);
+      EXPECT_EQ(Use->Inputs[0].isConst(), Preserved);
+      if (Preserved)
+        EXPECT_EQ(Use->Inputs[0].ConstVal, Value);
+      const bool Clobbered =
+          std::any_of(Med.CallClobbers.begin(), Med.CallClobbers.end(),
+                      [&](const MedCallClobber &Clobber) {
+                        return Clobber.Value.RegOff == Reg;
+                      });
+      EXPECT_EQ(Clobbered, !Preserved);
+      EXPECT_TRUE(verifyMedFunc(Med, "apx-call-preservation"));
+    }
+}
+
 TEST(TargetRegInfo, SelectsIntegerArgumentRegistersFromImageFormat) {
   const TargetRegInfo &X64 = getTargetRegInfo(Arch::X64);
   const llvm::ArrayRef<uint64_t> Win64Args =
