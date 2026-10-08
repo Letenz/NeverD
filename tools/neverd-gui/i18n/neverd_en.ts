@@ -136,8 +136,8 @@
         <translation>Enter re&amp;peatable comment...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>&amp;Mark position...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>Mar&amp;k position...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>

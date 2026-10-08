@@ -148,7 +148,7 @@ NEVERD_VIEW_ACTION(EditRepeatableComment,
                    ";", "comment",
                    QT_TRANSLATE_NOOP("Actions", "Comment the current address"))
 NEVERD_VIEW_ACTION(EditBookmark,
-                   QT_TRANSLATE_NOOP("Actions", "&Mark position..."), "Alt+M",
+                   QT_TRANSLATE_NOOP("Actions", "Mar&k position..."), "Alt+M",
                    "bookmark",
                    QT_TRANSLATE_NOOP("Actions", "Bookmark the current address"))
 

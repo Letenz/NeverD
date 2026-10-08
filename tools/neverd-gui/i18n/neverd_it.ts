@@ -136,7 +136,7 @@
         <translation>Inserisci commento ri&amp;petibile...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Segna &amp;posizione...</translation>
     </message>
     <message>
@@ -745,7 +745,7 @@
     </message>
     <message>
         <source>Undef&amp;ine</source>
-        <translation>&amp;Annulla definizione</translation>
+        <translation>Ann&amp;ulla definizione</translation>
     </message>
     <message>
         <source>Show the current item&apos;s bytes as bytes</source>

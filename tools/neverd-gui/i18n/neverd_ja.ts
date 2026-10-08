@@ -136,8 +136,8 @@
         <translation>リピータブルコメントを入力(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>位置をマーク(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>位置をマーク(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>

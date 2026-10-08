@@ -136,7 +136,7 @@
         <translation>&amp;Wiederholbaren Kommentar eingeben...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Position &amp;markieren...</translation>
     </message>
     <message>
@@ -745,7 +745,7 @@
     </message>
     <message>
         <source>Undef&amp;ine</source>
-        <translation>Definition &amp;aufheben</translation>
+        <translation>Definition auf&amp;heben</translation>
     </message>
     <message>
         <source>Show the current item&apos;s bytes as bytes</source>
@@ -785,7 +785,7 @@
     </message>
     <message>
         <source>&amp;Character</source>
-        <translation>&amp;Zeichen</translation>
+        <translation>Zei&amp;chen</translation>
     </message>
     <message>
         <source>Show the operand&apos;s number as characters</source>

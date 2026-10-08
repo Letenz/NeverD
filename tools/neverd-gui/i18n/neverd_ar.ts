@@ -136,8 +136,8 @@
         <translation>إدخال تعليق متكرر(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>وضع علامة على الموضع(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>وضع علامة على الموضع(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>

@@ -136,8 +136,8 @@
         <translation>반복 주석 입력(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>위치 표시(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>위치 표시(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>

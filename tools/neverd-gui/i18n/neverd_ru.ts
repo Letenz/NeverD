@@ -136,7 +136,7 @@
         <translation>Ввести &amp;повторяемый комментарий...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Отметить по&amp;зицию...</translation>
     </message>
     <message>
@@ -745,7 +745,7 @@
     </message>
     <message>
         <source>Undef&amp;ine</source>
-        <translation>&amp;Отменить определение</translation>
+        <translation>Отменить опр&amp;еделение</translation>
     </message>
     <message>
         <source>Show the current item&apos;s bytes as bytes</source>
@@ -777,7 +777,7 @@
     </message>
     <message>
         <source>&amp;Binary</source>
-        <translation>&amp;Двоичное</translation>
+        <translation>Д&amp;воичное</translation>
     </message>
     <message>
         <source>Show the operand&apos;s number in binary</source>
@@ -793,7 +793,7 @@
     </message>
     <message>
         <source>&amp;Offset</source>
-        <translation>&amp;Смещение</translation>
+        <translation>С&amp;мещение</translation>
     </message>
     <message>
         <source>Show the operand&apos;s number as the address it names</source>

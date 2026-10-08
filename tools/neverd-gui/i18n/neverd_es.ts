@@ -136,7 +136,7 @@
         <translation>Introducir comentario re&amp;petible...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Marcar &amp;posición...</translation>
     </message>
     <message>
@@ -729,7 +729,7 @@
     </message>
     <message>
         <source>&amp;Data</source>
-        <translation>&amp;Datos</translation>
+        <translation>D&amp;atos</translation>
     </message>
     <message>
         <source>Define a value at the current address; again for the next size</source>
@@ -737,7 +737,7 @@
     </message>
     <message>
         <source>&amp;String</source>
-        <translation>&amp;Cadena</translation>
+        <translation>Cad&amp;ena</translation>
     </message>
     <message>
         <source>Define the string that starts at the current address</source>
@@ -793,7 +793,7 @@
     </message>
     <message>
         <source>&amp;Offset</source>
-        <translation>&amp;Desplazamiento</translation>
+        <translation>Despla&amp;zamiento</translation>
     </message>
     <message>
         <source>Show the operand&apos;s number as the address it names</source>

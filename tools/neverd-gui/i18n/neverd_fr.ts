@@ -136,7 +136,7 @@
         <translation>Saisir un commentaire &amp;répétable...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Marquer la &amp;position...</translation>
     </message>
     <message>
@@ -729,7 +729,7 @@
     </message>
     <message>
         <source>&amp;Data</source>
-        <translation>&amp;Données</translation>
+        <translation>D&amp;onnées</translation>
     </message>
     <message>
         <source>Define a value at the current address; again for the next size</source>
@@ -737,7 +737,7 @@
     </message>
     <message>
         <source>&amp;String</source>
-        <translation>&amp;Chaîne</translation>
+        <translation>C&amp;haîne</translation>
     </message>
     <message>
         <source>Define the string that starts at the current address</source>
@@ -745,7 +745,7 @@
     </message>
     <message>
         <source>Undef&amp;ine</source>
-        <translation>&amp;Annuler la définition</translation>
+        <translation>Ann&amp;uler la définition</translation>
     </message>
     <message>
         <source>Show the current item&apos;s bytes as bytes</source>

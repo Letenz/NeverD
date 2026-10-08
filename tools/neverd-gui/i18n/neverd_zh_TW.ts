@@ -136,8 +136,8 @@
         <translation>輸入可重複註解(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>標記位置(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>標記位置(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>
