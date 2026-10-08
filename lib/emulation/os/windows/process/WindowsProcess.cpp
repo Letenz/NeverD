@@ -23,12 +23,14 @@ namespace {
 class StoppedProcess final : public ProcessView {
 public:
   StoppedProcess(ExecutionBackend &CPU, AddressSpace &Space,
-                 const Program &Modules, const Environment &Env,
+                 const IntegerABI &ABI, const Program &Modules,
+                 const Environment &Env,
                  const std::optional<Lifetime::Call> &Active,
                  const std::vector<uint64_t> &Initializers,
                  const ProcessResult &Result, ProcessStackView Stack)
-      : CPU(CPU), Space(Space), Modules(Modules), Env(Env), Active(Active),
-        Initializers(Initializers), Result(Result), Stack(Stack) {}
+      : CPU(CPU), Space(Space), ABI(ABI), Modules(Modules), Env(Env),
+        Active(Active), Initializers(Initializers), Result(Result),
+        Stack(Stack) {}
   GuestArchitecture architecture() const override { return CPU.architecture(); }
   llvm::Expected<RegisterValue> readRegister(CPURegister Register) override {
     return CPU.readRegister(Register);
@@ -48,15 +50,64 @@ public:
     auto Add = [&](size_t Index) {
       const auto &M = Modules.Modules[Index];
       if (resident(M))
-        Result.push_back({Modules.Identities[Index].Name, M.Loaded.Base,
-                          M.Loaded.Size, M.Loaded.Entry, Index == 0,
-                          M.System || M.Opaque});
+        Result.push_back(
+            {Modules.Identities[Index].Name, M.Loaded.Base, M.Loaded.Size,
+             M.Loaded.Entry, Index == 0,
+             M.System || M.Opaque || (!Index && !Modules.InputName.empty())});
     };
     Add(0);
     for (size_t Index : Modules.LoaderInitializationOrder)
       if (Index)
         Add(Index);
     return Result;
+  }
+  std::optional<ProcessModuleView> inputModule() override {
+    auto Index = windows_process::inputModule(Modules);
+    if (!Index)
+      return std::nullopt;
+    const auto &M = Modules.Modules[*Index];
+    return ProcessModuleView{Modules.Identities[*Index].Name,
+                             M.Loaded.Base,
+                             M.Loaded.Size,
+                             M.Loaded.Entry,
+                             *Index == 0,
+                             false};
+  }
+  llvm::Expected<std::optional<ProcessCallFrame>> callFrame() override {
+    auto SP = CPU.readRegister(ABI.info().StackPointer);
+    if (!SP)
+      return SP.takeError();
+    if (auto E = ABI.validateStackPointer((*SP)[0])) {
+      llvm::consumeError(std::move(E));
+      return std::nullopt;
+    }
+    if (ABI.info().Link == CPURegister::Invalid) {
+      auto Readable =
+          CPU.canAccess((*SP)[0], PointerSize, Read | UserAccessible);
+      if (!Readable)
+        return Readable.takeError();
+      if (!*Readable)
+        return std::nullopt;
+    }
+    auto Return = ABI.readReturnAddress(CPU, (*SP)[0]);
+    if (!Return)
+      return Return.takeError();
+    auto Executable = CPU.canAccess(*Return, 1, Execute | UserAccessible);
+    if (!Executable)
+      return Executable.takeError();
+    if (!*Executable)
+      return std::nullopt;
+    auto ReturnSP = ABI.returnStackPointer((*SP)[0]);
+    if (!ReturnSP)
+      return ReturnSP.takeError();
+    ProcessCallFrame Frame{*Return, *ReturnSP, {}};
+    for (size_t I = 0; I < Frame.Arguments.size(); ++I) {
+      auto Argument = ABI.readArgument(CPU, (*SP)[0], I);
+      if (!Argument)
+        return Argument.takeError();
+      Frame.Arguments[I] = *Argument;
+    }
+    return Frame;
   }
   std::vector<ProcessExportView> exports() override {
     std::vector<ProcessExportView> Result;
@@ -82,9 +133,7 @@ public:
     return Result;
   }
 
-  bool programInvocation() const override {
-    return Active && Active->Kind == Lifetime::CallKind::Entry;
-  }
+  bool programInvocation() const override { return Active && Active->Input; }
   std::vector<uint64_t> completedInitializers() const override {
     return Initializers;
   }
@@ -98,9 +147,12 @@ public:
   }
   llvm::Expected<std::optional<std::vector<uint8_t>>>
   threadLocalMemory() override {
-    std::vector<uint8_t> Bytes(Modules.Modules.front().Loaded.TLSSize);
+    auto Index = windows_process::inputModule(Modules);
+    if (!Index)
+      return failure(text::TLS);
+    std::vector<uint8_t> Bytes(Modules.Modules[*Index].Loaded.TLSSize);
     if (!Bytes.empty()) {
-      const auto Block = Env.TLS.find(0);
+      const auto Block = Env.TLS.find(*Index);
       if (Block == Env.TLS.end() || Bytes.size() > Block->second.Size)
         return failure(text::TLS);
       if (auto E = Space.snapshotBacking(Block->second.Address, Bytes))
@@ -112,6 +164,7 @@ public:
 private:
   ExecutionBackend &CPU;
   AddressSpace &Space;
+  const IntegerABI &ABI;
   const Program &Modules;
   const Environment &Env;
   const std::optional<Lifetime::Call> &Active;
@@ -284,8 +337,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   auto CurrentLife = [&]() -> Lifetime & {
     return Pending.empty() ? Life : *Pending.back().Operation.Notifications;
   };
-  StoppedProcess Stopped(CPU, **Space, *Program, *Env, Active, Initializers,
-                         Result, {StackBase, Options.StackSize});
+  StoppedProcess Stopped(CPU, **Space, *ABI, *Program, *Env, Active,
+                         Initializers, Result, {StackBase, Options.StackSize});
   bool Observing = false;
   auto Invoking = [&]() -> llvm::Error {
     if (!Observing || !Observer)
@@ -514,8 +567,9 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         Failed(std::move(E));
         break;
       }
-      if (Active->Kind == Lifetime::CallKind::TLS &&
-          Active->Arguments[0] == Loaded->Base &&
+      auto Input = inputModule(*Program);
+      if (Active->Kind == Lifetime::CallKind::TLS && Input &&
+          Active->Arguments[0] == Program->Modules[*Input].Loaded.Base &&
           Active->Arguments[1] == DLLProcessAttach)
         Initializers.push_back(Active->PC);
       auto More = Prepare();

@@ -41,11 +41,33 @@ constexpr uint64_t kSyntheticStackAlignment = 16;
 
 /// Residue of the ABI entry stack pointer modulo the synthetic stack alignment.
 /// x86-64 includes the pushed return address; Darwin i386 enters at 12 mod 16.
-constexpr uint64_t syntheticEntryStackResidue(
-    Arch A, BinaryFormat Fmt = BinaryFormat::Unknown) {
+/// A process entry point is entered aligned.
+constexpr uint64_t
+syntheticEntryStackResidue(Arch A, BinaryFormat Fmt = BinaryFormat::Unknown,
+                           StackEntryKind Kind = StackEntryKind::Call) {
+  if (Kind == StackEntryKind::ProcessEntry)
+    return 0;
   if (A == Arch::X64)
     return 8;
   return A == Arch::X86 && Fmt == BinaryFormat::MachO ? 12 : 0;
+}
+
+/// The alignment the ABI guarantees the entry stack pointer.  ARM AAPCS
+/// promises eight bytes at a public interface.  i386 promises sixteen on
+/// Darwin and at a System V process entry, and only four to a function
+/// Windows or Linux code calls.  The synthetic buffer's larger alignment is
+/// no such guarantee.
+constexpr uint64_t
+guaranteedEntryStackAlignment(Arch A, BinaryFormat Fmt,
+                              StackEntryKind Kind = StackEntryKind::Call) {
+  if (A == Arch::ARM)
+    return 8;
+  if (A == Arch::AArch64 || A == Arch::X64)
+    return 16;
+  if (A == Arch::X86 &&
+      (Fmt == BinaryFormat::MachO || Kind == StackEntryKind::ProcessEntry))
+    return 16;
+  return 4;
 }
 
 inline uint64_t elfPageSize(Arch A) {

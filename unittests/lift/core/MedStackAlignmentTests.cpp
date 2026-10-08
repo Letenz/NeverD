@@ -167,6 +167,98 @@ TEST(MedStackAlignment, HonorsEntryResiduesOnOtherArchitectures) {
   }
 }
 
+TEST(MedStackAlignment, TheKernelEntersAProcessAligned) {
+  // x86-64 `_start` pops argc and aligns the stack under argv.  A call would
+  // have entered at 8 mod 16, where that mask clears nothing; the kernel
+  // enters a System V process 16-byte aligned, where it clears eight bytes.
+  // i386 code is only promised sixteen at that entry.
+  struct Case {
+    Arch Architecture;
+    StackEntryKind Entry;
+    NdOp Simplified;
+  };
+  const Case Cases[] = {
+      {Arch::X64, StackEntryKind::Call, NdOp::COPY},
+      {Arch::X64, StackEntryKind::ProcessEntry, NdOp::INT_SUB},
+      {Arch::X86, StackEntryKind::Call, NdOp::INT_AND},
+      {Arch::X86, StackEntryKind::ProcessEntry, NdOp::INT_SUB},
+  };
+  for (const Case &C : Cases) {
+    SCOPED_TRACE(static_cast<int>(C.Architecture) * 2 +
+                 static_cast<int>(C.Entry));
+    MedFunc Func = frameWithEntrySP(C.Architecture);
+    auto &Ops = Func.Blocks[0].Ops;
+    const uint16_t Width = getTargetRegInfo(C.Architecture).PointerSize;
+    const uint64_t Mask =
+        Width == 8 ? UINT64_C(0xfffffffffffffff0) : UINT64_C(0xfffffff0);
+    Ops.push_back(op(NdOp::INT_ADD, temp(2, C.Architecture),
+                     reg(0, C.Architecture), MedVar::makeConst(Width, Width)));
+    Ops.push_back(op(NdOp::INT_AND, temp(3, C.Architecture),
+                     temp(2, C.Architecture), MedVar::makeConst(Mask, Width)));
+
+    simplifyProvenStackAlignment(Func, C.Architecture, BinaryFormat::ELF,
+                                 C.Entry);
+
+    EXPECT_EQ(Ops[2].Opcode, C.Simplified);
+    if (C.Simplified == NdOp::INT_SUB) {
+      EXPECT_EQ(Ops[2].Inputs[0], temp(2, C.Architecture));
+      EXPECT_EQ(Ops[2].Inputs[1].ConstVal, Width);
+    }
+  }
+}
+
+TEST(MedStackAlignment, AnEntryPointThatReturnsWasCalled) {
+  // `_start` cannot return: the kernel left no return address.  A test
+  // harness linking a function to the image's entry calls it, and it returns.
+  MedFunc Start = frameWithEntrySP(Arch::X64);
+  MedFunc Called = frameWithEntrySP(Arch::X64);
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Called.Blocks[0].Ops.push_back(Return);
+
+  EXPECT_EQ(functionEntryKind(Start, StackEntryKind::ProcessEntry),
+            StackEntryKind::ProcessEntry);
+  EXPECT_EQ(functionEntryKind(Called, StackEntryKind::ProcessEntry),
+            StackEntryKind::Call);
+  EXPECT_EQ(functionEntryKind(Start, StackEntryKind::Call),
+            StackEntryKind::Call);
+}
+
+TEST(MedStackAlignment, AJoinHoldsTheOffsetEveryWayInAgreesOn) {
+  // An x86 filter reads its frame through the EBP a join merges.  The join
+  // holds an offset when every way in brings it, a way back through the join
+  // included; a loop that moves the pointer holds none.
+  for (bool Moves : {false, true}) {
+    SCOPED_TRACE(Moves);
+    MedFunc Func = frameWithEntrySP(Arch::X86);
+    Func.Blocks[0].Ops.push_back(op(NdOp::INT_SUB, temp(2, Arch::X86),
+                                    reg(0, Arch::X86),
+                                    MedVar::makeConst(8, 4)));
+    MedBlock Loop;
+    Loop.Id = 1;
+    Loop.StartAddr = 0x1010;
+    PhiNode Join;
+    Join.Output = temp(5, Arch::X86);
+    Join.Args.push_back({0, temp(2, Arch::X86)});
+    Join.Args.push_back({1, temp(6, Arch::X86)});
+    Loop.Phis.push_back(Join);
+    Loop.Ops.push_back(
+        Moves ? op(NdOp::INT_ADD, temp(6, Arch::X86), temp(5, Arch::X86),
+                   MedVar::makeConst(8, 4))
+              : op(NdOp::COPY, temp(6, Arch::X86), temp(5, Arch::X86)));
+    Func.Blocks.push_back(std::move(Loop));
+
+    const auto Offset = entryStackOffset(Func, temp(5, Arch::X86), Arch::X86,
+                                         BinaryFormat::COFF);
+    if (Moves) {
+      EXPECT_FALSE(Offset.has_value());
+    } else {
+      ASSERT_TRUE(Offset.has_value());
+      EXPECT_EQ(*Offset, -8);
+    }
+  }
+}
+
 TEST(MedStackAlignment, ZeroMasksDoNotProveStackAlignment) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
     SCOPED_TRACE(static_cast<int>(Architecture));

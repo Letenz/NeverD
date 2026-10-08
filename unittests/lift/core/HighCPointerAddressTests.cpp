@@ -39789,6 +39789,35 @@ TEST(HighCPointerAddresses, FuncLoadUsesDebugFunctionNameOnSynthesizedEntry) {
   EXPECT_EQ(Source.find("sub_140001050"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, CorpusFuncLoadX86FilterThunksPrintTheirValue) {
+  // An `_except_handler3` filter thunk runs in the frame of the function that
+  // installed it, entered with that frame's EBP: `mov eax, 1; ret` is
+  // EXCEPTION_EXECUTE_HANDLER, and `mov eax, [ebp-1Ch]; ret` reads the local
+  // the body counts in.  Neither is a function to call.
+  if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
+    GTEST_SKIP() << "windows-eh corpus root is not configured";
+  const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                    "corpus/windows-eh/msvc/vs2019/x86/native/no-gs/o0/"
+                    "windows-seh-tests/xcpt4-msvc-x86-native-no-gs-o0.exe";
+  if (!std::filesystem::exists(Path))
+    GTEST_SKIP() << Path.string() << " is missing";
+
+  constexpr va_t Entry = 0x401580;
+  BinaryLoadOptions FuncOpts;
+  FuncOpts.OnlyFunctionEntries.insert(Entry);
+  auto Img = loadBinary(Path, FuncOpts);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
+  bool ReadsTheLocal = false;
+  for (llvm::StringRef Line : llvm::split(Source, '\n'))
+    ReadsTheLocal |= Line.contains("__except (*(") &&
+                     Line.ends_with(" *)(frame_base - 32)) {");
+  EXPECT_TRUE(ReadsTheLocal) << Source;
+  // 0x4029BD is `mov eax, 1; ret`, 0x401683 the frame read.
+  EXPECT_EQ(Source.find("sub_4029BD"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("sub_401683"), std::string::npos) << Source;
+}
+
 TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   // MSVC x86 `_except_handler3` plants the outlined except body in-function.
   // HighC must recover `Result = 41` on the same slot as `Result = -100`,

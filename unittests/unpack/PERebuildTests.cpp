@@ -137,6 +137,128 @@ TEST_F(PERebuild, NewImportCellsCannotConsumeProgramZeroFill) {
         ASSERT_EQ(Image.Mapped[At], Before[At]) << llvm::utohexstr(At);
 }
 
+TEST_F(PERebuild, IATProtectionExcludesWritableAndAppendedCells) {
+  ASSERT_GT(Input->regions().size(), 2u);
+  const auto &Region = Input->regions()[1];
+  const uint64_t First = Region.RVA + 0x100;
+  const uint64_t Last = Input->regions().back().RVA + 0x100;
+  write64le(C.Memory.data() + First, FirstGate);
+  write64le(C.Memory.data() + First + 8, 0);
+  write64le(C.Memory.data() + Last, SecondGate);
+  write64le(C.Memory.data() + Last + 8, 0);
+  for (uint64_t Page = Region.RVA / 4096;
+       Page < (Region.RVA + Region.MemorySize) / 4096; ++Page)
+    C.PageAccess[Page] = emulation::Read;
+  plantCall(Linked.Entry);
+  const ExportBinding Added{"third.dll", "third", {}};
+  const auto Result = rebuild(
+      {{C.Base + Linked.Entry + 6, Added, false, C.Base + Linked.Entry}});
+  ASSERT_FALSE(HasFailure());
+  ASSERT_EQ(Result.Imports.size(), 3u);
+  const auto Image = test::readImage(Result.File);
+  ASSERT_FALSE(HasFailure());
+  const auto IAT = Image.directory(llvm::COFF::IAT);
+  EXPECT_EQ(IAT.RelativeVirtualAddress, First);
+  EXPECT_EQ(IAT.Size, 16u);
+  for (const auto &Import : Result.Imports) {
+    EXPECT_EQ(read64le(Image.Mapped.data() + Import.SlotRVA + 8), 0u);
+    if (Import.SlotRVA != First)
+      EXPECT_GE(Import.SlotRVA,
+                uint64_t(IAT.RelativeVirtualAddress) + IAT.Size);
+  }
+  EXPECT_FALSE(Image.Sections[1].Characteristics &
+               llvm::COFF::IMAGE_SCN_MEM_WRITE);
+  EXPECT_TRUE(Image.Sections.back().Characteristics &
+              llvm::COFF::IMAGE_SCN_MEM_WRITE);
+}
+
+TEST_F(PERebuild, WritableCellsNeedNoNativeIATProtection) {
+  plantCall(Linked.Entry);
+  const auto Result = rebuild({{C.Base + Linked.Entry + 6, FirstBinding, false,
+                                C.Base + Linked.Entry}});
+  ASSERT_FALSE(HasFailure());
+  ASSERT_EQ(Result.Imports.size(), 1u);
+  const auto Image = test::readImage(Result.File);
+  EXPECT_EQ(Image.directory(llvm::COFF::IAT).RelativeVirtualAddress, 0u);
+  EXPECT_EQ(Image.directory(llvm::COFF::IAT).Size, 0u);
+  EXPECT_TRUE(Image.Sections.back().Characteristics &
+              llvm::COFF::IMAGE_SCN_MEM_WRITE);
+}
+
+TEST_F(PERebuild, IATProtectionCannotCoverExecutableOrWritablePages) {
+  ASSERT_GT(Input->regions().size(), 2u);
+  for (bool Executable : {false, true}) {
+    SCOPED_TRACE(Executable);
+    prepare();
+    ASSERT_FALSE(HasFailure());
+    C.Exports.emplace(FirstGate, FirstBinding);
+    for (size_t I : {size_t(0), Input->regions().size() - 1}) {
+      const auto &Region = Input->regions()[I];
+      write64le(C.Memory.data() + Region.RVA + 0x100, FirstGate);
+      write64le(C.Memory.data() + Region.RVA + 0x108, 0);
+      for (uint64_t Page = Region.RVA / 4096;
+           Page < (Region.RVA + Region.MemorySize) / 4096; ++Page)
+        C.PageAccess[Page] =
+            emulation::Read | (Executable ? emulation::Execute : 0);
+    }
+    auto Result = pe::rebuild(*Input, C, {});
+    ASSERT_FALSE(bool(Result));
+    EXPECT_NE(llvm::toString(Result.takeError()).find(pe::text::IATProtection),
+              std::string::npos);
+  }
+}
+
+TEST_F(PERebuild, IATDirectoryUsesOnlyReservedOptionalHeaderSpace) {
+  using llvm::object::coff_file_header;
+  using llvm::object::coff_section;
+  using llvm::object::pe32plus_header;
+  const auto Headers = Input->headers();
+  const uint64_t DirectoryCount = Headers.OptionalHeaderOffset +
+                                  offsetof(pe32plus_header, NumberOfRvaAndSize);
+  const uint16_t TruncatedSize =
+      sizeof(pe32plus_header) +
+      llvm::COFF::IAT * sizeof(llvm::object::data_directory);
+  for (bool Reserved : {true, false}) {
+    SCOPED_TRACE(Reserved);
+    Bytes = Linked.File;
+    write32le(Bytes.data() + DirectoryCount, llvm::COFF::IAT);
+    if (!Reserved) {
+      std::memmove(Bytes.data() + Headers.OptionalHeaderOffset + TruncatedSize,
+                   Bytes.data() + Headers.SectionTableOffset,
+                   Headers.Sections.size() * sizeof(coff_section));
+      write16le(Bytes.data() + Headers.FileHeaderOffset +
+                    offsetof(coff_file_header, SizeOfOptionalHeader),
+                TruncatedSize);
+    }
+    prepare();
+    ASSERT_FALSE(HasFailure());
+    C.Exports.emplace(FirstGate, FirstBinding);
+    const auto &Region = Input->regions().back();
+    const uint64_t Cell = Region.RVA + 0x100;
+    for (uint64_t Page = Region.RVA / 4096;
+         Page < (Region.RVA + Region.MemorySize) / 4096; ++Page)
+      C.PageAccess[Page] = emulation::Read;
+    write64le(C.Memory.data() + Cell, FirstGate);
+    write64le(C.Memory.data() + Cell + 8, 0);
+    auto Result = pe::rebuild(*Input, C, {});
+    if (!Reserved) {
+      ASSERT_FALSE(bool(Result));
+      EXPECT_NE(llvm::toString(Result.takeError()).find(pe::text::HeaderRoom),
+                std::string::npos);
+      continue;
+    }
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    const auto Image = test::readImage(Result->File);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(Image.Directories.size(), llvm::COFF::IAT + 1u);
+    EXPECT_EQ(Image.directory(llvm::COFF::IAT).RelativeVirtualAddress, Cell);
+    EXPECT_EQ(Image.directory(llvm::COFF::IAT).Size, 16u);
+    ASSERT_EQ(Image.Sections.size(), Linked.Sections.size() + 1);
+    for (size_t I = 0; I < Linked.Sections.size(); ++I)
+      EXPECT_EQ(Image.Sections[I].RVA, Linked.Sections[I].RVA);
+  }
+}
+
 TEST_F(PERebuild, ExportPointerWithoutAnArrayTerminatorIsNotAnImportCell) {
   const uint64_t Cell = Input->regions().back().RVA + 0x41;
   write64le(C.Memory.data() + Cell, FirstGate);
@@ -152,6 +274,22 @@ TEST_F(PERebuild, ExportPointerWithoutAnArrayTerminatorIsNotAnImportCell) {
   const auto Image = test::readImage(Result.File);
   EXPECT_TRUE(std::equal(Before.begin() + Cell, Before.begin() + Cell + 16,
                          Image.Mapped.begin() + Cell));
+}
+
+TEST_F(PERebuild, InternalExportPointersCannotCreateASelfImport) {
+  const uint64_t Cell = Input->regions().back().RVA + 0x41;
+  const uint64_t Pointer = C.Base + Linked.Entry;
+  C.Exports.emplace(Pointer, ExportBinding{"input.dll", "Query", {}});
+  write64le(C.Memory.data() + Cell, Pointer);
+  write64le(C.Memory.data() + Cell + 8, 0);
+  const auto Result = rebuild({});
+  ASSERT_FALSE(HasFailure());
+  EXPECT_TRUE(Result.Imports.empty());
+  const auto Image = test::readImage(Result.File);
+  EXPECT_EQ(Image.directory(llvm::COFF::IAT).RelativeVirtualAddress, 0u);
+  EXPECT_EQ(Image.directory(llvm::COFF::IAT).Size, 0u);
+  EXPECT_EQ(read64le(Image.Mapped.data() + Cell), Pointer);
+  EXPECT_EQ(read64le(Image.Mapped.data() + Cell + 8), 0u);
 }
 
 TEST_F(PERebuild, AdjacentProvidersCannotBorrowEachOthersImportTerminator) {
@@ -494,6 +632,33 @@ TEST_F(PERebuild, CompletedTLSStartupGetsAnAdapterOutsideOriginalStorage) {
                            Image.Mapped.begin() + R.RVA));
   EXPECT_TRUE(Image.Sections.back().Characteristics &
               llvm::COFF::IMAGE_SCN_MEM_EXECUTE);
+}
+
+TEST_F(PERebuild, CompletedGeneratedTLSCallsRequireTheAttachABI) {
+  prepareTLS();
+  ASSERT_FALSE(HasFailure());
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    C.CompletedCalls = {{C.Base + Callback, {C.Base, 1, 0}}};
+    auto &Call = C.CompletedCalls.front();
+    switch (Mutation) {
+    case 1:
+      ++Call.Entry;
+      break;
+    case 2:
+      ++Call.Arguments[0];
+      break;
+    case 3:
+      Call.Arguments[1] = 2;
+      break;
+    case 4:
+      Call.Arguments[2] = 1;
+      break;
+    }
+    const auto Result = rebuild({});
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(Result.MaterializedTLSCallbacks, Mutation == 0 ? 1u : 0u);
+  }
 }
 
 TEST_F(PERebuild, ARM64TLSAdaptersKeepTheOriginalCallbackTarget) {

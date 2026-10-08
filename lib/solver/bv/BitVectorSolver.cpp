@@ -21,6 +21,8 @@
 
 #include "neverd/solver/BitVectorSolver.h"
 
+#include "PermanentConjuncts.h"
+
 #include "neverd/solver/BitBlaster.h"
 #include "neverd/solver/CnfEncoder.h"
 #include "neverd/solver/SatSolver.h"
@@ -187,6 +189,19 @@ std::optional<SatLit> BitVectorSolver::literalFor(SymRef Pred) {
 }
 
 bool BitVectorSolver::assertTrue(SymRef Pred) {
+  // Permanent facts can simplify later gates. Assumptions never enter this
+  // path, and bounded preparation never replaces the complete assertion.
+  if (ok() && isValidRef(Ctx, Pred) && Ctx.width(Pred) == 1 &&
+      !Blaster.isEncoded(Pred)) {
+    if (auto Leaves = detail::collectPermanentConjuncts(Ctx, Pred)) {
+      for (auto [Leaf, Positive] : *Leaves) {
+        auto L = literalFor(Leaf);
+        if (!L)
+          return false;
+        Enc.assertTrue(Positive ? *L : ~*L);
+      }
+    }
+  }
   std::optional<SatLit> L = literalFor(Pred);
   if (!L)
     return false;

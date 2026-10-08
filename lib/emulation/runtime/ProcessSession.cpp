@@ -54,6 +54,12 @@ const char *processStopReasonName(ProcessStopReason Reason) {
   llvm_unreachable(runtime::ProcessOutcome);
 }
 ProcessView::~ProcessView() = default;
+std::optional<ProcessModuleView> ProcessView::inputModule() {
+  for (const auto &Module : modules())
+    if (Module.Main)
+      return Module;
+  return std::nullopt;
+}
 llvm::Expected<uint32_t> ProcessView::instructionSize(uint64_t) {
   return diagnostic::error(diagnostic::InstructionInspectionUnsupported);
 }

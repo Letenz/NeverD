@@ -315,6 +315,7 @@ include(WindowsDeferredFixtures.cmake)
 add_neverd_unittest(NeverDUnpackExecutionTests
   UnpackExecutionTests.cpp
   UnpackGeneratedTests.cpp
+  UnpackLibraryTests.cpp
   TIMEOUT 300
   LINK_COMPONENTS Unpack)
 target_include_directories(NeverDUnpackExecutionTests PRIVATE
@@ -322,6 +323,7 @@ target_include_directories(NeverDUnpackExecutionTests PRIVATE
 target_compile_definitions(NeverDUnpackExecutionTests PRIVATE
   NEVERD_UNPACK_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/unittests/unpack/fixtures/binaries")
 include(UnpackGeneratedFixtures.cmake)
+include(UnpackLibraryFixtures.cmake)
 if(TARGET NeverDWindowsDeferredFixtures)
   add_dependencies(NeverDUnpackExecutionTests NeverDWindowsDeferredFixtures)
   target_compile_definitions(NeverDUnpackExecutionTests PRIVATE

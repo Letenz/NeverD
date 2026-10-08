@@ -42,6 +42,12 @@ bool current(const Program &P, ModuleRef Ref) {
   return Ref.Index < P.Modules.size() && resident(P.Modules[Ref.Index]) &&
          P.Modules[Ref.Index].Generation == Ref.Generation;
 }
+std::optional<size_t> inputModule(const Program &P) {
+  if (P.InputModule && *P.InputModule < P.Modules.size() &&
+      resident(P.Modules[*P.InputModule]))
+    return P.InputModule;
+  return std::nullopt;
+}
 ModuleRef moduleRef(const Program &P, size_t Index) {
   return {Index, P.Modules[Index].Generation};
 }
@@ -69,8 +75,7 @@ public:
   Linker(Program &P, VirtualMemory &Memory, const ExecutionBudget &Budget,
          ExecutionBackend *CPU = nullptr)
       : P(P), Memory(Memory), Budget(Budget), CPU(CPU) {}
-  llvm::Expected<ModuleLink> run(llvm::StringRef Name,
-                                 const std::filesystem::path *Main = nullptr) {
+  llvm::Expected<ModuleLink> run(llvm::StringRef Name, Image *Main = nullptr) {
     auto Result = link(Name, Main);
     if (Result)
       return Result;
@@ -93,8 +98,7 @@ private:
     return Budget.remainingMicroseconds() ? llvm::Error::success()
                                           : failure(text::ModuleTimeout);
   }
-  llvm::Expected<size_t> visit(llvm::StringRef Name,
-                               const std::filesystem::path *Main = nullptr) {
+  llvm::Expected<size_t> visit(llvm::StringRef Name, Image *Main = nullptr) {
     if (auto E = checkTime())
       return std::move(E);
     if (auto I = findModule(P, Name)) {
@@ -112,9 +116,15 @@ private:
     const bool Opaque = DLL && Input == P.Catalogue.end();
     if (Opaque && !P.DeferUnmodeled)
       return llvm::make_error<ModuleLoadError>(uint32_t(ErrorModuleNotFound));
-    auto Image = Opaque ? makeOpaqueImage(P, Memory, Name)
-                        : loadProgramImage(DLL ? Input->second : *Main, P.Reads,
-                                           DLL, P.DeferUnmodeled);
+    const bool Prepared = DLL && Name == P.InputName && P.PreparedInput;
+    auto Image = Main ? llvm::Expected<windows_process::Image>(std::move(*Main))
+                 : Prepared ? llvm::Expected<windows_process::Image>(
+                                  std::move(*P.PreparedInput))
+                 : Opaque   ? makeOpaqueImage(P, Memory, Name)
+                            : loadProgramImage(Input->second, P.Reads, true,
+                                               P.DeferUnmodeled);
+    if (Prepared)
+      P.PreparedInput.reset();
     if (!Image)
       return Image.takeError();
     if (auto E = checkTime())
@@ -145,6 +155,8 @@ private:
     } else
       Index = Slot->second;
     auto &M = P.Modules[Index];
+    if (DLL && Name == P.InputName)
+      P.InputModule = Index;
     M.Loaded = std::move(*Image);
     M.Generation = P.NextGeneration++;
     M.State = ModuleState::Prepared;
@@ -202,8 +214,7 @@ private:
       Change.Edges.emplace_back(moduleRef(P, Owner), Ref);
     }
   }
-  llvm::Expected<ModuleLink> link(llvm::StringRef Name,
-                                  const std::filesystem::path *Main) {
+  llvm::Expected<ModuleLink> link(llvm::StringRef Name, Image *Main) {
     auto Root = visit(Name, Main);
     if (!Root)
       return Root.takeError();
@@ -297,12 +308,37 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
     return failure(text::ModuleBudget);
   Out.Reads = {Options.MemoryLimit, Options.MemoryLimit - RuntimeBytes};
   const auto FileName = Path.filename().u8string();
-  const std::string MainName(reinterpret_cast<const char *>(FileName.data()),
-                             FileName.size());
+  std::string MainName(reinterpret_cast<const char *>(FileName.data()),
+                       FileName.size());
   if (findProvider(MainName) ||
       Out.Catalogue.contains(llvm::StringRef(MainName).lower()))
     return failure(text::ModuleName + MainName);
-  auto Linked = Linker(Out, Memory, Budget).run(MainName, &Path);
+  auto Main =
+      loadProgramImage(Path, Out.Reads, std::nullopt, Out.DeferUnmodeled);
+  if (!Main)
+    return Main.takeError();
+  if (Main->DLL) {
+    std::string GuestName = MainName;
+    if (!llvm::StringRef(GuestName).ends_with_insensitive(text::DLLExtension))
+      GuestName += text::DLLExtension;
+    auto Name = moduleName(GuestName);
+    if (!Name)
+      return Name.takeError();
+    if (findProvider(*Name) || Out.Catalogue.contains(*Name))
+      return failure(text::ModuleName + GuestName);
+    if (Out.Catalogue.size() == windows_process_limits::Modules)
+      return failure(text::ModuleBudget);
+    Out.InputModule.reset();
+    Out.InputName = *Name;
+    Out.Catalogue.emplace(*Name, Path);
+    auto Host = makeLibraryHost(Out, *Main);
+    if (!Host)
+      return Host.takeError();
+    Out.PreparedInput = std::move(*Main);
+    Main = std::move(Host);
+    MainName = text::LibraryHostName;
+  }
+  auto Linked = Linker(Out, Memory, Budget).run(MainName, &*Main);
   if (!Linked)
     return Linked.takeError();
   for (auto Ref : Linked->Attach)

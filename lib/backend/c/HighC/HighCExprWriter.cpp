@@ -1581,6 +1581,11 @@ bool HighCWriter::isUnknownCallOperand(const HighExpr *Op) const {
     return true;
   if (Inner->Kind != ExprKind::Var && Inner->Kind != ExprKind::Phi)
     return false;
+  // The stack pointer the function was entered with is frame_base, which no
+  // statement assigns: `_start` passes it to __libc_start_main as stack_end.
+  if (CurrentFunc &&
+      isSyntheticEntryStackPointer(Inner->Var, *CurrentFunc, Opts.TheArch))
+    return false;
   const std::string Name = copyForwardName(varName(Inner->Var));
   if (auto It = ValueForward.find(Name); It != ValueForward.end() && It->second)
     return isUnknownCallOperand(It->second);
@@ -3018,8 +3023,8 @@ std::optional<int64_t> HighCWriter::frameDisplacement(const HighExpr &E) const {
       const auto BaseDisp = certifiedFrameStorageDisplacement(*Base);
       if (!BaseDisp || *BaseDisp < -CurrentFunc->FrameSize || *BaseDisp > 0)
         return std::nullopt;
-      const int64_t Residue = static_cast<int64_t>(
-          syntheticEntryStackResidue(Opts.TheArch, Opts.Format));
+      const int64_t Residue = static_cast<int64_t>(syntheticEntryStackResidue(
+          Opts.TheArch, Opts.Format, CurrentFunc->EntryKind));
       const int64_t Position = *BaseDisp + Residue;
       const int64_t Remainder = (Position % static_cast<int64_t>(Alignment) +
                                  static_cast<int64_t>(Alignment)) %

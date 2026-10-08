@@ -177,7 +177,7 @@ NEVERD_WINDOWS_PROCESS_TEXT(Prefix, "Windows process: ")
 NEVERD_WINDOWS_PROCESS_TEXT(Limits,
                             "invalid process limits or incompatible options")
 NEVERD_WINDOWS_PROCESS_TEXT(
-    Image, "requires a bounded AMD64/ARM64 PE32+ console executable")
+    Image, "requires a bounded AMD64/ARM64 PE32+ executable or DLL")
 NEVERD_WINDOWS_PROCESS_TEXT(Headers, "invalid or truncated PE headers")
 NEVERD_WINDOWS_PROCESS_TEXT(Sections,
                             "invalid, overlapping or inaccessible PE sections")

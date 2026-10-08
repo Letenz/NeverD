@@ -34,6 +34,36 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "WrappedEntriesRequireExplicitTransferEvidence/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "WrappedEntriesRequireExplicitTransferEvidence/{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "RecoversAttachEntryAndPreservesExports/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "RecoversAttachEntryAndPreservesExports/{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "OriginalAndNoEntryLibrariesDoNotInventAnEntry/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "OriginalAndNoEntryLibrariesDoNotInventAnEntry/{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "FailedAttachUsesOrdinaryLoaderCleanup/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "FailedAttachUsesOrdinaryLoaderCleanup/{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "InputIdentityIsDistinctFromTheHostProcess/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "InputIdentityIsDistinctFromTheHostProcess/{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
     "MixedGenerationInstructionsDoNotRetriggerEveryIteration/"
     "{backend_title}DirectX64")
@@ -2441,6 +2471,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST
+NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "RecoveredLibrariesLoadAndExportOnNativeWindows/WhpX64")
+NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
+    "Backends/UnpackLibrary."
+    "RecoveredLibrariesLoadAndExportOnNativeWindows/WhpDirectX64")
 NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
     "StateAPIs/WhpStateTransfer."
     "CancelledDirectRunPublishesACompleteBoundary/false")

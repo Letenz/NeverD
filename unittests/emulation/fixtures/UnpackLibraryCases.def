@@ -1,0 +1,57 @@
+//===- UnpackLibraryCases.def - Independent DLL recovery fixtures --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_LIBRARY_VALUE
+NEVERD_LIBRARY_VALUE(Capacity, 4096)
+NEVERD_LIBRARY_VALUE(Key, 0xa5)
+NEVERD_LIBRARY_VALUE(LoaderMode, 1)
+NEVERD_LIBRARY_VALUE(TLSMode, 2)
+NEVERD_LIBRARY_VALUE(PrivateTLSMode, 3)
+NEVERD_LIBRARY_VALUE(WrappedEntryMode, 4)
+NEVERD_LIBRARY_VALUE(StdoutSelector, 0xfffffff5)
+NEVERD_LIBRARY_VALUE(FailureStatus, 91)
+NEVERD_LIBRARY_VALUE(DependencyValue, 17)
+NEVERD_LIBRARY_VALUE(InitialTLS, 11)
+NEVERD_LIBRARY_VALUE(CallbackIncrement, 5)
+NEVERD_LIBRARY_VALUE(EntryIncrement, 7)
+NEVERD_LIBRARY_VALUE(ExportValue, 42)
+NEVERD_LIBRARY_VALUE(QueryOrdinal, 7)
+NEVERD_LIBRARY_VALUE(AliasOrdinal, 8)
+NEVERD_LIBRARY_VALUE(HiddenOrdinal, 13)
+NEVERD_LIBRARY_VALUE(RecordHeader, 16)
+NEVERD_LIBRARY_VALUE(InstructionLimit, 2000000)
+NEVERD_LIBRARY_VALUE(TimeoutMicroseconds, 60000000)
+#endif
+#ifdef NEVERD_LIBRARY_TEXT
+NEVERD_LIBRARY_TEXT(InputFile, "input.dll")
+NEVERD_LIBRARY_TEXT(DependencyFile, "dependency.dll")
+NEVERD_LIBRARY_TEXT(HostFile, "host.exe")
+NEVERD_LIBRARY_TEXT(BodySection, ".body")
+NEVERD_LIBRARY_TEXT(RecordSection, ".pack")
+NEVERD_LIBRARY_TEXT(AttachText, "attach\n")
+NEVERD_LIBRARY_TEXT(DetachText, "detach\n")
+NEVERD_LIBRARY_TEXT(QueryText, "query-ok\n")
+NEVERD_LIBRARY_TEXT(MissingTools, "requires Clang and lld-link DLL fixtures")
+#endif
+#ifdef NEVERD_LIBRARY_API
+NEVERD_LIBRARY_API(LoadLibraryA)
+NEVERD_LIBRARY_API(FreeLibrary)
+NEVERD_LIBRARY_API(GetProcAddress)
+NEVERD_LIBRARY_API(GetLastError)
+NEVERD_LIBRARY_API(GetModuleHandleA)
+NEVERD_LIBRARY_API(GetModuleFileNameA)
+NEVERD_LIBRARY_API(GetCurrentProcessId)
+NEVERD_LIBRARY_API(GetStdHandle)
+NEVERD_LIBRARY_API(WriteFile)
+NEVERD_LIBRARY_API(ExitProcess)
+#endif
+#ifdef NEVERD_LIBRARY_EXPORT
+NEVERD_LIBRARY_EXPORT(Query, "@7")
+NEVERD_LIBRARY_EXPORT(Alias, "=Query @8")
+NEVERD_LIBRARY_EXPORT(Hidden, "=Query @13 NONAME")
+NEVERD_LIBRARY_EXPORT(DataValue, "DATA")
+NEVERD_LIBRARY_EXPORT(Forwarded, "=kernel32.GetCurrentProcessId")
+NEVERD_LIBRARY_EXPORT(loader, "")
+#endif

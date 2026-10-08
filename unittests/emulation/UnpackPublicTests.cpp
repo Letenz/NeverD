@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../TestProcess.h"
+#include "UnpackLibraryTestSupport.h"
 #include "UnpackTestSupport.h"
 
 #include "neverd/sdk/NeverDCAPI.h"
@@ -14,6 +15,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 
 namespace {
@@ -120,6 +122,50 @@ TEST_F(UnpackPublic, RunWithoutAnEntryWritesNothingAndIsIncomplete) {
   EXPECT_EQ(Status, unpack_cli::Incomplete);
   EXPECT_FALSE(std::filesystem::exists(Output));
   EXPECT_NE(Text.find(text::NoEntryOutcome), std::string::npos);
+}
+
+TEST_F(UnpackPublic, CAPIAndCLIPreserveDLLExportsAndTLS) {
+#ifndef NEVERD_UNPACK_LIBRARY_FIXTURE_DIR
+  GTEST_SKIP() << test::library::MissingTools;
+#else
+  namespace library = unpack::test::library;
+  const auto Fixtures =
+      std::filesystem::path(NEVERD_UNPACK_LIBRARY_FIXTURE_DIR) / "X64";
+  const auto Original = readImage(Fixtures / library::InputFile);
+  const auto Input = (Directory / library::InputFile).string();
+  const auto First = (Directory / "first.dll").string();
+  const auto Second = (Directory / "second.dll").string();
+  ASSERT_TRUE(library::write(Input, library::pack(Original, library::TLSMode)));
+  llvm::json::Object Options{
+      {"windows",
+       llvm::json::Object{
+           {"modules",
+            llvm::json::Array{llvm::json::Object{
+                {"name", library::DependencyFile},
+                {"path", (Fixtures / library::DependencyFile).string()}}}}}}};
+  const std::string Encoded =
+      llvm::formatv("{0}", llvm::json::Value(std::move(Options))).str();
+  auto Report = api(Input, First, Encoded.c_str());
+  if (!Report) {
+    const std::string Reason = neverd_last_error(Session);
+    if (Reason.find(Unavailable) != std::string::npos ||
+        Reason == text::Disabled)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  EXPECT_EQ(Report->getString(text::OutcomeField), text::UnpackedOutcome);
+  const auto Image = readImage(readFile(First));
+  EXPECT_TRUE(Image.FileCharacteristics & llvm::COFF::IMAGE_FILE_DLL);
+  EXPECT_EQ(Image.Entry, Original.Entry);
+  EXPECT_EQ(Image.Exports, Original.Exports);
+  const auto [Status, Text] = cli(Input, Second, Encoded);
+  EXPECT_EQ(Status, unpack_cli::Success);
+  EXPECT_EQ(readFile(Second), readFile(First));
+  auto Parsed = llvm::json::parse(Text);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  EXPECT_EQ(Parsed->getAsObject()->getString(text::OutcomeField),
+            text::UnpackedOutcome);
+#endif
 }
 
 TEST_F(UnpackPublic, SetupFailuresAreErrorsNotReports) {

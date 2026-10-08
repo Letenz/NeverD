@@ -882,8 +882,10 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/,
 
     case sym::SymOp::Add: {
       // A sum whose term carries a negative coefficient reads far better as a
-      // subtraction, and the C backend has no other way to be told so.
-      llvm::SmallVector<sym::SymRef, 8> Plus, Minus;
+      // subtraction, and the C backend has no other way to be told so.  For
+      // the same reason a constant term comes last, a negative one subtracted:
+      // `p - 8` rather than `-8 + p`.
+      llvm::SmallVector<sym::SymRef, 8> Plus, Minus, Constants;
       for (sym::SymRef Term : Ctx.operands(Item.Ref)) {
         if (Ctx.op(Term) == sym::SymOp::Mul) {
           llvm::ArrayRef<sym::SymRef> Factors = Ctx.operands(Term);
@@ -893,21 +895,44 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/,
             continue;
           }
         }
-        Plus.push_back(Term);
+        (Ctx.isConst(Term) ? Constants : Plus).push_back(Term);
+      }
+      const ExprPtr Zero = HighExpr::makeConst(
+          0, ByteSize,
+          ScalarLiterals ? ConstantAddressProvenance::Scalar
+                         : ConstantAddressProvenance::Unknown);
+      // The sum keeps the type its first term in canonical order gave it,
+      // whichever term now leads.
+      ExprPtr First = !Constants.empty() ? get(Constants.front())
+                      : !Plus.empty()    ? get(Plus.front())
+                                         : Zero;
+      const TypeRef SumType = First ? First->Type : nullptr;
+      auto Combine = [&](NdOp Op, ExprPtr Lhs, ExprPtr Rhs) -> ExprPtr {
+        if (!Lhs || !Rhs)
+          return nullptr;
+        ExprPtr Node = HighExpr::makeBinop(Op, Lhs, Rhs);
+        if (SumType)
+          Node->Type = SumType;
+        return Node;
+      };
+      // A sum of nothing but constants and negated terms starts with them.
+      if (Plus.empty()) {
+        Plus = Constants;
+        Constants.clear();
       }
 
-      ExprPtr Acc =
-          Plus.empty()
-              ? HighExpr::makeConst(0, ByteSize,
-                                    ScalarLiterals
-                                        ? ConstantAddressProvenance::Scalar
-                                        : ConstantAddressProvenance::Unknown)
-              : binop(NdOp::INT_ADD, Plus);
-      for (sym::SymRef Term : Minus) {
-        if (!Acc)
-          break;
-        ExprPtr Rhs = get(Term);
-        Acc = Rhs ? HighExpr::makeBinop(NdOp::INT_SUB, Acc, Rhs) : nullptr;
+      ExprPtr Acc = Plus.empty() ? Zero : get(Plus.front());
+      for (size_t I = 1; I < Plus.size(); ++I)
+        Acc = Combine(NdOp::INT_ADD, Acc, get(Plus[I]));
+      for (sym::SymRef Term : Minus)
+        Acc = Combine(NdOp::INT_SUB, Acc, get(Term));
+      for (sym::SymRef Term : Constants) {
+        const llvm::APInt Value = Ctx.constValue(Term);
+        if (Value.isNegative() && !Value.isMinSignedValue())
+          Acc = Combine(NdOp::INT_SUB, Acc,
+                        literalExpr(-Value, ByteSize, ScalarLiterals));
+        else
+          Acc = Combine(NdOp::INT_ADD, Acc, get(Term));
       }
       Result = Acc;
       break;
