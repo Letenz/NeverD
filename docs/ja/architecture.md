@@ -645,7 +645,7 @@ Capstone ライブラリは網羅しません。
 | `lib/decode` | Capstone/native デコードと各アーキテクチャ lifter へのディスパッチ | `NeverDIR`、`NeverDLift` |
 | `lib/ir` | 共通型、LowIR・MedIR・HighIR・intrinsic の定義/変換 | 4 つの IR サブコンポーネント |
 | `lib/pipeline` | 関数検出と Low/Med/High/LLVM 経路の調整 | IR、decode、lift、LLVM backend、デバッグ情報、IR pass |
-| `lib/backend/c` | HighIR-to-C および LLVM-IR-to-C のレンダリング | IR |
+| `lib/backend/c` | HighIR-to-C および LLVM-IR-to-C のレンダリング、HighC の Rust・Go 表記 | IR |
 | `lib/backend/llvm` | MedIR から LLVM への lowering | IR |
 | `lib/backend/codegen` | ターゲットコード生成、PE/ELF/Mach-O の patch と in-place 書き換え | IR、loader |
 | `lib/sdk` | 公開 C ABI、session ライフサイクル、クエリ、永続化、プラグイン、lift/decompile/patch/audit/hunt エントリ | エンジンを `libneverd` に集約 |
