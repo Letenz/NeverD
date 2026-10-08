@@ -604,6 +604,26 @@ int main(void) { return other_slot(7) == 7 && other_slot(9) == 9 ? 0 : 1; }
 )");
 }
 
+TEST(HighValueForward, AnIndirectCallReadsItsTargetFromASlot) {
+  // The function pointer is kept in a frame slot and called through it: the
+  // slot is read like any other, and the frame that holds it is declared.
+  auto Call = HighExpr::makeCall("indirect", 0, {constant(5)});
+  Call->IsIndirectCall = true;
+  Call->IndirectTarget =
+      HighExpr::makeLoad(frameSlot(40), NdType::makeInt(8, false));
+  Call->Type = NdType::makeInt(8, false);
+  HighFunc F = function("through_slot",
+                        {store(frameSlot(40), input()), result(Call)});
+  F.FrameSize = 64;
+  const std::string Source = emit({F});
+  compileAndRun(Source + R"(
+static uint64_t twice(uint64_t x) { return 2 * x; }
+int main(void) {
+  return through_slot((uint64_t)(uintptr_t)twice) == 10 ? 0 : 1;
+}
+)");
+}
+
 TEST(HighValueForward, CopyKeepsTheValueItsSourceLoses) {
   // t1 copies v3, then v3 changes under the same name; t1 must keep the old
   // value, in straight-line code and around a loop.

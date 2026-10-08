@@ -1117,6 +1117,10 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
     for (const ExprPtr &Op : E.Operands)
       if (Op)
         Walk(*Op, AsAddress);
+    // An indirect call's target is read like an operand: a function pointer
+    // kept in a frame slot is that slot.
+    if (E.IndirectTarget)
+      Walk(*E.IndirectTarget, false);
   };
   std::function<void(const std::vector<HighStmt> &, bool)> WalkNotes;
   WalkNotes = [&](const std::vector<HighStmt> &Stmts, bool InHandler) {
@@ -5625,6 +5629,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       for (const ExprPtr &Op : N.Operands)
         if (Op)
           Walk(*Op, AsAddress);
+      // An indirect call reads its target as a value.
+      if (N.IndirectTarget)
+        Walk(*N.IndirectTarget, false);
     };
     Walk(Root, AsAddress);
   };

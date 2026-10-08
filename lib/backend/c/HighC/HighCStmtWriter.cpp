@@ -3263,6 +3263,9 @@ void HighCWriter::hideUnusedFrameSlotWrites(const HighFunc &Func) {
       for (const ExprPtr &Op : N.Operands)
         if (Op)
           Rec(*Op, AsAddress);
+      // An indirect call reads its target as a value.
+      if (N.IndirectTarget)
+        Rec(*N.IndirectTarget, false);
     };
     Rec(E, false);
   };
