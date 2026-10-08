@@ -2827,7 +2827,7 @@ TEST(HighCPointerAddresses, NamedEmptyWideImageConstPrintsAddressOfObject) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CStringT_ctor(result, (uint64_t)(uintptr_t)(&pwstr))"),
+  EXPECT_NE(Source.find("CStringT_ctor(result, (uintptr_t)&pwstr)"),
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("int16_t pwstr"), std::string::npos) << Source;
@@ -2924,8 +2924,7 @@ TEST(HighCPointerAddresses, IntegerImageAddressStoreCastsNamedObjectPointer) {
   Func.Body = {Store};
 
   const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
-  EXPECT_NE(Source.find("(uint64_t)(uintptr_t)(&block_descriptor)"),
-            std::string::npos)
+  EXPECT_NE(Source.find("= (uintptr_t)&block_descriptor;"), std::string::npos)
       << Source;
 }
 

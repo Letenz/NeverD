@@ -3243,8 +3243,16 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       // Replacing a machine integer address with a C object pointer must
       // preserve the expression's integer type (for example, a block
       // descriptor address stored through a uint64_t memory helper).
-      if (E.Type && E.Type->Kind == NdTypeKind::Int)
+      if (E.Type && E.Type->Kind == NdTypeKind::Int) {
+        // A 64-bit target's source is built on a 64-bit host, where uintptr_t
+        // is that unsigned integer already.
+        if (!E.Type->IsSigned && !E.Type->IsEnum &&
+            E.Type->Size == sizeof(uint64_t) &&
+            getTargetRegInfo(Opts.TheArch).PointerSize == sizeof(uint64_t))
+          return typedText(E, "(uintptr_t)" + Address, E.Type->Size,
+                           /*IsSigned=*/false);
         return "(" + typeToC(E.Type) + ")(uintptr_t)(" + Address + ")";
+      }
       return IntegerViewOperands.count(&E) ? "(uintptr_t)" + Address : Address;
     }
     return constStr(E.ConstVal, E.Type);
