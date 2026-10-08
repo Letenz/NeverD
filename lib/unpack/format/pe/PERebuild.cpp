@@ -413,6 +413,16 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
     return failure(text::ImageSize);
 
   auto Directories = H.Directories;
+  if (!Slots->empty() && Directories.size() <= llvm::COFF::IAT) {
+    // An input can leave trailing directory entries undeclared while still
+    // reserving them in the optional header. Use that space without moving
+    // the section table or overwriting an original section header.
+    const uint64_t End = H.OptionalHeaderOffset + sizeof(pe32plus_header) +
+                         (llvm::COFF::IAT + 1) * sizeof(data_directory);
+    if (End > H.SectionTableOffset)
+      return failure(text::HeaderRoom);
+    Directories.resize(llvm::COFF::IAT + 1);
+  }
   relocateDebugRecords(In, Placed, Directories, Memory);
   if (RebuiltTLS->DirectoryRVA) {
     Directories[llvm::COFF::TLS_TABLE].RelativeVirtualAddress =
@@ -432,6 +442,15 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
     Directories[llvm::COFF::IMPORT_TABLE].RelativeVirtualAddress =
         MetadataRVA + Repairs->CellBytes;
     Directories[llvm::COFF::IMPORT_TABLE].Size = DirectoryBytes;
+    // The native loader uses this range to make IAT pages writable while
+    // binding imports. With no IAT directory it falls back to the section
+    // containing the import descriptors, which is now separate from the
+    // original cells. Include each array's zero terminator, keep cells at
+    // their observed RVAs, and preserve the original section permissions.
+    const uint64_t Begin = Slots->front().RVA;
+    const uint64_t End = Slots->back().RVA + 2 * value::PointerSize;
+    Directories[llvm::COFF::IAT].RelativeVirtualAddress = Begin;
+    Directories[llvm::COFF::IAT].Size = End - Begin;
   }
 
   RebuiltImage Out;
@@ -454,6 +473,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   PE.ImageBase = C.Base;
   PE.SizeOfImage = NewImageSize;
   PE.SizeOfHeaders = HeaderBytes;
+  PE.NumberOfRvaAndSize = Directories.size();
   PE.CheckSum = 0;
   PE.DLLCharacteristics =
       PE.DLLCharacteristics &
