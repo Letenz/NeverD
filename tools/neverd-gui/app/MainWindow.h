@@ -103,6 +103,8 @@ private:
   /// analysis view used, otherwise the disassembly.
   void jump(Address address);
   void navigateExpression(const QString &text);
+  /// Follow a name double-clicked in the code view \p view.
+  void activateCodeName(CodeView *view, const QString &name);
   void synchronize(Address address, QObject *source);
   void updateActions();
   void updateStatusBar();

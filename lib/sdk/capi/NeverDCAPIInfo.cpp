@@ -17,6 +17,7 @@
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
+#include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/support/StringScan.h"
 
@@ -43,6 +44,15 @@ constexpr int kMaxDecodedTextBytes = 65536;
 } // namespace
 
 namespace {
+
+/// Add the name C code calls the import \p Symbol by, when its format's
+/// decoration makes that differ from the symbol (Mach-O `_printf`).
+void addCName(llvm::json::Object &Row, llvm::StringRef Symbol,
+              const BinaryImage &Img) {
+  const llvm::StringRef CName = cNameOfSymbol(Symbol, Img.Format, Img.Arch);
+  if (CName != Symbol)
+    Row["c_name"] = jsonSafeText(CName);
+}
 
 bool hasMainEntryPoint(const BinaryImage &Img) {
   return Img.Entry != 0 || Img.Arch == Arch::EVM;
@@ -200,6 +210,7 @@ const char *neverd_imports_json(neverd_session_t Sess) {
     llvm::json::Object Obj;
     Obj["module"] = jsonSafeText(Imp.Module);
     Obj["name"] = jsonSafeText(Imp.Name);
+    addCName(Obj, Imp.Name, S->Img);
     Obj["ordinal"] = static_cast<int64_t>(Imp.Ordinal);
     Obj["iat_addr"] = vaHex(Imp.IATAddr);
     llvm::sort(Stubs[I]);
@@ -237,9 +248,11 @@ const char *neverd_import_slots_json(neverd_session_t Sess) {
   for (const auto &[Addr, Slot] : Slots) {
     if (Conflicts.count(Addr))
       continue;
-    Arr.push_back(llvm::json::Object{{"addr", vaHex(Addr)},
-                                     {"name", jsonSafeText(Slot.first)},
-                                     {"addend", Slot.second}});
+    llvm::json::Object Obj{{"addr", vaHex(Addr)},
+                           {"name", jsonSafeText(Slot.first)},
+                           {"addend", Slot.second}};
+    addCName(Obj, Slot.first, S->Img);
+    Arr.push_back(std::move(Obj));
   }
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
