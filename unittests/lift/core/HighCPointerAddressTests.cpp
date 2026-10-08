@@ -43382,3 +43382,30 @@ TEST(HighCPointerAddresses, ArmEndingInAnEnteredLabelStillFallsThrough) {
   EXPECT_FALSE(unwrapLoopsThatNeverRepeat(Body));
   EXPECT_EQ(Body[1].Kind, StmtKind::While);
 }
+
+TEST(HighCPointerAddresses, ConditionalReturnOutOfALoopReturnsItsValue) {
+  // ARM32 `bxgt lr` leaves the loop with the value r0 carries around it.
+  // The return block defines no r0; the join heading the loop does.
+  constexpr va_t Entry = 0x10000;
+  const std::vector<uint8_t> Code = {
+      0x00, 0x10, 0xa0, 0xe3, //       mov r1, #0
+      0x0a, 0x00, 0x51, 0xe3, // loop: cmp r1, #10
+      0x1e, 0xff, 0x2f, 0xc1, //       bxgt lr
+      0x01, 0x00, 0x80, 0xe0, //       add r0, r0, r1
+      0x01, 0x10, 0x81, 0xe2, //       add r1, r1, #1
+      0xfa, 0xff, 0xff, 0xea, //       b loop
+  };
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Img.Arch = Arch::ARM;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Sym = Symbol::makeFunc(Entry);
+  Sym.Name = "sum_to_ten";
+  Img.Symbols.push_back(Sym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("void sum_to_ten"), std::string::npos) << HighC;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + HighC + R"(
+int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
+)");
+}
