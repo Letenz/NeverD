@@ -2227,6 +2227,33 @@ TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
             "error: preferred must name a legacy code page");
   EXPECT_EQ(Scan("[]"), "error: string options must be a JSON object");
 
+  // Pages of one string read the same rows from a cursor, ending with none.
+  std::string Paged = "[";
+  for (std::optional<uint64_t> Cursor = 0; Cursor;) {
+    const auto Page =
+        takeString(neverd_strings_page_json(Session, nullptr, *Cursor, 1));
+    auto PageJson = llvm::json::parse(Page);
+    ASSERT_TRUE(static_cast<bool>(PageJson)) << Page;
+    const auto *Object = PageJson->getAsObject();
+    const auto *Strings = Object->getArray("strings");
+    ASSERT_TRUE(Strings && Strings->size() == 1) << Page;
+    if (Paged.size() > 1)
+      Paged += ",";
+    Paged += llvm::formatv("{0}", (*Strings)[0]).str();
+    Cursor.reset();
+    if (const auto Next = Object->getString("next_addr")) {
+      uint64_t Value = 0;
+      ASSERT_FALSE(Next->getAsInteger(0, Value)) << Page;
+      Cursor = Value;
+    }
+  }
+  EXPECT_EQ(Paged + "]", Defaults);
+  EXPECT_EQ(takeString(neverd_strings_page_json(Session, nullptr,
+                                                0x401000 + 0x1000, 8)),
+            "{\"next_addr\":null,\"strings\":[]}");
+  EXPECT_EQ(neverd_strings_page_json(Session, R"({"min_length":0})", 0, 8),
+            nullptr);
+
   const auto Encodings = takeString(neverd_string_encodings_json());
   EXPECT_NE(Encodings.find(R"("name":"utf-16le","spelling":"UTF-16LE")"),
             std::string::npos)
