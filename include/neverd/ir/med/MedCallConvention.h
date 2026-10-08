@@ -60,6 +60,11 @@ struct CallArgumentConvention {
   bool VariadicFromSummary = false;
   /// The incoming stack-argument summary counts this convention's positions.
   bool StackArgumentSummary = false;
+  /// An integer register that carries no argument and that a call need not
+  /// preserve holds no defined value at entry (RAX beyond a variadic
+  /// callee's AL, R10, R11), so a store of that incoming value before a call
+  /// passes nothing: an alignment `push rax` is no stack argument.
+  bool UndefinedIncomingScratchRegisters = false;
   /// An indirect call whose own block sets no argument register takes the
   /// consecutive setup writes of the block before it, as IDA does.
   bool IndirectCallsTakePrecedingSetup = false;

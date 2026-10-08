@@ -658,6 +658,54 @@ TEST(SysVCallContract, AVariadicPrologueSpillReadsNoParameter) {
   }
 }
 
+TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {
+  // die() calls the variadic panic("out of memory") and never returns, so
+  // it aligns the stack for the call with a push of RAX (Clang) or a push,
+  // pop and `sub rsp, 8` (GCC) instead of a frame.  RAX's incoming value is
+  // undefined: the slot it lands in at the call passes nothing.
+  constexpr va_t Panic = Text, Die = Text + 0x60, ExitStub = Text + 0xA0;
+  const std::vector<std::vector<uint8_t>> Alignments = {
+      {0x50},                    // push rax
+      {0x50, 0x58,               // push rax; pop rax
+       0x48, 0x83, 0xEC, 0x08}}; // sub rsp, 8
+  for (const std::vector<uint8_t> &Alignment : Alignments) {
+    SCOPED_TRACE(Alignment.size());
+    std::vector<uint8_t> Code(0xB0, 0xCC);
+    std::vector<uint8_t> PanicCode = {
+        0x48, 0x81, 0xEC, 0xD8, 0x00, 0x00, 0x00, // sub rsp, 0xd8
+        0x48, 0x89, 0x74, 0x24, 0x28,             // mov [rsp+0x28], rsi
+        0x48, 0x89, 0x54, 0x24, 0x30,             // mov [rsp+0x30], rdx
+        0x48, 0x89, 0x4C, 0x24, 0x38,             // mov [rsp+0x38], rcx
+        0x4C, 0x89, 0x44, 0x24, 0x40,             // mov [rsp+0x40], r8
+        0x4C, 0x89, 0x4C, 0x24, 0x48,             // mov [rsp+0x48], r9
+        0x84, 0xC0,                               // test al, al
+        0x74, 0x05,                               // je spilled
+        0x0F, 0x29, 0x44, 0x24, 0x50,             // movaps [rsp+0x50], xmm0
+        0xE8};                                    // spilled: call exit
+    for (uint8_t B : rel32(Panic + PanicCode.size() + 4, ExitStub))
+      PanicCode.push_back(B);
+    put(Code, Panic, PanicCode);
+    std::vector<uint8_t> DieCode = {0xBF, 0x00, 0x20,
+                                    0x40, 0x00,  // mov edi, fmt
+                                    0x31, 0xC0}; // xor eax, eax
+    DieCode.insert(DieCode.begin(), Alignment.begin(), Alignment.end());
+    DieCode.push_back(0xE8); // call panic
+    for (uint8_t B : rel32(Die + DieCode.size() + 4, Panic))
+      DieCode.push_back(B);
+    put(Code, Die, DieCode);
+    const BinaryImage Img = makeImportImage(
+        Code, {{Panic, "panic"}, {Die, "die"}}, {{ExitStub, "exit"}});
+    const std::string Source = liftEntries(Img, {Die});
+    const std::string Body = body(Source, "die");
+    ASSERT_FALSE(Body.empty()) << Source;
+    const size_t Call = Body.find("panic(");
+    ASSERT_NE(Call, std::string::npos) << Body;
+    const std::string Line = Body.substr(Call, Body.find('\n', Call) - Call);
+    EXPECT_EQ(Line.find(','), std::string::npos) << Line;
+    EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+  }
+}
+
 TEST(SysVCallContract, ErrorCheckingWrapperEndsAtItsExitHelper) {
   // xxd's shape: put(s, f) returns fputs(s, f) unless it fails, then calls
   // die(3), which ends in exit.  GCC aligns the next function with no-ops,
