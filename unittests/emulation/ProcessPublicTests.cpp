@@ -702,6 +702,11 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         {field::FileCreationPolicy,
          llvm::cantFail(
              llvm::json::parse(emulation::darwin_test::CreationPolicyJSON))}};
+    if (RenameLinks)
+      (*(*Input.getAsObject()
+              ->getObject(field::DarwinFiles)
+              ->getArray(field::Directories))[1]
+            .getAsObject())[field::DirectorySwapRename] = true;
     (*Input.getAsObject()->getArray(field::Arguments))[2] = "/work/data";
     if (ProtectedLink) {
       auto *Arguments = Input.getAsObject()->getArray(field::Arguments);
@@ -762,6 +767,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     const auto *Services = Report->getAsObject()->getArray(field::Services);
     ASSERT_NE(Services, nullptr);
     bool Renamed = false, Exclusive = false, NoExpansion = false;
+    bool Swapped = false, SwappedNoExpansion = false, SwapMissing = false,
+         SwapInvalid = false;
     for (const auto &Service : *Services) {
       const auto *Event = Service.getAsObject();
       ASSERT_NE(Event, nullptr);
@@ -773,6 +780,17 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       Renamed |= Event->getBoolean(field::Error) == false &&
                  Event->getString(field::Result) == "0";
       if (Number == (X64 ? "20001e8" : "1e8")) {
+        const auto *Arguments = Event->getArray(field::Arguments);
+        ASSERT_NE(Arguments, nullptr);
+        ASSERT_GE(Arguments->size(), 5u);
+        const bool Success = Event->getBoolean(field::Error) == false &&
+                             Event->getString(field::Result) == "0";
+        Swapped |= Success && (*Arguments)[4].getAsString() == "2";
+        SwappedNoExpansion |= Success && (*Arguments)[4].getAsString() == "12";
+        SwapMissing |= Event->getBoolean(field::Error) == true &&
+                       Event->getString(field::Result) == "2";
+        SwapInvalid |= Event->getBoolean(field::Error) == true &&
+                       Event->getString(field::Result) == "16";
         Exclusive |= Event->getBoolean(field::Error) == true &&
                      Event->getString(field::Result) == "11";
         NoExpansion |= Event->getBoolean(field::Error) == true &&
@@ -782,6 +800,10 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     EXPECT_TRUE(Renamed);
     EXPECT_TRUE(Exclusive);
     EXPECT_TRUE(NoExpansion);
+    EXPECT_TRUE(Swapped);
+    EXPECT_TRUE(SwappedNoExpansion);
+    EXPECT_TRUE(SwapMissing);
+    EXPECT_TRUE(SwapInvalid);
     EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
     if (ProtectedLink) {

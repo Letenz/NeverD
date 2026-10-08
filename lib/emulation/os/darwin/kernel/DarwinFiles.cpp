@@ -1199,10 +1199,8 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   auto &Target = std::get<Description>(*To);
   if (Target.Link && Target.Link->Protected)
     return unsupported(Result, diagnostic::SymbolicLinkMutation);
-  // Ordinary leaf replacement is established separately from exchanging
-  // links or mixing a link with an actual directory vnode.
-  if ((Source.Link || Target.Link) &&
-      (Mode == RenameMode::Swap || Source.Directory || Target.Directory))
+  // Link leaf moves/exchanges are separate from actual directory/link pairs.
+  if ((Source.Link || Target.Link) && (Source.Directory || Target.Directory))
     return unsupported(Result, diagnostic::SymbolicLinkMutation);
   if (Mode == RenameMode::Exclusive &&
       (Target.File || Target.Directory || Target.Link)) {
@@ -1228,7 +1226,8 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     return returned(InvalidArgument, true);
   }
   if (Mode == RenameMode::Swap) {
-    if ((Target.Type != Kind::File && Target.Type != Kind::Directory) ||
+    if ((Target.Type != Kind::File && Target.Type != Kind::Directory &&
+         Target.Type != Kind::SymbolicLink) ||
         (Target.Directory &&
          (!Target.Directory->Linked ||
           (!Target.Directory->Created && !Target.Directory->Exchangeable))))
@@ -1284,8 +1283,11 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (Mode == RenameMode::Swap) {
     // Both objects stay linked. Neither their bytes nor their mapping leases
     // provide replacement credit; only their previous dynamic path charges do.
-    const uint64_t Other =
-        *StorageUsed - Source.File->PathCharge - Target.File->PathCharge;
+    const uint64_t SourceOld =
+        Source.Link ? Source.Link->Path.size() + 1 : Source.File->PathCharge;
+    const uint64_t TargetOld =
+        Target.Link ? Target.Link->Path.size() + 1 : Target.File->PathCharge;
+    const uint64_t Other = *StorageUsed - SourceOld - TargetOld;
     const uint64_t SourceCharge = Target.Path.size() + 1;
     const uint64_t TargetCharge = Source.Path.size() + 1;
     if (Target.Path.size() >= limits::Path ||
@@ -1296,21 +1298,41 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     // name. Node insertion and string swaps publish the bounded transaction.
     std::string SourceKey = Target.Path, TargetKey = Source.Path;
     std::string SourceIdentity = Target.Path, TargetIdentity = Source.Path;
-    auto SourceNode = Nodes.extract(Source.Path);
-    auto TargetNode = Nodes.extract(Target.Path);
-    SourceNode.key().swap(SourceKey);
-    TargetNode.key().swap(TargetKey);
-    Nodes.insert(std::move(SourceNode));
-    Nodes.insert(std::move(TargetNode));
-    Source.File->Path.swap(SourceIdentity);
-    Target.File->Path.swap(TargetIdentity);
-    Source.File->PathCharge = SourceCharge;
-    Target.File->PathCharge = TargetCharge;
-    Source.File->Parent = TargetParent;
-    Target.File->Parent = Parent;
+    auto Exchange = [&](auto &SourceTable, auto &TargetTable) {
+      auto SourceNode = SourceTable.extract(Source.Path);
+      auto TargetNode = TargetTable.extract(Target.Path);
+      SourceNode.key().swap(SourceKey);
+      TargetNode.key().swap(TargetKey);
+      SourceTable.insert(std::move(SourceNode));
+      TargetTable.insert(std::move(TargetNode));
+    };
+    if (Source.Link) {
+      if (Target.Link)
+        Exchange(Links, Links);
+      else
+        Exchange(Links, Nodes);
+      Source.Link->Path.swap(SourceIdentity);
+      Source.Link->Parent = TargetParent;
+    } else {
+      if (Target.Link)
+        Exchange(Nodes, Links);
+      else
+        Exchange(Nodes, Nodes);
+      Source.File->Path.swap(SourceIdentity);
+      Source.File->PathCharge = SourceCharge;
+      Source.File->Parent = TargetParent;
+      updateNamespaceMetadata(*Source.File, false);
+    }
+    if (Target.Link) {
+      Target.Link->Path.swap(TargetIdentity);
+      Target.Link->Parent = Parent;
+    } else {
+      Target.File->Path.swap(TargetIdentity);
+      Target.File->PathCharge = TargetCharge;
+      Target.File->Parent = Parent;
+      updateNamespaceMetadata(*Target.File, false);
+    }
     *StorageUsed = Other + SourceCharge + TargetCharge;
-    updateNamespaceMetadata(*Source.File, false);
-    updateNamespaceMetadata(*Target.File, false);
     Parent->Changed = TargetParent->Changed = true;
     return returned(0);
   }

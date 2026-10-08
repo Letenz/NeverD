@@ -827,6 +827,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                                     "generation": 2309737967,
                                     "creation_time": {"seconds": -19, "nanoseconds": 987654321},
                                     "mutation_policy": mutation}}
+                            if rename_links:
+                                mixed_options["darwin_files"]["directories"][1]["swap_rename"] = True
                             mixed_options["arguments"][2] = "/work/data"
                             if protected_link:
                                 mixed_options["arguments"][1] = (
@@ -865,8 +867,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                             self.assertTrue(any(event.get("error") is False and event["result"] == "0"
                                                 for event in renames), mode)
                             flagged = [event for event in renames if event["number"] == rename_numbers[2]]
-                            for code in ("11", "3e"):
+                            for code in ("11", "3e", "2", "16"):
                                 self.assertTrue(any(event.get("error") is True and event["result"] == code
+                                                    for event in flagged), mode)
+                            for flag in ("2", "12"):
+                                self.assertTrue(any(event.get("error") is False and event["result"] == "0"
+                                                    and event["arguments"][4] == flag
                                                     for event in flagged), mode)
                             self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
                             if protected_link:

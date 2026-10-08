@@ -1530,6 +1530,7 @@ TEST_P(DarwinProcess, RuntimeCreatedSymbolicLinksCanBeRemoved) {
 
 TEST_P(DarwinProcess, RuntimeCreatedSymbolicLinksCanBeRenamed) {
   Options.DarwinFiles = darwin_test::mixedSymbolicLinkOptions();
+  Options.DarwinFiles->SwapRenameDirectories.insert("/work");
   Options.Arguments[2] = "/work/data";
   auto Result = run("symbolic-link-rename");
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
@@ -1544,11 +1545,16 @@ TEST_P(DarwinProcess, RuntimeCreatedSymbolicLinksCanBeRenamed) {
     EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
       return Event.Number == Class + Number && Event.Error == false;
     })) << Number;
-  for (auto Error : {17u, 62u})
+  for (auto Error : {17u, 62u, 2u, 22u})
     EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
       return Event.Number == Class + 488 && Event.Error == true &&
              Event.Result == Error;
     })) << Error;
+  for (auto Flags : {2u, 18u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + 488 && Event.Error == false &&
+             Event.Result == 0 && uint32_t(Event.Arguments[4]) == Flags;
+    })) << Flags;
 }
 
 INSTANTIATE_TEST_SUITE_P(Transports, DarwinProcess,

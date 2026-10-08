@@ -4408,6 +4408,23 @@ static int symbolic_link_rename(const char *input) {
                       0 &&
                   !error && !secondary);
     RENAME_EXPECT(
+        call(474, (u64) "data", work, (u64) "peer", 0, 0, 0, &error) == 0 &&
+        !error && !secondary);
+    RENAME_EXPECT(
+        call(488, work, (u64) "a", work, (u64) "peer", 2, 0, &error) == 0 &&
+        !error && !secondary);
+    RENAME_EXPECT(
+        renamed_link_bytes(work, "peer", opaque[i], sizes[i]) &&
+        renamed_link_bytes(work, "a", (const unsigned char *)"data", 4));
+    RENAME_EXPECT(
+        call(488, work, (u64) "peer", work, (u64) "a", 18, 0, &error) == 0 &&
+        !error && !secondary);
+    RENAME_EXPECT(
+        renamed_link_bytes(work, "a", opaque[i], sizes[i]) &&
+        renamed_link_bytes(work, "peer", (const unsigned char *)"data", 4));
+    RENAME_EXPECT(call(472, work, (u64) "peer", 0, 0, 0, 0, &error) == 0 &&
+                  !error && !secondary);
+    RENAME_EXPECT(
         call(488, work, (u64) "a", work, (u64) "opaque", 4, 0, &error) == 0 &&
         !error && !secondary);
     RENAME_EXPECT(renamed_link_bytes(work, "opaque", opaque[i], sizes[i]));
@@ -4415,6 +4432,72 @@ static int symbolic_link_rename(const char *input) {
                       0 &&
                   !error && !secondary);
   }
+  RENAME_EXPECT(call(474, (u64) "data", work, (u64) "a", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) "missing", work, (u64) "b", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  u64 exchanged = call(463, work, (u64) "victim", 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && exchanged >= 3);
+  u64 exchanged_dup = call(41, exchanged, 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && exchanged_dup >= 3);
+  RENAME_EXPECT(call(199, exchanged, 5, 0, 0, 0, 0, &error) == 5 && !error);
+  u64 exchanged_map = call(197, 0, 10, 1, 2, exchanged, 0, &error);
+  RENAME_EXPECT(!error && !secondary);
+  RENAME_EXPECT(call(339, exchanged, (u64)victim_before, 0, 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(488, work, (u64) "a", work, (u64) "b", 2, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "a", (const unsigned char *)"missing", 7) &&
+      renamed_link_bytes(work, "b", (const unsigned char *)"data", 4));
+  RENAME_EXPECT(
+      call(488, work, (u64) "b", work, (u64) "victim", 18, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "victim", (const unsigned char *)"data", 4));
+  RENAME_EXPECT(
+      call(473, work, (u64) "b", (u64)bytes, 24, 0, 0, &error) == 22 && error);
+  RENAME_EXPECT(call(339, exchanged, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary && little_integer(current + 6, 2) == 1 &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8));
+  RENAME_EXPECT(
+      call(488, work, (u64) "b", work, (u64) "victim", 2, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "b", (const unsigned char *)"data", 4));
+  RENAME_EXPECT(
+      call(339, exchanged_dup, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+      !error && !secondary && little_integer(current + 6, 2) == 1 &&
+      little_integer(current + 8, 8) == little_integer(victim_before + 8, 8));
+  RENAME_EXPECT(call(199, exchanged_dup, 0, 1, 0, 0, 0, &error) == 5 && !error);
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, exchanged, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"abcdefghij", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(call(488, work, (u64) "a", work, (u64) "a", 2, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(
+      call(488, work, (u64) "a", work, (u64) "absent", 2, 0, &error) == 2 &&
+      error);
+  RENAME_EXPECT(
+      call(488, work, (u64) "a", work, (u64) "b", 6, 0, &error) == 22 && error);
+  RENAME_EXPECT(
+      call(488, work, (u64) "dot/a", work, (u64) "b", 18, 0, &error) == 62 &&
+      error);
+  RENAME_EXPECT(
+      call(488, work, (u64) "a", work, (u64) "dot/b", 18, 0, &error) == 62 &&
+      error);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "a", (const unsigned char *)"missing", 7) &&
+      renamed_link_bytes(work, "b", (const unsigned char *)"data", 4));
   RENAME_EXPECT(call(475, work, (u64) "x", 0700, 0, 0, 0, &error) == 0 &&
                 !error && !secondary);
   RENAME_EXPECT(call(475, work, (u64) "y", 0700, 0, 0, 0, &error) == 0 &&
@@ -4459,6 +4542,12 @@ static int symbolic_link_rename(const char *input) {
       !error && !secondary &&
       login_equal_bytes(bytes + 8, (const unsigned char *)"klmnopqrst", 10) &&
       login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(call(474, (u64) "./data", x, (u64) "a", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(488, y, (u64) "b", x, (u64) "a", 18, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(renamed_link_bytes(x, "a", (const unsigned char *)"data", 4) &&
+                renamed_link_bytes(y, "b", (const unsigned char *)"./data", 6));
   u64 cwd_file = call(5, (u64) "data", 0, 0, 0, 0, 0, &error);
   RENAME_EXPECT(!error && !secondary && cwd_file >= 3);
   RENAME_EXPECT(call(339, cwd_file, (u64)current, 0, 0, 0, 0, &error) == 0 &&
@@ -4480,8 +4569,9 @@ static int symbolic_link_rename(const char *input) {
       login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
   RENAME_EXPECT(call(13, work, 0, 0, 0, 0, 0, &error) == 0 && !error &&
                 !secondary);
-  const u64 descriptors[] = {cwd_file, rebound,   held, ydata, xdata, y,
-                             x,        duplicate, old,  work,  dir};
+  const u64 descriptors[] = {
+      exchanged, exchanged_dup, cwd_file, rebound, held, ydata, xdata, y,
+      x,         duplicate,     old,      work,    dir};
   for (unsigned i = 0; i != sizeof(descriptors) / sizeof(descriptors[0]); ++i)
     RENAME_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 &&
                   !error && !secondary);
@@ -4491,6 +4581,10 @@ static int symbolic_link_rename(const char *input) {
                                   (const unsigned char *)"klmnopqrst", 10) &&
                 login_equal_bytes((const unsigned char *)held_map,
                                   (const unsigned char *)"ABCDEFGHIJ", 10));
+  RENAME_EXPECT(login_equal_bytes((const unsigned char *)exchanged_map,
+                                  (const unsigned char *)"abcdefghij", 10));
+  RENAME_EXPECT(call(73, exchanged_map, PAGE, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
   RENAME_EXPECT(call(73, mapped, PAGE, 0, 0, 0, 0, &error) == 0 && !error &&
                 !secondary);
   RENAME_EXPECT(call(73, victim_map, PAGE, 0, 0, 0, 0, &error) == 0 && !error &&
