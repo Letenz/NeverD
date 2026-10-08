@@ -2034,8 +2034,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       noteFunctionAddress(E.ConstVal, Funcs);
     if (E.Kind == ExprKind::Const && isImageDataAddress(E.ConstVal) &&
         !imageStringLiteral(Opts.Image, E.ConstVal)) {
-      bool Named = false;
-      if (Dbg) {
+      bool Named = Opts.UserNames && Opts.UserNames->count(E.ConstVal);
+      if (!Named && Dbg) {
         if (auto Data = Dbg->resolveDataObject(E.ConstVal);
             Data && !Data->Name.empty() &&
             !llvm::StringRef(Data->Name).starts_with("??_C@"))

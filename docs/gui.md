@@ -98,7 +98,12 @@ shows the whole function and the visible area.
 
 **Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
 MedIR, HighIR or LLVM IR of the current function and follow the disassembly
-unless their lock is set. The LLVM views translate the current function alone,
+unless their lock is set. A window hidden behind another tab catches up when it
+is shown, so moving through the disassembly never waits for a decompile no one
+sees, and F5 pressed while a jump is loading decompiles the function the jump
+lands in. The engine emits a function's source once and pages it from there; a
+function longer than one page keeps the listing's names, such as `main`. The
+LLVM views translate the current function alone,
 with the others declared, so a function the engine refuses to translate shows
 its reason without affecting other functions. Rows mapped to instructions move
 the disassembly cursor. C opens at the function: the includes, support types and
@@ -227,8 +232,9 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Space | Toggle graph and text view |
 | F5 / Tab | Pseudocode / switch between disassembly and pseudocode |
 | X / Ctrl+X / Ctrl+J | References to the operand / to the item / from the item |
-| N | Rename the function |
+| N | Rename the name under the cursor, or the address: a function at its entry, data, a label in code |
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |
+| D / A / U | Make data (again for the next size) / a string / bytes of the item |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
 | Ctrl+P / Ctrl+L / Ctrl+S / Ctrl+E | Choose a function / name / segment / entry point |
@@ -283,11 +289,11 @@ not a NeverD database.
 
 ## Edits, history and analysis
 
-Comments are staged and saved explicitly; renames and function edits commit at
-once (staged comments are saved first). Opening another file, restarting the
+Comments are staged and saved explicitly; renames, function edits and data
+items commit at once (staged comments are saved first). Opening another file, restarting the
 worker or quitting with unsaved comments offers Save, Discard and Cancel. Edits
 prepared for a session that has since closed are refused, never applied to the
-new one. Annotation, rename and function edit commands have bounded undo/redo
+new one. Annotation, rename, function edit and data item commands have bounded undo/redo
 history bound to the input hash and sidecar contents; a write-ahead journal
 recovers an interrupted save, and foreign edits disable replay instead of
 silently applying commands to another state. One worker owns a writable input
@@ -301,6 +307,26 @@ symbols, the function detector and analysis, and the edits are kept in
 function-edits <input> --create <address>`, `--delete <address>`, `--list`).
 A function edit drops whole-program analysis results: analysis continues
 function by function until **Analyze** runs again.
+
+**Edit → Rename** (N) names any address, as the listing and the pseudocode
+show it: a name under the cursor renames what it denotes, otherwise the item
+the cursor is on. A data name replaces `qword_A410` in its label, every operand
+(`mov rdx, cs:pname`) and the C (`fprintf(stderr, "%s: %s\n", pname, msg)`). A
+name has no spaces, leads to one address and is never an automatic name such
+as `sub_1234`. Names are kept in `<input>.neverd-renames.json`, which the
+command line reads and writes too (`neverd rename <input> --addr <address>
+--to <name>`, `--clear`).
+
+**Edit → Data** (D) makes the item under the cursor a value, and pressing it
+again cycles the value through byte, word, dword and qword; **Edit → String**
+(A) makes the string that starts there an item, read as the string scan reads
+one; **Edit → Undefine** (U) shows the item's bytes as bytes, whatever
+analysis reads in them. D or A inside undefined bytes takes just the bytes the
+new item needs and leaves the rest undefined, and each press is one step of
+undo history. Code belongs to its function and is never made data. The items
+are kept in `<input>.neverd-items.json`, which the command line reads and
+writes too (`neverd items <input> --data <address> --size 4`, `--string
+<address>`, `--undefine <address> --size <n>`, `--clear <address>`).
 
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a

@@ -181,6 +181,12 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
       return true;
     }
   }
+  // A code view shown again follows the function it missed while hidden,
+  // after whatever showed it has chosen its own.
+  if (event->type() == QEvent::Show && followsDisassembly(object)) {
+    const QPointer<CodeView> view = static_cast<CodeView *>(object);
+    QTimer::singleShot(0, this, [this, view] { followFunction(view); });
+  }
   return KDDockWidgets::QtWidgets::MainWindow::eventFilter(object, event);
 }
 
@@ -748,19 +754,32 @@ void MainWindow::synchronize(Address address, QObject *source) {
     hex_->setCurrent(address, 1);
   const auto function = currentFunction();
   session_.publishSelection(address, function, QStringLiteral("disassembly"));
-  if (!synchronizing_ && function && pseudocode_ && !pseudocode_->locked() &&
-      docks_.value(PseudocodeDock) && docks_.value(PseudocodeDock)->isOpen() &&
-      pseudocode_->text()->function() != function)
-    pseudocode_->showFunction(*function);
+  followFunction(pseudocode_);
   if (auto *ir = docks_.value(RepresentationDock); ir && ir->isOpen()) {
     auto *view = static_cast<CodeView *>(ir->widget());
     if (function && view->text()->function() != function && !synchronizing_ &&
         !view->locked())
-      view->showFunction(*function);
+      followFunction(view);
     else
       view->text()->revealAddress(address);
   }
   updateActions();
+}
+
+void MainWindow::followFunction(CodeView *view) {
+  // A view hidden behind another tab catches up when it is shown (see
+  // eventFilter): reading the listing must not wait for a decompile that
+  // no one sees.
+  if (synchronizing_ || !view || view->locked() || !view->isVisible())
+    return;
+  if (const auto function = currentFunction();
+      function && view->text()->function() != function)
+    view->showFunction(*function);
+}
+
+bool MainWindow::followsDisassembly(const QObject *object) const {
+  const auto *ir = docks_.value(RepresentationDock);
+  return object && (object == pseudocode_ || (ir && object == ir->widget()));
 }
 
 //===----------------------------------------------------------------------===//
@@ -834,6 +853,17 @@ void MainWindow::connectActions() {
     if (const auto function = currentFunction())
       session_.deleteFunction(*function);
   });
+  // Data items are the disassembly's; a pseudocode window keeps its keys.
+  for (const auto &[id, action] :
+       {std::pair{ActionId::EditDefineData, QStringLiteral("data")},
+        std::pair{ActionId::EditDefineString, QStringLiteral("string")},
+        std::pair{ActionId::EditUndefine, QStringLiteral("undefine")}})
+    on(id, [this, action] {
+      if (focusedCodeView())
+        return;
+      if (const auto address = currentAddress())
+        session_.defineItem(*address, action);
+    });
   on(ActionId::JumpBack, [this] { disassembly_->goBack(); });
   on(ActionId::JumpForward, [this] { disassembly_->goForward(); });
   on(ActionId::JumpNextFunction, [this] { stepFunction(true); });
@@ -1081,6 +1111,11 @@ void MainWindow::updateActions() {
       ->setEnabled(functionEdits && function != currentAddress());
   actions_.action(ActionId::EditDeleteFunction)
       ->setEnabled(functionEdits && function.has_value());
+  const bool dataItems =
+      location && !session_.readOnly() && session_.keepsDataItems();
+  for (const auto id : {ActionId::EditDefineData, ActionId::EditDefineString,
+                        ActionId::EditUndefine})
+    actions_.action(id)->setEnabled(dataItems);
   actions_.action(ActionId::EditComment)
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::EditRepeatableComment)
@@ -1151,33 +1186,25 @@ void MainWindow::openDialog() {
 }
 
 void MainWindow::rename() {
-  const auto function = disassembly_->currentFunction();
+  const auto item = currentAddress();
   const auto target = disassembly_->operandTarget();
-  if (!function && !target)
+  if (!item && !target)
     return;
   const quint64 epoch = session_.epoch();
-  // A name under the cursor renames what it denotes; otherwise the function
-  // containing the cursor.  Only functions carry renames in the engine.
-  const Address address = target ? *target : *function;
+  // A name under the cursor renames what it denotes; otherwise the item the
+  // cursor is on: a function at its entry, data, or a label in code.
+  const Address address = target ? *target : *item;
   session_.read(
       QStringLiteral("resolve"), {{"query", hexAddress(address)}}, this,
       [this, address, epoch](const QJsonObject &payload) {
-        const auto entry = addressValue(payload.value("function_address"));
-        if (!entry || *entry != address) {
-          output_->append(tr("%1 is not a function entry; only functions can "
-                             "be renamed.")
-                              .arg(displayAddress(address)),
-                          1);
-          return;
-        }
-        const QString current = payload.value("name").toString();
+        const QString current = payload.value("address_name").toString();
         bool ok = false;
         const auto name = QInputDialog::getText(
-            this, tr("Rename function"),
+            this, tr("Rename address"),
             tr("Name of %1:").arg(displayAddress(address)), QLineEdit::Normal,
             current, &ok);
-        if (ok && !name.trimmed().isEmpty() && name != current)
-          session_.rename(address, name, epoch);
+        if (ok && !name.trimmed().isEmpty() && name.trimmed() != current)
+          session_.rename(address, name.trimmed(), epoch);
       });
 }
 
@@ -1223,6 +1250,20 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
 }
 
 void MainWindow::showPseudocode(const QString &representation) {
+  // A jump still loading decides the function, as it does for the graph:
+  // decompile once it lands, not the function the cursor is leaving.
+  if (disassembly_ && disassembly_->listing()->jumpPending()) {
+    if (!pseudocodeAfterJump_)
+      connect(
+          disassembly_->listing(), &ListingView::jumpSettled, this,
+          [this] {
+            if (const auto pending = std::exchange(pseudocodeAfterJump_, {}))
+              showPseudocode(*pending);
+          },
+          Qt::SingleShotConnection);
+    pseudocodeAfterJump_ = representation;
+    return;
+  }
   const auto function = currentFunction();
   if (!function) {
     output_->append(tr("Place the cursor inside a function to decompile it."),
@@ -1754,8 +1795,9 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   for (const auto id :
        {ActionId::EditRename, ActionId::EditComment, ActionId::EditBookmark})
     menu.addAction(actions_.action(id));
-  for (const auto id :
-       {ActionId::EditCreateFunction, ActionId::EditDeleteFunction})
+  for (const auto id : {ActionId::EditCreateFunction,
+                        ActionId::EditDeleteFunction, ActionId::EditDefineData,
+                        ActionId::EditDefineString, ActionId::EditUndefine})
     if (auto *action = actions_.action(id); action->isEnabled())
       menu.addAction(action);
   menu.addSeparator();

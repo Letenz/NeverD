@@ -120,8 +120,8 @@
         <translation>إعادة تسمية(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>إعادة تسمية الدالة الحالية</translation>
+        <source>Rename the current address</source>
+        <translation>إعادة تسمية العنوان الحالي</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -726,6 +726,30 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>التوقف عن معاملة الدالة الحالية كدالة</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>بيانات(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>تعريف قيمة عند العنوان الحالي؛ مرة أخرى للحجم التالي</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>سلسلة نصية(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>تعريف السلسلة النصية التي تبدأ عند العنوان الحالي</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>إلغاء التعريف(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>عرض بايتات العنصر الحالي كبايتات</translation>
     </message>
 </context>
 <context>
@@ -1720,12 +1744,8 @@ Double-click to go to the declaration.</source>
         <translation> · للقراءة فقط</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 ليس بداية دالة؛ يمكن إعادة تسمية الدوال فقط.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>إعادة تسمية الدالة</translation>
+        <source>Rename address</source>
+        <translation>إعادة تسمية العنوان</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -2134,6 +2154,18 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>حُذفت الدالة عند %1</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>البايتات عند %1 غير معرّفة بالفعل</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>أُلغي تعريف العنصر عند %1</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>عُرِّف %1 عند %2</translation>
     </message>
 </context>
 </TS>

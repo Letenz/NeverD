@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "NativeMobileSession.h"
+#include "SessionImpl.h"
 #include "gtest/gtest.h"
 
 #include "neverd/loader/BinaryImage.h"
@@ -2227,6 +2228,33 @@ TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
             "error: preferred must name a legacy code page");
   EXPECT_EQ(Scan("[]"), "error: string options must be a JSON object");
 
+  // Pages of one string read the same rows from a cursor, ending with none.
+  std::string Paged = "[";
+  for (std::optional<uint64_t> Cursor = 0; Cursor;) {
+    const auto Page =
+        takeString(neverd_strings_page_json(Session, nullptr, *Cursor, 1));
+    auto PageJson = llvm::json::parse(Page);
+    ASSERT_TRUE(static_cast<bool>(PageJson)) << Page;
+    const auto *Object = PageJson->getAsObject();
+    const auto *Strings = Object->getArray("strings");
+    ASSERT_TRUE(Strings && Strings->size() == 1) << Page;
+    if (Paged.size() > 1)
+      Paged += ",";
+    Paged += llvm::formatv("{0}", (*Strings)[0]).str();
+    Cursor.reset();
+    if (const auto Next = Object->getString("next_addr")) {
+      uint64_t Value = 0;
+      ASSERT_FALSE(Next->getAsInteger(0, Value)) << Page;
+      Cursor = Value;
+    }
+  }
+  EXPECT_EQ(Paged + "]", Defaults);
+  EXPECT_EQ(takeString(neverd_strings_page_json(Session, nullptr,
+                                                0x401000 + 0x1000, 8)),
+            "{\"next_addr\":null,\"strings\":[]}");
+  EXPECT_EQ(neverd_strings_page_json(Session, R"({"min_length":0})", 0, 8),
+            nullptr);
+
   const auto Encodings = takeString(neverd_string_encodings_json());
   EXPECT_NE(Encodings.find(R"("name":"utf-16le","spelling":"UTF-16LE")"),
             std::string::npos)
@@ -2465,6 +2493,51 @@ TEST_F(SessionCAPITest, SidecarWritesRespectWorkerOwnership) {
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "saved_name");
   EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-annotations.json"));
   EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-renames.json"));
+}
+
+TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {
+  // lea rax, [rip + d] to the data, then ret: the code takes the address of
+  // data no symbol names.
+  std::string Code = "\x48\x8d\x05";
+  const auto Displacement =
+      static_cast<uint32_t>(DataELFData - (DataELFEntry + 7));
+  for (unsigned I = 0; I < 4; ++I)
+    Code += static_cast<char>(Displacement >> (8 * I));
+  Code += '\xc3';
+  const auto Input =
+      write("user-names.elf",
+            makeDataELF(std::string_view("\x01\x02\x03\x04", 4), Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const std::string Row = "{\"addr\":\"0x" + llvm::utohexstr(DataELFData) +
+                          "\",\"name\":\"table_base\",\"size\":0}";
+  ASSERT_EQ(neverd_rename_addr(Session, DataELFData, "table_base"), 0)
+      << takeString(neverd_last_error(Session));
+  // The symbols name it, and so does the C.
+  EXPECT_NE(takeString(neverd_data_symbols_json(Session)).find(Row),
+            std::string::npos);
+  ASSERT_GE(neverd_session_discover_functions(Session), 1);
+  EXPECT_NE(
+      takeString(neverd_decompile(Session, DataELFEntry)).find("table_base"),
+      std::string::npos);
+  // The name is saved with the input and comes back with it.
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_NE(takeString(neverd_data_symbols_json(Reopened)).find(Row),
+              std::string::npos);
+    neverd_session_destroy(Reopened);
+  }
+  // A name has no spaces, and names an address in the image.
+  EXPECT_EQ(neverd_rename_addr(Session, DataELFData, "table base"), -1);
+  EXPECT_EQ(neverd_rename_addr(Session, 0x10, "nowhere"), -1);
+  // Taking the name away leaves the data unnamed again.
+  ASSERT_EQ(neverd_rename_addr(Session, DataELFData, nullptr), 0);
+  EXPECT_EQ(takeString(neverd_data_symbols_json(Session)).find("table_base"),
+            std::string::npos);
+  EXPECT_EQ(
+      takeString(neverd_decompile(Session, DataELFEntry)).find("table_base"),
+      std::string::npos);
 }
 
 TEST_F(SessionCAPITest, ReloadingRenamesRestoresNamesRemovedFromTheSidecar) {
@@ -3135,6 +3208,67 @@ TEST_F(SessionCAPITest, LibrarySourcePagesPreserveTextAndReloadEvidence) {
   EXPECT_EQ(Withdrawn.getString("text"), Before.getString("text"));
 }
 
+TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
+  const auto Path =
+      (std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) / "accessors-inline.o")
+          .string();
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  int Index = neverd_func_find_by_name(Session, "_nd_vector_u32_data_inline");
+  if (Index < 0)
+    Index = neverd_func_find_by_name(Session, "nd_vector_u32_data_inline");
+  ASSERT_GE(Index, 0);
+  const auto Entry = neverd_func_entry(Session, Index);
+  auto &State = *neverd::sdk::toSession(Session);
+  using Route = neverd::sdk::Session::SourceRoute;
+  const auto Decompile = [&](bool HighC) {
+    return takeString(HighC ? neverd_decompile(Session, Entry)
+                            : neverd_decompile_llvm(Session, Entry));
+  };
+  std::string HighCText;
+  for (const bool HighC : {true, false}) {
+    const char *Stage = HighC ? "c" : "llvmc";
+    SCOPED_TRACE(Stage);
+    const Route Kind = HighC ? Route::HighC : Route::LLVMC;
+    const std::string Original = Decompile(HighC);
+    ASSERT_FALSE(Original.empty()) << takeString(neverd_last_error(Session));
+    if (HighC)
+      HighCText = Original;
+    // A decompile keeps its text; the first page adds the map pages need.
+    auto *Kept = State.findFunctionSource(Entry, Kind);
+    ASSERT_NE(Kept, nullptr);
+    EXPECT_EQ(Kept->Text, Original);
+    EXPECT_FALSE(Kept->Map);
+    std::string Assembled;
+    for (size_t Offset = 0;;) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2));
+      ASSERT_TRUE(Page.getString("text"));
+      Assembled += Page.getString("text")->str();
+      if (Page.getBoolean("complete").value_or(false))
+        break;
+      ASSERT_TRUE(Page.getInteger("next_offset"));
+      Offset = *Page.getInteger("next_offset");
+      ASSERT_LT(Offset, 10000u);
+    }
+    EXPECT_EQ(Assembled, Original);
+    Kept = State.findFunctionSource(Entry, Kind);
+    ASSERT_NE(Kept, nullptr);
+    EXPECT_TRUE(Kept->Map);
+    // Later pages and decompiles read the kept text instead of emitting the
+    // function again.
+    Kept->Text = "/* kept */\n";
+    EXPECT_EQ(takeView(neverd_ir_view_json(Session, Entry, Stage, 0, 2))
+                  .getString("text"),
+              "/* kept */\n");
+    EXPECT_EQ(Decompile(HighC), "/* kept */\n");
+  }
+  // A new pipeline emits the source again.
+  neverd_session_restrict_function(Session, 0);
+  EXPECT_TRUE(State.FunctionSources.empty());
+  EXPECT_EQ(Decompile(true), HighCText);
+}
+
 TEST_F(SessionCAPITest, IRViewRejectsInvalidUTF8Representation) {
   EXPECT_EQ(neverd_ir_view_json(Session, 0, "\xff", 0, 1), nullptr);
   EXPECT_NE(takeString(neverd_last_error(Session)).find("UTF-8"),
@@ -3495,7 +3629,19 @@ TEST_F(SessionCAPITest, UserDataItemsDefineBytesAndPersist) {
             std::string::npos);
   EXPECT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"dword\"}"), 0);
   ASSERT_EQ(
-      neverd_item_set(Session, Word, "{\"kind\":\"undefined\",\"size\":2}"), 0);
+      neverd_item_set(Session, Word, "{\"kind\":\"undefined\",\"size\":4}"), 0);
+  // Undefined bytes give way to an item and stay undefined around it.
+  ASSERT_EQ(neverd_item_set(Session, Word + 1, "{\"kind\":\"byte\"}"), 0)
+      << takeString(neverd_last_error(Session));
+  const std::string ByteHex = "0x" + llvm::utohexstr(Word + 1);
+  const std::string RestHex = "0x" + llvm::utohexstr(Word + 2);
+  EXPECT_EQ(takeString(neverd_items_json(Session)),
+            "[{\"addr\":\"" + TextHex +
+                "\",\"encoding\":\"utf-8\",\"kind\":\"string\","
+                "\"size\":6},{\"addr\":\"" +
+                WordHex + "\",\"kind\":\"undefined\",\"size\":1},{\"addr\":\"" +
+                ByteHex + "\",\"kind\":\"byte\",\"size\":1},{\"addr\":\"" +
+                RestHex + "\",\"kind\":\"undefined\",\"size\":2}]");
 
   // Saved, the items come back with the input.
   ASSERT_EQ(neverd_items_save(Session), 0)

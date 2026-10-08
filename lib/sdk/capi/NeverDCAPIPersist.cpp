@@ -15,6 +15,7 @@
 #include "neverd/support/ProjectWriteLock.h"
 #include "neverd/support/StringScan.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
@@ -22,6 +23,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -233,6 +235,52 @@ int neverd_rename_func(neverd_session_t Sess, const char *OldName,
   }
   S->setError("function not found: " + std::string(OldName));
   return -1;
+}
+
+int neverd_rename_addr(neverd_session_t Sess, neverd_va_t Addr,
+                       const char *Name) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  const llvm::StringRef NewName = Name ? Name : "";
+  constexpr size_t MaxNameBytes = 4096;
+  if (NewName.size() > MaxNameBytes ||
+      llvm::any_of(NewName,
+                   [](unsigned char C) { return C <= ' ' || C == 0x7f; })) {
+    S->setError("a name has at most 4096 bytes and no spaces or control "
+                "characters");
+    return -1;
+  }
+  if (!S->Img.readVA(Addr, 1)) {
+    S->setError(vaHex(Addr) + " is not in the image");
+    return -1;
+  }
+  (void)neverd_func_count(Sess);
+  const auto PreviousRenames = S->Renames;
+  const auto PreviousOriginals = S->OriginalNames;
+  if (NewName.empty()) {
+    S->Renames.erase(Addr);
+  } else {
+    // What the address was called before the user named it.
+    if (!S->OriginalNames.count(Addr))
+      if (const Symbol *Sym = S->Img.findSymbolAt(Addr); Sym && !Sym->IsFunc)
+        S->OriginalNames[Addr] = Sym->Name;
+    S->Renames[Addr] = NewName.str();
+  }
+  // A function entry takes the name in the function list too.
+  S->refreshFunctionNames();
+  if (neverd_renames_save(Sess) != 0) {
+    S->Renames = PreviousRenames;
+    S->OriginalNames = PreviousOriginals;
+    S->refreshFunctionNames();
+    return -1;
+  }
+  return 0;
 }
 
 const char *neverd_renames_json(neverd_session_t Sess) {
@@ -628,12 +676,34 @@ int neverd_item_set(neverd_session_t Sess, neverd_va_t Addr,
     S->setError(Error);
     return -1;
   }
-  // An item replaces the one at its address and shares no byte with another.
-  if (const auto Other =
-          overlappingItem(S->DataItems, Addr, Item->Size, Addr)) {
-    S->setError(vaHex(Addr) + " overlaps the item at " + vaHex(*Other));
-    return -1;
+  // An item replaces the one at its address. Bytes the user undefined give
+  // way to it and stay undefined around it; it shares no byte with any other
+  // item.
+  const va_t End = Addr + Item->Size;
+  std::vector<va_t> Carved;
+  std::vector<std::pair<va_t, uint64_t>> Pieces;
+  auto It = S->DataItems.upper_bound(Addr);
+  if (It != S->DataItems.begin() &&
+      std::prev(It)->first + std::prev(It)->second.Size > Addr)
+    --It;
+  for (; It != S->DataItems.end() && It->first < End; ++It) {
+    const auto &[At, Other] = *It;
+    if (Other.Kind != UndefinedItemKind) {
+      if (At == Addr)
+        continue;
+      S->setError(vaHex(Addr) + " overlaps the item at " + vaHex(At));
+      return -1;
+    }
+    Carved.push_back(At);
+    if (At < Addr)
+      Pieces.emplace_back(At, Addr - At);
+    if (At + Other.Size > End)
+      Pieces.emplace_back(End, At + Other.Size - End);
   }
+  for (const va_t At : Carved)
+    S->DataItems.erase(At);
+  for (const auto &[At, Size] : Pieces)
+    S->DataItems[At] = {std::string(UndefinedItemKind), Size, {}};
   S->DataItems[Addr] = std::move(*Item);
   return 0;
 }

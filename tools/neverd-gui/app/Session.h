@@ -94,6 +94,15 @@ public:
   bool keepsFunctionEdits() const {
     return capabilities_.contains(QStringLiteral("function_create"));
   }
+  /// Whether the worker's engine keeps the user's data items.
+  bool keepsDataItems() const {
+    return capabilities_.contains(QStringLiteral("item_define"));
+  }
+  /// Define the item at \p address: \p action "data" makes a value, the
+  /// next size each time; "string" the string that starts there; "undefine"
+  /// shows the item's bytes as bytes.  Each commits at once, like a rename.
+  void defineItem(Address address, const QString &action,
+                  std::optional<quint64> epoch = {});
   /// Start a function at \p address, or stop treating the function at
   /// \p entry as one.  Each commits at once, like a rename.
   void createFunction(Address address, std::optional<quint64> epoch = {});
