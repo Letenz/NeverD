@@ -247,9 +247,9 @@ TEST(HighIntegerSignedness, LoadsReadTheSignednessOfTheirOperation) {
                 result(op(NdOp::INT_ADD, Word(0, true), constant(8)))});
   chooseIntegerSignedness(F);
   const std::string Source = emit({F});
-  EXPECT_NE(Source.find("*(_SQWORD *)(arg0 + 8)) < 0"), std::string::npos)
+  EXPECT_NE(Source.find("*(int64_t *)(arg0 + 8)) < 0"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("*(_QWORD *)arg0 + 8"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("*(uint64_t *)arg0 + 8"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(int64_t)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(uint64_t)*"), std::string::npos) << Source;
   compileAndRun(Source + R"(
