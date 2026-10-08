@@ -711,6 +711,22 @@
         <source>List the instructions that refer to strings</source>
         <translation>文字列を参照する命令を一覧表示します</translation>
     </message>
+    <message>
+        <source>Create &amp;function</source>
+        <translation>関数を作成(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Start a function at the current address</source>
+        <translation>現在のアドレスから関数を開始します</translation>
+    </message>
+    <message>
+        <source>&amp;Delete function</source>
+        <translation>関数を削除(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Stop treating the current function as one</source>
+        <translation>現在の関数を関数として扱わないようにします</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1074,6 +1090,10 @@
     <message>
         <source>&amp;Help</source>
         <translation>ヘルプ(&amp;H)</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>関数(&amp;F)</translation>
     </message>
 </context>
 <context>
@@ -2091,6 +2111,14 @@ Signed: %4</source>
     <message>
         <source>Strings: %1, %2 first, at least %3 columns</source>
         <translation>文字列：%1、%2 を優先、%3 桁以上</translation>
+    </message>
+    <message>
+        <source>Created a function at %1</source>
+        <translation>%1 に関数を作成しました</translation>
+    </message>
+    <message>
+        <source>Deleted the function at %1</source>
+        <translation>%1 の関数を削除しました</translation>
     </message>
 </context>
 </TS>

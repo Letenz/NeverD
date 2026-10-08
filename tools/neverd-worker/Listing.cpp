@@ -3178,6 +3178,12 @@ std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
   return std::nullopt;
 }
 
+void Listing::reindex() {
+  impl_->indexState = Impl::IndexState::Idle;
+  impl_->references.clear();
+  invalidate();
+}
+
 bool Listing::isImport(std::uint64_t address) {
   auto &d = *impl_;
   d.build();

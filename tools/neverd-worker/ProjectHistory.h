@@ -2,6 +2,7 @@
 #include "Protocol.h"
 
 #include <filesystem>
+#include <string_view>
 
 namespace neverd::worker {
 using AtomicWriter = void (*)(const std::filesystem::path &, const Json &);
@@ -24,6 +25,9 @@ public:
   std::string blockedReason() const { return blocked_; }
   void verifyLoadedState(const Json &state);
   static Json normalizedState(Json state);
+  /// The state table a history command kind changes (UserStateTables.def),
+  /// or null for an unknown kind.
+  static const char *tableOfKind(std::string_view kind);
 
 private:
   std::filesystem::path binary_, historyPath_, journalPath_;
@@ -35,6 +39,7 @@ private:
   Json commands_ = Json::array(), committedState_, previousDocument_;
   std::size_t cursor_ = 0;
   Json diskState() const;
+  void writeSidecars(const Json &state) const;
   Json document(const Json &state) const;
   void recover();
   void requireUsable() const;

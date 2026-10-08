@@ -65,7 +65,8 @@ bool Session::synchronizeFunctions() {
     for (size_t Index = 0; Index < Functions.size(); ++Index)
       FunctionIndices.try_emplace(Functions[Index].Entry, Index);
     for (const LowFunc &Function : PipeResult.LowFuncs) {
-      if (!FunctionIndices.try_emplace(Function.Entry, Functions.size()).second)
+      if (isDeletedFunction(Function.Entry) ||
+          !FunctionIndices.try_emplace(Function.Entry, Functions.size()).second)
         continue;
       // Existing loader/debug names and sizes remain authoritative. A saved
       // rename can precede discovery when reopening a stripped image.
@@ -242,6 +243,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.Loaded = true;
   S.Annotations.clear();
   S.Renames.clear();
+  S.FunctionEdits.clear();
   S.SigDB.clear();
   S.DiscoveredFunctions.reset();
   S.ImageStrings.reset();
@@ -249,6 +251,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
 
   neverd_annotations_load(Sess);
   neverd_renames_load(Sess);
+  neverd_functions_load(Sess);
 
   return 1;
 }

@@ -53,6 +53,8 @@ public:
   std::optional<std::uint64_t> resolveName(const std::string &name);
   /// Whether \p address is an import's slot or the entry of its thunk.
   bool isImport(std::uint64_t address);
+  /// Build the reference index again, as for a changed function list.
+  void reindex();
   /// Formatted instruction lines (no prefixes) of [start, end), for graph
   /// nodes.  Each element is {address, text, spans}.
   Json blockLines(std::uint64_t start, std::uint64_t end);

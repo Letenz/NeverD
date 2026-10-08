@@ -181,6 +181,7 @@ extern llvm::cl::SubCommand AnnotateCmd;
 extern llvm::cl::SubCommand DiffCmd;
 extern llvm::cl::SubCommand CallGraphCmd;
 extern llvm::cl::SubCommand RenameCmd;
+extern llvm::cl::SubCommand FunctionEditsCmd;
 extern llvm::cl::SubCommand SearchCmd;
 extern llvm::cl::SubCommand SectionsCmd;
 extern llvm::cl::SubCommand SymbolsCmd;
@@ -378,6 +379,11 @@ extern llvm::cl::opt<std::string> RenameFrom;
 extern llvm::cl::opt<std::string> RenameTo;
 extern llvm::cl::opt<bool> RenameList;
 
+// Function edits.
+extern llvm::cl::opt<std::string> FunctionCreate;
+extern llvm::cl::opt<std::string> FunctionDelete;
+extern llvm::cl::opt<bool> FunctionEditsList;
+
 // Search.
 extern llvm::cl::opt<std::string> SearchText;
 extern llvm::cl::opt<std::string> SearchHex;
@@ -533,6 +539,7 @@ int runConcolic();
 int runBookmarks();
 int runAnnotate(neverd_session_t Sess);
 int runRename(neverd_session_t Sess);
+int runFunctionEdits(neverd_session_t Sess);
 
 // NeverDCmdSearch.cpp — byte/string search and signature matching.
 int runSearch(neverd_session_t Sess);

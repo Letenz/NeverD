@@ -335,3 +335,148 @@ int neverd_renames_load(neverd_session_t Sess) {
   }
   return 0;
 }
+
+// ===--------------------------------------------------------------------===//
+// Function edits
+// ===--------------------------------------------------------------------===//
+
+static std::string functionsPath(const Session *S) {
+  return S->FilePath.string() + ".neverd-functions.json";
+}
+
+static llvm::json::Array functionEditRows(const Session *S) {
+  llvm::json::Array Rows;
+  for (const auto &[Entry, Created] : S->FunctionEdits)
+    Rows.push_back(llvm::json::Object{
+        {"addr", vaHex(Entry)}, {"state", Created ? "created" : "deleted"}});
+  return Rows;
+}
+
+int neverd_func_create(neverd_session_t Sess, neverd_va_t Entry) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  const Segment *Code = S->Img.getSegmentFor(Entry);
+  if (!Code || !Code->isExecutable()) {
+    S->setError(vaHex(Entry) + " is not in executable code");
+    return -1;
+  }
+  // The user's last edit at an address decides over the image, the detector
+  // and analysis, so a deleted function made again is a created one.
+  if (!S->isDeletedFunction(Entry)) {
+    (void)S->synchronizeFunctions();
+    for (const FuncInfo &F : S->Functions)
+      if (F.Entry == Entry) {
+        S->setError("a function already starts at " + vaHex(Entry));
+        return -1;
+      }
+  }
+  S->FunctionEdits[Entry] = true;
+  S->invalidatePipeline();
+  return 0;
+}
+
+int neverd_func_delete(neverd_session_t Sess, neverd_va_t Entry) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  (void)S->synchronizeFunctions();
+  if (llvm::none_of(S->Functions,
+                    [&](const FuncInfo &F) { return F.Entry == Entry; })) {
+    S->setError("no function starts at " + vaHex(Entry));
+    return -1;
+  }
+  // Recorded for a created function too: the image, the detector or analysis
+  // may find a function there as well.
+  S->FunctionEdits[Entry] = false;
+  S->invalidatePipeline();
+  return 0;
+}
+
+const char *neverd_functions_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  return dupStr(jsonToString(llvm::json::Value(functionEditRows(S))));
+}
+
+int neverd_functions_save(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded)
+    return -1;
+  ProjectWriteLock Lock(S->FilePath);
+  if (!Lock) {
+    S->setError("project writer unavailable: " + Lock.error());
+    return -1;
+  }
+  return saveSidecar(S, functionsPath(S), functionEditRows(S), "function edits")
+             ? 0
+             : -1;
+}
+
+int neverd_functions_load(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded)
+    return -1;
+  const auto Path = functionsPath(S);
+  std::error_code EC;
+  const bool Exists = std::filesystem::exists(Path, EC);
+  if (EC) {
+    S->setError("cannot inspect function edits: " + EC.message());
+    return -1;
+  }
+  std::map<va_t, bool> Edits;
+  if (Exists) {
+    std::ifstream In(Path);
+    if (!In.is_open()) {
+      S->setError("cannot read function edits");
+      return -1;
+    }
+    const std::string Content((std::istreambuf_iterator<char>(In)),
+                              std::istreambuf_iterator<char>());
+    auto Parsed = llvm::json::parse(Content);
+    if (!Parsed) {
+      llvm::consumeError(Parsed.takeError());
+      S->setError("function edits sidecar is not valid JSON");
+      return -1;
+    }
+    const auto *Rows = Parsed->getAsArray();
+    if (!Rows) {
+      S->setError("function edits sidecar is not an array");
+      return -1;
+    }
+    for (const auto &Row : *Rows) {
+      const auto *Object = Row.getAsObject();
+      const llvm::json::Value *Address = Object ? Object->get("addr") : nullptr;
+      const auto State = Object ? Object->getString("state") : std::nullopt;
+      const auto Entry =
+          Address ? parsePersistedAddress(*Address) : std::optional<va_t>();
+      if (!Entry || !State || (*State != "created" && *State != "deleted")) {
+        S->setError("function edits sidecar has an invalid row");
+        return -1;
+      }
+      Edits[*Entry] = *State == "created";
+    }
+  }
+  if (Edits == S->FunctionEdits)
+    return 0;
+  S->FunctionEdits = std::move(Edits);
+  S->invalidatePipeline();
+  return 0;
+}

@@ -265,6 +265,28 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
     }
   }
 
+  // The user's function edits decide over detection and debug information.
+  if (Opts.OnlyFunctionEntries.empty() && !Opts.FunctionEdits.empty()) {
+    llvm::erase_if(FuncEntries, [&](const std::pair<va_t, std::string> &Entry) {
+      const auto Edit = Opts.FunctionEdits.find(Entry.first);
+      return Edit != Opts.FunctionEdits.end() && !Edit->second;
+    });
+    for (const auto &[Entry, Created] : Opts.FunctionEdits) {
+      const Segment *Code = Img.getSegmentFor(Entry);
+      if (!Created || !Code || !Code->isExecutable() ||
+          llvm::any_of(FuncEntries,
+                       [&](const std::pair<va_t, std::string> &Known) {
+                         return Known.first == Entry;
+                       }))
+        continue;
+      FuncEntries.emplace_back(
+          Entry, (kAutoFuncPrefix + llvm::utohexstr(Entry)).str());
+    }
+    llvm::stable_sort(FuncEntries, [](const auto &Left, const auto &Right) {
+      return Left.first < Right.first;
+    });
+  }
+
   // The loader tags ELF e_entry as a runtime function so normal CRT startup
   // is preserved by patch mode.  A standalone ELF with only that detected
   // function has no other body to patch.  Allow its authenticated entry when

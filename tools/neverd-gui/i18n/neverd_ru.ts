@@ -711,6 +711,22 @@
         <source>List the instructions that refer to strings</source>
         <translation>Показать инструкции, ссылающиеся на строки</translation>
     </message>
+    <message>
+        <source>Create &amp;function</source>
+        <translation>Создать &amp;функцию</translation>
+    </message>
+    <message>
+        <source>Start a function at the current address</source>
+        <translation>Начать функцию с текущего адреса</translation>
+    </message>
+    <message>
+        <source>&amp;Delete function</source>
+        <translation>&amp;Удалить функцию</translation>
+    </message>
+    <message>
+        <source>Stop treating the current function as one</source>
+        <translation>Перестать считать текущую функцию функцией</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1074,6 +1090,10 @@
     <message>
         <source>&amp;Help</source>
         <translation>&amp;Справка</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>&amp;Функции</translation>
     </message>
 </context>
 <context>
@@ -2097,6 +2117,14 @@ Signed: %4</source>
     <message>
         <source>Strings: %1, %2 first, at least %3 columns</source>
         <translation>Строки: %1, сначала %2, не менее %3 колонок</translation>
+    </message>
+    <message>
+        <source>Created a function at %1</source>
+        <translation>Создана функция по адресу %1</translation>
+    </message>
+    <message>
+        <source>Deleted the function at %1</source>
+        <translation>Удалена функция по адресу %1</translation>
     </message>
 </context>
 </TS>

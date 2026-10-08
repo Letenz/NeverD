@@ -82,6 +82,16 @@ NEVERD_VIEW_ACTION(EditCopyAddress,
 NEVERD_VIEW_ACTION(EditRename, QT_TRANSLATE_NOOP("Actions", "Re&name..."), "N",
                    "rename",
                    QT_TRANSLATE_NOOP("Actions", "Rename the current function"))
+NEVERD_VIEW_ACTION(EditCreateFunction,
+                   QT_TRANSLATE_NOOP("Actions", "Create &function"), "P",
+                   "function_create",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Start a function at the current address"))
+NEVERD_VIEW_ACTION(EditDeleteFunction,
+                   QT_TRANSLATE_NOOP("Actions", "&Delete function"), "",
+                   "function_delete",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Stop treating the current function as one"))
 NEVERD_VIEW_ACTION(EditComment,
                    QT_TRANSLATE_NOOP("Actions", "Enter &comment..."), ":",
                    "comment",

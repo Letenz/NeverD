@@ -3340,6 +3340,80 @@ TEST_F(SessionCAPITest, AnalyzedLLVMPagesEmitTheirFunctionAlone) {
 #endif
 }
 
+TEST_F(SessionCAPITest, UserFunctionEditsShapeTheListAnalysisAndSidecar) {
+  // The second routine is unreachable: only a user's edit makes it a
+  // function.
+  const auto Input = write(
+      "edits.elf", makeNativeELF(false, 0x400000,
+                                 std::string_view("\xb8\x09\0\0\0\xc3", 6)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  ASSERT_EQ(neverd_session_analyze(Session), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  const auto Second = Entry + 6;
+  const std::string EntryHex = "0x" + llvm::utohexstr(Entry);
+  const std::string SecondHex = "0x" + llvm::utohexstr(Second);
+  ASSERT_GE(neverd_func_find_by_addr(Session, Entry), 0);
+  ASSERT_LT(neverd_func_find_by_addr(Session, Second), 0);
+
+  // A function starts in executable code where none does yet.
+  EXPECT_EQ(neverd_func_create(Session, 0x10), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("executable"),
+            std::string::npos);
+  EXPECT_EQ(neverd_func_create(Session, Entry), -1);
+  ASSERT_EQ(neverd_func_create(Session, Second), 0)
+      << takeString(neverd_last_error(Session));
+  const int Created = neverd_func_find_by_addr(Session, Second);
+  ASSERT_GE(Created, 0);
+  EXPECT_EQ(takeString(neverd_func_name(Session, Created)),
+            "sub_" + llvm::utohexstr(Second));
+  EXPECT_NE(takeString(neverd_decompile(Session, Second)).find("9"),
+            std::string::npos)
+      << takeString(neverd_last_error(Session));
+  // Whole-program analysis keeps it; as the workbench does, it first lifts
+  // the restriction the decompilation left.
+  const auto analyzeAll = [&] {
+    neverd_session_restrict_function(Session, 0);
+    return neverd_session_analyze(Session);
+  };
+  ASSERT_EQ(analyzeAll(), 1);
+  EXPECT_GE(neverd_func_find_by_addr(Session, Second), 0);
+
+  // Saved, the edit comes back with the input.
+  EXPECT_EQ(takeString(neverd_functions_json(Session)),
+            "[{\"addr\":\"" + SecondHex + "\",\"state\":\"created\"}]");
+  ASSERT_EQ(neverd_functions_save(Session), 0)
+      << takeString(neverd_last_error(Session));
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_GE(neverd_func_find_by_addr(Reopened, Second), 0);
+    neverd_session_destroy(Reopened);
+  }
+
+  // A deleted function stays deleted through analysis.  The last edit at an
+  // address decides, and a function made again keeps its own name.
+  const std::string EntryName = takeString(
+      neverd_func_name(Session, neverd_func_find_by_addr(Session, Entry)));
+  ASSERT_EQ(neverd_func_delete(Session, Entry), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_LT(neverd_func_find_by_addr(Session, Entry), 0);
+  ASSERT_EQ(analyzeAll(), 1);
+  EXPECT_LT(neverd_func_find_by_addr(Session, Entry), 0);
+  EXPECT_EQ(neverd_func_delete(Session, Entry), -1);
+  ASSERT_EQ(neverd_func_delete(Session, Second), 0);
+  EXPECT_LT(neverd_func_find_by_addr(Session, Second), 0);
+  ASSERT_EQ(neverd_func_create(Session, Entry), 0);
+  EXPECT_EQ(takeString(neverd_functions_json(Session)),
+            "[{\"addr\":\"" + EntryHex +
+                "\",\"state\":\"created\"},{\"addr\":\"" + SecondHex +
+                "\",\"state\":\"deleted\"}]");
+  ASSERT_EQ(analyzeAll(), 1);
+  const int Restored = neverd_func_find_by_addr(Session, Entry);
+  ASSERT_GE(Restored, 0);
+  EXPECT_EQ(takeString(neverd_func_name(Session, Restored)), EntryName);
+  EXPECT_LT(neverd_func_find_by_addr(Session, Second), 0);
+}
+
 TEST_F(SessionCAPITest, SignatureJSONPreservesASCIINameAndMatchFields) {
   expectSignatureJSONName("ascii_function");
 }

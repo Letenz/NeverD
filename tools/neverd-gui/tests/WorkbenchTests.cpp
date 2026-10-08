@@ -418,6 +418,38 @@ private slots:
         functions->model().rowObject(20).value("name").toString(),
         QStringLiteral("function_20"), OpenTimeoutMs);
 
+    // P starts a function inside another; the cursor stays on its
+    // instruction under the new function's header.
+    const Address loose = Base + 0x148;
+    disassembly->navigate(loose);
+    QTRY_COMPARE(disassembly->currentItem(), std::optional<Address>(loose));
+    QTRY_VERIFY(bench.action(ActionId::EditCreateFunction)->isEnabled());
+    bench.action(ActionId::EditCreateFunction)->trigger();
+    const QString looseName = QStringLiteral("sub_FFFF800012340148");
+    QTRY_COMPARE_WITH_TIMEOUT(
+        functions->model().rowObject(21).value("name").toString(), looseName,
+        OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentFunction(),
+                              std::optional<Address>(loose), OpenTimeoutMs);
+    QCOMPARE(disassembly->currentItem(), std::optional<Address>(loose));
+    QTRY_VERIFY(bench.action(ActionId::EditDeleteFunction)->isEnabled());
+    QVERIFY(!bench.action(ActionId::EditCreateFunction)->isEnabled());
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(path + ".neverd-functions.json"),
+                             OpenTimeoutMs);
+    // Deleting it gives the instruction back to the function around it, and
+    // undo brings the new function back.
+    bench.action(ActionId::EditDeleteFunction)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        functions->model().rowObject(21).value("name").toString(),
+        QStringLiteral("function_21"), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentFunction(),
+                              std::optional<Address>(Base + 0x140),
+                              OpenTimeoutMs);
+    bench.session.undo();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        functions->model().rowObject(21).value("name").toString(), looseName,
+        OpenTimeoutMs);
+
     // A restarted worker reopens the file where its database left it.
     bench.session.restart();
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
