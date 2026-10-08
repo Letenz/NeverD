@@ -719,13 +719,79 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
   if (It == DefinedFunctionsByIdentifier.end() || !It->second ||
       !It->second->Entry || It->second->Entry == E.CallAddr)
     return Name;
+  // A thunk named like the import it jumps to (`calloc: jmp [__imp_calloc]`)
+  // calls through the import's slot, as IDA prints it, by the identifier its
+  // declaration holds.
+  if (std::string Slot = importSlotIdentifier(E); !Slot.empty()) {
+    auto Declared = ExternalFunctionIdentifiers.find(Slot);
+    return Declared == ExternalFunctionIdentifiers.end() ? Slot
+                                                         : Declared->second;
+  }
   return Name + "_" + llvm::utohexstr(E.CallAddr);
+}
+
+const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {
+  if (E.IntrinsicId != Intrinsic::None || E.CallTarget.empty())
+    return nullptr;
+  auto It = DefinedFuncs.find(E.CallTarget);
+  if (It == DefinedFuncs.end() || !It->second)
+    return nullptr;
+  return functionIdentifier(*It->second) == callIdentifier(E) ? It->second
+                                                              : nullptr;
+}
+
+std::string HighCWriter::importSlotIdentifier(const HighExpr &E) const {
+  if (!Opts.Image || !E.CallAddr)
+    return {};
+  // The call goes through an import's slot, or to a stub that jumps through
+  // it, which the linker names on formats that name slots.
+  const Import *Imp = Opts.Image->findImportAt(E.CallAddr);
+  const llvm::StringRef Prefix = importSlotPrefix(Opts.Format);
+  if (!Imp || !Imp->IATAddr || Imp->Name.empty() || Prefix.empty())
+    return {};
+  // The image's own symbol for the slot names it as the program linked it:
+  // MinGW binds msvcrt's `__getmainargs` to `__imp____msvcrt_getmainargs`,
+  // and its `__imp____getmainargs` points to its own wrapper.  Otherwise the
+  // slot is the prefix and the import's symbol, `__imp_calloc` or
+  // `__imp___initterm` on 32-bit Windows, unless that names another object.
+  // C spells it without the format's underscore.
+  std::string SlotSymbol;
+  for (const Symbol &Sym : Opts.Image->Symbols)
+    if (Sym.Addr == Imp->IATAddr &&
+        llvm::StringRef(Sym.Name).starts_with(Prefix)) {
+      SlotSymbol = Sym.Name;
+      break;
+    }
+  if (SlotSymbol.empty()) {
+    SlotSymbol =
+        (Prefix + symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch))
+            .str();
+    if (const Symbol *Other = Opts.Image->findSymbol(SlotSymbol);
+        Other && Other->Addr != Imp->IATAddr)
+      return {};
+  }
+  std::string Identifier =
+      cNameOfSymbol(SlotSymbol, Opts.Format, Opts.TheArch).str();
+  for (char &Ch : Identifier)
+    if (!isCProjectionIdentifierByte(static_cast<unsigned char>(Ch)))
+      Ch = '_';
+  return Identifier;
 }
 
 std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
   std::string Name = E.CallTarget;
   if (Name.empty() && E.CallAddr)
     Name = (kAutoFuncPrefix + llvm::utohexstr(E.CallAddr)).str();
+  // Every name here is a symbol, but an import entry may name its function
+  // by the C name (SymbolDecorations.def): spell that as the symbol it links
+  // as, or the format's underscore would come off a C name (`_initterm`).
+  auto Spelled = [&](std::string Symbol) {
+    if (Opts.Image && E.CallAddr && Symbol == E.CallTarget)
+      if (const Import *Imp = Opts.Image->findImportAt(E.CallAddr);
+          Imp && Imp->Name == Symbol)
+        return symbolOfImportName(Symbol, Opts.Format, Opts.TheArch);
+    return Symbol;
+  };
   auto imageFunctionName = [&]() -> std::string {
     if (!Opts.Image || !E.CallAddr)
       return {};
@@ -739,7 +805,7 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
   if (!Dbg) {
     if (std::string FromImage = imageFunctionName(); !FromImage.empty())
       return FromImage;
-    return Name;
+    return Spelled(Name);
   }
   std::string DebugName;
   const bool OrdinalName = llvm::StringRef(Name).starts_with(kOrdinalPrefix);
@@ -778,13 +844,13 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
   if (DebugName.empty()) {
     if (std::string FromImage = imageFunctionName(); !FromImage.empty())
       return FromImage;
-    return Name;
+    return Spelled(Name);
   }
   if (Name.empty() || llvm::StringRef(Name).starts_with(kAutoFuncPrefix) ||
       OrdinalName || llvm::StringRef(Name).starts_with("__imp_") ||
       llvm::StringRef(Name).starts_with("_imp_"))
     return DebugName;
-  return Name;
+  return Spelled(Name);
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
@@ -916,8 +982,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       return Rendered;
   }
 
+  // The identifier the declarations use: a callee named like a different
+  // definition takes its own, and does not run that definition.
   if (E.IntrinsicId == Intrinsic::None)
-    Name = functionIdentifier(Name);
+    Name = callIdentifier(E);
   // A call through a parameter is named after it, but the parameter is only
   // callable in C when it is typed as a function pointer.
   if (E.IsIndirectCall && E.IndirectTarget &&
@@ -927,10 +995,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
 
   // A callee defined in this file has a prototype: convert between pointer
   // and integer arguments the way the machine passed them, in the register.
-  const HighFunc *Defined = nullptr;
-  if (E.IntrinsicId == Intrinsic::None && !E.CallTarget.empty())
-    if (auto It = DefinedFuncs.find(E.CallTarget); It != DefinedFuncs.end())
-      Defined = It->second;
+  const HighFunc *Defined = calledDefinition(E);
   // Its printed signature also fixes how many arguments the call passes: a
   // value past its parameters is not read by it, and a parameter the call
   // site did not determine is an unknown value.
@@ -1176,8 +1241,8 @@ const HighExpr *HighCWriter::functionAddressArgument(const HighExpr &Arg) {
 const libc::LibCPrototype *
 HighCWriter::calleePrototype(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
-      E.IsIndirectCall || E.CallTarget.empty() ||
-      DefinedFuncs.count(E.CallTarget) || debugCallee(E))
+      E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E) ||
+      debugCallee(E))
     return nullptr;
   const std::string Name = callIdentifier(E);
   if (SourceNativeSignatures.count(Name) ||
@@ -1189,8 +1254,8 @@ HighCWriter::calleePrototype(const HighExpr &E) const {
 
 llvm::StringRef HighCWriter::headerDeclaredCallee(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
-      E.IsIndirectCall || E.CallTarget.empty() ||
-      DefinedFuncs.count(E.CallTarget) || debugCallee(E))
+      E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E) ||
+      debugCallee(E))
     return {};
   const std::string Name = callIdentifier(E);
   if (SourceNativeSignatures.count(Name) ||
@@ -1238,8 +1303,8 @@ bool HighCWriter::takesPointerArgument(const HighExpr &E, size_t Index,
   // A prototype printed in this file, from debug information or from a
   // source signature converts its arguments itself.
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
-      E.IsIndirectCall || E.CallTarget.empty() ||
-      DefinedFuncs.count(E.CallTarget) || debugCallee(E))
+      E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E) ||
+      debugCallee(E))
     return false;
   const std::string Name = callIdentifier(E);
   if (SourceNativeSignatures.count(Name) ||
@@ -1878,8 +1943,8 @@ HighCWriter::knownArity(llvm::StringRef Symbol, llvm::StringRef Identifier) {
 std::optional<size_t>
 HighCWriter::plainDeclarationArity(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
-      E.IsIndirectCall || E.CallTarget.empty() ||
-      DefinedFuncs.count(E.CallTarget) || debugCallee(E))
+      E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E) ||
+      debugCallee(E))
     return std::nullopt;
   // Source, debug and MSVC knowledge declare the function their own way.
   const std::string Name = callIdentifier(E);

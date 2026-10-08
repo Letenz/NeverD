@@ -5786,9 +5786,8 @@ LLVMCWriter::resolveImportCalleeName(const llvm::Value *Callee) const {
   // GOT mirror names, calls that import.
   if (const auto *GV = llvm::dyn_cast<llvm::GlobalVariable>(Op);
       GV && GV->isDeclaration() && !GV->getName().empty())
-    return canonicalizeCProjectionIdentifier(
-        llvm_name::cNameOfLLVMName(GV->getName(), Opts.Format, Opts.TheArch),
-        "nd_import");
+    return canonicalizeCProjectionIdentifier(cNameOfGlobal(GV->getName(), true),
+                                             "nd_import");
   for (unsigned Depth = 0; Op && Depth < 6; ++Depth) {
     if (const auto *Fn = llvm::dyn_cast<llvm::Function>(Op))
       return functionIdentifier(*Fn);

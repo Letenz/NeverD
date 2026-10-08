@@ -248,6 +248,13 @@ public:
   std::string resolvedCallTarget(const HighExpr &E) const;
   /// The C identifier a direct call names; see HighCExprWriter.cpp.
   std::string callIdentifier(const HighExpr &E) const;
+  /// The C name of the import slot call \p E goes through, itself or by the
+  /// stub that jumps through it: a function pointer (`__imp_calloc`), or
+  /// empty when it calls no import or the format names no slot.
+  std::string importSlotIdentifier(const HighExpr &E) const;
+  /// The function this file defines that call \p E runs, or null: one named
+  /// like it at another address is a different function.
+  const HighFunc *calledDefinition(const HighExpr &E) const;
   std::string renderCallExpr(const HighExpr &E);
   std::string renderSourceCallExpr(const HighExpr &E);
   const HighFunc *sourceCallDefinition(const SourceCallTypeHint &Hint,
@@ -581,6 +588,9 @@ public:
   /// Callees with a call that never returns (HighExpr::DoesNotReturn); their
   /// declarations say so, as for a routine the name list knows.
   std::set<std::string> NoReturnCallTargets;
+  /// Call identifiers that name an import's slot (importSlotIdentifier):
+  /// declared as function pointers, linked by their own names.
+  std::set<std::string> ImportSlotIdentifiers;
   std::map<std::string, std::string> ExternalSourceIdentifiers;
   std::set<va_t> GotoTargets;
   /// How many gotos target each address in the current function.

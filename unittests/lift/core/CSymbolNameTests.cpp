@@ -797,6 +797,189 @@ TEST(CSymbolNames, MicrosoftNamesAreTheirOwnSymbolsOn32BitWindows) {
             "?f@@YAXXZ");
 }
 
+/// A 32-bit PE whose import directory lists msvcrt's `_initterm`, `_exit`
+/// and `exit`, in slots 0x2000, 0x2004 and 0x2008.
+BinaryImage msvcrtImports() {
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Format = BinaryFormat::COFF;
+  for (const auto &[Name, Slot] :
+       {std::pair{"_initterm", 0x2000}, std::pair{"_exit", 0x2004},
+        std::pair{"exit", 0x2008}}) {
+    Import Imp;
+    Imp.Module = "msvcrt.dll";
+    Imp.Name = Name;
+    Imp.IATAddr = Slot;
+    Img.Imports.push_back(std::move(Imp));
+  }
+  return Img;
+}
+
+TEST(CSymbolNames, ImportsKeepTheirCNamesOn32BitWindows) {
+  // An import directory lists export names, which are C names: msvcrt's
+  // `_initterm` is not `initterm`, and its `_exit` is not `exit`.  A COFF
+  // symbol carries the underscore: the thunk `__amsg_exit` is `_amsg_exit`.
+  const BinaryImage Img = msvcrtImports();
+  const std::vector<HighFunc> Funcs{
+      function("start", 0x1000,
+               {callStatement("_initterm", 0x2000,
+                              {HighExpr::makeConst(0x3000, 4),
+                               HighExpr::makeConst(0x3010, 4)})}),
+      function("quick", 0x1100,
+               {callStatement("_exit", 0x2004, {HighExpr::makeConst(1, 4)})}),
+      function("normal", 0x1200,
+               {callStatement("exit", 0x2008, {HighExpr::makeConst(0, 4)})}),
+      function(
+          "fatal", 0x1300,
+          {callStatement("__amsg_exit", 0x4000, {HighExpr::makeConst(2, 4)})})};
+  const std::string Source =
+      emitFor(Funcs, BinaryFormat::COFF, Arch::X86, &Img);
+  EXPECT_NE(Source.find("_initterm((void (**)(void))0x3000"), NotFound)
+      << Source;
+  EXPECT_NE(Source.find("_exit(1);"), NotFound) << Source;
+  EXPECT_NE(Source.find(" exit(0);"), NotFound) << Source;
+  EXPECT_NE(Source.find(" _amsg_exit(2);"), NotFound) << Source;
+  for (const char *Wrong : {" initterm(", "__amsg_exit("})
+    EXPECT_EQ(Source.find(Wrong), NotFound) << Wrong << "\n" << Source;
+}
+
+TEST(CSymbolNames, LLVMCImportsKeepTheirCNamesOn32BitWindows) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+declare void @_initterm(i32, i32)
+declare void @__amsg_exit(i32)
+define void @start() {
+  call void @_initterm(i32 12288, i32 12304)
+  call void @__amsg_exit(i32 2)
+  ret void
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  const BinaryImage Img = msvcrtImports();
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X86;
+  Options.Format = BinaryFormat::COFF;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options, nullptr, &Img));
+  // The import keeps its C name; the symbol `__amsg_exit` reads as C.
+  EXPECT_NE(Source.find(" _initterm("), NotFound) << Source;
+  EXPECT_EQ(Source.find(" initterm("), NotFound) << Source;
+  EXPECT_NE(Source.find(" _amsg_exit("), NotFound) << Source;
+}
+
+/// A thunk \p Name at 0x1000 that returns the call of its two parameters
+/// through the import slot 0x2000, as `jmp [slot]` lifts.
+HighFunc slotThunk(const char *Name, const char *ImportName, Arch Target) {
+  const uint16_t Bytes = Target == Arch::X86 ? 4 : 8;
+  std::vector<ExprPtr> Args;
+  for (int I = 0; I < 2; ++I) {
+    MedVar Var;
+    Var.Kind = MedVar::Param;
+    Var.Id = I;
+    Var.Size = Bytes;
+    Var.TheArch = Target;
+    Args.push_back(HighExpr::makeVar(Var, NdType::makeInt(Bytes)));
+  }
+  HighFunc F;
+  F.Name = Name;
+  F.Entry = 0x1000;
+  F.ReturnType = NdType::makeInt(Bytes, false);
+  F.Params = {{"arg0", NdType::makeInt(Bytes)},
+              {"arg1", NdType::makeInt(Bytes)}};
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeCall(ImportName, 0x2000, std::move(Args));
+  F.Body = {Return};
+  return F;
+}
+
+TEST(CSymbolNames, AThunkNamedLikeItsImportCallsThroughTheSlot) {
+  // A thunk the linker names like its import, `calloc: jmp [__imp_calloc]`,
+  // does not call itself: it calls through the slot the loader binds, which
+  // C declares as a function pointer named as the linker names the slot.
+  for (const auto &[Target, Thunk, ImportName, Slot] :
+       {std::tuple{Arch::X64, "calloc", "calloc", "__imp_calloc"},
+        std::tuple{Arch::X86, "__initterm", "_initterm", "_imp___initterm"}}) {
+    SCOPED_TRACE(Slot);
+    BinaryImage Img;
+    Img.Arch = Target;
+    Img.Format = BinaryFormat::COFF;
+    Import Imp;
+    Imp.Module = "msvcrt.dll";
+    Imp.Name = ImportName;
+    Imp.IATAddr = 0x2000;
+    Img.Imports.push_back(std::move(Imp));
+    const std::string Source = emitFor({slotThunk(Thunk, ImportName, Target)},
+                                       BinaryFormat::COFF, Target, &Img);
+    // The thunk returns the call through the slot, declared as a function
+    // pointer, and never calls itself.
+    EXPECT_NE(Source.find("(*" + std::string(Slot) + ")("), NotFound) << Source;
+    EXPECT_NE(Source.find("return " + std::string(Slot) + "("), NotFound)
+        << Source;
+    EXPECT_EQ(Source.find(
+                  "return " +
+                  cNameOfSymbol(Thunk, BinaryFormat::COFF, Target).str() + "("),
+              NotFound)
+        << Source;
+  }
+}
+
+TEST(CSymbolNames, AWrapperNamedLikeItsImportCallsTheSlotTheImageNames) {
+  // MinGW's own `__getmainargs` (0x1000) calls msvcrt's through a stub
+  // (0x3000) whose slot the linker named `__imp____msvcrt_getmainargs`, after
+  // the section symbol there; its `__imp____getmainargs` (0x4000) points to
+  // the wrapper itself.  Neither that variable nor a label to
+  // `___getmainargs` names the callee.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Format = BinaryFormat::COFF;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = 0x2100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(0x2100, 0xC3);
+  Img.Segments.push_back(std::move(Text));
+  Import Imp;
+  Imp.Module = "msvcrt.dll";
+  Imp.Name = "__getmainargs";
+  Imp.IATAddr = 0x5000;
+  Img.Imports.push_back(std::move(Imp));
+  ASSERT_TRUE(Img.recordImportStub(0x3000, 0));
+  for (const auto &[Name, Addr] :
+       {std::pair<const char *, va_t>{".idata$5", 0x5000},
+        {"__imp____msvcrt_getmainargs", 0x5000},
+        {"__imp____getmainargs", 0x4000}}) {
+    Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Img.Symbols.push_back(std::move(Sym));
+  }
+  HighFunc Wrapper = slotThunk("___getmainargs", "__getmainargs", Arch::X86);
+  Wrapper.Body.front().RetVal->CallAddr = 0x3000;
+  const std::string Source =
+      emitFor({Wrapper}, BinaryFormat::COFF, Arch::X86, &Img);
+  EXPECT_NE(Source.find("(*_imp____msvcrt_getmainargs)("), NotFound) << Source;
+  EXPECT_NE(Source.find("return _imp____msvcrt_getmainargs("), NotFound)
+      << Source;
+  EXPECT_EQ(Source.find("_imp____getmainargs"), NotFound) << Source;
+  EXPECT_EQ(Source.find("__asm__(\"___getmainargs\")"), NotFound) << Source;
+
+  // Without the slot's own symbol, `__imp____getmainargs` is the wrapper's
+  // pointer and no name for the slot: the callee keeps its own identifier.
+  llvm::erase_if(Img.Symbols, [](const Symbol &Sym) {
+    return Sym.Name == "__imp____msvcrt_getmainargs";
+  });
+  const std::string Unnamed =
+      emitFor({Wrapper}, BinaryFormat::COFF, Arch::X86, &Img);
+  EXPECT_EQ(Unnamed.find("_imp____getmainargs"), NotFound) << Unnamed;
+  EXPECT_EQ(Unnamed.find("__asm__(\"___getmainargs\")"), NotFound) << Unnamed;
+  EXPECT_NE(Unnamed.find("return __getmainargs_3000("), NotFound) << Unnamed;
+}
+
 TEST(CSymbolNames, ObjectsReadByTheirPathsWithTheirSymbolsBeside) {
   constexpr va_t Text = 0x1000, Data = 0x4000;
   BinaryImage Img;
