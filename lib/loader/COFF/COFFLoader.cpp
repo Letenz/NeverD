@@ -14,6 +14,8 @@
 
 #include "neverd/loader/COFF/COFFLoader.h"
 
+#include "COFFObjectView.h"
+
 #include "neverd/Limits.h"
 #include "neverd/loader/COFF/COFFDelphiEH.h"
 #include "neverd/loader/COFF/COFFException.h"
@@ -26,9 +28,11 @@
 #include "neverd/loader/ObjC/ObjCEH.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/loader/Rust/RustEH.h"
+#include "neverd/object/PELayout.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BranchEncoding.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/COFF.h"
@@ -80,10 +84,10 @@ COFFLoader::load(const std::filesystem::path &Path) {
     return BufOrErr.takeError();
   auto &Buf = *BufOrErr;
 
-  auto ObjOrErr = COFFObjectFile::create(Buf->getMemBufferRef());
+  auto ObjOrErr = coff_loader::COFFObjectView::create(Buf->getMemBufferRef());
   if (!ObjOrErr)
     return ObjOrErr.takeError();
-  const auto &Obj = **ObjOrErr;
+  const auto &Obj = ObjOrErr->object();
 
   Img.Arch = machineToArch(Obj.getMachine());
   if (Img.Arch == Arch::Unknown)
@@ -134,7 +138,7 @@ COFFLoader::load(const std::filesystem::path &Path) {
   if (!IsRelocatable) {
     Img.Entry = normalizeCodeAddress(Img.Entry, Img.Arch, Img.Mode);
     Img.COFFRichHeader =
-        decodeRichHeader(llvm::arrayRefFromStringRef(Obj.getData()));
+        decodeRichHeader(llvm::arrayRefFromStringRef(Buf->getBuffer()));
   }
   Img.Base = ImageBase;
   Img.LoadOnlyFunctionEntries = RestrictFunctionEntries;
@@ -172,8 +176,10 @@ COFFLoader::load(const std::filesystem::path &Path) {
       return llvm::make_error<llvm::StringError>(
           "coff: section index is out of range",
           llvm::inconvertibleErrorCode());
-    const uint64_t SectionSize = IsRelocatable ? SectionSizes[SectionID]
-                                               : uint64_t(CoffSec->VirtualSize);
+    const uint64_t SectionSize =
+        IsRelocatable ? SectionSizes[SectionID]
+                      : getPESectionContentSize(CoffSec->VirtualSize,
+                                                CoffSec->SizeOfRawData);
     va_t SectionVA = 0;
     if (IsRelocatable) {
       const uint64_t Alignment = std::max<uint64_t>(CoffSec->getAlignment(), 1);
@@ -840,7 +846,8 @@ COFFLoader::load(const std::filesystem::path &Path) {
     return std::move(Error);
 
   // --- Debug Directory (PDB path) ---
-  coff_loader::parseDebugDirectory(Obj, Img);
+  coff_loader::parseDebugDirectory(
+      Obj, Img, llvm::arrayRefFromStringRef(Buf->getBuffer()));
 
   // Named definitions own their entries before unwind discovery supplies
   // ranges. Otherwise .pdata creates an anonymous duplicate for every typed
@@ -863,7 +870,7 @@ COFFLoader::load(const std::filesystem::path &Path) {
     return std::move(E);
   if (llvm::Error E = verifyARMFunctionModeHints(Img, ARMFunctionModes))
     return std::move(E);
-  runPostLoadDiscovery(Img, "coff: loaded " + Path.filename().string());
+  runPostLoadDiscovery(Img, "coff: loaded " + pathToUTF8(Path.filename()));
   // Classified before any table is read.  A PE is the format where schema and
   // language diverge most: Delphi and MSVC share the registration chain, Rust
   // and C++ share the `FuncInfo`, and a MinGW image carries Itanium tables

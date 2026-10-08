@@ -5,7 +5,9 @@
 
 namespace neverd {
 /// A pointer parameter read exactly once by an unconditional entry load,
-/// before any observable operation. The pointer has no other occurrence,
+/// before any observable operation, including when the load is folded into
+/// a value/address dependency or a direct call argument. Siblings on that
+/// dependency path must have no effects. The pointer has no other occurrence,
 /// including writes, escapes or later reads. Unknown control flow and work
 /// exhaustion supply no summary. This is a source-only value-use fact; the
 /// caller must separately establish the target, ABI and replacement storage.

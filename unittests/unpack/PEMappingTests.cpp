@@ -190,18 +190,12 @@ TEST_F(PEMapping, NativeSectionRangesAgreeWithUnpackAndRuntime) {
     EXPECT_EQ((*Input)->regionAt(Region.RVA + Case.MappedSize), nullptr);
 #ifdef NEVERD_UNPACK_TEST_EXECUTION
     auto Runtime = load(Case, Bytes);
-    if (!Case.VirtualSize) {
-      // The execution metadata readers and analysis-loader agreement still
-      // require nonzero VirtualSize. Do not infer their broader support from
-      // the native page mapping fallback alone.
-      ASSERT_FALSE(bool(Runtime));
-      llvm::consumeError(Runtime.takeError());
-      continue;
-    }
     ASSERT_TRUE(bool(Runtime)) << llvm::toString(Runtime.takeError());
     ASSERT_EQ(Runtime->Regions.size(), 3u);
     EXPECT_EQ(Runtime->Regions[1].Bytes.size(), 4096u);
     const auto &Mapped = Runtime->Regions[2];
+    EXPECT_EQ(Mapped.ContentSize,
+              Case.VirtualSize ? Case.VirtualSize : Case.RawSize);
     ASSERT_EQ(Mapped.Bytes.size(), Case.MappedSize);
     for (uint64_t Offset = 0; Offset < Case.MappedSize; ++Offset)
       ASSERT_EQ(Mapped.Bytes[Offset],

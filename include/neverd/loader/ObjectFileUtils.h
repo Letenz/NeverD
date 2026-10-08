@@ -14,6 +14,7 @@
 #define NEVERD_LOADER_OBJECTFILEUTILS_H
 
 #include "neverd/Common.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Object/ObjectFile.h"
@@ -57,7 +58,7 @@ inline BinaryFormat magicToFormat(llvm::file_magic Magic) {
 /// Detect binary format using llvm::identify_magic (cf. llvm-objdump).
 inline BinaryFormat detectFormat(const std::filesystem::path &Path) {
   llvm::file_magic Magic = llvm::file_magic::unknown;
-  if (llvm::identify_magic(Path.string(), Magic))
+  if (llvm::identify_magic(pathToUTF8(Path), Magic))
     return BinaryFormat::Unknown;
   return magicToFormat(Magic);
 }
@@ -66,7 +67,7 @@ inline BinaryFormat detectFormat(const std::filesystem::path &Path) {
 inline std::unique_ptr<llvm::object::ObjectFile>
 openObjectFile(const std::filesystem::path &Path,
                std::unique_ptr<llvm::MemoryBuffer> &BufOut) {
-  auto BufOrErr = llvm::MemoryBuffer::getFile(Path.string());
+  auto BufOrErr = llvm::MemoryBuffer::getFile(pathToUTF8(Path));
   if (!BufOrErr)
     return nullptr;
   BufOut = std::move(*BufOrErr);

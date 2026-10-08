@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: fab8f746a3afad0cc7aeaee21f82d848bf0bad20c33a1f8140b1f3c821e75281 -->
+<!-- i18n-source: 78e6754f811bc16b1a89770eb1987a7d484301f161646eba212d6fd496e19372 -->
 
 [← 文件索引](README.md)
 
@@ -740,7 +740,7 @@ stat64/open/access/truncate/chdir 跟隨末端；lstat64/readlink保留末端。
 
 readlink(58)使用有符號低32位count，readlinkat(473)保留完整size_t；皆返回int，超過INT32_MAX先於路徑/FD返回EINVAL22。只複製min(count,目標長度)，不補NUL，只預檢實際前綴。零長度仍驗證路徑/類型後忽略輸出指標；非連結EINVAL22，全不可寫EFAULT14，部分可寫在複製前停止；傳輸/記憶體預算錯誤傳遞。
 
-固定連結名稱與原始目標位元組保持不變。MutableDirectories 不得為根或任何固定連結名稱的路徑分段祖先；/work 不包含 /workspace/link。獨立可變目錄可容納連結目標，包括執行期間建立、移動、刪除及替換的名稱。既有父目錄、掛載、別名、旗標、交換授權與建立策略檢查仍適用；新 inode 必須大於所有中繼資料/快照 inode，包括受保護連結。 固定 WritableFiles/MutationPolicies仍可修改最終普通檔案；連結unlink/rename在效果前明確停止。動態連結、硬連結、ACL與可變連結命名空間未支援。ARM64 macOS獨立探針在原五秒內通過189觀察、115完整緩衝檢查；不單獨證明物理iOS、Intel HVF或完整OS。
+固定連結名稱與原始目標位元組保持不變。MutableDirectories 不得為根或任何固定連結名稱的路徑分段祖先；/work 不包含 /workspace/link。獨立可變目錄可容納連結目標，包括執行期間建立、移動、刪除及替換的名稱。既有父目錄、掛載、別名、旗標、交換授權與建立策略檢查仍適用；新 inode 必須大於所有中繼資料/快照 inode，包括受保護連結。 固定 WritableFiles/MutationPolicies仍可修改最終普通檔案；連結unlink/rename在效果前明確停止。執行期間連結建立見下節；硬連結、ACL與可變初始連結目錄未支援。ARM64 macOS獨立探針在原五秒內通過189觀察、115完整緩衝檢查；不單獨證明物理iOS、Intel HVF或完整OS。
 
 新增 60 項 ARM64 macOS DELETE/RENAME 原生矩陣在原五秒期限內記錄完整 stat 緩衝、變更前後命名空間及保留 FD/CWD 身分。尾端斜線可展開固定連結並修改實際目標；NOFOLLOW_ANY 拒絕必要展開並回傳 ELOOP。無 SDK 的 symbolic-link-mutations 程式亦檢查建立、懸空目標、改名/刪除/替換、保留 CWD 父物件及關閉描述符前全部原始 10 個檔案位元組，以及關閉後仍保留的全部 10 個映射位元組；這不證明實體 iOS 或原生 Intel 覆蓋。
 
@@ -749,3 +749,49 @@ readlink(58)使用有符號低32位count，readlinkat(473)保留完整size_t；�
 ```
 
 [XNU namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_lookup.c), [XNU readlink / AT](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU open authorization](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_subr.c).
+
+## 執行期間建立符號連結
+
+原始 `symlink(57)` 與 `symlinkat(474)` 可在獲准修改的目錄內建立程序本地連結，回傳 int；目錄 FD 僅取低32位，絕對目的名稱忽略 FD。先匯入連結目標，再檢查目的名稱及 FD；首個 NUL 截斷0..1023個原始位元組，允許空、非 UTF-8、點與重複斜線。1024位元組無 NUL 回傳 ENAMETOOLONG63，先遇到不可讀位元組回傳 EFAULT14。初始 JSON 連結仍要求1..1023位元組。
+
+目前連結表持有實際名稱、父物件及原始位元組。既有末端名稱回傳 EEXIST17；懸空連結後已消耗的尾斜線可使建立發生於其目標名稱，舊連結不變。展開空目標回傳 ENOENT2；readlink 讀取空目標回傳0，正容量也不存取輸出指標，但仍先檢查計數、路徑與類型。
+
+名稱/NUL與目標僅計費一次，共用256項、16 MiB配額。拒絕不發布節點、不改變父目錄、不消耗 FD或普通檔案 inode。新連結完整中繼資料明確未知，不沿用普通檔案 CreationPolicy 或重用名稱的舊觀察；成功建立使父目錄 stat/快照未知。刪除或替換目標後，舊 FD/CWD/映射保留原物件。rmdir 與目錄替換會檢查連結子項；移動或 SWAP 任一側包含受保護初始連結時在作用前停止。連結與目錄的替換、硬連結、ACL與可變初始連結目錄仍未支援；別名不轉移實際父目錄授權。
+
+原生 ARM64 macOS 的150項記錄保留四項觀察器失敗；獨立10項補充只核對實際新目標與空連結邊界，不改寫舊結果。無 SDK 的 `symbolic-link-creation` 程式檢查兩個入口、原始位元組與緩衝邊界、父物件、替換檔案及舊 FD/映射全部10位元組；不證明實體 iOS、原生 Intel 或完整 OS相容性。
+
+[XNU symlink / symlinkat](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU empty-link expansion](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_lookup.c).
+
+## 刪除執行時建立的符號連結
+
+`unlink(10)` 與 `unlinkat(472)` 可刪除實際父目錄已授權修改的執行時連結；初始固定連結仍受保護。裸 `AT_SYMLINK_NOFOLLOW_ANY` 保留末端連結，允許刪除懸空、循環及空目標連結；中間或尾斜線要求展開時回傳 ELOOP62。無此旗標時由統一解析器選擇實際節點：`a → b → target` 中刪除 `a/` 會刪除 `b`，保留 `a` 與最終目標。既有旗標、路徑及 dirfd 錯誤順序不變。
+
+成功刪除立即退還一個動態項目及目前路徑/NUL/原始目標位元組費用，只使實際父目錄的完整 stat/列舉觀察失效，不消耗 FD 或建立 inode。目標內容、修改策略、舊描述符與共用游標、CWD、映射租約保留原物件；重用名稱不恢復舊連結。拒絕不改變模型狀態或退款。執行時建立連結的完整中繼資料仍未知。連結與目錄的替換，以及仍含受保護初始連結的子樹移動/SWAP 仍不支援。
+
+獨立 ARM64 macOS 原生參考於原五秒期限內記錄40例：28次成功刪除、12次原生錯誤及17次重複刪除 ENOENT，並檢查 FD/CWD/私有映射。這不是客體、實體 iOS 或原生 Intel 驗收；`symbolic-link-unlink` 與公開 API 用例另行驗證。
+
+## 重新命名執行時建立的符號連結
+
+`rename(128)`、`renameat(465)` 與 `renameatx_np(488)` 支援普通改名及 `RENAME_EXCL=4`：執行時連結移至空名稱、連結取代連結、連結取代普通檔案及普通檔案取代連結。兩個實際父目錄須在已證明的同一掛載域授權修改；初始固定連結仍不可變。統一解析器選取實際節點，空、懸空、循環與非 UTF-8 目標位元組不變；跨父目錄移動後，相對目標從新父目錄解析。裸 `RENAME_NOFOLLOW_ANY=16` 保留末端連結，中間路徑需要展開時回傳 ELOOP62。EXCL 對不同的既有目標回傳 EEXIST17；同物件 EXCL 缺少檔案系統大小寫屬性時明確不支援。
+
+交易在發布名稱前預留新路徑/NUL費用，含 NUL 最多1024位元組。被取代執行時連結的目前路徑/NUL/目標費用立即且只退還一次，與目標檔案 FD 或映射無關。被取代普通檔案的內容/動態路徑費用由舊描述符與映射租約持有，全部釋放才回收；只有可立即回收的普通目標提供預留額度。改名不需額外項目、FD 或普通檔案建立 inode。拒絕保留兩個節點，成功使實際父目錄完整 stat/列舉觀察失效；執行時連結完整中繼資料仍未知。連結與目錄替換、硬連結，以及仍含受保護初始連結的子樹移動/SWAP 仍不支援。
+
+獨立 ARM64 macOS 的19項原生對照在原五秒期限內記錄14次成功、5次 EEXIST/ELOOP 錯誤，並核對連結 inode/原始位元組、相對目標重新繫結及舊 FD/dup/游標/CWD/私有映射。無 SDK 的 `symbolic-link-rename` 與公開 SDK/CLI 用例另行檢查；原生參考本身不證明實體 iOS、原生 Intel 或完整 OS 相容。
+
+[XNU rename / namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c).
+
+## 交換執行時建立的符號連結
+
+`renameatx_np(488)` 的 `RENAME_SWAP=2` 支援執行時連結/連結、連結/普通檔案與普通檔案/連結的葉節點交換。兩個實際父目錄須在已證明的同一掛載域授權修改及 SWAP；完全相同名稱的連結交換不需額外 SWAP 宣告即可無作用成功。目標缺少回傳 ENOENT2；`SWAP|NOFOLLOW_ANY=18` 保留末端連結，必要中間展開回傳 ELOOP62；`SWAP|EXCL=6` 在讀取路徑前回傳 EINVAL22。原始目標位元組不變，相對目標分別從兩個新父目錄解析。
+
+交易先預留兩個路徑/NUL費用，再發布名稱。兩個節點持續連結，內容與映射租約不提供替換退款；初始普通檔案首次交換取得動態路徑費用，交換回來繼續重用。不需項目、FD 或建立 inode。檔案身分、nlink、舊描述符/共用游標、CWD 與映射保留原物件，實際父目錄完整觀察變為未知。執行時連結完整中繼資料、實際目錄/連結組合與含受保護初始連結的子樹移動/SWAP 仍不支援。獨立 ARM64 macOS 的22項原生對照在原五秒期限內記錄14次交換、2次同物件成功與6次錯誤。擴充 `symbolic-link-rename` 與 C++/SDK/CLI/Python 檢查實際 SWAP 標誌及錯誤；這些參考不證明實體 iOS、原生 Intel 或完整 OS 相容。
+
+[XNU rename / namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c).
+
+## 移動包含執行時符號連結的目錄樹
+
+普通/EXCL目錄移動及SWAP現已將執行時連結子項納入既有目錄交易，也支援目錄與普通檔案交換。交易先檢查所有目錄、檔案與連結的新名稱、共用命名空間衝突及含NUL的1024位元組路徑上限，再完整抽出三個表的節點並發布新鍵。目標位元組持續計費且不改寫，只更新目前路徑/NUL費用；SWAP不提供替換退款，不消耗額外項目、FD或建立inode。
+
+連結保留實際父目錄物件，父目錄路徑移動後，相對目標按新路徑解析；舊描述符、共用游標、CWD、已刪除節點與映射租約繼續保有原物件。受保護初始連結與所在樹仍不可變，根節點目錄/連結組合、執行時連結完整中繼資料、硬連結及ACL仍不支援。獨立ARM64 macOS的25項對照在原五秒期限內記錄5次移動、10次交換、2次同物件成功及8次保留命名空間的拒絕；跨父目錄案例檢查原文不變與相對目標重新綁定。擴充 `symbolic-link-rename` 覆蓋C++/SDK/CLI/Python，這些觀察不證明實體iOS、原生Intel或完整OS相容。
+
+[XNU rename / namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c).

@@ -56,6 +56,21 @@ region for browsing; this does not reconstruct the program's OEP. Invalid import
 bindings remain unknown, and fixed-image semantic checks retain their stricter
 requirements. Truncated or unmappable image structures can still prevent loading.
 
+Local file paths passed between the GUI, worker, CLI and C ABI use UTF-8 on
+all platforms. Windows paths are converted to native filesystem paths before
+loading binaries, companion PDB/MAP files, signatures and project sidecars.
+Chinese names, spaces and other Unicode characters are supported without
+changing the Windows system code page.
+
+The default application and code font is Consolas at 10 points when that
+family is installed. Otherwise, the system fixed-width font is used. A saved
+code-font choice continues to override the default for code views.
+
+Double-clicking a function name in a code view follows it in that same window,
+keeping its C or LLVM C representation even when the window is locked. Back and
+forward navigation also stays in the active code window. Imports and global
+objects continue to open at their addresses in the disassembly or hex view.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.
@@ -170,22 +185,40 @@ a routine returns keeps the integer the machine reads,
 converts to the type its header declares: `qsort(base, n, 4, (int (*)(const
 void *, const void *))compare)`.
 
-C++ names read as a classic disassembler shows them: the listing keeps the
-linkage name an instruction uses and adds its demangled form as a comment
+Mangled names read as their language spells them: the listing keeps the
+linkage name an instruction uses and adds the readable form as a comment
 (`call _ZN8QDomNodeC1Ev ; QDomNode::QDomNode()`), a function with a mangled
-name has the demangled one above its header, and the Functions window lists
-every function demangled, PLT entries included, with the filter matching
-either spelling. Itanium, Microsoft, Rust and D names are demangled.
+name has the readable one above its header, and the Functions window lists
+every function that way, PLT entries included, with the filter matching
+either spelling. Itanium and Microsoft C++, Rust (legacy and v0), Swift and D
+names are read. C++ names are as short as they can be without naming anything
+else: `std::__cxx11::basic_string<char, std::char_traits<char>,
+std::allocator<char>>::~basic_string()` reads `std::string::~string()` and
+`std::vector<int, std::allocator<int>>` reads `std::vector<int>`. A legacy
+Rust name loses its `::h<hash>`, and a Swift name reads as a declaration path
+with its argument labels (`Demo.Box.update(with:)`).
 
-C has no `::`, so in C pseudocode a C++ function reads by its scopes joined
-with underscores: `QDomNode_nodeType`, constructors and destructors as
-`QDomNode_ctor` and `QDomNode_dtor`, operators by name (`QString_assign`).
-Its complete demangled signature is a comment above its definition, overloads
-sharing a name are numbered (`QDomNodeList_ctor_2`), and an imported C++
-function keeps its mangled symbol in an `__asm__` label so that the code still
-links. Other names keep every byte of their symbol (`__libc_start_main`), apart
-from the underscore Mach-O and 32-bit Windows add to C names and the start-up
-functions the C runtime defines itself (`_start` reads `start`).
+The pseudocode is C that compiles, so a name C cannot spell reads by a C
+identifier made from it, with its readable form in a comment: above a
+definition, after an `extern` declaration and on the `neverd.image` line of a
+global. A C++ function reads by its scopes joined with underscores:
+`QDomNode_nodeType`, constructors and destructors as `QDomNode_ctor` and
+`QDomNode_dtor`, operators by name (`QString_assign`), and the objects the C++
+ABI emits by what they are (`QDomNode_vtable`). Rust and D paths read the same
+way (`core_fmt_write`; a trait's method keeps the trait,
+`String_Write_write_fmt`), Swift by its declaration path
+(`Demo_Box_count_getter`) and an Objective-C method as the GNU runtime names it
+(`-[NSString length]` is `_i_NSString__length`). Punctuation in other names
+separates words: Go's `fmt.(*pp).doPrintf` is `fmt_pp_doPrintf` and GCC's
+`foo.constprop.0` is `foo_constprop_0`. Distinct symbols that read alike are
+numbered (`QDomNodeList_ctor_2`), except MSVC C++ stems, which the MSVC rules
+share between overloads. An imported function whose identifier is not its
+symbol keeps the symbol in an `__asm__` label so that the code still links.
+Other names keep every byte of their symbol (`__libc_start_main`), apart from
+the underscore Mach-O and 32-bit Windows add to C names and the start-up
+functions the C runtime defines itself (`_start` reads `start`). A name an
+image spells with control characters, and that no scheme reads, is never
+copied into a comment.
 
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common

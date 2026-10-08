@@ -455,8 +455,17 @@ void DarwinFiles::initializeNamespace() {
       Node->Policy = &Policy->second;
     Nodes.emplace(Path, std::move(Node));
   }
-  for (const auto &[Path, Target] : Options->SymbolicLinks)
-    initialDirectoryNode(parentPath(Path));
+  for (const auto &[Path, Target] : Options->SymbolicLinks) {
+    auto Node = std::make_shared<LinkNode>();
+    Node->Initial = Target;
+    Node->Path = Path;
+    Node->Parent = initialDirectoryNode(parentPath(Path));
+    Node->Protected = true;
+    const auto Metadata = Options->Metadata.find(Path);
+    if (Metadata != Options->Metadata.end())
+      Node->Metadata = &Metadata->second;
+    Links.emplace(Path, std::move(Node));
+  }
   NamespaceReady = true;
   if (Options->WorkingDirectory)
     CurrentDirectory = Directories.at(*Options->WorkingDirectory);
@@ -525,8 +534,14 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
   return Node;
 }
 
-uint32_t DarwinFiles::dynamicDirectoryEntries() const {
-  return llvm::count_if(
+uint32_t DarwinFiles::dynamicEntries() const {
+  // FixedEntries already includes every initial link and directory. Only
+  // created links consume additional entries; files retain their orphan charge.
+  return Nodes.size() + Unlinked.size() +
+         llvm::count_if(
+             Links,
+             [](const auto &Entry) { return !Entry.second->Protected; }) +
+         llvm::count_if(
              Directories,
              [](const auto &Entry) { return Entry.second->Created; }) +
          llvm::count_if(UnlinkedDirectories,
@@ -781,11 +796,11 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
         Prefix += '/';
       Prefix.append(Part.data(), Part.size());
       auto ChildDirectory = directoryNode(Prefix);
-      const auto Link = Options->SymbolicLinks.find(Prefix);
-      Type = Nodes.contains(Prefix)                 ? PathKind::File
-             : ChildDirectory                       ? PathKind::Directory
-             : Link != Options->SymbolicLinks.end() ? PathKind::SymbolicLink
-                                                    : PathKind::Missing;
+      const auto Link = this->Links.find(Prefix);
+      Type = Nodes.contains(Prefix)      ? PathKind::File
+             : ChildDirectory            ? PathKind::Directory
+             : Link != this->Links.end() ? PathKind::SymbolicLink
+                                         : PathKind::Missing;
       if (Type == PathKind::SymbolicLink &&
           (Links.FollowFinal || Index + 1 < Parts.size())) {
         if (Links.NoExpansion || Expansions++ >= MaxSymbolicLinks)
@@ -801,9 +816,13 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
           Suffix = Suffix.drop_front();
         if (Suffix == "/")
           Suffix = {};
+        const auto Bytes = Link->second->bytes();
+        // XNU rejects an empty link at the expansion boundary, before adding
+        // any suffix. Retaining the terminal object still permits readlink.
+        if (Bytes.empty())
+          return uint32_t(NoEntry);
         const llvm::StringRef Target(
-            reinterpret_cast<const char *>(Link->second.data()),
-            Link->second.size());
+            reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
         if (Target.size() + Suffix.size() + 1 > limits::Path)
           return uint32_t(NameTooLong);
         Path = (Target + Suffix).str();
@@ -844,9 +863,8 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
       File.File = Nodes.at(File.Path);
       File.Metadata = nullptr;
     } else if (Type == PathKind::SymbolicLink) {
-      File.Input = Options->SymbolicLinks.at(File.Path);
-      const auto M = Options->Metadata.find(File.Path);
-      File.Metadata = M == Options->Metadata.end() ? nullptr : &M->second;
+      File.Link = this->Links.at(File.Path);
+      File.Metadata = File.Link->Metadata;
     } else {
       File.Directory = std::move(Directory);
     }
@@ -939,15 +957,61 @@ DarwinFiles::readLink(uint64_t Path, uint64_t Address, uint64_t Size,
   const auto &Link = std::get<Description>(*Resolved);
   if (Link.Type != Kind::SymbolicLink)
     return returned(InvalidArgument, true);
-  if (!Size)
+  // Empty targets perform no copy, even with a nonzero count and a bad
+  // output pointer. Count/path/kind checks still precede this native boundary.
+  if (!Size || Link.bytes().empty())
     return returned(0);
   const auto Bytes =
-      Link.Input.take_front(std::min<uint64_t>(Size, Link.Input.size()));
+      Link.bytes().take_front(std::min<uint64_t>(Size, Link.bytes().size()));
   auto Copied =
       copyout(Address, Bytes, diagnostic::SymbolicLinkPartialOutput, Result);
   if (Copied && *Copied && !(**Copied).Error)
     (**Copied).Value = Bytes.size();
   return Copied;
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::makeSymbolicLink(uint64_t Target, uint64_t Path,
+                              uint32_t DirectoryFD, ProcessResult &Result) {
+  // copyinstr(target) precedes destination nameiat, including its dirfd and
+  // existence checks. Targets are opaque bytes, not catalogue path inputs.
+  auto Imported = readPath(Target);
+  if (!Imported)
+    return Imported.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*Imported))
+    return returned(*Error, true);
+  auto Resolved =
+      resolvePath(Path, DirectoryFD, LookupMode::CreateFile, {false, false});
+  if (!Resolved)
+    return Resolved.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*Resolved))
+    return returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&*Resolved))
+    return unsupported(Result, *Reason);
+  const auto &File = std::get<Description>(*Resolved);
+  if (File.Type != Kind::Missing)
+    return returned(FileExists, true);
+  auto Parent = directoryNode(parentPath(File.Path));
+  if (!Parent->Mutable)
+    return unsupported(Result, diagnostic::DirectoryNotMutable);
+  if (auto E = prepareMutation())
+    return std::move(E);
+  const auto &Bytes = std::get<std::string>(*Imported);
+  const uint64_t Charge = File.Path.size() + 1 + Bytes.size();
+  if (File.Path.size() >= limits::Path ||
+      FixedEntries + dynamicEntries() >= limits::Files ||
+      Charge > limits::Bytes - *StorageUsed)
+    return unsupported(Result, diagnostic::SymbolicLinkCreationLimit);
+  auto Node = std::make_shared<LinkNode>();
+  Node->CreatedTarget.emplace(Bytes.begin(), Bytes.end());
+  Node->Path = File.Path;
+  Node->Parent = Parent;
+  // The regular-file CreationPolicy does not establish link metadata or an
+  // inode. Reused names never inherit an old Options.Metadata observation.
+  Links.emplace(File.Path, std::move(Node));
+  *StorageUsed += Charge;
+  Parent->Changed = true;
+  return returned(0);
 }
 
 llvm::Expected<std::optional<ServiceResult>>
@@ -971,9 +1035,7 @@ DarwinFiles::makeDirectory(uint64_t Path, uint32_t DirectoryFD,
     return std::move(E);
   const uint64_t Charge = File.Path.size() + 1;
   if (File.Path.size() >= limits::Path ||
-      FixedEntries + Nodes.size() + Unlinked.size() +
-              dynamicDirectoryEntries() >=
-          limits::Files ||
+      FixedEntries + dynamicEntries() >= limits::Files ||
       Charge > limits::Bytes - *StorageUsed)
     return unsupported(Result, diagnostic::DirectoryCreationLimit);
   auto Node = std::make_shared<DirectoryNode>();
@@ -1023,10 +1085,13 @@ DarwinFiles::removeDirectory(uint64_t Path, uint32_t DirectoryFD,
   const auto Prefix = File.Path + '/';
   const auto ChildFile = Nodes.lower_bound(Prefix);
   const auto ChildDirectory = Directories.lower_bound(Prefix);
+  const auto ChildLink = Links.lower_bound(Prefix);
   if ((ChildFile != Nodes.end() &&
        llvm::StringRef(ChildFile->first).starts_with(Prefix)) ||
       (ChildDirectory != Directories.end() &&
-       llvm::StringRef(ChildDirectory->first).starts_with(Prefix)))
+       llvm::StringRef(ChildDirectory->first).starts_with(Prefix)) ||
+      (ChildLink != Links.end() &&
+       llvm::StringRef(ChildLink->first).starts_with(Prefix)))
     return returned(DirectoryNotEmpty, true);
   if (!mutableDirectory(File.Directory->Parent->Path))
     return unsupported(Result, diagnostic::DirectoryNotMutable);
@@ -1057,8 +1122,22 @@ DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result,
     return returned(*Error, true);
   if (File.Type == Kind::Directory)
     return returned(OperationNotPermitted, true);
-  if (File.Type == Kind::SymbolicLink)
-    return unsupported(Result, diagnostic::SymbolicLinkMutation);
+  if (File.Type == Kind::SymbolicLink) {
+    const auto &Link = File.Link;
+    if (Link->Protected)
+      return unsupported(Result, diagnostic::SymbolicLinkMutation);
+    if (!Link->Parent->Mutable)
+      return unsupported(Result, diagnostic::DirectoryNotMutable);
+    if (auto E = prepareMutation())
+      return std::move(E);
+    // No descriptor or mapping owns the link itself. Its opaque target and
+    // the current path charge are released with this namespace entry.
+    const uint64_t Charge = Link->Path.size() + 1 + Link->bytes().size();
+    Links.erase(Link->Path);
+    *StorageUsed -= Charge;
+    Link->Parent->Changed = true;
+    return returned(0);
+  }
   const auto Parent = parentPath(File.Path);
   if (!mutableDirectory(Parent))
     return unsupported(Result, diagnostic::DirectoryNotMutable);
@@ -1096,7 +1175,7 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (auto *Reason = std::get_if<const char *>(&*From))
     return unsupported(Result, *Reason);
   auto &Source = std::get<Description>(*From);
-  if (Source.Type == Kind::SymbolicLink)
+  if (Source.Link && Source.Link->Protected)
     return unsupported(Result, diagnostic::SymbolicLinkMutation);
   if (Source.Type == Kind::Directory &&
       (!Source.Directory->Linked ||
@@ -1118,13 +1197,18 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (auto *Reason = std::get_if<const char *>(&*To))
     return unsupported(Result, *Reason);
   auto &Target = std::get<Description>(*To);
-  if (Target.Type == Kind::SymbolicLink)
+  if (Target.Link && Target.Link->Protected)
     return unsupported(Result, diagnostic::SymbolicLinkMutation);
-  if (Mode == RenameMode::Exclusive && (Target.File || Target.Directory)) {
+  // Link leaf moves/exchanges are separate from actual directory/link pairs.
+  if ((Source.Link || Target.Link) && (Source.Directory || Target.Directory))
+    return unsupported(Result, diagnostic::SymbolicLinkMutation);
+  if (Mode == RenameMode::Exclusive &&
+      (Target.File || Target.Directory || Target.Link)) {
     // Same-object exclusive rename depends on filesystem case sensitivity.
     // Exact catalogue keys do not supply that missing filesystem property.
     if ((Source.File && Target.File == Source.File) ||
-        (Source.Directory && Target.Directory == Source.Directory))
+        (Source.Directory && Target.Directory == Source.Directory) ||
+        (Source.Link && Target.Link == Source.Link))
       return unsupported(Result, diagnostic::RenameCaseSensitivity);
     return returned(FileExists, true);
   }
@@ -1142,22 +1226,26 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     return returned(InvalidArgument, true);
   }
   if (Mode == RenameMode::Swap) {
-    if ((Target.Type != Kind::File && Target.Type != Kind::Directory) ||
+    if ((Target.Type != Kind::File && Target.Type != Kind::Directory &&
+         Target.Type != Kind::SymbolicLink) ||
         (Target.Directory &&
          (!Target.Directory->Linked ||
           (!Target.Directory->Created && !Target.Directory->Exchangeable))))
       return unsupported(Result, diagnostic::RenameSwapKind);
   }
-  const auto Parent =
-      Source.File ? Source.File->Parent : Source.Directory->Parent;
-  const auto TargetParent = directoryNode(parentPath(Target.Path));
+  const auto Parent = Source.File   ? Source.File->Parent
+                      : Source.Link ? Source.Link->Parent
+                                    : Source.Directory->Parent;
+  const auto TargetParent = Target.Link
+                                ? Target.Link->Parent
+                                : directoryNode(parentPath(Target.Path));
   // Device equality alone does not establish one mount. Only mkdir and
   // declared initial subtrees supply non-mount parent relationships.
   if (Parent->mountAncestor() != TargetParent->mountAncestor())
     return unsupported(Result, diagnostic::RenameMount);
   // Even a same-name native rename performs authorization. The namespace
   // grant excludes known restricted flags, aliases and special parent modes.
-  if (!mutableDirectory(Parent->Path) || !mutableDirectory(TargetParent->Path))
+  if (!Parent->Mutable || !TargetParent->Mutable)
     return unsupported(Result, diagnostic::DirectoryNotMutable);
   std::optional<int32_t> Device;
   auto SameDevice = [&](int32_t D) {
@@ -1195,8 +1283,11 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (Mode == RenameMode::Swap) {
     // Both objects stay linked. Neither their bytes nor their mapping leases
     // provide replacement credit; only their previous dynamic path charges do.
-    const uint64_t Other =
-        *StorageUsed - Source.File->PathCharge - Target.File->PathCharge;
+    const uint64_t SourceOld =
+        Source.Link ? Source.Link->Path.size() + 1 : Source.File->PathCharge;
+    const uint64_t TargetOld =
+        Target.Link ? Target.Link->Path.size() + 1 : Target.File->PathCharge;
+    const uint64_t Other = *StorageUsed - SourceOld - TargetOld;
     const uint64_t SourceCharge = Target.Path.size() + 1;
     const uint64_t TargetCharge = Source.Path.size() + 1;
     if (Target.Path.size() >= limits::Path ||
@@ -1207,51 +1298,90 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     // name. Node insertion and string swaps publish the bounded transaction.
     std::string SourceKey = Target.Path, TargetKey = Source.Path;
     std::string SourceIdentity = Target.Path, TargetIdentity = Source.Path;
-    auto SourceNode = Nodes.extract(Source.Path);
-    auto TargetNode = Nodes.extract(Target.Path);
-    SourceNode.key().swap(SourceKey);
-    TargetNode.key().swap(TargetKey);
-    Nodes.insert(std::move(SourceNode));
-    Nodes.insert(std::move(TargetNode));
-    Source.File->Path.swap(SourceIdentity);
-    Target.File->Path.swap(TargetIdentity);
-    Source.File->PathCharge = SourceCharge;
-    Target.File->PathCharge = TargetCharge;
-    Source.File->Parent = TargetParent;
-    Target.File->Parent = Parent;
+    auto Exchange = [&](auto &SourceTable, auto &TargetTable) {
+      auto SourceNode = SourceTable.extract(Source.Path);
+      auto TargetNode = TargetTable.extract(Target.Path);
+      SourceNode.key().swap(SourceKey);
+      TargetNode.key().swap(TargetKey);
+      SourceTable.insert(std::move(SourceNode));
+      TargetTable.insert(std::move(TargetNode));
+    };
+    if (Source.Link) {
+      if (Target.Link)
+        Exchange(Links, Links);
+      else
+        Exchange(Links, Nodes);
+      Source.Link->Path.swap(SourceIdentity);
+      Source.Link->Parent = TargetParent;
+    } else {
+      if (Target.Link)
+        Exchange(Nodes, Links);
+      else
+        Exchange(Nodes, Nodes);
+      Source.File->Path.swap(SourceIdentity);
+      Source.File->PathCharge = SourceCharge;
+      Source.File->Parent = TargetParent;
+      updateNamespaceMetadata(*Source.File, false);
+    }
+    if (Target.Link) {
+      Target.Link->Path.swap(TargetIdentity);
+      Target.Link->Parent = Parent;
+    } else {
+      Target.File->Path.swap(TargetIdentity);
+      Target.File->PathCharge = TargetCharge;
+      Target.File->Parent = Parent;
+      updateNamespaceMetadata(*Target.File, false);
+    }
     *StorageUsed = Other + SourceCharge + TargetCharge;
-    updateNamespaceMetadata(*Source.File, false);
-    updateNamespaceMetadata(*Target.File, false);
     Parent->Changed = TargetParent->Changed = true;
     return returned(0);
   }
   // Only Nodes and this lookup may own an immediately reclaimable target.
   // A mapping retains a separate lease even after all descriptors close.
-  const uint64_t Credit = Target.File && Target.File.use_count() == 2 &&
-                                  Target.File->Lease.use_count() == 1
-                              ? Target.bytes().size() + Target.File->PathCharge
-                              : 0;
-  const uint64_t Other = *StorageUsed - Source.File->PathCharge - Credit;
+  const uint64_t FileCredit =
+      Target.File && Target.File.use_count() == 2 &&
+              Target.File->Lease.use_count() == 1
+          ? Target.bytes().size() + Target.File->PathCharge
+          : 0;
+  // Runtime links have no descriptor or mapping lease of their own. Replacing
+  // one releases its entire current name/target charge, regardless of owners
+  // of the referent. Moving a source link changes only its name charge.
+  const uint64_t LinkCredit =
+      Target.Link ? Target.Link->Path.size() + 1 + Target.bytes().size() : 0;
+  const uint64_t OldCharge =
+      Source.Link ? Source.Link->Path.size() + 1 : Source.File->PathCharge;
+  const uint64_t Other = *StorageUsed - OldCharge - FileCredit - LinkCredit;
   const uint64_t Charge = Target.Path.size() + 1;
   if (Target.Path.size() >= limits::Path || Charge > limits::Bytes - Other)
     return unsupported(Result, diagnostic::RenameLimit);
   std::string NewKey = Target.Path, NewIdentity = Target.Path;
   if (Target.File)
     Unlinked.reserve(Unlinked.size() + 1);
-  auto Moved = Nodes.extract(Source.Path);
-  if (Target.File) {
-    updateNamespaceMetadata(*Target.File, true);
-    Unlinked.push_back(Target.File);
-    Nodes.erase(Target.Path);
+  auto Move = [&](auto &Table) {
+    auto Moved = Table.extract(Source.Path);
+    if (Target.File) {
+      updateNamespaceMetadata(*Target.File, true);
+      Unlinked.push_back(Target.File);
+      Nodes.erase(Target.Path);
+    } else if (Target.Link) {
+      Links.erase(Target.Path);
+    }
+    Moved.key().swap(NewKey);
+    Table.insert(std::move(Moved));
+  };
+  if (Source.Link) {
+    Move(Links);
+    Source.Link->Path.swap(NewIdentity);
+    Source.Link->Parent = TargetParent;
+  } else {
+    Move(Nodes);
+    updateNamespaceMetadata(*Source.File, false);
+    Source.File->Path.swap(NewIdentity);
+    Source.File->PathCharge = Charge;
+    Source.File->Parent = TargetParent;
   }
-  Moved.key().swap(NewKey);
-  Nodes.insert(std::move(Moved));
-  updateNamespaceMetadata(*Source.File, false);
-  Source.File->Path.swap(NewIdentity);
-  // Reclaim below deducts Credit exactly once, after the lookup releases it.
-  *StorageUsed = *StorageUsed - Source.File->PathCharge + Charge;
-  Source.File->PathCharge = Charge;
-  Source.File->Parent = TargetParent;
+  // Reclaim below deducts FileCredit once, after the lookup releases it.
+  *StorageUsed = *StorageUsed - OldCharge - LinkCredit + Charge;
   Parent->Changed = TargetParent->Changed = true;
   Target.File.reset();
   reclaimUnlinked();
@@ -1282,12 +1412,23 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
     const auto Prefix = Target.Path + '/';
     const auto File = Nodes.lower_bound(Prefix);
     const auto Directory = Directories.lower_bound(Prefix);
+    const auto Link = Links.lower_bound(Prefix);
     if ((File != Nodes.end() &&
          llvm::StringRef(File->first).starts_with(Prefix)) ||
         (Directory != Directories.end() &&
-         llvm::StringRef(Directory->first).starts_with(Prefix)))
+         llvm::StringRef(Directory->first).starts_with(Prefix)) ||
+        (Link != Links.end() &&
+         llvm::StringRef(Link->first).starts_with(Prefix)))
       return returned(DirectoryNotEmpty, true);
   }
+  // Initial links remain protected, including indirect moves of their names.
+  // Runtime links participate in the same preflight as files and directories.
+  if (llvm::any_of(Links, [&](const auto &Entry) {
+        return Entry.second->Protected &&
+               (Descendant(Entry.second->Parent, Source.Directory) ||
+                (Swap && Descendant(Entry.second->Parent, Target.Directory)));
+      }))
+    return unsupported(Result, diagnostic::SymbolicLinkDirectoryMove);
   // Reclaim before transaction references are collected. A held orphan file
   // or directory retains its original parent, including an empty target.
   if (auto E = prepareMutation())
@@ -1308,8 +1449,14 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
     bool Linked;
     decltype(Nodes)::node_type Entry;
   };
+  struct LinkMove {
+    std::shared_ptr<LinkNode> Node;
+    std::string Path, Key;
+    decltype(Links)::node_type Entry;
+  };
   std::vector<DirectoryMove> DirectoryMoves;
   std::vector<FileMove> Files;
+  std::vector<LinkMove> LinkMoves;
   uint64_t OldCharge = 0, NewCharge = 0;
   auto NewPath = [&](const std::string &Path,
                      bool Forward) -> std::optional<std::string> {
@@ -1327,6 +1474,10 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
     return Node == Source.File || Descendant(Node->Parent, Source.Directory) ||
            (Swap && (Node == Target.File ||
                      Descendant(Node->Parent, Target.Directory)));
+  };
+  auto MovesLink = [&](const std::shared_ptr<LinkNode> &Node) {
+    return Descendant(Node->Parent, Source.Directory) ||
+           (Swap && Descendant(Node->Parent, Target.Directory));
   };
   auto Directory = [&](const std::shared_ptr<DirectoryNode> &Node,
                        bool Linked) -> const char * {
@@ -1373,22 +1524,42 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
   for (const auto &Node : Unlinked)
     if (auto Reason = File(Node, false))
       return unsupported(Result, Reason);
+  for (const auto &[Path, Node] : Links) {
+    if (!MovesLink(Node))
+      continue;
+    auto New = NewPath(Node->Path, Descendant(Node->Parent, Source.Directory));
+    if (!New)
+      return unsupported(Result, diagnostic::NamespaceAlias);
+    if (New->size() >= limits::Path)
+      return unsupported(Result, diagnostic::RenameLimit);
+    // Target bytes stay opaque and charged. Only the live name/NUL changes;
+    // unlike an initial file, every runtime link already owns that charge.
+    OldCharge += Node->Path.size() + 1;
+    NewCharge += New->size() + 1;
+    auto Key = *New;
+    LinkMoves.push_back({Node, std::move(*New), std::move(Key), {}});
+  }
   const uint64_t Other = *StorageUsed - OldCharge - Credit;
   if (NewCharge > limits::Bytes - Other)
     return unsupported(Result, diagnostic::RenameLimit);
   auto AvailableKey = [&](const std::string &Key) {
     const auto Directory = Directories.find(Key);
     const auto File = Nodes.find(Key);
+    const auto Link = Links.find(Key);
     return (Directory == Directories.end() ||
             MovesDirectory(Directory->second) ||
             (!Swap && Directory->second == Target.Directory)) &&
-           (File == Nodes.end() || MovesFile(File->second));
+           (File == Nodes.end() || MovesFile(File->second)) &&
+           (Link == Links.end() || MovesLink(Link->second));
   };
   for (const auto &Move : DirectoryMoves)
     if (Move.Linked && !AvailableKey(Move.Key))
       return unsupported(Result, diagnostic::NamespaceAlias);
   for (const auto &Move : Files)
     if (Move.Linked && !AvailableKey(Move.Key))
+      return unsupported(Result, diagnostic::NamespaceAlias);
+  for (const auto &Move : LinkMoves)
+    if (!AvailableKey(Move.Key))
       return unsupported(Result, diagnostic::NamespaceAlias);
   if (!Swap && Target.Directory)
     UnlinkedDirectories.reserve(UnlinkedDirectories.size() + 1);
@@ -1401,13 +1572,15 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
     Directories.erase(Target.Path);
   }
   // Opposing subtrees may have identical child suffixes, including mixed
-  // root types. Extract both maps completely before inserting any new key.
+  // root types. Extract all three maps before inserting any new key.
   for (auto &Move : DirectoryMoves)
     if (Move.Linked)
       Move.Entry = Directories.extract(Move.Node->Path);
   for (auto &Move : Files)
     if (Move.Linked)
       Move.Entry = Nodes.extract(Move.Node->Path);
+  for (auto &Move : LinkMoves)
+    Move.Entry = Links.extract(Move.Node->Path);
   for (auto &Move : DirectoryMoves) {
     if (Move.Linked) {
       Move.Entry.key().swap(Move.Key);
@@ -1423,6 +1596,13 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
     }
     Move.Node->Path.swap(Move.Path);
     Move.Node->PathCharge = Move.Node->Path.size() + 1;
+  }
+  for (auto &Move : LinkMoves) {
+    Move.Entry.key().swap(Move.Key);
+    Links.insert(std::move(Move.Entry));
+    Move.Node->Path.swap(Move.Path);
+    // Retain the actual parent object as its path moves with the subtree.
+    // Rewriting raw targets would change relative, dangling and opaque links.
   }
   if (Source.Directory) {
     Source.Directory->Parent = TargetParent;
@@ -1446,6 +1626,7 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
   *StorageUsed = *StorageUsed - OldCharge + NewCharge;
   DirectoryMoves.clear();
   Files.clear();
+  LinkMoves.clear();
   if (!Swap) {
     Target.Directory.reset();
     reclaimUnlinked();
@@ -1462,9 +1643,7 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     return std::move(E);
   const uint64_t Charge = File.Path.size() + 1;
   if (File.Path.size() >= limits::Path ||
-      FixedEntries + Nodes.size() + Unlinked.size() +
-              dynamicDirectoryEntries() >=
-          limits::Files ||
+      FixedEntries + dynamicEntries() >= limits::Files ||
       Charge > limits::Bytes - *StorageUsed)
     return unsupported(Result, diagnostic::FileCreationLimit);
   if (Options->CreationPolicy && !NextCreatedInode)
@@ -1660,6 +1839,10 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     CurrentUmask = A[0] & 07777;
     return returned(Previous);
   }
+  if (Service == ServiceKind::Symlink)
+    return makeSymbolicLink(A[0], A[1], AtCurrentDirectory, Result);
+  if (Service == ServiceKind::SymlinkAt)
+    return makeSymbolicLink(A[0], A[2], uint32_t(A[1]), Result);
   if (Service == ServiceKind::ReadLink)
     return readLink(A[0], A[1], uint32_t(A[2]), AtCurrentDirectory, Result);
   if (Service == ServiceKind::ReadLinkAt)

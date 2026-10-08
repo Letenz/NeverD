@@ -125,6 +125,8 @@ void Theme::setMode(Mode mode) {
 
 QFont Theme::defaultCodeFont() {
   QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+  if (QFontDatabase::hasFamily(QStringLiteral("Consolas")))
+    font.setFamily(QStringLiteral("Consolas"));
   font.setPointSize(DefaultCodePointSize);
   font.setStyleHint(QFont::Monospace, QFont::PreferAntialias);
   font.setFixedPitch(true);
@@ -168,6 +170,7 @@ void Theme::apply() {
     emit changed();
     return;
   }
+  application->setFont(defaultCodeFont());
   // Fusion renders the palette faithfully on every platform.
   if (application->style()->name().compare("fusion", Qt::CaseInsensitive))
     application->setStyle(QStyleFactory::create("Fusion"));

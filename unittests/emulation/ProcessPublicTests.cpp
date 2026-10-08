@@ -460,8 +460,12 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"mach-time", "68"},
           std::pair{"mach-timebase-values",
                     emulation::darwin_test::TimebaseHex},
-          std::pair{"mach-clock-values",
-                    emulation::darwin_test::MachClockHex}}) {
+          std::pair{"mach-clock-values", emulation::darwin_test::MachClockHex},
+          std::pair{"symbolic-link-creation", "62"},
+          std::pair{"symbolic-link-unlink", "55"},
+          std::pair{"symbolic-link-unlink-protected", "55"},
+          std::pair{"symbolic-link-rename", "52"},
+          std::pair{"symbolic-link-rename-protected", "52"}}) {
       const bool X64 = llvm::StringRef(File).ends_with("x86_64");
       if (X64 && llvm::StringRef(Mode) == "mach-clock-values")
         continue;
@@ -484,6 +488,10 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   const auto Output = (Root / OutputFile).string();
   const auto &[File, Profile, Mode, Expected] = GetParam();
   const llvm::StringRef ModeName(Mode);
+  const bool UnlinkLinks = ModeName.starts_with("symbolic-link-unlink");
+  const bool RenameLinks = ModeName.starts_with("symbolic-link-rename");
+  const bool ProtectedLink =
+      (UnlinkLinks || RenameLinks) && ModeName.ends_with("-protected");
   const bool X64 = llvm::StringRef(File).ends_with("x86_64");
   SCOPED_TRACE(File);
   Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
@@ -652,7 +660,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       D.getAsObject()->erase(field::DirectoryContents);
     Options = llvm::formatv("{0}", Input).str();
   }
-  if (ModeName == "symbolic-link-mutations") {
+  if (ModeName == "symbolic-link-mutations" ||
+      ModeName == "symbolic-link-creation" || UnlinkLinks || RenameLinks) {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto M =
         llvm::cantFail(llvm::json::parse(emulation::darwin_test::MetadataJSON));
@@ -693,7 +702,18 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         {field::FileCreationPolicy,
          llvm::cantFail(
              llvm::json::parse(emulation::darwin_test::CreationPolicyJSON))}};
+    if (RenameLinks)
+      (*(*Input.getAsObject()
+              ->getObject(field::DarwinFiles)
+              ->getArray(field::Directories))[1]
+            .getAsObject())[field::DirectorySwapRename] = true;
     (*Input.getAsObject()->getArray(field::Arguments))[2] = "/work/data";
+    if (ProtectedLink) {
+      auto *Arguments = Input.getAsObject()->getArray(field::Arguments);
+      (*Arguments)[1] =
+          RenameLinks ? "symbolic-link-rename" : "symbolic-link-unlink";
+      Arguments->push_back("protected");
+    }
     Options = llvm::formatv("{0}", Input).str();
   }
   auto Text = takeString(neverd_emulate_process_json(Session, Path.c_str(),
@@ -701,9 +721,105 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
   auto Report = llvm::json::parse(Text);
   ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
-  EXPECT_EQ(Report->getAsObject()->getString(field::Stop), "exited");
-  EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
+  EXPECT_EQ(Report->getAsObject()->getString(field::Stop),
+            ProtectedLink ? "unsupported_service" : "exited");
+  if (ProtectedLink) {
+    ASSERT_NE(Report->getAsObject()->get(field::ExitStatus), nullptr);
+    EXPECT_EQ(*Report->getAsObject()->get(field::ExitStatus),
+              llvm::json::Value(nullptr));
+  } else {
+    EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
+  }
   EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
+  if (UnlinkLinks) {
+    // The guest validates target FD/map identity before emitting U. Also
+    // require actual removal and repeated-removal errors in the public trace.
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    bool Removed = false, Missing = false;
+    for (const auto &Service : *Services) {
+      const auto *Event = Service.getAsObject();
+      ASSERT_NE(Event, nullptr);
+      const auto Number = Event->getString(field::Number);
+      if (Number != (X64 ? "200000a" : "a") &&
+          Number != (X64 ? "20001d8" : "1d8"))
+        continue;
+      Removed |= Event->getBoolean(field::Error) == false &&
+                 Event->getString(field::Result) == "0";
+      Missing |= Event->getBoolean(field::Error) == true &&
+                 Event->getString(field::Result) == "2";
+    }
+    EXPECT_TRUE(Removed);
+    EXPECT_TRUE(Missing);
+    EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    if (ProtectedLink) {
+      ASSERT_FALSE(Services->empty());
+      const auto *Last = Services->back().getAsObject();
+      ASSERT_NE(Last, nullptr);
+      EXPECT_EQ(Last->getString(field::Number), X64 ? "200000a" : "a");
+      ASSERT_NE(Last->get(field::Result), nullptr);
+      EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+      EXPECT_EQ(Last->get(field::Error), nullptr);
+    }
+  }
+  if (RenameLinks) {
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    bool Renamed = false, Exclusive = false, NoExpansion = false;
+    bool Swapped = false, SwappedNoExpansion = false, SwapMissing = false,
+         SwapInvalid = false, SubtreeNonempty = false;
+    for (const auto &Service : *Services) {
+      const auto *Event = Service.getAsObject();
+      ASSERT_NE(Event, nullptr);
+      const auto Number = Event->getString(field::Number);
+      if (Number != (X64 ? "2000080" : "80") &&
+          Number != (X64 ? "20001d1" : "1d1") &&
+          Number != (X64 ? "20001e8" : "1e8"))
+        continue;
+      Renamed |= Event->getBoolean(field::Error) == false &&
+                 Event->getString(field::Result) == "0";
+      SubtreeNonempty |= Number == (X64 ? "20001d1" : "1d1") &&
+                         Event->getBoolean(field::Error) == true &&
+                         Event->getString(field::Result) == "42";
+      if (Number == (X64 ? "20001e8" : "1e8")) {
+        const auto *Arguments = Event->getArray(field::Arguments);
+        ASSERT_NE(Arguments, nullptr);
+        ASSERT_GE(Arguments->size(), 5u);
+        const bool Success = Event->getBoolean(field::Error) == false &&
+                             Event->getString(field::Result) == "0";
+        Swapped |= Success && (*Arguments)[4].getAsString() == "2";
+        SwappedNoExpansion |= Success && (*Arguments)[4].getAsString() == "12";
+        SwapMissing |= Event->getBoolean(field::Error) == true &&
+                       Event->getString(field::Result) == "2";
+        SwapInvalid |= Event->getBoolean(field::Error) == true &&
+                       Event->getString(field::Result) == "16";
+        Exclusive |= Event->getBoolean(field::Error) == true &&
+                     Event->getString(field::Result) == "11";
+        NoExpansion |= Event->getBoolean(field::Error) == true &&
+                       Event->getString(field::Result) == "3e";
+      }
+    }
+    EXPECT_TRUE(Renamed);
+    EXPECT_TRUE(Exclusive);
+    EXPECT_TRUE(NoExpansion);
+    EXPECT_TRUE(Swapped);
+    EXPECT_TRUE(SwappedNoExpansion);
+    EXPECT_TRUE(SwapMissing);
+    EXPECT_TRUE(SwapInvalid);
+    EXPECT_TRUE(SubtreeNonempty);
+    EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    if (ProtectedLink) {
+      ASSERT_FALSE(Services->empty());
+      const auto *Last = Services->back().getAsObject();
+      ASSERT_NE(Last, nullptr);
+      EXPECT_EQ(Last->getString(field::Number), X64 ? "2000080" : "80");
+      ASSERT_NE(Last->get(field::Result), nullptr);
+      EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+      EXPECT_EQ(Last->get(field::Error), nullptr);
+    }
+  }
   if (llvm::StringRef(Mode).starts_with("mach-")) {
     const auto *Services = Report->getAsObject()->getArray(field::Services);
     ASSERT_NE(Services, nullptr);
@@ -729,7 +845,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
                        test::shellQuote(Options) +
                        test::redirectStdout(Output) + test::silenceStderr();
   EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::GuestFailure);
+            ProtectedLink ? process_cli::Incomplete
+                          : process_cli::GuestFailure);
   auto Buffer = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Buffer));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())), *Report);

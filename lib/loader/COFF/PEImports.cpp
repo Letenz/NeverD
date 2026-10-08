@@ -269,26 +269,22 @@ void parseImports(const llvm::object::COFFObjectFile &Object,
                               "bytes; their bindings were ignored.");
       continue;
     }
-    if (!std::all_of(Descriptors[I].begin(), Descriptors[I].end(),
-                     [&](const Import &Imp) {
-                       return Image.isValidImportStorageSlot(Imp.IATAddr,
-                                                             Imp.Name);
-                     })) {
-      Image.addLoadDiagnostic("pe.import_storage_invalid",
-                              "PE IAT contains a noncanonical storage slot; "
-                              "its descriptor bindings were ignored.");
-      continue;
-    }
     for (auto &Imp : Descriptors[I]) {
       if (!Published.insert(Imp.IATAddr).second)
         continue;
-      if (Image.recordImportStorageSlot(Imp.IATAddr, Imp.Name, 0,
-                                        ImportStorageEvidence::ImportDirectory))
-        Image.Imports.push_back(std::move(Imp));
-      else
+      // Windows accepts unaligned IATs and IATs in executable sections. A
+      // complete descriptor still owns their import identities; it does not
+      // relax the shared canonical pointer-storage contract.
+      if (Image.isValidImportStorageSlot(Imp.IATAddr, Imp.Name) &&
+          !Image.recordImportStorageSlot(
+              Imp.IATAddr, Imp.Name, 0,
+              ImportStorageEvidence::ImportDirectory)) {
         Image.addLoadDiagnostic("pe.import_binding_conflict",
                                 "PE import storage conflicts with an existing "
                                 "identity; no import identity was published.");
+        continue;
+      }
+      Image.Imports.push_back(std::move(Imp));
     }
   }
 }

@@ -12,6 +12,7 @@
 #include "neverd/support/BinaryLoading.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/FilePath.h"
 #include "neverd/support/TextEncoding.h"
 
 #include "llvm/Support/Error.h"
@@ -76,7 +77,7 @@ Expected<BinaryImage> loadBinary(const std::filesystem::path &Path,
                                  const BinaryLoadOptions &Opts) {
   auto TheLoader = Loader::create(Path);
   if (!TheLoader)
-    return make_error<StringError>("unknown binary format: " + Path.string(),
+    return make_error<StringError>("unknown binary format: " + pathToUTF8(Path),
                                    inconvertibleErrorCode());
   if (!Opts.OnlyFunctionEntries.empty())
     TheLoader->restrictFunctions(Opts.OnlyFunctionEntries);

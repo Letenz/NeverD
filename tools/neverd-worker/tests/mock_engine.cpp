@@ -161,6 +161,10 @@ void neverd_free_string(const char *value) {
   std::free(const_cast<char *>(value));
 }
 const char *neverd_version_number() { return copy("test-1.0"); }
+const char *neverd_headers_json(neverd_session_t) {
+  return copy(R"({"language":{"runtime":"c","secondary":[],"evidence":[]}})");
+}
+
 const char *neverd_dashboard_json(neverd_session_t s) {
   // Deterministic fixture-only identity. The real engine uses SHA-256; the
   // production real-engine test verifies that digest against Python hashlib.
@@ -202,6 +206,9 @@ int neverd_func_size(neverd_session_t s, int index) {
 const char *neverd_func_name(neverd_session_t s, int index) {
   const auto address = neverd_func_entry(s, index);
   auto it = session(s)->names.find(address);
+  if (it == session(s)->names.end() && address == Base + 0x150 &&
+      session(s)->path.ends_with("pseudocode-navigation.bin"))
+    return copy("_ZN3BarC1Ev");
   if (it != session(s)->names.end())
     return copy(it->second);
   if ((address - Base) % 16 == 0)
@@ -219,6 +226,12 @@ int neverd_func_find_by_addr(neverd_session_t s, neverd_va_t address) {
              : -1;
 }
 int neverd_func_find_by_name(neverd_session_t s, const char *name) {
+  if (std::string(name).starts_with("delayed_")) {
+    std::puts("fixture delayed lookup started");
+    std::fflush(stdout);
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    return std::string(name) == "delayed_function" ? 22 : -1;
+  }
   for (int i = 0, count = neverd_func_count(s); i < count; ++i) {
     const auto *value = neverd_func_name(s, i);
     const bool match = std::string(value) == name;
@@ -494,7 +507,20 @@ const char *neverd_unwind_frame_json(neverd_session_t, neverd_va_t address) {
          true}}.dump());
   return copy("null");
 }
-const char *neverd_decompile(neverd_session_t, neverd_va_t) {
+const char *neverd_decompile(neverd_session_t s, neverd_va_t address) {
+  if (session(s)->path.ends_with("pseudocode-import.bin"))
+    return copy("int caller(void) {\n  return function_22();\n}\n");
+  if (session(s)->path.ends_with("pseudocode-global.bin"))
+    return copy("extern int global_value; /* 0xffff800012343000 */\n"
+                "int caller(void) {\n  return global_value;\n}\n");
+  if (session(s)->path.ends_with("pseudocode-delayed.bin"))
+    return copy("int caller(void) {\n  return delayed_function();\n}\n");
+  if (session(s)->path.ends_with("pseudocode-delayed-error.bin"))
+    return copy("int caller(void) {\n  return delayed_missing();\n}\n");
+  if (session(s)->path.ends_with("pseudocode-navigation.bin"))
+    return copy(address == Base + 0x140
+                    ? "int function_20(void) {\n  return function_22();\n}\n"
+                    : "int called(void) {\n  return 42;\n}\n");
   std::string text;
   for (int i = 0; i < 700; ++i)
     text += "// code line " + std::to_string(i) + "\n";
@@ -539,8 +565,19 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
         "extern uint64_t qword_10; /* 0x10 */\n",
         "\n",
         "/* neverd.entry */\n"};
-    for (int i = 0; i < 700; ++i)
-      lines.push_back("// code line " + std::to_string(i) + "\n");
+    for (int i = 0; i < 700; ++i) {
+      if (session(s)->path.ends_with("pseudocode-navigation.bin") && i < 3) {
+        if (i == 0)
+          lines.push_back("int caller(void) {\n");
+        else if (i == 1)
+          lines.push_back(address == Base + 0x140 ? "  return Bar_ctor();\n"
+                                                  : "  return 42;\n");
+        else
+          lines.push_back("}\n");
+      } else {
+        lines.push_back("// code line " + std::to_string(i) + "\n");
+      }
+    }
     const auto total = lines.size();
     const auto first = std::min(offset, total);
     const auto end = first + std::min(limit, total - first);
@@ -815,7 +852,12 @@ const char *neverd_symbols_json(neverd_session_t s) {
   }
   return copy(rows.dump());
 }
-const char *neverd_imports_json(neverd_session_t) {
+const char *neverd_imports_json(neverd_session_t s) {
+  if (session(s)->path.ends_with("pseudocode-import.bin"))
+    return copy(Json::array({{{"name", "function_22"},
+                              {"module", "fixture"},
+                              {"iat_addr", hexAddress(Base + 0x160)}}})
+                    .dump());
   return copy(Json::array().dump());
 }
 const char *neverd_exports_json(neverd_session_t) {

@@ -8,6 +8,7 @@
 
 #include "neverd/object/MachOLayout.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
@@ -107,10 +108,11 @@ void appendRuntimeFunction(va_t Addr, std::vector<va_t> *Out,
 llvm::Expected<std::pair<std::unique_ptr<llvm::MemoryBuffer>,
                          std::unique_ptr<llvm::object::MachOObjectFile>>>
 openMachOFile(const std::filesystem::path &Path) {
-  auto BufOrErr = llvm::MemoryBuffer::getFile(Path.string());
+  auto BufOrErr = llvm::MemoryBuffer::getFile(pathToUTF8(Path));
   if (!BufOrErr)
-    return llvm::make_error<llvm::StringError>(
-        "macho: cannot open " + Path.string(), llvm::inconvertibleErrorCode());
+    return llvm::make_error<llvm::StringError>("macho: cannot open " +
+                                                   pathToUTF8(Path),
+                                               llvm::inconvertibleErrorCode());
 
   auto Buf = std::move(*BufOrErr);
   auto BinaryOr = llvm::object::createBinary(Buf->getMemBufferRef());

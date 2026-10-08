@@ -15,10 +15,12 @@
 
 #include "neverd/evm/bytecode/EVMBytecode.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
+#include "neverd/loader/ExceptionCommon.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
+#include "neverd/support/FilePath.h"
 #include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -670,7 +672,7 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   Root["instruction_mode"] = getInstructionModeName(S->Img.Mode);
   Root["format"] = S->Img.getFormatName();
   Root["bits"] = S->Img.is64Bit() ? 64 : 32;
-  Root["file_path"] = jsonSafeText(S->FilePath.string());
+  Root["file_path"] = jsonSafeText(pathToUTF8(S->FilePath));
 
   std::error_code EC;
   auto FileSz = std::filesystem::file_size(S->FilePath, EC);
@@ -720,6 +722,24 @@ const char *neverd_headers_json(neverd_session_t Sess) {
 
   if (S->Img.EVM)
     Root["evm"] = describeEVMImage(*S->Img.EVM);
+
+  // The language whose runtime built the image, which decides how its names
+  // read.  Evidence comes from LanguageRuntime.def, the version from the
+  // image's own release string.
+  const LanguageRuntimeInfo &Language = S->Img.ExceptionMetadata.Runtime;
+  llvm::json::Object LanguageInfo;
+  LanguageInfo["runtime"] = getSourceLanguageRuntimeName(Language.Runtime);
+  if (!Language.Version.empty())
+    LanguageInfo["version"] = jsonSafeText(Language.Version);
+  llvm::json::Array Secondary;
+  for (SourceLanguageRuntime Runtime : Language.SecondaryRuntimes)
+    Secondary.push_back(getSourceLanguageRuntimeName(Runtime));
+  LanguageInfo["secondary"] = std::move(Secondary);
+  llvm::json::Array Evidence;
+  for (const std::string &Item : Language.Evidence)
+    Evidence.push_back(jsonSafeText(Item));
+  LanguageInfo["evidence"] = std::move(Evidence);
+  Root["language"] = std::move(LanguageInfo);
 
   llvm::json::Object Dyn;
   const auto &DI = S->Img.DynInfo;
@@ -821,8 +841,8 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
   llvm::json::Object Root;
 
   llvm::json::Object File;
-  File["path"] = jsonSafeText(S->FilePath.string());
-  File["name"] = jsonSafeText(S->FilePath.filename().string());
+  File["path"] = jsonSafeText(pathToUTF8(S->FilePath));
+  File["name"] = jsonSafeText(pathToUTF8(S->FilePath.filename()));
   File["format"] = S->Img.getFormatName();
   File["arch"] = getArchName(S->Img.Arch);
   File["instruction_mode"] = getInstructionModeName(S->Img.Mode);

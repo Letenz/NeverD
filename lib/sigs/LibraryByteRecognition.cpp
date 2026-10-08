@@ -5,11 +5,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/SymbolSpelling.h"
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureDB.h"
 #include "neverd/sigs/SignatureMatcher.h"
-
-#include "llvm/Demangle/Demangle.h"
 
 #include <map>
 #include <set>
@@ -142,7 +141,7 @@ std::vector<LibraryRecognition> neverd::sigs::recognizeLibraryFeatureBytes(
       if (const auto At = StatedSymbols.find(Address);
           At != StatedSymbols.end() && At->second.contains(C.Rule->LinkageName))
         Match.LinkageName = C.Rule->LinkageName;
-      Match.DisplayName = llvm::demangle(C.Rule->LinkageName);
+      Match.DisplayName = displaySymbolName(C.Rule->LinkageName);
       Results.push_back(std::move(Match));
     }
   }

@@ -18,6 +18,7 @@
 #include "neverd/debug/MSVCMapLoader.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Debug.h"
@@ -69,11 +70,14 @@ pdbCandidates(const std::filesystem::path &BinaryPath, const BinaryImage &Img) {
   // next to the image.
   llvm::StringRef Recorded(Img.DynInfo.PDBPath);
   if (!Recorded.empty() && !Recorded.starts_with(kBuildIdPrefix)) {
-    addCandidate(Out, std::filesystem::path(Recorded.str()));
-    addCandidate(Out, Dir / recordedFileName(Recorded).str());
+    addCandidate(Out, std::filesystem::u8path(Recorded.str()));
+    addCandidate(
+        Out, Dir / std::filesystem::u8path(recordedFileName(Recorded).str()));
   }
 
-  addCandidate(Out, Dir / (BinaryPath.stem().string() + ".pdb"));
+  auto Companion = BinaryPath;
+  Companion.replace_extension(".pdb");
+  addCandidate(Out, std::move(Companion));
   return Out;
 }
 
@@ -83,10 +87,14 @@ std::vector<std::filesystem::path>
 splitDwarfCandidates(const std::filesystem::path &BinaryPath) {
   std::vector<std::filesystem::path> Out;
   const std::filesystem::path Dir = BinaryPath.parent_path();
-  const std::string Name = BinaryPath.filename().string();
+  const auto Name = BinaryPath.filename();
 
-  addCandidate(Out, Dir / (Name + ".debug"));
-  addCandidate(Out, Dir / (BinaryPath.stem().string() + ".debug"));
+  auto Companion = BinaryPath;
+  Companion += ".debug";
+  addCandidate(Out, std::move(Companion));
+  Companion = BinaryPath;
+  Companion.replace_extension(".debug");
+  addCandidate(Out, std::move(Companion));
   addCandidate(Out, Dir / ".debug" / Name);
   return Out;
 }
@@ -96,8 +104,12 @@ mapCandidates(const std::filesystem::path &BinaryPath) {
   std::vector<std::filesystem::path> Out;
   const std::filesystem::path Dir = BinaryPath.parent_path();
 
-  addCandidate(Out, Dir / (BinaryPath.stem().string() + ".map"));
-  addCandidate(Out, Dir / (BinaryPath.filename().string() + ".map"));
+  auto Companion = BinaryPath;
+  Companion.replace_extension(".map");
+  addCandidate(Out, std::move(Companion));
+  Companion = BinaryPath;
+  Companion += ".map";
+  addCandidate(Out, std::move(Companion));
   return Out;
 }
 
@@ -115,7 +127,7 @@ DebugInfoResult loadPDB(const std::filesystem::path &P, const BinaryImage &Img,
     R.Kind = DebugInfoKind::PDB;
     R.Path = P;
   } else {
-    R.Error = "no function symbols in " + P.string();
+    R.Error = "no function symbols in " + pathToUTF8(P);
   }
   return R;
 }
@@ -188,23 +200,23 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
 
   if (!Req.PDBPath.empty()) {
     if (!isReadableFile(Req.PDBPath)) {
-      Result.Error = "PDB file not found: " + Req.PDBPath.string();
+      Result.Error = "PDB file not found: " + pathToUTF8(Req.PDBPath);
       return Result;
     }
     Result = loadPDB(Req.PDBPath, Img, Progress);
     if (!Result && Result.Error.empty())
-      Result.Error = "no function symbols in " + Req.PDBPath.string();
+      Result.Error = "no function symbols in " + pathToUTF8(Req.PDBPath);
     return Result;
   }
 
   if (!Req.MapPath.empty()) {
     if (!isReadableFile(Req.MapPath)) {
-      Result.Error = "MAP file not found: " + Req.MapPath.string();
+      Result.Error = "MAP file not found: " + pathToUTF8(Req.MapPath);
       return Result;
     }
     Result = loadMap(Req.MapPath, Img);
     if (!Result)
-      Result.Error = "no function symbols in " + Req.MapPath.string();
+      Result.Error = "no function symbols in " + pathToUTF8(Req.MapPath);
     return Result;
   }
 
@@ -223,7 +235,7 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
       if (Attempt)
         return Attempt;
       LLVM_DEBUG(llvm::dbgs()
-                 << "debug-discovery: rejected PDB candidate " << C.string()
+                 << "debug-discovery: rejected PDB candidate " << pathToUTF8(C)
                  << (Attempt.Error.empty() ? "" : ": ") << Attempt.Error
                  << "\n");
     }
