@@ -115,10 +115,12 @@ NEVERD_API const char *neverd_string_refs_json(neverd_session_t Sess,
 /// folding, so that a filter matches text regardless of case in any script.
 /// Bytes that are not UTF-8 stay as they are.  NULL for NULL.
 NEVERD_API const char *neverd_fold_case(const char *Text);
-/// \p Name as a listing reads it: an Itanium, Microsoft, Rust or D mangled
-/// name demangled the way function identities' "display_name" is, also with
-/// one leading underscore more (a Mach-O symbol or an ELF PLT entry's name),
-/// and any other name as it is.  NULL for NULL.
+/// \p Name as a listing reads it: an Itanium or Microsoft C++, Rust, Swift or
+/// D mangled name as its language spells it, the way function identities'
+/// "display_name" is (C++ template arguments equal to their defaults dropped,
+/// a legacy Rust hash dropped), also with one leading underscore more (a
+/// Mach-O symbol or an ELF PLT entry's name), and any other name as it is.
+/// NULL for NULL.
 NEVERD_API const char *neverd_demangle(const char *Name);
 /// \p Size bytes decoded in \p Encoding (a name or alias of
 /// neverd_string_encodings_json()) for display, one cell per byte:
@@ -144,6 +146,10 @@ NEVERD_API const char *neverd_symbols_json(neverd_session_t Sess);
 /// The symbols of neverd_symbols_json that are not functions.
 NEVERD_API const char *neverd_data_symbols_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_relocs_json(neverd_session_t Sess);
+/// The image's headers.  "language" is the runtime that built the image as
+/// {"runtime","version"?,"secondary":[],"evidence":[]}: "c", "c++-itanium",
+/// "c++-msvc", "rust", "go", "objective-c", "swift", "delphi", "ada", "d" or
+/// "unknown", with the Go release when the image names one.
 NEVERD_API const char *neverd_headers_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_entrypoints_json(neverd_session_t Sess);
 /// An overview of the loaded image: "file" (path, name, format, arch, bits,
