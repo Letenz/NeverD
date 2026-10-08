@@ -1121,7 +1121,14 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                  (Ty->IsEnum && Ty->IsSigned == NeedsSignedCast &&
                   Ty->Size == CmpSize)))
         return exprStr(*Op, 99);
-      return "(" + UTy + ")" + exprStr(*Op, 99);
+      // Text that prints as the compared type already, such as a pointer read
+      // as `(uintptr_t)p`, compares as it is.
+      std::string Text = exprStr(*Op, 99);
+      if (const auto Printed = printedIntegerType(*Op);
+          Printed && Printed->first == CmpSize &&
+          Printed->second == NeedsSignedCast)
+        return Text;
+      return "(" + UTy + ")" + Text;
     };
     LHS = CastOp(L);
     RHS = CastOp(R);
