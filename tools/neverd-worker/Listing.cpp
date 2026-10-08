@@ -514,6 +514,10 @@ struct Listing::Impl {
   StringsExFunction stringsEx = nullptr;
   StringsPageFunction stringsPage = nullptr;
   ItemsFunction itemsQuery = nullptr;
+  /// neverd_operand_formats_json, which has the items query's signature.
+  ItemsFunction operandFormatsQuery = nullptr;
+  /// The user's operand formats by instruction address, by operand index.
+  std::unordered_map<std::uint64_t, std::vector<NumberFormat>> numberFormats;
   StringAtFunction stringAtQuery = nullptr;
   DecodeTextFunction decodeText = nullptr;
   /// The user's data items (neverd_items_json) by address: a value, a string
@@ -611,6 +615,8 @@ struct Listing::Impl {
     stringsEx = engineSymbol<StringsExFunction>("neverd_strings_ex_json");
     stringsPage = engineSymbol<StringsPageFunction>("neverd_strings_page_json");
     itemsQuery = engineSymbol<ItemsFunction>("neverd_items_json");
+    operandFormatsQuery =
+        engineSymbol<ItemsFunction>("neverd_operand_formats_json");
     stringAtQuery = engineSymbol<StringAtFunction>("neverd_string_at");
     decodeText = engineSymbol<DecodeTextFunction>("neverd_decode_text_json");
     stringRefs = engineSymbol<StringRefsFunction>("neverd_string_refs_json");
@@ -1133,6 +1139,7 @@ struct Listing::Impl {
         addString(row);
     }
     loadUserItems();
+    loadNumberFormats();
     std::sort(strings.begin(), strings.end(),
               [](const StringItem &a, const StringItem &b) {
                 return a.address < b.address;
@@ -1272,6 +1279,29 @@ struct Listing::Impl {
       return nullptr;
     --it;
     return address < it->first + it->second.size ? &*it : nullptr;
+  }
+
+  /// Read how the user shows instruction operands' numbers.
+  void loadNumberFormats() {
+    numberFormats.clear();
+    if (!operandFormatsQuery)
+      return;
+    const auto rows = takeJson(operandFormatsQuery(session));
+    if (!rows.is_array())
+      return;
+    for (const auto &row : rows) {
+      auto &formats = numberFormats[jsonAddress(row.value("addr", Json()))];
+      for (const auto &entry : row.value("operands", Json::array())) {
+        const auto index = jsonCount(entry.value("operand", Json()));
+        const auto base = parseNumberBase(entry.value("base", std::string()));
+        if (!base || index > 7)
+          continue;
+        if (formats.size() <= index)
+          formats.resize(index + 1);
+        formats[index] = {*base, entry.value("negate", false),
+                          entry.value("invert", false)};
+      }
+    }
   }
 
   /// Read the user's data items. Their strings join the scan's, and replace
@@ -2432,6 +2462,9 @@ struct Listing::Impl {
     facts.flow = flowName(instruction.flow);
     facts.target = instruction.target;
     facts.bytes = instruction.bytes;
+    if (const auto formats = numberFormats.find(instruction.address);
+        formats != numberFormats.end())
+      facts.numberFormats = &formats->second;
     FrameNamer frame;
     if (body && !body->frame.empty()) {
       frame = [this, body](std::int64_t offset) {
@@ -3262,6 +3295,28 @@ Listing::~Listing() = default;
 void Listing::invalidate() {
   impl_->built = false;
   ++impl_->generation;
+}
+
+void Listing::reloadNumberFormats() {
+  // A listing that is not built yet reads them as it builds.
+  if (impl_->built)
+    impl_->loadNumberFormats();
+}
+
+bool Listing::showsNumberFormats() {
+  impl_->build();
+  return neverd::worker::showsNumberFormats(impl_->dialect);
+}
+
+std::optional<std::vector<bool>>
+Listing::numberOperands(std::uint64_t address) {
+  auto &d = *impl_;
+  d.build();
+  const auto item = d.itemAt(address);
+  if (!item || item->kind != ItemKind::Instruction || item->start != address)
+    return std::nullopt;
+  const auto &instruction = d.decode(item->function).instructions[item->index];
+  return formattableOperands(instruction.operands, d.dialect);
 }
 
 void Listing::setStringOptions(std::string options) {

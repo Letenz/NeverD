@@ -2501,6 +2501,64 @@ TEST_F(SessionCAPITest, SidecarWritesRespectWorkerOwnership) {
   EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-renames.json"));
 }
 
+TEST_F(SessionCAPITest, OperandFormatsPersistByInstructionAndOperand) {
+  const auto Input = write("operands.elf", makeNativeELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Entry = neverd_session_entry_addr(Session);
+  const std::string EntryHex = "0x" + llvm::utohexstr(Entry);
+  ASSERT_EQ(
+      neverd_operand_format_set(Session, Entry, 1, R"({"base":"decimal"})"), 0)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_operand_format_set(Session, Entry, 0,
+                                      R"({"base":"hex","negate":true})"),
+            0);
+  const std::string Rows =
+      "[{\"addr\":\"" + EntryHex +
+      "\",\"operands\":[{\"base\":\"hex\",\"invert\":false,\"negate\":true,"
+      "\"operand\":0},{\"base\":\"decimal\",\"invert\":false,\"negate\":"
+      "false,\"operand\":1}]}]";
+  EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), Rows);
+  // A base the table does not name, an operand past the eighth and a flag
+  // that is no boolean are refused.
+  EXPECT_EQ(neverd_operand_format_set(Session, Entry, 1, R"({"base":"octal"})"),
+            -1);
+  EXPECT_EQ(neverd_operand_format_set(Session, Entry, 8, R"({"base":"hex"})"),
+            -1);
+  EXPECT_EQ(neverd_operand_format_set(Session, Entry, 1,
+                                      R"({"base":"hex","negate":1})"),
+            -1);
+  EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), Rows);
+  // Saved, the formats come back with the input.
+  ASSERT_EQ(neverd_operand_formats_save(Session), 0)
+      << takeString(neverd_last_error(Session));
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_operand_formats_json(Reopened)), Rows);
+    neverd_session_destroy(Reopened);
+  }
+  // The listing's own spelling, or none, forgets an operand's format.
+  ASSERT_EQ(
+      neverd_operand_format_set(Session, Entry, 0, R"({"base":"number"})"), 0);
+  ASSERT_EQ(neverd_operand_format_set(Session, Entry, 1, nullptr), 0);
+  EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), "[]");
+  // Formats belong to code; data takes none.
+  const auto Data = write("operands-data.elf",
+                          makeDataELF(std::string_view("\x01\x02\x03\x04", 4)));
+  neverd_session_t DataSession = neverd_session_create();
+  ASSERT_EQ(neverd_session_load(DataSession, Data.c_str()), 1);
+  EXPECT_EQ(neverd_operand_format_set(DataSession, DataELFData, 0,
+                                      R"({"base":"hex"})"),
+            -1);
+  EXPECT_NE(takeString(neverd_last_error(DataSession)).find("executable"),
+            std::string::npos);
+  EXPECT_EQ(neverd_operand_format_set(DataSession, DataELFEntry, 0,
+                                      R"({"base":"hex"})"),
+            0);
+  neverd_session_destroy(DataSession);
+}
+
 TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {
   // lea rax, [rip + d] to the data, then ret: the code takes the address of
   // data no symbol names.

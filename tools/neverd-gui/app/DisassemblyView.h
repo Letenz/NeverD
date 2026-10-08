@@ -42,6 +42,9 @@ public:
   std::optional<Address> currentFunction() const;
   QString currentFunctionName() const;
   std::optional<Address> operandTarget() const;
+  /// The instruction operand the cursor is on (ListingView::currentOperand);
+  /// none in the graph.
+  std::optional<int> currentOperand() const;
   QString currentToken() const;
   QString selectedText() const;
   void setSyncName(const QString &name) {

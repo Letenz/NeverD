@@ -915,7 +915,50 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"word\"")),
                              OpenTimeoutMs);
 
-    // A restarted worker reopens the file where its database left it.
+    // H shows the number of the operand under the cursor, or else the
+    // line's last number, in decimal at once; _ changes its sign and # goes
+    // back to the listing's number.  Each commits at once.
+    const Address instruction = Base + 0x51;
+    const auto operandFormat = [&] {
+      const auto rows =
+          QJsonDocument::fromJson(readAll(path + ".neverd-operands.json"))
+              .array();
+      for (const auto &row : rows)
+        for (const auto &entry : row.toObject().value("operands").toArray())
+          return entry.toObject();
+      return QJsonObject();
+    };
+    const auto shown = [&](const char *operands) {
+      return disassembly->listing()->currentLineText().contains(
+          QLatin1String(operands));
+    };
+    disassembly->navigate(instruction);
+    disassembly->focusContent();
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(instruction));
+    QTRY_VERIFY(shown("rsp, 20h"));
+    QTRY_VERIFY(bench.action(ActionId::EditOperandDecimal)->isEnabled());
+    bench.action(ActionId::EditOperandDecimal)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(operandFormat().value("base").toString(),
+                              QStringLiteral("decimal"), OpenTimeoutMs);
+    QCOMPARE(operandFormat().value("operand").toInt(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(shown("rsp, 32"), OpenTimeoutMs);
+    bench.action(ActionId::EditOperandNegate)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(operandFormat().value("negate").toBool(),
+                             OpenTimeoutMs);
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(!operandFormat().value("negate").toBool(),
+                             OpenTimeoutMs);
+    QCOMPARE(operandFormat().value("base").toString(),
+             QStringLiteral("decimal"));
+    bench.action(ActionId::EditOperandNumber)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(operandFormat().isEmpty(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(shown("rsp, 20h"), OpenTimeoutMs);
+
+    // A restarted worker reopens the file where its database left it.  The
+    // worker writes the sidecar before it answers, and an edit in flight asks
+    // to be saved first.
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.dirty(), OpenTimeoutMs);
     bench.session.restart();
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);

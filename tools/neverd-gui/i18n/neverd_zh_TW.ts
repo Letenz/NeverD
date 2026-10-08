@@ -136,8 +136,8 @@
         <translation>輸入可重複註解(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>標記位置(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>標記位置(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>
@@ -751,6 +751,70 @@
         <source>Show the current item&apos;s bytes as bytes</source>
         <translation>將目前項目顯示為原始位元組</translation>
     </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>數字(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>依清單的預設方式顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>十六進位(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>以十六進位顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>十進位(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>以十進位顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>二進位(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>以二進位顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>字元(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>以字元顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>位移(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>以其指向位址的名稱顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>變更正負號(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>以相反的正負號顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>位元反相(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>以位元反相的形式顯示運算元的數字</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1118,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>函式(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>運算元類型(&amp;T)</translation>
     </message>
 </context>
 <context>

@@ -136,7 +136,7 @@
         <translation>Ввести &amp;повторяемый комментарий...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Отметить по&amp;зицию...</translation>
     </message>
     <message>
@@ -745,11 +745,75 @@
     </message>
     <message>
         <source>Undef&amp;ine</source>
-        <translation>&amp;Отменить определение</translation>
+        <translation>Отменить опр&amp;еделение</translation>
     </message>
     <message>
         <source>Show the current item&apos;s bytes as bytes</source>
         <translation>Показать байты текущего элемента как байты</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>&amp;Число</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>Показать число операнда так, как выбирает листинг</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>&amp;Шестнадцатеричное</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>Показать число операнда в шестнадцатеричном виде</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>&amp;Десятичное</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>Показать число операнда в десятичном виде</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>Д&amp;воичное</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>Показать число операнда в двоичном виде</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>&amp;Символ</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>Показать число операнда как символы</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>С&amp;мещение</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>Показать число операнда как адрес, на который оно указывает</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>Сменить &amp;знак</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>Показать число операнда со сменённым знаком</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>Побитовое отрицани&amp;е</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>Показать число операнда с инвертированными битами</translation>
     </message>
 </context>
 <context>
@@ -1118,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>&amp;Функции</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>&amp;Тип операнда</translation>
     </message>
 </context>
 <context>
