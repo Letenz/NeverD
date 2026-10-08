@@ -194,11 +194,12 @@ TEST(Win64CallContract, TheRuntimesOwnPrototypeFixesWhatItsSlotReads) {
   // RDX by the C library's arity, _initterm by the Windows C runtime's own
   // prototype, and _lock reads RCX alone as that runtime declares it.
   // __getmainargs takes a fifth argument on the stack, so its slot has no
-  // fixed reads.
+  // fixed reads, and neither has _pipe(fds, size, mode): POSIX pipe(fds)
+  // is another function.
   const std::vector<const char *> Imports = {"calloc", "_initterm", "_lock",
-                                             "__getmainargs"};
+                                             "__getmainargs", "_pipe"};
   constexpr va_t Caller = Text;
-  std::vector<uint8_t> Code(0x40, 0xCC);
+  std::vector<uint8_t> Code(0x48, 0xCC);
   std::vector<std::vector<uint8_t>> Calls;
   for (size_t I = 0; I < Imports.size(); ++I)
     Calls.push_back(throughSlot(Caller + 4 + 6 * I, slot(I)));
@@ -218,6 +219,7 @@ TEST(Win64CallContract, TheRuntimesOwnPrototypeFixesWhatItsSlotReads) {
   EXPECT_EQ(Reads.at(slot(2))[family(x86reg::RCX)], 8u);
   EXPECT_EQ(Reads.at(slot(2))[family(x86reg::RDX)], 0u);
   EXPECT_FALSE(Reads.count(slot(3)));
+  EXPECT_FALSE(Reads.count(slot(4)));
 }
 
 } // namespace

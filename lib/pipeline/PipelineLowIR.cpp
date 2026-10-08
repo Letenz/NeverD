@@ -26,6 +26,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/loader/PointerRelocation.h"
+#include "neverd/loader/SymbolDecoration.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
@@ -2852,8 +2853,9 @@ bool forwardsToGuardDispatch(const BinaryImage &Img, const LowFunc &F) {
 /// passes its import's parameters.  Only a routine with a fixed prototype is
 /// listed: one of the image format's own runtime (LibCPrototype, such as the
 /// Windows C runtime's `_initterm`), else one the arity tables give
-/// (LibCNames.h).  Every integer and pointer argument must be in a register
-/// and none in a vector register; each is read pointer-wide.
+/// (LibCNames.h), by the exact name where the import entry is the C name.
+/// Every integer and pointer argument must be in a register and none in a
+/// vector register; each is read pointer-wide.
 std::map<va_t, GPRReadWidths>
 importPrototypeEntryReads(const BinaryImage &Img,
                           const std::vector<LowFunc> &Funcs,
@@ -2873,7 +2875,11 @@ importPrototypeEntryReads(const BinaryImage &Img,
         return std::nullopt;
       return Prototype->ParamCount;
     }
-    const auto Arity = libc::libcArityForSymbol(Name);
+    // A PE import entry is the C name: MSVC's `_pipe(fds, size, mode)` is
+    // not POSIX `pipe(fds)`, which stripping its underscore would reach.
+    const auto Arity = importNamesAreCNames(Img.Format)
+                           ? libc::libcArity(Name)
+                           : libc::libcArityForSymbol(Name);
     if (!Arity || Arity->FpArgs != 0 || Arity->IntArgs < 0)
       return std::nullopt;
     return Arity->IntArgs;
