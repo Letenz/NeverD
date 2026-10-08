@@ -7299,9 +7299,10 @@ TEST(HighControlFlowSemantics, PhiCopiesOfOneRegisterShareItsName) {
   // v1 = x; v2 = v1; L: v3 = v2 + 1; v2 = v3; if (v3 < x + 5) goto L;
   // return v3;  -- the PHI copies of one register never overlap the values
   // they copy, so all three versions become one local and the copies go.
-  // A version read after the other is redefined, a copy between two
-  // registers, one of an unknown value, of a register nothing assigns, or of
-  // a frame address stays.
+  // A temporary copied into the register joins it too.  A version read
+  // after the other is redefined, a copy between two registers, one of an
+  // unknown value, of a register nothing assigns, or of a frame address
+  // stays.
   auto Reg = [](int Tag, unsigned Offset = 0x10) {
     MedVar V;
     V.Kind = MedVar::Reg;
@@ -7368,6 +7369,37 @@ TEST(HighControlFlowSemantics, PhiCopiesOfOneRegisterShareItsName) {
     EXPECT_EQ(countKind(F, StmtKind::Nop), 2u);
     for (uint64_t X = 0; X < 4; ++X)
       EXPECT_EQ(execute(F, X), std::optional<uint64_t>(X + 5)) << X;
+  }
+  {
+    // if (x < 3) { t7 = x + 2; v1 = t7; } else v1 = x; return v1;  -- copy
+    // propagation left a temporary in the register's PHI copy; it joins the
+    // register's local and takes its name.
+    MedVar T;
+    T.Kind = MedVar::Temp;
+    T.Id = 7;
+    T.Size = 8;
+    T.TheArch = Arch::X64;
+    auto Temp = [&] { return HighExpr::makeVar(T, NdType::makeInt(8)); };
+    HighStmt Branch;
+    Branch.Kind = StmtKind::IfElse;
+    Branch.Addr = 0x1000;
+    Branch.Cond =
+        HighExpr::makeBinop(NdOp::INT_LESS, Input(), HighExpr::makeConst(3, 8));
+    Branch.Body = {Set(0x1004, Temp(), Plus(Input(), 2)),
+                   Set(0x1008, Reg(1), Temp(), true)};
+    Branch.ElseBody = {Set(0x100c, Reg(1), Input(), true)};
+    HighFunc F;
+    F.Body = {Branch, result(0x1010, Reg(1))};
+    EXPECT_TRUE(coalesceHighPhiCopies(F));
+    EXPECT_EQ(countKind(F, StmtKind::Nop), 1u);
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (E && E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Temp)
+          EXPECT_EQ(E->Var.RenameTag, 1);
+      });
+    });
+    for (uint64_t X = 0; X < 6; ++X)
+      EXPECT_EQ(execute(F, X), std::optional<uint64_t>(X < 3 ? X + 2 : X)) << X;
   }
   enum class Kept { ReadAfter, OtherRegister, Unknown, Unassigned, Frame };
   for (Kept Kind : {Kept::ReadAfter, Kept::OtherRegister, Kept::Unknown,

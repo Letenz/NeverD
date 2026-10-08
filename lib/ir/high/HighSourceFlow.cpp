@@ -1170,8 +1170,11 @@ class SourceFlow {
     }
   }
 
-  // A copy `D = S` between two values of one register, both plain locals of
-  // the same type: the copy that lowering made for a PHI.
+  // A copy `D = S` that lowering made for a PHI, both plain locals of the
+  // same type: D a register's renamed value and S another value of that
+  // register, or a temporary that copy propagation put in its place.  The
+  // destination's class names the merged local, so a temporary, which has
+  // no rename tag, only ever joins one.
   struct RegisterCopy {
     size_t Destination, Source;
   };
@@ -1183,8 +1186,10 @@ class SourceFlow {
         !scalarLocal(S->Val))
       return std::nullopt;
     const MedVar &D = S->Dst->Var, &V = S->Val->Var;
-    if (D.Kind != MedVar::Reg || V.Kind != MedVar::Reg || D.RenameTag < 0 ||
-        V.RenameTag < 0 || D.RegOff != V.RegOff || D.Size != V.Size ||
+    const bool SameRegister =
+        V.Kind == MedVar::Reg && V.RenameTag >= 0 && D.RegOff == V.RegOff;
+    if (D.Kind != MedVar::Reg || D.RenameTag < 0 ||
+        (!SameRegister && V.Kind != MedVar::Temp) || D.Size != V.Size ||
         S->Dst->Type->Kind != S->Val->Type->Kind ||
         S->Dst->Type->Size != S->Val->Type->Size ||
         S->Dst->Type->IsSigned != S->Val->Type->IsSigned || entryValue(V))
