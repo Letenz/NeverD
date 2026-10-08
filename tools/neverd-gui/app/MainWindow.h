@@ -13,6 +13,7 @@
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <optional>
 
+class QDialog;
 class QLabel;
 class McpConnectionManager;
 class GuiSessionBroker;
@@ -170,6 +171,7 @@ private:
   QHash<QString, Dock *> docks_;
   QHash<int, ChooserView *> choosers_;
   QPointer<CodeView> pseudocode_;
+  QPointer<QDialog> quickStart_;
   QLabel *analysisLabel_ = nullptr, *directionLabel_ = nullptr,
          *diskLabel_ = nullptr, *fileLabel_ = nullptr;
   QMenu *recentMenu_ = nullptr;
