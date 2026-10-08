@@ -326,4 +326,31 @@ int main(void) {
 )");
 }
 
+TEST(HighCIntegerConversion, ACarryPrintsEachOperandOnce) {
+  // return carry(x * 3, x + 5): the carry out of the 64-bit sum.  Each
+  // operand prints once, so a chain of carries does not double per link.
+  const TypeRef U64 = integer(8, false), U8 = integer(1, false);
+  HighFunc F = function(
+      "carry", U64,
+      {result(extend(NdOp::INT_ZEXT,
+                     op(NdOp::INT_CARRY,
+                        op(NdOp::INT_MULT, input(), constant(3), U64),
+                        op(NdOp::INT_ADD, input(), constant(5), U64), U8),
+                     U64))});
+  const std::string Source = emit(F);
+  EXPECT_NE(Source.find("__builtin_add_overflow("), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("arg0 * 3"), Source.rfind("arg0 * 3")) << Source;
+  compileAndRun(Source + Inputs + R"(
+int main(void) {
+  for (unsigned i = 0; i < sizeof xs / sizeof xs[0]; ++i) {
+    const uint64_t a = xs[i] * 3, b = xs[i] + 5;
+    if (carry(xs[i]) != (uint64_t)(a + b < a))
+      return 1;
+  }
+  return 0;
+}
+)");
+}
+
 } // namespace

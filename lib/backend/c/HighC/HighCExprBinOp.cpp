@@ -798,16 +798,13 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
            ")))";
   }
   case NdOp::INT_CARRY: {
+    // The carry out of the unsigned sum at the operand width.  Each operand
+    // prints once: a chain of carries would otherwise double at every link.
     const uint16_t Size = E.Operands[0]->Type ? E.Operands[0]->Type->Size : 8;
     const auto OperandType = typeToC(NdType::makeInt(Size, false));
-    const auto CarrierType =
-        typeToC(NdType::makeInt(Size < 4 ? 4 : Size, false));
-    const auto Left = "(" + OperandType + ")(" + exprStr(*E.Operands[0]) + ")";
-    const auto Right = "(" + OperandType + ")(" + exprStr(*E.Operands[1]) + ")";
-    // Carry uses unsigned bit patterns and the operand width, not the boolean
-    // result width. Restore that width after C promotes narrow operands.
-    return "((" + OperandType + ")((" + CarrierType + ")(" + Left + ") + (" +
-           CarrierType + ")(" + Right + ")) < (" + Left + "))";
+    return "__builtin_add_overflow((" + OperandType + ")(" +
+           exprStr(*E.Operands[0]) + "), (" + OperandType + ")(" +
+           exprStr(*E.Operands[1]) + "), &(" + OperandType + "){0})";
   }
   case NdOp::INT_SOVF:
   case NdOp::INT_SBOR: {
