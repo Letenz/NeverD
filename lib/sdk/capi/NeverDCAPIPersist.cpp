@@ -571,8 +571,10 @@ std::filesystem::path itemsPath(const Session *S) {
 /// The operands of one instruction a format may name.
 constexpr int MaxFormattedOperands = 8;
 
-std::string operandsPath(const Session *S) {
-  return S->FilePath.string() + ".neverd-operands.json";
+std::filesystem::path operandsPath(const Session *S) {
+  auto Path = S->FilePath;
+  Path += ".neverd-operands.json";
+  return Path;
 }
 
 bool isOperandBase(llvm::StringRef Base) {
