@@ -118,6 +118,8 @@ public:
   bool isImageDataAddress(va_t Addr) const;
   void noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                        bool MemoryAccess = false);
+  /// Notes an object the code reaches only by its address so far.
+  void noteImageAddress(va_t Addr);
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
@@ -764,6 +766,9 @@ public:
     std::set<uint16_t> MemoryWidths;
     /// The code stores to it.
     bool Written = false;
+    /// The type stands in for one the code never read or wrote it with: any
+    /// access's type replaces it.
+    bool WeakType = false;
     /// The code calls or jumps through the pointer it holds.
     bool CallSlot = false;
     /// A string referenced by its address alone: declared as its array, with

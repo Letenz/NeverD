@@ -25546,7 +25546,7 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   Setup.Id = 1;
   Setup.StartAddr = 0x140001010;
   Setup.Preds = {0};
-  Setup.Succs = {2, 3};
+  Setup.Succs = {3, 2};
   MedOp Lea;
   Lea.Opcode = NdOp::INT_ADD;
   Lea.Output = R81;
@@ -25554,12 +25554,12 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   Lea.addInput(MedVar::makeConst(0x40, 8));
   Lea.Addr = 0x140001010;
   Setup.Ops.push_back(std::move(Lea));
+  // Both arms run, depending on the first argument, and join at the call.
   MedOp Jcc;
   Jcc.Opcode = NdOp::COND_BR;
   Jcc.Addr = 0x140001018;
-  Jcc.addInput(MedVar::makeConst(1, 4));
   Jcc.addInput(MedVar::makeConst(0x140001030, 8));
-  Jcc.addInput(MedVar::makeConst(0x140001020, 8));
+  Jcc.addInput(Med.Params.front());
   Setup.Ops.push_back(std::move(Jcc));
   Med.Blocks.push_back(std::move(Setup));
 
