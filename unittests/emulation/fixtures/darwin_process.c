@@ -3898,7 +3898,372 @@ static int symbolic_link_mutations(const char *input) {
              : 225;
 }
 
+/* Runtime-created links share the current namespace and retain target objects.
+ */
+static int symbolic_link_creation(const char *input) {
+  unsigned error, length = 0;
+  char root[1024];
+  while (length < sizeof(root) - 1 && input[length]) {
+    root[length] = input[length];
+    ++length;
+  }
+  if (input[length] || length < 10 || !equal(input + length - 10, "/work/data"))
+    return 201;
+  if (length == 10) {
+    root[0] = '/';
+    root[1] = 0;
+  } else
+    root[length - 10] = 0;
+  u64 dir = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 202;
+  u64 work = call(463, dir, (u64) "work", 0x100000, 0, 0, 0, &error);
+  if (error || secondary || call(13, work, 0, 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 203;
+  u64 old = call(463, work, (u64) "data", 2, 0, 0, 0, &error);
+  if (error || secondary)
+    return 204;
+  unsigned char original[144], current_stat[144], bytes[32];
+  if (call(339, old, (u64)original, 0, 0, 0, 0, &error) || error || secondary)
+    return 205;
+  u64 mapped = call(197, 0, 10, 1, 2, old, 0, &error);
+  if (error || secondary ||
+      !login_equal_bytes((const unsigned char *)mapped,
+                         (const unsigned char *)"0123456789", 10))
+    return 206;
+  const unsigned char target[] = {'d', 'a', 't', 'a', 0, 0xff, 0xff};
+  if (call(57, (u64)target, (u64) "link", 0, 0, 0, 0, &error) || error ||
+      secondary ||
+      call(474, (u64) "data", work | 0x1234567800000000ULL, (u64) "alias", 0, 0,
+           0, &error) ||
+      error || secondary)
+    return 207;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(473, work, (u64) "alias", (u64)(bytes + 8), 24, 0, 0, &error) != 4 ||
+      error || secondary ||
+      !login_equal_bytes(bytes + 8, (const unsigned char *)"data", 4) ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 12, 20))
+    return 208;
+  u64 held = call(463, work, (u64) "link", 0, 0, 0, 0, &error);
+  if (error || secondary || held != old + 1)
+    return 209;
+  if (call(474, 1, 999, 1, 0, 0, 0, &error) != 14 || !error ||
+      call(474, (u64) "data", 999, (u64) "new", 0, 0, 0, &error) != 9 ||
+      !error ||
+      call(57, (u64) "data", (u64) "link", 0, 0, 0, 0, &error) != 17 || !error)
+    return 210;
+  if (call(57, (u64) "", (u64) "empty", 0, 0, 0, 0, &error) || error ||
+      secondary ||
+      call(474, (u64) "", work, (u64) "empty-at", 0, 0, 0, &error) || error ||
+      secondary || call(58, (u64) "empty", (u64)-1, 16, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(473, work, (u64) "empty-at", 1, 16, 0, 0, &error) || error ||
+      secondary || call(58, (u64) "empty", (u64)-1, 0, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(463, work, (u64) "empty", 0, 0, 0, 0, &error) != 2 || !error)
+    return 211;
+  const unsigned char raw[] = {'p', 0xff, 0};
+  if (call(474, (u64)raw, work, (u64) "raw", 0, 0, 0, &error) || error ||
+      secondary)
+    return 212;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(58, (u64) "raw", (u64)(bytes + 8), 1, 0, 0, 0, &error) != 1 ||
+      error || secondary || bytes[8] != 'p' || !login_canary_bytes(bytes, 8) ||
+      !login_canary_bytes(bytes + 9, 23))
+    return 213;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(473, work, (u64) "raw", (u64)(bytes + 8), 24, 0, 0, &error) != 2 ||
+      error || secondary || bytes[8] != 'p' || bytes[9] != 0xff ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22))
+    return 214;
+  if (call(57, (u64) "missing", (u64) "dangling", 0, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(474, (u64) "data", work, (u64) "dangling////", 0, 0, 0, &error) ||
+      error || secondary)
+    return 215;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(473, work, (u64) "dangling", (u64)(bytes + 8), 24, 0, 0, &error) !=
+          7 ||
+      error || secondary ||
+      !login_equal_bytes(bytes + 8, (const unsigned char *)"missing", 7) ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 15, 17))
+    return 216;
+  if (call(472, work, (u64) "data", 0, 0, 0, 0, &error) || error || secondary ||
+      call(463, work, (u64) "link", 0, 0, 0, 0, &error) != 2 || !error)
+    return 217;
+  if (call(463, work, (u64) "link", 0xa02, 0600, 0, 0, &error) != 17 || !error)
+    return 228;
+  u64 replacement = call(463, work, (u64) "link", 0x202, 0600, 0, 0, &error);
+  if (error || secondary ||
+      call(4, replacement, (u64) "XY", 2, 0, 0, 0, &error) != 2 || error ||
+      secondary)
+    return 218;
+  u64 current = call(463, work, (u64) "dangling", 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(339, current, (u64)current_stat, 0, 0, 0, 0, &error) || error ||
+      secondary ||
+      little_integer(current_stat + 8, 8) == little_integer(original + 8, 8) ||
+      little_integer(current_stat + 96, 8) != 2)
+    return 219;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, current, (u64)(bytes + 8), 2, 0, 0, 0, &error) != 2 || error ||
+      secondary || bytes[8] != 'X' || bytes[9] != 'Y' ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22))
+    return 220;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, held, (u64)(bytes + 8), 10, 0, 0, 0, &error) != 10 || error ||
+      secondary ||
+      !login_equal_bytes(bytes + 8, (const unsigned char *)"0123456789", 10) ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 18, 14))
+    return 221;
+  if (call(475, work, (u64) "box", 0700, 0, 0, 0, &error) || error || secondary)
+    return 222;
+  u64 box = call(463, work, (u64) "box", 0x100000, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(465, work, (u64) "box", work, (u64) "shift", 0, 0, &error) ||
+      error || secondary ||
+      call(474, (u64) "../data", box, (u64) "relative", 0, 0, 0, &error) ||
+      error || secondary || call(13, box, 0, 0, 0, 0, 0, &error) || error ||
+      secondary || call(57, (u64) "../data", (u64) "cwd", 0, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(472, work, (u64) "shift", 0x80, 0, 0, 0, &error) != 66 || !error)
+    return 223;
+  u64 moved = call(463, box, (u64) "cwd", 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(339, moved, (u64)current_stat, 0, 0, 0, 0, &error) || error ||
+      secondary || little_integer(current_stat + 96, 8) != 2 ||
+      call(13, dir, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 224;
+  const u64 descriptors[] = {old,   held, replacement, current,
+                             moved, box,  work,        dir};
+  for (unsigned i = 0; i != 8; ++i)
+    if (call(6, descriptors[i], 0, 0, 0, 0, 0, &error) || error || secondary)
+      return 225;
+  if (!login_equal_bytes((const unsigned char *)mapped,
+                         (const unsigned char *)"0123456789", 10) ||
+      call(73, mapped, PAGE, 0, 0, 0, 0, &error) || error || secondary)
+    return 226;
+  const char marker = 'b';
+  return call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error &&
+                 !secondary
+             ? 37
+             : 227;
+}
+
+/* Runtime link removal changes the selected namespace entry, not its target.
+ * All NOFOLLOW_ANY paths start at a held directory, avoiding host /tmp links.
+ */
+static int symbolic_link_unlink(const char *input) {
+  unsigned error, length = 0;
+  char root[1024];
+  while (length < sizeof(root) - 1 && input[length]) {
+    root[length] = input[length];
+    ++length;
+  }
+  if (input[length] || length < 10 || !equal(input + length - 10, "/work/data"))
+    return 51;
+  if (length == 10) {
+    root[0] = '/';
+    root[1] = 0;
+  } else
+    root[length - 10] = 0;
+  int check = 51;
+#define UNLINK_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 dir = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && dir >= 3);
+  u64 work = call(463, dir, (u64) "work", 0x100000, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && work >= 3);
+  UNLINK_EXPECT(call(13, work, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  u64 target = call(463, work, (u64) "data", 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && target >= 3);
+  unsigned char original[144], current[144], bytes[32];
+  UNLINK_EXPECT(call(339, target, (u64)original, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(199, target, 2, 0, 0, 0, 0, &error) == 2 && !error);
+  u64 mapped = call(197, 0, 10, 1, 2, target, 0, &error);
+  UNLINK_EXPECT(!error && !secondary &&
+                login_equal_bytes((const unsigned char *)mapped,
+                                  (const unsigned char *)"0123456789", 10));
+  UNLINK_EXPECT(call(57, (u64) "data", (u64) "link", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(474, (u64) "data", work, (u64) "alias", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  u64 held = call(463, work, (u64) "link", 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && held >= 3 && held != target);
+  UNLINK_EXPECT(call(3, held, (u64)bytes, 1, 0, 0, 0, &error) == 1 && !error &&
+                bytes[0] == '0');
+  UNLINK_EXPECT(call(10, (u64) "link", 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  UNLINK_EXPECT(call(10, (u64) "link", 0, 0, 0, 0, 0, &error) == 2 && error);
+  UNLINK_EXPECT(call(472, work, (u64) "alias", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(472, work, (u64) "alias", 0, 0, 0, 0, &error) == 2 &&
+                error);
+
+  UNLINK_EXPECT(call(475, work, (u64) "box", 0700, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  u64 box = call(463, work, (u64) "box", 0x100000, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && box >= 3);
+  // Reuse the removed name for five distinct raw targets. A final symlink is
+  // deleted without following it, even when its target cannot be resolved.
+  const char targets[][8] = {"data", "box", "missing", "link", ""};
+  for (unsigned i = 0; i != 5; ++i) {
+    UNLINK_EXPECT(
+        call(474, (u64)targets[i], work, (u64) "link", 0, 0, 0, &error) == 0 &&
+        !error && !secondary);
+    UNLINK_EXPECT(call(472, work, (u64) "link", 0x800, 0, 0, 0, &error) == 0 &&
+                  !error && !secondary);
+    UNLINK_EXPECT(call(472, work, (u64) "link", 0x800, 0, 0, 0, &error) == 2 &&
+                  error);
+  }
+  // NOFOLLOW_ANY refuses an intermediate link and leaves the child intact.
+  UNLINK_EXPECT(call(474, (u64) "box", work, (u64) "into", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(
+      call(474, (u64) "../data", box, (u64) "child", 0, 0, 0, &error) == 0 &&
+      !error && !secondary);
+  UNLINK_EXPECT(call(472, work, (u64) "into/child", 0x800, 0, 0, 0, &error) ==
+                    62 &&
+                error);
+  login_fill_canary(bytes, sizeof(bytes));
+  UNLINK_EXPECT(
+      call(473, box, (u64) "child", (u64)(bytes + 8), 24, 0, 0, &error) == 7 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"../data", 7) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 15, 17));
+  UNLINK_EXPECT(call(472, box, (u64) "child", 0x800, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(472, work, (u64) "into", 0x800, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+
+  // The observed slash restart in a -> b -> box removes b, retaining a and
+  // the target directory. A held FD and CWD keep referring to that same box.
+  // New-directory complete stat observations remain unknown in the model.
+  // F_GETPATH plus CWD-relative access checks the retained path and parent.
+  unsigned char box_before[1040], box_after[1040];
+  login_fill_canary(box_before, sizeof(box_before));
+  UNLINK_EXPECT(call(92, box, 50, (u64)(box_before + 8), 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary && login_canary_bytes(box_before, 8) &&
+                login_canary_bytes(box_before + 1032, 8));
+  unsigned box_before_length = 0;
+  while (box_before_length < 1024 && box_before[8 + box_before_length])
+    ++box_before_length;
+  UNLINK_EXPECT(box_before_length > 0 && box_before_length < 1024);
+  UNLINK_EXPECT(call(474, (u64) "b", work, (u64) "a", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(474, (u64) "box", work, (u64) "b", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(13, box, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  UNLINK_EXPECT(call(472, work, (u64) "a////", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  login_fill_canary(bytes, sizeof(bytes));
+  UNLINK_EXPECT(
+      call(473, work, (u64) "a", (u64)(bytes + 8), 24, 0, 0, &error) == 1 &&
+      !error && !secondary && bytes[8] == 'b' && login_canary_bytes(bytes, 8) &&
+      login_canary_bytes(bytes + 9, 23));
+  UNLINK_EXPECT(
+      call(473, work, (u64) "b", (u64)(bytes + 8), 24, 0, 0, &error) == 2 &&
+      error && login_canary_bytes(bytes, 8) && bytes[8] == 'b' &&
+      login_canary_bytes(bytes + 9, 23));
+  UNLINK_EXPECT(call(466, work, (u64) "box", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  u64 cwd = call(5, (u64) ".", 0x100000, 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && cwd >= 3);
+  login_fill_canary(box_after, sizeof(box_after));
+  UNLINK_EXPECT(call(92, cwd, 50, (u64)(box_after + 8), 0, 0, 0, &error) == 0 &&
+                !error && !secondary && login_canary_bytes(box_after, 8) &&
+                login_canary_bytes(box_after + 1032, 8));
+  unsigned box_after_length = 0;
+  while (box_after_length < 1024 && box_after[8 + box_after_length])
+    ++box_after_length;
+  UNLINK_EXPECT(box_after_length > 0 && box_after_length < 1024);
+  UNLINK_EXPECT(
+      box_before_length == box_after_length &&
+      login_equal_bytes(box_before + 8, box_after + 8, box_before_length + 1));
+  u64 from_cwd = call(5, (u64) "../data", 0, 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && from_cwd >= 3);
+  UNLINK_EXPECT(call(339, from_cwd, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) ==
+                    little_integer(original + 8, 8));
+  login_fill_canary(bytes, sizeof(bytes));
+  UNLINK_EXPECT(
+      call(153, from_cwd, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"0123456789", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  UNLINK_EXPECT(call(6, from_cwd, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  UNLINK_EXPECT(call(472, work, (u64) "a", 0x800, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(13, work, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+
+  // Neither successful removal nor failed repetition advances file cursors,
+  // alters the target's identity/content, or releases its private mapping.
+  UNLINK_EXPECT(call(199, target, 0, 1, 0, 0, 0, &error) == 2 && !error);
+  UNLINK_EXPECT(call(199, held, 0, 1, 0, 0, 0, &error) == 1 && !error);
+  UNLINK_EXPECT(call(3, held, (u64)bytes, 1, 0, 0, 0, &error) == 1 && !error &&
+                bytes[0] == '1');
+  UNLINK_EXPECT(
+      call(339, held, (u64)current, 0, 0, 0, 0, &error) == 0 && !error &&
+      !secondary &&
+      little_integer(current + 8, 8) == little_integer(original + 8, 8) &&
+      little_integer(current + 6, 2) == little_integer(original + 6, 2) &&
+      little_integer(current + 96, 8) == 10);
+  u64 named = call(463, work, (u64) "data", 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && named >= 3);
+  UNLINK_EXPECT(call(339, named, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) ==
+                    little_integer(original + 8, 8));
+  login_fill_canary(bytes, sizeof(bytes));
+  UNLINK_EXPECT(
+      call(153, target, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"0123456789", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  UNLINK_EXPECT(login_equal_bytes((const unsigned char *)mapped,
+                                  (const unsigned char *)"0123456789", 10));
+  const u64 descriptors[] = {named, held, target, cwd, box, work, dir};
+  for (unsigned i = 0; i != 7; ++i)
+    UNLINK_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 &&
+                  !error && !secondary);
+  UNLINK_EXPECT(login_equal_bytes((const unsigned char *)mapped,
+                                  (const unsigned char *)"0123456789", 10) &&
+                call(73, mapped, PAGE, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  const char marker = 'U';
+  UNLINK_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error &&
+                !secondary);
+#undef UNLINK_EXPECT
+  return 37;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
+  if (argc >= 2 && equal(argv[1], "symbolic-link-unlink")) {
+    int status = argc < 3 ? 51 : symbolic_link_unlink(argv[2]);
+    if (status == 37 && argc >= 4 && equal(argv[3], "protected")) {
+      // This explicit model refusal is excluded from the native inventory.
+      unsigned error;
+      call(10, (u64) "/static/data-link", 0, 0, 0, 0, 0, &error);
+      return 50;
+    }
+    return status;
+  }
+  if (argc >= 2 && equal(argv[1], "symbolic-link-creation"))
+    return argc < 3 ? 201 : symbolic_link_creation(argv[2]);
   if (argc >= 2 && equal(argv[1], "symbolic-link-mutations"))
     return argc < 3 ? 201 : symbolic_link_mutations(argv[2]);
   if (argc >= 2 && equal(argv[1], "symbolic-links"))

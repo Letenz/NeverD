@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: fab8f746a3afad0cc7aeaee21f82d848bf0bad20c33a1f8140b1f3c821e75281 -->
+<!-- i18n-source: beada521ead13ba6e6bdc5afba4445233c9085f4104db03507b5cfca85048443 -->
 
 [← Índice de documentación](README.md)
 
@@ -738,7 +738,7 @@ stat64/open/access/truncate/chdir siguen el enlace final; lstat64/readlink lo re
 
 readlink(58) usa count firmado bajo32; readlinkat(473) size_t completo; ambos retornanint. SobreINT32_MAX:EINVAL22 antes de ruta/FD. Copia min(count,longitud), sinNUL, validando sólo ese prefijo. Longitud0 valida ruta/tipo y luego ignora salida. No enlace:EINVAL22; ningún byte escribible:EFAULT14; prefijo parcial: parada antes de copiar. Errores de transporte/presupuesto se propagan.
 
-Los nombres y bytes de destino de los enlaces permanecen fijos. MutableDirectories no puede ser la raíz ni un ancestro por segmentos de un enlace fijo; /work no contiene /workspace/link. Dominios mutables separados pueden contener destinos creados, movidos, eliminados o sustituidos durante la ejecución. Se mantienen las comprobaciones de padres, montajes, alias, flags, soporte SWAP y creación; los nuevos inodos deben superar todos los de metadatos/instantáneas, incluidos los enlaces protegidos. WritableFiles/MutationPolicies fijos pueden modificar el archivo resuelto. Unlink/rename del enlace retenido paran antes de efectos. Enlaces dinámicos/duros,ACL y espacio mutable siguen pendientes. Sonda ARM64 macOS:189 observaciones/115 buffers completos en los5s originales; no prueba iOS físico/Intel HVF/OS completo.
+Los nombres y bytes de destino de los enlaces permanecen fijos. MutableDirectories no puede ser la raíz ni un ancestro por segmentos de un enlace fijo; /work no contiene /workspace/link. Dominios mutables separados pueden contener destinos creados, movidos, eliminados o sustituidos durante la ejecución. Se mantienen las comprobaciones de padres, montajes, alias, flags, soporte SWAP y creación; los nuevos inodos deben superar todos los de metadatos/instantáneas, incluidos los enlaces protegidos. WritableFiles/MutationPolicies fijos pueden modificar el archivo resuelto. Unlink/rename del enlace retenido paran antes de efectos. La creación durante la ejecución se describe abajo; enlaces duros,ACL y catálogos iniciales mutables siguen pendientes. Sonda ARM64 macOS:189 observaciones/115 buffers completos en los5s originales; no prueba iOS físico/Intel HVF/OS completo.
 
 Los60 controles adicionales ARM64 macOS DELETE/RENAME conservan buffers stat completos, espacio de nombres antes/después e identidades FD/CWD dentro del límite original de5s. Las barras finales pueden expandir un enlace fijo y modificar su destino; NOFOLLOW_ANY rechaza la expansión necesaria con ELOOP. symbolic-link-mutations sin SDK comprueba creación, destinos ausentes, traslado/borrado/sustitución, padres CWD retenidos y los10 bytes originales del archivo antes de cerrar FD, además de los10 bytes del mapeo después. No acredita iOS físico ni Intel nativo.
 
@@ -747,3 +747,23 @@ Los60 controles adicionales ARM64 macOS DELETE/RENAME conservan buffers stat com
 ```
 
 [XNU namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_lookup.c), [XNU readlink / AT](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU open authorization](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_subr.c).
+
+## Creación de enlaces simbólicos durante la ejecución
+
+`symlink(57)` y `symlinkat(474)` crean enlaces locales al proceso en directorios mutables autorizados y devuelven int. Dirfd usa los32 bits bajos; un destino absoluto ignora el FD. La cadena objetivo se importa antes del destino hasta el primer NUL:0..1023 bytes opacos, vacíos, no UTF8, puntos y separadores repetidos.1024 bytes sin NUL dan ENAMETOOLONG63; un fallo anterior da EFAULT14. Los objetivos JSON iniciales siguen exigiendo1..1023 bytes.
+
+La tabla actual posee nombre real, padre y bytes. Un terminal existente devuelve EEXIST17. Las barras finales consumidas pueden seguir un enlace colgante y crear en su objetivo, sin cambiar el enlace anterior. Expandir un objetivo vacío da ENOENT2. Readlink vacío devuelve0 sin acceder al puntero de salida incluso con capacidad positiva, tras verificar count/ruta/tipo.
+
+Nombre/NUL y objetivo se cobran una vez en las256 entradas/16 MiB compartidos. Un rechazo no cambia nodo, padre, FD ni inodo de creación de archivo. Los metadatos completos nuevos son desconocidos; no heredan CreationPolicy de archivo ni observaciones de nombres reutilizados. Stat/instantánea del padre pasan a desconocidos tras crear. FD/CWD/mapas conservan objetos antiguos tras borrar/sustituir el objetivo. Rmdir y sustitución de directorios detectan hijos enlace. Mover/SWAP con enlaces en cualquiera de los lados que se mueve se detiene antes de efectos. Rename del enlace, enlaces duros, ACL y catálogos iniciales mutables quedan pendientes; un alias no transfiere autoridad al padre real.
+
+Los150 registros ARM64 macOS conservan cuatro fallos de observador; diez controles separados verifican el objeto nuevo real y límites vacíos. El programa sin SDK `symbolic-link-creation` verifica ambas entradas, bytes/buffers, padres, sustitución y los diez bytes completos de FD/mapas anteriores. No demuestra iOS físico, Intel nativo o compatibilidad completa.
+
+[XNU symlink / symlinkat](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU empty-link expansion](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_lookup.c).
+
+## Eliminar enlaces simbólicos creados en ejecución
+
+`unlink(10)` y `unlinkat(472)` eliminan enlaces creados en ejecución cuando el padre real autoriza cambios; los enlaces iniciales fijos siguen protegidos. `AT_SYMLINK_NOFOLLOW_ANY` por sí solo conserva el enlace final y permite eliminarlo, incluso con destino ausente, cíclico o vacío. Una expansión intermedia o por barra final devuelve ELOOP62. Sin esa opción, eliminar `a/` en `a → b → target` borra solo `b`, conservando `a` y el destino final. Se mantiene el orden de errores de opciones, ruta y dirfd.
+
+El éxito devuelve una entrada dinámica y el coste actual de ruta/NUL/destino una sola vez, e invalida únicamente las observaciones completas stat/enumeración del padre real. No necesita FD libre ni inodo de creación. Datos, política de modificación, descripciones abiertas, cursores compartidos, CWD y mapas conservan sus objetos. Reutilizar el nombre no restaura el enlace; el rechazo no cambia estado ni presupuesto. Los metadatos completos de enlaces creados en ejecución siguen siendo desconocidos. Rename del enlace y mover/SWAP subárboles que aún contienen enlaces siguen sin admitirse.
+
+Las 40 observaciones ARM64 macOS independientes registran 28 eliminaciones, 12 errores, 17 ENOENT al repetir y conservación de FD/CWD/mapas privados con el mismo límite de cinco segundos. No certifican huéspedes, iOS físico ni Intel nativo. `symbolic-link-unlink` y los casos API públicos comprueban los límites por separado.
