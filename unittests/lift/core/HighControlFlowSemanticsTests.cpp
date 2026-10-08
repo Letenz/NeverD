@@ -2747,31 +2747,47 @@ size_t countTests(const HighFunc &F) {
 }
 } // namespace
 
-TEST(HighControlFlowSemantics, AlwaysTakenBranchKeepsOnlyItsTarget) {
+TEST(HighControlFlowSemantics, ConstantBranchKeepsOnlyTheArmThatRuns) {
   // deregister_tm_clones compares two addresses of one object, so its branch
   // always goes one way, and `if (1) { ... } else { ... }` printed both
-  // arms. Only the arm that runs remains, without a test.
-  MedFunc M = blockFunction("always_taken", 4);
+  // arms. Whichever way a constant branch goes and however its arms are
+  // laid out, only the arm that runs remains, without a test.
   auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
-  M.Blocks[0].Succs = {1, 2};
-  M.Blocks[0].Ops = {operation(NdOp::COND_BR, 0x1004, {},
-                               {C(0x1100), MedVar::makeConst(1, 1)})};
-  M.Blocks[1].Preds = {0};
-  M.Blocks[1].Succs = {3};
-  M.Blocks[1].Ops = {operation(NdOp::COPY, 0x1100, resultValue(1), {C(5)}),
-                     operation(NdOp::BRANCH, 0x1104, {}, {C(0x1300)})};
-  M.Blocks[2].Preds = {0};
-  M.Blocks[2].Succs = {3};
-  M.Blocks[2].Ops = {operation(NdOp::COPY, 0x1200, resultValue(2), {C(7)})};
-  M.Blocks[3].Preds = {1, 2};
-  M.Blocks[3].Phis = {
-      {resultValue(3), {{1, resultValue(1)}, {2, resultValue(2)}}}};
-  M.Blocks[3].Ops = {operation(NdOp::RETURN, 0x1300, {}, {resultValue(3)})};
-  const auto F = MedToHighConverter().convert(M, Arch::X64);
-  EXPECT_EQ(countTests(F), 0u);
-  for (uint64_t Input : {0u, 1u}) {
-    SCOPED_TRACE(Input);
-    EXPECT_NO_THROW(EXPECT_EQ(execute(F, Input, true), 5u));
+  for (uint64_t Condition : {0u, 1u}) {
+    for (va_t Target : {va_t{0x1100}, va_t{0x1200}}) {
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << Condition << " " << Target << " " << Reverse);
+        MedFunc M = blockFunction("constant_branch", 4);
+        M.Blocks[0].Succs = {Target == 0x1100 ? 1 : 2,
+                             Target == 0x1100 ? 2 : 1};
+        if (Reverse)
+          std::swap(M.Blocks[0].Succs[0], M.Blocks[0].Succs[1]);
+        M.Blocks[0].Ops = {
+            operation(NdOp::COND_BR, 0x1004, {},
+                      {C(Target), MedVar::makeConst(Condition, 1)})};
+        M.Blocks[1].Preds = {0};
+        M.Blocks[1].Succs = {3};
+        M.Blocks[1].Ops = {
+            operation(NdOp::COPY, 0x1100, resultValue(1), {C(5)}),
+            operation(NdOp::BRANCH, 0x1104, {}, {C(0x1300)})};
+        M.Blocks[2].Preds = {0};
+        M.Blocks[2].Succs = {3};
+        M.Blocks[2].Ops = {
+            operation(NdOp::COPY, 0x1200, resultValue(2), {C(7)})};
+        M.Blocks[3].Preds = {1, 2};
+        M.Blocks[3].Phis = {
+            {resultValue(3), {{1, resultValue(1)}, {2, resultValue(2)}}}};
+        M.Blocks[3].Ops = {
+            operation(NdOp::RETURN, 0x1300, {}, {resultValue(3)})};
+        const auto F = MedToHighConverter().convert(M, Arch::X64);
+        EXPECT_EQ(countTests(F), 0u);
+        const bool RunsBlock1 = (Target == 0x1100) == (Condition != 0);
+        for (uint64_t Input : {0u, 1u})
+          EXPECT_NO_THROW(
+              EXPECT_EQ(execute(F, Input, true), RunsBlock1 ? 5u : 7u));
+      }
+    }
   }
 }
 
