@@ -1288,6 +1288,18 @@
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
     </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
+    </message>
+    <message>
+        <source>Rust</source>
+        <translation>Rust</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Go</translation>
+    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -1410,6 +1422,16 @@ Recognized library operation; click to show its code.</source>
 Double-click to go to the declaration.</source>
         <translation>%1
 두 번 클릭하면 선언으로 이동합니다.</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>C로 표시한 선언 %n개</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1923,8 +1945,8 @@ Signed: %4</source>
         <translation>명령을 입력하세요</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>C 파일 만들기</translation>
+        <source>Create source file</source>
+        <translation>소스 파일 만들기</translation>
     </message>
     <message>
         <source>Create LST file</source>

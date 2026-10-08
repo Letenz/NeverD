@@ -31,6 +31,8 @@ class OutputLanguage(IntEnum):
     C = 0
     SOLIDITY = 1
     RUST = 2
+    GO = 3
+    SOURCE = 4
 
 
 class PluginType(IntEnum):

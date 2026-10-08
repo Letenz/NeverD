@@ -2778,7 +2778,7 @@ libraries supplied by the CMake helper.
 | `lib/decode` | Capstone/native decode and dispatch into the architecture lifters | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | Common types plus LowIR, MedIR, HighIR, and intrinsic definitions/transforms | Its four IR subcomponents |
 | `lib/pipeline` | Function detection and Low/Med/High/LLVM route orchestration | IR, decode, lift, LLVM backend, debug info, IR passes |
-| `lib/backend/c` | HighIR-to-C and LLVM-IR-to-C rendering | IR |
+| `lib/backend/c` | HighIR-to-C and LLVM-IR-to-C rendering, and HighC spelled in Rust and Go | IR |
 | `lib/backend/llvm` | MedIR-to-LLVM lowering | IR |
 | `lib/backend/codegen` | Target code generation plus PE/ELF/Mach-O patch and in-place rewrite | IR, loader |
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |

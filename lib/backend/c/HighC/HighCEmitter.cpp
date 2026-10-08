@@ -405,8 +405,10 @@ std::string HighCWriter::functionIdentifier(llvm::StringRef SourceName) const {
       It != ExternalFunctionIdentifiers.end())
     return It->second;
   // A reference keeps its symbol's exact C name, which it links by.
-  return canonicalizeCProjectionIdentifier(
+  std::string Identifier = canonicalizeCProjectionIdentifier(
       cNameOfSymbol(SourceName, Opts.Format, Opts.TheArch), "nd_function");
+  ReferencedFunctionSymbols.try_emplace(Identifier, SourceName.str());
+  return Identifier;
 }
 
 std::string HighCWriter::memoryTypeName(const TypeRef &Ty) const {
@@ -449,8 +451,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   const bool ProjectsScalarWideIntegers =
       Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64;
   // C compilers provide __int128 on targets with 64-bit pointers only.
-  const bool TargetHasInt128 =
-      pointerBytes(Opts.TheArch) >= sizeof(uint64_t);
+  const bool TargetHasInt128 = pointerBytes(Opts.TheArch) >= sizeof(uint64_t);
   auto CollectWideType = [&](const TypeRef &Type) {
     if (const unsigned Bytes = partialIntegerBytes(Type))
       PartialIntegerBytes.emplace(typeToC(Type), Bytes);
@@ -2070,9 +2071,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                                  }),
                      SizedObjects.end());
   for (const auto &[Addr, Size] : SizedObjects)
-    SizedObjectReach.push_back(std::max(
-        SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
-        Addr + Size));
+    SizedObjectReach.push_back(
+        std::max(SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
+                 Addr + Size));
   // The code reaches all of an object through an address that varies or
   // points into it: the object is declared whole, as bytes.
   auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written) {
@@ -2217,9 +2218,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   PointerSlots.insert(Opts.Image->DataPtrRelocSlots.begin(),
                       Opts.Image->DataPtrRelocSlots.end());
   auto Extent = [](const ImageObject &Obj) -> uint64_t {
-    return std::max<uint64_t>(
-        Obj.IndexedBytes,
-        Obj.String ? Obj.ArrayBytes : (Obj.Type ? Obj.Type->Size : 0));
+    return std::max<uint64_t>(Obj.IndexedBytes,
+                              Obj.String ? Obj.ArrayBytes
+                                         : (Obj.Type ? Obj.Type->Size : 0));
   };
   std::set<va_t> NotedSlots;
   for (bool Changed = !PointerSlots.empty(); Changed;) {
@@ -2327,12 +2328,14 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       return;
     const auto First = ImageObjects.find(GroupBase);
     ImageBacking Backing{
-        GroupBase, GroupEnd,
+        GroupBase,
+        GroupEnd,
         First != ImageObjects.end() && !First->second.Name.empty()
             ? First->second.Name
             : GlobalIdentifierAllocator.allocate(
                   makeSyntheticGlobalName(GroupBase) + "_bytes", "g"),
-        {}, {}};
+        {},
+        {}};
     for (auto Slot = PointerSlots.lower_bound(GroupBase);
          Slot != PointerSlots.end() && *Slot < GroupEnd; ++Slot) {
       if ((*Slot - GroupBase) % PointerBytes ||
@@ -2368,8 +2371,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     GroupEnd = std::max(GroupEnd, End);
     ++GroupCount;
     NeedsBacking |= Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes ||
-                    (Obj.HoldsPointers && !Obj.PointsTo &&
-                     Size > PointerBytes);
+                    (Obj.HoldsPointers && !Obj.PointsTo && Size > PointerBytes);
     for (uint16_t Width : Obj.MemoryWidths)
       NeedsBacking |= Width && (Width & (Width - 1)) != 0;
   }
@@ -2536,8 +2538,7 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   }
 }
 
-std::optional<std::string>
-HighCWriter::relocatedSlotTarget(va_t Slot) const {
+std::optional<std::string> HighCWriter::relocatedSlotTarget(va_t Slot) const {
   const unsigned PointerBytes = pointerBytes(Opts.TheArch);
   const uint8_t *Bytes = Opts.Image->readVA(Slot, PointerBytes);
   if (!Bytes)
@@ -2835,6 +2836,7 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
     if (I + 1 < Funcs.size())
       OS << "\n";
   }
+  recordSourceNames(Funcs);
 }
 
 //===----------------------------------------------------------------------===//

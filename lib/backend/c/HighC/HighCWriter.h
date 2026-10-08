@@ -108,6 +108,9 @@ public:
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
+  /// Records the functions and objects the text names in the source map
+  /// (HighCSourceNames.cpp).
+  void recordSourceNames(const std::vector<HighFunc> &Funcs);
   TypeRef declaredFunctionReturnType(const HighFunc &Func) const;
   void prepareFunctionReturns(std::vector<HighFunc> &Funcs) const;
   void prepareFunctionIdentifiers(const std::vector<HighFunc> &Funcs);
@@ -587,6 +590,9 @@ public:
   /// declarations say so, as for a routine the name list knows.
   std::set<std::string> NoReturnCallTargets;
   std::map<std::string, std::string> ExternalSourceIdentifiers;
+  /// The identifiers functionIdentifier() spelled for functions no map
+  /// names, and the symbols they stand for (recordSourceNames()).
+  mutable std::map<std::string, std::string> ReferencedFunctionSymbols;
   std::set<va_t> GotoTargets;
   /// How many gotos target each address in the current function.
   std::map<va_t, unsigned> GotoTargetUses;
@@ -783,6 +789,9 @@ public:
 
   struct ImageObject {
     std::string Name;
+    /// The name the user, debug information or a symbol gives it, which
+    /// \ref Name is spelled from; empty for a name the emitter made.
+    std::string Symbol;
     /// The symbol its name is spelled from, as its language spells it, for
     /// the comment that declares it; empty when the name is the symbol.
     std::string Readable;
@@ -897,8 +906,8 @@ public:
   std::optional<std::string> relocatedSlotTarget(va_t Slot) const;
   /// A pointer-sized object at a relocated slot: the address it holds, as
   /// its initializer.
-  std::optional<std::string> relocatedSlotInitializer(va_t Addr,
-                                                      const ImageObject &Obj) const;
+  std::optional<std::string>
+  relocatedSlotInitializer(va_t Addr, const ImageObject &Obj) const;
   /// Declares the objects whose relocated pointer slots name other objects:
   /// the backings that hold them, as words, and the single slots \p Deferred.
   void writePointerBackings(const std::vector<va_t> &Deferred);

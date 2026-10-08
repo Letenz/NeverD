@@ -1288,6 +1288,18 @@
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
     </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
+    </message>
+    <message>
+        <source>Rust</source>
+        <translation>Rust</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Go</translation>
+    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -1420,6 +1432,21 @@ Recognized library operation; click to show its code.</source>
 Double-click to go to the declaration.</source>
         <translation>%1
 انقر نقرًا مزدوجًا للانتقال إلى التصريح.</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>%n تصريح معروض بلغة C</numerusform>
+            <numerusform>%n تصريح معروض بلغة C</numerusform>
+            <numerusform>%n تصريحان معروضان بلغة C</numerusform>
+            <numerusform>%n تصريحات معروضة بلغة C</numerusform>
+            <numerusform>%n تصريحًا معروضًا بلغة C</numerusform>
+            <numerusform>%n تصريح معروض بلغة C</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1938,8 +1965,8 @@ Signed: %4</source>
         <translation>اكتب أمراً</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>إنشاء ملف C</translation>
+        <source>Create source file</source>
+        <translation>إنشاء ملف مصدري</translation>
     </message>
     <message>
         <source>Create LST file</source>

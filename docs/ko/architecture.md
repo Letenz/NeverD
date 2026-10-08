@@ -626,7 +626,7 @@ personality 인식이나 native lowering에서 추론하면 안 됩니다.
 | `lib/decode` | Capstone/native 디코드 및 아키텍처 lifter로 디스패치 | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | 공통 타입과 LowIR·MedIR·HighIR·intrinsic 정의/변환 | 네 IR 하위 구성 요소 |
 | `lib/pipeline` | 함수 감지와 Low/Med/High/LLVM 경로 조정 | IR, decode, lift, LLVM backend, 디버그 정보, IR pass |
-| `lib/backend/c` | HighIR-to-C 및 LLVM-IR-to-C 렌더링 | IR |
+| `lib/backend/c` | HighIR-to-C 및 LLVM-IR-to-C 렌더링, HighC의 Rust·Go 표기 | IR |
 | `lib/backend/llvm` | MedIR-to-LLVM lowering | IR |
 | `lib/backend/codegen` | 대상 코드 생성과 PE/ELF/Mach-O patch 및 in-place 재작성 | IR, loader |
 | `lib/sdk` | 공개 C ABI, session 수명 주기, query, 지속성, 플러그인, lift/decompile/patch/audit/hunt 진입점 | 엔진 구성 요소를 `libneverd`로 집계 |
