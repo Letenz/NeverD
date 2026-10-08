@@ -159,7 +159,9 @@ std::vector<uint8_t> buildImports(llvm::ArrayRef<Slot> Slots,
 
 struct TailRepairs {
   struct Site {
-    uint64_t ReturnRVA;
+    // Conflicting starts share an end, so their union begins at the earliest
+    // start. Keep that coverage even after this continuation is rejected.
+    uint64_t BeginRVA, ReturnRVA;
     const ExportBinding *Target;
     x64::ImportSite Patch;
   };
@@ -194,6 +196,7 @@ llvm::Expected<TailRepairs> planTailImports(const Image &In, const Capture &C,
     auto Existing = llvm::find_if(
         Repairs.Sites, [&](const auto &S) { return S.ReturnRVA == ReturnRVA; });
     if (Existing != Repairs.Sites.end()) {
+      Existing->BeginRVA = std::min(Existing->BeginRVA, Patch->RVA);
       if (Existing->Target && (*Existing->Target != Call.Target ||
                                Existing->Patch.RVA != Patch->RVA ||
                                Existing->Patch.Register != Patch->Register)) {
@@ -202,20 +205,18 @@ llvm::Expected<TailRepairs> planTailImports(const Image &In, const Capture &C,
       }
       continue;
     }
-    Repairs.Sites.push_back({ReturnRVA, &Call.Target, *Patch});
+    Repairs.Sites.push_back({Patch->RVA, ReturnRVA, &Call.Target, *Patch});
   }
   // A byte sequence can describe overlapping sites. No observation gives one
   // permission to overwrite another, even when both reach the same export.
   llvm::sort(Repairs.Sites, [](const auto &A, const auto &B) {
-    return A.Patch.RVA < B.Patch.RVA;
+    return A.BeginRVA < B.BeginRVA;
   });
   for (size_t First = 0; First < Repairs.Sites.size();) {
     size_t End = First + 1;
-    uint64_t Limit =
-        Repairs.Sites[First].Patch.RVA + Repairs.Sites[First].Patch.Size;
-    while (End < Repairs.Sites.size() && Repairs.Sites[End].Patch.RVA < Limit) {
-      Limit = std::max(Limit, Repairs.Sites[End].Patch.RVA +
-                                  Repairs.Sites[End].Patch.Size);
+    uint64_t Limit = Repairs.Sites[First].ReturnRVA;
+    while (End < Repairs.Sites.size() && Repairs.Sites[End].BeginRVA < Limit) {
+      Limit = std::max(Limit, Repairs.Sites[End].ReturnRVA);
       ++End;
     }
     if (End - First > 1)
@@ -373,7 +374,9 @@ void retainDebugStorage(const Image &In,
 /// validated storage requirements have already participated in placement.
 void relocateDebugRecords(const Image &In, llvm::ArrayRef<Placement> Placed,
                           std::vector<data_directory> &Directories,
-                          std::vector<uint8_t> &Memory) {
+                          std::vector<uint8_t> &Memory,
+                          uint64_t InputOverlayOffset,
+                          uint64_t OutputOverlayOffset) {
   if (llvm::COFF::DEBUG_DIRECTORY >= Directories.size())
     return;
   const auto Regions = In.regions();
@@ -392,10 +395,20 @@ void relocateDebugRecords(const Image &In, llvm::ArrayRef<Placement> Placed,
   for (uint64_t I = 0; I < Records; ++I) {
     const uint64_t At = RVA + I * sizeof(debug_directory);
     auto Record = fetch<debug_directory>(Memory, At);
-    Record.PointerToRawData =
-        Record.AddressOfRawData
-            ? FileOffset(Record.AddressOfRawData, Record.SizeOfData)
-            : 0;
+    if (Record.AddressOfRawData) {
+      Record.PointerToRawData =
+          FileOffset(Record.AddressOfRawData, Record.SizeOfData);
+    } else {
+      // File-only payloads can live in the retained overlay. Its bytes move
+      // together, so preserve their relative file position without inventing
+      // an RVA or treating an invalid mapped payload as file-only data.
+      const uint64_t Source = Record.PointerToRawData;
+      Record.PointerToRawData =
+          Source >= InputOverlayOffset && Source <= In.file().size() &&
+                  Record.SizeOfData <= In.file().size() - Source
+              ? OutputOverlayOffset + (Source - InputOverlayOffset)
+              : 0;
+    }
     store(Memory, At, Record);
   }
 }
@@ -518,7 +531,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
       return failure(text::HeaderRoom);
     Directories.resize(llvm::COFF::IAT + 1);
   }
-  relocateDebugRecords(In, Placed, Directories, Memory);
+  relocateDebugRecords(In, Placed, Directories, Memory, InputEnd, Cursor);
   if (RebuiltTLS->DirectoryRVA) {
     Directories[llvm::COFF::TLS_TABLE].RelativeVirtualAddress =
         RebuiltTLS->DirectoryRVA;
@@ -597,7 +610,10 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
         Generated += C.Memory[RVA] != C.Baseline[RVA];
       Out.Sections.push_back(
           {R.Name, R.RVA, Placed[I].VirtualSize, Placed[I].Size, Generated});
-      std::copy_n(Memory.begin() + R.RVA, Placed[I].Size,
+      // File alignment may exceed the committed page range. Its padding is
+      // already zero; bytes from an image gap do not belong to this section.
+      std::copy_n(Memory.begin() + R.RVA,
+                  std::min<uint64_t>(Placed[I].Size, R.MemorySize),
                   Out.File.begin() + Placed[I].Offset);
     } else {
       const llvm::StringRef Name = unpack::text::MetadataSection;

@@ -25,6 +25,7 @@ NEVERD_NATIVE_CPU_OWNER(NeverDThreadPointerTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDUserExecutionTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDDirectX64Tests)
 NEVERD_NATIVE_CPU_OWNER(NeverDExecutionSessionTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDUnpackTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDUnpackExecutionTests)
 #endif
 #ifdef NEVERD_NATIVE_CPU_HOST
@@ -33,6 +34,37 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEMapping.NativeSectionRangesAgreeWithUnpackAndRuntime")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEMapping.RebuildingPreservesNativeRangesAndFileAlignment")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEMapping.RawFileValidationIncludesUnmappedTailBytes")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEMapping.FilePaddingCannotCopyReservedImageBytes")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEMapping.AllZeroRawPagesRemainAccessibleThroughVirtualSize")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("PEMapping.PageRoundingCannotWrapThePE32Extent")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PERebuild.ConflictingContinuationsRetainEveryOverlappingStart")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PERebuild.TouchingWindowsAndRepeatedWitnessesRemainRepairable")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PERebuild.InvalidOriginalTLSNeedsAWitnessedReplacement")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PERebuild.AValidWitnessedTLSRecordReplacesAnInvalidOriginal")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PERebuild.UnwitnessedOriginalTLSRestoresStateAndKeepsPendingCallbacks")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PERebuild.UnwitnessedOriginalTLSRequiresAnExactLiveSnapshot")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDebugRecords.FileOnlyDebugPayloadKeepsItsRelativeOverlayPosition")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDebugRecords.FileOnlyDebugPayloadMustFitThePreservedOverlay")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.SelectedTransfersCaptureInitializerAndThreadState")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.SelectedTransfersRejectFailedThreadStateCapture")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackLibrary."
     "WrappedEntriesRequireExplicitTransferEvidence/{backend_title}X64")

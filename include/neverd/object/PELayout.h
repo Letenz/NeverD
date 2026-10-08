@@ -18,6 +18,7 @@
 
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Object/COFF.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <cstdint>
 #include <cstring>
@@ -131,6 +132,16 @@ inline uint32_t getPESectionAlignment(const PEHeaderPtrs &PE) {
   if (const auto *Opt = getPE32OptionalHeader(PE))
     return Opt->SectionAlignment;
   return 0;
+}
+
+/// Accessible bytes of a Windows user-image section, rounded to guest pages.
+/// SectionAlignment positions section RVAs; it does not commit the intervening
+/// pages. Raw data beyond a nonzero VirtualSize cannot extend this page range.
+/// This is a memory range, not the declared file-backed metadata extent.
+inline uint64_t getPEUserSectionMappedSize(uint32_t VirtualSize,
+                                           uint32_t RawSize,
+                                           uint64_t PageSize) {
+  return llvm::alignTo(uint64_t(VirtualSize ? VirtualSize : RawSize), PageSize);
 }
 
 inline uint32_t getPESizeOfImage(const PEHeaderPtrs &PE) {

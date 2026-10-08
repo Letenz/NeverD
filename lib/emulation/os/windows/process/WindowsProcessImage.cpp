@@ -6,6 +6,7 @@
 #include "WindowsProcess.h"
 
 #include "neverd/loader/Loader.h"
+#include "neverd/object/PELayout.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/COFF.h"
@@ -398,7 +399,7 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
     if (!R.copy(Table + I * sizeof(S), S))
       return failure(text::Headers);
     const uint64_t Span =
-        pages(std::max(uint32_t(S.VirtualSize), uint32_t(S.SizeOfRawData)));
+        getPEUserSectionMappedSize(S.VirtualSize, S.SizeOfRawData, PageSize);
     const uint64_t FileOffset = S.PointerToRawData, RawSize = S.SizeOfRawData;
     if (!S.VirtualSize || S.VirtualAddress % PE.SectionAlignment ||
         S.VirtualAddress < Previous || S.VirtualAddress >= Size ||
@@ -429,7 +430,8 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
     R.Sections.push_back({S, Raw});
     ImageRegion Region{Base + S.VirtualAddress, Permissions,
                        std::vector<uint8_t>(Span), S.VirtualSize, RawSize};
-    std::copy(Raw.begin(), Raw.end(), Region.Bytes.begin());
+    std::copy_n(Raw.begin(), std::min<uint64_t>(Raw.size(), Span),
+                Region.Bytes.begin());
     Out.Regions.push_back(std::move(Region));
     Previous = S.VirtualAddress + Span;
   }
