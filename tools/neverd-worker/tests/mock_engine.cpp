@@ -141,7 +141,16 @@ const char *neverd_session_format_name(neverd_session_t) { return copy("ELF"); }
 int neverd_session_bitness(neverd_session_t) { return 64; }
 unsigned long long neverd_session_file_size(neverd_session_t) { return 8192; }
 neverd_va_t neverd_session_base_addr(neverd_session_t) { return Base; }
-neverd_va_t neverd_session_entry_addr(neverd_session_t) { return Base; }
+neverd_va_t neverd_session_entry_addr(neverd_session_t s) {
+  return session(s)->path.find("unknown-entry") == std::string::npos ? Base : 0;
+}
+const char *neverd_session_load_diagnostics_json(neverd_session_t s) {
+  if (s && session(s)->path.find("unknown-entry") != std::string::npos)
+    return copy(Json::array({{{"code", "pe.entry_unmapped"},
+                              {"message", "Fixture PE entry is unknown."}}})
+                    .dump());
+  return copy("[]");
+}
 int neverd_session_segment_count(neverd_session_t) { return 2; }
 int neverd_session_section_count(neverd_session_t) { return 2; }
 int neverd_session_import_count(neverd_session_t) { return 0; }

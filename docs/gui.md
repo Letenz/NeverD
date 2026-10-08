@@ -43,6 +43,19 @@ set `NEVERD_ENGINE_LIBRARY` to the runtime DLL and `NEVERD_ENGINE_IMPLIB` to its
 matching import `.lib`; make runtime dependencies available alongside the
 worker.
 
+Open a binary or a project with **File → Open**, or drag one file from
+the system file manager onto the quick-start dialog, workbench or a floating
+view. File drops use the same open workflow, including the save/discard/cancel
+prompt for unsaved changes. Drop one existing file at a time; directories and
+web URLs are not opened. Opening by drag and drop leaves the source file in
+place.
+
+PE browsing tolerates complete legacy relocation layouts and reports unusable
+entry/import metadata in **Output**. An unknown entry opens at a mapped code
+region for browsing; this does not reconstruct the program's OEP. Invalid import
+bindings remain unknown, and fixed-image semantic checks retain their stricter
+requirements. Truncated or unmappable image structures can still prevent loading.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.
@@ -98,7 +111,12 @@ shows the whole function and the visible area.
 
 **Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
 MedIR, HighIR or LLVM IR of the current function and follow the disassembly
-unless their lock is set. The LLVM views translate the current function alone,
+unless their lock is set. A window hidden behind another tab catches up when it
+is shown, so moving through the disassembly never waits for a decompile no one
+sees, and F5 pressed while a jump is loading decompiles the function the jump
+lands in. The engine emits a function's source once and pages it from there; a
+function longer than one page keeps the listing's names, such as `main`. The
+LLVM views translate the current function alone,
 with the others declared, so a function the engine refuses to translate shows
 its reason without affecting other functions. Rows mapped to instructions move
 the disassembly cursor. C opens at the function: the includes, support types and
