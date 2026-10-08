@@ -5426,6 +5426,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     emitIndent(1);
     OS << "const uintptr_t frame_base = (uintptr_t)(stack_storage + "
        << FrameBaseOffset << ");\n";
+    // The rebuilt storage has the host's pointer width, which a 64-bit
+    // target's source is compiled with: frame arithmetic is uint64_t already.
+    const uint16_t PointerBytes = getTargetRegInfo(Opts.TheArch).PointerSize;
+    if (PointerBytes == sizeof(uint64_t))
+      DeclaredCTypes.emplace("frame_base",
+                             NdType::makeInt(PointerBytes, /*Signed=*/false));
   }
   std::set<std::string> PrintedAddrSlots;
   std::set<std::string> PrintedSlotStores;

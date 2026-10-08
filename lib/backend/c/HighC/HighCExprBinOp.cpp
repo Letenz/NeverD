@@ -721,14 +721,23 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     if (E.Operands[1]->Kind == ExprKind::Const &&
         E.Operands[1]->ConstVal >= Size * 8u)
       return "0";
+    // The shift happens in an unsigned carrier and comes back at the
+    // operation's width, unsigned, whatever its type says.
     // A constant or masked count below the width needs no overshift guard.
     if (countBelow(*E.Operands[1], Size * 8u))
-      return AtCarrier && getOpPrecedence(NdOp::INT_LEFT) > ParentPrec ? Shifted
-                                                                       : Shift;
+      return typedText(E,
+                       AtCarrier && getOpPrecedence(NdOp::INT_LEFT) > ParentPrec
+                           ? Shifted
+                           : Shift,
+                       Size, /*IsSigned=*/false);
     const auto CountType = typeToC(NdType::makeInt(
         E.Operands[1]->Type ? E.Operands[1]->Type->Size : 8, false));
-    return "((" + CountType + ")" + Right + " < " + std::to_string(Size * 8u) +
-           " ? " + Shift + " : 0)";
+    std::string Guarded = "((" + CountType + ")" + Right + " < " +
+                          std::to_string(Size * 8u) + " ? " + Shift + " : 0)";
+    // Below int, the conditional promotes its arms back to int.
+    if (Size < 4)
+      return Guarded;
+    return typedText(E, std::move(Guarded), Size, /*IsSigned=*/false);
   }
   case NdOp::SUBBYTES: {
     if (const HighExpr *Call = typedCallResult(&E))
@@ -754,6 +763,18 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     // odd-width carrier for the upper part.
     const HighExpr &HiE = *E.Operands[0];
     const HighExpr &LoE = *E.Operands[1];
+    // The low part zero-extended to the carrier: a constant is its value, and
+    // a value already printed at its width converts once.
+    auto ZeroExtendedLow = [&](const TypeRef &Carrier) -> std::string {
+      const uint16_t LoSize = LoE.Type->Size;
+      if (LoE.Kind == ExprKind::Const)
+        return constStr(LoSize >= 8 ? LoE.ConstVal
+                                    : LoE.ConstVal &
+                                          ((uint64_t{1} << (8 * LoSize)) - 1),
+                        Carrier);
+      return "(" + typeToC(Carrier) + ")" +
+             integerView(LoE, NdType::makeInt(LoSize, false), 99);
+    };
     if (HiE.Kind == ExprKind::BinOp && HiE.Op == NdOp::SUBBYTES &&
         HiE.Operands.size() == 2 && HiE.Operands[1]->Kind == ExprKind::Const &&
         !typedCallResult(&HiE) && E.Type && E.Type->Size <= 8 && LoE.Type &&
@@ -762,15 +783,16 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
         HiE.Operands[0]->Type->Kind == NdTypeKind::Int &&
         HiE.Operands[0]->Type->Size >= E.Type->Size) {
       const TypeRef Carrier = NdType::makeInt(E.Type->Size, false);
-      const TypeRef LoCarrier = NdType::makeInt(LoE.Type->Size, false);
       const uint64_t Width = E.Type->Size == 8
                                  ? ~uint64_t{0}
                                  : (uint64_t{1} << (8 * E.Type->Size)) - 1;
       const uint64_t Low = (uint64_t{1} << (8 * LoE.Type->Size)) - 1;
-      const std::string Ty = typeToC(Carrier);
-      return "((" + Ty + ")(" + exprStr(*HiE.Operands[0], 99) + ") & " +
-             constStr(Width & ~Low, Carrier) + " | (" + Ty + ")((" +
-             typeToC(LoCarrier) + ")(" + exprStr(LoE, 99) + ")))";
+      std::string Text = integerView(*HiE.Operands[0], Carrier, 99) + " & " +
+                         constStr(Width & ~Low, Carrier);
+      // Clearing the low bytes is the whole merge when they become zero.
+      if (!(LoE.Kind == ExprKind::Const && (LoE.ConstVal & Low) == 0))
+        Text += " | " + ZeroExtendedLow(Carrier);
+      return "(" + Text + ")";
     }
     // A constant upper part already fits its width: shift it in the carrier.
     if (HiE.Kind == ExprKind::Const && HiE.Type && E.Type &&
@@ -779,9 +801,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       const TypeRef Carrier = NdType::makeInt(E.Type->Size, false);
       const std::string Ty = typeToC(Carrier);
       return "((" + Ty + ")" + constStr(HiE.ConstVal & HiMask, Carrier) +
-             " << " + std::to_string(LoE.Type->Size * 8) + " | (" + Ty + ")((" +
-             typeToC(NdType::makeInt(LoE.Type->Size, false)) + ")(" +
-             exprStr(LoE, 99) + ")))";
+             " << " + std::to_string(LoE.Type->Size * 8) + " | " +
+             ZeroExtendedLow(Carrier) + ")";
     }
     std::string Hi = exprStr(*E.Operands[0], 99);
     std::string Lo = exprStr(*E.Operands[1], 99);
@@ -1100,7 +1121,14 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                  (Ty->IsEnum && Ty->IsSigned == NeedsSignedCast &&
                   Ty->Size == CmpSize)))
         return exprStr(*Op, 99);
-      return "(" + UTy + ")" + exprStr(*Op, 99);
+      // Text that prints as the compared type already, such as a pointer read
+      // as `(uintptr_t)p`, compares as it is.
+      std::string Text = exprStr(*Op, 99);
+      if (const auto Printed = printedIntegerType(*Op);
+          Printed && Printed->first == CmpSize &&
+          Printed->second == NeedsSignedCast)
+        return Text;
+      return "(" + UTy + ")" + Text;
     };
     LHS = CastOp(L);
     RHS = CastOp(R);
