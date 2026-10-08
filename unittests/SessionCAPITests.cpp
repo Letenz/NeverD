@@ -19,6 +19,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -2602,6 +2603,33 @@ TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {
   EXPECT_EQ(
       takeString(neverd_decompile(Session, DataELFEntry)).find("table_base"),
       std::string::npos);
+}
+
+TEST_F(SessionCAPITest, InputSha256IsTheHashOfTheLoadedFile) {
+  const auto Expected = [](const std::string &Bytes) {
+    return llvm::toHex(llvm::SHA256::hash(llvm::arrayRefFromStringRef(Bytes)),
+                       /*LowerCase=*/true);
+  };
+  EXPECT_EQ(takeString(neverd_session_input_sha256(Session)), "");
+  // The loader's hash for a native image, and the dashboard reports the same.
+  const std::string Native = makeNativeELF(false);
+  const auto NativePath = write("hashed.elf", Native);
+  ASSERT_EQ(neverd_session_load(Session, NativePath.c_str()), 1);
+  EXPECT_EQ(takeString(neverd_session_input_sha256(Session)), Expected(Native));
+  auto Dashboard =
+      llvm::json::parse(takeString(neverd_dashboard_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Dashboard));
+  EXPECT_EQ(Dashboard->getAsObject()
+                ->getObject("hashes")
+                ->getString("sha256")
+                .value_or(""),
+            Expected(Native));
+  // An input its loader does not hash is hashed from its file.
+  const std::string Contract = "6001600055";
+  const auto ContractPath = write("hashed.evm", Contract);
+  ASSERT_EQ(neverd_session_load(Session, ContractPath.c_str()), 1);
+  EXPECT_EQ(takeString(neverd_session_input_sha256(Session)),
+            Expected(Contract));
 }
 
 TEST_F(SessionCAPITest, ReloadingRenamesRestoresNamesRemovedFromTheSidecar) {

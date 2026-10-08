@@ -8,13 +8,19 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <array>
 #include <deque>
+#include <optional>
+#include <utility>
+#include <vector>
 
 namespace neverd {
 
@@ -41,6 +47,149 @@ void addRead(Arch A, GPRReadWidths &Reads, uint64_t RegOff, uint64_t Size) {
 void joinReads(GPRReadWidths &Into, const GPRReadWidths &From) {
   for (size_t I = 0; I < Into.size(); ++I)
     Into[I] = std::max(Into[I], From[I]);
+}
+
+/// The stores of \p F, a System V function, that spill the incoming argument
+/// registers to the register save area of a variadic prologue, as (block,
+/// op) indices.  The prologue reads AL, the count of vector registers the
+/// caller set, before writing RAX, branches on it around the vector register
+/// spills, and stores the argument registers from the first variadic
+/// position through the last, each still unwritten, to consecutive slots off
+/// one unchanged base register: in the entry block (GCC, optimizing Clang) or
+/// where the branch rejoins (Clang -O0).  Such a spill reads no parameter: a
+/// caller passes exactly the variadic arguments it sets.
+std::set<std::pair<size_t, size_t>>
+findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
+                           const std::map<int, size_t> &IndexOfId) {
+  std::set<std::pair<size_t, size_t>> Spills;
+  if (Img.Arch != Arch::X64 || Img.Format == BinaryFormat::COFF ||
+      F.Blocks.empty())
+    return Spills;
+  const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
+  const llvm::ArrayRef<uint64_t> Registers =
+      TRI.integerArgumentLayout(Img.Format).Registers;
+  auto IndexOf = [&](int Id) -> std::optional<size_t> {
+    if (auto It = IndexOfId.find(Id); It != IndexOfId.end())
+      return It->second;
+    return std::nullopt;
+  };
+  auto WritesGPR = [&](const LowBlock &Block) {
+    return llvm::any_of(Block.Ops, [&](const LowOp &Op) {
+      return Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+             (Op.Output.isReg() && gprFamilyOf(Img.Arch, Op.Output.Offset));
+    });
+  };
+  // The prologue in execution order: the entry block, then, when it branches
+  // around a block that writes no integer register and the two paths rejoin
+  // with no other way in, the join.
+  std::vector<size_t> Prologue{0};
+  const LowBlock &Entry = F.Blocks.front();
+  if (Entry.Succs.size() == 2)
+    if (auto A = IndexOf(Entry.Succs[0]), B = IndexOf(Entry.Succs[1]); A && B)
+      for (const auto &[Around, Join] :
+           {std::pair{*A, *B}, std::pair{*B, *A}}) {
+        const LowBlock &Skipped = F.Blocks[Around];
+        if (Around != 0 && Join != 0 && Skipped.Succs.size() == 1 &&
+            IndexOf(Skipped.Succs.front()) == Join &&
+            Skipped.Preds.size() == 1 && F.Blocks[Join].Preds.size() == 2 &&
+            !WritesGPR(Skipped)) {
+          Prologue.push_back(Join);
+          break;
+        }
+      }
+  // An address as a base register family, how often that family had been
+  // written when the address was formed, and a displacement.
+  struct Slot {
+    unsigned Family = 0;
+    unsigned Version = 0;
+    int64_t Displacement = 0;
+  };
+  struct Spill {
+    size_t Block = 0;
+    size_t Op = 0;
+    Slot Address;
+  };
+  std::array<unsigned, kX64GPRBytes / 8> Versions{};
+  std::map<uint64_t, Slot> TempSlots;
+  GPRFamilyMask Written = 0;
+  bool ReadsVectorCount = false;
+  std::vector<std::optional<Spill>> Stored(Registers.size());
+  auto SlotOf = [&](const NdVar &V) -> std::optional<Slot> {
+    if (V.isTemp()) {
+      if (auto It = TempSlots.find(V.Offset); It != TempSlots.end())
+        return It->second;
+      return std::nullopt;
+    }
+    if (const auto Family = V.isReg() && V.Size == TRI.PointerSize
+                                ? gprFamilyOf(Img.Arch, V.Offset)
+                                : std::nullopt)
+      return Slot{*Family, Versions[*Family], 0};
+    return std::nullopt;
+  };
+  const std::optional<unsigned> VectorCount =
+      gprFamilyOf(Img.Arch, x86reg::RAX);
+  for (const size_t BI : Prologue) {
+    const LowBlock &Block = F.Blocks[BI];
+    TempSlots.clear();
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      const LowOp &Op = Block.Ops[I];
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+        break;
+      for (uint8_t In = 0; In < Op.NumInputs; ++In)
+        if (Op.Inputs[In].isReg() && VectorCount &&
+            gprFamilyOf(Img.Arch, Op.Inputs[In].Offset) == VectorCount &&
+            !((Written >> *VectorCount) & 1))
+          ReadsVectorCount = true;
+      if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
+          Op.Inputs[1].isReg() && Op.Inputs[1].Size == TRI.PointerSize)
+        for (size_t K = 0; K < Registers.size(); ++K)
+          if (Op.Inputs[1].Offset == Registers[K] && !Stored[K] &&
+              !((Written >> (Registers[K] / 8)) & 1))
+            if (auto Address = SlotOf(Op.Inputs[0]))
+              Stored[K] = Spill{BI, I, *Address};
+      // The lifter forms an address in a temporary, `t = base; t = t + d`,
+      // and reuses the temporary in later instructions.
+      if (Op.Output.isTemp()) {
+        std::optional<Slot> Address;
+        if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
+          Address = SlotOf(Op.Inputs[0]);
+        else if ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
+                 Op.NumInputs == 2 && Op.Inputs[1].isConst())
+          if ((Address = SlotOf(Op.Inputs[0]))) {
+            const auto Constant = static_cast<int64_t>(Op.Inputs[1].Offset);
+            Address->Displacement +=
+                Op.Opcode == NdOp::INT_ADD ? Constant : -Constant;
+          }
+        if (Address && Op.Output.Size == TRI.PointerSize)
+          TempSlots[Op.Output.Offset] = *Address;
+        else
+          TempSlots.erase(Op.Output.Offset);
+      }
+      if (Op.Output.isReg())
+        if (const auto Family = gprFamilyOf(Img.Arch, Op.Output.Offset)) {
+          ++Versions[*Family];
+          Written |= GPRFamilyMask(1) << *Family;
+        }
+    }
+  }
+  if (!ReadsVectorCount)
+    return Spills;
+  // The save area holds the variadic registers through the last one; a named
+  // parameter's own home slot lies elsewhere (GCC -O0).
+  size_t First = Registers.size();
+  while (First > 0 && Stored[First - 1]) {
+    if (First < Registers.size()) {
+      const Slot &Lower = Stored[First - 1]->Address,
+                 &Upper = Stored[First]->Address;
+      if (Lower.Family != Upper.Family || Lower.Version != Upper.Version ||
+          Lower.Displacement + TRI.PointerSize != Upper.Displacement)
+        break;
+    }
+    --First;
+  }
+  for (size_t K = First; K < Registers.size(); ++K)
+    Spills.insert({Stored[K]->Block, Stored[K]->Op});
+  return Spills;
 }
 
 /// The byte and word writes in \p Block that the lifter spells as a masked
@@ -484,6 +633,8 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
     return FPReturn != 0 && Out.isReg() && Out.Size != 0 &&
            Out.Offset < FPReturn + 16 && FPReturn < Out.Offset + Out.Size;
   };
+  const std::set<std::pair<size_t, size_t>> SaveAreaSpills =
+      findRegisterSaveAreaSpills(Img, F, IndexOfId);
   for (size_t BI = 0; BI < F.Blocks.size(); ++BI) {
     const LowBlock &Block = F.Blocks[BI];
     RegisterBlock &Out = Effect.Blocks[BI];
@@ -527,7 +678,8 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
         continue;
       RegisterStep Step;
       for (uint8_t In = 0; In < Op.NumInputs; ++In)
-        if (Op.Inputs[In].isReg() && !(In == 0 && MergeReads.count(I)))
+        if (Op.Inputs[In].isReg() && !(In == 0 && MergeReads.count(I)) &&
+            !(In == 1 && SaveAreaSpills.count({BI, I})))
           addRead(Img.Arch, Step.Reads, Op.Inputs[In].Offset,
                   Op.Inputs[In].Size);
       // The result of a call that never returns reaches no one.
@@ -553,9 +705,12 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
       switch (Op.Opcode) {
       case NdOp::INDIR_CALL:
         // A rewritten indirect tail jump (`jmp [iat]` in an import thunk)
-        // passes this function's registers on to its unknown target.
+        // passes this function's registers on to its unknown target, unless
+        // the slot is an import's and its prototype says what that reads.
         Effect.Unknown = true;
         (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
+        if (DirectTarget && !importCalleeName(Img, Op.Inputs[0].Offset).empty())
+          Step.ImportCallee = Op.Inputs[0].Offset;
         break;
       case NdOp::INDIR_BR:
         // A resolved jump table has successors; an indirect tail jump leaves
@@ -587,6 +742,8 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
           if (!NoReturnCall)
             Effect.Unknown = true;
           (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
+          if (DirectTarget)
+            Step.ImportCallee = Op.Inputs[0].Offset;
         } else {
           Step.Callee = Op.Inputs[0].Offset;
           Step.TailCallee = TailCall;
@@ -600,7 +757,8 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
       default:
         break;
       }
-      Effect.UnknownEntryReads |= Step.UnknownTailCall;
+      Effect.UnknownEntryReads |=
+          Step.UnknownTailCall && Step.ImportCallee == InvalidVA;
       Out.Steps.push_back(Step);
     }
   }
@@ -625,16 +783,25 @@ GPRReadWidths entryLiveWidths(const LocalRegisterEffect &F,
   auto Transfer = [&](const RegisterBlock &Block, GPRReadWidths Live) {
     for (auto It = Block.Steps.rbegin(); It != Block.Steps.rend(); ++It) {
       const RegisterStep &Step = *It;
+      // An import with a prototype reads exactly its parameters.
+      const auto ImportReads = Step.ImportCallee != InvalidVA
+                                   ? EntryReads.find(Step.ImportCallee)
+                                   : EntryReads.end();
       if (Step.Exits)
         Live.fill(0);
       if (Step.UnknownTailCall) {
         Live.fill(0);
-        for (size_t I = 0; I < Live.size(); ++I)
-          if ((ArgumentFamilies >> I) & 1)
-            Live[I] = 8;
+        if (ImportReads != EntryReads.end())
+          joinReads(Live, ImportReads->second);
+        else
+          for (size_t I = 0; I < Live.size(); ++I)
+            if ((ArgumentFamilies >> I) & 1)
+              Live[I] = 8;
       } else if (Step.UnknownCall || (Step.Callee != InvalidVA &&
                                       DispatchThunks.count(Step.Callee))) {
         Clear(Live, VolatileFamilies);
+        if (ImportReads != EntryReads.end())
+          joinReads(Live, ImportReads->second);
       } else if (Step.Callee != InvalidVA) {
         auto W = MayWrite.find(Step.Callee);
         Clear(Live, W != MayWrite.end() ? W->second : VolatileFamilies);
@@ -718,9 +885,18 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   // that tail-calls code whose reads are unknown: that code receives this
   // function's incoming registers.
   std::set<va_t> UnknownReads;
+  auto TailCallsUnknownImport = [&](const LocalRegisterEffect &Effect) {
+    return llvm::any_of(Effect.Blocks, [&](const RegisterBlock &Block) {
+      return llvm::any_of(Block.Steps, [&](const RegisterStep &Step) {
+        return Step.UnknownTailCall && Step.ImportCallee != InvalidVA &&
+               !FixedEntryReads.count(Step.ImportCallee);
+      });
+    });
+  };
   for (const auto &[Entry, Effect] : Funcs)
     if (!FixedEntryReads.count(Entry) &&
-        (Effect.Incomplete || Effect.UnknownEntryReads))
+        (Effect.Incomplete || Effect.UnknownEntryReads ||
+         TailCallsUnknownImport(Effect)))
       UnknownReads.insert(Entry);
   for (bool Changed = true; Changed;) {
     Changed = false;

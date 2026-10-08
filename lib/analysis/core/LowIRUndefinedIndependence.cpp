@@ -1309,7 +1309,9 @@ class Checker {
     }
   }
 
-  LowBlock prepareNative(Path &P, LowInstructionUndefinedEffects &Effects) {
+  LowBlock
+  prepareNative(Path &P,
+                std::vector<LowInstructionUndefinedEffects> &Descriptions) {
     const auto &Insn = NativeInstructions.at(P.NativeAddress);
     if (Insn.Origin.Control == LowInstructionControl::Terminator) {
       Result.BlockId = P.BlockId;
@@ -1324,7 +1326,8 @@ class Checker {
     B.EndAddr = P.NativeAddress + Insn.Origin.Size;
     B.Ops = Insn.Ops;
     B.InstructionBoundaries.push_back(Insn.Origin);
-    Effects = Insn.UndefinedEffects;
+    Descriptions.push_back(Insn.UndefinedEffects);
+    auto &Effects = Descriptions.back();
     if (Insn.ProfileProjection != InterpreterProfileProjection::None)
       NativeProfileProjections.push_back(
           {B.Id, B.StartAddr, Insn.ProfileProjection});
@@ -1358,6 +1361,52 @@ class Checker {
       fail(Status::Invalid, llvm::toString(std::move(Error)));
     validateEffects(B.InstructionBoundaries.front(), B.Ops, Effects);
     NativeRecords.push_back({B.Id, B.InstructionBoundaries.front(), Effects});
+    // These are real trace blocks: intermediate instruction visits neither
+    // allocate a Path nor enter Pending. Per-instruction semantics, scratch
+    // lifetimes and instruction/operation budgets remain in runPath.
+    while (B.InstructionBoundaries.size() < 32) {
+      const auto &Last =
+          NativeInstructions.at(B.InstructionBoundaries.back().Address);
+      if (Last.Origin.Control != LowInstructionControl::None ||
+          Last.NativeStackControl != SpecializationNativeStackControl::None ||
+          Last.IsNativeCall)
+        break;
+      const auto Address = Last.Fallthrough.Address;
+      const bool Cutpoint =
+          inductive() &&
+          llvm::any_of(Refinement->LoopPlan->Cutpoints, [&](const auto &Cut) {
+            return Address == (CandidateExecution ? Cut.CandidateAddress
+                                                  : Cut.OriginalAddress);
+          });
+      // An interior cut must see the actual prefix state. Retained audit and
+      // trap boundaries must still reach their ordinary refusal gate; physical
+      // stack expansion also needs the actual state at its own instruction.
+      if (Cutpoint || NativeAuditBoundaries.count(Address))
+        break;
+      const auto It = NativeInstructions.find(Address);
+      if (It == NativeInstructions.end())
+        break;
+      const auto &Next = It->second;
+      if ((Next.Origin.Control != LowInstructionControl::None &&
+           Next.Origin.Control != LowInstructionControl::Branch) ||
+          Next.NativeStackControl != SpecializationNativeStackControl::None ||
+          Next.IsNativeCall)
+        break;
+      auto Boundary = Next.Origin;
+      validateEffects(Boundary, Next.Ops, Next.UndefinedEffects);
+      Boundary.FirstOp = B.Ops.size();
+      B.Ops.insert(B.Ops.end(), Next.Ops.begin(), Next.Ops.end());
+      B.InstructionBoundaries.push_back(Boundary);
+      B.EndAddr = Address + Boundary.Size;
+      Descriptions.push_back(Next.UndefinedEffects);
+      NativeRecords.push_back({B.Id, Boundary, Next.UndefinedEffects});
+      if (Next.ProfileProjection != InterpreterProfileProjection::None)
+        NativeProfileProjections.push_back(
+            {B.Id, Address, Next.ProfileProjection});
+    }
+    if (auto Error = validateLowInstructionBoundaries(
+            B, LowInstructionBoundaryRequirement::Required))
+      fail(Status::Invalid, llvm::toString(std::move(Error)));
     NativeTrace.Blocks.push_back(B);
     return B;
   }
@@ -1386,7 +1435,7 @@ class Checker {
       return;
     if (++Result.BlockVisits > Limits.MaxBlockVisits)
       fail(Status::BudgetExceeded, "block-visit budget exhausted");
-    LowInstructionUndefinedEffects NativeEffects;
+    std::vector<LowInstructionUndefinedEffects> NativeEffects;
     std::optional<LowBlock> NativeBlock;
     if (Provider)
       NativeBlock = prepareNative(P, NativeEffects);
@@ -1398,7 +1447,9 @@ class Checker {
     if (!B.ExceptionalSuccs.empty() || !B.ExceptionalPreds.empty())
       fail(Status::Unsupported, "exceptional control flow is unsupported");
     SymExec Left(Ctx, P.Left), Right(Ctx, P.Right);
-    for (const auto &Boundary : B.InstructionBoundaries) {
+    for (size_t BoundaryIndex = 0;
+         BoundaryIndex != B.InstructionBoundaries.size(); ++BoundaryIndex) {
+      const auto &Boundary = B.InstructionBoundaries[BoundaryIndex];
       if (++Result.Instructions > Limits.MaxInstructions)
         fail(Status::BudgetExceeded, "instruction-visit budget exhausted");
       Result.InstructionAddress = Boundary.Address;
@@ -1414,13 +1465,13 @@ class Checker {
         fail(Status::Unsupported,
              "instruction mode or local control guard is unsupported");
       const auto Record = Effects.find({B.Id, Boundary.Address});
-      const auto *DescriptionPointer = Provider ? &NativeEffects
+      const auto *DescriptionPointer = Provider ? &NativeEffects[BoundaryIndex]
                                        : Record == Effects.end()
                                            ? nullptr
                                            : &Record->second->Effects;
       const bool ProfileProjection =
           Provider && Contract.X64FlagsProfile &&
-          x64::isCetDisabledProjection(NativeInstructions.at(B.StartAddr));
+          x64::isCetDisabledProjection(NativeInstructions.at(Boundary.Address));
       if (!DescriptionPointer ||
           (DescriptionPointer->Coverage == LowUndefinedCoverage::Missing &&
            !ProfileProjection))
@@ -1604,7 +1655,7 @@ class Checker {
             const auto Taken = Ctx.mkAnd(Incoming, Condition);
             const auto Other = Ctx.mkAnd(Incoming, Ctx.mkNot(Condition));
             const auto Fallthrough =
-                NativeInstructions.at(B.StartAddr).Fallthrough.Address;
+                NativeInstructions.at(Boundary.Address).Fallthrough.Address;
             // A completed UNSAT proof for one edge proves that its complement
             // covers the incoming domain. Keep that domain without making
             // later queries reprove this branch fact. Unknown still refuses,
@@ -1658,9 +1709,11 @@ class Checker {
     }
     if (Provider) {
       const auto Predicate = P.Predicate;
-      scheduleNative(std::move(P),
-                     NativeInstructions.at(B.StartAddr).Fallthrough.Address,
-                     Predicate);
+      scheduleNative(
+          std::move(P),
+          NativeInstructions.at(B.InstructionBoundaries.back().Address)
+              .Fallthrough.Address,
+          Predicate);
       return;
     }
     if (B.Succs.size() != 1)

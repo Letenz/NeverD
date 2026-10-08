@@ -25,6 +25,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 
@@ -132,6 +133,18 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
         break;
       }
     }
+
+    // The incoming value of a scratch register that carries no argument is
+    // undefined: storing it, as an alignment `push rax` does, passes nothing.
+    if (Scan.Convention && Scan.Convention->UndefinedIncomingScratchRegisters &&
+        Stored.Kind == MedVar::Reg && Stored.SSAVer == 0 &&
+        Stored.RegOff != Scan.SpRegOff && !preserved(Stored) &&
+        gprFamilyOf(Scan.TheArch, Stored.RegOff) &&
+        llvm::none_of(Layout.Registers, [&](uint64_t Reg) {
+          return gprFamilyOf(Scan.TheArch, Reg) ==
+                 gprFamilyOf(Scan.TheArch, Stored.RegOff);
+        }))
+      return;
 
     const MedVar &AddrVar = Prev.Inputs[0];
     int64_t StackOff = -1;
@@ -1245,8 +1258,7 @@ std::string MedToHighConverter::calleeDisplayName(va_t Target) const {
 }
 
 void MedToHighConverter::resolveCalleeNames(
-    const std::set<va_t> &Targets,
-    std::map<va_t, std::string> &Names) const {
+    const std::set<va_t> &Targets, std::map<va_t, std::string> &Names) const {
   if (!Image) {
     for (va_t Target : Targets)
       Names[Target] = calleeDisplayName(Target);

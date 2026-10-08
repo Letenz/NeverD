@@ -18,7 +18,9 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/InternalNoReturn.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -2842,6 +2844,56 @@ bool forwardsToGuardDispatch(const BinaryImage &Img, const LowFunc &F) {
               Slot.Offset, RuntimeCallablePointerSlotKind::GuardXFGDispatch));
 }
 
+/// The argument registers the libc imports that \p Funcs and the callees
+/// \p Effects summarizes call read, keyed by the address each call names its
+/// import by: an executable stub or a slot the loader binds, listed in the
+/// import directory or not (importCalleeName).  A stub lifted as a function
+/// is keyed too.  A call in a function whose own summary is incomplete still
+/// passes its import's parameters.  Only a routine the arity tables give a
+/// fixed prototype (LibCNames.h), with every integer and pointer argument in
+/// a register and none in a vector register, is listed; each argument is
+/// read pointer-wide.
+std::map<va_t, GPRReadWidths>
+importPrototypeEntryReads(const BinaryImage &Img,
+                          const std::vector<LowFunc> &Funcs,
+                          const std::map<va_t, LocalRegisterEffect> &Effects) {
+  const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
+  const llvm::ArrayRef<uint64_t> Registers =
+      TRI.integerArgumentLayout(Img.Format).Registers;
+  std::map<va_t, GPRReadWidths> Reads;
+  std::set<va_t> Seen;
+  auto Classify = [&](va_t Addr) {
+    if (!Seen.insert(Addr).second)
+      return;
+    const std::string Name = importCalleeName(Img, Addr);
+    if (Name.empty())
+      return;
+    const auto Arity = libc::libcArityForSymbol(Name);
+    if (!Arity || Arity->FpArgs != 0 || Arity->IntArgs < 0 ||
+        static_cast<size_t>(Arity->IntArgs) > Registers.size())
+      return;
+    GPRReadWidths Widths{};
+    for (int K = 0; K < Arity->IntArgs; ++K)
+      if (const auto Family = gprFamilyOf(Img.Arch, Registers[K]))
+        Widths[*Family] = static_cast<uint8_t>(TRI.PointerSize);
+    Reads[Addr] = Widths;
+  };
+  for (const LowFunc &F : Funcs)
+    for (const LowBlock &Block : F.Blocks)
+      for (const LowOp &Op : Block.Ops)
+        if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+            Op.NumInputs > 0 && Op.Inputs[0].isConst())
+          Classify(Op.Inputs[0].Offset);
+  for (const auto &[Entry, Effect] : Effects) {
+    Classify(Entry);
+    for (const RegisterBlock &Block : Effect.Blocks)
+      for (const RegisterStep &Step : Block.Steps)
+        if (Step.ImportCallee != InvalidVA)
+          Classify(Step.ImportCallee);
+  }
+  return Reads;
+}
+
 /// Summarize which GPRs each direct callee may write (CallRegisterEffects.h).
 /// Callees outside Result.LowFuncs are lifted here with the same CFG settings,
 /// up to the Limits.h depth and count; beyond those they stay unsummarized.
@@ -2945,6 +2997,10 @@ void computeCallRegisterEffects(
       Classify(Entry, Img.getFunctionNameAt(Entry));
     for (const Import &Imp : Img.Imports)
       Classify(Imp.IATAddr, Imp.Name);
+  } else if (const CallArgumentConvention *Convention =
+                 callArgumentConvention(Img.Arch, Img.Format);
+             Convention && Convention->ImportArgumentsFromPrototype) {
+    FixedEntryReads = importPrototypeEntryReads(Img, Result.LowFuncs, Effects);
   }
   CallRegisterSummaries Summaries = solveCallRegisterEffects(
       Effects, Volatile, Arguments, DispatchThunks, FixedEntryReads);
