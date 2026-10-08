@@ -66,6 +66,11 @@ The default application and code font is Consolas at 10 points when that
 family is installed. Otherwise, the system fixed-width font is used. A saved
 code-font choice continues to override the default for code views.
 
+Double-clicking a function name in a code view follows it in that same window,
+keeping its C or LLVM C representation even when the window is locked. Back and
+forward navigation also stays in the active code window. Imports and global
+objects continue to open at their addresses in the disassembly or hex view.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.
