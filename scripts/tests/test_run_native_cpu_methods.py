@@ -148,6 +148,39 @@ class NativeMethodEvidenceTests(unittest.TestCase):
         self.assertFalse(shards[0] & shards[1])
         self.assertEqual(set.union(*shards), set(methods.parse_inventory(self.document)))
 
+    @unittest.skipUnless(os.name == "posix", "requires POSIX process groups")
+    def test_unit_subdirectories_keep_their_method_and_shard_execution_paths(self):
+        directories = {}
+        for test, (directory, owner) in zip(self.document["tests"], (
+                ("emulation", "Owner"), ("unpack", "NeverDUnpackTests")), strict=True):
+            working = str(self.root / "unittests" / directory)
+            binary = str(Path(working) / owner)
+            test["command"][0] = binary
+            test["properties"][0]["value"] = [owner]
+            test["properties"][-1]["value"] = working
+            directories[binary] = working
+        shards = [methods.shard_inventory(self.document, index, 2) for index in range(2)]
+        self.assertEqual({test["command"][0] for shard in shards for test in shard["tests"]},
+                         set(directories))
+
+        def execute(command, directory, environment, timeout, evidence):
+            self.assertEqual(directory, directories[command[0]])
+            name = command[1].removeprefix("--gtest_filter=").split(".", 1)[1]
+            self.write_xml(names=(name,))
+            evidence.mkdir(parents=True)
+            (evidence / "results.xml").write_bytes(self.xml.read_bytes())
+            return {"status": 0, "timed_out": False, "child_retired": True}
+
+        outcomes = []
+        with mock.patch.object(methods, "execute", side_effect=execute) as child, \
+                contextlib.redirect_stdout(io.StringIO()):
+            for index, shard in enumerate(shards):
+                cases, status = methods.run_methods(shard, self.root / f"shard-{index}", {})
+                self.assertEqual(status, 0)
+                outcomes.extend(case.test for case in cases)
+        self.assertEqual(child.call_count, 2)
+        self.assertEqual(set(outcomes), set(methods.parse_inventory(self.document)))
+
     def wrapped_document(self):
         document = copy.deepcopy(self.document)
         for test in document["tests"]:

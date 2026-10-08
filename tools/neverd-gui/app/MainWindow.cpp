@@ -483,6 +483,9 @@ CodeView *MainWindow::codeView(const QString &representation) {
   });
   connect(view->text(), &CodeText::nameActivated, this,
           [this, view](const QString &name) { activateCodeName(view, name); });
+  // Data shows in the disassembly, as an import's name does.
+  connect(view->text(), &CodeText::objectActivated, this,
+          [this](Address address) { jump(address); });
   connect(view->text(), &CodeText::contextMenuRequested, this,
           &MainWindow::contextMenu);
   if (c)

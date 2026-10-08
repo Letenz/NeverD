@@ -3,11 +3,17 @@
 # that the native CPU inventory can require them.
 add_neverd_unittest(NeverDUnpackTests
   PEDebugTests.cpp
+  PEMappingTests.cpp
   PERebuildTests.cpp
-  ProcessImportsTests.cpp
-  ProcessTransferTests.cpp
   UnpackIdentifyTests.cpp
   LINK_COMPONENTS Unpack)
+if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
+  target_sources(NeverDUnpackTests PRIVATE
+    ProcessImportsTests.cpp
+    ProcessTransferTests.cpp)
+  target_compile_definitions(NeverDUnpackTests PRIVATE
+    NEVERD_UNPACK_TEST_EXECUTION=1)
+endif()
 target_include_directories(NeverDUnpackTests PRIVATE "${PROJECT_SOURCE_DIR}/lib")
 target_compile_definitions(NeverDUnpackTests PRIVATE
   NEVERD_UNPACK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/binaries")

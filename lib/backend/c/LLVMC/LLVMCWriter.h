@@ -739,8 +739,9 @@ public:
   };
   std::map<va_t, ImageDataUse> ImageDataUses;
   void collectImageDataUses(llvm::Module &Mod);
-  /// Declare the imports that calls through the slots the loader binds print
-  /// by name (resolveImportCalleeName), with the type the calls return.
+  /// Declare the imports that calls through slots the loader binds outside
+  /// the import table print by name (resolveImportCalleeName), with the type
+  /// the calls return.
   void writeImportCalleeDecls(llvm::Module &Mod);
   /// Last store in the current block. Cleared with `AllocaImmediates`.
   std::map<const llvm::AllocaInst *, const llvm::Value *> AllocaLastValues;

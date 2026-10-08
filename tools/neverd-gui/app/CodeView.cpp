@@ -22,6 +22,7 @@
 #include <QToolTip>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <utility>
 
 namespace neverd::gui {
 namespace {
@@ -835,6 +836,11 @@ void CodeText::mouseDoubleClickEvent(QMouseEvent *event) {
       controlWords().contains(token) || keywordWords().contains(token) ||
       typeWords().contains(token))
     return;
+  // A global shows at its address, whatever C called it there.
+  if (const auto address = objectAddress(token)) {
+    emit objectActivated(*address);
+    return;
+  }
   // A C++ function links by its mangled symbol, which the binary names.
   emit nameActivated(linkedSymbol(token).value_or(token));
 }
@@ -871,10 +877,33 @@ const CodeText::Declarations &CodeText::declarations() const {
       QStringLiteral(R"(^\s*#\s*define\s+([A-Za-z_]\w*))"));
   static const QRegularExpression Labeled(QStringLiteral(
       R"re(\b([A-Za-z_]\w*)\s*\([^;]*\)\s*__asm__\s*\(\s*"([^"\\]+)"\s*\))re"));
+  // A global's address: in the comment above its declaration (decompiled C)
+  // or after it (C through LLVM).  The declared name precedes its array
+  // bounds and its initializer or the end of the declaration.
+  static const QRegularExpression ImageAddress(
+      QStringLiteral(R"(^\s*/\*\s*neverd\.image:\s*0x([0-9A-Fa-f]+)\b)"));
+  static const QRegularExpression TrailingAddress(
+      QStringLiteral(R"(;\s*/\*\s*0x([0-9A-Fa-f]+)\s*\*/\s*$)"));
+  static const QRegularExpression Declared(
+      QStringLiteral(R"(\b([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*[=;])"));
   auto &found = declarations_.emplace();
   int line = 0;
+  std::optional<Address> declaredAt;
   for (const QStringView text : QStringView(source_).split(QLatin1Char('\n'))) {
     const QStringView head = text.trimmed();
+    if (const auto marker = ImageAddress.matchView(text); marker.hasMatch()) {
+      declaredAt = marker.captured(1).toULongLong(nullptr, 16);
+      ++line;
+      continue;
+    }
+    std::optional<Address> address = std::exchange(declaredAt, std::nullopt);
+    if (const auto trailing = TrailingAddress.matchView(text);
+        !address && trailing.hasMatch() && head.startsWith(u"extern"))
+      address = trailing.captured(1).toULongLong(nullptr, 16);
+    if (address)
+      if (const auto name = Declared.matchView(text);
+          name.hasMatch() && !found.objects.contains(name.captured(1)))
+        found.objects.insert(name.captured(1), *address);
     if (head.startsWith(u"typedef") || head.startsWith(u"struct") ||
         head.startsWith(u"union") || head.startsWith(u"enum") ||
         head.startsWith(u'#')) {
@@ -897,6 +926,13 @@ const CodeText::Declarations &CodeText::declarations() const {
 std::optional<int> CodeText::declarationLine(const QString &name) const {
   const auto &types = declarations().types;
   if (const auto found = types.constFind(name); found != types.cend())
+    return *found;
+  return std::nullopt;
+}
+
+std::optional<Address> CodeText::objectAddress(const QString &name) const {
+  const auto &objects = declarations().objects;
+  if (const auto found = objects.constFind(name); found != objects.cend())
     return *found;
   return std::nullopt;
 }

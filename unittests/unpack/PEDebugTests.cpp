@@ -186,6 +186,81 @@ TEST(PEDebugRecords, DebugRecordsRetainTheirFileStorageWithoutAPayload) {
             sizeof(debug_directory));
 }
 
+TEST(PEDebugRecords, FileOnlyDebugPayloadKeepsItsRelativeOverlayPosition) {
+  for (uint32_t Prefix : {0u, 17u}) {
+    SCOPED_TRACE(Prefix);
+    DebugImage Fixture;
+    Fixture.Directories[llvm::COFF::DEBUG_DIRECTORY].RelativeVirtualAddress =
+        0x1100;
+    Fixture.Directories[llvm::COFF::DEBUG_DIRECTORY].Size =
+        sizeof(debug_directory);
+    const uint64_t InputEnd =
+        Fixture.Sections[1].PointerToRawData + Fixture.Data.size();
+    debug_directory Debug{};
+    Debug.Type = llvm::COFF::IMAGE_DEBUG_TYPE_EX_DLLCHARACTERISTICS;
+    Debug.SizeOfData = 4;
+    Debug.PointerToRawData = InputEnd + Prefix;
+    store(Fixture.Text, 0x100, Debug);
+    auto Bytes = Fixture.file();
+    std::vector<uint8_t> Overlay(Prefix, 0xa5);
+    // Zero extended DLL characteristics are valid. A stale zero file pointer
+    // would instead read the nonzero DOS signature as these flags.
+    Overlay.insert(Overlay.end(), Debug.SizeOfData, 0);
+    Overlay.push_back(0x7b);
+    Bytes.insert(Bytes.end(), Overlay.begin(), Overlay.end());
+    auto Input = pe::Image::read(Bytes);
+    ASSERT_TRUE(bool(Input)) << llvm::toString(Input.takeError());
+    auto Result = pe::rebuild(**Input, Fixture.capture(), {});
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    const auto Rebuilt = test::readImage(Result->File);
+    ASSERT_FALSE(HasFailure());
+    const uint64_t OutputEnd =
+        Rebuilt.Sections.back().FileOffset + Rebuilt.Sections.back().FileSize;
+    ASSERT_NE(OutputEnd, InputEnd);
+    const uint64_t Field = 0x1100 + offsetof(debug_directory, PointerToRawData);
+    const uint64_t Payload =
+        llvm::support::endian::read32le(Rebuilt.Mapped.data() + Field);
+    EXPECT_EQ(Payload, OutputEnd + Prefix);
+    ASSERT_LE(Payload + Debug.SizeOfData, Result->File.size());
+    EXPECT_EQ(llvm::support::endian::read32le(Result->File.data() + Payload),
+              0u);
+    EXPECT_EQ(llvm::support::endian::read32le(
+                  Rebuilt.Mapped.data() + 0x1100 +
+                  offsetof(debug_directory, AddressOfRawData)),
+              0u);
+    ASSERT_EQ(Result->File.size(), OutputEnd + Overlay.size());
+    EXPECT_TRUE(std::equal(Overlay.begin(), Overlay.end(),
+                           Result->File.begin() + OutputEnd));
+  }
+}
+
+TEST(PEDebugRecords, FileOnlyDebugPayloadMustFitThePreservedOverlay) {
+  for (uint32_t Offset : {0u, 0x25ffu, 0x2605u, 0x2609u, UINT32_MAX}) {
+    SCOPED_TRACE(Offset);
+    DebugImage Fixture;
+    Fixture.Directories[llvm::COFF::DEBUG_DIRECTORY].RelativeVirtualAddress =
+        0x1100;
+    Fixture.Directories[llvm::COFF::DEBUG_DIRECTORY].Size =
+        sizeof(debug_directory);
+    debug_directory Debug{};
+    Debug.SizeOfData = 4;
+    Debug.PointerToRawData = Offset;
+    store(Fixture.Text, 0x100, Debug);
+    auto Bytes = Fixture.file();
+    ASSERT_EQ(Bytes.size(), 0x2600u);
+    Bytes.resize(Bytes.size() + 8, 0);
+    auto Input = pe::Image::read(Bytes);
+    ASSERT_TRUE(bool(Input)) << llvm::toString(Input.takeError());
+    auto Result = pe::rebuild(**Input, Fixture.capture(), {});
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    const auto Rebuilt = test::readImage(Result->File);
+    ASSERT_FALSE(HasFailure());
+    const uint64_t Field = 0x1100 + offsetof(debug_directory, PointerToRawData);
+    EXPECT_EQ(llvm::support::endian::read32le(Rebuilt.Mapped.data() + Field),
+              0u);
+  }
+}
+
 TEST(PEDebugRecords, UnmappedDebugPayloadCannotAcquireAFileOffset) {
   DebugImage Fixture;
   Fixture.Directories[llvm::COFF::DEBUG_DIRECTORY].RelativeVirtualAddress =
@@ -195,9 +270,11 @@ TEST(PEDebugRecords, UnmappedDebugPayloadCannotAcquireAFileOffset) {
   debug_directory Debug{};
   Debug.SizeOfData = 8;
   Debug.AddressOfRawData = 0x3ffc;
-  Debug.PointerToRawData = 0x12345678;
+  Debug.PointerToRawData =
+      Fixture.Sections[1].PointerToRawData + Fixture.Data.size();
   store(Fixture.Text, 0x1e8, Debug);
-  const auto Bytes = Fixture.file();
+  auto Bytes = Fixture.file();
+  Bytes.resize(Bytes.size() + Debug.SizeOfData, 0);
   auto Input = pe::Image::read(Bytes);
   ASSERT_TRUE(bool(Input)) << llvm::toString(Input.takeError());
   auto Result = pe::rebuild(**Input, Fixture.capture(), {});
