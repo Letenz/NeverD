@@ -948,9 +948,14 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
     const auto &MP = Func.Params[PI];
     MedTypedParam TP;
     TP.Name = "arg" + std::to_string(PI);
+    const auto Scalar = MP.RegOff == kNoParamReg
+                            ? Func.FPParamScalarBytes.end()
+                            : Func.FPParamScalarBytes.find(MP.RegOff);
     if (PtrParameters.count(PI) && !SegmentOffsetParameters.count(PI) &&
         !TRI.isFrameOrLinkReg(MP.RegOff))
       TP.Type = NdType::makePtr();
+    else if (Scalar != Func.FPParamScalarBytes.end())
+      TP.Type = NdType::makeFloat(Scalar->second);
     else
       TP.Type = NdType::makeInt(MP.Size);
     Func.TypedParams.push_back(TP);

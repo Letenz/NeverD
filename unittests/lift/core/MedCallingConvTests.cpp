@@ -6113,12 +6113,15 @@ TEST(LowToMedX86CallingConv, ScalarSSEMergeIsNotAParameterUntilALaneIsRead) {
   EXPECT_TRUE(hasParameterIn(Convert(true), x86reg::XMM2));
 }
 
-TEST(LowToMedCallingConv, LaneInsertIntoXMM0IsReturnedOnlyOnX64) {
-  // `movss xmm0, [p]` into an incoming xmm0 whose upper lanes reach the
-  // return register.  x86-64 returns a vector there, so those lanes may be
-  // returned and xmm0 stays a parameter.  i386 returns floating point in x87
-  // st0 and records in memory, so a merge into xmm0 is not returned.
-  auto Convert = [](Arch TheArch) {
+TEST(LowToMedCallingConv,
+     LaneInsertIntoXMM0IsAParameterOnlyWhenItsLanesAreRead) {
+  // A scalar write into an incoming xmm0 keeps its upper lanes.  i386
+  // returns floating point in x87 st0 and records in memory, so the merge is
+  // not returned.  x86-64 returns a scalar in the low lane, which the write
+  // replaced: the kept lanes reach no result, and like `cvtsi2sd xmm0, edi`
+  // of a `double f(int)` they make no parameter.  A read of the whole
+  // register still observes them.
+  auto Convert = [](Arch TheArch, bool StoreWhole) {
     const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
     const NdVar Pointer = NdVar::reg(
         TRI.IntParamRegs.empty() ? x86reg::RAX : TRI.IntParamRegs.front(),
@@ -6128,11 +6131,57 @@ TEST(LowToMedCallingConv, LaneInsertIntoXMM0IsReturnedOnlyOnX64) {
       Push(NdOp::LOAD, NdVar::tmp(1, 4), {Pointer});
       Push(NdOp::SUBBYTES, NdVar::tmp(2, 12), {XMM0, NdVar::cst(4, 4)});
       Push(NdOp::CONCAT, XMM0, {NdVar::tmp(2, 12), NdVar::tmp(1, 4)});
+      if (StoreWhole)
+        Push(NdOp::STORE, NdVar(), {Pointer, XMM0});
     });
     return LowToMedConverter().convert(Low, TheArch);
   };
-  EXPECT_TRUE(hasParameterIn(Convert(Arch::X64), x86reg::XMM0));
-  EXPECT_FALSE(hasParameterIn(Convert(Arch::X86), x86reg::XMM0));
+  EXPECT_FALSE(hasParameterIn(Convert(Arch::X64, false), x86reg::XMM0));
+  EXPECT_FALSE(hasParameterIn(Convert(Arch::X86, false), x86reg::XMM0));
+  EXPECT_TRUE(hasParameterIn(Convert(Arch::X64, true), x86reg::XMM0));
+}
+
+TEST(LowToMedX86CallingConv, AScalarReadOfAnXMMArgumentIsAFloatOrDouble) {
+  // `mulsd xmm0, xmm1` of `double f(double a, double b)` reads only each
+  // register's low eight bytes: both are double parameters.  `cvtsi2sd xmm1,
+  // edi` first makes xmm1 a scratch merge, which is no parameter at all.
+  auto Convert = [](bool XMM1IsScratch, bool ReadWholeXMM0) {
+    const NdVar XMM0 = NdVar::reg(x86reg::XMM0, 16);
+    const NdVar XMM1 = NdVar::reg(x86reg::XMM1, 16);
+    const NdVar RDI = NdVar::reg(x86reg::RDI, 8);
+    LowFunc Low = makeOneBlockLow(0x1000, "mul", [&](auto Push) {
+      if (XMM1IsScratch) {
+        Push(NdOp::FLOAT_INT2FLOAT, NdVar::tmp(1, 8),
+             {NdVar::reg(x86reg::RDI, 4)});
+        Push(NdOp::SUBBYTES, NdVar::tmp(2, 8), {XMM1, NdVar::cst(8, 4)});
+        Push(NdOp::CONCAT, XMM1, {NdVar::tmp(2, 8), NdVar::tmp(1, 8)});
+      }
+      Push(NdOp::SUBBYTES, NdVar::tmp(3, 8), {XMM0, NdVar::cst(0, 4)});
+      Push(NdOp::SUBBYTES, NdVar::tmp(4, 8), {XMM1, NdVar::cst(0, 4)});
+      Push(NdOp::FLOAT_MULT, NdVar::tmp(5, 8),
+           {NdVar::tmp(3, 8), NdVar::tmp(4, 8)});
+      if (ReadWholeXMM0)
+        Push(NdOp::STORE, NdVar(), {RDI, XMM0});
+      Push(NdOp::SUBBYTES, NdVar::tmp(6, 8), {XMM0, NdVar::cst(8, 4)});
+      Push(NdOp::CONCAT, XMM0, {NdVar::tmp(6, 8), NdVar::tmp(5, 8)});
+    });
+    return LowToMedConverter().convert(Low, Arch::X64);
+  };
+  const MedFunc Both = Convert(false, false);
+  ASSERT_TRUE(hasParameterIn(Both, x86reg::XMM0));
+  ASSERT_TRUE(hasParameterIn(Both, x86reg::XMM1));
+  EXPECT_EQ(Both.FPParamScalarBytes.count(x86reg::XMM0), 1u);
+  EXPECT_EQ(Both.FPParamScalarBytes.at(x86reg::XMM0), 8u);
+  EXPECT_EQ(Both.FPParamScalarBytes.at(x86reg::XMM1), 8u);
+
+  const MedFunc Mixed = Convert(true, false);
+  EXPECT_TRUE(hasParameterIn(Mixed, x86reg::XMM0));
+  EXPECT_FALSE(hasParameterIn(Mixed, x86reg::XMM1));
+
+  // A whole-register store reads the upper lane too: a vector.
+  const MedFunc Whole = Convert(false, true);
+  EXPECT_TRUE(hasParameterIn(Whole, x86reg::XMM0));
+  EXPECT_EQ(Whole.FPParamScalarBytes.count(x86reg::XMM0), 0u);
 }
 
 TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
