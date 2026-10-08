@@ -167,6 +167,337 @@ HighStmt loop(ExprPtr Cond, std::vector<HighStmt> Body) {
   return S;
 }
 
+ExprPtr typedParameter(int Id, TypeRef Type) {
+  MedVar V;
+  V.Kind = MedVar::Param;
+  V.Id = Id;
+  V.Size = Type->Size;
+  V.TheArch = Arch::X64;
+  return HighExpr::makeVar(V, std::move(Type));
+}
+
+TEST(HighValueForward, IndexedLoadKeepsSnapshotAcrossCoalescedLoopCopies) {
+  for (bool MixedKinds : {false, true}) {
+    SCOPED_TRACE(MixedKinds);
+    const auto Word = NdType::makeInt(4, false);
+    const auto IndexType = NdType::makeInt(8, false);
+    auto Value = [&](int Tag, bool Backedge = false) {
+      MedVar V;
+      V.Kind = MixedKinds && Backedge ? MedVar::Temp : MedVar::Reg;
+      V.Id = 50000 + Tag;
+      V.RenameTag = Tag;
+      V.Size = Tag == 0 ? 8 : 4;
+      V.TheArch = Arch::X64;
+      return HighExpr::makeVar(V, Tag == 0 ? IndexType : Word);
+    };
+    auto Array = [] {
+      return typedParameter(0, NdType::makePtr(NdType::makeInt(4, true)));
+    };
+    auto Count = [] { return typedParameter(1, NdType::makeInt(4, true)); };
+    auto Add = [](ExprPtr A, ExprPtr B, TypeRef Type) {
+      auto E = op(NdOp::INT_ADD, std::move(A), std::move(B));
+      E->Type = std::move(Type);
+      return E;
+    };
+    auto Next = [&] { return Add(Value(0), constant(1), IndexType); };
+    auto Saved = [] {
+      MedVar V;
+      V.Kind = MedVar::Temp;
+      V.Id = 24;
+      V.SSAVer = 1;
+      V.Size = 4;
+      V.TheArch = Arch::X64;
+      return HighExpr::makeVar(V, NdType::makeInt(4, false));
+    };
+    auto Offset = op(NdOp::INT_MULT, Value(0), constant(4));
+    auto Load = HighExpr::makeLoad(op(NdOp::INT_ADD, Array(), Offset), Word);
+    auto SetIndex = assign(Value(0, true), Next());
+    auto SetSum = assign(Value(1, true), Add(Value(1), Saved(), Word));
+    SetIndex.IsPhiCopy = SetSum.IsPhiCopy = true;
+    HighStmt Break;
+    Break.Kind = StmtKind::Break;
+    HighFunc F = function(
+        "indexed_sum",
+        {when(
+             op(NdOp::INT_SLESSEQUAL, Count(), HighExpr::makeConst(0, 4), true),
+             {result(HighExpr::makeConst(0, 4))}),
+         assign(Value(0), constant(0)),
+         assign(Value(1), HighExpr::makeConst(0, 4)),
+         loop(HighExpr::makeConst(1, 1),
+              {assign(Saved(), Load),
+               assign(Value(2), Add(Value(1), Saved(), Word)),
+               when(op(NdOp::INT_EQUAL, Count(), Next(), true), {Break}),
+               SetIndex, SetSum}),
+         result(Value(2))});
+    F.ReturnType = Word;
+    F.Params = {{"arg0", NdType::makePtr(NdType::makeInt(4, true))},
+                {"arg1", NdType::makeInt(4, true)}};
+    const std::string Source = emit({F});
+    compileAndRun(Source + R"(
+int main(void) {
+  const int32_t a[] = {-5, 7, 0, 9, -3};
+  const int32_t b[] = {13, -2, -17, 6, 41};
+  for (unsigned which = 0; which < 2; ++which) {
+    const int32_t *values = which ? b : a;
+    uint32_t expected = 0;
+    for (int count = 1; count <= 5; ++count) {
+      expected += (uint32_t)values[count - 1];
+      if (indexed_sum((int32_t *)values, count) != expected) return 1;
+    }
+  }
+  return indexed_sum(0, 0) == 0 && indexed_sum(0, -1) == 0 ? 0 : 2;
+}
+)");
+  }
+}
+
+TEST(HighValueForward, TypedIndexedLoadKeepsSnapshotBeforeMemoryStore) {
+  const auto Word = NdType::makeInt(8, false);
+  auto Address = [&] {
+    return op(NdOp::INT_ADD, typedParameter(0, NdType::makePtr(Word)),
+              op(NdOp::INT_MULT, typedParameter(1, Word), constant(8)));
+  };
+  HighStmt Write;
+  Write.Kind = StmtKind::Store;
+  Write.StoreAddr = Address();
+  Write.StoreVal = constant(7);
+  HighFunc F = function(
+      "indexed_store",
+      {assign(local(1, Word), HighExpr::makeLoad(Address(), Word)), Write,
+       result(op(NdOp::INT_ADD, local(1, Word),
+                 HighExpr::makeLoad(Address(), Word)))});
+  F.Params = {{"arg0", NdType::makePtr(Word)}, {"arg1", Word}};
+  const std::string Source = emit({F});
+  compileAndRun(Source + R"(
+int main(void) {
+  for (uint64_t initial = 0; initial < 40; ++initial) {
+    uint64_t values[] = {91, initial, 83};
+    if (indexed_store(values, 1) != initial + 7 || values[0] != 91 ||
+        values[1] != 7 || values[2] != 83) return 1;
+  }
+  return 0;
+}
+)");
+}
+
+TEST(HighValueForward, StableTypedIndexedLoadStillFoldsMultipleUses) {
+  const auto Word = NdType::makeInt(8, false);
+  auto Address = op(NdOp::INT_ADD, typedParameter(0, NdType::makePtr(Word)),
+                    op(NdOp::INT_MULT, typedParameter(1, Word), constant(8)));
+  HighFunc F =
+      function("stable_index",
+               {assign(local(1, Word), HighExpr::makeLoad(Address, Word)),
+                result(op(NdOp::INT_ADD, local(1, Word), local(1, Word)))});
+  F.Params = {{"arg0", NdType::makePtr(Word)}, {"arg1", Word}};
+  const std::string Source = emit({F});
+  EXPECT_EQ(declarationOf(Source, "t1"), "") << Source;
+  EXPECT_NE(Source.find("arg0[arg1]"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+int main(void) {
+  for (uint64_t initial = 0; initial < 40; ++initial) {
+    uint64_t values[] = {91, initial, 83};
+    for (uint64_t index = 0; index < 3; ++index)
+      if (stable_index(values, index) != values[index] * 2) return 1;
+    if (values[0] != 91 || values[1] != initial || values[2] != 83) return 2;
+  }
+  return 0;
+}
+)");
+}
+
+TEST(HighValueForward, TypedMemberLoadKeepsSnapshotAcrossMutatingCall) {
+  const auto Word = NdType::makeInt(8, false);
+  auto Counter = NdType::makeNamedRecord("Counter", 24);
+  Counter->FieldDisplayNames = {"before", "value", "after"};
+  Counter->FieldDisplayOffsets = {0, 8, 16};
+  Counter->FieldDisplayTypes = {Word, Word, Word};
+  const auto Pointer = NdType::makePtr(Counter);
+  auto Argument = [&] { return typedParameter(0, Pointer); };
+  auto Address = HighExpr::makeBinop(NdOp::INT_ADD, Argument(), constant(8));
+  Address->Type = NdType::makePtr(Word);
+  HighStmt Change;
+  Change.Kind = StmtKind::Call;
+  Change.CallExpr = HighExpr::makeCall("mutate_counter", 0x2000, {Argument()});
+  Change.CallExpr->Type = NdType::makeInt(4, true);
+  HighFunc F =
+      function("member_snapshot",
+               {assign(local(17, Word), HighExpr::makeLoad(Address, Word)),
+                Change, result(local(17, Word))});
+  F.ReturnType = Word;
+  F.Params = {{"arg0", Pointer}};
+  const std::string Source = emit({F});
+  // The named-record spelling is a display type. Supply and independently
+  // check its concrete C layout before the generated function uses it.
+  compileAndRun(std::string(R"(
+#include <stdint.h>
+#include <stddef.h>
+typedef struct Counter {
+  uint64_t before;
+  uint64_t value;
+  uint64_t after;
+} Counter;
+_Static_assert(sizeof(Counter) == 24, "Counter size");
+_Static_assert(offsetof(Counter, value) == 8, "Counter value offset");
+_Static_assert(offsetof(Counter, after) == 16, "Counter trailing canary offset");
+int mutate_counter(uintptr_t address);
+)") + Source + R"(
+static uint64_t replacement;
+static unsigned calls;
+int mutate_counter(uintptr_t address) {
+  Counter *counter = (Counter *)address;
+  ++calls;
+  counter->value = replacement;
+  return 0;
+}
+int main(void) {
+  static const uint64_t initial[] = {
+    UINT64_C(0), UINT64_C(1), UINT64_C(7), UINT64_C(0x7fffffffffffffff),
+    UINT64_C(0x8000000000000000), UINT64_MAX - UINT64_C(1), UINT64_MAX
+  };
+  static const uint64_t changed[] = {
+    UINT64_MAX, UINT64_C(0), UINT64_C(11), UINT64_C(0x8000000000000000),
+    UINT64_C(0x123456789abcdef0), UINT64_C(19), UINT64_C(1)
+  };
+  for (size_t i = 0; i < sizeof(initial) / sizeof(initial[0]); ++i) {
+    Counter counter = {UINT64_C(0x13579bdf2468ace0), initial[i],
+                       UINT64_C(0xfedcba9876543210)};
+    replacement = changed[i];
+    calls = 0;
+    if (member_snapshot(&counter) != initial[i]) return 1;
+    if (counter.value != changed[i] || calls != 1) return 2;
+    if (counter.before != UINT64_C(0x13579bdf2468ace0) ||
+        counter.after != UINT64_C(0xfedcba9876543210)) return 3;
+  }
+  return 0;
+}
+)");
+}
+
+TEST(HighValueForward, TypedIndexedLoadEvaluatesCallAddressOnce) {
+  const auto Word = NdType::makeInt(8, false);
+  auto Index = HighExpr::makeCall("next_index", 0x2100, {});
+  Index->Type = NdType::makeInt(4, true);
+  auto Offset = op(NdOp::INT_MULT, Index, constant(8));
+  Offset->Type = Word;
+  auto Address =
+      op(NdOp::INT_ADD, typedParameter(0, NdType::makePtr(Word)), Offset);
+  Address->Type = NdType::makePtr(Word);
+  auto Sum = op(NdOp::INT_ADD, local(23, Word), local(23, Word));
+  Sum->Type = Word;
+  HighFunc F =
+      function("indexed_call_snapshot",
+               {assign(local(23, Word), HighExpr::makeLoad(Address, Word)),
+                result(Sum)});
+  F.ReturnType = Word;
+  F.Params = {{"arg0", NdType::makePtr(Word)}};
+  const std::string Source = emit({F});
+  // The unknown external call is an int-returning ABI boundary. Its result
+  // changes on each invocation, independently of the array being read.
+  compileAndRun(std::string(R"(
+#include <stdint.h>
+int next_index(void);
+)") + Source + R"(
+static unsigned calls;
+static unsigned first_index;
+int next_index(void) {
+  const unsigned index = (first_index + calls) % 3;
+  ++calls;
+  return (int)index;
+}
+int main(void) {
+  for (unsigned row = 0; row < 2; ++row) {
+    for (unsigned index = 0; index < 3; ++index) {
+      uint64_t values[] = {UINT64_C(0x13579bdf2468ace0), 11 + row,
+                           23 + row * 3, 37 + row * 7,
+                           UINT64_C(0xfedcba9876543210)};
+      const uint64_t original[] = {UINT64_C(0x13579bdf2468ace0), 11 + row,
+                                  23 + row * 3, 37 + row * 7,
+                                  UINT64_C(0xfedcba9876543210)};
+      const uint64_t expected = original[index + 1] * UINT64_C(2);
+      first_index = index;
+      calls = 0;
+      const uint64_t actual = indexed_call_snapshot(values + 1);
+      if (calls != 1) return 1;
+      if (actual != expected) return 2;
+      for (unsigned i = 0; i < 5; ++i)
+        if (values[i] != original[i]) return 3;
+    }
+  }
+  return 0;
+}
+)");
+}
+
+TEST(HighValueForward, TypedMemberNarrowingKeepsUnsignedByteView) {
+  for (bool CastReturn : {false, true}) {
+    SCOPED_TRACE(CastReturn);
+    const auto Word = NdType::makeInt(8, false);
+    const auto Byte = NdType::makeInt(1, false);
+    auto Counter = NdType::makeNamedRecord("Counter", 24);
+    Counter->FieldDisplayNames = {"before", "value", "after"};
+    Counter->FieldDisplayOffsets = {0, 8, 16};
+    Counter->FieldDisplayTypes = {Word, Word, Word};
+    const auto Pointer = NdType::makePtr(Counter);
+    auto Address = op(NdOp::INT_ADD, typedParameter(0, Pointer), constant(8));
+    Address->Type = NdType::makePtr(Word);
+    auto Saved = [&] {
+      MedVar V;
+      V.Kind = MedVar::Temp;
+      V.Id = 29;
+      V.Size = 1;
+      V.TheArch = Arch::X64;
+      return HighExpr::makeVar(V, Byte);
+    };
+    auto Narrow = std::make_shared<HighExpr>();
+    Narrow->Kind = ExprKind::Cast;
+    Narrow->CastTo = Narrow->Type = Byte;
+    Narrow->Operands.push_back(HighExpr::makeLoad(Address, Word));
+    auto Widen = HighExpr::makeUnary(NdOp::INT_ZEXT, Saved());
+    Widen->Type = Word;
+    if (CastReturn) {
+      Widen->Kind = ExprKind::Cast;
+      Widen->CastTo = Word;
+    }
+    HighFunc F =
+        function("narrowed_member", {assign(Saved(), Narrow), result(Widen)});
+    F.ReturnType = Word;
+    F.Params = {{"arg0", Pointer}};
+    const std::string Source = emit({F});
+    compileAndRun(std::string(R"(
+#include <stdint.h>
+#include <stddef.h>
+typedef struct Counter {
+  uint64_t before;
+  uint64_t value;
+  uint64_t after;
+} Counter;
+_Static_assert(sizeof(Counter) == 24, "Counter size");
+_Static_assert(offsetof(Counter, value) == 8, "Counter value offset");
+_Static_assert(offsetof(Counter, after) == 16, "Counter trailing canary offset");
+)") + Source + R"(
+int main(void) {
+  static const uint64_t inputs[] = {
+    UINT64_C(0), UINT64_C(1), UINT64_C(0x7f), UINT64_C(0x80),
+    UINT64_C(0xff), UINT64_C(0x100), UINT64_C(0x1ff),
+    UINT64_C(0xffffffff), UINT64_C(0x100000000),
+    UINT64_C(0x7fffffffffffffff), UINT64_C(0x8000000000000000),
+    UINT64_C(0x8000000000000080), UINT64_MAX - UINT64_C(1), UINT64_MAX
+  };
+  for (size_t i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i) {
+    Counter counter = {UINT64_C(0x13579bdf2468ace0), inputs[i],
+                       UINT64_C(0xfedcba9876543210)};
+    const uint64_t expected = (uint64_t)(uint8_t)inputs[i];
+    if (narrowed_member(&counter) != expected) return 1;
+    if (counter.before != UINT64_C(0x13579bdf2468ace0) ||
+        counter.value != inputs[i] ||
+        counter.after != UINT64_C(0xfedcba9876543210)) return 2;
+  }
+  return 0;
+}
+)");
+  }
+}
+
 TEST(HighValueForward, LoopConditionKeepsAValueTheLoopChanges) {
   // n = count + 1 before the loop, and the loop changes count under the
   // same name: the condition must keep reading n.
@@ -255,9 +586,9 @@ int main(void) { return same_slot(7) == 7 && same_slot(9) == 9 ? 0 : 1; }
 
 TEST(HighValueForward, SlotLoadStaysBeforeAnAssignmentToItsSlot) {
   HighFunc F = reloaded("assigned_slot", 16);
-  F.Body[2] = assign(HighExpr::makeLoad(frameSlot(16),
-                                       NdType::makeInt(8, false)),
-                     constant(5));
+  F.Body[2] =
+      assign(HighExpr::makeLoad(frameSlot(16), NdType::makeInt(8, false)),
+             constant(5));
   const std::string Source = emit({F});
   EXPECT_NE(declarationOf(Source, "t1"), "") << Source;
   compileAndRun(Source + R"(

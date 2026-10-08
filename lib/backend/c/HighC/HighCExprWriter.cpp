@@ -2045,6 +2045,11 @@ HighCWriter::typedPointerOffset(const HighExpr &Addr) const {
       const std::string Name = varName(Cur->Var);
       if (auto It = ValueForward.find(Name);
           It != ValueForward.end() && It->second && It->second != Cur) {
+        // Keep the proved field projection and its type together. Expanding
+        // it back to a raw frame load loses the type when frame slots have
+        // been replaced by their shared byte storage.
+        if (FieldForward.count(Name) && FieldForwardTypes.count(Name))
+          break;
         Cur = It->second;
         continue;
       }
