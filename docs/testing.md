@@ -1808,6 +1808,14 @@ The semantic fixture tests behavior rather than textual shape:
 
 The main implementation is
 [`SemanticRoundTripFixture.h`](../unittests/semantic/SemanticRoundTripFixture.h).
+With `NEVERD_SEMANTIC_HIGHC=1` in the environment, step 4 decompiles the object
+to C on the HighC route instead and builds that C for the original target at
+`-O2` with `-fno-strict-aliasing`; the run then checks the decompiled C itself
+by execution. A case whose C calls a routine the freestanding image cannot
+link (a rounding instruction printed as `nearbyint`), or does not begin with the
+tested function, is skipped with that reason. Every round-trip test runs this
+way, so compare the failing names of two such runs to judge a HighC or HighIR
+change.
 The patch-full fixture uses `Codegen::compileForRewrite`, the same rewrite
 backend as patch operations, then compares baseline and transformed code across
 the full 4 x 3 ISA/format grid.
