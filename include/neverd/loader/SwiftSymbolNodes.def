@@ -1,0 +1,95 @@
+//===- SwiftSymbolNodes.def - Swift nodes NeverD spells ---------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The Swift demangling node kinds whose names NeverD spells, and how.  A
+/// symbol holding any other kind where these are read has no readable
+/// spelling: it keeps its mangled name rather than a partial one.  Define the
+/// macros a consumer reads before including this file; the others expand to
+/// nothing.
+///
+///   NEVERD_SWIFT_CONTEXT(Kind)
+///       a declaration that is a scope: its own context, then its Identifier
+///       (`Demo.Box`)
+///   NEVERD_SWIFT_MEMBER(Kind, Readable, Stem, TakesArguments)
+///       a member with no name of its own, read after its context:
+///       `Demo.Box.init(x:)`, with argument labels when TakesArguments
+///   NEVERD_SWIFT_ACCESSOR(Kind, Readable, Stem)
+///       an accessor of the variable or subscript it holds:
+///       `Demo.Box.count.getter`
+///   NEVERD_SWIFT_THUNK(Kind, Readable, Stem)
+///       a wrapper around the entity it holds: `dispatch thunk of ...`
+///   NEVERD_SWIFT_TYPE_THUNK(Kind, Readable, Stem)
+///       a wrapper around a type: `type metadata accessor for Demo.Box`
+///   NEVERD_SWIFT_MARKER(Kind, Readable, Stem)
+///       a node that precedes the entity in the symbol and qualifies it:
+///       `merged Demo.answer()`
+///
+/// Readable is the source spelling and Stem the word a C identifier stem
+/// takes for it.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_SWIFT_CONTEXT
+#define NEVERD_SWIFT_CONTEXT(Kind)
+#endif
+#ifndef NEVERD_SWIFT_MEMBER
+#define NEVERD_SWIFT_MEMBER(Kind, Readable, Stem, TakesArguments)
+#endif
+#ifndef NEVERD_SWIFT_ACCESSOR
+#define NEVERD_SWIFT_ACCESSOR(Kind, Readable, Stem)
+#endif
+#ifndef NEVERD_SWIFT_THUNK
+#define NEVERD_SWIFT_THUNK(Kind, Readable, Stem)
+#endif
+#ifndef NEVERD_SWIFT_TYPE_THUNK
+#define NEVERD_SWIFT_TYPE_THUNK(Kind, Readable, Stem)
+#endif
+#ifndef NEVERD_SWIFT_MARKER
+#define NEVERD_SWIFT_MARKER(Kind, Readable, Stem)
+#endif
+
+NEVERD_SWIFT_CONTEXT("Class")
+NEVERD_SWIFT_CONTEXT("Structure")
+NEVERD_SWIFT_CONTEXT("Enum")
+NEVERD_SWIFT_CONTEXT("Protocol")
+NEVERD_SWIFT_CONTEXT("TypeAlias")
+NEVERD_SWIFT_CONTEXT("OtherNominalType")
+
+NEVERD_SWIFT_MEMBER("Constructor", "init", "init", true)
+NEVERD_SWIFT_MEMBER("Allocator", "__allocating_init", "allocating_init", true)
+NEVERD_SWIFT_MEMBER("Destructor", "deinit", "deinit", false)
+NEVERD_SWIFT_MEMBER("Deallocator", "__deallocating_deinit",
+                    "deallocating_deinit", false)
+NEVERD_SWIFT_MEMBER("IVarDestroyer", "__ivar_destroyer", "ivar_destroyer",
+                    false)
+
+NEVERD_SWIFT_ACCESSOR("Getter", "getter", "getter")
+NEVERD_SWIFT_ACCESSOR("Setter", "setter", "setter")
+NEVERD_SWIFT_ACCESSOR("ModifyAccessor", "modify", "modify")
+NEVERD_SWIFT_ACCESSOR("ReadAccessor", "read", "read")
+NEVERD_SWIFT_ACCESSOR("WillSet", "willset", "willset")
+NEVERD_SWIFT_ACCESSOR("DidSet", "didset", "didset")
+NEVERD_SWIFT_ACCESSOR("GlobalGetter", "getter", "getter")
+NEVERD_SWIFT_ACCESSOR("UnsafeAddressor", "unsafeAddressor", "unsafeAddressor")
+NEVERD_SWIFT_ACCESSOR("UnsafeMutableAddressor", "unsafeMutableAddressor",
+                      "unsafeMutableAddressor")
+
+NEVERD_SWIFT_THUNK("DispatchThunk", "dispatch thunk of ", "dispatch_thunk")
+NEVERD_SWIFT_THUNK("MethodDescriptor", "method descriptor for ",
+                   "method_descriptor")
+
+NEVERD_SWIFT_TYPE_THUNK("TypeMetadataAccessFunction",
+                        "type metadata accessor for ", "metadata_accessor")
+
+NEVERD_SWIFT_MARKER("MergedFunction", "merged ", "merged")
+
+#undef NEVERD_SWIFT_CONTEXT
+#undef NEVERD_SWIFT_MEMBER
+#undef NEVERD_SWIFT_ACCESSOR
+#undef NEVERD_SWIFT_THUNK
+#undef NEVERD_SWIFT_TYPE_THUNK
+#undef NEVERD_SWIFT_MARKER

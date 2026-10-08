@@ -1,0 +1,209 @@
+//===- CxxTemplateSimplifications.def - Shorter C++ type names --*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// How a demangled C++ name reads shorter without naming anything else: the
+/// standard library's ABI namespaces go, template arguments that equal their
+/// defaults go, and a specialization the standard names reads by that name.
+/// `std::__cxx11::basic_string<char, std::char_traits<char>,
+/// std::allocator<char>>::append` reads `std::string::append`.  Define the
+/// macros a consumer reads before including this file; the others expand to
+/// nothing.
+///
+///   NEVERD_CXX_INLINE_NAMESPACE(Scope, Namespace)
+///       Namespace inside Scope is an ABI version that names nothing a reader
+///       needs: `std::__cxx11::list` is `std::list`
+///   NEVERD_CXX_DEFAULT_ARGUMENT(Template, Index, Default)
+///       the argument at Index of Template defaults to Default, in which `$N`
+///       stands for argument N as it reads; an argument equal to its default
+///       is dropped when no argument after it remains
+///   NEVERD_CXX_ALIAS(Specialization, Alias)
+///       Specialization, with its defaults dropped, is the standard Alias;
+///       its constructors and destructor take the alias's name too
+///   NEVERD_CXX_OPERATOR_TOKEN(Spelling)
+///       an operator a function name can spell after `operator`, which a
+///       name is read with before any template argument list: `operator<<`
+///       in `std::operator<<<std::char_traits<char>>`.  Longer spellings
+///       come first.
+///   NEVERD_CXX_TAG_KEYWORD(Keyword)
+///       a keyword Microsoft's demangler writes before a class type in a
+///       template argument (`class std::allocator<char>`), which C++ does not
+///       need there
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_CXX_INLINE_NAMESPACE
+#define NEVERD_CXX_INLINE_NAMESPACE(Scope, Namespace)
+#endif
+#ifndef NEVERD_CXX_DEFAULT_ARGUMENT
+#define NEVERD_CXX_DEFAULT_ARGUMENT(Template, Index, Default)
+#endif
+#ifndef NEVERD_CXX_ALIAS
+#define NEVERD_CXX_ALIAS(Specialization, Alias)
+#endif
+#ifndef NEVERD_CXX_OPERATOR_TOKEN
+#define NEVERD_CXX_OPERATOR_TOKEN(Spelling)
+#endif
+#ifndef NEVERD_CXX_TAG_KEYWORD
+#define NEVERD_CXX_TAG_KEYWORD(Keyword)
+#endif
+
+// libstdc++'s C++11 ABI, libc++ and the Android NDK's libc++.
+NEVERD_CXX_INLINE_NAMESPACE("std", "__cxx11")
+NEVERD_CXX_INLINE_NAMESPACE("std", "__1")
+NEVERD_CXX_INLINE_NAMESPACE("std", "__ndk1")
+// libstdc++'s versions of its filesystem library and clocks.
+NEVERD_CXX_INLINE_NAMESPACE("std::filesystem", "__cxx11")
+NEVERD_CXX_INLINE_NAMESPACE("std::chrono", "_V2")
+
+// Containers.
+NEVERD_CXX_DEFAULT_ARGUMENT("std::vector", 1, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::deque", 1, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::list", 1, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::forward_list", 1, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::set", 1, "std::less<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::set", 2, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::multiset", 1, "std::less<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::multiset", 2, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::map", 2, "std::less<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::map", 3,
+                            "std::allocator<std::pair<$0 const, $1>>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::multimap", 2, "std::less<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::multimap", 3,
+                            "std::allocator<std::pair<$0 const, $1>>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_set", 1, "std::hash<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_set", 2, "std::equal_to<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_set", 3, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_multiset", 1, "std::hash<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_multiset", 2, "std::equal_to<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_multiset", 3, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_map", 2, "std::hash<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_map", 3, "std::equal_to<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_map", 4,
+                            "std::allocator<std::pair<$0 const, $1>>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_multimap", 2, "std::hash<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_multimap", 3, "std::equal_to<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unordered_multimap", 4,
+                            "std::allocator<std::pair<$0 const, $1>>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::stack", 1, "std::deque<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::queue", 1, "std::deque<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::priority_queue", 1, "std::vector<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::priority_queue", 2, "std::less<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::unique_ptr", 1, "std::default_delete<$0>")
+
+// Strings and streams.
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_string", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_string", 2, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_string_view", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_ios", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_streambuf", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_istream", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_ostream", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_iostream", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_filebuf", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_ifstream", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_ofstream", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_fstream", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_stringbuf", 1, "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_stringbuf", 2, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_istringstream", 1,
+                            "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_istringstream", 2, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_ostringstream", 1,
+                            "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_ostringstream", 2, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_stringstream", 1,
+                            "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::basic_stringstream", 2, "std::allocator<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::istreambuf_iterator", 1,
+                            "std::char_traits<$0>")
+NEVERD_CXX_DEFAULT_ARGUMENT("std::ostreambuf_iterator", 1,
+                            "std::char_traits<$0>")
+
+NEVERD_CXX_ALIAS("std::basic_string<char>", "std::string")
+NEVERD_CXX_ALIAS("std::basic_string<wchar_t>", "std::wstring")
+NEVERD_CXX_ALIAS("std::basic_string<char8_t>", "std::u8string")
+NEVERD_CXX_ALIAS("std::basic_string<char16_t>", "std::u16string")
+NEVERD_CXX_ALIAS("std::basic_string<char32_t>", "std::u32string")
+NEVERD_CXX_ALIAS("std::basic_string_view<char>", "std::string_view")
+NEVERD_CXX_ALIAS("std::basic_string_view<wchar_t>", "std::wstring_view")
+NEVERD_CXX_ALIAS("std::basic_ios<char>", "std::ios")
+NEVERD_CXX_ALIAS("std::basic_ios<wchar_t>", "std::wios")
+NEVERD_CXX_ALIAS("std::basic_streambuf<char>", "std::streambuf")
+NEVERD_CXX_ALIAS("std::basic_streambuf<wchar_t>", "std::wstreambuf")
+NEVERD_CXX_ALIAS("std::basic_istream<char>", "std::istream")
+NEVERD_CXX_ALIAS("std::basic_istream<wchar_t>", "std::wistream")
+NEVERD_CXX_ALIAS("std::basic_ostream<char>", "std::ostream")
+NEVERD_CXX_ALIAS("std::basic_ostream<wchar_t>", "std::wostream")
+NEVERD_CXX_ALIAS("std::basic_iostream<char>", "std::iostream")
+NEVERD_CXX_ALIAS("std::basic_iostream<wchar_t>", "std::wiostream")
+NEVERD_CXX_ALIAS("std::basic_filebuf<char>", "std::filebuf")
+NEVERD_CXX_ALIAS("std::basic_filebuf<wchar_t>", "std::wfilebuf")
+NEVERD_CXX_ALIAS("std::basic_ifstream<char>", "std::ifstream")
+NEVERD_CXX_ALIAS("std::basic_ifstream<wchar_t>", "std::wifstream")
+NEVERD_CXX_ALIAS("std::basic_ofstream<char>", "std::ofstream")
+NEVERD_CXX_ALIAS("std::basic_ofstream<wchar_t>", "std::wofstream")
+NEVERD_CXX_ALIAS("std::basic_fstream<char>", "std::fstream")
+NEVERD_CXX_ALIAS("std::basic_fstream<wchar_t>", "std::wfstream")
+NEVERD_CXX_ALIAS("std::basic_stringbuf<char>", "std::stringbuf")
+NEVERD_CXX_ALIAS("std::basic_stringbuf<wchar_t>", "std::wstringbuf")
+NEVERD_CXX_ALIAS("std::basic_istringstream<char>", "std::istringstream")
+NEVERD_CXX_ALIAS("std::basic_istringstream<wchar_t>", "std::wistringstream")
+NEVERD_CXX_ALIAS("std::basic_ostringstream<char>", "std::ostringstream")
+NEVERD_CXX_ALIAS("std::basic_ostringstream<wchar_t>", "std::wostringstream")
+NEVERD_CXX_ALIAS("std::basic_stringstream<char>", "std::stringstream")
+NEVERD_CXX_ALIAS("std::basic_stringstream<wchar_t>", "std::wstringstream")
+
+NEVERD_CXX_OPERATOR_TOKEN("<=>")
+NEVERD_CXX_OPERATOR_TOKEN("<<=")
+NEVERD_CXX_OPERATOR_TOKEN(">>=")
+NEVERD_CXX_OPERATOR_TOKEN("->*")
+NEVERD_CXX_OPERATOR_TOKEN("<<")
+NEVERD_CXX_OPERATOR_TOKEN(">>")
+NEVERD_CXX_OPERATOR_TOKEN("<=")
+NEVERD_CXX_OPERATOR_TOKEN(">=")
+NEVERD_CXX_OPERATOR_TOKEN("->")
+NEVERD_CXX_OPERATOR_TOKEN("()")
+NEVERD_CXX_OPERATOR_TOKEN("[]")
+NEVERD_CXX_OPERATOR_TOKEN("==")
+NEVERD_CXX_OPERATOR_TOKEN("!=")
+NEVERD_CXX_OPERATOR_TOKEN("&&")
+NEVERD_CXX_OPERATOR_TOKEN("||")
+NEVERD_CXX_OPERATOR_TOKEN("++")
+NEVERD_CXX_OPERATOR_TOKEN("--")
+NEVERD_CXX_OPERATOR_TOKEN("+=")
+NEVERD_CXX_OPERATOR_TOKEN("-=")
+NEVERD_CXX_OPERATOR_TOKEN("*=")
+NEVERD_CXX_OPERATOR_TOKEN("/=")
+NEVERD_CXX_OPERATOR_TOKEN("%=")
+NEVERD_CXX_OPERATOR_TOKEN("&=")
+NEVERD_CXX_OPERATOR_TOKEN("|=")
+NEVERD_CXX_OPERATOR_TOKEN("^=")
+NEVERD_CXX_OPERATOR_TOKEN("<")
+NEVERD_CXX_OPERATOR_TOKEN(">")
+NEVERD_CXX_OPERATOR_TOKEN("+")
+NEVERD_CXX_OPERATOR_TOKEN("-")
+NEVERD_CXX_OPERATOR_TOKEN("*")
+NEVERD_CXX_OPERATOR_TOKEN("/")
+NEVERD_CXX_OPERATOR_TOKEN("%")
+NEVERD_CXX_OPERATOR_TOKEN("&")
+NEVERD_CXX_OPERATOR_TOKEN("|")
+NEVERD_CXX_OPERATOR_TOKEN("^")
+NEVERD_CXX_OPERATOR_TOKEN("~")
+NEVERD_CXX_OPERATOR_TOKEN("!")
+NEVERD_CXX_OPERATOR_TOKEN("=")
+NEVERD_CXX_OPERATOR_TOKEN(",")
+
+NEVERD_CXX_TAG_KEYWORD("class ")
+NEVERD_CXX_TAG_KEYWORD("struct ")
+NEVERD_CXX_TAG_KEYWORD("union ")
+NEVERD_CXX_TAG_KEYWORD("enum ")
+
+#undef NEVERD_CXX_INLINE_NAMESPACE
+#undef NEVERD_CXX_DEFAULT_ARGUMENT
+#undef NEVERD_CXX_ALIAS
+#undef NEVERD_CXX_OPERATOR_TOKEN
+#undef NEVERD_CXX_TAG_KEYWORD

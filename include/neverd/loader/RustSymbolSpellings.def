@@ -1,0 +1,31 @@
+//===- RustSymbolSpellings.def - How legacy Rust symbols escape -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The escapes rustc's legacy mangling (`_ZN..17h<hash>E`) writes for path
+/// characters an Itanium identifier cannot hold, as rustc-demangle reads them
+/// back.
+///
+///   NEVERD_RUST_LEGACY_ESCAPE(Code, Text)
+///       `$Code$` in an identifier stands for Text.  `$u<hex>$` stands for the
+///       Unicode scalar value <hex> and `..` for `::`; neither is a row.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_RUST_LEGACY_ESCAPE
+#define NEVERD_RUST_LEGACY_ESCAPE(Code, Text)
+#endif
+
+NEVERD_RUST_LEGACY_ESCAPE("SP", "@")
+NEVERD_RUST_LEGACY_ESCAPE("BP", "*")
+NEVERD_RUST_LEGACY_ESCAPE("RF", "&")
+NEVERD_RUST_LEGACY_ESCAPE("LT", "<")
+NEVERD_RUST_LEGACY_ESCAPE("GT", ">")
+NEVERD_RUST_LEGACY_ESCAPE("LP", "(")
+NEVERD_RUST_LEGACY_ESCAPE("RP", ")")
+NEVERD_RUST_LEGACY_ESCAPE("C", ",")
+
+#undef NEVERD_RUST_LEGACY_ESCAPE

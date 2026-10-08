@@ -5382,20 +5382,23 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
 
   if (EmitFunctionWrapper && Func.Entry)
     OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
-  // A C++ definition names its demangled signature: the C identifier keeps
-  // only its scopes and name.
+  // A definition whose identifier is spelled from its symbol names the symbol
+  // as its language does (`QDomNode::nodeType() const`, `main.main`), unless
+  // the debug name's comment below says the same.
+  const bool DebugNameComment =
+      !Func.DebugName.empty() && Func.DebugName != Func.Name;
   if (Opts.EmitComments)
     if (auto Symbol = FunctionSymbolNames.find(&Func);
         Symbol != FunctionSymbolNames.end())
       if (const std::string Demangled = demangledComment(Symbol->second);
-          !Demangled.empty() && Demangled != Func.DebugName) {
+          !Demangled.empty() &&
+          !(DebugNameComment && Demangled == Func.DebugName)) {
         if (!EmitFunctionWrapper)
           emitIndent(1);
         OS << "/* " << Demangled << " */\n";
       }
 
-  if (Opts.EmitComments && !Func.DebugName.empty() &&
-      Func.DebugName != Func.Name) {
+  if (Opts.EmitComments && DebugNameComment) {
     if (!EmitFunctionWrapper)
       emitIndent(1);
     OS << "/* " << Func.DebugName;

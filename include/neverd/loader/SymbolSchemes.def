@@ -1,0 +1,55 @@
+//===- SymbolSchemes.def - The manglings symbol names follow ----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The manglings NeverD reads symbol names in, the language each spells and
+/// the prefixes that introduce it.  Define the macros a consumer reads before
+/// including this file; the others expand to nothing.
+///
+///   NEVERD_SYMBOL_SCHEME(Id, Language)
+///       a mangling and the source language whose names it spells.  A name is
+///       tried against the schemes in the order listed: legacy Rust names are
+///       Itanium-shaped, so Rust comes before Itanium.
+///   NEVERD_SYMBOL_SCHEME_PREFIX(Id, Prefix)
+///       one spelling a name of scheme Id starts with.  Mach-O adds one more
+///       underscore to every symbol; the schemes accept that one as well.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_SYMBOL_SCHEME
+#define NEVERD_SYMBOL_SCHEME(Id, Language)
+#endif
+#ifndef NEVERD_SYMBOL_SCHEME_PREFIX
+#define NEVERD_SYMBOL_SCHEME_PREFIX(Id, Prefix)
+#endif
+
+NEVERD_SYMBOL_SCHEME(RustLegacy, "rust")
+NEVERD_SYMBOL_SCHEME(RustV0, "rust")
+NEVERD_SYMBOL_SCHEME(Itanium, "c++")
+NEVERD_SYMBOL_SCHEME(Microsoft, "c++")
+NEVERD_SYMBOL_SCHEME(Swift, "swift")
+NEVERD_SYMBOL_SCHEME(D, "d")
+NEVERD_SYMBOL_SCHEME(ObjCMethod, "objective-c")
+
+// Legacy Rust is Itanium's nested name ending in a `17h<16 hex digits>` hash.
+NEVERD_SYMBOL_SCHEME_PREFIX(RustLegacy, "_ZN")
+NEVERD_SYMBOL_SCHEME_PREFIX(RustV0, "_R")
+NEVERD_SYMBOL_SCHEME_PREFIX(Itanium, "_Z")
+NEVERD_SYMBOL_SCHEME_PREFIX(Microsoft, "?")
+// Swift 5 and later (`$s`), Swift 4.2 (`$S`), Embedded Swift (`$e`) and
+// Swift 4.0 (`_T0`).
+NEVERD_SYMBOL_SCHEME_PREFIX(Swift, "$s")
+NEVERD_SYMBOL_SCHEME_PREFIX(Swift, "$S")
+NEVERD_SYMBOL_SCHEME_PREFIX(Swift, "$e")
+NEVERD_SYMBOL_SCHEME_PREFIX(Swift, "_T0")
+NEVERD_SYMBOL_SCHEME_PREFIX(D, "_D")
+// Objective-C method implementations: `-[Class selector:]` for an instance
+// method, `+[Class(Category) selector]` for a class method.
+NEVERD_SYMBOL_SCHEME_PREFIX(ObjCMethod, "-[")
+NEVERD_SYMBOL_SCHEME_PREFIX(ObjCMethod, "+[")
+
+#undef NEVERD_SYMBOL_SCHEME
+#undef NEVERD_SYMBOL_SCHEME_PREFIX
