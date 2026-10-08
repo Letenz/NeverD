@@ -15,6 +15,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 
 #include <algorithm>
+#include <set>
 #include <stdexcept>
 
 namespace neverd {
@@ -191,18 +192,27 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
   }
 
   if (!RetVal) {
-    if (const MedBlock *Pred = onlyPredecessor(Med, CurBlock)) {
+    // A bare RET block inherits the value established on its only incoming
+    // edge: the last definition on the chain of single predecessors, or the
+    // join that begins a block of it (a conditional return out of a loop).
+    // Reconstruct the defining expression rather than naming the otherwise
+    // unused register SSA output. Multiple incoming edges need an explicit
+    // PHI; choosing one predecessor would invent semantics.
+    std::set<const MedBlock *> Seen{&CurBlock};
+    for (const MedBlock *Pred = onlyPredecessor(Med, CurBlock);
+         Pred && !RetVal && Seen.insert(Pred).second;
+         Pred = onlyPredecessor(Med, *Pred)) {
       for (auto RIt = Pred->Ops.rbegin(); RIt != Pred->Ops.rend(); ++RIt) {
         if (RIt->Output.Kind != MedVar::Reg || RIt->Output.Size == 0 ||
             RIt->Output.RegOff != ReturnReg)
           continue;
-        // A bare RET block inherits the value established on its only incoming
-        // edge. Reconstruct the defining expression rather than naming the
-        // otherwise unused register SSA output. Multiple incoming edges need
-        // an explicit PHI; choosing one predecessor would invent semantics.
         RetVal = ValueFromDefinition(*RIt);
         break;
       }
+      for (const auto &Phi : Pred->Phis)
+        if (!RetVal && Phi.Output.Kind == MedVar::Reg &&
+            Phi.Output.RegOff == ReturnReg)
+          RetVal = HighExpr::makeVar(Phi.Output);
     }
   }
 

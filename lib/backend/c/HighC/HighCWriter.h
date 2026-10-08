@@ -76,6 +76,13 @@ std::string frameStorageAddress(int64_t Displacement);
 /// The bytes of a pointer, and of an integer argument register, on \p A.
 uint16_t pointerBytes(Arch A);
 
+/// The bytes of the integer \p Operand a bit count counts, or 0.
+uint16_t countedBytes(const HighExpr &Operand);
+
+/// The bits C's counting builtins count the integer \p Operand in: 32 for
+/// at most 4 bytes (unsigned int), 64 for 8 bytes, and 0 for any other width.
+unsigned countedBits(const HighExpr &Operand);
+
 /// \p E prints as a C expression whose value is 0 or 1: a comparison, a
 /// logical operation, or a carry or overflow test.  Its zero or sign
 /// extension is that value at any width, with no view of its own byte.
@@ -635,6 +642,9 @@ public:
   std::set<std::string> MemoryTypes;
   std::map<std::tuple<unsigned, unsigned, bool>, std::string>
       FloatToIntegerHelpers;
+  /// The helper counting a zero's leading zeros as its width, by the bits it
+  /// counts in (32 or 64).
+  std::map<unsigned, std::string> LeadingZeroHelpers;
   std::map<std::string, unsigned> PartialIntegerBytes;
   std::set<std::pair<std::string, NdMemoryAddressSpace>> SegmentedMemoryTypes;
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>

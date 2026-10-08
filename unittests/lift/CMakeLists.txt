@@ -1141,6 +1141,7 @@ add_neverd_unittest(NeverDHighControlFlowTests
   core/HighFrameStoreForwardingTests.cpp
   core/HighSwitchFollowTests.cpp
   core/HighIntegerSignednessTests.cpp
+  core/HighNarrowLocalsTests.cpp
   core/HighValueForwardTests.cpp
   core/HighCIntegerConversionTests.cpp
   core/HighSSADefinitionTests.cpp

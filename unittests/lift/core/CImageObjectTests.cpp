@@ -245,6 +245,49 @@ TEST(CImageObjects, WrittenSlotsKeepTheirMachineValue) {
   EXPECT_EQ(Source.find("\"中文 hello\""), NotFound) << Source;
 }
 
+TEST(CImageObjects, WideAndNonFiniteValuesKeepTheirBytes) {
+  // A vector constant pool entry and a NaN have no C literal; each object
+  // still holds the image's bytes.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  std::vector<uint8_t> Rodata(0x20, 0);
+  for (unsigned I = 0; I < 16; ++I)
+    Rodata[I] = static_cast<uint8_t>(0xF0 + I);
+  putPointer(Rodata, 0x10, 0x7FF8000000000123ull);
+  Img.Segments.push_back(
+      segment(".text", TextVA, std::vector<uint8_t>(0x10),
+              SegmentFlags::Readable | SegmentFlags::Executable));
+  Img.Segments.push_back(
+      segment(".rodata", RodataVA, std::move(Rodata), SegmentFlags::Readable));
+  const TypeRef U64 = NdType::makeInt(8, false);
+  HighFunc High = function("high_half", U64, TextVA);
+  auto Half = HighExpr::makeBinop(NdOp::SUBBYTES,
+                                  load(RodataVA, NdType::makeInt(16, true)),
+                                  HighExpr::makeConst(8, 4));
+  Half->Type = U64;
+  High.Body = {returnStatement(std::move(Half))};
+  HighFunc Nan = function("nan_bits", U64, TextVA + 4);
+  Nan.Body = {returnStatement(
+      HighExpr::makeBitCast(load(RodataVA + 0x10, NdType::makeFloat(8)), U64))};
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({High, Nan}, OS, Options));
+  OS.flush();
+  source_call_execution_test::compileAndRun(Source + R"(
+int main(void) {
+  if (high_half() != 0xFFFEFDFCFBFAF9F8ull)
+    return 1;
+  return nan_bits() != 0x7FF8000000000123ull;
+}
+)");
+}
+
 TEST(CImageObjects, AccessesTypeObjectsTheCodeAlsoTakesTheAddressOf) {
   // `__do_global_dtors_aux` stores one byte to `completed.0`, and
   // `deregister_tm_clones` only takes its address. Whichever function comes

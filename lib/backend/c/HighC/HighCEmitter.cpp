@@ -427,6 +427,7 @@ HighCWriter::floatToIntegerConversion(const HighExpr &E) const {
 void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   std::set<std::string> Names;
   FloatToIntegerHelpers.clear();
+  LeadingZeroHelpers.clear();
   PartialIntegerBytes.clear();
   SegmentedMemoryTypes.clear();
   AtomicLoadTypes.clear();
@@ -457,6 +458,14 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       return;
     CollectWideType(E.Type);
     CollectWideType(E.CastTo);
+    if (E.Kind == ExprKind::UnaryOp && E.Op == NdOp::LZCOUNT &&
+        !E.Operands.empty() && E.Operands[0]) {
+      const unsigned Bits = countedBits(*E.Operands[0]);
+      auto [It, Inserted] = LeadingZeroHelpers.try_emplace(Bits);
+      if (Inserted && Bits)
+        It->second = GlobalIdentifierAllocator.allocate(
+            "neverd_clz" + std::to_string(Bits), "nd_clz");
+    }
     if (auto Shape = floatToIntegerConversion(E)) {
       auto [It, Inserted] = FloatToIntegerHelpers.try_emplace(Shape->key());
       if (Inserted) {
@@ -599,6 +608,17 @@ void HighCWriter::writeMemoryHelpers() {
     auto [Bits, FloatBits, Signed] = Key;
     c_float::writeConversion(
         OS, Name, {Bits, FloatBits, Signed, fpToIntegerPolicy(Opts.TheArch)});
+  }
+  // The machine counts a zero's leading zeros as its width; C's builtins
+  // leave that count undefined.
+  for (const auto &[Bits, Name] : LeadingZeroHelpers) {
+    if (Name.empty())
+      continue;
+    const std::string Type = "uint" + std::to_string(Bits) + "_t";
+    OS << "static inline int " << Name << "(" << Type << " value) {\n"
+       << "    return value ? "
+       << (Bits == 32 ? "__builtin_clz" : "__builtin_clzll")
+       << "(value) : " << Bits << ";\n}\n\n";
   }
   // The accesses' types or assumptions are written only when an access can
   // name a type; otherwise every access keeps its portable byte copy.
@@ -1513,6 +1533,28 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // the same headers and prototypes.
   for (auto &F : Funcs)
     collectCallTargets(F.Body, CallTargets);
+  // How many bytes of each callee's result the code reads: a call a
+  // statement assigns, its destination's; a call inside an expression may be
+  // read whole.  A function whose address the code only takes reads none.
+  std::map<std::string, uint16_t> ResultBytes;
+  const uint16_t RegisterBytes = pointerBytes(Opts.TheArch);
+  for (const HighFunc &F : Funcs)
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      const HighExpr *Top =
+          S.Kind == StmtKind::Call ? S.CallExpr.get() : S.Val.get();
+      std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+        if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::None) {
+          uint16_t &Bytes = ResultBytes[callIdentifier(E)];
+          if (&E != Top)
+            Bytes = RegisterBytes;
+          else if (S.Kind == StmtKind::Assign && S.Dst)
+            Bytes = std::max<uint16_t>(Bytes, S.Dst->Type ? S.Dst->Type->Size
+                                                          : S.Dst->Var.Size);
+        }
+        E.forEachChildExpr([&](const ExprPtr &Child) { Visit(*Child); });
+      };
+      forEachExpr(S, [&](const ExprPtr &E) { Visit(*E); });
+    });
   // A function whose address the code takes is declared as a callee is.
   CallTargets.insert(AddressTakenFunctions.begin(),
                      AddressTakenFunctions.end());
@@ -1917,13 +1959,20 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         else if (!Prototype->Variadic && !Prototype->ParamCount)
           OS << "void";
       } else {
-        OS << "extern int " << Identifier << "(";
+        const std::string Register =
+            "int" + std::to_string(pointerBytes(Opts.TheArch) * 8) + "_t";
+        // A callee nothing declares returns its register whole.  An int
+        // holds the result while the code reads at most an int of it; a
+        // 64-bit pointer read through one would lose its upper half.
+        const auto Read = ResultBytes.find(Name);
+        const bool WholeRegister =
+            Read != ResultBytes.end() && Read->second > sizeof(int32_t);
+        OS << "extern " << (WholeRegister ? Register : "int") << " "
+           << Identifier << "(";
         if (auto Arity = knownArity(Symbol, Name);
             Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
           // Each argument fills one integer register: an int64_t on a 32-bit
           // target would take two, and the arguments after it would move.
-          const std::string Register =
-              "int" + std::to_string(pointerBytes(Opts.TheArch) * 8) + "_t";
           if (Arity->IntArgs == 0)
             OS << "void";
           else {
@@ -2244,6 +2293,27 @@ void HighCWriter::writeImageObjects() {
 std::optional<std::string>
 HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
   const TypeRef &Type = Obj.Type;
+  // C has no 128-bit literal; the two halves make a constant expression.
+  if (Type && Type->Kind == NdTypeKind::Int && !Type->IsEnum &&
+      Type->Size == 16) {
+    const uint8_t *Bytes = Opts.Image->readVA(Addr, 16);
+    if (!Bytes)
+      return std::nullopt;
+    uint64_t Low = 0, High = 0;
+    for (unsigned I = 0; I < 8; ++I) {
+      Low |= static_cast<uint64_t>(Bytes[I]) << (8 * I);
+      High |= static_cast<uint64_t>(Bytes[8 + I]) << (8 * I);
+    }
+    if (!Low && !High)
+      return std::nullopt;
+    std::string Value = "0x" + llvm::utohexstr(Low) + "ull";
+    if (High)
+      Value = "(unsigned __int128)0x" + llvm::utohexstr(High) + "ull << 64 | " +
+              Value;
+    return Type->IsSigned ? "__builtin_bit_cast(" + typeToC(Type) + ", " +
+                                "(unsigned __int128)(" + Value + "))"
+                          : Value;
+  }
   if (!Type || (Type->Size != 1 && Type->Size != 2 && Type->Size != 4 &&
                 Type->Size != 8))
     return std::nullopt;
@@ -2269,9 +2339,10 @@ HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
                                               : llvm::APFloat::IEEEdouble(),
                               llvm::APInt(Type->Size * 8, Value));
     // A hexadecimal floating constant is exact; C has none for infinities
-    // and NaNs.
+    // and NaNs, which take their bits.
     if (!Float.isFinite())
-      return std::nullopt;
+      return "__builtin_bit_cast(" + typeToC(Type) + ", 0x" +
+             llvm::utohexstr(Value) + (Type->Size == 4 ? "u" : "ull") + ")";
     char Text[64];
     Float.convertToHexString(Text, 0, /*UpperCase=*/false,
                              llvm::APFloat::rmNearestTiesToEven);

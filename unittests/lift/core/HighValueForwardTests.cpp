@@ -709,7 +709,7 @@ TEST(HighValueForward, StatusTestTakesTheCallItReads) {
       << Source;
   compileAndRun(Source + R"(
 static unsigned calls;
-int probe(uint64_t x) { ++calls; return (int)x - 10; }
+int64_t probe(uint64_t x) { ++calls; return (int64_t)x - 10; }
 int main(void) {
   for (uint64_t x = 0; x < 20; ++x) {
     calls = 0;

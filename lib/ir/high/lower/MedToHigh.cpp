@@ -1312,7 +1312,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   // from a temporary joins its definition, once names merged.
   inlineAdjacentLoads(Func);
   foldCopiesIntoDefinitions(Func);
-  // Signedness follows the merged names: one declaration, one type.
+  // Width and signedness follow the merged names: one declaration, one type.
+  narrowLocals(Func);
   chooseIntegerSignedness(Func);
   nameRepeatedValues(Func);
   Trace.high(Func, "after-exceptions");
