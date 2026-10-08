@@ -2286,6 +2286,18 @@ Signed: %4</translation>
         <source>NeverD cannot load this file: %1</source>
         <translation>NeverD cannot load this file: %1</translation>
     </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>Listed for the file&apos;s name alone; its contents do not show this format</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>Only the file&apos;s name suggests a format; choose a row to load the file that way</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>Processor: %1</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

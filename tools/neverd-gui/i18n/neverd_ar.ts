@@ -2298,6 +2298,18 @@ Signed: %4</source>
         <source>NeverD cannot load this file: %1</source>
         <translation>لا يستطيع NeverD تحميل هذا الملف: %1</translation>
     </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>مُدرج بسبب اسم الملف فقط؛ محتواه لا يدل على هذا التنسيق</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>اسم الملف وحده يوحي بتنسيق؛ اختر صفًا لتحميل الملف بهذه الطريقة</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>المعالج: %1</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

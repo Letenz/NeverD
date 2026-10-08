@@ -2283,6 +2283,18 @@ Signed: %4</source>
         <source>NeverD cannot load this file: %1</source>
         <translation>NeverD가 이 파일을 불러올 수 없습니다: %1</translation>
     </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>파일 이름만으로 나열되었습니다. 내용은 이 형식이 아닙니다</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>파일 이름만 형식을 암시합니다. 그 방식으로 불러오려면 행을 선택하세요</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>프로세서: %1</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

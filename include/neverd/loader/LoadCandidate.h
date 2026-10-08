@@ -62,11 +62,15 @@ struct LoadCandidate {
   std::string Reason;
   /// Listed before the other rows, as a specific format beats a generic one.
   bool First = false;
+  /// The loader took the file for its name alone, not its contents, so a
+  /// load dialog does not choose the row by default.
+  bool ByName = false;
 };
 
 /// Every loader's rows for the file at \p Path in list order: the rows that
 /// lead, then the others in loader order, then "Binary file", which accepts
-/// any file.  The file is only read as far as its headers.
+/// any file.  The file is read no further than a loader needs to tell its
+/// format.
 std::vector<LoadCandidate> identifyFile(const std::filesystem::path &Path);
 
 } // namespace neverd

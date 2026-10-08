@@ -2283,6 +2283,18 @@ Signed: %4</source>
         <source>NeverD cannot load this file: %1</source>
         <translation>NeverD はこのファイルを読み込めません: %1</translation>
     </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>ファイル名だけで一覧に挙がっています。内容はこの形式を示していません</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>形式を示しているのはファイル名だけです。その方法で読み込むには行を選んでください</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>プロセッサ: %1</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

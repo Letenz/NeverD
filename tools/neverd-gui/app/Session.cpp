@@ -440,6 +440,7 @@ void Session::closeFile() {
   pendingFile_.clear();
   resetState();
   filePath_.clear();
+  loadOptions_ = {};
   emit unloaded();
   restartPending_ = true;
   client_.stop();

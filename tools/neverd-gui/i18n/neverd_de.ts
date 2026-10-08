@@ -2286,6 +2286,18 @@ Mit Vorzeichen: %4</translation>
         <source>NeverD cannot load this file: %1</source>
         <translation>NeverD kann diese Datei nicht laden: %1</translation>
     </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>Nur wegen des Dateinamens aufgeführt; der Inhalt zeigt dieses Format nicht</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>Nur der Dateiname deutet auf ein Format hin; wählen Sie eine Zeile, um die Datei so zu laden</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>Prozessor: %1</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

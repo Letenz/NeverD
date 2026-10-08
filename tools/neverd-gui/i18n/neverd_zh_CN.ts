@@ -2283,6 +2283,18 @@ Signed: %4</source>
         <source>NeverD cannot load this file: %1</source>
         <translation>NeverD 无法加载此文件：%1</translation>
     </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>仅因文件名而列出；文件内容并不符合此格式</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>只有文件名提示了格式；如需按该方式加载，请选择相应的行</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>处理器：%1</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

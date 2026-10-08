@@ -282,7 +282,8 @@ const char *neverd_identify_json(const char *Path) {
                                                : getArchName(Row.TheArch)},
                              {"bits", Row.Bits},
                              {"endian", Row.BigEndian ? "big" : "little"},
-                             {"loadable", Row.Loadable}};
+                             {"loadable", Row.Loadable},
+                             {"by_name", Row.ByName}};
     if (!Row.Reason.empty())
       Entry["reason"] = jsonSafeText(Row.Reason);
     Rows.push_back(std::move(Entry));

@@ -2286,6 +2286,18 @@ Con segno: %4</translation>
         <source>NeverD cannot load this file: %1</source>
         <translation>NeverD non può caricare questo file: %1</translation>
     </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>Elencato solo per il nome del file; il contenuto non mostra questo formato</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>Solo il nome del file suggerisce un formato; scegli una riga per caricarlo così</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>Processore: %1</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

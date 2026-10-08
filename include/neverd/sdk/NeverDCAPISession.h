@@ -45,13 +45,15 @@ NEVERD_API void neverd_session_destroy(neverd_session_t Sess);
 /// Path is UTF-8 on every platform, including Windows.
 NEVERD_API int neverd_session_load(neverd_session_t Sess, const char *Path);
 /// List the ways neverd_session_load can read the file at \p Path, as a load
-/// dialog shows them, reading no more than its headers:
+/// dialog shows them, without loading it:
 /// {"rows":[{"loader","text","processor","bits","endian","loadable",
-/// "reason"?}]} in list order -- the rows a loader asks to lead, the others,
-/// then "Binary file" -- with "processor" as neverd_session_arch_name names
-/// it ("" when NeverD has none) and "reason" saying why a row cannot be
-/// loaded; {"rows":[],"error"} when \p Path names no regular file.  Path is
-/// UTF-8.  Free with neverd_free_string.
+/// "by_name","reason"?}]} in list order -- the rows a loader asks to lead,
+/// the others, then "Binary file" -- with "processor" as
+/// neverd_session_arch_name names it ("" when NeverD has none), "by_name" for
+/// a row the loader took for the file's name alone (a dialog should not
+/// choose it by default) and "reason" saying why a row cannot be loaded;
+/// {"rows":[],"error"} when \p Path names no regular file.  Path is UTF-8.
+/// Free with neverd_free_string.
 NEVERD_API const char *neverd_identify_json(const char *Path);
 NEVERD_API int neverd_session_is_loaded(neverd_session_t Sess);
 

@@ -62,13 +62,15 @@ int runIdentify() {
     WithColor::error() << *Error << "\n";
     return 1;
   }
-  // As the load dialog lists them: the first loadable row is the default.
+  // As the load dialog lists them: the first row loadable for the file's
+  // contents is the default.
   outs() << "Load file " << InputFile << " as:\n";
   bool Chosen = false;
   for (const json::Value &Value : *Root->getArray("rows")) {
     const json::Object &Row = *Value.getAsObject();
     const bool Loadable = Row.getBoolean("loadable").value_or(false);
-    const bool Default = Loadable && !Chosen;
+    const bool Default =
+        Loadable && !Row.getBoolean("by_name").value_or(false) && !Chosen;
     Chosen |= Default;
     outs() << (Default ? "  * " : "    ") << Row.getString("text").value_or("")
            << " [" << Row.getString("loader").value_or("") << "]";
@@ -77,6 +79,8 @@ int runIdentify() {
       outs() << "  " << *Processor;
     if (!Loadable)
       outs() << "  (" << Row.getString("reason").value_or("") << ")";
+    else if (Row.getBoolean("by_name").value_or(false))
+      outs() << "  (for the file name alone)";
     outs() << "\n";
   }
   return 0;

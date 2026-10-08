@@ -426,6 +426,22 @@ private slots:
                     {"loadable", false},
                     {"reason", "NeverD has no MIPS processor"}},
         rows[1]};
+    // A row a loader took for the file's name alone is never the default.
+    const QJsonArray named{QJsonObject{{"loader", "evm"},
+                                       {"text", "EVM bytecode"},
+                                       {"processor", "evm"},
+                                       {"loadable", true},
+                                       {"by_name", true}},
+                           rows[1]};
+    LoadFileDialog byName(QStringLiteral("/tmp/firmware.bin"), named);
+    QCOMPARE(byName.row(), -1);
+    auto *accept = byName.findChild<QPushButton *>(QStringLiteral("ok"));
+    QVERIFY(!accept->isEnabled());
+    byName.findChild<QListWidget *>(QStringLiteral("loaders"))
+        ->setCurrentRow(0);
+    QCOMPARE(byName.row(), 0);
+    QVERIFY(accept->isEnabled());
+
     LoadFileDialog refused(QStringLiteral("/tmp/mips"), mips);
     QCOMPARE(refused.row(), -1);
     QVERIFY(

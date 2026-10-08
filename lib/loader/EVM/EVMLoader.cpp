@@ -57,7 +57,7 @@ llvm::Expected<BinaryImage> EVMLoader::load(const std::filesystem::path &Path) {
   return Image;
 }
 
-void EVMLoader::identify(std::vector<LoadCandidate> &Rows) {
+void EVMLoader::identify(std::vector<LoadCandidate> &Rows, bool ByName) {
   LoadCandidate Row;
   Row.Row = LoadRow::EVM;
   Row.Format = BinaryFormat::EVM;
@@ -66,6 +66,7 @@ void EVMLoader::identify(std::vector<LoadCandidate> &Rows) {
   Row.Bits = 256;
   Row.BigEndian = true;
   Row.Loadable = true;
+  Row.ByName = ByName;
   Rows.push_back(std::move(Row));
 }
 

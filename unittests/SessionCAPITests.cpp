@@ -2704,6 +2704,17 @@ TEST_F(SessionCAPITest, IdentifyListsWhatLoadingReads) {
   ASSERT_EQ(neverd_session_load(Session, FatPath.c_str()), 1);
   EXPECT_EQ(takeString(neverd_session_arch_name(Session)),
             Chosen.getString("processor").value_or(""));
+  // Bytecode text is EVM by its contents; other contents named as bytecode
+  // are EVM for the name alone, which a dialog does not choose by default.
+  Rows = rows(write("identify-contract.evm", "6001600055"));
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "EVM bytecode");
+  EXPECT_TRUE(loadable(Rows[0]));
+  EXPECT_FALSE(Rows[0].getBoolean("by_name").value_or(true));
+  Rows = rows(write("identify-firmware.bin", std::string(64, '\x07')));
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "EVM bytecode");
+  EXPECT_TRUE(Rows[0].getBoolean("by_name").value_or(false));
   // Data no loader reads is a binary file only.
   Rows = rows(write("identify.dat", std::string(64, '\x07')));
   ASSERT_EQ(Rows.size(), 1u);

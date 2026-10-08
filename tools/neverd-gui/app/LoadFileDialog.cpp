@@ -67,6 +67,9 @@ LoadFileDialog::LoadFileDialog(const QString &path, const QJsonArray &rows,
       item->setFlags(item->flags() &
                      ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable));
       item->setToolTip(row.value("reason").toString());
+    } else if (row.value("by_name").toBool()) {
+      item->setToolTip(tr("Listed for the file's name alone; its contents do "
+                          "not show this format"));
     }
   }
   const int shown = std::clamp(loaders_->count(), 1, ListedRows);
@@ -154,17 +157,26 @@ LoadFileDialog::LoadFileDialog(const QString &path, const QJsonArray &rows,
             if (item->flags() & Qt::ItemIsEnabled)
               accept();
           });
-  // The first row loading can read is the default, as in IDA.
-  for (int index = 0; index < loaders_->count(); ++index)
-    if (loaders_->item(index)->flags() & Qt::ItemIsEnabled) {
+  // The first row loading can read for the file's contents is the default,
+  // as in IDA; a row a loader took for the file's name alone is never chosen
+  // for the user.
+  bool loadable = false;
+  for (int index = 0; index < loaders_->count(); ++index) {
+    if (!(loaders_->item(index)->flags() & Qt::ItemIsEnabled))
+      continue;
+    loadable = true;
+    if (!rows_[index].toObject().value("by_name").toBool()) {
       loaders_->setCurrentRow(index);
       break;
     }
+  }
   if (row() < 0) {
     ok_->setEnabled(false);
     const auto first = rows_.isEmpty() ? QJsonObject() : rows_[0].toObject();
-    note_->setText(tr("NeverD cannot load this file: %1")
-                       .arg(first.value("reason").toString()));
+    note_->setText(loadable ? tr("Only the file's name suggests a format; "
+                                 "choose a row to load the file that way")
+                            : tr("NeverD cannot load this file: %1")
+                                  .arg(first.value("reason").toString()));
     note_->show();
   }
 }
@@ -192,14 +204,19 @@ void LoadFileDialog::select(int row) {
   const auto chosen = rows_[row].toObject();
   const auto processor = chosen.value("processor").toString();
   processors_->clearSelection();
+  bool listed = processor.isEmpty();
   for (int family = 0; family < processors_->topLevelItemCount(); ++family) {
     auto *folder = processors_->topLevelItem(family);
     for (int child = 0; child < folder->childCount(); ++child)
       if (folder->child(child)->data(0, Qt::UserRole).toString() == processor) {
         processors_->setCurrentItem(folder->child(child));
         folder->child(child)->setSelected(true);
+        listed = true;
       }
   }
+  // A processor the list does not name still shows.
+  note_->setText(listed ? QString() : tr("Processor: %1").arg(processor));
+  note_->setVisible(!listed);
   ok_->setEnabled(chosen.value("loadable").toBool());
 }
 

@@ -75,8 +75,12 @@ std::vector<LoadCandidate> identifyFile(const std::filesystem::path &Path) {
       break;
     case BinaryFormat::EVM:
     case BinaryFormat::Unknown:
-      if (evm::hasEVMFileExtension(Path) || evm::looksLikeEVMInput(Path))
-        EVMLoader::identify(Rows);
+      // Bytecode text or an artifact shows in the contents; an EVM file
+      // name takes any contents.
+      if (evm::looksLikeEVMInput(Path))
+        EVMLoader::identify(Rows, /*ByName=*/false);
+      else if (evm::hasEVMFileExtension(Path))
+        EVMLoader::identify(Rows, /*ByName=*/true);
       break;
     }
   }
