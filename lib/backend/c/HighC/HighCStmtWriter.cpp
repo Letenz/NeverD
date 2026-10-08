@@ -907,7 +907,9 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       }
     }
     emitIndent(Indent);
+    StatementCall = Stmt.CallExpr.get();
     OS << exprStr(*Stmt.CallExpr) << ";\n";
+    StatementCall = nullptr;
     break;
 
   case StmtKind::Return:

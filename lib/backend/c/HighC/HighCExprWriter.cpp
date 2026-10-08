@@ -916,6 +916,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   std::string S = Name + "(";
   const auto Callee = debugCallee(E);
   const libc::LibCPrototype *Prototype = calleePrototype(E);
+  const llvm::StringRef HeaderCallee = headerDeclaredCallee(E);
   const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   // A callee printed in this file fixes the count by its signature; otherwise
   // debug info and MSVC member knowledge may trim ABI-only extra operands.
@@ -1041,22 +1042,50 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // casts of the values the machine passed; C converts its integer
     // parameters itself.
     if (Prototype && I < Prototype->ParamCount) {
-      const std::string Param(Prototype->Params[I]);
+      const std::string Param = prototypeType(Prototype->Params[I]);
       const HighExpr *Value = unwrapIntegerView(Op);
       const bool Null =
           Value && Value->Kind == ExprKind::Const && Value->ConstVal == 0;
+      // A narrow string literal is the `char *` C converts to a character
+      // or untyped pointer itself.
+      const bool Converts = !Arg.empty() && Arg.front() == '"' &&
+                            (Param == "char *" || Param == "const char *" ||
+                             Param == "void *" || Param == "const void *");
       if (libc::isPointerParameter(Param)) {
-        // An integer narrower than a pointer widens first.
+        // An integer narrower than a pointer widens first, as does the int
+        // an unknown value prints as.
         const bool Narrow = !PointerArgument && Op->Type &&
-                            Op->Type->Kind == NdTypeKind::Int &&
-                            Op->Type->Size < pointerBytes(Opts.TheArch);
-        if (!Null)
+                            ((Op->Type->Kind == NdTypeKind::Int &&
+                              Op->Type->Size < pointerBytes(Opts.TheArch)) ||
+                             isUnknownCallOperand(Op));
+        // An address its integer view carries passes as the pointer it is.
+        llvm::StringRef Address(Arg);
+        if (Address.consume_front("(uintptr_t)") && Address.starts_with("&") &&
+            castOperand(Address.str()) == Address)
+          Arg = Param == "const void *" ? Address.str()
+                                        : "(" + Param + ")" + Address.str();
+        else if (!Null && !Converts)
           Arg = "(" + Param + ")" + (Narrow ? "(uintptr_t)" : "") +
                 castOperand(Arg);
       } else if (Op->Type && Op->Type->Kind == NdTypeKind::Ptr) {
         Arg = "(" + Param + ")(uintptr_t)" + castOperand(Arg);
       }
     }
+    // A standard function's function-pointer parameter takes the value
+    // converted to the type its header declares: a recovered function's
+    // signature is not the one the parameter names.
+    if (!HeaderCallee.empty())
+      if (const auto Type = libc::functionPointerParameter(
+              HeaderCallee, static_cast<unsigned>(I))) {
+        const HighExpr *Value = unwrapIntegerView(Op);
+        const bool Narrow = !PointerArgument && Op->Type &&
+                            ((Op->Type->Kind == NdTypeKind::Int &&
+                              Op->Type->Size < pointerBytes(Opts.TheArch)) ||
+                             isUnknownCallOperand(Op));
+        if (!Value || Value->Kind != ExprKind::Const || Value->ConstVal != 0)
+          Arg = "(" + std::string(*Type) + ")" + (Narrow ? "(uintptr_t)" : "") +
+                castOperand(Arg);
+      }
     // A callee printed in this file has a prototype: convert between pointer
     // and integer arguments the way the machine passed them, in a register.
     if (Defined && I < Defined->Params.size() && Defined->Params[I].Type &&
@@ -1137,7 +1166,54 @@ HighCWriter::calleePrototype(const HighExpr &E) const {
       ConflictingSourceNativeSignatures.count(Name) ||
       DebugExternSigs.count(Name) || msvcCallee(Name, Opts.Format))
     return nullptr;
-  return libc::libcPrototypeForSymbol(resolvedCallTarget(E));
+  return prototypeForSymbol(resolvedCallTarget(E));
+}
+
+llvm::StringRef HighCWriter::headerDeclaredCallee(const HighExpr &E) const {
+  if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
+      E.IsIndirectCall || E.CallTarget.empty() ||
+      DefinedFuncs.count(E.CallTarget) || debugCallee(E))
+    return {};
+  const std::string Name = callIdentifier(E);
+  if (SourceNativeSignatures.count(Name) ||
+      ConflictingSourceNativeSignatures.count(Name) ||
+      DebugExternSigs.count(Name) || msvcCallee(Name, Opts.Format))
+    return {};
+  llvm::StringRef Symbol = E.CallTarget;
+  if (!libc::isKnownFunction(Symbol.str()) && Symbol.starts_with("_") &&
+      libc::isKnownFunction(Symbol.drop_front().str()))
+    Symbol = Symbol.drop_front();
+  return libc::isKnownFunction(Symbol.str()) ? Symbol : llvm::StringRef();
+}
+
+const libc::LibCPrototype *
+HighCWriter::prototypeForSymbol(llvm::StringRef Symbol) const {
+  if (const libc::LibCPrototype *Prototype =
+          libc::libcPrototype(Symbol, Opts.Format))
+    return Prototype;
+  const llvm::StringRef CName =
+      cNameOfSymbol(Symbol, Opts.Format, Opts.TheArch);
+  return CName != Symbol ? libc::libcPrototype(CName, Opts.Format) : nullptr;
+}
+
+const libc::LibCPrototype *
+HighCWriter::externalPrototype(const std::string &Name) const {
+  const auto Sources = ExternalCallSources.find(Name);
+  return prototypeForSymbol(Sources != ExternalCallSources.end() &&
+                                    Sources->second.size() == 1
+                                ? llvm::StringRef(*Sources->second.begin())
+                                : llvm::StringRef(Name));
+}
+
+std::string HighCWriter::prototypeType(std::string_view Type) const {
+  constexpr std::string_view Winapi = "WINAPI ";
+  std::string Text(Type);
+  const size_t At = Text.find(Winapi);
+  if (At == std::string::npos)
+    return Text;
+  return Text.replace(At, Winapi.size(),
+                      Opts.TheArch == Arch::X86 ? "__attribute__((stdcall)) "
+                                                : "");
 }
 
 bool HighCWriter::takesPointerArgument(const HighExpr &E, size_t Index,
@@ -1153,19 +1229,20 @@ bool HighCWriter::takesPointerArgument(const HighExpr &E, size_t Index,
       ConflictingSourceNativeSignatures.count(Name) ||
       DebugExternSigs.count(Name) || msvcCallee(Name, Opts.Format))
     return false;
-  // A known prototype's pointer parameter takes a pointer, cast to its type.
+  // A known prototype's pointer parameter takes a pointer, cast to its type,
+  // and its variadic arguments any pointer.
   if (const libc::LibCPrototype *Prototype = calleePrototype(E))
-    return Index < Prototype->ParamCount &&
-           libc::isPointerParameter(Prototype->Params[Index]);
+    return Index < Prototype->ParamCount
+               ? libc::isPointerParameter(Prototype->Params[Index])
+               : Prototype->Variadic;
   // A known C function is declared by its header: a variadic argument takes
-  // any pointer, and a string parameter a narrow string.
-  llvm::StringRef Symbol = E.CallTarget;
-  if (!libc::isKnownFunction(Symbol.str()) && Symbol.starts_with("_") &&
-      libc::isKnownFunction(Symbol.drop_front().str()))
-    Symbol = Symbol.drop_front();
-  if (libc::isKnownFunction(Symbol.str())) {
+  // any pointer, a function-pointer parameter a function and a string
+  // parameter a narrow string.
+  if (const llvm::StringRef Symbol = headerDeclaredCallee(E); !Symbol.empty()) {
     if (const unsigned Fixed = libc::varArgFixedCount(Symbol.str());
         Fixed && Index >= Fixed)
+      return true;
+    if (libc::functionPointerParameter(Symbol, static_cast<unsigned>(Index)))
       return true;
     return NarrowString &&
            libc::isCStringParameter(Symbol.str(), static_cast<unsigned>(Index));
@@ -1358,9 +1435,10 @@ bool HighCWriter::knownVoidCall(const HighExpr &E) const {
   if (const MsvcCallee *Msvc = msvcCallee(callIdentifier(E), Opts.Format))
     return Msvc->Kind == MsvcCalleeKind::Dtor &&
            isMsvcDestructorName(resolvedCallTarget(E));
-  const auto Callee = debugCallee(E);
-  return Callee && Callee->ReturnType &&
-         Callee->ReturnType->Kind == NdTypeKind::Void;
+  if (const auto Callee = debugCallee(E))
+    return Callee->ReturnType && Callee->ReturnType->Kind == NdTypeKind::Void;
+  const libc::LibCPrototype *Prototype = calleePrototype(E);
+  return Prototype && Prototype->Return == "void";
 }
 
 std::string HighCWriter::intrinsicOperandStr(const HighExpr &E) {
@@ -1763,6 +1841,10 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
   }
   if (Msvc)
     return msvcPrintedArgLimit(*Msvc, Have, UnknownAt, KeepExtra);
+  // A routine with a C library prototype takes its parameters.
+  if (const libc::LibCPrototype *Prototype = calleePrototype(E);
+      Prototype && !Prototype->Variadic)
+    return Clamp(Prototype->ParamCount);
   if (auto Arity = knownArity(resolvedCallTarget(E), Name);
       Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0)
     return Clamp(static_cast<size_t>(Arity->IntArgs));
@@ -1788,6 +1870,8 @@ HighCWriter::plainDeclarationArity(const HighExpr &E) const {
       ConflictingSourceNativeSignatures.count(Name) ||
       msvcCallee(Name, Opts.Format))
     return std::nullopt;
+  if (const libc::LibCPrototype *Prototype = calleePrototype(E))
+    return static_cast<size_t>(Prototype->ParamCount);
   const auto Arity = knownArity(resolvedCallTarget(E), Name);
   if (!Arity || Arity->FpArgs != 0 || Arity->IntArgs < 0)
     return std::nullopt;
@@ -3580,6 +3664,16 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
   }
   case ExprKind::Call: {
     std::string Text = renderCallExpr(E);
+    // A routine returning a pointer returns it in the integer register the
+    // machine reads, as a function's address is one: arithmetic on it adds
+    // bytes.  A call assigned to a variable has the variable's type.
+    if (&E != StatementCall && (!E.Type || E.Type->Kind == NdTypeKind::Int))
+      if (const libc::LibCPrototype *Prototype = calleePrototype(E);
+          Prototype && libc::isPointerParameter(Prototype->Return))
+        return E.Type && (E.Type->Size != pointerBytes(Opts.TheArch) ||
+                          E.Type->IsSigned)
+                   ? "(" + typeToC(E.Type) + ")(uintptr_t)" + Text
+                   : PointerInteger("(uintptr_t)" + Text);
     // `callee(...)` has the return type its declaration prints.
     if (const TypeRef Return = knownCallReturnType(E); isPlainInteger(Return)) {
       const std::string Prefix = callIdentifier(E) + "(";

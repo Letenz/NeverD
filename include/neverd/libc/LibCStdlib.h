@@ -78,6 +78,7 @@ inline constexpr std::array kStdlibFunctions = {
     "ltoa",
     "mkstemp",
     "mktemp",
+    "on_exit",
     "putenv",
     "realpath",
     "setenv",

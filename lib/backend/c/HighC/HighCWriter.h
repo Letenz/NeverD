@@ -336,8 +336,9 @@ public:
   bool isCtorSourceExpr(const HighExpr *Op) const;
   bool isCtorDisplayOperand(const HighExpr *Op) const;
   TypeRef knownCallReturnType(const HighExpr &E) const;
-  /// A call whose prototype returns nothing: TPI says `void`, or the callee
-  /// is a destructor. The result register it leaves holds no defined value.
+  /// A call whose prototype returns nothing: TPI or the C library tables say
+  /// `void`, or the callee is a destructor. The result register it leaves
+  /// holds no defined value.
   bool knownVoidCall(const HighExpr &E) const;
   const HighExpr *typedCallResult(const HighExpr *E) const;
   const HighExpr *peelIntegerViewOps(const HighExpr *E) const;
@@ -793,6 +794,22 @@ public:
   /// The C library prototype the call \p E's callee is declared with: a
   /// routine no header declares and nothing else gives a signature.
   const libc::LibCPrototype *calleePrototype(const HighExpr &E) const;
+  /// The standard C function the call \p E calls, whose header declares its
+  /// parameters, or empty.
+  llvm::StringRef headerDeclaredCallee(const HighExpr &E) const;
+  /// The C library prototype of the routine \p Symbol links to in this
+  /// image: an import keeps its export's name, an object symbol the format's
+  /// decoration.
+  const libc::LibCPrototype *prototypeForSymbol(llvm::StringRef Symbol) const;
+  /// The prototype of the external function a call target \p Name names
+  /// (writeForwardDecls), by the one symbol its calls link to.
+  const libc::LibCPrototype *externalPrototype(const std::string &Name) const;
+  /// The C type \p Type of a prototype on this target: `WINAPI` is stdcall
+  /// on 32-bit x86 and nothing elsewhere.
+  std::string prototypeType(std::string_view Type) const;
+  /// The call a statement makes for its effect alone, whose result no
+  /// conversion prints.
+  const HighExpr *StatementCall = nullptr;
   /// Functions the code takes the address of, by entry: the C name the
   /// address prints as.
   std::map<va_t, std::string> FunctionAddressNames;

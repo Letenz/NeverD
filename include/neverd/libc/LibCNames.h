@@ -16,6 +16,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -77,27 +78,60 @@ struct LibCArityEntry {
   LibCArity Arity;
 };
 
-/// The C declaration of a routine no standard header declares, such as the one
-/// the start files enter a program through (LibCStartup.h): its return type
-/// and each parameter's C type.  Its arity is derived from it.
+/// The C declaration of a routine no standard header declares: one the start
+/// files enter a program through (LibCStartup.h), a C++ runtime entry point
+/// (LibCExceptionRuntime.h), a fortified or ISO-alias C library routine
+/// (LibCFortify.h) or a Windows C runtime one (WindowsCRT.h).  A
+/// non-variadic one's arity is derived from it.
 struct LibCPrototype {
-  /// The name without leading underscores, as the arity tables key it.
+  /// The C name the routine links by.
   std::string_view Name;
   std::string_view Return;
+  /// Each parameter's C type.  `WINAPI` in one names the Windows API calling
+  /// convention of the function pointer it spells.
   std::array<std::string_view, 8> Params{};
   uint8_t ParamCount = 0;
+  /// Further arguments follow the parameters (`...`).
+  bool Variadic = false;
+  /// The header declaring a type the declaration names (`FILE`, `size_t`),
+  /// or empty.
+  std::string_view Header{};
+  /// The object format whose C runtime provides the routine, or Unknown for
+  /// every format's.
+  BinaryFormat Format = BinaryFormat::Unknown;
+  /// The routine uses the Windows API calling convention: stdcall on 32-bit
+  /// x86.
+  bool Winapi = false;
 };
 
-/// Whether a parameter of C type \p Type takes a pointer: an object or a
-/// function pointer.
-constexpr bool isPointerParameter(std::string_view Type) {
-  return !Type.empty() &&
-         (Type.back() == '*' || Type.find("(*)") != std::string_view::npos);
+/// The prototype `Return Name(Params)`, whose types \p Header declares where
+/// C does not; a last parameter `...` makes it variadic.
+constexpr LibCPrototype
+makeLibCPrototype(std::string_view Name, std::string_view Return,
+                  std::initializer_list<std::string_view> Params,
+                  std::string_view Header = {}) {
+  LibCPrototype Prototype{Name, Return};
+  for (std::string_view Param : Params) {
+    if (Param == "...") {
+      Prototype.Variadic = true;
+      break;
+    }
+    Prototype.Params[Prototype.ParamCount++] = Param;
+  }
+  Prototype.Header = Header;
+  return Prototype;
 }
 
-/// The prototype of the routine a symbol \p Name links to, leading
-/// underscores ignored, or null.
-const LibCPrototype *libcPrototypeForSymbol(std::string_view Name);
+/// Whether a parameter of C type \p Type takes a pointer: an object or a
+/// function pointer, or a pointer to one.
+constexpr bool isPointerParameter(std::string_view Type) {
+  return !Type.empty() &&
+         (Type.back() == '*' || Type.find("*)") != std::string_view::npos);
+}
+
+/// The prototype of the routine C name \p Name links to in an image of object
+/// format \p Format, or null.
+const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format);
 
 /// The fixed argument arity of a known NON-variadic libc function (e.g. fputs
 /// -> {2,0}, sqrt -> {0,1}), used to bound the heuristic argument recovery for
@@ -168,6 +202,12 @@ bool isVaListConsumer(std::string_view Name);
 /// True if parameter \p Index of the standard C or POSIX function \p Name is
 /// a narrow, NUL-terminated `char` string.  Leading underscores are ignored.
 bool isCStringParameter(std::string_view Name, unsigned Index);
+
+/// The C type of parameter \p Index of the standard C or POSIX function
+/// \p Name when it takes a function (`qsort`'s comparison), or nullopt.
+/// Leading underscores are ignored.
+std::optional<std::string_view> functionPointerParameter(std::string_view Name,
+                                                         unsigned Index);
 
 /// What a compiler stack-probe helper does (StackProbeRoutines.inc).
 enum class StackProbeEffect : uint8_t {
