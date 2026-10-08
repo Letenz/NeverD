@@ -2407,9 +2407,14 @@ HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
     if (High)
       Value = "(unsigned __int128)0x" + llvm::utohexstr(High) + "ull << 64 | " +
               Value;
-    return Type->IsSigned ? "__builtin_bit_cast(" + typeToC(Type) + ", " +
-                                "(unsigned __int128)(" + Value + "))"
-                          : Value;
+    if (!Type->IsSigned)
+      return Value;
+    // A _BitInt(128) standing in for __int128 takes no __builtin_bit_cast in
+    // a constant initializer; its conversion wraps the same bits.
+    if (Int128AsBitInt)
+      return "(" + typeToC(Type) + ")(" + Value + ")";
+    return "__builtin_bit_cast(" + typeToC(Type) + ", (unsigned __int128)(" +
+           Value + "))";
   }
   if (!Type || (Type->Size != 1 && Type->Size != 2 && Type->Size != 4 &&
                 Type->Size != 8))

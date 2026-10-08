@@ -1340,6 +1340,47 @@ TEST(HighCIntegerWidths, A32BitTargetSpellsA128BitIntegerAsBitInt) {
   }
 }
 
+TEST(HighCIntegerWidths, A32BitTargetInitializesASigned128BitObject) {
+  // A signed 16-byte constant-pool entry on i386: _BitInt(128) stands in for
+  // __int128, and a constant initializer converts its bits instead of
+  // taking a __builtin_bit_cast, which C does not evaluate there.
+  constexpr va_t Base = 0x2000;
+  BinaryImage Image;
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  Image.Format = BinaryFormat::ELF;
+  Segment Data;
+  Data.Name = ".rodata";
+  Data.VA = Base;
+  Data.Data.assign(16, 0x80);
+  Data.Size = Data.Data.size();
+  Data.Flags = SegmentFlags::Readable;
+  Image.Segments.push_back(std::move(Data));
+  const TypeRef Wide = NdType::makeInt(16, true);
+  auto Load = HighExpr::makeLoad(
+      HighExpr::makeConst(Base, 4, ConstantAddressProvenance::DataAddress),
+      Wide);
+  auto Low =
+      HighExpr::makeBinop(NdOp::SUBBYTES, Load, HighExpr::makeConst(0, 4));
+  Low->Type = NdType::makeInt(4, false);
+  HighFunc Func;
+  Func.Name = "low_word";
+  Func.ReturnType = NdType::makeInt(4, false);
+  returnValue(Func, Low);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X86;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Image;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_EQ(Source.find("__builtin_bit_cast(__int128"), std::string::npos)
+      << Source;
+  const auto Errors = compileForTarget(Source, "i686-linux-gnu");
+  EXPECT_FALSE(Errors) << *Errors << Source;
+}
+
 TEST(HighCIntegerWidths, WindowsX64SyscallUsesTheServiceConvention) {
   // return (uint64_t)syscall(0x55, 1, 2, 3, 4) under the NT convention: the
   // helper runs SYSCALL with the service number in RAX and the arguments in
