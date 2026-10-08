@@ -115,6 +115,12 @@ void ListingView::jumpTo(Address address) {
   request(Fetch::Jump, address, 0, JumpContextBefore, PageLines);
 }
 
+std::optional<Address> ListingView::topItem() const {
+  if (lines_.empty())
+    return std::nullopt;
+  return lines_[std::clamp<std::size_t>(top_, 0, lines_.size() - 1)].item;
+}
+
 void ListingView::refresh() {
   if (!session_.loaded())
     return;

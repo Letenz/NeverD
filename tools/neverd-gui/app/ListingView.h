@@ -38,6 +38,8 @@ public:
   std::optional<Address> currentAddress() const;
   /// Item address of the cursor line.
   std::optional<Address> currentItem() const;
+  /// Item address of the first visible line, if any line is loaded.
+  std::optional<Address> topItem() const;
   std::optional<Address> currentFunction() const;
   QString currentFunctionName() const;
   /// Navigation target of the token under the cursor, else of the line.

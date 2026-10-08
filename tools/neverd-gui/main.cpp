@@ -1,5 +1,6 @@
 #include "app/DisassemblyView.h"
 #include "app/GnomeModalDialogs.h"
+#include "app/InteractionMetrics.h"
 #include "app/Language.h"
 #include "app/ListingView.h"
 #include "app/MainWindow.h"
@@ -138,6 +139,15 @@ int main(int argc, char **argv) {
        QStringLiteral("Startup benchmark deadline from main entry in "
                       "milliseconds"),
        QStringLiteral("milliseconds"), QStringLiteral("30000")});
+  parser.addOption(
+      {QStringLiteral("interaction-benchmark"),
+       QStringLiteral("Scroll, jump, open graphs and pseudocode in the opened "
+                      "file, write their latencies as JSON and exit"),
+       QStringLiteral("path")});
+  parser.addOption(
+      {QStringLiteral("interaction-benchmark-timeout"),
+       QStringLiteral("Interaction benchmark deadline in milliseconds"),
+       QStringLiteral("milliseconds"), QStringLiteral("600000")});
 #ifdef NEVERD_GUI_TEST_PROBES
   parser.addOption(
       {QStringLiteral("widgets-test"),
@@ -160,8 +170,10 @@ int main(int argc, char **argv) {
                      QStringLiteral("neverd-worker")
 #endif
                  );
+  const bool interaction =
+      parser.isSet(QStringLiteral("interaction-benchmark"));
   bool automated = parser.isSet(QStringLiteral("startup-benchmark")) ||
-                   parser.isSet(QStringLiteral("smoke-test"));
+                   parser.isSet(QStringLiteral("smoke-test")) || interaction;
 #ifdef NEVERD_GUI_TEST_PROBES
   const bool probe = parser.isSet(QStringLiteral("widgets-test")) ||
                      parser.isSet(QStringLiteral("analysis-test"));
@@ -217,6 +229,21 @@ int main(int argc, char **argv) {
   window.initializeLayout();
   if (startupMetrics)
     startupMetrics->observeWindow(&window);
+  std::unique_ptr<InteractionMetrics> interactionMetrics;
+  if (interaction) {
+    bool validTimeout = false;
+    const auto timeout =
+        parser.value(QStringLiteral("interaction-benchmark-timeout"))
+            .toInt(&validTimeout);
+    if (!validTimeout || timeout < 1000 || timeout > 3600000 || !openingFile) {
+      qCritical("The interaction benchmark needs an input file and a timeout "
+                "of 1000-3600000 milliseconds");
+      return 2;
+    }
+    interactionMetrics = std::make_unique<InteractionMetrics>(
+        window, session, parser.value(QStringLiteral("interaction-benchmark")),
+        timeout, &app);
+  }
   window.show();
   QObject::connect(&app, &QApplication::aboutToQuit, &window, [&window] {
     QSettings().setValue(GeometryKey, window.saveGeometry());
