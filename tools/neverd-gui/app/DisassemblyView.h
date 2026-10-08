@@ -29,7 +29,9 @@ public:
   bool graphMode() const;
   void setGraphMode(bool graph);
   /// Navigate, recording the previous location for Jump to previous position.
-  void navigate(Address address, bool record = true);
+  /// A code window can supply its own origin when it is pinned elsewhere.
+  void navigate(Address address, bool record = true,
+                std::optional<Address> from = {});
   void goBack();
   void goForward();
   bool canGoBack() const { return historyIndex_ > 0; }

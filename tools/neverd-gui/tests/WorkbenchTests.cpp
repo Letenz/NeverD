@@ -5,9 +5,11 @@
 #include "DisassemblyView.h"
 #include "GraphView.h"
 #include "HexView.h"
+#include "ListingView.h"
 #include "MainWindow.h"
 #include "ProjectDatabase.h"
 #include "Session.h"
+#include "Theme.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
@@ -16,16 +18,20 @@
 #include <QClipboard>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontMetricsF>
 #include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLineEdit>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
 #include <QTreeView>
+#include <cmath>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <memory>
 
@@ -89,6 +95,242 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void codeAddressLinksRetainAddressNavigation_data() {
+    QTest::addColumn<bool>("global");
+    QTest::newRow("import-with-function-address") << false;
+    QTest::newRow("global-object") << true;
+  }
+
+  void codeAddressLinksRetainAddressNavigation() {
+    QFETCH(bool, global);
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(
+        directory, global ? QStringLiteral("pseudocode-global.bin")
+                          : QStringLiteral("pseudocode-import.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("c"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 1);
+    for (auto *button : view->findChildren<QToolButton *>())
+      if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+        button->setChecked(true);
+    QVERIFY(view->locked());
+    const auto target = global ? Base + 0x3000 : Base + 0x160;
+    // The import intentionally has both address and function_address.
+    if (!global) {
+      QJsonObject resolved;
+      bench.session.read(QStringLiteral("resolve"), {{"query", "function_22"}},
+                         bench.window.get(),
+                         [&](const QJsonObject &p) { resolved = p; });
+      QTRY_VERIFY(!resolved.isEmpty());
+      QVERIFY(resolved.value("import").toBool());
+      QVERIFY(addressValue(resolved.value("function_address")).has_value());
+    }
+    const auto token =
+        global ? QStringLiteral("global_value") : QStringLiteral("function_22");
+    QSignalSpy activation(code, &CodeText::objectActivated);
+    QSignalSpy names(code, &CodeText::nameActivated);
+    // Clicking the use, after a real declaration, exercises object recognition.
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const int row = global ? 2 : 1;
+    const QPoint point(
+        qRound(6 + 17 * metrics.horizontalAdvance(QLatin1Char('M'))),
+        qRound((row - code->verticalScrollBar()->value() + 0.5) *
+               std::ceil(metrics.lineSpacing())));
+    code->setFocus();
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(code->currentToken(), token);
+    QTest::mouseDClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(global ? activation.size() : names.size(), 1);
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(target));
+    QTRY_VERIFY(!code->hasFocus());
+    QCOMPARE(code->function(), std::optional<Address>(Base + 0x140));
+  }
+
+  void lateCodeLookupsDoNotReplaceNewerNavigation_data() {
+    QTest::addColumn<bool>("error");
+    QTest::addColumn<bool>("sessionChange");
+    QTest::newRow("late-success-navigation") << false << false;
+    QTest::newRow("late-error-navigation") << true << false;
+    QTest::newRow("late-success-session") << false << true;
+    QTest::newRow("late-error-session") << true << true;
+  }
+
+  void lateCodeLookupsDoNotReplaceNewerNavigation() {
+    QFETCH(bool, error);
+    QFETCH(bool, sessionChange);
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(
+        directory, error ? QStringLiteral("pseudocode-delayed-error.bin")
+                         : QStringLiteral("pseudocode-delayed.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("c"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 1);
+    for (auto *button : view->findChildren<QToolButton *>())
+      if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+        button->setChecked(true);
+    QVERIFY(view->locked());
+    QSignalSpy messages(&bench.session, &Session::message);
+    QSignalSpy names(code, &CodeText::nameActivated);
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const QPoint point(
+        qRound(6 + 17 * metrics.horizontalAdvance(QLatin1Char('M'))),
+        qRound((1 - code->verticalScrollBar()->value() + 0.5) *
+               std::ceil(metrics.lineSpacing())));
+    code->setFocus();
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QTest::mouseDClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(names.size(), 1);
+    const auto started = [&] {
+      for (const auto &row : messages)
+        if (row.first().toString().contains(
+                QStringLiteral("fixture delayed lookup started")))
+          return true;
+      return false;
+    };
+    QTRY_VERIFY(started());
+    if (sessionChange) {
+      const auto epoch = bench.session.epoch();
+      bench.session.closeFile();
+      QTRY_VERIFY(bench.session.epoch() != epoch);
+      QTRY_VERIFY(!bench.session.loaded());
+    } else {
+      // The pinned view remains at its source; the address view moves.
+      bench.window->disassembly()->navigate(Base + 0x180);
+      QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                   std::optional<Address>(Base + 0x180));
+    }
+    QTest::qWait(600);
+    if (!sessionChange) {
+      QCOMPARE(code->function(), std::optional<Address>(Base + 0x140));
+      QCOMPARE(bench.window->disassembly()->currentFunction(),
+               std::optional<Address>(Base + 0x180));
+    } else {
+      QVERIFY(!bench.session.loaded());
+    }
+    for (const auto &row : messages)
+      QVERIFY(
+          !row.first().toString().startsWith(QStringLiteral("Cannot jump to")));
+  }
+
+  void pseudocodeFunctionLinksStayInTheirWindow_data() {
+    QTest::addColumn<QString>("representation");
+    QTest::addColumn<bool>("secondWindow");
+    QTest::addColumn<bool>("locked");
+    for (const auto &representation :
+         {QStringLiteral("c"), QStringLiteral("llvmc")})
+      for (const bool second : {false, true})
+        for (const bool locked : {false, true}) {
+          const auto name = representation + (second ? "-second" : "-primary") +
+                            (locked ? "-locked" : "-following");
+          QTest::newRow(qPrintable(name)) << representation << second << locked;
+        }
+  }
+
+  void pseudocodeFunctionLinksStayInTheirWindow() {
+    QFETCH(QString, representation);
+    QFETCH(bool, secondWindow);
+    QFETCH(bool, locked);
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("pseudocode-navigation.bin"));
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    const Address caller = Base + 0x140;
+    const Address callee =
+        Base + (representation == QLatin1String("c") ? 0x160 : 0x150);
+    disassembly->navigate(caller);
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(caller));
+    bench.action(secondWindow ? ActionId::ViewLowIR : ActionId::ViewPseudocode)
+        ->trigger();
+    auto *view = bench.codeView(secondWindow ? QStringLiteral("low")
+                                             : QStringLiteral("c"));
+    QVERIFY(view);
+    view->setRepresentation(representation);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 1,
+                             OpenTimeoutMs);
+    QCOMPARE(code->function(), std::optional<Address>(caller));
+    if (locked) {
+      QToolButton *lock = nullptr;
+      for (auto *button : view->findChildren<QToolButton *>())
+        if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+          lock = button;
+      QVERIFY(lock);
+      lock->setChecked(true);
+      QVERIFY(view->locked());
+      // A pinned code view can differ from the background assembly location.
+      disassembly->navigate(Base + 0x180);
+      QTRY_COMPARE(disassembly->currentFunction(),
+                   std::optional<Address>(Base + 0x180));
+      QCOMPARE(code->function(), std::optional<Address>(caller));
+    }
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    const QString link = representation == QLatin1String("c")
+                             ? QStringLiteral("function_22")
+                             : QStringLiteral("Bar_ctor");
+    QVERIFY(code->findText(link, true));
+    QCOMPARE(code->currentToken(), link);
+    QSignalSpy activation(code, &CodeText::nameActivated);
+    // The call is row 1 in C, row 3 after LLVM C's folded prelude.
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const int row = representation == QLatin1String("c") ? 1 : 3;
+    const QPoint point(
+        qRound(6 + 17 * metrics.horizontalAdvance(QLatin1Char('M'))),
+        qRound((row - code->verticalScrollBar()->value() + 0.5) *
+               std::ceil(metrics.lineSpacing())));
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(code->currentToken(), link);
+    QTest::mouseDClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(activation.size(), 1);
+    if (representation == QLatin1String("llvmc"))
+      QCOMPARE(activation.first().first().toString(),
+               QStringLiteral("_ZN3BarC1Ev"));
+    QTRY_COMPARE_WITH_TIMEOUT(code->function(), std::optional<Address>(callee),
+                              OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
+    QCOMPARE(view->representation(), representation);
+    QVERIFY(code->isVisible());
+    QTRY_VERIFY(code->hasFocus());
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(callee));
+    QVERIFY(bench.action(ActionId::JumpBack)->isEnabled());
+    bench.action(ActionId::JumpBack)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(code->function(), std::optional<Address>(caller),
+                              OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
+    QVERIFY(code->isVisible());
+    QTRY_VERIFY(code->hasFocus());
+    QCOMPARE(view->representation(), representation);
+    QVERIFY(bench.action(ActionId::JumpForward)->isEnabled());
+    bench.action(ActionId::JumpForward)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(code->function(), std::optional<Address>(callee),
+                              OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
+    QVERIFY(code->isVisible());
+    QTRY_VERIFY(code->hasFocus());
+  }
+
   void initTestCase() {
     QVERIFY(settingsDirectory_.isValid());
     QCoreApplication::setOrganizationName(QStringLiteral("NeverDTests"));

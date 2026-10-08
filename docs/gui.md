@@ -43,6 +43,11 @@ set `NEVERD_ENGINE_LIBRARY` to the runtime DLL and `NEVERD_ENGINE_IMPLIB` to its
 matching import `.lib`; make runtime dependencies available alongside the
 worker.
 
+Double-clicking a function name in a code view follows it in that same window,
+keeping its C or LLVM C representation even when the window is locked. Back and
+forward navigation also stays in the active code window. Imports and global
+objects continue to open at their addresses in the disassembly or hex view.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.
