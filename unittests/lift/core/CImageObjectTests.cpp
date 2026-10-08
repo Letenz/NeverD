@@ -636,6 +636,154 @@ int main(void) {
 )");
 }
 
+/// An x86-64 ELF image with \p Rodata and \p Data at RodataVA and DataVA.
+BinaryImage dataImage(std::vector<uint8_t> Rodata, std::vector<uint8_t> Data) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  Img.Segments.push_back(
+      segment(".text", TextVA, std::vector<uint8_t>(0x20),
+              SegmentFlags::Readable | SegmentFlags::Executable));
+  Img.Segments.push_back(
+      segment(".rodata", RodataVA, std::move(Rodata), SegmentFlags::Readable));
+  Img.Segments.push_back(segment(".data", DataVA, std::move(Data),
+                                 SegmentFlags::Readable |
+                                     SegmentFlags::Writable));
+  return Img;
+}
+
+std::string emitWithImage(const std::vector<HighFunc> &Funcs,
+                          const BinaryImage &Img) {
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  Options.Image = &Img;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  EXPECT_TRUE(HighCEmitter().emit(Funcs, OS, Options));
+  OS.flush();
+  return Source;
+}
+
+ExprPtr dataParam(int Id) {
+  MedVar V;
+  V.Kind = MedVar::Param;
+  V.Id = Id;
+  V.Size = 8;
+  V.TheArch = Arch::X64;
+  return HighExpr::makeVar(V, NdType::makeInt(8, false));
+}
+
+TEST(CImageObjects, AnAtomicOnBytesTakesItsTypedPointer) {
+  // `q` is read at 8 and at 4 bytes, so it is declared as bytes; the
+  // compare-exchange on it takes a uint64_t pointer, not a byte's.
+  std::vector<uint8_t> Data(0x10, 0);
+  Data[0] = 5;
+  BinaryImage Img = dataImage(std::vector<uint8_t>(0x10), std::move(Data));
+  Img.Symbols = {dataSymbol("q", DataVA, 8)};
+  const TypeRef U64 = NdType::makeInt(8, false);
+  auto Cas = HighExpr::makeBinop(
+      NdOp::ATOMIC_CMPXCHG,
+      HighExpr::makeConst(DataVA, 8, ConstantAddressProvenance::Address),
+      dataParam(0));
+  Cas->Operands.push_back(dataParam(1));
+  Cas->Type = U64;
+  Cas->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  HighFunc Swap = function("swap", U64, TextVA);
+  Swap.Params = {{"arg0", U64}, {"arg1", U64}};
+  Swap.Body = {returnStatement(Cas)};
+  HighFunc Low = function("low", NdType::makeInt(4, false), TextVA + 0x10);
+  Low.Body = {returnStatement(load(DataVA, NdType::makeInt(4, false)))};
+  const std::string Source = emitWithImage({Swap, Low}, Img);
+  source_call_execution_test::compileAndRun(Source + R"(
+int main(void) { return swap(5, 7) != 5 || low() != 7; }
+)");
+}
+
+TEST(CImageObjects, AStringAddressStoredAsAnIntegerConverts) {
+  // The code keeps a string's address in an integer object: the literal is
+  // an array, and the object takes its address.
+  std::vector<uint8_t> Rodata = {'h', 'i', 0, 0};
+  BinaryImage Img = dataImage(std::move(Rodata), std::vector<uint8_t>(0x10));
+  Img.Symbols = {dataSymbol("msg", RodataVA, 3), dataSymbol("kept", DataVA, 8)};
+  const TypeRef U64 = NdType::makeInt(8, false);
+  HighStmt Keep;
+  Keep.Kind = StmtKind::Store;
+  Keep.StoreAddr =
+      HighExpr::makeConst(DataVA, 8, ConstantAddressProvenance::Address);
+  Keep.StoreVal =
+      HighExpr::makeConst(RodataVA, 8, ConstantAddressProvenance::DataAddress);
+  Keep.StoreVal->Type = U64;
+  HighFunc Remember = function("remember", U64, TextVA);
+  Remember.Body = {Keep, returnStatement(load(DataVA, U64))};
+  const std::string Source = emitWithImage({Remember}, Img);
+  source_call_execution_test::compileAndRun(Source + R"(
+int main(void) {
+  const char *text = (const char *)(uintptr_t)remember();
+  return text[0] != 'h' || text[1] != 'i' || text[2] != 0;
+}
+)");
+}
+
+TEST(CImageObjects, AnAddressPairKeepsItsObjects) {
+  // `{a, b}` stored as one 64-bit value on i386: each half is an address,
+  // not the number it has in the image.
+  BinaryImage Img = dataImage(std::vector<uint8_t>(0x20), {});
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Symbols = {dataSymbol("a", RodataVA, 8), dataSymbol("b", RodataVA + 8, 8)};
+  auto Pair = HighExpr::makeBinop(
+      NdOp::CONCAT,
+      HighExpr::makeConst(RodataVA + 8, 4,
+                          ConstantAddressProvenance::DataAddress),
+      HighExpr::makeConst(RodataVA, 4, ConstantAddressProvenance::DataAddress));
+  Pair->Type = NdType::makeInt(8, false);
+  Pair->Operands[0]->Type = Pair->Operands[1]->Type = NdType::makeInt(4, false);
+  HighFunc Both = function("both", NdType::makeInt(8, false), TextVA);
+  Both.Body = {returnStatement(Pair)};
+  const std::string Source = emitWithImage({Both}, Img);
+  const size_t Body = Source.find("both(");
+  ASSERT_NE(Body, NotFound) << Source;
+  EXPECT_EQ(Source.find(std::to_string(RodataVA + 8) + " << 32", Body),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("&b", Body), NotFound) << Source;
+}
+
+TEST(CImageObjects, AnObjectWrittenAtAVariableOffsetIsDeclaredWhole) {
+  // `count` is read directly and written as `*(base + &count)`, base a
+  // reloaded GOT base that is zero: both reach the one object, which a
+  // number in the write would miss.
+  BinaryImage Img = dataImage({}, std::vector<uint8_t>(0x10));
+  Img.Segments.erase(Img.Segments.begin() + 1);
+  Img.Symbols = {dataSymbol("count", DataVA, 4)};
+  const TypeRef U64 = NdType::makeInt(8, false);
+  const TypeRef I32 = NdType::makeInt(4, true);
+  auto Address = HighExpr::makeBinop(
+      NdOp::INT_ADD, dataParam(0),
+      HighExpr::makeConst(DataVA, 8, ConstantAddressProvenance::Unknown));
+  Address->Type = U64;
+  HighStmt Write;
+  Write.Kind = StmtKind::Store;
+  Write.StoreAddr = Address;
+  Write.StoreVal = HighExpr::makeBinop(NdOp::SUBBYTES, dataParam(1),
+                                       HighExpr::makeConst(0, 4));
+  Write.StoreVal->Type = I32;
+  HighFunc Put = function("put", NdType::makeVoid(), TextVA);
+  Put.Params = {{"arg0", U64}, {"arg1", U64}};
+  Put.Body = {Write};
+  HighFunc Get = function("get", I32, TextVA + 0x10);
+  Get.Body = {returnStatement(load(DataVA, I32))};
+  const std::string Source = emitWithImage({Put, Get}, Img);
+  source_call_execution_test::compileAndRun(Source + R"(
+int main(void) {
+  put(0, 99);
+  return get() != 99;
+}
+)");
+}
+
 TEST(CImageObjects, LiteralsSpellExactlyTheirBytes) {
   BinaryImage Img;
   Img.Arch = Arch::X64;

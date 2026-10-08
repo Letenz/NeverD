@@ -207,8 +207,9 @@ std::string memoryPointerCast(llvm::StringRef Type, llvm::StringRef Address,
                  std::to_string(cMemoryAddressSpace(AddressSpace)) + ")))";
   // addrStr already emits `(uintptr_t)base + imm` for typed pointer offsets.
   // Another integer round-trip is `*(T *)(uintptr_t)((uintptr_t)p + 8)`.
-  // `&member` is already a typed object address; do not recast it.
-  if (Address.starts_with("&"))
+  // `&member` is already a typed object address; do not recast it.  An
+  // element of a byte backing (`&table[8]`) is a byte's address.
+  if (Address.starts_with("&") && !Address.contains('['))
     return Address.str();
   if (Address.contains("(uintptr_t)"))
     return "(" + Qualified + " *)(" + Address.str() + ")";
@@ -2187,6 +2188,10 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         if (auto VA = constAddress(*S.StoreAddr))
           noteImageObject(*VA, S.StoreVal ? S.StoreVal->Type : nullptr, true,
                           true);
+        // A table written at a variable offset is the whole table too.
+        if (const HighExpr *Base = indexedImageBase(*S.StoreAddr))
+          NoteWhole(Base->ConstVal, S.StoreVal ? S.StoreVal->Type : nullptr,
+                    true);
       }
       forEachExpr(S, [&](const ExprPtr &E) {
         if (E)

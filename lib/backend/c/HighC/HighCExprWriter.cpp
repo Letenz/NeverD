@@ -3904,6 +3904,12 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
   if (!FuncReturnType || FuncReturnType->Kind != NdTypeKind::Int)
     return exprStr(Expr);
 
+  // A string literal is an array: an integer return takes its address.
+  if (const HighExpr *Inner = unwrapIntegerView(&Expr);
+      Inner && Inner->Kind == ExprKind::Const)
+    if (std::string Text = exprStr(*Inner); isStringLiteralText(Text))
+      return "(" + typeToC(FuncReturnType) + ")(uintptr_t)(" + Text + ")";
+
   // EAX/RAX leftovers are Cast / same-width zext / SUBBYTES 0 around the
   // i32 add. A real widen (i16→i64) stays so narrowing the C return does
   // not turn zero extension into sign extension.

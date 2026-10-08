@@ -773,11 +773,20 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     // odd-width carrier for the upper part.
     const HighExpr &HiE = *E.Operands[0];
     const HighExpr &LoE = *E.Operands[1];
+    // A constant the code holds as an address prints as the object it
+    // names, never as its number: `{a, b}` stored as one 64-bit pair.
+    auto Number = [&](const HighExpr &C) {
+      return C.Kind == ExprKind::Const &&
+             (C.ConstProvenance == ConstantAddressProvenance::Scalar ||
+              C.ConstProvenance == ConstantAddressProvenance::AddressFragment ||
+              (C.ConstProvenance == ConstantAddressProvenance::Unknown &&
+               !ImageObjects.count(C.ConstVal)));
+    };
     // The low part zero-extended to the carrier: a constant is its value, and
     // a value already printed at its width converts once.
     auto ZeroExtendedLow = [&](const TypeRef &Carrier) -> std::string {
       const uint16_t LoSize = LoE.Type->Size;
-      if (LoE.Kind == ExprKind::Const)
+      if (Number(LoE))
         return constStr(LoSize >= 8 ? LoE.ConstVal
                                     : LoE.ConstVal &
                                           ((uint64_t{1} << (8 * LoSize)) - 1),
@@ -805,7 +814,7 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       return "(" + Text + ")";
     }
     // A constant upper part already fits its width: shift it in the carrier.
-    if (HiE.Kind == ExprKind::Const && HiE.Type && E.Type &&
+    if (Number(HiE) && HiE.Type && E.Type &&
         E.Type->Size <= 8 && LoE.Type && LoE.Type->Size < E.Type->Size) {
       const uint64_t HiMask = (uint64_t{1} << (8 * HiE.Type->Size)) - 1;
       const TypeRef Carrier = NdType::makeInt(E.Type->Size, false);

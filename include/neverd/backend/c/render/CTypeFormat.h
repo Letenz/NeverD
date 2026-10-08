@@ -44,6 +44,10 @@ std::string typeToC(const TypeRef &Ty);
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
                                               bool AllowEmpty = false);
 
+/// Whether C text starts with a string literal (`"..."`, `L"..."`, `u8"..."`,
+/// `u"..."`, `U"..."`), which C takes as an array, not as an integer.
+bool isStringLiteralText(llvm::StringRef Text);
+
 /// The string that starts at \p Addr in readable, non-executable image bytes,
 /// as a comment beside a reference to it reads it: its text in quotes, after
 /// its encoding's name unless that is ASCII or UTF-8 (`GBK "你好"`), with

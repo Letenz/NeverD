@@ -74,6 +74,13 @@ std::string escapeCString(llvm::StringRef Str) {
   return Result;
 }
 
+bool isStringLiteralText(llvm::StringRef Text) {
+  for (llvm::StringRef Prefix : {"\"", "L\"", "u8\"", "u\"", "U\""})
+    if (Text.starts_with(Prefix))
+      return true;
+  return false;
+}
+
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
                                               bool AllowEmpty) {
   if (!Img || Addr == 0 || Addr == InvalidVA)

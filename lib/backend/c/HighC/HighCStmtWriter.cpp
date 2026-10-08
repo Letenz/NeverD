@@ -660,7 +660,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
            << ")";
       else if (DeclaredType && DeclaredType->Kind == NdTypeKind::Int &&
-               !ValueText.empty() && ValueText.front() == '&')
+               !ValueText.empty() &&
+               (ValueText.front() == '&' || isStringLiteralText(ValueText)))
         OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
            << ")";
       else if (isUnknownCallOperand(Stmt.Val.get()))
@@ -819,6 +820,11 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                  ProjectedDestType->Kind == NdTypeKind::Ptr)
           OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
              << ValueText << ")";
+        else if (ProjectedDestType &&
+                 ProjectedDestType->Kind == NdTypeKind::Int &&
+                 isStringLiteralText(ValueText))
+          OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
+             << ValueText << ")";
         else
           OS << ValueText;
         OS << ";\n";
@@ -829,10 +835,13 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         if (auto Name = imageObjectName(*VA)) {
           emitIndent(Indent);
           OS << *Name << " = ";
+          const std::string ValueText = exprStr(*Stmt.StoreVal);
           if (isUnknownCallOperand(Stmt.StoreVal.get()))
             OS << "0";
+          else if (isStringLiteralText(ValueText))
+            OS << "(uintptr_t)(" << ValueText << ")";
           else
-            OS << exprStr(*Stmt.StoreVal);
+            OS << ValueText;
           OS << ";\n";
           break;
         }
