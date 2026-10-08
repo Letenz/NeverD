@@ -1528,6 +1528,19 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
           return "&" + *Member;
         if (auto Slot = namedFrameSlot(*Inner))
           return "&" + *Slot;
+        // The constant is the table and the rest the offset into it.
+        if (Base->Kind != ExprKind::Const && indexedImageBase(*Inner) == Off)
+          if (auto Table = imageBackingAddress(Off->ConstVal)) {
+            constexpr int AddPrec = 9;
+            std::string S =
+                "(uintptr_t)" + *Table + " + " +
+                integerView(
+                    *Base,
+                    NdType::makeInt(getTargetRegInfo(Opts.TheArch).PointerSize,
+                                    false),
+                    AddPrec);
+            return ParentPrec >= AddPrec ? "(" + S + ")" : S;
+          }
       }
       constexpr int AddPrec = 9;
       std::string B = addrStr(*Base, AddPrec, ProjectImageBacking);
@@ -3527,10 +3540,20 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (ImageObjects.count(E.ConstVal) ||
         E.ConstProvenance == ConstantAddressProvenance::Address ||
         E.ConstProvenance == ConstantAddressProvenance::DataAddress)
-      if (auto Backing = imageBackingAddress(E.ConstVal))
+      if (auto Backing = imageBackingAddress(E.ConstVal)) {
+        // An integer the machine computes with stays an integer: `~` or a
+        // multiplication takes no pointer.
+        if (E.Type && E.Type->Kind == NdTypeKind::Int && !E.Type->IsEnum)
+          return E.Type->Size == sizeof(uint64_t) && !E.Type->IsSigned &&
+                         getTargetRegInfo(Opts.TheArch).PointerSize ==
+                             sizeof(uint64_t)
+                     ? typedText(E, "(uintptr_t)" + *Backing, E.Type->Size,
+                                 /*IsSigned=*/false)
+                     : "(" + typeToC(E.Type) + ")(uintptr_t)" + *Backing;
         return IntegerViewOperands.count(&E)
                    ? PointerInteger("(uintptr_t)" + *Backing)
                    : *Backing;
+      }
     if (auto Name = imageObjectName(E.ConstVal)) {
       // An array is its own address in C, which a string parameter takes.
       const auto Object = ImageObjects.find(E.ConstVal);
@@ -4087,6 +4110,49 @@ std::optional<std::string> HighCWriter::imageObjectName(va_t Addr) const {
   if (It == ImageObjects.end())
     return std::nullopt;
   return It->second.Name;
+}
+
+const HighExpr *HighCWriter::indexedImageBase(const HighExpr &Address) const {
+  // The terms of a sum, through nested sums: `(i * 8 + &table) + 3` reads a
+  // field of an entry.
+  std::vector<const HighExpr *> Terms;
+  std::function<bool(const HighExpr &, unsigned)> Collect =
+      [&](const HighExpr &E, unsigned Depth) {
+        const HighExpr *Inner = peelIntegerViewOps(&E);
+        if (!Inner || Depth > limits::kMaxIntegerViewUnwrapDepth)
+          return false;
+        if (Inner->Kind == ExprKind::BinOp && Inner->Op == NdOp::INT_ADD &&
+            Inner->Operands.size() == 2 && Inner->Operands[0] &&
+            Inner->Operands[1])
+          return Collect(*Inner->Operands[0], Depth + 1) &&
+                 Collect(*Inner->Operands[1], Depth + 1);
+        Terms.push_back(Inner);
+        return true;
+      };
+  const HighExpr *Inner = peelIntegerViewOps(&Address);
+  if (!Inner || Inner->Kind != ExprKind::BinOp || Inner->Op != NdOp::INT_ADD ||
+      !Collect(Address, 0))
+    return nullptr;
+  // One term is the object's address and another varies.  A number equal to
+  // an address is no address; an object without a size has no extent to
+  // declare.
+  const HighExpr *Base = nullptr;
+  bool Varies = false;
+  for (const HighExpr *Term : Terms) {
+    if (Term->Kind != ExprKind::Const) {
+      Varies = true;
+      continue;
+    }
+    if (Term->ConstProvenance == ConstantAddressProvenance::Scalar ||
+        Term->ConstProvenance == ConstantAddressProvenance::AddressFragment ||
+        !isImageDataAddress(Term->ConstVal) ||
+        !Opts.Image->dataObjectSizeAt(Term->ConstVal))
+      continue;
+    if (Base)
+      return nullptr;
+    Base = Term;
+  }
+  return Varies ? Base : nullptr;
 }
 
 std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {

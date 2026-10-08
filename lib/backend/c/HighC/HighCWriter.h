@@ -791,6 +791,9 @@ public:
     /// A pointer slot only loaded, holding the address of a read-only string:
     /// declared as that string's pointer, initialized by its literal.
     std::optional<ImageCString> PointsTo;
+    /// The code indexes the object (`table[i]`): its whole extent, as the
+    /// image's symbol sizes it, is declared, as bytes.
+    uint64_t IndexedBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
   /// The C initializer of an object's scalar value, as the image holds it;
@@ -798,6 +801,9 @@ public:
   /// cannot spell exactly.
   std::optional<std::string> imageObjectInitializer(va_t Addr,
                                                     const ImageObject &Obj);
+  /// The address constant of a sized image object that \p Address indexes
+  /// by a variable byte offset (`i + &table`), or null.
+  const HighExpr *indexedImageBase(const HighExpr &Address) const;
   /// The image object a call argument prints as when it is a string: the
   /// array's address, or a load of a pointer to one.  The expression is the
   /// one that prints the object's name.

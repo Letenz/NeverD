@@ -2061,6 +2061,22 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           noteImageObject(*VA, E.Type, false, true);
       }
     }
+    // A table read or written at a variable offset is the whole table.
+    if ((E.Kind == ExprKind::Load || E.Kind == ExprKind::Store) &&
+        E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        !E.Operands.empty() && E.Operands[0])
+      if (const HighExpr *Base = indexedImageBase(*E.Operands[0])) {
+        const TypeRef Access =
+            E.Kind == ExprKind::Load
+                ? E.Type
+                : (E.Operands.size() > 1 && E.Operands[1] ? E.Operands[1]->Type
+                                                          : nullptr);
+        noteImageObject(Base->ConstVal, Access, E.Kind == ExprKind::Store,
+                        true);
+        ImageObject &Obj = ImageObjects[Base->ConstVal];
+        Obj.IndexedBytes = std::max(
+            Obj.IndexedBytes, Opts.Image->dataObjectSizeAt(Base->ConstVal));
+      }
     if (E.Kind == ExprKind::Store &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         E.Operands.size() >= 2 && E.Operands[0]) {
@@ -2177,8 +2193,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                makeSyntheticGlobalName(GroupBase) + "_bytes", "g")});
   };
   for (const auto &[Addr, Obj] : ImageObjects) {
-    const uint64_t Size =
-        Obj.String ? Obj.ArrayBytes : (Obj.Type ? Obj.Type->Size : 0);
+    const uint64_t Size = std::max<uint64_t>(
+        Obj.IndexedBytes,
+        Obj.String ? Obj.ArrayBytes : (Obj.Type ? Obj.Type->Size : 0));
     if (!Size || Addr > std::numeric_limits<va_t>::max() - Size)
       llvm::report_fatal_error("HighC image object has invalid extent");
     const va_t End = Addr + Size;
@@ -2194,7 +2211,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       NeedsBacking = true;
     GroupEnd = std::max(GroupEnd, End);
     ++GroupCount;
-    NeedsBacking |= Obj.MemoryWidths.size() > 1;
+    NeedsBacking |= Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes;
     for (uint16_t Width : Obj.MemoryWidths)
       NeedsBacking |= Width && (Width & (Width - 1)) != 0;
   }

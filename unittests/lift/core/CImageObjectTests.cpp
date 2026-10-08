@@ -348,6 +348,63 @@ int main(void) {
   }
 }
 
+TEST(CImageObjects, AnIndexedTableIsDeclaredWhole) {
+  // `table[i & 15]` reads the table at a variable offset: the whole sized
+  // object is declared, and the read goes through it, not through the
+  // image address it had.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  std::vector<uint8_t> Rodata(0x20, 0);
+  for (unsigned I = 0; I < 16; ++I)
+    Rodata[I] = static_cast<uint8_t>(3 * I + 7);
+  Img.Segments.push_back(
+      segment(".text", TextVA, std::vector<uint8_t>(0x10),
+              SegmentFlags::Readable | SegmentFlags::Executable));
+  Img.Segments.push_back(
+      segment(".rodata", RodataVA, std::move(Rodata), SegmentFlags::Readable));
+  Img.Symbols = {dataSymbol("table", RodataVA, 16)};
+  const TypeRef U64 = NdType::makeInt(8, false);
+  MedVar Index;
+  Index.Kind = MedVar::Param;
+  Index.Id = 0;
+  Index.Size = 8;
+  Index.TheArch = Arch::X64;
+  auto Masked = HighExpr::makeBinop(
+      NdOp::INT_AND, HighExpr::makeVar(Index, U64), HighExpr::makeConst(15, 8));
+  Masked->Type = U64;
+  auto Address = HighExpr::makeBinop(
+      NdOp::INT_ADD, Masked,
+      HighExpr::makeConst(RodataVA, 8, ConstantAddressProvenance::Address));
+  Address->Type = U64;
+  auto Read = HighExpr::makeLoad(Address, NdType::makeInt(1, false));
+  auto Wide = HighExpr::makeUnary(NdOp::INT_ZEXT, Read);
+  Wide->Type = U64;
+  HighFunc Lookup = function("lookup", U64, TextVA);
+  Lookup.Params = {{"arg0", U64}};
+  Lookup.Body = {returnStatement(Wide)};
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Lookup}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("_bytes[16] = {"), NotFound) << Source;
+  EXPECT_NE(Source.find("_bytes[0] + (uint64_t)(arg0 & 15)"), NotFound)
+      << Source;
+  source_call_execution_test::compileAndRun(Source + R"(
+int main(void) {
+  for (uint64_t i = 0; i < 40; ++i)
+    if (lookup(i) != 3 * (i & 15) + 7)
+      return 1;
+  return 0;
+}
+)");
+}
+
 TEST(CImageObjects, LiteralsSpellExactlyTheirBytes) {
   BinaryImage Img;
   Img.Arch = Arch::X64;
