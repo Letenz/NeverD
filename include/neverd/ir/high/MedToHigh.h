@@ -191,6 +191,10 @@ bool mergeJumpsIntoNextIfArms(HighFunc &Func);
 /// of its uses read, so that wrapping arithmetic, logical shifts and
 /// unsigned comparisons print without casts.  Value bits do not change.
 void chooseIntegerSignedness(HighFunc &Func);
+/// A large value one statement reads several times is assigned to a fresh
+/// local before it, when evaluating the value earlier cannot fault or have
+/// an effect.  The C writer prints each read of a shared node in full.
+bool nameRepeatedValues(HighFunc &Func);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);

@@ -1313,6 +1313,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   foldCopiesIntoDefinitions(Func);
   // Signedness follows the merged names: one declaration, one type.
   chooseIntegerSignedness(Func);
+  nameRepeatedValues(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 

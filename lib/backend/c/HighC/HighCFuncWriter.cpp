@@ -3181,7 +3181,7 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       if (SourceNamed)
         continue;
     }
-    if (Stmt->IsPhiCopy)
+    if (Stmt->IsPhiCopy || Stmt->KeepsName)
       continue;
     const bool SavedEH = InEHClauseBody;
     if (Info.Handler)

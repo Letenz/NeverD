@@ -7295,6 +7295,49 @@ TEST(HighControlFlowSemantics, TemporariesReadOnceStayOutOfTheTailLimit) {
   }
 }
 
+TEST(HighControlFlowSemantics, AValueReadManyTimesIsNamedOnce) {
+  // e0 = x; e(k+1) = e(k) * 3 + (e(k) & 0xff): each level reads the one
+  // below twice, so the returned expression prints 2^12 copies of x.
+  // Naming the repeated levels keeps every printed expression small, and
+  // the result is unchanged.
+  auto Typed = [](ExprPtr E) {
+    E->Type = NdType::makeInt(8);
+    return E;
+  };
+  ExprPtr Level = local(0);
+  Level->Type = NdType::makeInt(8);
+  for (unsigned K = 0; K < 12; ++K)
+    Level = Typed(HighExpr::makeBinop(
+        NdOp::INT_ADD,
+        Typed(HighExpr::makeBinop(NdOp::INT_MULT, Level,
+                                  HighExpr::makeConst(3, 8))),
+        Typed(HighExpr::makeBinop(NdOp::INT_AND, Level,
+                                  HighExpr::makeConst(0xff, 8)))));
+  HighFunc F;
+  F.Body = {result(0x10, Level)};
+  const std::vector<uint64_t> Inputs{0, 1, 0xff, 0x1234567, ~uint64_t{0}};
+  std::vector<std::optional<uint64_t>> Expected;
+  for (uint64_t Input : Inputs)
+    Expected.push_back(execute(F, Input));
+  EXPECT_TRUE(nameRepeatedValues(F));
+  // Printed in full, each statement's expressions stay small.
+  std::function<uint64_t(const ExprPtr &)> Printed = [&](const ExprPtr &E) {
+    uint64_t N = 1;
+    if (E)
+      for (const ExprPtr &Operand : E->Operands)
+        N = std::min<uint64_t>(N + Printed(Operand), 1u << 20);
+    return N;
+  };
+  unsigned Names = 0;
+  for (const HighStmt &S : F.Body) {
+    EXPECT_LE(Printed(S.Kind == StmtKind::Return ? S.RetVal : S.Val), 512u);
+    Names += S.Kind == StmtKind::Assign && S.KeepsName;
+  }
+  EXPECT_GT(Names, 0u);
+  for (size_t I = 0; I != Inputs.size(); ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Expected[I]) << Inputs[I];
+}
+
 TEST(HighControlFlowSemantics, ALaneOfAJoinIsThatLane) {
   // A 16-byte value joined from four 4-byte lanes, read back at bytes 8..11,
   // is the third lane; a comparison of two constants and a selection on a
