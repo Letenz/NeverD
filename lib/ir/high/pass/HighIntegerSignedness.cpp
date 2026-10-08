@@ -65,8 +65,10 @@ Reads operandReads(const HighExpr &Parent, size_t Index) {
   case NdOp::INT_SREM:
   case NdOp::INT_SEXT:
     return Reads::Signed;
+  // A shift count reads the same in either signedness; unsigned spells the
+  // masking arithmetic that usually computes it without conversions.
   case NdOp::INT_ASHR:
-    return Index == 0 ? Reads::Signed : Reads::Neither;
+    return Index == 0 ? Reads::Signed : Reads::Unsigned;
   case NdOp::INT_LESS:
   case NdOp::INT_LESSEQUAL:
   case NdOp::INT_DIV:
@@ -80,7 +82,7 @@ Reads operandReads(const HighExpr &Parent, size_t Index) {
     return Reads::Unsigned;
   case NdOp::INT_RIGHT:
   case NdOp::INT_LEFT:
-    return Index == 0 ? Reads::Unsigned : Reads::Neither;
+    return Reads::Unsigned;
   default:
     return Reads::Neither;
   }
