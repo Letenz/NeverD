@@ -2662,7 +2662,8 @@ TEST_F(SessionCAPITest, IdentifyListsWhatLoadingReads) {
   EXPECT_EQ(Rows[0].getString("processor").value_or(""), "x86_64");
   EXPECT_TRUE(loadable(Rows[0]));
   EXPECT_EQ(text(Rows[1]), "Binary file");
-  EXPECT_FALSE(loadable(Rows[1]));
+  EXPECT_EQ(Rows[1].getString("loader").value_or(""), "binary");
+  EXPECT_TRUE(loadable(Rows[1]));
   ASSERT_EQ(neverd_session_load(Session, NativePath.c_str()), 1);
   EXPECT_EQ(takeString(neverd_session_arch_name(Session)), "x86_64");
   // A processor NeverD lacks and a big-endian file are named and refused,
@@ -2719,6 +2720,72 @@ TEST_F(SessionCAPITest, IdentifyListsWhatLoadingReads) {
   Rows = rows(write("identify.dat", std::string(64, '\x07')));
   ASSERT_EQ(Rows.size(), 1u);
   EXPECT_EQ(text(Rows[0]), "Binary file");
+}
+
+TEST_F(SessionCAPITest, BinaryFilesLoadAsAskedAndAreNotAnalyzed) {
+  // nop; nop; mov eax, 7; ret: x86-64 code no header describes, named as EVM
+  // bytecode often is.
+  const std::string Code("\x90\x90\xb8\x07\x00\x00\x00\xc3", 8);
+  const auto Path = write("firmware.bin", Code);
+  ASSERT_EQ(neverd_session_set_load_options(
+                Session, R"({"loader":"binary","processor":"x86_64",)"
+                         R"("base":"0x400000","entry":"0x400002"})"),
+            0)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_arch_name(Session)), "x86_64");
+  EXPECT_EQ(neverd_session_entry_addr(Session), 0x400002u);
+  EXPECT_NE(takeString(neverd_disasm_json(Session, 0x400002, 1)).find("mov"),
+            std::string::npos);
+  // Nothing states its calling convention: analysis refuses it, and says so.
+  EXPECT_EQ(takeString(neverd_decompile(Session, 0x400002)), "");
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("calling convention"),
+            std::string::npos);
+  EXPECT_EQ(neverd_session_analyze(Session), 0);
+  // Kept with the input, the choice reads the file the same way unasked.
+  // "auto" refuses it: only its .bin name ties it to EVM bytecode, which
+  // the user reads it as by choosing that loader.
+  ASSERT_EQ(neverd_load_options_save(Session), 0)
+      << takeString(neverd_last_error(Session));
+  {
+    neverd_session_t Again = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Again, Path.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_session_arch_name(Again)), "x86_64");
+    EXPECT_NE(
+        takeString(neverd_session_load_options_json(Again)).find("binary"),
+        std::string::npos);
+    ASSERT_EQ(neverd_session_set_load_options(Again, R"({"loader":"auto"})"),
+              0);
+    EXPECT_EQ(neverd_session_load(Again, Path.c_str()), 0);
+    EXPECT_NE(takeString(neverd_last_error(Again)).find("choose its loader"),
+              std::string::npos);
+    ASSERT_EQ(neverd_session_set_load_options(Again, R"({"loader":"evm"})"), 0);
+    ASSERT_EQ(neverd_session_load(Again, Path.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_session_arch_name(Again)), "evm");
+    EXPECT_EQ(takeString(neverd_session_load_options_json(Again)),
+              R"({"loader":"evm"})");
+    neverd_session_destroy(Again);
+  }
+  // Options the loader cannot follow are refused.
+  EXPECT_EQ(neverd_session_set_load_options(
+                Session, R"({"loader":"binary","processor":"mips"})"),
+            -1);
+  ASSERT_EQ(
+      neverd_session_set_load_options(
+          Session, R"({"loader":"binary","processor":"x86","size":"0x100"})"),
+      0);
+  EXPECT_EQ(neverd_session_load(Session, Path.c_str()), 0);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("end of the file"),
+            std::string::npos);
+  // A 32-bit processor addresses no byte past 4 GiB.
+  ASSERT_EQ(neverd_session_set_load_options(
+                Session, R"({"loader":"binary","processor":"thumb",)"
+                         R"("base":"0xfffffffc"})"),
+            0);
+  EXPECT_EQ(neverd_session_load(Session, Path.c_str()), 0);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("4 GiB"),
+            std::string::npos);
 }
 
 TEST_F(SessionCAPITest, InputSha256IsTheHashOfTheLoadedFile) {
@@ -3311,6 +3378,68 @@ TEST_F(SessionCAPITest,
       EXPECT_TRUE(Beyond.getBoolean("complete").value_or(false));
       EXPECT_TRUE(Beyond.getArray("rows")->empty());
     }
+  }
+}
+
+TEST_F(SessionCAPITest, SourceViewsSpellPagesInTheFunctionsLanguage) {
+  const std::string Path =
+      write("mapped.elf", makeNativeELF(/*AArch64=*/false, 0x400000));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Entry = neverd_session_entry_addr(Session);
+  // Pages of two lines reassemble the whole text; the first page says what
+  // the text reads in.
+  auto Assemble = [&](const char *Stage, llvm::json::Object &First) {
+    std::string Text;
+    size_t Offset = 0;
+    for (;;) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2));
+      EXPECT_EQ(Page.getString("representation"), Stage);
+      EXPECT_EQ(Page.getInteger("byte_offset"), Text.size());
+      if (!Page.getString("text"))
+        return Text;
+      Text += Page.getString("text")->str();
+      if (Offset == 0)
+        First = Page;
+      if (Page.getBoolean("complete").value_or(false))
+        return Text;
+      const auto Next = Page.getInteger("next_offset");
+      if (!Next || *Next <= static_cast<int64_t>(Offset) || *Next > 10000)
+        return Text;
+      Offset = static_cast<size_t>(*Next);
+    }
+  };
+  llvm::json::Object CPage, SourcePage, RustPage, GoPage;
+  const std::string C = Assemble("c", CPage);
+  ASSERT_FALSE(C.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(CPage.getString("dialect"), "c");
+  // A C program's functions read in C.
+  EXPECT_EQ(Assemble("source", SourcePage), C);
+  EXPECT_EQ(SourcePage.getString("dialect"), "c");
+  const std::string Rust = Assemble("rust", RustPage);
+  EXPECT_EQ(RustPage.getString("dialect"), "rust");
+  EXPECT_NE(Rust.find("unsafe fn "), std::string::npos) << Rust;
+  EXPECT_NE(RustPage.getArray("unread"), nullptr);
+  EXPECT_NE(RustPage.getArray("source_names"), nullptr);
+  const std::string Go = Assemble("go", GoPage);
+  EXPECT_EQ(GoPage.getString("dialect"), "go");
+  EXPECT_NE(Go.find("func "), std::string::npos) << Go;
+  // The prelude ends where the spelled definition begins, at a line start.
+  if (const auto *Prelude = RustPage.getObject("prelude")) {
+    const auto End = Prelude->getInteger("end_byte");
+    ASSERT_TRUE(End);
+    ASSERT_GT(*End, 0);
+    ASSERT_LT(static_cast<size_t>(*End), Rust.size());
+    EXPECT_EQ(Rust[*End - 1], '\n');
+  }
+  // Bytecode has no native source to spell.
+  const std::string Contract = write("mapped.evm", "600160020100");
+  ASSERT_EQ(neverd_session_load(Session, Contract.c_str()), 1);
+  for (const char *Stage : {"source", "rust", "go"}) {
+    auto Unsupported = takeView(neverd_ir_view_json(Session, 0, Stage, 0, 2));
+    EXPECT_EQ(Unsupported.getString("mapping_status"),
+              "unsupported_architecture");
   }
 }
 

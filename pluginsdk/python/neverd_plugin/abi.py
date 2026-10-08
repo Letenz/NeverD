@@ -31,6 +31,8 @@ class OutputLanguage(IntEnum):
     C = 0
     SOLIDITY = 1
     RUST = 2
+    GO = 3
+    SOURCE = 4
 
 
 class PluginType(IntEnum):
@@ -923,6 +925,18 @@ _declare(
     ["const char *"],
     ownership=Ownership.OWNED_STRING,
 )
+_declare(
+    "neverd_session_set_load_options",
+    "int",
+    ["neverd_session_t", "const char *"],
+)
+_declare(
+    "neverd_session_load_options_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare("neverd_load_options_save", "int", ["neverd_session_t"])
 _declare(
     "neverd_session_restrict_function",
     "void",

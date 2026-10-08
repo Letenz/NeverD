@@ -1288,6 +1288,18 @@
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
     </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
+    </message>
+    <message>
+        <source>Rust</source>
+        <translation>Rust</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Go</translation>
+    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -1410,6 +1422,16 @@ Recognized library operation; click to show its code.</source>
 Double-click to go to the declaration.</source>
         <translation>%1
 按兩下前往宣告。</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>%n 個宣告以 C 顯示</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1923,8 +1945,8 @@ Signed: %4</source>
         <translation>輸入命令</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>建立 C 檔案</translation>
+        <source>Create source file</source>
+        <translation>建立原始碼檔案</translation>
     </message>
     <message>
         <source>Create LST file</source>
@@ -2295,6 +2317,58 @@ Signed: %4</source>
         <source>Processor: %1</source>
         <translation>處理器：%1</translation>
     </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 不是十六進位數</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>載入檔案所用的基底位址</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>選擇檔案程式碼執行的處理器</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>進入點(&amp;N)</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>檔案位移(&amp;O)</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>要載入的位元組數</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>映像基底位址(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>載入大小(&amp;Z)</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>處理器類型（按兩下設定）(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>映像基底位址</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>到檔案結尾</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>開始執行的位址</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>載入的位元組在檔案中的起始位置</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2333,6 +2407,10 @@ Signed: %4</source>
     <message>
         <source>Solana BPF</source>
         <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>Thumb (AArch32)</source>
+        <translation>Thumb（AArch32）</translation>
     </message>
 </context>
 </TS>

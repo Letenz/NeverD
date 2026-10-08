@@ -815,6 +815,37 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
           if (ByteOff == 0 && LoadSz > Slot)
             Offsets.insert(slotOf(*Off + LoadSz - Slot).first);
         }
+  // A tail call at the entry stack pointer hands its callee this function's
+  // incoming stack arguments: the slots of the positions the callee is known
+  // to read (MedOp::CalleeStackArgs, counting the registers' too) are
+  // parameters passed through, though the body never loads them, as in a
+  // thunk `jmp [__imp___getmainargs]`.
+  for (const auto &Blk : Func.Blocks)
+    for (size_t I = 0; I + 1 < Blk.Ops.size(); ++I) {
+      const MedOp &Call = Blk.Ops[I];
+      if ((Call.Opcode != NdOp::CALL && Call.Opcode != NdOp::INDIR_CALL) ||
+          Call.CalleeStackArgs <= 0 || Blk.Ops[I + 1].Opcode != NdOp::RETURN ||
+          Blk.Ops[I + 1].Addr != Call.Addr)
+        continue;
+      // The stack pointer at the call: the block's last write before it, else
+      // the entry block's incoming one.
+      std::optional<int64_t> CallOff;
+      bool Written = false;
+      for (size_t J = I; J-- > 0 && !Written;)
+        if (const MedVar &Out = Blk.Ops[J].Output;
+            Out.Kind == MedVar::Reg && Out.RegOff == SpOff && Out.Size > 0) {
+          CallOff = traceOff(Out, 0);
+          Written = true;
+        }
+      if (!Written && Blk.Preds.empty())
+        CallOff = 0;
+      if (CallOff != 0)
+        continue;
+      for (int K = MaxRegArgs; K < Call.CalleeStackArgs; ++K)
+        if (const int64_t Off = Base + (K - MaxRegArgs) * Slot;
+            MaxStackOff <= 0 || Off < MaxStackOff)
+          Offsets.insert(Off);
+    }
   if (Offsets.empty())
     return;
 

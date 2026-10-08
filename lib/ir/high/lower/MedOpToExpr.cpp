@@ -57,6 +57,11 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
       return HighExpr::makeBitCast(Value,
                                    NdType::makeInt(Op.Output.Size, false));
     };
+    // C computes in float, double, and the x87 80-bit extended format its
+    // `long double` names on x86; a value of another width has no C float.
+    auto CFloatBytes = [](uint16_t Bytes) {
+      return Bytes == 4 || Bytes == 8 || Bytes == 10;
+    };
     switch (Op.Opcode) {
     case NdOp::FLOAT_ADD:
     case NdOp::FLOAT_SUB:
@@ -68,8 +73,7 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
     case NdOp::FLOAT_NOTEQUAL:
     case NdOp::FLOAT_LESS:
     case NdOp::FLOAT_LESSEQUAL: {
-      if (Op.NumInputs != 2 ||
-          (Op.Inputs[0].Size != 4 && Op.Inputs[0].Size != 8) ||
+      if (Op.NumInputs != 2 || !CFloatBytes(Op.Inputs[0].Size) ||
           Op.Inputs[0].Size != Op.Inputs[1].Size)
         return HighExpr::makeUndef(Op.Output.Size);
       auto Value = HighExpr::makeBinop(
@@ -86,7 +90,7 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
     }
     case NdOp::FLOAT_INT2FLOAT:
     case NdOp::FLOAT_UINT2FLOAT: {
-      if (Op.NumInputs != 1 || (Op.Output.Size != 4 && Op.Output.Size != 8))
+      if (Op.NumInputs != 1 || !CFloatBytes(Op.Output.Size))
         return HighExpr::makeUndef(Op.Output.Size);
       auto Integer = std::make_shared<HighExpr>();
       Integer->Kind = ExprKind::Cast;
@@ -107,15 +111,16 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
     case NdOp::FLOAT_FLOAT2UINT:
     case NdOp::FLOAT_TRUNC:
     case NdOp::FLOAT_FLOAT2FLOAT: {
-      if (Op.NumInputs != 1 ||
-          (Op.Inputs[0].Size != 4 && Op.Inputs[0].Size != 8))
+      const bool IntegerResult = Op.Opcode == NdOp::FLOAT_ISNAN ||
+                                 Op.Opcode == NdOp::FLOAT_FLOAT2INT ||
+                                 Op.Opcode == NdOp::FLOAT_FLOAT2UINT ||
+                                 Op.Opcode == NdOp::FLOAT_TRUNC;
+      if (Op.NumInputs != 1 || !CFloatBytes(Op.Inputs[0].Size) ||
+          (!IntegerResult && !CFloatBytes(Op.Output.Size)))
         return HighExpr::makeUndef(Op.Output.Size);
       auto Value = HighExpr::makeUnary(
           Op.Opcode, sourceFloatValue(Op.Inputs[0], Op.Inputs[0].Size));
-      if (Op.Opcode == NdOp::FLOAT_ISNAN ||
-          Op.Opcode == NdOp::FLOAT_FLOAT2INT ||
-          Op.Opcode == NdOp::FLOAT_FLOAT2UINT ||
-          Op.Opcode == NdOp::FLOAT_TRUNC) {
+      if (IntegerResult) {
         Value->Type = NdType::makeInt(Op.Output.Size,
                                       Op.Opcode != NdOp::FLOAT_FLOAT2UINT &&
                                           Op.Opcode != NdOp::FLOAT_ISNAN);

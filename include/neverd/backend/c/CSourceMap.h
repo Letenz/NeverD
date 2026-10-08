@@ -10,6 +10,8 @@
 #include "neverd/ir/high/HighSourceMap.h"
 
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace neverd {
 
@@ -33,6 +35,22 @@ struct CSourceDefinition {
   bool operator==(const CSourceDefinition &) const = default;
 };
 
+/// A function or object the emitted C names, and the symbol its identifier
+/// stands for, so that a reader of the text can name it as its source
+/// language does.
+struct CSourceName {
+  enum class Kind : uint8_t { Function, Object };
+  Kind TheKind = Kind::Function;
+  /// The C identifier the text spells.
+  std::string Identifier;
+  /// The symbol as the image spells it; empty for a name the emitter made
+  /// itself (`off_4010`) and for one several symbols share (an MSVC stem).
+  std::string Symbol;
+  /// The function's entry or the object's address, when the emitter knows it.
+  std::optional<va_t> Address;
+  bool operator==(const CSourceName &) const = default;
+};
+
 struct CSourceRegion {
   /// Index into CSourceMap::Recognitions, shared by both C routes.
   size_t Recognition = 0;
@@ -52,6 +70,9 @@ struct CSourceMap {
   /// before the first is the translation unit's prelude: includes, support
   /// types and declarations.
   std::vector<CSourceDefinition> Definitions;
+  /// The functions and objects the text names, in identifier order, replaced
+  /// on every emit.
+  std::vector<CSourceName> Names;
 };
 
 } // namespace neverd

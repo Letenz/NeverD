@@ -1288,6 +1288,18 @@
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
     </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
+    </message>
+    <message>
+        <source>Rust</source>
+        <translation>Rust</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Go</translation>
+    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -1412,6 +1424,17 @@ Operación de biblioteca reconocida; haz clic para mostrar su código.</translat
 Double-click to go to the declaration.</source>
         <translation>%1
 Haz doble clic para ir a la declaración.</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>%n declaración mostrada en C</numerusform>
+            <numerusform>%n declaraciones mostradas en C</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1926,8 +1949,8 @@ Con signo: %4</translation>
         <translation>Escribe un comando</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>Crear archivo C</translation>
+        <source>Create source file</source>
+        <translation>Crear archivo de código fuente</translation>
     </message>
     <message>
         <source>Create LST file</source>
@@ -2298,6 +2321,58 @@ Con signo: %4</translation>
         <source>Processor: %1</source>
         <translation>Procesador: %1</translation>
     </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 no es un número hexadecimal</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>Dirección base en la que se carga el archivo</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>Elija el procesador en el que se ejecuta el código del archivo</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>&amp;Punto de entrada</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>D&amp;esplazamiento en el archivo</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>Cuántos bytes cargar</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>&amp;Base de la imagen</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>Tamaño de ca&amp;rga</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>&amp;Tipo de procesador (doble clic para fijarlo)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>La base de la imagen</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>Hasta el final del archivo</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>Dónde empieza la ejecución</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>Dónde empiezan en el archivo los bytes cargados</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2336,6 +2411,10 @@ Con signo: %4</translation>
     <message>
         <source>Solana BPF</source>
         <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>Thumb (AArch32)</source>
+        <translation>Thumb (AArch32)</translation>
     </message>
 </context>
 </TS>

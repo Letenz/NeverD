@@ -40,7 +40,7 @@ EVM 二进制重写会被明确拒绝；`patch` 仍只用于原生二进制。
 
 | 输入 | 识别与规范化 |
 |------|--------------|
-| 原始字节 | `.raw`、`.evmraw`，或带明确 EVM 扩展名的二进制内容 |
+| 原始字节 | `.evm` 或 `.evmraw` 中的二进制内容。`.bin`、`.hex`、`.bytecode`、`.json`、`.raw` 也是其他工具常用的扩展名，其中的二进制内容只有在选择 EVM 加载器时（`--loader evm` 或加载对话框中的 EVM 行）才按 EVM 字节码读取，否则拒绝加载 |
 | 十六进制文本 | 可选 `0x`、任意 ASCII 空白；支持 `.evm`、`.hex`、`.bin`、`.bytecode`，也会探测通过验证且无扩展名的十六进制文本 |
 | 编译器制品 | `.json` 根节点或 `evm` 下的 `deployedBytecode`、`runtimeBytecode`、`bytecode`；也支持 `contracts → file → contract → evm` 形式的 solc 标准 JSON |
 

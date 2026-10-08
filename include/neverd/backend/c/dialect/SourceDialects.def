@@ -1,0 +1,24 @@
+//===- SourceDialects.def - The languages pseudocode reads in ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The languages the C NeverD emits can be read in.  C is the emitted text
+/// itself; the others spell the same code in their syntax (SourceDialect.h).
+///
+///   NEVERD_SOURCE_DIALECT(Id, Key, Display)
+///     Key names the dialect in the C API, the worker protocol and the CLI.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_SOURCE_DIALECT
+#define NEVERD_SOURCE_DIALECT(Id, Key, Display)
+#endif
+
+NEVERD_SOURCE_DIALECT(C, "c", "C")
+NEVERD_SOURCE_DIALECT(Rust, "rust", "Rust")
+NEVERD_SOURCE_DIALECT(Go, "go", "Go")
+
+#undef NEVERD_SOURCE_DIALECT

@@ -46,7 +46,7 @@ native-binary operation.
 
 | Input | Recognition and normalization |
 |-------|-------------------------------|
-| Raw bytes | `.raw` or `.evmraw`, or binary content in an explicit EVM extension |
+| Raw bytes | Binary content in `.evm` or `.evmraw`. Binary content in `.bin`, `.hex`, `.bytecode`, `.json` or `.raw`, extensions other tools give their files too, reads as EVM bytecode only when the EVM loader is chosen (`--loader evm`, or the load dialog's EVM row); otherwise loading refuses it |
 | Hex text | Optional `0x`, arbitrary ASCII whitespace, extensions `.evm`, `.hex`, `.bin`, or `.bytecode`; validated extension-free hex is also detected |
 | Compiler artifact | `.json` with root or `evm`-nested `deployedBytecode`, `runtimeBytecode`, or `bytecode`; solc standard JSON under `contracts → file → contract → evm` is supported |
 

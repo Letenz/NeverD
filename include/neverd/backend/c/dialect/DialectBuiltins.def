@@ -1,0 +1,71 @@
+//===- DialectBuiltins.def - Builtins as each language spells them -*- C++ -*-//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Compiler builtins of emitted C that Rust and Go spell with their own
+/// library.  `$N` is the Nth argument, converted to the builtin's C
+/// parameter type; a builtin a row does not list keeps its C name.  The
+/// result type is the spelled call's type as a C type name, or empty when
+/// it is the builtin's own.
+///
+///   NEVERD_DIALECT_BUILTIN(Name, Rust, RustResult, Go, GoResult)
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_DIALECT_BUILTIN
+#define NEVERD_DIALECT_BUILTIN(Name, Rust, RustResult, Go, GoResult)
+#endif
+
+NEVERD_DIALECT_BUILTIN("__builtin_trap", "abort()", "", "trap()", "")
+NEVERD_DIALECT_BUILTIN("__builtin_unreachable", "unreachable_unchecked()", "",
+                       "trap()", "")
+NEVERD_DIALECT_BUILTIN("__builtin_popcount", "$0.count_ones()", "uint32_t",
+                       "bits.OnesCount32($0)", "intptr_t")
+NEVERD_DIALECT_BUILTIN("__builtin_popcountl", "$0.count_ones()", "uint32_t",
+                       "bits.OnesCount64(uint64($0))", "intptr_t")
+NEVERD_DIALECT_BUILTIN("__builtin_popcountll", "$0.count_ones()", "uint32_t",
+                       "bits.OnesCount64($0)", "intptr_t")
+NEVERD_DIALECT_BUILTIN("__builtin_clz", "$0.leading_zeros()", "uint32_t",
+                       "bits.LeadingZeros32($0)", "intptr_t")
+NEVERD_DIALECT_BUILTIN("__builtin_clzll", "$0.leading_zeros()", "uint32_t",
+                       "bits.LeadingZeros64($0)", "intptr_t")
+NEVERD_DIALECT_BUILTIN("__builtin_ctz", "$0.trailing_zeros()", "uint32_t",
+                       "bits.TrailingZeros32($0)", "intptr_t")
+NEVERD_DIALECT_BUILTIN("__builtin_ctzll", "$0.trailing_zeros()", "uint32_t",
+                       "bits.TrailingZeros64($0)", "intptr_t")
+NEVERD_DIALECT_BUILTIN("__builtin_bswap16", "$0.swap_bytes()", "",
+                       "bits.ReverseBytes16($0)", "")
+NEVERD_DIALECT_BUILTIN("__builtin_bswap32", "$0.swap_bytes()", "",
+                       "bits.ReverseBytes32($0)", "")
+NEVERD_DIALECT_BUILTIN("__builtin_bswap64", "$0.swap_bytes()", "",
+                       "bits.ReverseBytes64($0)", "")
+NEVERD_DIALECT_BUILTIN("__builtin_bitreverse8", "$0.reverse_bits()", "",
+                       "bits.Reverse8($0)", "")
+NEVERD_DIALECT_BUILTIN("__builtin_bitreverse16", "$0.reverse_bits()", "",
+                       "bits.Reverse16($0)", "")
+NEVERD_DIALECT_BUILTIN("__builtin_bitreverse32", "$0.reverse_bits()", "",
+                       "bits.Reverse32($0)", "")
+NEVERD_DIALECT_BUILTIN("__builtin_bitreverse64", "$0.reverse_bits()", "",
+                       "bits.Reverse64($0)", "")
+NEVERD_DIALECT_BUILTIN("__builtin_rotateleft32", "$0.rotate_left($1)", "",
+                       "bits.RotateLeft32($0, int($1))", "")
+NEVERD_DIALECT_BUILTIN("__builtin_rotateleft64", "$0.rotate_left($1 as u32)",
+                       "", "bits.RotateLeft64($0, int($1))", "")
+NEVERD_DIALECT_BUILTIN("__builtin_rotateright32", "$0.rotate_right($1)", "",
+                       "bits.RotateLeft32($0, -int($1))", "")
+NEVERD_DIALECT_BUILTIN("__builtin_rotateright64", "$0.rotate_right($1 as u32)",
+                       "", "bits.RotateLeft64($0, -int($1))", "")
+NEVERD_DIALECT_BUILTIN("__builtin_sqrt", "$0.sqrt()", "", "math.Sqrt($0)", "")
+NEVERD_DIALECT_BUILTIN("__builtin_fabs", "$0.abs()", "", "math.Abs($0)", "")
+NEVERD_DIALECT_BUILTIN("__builtin_ceil", "$0.ceil()", "", "math.Ceil($0)", "")
+NEVERD_DIALECT_BUILTIN("__builtin_floor", "$0.floor()", "", "math.Floor($0)",
+                       "")
+NEVERD_DIALECT_BUILTIN("__builtin_trunc", "$0.trunc()", "", "math.Trunc($0)",
+                       "")
+NEVERD_DIALECT_BUILTIN("__debugbreak", "breakpoint()", "",
+                       "runtime.Breakpoint()", "")
+
+#undef NEVERD_DIALECT_BUILTIN

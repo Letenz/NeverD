@@ -1367,6 +1367,8 @@ struct BinaryImage {
       return "Mach-O";
     case BinaryFormat::EVM:
       return kEVMFormatName.data();
+    case BinaryFormat::Raw:
+      return "Binary";
     default:
       return "Unknown";
     }
@@ -1492,12 +1494,26 @@ struct BinaryImage {
     return Result;
   }
 
-  /// Resolve the best available display name for a function address.
+  /// Resolve the best available display name for a function address: an
+  /// export, else a function symbol a producer stated, else another symbol
+  /// there.  A section's own symbol (COFF's `.text` where an import library
+  /// object's thunk starts) names no function a function symbol names, and a
+  /// synthesized `sub_` start names none a label does.
   std::string getFunctionNameAt(va_t Addr) const {
     if (const Export *Exp = findExportAt(Addr); Exp && !Exp->Name.empty())
       return Exp->Name;
-    if (const Symbol *Sym = findSymbolAt(Addr); Sym && !Sym->Name.empty())
-      return Sym->Name;
+    const Symbol *Best = nullptr;
+    auto Rank = [](const Symbol &Sym) {
+      if (Sym.Origin == NameOrigin::Synthesized)
+        return 0;
+      return Sym.IsFunc ? 2 : 1;
+    };
+    for (const auto &Sym : Symbols)
+      if (Sym.Addr == Addr && !Sym.Name.empty() &&
+          (!Best || Rank(Sym) > Rank(*Best)))
+        Best = &Sym;
+    if (Best)
+      return Best->Name;
     return (kAutoFuncPrefix + llvm::utohexstr(Addr)).str();
   }
 

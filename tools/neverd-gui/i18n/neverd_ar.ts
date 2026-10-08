@@ -1288,6 +1288,18 @@
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
     </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
+    </message>
+    <message>
+        <source>Rust</source>
+        <translation>Rust</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Go</translation>
+    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -1420,6 +1432,21 @@ Recognized library operation; click to show its code.</source>
 Double-click to go to the declaration.</source>
         <translation>%1
 انقر نقرًا مزدوجًا للانتقال إلى التصريح.</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>%n تصريح معروض بلغة C</numerusform>
+            <numerusform>%n تصريح معروض بلغة C</numerusform>
+            <numerusform>%n تصريحان معروضان بلغة C</numerusform>
+            <numerusform>%n تصريحات معروضة بلغة C</numerusform>
+            <numerusform>%n تصريحًا معروضًا بلغة C</numerusform>
+            <numerusform>%n تصريح معروض بلغة C</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1938,8 +1965,8 @@ Signed: %4</source>
         <translation>اكتب أمراً</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>إنشاء ملف C</translation>
+        <source>Create source file</source>
+        <translation>إنشاء ملف مصدري</translation>
     </message>
     <message>
         <source>Create LST file</source>
@@ -2310,6 +2337,58 @@ Signed: %4</source>
         <source>Processor: %1</source>
         <translation>المعالج: %1</translation>
     </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 ليس رقمًا ست عشريًا</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>العنوان الأساسي لتحميل الملف</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>اختر المعالج الذي تعمل عليه شيفرة الملف</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>نقطة الدخول(&amp;N)</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>إزاحة الملف(&amp;O)</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>عدد البايتات المراد تحميلها</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>أساس الصورة(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>حجم التحميل(&amp;Z)</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>نوع المعالج (انقر نقرًا مزدوجًا للتعيين)(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>أساس الصورة</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>حتى نهاية الملف</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>حيث يبدأ التنفيذ</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>موضع بدء البايتات المحمّلة في الملف</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2348,6 +2427,10 @@ Signed: %4</source>
     <message>
         <source>Solana BPF</source>
         <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>Thumb (AArch32)</source>
+        <translation>Thumb (AArch32)</translation>
     </message>
 </context>
 </TS>

@@ -69,6 +69,9 @@ struct MockSession {
   std::vector<std::uint64_t> functions = listedFunctions({});
   neverd_load_progress_fn progress = nullptr;
   void *progressUser = nullptr;
+  /// The loader the next load reads with, and the one the image was read
+  /// with, in neverd_session_set_load_options JSON; null reads the sidecar.
+  Json requestedLoad, loadedWith = {{"loader", "auto"}};
 };
 MockSession *session(neverd_session_t s) {
   return static_cast<MockSession *>(s);
@@ -111,6 +114,11 @@ int neverd_session_load(neverd_session_t s, const char *path) {
     return 0;
   }
   session(s)->path = path;
+  session(s)->loadedWith = session(s)->requestedLoad.is_null()
+                               ? read(std::string(path) + ".neverd-load.json")
+                               : session(s)->requestedLoad;
+  if (!session(s)->loadedWith.is_object())
+    session(s)->loadedWith = {{"loader", "auto"}};
   notify("ready", 1);
   return 1;
 }
@@ -187,9 +195,29 @@ const char *neverd_identify_json(const char *path) {
                   {"processor", ""},
                   {"bits", 0},
                   {"endian", "little"},
-                  {"loadable", false},
-                  {"reason", "Loading a binary file is not supported yet"}});
+                  {"loadable", true}});
   return copy(Json{{"rows", rows}}.dump());
+}
+// The loader choice as the engine takes it: auto, evm, or a binary file
+// with a processor; kept in the input's load options sidecar.
+int neverd_session_set_load_options(neverd_session_t s, const char *json) {
+  if (!json) {
+    session(s)->requestedLoad = nullptr;
+    return 0;
+  }
+  const Json options = Json::parse(json, nullptr, false);
+  const std::string loader =
+      options.is_object() ? options.value("loader", "auto") : "";
+  if ((loader != "auto" && loader != "evm" && loader != "binary") ||
+      (loader == "binary" && options.value("processor", "").empty())) {
+    session(s)->error = "mock: unusable load options";
+    return -1;
+  }
+  session(s)->requestedLoad = options;
+  return 0;
+}
+const char *neverd_session_load_options_json(neverd_session_t s) {
+  return copy(session(s)->loadedWith.dump());
 }
 void neverd_session_set_debug_info_enabled(neverd_session_t s, int enabled) {
   session(s)->debugInfo = enabled != 0;
@@ -579,10 +607,99 @@ const char *neverd_ir_llvm(neverd_session_t s, neverd_va_t a) {
 const char *neverd_decompile_llvm(neverd_session_t s, neverd_va_t a) {
   return neverd_decompile(s, a);
 }
+namespace {
+/// A source page in a language: C as neverd_decompile gives it, or the Rust
+/// and Go views, whose source name `core::fmt::write` the page locates.
+std::string spelledPage(neverd_session_t s, neverd_va_t address,
+                        const std::string &representation, std::size_t offset,
+                        std::size_t limit) {
+  std::string language = representation;
+  if (representation == "source")
+    language = session(s)->path.ends_with("pseudocode-rust.bin") ? "rust" : "c";
+  std::string full;
+  if (language == "c") {
+    const char *c = neverd_decompile(s, address);
+    full = c;
+    std::free(const_cast<char *>(c));
+  } else if (language == "rust") {
+    full = "// NeverD pseudocode in Rust syntax\n"
+           "unsafe fn rust_probe::main() -> i64 {\n"
+           "    let mut v0: i64;\n"
+           "    'switch1: {\n"
+           "        v0 = core::fmt::write(1);\n"
+           "    }\n"
+           "    return v0 as i64;\n"
+           "}\n";
+  } else {
+    full = "// NeverD pseudocode in Go syntax\n"
+           "func main.main() int64 {\n"
+           "    var v0 int64\n"
+           "    v0 = core::fmt::write(1)\n"
+           "    return v0\n"
+           "}\n";
+  }
+  std::vector<std::size_t> starts = {0};
+  for (std::size_t i = 0; i + 1 < full.size(); ++i)
+    if (full[i] == '\n')
+      starts.push_back(i + 1);
+  const auto total = starts.size();
+  const auto first = std::min(offset, total);
+  const auto end = first + std::min(limit, total - first);
+  const auto begin = starts[std::min(first, total - 1)];
+  const auto stop = end < total ? starts[end] : full.size();
+  Json rows = Json::array();
+  for (auto i = first; i < end; ++i)
+    rows.push_back(
+        {{"line", i},
+         {"object_id", representation + ":line:" + std::to_string(i)},
+         {"kind", "source"},
+         {"mapping_status", "unmapped"},
+         {"addresses", Json::array()}});
+  Json names = Json::array();
+  const std::string name = "core::fmt::write";
+  for (auto at = full.find(name); at != std::string::npos;
+       at = full.find(name, at + 1))
+    if (at >= begin && at < stop)
+      names.push_back({{"begin_byte", at},
+                       {"end_byte", at + name.size()},
+                       {"identifier", "core_fmt_write"},
+                       {"symbol", "_ZN4core3fmt5write17h0123456789abcdefE"},
+                       {"address", hexAddress(Base + 0x160)}});
+  return Json{{"schema_version", 1},
+              {"address", hexAddress(address)},
+              {"representation", representation},
+              {"mapping_status", "library_regions"},
+              {"text", full.substr(begin, stop - begin)},
+              {"rows", rows},
+              {"library_regions", Json::array()},
+              {"offset", first},
+              {"byte_offset", begin},
+              {"total_lines", total},
+              {"complete", end == total},
+              {"next_offset", end == total ? Json(nullptr) : Json(end)},
+              {"dialect", language},
+              {"unread", language == "go" ? Json::array({"a volatile access"})
+                                          : Json::array()},
+              {"source_names", names}}
+      .dump();
+}
+} // namespace
+
 const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {
   session(s)->error.clear();
+  if (std::string(representation) == "source" ||
+      std::string(representation) == "rust" ||
+      std::string(representation) == "go") {
+    // One function of the Rust fixture is refused.
+    if (session(s)->path.ends_with("pseudocode-rust.bin") &&
+        address == Base + 0x180) {
+      session(s)->error = "fixture refuses this function";
+      return nullptr;
+    }
+    return copy(spelledPage(s, address, representation, offset, limit));
+  }
   // LLVM-C pages place the definition after a three-line prelude.
   if (std::string(representation) == "llvmc") {
     // Globals declared as decompiled C and as C through LLVM declare them.

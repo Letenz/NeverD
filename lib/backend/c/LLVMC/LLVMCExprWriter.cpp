@@ -686,9 +686,8 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     // A symbol defined elsewhere keeps its C name: `__cxa_atexit` is not
     // `_cxa_atexit`.
     if (GV->isDeclaration())
-      return canonicalizeCProjectionIdentifier(
-          llvm_name::cNameOfLLVMName(N, Opts.Format, Opts.TheArch),
-          "nd_symbol");
+      return canonicalizeCProjectionIdentifier(cNameOfGlobal(N, true),
+                                               "nd_symbol");
 
     if (N[0] == '_')
       N = N.substr(1);

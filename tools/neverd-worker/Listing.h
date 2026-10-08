@@ -65,6 +65,9 @@ public:
   /// Read the user's operand formats again.  They change only instruction
   /// text, so the rest of the listing stands.
   void reloadNumberFormats();
+  /// Names or the user's data items changed: the next query reads them again
+  /// without scanning strings or reading imports and exports again.
+  void namesChanged();
   /// Whether instruction lines show the user's operand formats.
   bool showsNumberFormats();
   /// Which operands of the instruction that starts at \p address a number
@@ -79,6 +82,13 @@ public:
   /// Formatted instruction lines (no prefixes) of [start, end), for graph
   /// nodes.  Each element is {address, text, spans}.
   Json blockLines(std::uint64_t start, std::uint64_t end);
+  /// The control flow graph of the function containing \p address as its
+  /// decoded instructions give it, in the engine's cfg JSON shape: blocks
+  /// end at branches and returns, a call does not end one.  An indirect jump
+  /// ends its block with no edges, since only analysis recovers a jump
+  /// table's targets.  For images the engine does not analyze, such as
+  /// binary files.
+  Json decodedGraph(std::uint64_t address);
   /// Functions in address order under their display names:
   /// [{"name","engine_name","address","size","library","thunk","exported"}].
   const Json &functionRows();

@@ -651,11 +651,16 @@ class CProjectionIdentifierAllocator {
 public:
   std::string allocate(llvm::StringRef Raw,
                        llvm::StringRef Fallback = "nd_symbol") {
-    const std::string Base = canonicalizeCProjectionIdentifier(Raw, Fallback);
-    std::string Candidate = Base;
+    return allocateVerbatim(canonicalizeCProjectionIdentifier(Raw, Fallback));
+  }
+
+  /// Allocates \p Identifier, already a C identifier, as it is spelled
+  /// unless another name holds it.
+  std::string allocateVerbatim(llvm::StringRef Identifier) {
+    std::string Candidate = Identifier.str();
     unsigned Suffix = 2;
     while (!Used.insert(Candidate).second)
-      Candidate = Base + "_" + std::to_string(Suffix++);
+      Candidate = Identifier.str() + "_" + std::to_string(Suffix++);
     return Candidate;
   }
 

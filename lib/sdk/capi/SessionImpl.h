@@ -15,9 +15,11 @@
 
 #include "../plugin/PluginManager.h"
 #include "ImageStrings.h"
+#include "LoadOptions.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/CSourceMap.h"
+#include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
@@ -112,8 +114,9 @@ struct Session {
   /// The modules of the functions shown last, the newest first.
   std::list<FunctionLlvmModule> FunctionLlvmModules;
   static constexpr size_t MaxFunctionLlvmModules = 8;
-  /// The C route that emitted a function's source.
-  enum class SourceRoute : uint8_t { HighC, LLVMC, LLVMCNoOpt };
+  /// The C route that emitted a function's source, or the language its
+  /// HighC source is spelled in.
+  enum class SourceRoute : uint8_t { HighC, LLVMC, LLVMCNoOpt, Rust, Go };
   /// One function's emitted C.  A view pages through the whole text, and the
   /// text stays the same until the pipeline or an input of the emitter
   /// outside it changes (forgetEmittedSources), so every page after the first
@@ -126,6 +129,9 @@ struct Session {
     /// them.  Its recognitions live in PipeResult, which clearPipeline()
     /// drops together with this.
     std::optional<CSourceMap> Map;
+    /// A spelled source's declarations shown as C, and its source names.
+    std::vector<std::string> Unread;
+    std::vector<SourceDialectName> Names;
   };
   /// The sources of the functions shown last, the newest first.
   std::list<FunctionSource> FunctionSources;
@@ -352,6 +358,12 @@ struct Session {
   };
   /// The user's operand formats by instruction address and operand index.
   std::map<va_t, std::map<unsigned, OperandFormat>> OperandFormats;
+  /// The loader the next load reads the input with, as
+  /// neverd_session_set_load_options chose it.  Unset, the load reads the
+  /// load options sidecar, else the file's own format.
+  std::optional<LoaderChoice> RequestedLoad;
+  /// The loader the loaded image was read with.
+  LoaderChoice LoadedChoice;
 
   bool isDeletedFunction(va_t Entry) const {
     const auto Edit = FunctionEdits.find(Entry);
@@ -498,6 +510,12 @@ struct Session {
   bool ensurePipeline() {
     if (!Loaded) {
       setError("no binary loaded");
+      return false;
+    }
+    // Analysis would have to guess the calling convention of a binary file;
+    // its functions are browsed, not lifted.
+    if (Img.Format == BinaryFormat::Raw) {
+      setError(BinaryFileNotAnalyzed.str());
       return false;
     }
     if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())

@@ -405,8 +405,10 @@ std::string HighCWriter::functionIdentifier(llvm::StringRef SourceName) const {
       It != ExternalFunctionIdentifiers.end())
     return It->second;
   // A reference keeps its symbol's exact C name, which it links by.
-  return canonicalizeCProjectionIdentifier(
+  std::string Identifier = canonicalizeCProjectionIdentifier(
       cNameOfSymbol(SourceName, Opts.Format, Opts.TheArch), "nd_function");
+  ReferencedFunctionSymbols.try_emplace(Identifier, SourceName.str());
+  return Identifier;
 }
 
 std::string HighCWriter::memoryTypeName(const TypeRef &Ty) const {
@@ -444,13 +446,14 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   Has256BitInteger = false;
   Has512BitInteger = false;
   Int128AsBitInt = false;
+  X87Helpers.clear();
+  UsesX87Extended = false;
   // Native AArch64 vector carriers are projected to SVE ACLE types.  x86
   // vector intrinsics use scalar integer carriers at the HighIR boundary.
   const bool ProjectsScalarWideIntegers =
       Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64;
   // C compilers provide __int128 on targets with 64-bit pointers only.
-  const bool TargetHasInt128 =
-      pointerBytes(Opts.TheArch) >= sizeof(uint64_t);
+  const bool TargetHasInt128 = pointerBytes(Opts.TheArch) >= sizeof(uint64_t);
   auto CollectWideType = [&](const TypeRef &Type) {
     if (const unsigned Bytes = partialIntegerBytes(Type))
       PartialIntegerBytes.emplace(typeToC(Type), Bytes);
@@ -460,6 +463,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
                         Type->Kind == NdTypeKind::Int && Type->Size == 64;
     Int128AsBitInt |= !TargetHasInt128 && Type &&
                       Type->Kind == NdTypeKind::Int && Type->Size == 16;
+    UsesX87Extended |= Type && Type->Kind == NdTypeKind::Float &&
+                       Type->Size == 10 && Type->SourceName.empty();
   };
   std::set<const HighExpr *> Seen;
   bool HideEHRuntimeMemory = false;
@@ -471,6 +476,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       return;
     CollectWideType(E.Type);
     CollectWideType(E.CastTo);
+    if (const auto Helper = x87HelperFor(E))
+      X87Helpers.insert(*Helper);
     if (E.Kind == ExprKind::UnaryOp && E.Op == NdOp::LZCOUNT &&
         !E.Operands.empty() && E.Operands[0]) {
       const unsigned Bits = countedBits(*E.Operands[0]);
@@ -1292,16 +1299,13 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       }
       if (Ex.IntrinsicId == Intrinsic::A64_Frinti)
         NeedsFEnvAccess = true;
-      const bool IsX87FpremHelper = Ex.IntrinsicId == Intrinsic::X87Fprem ||
-                                    Ex.IntrinsicId == Intrinsic::X87Fprem1 ||
-                                    Ex.IntrinsicId == Intrinsic::X87ReadStatus;
-      if (IsX87FpremHelper)
-        NeedsX87FpremHelpers = true;
-      else if (Ex.IntrinsicId == Intrinsic::X64Syscall)
+      const bool IsX87Helper = x87HelperFor(Ex).has_value();
+      if (Ex.IntrinsicId == Intrinsic::X64Syscall)
         NeedsX64SyscallHelper = true;
       else if (Ex.IntrinsicId == Intrinsic::X64WindowsSyscall)
         NeedsX64WindowsSyscallHelper = true;
-      else if (Ex.IntrinsicId != Intrinsic::None &&
+      // The x87 helpers, collected with the unit's types, need no header.
+      else if (Ex.IntrinsicId != Intrinsic::None && !IsX87Helper &&
                (intrinsicCName(Ex.IntrinsicId) ||
                 x86MemoryIntrinsicUsesCHeader(Ex.IntrinsicId)))
         HasCIntrinsics = true;
@@ -1333,6 +1337,11 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
             // C name need not be the symbol the rule knows.
             if (isNoreturnCallExpr(Ex))
               NoReturnCallTargets.insert(Name);
+            // Only a callee named like a different definition calls through
+            // its slot (callIdentifier).
+            if (Name != functionIdentifier(SourceName) &&
+                Name == importSlotIdentifier(Ex))
+              ImportSlotIdentifiers.insert(Name);
             if (auto FS = debugCallee(Ex)) {
               noteDebugExtern(Name, *FS);
               noteDebugExternCallSret(Name, *FS, Ex);
@@ -1780,11 +1789,16 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     // functionIdentifier (or the source-call projection).  Removing another
     // leading underscore here declares a different function from the call.
     llvm::StringRef RenderedName(Name);
+    // A call through an import's slot declares the slot, a function pointer
+    // that links by its own name; its source names the import, and the thunk
+    // named like it, not the slot.
+    const bool ImportSlot = ImportSlotIdentifiers.count(Name);
     const auto Existing = ExternalFunctionIdentifiers.find(Name);
     std::string Identifier =
-        Existing == ExternalFunctionIdentifiers.end()
-            ? GlobalIdentifierAllocator.allocate(RenderedName, "nd_external")
-            : Existing->second;
+        Existing != ExternalFunctionIdentifiers.end() ? Existing->second
+        : ImportSlot
+            ? GlobalIdentifierAllocator.allocateVerbatim(Name)
+            : GlobalIdentifierAllocator.allocate(RenderedName, "nd_external");
     ExternalFunctionIdentifiers.emplace(Name, Identifier);
     ExternalFunctionIdentifiers.try_emplace(RenderedName.str(), Identifier);
     // The statement writer ends a path at a call to a known noreturn function
@@ -1795,11 +1809,16 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     // An import whose identifier is not its symbol links by the symbol, which
     // a comment spells as its language does.
     std::string LinkLabel, LinkComment;
+    const std::string Declared =
+        ImportSlot ? "(*" + Identifier + ")" : Identifier;
     if (auto Sources = ExternalCallSources.find(Name);
-        Sources != ExternalCallSources.end()) {
+        Sources != ExternalCallSources.end() && !ImportSlot) {
       for (const std::string &SourceName : Sources->second)
         ExternalSourceIdentifiers[SourceName] = Identifier;
-      if (Sources->second.size() == 1) {
+      // A label naming a function this file defines would bind the call to
+      // that definition, which is not the function it calls.
+      if (Sources->second.size() == 1 &&
+          !FunctionIdentifiersBySourceName.count(*Sources->second.begin())) {
         const llvm::StringRef CName =
             cNameOfSymbol(*Sources->second.begin(), Opts.Format, Opts.TheArch);
         if (linksByLabel(CName, Identifier)) {
@@ -1975,7 +1994,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         if (Prototype->Winapi && Opts.TheArch == Arch::X86)
           OS << "__attribute__((stdcall)) ";
         const std::string Return = prototypeType(Prototype->Return);
-        OS << Return << (Return.back() == '*' ? "" : " ") << Identifier << "(";
+        OS << Return << (Return.back() == '*' ? "" : " ") << Declared << "(";
         for (unsigned I = 0; I < Prototype->ParamCount; ++I)
           OS << (I ? ", " : "") << prototypeType(Prototype->Params[I]);
         // ISO C before C23 spells no prototype of `...` alone.
@@ -1992,8 +2011,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         const auto Read = ResultBytes.find(Name);
         const bool WholeRegister =
             Read != ResultBytes.end() && Read->second > sizeof(int32_t);
-        OS << "extern " << (WholeRegister ? Register : "int") << " "
-           << Identifier << "(";
+        OS << "extern " << (WholeRegister ? Register : "int") << " " << Declared
+           << "(";
         if (auto Arity = knownArity(Symbol, Name);
             Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
           // Each argument fills one integer register: an int64_t on a 32-bit
@@ -2070,9 +2089,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                                  }),
                      SizedObjects.end());
   for (const auto &[Addr, Size] : SizedObjects)
-    SizedObjectReach.push_back(std::max(
-        SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
-        Addr + Size));
+    SizedObjectReach.push_back(
+        std::max(SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
+                 Addr + Size));
   // The code reaches all of an object through an address that varies or
   // points into it: the object is declared whole, as bytes.
   auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written) {
@@ -2217,9 +2236,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   PointerSlots.insert(Opts.Image->DataPtrRelocSlots.begin(),
                       Opts.Image->DataPtrRelocSlots.end());
   auto Extent = [](const ImageObject &Obj) -> uint64_t {
-    return std::max<uint64_t>(
-        Obj.IndexedBytes,
-        Obj.String ? Obj.ArrayBytes : (Obj.Type ? Obj.Type->Size : 0));
+    return std::max<uint64_t>(Obj.IndexedBytes,
+                              Obj.String ? Obj.ArrayBytes
+                                         : (Obj.Type ? Obj.Type->Size : 0));
   };
   std::set<va_t> NotedSlots;
   for (bool Changed = !PointerSlots.empty(); Changed;) {
@@ -2327,12 +2346,14 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       return;
     const auto First = ImageObjects.find(GroupBase);
     ImageBacking Backing{
-        GroupBase, GroupEnd,
+        GroupBase,
+        GroupEnd,
         First != ImageObjects.end() && !First->second.Name.empty()
             ? First->second.Name
             : GlobalIdentifierAllocator.allocate(
                   makeSyntheticGlobalName(GroupBase) + "_bytes", "g"),
-        {}, {}};
+        {},
+        {}};
     for (auto Slot = PointerSlots.lower_bound(GroupBase);
          Slot != PointerSlots.end() && *Slot < GroupEnd; ++Slot) {
       if ((*Slot - GroupBase) % PointerBytes ||
@@ -2368,8 +2389,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     GroupEnd = std::max(GroupEnd, End);
     ++GroupCount;
     NeedsBacking |= Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes ||
-                    (Obj.HoldsPointers && !Obj.PointsTo &&
-                     Size > PointerBytes);
+                    (Obj.HoldsPointers && !Obj.PointsTo && Size > PointerBytes);
     for (uint16_t Width : Obj.MemoryWidths)
       NeedsBacking |= Width && (Width & (Width - 1)) != 0;
   }
@@ -2536,8 +2556,7 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   }
 }
 
-std::optional<std::string>
-HighCWriter::relocatedSlotTarget(va_t Slot) const {
+std::optional<std::string> HighCWriter::relocatedSlotTarget(va_t Slot) const {
   const unsigned PointerBytes = pointerBytes(Opts.TheArch);
   const uint8_t *Bytes = Opts.Image->readVA(Slot, PointerBytes);
   if (!Bytes)
@@ -2627,76 +2646,30 @@ HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
                         : std::optional<std::string>(constStr(Value, Type));
   case NdTypeKind::Ptr:
     return "(" + typeToC(Type) + ")" + constStr(Value);
-  case NdTypeKind::Float: {
-    if (Type->Size != 4 && Type->Size != 8)
-      return std::nullopt;
-    const llvm::APFloat Float(Type->Size == 4 ? llvm::APFloat::IEEEsingle()
-                                              : llvm::APFloat::IEEEdouble(),
-                              llvm::APInt(Type->Size * 8, Value));
-    // A hexadecimal floating constant is exact; C has none for infinities
-    // and NaNs, which take their bits.
-    if (!Float.isFinite())
-      return "__builtin_bit_cast(" + typeToC(Type) + ", 0x" +
-             llvm::utohexstr(Value) + (Type->Size == 4 ? "u" : "ull") + ")";
-    char Text[64];
-    Float.convertToHexString(Text, 0, /*UpperCase=*/false,
-                             llvm::APFloat::rmNearestTiesToEven);
-    return std::string(Text) + (Type->Size == 4 ? "f" : "");
-  }
+  case NdTypeKind::Float:
+    return floatConstantText(Value, Type);
   default:
     return std::nullopt;
   }
 }
 
-void HighCWriter::writeX87FpremHelpers() {
-  if (!NeedsX87FpremHelpers)
-    return;
-  // The status must be sampled inside the same asm block as FPREM. A separate
-  // C expression could let the compiler spill an x87 value before FNSTSW and
-  // thereby change the condition codes observed by the source program.
-  OS << "static _Thread_local uint16_t neverd_x87_fprem_status;\n"
-        "static _Thread_local unsigned char "
-        "neverd_x87_fprem_status_pending;\n\n"
-        "static inline _BitInt(80) neverd_x87_partial_remainder(\n"
-        "    _BitInt(80) dividend, _BitInt(80) divisor, int nearest) {\n"
-        "    unsigned char lhs[10], rhs[10], result[10];\n"
-        "    uint16_t status;\n"
-        "    __builtin_memcpy(lhs, &dividend, 10);\n"
-        "    __builtin_memcpy(rhs, &divisor, 10);\n"
-        "    if (nearest) {\n"
-        "        __asm__ volatile(\"fldt %[rhs]\\n\\t"
-        "fldt %[lhs]\\n\\tfprem1\\n\\tfnstsw %%ax\\n\\t"
-        "fstpt %[result]\\n\\tfstp %%st(0)\"\n"
-        "            : [result] \"=m\"(result), \"=a\"(status)\n"
-        "            : [lhs] \"m\"(lhs), [rhs] \"m\"(rhs)\n"
-        "            : \"cc\", \"memory\", \"st\", \"st(1)\");\n"
-        "    } else {\n"
-        "        __asm__ volatile(\"fldt %[rhs]\\n\\t"
-        "fldt %[lhs]\\n\\tfprem\\n\\tfnstsw %%ax\\n\\t"
-        "fstpt %[result]\\n\\tfstp %%st(0)\"\n"
-        "            : [result] \"=m\"(result), \"=a\"(status)\n"
-        "            : [lhs] \"m\"(lhs), [rhs] \"m\"(rhs)\n"
-        "            : \"cc\", \"memory\", \"st\", \"st(1)\");\n"
-        "    }\n"
-        "    neverd_x87_fprem_status = status;\n"
-        "    neverd_x87_fprem_status_pending = 1;\n"
-        "    _BitInt(80) bits = 0;\n"
-        "    __builtin_memcpy(&bits, result, 10);\n"
-        "    return bits;\n"
-        "}\n\n"
-        "static inline _BitInt(80) neverd_x87_fprem(\n"
-        "    _BitInt(80) dividend, _BitInt(80) divisor) {\n"
-        "    return neverd_x87_partial_remainder(dividend, divisor, 0);\n"
-        "}\n\n"
-        "static inline _BitInt(80) neverd_x87_fprem1(\n"
-        "    _BitInt(80) dividend, _BitInt(80) divisor) {\n"
-        "    return neverd_x87_partial_remainder(dividend, divisor, 1);\n"
-        "}\n\n"
-        "static inline uint16_t neverd_x87_read_status(void) {\n"
-        "    if (!neverd_x87_fprem_status_pending) __builtin_trap();\n"
-        "    neverd_x87_fprem_status_pending = 0;\n"
-        "    return neverd_x87_fprem_status;\n"
-        "}\n\n";
+std::optional<std::string>
+HighCWriter::floatConstantText(uint64_t Value, const TypeRef &Type) const {
+  if (!Type || Type->Kind != NdTypeKind::Float ||
+      (Type->Size != 4 && Type->Size != 8))
+    return std::nullopt;
+  const llvm::APFloat Float(Type->Size == 4 ? llvm::APFloat::IEEEsingle()
+                                            : llvm::APFloat::IEEEdouble(),
+                            llvm::APInt(Type->Size * 8, Value));
+  // A hexadecimal floating constant is exact; C has none for infinities
+  // and NaNs, which take their bits.
+  if (!Float.isFinite())
+    return "__builtin_bit_cast(" + typeToC(Type) + ", 0x" +
+           llvm::utohexstr(Value) + (Type->Size == 4 ? "u" : "ull") + ")";
+  char Text[64];
+  Float.convertToHexString(Text, 0, /*UpperCase=*/false,
+                           llvm::APFloat::rmNearestTiesToEven);
+  return std::string(Text) + (Type->Size == 4 ? "f" : "");
 }
 
 void HighCWriter::writeX64SyscallHelper() {
@@ -2813,8 +2786,8 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
     walkStmts(Func.Body,
               [&](const HighStmt &Stmt) { forEachExpr(Stmt, Visit); });
   }
+  writeX87CHelpers(OS, UsesX87Extended, X87Helpers);
   writeMemoryHelpers();
-  writeX87FpremHelpers();
   writeX64SyscallHelper();
   writeX64WindowsSyscallHelper();
   writeForwardDecls(Funcs);
@@ -2835,6 +2808,7 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
     if (I + 1 < Funcs.size())
       OS << "\n";
   }
+  recordSourceNames(Funcs);
 }
 
 //===----------------------------------------------------------------------===//

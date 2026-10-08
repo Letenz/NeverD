@@ -34,6 +34,41 @@
 
 namespace neverd {
 
+/// Floating-point arithmetic, comparison and conversion: with the default
+/// environment's masked exceptions none traps, and a conversion to an integer
+/// prints through a total helper.
+static bool isTrapFreeFloatOp(NdOp Op) {
+  switch (Op) {
+  case NdOp::FLOAT_ADD:
+  case NdOp::FLOAT_SUB:
+  case NdOp::FLOAT_MULT:
+  case NdOp::FLOAT_DIV:
+  case NdOp::FLOAT_MINNUM:
+  case NdOp::FLOAT_MAXNUM:
+  case NdOp::FLOAT_EQUAL:
+  case NdOp::FLOAT_NOTEQUAL:
+  case NdOp::FLOAT_LESS:
+  case NdOp::FLOAT_LESSEQUAL:
+  case NdOp::FLOAT_NEG:
+  case NdOp::FLOAT_ABS:
+  case NdOp::FLOAT_SQRT:
+  case NdOp::FLOAT_CEIL:
+  case NdOp::FLOAT_FLOOR:
+  case NdOp::FLOAT_ROUND:
+  case NdOp::FLOAT_ROUNDEVEN:
+  case NdOp::FLOAT_ISNAN:
+  case NdOp::FLOAT_INT2FLOAT:
+  case NdOp::FLOAT_UINT2FLOAT:
+  case NdOp::FLOAT_FLOAT2FLOAT:
+  case NdOp::FLOAT_FLOAT2INT:
+  case NdOp::FLOAT_FLOAT2UINT:
+  case NdOp::FLOAT_TRUNC:
+    return true;
+  default:
+    return false;
+  }
+}
+
 // Only remove or slice values whose evaluation cannot read memory, trap or
 // call another function. Unknown bits may be discarded only when their exact
 // bytes have no reads; this never supplies a replacement bit value.
@@ -60,8 +95,17 @@ bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
       if (!E->Operands.empty())
         return false;
       break;
+    case ExprKind::BitCast:
+      // A reinterpretation of the same bytes.
+      if (E->Operands.size() != 1 || !E->Operands[0] || !E->Operands[0]->Type ||
+          E->Operands[0]->Type->Size != E->Type->Size)
+        return false;
+      break;
     case ExprKind::Cast:
     case ExprKind::UnaryOp:
+      if (E->Kind == ExprKind::UnaryOp && isTrapFreeFloatOp(E->Op) &&
+          E->Operands.size() == 1 && E->Operands[0])
+        break;
       if (E->Type->Kind != NdTypeKind::Int || E->Operands.size() != 1 ||
           !E->Operands[0] || !E->Operands[0]->Type ||
           E->Operands[0]->Type->Kind != NdTypeKind::Int)
@@ -72,6 +116,9 @@ bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
         return false;
       break;
     case ExprKind::BinOp:
+      if (isTrapFreeFloatOp(E->Op) && E->Operands.size() == 2 &&
+          E->Operands[0] && E->Operands[1])
+        break;
       if (E->Type->Kind != NdTypeKind::Int || E->Operands.size() != 2 ||
           !E->Operands[0] || !E->Operands[0]->Type ||
           E->Operands[0]->Type->Kind != NdTypeKind::Int || !E->Operands[1] ||
@@ -239,8 +286,7 @@ void narrowSourceConcatLocals(HighFunc &Func) {
           Value->Operands[1] && Value->Operands[0]->Type &&
           Value->Operands[1]->Type &&
           Value->Operands[1]->Type->Kind == NdTypeKind::Int &&
-          Value->Operands[0]->Type->Size +
-                  Value->Operands[1]->Type->Size ==
+          Value->Operands[0]->Type->Size + Value->Operands[1]->Type->Size ==
               Value->Type->Size &&
           (Value->Operands[1]->Type->Size == 4 ||
            (CarrierBytes == 16 && Value->Operands[1]->Type->Size == 8)) &&
@@ -339,11 +385,11 @@ void narrowSourceConcatLocals(HighFunc &Func) {
     const uint16_t CarrierBytes = DestinationShape ? D->Type->Size : 0;
     C.Valid &= !C.CarrierBytes || C.CarrierBytes == CarrierBytes;
     C.CarrierBytes = CarrierBytes;
-    const auto ConcatLow =
-        DestinationShape && V->Type && V->Type->Kind == NdTypeKind::Int &&
-                V->Type->Size == CarrierBytes
-            ? ConcatLowPrefix(V, CarrierBytes)
-            : ExprPtr{};
+    const auto ConcatLow = DestinationShape && V->Type &&
+                                   V->Type->Kind == NdTypeKind::Int &&
+                                   V->Type->Size == CarrierBytes
+                               ? ConcatLowPrefix(V, CarrierBytes)
+                               : ExprPtr{};
     const bool ConcatShape = bool(ConcatLow);
     const bool ExtensionShape =
         DestinationShape && V->Type && V->Type->Kind == NdTypeKind::Int &&
@@ -1171,10 +1217,10 @@ void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
 
 void elimConsecutiveDeadStores(std::vector<HighStmt> &Stmts) {
   Stmts.erase(std::remove_if(Stmts.begin(), Stmts.end(),
-                            [](const HighStmt &S) {
-                              return S.Kind == StmtKind::Nop &&
-                                     (!S.Addr || S.Addr == InvalidVA);
-                            }),
+                             [](const HighStmt &S) {
+                               return S.Kind == StmtKind::Nop &&
+                                      (!S.Addr || S.Addr == InvalidVA);
+                             }),
               Stmts.end());
 
   for (size_t I = 0; I + 1 < Stmts.size(); ++I) {

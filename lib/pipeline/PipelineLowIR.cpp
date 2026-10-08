@@ -26,6 +26,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/loader/PointerRelocation.h"
+#include "neverd/loader/SymbolDecoration.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
@@ -2844,23 +2845,60 @@ bool forwardsToGuardDispatch(const BinaryImage &Img, const LowFunc &F) {
               Slot.Offset, RuntimeCallablePointerSlotKind::GuardXFGDispatch));
 }
 
-/// The argument registers the libc imports that \p Funcs and the callees
-/// \p Effects summarizes call read, keyed by the address each call names its
+/// The arguments of the libc imports that \p Funcs and the callees
+/// \p Effects summarizes call: the registers each reads, and with \p
+/// StackArguments the argument positions its stack arguments imply.
+struct ImportPrototypeArguments {
+  std::map<va_t, GPRReadWidths> Reads;
+  std::map<va_t, int> StackArgs;
+};
+
+/// The arguments of the libc imports that \p Funcs and the callees
+/// \p Effects summarizes call, keyed by the address each call names its
 /// import by: an executable stub or a slot the loader binds, listed in the
 /// import directory or not (importCalleeName).  A stub lifted as a function
 /// is keyed too.  A call in a function whose own summary is incomplete still
-/// passes its import's parameters.  Only a routine the arity tables give a
-/// fixed prototype (LibCNames.h), with every integer and pointer argument in
-/// a register and none in a vector register, is listed; each argument is
-/// read pointer-wide.
-std::map<va_t, GPRReadWidths>
-importPrototypeEntryReads(const BinaryImage &Img,
-                          const std::vector<LowFunc> &Funcs,
-                          const std::map<va_t, LocalRegisterEffect> &Effects) {
+/// passes its import's parameters.  Only a routine with a fixed prototype is
+/// listed: one of the image format's own runtime (LibCPrototype, such as the
+/// Windows C runtime's `_initterm`), else one the arity tables give
+/// (LibCNames.h), by the exact name where the import entry is the C name.
+/// No argument may be in a vector register, and each register argument is
+/// read pointer-wide.  The arguments past the registers are on the stack,
+/// which only a convention that summarizes stack arguments (\p
+/// StackArguments) counts; elsewhere such a routine is not listed.  Without
+/// \p RegisterArguments an import takes every argument on the stack.
+ImportPrototypeArguments
+importPrototypeArguments(const BinaryImage &Img,
+                         const std::vector<LowFunc> &Funcs,
+                         const std::map<va_t, LocalRegisterEffect> &Effects,
+                         bool StackArguments, bool RegisterArguments = true) {
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const llvm::ArrayRef<uint64_t> Registers =
-      TRI.integerArgumentLayout(Img.Format).Registers;
-  std::map<va_t, GPRReadWidths> Reads;
+      RegisterArguments ? llvm::ArrayRef<uint64_t>(
+                              TRI.integerArgumentLayout(Img.Format).Registers)
+                        : llvm::ArrayRef<uint64_t>();
+  // A runtime's own prototype names its routine exactly, where stripping
+  // leading underscores for the arity tables could reach another runtime's.
+  auto IntegerArguments = [&](const std::string &Name) -> std::optional<int> {
+    if (const libc::LibCPrototype *Prototype =
+            libc::libcPrototype(Name, Img.Format)) {
+      if (Prototype->Variadic ||
+          llvm::any_of(
+              llvm::ArrayRef(Prototype->Params.data(), Prototype->ParamCount),
+              libc::isFloatingType))
+        return std::nullopt;
+      return Prototype->ParamCount;
+    }
+    // A PE import entry is the C name: MSVC's `_pipe(fds, size, mode)` is
+    // not POSIX `pipe(fds)`, which stripping its underscore would reach.
+    const auto Arity = importNamesAreCNames(Img.Format)
+                           ? libc::libcArity(Name)
+                           : libc::libcArityForSymbol(Name);
+    if (!Arity || Arity->FpArgs != 0 || Arity->IntArgs < 0)
+      return std::nullopt;
+    return Arity->IntArgs;
+  };
+  ImportPrototypeArguments Result;
   std::set<va_t> Seen;
   auto Classify = [&](va_t Addr) {
     if (!Seen.insert(Addr).second)
@@ -2868,15 +2906,20 @@ importPrototypeEntryReads(const BinaryImage &Img,
     const std::string Name = importCalleeName(Img, Addr);
     if (Name.empty())
       return;
-    const auto Arity = libc::libcArityForSymbol(Name);
-    if (!Arity || Arity->FpArgs != 0 || Arity->IntArgs < 0 ||
-        static_cast<size_t>(Arity->IntArgs) > Registers.size())
+    const std::optional<int> Count = IntegerArguments(Name);
+    const int InRegisters =
+        std::min(Count.value_or(0), static_cast<int>(Registers.size()));
+    if (!Count || (*Count > InRegisters && !StackArguments))
       return;
     GPRReadWidths Widths{};
-    for (int K = 0; K < Arity->IntArgs; ++K)
+    for (int K = 0; K < InRegisters; ++K)
       if (const auto Family = gprFamilyOf(Img.Arch, Registers[K]))
         Widths[*Family] = static_cast<uint8_t>(TRI.PointerSize);
-    Reads[Addr] = Widths;
+    Result.Reads[Addr] = Widths;
+    // Counted as positions, the registers' included, as the stack summary
+    // counts them (LocalRegisterEffect::StackArgs); 0 for none on the stack.
+    if (StackArguments)
+      Result.StackArgs[Addr] = *Count > InRegisters ? *Count : 0;
   };
   for (const LowFunc &F : Funcs)
     for (const LowBlock &Block : F.Blocks)
@@ -2891,7 +2934,7 @@ importPrototypeEntryReads(const BinaryImage &Img,
         if (Step.ImportCallee != InvalidVA)
           Classify(Step.ImportCallee);
   }
-  return Reads;
+  return Result;
 }
 
 /// Summarize which GPRs each direct callee may write (CallRegisterEffects.h).
@@ -2903,8 +2946,22 @@ void computeCallRegisterEffects(
     const NoReturnCalleeProver &NoReturnCallees,
     const detail::AbsoluteRelocationRootIndex &AbsoluteRelocationRoots,
     const ExecutableCodeOwnerIndex *CodeOwnerIndex, PipelineResult &Result) {
-  if (Img.Arch != Arch::X64)
+  if (Img.Arch != Arch::X64) {
+    // Where an import takes every argument on the stack (i386: regparm is
+    // for internal calls only), there are no register summaries, but a
+    // prototyped import still reads its count of stack arguments.
+    if (const CallArgumentConvention *Convention =
+            callArgumentConvention(Img.Arch, Img.Format);
+        Convention && Convention->ImportArgumentsFromPrototype &&
+        Convention->StackArgumentSummary &&
+        Convention->RegparmOnlyForInternalCalls)
+      Result.CallEntryStackArgs =
+          importPrototypeArguments(Img, Result.LowFuncs, {},
+                                   /*StackArguments=*/true,
+                                   /*RegisterArguments=*/false)
+              .StackArgs;
     return;
+  }
   std::map<va_t, LocalRegisterEffect> Effects;
   std::map<va_t, int> Depth;
   std::vector<va_t> Work;
@@ -2997,13 +3054,25 @@ void computeCallRegisterEffects(
       Classify(Entry, Img.getFunctionNameAt(Entry));
     for (const Import &Imp : Img.Imports)
       Classify(Imp.IATAddr, Imp.Name);
-  } else if (const CallArgumentConvention *Convention =
-                 callArgumentConvention(Img.Arch, Img.Format);
-             Convention && Convention->ImportArgumentsFromPrototype) {
-    FixedEntryReads = importPrototypeEntryReads(Img, Result.LowFuncs, Effects);
   }
-  CallRegisterSummaries Summaries = solveCallRegisterEffects(
-      Effects, Volatile, Arguments, DispatchThunks, FixedEntryReads);
+  // A libc import with a fixed prototype reads its parameters however the
+  // code reaches it; a documented contract above decides first.
+  std::map<va_t, int> FixedEntryStackArgs;
+  if (const CallArgumentConvention *Convention =
+          callArgumentConvention(Img.Arch, Img.Format);
+      Convention && Convention->ImportArgumentsFromPrototype) {
+    ImportPrototypeArguments Prototyped = importPrototypeArguments(
+        Img, Result.LowFuncs, Effects, Convention->StackArgumentSummary);
+    for (auto &[Addr, Widths] : Prototyped.Reads)
+      if (!DispatchThunks.count(Addr))
+        FixedEntryReads.try_emplace(Addr, Widths);
+    for (auto &[Addr, Count] : Prototyped.StackArgs)
+      if (!DispatchThunks.count(Addr))
+        FixedEntryStackArgs.try_emplace(Addr, Count);
+  }
+  CallRegisterSummaries Summaries =
+      solveCallRegisterEffects(Effects, Volatile, Arguments, DispatchThunks,
+                               FixedEntryReads, FixedEntryStackArgs);
   Result.CallDispatchThunks = std::move(DispatchThunks);
   Result.CallMayWriteGPRs = std::move(Summaries.MayWrite);
   Result.CallEntryReadGPRs = std::move(Summaries.EntryReads);

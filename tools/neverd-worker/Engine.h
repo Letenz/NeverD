@@ -114,6 +114,19 @@ private:
   /// The user's operand formats changed: instruction text shows them at
   /// once, without building the listing again.
   void operandFormatsChanged();
+  /// Names or the user's data items changed: drop what shows them, and let
+  /// the listing read them again without its string scan.
+  void namesChanged();
+  /// A comment changed.  The listing reads comments as it formats lines, so
+  /// only views that keep formatted text drop it.
+  void commentsChanged();
+  /// Whether the open file is a binary file: no header states its calling
+  /// convention, so the engine does not analyze it and its graphs come from
+  /// the listing's decoding.
+  bool binaryFile() const;
+  /// The control flow graph of the function at \p address, in the engine's
+  /// cfg JSON shape.
+  Json functionGraph(std::uint64_t address);
   /// The function list changed: analysis restarts function by function and
   /// the reference index is built again.
   void functionsChanged();

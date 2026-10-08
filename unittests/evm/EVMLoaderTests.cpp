@@ -6,8 +6,8 @@
 
 #include "gtest/gtest.h"
 
-#include "neverd/support/BinaryLoading.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/BinaryLoading.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Error.h"
@@ -73,10 +73,9 @@ TEST_F(EVMLoaderTest, AutoDetectsAndBuildsAnEVMImage) {
 TEST_F(EVMLoaderTest, KeepsTheContainerAndWhatWasLearnedFromIt) {
   // A constructor that returns five bytes, followed by those bytes and the
   // trailer naming the compiler.
-  const auto Path = write("counter.creation.evm",
-                          "0x6005600c60003960056000f3"
-                          "6001600055"
-                          "a164736f6c634300081e000a");
+  const auto Path = write("counter.creation.evm", "0x6005600c60003960056000f3"
+                                                  "6001600055"
+                                                  "a164736f6c634300081e000a");
   auto Image = loadBinary(Path);
   ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
 
@@ -100,9 +99,8 @@ TEST_F(EVMLoaderTest, KeepsTheContainerAndWhatWasLearnedFromIt) {
 }
 
 TEST_F(EVMLoaderTest, ReportsADelegationIndicatorInsteadOfDecodingIt) {
-  const auto Path =
-      write("delegated.evm",
-            "0xef01003333333333333333333333333333333333333333");
+  const auto Path = write("delegated.evm",
+                          "0xef01003333333333333333333333333333333333333333");
   auto Image = loadBinary(Path);
   ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
 
@@ -114,6 +112,30 @@ TEST_F(EVMLoaderTest, ReportsADelegationIndicatorInsteadOfDecodingIt) {
   EXPECT_EQ(Image->EVM->DelegateTarget.front(), 0x33);
   EXPECT_FALSE(Image->EVM->RuntimeExtracted);
   EXPECT_FALSE(Image->EVM->MetadataStripped);
+}
+
+TEST_F(EVMLoaderTest, ReadsBytesUnderASharedNameOnlyWhenChosen) {
+  // A firmware image is as likely a .bin as raw bytecode is.
+  const std::string Bytes("\x60\x01\x60\x00\x55\x00\xff\x07", 8);
+  const auto Firmware = write("firmware.bin", Bytes);
+  EXPECT_EQ(Loader::create(Firmware), nullptr);
+  auto Refused = loadBinary(Firmware);
+  ASSERT_FALSE(static_cast<bool>(Refused));
+  EXPECT_NE(llvm::toString(Refused.takeError()).find("choose its loader"),
+            std::string::npos);
+  BinaryLoadOptions Chosen;
+  Chosen.Choice.Format = BinaryFormat::EVM;
+  auto Image = loadBinary(Firmware, Chosen);
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  EXPECT_EQ(Image->Arch, Arch::EVM);
+  // A name that says EVM reads the same bytes by itself, and hex text under
+  // a shared name decodes as bytecode.
+  auto Named = loadBinary(write("contract.evmraw", Bytes));
+  ASSERT_TRUE(static_cast<bool>(Named)) << llvm::toString(Named.takeError());
+  EXPECT_EQ(Named->Arch, Arch::EVM);
+  auto Text = loadBinary(write("contract.bin", "6001600055"));
+  ASSERT_TRUE(static_cast<bool>(Text)) << llvm::toString(Text.takeError());
+  EXPECT_EQ(Text->Arch, Arch::EVM);
 }
 
 TEST_F(EVMLoaderTest, RefusesUnknownTextFiles) {

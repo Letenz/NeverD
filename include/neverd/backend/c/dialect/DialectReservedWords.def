@@ -1,0 +1,103 @@
+//===- DialectReservedWords.def - Words a name cannot be --------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The keywords of each dialect.  A C identifier that is one is escaped:
+/// Rust writes `r#match`; Go, which has no raw identifiers, writes `type_`.
+///
+///   NEVERD_RUST_KEYWORD(Word)
+///   NEVERD_GO_KEYWORD(Word)
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_RUST_KEYWORD
+#define NEVERD_RUST_KEYWORD(Word)
+#endif
+#ifndef NEVERD_GO_KEYWORD
+#define NEVERD_GO_KEYWORD(Word)
+#endif
+
+NEVERD_RUST_KEYWORD("as")
+NEVERD_RUST_KEYWORD("async")
+NEVERD_RUST_KEYWORD("await")
+NEVERD_RUST_KEYWORD("break")
+NEVERD_RUST_KEYWORD("const")
+NEVERD_RUST_KEYWORD("continue")
+NEVERD_RUST_KEYWORD("crate")
+NEVERD_RUST_KEYWORD("dyn")
+NEVERD_RUST_KEYWORD("else")
+NEVERD_RUST_KEYWORD("enum")
+NEVERD_RUST_KEYWORD("extern")
+NEVERD_RUST_KEYWORD("false")
+NEVERD_RUST_KEYWORD("fn")
+NEVERD_RUST_KEYWORD("for")
+NEVERD_RUST_KEYWORD("gen")
+NEVERD_RUST_KEYWORD("if")
+NEVERD_RUST_KEYWORD("impl")
+NEVERD_RUST_KEYWORD("in")
+NEVERD_RUST_KEYWORD("let")
+NEVERD_RUST_KEYWORD("loop")
+NEVERD_RUST_KEYWORD("match")
+NEVERD_RUST_KEYWORD("mod")
+NEVERD_RUST_KEYWORD("move")
+NEVERD_RUST_KEYWORD("mut")
+NEVERD_RUST_KEYWORD("pub")
+NEVERD_RUST_KEYWORD("ref")
+NEVERD_RUST_KEYWORD("return")
+NEVERD_RUST_KEYWORD("self")
+NEVERD_RUST_KEYWORD("Self")
+NEVERD_RUST_KEYWORD("static")
+NEVERD_RUST_KEYWORD("struct")
+NEVERD_RUST_KEYWORD("super")
+NEVERD_RUST_KEYWORD("trait")
+NEVERD_RUST_KEYWORD("true")
+NEVERD_RUST_KEYWORD("try")
+NEVERD_RUST_KEYWORD("type")
+NEVERD_RUST_KEYWORD("unsafe")
+NEVERD_RUST_KEYWORD("use")
+NEVERD_RUST_KEYWORD("where")
+NEVERD_RUST_KEYWORD("while")
+NEVERD_RUST_KEYWORD("yield")
+NEVERD_RUST_KEYWORD("abstract")
+NEVERD_RUST_KEYWORD("become")
+NEVERD_RUST_KEYWORD("box")
+NEVERD_RUST_KEYWORD("do")
+NEVERD_RUST_KEYWORD("final")
+NEVERD_RUST_KEYWORD("macro")
+NEVERD_RUST_KEYWORD("override")
+NEVERD_RUST_KEYWORD("priv")
+NEVERD_RUST_KEYWORD("typeof")
+NEVERD_RUST_KEYWORD("unsized")
+NEVERD_RUST_KEYWORD("virtual")
+
+NEVERD_GO_KEYWORD("break")
+NEVERD_GO_KEYWORD("case")
+NEVERD_GO_KEYWORD("chan")
+NEVERD_GO_KEYWORD("const")
+NEVERD_GO_KEYWORD("continue")
+NEVERD_GO_KEYWORD("default")
+NEVERD_GO_KEYWORD("defer")
+NEVERD_GO_KEYWORD("else")
+NEVERD_GO_KEYWORD("fallthrough")
+NEVERD_GO_KEYWORD("for")
+NEVERD_GO_KEYWORD("func")
+NEVERD_GO_KEYWORD("go")
+NEVERD_GO_KEYWORD("goto")
+NEVERD_GO_KEYWORD("if")
+NEVERD_GO_KEYWORD("import")
+NEVERD_GO_KEYWORD("interface")
+NEVERD_GO_KEYWORD("map")
+NEVERD_GO_KEYWORD("package")
+NEVERD_GO_KEYWORD("range")
+NEVERD_GO_KEYWORD("return")
+NEVERD_GO_KEYWORD("select")
+NEVERD_GO_KEYWORD("struct")
+NEVERD_GO_KEYWORD("switch")
+NEVERD_GO_KEYWORD("type")
+NEVERD_GO_KEYWORD("var")
+
+#undef NEVERD_RUST_KEYWORD
+#undef NEVERD_GO_KEYWORD

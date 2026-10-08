@@ -34331,9 +34331,11 @@ TEST(HighCPointerAddresses, I386PicDataIsReadThroughItsObject) {
   const std::string Compiler = *Found;
 #endif
   llvm::SmallString<128> SourcePath, ObjectPath, CheckPath, ErrorPath;
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-pic", "c", SourcePath));
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-pic", "c", SourcePath));
   llvm::FileRemover RemoveSource(SourcePath);
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-pic", "o", ObjectPath));
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-pic", "o", ObjectPath));
   llvm::FileRemover RemoveObject(ObjectPath);
   ASSERT_FALSE(
       llvm::sys::fs::createTemporaryFile("neverd-pic-out", "c", CheckPath));
@@ -42081,10 +42083,10 @@ TEST(HighCPointerAddresses, FloatVectorIntrinsicsTakeTheirVectorTypes) {
   // does not convert from an integer vector.
   constexpr va_t Entry = 0x140001000;
   const std::vector<uint8_t> Code = {
-      0x0f, 0xc6, 0xc1, 0x1b,       // shufps xmm0, xmm1, 0x1b
-      0x0f, 0x11, 0x01,             // movups [rcx], xmm0
-      0x66, 0x0f, 0x14, 0xd3,       // unpcklpd xmm2, xmm3
-      0x66, 0x0f, 0x11, 0x12,       // movupd [rdx], xmm2
+      0x0f, 0xc6, 0xc1, 0x1b, // shufps xmm0, xmm1, 0x1b
+      0x0f, 0x11, 0x01,       // movups [rcx], xmm0
+      0x66, 0x0f, 0x14, 0xd3, // unpcklpd xmm2, xmm3
+      0x66, 0x0f, 0x11, 0x12, // movupd [rdx], xmm2
       0xc3};
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
@@ -43523,6 +43525,60 @@ TEST(HighCPointerAddresses, ConditionalReturnOutOfALoopReturnsItsValue) {
   compileAndRunCallOrdering("#include <stdint.h>\n" + HighC + R"(
 int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 )");
+}
+
+/// Decompile x64 \p Code at 0x140001000 and run it as `sub_140001000`; the
+/// C must compute in `long double` and return \p Expected.
+void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected) {
+  constexpr va_t Entry = 0x140001000;
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("long double"), std::string::npos) << HighC;
+  // The unit is written without includes; its ten-byte accesses copy
+  // through memcpy.
+  compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
+                            HighC +
+                            "\nint main(void) { return (uint64_t)"
+                            "sub_140001000() != " +
+                            std::to_string(Expected) + "ull; }\n");
+}
+
+TEST(HighCPointerAddresses, AnX87ValueRoundsToTheDoubleItIsStoredAs) {
+  // fld1 / fldpi load the extended format and fstp qword rounds it to a
+  // double: the C converts through `long double`, not to an unknown value.
+  for (const auto &[Load, Expected] :
+       {std::pair<uint8_t, uint64_t>{0xe8, 0x3FF0000000000000ull},
+        std::pair<uint8_t, uint64_t>{0xeb, 0x400921FB54442D18ull}})
+    expectX87Result({0xd9, Load,                   // fld1 / fldpi
+                     0xdd, 0x5c, 0x24, 0xf8,       // fstp qword [rsp-8]
+                     0x48, 0x8b, 0x44, 0x24, 0xf8, // mov rax, [rsp-8]
+                     0xc3},
+                    Expected);
+}
+
+TEST(HighCPointerAddresses, X87ArithmeticComputesInLongDouble) {
+  expectX87Result({0xd9, 0xe8,                   // fld1
+                   0xd9, 0xe8,                   // fld1
+                   0xde, 0xc1,                   // faddp st(1), st
+                   0xdd, 0x5c, 0x24, 0xf8,       // fstp qword [rsp-8]
+                   0x48, 0x8b, 0x44, 0x24, 0xf8, // mov rax, [rsp-8]
+                   0xc3},
+                  0x4000000000000000ull);
+}
+
+TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
+  // The extended value fills ten bytes; the qword after it survives, and
+  // the stored exponent word reads back.  A store of a whole C object of
+  // 12 or 16 bytes would overwrite the neighbor.
+  expectX87Result({0x48, 0xc7, 0x44, 0x24, 0xea,
+                   0x2a, 0,    0,    0,          // mov qword [rsp-16h], 42
+                   0xd9, 0xe8,                   // fld1
+                   0xdb, 0x7c, 0x24, 0xe0,       // fstp tbyte [rsp-20h]
+                   0x48, 0x8b, 0x44, 0x24, 0xea, // mov rax, [rsp-16h]
+                   0x0f, 0xb7, 0x4c, 0x24, 0xe8, // movzx ecx, word [rsp-18h]
+                   0x48, 0x01, 0xc8,             // add rax, rcx
+                   0xc3},
+                  42 + 0x3FFF);
 }
 
 TEST(HighCPointerAddresses, AStackArgumentIsNotARegisterArgumentOfTheSameId) {
