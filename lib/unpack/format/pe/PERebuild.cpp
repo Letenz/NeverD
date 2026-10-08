@@ -281,6 +281,46 @@ uint32_t observedAccess(const Capture &C, const ImageRegion &R) {
   return Flags;
 }
 
+/// Import descriptors name each address array independently. The optional
+/// IAT directory also tells the native loader which pages it may protect.
+/// Writable cells, including appended cells, need no such protection range.
+/// Including their intervening data or code would change program semantics.
+llvm::Expected<data_directory>
+iatProtection(const Image &In, llvm::ArrayRef<uint32_t> Permissions,
+              llvm::ArrayRef<Slot> Slots) {
+  data_directory Directory{};
+  const auto Regions = In.regions();
+  uint64_t Begin = In.extent(), End = 0;
+  for (const auto &S : Slots) {
+    const auto *Region = In.regionAt(S.RVA);
+    if (!Region || (Permissions[Region - Regions.data()] &
+                    llvm::COFF::IMAGE_SCN_MEM_WRITE))
+      continue;
+    Begin = std::min(Begin, S.RVA);
+    End = std::max(End, S.RVA + 2 * value::PointerSize);
+  }
+  if (!End)
+    return Directory;
+  uint64_t Covered = Begin;
+  for (size_t I = 0; I < Regions.size(); ++I) {
+    const auto &Region = Regions[I];
+    if (Region.RVA + Region.MemorySize <= Covered)
+      continue;
+    const uint32_t Access = Permissions[I];
+    if (Region.RVA > Covered || !(Access & llvm::COFF::IMAGE_SCN_MEM_READ) ||
+        (Access &
+         (llvm::COFF::IMAGE_SCN_MEM_WRITE | llvm::COFF::IMAGE_SCN_MEM_EXECUTE)))
+      return failure(text::IATProtection);
+    Covered = Region.RVA + Region.MemorySize;
+    if (Covered >= End) {
+      Directory.RelativeVirtualAddress = Begin;
+      Directory.Size = End - Begin;
+      return Directory;
+    }
+  }
+  return failure(text::IATProtection);
+}
+
 /// Debug records name their payload by file offset as well as by RVA.
 void relocateDebugRecords(const Image &In, llvm::ArrayRef<Placement> Placed,
                           std::vector<data_directory> &Directories,
@@ -336,6 +376,13 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   auto Repairs = planTailImports(In, C, Plan.TailImports, Memory, *Slots);
   if (!Repairs)
     return Repairs.takeError();
+  std::vector<uint32_t> Permissions;
+  Permissions.reserve(Regions.size());
+  for (const auto &Region : Regions)
+    Permissions.push_back(observedAccess(C, Region));
+  auto IAT = iatProtection(In, Permissions, *Slots);
+  if (!IAT)
+    return IAT.takeError();
   redirectTailImports(*Repairs, *Slots, Memory);
   const auto Groups = groupSlots(*Slots);
 
@@ -413,6 +460,16 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
     return failure(text::ImageSize);
 
   auto Directories = H.Directories;
+  if (IAT->Size && Directories.size() <= llvm::COFF::IAT) {
+    // An input can leave trailing directory entries undeclared while still
+    // reserving them in the optional header. Use that space without moving
+    // the section table or overwriting an original section header.
+    const uint64_t End = H.OptionalHeaderOffset + sizeof(pe32plus_header) +
+                         (llvm::COFF::IAT + 1) * sizeof(data_directory);
+    if (End > H.SectionTableOffset)
+      return failure(text::HeaderRoom);
+    Directories.resize(llvm::COFF::IAT + 1);
+  }
   relocateDebugRecords(In, Placed, Directories, Memory);
   if (RebuiltTLS->DirectoryRVA) {
     Directories[llvm::COFF::TLS_TABLE].RelativeVirtualAddress =
@@ -433,6 +490,8 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
         MetadataRVA + Repairs->CellBytes;
     Directories[llvm::COFF::IMPORT_TABLE].Size = DirectoryBytes;
   }
+  if (IAT->Size)
+    Directories[llvm::COFF::IAT] = *IAT;
 
   RebuiltImage Out;
   for (const auto &Site : Repairs->Sites)
@@ -454,6 +513,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   PE.ImageBase = C.Base;
   PE.SizeOfImage = NewImageSize;
   PE.SizeOfHeaders = HeaderBytes;
+  PE.NumberOfRvaAndSize = Directories.size();
   PE.CheckSum = 0;
   PE.DLLCharacteristics =
       PE.DLLCharacteristics &
@@ -477,7 +537,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
                               llvm::COFF::IMAGE_SCN_MEM_WRITE |
                               llvm::COFF::IMAGE_SCN_MEM_EXECUTE;
       uint32_t Flags =
-          (H.Sections[I].Characteristics & ~Access) | observedAccess(C, R);
+          (H.Sections[I].Characteristics & ~Access) | Permissions[I];
       if (Placed[I].Size) {
         Flags &= ~uint32_t(llvm::COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA);
         if (!(Flags & llvm::COFF::IMAGE_SCN_CNT_CODE))
