@@ -2317,6 +2317,58 @@ Signed: %4</source>
         <source>Processor: %1</source>
         <translation>处理器：%1</translation>
     </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 不是十六进制数</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>加载文件所用的基址</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>选择文件代码运行的处理器</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>入口点(&amp;N)</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>文件偏移(&amp;O)</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>要加载的字节数</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>映像基址(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>加载大小(&amp;Z)</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>处理器类型（双击设置）(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>映像基址</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>到文件末尾</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>开始执行的地址</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>加载的字节在文件中的起始位置</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2355,6 +2407,10 @@ Signed: %4</source>
     <message>
         <source>Solana BPF</source>
         <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>Thumb (AArch32)</source>
+        <translation>Thumb（AArch32）</translation>
     </message>
 </context>
 </TS>

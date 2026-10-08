@@ -25,6 +25,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "JSONText.h"
+#include "LoadOptions.h"
 #include "NativeMobileSession.h"
 #include "NativePhaseTrace.h"
 #include "SessionImpl.h"
@@ -162,6 +163,20 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
     LoadOpts.OnlyFunctionEntries = Policy->OnlyFunctionEntries;
     LoadOpts.ARMFunctionModes = Policy->ARMFunctionModes;
     DbgRequest = Policy->DbgRequest;
+  }
+  // The file reads with the loader its project keeps, as a session load
+  // reads it; the pipeline refuses a binary file.
+  if (Policy && Policy->RequestedLoad) {
+    LoadOpts.Choice = *Policy->RequestedLoad;
+  } else if (auto Kept = readLoadOptionsSidecar(Path); !Kept) {
+    Err = llvm::toString(Kept.takeError());
+    return false;
+  } else {
+    LoadOpts.Choice = *Kept;
+  }
+  if (LoadOpts.Choice.Format == BinaryFormat::Raw) {
+    Err = BinaryFileNotAnalyzed.str();
+    return false;
   }
   auto ImgOrErr = loadBinary(Path, LoadOpts);
   if (!ImgOrErr) {
@@ -327,6 +342,17 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
   BinaryLoadOptions LoadOpts;
   LoadOpts.OnlyFunctionEntries = S->OnlyFunctionEntries;
   LoadOpts.ARMFunctionModes = S->ARMFunctionModes;
+  // The file reads with the loader the caller chose, else the one its
+  // project keeps.
+  if (S->RequestedLoad) {
+    LoadOpts.Choice = *S->RequestedLoad;
+  } else if (auto Kept = readLoadOptionsSidecar(P); !Kept) {
+    S->setError(llvm::toString(Kept.takeError()));
+    Trace.finish(false);
+    return 0;
+  } else {
+    LoadOpts.Choice = *Kept;
+  }
   auto ImgOrErr = loadBinary(P, LoadOpts);
   if (!ImgOrErr) {
     std::string Err;
@@ -339,6 +365,8 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
   const int Result =
       finishSessionLoad(Sess, *S, std::move(*ImgOrErr), std::move(P),
                         std::move(SanitizeSourcePath));
+  if (Result)
+    S->LoadedChoice = LoadOpts.Choice;
   Trace.finish(Result != 0);
   return Result;
 }

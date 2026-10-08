@@ -3,12 +3,15 @@
 #include <QCheckBox>
 #include <QCoreApplication>
 #include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -32,14 +35,18 @@ constexpr ProcessorFamily Families[] = {
 
 struct Processor {
   const char *family, *shortName, *name;
+  bool binary;
 };
 constexpr Processor Processors[] = {
-#define NEVERD_PROCESSOR(Family, ShortName, Name) {#Family, ShortName, Name},
+#define NEVERD_PROCESSOR(Family, ShortName, Name, Binary)                      \
+  {#Family, ShortName, Name, Binary},
 #include "Processors.def"
 };
 
 /// The list shows this many rows before it scrolls.
 constexpr int ListedRows = 5;
+/// Whether a processor list item can read a binary file.
+constexpr int BinaryRole = Qt::UserRole + 1;
 
 } // namespace
 
@@ -79,16 +86,16 @@ LoadFileDialog::LoadFileDialog(const QString &path, const QJsonArray &rows,
   layout->addWidget(loaders_);
 
   // The processor the chosen loader reads the file as.
-  auto *processorHeading = new QLabel(tr("Processor t&ype"), this);
+  processorHeading_ = new QLabel(this);
   processors_ = new QTreeWidget(this);
   processors_->setObjectName(QStringLiteral("processors"));
   processors_->setColumnCount(2);
   processors_->setHeaderHidden(true);
-  processors_->setToolTip(tr("The file's header states the processor"));
-  processorHeading->setBuddy(processors_);
+  processorHeading_->setBuddy(processors_);
   for (const auto &family : Families) {
     auto *folder = new QTreeWidgetItem(
         processors_, {QCoreApplication::translate("Processors", family.name)});
+    folder->setFlags(folder->flags() & ~Qt::ItemIsSelectable);
     for (const auto &processor : Processors)
       if (QLatin1String(processor.family) == QLatin1String(family.id)) {
         auto *item = new QTreeWidgetItem(
@@ -96,14 +103,38 @@ LoadFileDialog::LoadFileDialog(const QString &path, const QJsonArray &rows,
                      QString::fromLatin1(processor.shortName)});
         item->setData(0, Qt::UserRole,
                       QString::fromLatin1(processor.shortName));
+        item->setData(0, BinaryRole, processor.binary);
       }
   }
   processors_->expandAll();
   processors_->resizeColumnToContents(0);
-  // Every loader NeverD has takes the processor from the header.
-  processors_->setEnabled(false);
-  layout->addWidget(processorHeading);
+  layout->addWidget(processorHeading_);
   layout->addWidget(processors_);
+
+  // Where a binary file's bytes map, as IDA's image base and memory
+  // organization ask.
+  auto *placement = new QFormLayout;
+  const auto field = [this](const char *name, const QString &text,
+                            const QString &placeholder) {
+    auto *edit = new QLineEdit(text, this);
+    edit->setObjectName(QLatin1String(name));
+    edit->setPlaceholderText(placeholder);
+    connect(edit, &QLineEdit::textChanged, this, &LoadFileDialog::update);
+    return edit;
+  };
+  base_ = field("base", QStringLiteral("0x0"), {});
+  offset_ = field("offset", QStringLiteral("0x0"), {});
+  size_ = field("size", {}, tr("To the end of the file"));
+  entry_ = field("entry", {}, tr("The image base"));
+  base_->setToolTip(tr("Base address for loading the file"));
+  offset_->setToolTip(tr("Where in the file the loaded bytes start"));
+  size_->setToolTip(tr("How many bytes to load"));
+  entry_->setToolTip(tr("Where execution starts"));
+  placement->addRow(tr("Image &base"), base_);
+  placement->addRow(tr("File &offset"), offset_);
+  placement->addRow(tr("Loading si&ze"), size_);
+  placement->addRow(tr("E&ntry point"), entry_);
+  layout->addLayout(placement);
 
   // What loading does besides reading the image.
   auto *groups = new QHBoxLayout;
@@ -154,31 +185,21 @@ LoadFileDialog::LoadFileDialog(const QString &path, const QJsonArray &rows,
           &LoadFileDialog::select);
   connect(loaders_, &QListWidget::itemDoubleClicked, this,
           [this](QListWidgetItem *item) {
-            if (item->flags() & Qt::ItemIsEnabled)
+            if ((item->flags() & Qt::ItemIsEnabled) && ok_->isEnabled())
               accept();
           });
+  connect(processors_, &QTreeWidget::currentItemChanged, this,
+          &LoadFileDialog::update);
   // The first row loading can read for the file's contents is the default,
   // as in IDA; a row a loader took for the file's name alone is never chosen
   // for the user.
-  bool loadable = false;
-  for (int index = 0; index < loaders_->count(); ++index) {
-    if (!(loaders_->item(index)->flags() & Qt::ItemIsEnabled))
-      continue;
-    loadable = true;
-    if (!rows_[index].toObject().value("by_name").toBool()) {
+  for (int index = 0; index < loaders_->count(); ++index)
+    if ((loaders_->item(index)->flags() & Qt::ItemIsEnabled) &&
+        !rows_[index].toObject().value("by_name").toBool()) {
       loaders_->setCurrentRow(index);
       break;
     }
-  }
-  if (row() < 0) {
-    ok_->setEnabled(false);
-    const auto first = rows_.isEmpty() ? QJsonObject() : rows_[0].toObject();
-    note_->setText(loadable ? tr("Only the file's name suggests a format; "
-                                 "choose a row to load the file that way")
-                            : tr("NeverD cannot load this file: %1")
-                                  .arg(first.value("reason").toString()));
-    note_->show();
-  }
+  select(loaders_->currentRow());
 }
 
 int LoadFileDialog::row() const {
@@ -187,10 +208,49 @@ int LoadFileDialog::row() const {
                                                      : -1;
 }
 
+bool LoadFileDialog::binary() const {
+  const int chosen = row();
+  return chosen >= 0 && rows_[chosen].toObject().value("loader").toString() ==
+                            QLatin1String("binary");
+}
+
+QString LoadFileDialog::chosenProcessor() const {
+  const auto *item = processors_->currentItem();
+  return item && item->data(0, BinaryRole).toBool()
+             ? item->data(0, Qt::UserRole).toString()
+             : QString();
+}
+
+std::optional<quint64> LoadFileDialog::number(const QLineEdit *field,
+                                              std::optional<quint64> empty) {
+  QString text = field->text().trimmed();
+  if (text.isEmpty())
+    return empty;
+  if (text.startsWith(QLatin1String("0x"), Qt::CaseInsensitive))
+    text = text.mid(2);
+  bool ok = false;
+  const quint64 value = text.toULongLong(&ok, 16);
+  return ok ? std::optional<quint64>(value) : std::nullopt;
+}
+
 LoadOptions LoadFileDialog::options() const {
   LoadOptions options;
   options.debugInfo = debugInfo_->isChecked();
   options.analysis = analysis_->isChecked();
+  // A row the file's name alone suggests reads the file only when chosen,
+  // as a binary file does.
+  if (const int chosen = row(); chosen >= 0) {
+    const auto picked = rows_[chosen].toObject();
+    if (binary() || picked.value("by_name").toBool())
+      options.loader = picked.value("loader").toString();
+  }
+  if (binary()) {
+    options.processor = chosenProcessor();
+    options.base = number(base_, 0).value_or(0);
+    options.offset = number(offset_, 0).value_or(0);
+    options.size = number(size_, 0).value_or(0);
+    options.entry = number(entry_);
+  }
   return options;
 }
 
@@ -198,26 +258,86 @@ bool LoadFileDialog::indicator() const { return indicator_->isChecked(); }
 
 void LoadFileDialog::setIndicator(bool shown) { indicator_->setChecked(shown); }
 
+void LoadFileDialog::setBinaryProcessor(const QString &processor) {
+  binaryProcessor_ = processor;
+  select(loaders_->currentRow());
+}
+
 void LoadFileDialog::select(int row) {
-  if (row < 0 || row >= rows_.size())
-    return;
-  const auto chosen = rows_[row].toObject();
-  const auto processor = chosen.value("processor").toString();
+  const bool raw = binary();
+  // A header names the processor; a binary file's is the user's to pick.
+  processorHeading_->setText(raw ? tr("Processor t&ype (double-click to set)")
+                                 : tr("Processor t&ype"));
+  processors_->setEnabled(raw);
+  processors_->setToolTip(raw ? tr("Choose the processor the file's code "
+                                   "runs on")
+                              : tr("The file's header states the processor"));
+  for (auto *field : {base_, offset_, size_, entry_})
+    field->setEnabled(raw);
+  const QString wanted =
+      raw ? binaryProcessor_
+          : (row >= 0 && row < rows_.size()
+                 ? rows_[row].toObject().value("processor").toString()
+                 : QString());
+  // Rewriting the tree moves its current item; the OK state follows once,
+  // from the finished tree.
+  const QSignalBlocker quiet(processors_);
   processors_->clearSelection();
-  bool listed = processor.isEmpty();
+  processors_->setCurrentItem(nullptr);
   for (int family = 0; family < processors_->topLevelItemCount(); ++family) {
     auto *folder = processors_->topLevelItem(family);
-    for (int child = 0; child < folder->childCount(); ++child)
-      if (folder->child(child)->data(0, Qt::UserRole).toString() == processor) {
-        processors_->setCurrentItem(folder->child(child));
-        folder->child(child)->setSelected(true);
-        listed = true;
+    for (int child = 0; child < folder->childCount(); ++child) {
+      auto *item = folder->child(child);
+      const bool usable = !raw || item->data(0, BinaryRole).toBool();
+      item->setFlags(usable ? item->flags() | Qt::ItemIsEnabled
+                            : item->flags() & ~Qt::ItemIsEnabled);
+      if (!wanted.isEmpty() &&
+          item->data(0, Qt::UserRole).toString() == wanted) {
+        processors_->setCurrentItem(item);
+        item->setSelected(true);
       }
+    }
   }
-  // A processor the list does not name still shows.
-  note_->setText(listed ? QString() : tr("Processor: %1").arg(processor));
-  note_->setVisible(!listed);
-  ok_->setEnabled(chosen.value("loadable").toBool());
+  update();
+}
+
+void LoadFileDialog::update() {
+  QString note;
+  bool acceptable = false;
+  const int chosen = row();
+  if (chosen < 0) {
+    bool loadable = false;
+    for (int index = 0; index < loaders_->count(); ++index)
+      loadable |= bool(loaders_->item(index)->flags() & Qt::ItemIsEnabled);
+    const auto first = rows_.isEmpty() ? QJsonObject() : rows_[0].toObject();
+    note = loadable ? tr("Only the file's name suggests a format; choose a row "
+                         "to load the file that way")
+                    : tr("NeverD cannot load this file: %1")
+                          .arg(first.value("reason").toString());
+  } else if (binary()) {
+    if (chosenProcessor().isEmpty())
+      note = tr("Choose the processor the file's code runs on");
+    else if (!number(base_, 0))
+      note = tr("%1 is not a hexadecimal number").arg(base_->text());
+    else if (!number(offset_, 0))
+      note = tr("%1 is not a hexadecimal number").arg(offset_->text());
+    else if (!number(size_, 0))
+      note = tr("%1 is not a hexadecimal number").arg(size_->text());
+    else if (!entry_->text().trimmed().isEmpty() && !number(entry_))
+      note = tr("%1 is not a hexadecimal number").arg(entry_->text());
+    else
+      acceptable = true;
+  } else {
+    acceptable = rows_[chosen].toObject().value("loadable").toBool();
+    // A processor the list does not name still shows.
+    const auto processor =
+        rows_[chosen].toObject().value("processor").toString();
+    if (!processor.isEmpty() && !processors_->currentItem())
+      note = tr("Processor: %1").arg(processor);
+  }
+  ok_->setEnabled(acceptable);
+  note_->setText(note);
+  note_->setVisible(!note.isEmpty());
 }
 
 } // namespace neverd::gui

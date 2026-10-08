@@ -75,22 +75,30 @@ std::vector<LoadCandidate> identifyFile(const std::filesystem::path &Path) {
       break;
     case BinaryFormat::EVM:
     case BinaryFormat::Unknown:
-      // Bytecode text or an artifact shows in the contents; an EVM file
-      // name takes any contents.
-      if (evm::looksLikeEVMInput(Path))
+    case BinaryFormat::Raw:
+      // Binary data under a name other tools share reads as bytecode only
+      // when the user chooses so.
+      switch (evm::matchEVMInput(Path)) {
+      case evm::EVMInputMatch::Bytecode:
         EVMLoader::identify(Rows, /*ByName=*/false);
-      else if (evm::hasEVMFileExtension(Path))
+        break;
+      case evm::EVMInputMatch::Name:
         EVMLoader::identify(Rows, /*ByName=*/true);
+        break;
+      case evm::EVMInputMatch::None:
+        break;
+      }
       break;
     }
   }
   std::stable_partition(Rows.begin(), Rows.end(),
                         [](const LoadCandidate &Row) { return Row.First; });
-  // Any file can be read as a binary file.
+  // Any file can be read as a binary file of the processor the user names.
   LoadCandidate Binary;
   Binary.Row = LoadRow::Binary;
+  Binary.Format = BinaryFormat::Raw;
   Binary.Description = getLoadRowText(LoadRow::Binary).str();
-  Binary.Reason = getLoadReasonText(LoadReason::Binary).str();
+  Binary.Loadable = true;
   Rows.push_back(std::move(Binary));
   return Rows;
 }
@@ -105,6 +113,10 @@ std::unique_ptr<Loader> Loader::create(BinaryFormat Format) {
     return std::make_unique<MachOLoader>();
   case BinaryFormat::EVM:
     return std::make_unique<EVMLoader>();
+  case BinaryFormat::Raw:
+    // A binary file's loader needs the processor and placement the user
+    // chose; loadBinary makes it from them.
+    return nullptr;
   default:
     return nullptr;
   }
@@ -113,12 +125,21 @@ std::unique_ptr<Loader> Loader::create(BinaryFormat Format) {
 std::unique_ptr<Loader> Loader::create(const std::filesystem::path &Path) {
   BinaryFormat Fmt = detectFormat(Path);
   if (Fmt == BinaryFormat::Unknown) {
-    if (evm::hasEVMFileExtension(Path) || evm::looksLikeEVMInput(Path))
+    if (evm::matchEVMInput(Path) == evm::EVMInputMatch::Bytecode)
       Fmt = BinaryFormat::EVM;
     else
       return nullptr;
   }
   return create(Fmt);
+}
+
+std::string Loader::describeRefusal(const std::filesystem::path &Path) {
+  if (evm::matchEVMInput(Path) == evm::EVMInputMatch::Name)
+    return pathToUTF8(Path) +
+           ": only its name ties it to EVM bytecode, a name other tools give "
+           "their files too; choose its loader: evm reads it as bytecode, "
+           "binary as a processor's code";
+  return "unknown binary format: " + pathToUTF8(Path);
 }
 
 } // namespace neverd

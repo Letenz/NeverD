@@ -21,6 +21,17 @@ struct LoadOptions {
   bool debugInfo = true;
   /// Analyze in idle time: function discovery and the reference index.
   bool analysis = true;
+  /// The loader the user chose for a file that names no format itself:
+  /// "evm" for EVM bytecode, or "binary" as the fields below place it; empty
+  /// reads the file as its header or contents say.
+  QString loader;
+  /// A binary file: the processor its code is read as ("x86_64", "thumb",
+  /// ...), the address its bytes map at, the bytes from offset on (size 0
+  /// for the rest of the file), and where execution starts (the base when
+  /// unset).
+  QString processor;
+  quint64 base = 0, offset = 0, size = 0;
+  std::optional<quint64> entry;
 };
 
 /// One analysis worker and the binary it has open.  The session starts the

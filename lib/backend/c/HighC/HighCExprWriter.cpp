@@ -683,17 +683,25 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   case NdOp::FLOAT_NEG:
     return "-" + exprStr(*E.Operands[0], 99);
   case NdOp::FLOAT_ABS:
-    return "__builtin_fabs(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_SQRT:
-    return "__builtin_sqrt(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_CEIL:
-    return "__builtin_ceil(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_FLOOR:
-    return "__builtin_floor(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_ROUND:
-    return "__builtin_round(" + exprStr(*E.Operands[0]) + ")";
-  case NdOp::FLOAT_ROUNDEVEN:
-    return "__builtin_nearbyint(" + exprStr(*E.Operands[0]) + ")";
+  case NdOp::FLOAT_ROUNDEVEN: {
+    // A `long double` computes through the `l` builtins; the x87 rounds and
+    // takes roots with its own instructions, which no C library need link.
+    const bool Extended = isX87Value(*E.Operands[0]);
+    if (const auto Helper = x87HelperFor(E))
+      return useX87Helper(*Helper) + "(" + exprStr(*E.Operands[0]) + ")";
+    const char *Name = E.Op == NdOp::FLOAT_ABS     ? "__builtin_fabs"
+                       : E.Op == NdOp::FLOAT_SQRT  ? "__builtin_sqrt"
+                       : E.Op == NdOp::FLOAT_CEIL  ? "__builtin_ceil"
+                       : E.Op == NdOp::FLOAT_FLOOR ? "__builtin_floor"
+                       : E.Op == NdOp::FLOAT_ROUND ? "__builtin_round"
+                                                   : "__builtin_nearbyint";
+    return std::string(Name) + (Extended ? "l(" : "(") +
+           exprStr(*E.Operands[0]) + ")";
+  }
   case NdOp::FLOAT_ISNAN:
     return "__builtin_isnan(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_INT2FLOAT:
@@ -704,6 +712,40 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     return "/* unary " + std::to_string(static_cast<int>(E.Op)) + " */ " +
            exprStr(*E.Operands[0]);
   }
+}
+
+bool HighCWriter::isX87Value(const HighExpr &E) {
+  return E.Type && E.Type->Kind == NdTypeKind::Float && E.Type->Size == 10;
+}
+
+std::optional<X87CHelper> HighCWriter::x87HelperFor(const HighExpr &E) const {
+  // The control word the function reads before setting it is the unit's.
+  if (E.Kind == ExprKind::Var && E.Var.SSAVer == 0 &&
+      isX87ControlWord(Opts.TheArch, E.Var))
+    return X87CHelper::ControlWord;
+  if (E.Kind == ExprKind::BitCast && E.Operands.size() == 1 && E.Operands[0]) {
+    if (isX87Value(E))
+      return X87CHelper::Value;
+    if (isX87Value(*E.Operands[0]))
+      return X87CHelper::Bits;
+  }
+  if (E.Kind == ExprKind::UnaryOp &&
+      (E.Op == NdOp::FLOAT_ROUNDEVEN || E.Op == NdOp::FLOAT_SQRT) &&
+      !E.Operands.empty() && E.Operands[0] && isX87Value(*E.Operands[0]))
+    return E.Op == NdOp::FLOAT_SQRT ? X87CHelper::Fsqrt : X87CHelper::Frndint;
+  if (E.Kind != ExprKind::Call)
+    return std::nullopt;
+  if (E.IntrinsicId == Intrinsic::X87Fprem ||
+      E.IntrinsicId == Intrinsic::X87Fprem1 ||
+      E.IntrinsicId == Intrinsic::X87ReadStatus)
+    return X87CHelper::Fprem;
+  return x87ValueHelper(E.IntrinsicId);
+}
+
+std::string HighCWriter::useX87Helper(X87CHelper Helper) const {
+  if (!X87Helpers.count(Helper))
+    throw std::runtime_error("HighC x87 helper was not collected");
+  return x87CHelperName(Helper);
 }
 
 /// A callee whose name renders to the identifier of a different function
@@ -893,7 +935,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   if (E.IntrinsicId != Intrinsic::None) {
     auto Typed = renderX86TypedIntrinsicCall(
         Opts.TheArch, E, [this](const HighExpr &Expr) { return exprStr(Expr); },
-        HasCIntrinsics);
+        HasCIntrinsics, Opts.Format != BinaryFormat::COFF);
     if (!Typed.empty())
       return Typed;
 
@@ -3051,8 +3093,11 @@ std::string HighCWriter::unknownVarUse(const HighExpr &E,
       E.Var.SSAVer == 0 && Name == RawName && !AssignedNames.count(RawName) &&
       !isEmittedParamName(RawName) &&
       !(CurrentFunc &&
-        isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch)))
+        isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch))) {
+    if (x87HelperFor(E) == X87CHelper::ControlWord)
+      return useX87Helper(X87CHelper::ControlWord) + "()";
     return "(__builtin_trap(), 0 /* unknown register */)";
+  }
   return {};
 }
 
@@ -3743,8 +3788,13 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return *Slot;
       if (auto VA = constAddress(*E.Operands[0])) {
         const uint16_t Size = E.Type ? E.Type->Size : 0;
-        if (auto Imm = foldReadonlyScalar(*VA, Size))
+        if (auto Imm = foldReadonlyScalar(*VA, Size)) {
+          // A float read from constant data is its value: the bits printed
+          // as an integer would convert to another one.
+          if (const auto Float = floatConstantText(*Imm, E.Type))
+            return *Float;
           return constStr(*Imm);
+        }
         if (auto Name = imageObjectName(*VA)) {
           // A string's pointer reads as the integer the machine loads where
           // no parameter takes it as the pointer it is.
@@ -3853,6 +3903,12 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                          E.Type->IsSigned);
       return "(" + typeToC(E.Type) + ")" + exprStr(Src, 99);
     }
+    // An x87 value's 80 bits fill ten bytes of a wider C object, which
+    // __builtin_bit_cast cannot reinterpret: they are copied.
+    if (isX87Value(E))
+      return useX87Helper(X87CHelper::Value) + "(" + exprStr(Src) + ")";
+    if (isX87Value(Src))
+      return useX87Helper(X87CHelper::Bits) + "(" + exprStr(Src) + ")";
     // The explicit source cast prevents integer promotions (or an unsuffixed
     // constant) from changing the operand's byte width inside the builtin.
     return "__builtin_bit_cast(" + typeToC(E.Type) + ", (" + typeToC(Src.Type) +
@@ -4009,8 +4065,13 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
   auto PeelReturnViews = [&](const HighExpr *Cur) {
     for (unsigned Peel = 0; Peel < limits::kMaxIntegerViewUnwrapDepth && Cur;
          ++Peel) {
+      // A view of an integer only: the bits of a floating value are no
+      // view of it, and C would convert the value they were peeled from.
       if ((Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast) &&
-          !Cur->Operands.empty() && Cur->Operands[0]) {
+          !Cur->Operands.empty() && Cur->Operands[0] &&
+          (!Cur->Operands[0]->Type ||
+           Cur->Operands[0]->Type->Kind == NdTypeKind::Int ||
+           Cur->Operands[0]->Type->Kind == NdTypeKind::Ptr)) {
         Cur = Cur->Operands[0].get();
         continue;
       }

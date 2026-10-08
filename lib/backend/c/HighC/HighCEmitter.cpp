@@ -446,6 +446,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   Has256BitInteger = false;
   Has512BitInteger = false;
   Int128AsBitInt = false;
+  X87Helpers.clear();
+  UsesX87Extended = false;
   // Native AArch64 vector carriers are projected to SVE ACLE types.  x86
   // vector intrinsics use scalar integer carriers at the HighIR boundary.
   const bool ProjectsScalarWideIntegers =
@@ -461,6 +463,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
                         Type->Kind == NdTypeKind::Int && Type->Size == 64;
     Int128AsBitInt |= !TargetHasInt128 && Type &&
                       Type->Kind == NdTypeKind::Int && Type->Size == 16;
+    UsesX87Extended |= Type && Type->Kind == NdTypeKind::Float &&
+                       Type->Size == 10 && Type->SourceName.empty();
   };
   std::set<const HighExpr *> Seen;
   bool HideEHRuntimeMemory = false;
@@ -472,6 +476,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       return;
     CollectWideType(E.Type);
     CollectWideType(E.CastTo);
+    if (const auto Helper = x87HelperFor(E))
+      X87Helpers.insert(*Helper);
     if (E.Kind == ExprKind::UnaryOp && E.Op == NdOp::LZCOUNT &&
         !E.Operands.empty() && E.Operands[0]) {
       const unsigned Bits = countedBits(*E.Operands[0]);
@@ -1293,16 +1299,13 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       }
       if (Ex.IntrinsicId == Intrinsic::A64_Frinti)
         NeedsFEnvAccess = true;
-      const bool IsX87FpremHelper = Ex.IntrinsicId == Intrinsic::X87Fprem ||
-                                    Ex.IntrinsicId == Intrinsic::X87Fprem1 ||
-                                    Ex.IntrinsicId == Intrinsic::X87ReadStatus;
-      if (IsX87FpremHelper)
-        NeedsX87FpremHelpers = true;
-      else if (Ex.IntrinsicId == Intrinsic::X64Syscall)
+      const bool IsX87Helper = x87HelperFor(Ex).has_value();
+      if (Ex.IntrinsicId == Intrinsic::X64Syscall)
         NeedsX64SyscallHelper = true;
       else if (Ex.IntrinsicId == Intrinsic::X64WindowsSyscall)
         NeedsX64WindowsSyscallHelper = true;
-      else if (Ex.IntrinsicId != Intrinsic::None &&
+      // The x87 helpers, collected with the unit's types, need no header.
+      else if (Ex.IntrinsicId != Intrinsic::None && !IsX87Helper &&
                (intrinsicCName(Ex.IntrinsicId) ||
                 x86MemoryIntrinsicUsesCHeader(Ex.IntrinsicId)))
         HasCIntrinsics = true;
@@ -2643,76 +2646,30 @@ HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
                         : std::optional<std::string>(constStr(Value, Type));
   case NdTypeKind::Ptr:
     return "(" + typeToC(Type) + ")" + constStr(Value);
-  case NdTypeKind::Float: {
-    if (Type->Size != 4 && Type->Size != 8)
-      return std::nullopt;
-    const llvm::APFloat Float(Type->Size == 4 ? llvm::APFloat::IEEEsingle()
-                                              : llvm::APFloat::IEEEdouble(),
-                              llvm::APInt(Type->Size * 8, Value));
-    // A hexadecimal floating constant is exact; C has none for infinities
-    // and NaNs, which take their bits.
-    if (!Float.isFinite())
-      return "__builtin_bit_cast(" + typeToC(Type) + ", 0x" +
-             llvm::utohexstr(Value) + (Type->Size == 4 ? "u" : "ull") + ")";
-    char Text[64];
-    Float.convertToHexString(Text, 0, /*UpperCase=*/false,
-                             llvm::APFloat::rmNearestTiesToEven);
-    return std::string(Text) + (Type->Size == 4 ? "f" : "");
-  }
+  case NdTypeKind::Float:
+    return floatConstantText(Value, Type);
   default:
     return std::nullopt;
   }
 }
 
-void HighCWriter::writeX87FpremHelpers() {
-  if (!NeedsX87FpremHelpers)
-    return;
-  // The status must be sampled inside the same asm block as FPREM. A separate
-  // C expression could let the compiler spill an x87 value before FNSTSW and
-  // thereby change the condition codes observed by the source program.
-  OS << "static _Thread_local uint16_t neverd_x87_fprem_status;\n"
-        "static _Thread_local unsigned char "
-        "neverd_x87_fprem_status_pending;\n\n"
-        "static inline _BitInt(80) neverd_x87_partial_remainder(\n"
-        "    _BitInt(80) dividend, _BitInt(80) divisor, int nearest) {\n"
-        "    unsigned char lhs[10], rhs[10], result[10];\n"
-        "    uint16_t status;\n"
-        "    __builtin_memcpy(lhs, &dividend, 10);\n"
-        "    __builtin_memcpy(rhs, &divisor, 10);\n"
-        "    if (nearest) {\n"
-        "        __asm__ volatile(\"fldt %[rhs]\\n\\t"
-        "fldt %[lhs]\\n\\tfprem1\\n\\tfnstsw %%ax\\n\\t"
-        "fstpt %[result]\\n\\tfstp %%st(0)\"\n"
-        "            : [result] \"=m\"(result), \"=a\"(status)\n"
-        "            : [lhs] \"m\"(lhs), [rhs] \"m\"(rhs)\n"
-        "            : \"cc\", \"memory\", \"st\", \"st(1)\");\n"
-        "    } else {\n"
-        "        __asm__ volatile(\"fldt %[rhs]\\n\\t"
-        "fldt %[lhs]\\n\\tfprem\\n\\tfnstsw %%ax\\n\\t"
-        "fstpt %[result]\\n\\tfstp %%st(0)\"\n"
-        "            : [result] \"=m\"(result), \"=a\"(status)\n"
-        "            : [lhs] \"m\"(lhs), [rhs] \"m\"(rhs)\n"
-        "            : \"cc\", \"memory\", \"st\", \"st(1)\");\n"
-        "    }\n"
-        "    neverd_x87_fprem_status = status;\n"
-        "    neverd_x87_fprem_status_pending = 1;\n"
-        "    _BitInt(80) bits = 0;\n"
-        "    __builtin_memcpy(&bits, result, 10);\n"
-        "    return bits;\n"
-        "}\n\n"
-        "static inline _BitInt(80) neverd_x87_fprem(\n"
-        "    _BitInt(80) dividend, _BitInt(80) divisor) {\n"
-        "    return neverd_x87_partial_remainder(dividend, divisor, 0);\n"
-        "}\n\n"
-        "static inline _BitInt(80) neverd_x87_fprem1(\n"
-        "    _BitInt(80) dividend, _BitInt(80) divisor) {\n"
-        "    return neverd_x87_partial_remainder(dividend, divisor, 1);\n"
-        "}\n\n"
-        "static inline uint16_t neverd_x87_read_status(void) {\n"
-        "    if (!neverd_x87_fprem_status_pending) __builtin_trap();\n"
-        "    neverd_x87_fprem_status_pending = 0;\n"
-        "    return neverd_x87_fprem_status;\n"
-        "}\n\n";
+std::optional<std::string>
+HighCWriter::floatConstantText(uint64_t Value, const TypeRef &Type) const {
+  if (!Type || Type->Kind != NdTypeKind::Float ||
+      (Type->Size != 4 && Type->Size != 8))
+    return std::nullopt;
+  const llvm::APFloat Float(Type->Size == 4 ? llvm::APFloat::IEEEsingle()
+                                            : llvm::APFloat::IEEEdouble(),
+                            llvm::APInt(Type->Size * 8, Value));
+  // A hexadecimal floating constant is exact; C has none for infinities
+  // and NaNs, which take their bits.
+  if (!Float.isFinite())
+    return "__builtin_bit_cast(" + typeToC(Type) + ", 0x" +
+           llvm::utohexstr(Value) + (Type->Size == 4 ? "u" : "ull") + ")";
+  char Text[64];
+  Float.convertToHexString(Text, 0, /*UpperCase=*/false,
+                           llvm::APFloat::rmNearestTiesToEven);
+  return std::string(Text) + (Type->Size == 4 ? "f" : "");
 }
 
 void HighCWriter::writeX64SyscallHelper() {
@@ -2829,8 +2786,8 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
     walkStmts(Func.Body,
               [&](const HighStmt &Stmt) { forEachExpr(Stmt, Visit); });
   }
+  writeX87CHelpers(OS, UsesX87Extended, X87Helpers);
   writeMemoryHelpers();
-  writeX87FpremHelpers();
   writeX64SyscallHelper();
   writeX64WindowsSyscallHelper();
   writeForwardDecls(Funcs);

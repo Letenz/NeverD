@@ -43,7 +43,7 @@ EVM. La reescritura binaria EVM se rechaza explícitamente; `patch` sigue siendo
 
 | Entrada | Reconocimiento y normalización |
 |---------|--------------------------------|
-| Bytes crudos | `.raw`, `.evmraw` o contenido binario con extensión EVM explícita |
+| Bytes crudos | Contenido binario en `.evm` o `.evmraw`. El contenido binario en `.bin`, `.hex`, `.bytecode`, `.json` o `.raw`, extensiones que también usan otras herramientas, se lee como bytecode EVM solo si se elige el cargador EVM (`--loader evm` o la fila EVM del diálogo de carga); si no, la carga lo rechaza |
 | Texto hexadecimal | `0x` opcional, espacios ASCII arbitrarios, `.evm`, `.hex`, `.bin`, `.bytecode`; también se detecta hex sin extensión tras validarlo |
 | Artefacto de compilador | `.json` con `deployedBytecode`, `runtimeBytecode` o `bytecode` en raíz o bajo `evm`; también JSON estándar solc `contracts → file → contract → evm` |
 

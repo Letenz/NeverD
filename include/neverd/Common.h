@@ -372,7 +372,10 @@ inline const char *getArchName(Arch A) {
   }
 }
 
-enum class BinaryFormat : uint8_t { ELF, COFF, MachO, EVM, Unknown };
+/// The container a binary came in.  Raw is a file no header describes, read
+/// as one processor's code at an address the user names; it follows Unknown
+/// so the other formats keep their numbers.
+enum class BinaryFormat : uint8_t { ELF, COFF, MachO, EVM, Unknown, Raw };
 
 enum class Bitness : uint8_t { Bits32, Bits64, Bits256, Unknown };
 

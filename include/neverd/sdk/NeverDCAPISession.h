@@ -55,6 +55,26 @@ NEVERD_API int neverd_session_load(neverd_session_t Sess, const char *Path);
 /// {"rows":[],"error"} when \p Path names no regular file.  Path is UTF-8.
 /// Free with neverd_free_string.
 NEVERD_API const char *neverd_identify_json(const char *Path);
+/// Read the input of the next neverd_session_load() as \p OptionsJson says
+/// instead of by its header: {"loader":"binary","processor":"x86"|"x86_64"|
+/// "arm"|"thumb"|"aarch64","base","offset","size","entry"?} reads it as a
+/// binary file -- the bytes from offset on (size 0 for the rest of the file)
+/// as that processor's code at base, starting at entry (base when absent);
+/// numbers are integers or hexadecimal strings.  {"loader":"auto"} reads the
+/// header even when the input's `.neverd-load.json` says otherwise; NULL
+/// drops the request, so a load reads that file when there is one.  A binary
+/// file's functions are browsed, not decompiled: analysis refuses it, since
+/// nothing states its calling convention.  Returns 0, or -1 with
+/// neverd_last_error.
+NEVERD_API int neverd_session_set_load_options(neverd_session_t Sess,
+                                               const char *OptionsJson);
+/// How the loaded image was read, in neverd_session_set_load_options JSON;
+/// "{}" before a load.  Free with neverd_free_string.
+NEVERD_API const char *neverd_session_load_options_json(neverd_session_t Sess);
+/// Keep how the image was read in `<input>.neverd-load.json` for later loads,
+/// or remove that file when the header was read.  Returns 0, or -1 with
+/// neverd_last_error.
+NEVERD_API int neverd_load_options_save(neverd_session_t Sess);
 NEVERD_API int neverd_session_is_loaded(neverd_session_t Sess);
 
 /// Add the native function entries the function detector finds in the loaded

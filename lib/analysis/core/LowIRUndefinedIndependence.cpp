@@ -10,7 +10,11 @@
 #include "../arch/x86_64/NativeStackControl.h"
 #include "../arch/x86_64/X64Recovery.h"
 #include "../arch/x86_64/X64UserFlags.h"
+#include "CompleteModel.h"
 #include "CompletedQueryCache.h"
+#include "CompletedTargetFacts.h"
+#include "ConditionalImplication.h"
+#include "DomainCoverage.h"
 #include "FiniteQueryCache.h"
 #include "FiniteValues.h"
 #include "FrameEntryConstraints.h"
@@ -338,6 +342,72 @@ struct RefinementSession {
   const LowFunc *Original = nullptr;
 };
 
+// Named factories bind every fallback domain to the complete question. There
+// is no API for adding a stronger domain hint to an unrelated predicate.
+class ProofQuery {
+public:
+  enum class Mode {
+    Complete,
+    Ordered,
+    Branch,
+    SelectorFeasibility,
+    SelectorCoverage,
+    TerminalCoverage,
+    PathPair,
+    Implication
+  };
+  using Encoding = std::unique_ptr<solver::BitVectorSolver>;
+  const Mode Kind;
+  const SymRef Predicate, Domain, Detail;
+  Encoding *const ReusableEncoding;
+
+private:
+  ProofQuery(Mode Kind, SymRef Predicate, SymRef Domain = {},
+             SymRef Detail = {}, Encoding *ReusableEncoding = nullptr)
+      : Kind(Kind), Predicate(Predicate), Domain(Domain), Detail(Detail),
+        ReusableEncoding(ReusableEncoding) {}
+  static ProofQuery bind(SymContext &Ctx, Mode Kind, SymRef Domain, SymRef Term,
+                         bool Negated, Encoding *Reuse = nullptr) {
+    const auto Boolean = [&](SymRef R) {
+      return R && R.index() < Ctx.numNodes() && Ctx.width(R) == 1;
+    };
+    if (!Boolean(Domain) || !Boolean(Term))
+      return {Kind, {}};
+    return {Kind, Ctx.mkAnd(Domain, Negated ? Ctx.mkNot(Term) : Term), Domain,
+            Term, Reuse};
+  }
+
+public:
+  static ProofQuery complete(SymRef Predicate, Encoding *Reuse = nullptr) {
+    return {Mode::Complete, Predicate, {}, {}, Reuse};
+  }
+  static ProofQuery ordered(SymRef Predicate, SymRef First) {
+    return {Mode::Ordered, Predicate, {}, First};
+  }
+  static ProofQuery branch(SymContext &Ctx, SymRef Incoming, SymRef Condition,
+                           bool Taken, Encoding &Reuse) {
+    return bind(Ctx, Mode::Branch, Incoming, Condition, !Taken, &Reuse);
+  }
+  static ProofQuery selector(SymContext &Ctx, SymRef Domain, SymRef Condition) {
+    return bind(Ctx, Mode::SelectorFeasibility, Domain, Condition, false);
+  }
+  static ProofQuery selectorCoverage(SymContext &Ctx, SymRef Domain,
+                                     SymRef Coverage) {
+    return bind(Ctx, Mode::SelectorCoverage, Domain, Coverage, true);
+  }
+  static ProofQuery terminalCoverage(SymContext &Ctx, SymRef Domain,
+                                     SymRef Coverage) {
+    return bind(Ctx, Mode::TerminalCoverage, Domain, Coverage, true);
+  }
+  static ProofQuery pathPair(SymContext &Ctx, SymRef Candidate,
+                             SymRef Original) {
+    return bind(Ctx, Mode::PathPair, Candidate, Original, false);
+  }
+  static ProofQuery implication(SymContext &Ctx, SymRef Domain, SymRef Goal) {
+    return bind(Ctx, Mode::Implication, Domain, Goal, true);
+  }
+};
+
 class Checker {
   friend class LoopPlanInference;
   const LowFunc *Function = nullptr;
@@ -380,6 +450,10 @@ class Checker {
   // Frame and native target projections clone one pristine full predicate.
   // Their models, blocking clauses and searches remain independent.
   detail::FiniteDomainEncoding ProjectionDomain{Ctx, Limits.Solver};
+  detail::CompletedTargetFacts TargetFacts{Ctx, Limits.MaxSymbolicNodes};
+  SymRef PristineDomainPredicate;
+  std::unique_ptr<solver::BitVectorSolver> PristineDomainEncoding;
+  conditional_implication::Cache ConditionalProofs;
   // One completed model-free query in this immutable DAG and fixed solver
   // configuration. No model, incomplete answer or cross-context fact escapes.
   SymRef LastCompletedQuery;
@@ -505,7 +579,8 @@ class Checker {
           fail(Status::Invalid, "overlapping feasible loop cutpoint selectors");
         Selected = Selected ? Ctx.mkOr(Selected, Left) : Left;
         const auto Domain = Ctx.mkAnd(P.Predicate, Left);
-        if (query(Domain) == solver::SatResult::Unsat)
+        if (query(ProofQuery::selector(Ctx, P.Predicate, Left)) ==
+            solver::SatResult::Unsat)
           continue;
         if (++ScheduledPaths > Limits.MaxPaths)
           fail(Status::BudgetExceeded, "loop selector path budget exhausted");
@@ -539,7 +614,8 @@ class Checker {
     }
     if (Selected) {
       const auto Unmatched = Ctx.mkAnd(P.Predicate, Ctx.mkNot(Selected));
-      if (query(Unmatched) == solver::SatResult::Unsat)
+      if (query(ProofQuery::selectorCoverage(Ctx, P.Predicate, Selected)) ==
+          solver::SatResult::Unsat)
         return true;
       P.Predicate = Unmatched;
     }
@@ -564,15 +640,143 @@ class Checker {
     ++Result.SolverQueries;
   }
 
-  solver::SatResult
-  query(SymRef Predicate,
-        std::unique_ptr<solver::BitVectorSolver> *EncodingCache = nullptr,
-        SymRef OrderedConjunct = {}) {
+  std::unique_ptr<solver::BitVectorSolver> domainEncoding(SymRef Predicate) {
+    if (PristineDomainEncoding && Predicate == PristineDomainPredicate)
+      if (auto Copy = PristineDomainEncoding->cloneEncoding())
+        return Copy;
+    PristineDomainEncoding.reset();
+    auto Options = Limits.Solver;
+    Options.BuildModel = false;
+    auto Fresh = std::make_unique<solver::BitVectorSolver>(Ctx, Options);
+    if (Fresh->assertTrue(Predicate)) {
+      PristineDomainEncoding = Fresh->cloneEncoding();
+      PristineDomainPredicate = Predicate;
+    }
+    return Fresh;
+  }
+
+  struct CoverageProof {
+    bool Proved = false;
+    uint64_t Guards = 0, Facts = 0, FreshQueries = 0, Words = 0;
+  };
+
+  CoverageProof proveSelectorCoverage(SymRef Predicate, SymRef Domain,
+                                      SymRef Coverage) {
+    CoverageProof Proof;
+    uint64_t Remaining = Limits.MaxSymbolicNodes;
+    const auto Finish = [&](bool Proved) {
+      Proof.Proved = Proved;
+      Proof.Words = Limits.MaxSymbolicNodes - Remaining;
+      return Proof;
+    };
+    const auto Boolean = [&](SymRef R) {
+      return R && R.index() < Ctx.numNodes() && Ctx.width(R) == 1;
+    };
+    if (!Boolean(Predicate) || !Boolean(Domain) || !Boolean(Coverage))
+      return Finish(false);
+    if (Ctx.mkAnd(Domain, Ctx.mkNot(Coverage)) != Predicate)
+      return Finish(false);
     nodes();
-    if (Predicate && Predicate == LastCompletedQuery)
+    llvm::SmallVector<SymRef, 8> Guards;
+    if (Ctx.op(Coverage) == symbolic::SymOp::And) {
+      if (Ctx.numOperands(Coverage) > Remaining)
+        return Finish(false);
+      Remaining -= Ctx.numOperands(Coverage);
+      Guards.append(Ctx.operands(Coverage).begin(),
+                    Ctx.operands(Coverage).end());
+    } else {
+      if (!Remaining)
+        return Finish(false);
+      --Remaining;
+      Guards.push_back(Coverage);
+    }
+    for (SymRef Guard : Guards) {
+      chargeQuery();
+      ++Proof.Guards;
+      const auto Known = TargetFacts.proves(Ctx, Domain, Guard, Remaining);
+      if (Known == detail::CompletedTargetFacts::Answer::BudgetExceeded)
+        return Finish(false);
+      if (Known == detail::CompletedTargetFacts::Answer::Proved) {
+        ++Proof.Facts;
+        continue;
+      }
+      // Every fresh obligation retains the complete current domain. One
+      // unproved sibling keeps the original coverage query unresolved.
+      const auto Question = Ctx.mkAnd(Domain, Ctx.mkNot(Guard));
+      nodes();
+      auto Options = Limits.Solver;
+      Options.BuildModel = false;
+      solver::BitVectorSolver Fresh(Ctx, Options);
+      Fresh.assertTrue(Domain);
+      Fresh.assertTrue(Question);
+      ++Proof.FreshQueries;
+      if (Fresh.check() != solver::SatResult::Unsat)
+        return Finish(false);
+    }
+    return Finish(true);
+  }
+
+  conditional_implication::Limits conditionalLimits() const {
+    conditional_implication::Limits Bound;
+    Bound.MaxNodes = Limits.MaxSymbolicNodes;
+    Bound.MaxWork = Limits.MaxSymbolicNodes;
+    Bound.MaxWidth =
+        Limits.Solver.Blast.MaxWidth ? Limits.Solver.Blast.MaxWidth : 256;
+    Bound.MaxQueries = Limits.MaxSolverQueries;
+    return Bound;
+  }
+
+  bool proveTerminalCoverage(SymRef Predicate, SymRef Domain, SymRef Covered) {
+    const auto Check = [&](SymRef Question, SymRef D) {
+      nodes();
+      chargeQuery();
+      auto Options = Limits.Solver;
+      Options.BuildModel = false;
+      solver::BitVectorSolver Fresh(Ctx, Options);
+      Fresh.assertTrue(D);
+      Fresh.assertTrue(Question);
+      return Fresh.check();
+    };
+    const auto Factors = detail::proveCoverageFromDomainFacts(
+        Ctx, Predicate, Domain, Covered, Limits.MaxSymbolicNodes,
+        [&](SymRef Question) { return Check(Question, Domain); },
+        [&] { nodes(); });
+    if (Factors.Proved)
+      return true;
+    return detail::provePartitionedCoverage(
+               Ctx, Domain, Covered, Limits.MaxSymbolicNodes,
+               [&](SymRef D, SymRef Goal) {
+                 return Check(Ctx.mkAnd(D, Ctx.mkNot(Goal)), D);
+               },
+               [&] { nodes(); })
+        .Proved;
+  }
+
+  solver::SatResult completeQuery(SymRef Predicate, solver::SatResult Answer) {
+    if (LastCompletedQuery) {
+      QueryProofs.store(Ctx, LastCompletedQuery, LastCompletedAnswer);
+      QueryProofs.store(Ctx, Predicate, Answer);
+    }
+    LastCompletedQuery = Predicate;
+    LastCompletedAnswer = Answer;
+    if (Answer == solver::SatResult::Sat)
+      LastFeasibleQuery = Predicate;
+    return Answer;
+  }
+
+  solver::SatResult query(const ProofQuery &Request) {
+    using Mode = ProofQuery::Mode;
+    const auto Predicate = Request.Predicate;
+    const auto Domain = Request.Domain;
+    auto *EncodingCache = Request.ReusableEncoding;
+    nodes();
+    if (!Predicate || Predicate.index() >= Ctx.numNodes() ||
+        Ctx.width(Predicate) != 1)
+      fail(Status::Invalid, "invalid relational solver query");
+    if (Predicate == LastCompletedQuery)
       return LastCompletedAnswer;
     chargeQuery();
-    if (Predicate && Predicate == LastFeasibleQuery) {
+    if (Predicate == LastFeasibleQuery) {
       LastCompletedQuery = Predicate;
       LastCompletedAnswer = solver::SatResult::Sat;
       return LastCompletedAnswer;
@@ -584,47 +788,122 @@ class Checker {
         LastFeasibleQuery = Predicate;
       return *Hit;
     }
-    const bool Reused = EncodingCache && *EncodingCache;
+    const auto ChargeConditional = [&] {
+      nodes();
+      chargeQuery();
+      return true;
+    };
+    if (Request.Kind == Mode::Implication) {
+      const auto Proof = ConditionalProofs.proveCached(
+          Ctx, Domain, Request.Detail, Limits.Solver, conditionalLimits(),
+          ChargeConditional);
+      nodes();
+      if (Proof.Proved)
+        return completeQuery(Predicate, solver::SatResult::Unsat);
+    }
+
+    // Terminal coverage first searches the original complete query. Domain
+    // preparation belongs only to the explicitly bound modes that admit it.
+    const auto EncodingDomain =
+        Request.Kind == Mode::TerminalCoverage ? SymRef{} : Domain;
+    const bool HasDomain = EncodingDomain && !Ctx.isConst(EncodingDomain) &&
+                           !Ctx.isConst(Predicate);
     const auto Fresh = [&] {
+      if (HasDomain)
+        return domainEncoding(EncodingDomain);
       auto Options = Limits.Solver;
       Options.BuildModel = false;
       return std::make_unique<solver::BitVectorSolver>(Ctx, Options);
     };
+    const bool Reused = EncodingCache && *EncodingCache;
     if (EncodingCache && !*EncodingCache)
       *EncodingCache = Fresh();
-    const auto ColdQuery = [&] {
-      if (OrderedConjunct)
-        return detail::checkWithOrderedConjunct(
-            Ctx, Predicate, OrderedConjunct, Limits.Solver,
-            [&] { chargeQuery(); });
-      return solver::checkSat(Ctx, Predicate, nullptr, Limits.Solver);
-    };
-    auto Answer = EncodingCache ? (*EncodingCache)->check({Predicate})
-                                : ColdQuery();
-    // Accumulated encodings can fill a session although this query alone fits.
-    // Charge the second attempt and retry once with an empty encoder. Width,
-    // malformed-input and SAT-search exhaustion are never retried here.
+    auto Error = solver::BlastError::None;
+    solver::SatResult Answer;
+    if (EncodingCache) {
+      Answer = (*EncodingCache)->check({Predicate});
+      Error = (*EncodingCache)->encodeError();
+    } else if (Request.Kind == Mode::Ordered) {
+      Answer = detail::checkWithOrderedConjunct(Ctx, Predicate, Request.Detail,
+                                                Limits.Solver,
+                                                [&] { chargeQuery(); });
+    } else if (Request.Kind == Mode::Complete) {
+      Answer = solver::checkSat(Ctx, Predicate, nullptr, Limits.Solver);
+    } else {
+      auto Original = Fresh();
+      Original->assertTrue(Predicate);
+      Answer = Original->check();
+      Error = Original->encodeError();
+    }
+    // Only an accumulated encoding's gate refusal gets a fresh retry. Keep
+    // malformed input, width refusal and search exhaustion distinct.
     if (Reused && Answer == solver::SatResult::Unknown &&
-        (*EncodingCache)->encodeError() == solver::BlastError::TooManyGates) {
+        Error == solver::BlastError::TooManyGates) {
       chargeQuery();
       *EncodingCache = Fresh();
       Answer = (*EncodingCache)->check({Predicate});
+      Error = (*EncodingCache)->encodeError();
     }
+    const bool CanWitness = Request.Kind == Mode::SelectorFeasibility ||
+                            Request.Kind == Mode::PathPair;
+    if (CanWitness && Answer == solver::SatResult::Unknown &&
+        Error == solver::BlastError::TooManyGates && !Ctx.isConst(Domain)) {
+      chargeQuery();
+      auto Options = Limits.Solver;
+      Options.BuildModel = true;
+      solver::BitVectorSolver Candidate(Ctx, Options);
+      Candidate.assertTrue(Domain);
+      if (Candidate.check() == solver::SatResult::Sat) {
+        const auto Witness = complete_model::verify(
+            Ctx, Predicate, Candidate.model(), Limits.MaxSymbolicNodes,
+            Limits.Solver.Blast.MaxWidth);
+        if (Witness.Answer == complete_model::Verdict::Satisfied)
+          Answer = solver::SatResult::Sat;
+      }
+    }
+    if (Request.Kind == Mode::SelectorCoverage &&
+        Answer == solver::SatResult::Unknown &&
+        Error == solver::BlastError::TooManyGates &&
+        proveSelectorCoverage(Predicate, Domain, Request.Detail).Proved)
+      Answer = solver::SatResult::Unsat;
+    if (Request.Kind == Mode::TerminalCoverage &&
+        Answer == solver::SatResult::Unknown &&
+        Error == solver::BlastError::TooManyGates &&
+        proveTerminalCoverage(Predicate, Domain, Request.Detail))
+      Answer = solver::SatResult::Unsat;
+
+    // Whole path-pair disjointness and explicit implications share the same
+    // conditional owner. A rejected domain model supplies no UNSAT conclusion.
+    if ((Request.Kind == Mode::Implication || Request.Kind == Mode::PathPair) &&
+        Answer == solver::SatResult::Unknown &&
+        (Error == solver::BlastError::None ||
+         Error == solver::BlastError::TooManyGates)) {
+      auto Goal = Request.Kind == Mode::PathPair ? Ctx.mkNot(Request.Detail)
+                                                 : Request.Detail;
+      nodes();
+      const auto Proof = ConditionalProofs.proveFresh(
+          Ctx, Domain, Goal, Limits.Solver, conditionalLimits(),
+          Limits.MaxSolverQueries - Result.SolverQueries, ChargeConditional);
+      nodes();
+      if (Proof.Proved)
+        Answer = solver::SatResult::Unsat;
+    }
+    nodes();
     if (Answer == solver::SatResult::Unknown)
       fail(Status::BudgetExceeded, "relational solver budget exhausted");
     if (Answer == solver::SatResult::Invalid)
       fail(Status::Invalid, "invalid relational solver query");
-    // One-shot checkers already retain their only answer in the immediate
-    // fast path. Allocate the history only after another query completes.
-    if (LastCompletedQuery) {
-      QueryProofs.store(Ctx, LastCompletedQuery, LastCompletedAnswer);
-      QueryProofs.store(Ctx, Predicate, Answer);
-    }
-    LastCompletedQuery = Predicate;
-    LastCompletedAnswer = Answer;
-    if (Answer == solver::SatResult::Sat)
-      LastFeasibleQuery = Predicate;
-    return Answer;
+    return completeQuery(Predicate, Answer);
+  }
+
+  solver::SatResult
+  query(SymRef Predicate,
+        std::unique_ptr<solver::BitVectorSolver> *EncodingCache = nullptr,
+        SymRef OrderedConjunct = {}) {
+    return query(EncodingCache ? ProofQuery::complete(Predicate, EncodingCache)
+                 : OrderedConjunct
+                     ? ProofQuery::ordered(Predicate, OrderedConjunct)
+                     : ProofQuery::complete(Predicate));
   }
 
   void equal(SymRef Predicate, SymRef Left, SymRef Right,
@@ -638,7 +917,8 @@ class Checker {
       return;
     solver::SatResult Answer;
     try {
-      Answer = query(Ctx.mkAnd(Predicate, Ctx.mkNe(Left, Right)));
+      Answer =
+          query(ProofQuery::implication(Ctx, Predicate, Ctx.mkEq(Left, Right)));
     } catch (const Stop &) {
       Result.Diagnostic += " while checking " + Observation.str();
       throw;
@@ -1284,8 +1564,8 @@ class Checker {
       return;
     }
     uint64_t Queries = Result.SolverQueries;
-    const auto Values = detail::enumerateFiniteValues(
-        ProjectionDomain, Predicate, {Target}, Limits.MaxIndirectTargets,
+    const auto Values = TargetFacts.enumerate(
+        ProjectionDomain, Predicate, Target, Limits.MaxIndirectTargets,
         Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Values.Status != detail::FiniteValueStatus::Complete)
@@ -1664,9 +1944,12 @@ class Checker {
             // End encoding reuse with the branch so unrelated native history
             // cannot make a later small query search a much larger formula.
             std::unique_ptr<solver::BitVectorSolver> BranchEncoding;
-            if (query(Taken, &BranchEncoding) == solver::SatResult::Unsat) {
+            if (query(ProofQuery::branch(Ctx, Incoming, Condition, true,
+                                         BranchEncoding)) ==
+                solver::SatResult::Unsat) {
               scheduleNative(std::move(P), Fallthrough, Incoming);
-            } else if (query(Other, &BranchEncoding) ==
+            } else if (query(ProofQuery::branch(Ctx, Incoming, Condition, false,
+                                                BranchEncoding)) ==
                        solver::SatResult::Unsat) {
               nativeTargets(std::move(P), Left.branchTarget(), Incoming);
             } else {
@@ -2331,7 +2614,7 @@ public:
         }
         const auto Domain =
             inductive() ? Refinement->SegmentPredicate : Refinement->Predicate;
-        if (query(Ctx.mkAnd(Domain, Ctx.mkNot(Covered))) !=
+        if (query(ProofQuery::terminalCoverage(Ctx, Domain, Covered)) !=
             solver::SatResult::Unsat)
           fail(Status::Unsupported,
                "terminal paths do not cover the entry domain");
@@ -2354,7 +2637,9 @@ public:
           ++Refinement->TerminalPairs;
           const auto Predicate =
               Ctx.mkAnd(Original.Predicate, Candidate.Predicate);
-          if (query(Predicate) == solver::SatResult::Unsat)
+          if (query(ProofQuery::pathPair(Ctx, Candidate.Predicate,
+                                         Original.Predicate)) ==
+              solver::SatResult::Unsat)
             continue;
           if (inductive() &&
               (Original.Cutpoint >= 0 || Candidate.Cutpoint >= 0)) {

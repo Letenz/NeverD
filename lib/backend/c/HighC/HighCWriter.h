@@ -133,7 +133,6 @@ public:
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
-  void writeX87FpremHelpers();
   void writeX64SyscallHelper();
   void writeX64WindowsSyscallHelper();
   struct MemoryLoadDestination {
@@ -624,7 +623,16 @@ public:
   std::map<va_t, std::string> SEHExceptionCodeNames;
   void writeSEHExceptionCodeCapture(va_t HandlerVA, int Indent);
   std::string sehFilterValueText(const HighExpr &Value);
-  bool NeedsX87FpremHelpers = false;
+  /// The x87 helpers the output calls, and whether it computes with the
+  /// x87 extended `long double`.
+  std::set<X87CHelper> X87Helpers;
+  bool UsesX87Extended = false;
+  /// An x87 extended value: what `long double` holds.
+  static bool isX87Value(const HighExpr &E);
+  /// The x87 helper \p E prints through, if any.
+  std::optional<X87CHelper> x87HelperFor(const HighExpr &E) const;
+  /// The name of \p Helper, which the output must declare.
+  std::string useX87Helper(X87CHelper Helper) const;
   bool NeedsX64SyscallHelper = false;
   bool NeedsX64WindowsSyscallHelper = false;
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
@@ -838,6 +846,9 @@ public:
   /// cannot spell exactly.
   std::optional<std::string> imageObjectInitializer(va_t Addr,
                                                     const ImageObject &Obj);
+  /// The exact C constant for the float with bits \p Value.
+  std::optional<std::string> floatConstantText(uint64_t Value,
+                                               const TypeRef &Type) const;
   /// The address constant of a sized image object that \p Address indexes
   /// by a variable byte offset (`i + &table`), or null.  The constant may
   /// point into the object (`i + &table[2]`).
