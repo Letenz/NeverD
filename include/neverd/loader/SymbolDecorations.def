@@ -7,7 +7,9 @@
 /// \file
 /// The object formats whose C compilers add one leading underscore to every
 /// C name they emit as a symbol: `printf` links as `_printf`.  ELF and x64
-/// COFF symbols spell C names as they are.
+/// COFF symbols spell C names as they are.  Also the formats whose import
+/// entries name a function by its C name rather than by its symbol, and the
+/// prefix a format's linker gives the symbol of an import's address slot.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -25,12 +27,29 @@
 #ifndef NEVERD_ABI_UNDECORATED_PREFIX
 #define NEVERD_ABI_UNDECORATED_PREFIX(Format, Arch, Prefix)
 #endif
+// NEVERD_IMPORT_C_NAMES(Format): an import entry names its function by the
+// C name, the export name a PE import directory lists (`_initterm`, `exit`),
+// not by the symbol it links as.  A Mach-O bind and an ELF dynamic symbol
+// name the symbol itself.
+#ifndef NEVERD_IMPORT_C_NAMES
+#define NEVERD_IMPORT_C_NAMES(Format)
+#endif
+// NEVERD_IMPORT_SLOT_PREFIX(Format, Prefix): the linker names the address
+// slot of an import by Prefix and the symbol it imports, `__imp_calloc` for
+// `calloc` (`__imp__calloc` on 32-bit Windows).
+#ifndef NEVERD_IMPORT_SLOT_PREFIX
+#define NEVERD_IMPORT_SLOT_PREFIX(Format, Prefix)
+#endif
 
 NEVERD_ABI_UNDERSCORE(MachO)
 NEVERD_ABI_UNDERSCORE_ON(COFF, X86)
 NEVERD_ABI_UNDECORATED_PREFIX(COFF, X86, "?")
 NEVERD_ABI_UNDECORATED_PREFIX(COFF, X86, "@")
+NEVERD_IMPORT_C_NAMES(COFF)
+NEVERD_IMPORT_SLOT_PREFIX(COFF, "__imp_")
 
 #undef NEVERD_ABI_UNDERSCORE
 #undef NEVERD_ABI_UNDERSCORE_ON
 #undef NEVERD_ABI_UNDECORATED_PREFIX
+#undef NEVERD_IMPORT_C_NAMES
+#undef NEVERD_IMPORT_SLOT_PREFIX

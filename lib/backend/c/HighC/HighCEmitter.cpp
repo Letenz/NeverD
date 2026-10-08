@@ -1334,6 +1334,11 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
             // C name need not be the symbol the rule knows.
             if (isNoreturnCallExpr(Ex))
               NoReturnCallTargets.insert(Name);
+            // Only a callee named like a different definition calls through
+            // its slot (callIdentifier).
+            if (Name != functionIdentifier(SourceName) &&
+                Name == importSlotIdentifier(Ex))
+              ImportSlotIdentifiers.insert(Name);
             if (auto FS = debugCallee(Ex)) {
               noteDebugExtern(Name, *FS);
               noteDebugExternCallSret(Name, *FS, Ex);
@@ -1781,11 +1786,16 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     // functionIdentifier (or the source-call projection).  Removing another
     // leading underscore here declares a different function from the call.
     llvm::StringRef RenderedName(Name);
+    // A call through an import's slot declares the slot, a function pointer
+    // that links by its own name; its source names the import, and the thunk
+    // named like it, not the slot.
+    const bool ImportSlot = ImportSlotIdentifiers.count(Name);
     const auto Existing = ExternalFunctionIdentifiers.find(Name);
     std::string Identifier =
-        Existing == ExternalFunctionIdentifiers.end()
-            ? GlobalIdentifierAllocator.allocate(RenderedName, "nd_external")
-            : Existing->second;
+        Existing != ExternalFunctionIdentifiers.end() ? Existing->second
+        : ImportSlot
+            ? GlobalIdentifierAllocator.allocateVerbatim(Name)
+            : GlobalIdentifierAllocator.allocate(RenderedName, "nd_external");
     ExternalFunctionIdentifiers.emplace(Name, Identifier);
     ExternalFunctionIdentifiers.try_emplace(RenderedName.str(), Identifier);
     // The statement writer ends a path at a call to a known noreturn function
@@ -1796,11 +1806,16 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     // An import whose identifier is not its symbol links by the symbol, which
     // a comment spells as its language does.
     std::string LinkLabel, LinkComment;
+    const std::string Declared =
+        ImportSlot ? "(*" + Identifier + ")" : Identifier;
     if (auto Sources = ExternalCallSources.find(Name);
-        Sources != ExternalCallSources.end()) {
+        Sources != ExternalCallSources.end() && !ImportSlot) {
       for (const std::string &SourceName : Sources->second)
         ExternalSourceIdentifiers[SourceName] = Identifier;
-      if (Sources->second.size() == 1) {
+      // A label naming a function this file defines would bind the call to
+      // that definition, which is not the function it calls.
+      if (Sources->second.size() == 1 &&
+          !FunctionIdentifiersBySourceName.count(*Sources->second.begin())) {
         const llvm::StringRef CName =
             cNameOfSymbol(*Sources->second.begin(), Opts.Format, Opts.TheArch);
         if (linksByLabel(CName, Identifier)) {
@@ -1976,7 +1991,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         if (Prototype->Winapi && Opts.TheArch == Arch::X86)
           OS << "__attribute__((stdcall)) ";
         const std::string Return = prototypeType(Prototype->Return);
-        OS << Return << (Return.back() == '*' ? "" : " ") << Identifier << "(";
+        OS << Return << (Return.back() == '*' ? "" : " ") << Declared << "(";
         for (unsigned I = 0; I < Prototype->ParamCount; ++I)
           OS << (I ? ", " : "") << prototypeType(Prototype->Params[I]);
         // ISO C before C23 spells no prototype of `...` alone.
@@ -1993,8 +2008,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         const auto Read = ResultBytes.find(Name);
         const bool WholeRegister =
             Read != ResultBytes.end() && Read->second > sizeof(int32_t);
-        OS << "extern " << (WholeRegister ? Register : "int") << " "
-           << Identifier << "(";
+        OS << "extern " << (WholeRegister ? Register : "int") << " " << Declared
+           << "(";
         if (auto Arity = knownArity(Symbol, Name);
             Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
           // Each argument fills one integer register: an int64_t on a 32-bit

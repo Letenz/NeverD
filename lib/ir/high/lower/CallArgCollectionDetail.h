@@ -94,6 +94,10 @@ struct CallArgScan {
   /// Whether argument register \p Index is one of this function's own
   /// parameters, which a forwarder passes through untouched.
   llvm::function_ref<bool(int)> IsOwnParameter;
+  /// This function's own stack parameter at argument position \p Index,
+  /// which a tail jump passes on unless it stores another value there
+  /// (nullptr when it has none).
+  llvm::function_ref<ExprPtr(int)> OwnStackParam;
   /// Offset of an address from the stack pointer at function entry, when it
   /// resolves through copies and constant adjustments (an `r11 = rsp`
   /// frame); nullopt otherwise.

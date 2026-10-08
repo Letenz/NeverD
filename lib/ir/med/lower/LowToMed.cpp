@@ -216,7 +216,20 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   if (LOp.Opcode == NdOp::INDIR_CALL &&
       (!Convention || !Convention->ImportArgumentsFromPrototype))
     return;
+  // A call through a dispatcher's own slot stays the indirect call it is;
+  // the dispatcher contract below describes a call to its entry.
+  if (LOp.Opcode == NdOp::INDIR_CALL && CallDispatchThunks &&
+      CallDispatchThunks->count(LOp.Inputs[0].Offset))
+    return;
   const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
+  // A convention without register summaries still knows how many stack
+  // arguments a prototyped import reads (CallEntryStackArgs).
+  if (Convention && Convention->StackArgumentSummary &&
+      !Convention->RegisterArgumentsFromCalleeSummary && CallEntryStackArgs)
+    if (auto S = CallEntryStackArgs->find(LOp.Inputs[0].Offset);
+        S != CallEntryStackArgs->end())
+      MOp.CalleeStackArgs = static_cast<int8_t>(std::min(
+          S->second, static_cast<int>(std::numeric_limits<int8_t>::max())));
   const llvm::ArrayRef<uint64_t> ArgRegs = TRI.integerParamRegs(TargetFormat);
   const int8_t Slots =
       static_cast<int8_t>(std::min<size_t>(ArgRegs.size(), kTrackedArgSlots));
