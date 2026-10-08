@@ -120,8 +120,8 @@
         <translation>이름 바꾸기(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>현재 함수의 이름을 바꿉니다</translation>
+        <source>Rename the current address</source>
+        <translation>현재 주소의 이름을 바꿉니다</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -1729,12 +1729,8 @@ Double-click to go to the declaration.</source>
         <translation> · 읽기 전용</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1은(는) 함수 시작 주소가 아닙니다. 함수만 이름을 바꿀 수 있습니다.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>함수 이름 바꾸기</translation>
+        <source>Rename address</source>
+        <translation>주소 이름 바꾸기</translation>
     </message>
     <message>
         <source>Name of %1:</source>

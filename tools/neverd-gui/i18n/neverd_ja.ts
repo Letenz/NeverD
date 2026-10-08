@@ -120,8 +120,8 @@
         <translation>名前の変更(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>現在の関数の名前を変更します</translation>
+        <source>Rename the current address</source>
+        <translation>現在のアドレスの名前を変更します</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -1729,12 +1729,8 @@ Double-click to go to the declaration.</source>
         <translation> · 読み取り専用</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 は関数の先頭ではありません。名前を変更できるのは関数のみです。</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>関数名の変更</translation>
+        <source>Rename address</source>
+        <translation>アドレスの名前を変更</translation>
     </message>
     <message>
         <source>Name of %1:</source>

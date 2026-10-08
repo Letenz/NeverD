@@ -639,6 +639,16 @@ neverd_va_t neverd_session_entry_addr(neverd_session_t Sess) {
   return S->Loaded ? S->Img.Entry : 0;
 }
 
+const char *neverd_session_load_diagnostics_json(neverd_session_t Sess) {
+  llvm::json::Array Diagnostics;
+  const auto *S = toSession(Sess);
+  if (S && S->Loaded)
+    for (const auto &D : S->Img.LoadDiagnostics)
+      Diagnostics.push_back(
+          llvm::json::Object{{"code", D.Code}, {"message", D.Message}});
+  return dupStr(jsonToString(llvm::json::Value(std::move(Diagnostics))));
+}
+
 int neverd_session_segment_count(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   return S->Loaded ? static_cast<int>(S->Img.Segments.size()) : 0;

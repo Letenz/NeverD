@@ -139,7 +139,16 @@ const char *neverd_session_format_name(neverd_session_t) { return copy("ELF"); }
 int neverd_session_bitness(neverd_session_t) { return 64; }
 unsigned long long neverd_session_file_size(neverd_session_t) { return 8192; }
 neverd_va_t neverd_session_base_addr(neverd_session_t) { return Base; }
-neverd_va_t neverd_session_entry_addr(neverd_session_t) { return Base; }
+neverd_va_t neverd_session_entry_addr(neverd_session_t s) {
+  return session(s)->path.find("unknown-entry") == std::string::npos ? Base : 0;
+}
+const char *neverd_session_load_diagnostics_json(neverd_session_t s) {
+  if (s && session(s)->path.find("unknown-entry") != std::string::npos)
+    return copy(Json::array({{{"code", "pe.entry_unmapped"},
+                              {"message", "Fixture PE entry is unknown."}}})
+                    .dump());
+  return copy("[]");
+}
 int neverd_session_segment_count(neverd_session_t) { return 2; }
 int neverd_session_section_count(neverd_session_t) { return 2; }
 int neverd_session_import_count(neverd_session_t) { return 0; }
@@ -784,14 +793,27 @@ const char *neverd_sections_json(neverd_session_t) {
                             {"flags", "RW-"}}})
                   .dump());
 }
-const char *neverd_symbols_json(neverd_session_t) {
-  return copy(
-      Json::array(
-          {{{"addr", hexAddress(Base)},
-            {"name", "function_0"},
-            {"type", "function"}},
-           {{"addr", hexAddress(BssBase)}, {"name", "stderr"}, {"size", 8}}})
-          .dump());
+const char *neverd_symbols_json(neverd_session_t s) {
+  Json rows = Json::array(
+      {{{"addr", hexAddress(Base)},
+        {"name", "function_0"},
+        {"type", "function"}},
+       {{"addr", hexAddress(BssBase)}, {"name", "stderr"}, {"size", 8}}});
+  // The user's names of data replace the symbols' or add rows of their own.
+  for (const auto &[address, name] : session(s)->names) {
+    if (neverd_func_find_by_addr(s, address) >= 0)
+      continue;
+    bool replaced = false;
+    for (auto &row : rows)
+      if (parseAddress(row.at("addr").get<std::string>()) == address) {
+        row["name"] = name;
+        replaced = true;
+      }
+    if (!replaced)
+      rows.push_back(
+          {{"addr", hexAddress(address)}, {"name", name}, {"size", 0}});
+  }
+  return copy(rows.dump());
 }
 const char *neverd_imports_json(neverd_session_t) {
   return copy(Json::array().dump());

@@ -912,8 +912,17 @@ cl::opt<std::string>
 cl::opt<std::string> RenameFrom("func", cl::desc("Function name to rename"),
                                 cl::init(""), cl::sub(RenameCmd));
 
-cl::opt<std::string> RenameTo("to", cl::desc("New function name"), cl::init(""),
+cl::opt<std::string> RenameTo("to", cl::desc("New name"), cl::init(""),
                               cl::sub(RenameCmd));
+
+cl::opt<std::string>
+    RenameAddr("addr",
+               cl::desc("Address (hex) to name: a function, data or a label"),
+               cl::init(""), cl::value_desc("address"), cl::sub(RenameCmd));
+
+cl::opt<bool> RenameClear("clear",
+                          cl::desc("Take the user's name away from --addr"),
+                          cl::sub(RenameCmd));
 
 cl::opt<bool> RenameList("list", cl::desc("List all renames"),
                          cl::sub(RenameCmd));

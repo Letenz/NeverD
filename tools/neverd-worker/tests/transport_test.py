@@ -330,6 +330,21 @@ def run(executable):
         steps = [(step["kind"], step["address"]) for step in client.call("history")["payload"]["items"]
                  if step["applied"] and step["kind"] == "item"]
         assert steps == [("item", "0xffff800012343230")] * 2 + [("item", "0xffff800012343108")], steps
+        # N names any address: data takes the name in its label, and the name
+        # resolves to it; a name used elsewhere or in an automatic form is
+        # refused, and undo takes the name back.
+        assert client.call("rename", {"address": "0xffff800012343230", "name": "program_name"})["status"] == "ok"
+        bss = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343230", "before": 0, "after": 2})["payload"]["lines"]]
+        assert any(line.startswith("program_name dw ?") for line in bss), bss
+        resolved = client.call("resolve", {"query": "program_name"})["payload"]
+        assert resolved["address"] == "0xffff800012343230" and resolved["address_name"] == "program_name", resolved
+        used = client.call("rename", {"address": "0xffff800012343200", "name": "program_name"})
+        assert used["error"]["code"] == "invalid_request", used
+        automatic = client.call("rename", {"address": "0xffff800012343200", "name": "sub_1234"})
+        assert automatic["error"]["code"] == "invalid_request", automatic
+        assert client.call("undo")["status"] == "ok"
+        assert client.call("resolve", {"query": "program_name"})["status"] == "error"
         client.call("string_options", {"encodings": ["ascii", "utf-8", "utf-16le"]})
         # Hex views ask for bytes as text in an encoding, a cell per byte.
         bytes_ = client.call("bytes", {"address": "0xffff800012343000", "size": 4, "text_encoding": "ascii"})["payload"]
