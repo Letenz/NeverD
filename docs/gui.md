@@ -273,11 +273,11 @@ not a NeverD database.
 
 ## Edits, history and analysis
 
-Comments are staged and saved explicitly; renames and function edits commit at
-once (staged comments are saved first). Opening another file, restarting the
+Comments are staged and saved explicitly; renames, function edits and data
+items commit at once (staged comments are saved first). Opening another file, restarting the
 worker or quitting with unsaved comments offers Save, Discard and Cancel. Edits
 prepared for a session that has since closed are refused, never applied to the
-new one. Annotation, rename and function edit commands have bounded undo/redo
+new one. Annotation, rename, function edit and data item commands have bounded undo/redo
 history bound to the input hash and sidecar contents; a write-ahead journal
 recovers an interrupted save, and foreign edits disable replay instead of
 silently applying commands to another state. One worker owns a writable input
@@ -291,6 +291,17 @@ symbols, the function detector and analysis, and the edits are kept in
 function-edits <input> --create <address>`, `--delete <address>`, `--list`).
 A function edit drops whole-program analysis results: analysis continues
 function by function until **Analyze** runs again.
+
+**Edit → Data** (D) makes the item under the cursor a value, and pressing it
+again cycles the value through byte, word, dword and qword; **Edit → String**
+(A) makes the string that starts there an item, read as the string scan reads
+one; **Edit → Undefine** (U) shows the item's bytes as bytes, whatever
+analysis reads in them. D or A inside undefined bytes takes just the bytes the
+new item needs and leaves the rest undefined, and each press is one step of
+undo history. Code belongs to its function and is never made data. The items
+are kept in `<input>.neverd-items.json`, which the command line reads and
+writes too (`neverd items <input> --data <address> --size 4`, `--string
+<address>`, `--undefine <address> --size <n>`, `--clear <address>`).
 
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a
