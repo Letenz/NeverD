@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 21441b8b14985fbac413a4bb78aa57c696ad5eb07b70d439200550bdc6ce27a4 -->
+<!-- i18n-source: fab8f746a3afad0cc7aeaee21f82d848bf0bad20c33a1f8140b1f3c821e75281 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -740,7 +740,9 @@ stat64/open/access/truncate/chdirは末尾リンクを追跡し、lstat64/readli
 
 readlink(58)は符号付き下位32ビットcount、readlinkat(473)は完全なsize_t。intを返し、INT32_MAX超過はパス/FDより先にEINVAL22。min(count,目標長)だけコピーしNULなし、実際の範囲だけ検査。ゼロ長もパス/型を検証後に出力を無視。非リンクEINVAL22、全域書込み不可EFAULT14、部分書込みはコピー前に停止。転送/メモリ予算エラーは伝播します。
 
-非空リンクと MutableDirectories/RemovableDirectories/MovableDirectories/ExchangeableDirectories/SwapRenameDirectories/CreationPolicy は全体で併用不可。固定名WritableFiles/MutationPoliciesは対象の通常ファイルを変更できます。リンクunlink/renameは作用前に停止。動的/ハードリンク、ACL、可変リンク名前空間は未対応。ARM64 macOS独立プローブは元の5秒以内に189観察/115全バッファを通過しました。物理iOS/Intel HVF/完全OSの証明ではありません。
+固定リンク名と生の対象バイトは不変です。MutableDirectories はルートや固定リンク名のパス区切り上の祖先になれません。/work は /workspace/link を含みません。別の可変ディレクトリ内の対象は実行中に作成・移動・削除・置換できます。親、マウント、別名、フラグ、SWAP 対応、作成ポリシーの既存検証は維持され、新しい inode は保護リンクを含む全メタデータ/スナップショット inode より大きい必要があります。 固定名WritableFiles/MutationPoliciesは対象の通常ファイルを変更できます。リンクunlink/renameは作用前に停止。動的/ハードリンク、ACL、可変リンク名前空間は未対応。ARM64 macOS独立プローブは元の5秒以内に189観察/115全バッファを通過しました。物理iOS/Intel HVF/完全OSの証明ではありません。
+
+追加の ARM64 macOS DELETE/RENAME 60 ケースは元の5秒制限内で完全な stat バッファ、変更前後の名前空間、保持 FD/CWD の識別を記録します。末尾スラッシュは固定リンクを展開して実際の対象を変更でき、必要な展開を NOFOLLOW_ANY は ELOOP で拒否します。SDK 不要の symbolic-link-mutations は作成、存在しない対象、移動/削除/置換、保持 CWD の親、FD 終了前の元のファイル10バイト全体と、終了後にも保持されるマッピング10バイト全体を検証します。実機 iOS やネイティブ Intel の証明ではありません。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"symbolic_links":[{"path":"/link","target_hex":"64617461"}],"working_directory":"/"}}

@@ -125,6 +125,8 @@ public:
   bool isImageDataAddress(va_t Addr) const;
   void noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                        bool MemoryAccess = false);
+  /// Notes an object the code reaches only by its address so far.
+  void noteImageAddress(va_t Addr);
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
@@ -477,6 +479,7 @@ public:
   void propagateFrameSlotCopyTypes(const HighFunc &Func);
   void hideInteriorRecordFieldSlots();
   void overlayPackedValueHomes(const HighFunc &Func);
+  void collectFieldLoadTypes(const HighFunc &Func);
   void collectFieldLoadForward(const HighFunc &Func);
   void collectEnumConstForward(const HighFunc &Func);
   void collectTypedPointerArgDests(const HighFunc &Func);
@@ -491,8 +494,9 @@ public:
   bool isForwardableValueExpr(const HighExpr &E) const;
   bool isImageObjectLoad(const HighExpr &E) const;
   bool isTypedMemberLoad(const HighExpr &E) const;
-  bool isReloadableLoad(const HighExpr &E) const {
-    return isImageObjectLoad(E) || isTypedMemberLoad(E);
+  bool isTypedIndexLoad(const HighExpr &E);
+  bool isReloadableLoad(const HighExpr &E) {
+    return isImageObjectLoad(E) || isTypedMemberLoad(E) || isTypedIndexLoad(E);
   }
   /// `!(x == 0 || x < 0)` → `!(x <= 0)` so the cond mentions `x` once.
   void foldSignedJleConds(std::vector<HighStmt> &Stmts);
@@ -774,6 +778,9 @@ public:
     std::set<uint16_t> MemoryWidths;
     /// The code stores to it.
     bool Written = false;
+    /// The type stands in for one the code never read or wrote it with: any
+    /// access's type replaces it.
+    bool WeakType = false;
     /// The code calls or jumps through the pointer it holds.
     bool CallSlot = false;
     /// A string referenced by its address alone: declared as its array, with

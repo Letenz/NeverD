@@ -16,12 +16,19 @@ namespace neverd::gui {
 ///
 /// Every write is one SQLite transaction, so a database is never left half
 /// written.  The input is stored in independently compressed chunks that are
-/// compressed and expanded in parallel.
+/// compressed and expanded in parallel.  A file that is not a NeverD database
+/// is never written to.
 class ProjectDatabase final {
 public:
   static constexpr char Extension[] = ".nddb";
+  /// The SQLite application id in every database header: "NDDB" in ASCII,
+  /// so NeverD and tools such as file(1) tell a database from other SQLite
+  /// files whatever its name.
+  static constexpr qint32 ApplicationId = 0x4E444442;
   /// The database of \p binary: the binary's file name plus `.nddb`.
   static QString pathFor(const QString &binary);
+  /// Whether \p path is opened as a database: it has the `.nddb` suffix or
+  /// its header carries the application id.
   static bool isDatabase(const QString &path);
 
   struct Contents {

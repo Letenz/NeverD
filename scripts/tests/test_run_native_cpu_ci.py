@@ -42,6 +42,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         self.changes = {}
         self.status = 0
         self.executions = []
+        self.discoveries = []
         self.test_environment = {}
 
     def execute(self, command, **kwargs):
@@ -55,6 +56,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
     def capture(self, command, **kwargs):
         if command[0] == "git":
             return "test-commit\n" if command[1] == "rev-parse" else ""
+        self.discoveries.append(command)
         return json.dumps({
             "kind": "ctestInfo", "version": {"major": 1},
             "tests": [
@@ -242,6 +244,70 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         self.assertEqual(self.run_evidence(), 0)
         self.assertEqual(self.summary()["owners"], ["Owner"])
         self.assertFalse(self.summary()["with_drivers"])
+
+    def test_declared_owners_run_across_unit_directories_with_the_same_filter(self):
+        definition = self.root / "scripts/NativeCPUTests.def"
+        definition.write_text(definition.read_text() +
+            'NEVERD_NATIVE_CPU_OWNER(NeverDUnpackTests)\n'
+            'NEVERD_NATIVE_CPU_REQUIRED_TEST("PERebuild.PreservesTLS")\n')
+        targets = self.build / "CMakeFiles/TargetDirectories.txt"
+        targets.write_text(targets.read_text() + "\n".join(str(self.build / path) for path in (
+            "unittests/unpack/CMakeFiles/NeverDUnpackTests.dir",
+            "unittests/unpack/CMakeFiles/UnrelatedTests.dir")) + "\n")
+        self.records += (TestRecord("PERebuild.PreservesTLS",
+                                    frozenset({"NeverDUnpackTests"})),)
+        self.reported = self.records
+        self.assertEqual(self.run_evidence(), 0)
+        build = self.executions[0]
+        self.assertEqual(build[build.index("--target") + 1:build.index("--parallel")],
+                         ["Owner", "NeverDUnpackTests"])
+        self.assertEqual(len(self.discoveries), 1)
+        for command in (self.discoveries[0], self.executions[1]):
+            self.assertEqual(command[command.index("--test-dir") + 1],
+                             str((self.build / "unittests").resolve()))
+            self.assertEqual(command[command.index("-L") + 1],
+                             "^(Owner|NeverDUnpackTests)$")
+        inventory = json.loads((self.evidence / "inventory.json").read_text())
+        self.assertEqual(set(native.parse_inventory(inventory)), set(self.records))
+        self.assertEqual(self.summary()["registered"], 4)
+        self.assertEqual(self.summary()["total"], 4)
+        self.assertEqual(self.summary()["required_native_tests"], 3)
+
+    def test_owner_paths_accept_unit_subdirectories_and_native_separators(self):
+        targets = self.build / "CMakeFiles/TargetDirectories.txt"
+        for directory in ("unpack", "other/nested"):
+            for separator in ("/", "\\"):
+                with self.subTest(directory=directory, separator=separator):
+                    path = str(self.build / "unittests" / directory / "CMakeFiles/Owner.dir")
+                    targets.write_text(path.replace("/", separator) + "\n")
+                    self.assertEqual(self.run_evidence(), 0)
+
+    def test_external_or_malformed_owner_paths_cannot_authorize_a_build(self):
+        targets = self.build / "CMakeFiles/TargetDirectories.txt"
+        for path in (
+            self.root / "other-build/unittests/emulation/CMakeFiles/Owner.dir",
+            self.build / "external/unittests/emulation/CMakeFiles/Owner.dir",
+            self.build / "unittests-other/emulation/CMakeFiles/Owner.dir",
+            self.build / "unittests/emulation/CMakeFiles/Owner",
+            self.build / "unittests/emulation/CMakeFiles/nested/Owner.dir",
+            self.build / "unittests/emulation/CMakeFiles/../../../../Owner.dir",
+            Path("./unittests/emulation/CMakeFiles/Owner.dir"),
+        ):
+            with self.subTest(path=path):
+                targets.write_text(str(path) + "\n")
+                with self.assertRaisesRegex(ValueError, "unconfigured"):
+                    self.run_evidence()
+        self.assertEqual(self.executions, [])
+        self.assertEqual(self.discoveries, [])
+
+    def test_same_owner_in_distinct_unit_directories_is_ambiguous(self):
+        targets = self.build / "CMakeFiles/TargetDirectories.txt"
+        targets.write_text(targets.read_text() + str(
+            self.build / "unittests/unpack/CMakeFiles/Owner.dir") + "\n")
+        with self.assertRaisesRegex(ValueError, "ambiguous native CPU owner"):
+            self.run_evidence()
+        self.assertEqual(self.executions, [])
+        self.assertEqual(self.discoveries, [])
 
     def test_method_execution_uses_the_same_missing_and_native_skip_gate(self):
         from scripts.audit_ci_test_results import TestOutcome
@@ -461,8 +527,13 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 with self.subTest(backend=backend, host=host):
                     owners, required = native.darwin_inventory(native.ROOT, backend, host)
                     self.assertEqual(owners, ["NeverDDarwinProcessTests"])
-                    self.assertEqual(len(required), 49 * len(platforms))
+                    self.assertEqual(len(required), 50 * len(platforms))
                     for platform in platforms:
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "FixedLinksObserveMutableTargetsAndRetainOldObjects/"
+                            f"{platform}_{backend}", required,
+                        )
                         self.assertIn(
                             "Transports/DarwinProcess."
                             "SymbolicLinksPreserveRawTargetsMetadataAndNoFollowPolicies/"

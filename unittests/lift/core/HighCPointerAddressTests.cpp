@@ -2902,7 +2902,7 @@ TEST(HighCPointerAddresses, NamesImageDataFromDebugObject) {
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
   EXPECT_NE(Source.find("__security_cookie"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("g_1400050E0"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("_1400050E0"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, IntegerImageAddressStoreCastsNamedObjectPointer) {
@@ -4929,7 +4929,14 @@ TEST(HighCPointerAddresses, SplitAddFieldLoadPrintsNestedMember) {
   EXPECT_NE(Source.find("GetData("), std::string::npos) << Source;
   EXPECT_NE(Source.find("this->m_pRecordData.p->m_core.id"), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("t94"), std::string::npos) << Source;
+  // Keeping the loaded value in a local is valid; both forms must retain the
+  // typed member path and pass the same value to the call.
+  if (Source.find("t94") != std::string::npos) {
+    EXPECT_NE(Source.find("t94 = this->m_pRecordData.p->m_core.id;"),
+              std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find(", t94);"), std::string::npos) << Source;
+  }
 }
 
 TEST(HighCPointerAddresses, WidenedFieldLoadPrintsNestedMember) {
@@ -6899,13 +6906,22 @@ TEST(HighCPointerAddresses, UnusedFieldLoadViewAssignComposesIntoCondAndStore) {
   Guard.ElseBody = {Inner};
   Func.Body = {Load, Slice, Guard};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("if (this->m_completedCount)"), std::string::npos)
+  // This legacy undefined-register recovery fixture checks display composition.
+  // The defined view must retain its snapshot across the potentially mutating
+  // GetLength call; valid-IR execution is covered by HighValueForward tests.
+  EXPECT_NE(Source.find("if (t97)"), std::string::npos) << Source;
+  const auto Snapshot = Source.find("t97 = (int32_t)(this->m_completedCount);");
+  const auto Call = Source.find("GetLength(this)");
+  ASSERT_NE(Snapshot, std::string::npos) << Source;
+  ASSERT_NE(Call, std::string::npos) << Source;
+  EXPECT_LT(Snapshot, Call) << Source;
+  expectPortableStore(Source, "int32_t", "0x140008000", "t97");
+  EXPECT_EQ(Source.find("GetLength(this)", Call + 1), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("this->m_completedCount"), std::string::npos) << Source;
   expectPortableStore(Source, "int64_t", "0x140008008", "GetLength(this)");
   EXPECT_EQ(Source.find("\n    GetLength("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v97 ="), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("t97"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v97"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t94"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v98"), std::string::npos) << Source;
@@ -25546,7 +25562,7 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   Setup.Id = 1;
   Setup.StartAddr = 0x140001010;
   Setup.Preds = {0};
-  Setup.Succs = {2, 3};
+  Setup.Succs = {3, 2};
   MedOp Lea;
   Lea.Opcode = NdOp::INT_ADD;
   Lea.Output = R81;
@@ -25554,12 +25570,12 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   Lea.addInput(MedVar::makeConst(0x40, 8));
   Lea.Addr = 0x140001010;
   Setup.Ops.push_back(std::move(Lea));
+  // Both arms run, depending on the first argument, and join at the call.
   MedOp Jcc;
   Jcc.Opcode = NdOp::COND_BR;
   Jcc.Addr = 0x140001018;
-  Jcc.addInput(MedVar::makeConst(1, 4));
   Jcc.addInput(MedVar::makeConst(0x140001030, 8));
-  Jcc.addInput(MedVar::makeConst(0x140001020, 8));
+  Jcc.addInput(Med.Params.front());
   Setup.Ops.push_back(std::move(Jcc));
   Med.Blocks.push_back(std::move(Setup));
 
@@ -34736,7 +34752,7 @@ TEST(LLVMCPointerAddresses, AllocaReadonlyImageLoadFoldsImmediate) {
       LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
   OS.flush();
   EXPECT_NE(Source.find("0xE0421001"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("g_140003260"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("_140003260"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint32_t*)"), std::string::npos) << Source;
 }
 
@@ -34779,7 +34795,7 @@ TEST(LLVMCPointerAddresses, AllocaImageLoadUsesDebugObjectName) {
   OS.flush();
   EXPECT_NE(Source.find("extern uint64_t s_instance;"), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("g_1400050E0"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("_1400050E0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint64_t*)"), std::string::npos) << Source;
 }
 
@@ -38873,7 +38889,8 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsCookieDoesNotLoadNull) {
   ASSERT_FALSE(Source.empty()) << Source;
   EXPECT_EQ(Source.find("*(uint64_t*)0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint32_t*)0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("g_"), std::string::npos) << Source;
+  // The cookie reads through the image object that holds it.
+  EXPECT_NE(Source.find("unk_140005000"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, ReturnViewChainAroundAddKeepsOneCast) {
@@ -39006,8 +39023,8 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
             "int32_t t22_4;")
       << Source;
   EXPECT_EQ(
-      llvm::StringRef(sourceLineContaining(Source, "g_1400050E0;")).trim(),
-      "int32_t g_1400050E0;")
+      llvm::StringRef(sourceLineContaining(Source, "dword_1400050E0;")).trim(),
+      "int32_t dword_1400050E0;")
       << Source;
   const std::string ReturnText = "return var_m18 + 1;";
   const size_t FirstReturn = Source.find(ReturnText);
@@ -39020,7 +39037,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
       << Source;
   EXPECT_EQ(Source.find("(int64_t)(uint32_t)(int32_t)"), std::string::npos)
       << Source;
-  const auto GlobalStore = sourceLineContaining(Source, "g_1400050E0 = ");
+  const auto GlobalStore = sourceLineContaining(Source, "dword_1400050E0 = ");
   const auto Copy = sourceLineContaining(Source, "t22_4 = var_m18;");
   ASSERT_FALSE(GlobalStore.empty()) << Source;
   ASSERT_FALSE(Copy.empty()) << Source;
@@ -39028,7 +39045,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
       "uint32_t var_m18 = bits;\nint32_t t22_4;\n" + std::string(Copy) + "\n" +
           std::string(GlobalStore) + "\n" +
           std::string(sourceLineContaining(Source, ReturnText)),
-      "g_1400050E0", /*Portable=*/false);
+      "dword_1400050E0", /*Portable=*/false);
 }
 
 TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeHasSingleWin64Arg) {
@@ -39056,9 +39073,9 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeHasSingleWin64Arg) {
 // The lifter models image loads as volatile. Preserve that observable read
 // even for .rdata, then pass the captured SSA value to the exception call.
 void expectCapturedSehExceptionCode(const std::string &Source) {
-  const size_t DeclAt = Source.find("extern uint32_t g_140003260;");
+  const size_t DeclAt = Source.find("extern uint32_t dword_140003260;");
   const size_t LoadAt =
-      Source.find(" = *((uint32_t volatile*)(&g_140003260));");
+      Source.find(" = *((uint32_t volatile*)(&dword_140003260));");
   ASSERT_NE(DeclAt, std::string::npos) << Source;
   ASSERT_NE(LoadAt, std::string::npos) << Source;
   EXPECT_LT(DeclAt, LoadAt) << Source;
@@ -39139,7 +39156,7 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
       << Source;
   EXPECT_EQ(Source.find("_call_clobber"), std::string::npos) << Source;
   expectCapturedSehExceptionCode(Source);
-  EXPECT_EQ(Source.find("g_140003000"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("_140003000"), std::string::npos) << Source;
   // The normal edge from the last try block reaches the range marker next
   // in printed order; the handler between them in LLVM order is printed in
   // __except.  Keep both the conditional skip and handler rejoin edges.
@@ -39171,7 +39188,7 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   // the object that both branches wrote, never a separate byte-frame slot.
   EXPECT_NE(Join.find(NormalSlot), std::string::npos) << Source;
   EXPECT_EQ(Join.find("*(uint32_t*)"), std::string::npos) << Source;
-  const auto Sink = capturedVolatileImageStore(Join, "g_140005000", 224);
+  const auto Sink = capturedVolatileImageStore(Join, "unk_140005000", 224);
   ASSERT_TRUE(Sink.has_value()) << Source;
   const std::string &SinkValue = Sink->Value;
   if (SinkValue != NormalSlot)
@@ -39270,7 +39287,7 @@ TEST(LLVMCPointerAddresses, CorpusOptimizedSehResultIsAssignedOnBothPaths) {
     ASSERT_FALSE(NormalHome.empty()) << Source;
     const std::string HandlerHome = AssignedName(HandlerValue);
     ASSERT_FALSE(HandlerHome.empty()) << Source;
-    const auto Sink = capturedVolatileImageStore(Source, "g_140003000", 160);
+    const auto Sink = capturedVolatileImageStore(Source, "unk_140003000", 160);
     ASSERT_TRUE(Sink.has_value()) << Source;
     const size_t SinkAt = Sink->Position;
     const std::string &SinkHome = Sink->Value;
@@ -39349,7 +39366,7 @@ TEST(LLVMCPointerAddresses, CorpusSehProbeCliLlvmcKeepsProtectedEffects) {
   EXPECT_LT(HandlerAt, ExceptCloseAt) << Source;
   const std::string Continuation = Source.substr(ExceptCloseAt);
   const auto Sink =
-      capturedVolatileImageStore(Continuation, "g_140005000", 224);
+      capturedVolatileImageStore(Continuation, "unk_140005000", 224);
   ASSERT_TRUE(Sink.has_value()) << Source;
   EXPECT_EQ(Sink->Value, Slot) << Source;
   EXPECT_NE(Continuation.find("return (" + Slot + " + 1);"), std::string::npos)
@@ -39869,7 +39886,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   const std::string HandlerText = Source.substr(ExceptAt);
   EXPECT_LT(Source.find("= 0xFFFFFF9C;"), ExceptAt) << Source;
   EXPECT_GT(Source.find("= 41;"), ExceptAt) << Source;
-  const auto GlobalStore = sourceLineContaining(HandlerText, "g_4040C8 = ");
+  const auto GlobalStore = sourceLineContaining(HandlerText, "dword_4040C8 = ");
   EXPECT_NE(GlobalStore.find("__builtin_memcpy(&"), std::string_view::npos)
       << Source;
   EXPECT_NE(GlobalStore.find(JoinedAddress), std::string_view::npos) << Source;
@@ -39881,7 +39898,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   EXPECT_NE(Return.find("__builtin_memcpy(&"), std::string_view::npos)
       << Source;
   EXPECT_NE(Return.find(JoinedAddress), std::string_view::npos) << Source;
-  EXPECT_LT(HandlerText.find("g_4040C8 = "), HandlerText.find("return "))
+  EXPECT_LT(HandlerText.find("dword_4040C8 = "), HandlerText.find("return "))
       << Source;
   EXPECT_EQ(HandlerText.find("return ", HandlerText.find("return ") + 7),
             std::string::npos)
@@ -39889,8 +39906,9 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   EXPECT_EQ(llvm::StringRef(sourceLineContaining(Source, "sub_401040(")).trim(),
             "int32_t sub_401040(int32_t arg0) {")
       << Source;
-  EXPECT_EQ(llvm::StringRef(sourceLineContaining(Source, "g_4040C8;")).trim(),
-            "int32_t g_4040C8;")
+  EXPECT_EQ(
+      llvm::StringRef(sourceLineContaining(Source, "dword_4040C8;")).trim(),
+      "int32_t dword_4040C8;")
       << Source;
   const auto ReturnArgs = callArguments(Return, "__builtin_memcpy", false);
   const auto GlobalArgs = callArguments(GlobalStore, "__builtin_memcpy", false);
@@ -39914,7 +39932,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
       "memcpy(frame, &bits, 4);\nint32_t " +
           ReturnName + ", " + GlobalName + ";\n" + std::string(GlobalStore) +
           "\n" + std::string(Return),
-      "g_4040C8", /*Portable=*/true);
+      "dword_4040C8", /*Portable=*/true);
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
   // The retained SSA copy of the exception code must reach the call unchanged.
