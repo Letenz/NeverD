@@ -78,6 +78,8 @@ public:
           FileScope.insert(D);
           if (D->Body)
             Defined.insert(D->Name);
+          if (D->Kind == DeclKind::Variable && !D->Extern)
+            DefinedObjects.insert(D->Name);
         }
   }
 
@@ -1360,6 +1362,9 @@ private:
           line("func " + signature(D, /*Named=*/false));
         break;
       case DeclKind::Variable: {
+        // A definition later in the text declares it.
+        if (D->Extern && DefinedObjects.contains(D->Name))
+          break;
         std::string Text = "var " + name(D->Name) + " " + type(D->Ty);
         if (D->Init)
           Text += " = " + initializer(D->Init, D->Ty);
@@ -1424,7 +1429,7 @@ private:
   }
 
   llvm::DenseSet<const Decl *> FileScope;
-  llvm::StringSet<> Defined;
+  llvm::StringSet<> Defined, DefinedObjects;
   const CType *ReturnType = nullptr;
 };
 

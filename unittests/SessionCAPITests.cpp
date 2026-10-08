@@ -3198,6 +3198,68 @@ TEST_F(SessionCAPITest,
   }
 }
 
+TEST_F(SessionCAPITest, SourceViewsSpellPagesInTheFunctionsLanguage) {
+  const std::string Path =
+      write("mapped.elf", makeNativeELF(/*AArch64=*/false, 0x400000));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Entry = neverd_session_entry_addr(Session);
+  // Pages of two lines reassemble the whole text; the first page says what
+  // the text reads in.
+  auto Assemble = [&](const char *Stage, llvm::json::Object &First) {
+    std::string Text;
+    size_t Offset = 0;
+    for (;;) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2));
+      EXPECT_EQ(Page.getString("representation"), Stage);
+      EXPECT_EQ(Page.getInteger("byte_offset"), Text.size());
+      if (!Page.getString("text"))
+        return Text;
+      Text += Page.getString("text")->str();
+      if (Offset == 0)
+        First = Page;
+      if (Page.getBoolean("complete").value_or(false))
+        return Text;
+      const auto Next = Page.getInteger("next_offset");
+      if (!Next || *Next <= static_cast<int64_t>(Offset) || *Next > 10000)
+        return Text;
+      Offset = static_cast<size_t>(*Next);
+    }
+  };
+  llvm::json::Object CPage, SourcePage, RustPage, GoPage;
+  const std::string C = Assemble("c", CPage);
+  ASSERT_FALSE(C.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(CPage.getString("dialect"), "c");
+  // A C program's functions read in C.
+  EXPECT_EQ(Assemble("source", SourcePage), C);
+  EXPECT_EQ(SourcePage.getString("dialect"), "c");
+  const std::string Rust = Assemble("rust", RustPage);
+  EXPECT_EQ(RustPage.getString("dialect"), "rust");
+  EXPECT_NE(Rust.find("unsafe fn "), std::string::npos) << Rust;
+  EXPECT_NE(RustPage.getArray("unread"), nullptr);
+  EXPECT_NE(RustPage.getArray("source_names"), nullptr);
+  const std::string Go = Assemble("go", GoPage);
+  EXPECT_EQ(GoPage.getString("dialect"), "go");
+  EXPECT_NE(Go.find("func "), std::string::npos) << Go;
+  // The prelude ends where the spelled definition begins, at a line start.
+  if (const auto *Prelude = RustPage.getObject("prelude")) {
+    const auto End = Prelude->getInteger("end_byte");
+    ASSERT_TRUE(End);
+    ASSERT_GT(*End, 0);
+    ASSERT_LT(static_cast<size_t>(*End), Rust.size());
+    EXPECT_EQ(Rust[*End - 1], '\n');
+  }
+  // Bytecode has no native source to spell.
+  const std::string Contract = write("mapped.evm", "600160020100");
+  ASSERT_EQ(neverd_session_load(Session, Contract.c_str()), 1);
+  for (const char *Stage : {"source", "rust", "go"}) {
+    auto Unsupported = takeView(neverd_ir_view_json(Session, 0, Stage, 0, 2));
+    EXPECT_EQ(Unsupported.getString("mapping_status"),
+              "unsupported_architecture");
+  }
+}
+
 TEST_F(SessionCAPITest,
        IRViewRejectsInvalidPagesAndReportsUnsupportedMappings) {
   EXPECT_EQ(neverd_ir_view_json(Session, 0, "low", 0, 0), nullptr);

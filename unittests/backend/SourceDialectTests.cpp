@@ -163,6 +163,23 @@ TEST(SourceDialect, KeepsCBreakAndContinue) {
       << Go;
 }
 
+TEST(SourceDialect, SpellsSparseArraysAndOneDeclarationPerObject) {
+  const char *C = "#include <stdint.h>\n"
+                  "extern int64_t counter;\n"
+                  "int64_t counter = 5;\n"
+                  "unsigned char bytes[6] = { [0] = 0x40, [3] = 0x88, };\n";
+  const std::string Rust = spell(C, SourceDialect::Rust).Text;
+  EXPECT_NE(Rust.find("static mut bytes: [u8; 6] = [0x40, 0, 0, 0x88, 0, 0];"),
+            std::string::npos)
+      << Rust;
+  EXPECT_EQ(Rust.find("extern \"C\""), std::string::npos) << Rust;
+  const std::string Go = spell(C, SourceDialect::Go).Text;
+  EXPECT_NE(Go.find("var bytes [6]uint8 = [6]uint8{0: 0x40, 3: 0x88}"),
+            std::string::npos)
+      << Go;
+  EXPECT_EQ(Go.find("var counter int64\n"), std::string::npos) << Go;
+}
+
 TEST(SourceDialect, ShowsWhatItCannotSpellAsC) {
   const char *C = "#include <stdint.h>\n"
                   "int64_t k(int64_t v) {\n"

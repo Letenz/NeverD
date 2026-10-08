@@ -70,6 +70,8 @@ public:
           FileScope.insert(D);
           if (D->Body)
             Defined.insert(D->Name);
+          if (D->Kind == DeclKind::Variable && !D->Extern)
+            DefinedObjects.insert(D->Name);
         }
   }
 
@@ -1260,24 +1262,35 @@ private:
       return value(Init, Ty).Text;
     }
     if (Ty->isArray()) {
-      // Designators in order are plain elements.
+      // Each element in its place, designated or next; C zeroes the rest.
       std::vector<std::string> Elements;
-      for (size_t I = 0; I < Init->Ops.size(); ++I) {
-        const Expr *Item = Init->Ops[I];
+      size_t Next = 0;
+      for (const Expr *Item : Init->Ops) {
         if (Item->Kind == ExprKind::Designated) {
           if (Item->Ops.size() != 2 || !Item->Ops[0]->Value ||
-              *Item->Ops[0]->Value != static_cast<int64_t>(I)) {
-            unsupported("an array initializer out of order");
+              *Item->Ops[0]->Value < 0 ||
+              (Ty->Count &&
+               static_cast<uint64_t>(*Item->Ops[0]->Value) >= *Ty->Count)) {
+            unsupported("an array designator outside its array");
             return "_";
           }
+          Next = static_cast<size_t>(*Item->Ops[0]->Value);
           Item = Item->Ops[1];
         }
-        Elements.push_back(initializer(Item, Ty->Inner));
+        if (Elements.size() <= Next)
+          Elements.resize(Next + 1);
+        Elements[Next++] = initializer(Item, Ty->Inner);
       }
-      // C zeroes what an initializer leaves out.
-      if (Ty->Count && Ty->Inner->isScalar())
-        while (Elements.size() < *Ty->Count)
-          Elements.push_back("0");
+      if (Ty->Count && Ty->Inner->isScalar() && Elements.size() < *Ty->Count)
+        Elements.resize(*Ty->Count);
+      for (std::string &Element : Elements)
+        if (Element.empty()) {
+          if (!Ty->Inner->isScalar()) {
+            unsupported("a partly initialized array of records");
+            return "_";
+          }
+          Element = "0";
+        }
       if (Ty->Count && Elements.size() < *Ty->Count) {
         unsupported("a partly initialized array of records");
         return "_";
@@ -1450,7 +1463,9 @@ private:
           prototype(D);
         break;
       case DeclKind::Variable:
-        global(D);
+        // A definition later in the text declares it.
+        if (!D->Extern || !DefinedObjects.contains(D->Name))
+          global(D);
         break;
       case DeclKind::Typedef:
         if (!D->Ty->isInteger())
@@ -1564,7 +1579,7 @@ private:
   }
 
   llvm::DenseSet<const Decl *> FileScope;
-  llvm::StringSet<> Defined;
+  llvm::StringSet<> Defined, DefinedObjects;
   std::vector<Target> Targets;
   const CType *ReturnType = nullptr;
   unsigned Labels = 0;
