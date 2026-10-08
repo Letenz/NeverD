@@ -38,6 +38,11 @@ on:
         required: false
         type: string
         default: ''
+      windows_eh_replay_artifact_run:
+        description: 'Replay existing Windows EH evidence without rebuilding it'
+        required: false
+        type: string
+        default: ''
       native_cpu_backend:
         description: 'Native x64 transport for the native_cpu_only profile'
         required: true
@@ -2087,7 +2092,7 @@ jobs:
 
   windows-eh-focused:
     name: Windows EH (x86 Wine and ARM32 PE contracts)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     env:
@@ -2255,9 +2260,12 @@ jobs:
   windows-eh-native-replay:
     name: Windows EH (native PE32 replay)
     needs: windows-eh-focused
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_llvm_artifact_run != '' }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && (inputs.windows_eh_replay_artifact_run != '' || (needs.windows-eh-focused.result == 'success' && inputs.windows_eh_llvm_artifact_run != '')) }}
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2267,15 +2275,22 @@ jobs:
           python-version: '3.12'
       - uses: actions/download-artifact@v4
         with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.windows_eh_replay_artifact_run || github.run_id }}
           name: windows-eh-x86-runtime-arm32-contracts
           path: build-windows-eh
+      - name: Diagnose an existing original-image baseline
+        if: ${{ inputs.windows_eh_replay_artifact_run != '' }}
+        run: python scripts/check_windows_registration_native_diagnostics.py --root build-windows-eh
       - name: Execute the exact original and reconstructed images with the Windows CRT
-        run: python scripts/replay_windows_registration.py --evidence-root build-windows-eh/evidence --output build-windows-eh/native-replay.json
+        run: python scripts/replay_windows_registration.py --evidence-root build-windows-eh/evidence --source-profile ${{ inputs.windows_eh_replay_artifact_run != '' && 'seh3-eh4' || 'all' }} --output build-windows-eh/native-replay.json
       - name: Preserve native loader evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: windows-eh-native-pe32-runtime
-          path: build-windows-eh/native-replay.json
+          path: |
+            build-windows-eh/native-replay.json
+            build-windows-eh/runtime-diagnostics.json
           if-no-files-found: error
           retention-days: 14

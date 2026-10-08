@@ -34,37 +34,7 @@ jobs:
           name: windows-eh-x86-runtime-arm32-contracts
           path: build-windows-eh
       - name: Collect original-image runtime diagnostics
-        shell: python
-        run: |
-          import json, os, struct
-          from pathlib import Path
-          from scripts.check_windows_registration_eh import run_image
-          from scripts.check_windows_registration_rewrite import PE32
-          source = Path('build-windows-eh/evidence/source-filter/original.exe')
-          pe = PE32(source.read_bytes())
-          entry = pe.raw(pe.entry())
-          assert pe.data[entry:entry+5] == bytes.fromhex('5589e56aff')
-          table = pe.u32(entry + 6) - pe.base
-          filter_rva = pe.u32(pe.raw(table) + 4) - pe.base
-          config_rva, _ = pe.directory(10)
-          config = pe.raw(config_rva)
-          observations = []
-          for variant in ('original', 'constant-filter', 'no-safe-seh', 'no-load-config'):
-              data = bytearray(pe.data)
-              if variant == 'constant-filter':
-                  start = pe.raw(filter_rva, 6)
-                  data[start:start+6] = bytes.fromhex('b801000000c3')
-              if variant == 'no-safe-seh':
-                  struct.pack_into('<2I', data, config + 64, 0, 0)
-              if variant == 'no-load-config':
-                  struct.pack_into('<2I', data, pe.optional + 96 + 10*8, 0, 0)
-              image = Path('build-windows-eh') / ('diagnostic-' + variant + '.exe')
-              image.write_bytes(data)
-              result = run_image(image, [], os.environ.copy(), 60)
-              observations.append({'variant': variant, 'runtime': result})
-          Path('build-windows-eh/runtime-diagnostics.json').write_text(json.dumps({
-              'evidence': 'diagnostic-variants-only', 'observations': observations}, indent=2))
-          print(json.dumps(observations, indent=2))
+        run: python scripts/check_windows_registration_native_diagnostics.py --root build-windows-eh
       - name: Replay exact source and cookie evidence
         run: python scripts/replay_windows_registration.py --evidence-root build-windows-eh/evidence --source-profile '${{ inputs.source_profile }}' --output build-windows-eh/native-replay.json
       - uses: actions/upload-artifact@v4
