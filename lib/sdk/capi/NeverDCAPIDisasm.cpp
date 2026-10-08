@@ -193,9 +193,13 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
               Obj["target"] = vaHex(Flow.Target);
             if (!Flow.Refs.empty()) {
               llvm::json::Array Refs;
-              for (const auto &[To, Kind] : Flow.Refs)
-                Refs.push_back(llvm::json::Object{{"to", vaHex(To)},
-                                                  {"kind", Kind.str()}});
+              for (const InstructionRef &Ref : Flow.Refs) {
+                llvm::json::Object Row{{"to", vaHex(Ref.To)},
+                                       {"kind", Ref.Kind.str()}};
+                if (Ref.Bytes)
+                  Row["size"] = static_cast<int64_t>(Ref.Bytes);
+                Refs.push_back(std::move(Row));
+              }
               Obj["refs"] = std::move(Refs);
             }
           }
@@ -247,6 +251,7 @@ const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
   struct Ref {
     va_t From, To;
     llvm::StringRef Kind;
+    unsigned Bytes = 0;
   };
   // Each function's references, merged in entry order.
   std::vector<std::vector<Ref>> Slots(Page.Functions.size());
@@ -257,14 +262,14 @@ const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
         if (Flow.Target != InvalidVA && !Flow.Kind.empty() &&
             Flow.Kind != UnliftedFlow)
           Out.push_back({DI.Addr, Flow.Target, Flow.Kind});
-        for (const auto &[To, Kind] : Flow.Refs)
-          Out.push_back({DI.Addr, To, Kind});
+        for (const InstructionRef &R : Flow.Refs)
+          Out.push_back({DI.Addr, R.To, R.Kind, R.Bytes});
         // A transfer through a slot the loader relocated to code reaches
         // the slot's pointer as loaded.
         if (Flow.Kind == "icall" || Flow.Kind == "ijump")
-          for (const auto &[Slot, Kind] : Flow.Refs)
-            if (Kind == "read" && S->Img.CodePtrRelocSlots.count(Slot))
-              if (const auto Target = relocatedPointer(S->Img, Slot))
+          for (const InstructionRef &R : Flow.Refs)
+            if (R.Kind == "read" && S->Img.CodePtrRelocSlots.count(R.To))
+              if (const auto Target = relocatedPointer(S->Img, R.To))
                 Out.push_back({DI.Addr, *Target, Flow.Kind});
       });
   if (!Decoded) {
@@ -273,9 +278,12 @@ const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
   }
   llvm::json::Array Refs;
   for (const auto &Slot : Slots)
-    for (const Ref &R : Slot)
-      Refs.push_back(
-          llvm::json::Array{vaHex(R.From), vaHex(R.To), R.Kind.str()});
+    for (const Ref &R : Slot) {
+      llvm::json::Array Row{vaHex(R.From), vaHex(R.To), R.Kind.str()};
+      if (R.Bytes)
+        Row.push_back(static_cast<int64_t>(R.Bytes));
+      Refs.push_back(std::move(Row));
+    }
   llvm::json::Object Result;
   Result["refs"] = std::move(Refs);
   Result["next_entry"] =

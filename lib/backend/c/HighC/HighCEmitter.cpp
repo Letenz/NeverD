@@ -1454,6 +1454,10 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
       continue;
     if (const char *Hdr = libc::headerFor(Name))
       Headers.insert(Hdr);
+    // A C library prototype can name a type a header declares.
+    if (const libc::LibCPrototype *Prototype = externalPrototype(Name);
+        Prototype && !Prototype->Header.empty())
+      Headers.insert(std::string(Prototype->Header));
   }
   if (NeedsObjCRuntime) {
     Headers.insert("objc/message.h");
@@ -1632,9 +1636,13 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
 
   // Direct calls can precede the callee's body in address order. Declare the
   // recovered internal signature before any body so C does not infer an
-  // obsolete implicit int/no-parameter declaration at that call site.
+  // obsolete implicit int/no-parameter declaration at that call site.  A
+  // function whose address the code takes is named before its body the same
+  // way.
   for (const auto &[Name, Function] : DefinedFunctionsByIdentifier) {
-    if (!CallTargets.count(Name) || !Prototyped.insert(Function).second)
+    if ((!CallTargets.count(Name) &&
+         !AddressTakenDefinitions.count(Function)) ||
+        !Prototyped.insert(Function).second)
       continue;
     CurrentFunc = Function;
     Analysis = {};
@@ -1895,12 +1903,18 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
               : llvm::StringRef(Name);
       // A routine no header declares takes the prototype the C library tables
       // give it; its calls convert their arguments to its parameter types.
-      if (const libc::LibCPrototype *Prototype =
-              libc::libcPrototypeForSymbol(Symbol)) {
-        OS << "extern " << Prototype->Return << " " << Identifier << "(";
+      if (const libc::LibCPrototype *Prototype = prototypeForSymbol(Symbol)) {
+        OS << "extern ";
+        if (Prototype->Winapi && Opts.TheArch == Arch::X86)
+          OS << "__attribute__((stdcall)) ";
+        const std::string Return = prototypeType(Prototype->Return);
+        OS << Return << (Return.back() == '*' ? "" : " ") << Identifier << "(";
         for (unsigned I = 0; I < Prototype->ParamCount; ++I)
-          OS << (I ? ", " : "") << Prototype->Params[I];
-        if (!Prototype->ParamCount)
+          OS << (I ? ", " : "") << prototypeType(Prototype->Params[I]);
+        // ISO C before C23 spells no prototype of `...` alone.
+        if (Prototype->Variadic && Prototype->ParamCount)
+          OS << ", ...";
+        else if (!Prototype->Variadic && !Prototype->ParamCount)
           OS << "void";
       } else {
         OS << "extern int " << Identifier << "(";
@@ -1937,6 +1951,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   ImageBackings.clear();
   FunctionAddressNames.clear();
   AddressTakenFunctions.clear();
+  AddressTakenDefinitions.clear();
   if (!Opts.Image)
     return;
   VarKeyMap<va_t> ImageLoadVars;
@@ -2144,6 +2159,7 @@ void HighCWriter::noteFunctionAddress(va_t Addr,
   for (const HighFunc &Func : Funcs)
     if (Func.Entry == Addr && !Func.Name.empty()) {
       FunctionAddressNames.emplace(Addr, functionIdentifier(Func));
+      AddressTakenDefinitions.insert(&Func);
       return;
     }
   // A function the image names; this output declares it.

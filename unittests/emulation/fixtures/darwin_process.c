@@ -3739,7 +3739,168 @@ static int symbolic_links(const char *input) {
              : 250;
 }
 
+/* One closed catalogue has fixed /static links and mutable /work names. */
+static int symbolic_link_mutations(const char *input) {
+  unsigned error, length = 0;
+  char root[1024];
+  while (length < sizeof(root) - 1 && input[length]) {
+    root[length] = input[length];
+    ++length;
+  }
+  if (input[length] || length < 10 || !equal(input + length - 10, "/work/data"))
+    return 201;
+  if (length == 10) {
+    root[0] = '/';
+    root[1] = 0;
+  } else {
+    root[length - 10] = 0;
+  }
+  u64 dir = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 202;
+  u64 old = call(463, dir, (u64) "static/data-link", 2, 0, 0, 0, &error);
+  if (error || secondary)
+    return 203;
+  unsigned char target[144], own[144], after[144], bytes[32];
+  if (call(339, old, (u64)target, 0, 0, 0, 0, &error) || error || secondary ||
+      call(470, dir, (u64) "static/data-link", (u64)own, 0x20, 0, 0, &error) ||
+      error || secondary)
+    return 204;
+  u64 mapped = call(197, 0, 10, 1, 2, old, 0, &error);
+  if (error || secondary ||
+      !login_equal_bytes((const unsigned char *)mapped,
+                         (const unsigned char *)"0123456789", 10))
+    return 205;
+  if (call(463, dir, (u64) "static/missing-link", 0, 0, 0, 0, &error) != 2 ||
+      !error ||
+      call(463, dir, (u64) "static/missing-link", 0x20000a02, 0600, 0, 0,
+           &error) != 17 ||
+      !error ||
+      call(463, dir, (u64) "static/alias/new", 0x20000a02, 0600, 0, 0,
+           &error) != 62 ||
+      !error)
+    return 206;
+  u64 created =
+      call(463, dir, (u64) "static/alias/new", 0xa02, 0600, 0, 0, &error);
+  if (error || secondary ||
+      call(4, created, (u64) "UV", 2, 0, 0, 0, &error) != 2 || error ||
+      secondary)
+    return 207;
+  u64 alias = call(463, dir, (u64) "static/missing-link", 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 208;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, alias, (u64)(bytes + 8), 2, 0, 0, 0, &error) != 2 || error ||
+      secondary || bytes[8] != 'U' || bytes[9] != 'V' ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22))
+    return 209;
+  if (call(465, dir, (u64) "static/alias/new", dir, (u64) "static/alias/moved",
+           0, 0, &error) ||
+      error || secondary ||
+      call(463, dir, (u64) "static/missing-link", 0, 0, 0, 0, &error) != 2 ||
+      !error ||
+      call(472, dir, (u64) "static/alias/moved", 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 210;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, alias, (u64)(bytes + 8), 2, 0, 0, 0, &error) != 2 || error ||
+      secondary || bytes[8] != 'U' || bytes[9] != 'V' ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22))
+    return 211;
+  if (call(465, dir, (u64) "static/data-link/", dir, (u64) "work/renamed", 0, 0,
+           &error) ||
+      error || secondary ||
+      call(463, dir, (u64) "static/data-link", 0, 0, 0, 0, &error) != 2 ||
+      !error ||
+      call(472, dir, (u64) "static/alias/renamed", 0, 0, 0, 0, &error) ||
+      error || secondary)
+    return 212;
+  u64 replacement =
+      call(463, dir, (u64) "static/alias/data", 0xa02, 0600, 0, 0, &error);
+  if (error || secondary ||
+      call(4, replacement, (u64) "XY", 2, 0, 0, 0, &error) != 2 || error ||
+      secondary)
+    return 213;
+  u64 current = call(463, dir, (u64) "static/data-link", 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(339, current, (u64)after, 0, 0, 0, 0, &error) || error ||
+      secondary ||
+      little_integer(after + 8, 8) == little_integer(target + 8, 8) ||
+      little_integer(after + 96, 8) != 2)
+    return 214;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, current, (u64)(bytes + 8), 2, 0, 0, 0, &error) != 2 || error ||
+      secondary || bytes[8] != 'X' || bytes[9] != 'Y' ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22))
+    return 215;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, old, (u64)(bytes + 8), 10, 0, 0, 0, &error) != 10 || error ||
+      secondary ||
+      !login_equal_bytes(bytes + 8, (const unsigned char *)"0123456789", 10) ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 18, 14) ||
+      !login_equal_bytes((const unsigned char *)mapped,
+                         (const unsigned char *)"0123456789", 10))
+    return 216;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(473, dir, (u64) "static/data-link", (u64)(bytes + 8),
+           sizeof(bytes) - 8, 0, 0, &error) != 12 ||
+      error || secondary ||
+      !login_equal_bytes(bytes + 8, (const unsigned char *)"../work/data",
+                         12) ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 20, 12) ||
+      call(470, dir, (u64) "static/data-link", (u64)after, 0x820, 0, 0,
+           &error) ||
+      error || secondary ||
+      little_integer(after, 4) != little_integer(own, 4) ||
+      little_integer(after + 4, 2) != little_integer(own + 4, 2) ||
+      little_integer(after + 8, 8) != little_integer(own + 8, 8) ||
+      little_integer(after + 96, 8) != little_integer(own + 96, 8))
+    return 217;
+  if (call(475, dir, (u64) "static/alias/box", 0700, 0, 0, 0, &error) ||
+      error || secondary)
+    return 218;
+  u64 box = call(463, dir, (u64) "static/alias/box", 0x100000, 0, 0, 0, &error);
+  if (error || secondary || call(13, box, 0, 0, 0, 0, 0, &error) || error ||
+      secondary ||
+      call(465, dir, (u64) "static/alias/box", dir, (u64) "static/alias/shift",
+           0, 0, &error) ||
+      error || secondary ||
+      call(472, dir, (u64) "static/alias/shift", 0x80, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(475, dir, (u64) "static/alias/box", 0700, 0, 0, 0, &error) ||
+      error || secondary)
+    return 219;
+  if (call(463, (u64)-2, (u64) "lost", 0xa02, 0600, 0, 0, &error) != 2 ||
+      !error)
+    return 220;
+  u64 parent_file = call(463, (u64)-2, (u64) "../data", 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 221;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, parent_file, (u64)(bytes + 8), 2, 0, 0, 0, &error) != 2 ||
+      error || secondary || bytes[8] != 'X' || bytes[9] != 'Y' ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22) ||
+      call(13, dir, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 222;
+  const u64 descriptors[] = {old,     created, alias,       replacement,
+                             current, box,     parent_file, dir};
+  for (unsigned i = 0; i != 8; ++i)
+    if (call(6, descriptors[i], 0, 0, 0, 0, 0, &error) || error || secondary)
+      return 223;
+  if (!login_equal_bytes((const unsigned char *)mapped,
+                         (const unsigned char *)"0123456789", 10) ||
+      call(73, mapped, PAGE, 0, 0, 0, 0, &error) || error || secondary)
+    return 224;
+  const char marker = 'z';
+  return call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error &&
+                 !secondary
+             ? 37
+             : 225;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
+  if (argc >= 2 && equal(argv[1], "symbolic-link-mutations"))
+    return argc < 3 ? 201 : symbolic_link_mutations(argv[2]);
   if (argc >= 2 && equal(argv[1], "symbolic-links"))
     return argc < 3 ? 225 : symbolic_links(argv[2]);
   unsigned error = 0;

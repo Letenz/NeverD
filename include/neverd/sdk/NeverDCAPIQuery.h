@@ -76,6 +76,14 @@ NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 /// with neverd_last_error() for malformed options.
 NEVERD_API const char *neverd_strings_ex_json(neverd_session_t Sess,
                                               const char *OptionsJson);
+/// The string that starts at \p Addr, as neverd_strings_ex_json() reads one
+/// with \p OptionsJson (NULL for the default encodings), except that a single
+/// character is enough when the options name no "min_length".  Returns
+/// {"addr","length","chars","encoding","value"} as that function's rows, and
+/// "unit", the bytes of the encoding's code unit (and so of the terminator),
+/// or NULL with neverd_last_error() when no string starts there.
+NEVERD_API const char *neverd_string_at(neverd_session_t Sess, neverd_va_t Addr,
+                                        const char *OptionsJson);
 /// The encodings neverd_strings_ex_json() can search:
 /// [{"name","spelling","unit","default","legacy"},...], where "spelling" is
 /// how a listing names the encoding (empty for plain ASCII), "unit" the bytes
