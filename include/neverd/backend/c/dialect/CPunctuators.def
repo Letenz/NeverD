@@ -1,0 +1,68 @@
+//===- CPunctuators.def - The punctuators of C ------------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The punctuators of C (C17 6.4.6), longest first, so that a reader takes
+/// the longest one a text starts with.
+///
+///   NEVERD_C_PUNCTUATOR(Spelling)
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_C_PUNCTUATOR
+#define NEVERD_C_PUNCTUATOR(Spelling)
+#endif
+
+NEVERD_C_PUNCTUATOR("...")
+NEVERD_C_PUNCTUATOR("<<=")
+NEVERD_C_PUNCTUATOR(">>=")
+NEVERD_C_PUNCTUATOR("->")
+NEVERD_C_PUNCTUATOR("++")
+NEVERD_C_PUNCTUATOR("--")
+NEVERD_C_PUNCTUATOR("<<")
+NEVERD_C_PUNCTUATOR(">>")
+NEVERD_C_PUNCTUATOR("<=")
+NEVERD_C_PUNCTUATOR(">=")
+NEVERD_C_PUNCTUATOR("==")
+NEVERD_C_PUNCTUATOR("!=")
+NEVERD_C_PUNCTUATOR("&&")
+NEVERD_C_PUNCTUATOR("||")
+NEVERD_C_PUNCTUATOR("*=")
+NEVERD_C_PUNCTUATOR("/=")
+NEVERD_C_PUNCTUATOR("%=")
+NEVERD_C_PUNCTUATOR("+=")
+NEVERD_C_PUNCTUATOR("-=")
+NEVERD_C_PUNCTUATOR("&=")
+NEVERD_C_PUNCTUATOR("^=")
+NEVERD_C_PUNCTUATOR("|=")
+NEVERD_C_PUNCTUATOR("##")
+NEVERD_C_PUNCTUATOR("[")
+NEVERD_C_PUNCTUATOR("]")
+NEVERD_C_PUNCTUATOR("(")
+NEVERD_C_PUNCTUATOR(")")
+NEVERD_C_PUNCTUATOR("{")
+NEVERD_C_PUNCTUATOR("}")
+NEVERD_C_PUNCTUATOR(".")
+NEVERD_C_PUNCTUATOR("&")
+NEVERD_C_PUNCTUATOR("*")
+NEVERD_C_PUNCTUATOR("+")
+NEVERD_C_PUNCTUATOR("-")
+NEVERD_C_PUNCTUATOR("~")
+NEVERD_C_PUNCTUATOR("!")
+NEVERD_C_PUNCTUATOR("/")
+NEVERD_C_PUNCTUATOR("%")
+NEVERD_C_PUNCTUATOR("<")
+NEVERD_C_PUNCTUATOR(">")
+NEVERD_C_PUNCTUATOR("^")
+NEVERD_C_PUNCTUATOR("|")
+NEVERD_C_PUNCTUATOR("?")
+NEVERD_C_PUNCTUATOR(":")
+NEVERD_C_PUNCTUATOR(";")
+NEVERD_C_PUNCTUATOR("=")
+NEVERD_C_PUNCTUATOR(",")
+NEVERD_C_PUNCTUATOR("#")
+
+#undef NEVERD_C_PUNCTUATOR

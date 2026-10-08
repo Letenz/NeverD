@@ -108,6 +108,9 @@ public:
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
+  /// Records the functions and objects the text names in the source map
+  /// (HighCSourceNames.cpp).
+  void recordSourceNames(const std::vector<HighFunc> &Funcs);
   TypeRef declaredFunctionReturnType(const HighFunc &Func) const;
   void prepareFunctionReturns(std::vector<HighFunc> &Funcs) const;
   void prepareFunctionIdentifiers(const std::vector<HighFunc> &Funcs);
@@ -775,6 +778,9 @@ public:
 
   struct ImageObject {
     std::string Name;
+    /// The name the user, debug information or a symbol gives it, which
+    /// \ref Name is spelled from; empty for a name the emitter made.
+    std::string Symbol;
     /// The symbol its name is spelled from, as its language spells it, for
     /// the comment that declares it; empty when the name is the symbol.
     std::string Readable;

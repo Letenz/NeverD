@@ -2549,6 +2549,7 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
     if (I + 1 < Funcs.size())
       OS << "\n";
   }
+  recordSourceNames(Funcs);
 }
 
 //===----------------------------------------------------------------------===//
