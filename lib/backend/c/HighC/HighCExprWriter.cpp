@@ -3125,6 +3125,13 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec,
 
 std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                                      MemoryLoadDestination *Destination) {
+  // On a 64-bit target the source is built on a 64-bit host, where a
+  // pointer converted to uintptr_t is the unsigned 64-bit integer already.
+  auto PointerInteger = [&](std::string Text) {
+    if (getTargetRegInfo(Opts.TheArch).PointerSize != sizeof(uint64_t))
+      return Text;
+    return typedText(E, std::move(Text), sizeof(uint64_t), /*IsSigned=*/false);
+  };
   static thread_local int Depth = 0;
   struct Guard {
     int &D;
@@ -3201,11 +3208,13 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       if (const auto Disp = frameDisplacement(E)) {
         auto It = FrameSlots.find(*Disp);
         if (It != FrameSlots.end() && It->second.UsedAsMemory)
-          return (IntegerViewOperands.count(&E) ? "(uintptr_t)&" : "&") + *Slot;
+          return IntegerViewOperands.count(&E)
+                     ? PointerInteger("(uintptr_t)&" + *Slot)
+                     : "&" + *Slot;
       }
     }
     if (pointerNeedsIntegerView(DeclaredType))
-      return "(uintptr_t)" + Name;
+      return PointerInteger("(uintptr_t)" + Name);
     if (DeclaredType &&
         DeclaredType->SourceName == kSourceAArch64Vector128CType)
       return "__builtin_bit_cast(__int128, " + Name + ")";
@@ -3226,7 +3235,9 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         AllowEmpty = true;
     }
     if (auto Lit = imageStringLiteral(Opts.Image, E.ConstVal, AllowEmpty))
-      return LiteralAddressOperands.count(&E) ? "(uintptr_t)" + *Lit : *Lit;
+      return LiteralAddressOperands.count(&E)
+                 ? PointerInteger("(uintptr_t)" + *Lit)
+                 : *Lit;
     // Preserve the existing exact-object spelling, but do not turn an
     // unrelated numeric immediate that happens to lie inside a backing range
     // into an address.
@@ -3236,8 +3247,9 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         E.ConstProvenance == ConstantAddressProvenance::Address ||
         E.ConstProvenance == ConstantAddressProvenance::DataAddress)
       if (auto Backing = imageBackingAddress(E.ConstVal))
-        return IntegerViewOperands.count(&E) ? "(uintptr_t)" + *Backing
-                                             : *Backing;
+        return IntegerViewOperands.count(&E)
+                   ? PointerInteger("(uintptr_t)" + *Backing)
+                   : *Backing;
     if (auto Name = imageObjectName(E.ConstVal)) {
       const std::string Address = "&" + *Name;
       // Replacing a machine integer address with a C object pointer must
@@ -3253,7 +3265,9 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                            /*IsSigned=*/false);
         return "(" + typeToC(E.Type) + ")(uintptr_t)(" + Address + ")";
       }
-      return IntegerViewOperands.count(&E) ? "(uintptr_t)" + Address : Address;
+      return IntegerViewOperands.count(&E)
+                 ? PointerInteger("(uintptr_t)" + Address)
+                 : Address;
     }
     return constStr(E.ConstVal, E.Type);
   }
@@ -3266,7 +3280,9 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       if (const auto Disp = certifiedFrameStorageDisplacement(E))
         return frameStorageAddress(*Disp);
     if (auto Slot = namedFrameSlot(E))
-      return (IntegerViewOperands.count(&E) ? "(uintptr_t)&" : "&") + *Slot;
+      return IntegerViewOperands.count(&E)
+                 ? PointerInteger("(uintptr_t)&" + *Slot)
+                 : "&" + *Slot;
     if (auto Member = typedMemberAddress(E))
       return "&" + *Member;
     return renderBinOp(E, ParentPrec);
