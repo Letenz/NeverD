@@ -13958,17 +13958,6 @@
             "windows"
           ]
         },
-        {
-          "runner": "gtest",
-          "target": "NeverDProcessPublicTests",
-          "source": "unittests/emulation/ProcessPublicTests.cpp",
-          "filter": "*DarwinInputsPublic*mutable_initial_links*",
-          "platforms": [
-            "darwin",
-            "linux",
-            "windows"
-          ]
-        },
           {
             "runner": "gtest",
             "target": "NeverDProcessPublicTests",
