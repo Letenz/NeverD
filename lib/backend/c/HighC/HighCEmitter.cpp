@@ -1986,7 +1986,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       // Empty/non-ASCII rdata stays a named object (`&pwstr`), not a hex
       // immediate. Printable C/wchar literals still fold at the call site.
       if (Named)
-        noteImageObject(E.ConstVal, NdType::makeInt(2), false);
+        noteImageAddress(E.ConstVal);
     }
     if (E.Kind == ExprKind::Load &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
