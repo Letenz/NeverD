@@ -37,9 +37,13 @@ NEVERD_DARWIN_VALUE(SeekHole, 3)
 NEVERD_DARWIN_VALUE(SeekData, 4)
 NEVERD_DARWIN_VALUE(NameTooLong, 63)
 NEVERD_DARWIN_VALUE(DirectoryNotEmpty, 66)
+NEVERD_DARWIN_VALUE(TooManyLinks, 62)
+NEVERD_DARWIN_VALUE(MaxSymbolicLinks, 32)
 NEVERD_DARWIN_VALUE(Overflow, 84)
 NEVERD_DARWIN_VALUE(OpenCloseOnExec, 0x01000000)
 NEVERD_DARWIN_VALUE(OpenDirectory, 0x00100000)
+NEVERD_DARWIN_VALUE(OpenNoFollow, 0x100)
+NEVERD_DARWIN_VALUE(OpenNoFollowAny, 0x20000000)
 NEVERD_DARWIN_VALUE(OpenAccessMask, 3)
 NEVERD_DARWIN_VALUE(OpenWriteOnly, 1)
 NEVERD_DARWIN_VALUE(OpenReadWrite, 2)
@@ -74,6 +78,7 @@ NEVERD_DARWIN_VALUE(DuplicateCloseOnExec, 67)
 NEVERD_DARWIN_VALUE(FileStatusSize, 144)
 NEVERD_DARWIN_VALUE(FileRegularMode, 0x8000)
 NEVERD_DARWIN_VALUE(FileDirectoryMode, 0x4000)
+NEVERD_DARWIN_VALUE(FileSymbolicLinkMode, 0xa000)
 NEVERD_DARWIN_VALUE(FilePermissionMask, 0x0fff)
 NEVERD_DARWIN_VALUE(MaxWriteBytes, 0x7fffffff)
 NEVERD_DARWIN_VALUE(MaxIOVectors, 1024)
@@ -124,6 +129,8 @@ NEVERD_DARWIN_SERVICE(Pwritev, 541, Wide)
 NEVERD_DARWIN_SERVICE(Open, 5, Int)
 NEVERD_DARWIN_SERVICE(Close, 6, Int)
 NEVERD_DARWIN_SERVICE(Unlink, 10, Int)
+NEVERD_DARWIN_SERVICE(ReadLink, 58, Int)
+NEVERD_DARWIN_SERVICE(ReadLinkAt, 473, Int)
 NEVERD_DARWIN_SERVICE(Mkdir, 136, Int)
 NEVERD_DARWIN_SERVICE(MkdirAt, 475, Int)
 NEVERD_DARWIN_SERVICE(Rmdir, 137, Int)
@@ -291,6 +298,18 @@ NEVERD_DARWIN_DIAGNOSTIC(TimeAbsoluteMissing,
 NEVERD_DARWIN_DIAGNOSTIC(TimePartialOutput,
                          "Darwin time output buffer is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(FileOptionsLimit, "invalid Darwin file input limits")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SymbolicLinkTarget,
+    "Darwin symbolic link targets require 1..1023 non-NUL bytes")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SymbolicLinkNamespace,
+    "Darwin symbolic links cannot share a mutable directory namespace")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SymbolicLinkMutation,
+    "Darwin symbolic link namespace mutation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SymbolicLinkPartialOutput,
+    "Darwin symbolic link target output is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(FileOptionPath,
                          "invalid or conflicting Darwin catalogue path")
 NEVERD_DARWIN_DIAGNOSTIC(FileAccessPermissions,

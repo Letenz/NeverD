@@ -318,6 +318,10 @@ struct HighStmt {
   bool EHIsReducible = false;
 
   bool IsPhiCopy = false;
+  /// An assignment naming a value so that the statements reading it stay
+  /// short (nameRepeatedValues).  Folding it back into a reader would print
+  /// the value there in full again.
+  bool KeepsName = false;
 
   std::string str(int Indent = 0) const;
 };

@@ -10,6 +10,7 @@
 ///   - Comparison negation folding (!(a < b) → b <= a)
 ///   - Identity/zero elimination  (x + 0 → x, x * 1 → x)
 ///   - Subtraction-to-comparison folding  ((a - b) == 0 → a == b)
+///   - Order/equality merging  (c <= x && x != c → c < x)
 ///   - Negative constant folding  (x + (-N) → x - N)
 ///   - Sub-piece identity elimination  (SUBBYTES((u64)x, 0) → x)
 ///   - Truncation narrowing  ((u32)((u64)a + (u64)b) → a + b)
@@ -20,6 +21,7 @@
 
 #include "neverd/ir/high/MedToHigh.h"
 
+#include <optional>
 #include <unordered_set>
 
 namespace neverd {
@@ -353,6 +355,73 @@ static bool discardMaskedConcatHigh(const ExprPtr &E) {
   return true;
 }
 
+/// Whether \p A and \p B are one integer value: the same expression,
+/// possibly behind same-width integer views (a signedness cast or the full
+/// low slice), as flag tests of one compare read it.
+static bool sameIntegerValue(const ExprPtr &A, const ExprPtr &B) {
+  auto Peel = [](ExprPtr E) {
+    for (unsigned Depth = 0; E && Depth < 4; ++Depth) {
+      const bool View =
+          E->Operands.size() >= 1 && E->Operands[0] && E->Type &&
+          E->Operands[0]->Type &&
+          E->Operands[0]->Type->Kind == NdTypeKind::Int &&
+          E->Type->Kind == NdTypeKind::Int &&
+          E->Operands[0]->Type->Size == E->Type->Size &&
+          ((E->Kind == ExprKind::Cast && E->Operands.size() == 1) ||
+           (E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+            E->Operands.size() == 2 && E->Operands[1] &&
+            E->Operands[1]->Kind == ExprKind::Const &&
+            E->Operands[1]->ConstVal == 0));
+      if (!View)
+        break;
+      E = E->Operands[0];
+    }
+    return E;
+  };
+  if (!A || !B || !A->Type || !B->Type || A->Type->Size != B->Type->Size)
+    return false;
+  const ExprPtr PA = Peel(A), PB = Peel(B);
+  return PA && PB && PA->structuralEq(*PB);
+}
+
+/// `c <= x && x != c` is `c < x`, and `x < c || x == c` is `x <= c`: the
+/// unsigned or signed above / below-or-equal tests of one compare, which x86
+/// spells as two flag tests (`ja` reads !CF && !ZF).
+static ExprPtr mergeOrderAndEquality(const ExprPtr &E) {
+  if (!E || E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
+      (E->Op != NdOp::BOOL_AND && E->Op != NdOp::BOOL_OR))
+    return nullptr;
+  const bool And = E->Op == NdOp::BOOL_AND;
+  for (unsigned I = 0; I < 2; ++I) {
+    const ExprPtr &Order = E->Operands[I], &Equality = E->Operands[1 - I];
+    if (!Order || !Equality || Order->Kind != ExprKind::BinOp ||
+        Equality->Kind != ExprKind::BinOp || Order->Operands.size() != 2 ||
+        Equality->Operands.size() != 2 ||
+        Equality->Op != (And ? NdOp::INT_NOTEQUAL : NdOp::INT_EQUAL))
+      continue;
+    NdOp Merged = NdOp::NOP;
+    if (And && Order->Op == NdOp::INT_LESSEQUAL)
+      Merged = NdOp::INT_LESS;
+    else if (And && Order->Op == NdOp::INT_SLESSEQUAL)
+      Merged = NdOp::INT_SLESS;
+    else if (!And && Order->Op == NdOp::INT_LESS)
+      Merged = NdOp::INT_LESSEQUAL;
+    else if (!And && Order->Op == NdOp::INT_SLESS)
+      Merged = NdOp::INT_SLESSEQUAL;
+    if (Merged == NdOp::NOP)
+      continue;
+    const ExprPtr &L = Order->Operands[0], &R = Order->Operands[1];
+    const ExprPtr &P = Equality->Operands[0], &Q = Equality->Operands[1];
+    if (!(sameIntegerValue(L, P) && sameIntegerValue(R, Q)) &&
+        !(sameIntegerValue(L, Q) && sameIntegerValue(R, P)))
+      continue;
+    auto Result = std::make_shared<HighExpr>(*Order);
+    Result->Op = Merged;
+    return Result;
+  }
+  return nullptr;
+}
+
 static void simplifyExprRecursive(
     ExprPtr &E, std::unordered_set<const HighExpr *> &Seen,
     const std::unordered_set<const HighExpr *> &OrderedMemory) {
@@ -417,6 +486,73 @@ static void simplifyExprRecursive(
         return;
       }
     }
+  }
+
+  // A slice within one part of a join reads that part: a lane of a vector
+  // the expression has just assembled.  Printed whole, the join repeats at
+  // every lane read, and again at every level that slices it.  The other
+  // part is not evaluated, so it must be a value nothing would miss.
+  for (bool Narrowed = true; Narrowed;) {
+    Narrowed = false;
+    if (E->Kind != ExprKind::BinOp || E->Op != NdOp::SUBBYTES ||
+        E->Operands.size() != 2 || !E->Operands[0] || !E->Operands[1] ||
+        E->Operands[1]->Kind != ExprKind::Const || !E->Type ||
+        E->Type->Kind != NdTypeKind::Int || !E->Type->Size ||
+        E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      break;
+    const auto &Joined = E->Operands[0];
+    if (Joined->Kind != ExprKind::BinOp || Joined->Op != NdOp::CONCAT ||
+        Joined->Operands.size() != 2 || !Joined->Type ||
+        Joined->Type->Kind != NdTypeKind::Int ||
+        Joined->IntrinsicId != Intrinsic::None ||
+        !Joined->IntrinsicOutputs.empty() ||
+        Joined->MemoryOrdering != NdMemoryOrdering::None ||
+        Joined->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      break;
+    const ExprPtr High = Joined->Operands[0], Low = Joined->Operands[1];
+    if (!High || !Low || !High->Type || !Low->Type ||
+        High->Type->Kind != NdTypeKind::Int ||
+        Low->Type->Kind != NdTypeKind::Int ||
+        High->Type->Size + Low->Type->Size != Joined->Type->Size)
+      break;
+    const uint64_t Offset = E->Operands[1]->ConstVal;
+    const uint64_t Bytes = E->Type->Size, LowBytes = Low->Type->Size;
+    size_t Budget = 4096;
+    ExprPtr Part;
+    uint64_t PartOffset = 0;
+    if (Offset + Bytes <= LowBytes && harmlessIntegerValue(High, Budget)) {
+      Part = Low;
+      PartOffset = Offset;
+    } else if (Offset >= LowBytes &&
+               Offset + Bytes <= LowBytes + High->Type->Size &&
+               harmlessIntegerValue(Low, Budget)) {
+      Part = High;
+      PartOffset = Offset - LowBytes;
+    }
+    if (!Part)
+      break;
+    if (PartOffset == 0 && Part->Type->Size == Bytes) {
+      if (Part->Type->IsSigned == E->Type->IsSigned) {
+        E = Part;
+      } else {
+        auto Cast = std::make_shared<HighExpr>();
+        Cast->Kind = ExprKind::Cast;
+        Cast->Type = Cast->CastTo = E->Type;
+        Cast->Operands = {Part};
+        E = std::move(Cast);
+      }
+      return;
+    }
+    // Rewrite a copy: another parent may read the join itself.
+    auto Slice = std::make_shared<HighExpr>(*E);
+    Slice->Operands = {
+        Part, HighExpr::makeConst(PartOffset, E->Operands[1]->Type
+                                                  ? E->Operands[1]->Type->Size
+                                                  : 4)};
+    E = std::move(Slice);
+    Narrowed = true;
   }
 
   if (E->Kind == ExprKind::UnaryOp && E->Op == NdOp::BOOL_NOT &&
@@ -489,8 +625,82 @@ static void simplifyExprRecursive(
     return;
   }
 
+  // A selection on a constant reads one arm.
+  if (E->Kind == ExprKind::BinOp && E->Op == NdOp::SELECT &&
+      E->Operands.size() == 3 && E->Operands[0] &&
+      E->Operands[0]->Kind == ExprKind::Const && E->Operands[1] &&
+      E->Operands[2] && E->Type && E->Type->Kind == NdTypeKind::Int) {
+    const bool Taken = E->Operands[0]->ConstVal != 0;
+    const ExprPtr Kept = E->Operands[Taken ? 1 : 2];
+    size_t Budget = 4096;
+    if (Kept->Type && Kept->Type->Kind == NdTypeKind::Int &&
+        Kept->Type->Size == E->Type->Size &&
+        harmlessIntegerValue(E->Operands[Taken ? 2 : 1], Budget)) {
+      if (Kept->Type->IsSigned == E->Type->IsSigned) {
+        E = Kept;
+      } else {
+        auto Cast = std::make_shared<HighExpr>();
+        Cast->Kind = ExprKind::Cast;
+        Cast->Type = Cast->CastTo = E->Type;
+        Cast->Operands = {Kept};
+        E = std::move(Cast);
+      }
+      return;
+    }
+  }
+
   if (E->Kind != ExprKind::BinOp || E->Operands.size() != 2)
     return;
+
+  // Two constants compare to a constant, at their width.
+  if (E->Operands[0] && E->Operands[1] &&
+      E->Operands[0]->Kind == ExprKind::Const &&
+      E->Operands[1]->Kind == ExprKind::Const && E->Operands[0]->Type &&
+      E->Operands[1]->Type &&
+      E->Operands[0]->Type->Size == E->Operands[1]->Type->Size &&
+      E->Operands[0]->Type->Size >= 1 && E->Operands[0]->Type->Size <= 8 &&
+      E->Type && E->Type->Kind == NdTypeKind::Int) {
+    const unsigned Bits = E->Operands[0]->Type->Size * 8;
+    const uint64_t Mask = Bits == 64 ? ~uint64_t{0} : (uint64_t{1} << Bits) - 1;
+    const uint64_t A = E->Operands[0]->ConstVal & Mask;
+    const uint64_t B = E->Operands[1]->ConstVal & Mask;
+    auto Signed = [&](uint64_t V) {
+      return Bits == 64 ? static_cast<int64_t>(V)
+                        : static_cast<int64_t>(V << (64 - Bits)) >> (64 - Bits);
+    };
+    std::optional<bool> Result;
+    switch (E->Op) {
+    case NdOp::INT_EQUAL:
+      Result = A == B;
+      break;
+    case NdOp::INT_NOTEQUAL:
+      Result = A != B;
+      break;
+    case NdOp::INT_LESS:
+      Result = A < B;
+      break;
+    case NdOp::INT_LESSEQUAL:
+      Result = A <= B;
+      break;
+    case NdOp::INT_SLESS:
+      Result = Signed(A) < Signed(B);
+      break;
+    case NdOp::INT_SLESSEQUAL:
+      Result = Signed(A) <= Signed(B);
+      break;
+    default:
+      break;
+    }
+    if (Result) {
+      E = HighExpr::makeConst(*Result ? 1 : 0, E->Type->Size);
+      return;
+    }
+  }
+
+  if (ExprPtr Merged = mergeOrderAndEquality(E)) {
+    E = std::move(Merged);
+    return;
+  }
 
   discardMaskedConcatHigh(E);
 

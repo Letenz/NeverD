@@ -52,6 +52,11 @@ inline constexpr auto kExceptionRuntimeArity = std::to_array<LibCArityEntry>({
     {"RtlRaiseException", {1, 0}},
     {"RtlUnwindEx", {6, 0}},
 
+    // MSVC's x64 and ARM compilers lower setjmp to these, passing the frame
+    // that longjmp unwinds to after the buffer.
+    {"intrinsic_setjmp", {2, 0}},
+    {"intrinsic_setjmpex", {2, 0}},
+
     // MSVC /GS cookie helpers.  Intra-image CRT copies are not imports, so
     // call-argument recovery would otherwise treat leftover rdx/r8/r9 as
     // extra parameters of __security_check_cookie.

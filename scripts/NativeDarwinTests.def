@@ -90,4 +90,6 @@ NEVERD_NATIVE_DARWIN_CASE(
     ResourceUsagePreservesIndependentSnapshotsSignedLayoutAndCopyOrder)
 NEVERD_NATIVE_DARWIN_CASE(
     CredentialsKeepGroupQueriesAndCreationOwnershipCoherent)
+NEVERD_NATIVE_DARWIN_CASE(
+    SymbolicLinksPreserveRawTargetsMetadataAndNoFollowPolicies)
 #endif

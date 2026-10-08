@@ -110,16 +110,11 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
     S.emitIntrinsic(Intrinsic::ArmHlt);
     break;
   case ARM_INS_UDF:
-  case ARM_INS_TRAP: {
-    LowOp LOp;
-    LOp.Opcode = NdOp::INTRINSIC;
-    LOp.Addr = S.Addr;
-    LOp.Seq = S.Seq++;
-    LOp.Output = NdVar::reg(armreg::R0, 4);
-    LOp.addInput(NdVar::cst(static_cast<uint64_t>(Intrinsic::ArmUdf), 2));
-    S.Ops.push_back(LOp);
+  case ARM_INS_TRAP:
+    // An undefined instruction raises an exception and writes no register:
+    // a debugger break resumes with r0 as it was.
+    S.emitVoidIntrinsic(Intrinsic::ArmUdf);
     break;
-  }
   case ARM_INS_DMB:
     S.emitVoidIntrinsic(Intrinsic::ArmDmb);
     break;

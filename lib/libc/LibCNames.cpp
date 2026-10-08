@@ -185,6 +185,7 @@ struct ArityRegistry {
     registerArity(Map, kComplexArity);
     registerArity(Map, kTimeArity);
     registerArity(Map, kExceptionRuntimeArity);
+    registerArity(Map, kSetjmpArity);
   }
 };
 

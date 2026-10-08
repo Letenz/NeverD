@@ -45,18 +45,30 @@ def native_architecture(expected: str) -> str:
 
 
 def execute_cases(program: Path, cases: list[tuple[str, int, bytes]]) -> list[dict]:
-    with tempfile.TemporaryDirectory(prefix="neverd-darwin-files-") as directory:
+    with (tempfile.TemporaryDirectory(prefix="neverd-darwin-files-") as directory,
+          tempfile.TemporaryDirectory(prefix="neverd-darwin-links-") as links):
         input_file = Path(directory) / "data"
         (Path(directory) / "empty").mkdir()
-        return _execute_cases(program, cases, input_file)
+        return _execute_cases(program, cases, input_file, Path(links))
 
 
-def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_file: Path) -> list[dict]:
+def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_file: Path,
+                   symbolic_root: Path) -> list[dict]:
     results = []
     for mode, status, output in cases:
-        input_file.write_bytes(b"0123456789")
+        case_input = input_file
+        if mode == "symbolic-links":
+            catalogue = symbolic_root / "catalogue"
+            catalogue.mkdir()
+            (catalogue / "empty").mkdir()
+            for name, target in (("link", "data"), ("chain", "link"),
+                                 ("dangling", "missing"), ("cycle", "cycle"),
+                                 ("dirlink", "empty")):
+                (catalogue / name).symlink_to(target)
+            case_input = catalogue / "data"
+        case_input.write_bytes(b"0123456789")
         try:
-            result = subprocess.run([str(program), mode, str(input_file)], capture_output=True, timeout=5)
+            result = subprocess.run([str(program), mode, str(case_input)], capture_output=True, timeout=5)
             results.append({
                 "mode": mode, "exit_status": result.returncode,
                 "stdout_hex": result.stdout.hex(), "stderr_hex": result.stderr.hex(),

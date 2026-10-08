@@ -4,6 +4,12 @@
 //
 //===----------------------------------------------------------------------===//
 #include "DriverBuiltinImages.def"
+#ifndef NEVERD_WDM_MULTIPLE_WAIT_FIXTURE
+#define NEVERD_WDM_MULTIPLE_WAIT_FIXTURE ""
+#endif
+#ifndef NEVERD_WDM_MULTIPLE_WAIT_CFG_FIXTURE
+#define NEVERD_WDM_MULTIPLE_WAIT_CFG_FIXTURE ""
+#endif
 #ifndef NEVERD_KMDF_CFG_FIXTURE
 #define NEVERD_KMDF_CFG_FIXTURE ""
 #endif

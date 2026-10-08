@@ -1102,8 +1102,19 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
   static_assert(std::size(Cases) != 0);
   for (const auto &Test : Cases) {
     SCOPED_TRACE(Test.Mode);
+    auto CaseInput = Input;
+    if (llvm::StringRef(Test.Mode) == "symbolic-links") {
+      const auto Catalogue = Root / "symbolic-links";
+      ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
+      for (const auto &[Name, Target] :
+           {std::pair{"link", "data"}, std::pair{"chain", "link"},
+            std::pair{"dangling", "missing"}, std::pair{"cycle", "cycle"},
+            std::pair{"dirlink", "empty"}})
+        std::filesystem::create_symlink(Target, Catalogue / Name);
+      CaseInput = (Catalogue / "data").string();
+    }
     {
-      std::ofstream File(Input, std::ios::binary | std::ios::trunc);
+      std::ofstream File(CaseInput, std::ios::binary | std::ios::trunc);
       File << "0123456789";
       ASSERT_TRUE(File.good());
     }
@@ -1116,7 +1127,7 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
     std::string LaunchError;
     bool ExecutionFailed = false;
     const auto Status = llvm::sys::ExecuteAndWait(
-        Program, {Program, Test.Mode, Input}, std::nullopt, Redirects, 5, 0,
+        Program, {Program, Test.Mode, CaseInput}, std::nullopt, Redirects, 5, 0,
         &LaunchError, &ExecutionFailed);
     ASSERT_FALSE(ExecutionFailed) << LaunchError;
     auto Out = llvm::MemoryBuffer::getFile(Output);

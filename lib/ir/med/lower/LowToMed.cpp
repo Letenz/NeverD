@@ -19,6 +19,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/SourceRegisterCopy.h"
@@ -528,6 +529,18 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
           break;
         ++BoundaryIndex;
       }
+      // A stack probe touches the frame's pages and changes nothing the
+      // program observes (StackProbeRoutines.inc): it lowers to nothing.
+      const bool TailCall =
+          BoundaryIndex < LB.InstructionBoundaries.size() &&
+          LB.InstructionBoundaries[BoundaryIndex].FirstOp <= LowOpIndex &&
+          LB.InstructionBoundaries[BoundaryIndex].Control ==
+              LowInstructionControl::TailCall;
+      if (Image && LOp.Opcode == NdOp::CALL && LOp.NumInputs > 0 &&
+          LOp.Inputs[0].isConst() && !TailCall &&
+          libc::stackProbeEffect(*Image, LOp.Inputs[0].Offset) ==
+              libc::StackProbeEffect::Probe)
+        continue;
 
       MedOp MOp;
       if (const auto Site = sourceCallOccurrenceKey(LOp); Site) {

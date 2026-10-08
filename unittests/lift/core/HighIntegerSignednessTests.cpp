@@ -232,6 +232,61 @@ int main(void) {
 )");
 }
 
+TEST(HighIntegerSignedness, LoadsReadTheSignednessOfTheirOperation) {
+  // The first word, lifted as signed, feeds wrapping addition; the second,
+  // lifted as unsigned, a signed comparison.  Each read takes the
+  // signedness its operation wants and needs no conversion.
+  auto Word = [](uint64_t Offset, bool Signed) {
+    return HighExpr::makeLoad(
+        Offset ? op(NdOp::INT_ADD, input(), constant(Offset)) : input(),
+        NdType::makeInt(8, Signed));
+  };
+  HighFunc F = function(
+      "loads", {when(op(NdOp::INT_SLESS, Word(8, false), constant(0), true),
+                     {result(constant(1))}),
+                result(op(NdOp::INT_ADD, Word(0, true), constant(8)))});
+  chooseIntegerSignedness(F);
+  const std::string Source = emit({F});
+  EXPECT_NE(Source.find("*(_SQWORD *)(arg0 + 8)) < 0"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("*(_QWORD *)arg0 + 8"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(int64_t)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(uint64_t)*"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+int main(void) {
+  uint64_t words[2] = {0xFFFFFFFFFFFFFFFCull, 5};
+  if (loads((uint64_t)(uintptr_t)words) != 4)
+    return 1;
+  words[1] = 0x8000000000000000ull;
+  if (loads((uint64_t)(uintptr_t)words) != 1)
+    return 2;
+  return 0;
+}
+)");
+}
+
+TEST(HighIntegerSignedness, ConstantsCompareFromTheRight) {
+  // 0 < x signed and 5 <= x unsigned print with the constant on the right.
+  HighFunc F = function(
+      "order", {when(op(NdOp::INT_SLESS, constant(0), input(), true),
+                     {result(constant(1))}),
+                when(op(NdOp::INT_LESSEQUAL, constant(5), input(), true),
+                     {result(constant(2))}),
+                result(constant(3))});
+  const std::string Source = emit({F});
+  EXPECT_NE(Source.find("(int64_t)arg0 > 0"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("arg0 >= 5"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+int main(void) {
+  if (order(1) != 1 || order(0x7FFFFFFFFFFFFFFFull) != 1)
+    return 1;
+  if (order(0) != 3 || order(0x8000000000000000ull) != 2)
+    return 2;
+  return 0;
+}
+)");
+}
+
 TEST(HighIntegerSignedness, NonIntegerLocalsKeepTheirTypes) {
   HighFunc F = function(
       "pointer", {assign(local(1, NdType::makePtr()), input()),

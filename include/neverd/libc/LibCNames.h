@@ -143,6 +143,25 @@ VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
 /// have leading underscores already stripped.
 bool isVaListConsumer(std::string_view Name);
 
+/// True if parameter \p Index of the standard C or POSIX function \p Name is
+/// a narrow, NUL-terminated `char` string.  Leading underscores are ignored.
+bool isCStringParameter(std::string_view Name, unsigned Index);
+
+/// What a compiler stack-probe helper does (StackProbeRoutines.inc).
+enum class StackProbeEffect : uint8_t {
+  /// Touches the frame's pages and changes nothing the program observes.
+  Probe,
+  /// Also moves the stack pointer by the size it receives.
+  Allocate,
+};
+
+/// The effect of the stack-probe helper whose entry is \p Target in \p Img,
+/// or nullopt when \p Target is not one for the image's format and
+/// architecture.  The helper is known by a name the binary or its debug
+/// information states, never by one an analysis guessed.
+std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
+                                                 va_t Target);
+
 /// True if Name is a libc/POSIX function that never returns to its caller
 /// (abort / exit / _exit / _Exit / quick_exit, longjmp / siglongjmp,
 /// pthread_exit / thrd_exit, the err / errx family, and the internal assert /

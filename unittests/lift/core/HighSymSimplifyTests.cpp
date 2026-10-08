@@ -410,40 +410,54 @@ TEST(HighSymSimplify, KeepsWhatItCannotSeeInsideOf) {
   EXPECT_EQ(Expr.find('^'), std::string::npos) << Expr;
   EXPECT_EQ(Expr.find('&'), std::string::npos) << Expr;
 
-  const HighStmt *Snapshot = nullptr;
+  // The read happens once, no later than the return: kept apart as a
+  // snapshot the return reads, or inside the return itself.
+  const HighExpr *Read = nullptr;
+  const HighStmt *ReadStmt = nullptr;
   const HighStmt *Return = nullptr;
   unsigned ReadCount = 0;
   for (const HighStmt &Stmt : Func.Body) {
-    if (Stmt.Kind == StmtKind::Assign && Stmt.Val &&
-        Stmt.Val->Kind == ExprKind::Load) {
-      EXPECT_EQ(Return, nullptr) << "memory read moved after its use";
-      Snapshot = &Stmt;
-      ++ReadCount;
-    }
+    forEachExpr(Stmt, [&](const ExprPtr &Root) {
+      std::vector<const HighExpr *> Work{Root.get()};
+      while (!Work.empty()) {
+        const HighExpr *E = Work.back();
+        Work.pop_back();
+        if (!E)
+          continue;
+        if (E->Kind == ExprKind::Load) {
+          EXPECT_EQ(Return, nullptr) << "memory read moved after its use";
+          Read = E;
+          ReadStmt = &Stmt;
+          ++ReadCount;
+        }
+        for (const ExprPtr &Operand : E->Operands)
+          Work.push_back(Operand.get());
+      }
+    });
     if (Stmt.Kind == StmtKind::Return)
       Return = &Stmt;
   }
-  ASSERT_EQ(ReadCount, 1U);
-  ASSERT_NE(Snapshot, nullptr);
-  ASSERT_TRUE(Snapshot->Dst);
-  ASSERT_EQ(Snapshot->Val->Operands.size(), 1U);
-  ASSERT_EQ(Snapshot->Val->Operands[0]->Kind, ExprKind::Var);
-  EXPECT_EQ(Snapshot->Val->Operands[0]->Var.Kind, MedVar::Param);
-  EXPECT_EQ(Snapshot->Val->Operands[0]->Var.Id, 0);
-  EXPECT_EQ(Snapshot->Val->Operands[0]->Var.RegOff, Addr.RegOff);
-  EXPECT_EQ(Snapshot->Val->Operands[0]->Var.Size, Addr.Size);
-  ASSERT_TRUE(Snapshot->Val->Type);
-  EXPECT_EQ(Snapshot->Val->Type->Size, kWordBytes);
+  ASSERT_EQ(ReadCount, 1U) << Expr;
   ASSERT_NE(Return, nullptr);
+  ASSERT_EQ(Read->Operands.size(), 1U);
+  ASSERT_EQ(Read->Operands[0]->Kind, ExprKind::Var);
+  EXPECT_EQ(Read->Operands[0]->Var.Kind, MedVar::Param);
+  EXPECT_EQ(Read->Operands[0]->Var.Id, 0);
+  EXPECT_EQ(Read->Operands[0]->Var.RegOff, Addr.RegOff);
+  EXPECT_EQ(Read->Operands[0]->Var.Size, Addr.Size);
+  ASSERT_TRUE(Read->Type);
+  EXPECT_EQ(Read->Type->Size, kWordBytes);
+  if (ReadStmt == Return)
+    return;
+  ASSERT_EQ(ReadStmt->Kind, StmtKind::Assign);
+  ASSERT_TRUE(ReadStmt->Dst);
   bool UsesSnapshot = false;
   std::vector<ExprPtr> Worklist{Return->RetVal};
   while (!Worklist.empty()) {
     ExprPtr Current = Worklist.back();
     Worklist.pop_back();
     ASSERT_TRUE(Current);
-    EXPECT_NE(Current->Kind, ExprKind::Load)
-        << "return must use the saved value without repeating the read";
-    UsesSnapshot |= Current->structuralEq(*Snapshot->Dst);
+    UsesSnapshot |= Current->structuralEq(*ReadStmt->Dst);
     Worklist.insert(Worklist.end(), Current->Operands.begin(),
                     Current->Operands.end());
   }

@@ -2540,6 +2540,370 @@ bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
+/// The addresses a jump or an exception handler entry reaches.
+static std::set<va_t> collectEntryTargets(const std::vector<HighStmt> &Body) {
+  std::set<va_t> Targets;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
+        S.GotoTarget != InvalidVA)
+      Targets.insert(S.GotoTarget);
+    for (const HighEHClause &Clause : S.EHClauses)
+      Targets.insert(Clause.HandlerVA);
+  });
+  return Targets;
+}
+
+/// The statement that ends \p Body, looking into a trailing block; a label
+/// there, which a jump may reach, is what ends it.  Null for an empty body.
+static const HighStmt *lastLeafStatement(const std::vector<HighStmt> &Body) {
+  for (auto It = Body.rbegin(); It != Body.rend(); ++It) {
+    if (isEmptyAnchor(*It)) {
+      if (It->Addr != 0 && It->Addr != InvalidVA)
+        return &*It;
+      continue;
+    }
+    if (It->Kind == StmtKind::Block)
+      return lastLeafStatement(It->Body);
+    return &*It;
+  }
+  return nullptr;
+}
+
+bool moveSwitchTailsToTheirExit(std::vector<HighStmt> &Body) {
+  const std::set<va_t> Targets = collectEntryTargets(Body);
+  auto lastStatement = [](std::vector<HighStmt> &L) -> HighStmt * {
+    for (auto It = L.rbegin(); It != L.rend(); ++It)
+      if (!isEmptyAnchor(*It) || (It->Addr != 0 && It->Addr != InvalidVA))
+        return &*It;
+    return nullptr;
+  };
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit = [&](std::vector<HighStmt>
+                                                               &L) {
+    for (size_t K = 0; K + 1 < L.size(); ++K) {
+      HighStmt &Switch = L[K];
+      // Without a default, an unmatched selector leaves the switch too.
+      if (Switch.Kind != StmtKind::Switch || Switch.DefaultBody.empty())
+        continue;
+      std::vector<HighStmt> Tail(L.begin() + K + 1, L.end());
+      HighStmt *TailLast = lastStatement(Tail);
+      if (!TailLast || !endsItsBlock(*TailLast) ||
+          hasLooseBreakOrContinue(Tail))
+        continue;
+      // Only straight-line code moves.  A tail that jumps on is
+      // busiestExitFollowsTheSwitch's to place: moved into a case, its
+      // jump would only join the switch's others.  Nested control flow
+      // stays where later rewrites still restructure it.
+      const bool StraightLine =
+          std::all_of(Tail.begin(), Tail.end(), [](const HighStmt &T) {
+            return isEmptyAnchor(T) ||
+                   ((T.Kind == StmtKind::Assign || T.Kind == StmtKind::Store ||
+                     T.Kind == StmtKind::Call || T.Kind == StmtKind::ExprStmt ||
+                     T.Kind == StmtKind::Return) &&
+                    T.Body.empty() && T.ElseBody.empty());
+          });
+      if (!StraightLine)
+        continue;
+      bool Entered = false;
+      for (const HighStmt &T : Tail)
+        Entered |=
+            anyAddressEntered(T, [&](va_t A) { return Targets.count(A) != 0; });
+      if (Entered)
+        continue;
+      // The switch's ways out: its breaks, and each body whose end falls
+      // out of the switch.  T moves to the only one.
+      unsigned Exits = 0;
+      HighStmt *Break = nullptr;
+      std::vector<HighStmt> *OpenBody = nullptr;
+      auto Scan = [&](std::vector<HighStmt> &CaseBody) {
+        unsigned Breaks = 0;
+        if (HighStmt *B = findOnlyLoopBreak(CaseBody, Breaks))
+          Break = B;
+        Exits += Breaks;
+        const HighStmt *Last = lastLeafStatement(CaseBody);
+        if (!Last || (!endsItsBlock(*Last) && Last->Kind != StmtKind::Break)) {
+          ++Exits;
+          OpenBody = &CaseBody;
+        }
+      };
+      for (SwitchCase &C : Switch.Cases)
+        if (!C.FallsThrough)
+          Scan(C.Body);
+      Scan(Switch.DefaultBody);
+      if (Exits != 1)
+        continue;
+      if (Break) {
+        HighStmt Moved;
+        Moved.Kind = StmtKind::Block;
+        Moved.Addr = Break->Addr;
+        Moved.Body = std::move(Tail);
+        *Break = std::move(Moved);
+      } else if (OpenBody) {
+        OpenBody->insert(OpenBody->end(), std::make_move_iterator(Tail.begin()),
+                         std::make_move_iterator(Tail.end()));
+      } else {
+        continue;
+      }
+      L.erase(L.begin() + K + 1, L.end());
+      Changed = true;
+      break;
+    }
+    for (HighStmt &S : L) {
+      Visit(S.Body);
+      Visit(S.ElseBody);
+      for (auto &C : S.Cases)
+        Visit(C.Body);
+      Visit(S.DefaultBody);
+      for (auto &ClauseBody : S.EHClauseBodies)
+        Visit(ClauseBody);
+    }
+  };
+  Visit(Body);
+  return Changed;
+}
+
+/// The value of the pure integer expression \p E when the variable \p Key
+/// holds \p Value; nullopt when \p E reads anything else.
+static std::optional<llvm::APInt> evaluateWith(const HighExpr &E, VarKey Key,
+                                               const llvm::APInt &Value,
+                                               unsigned Depth = 0) {
+  if (Depth > 32 || !E.Type || E.Type->Kind != NdTypeKind::Int ||
+      E.Type->Size == 0 || E.Type->Size > 8 ||
+      E.MemoryOrdering != NdMemoryOrdering::None ||
+      E.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      E.IntrinsicId != Intrinsic::None || !E.IntrinsicOutputs.empty())
+    return std::nullopt;
+  const unsigned Bits = E.Type->Size * 8;
+  auto Operand = [&](size_t I) -> std::optional<llvm::APInt> {
+    if (I >= E.Operands.size() || !E.Operands[I])
+      return std::nullopt;
+    return evaluateWith(*E.Operands[I], Key, Value, Depth + 1);
+  };
+  auto Boolean = [&](bool B) { return llvm::APInt(Bits, B ? 1 : 0); };
+  switch (E.Kind) {
+  case ExprKind::Const:
+    return llvm::APInt(64, E.ConstVal).zextOrTrunc(Bits);
+  case ExprKind::Var:
+    if (varKey(E.Var) != Key || Value.getBitWidth() != Bits)
+      return std::nullopt;
+    return Value;
+  case ExprKind::Cast:
+  case ExprKind::BitCast: {
+    auto In = Operand(0);
+    if (!In || E.Operands.size() != 1 ||
+        (E.Kind == ExprKind::BitCast && In->getBitWidth() != Bits))
+      return std::nullopt;
+    // evaluateWith returned a value, so the operand has an integer type.
+    return E.Operands[0]->Type->IsSigned ? In->sextOrTrunc(Bits)
+                                         : In->zextOrTrunc(Bits);
+  }
+  case ExprKind::UnaryOp: {
+    auto In = Operand(0);
+    if (!In)
+      return std::nullopt;
+    switch (E.Op) {
+    case NdOp::INT_ZEXT:
+      return In->zextOrTrunc(Bits);
+    case NdOp::INT_SEXT:
+      return In->sextOrTrunc(Bits);
+    case NdOp::BOOL_NOT:
+      return Boolean(In->isZero());
+    default:
+      return std::nullopt;
+    }
+  }
+  case ExprKind::BinOp: {
+    auto A = Operand(0), B = Operand(1);
+    if (!A || !B)
+      return std::nullopt;
+    if (E.Op == NdOp::SUBBYTES) {
+      const uint64_t Shift = B->getZExtValue() * 8;
+      if (Shift >= A->getBitWidth())
+        return std::nullopt;
+      return A->lshr(static_cast<unsigned>(Shift)).zextOrTrunc(Bits);
+    }
+    if (E.Op == NdOp::BOOL_AND)
+      return Boolean(!A->isZero() && !B->isZero());
+    if (E.Op == NdOp::BOOL_OR)
+      return Boolean(!A->isZero() || !B->isZero());
+    if (A->getBitWidth() != B->getBitWidth())
+      return std::nullopt;
+    const bool SameWidth = A->getBitWidth() == Bits;
+    switch (E.Op) {
+    case NdOp::INT_ADD:
+      return SameWidth ? std::optional(*A + *B) : std::nullopt;
+    case NdOp::INT_SUB:
+      return SameWidth ? std::optional(*A - *B) : std::nullopt;
+    case NdOp::INT_AND:
+      return SameWidth ? std::optional(*A & *B) : std::nullopt;
+    case NdOp::INT_OR:
+      return SameWidth ? std::optional(*A | *B) : std::nullopt;
+    case NdOp::INT_XOR:
+      return SameWidth ? std::optional(*A ^ *B) : std::nullopt;
+    case NdOp::INT_EQUAL:
+      return Boolean(*A == *B);
+    case NdOp::INT_NOTEQUAL:
+      return Boolean(*A != *B);
+    case NdOp::INT_LESS:
+      return Boolean(A->ult(*B));
+    case NdOp::INT_LESSEQUAL:
+      return Boolean(A->ule(*B));
+    case NdOp::INT_SLESS:
+      return Boolean(A->slt(*B));
+    case NdOp::INT_SLESSEQUAL:
+      return Boolean(A->sle(*B));
+    default:
+      return std::nullopt;
+    }
+  }
+  default:
+    return std::nullopt;
+  }
+}
+
+/// \p A and \p B do the same thing: copies of one statement list, as a
+/// duplicated return tail is.  Empty anchors do nothing; the caller has
+/// checked that no jump enters them.
+static bool sameStatements(const std::vector<HighStmt> &AllA,
+                           const std::vector<HighStmt> &AllB) {
+  std::vector<const HighStmt *> A, B;
+  for (const HighStmt &S : AllA)
+    if (!isEmptyAnchor(S))
+      A.push_back(&S);
+  for (const HighStmt &S : AllB)
+    if (!isEmptyAnchor(S))
+      B.push_back(&S);
+  if (A.size() != B.size())
+    return false;
+  auto SameExpr = [](const ExprPtr &X, const ExprPtr &Y) {
+    return X == Y || (X && Y && X->structuralEq(*Y));
+  };
+  for (size_t I = 0; I < A.size(); ++I) {
+    const HighStmt &X = *A[I], &Y = *B[I];
+    if (X.Kind != Y.Kind || X.GotoTarget != Y.GotoTarget ||
+        !SameExpr(X.Dst, Y.Dst) || !SameExpr(X.Val, Y.Val) ||
+        !SameExpr(X.RetVal, Y.RetVal) || !SameExpr(X.CallExpr, Y.CallExpr) ||
+        !SameExpr(X.StoreAddr, Y.StoreAddr) ||
+        !SameExpr(X.StoreVal, Y.StoreVal) || !SameExpr(X.Cond, Y.Cond) ||
+        !X.Cases.empty() || !Y.Cases.empty() || !X.EHClauses.empty() ||
+        !Y.EHClauses.empty() || !sameStatements(X.Body, Y.Body) ||
+        !sameStatements(X.ElseBody, Y.ElseBody) ||
+        !sameStatements(X.DefaultBody, Y.DefaultBody))
+      return false;
+  }
+  return true;
+}
+
+bool absorbSwitchRangeGuards(std::vector<HighStmt> &Body) {
+  const std::set<va_t> Targets = collectEntryTargets(Body);
+  auto Entered = [&](const std::vector<HighStmt> &L) {
+    return std::any_of(L.begin(), L.end(), [&](const HighStmt &T) {
+      return anyAddressEntered(T,
+                               [&](va_t A) { return Targets.count(A) != 0; });
+    });
+  };
+  // A case that breaks or runs off its end continues after the switch.
+  auto LeavesTheSwitch = [&](const std::vector<HighStmt> &CaseBody) {
+    const HighStmt *Last = lastLeafStatement(CaseBody);
+    return !Last || !endsItsBlock(*Last) || hasLooseBreak(CaseBody);
+  };
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t K = 0; K + 1 < L.size(); ++K) {
+          HighStmt &Guard = L[K];
+          if (Guard.Kind != StmtKind::If || !Guard.Cond ||
+              !Guard.ElseBody.empty() || Guard.Body.size() != 1 ||
+              Guard.Body[0].Kind != StmtKind::Switch ||
+              Targets.count(Guard.Body[0].Addr))
+            continue;
+          HighStmt &Switch = Guard.Body[0];
+          if (!Switch.SwitchExpr || Switch.SwitchExpr->Kind != ExprKind::Var ||
+              !Switch.SwitchExpr->Type || Switch.DefaultBody.empty())
+            continue;
+          // Every case label must pass the guard: a value that fails it then
+          // matches no case and takes the default.
+          const unsigned Bits = Switch.SwitchExpr->Type->Size * 8;
+          if (Bits == 0 || Bits > 64)
+            continue;
+          const VarKey Key = varKey(Switch.SwitchExpr->Var);
+          bool Covered = !Switch.Cases.empty();
+          for (const SwitchCase &C : Switch.Cases) {
+            auto Passes = evaluateWith(
+                *Guard.Cond, Key, llvm::APInt(64, C.Value).zextOrTrunc(Bits));
+            Covered &= Passes && !Passes->isZero();
+            if (!Covered)
+              break;
+          }
+          if (!Covered)
+            continue;
+          // A failing value continues after the guard at D; the default must
+          // run D too: by jumping to it, or by a copy of all of it.  A copy
+          // stands for D only when D never falls out (the default would
+          // then run D twice) and has no break (one in the default leaves
+          // the switch instead).
+          std::vector<HighStmt> &Default = Switch.DefaultBody;
+          const va_t RestLabel = L[K + 1].Addr;
+          const bool JumpsToRest = Default.size() == 1 &&
+                                   Default[0].Kind == StmtKind::Goto &&
+                                   RestLabel != 0 && RestLabel != InvalidVA &&
+                                   Default[0].GotoTarget == RestLabel;
+          bool KeepDefault = false;
+          if (!JumpsToRest) {
+            std::vector<HighStmt> Rest(L.begin() + K + 1, L.end());
+            const HighStmt *RestLast = lastLeafStatement(Rest);
+            if (!RestLast || !endsItsBlock(*RestLast) || hasLooseBreak(Rest) ||
+                !sameStatements(Default, Rest))
+              continue;
+            // With no case leaving the switch, D after it is dead once the
+            // guard goes; otherwise the cases still need D after the switch,
+            // and the default's copy goes instead.
+            KeepDefault = std::none_of(Switch.Cases.begin(), Switch.Cases.end(),
+                                       [&](const SwitchCase &C) {
+                                         return !C.FallsThrough &&
+                                                LeavesTheSwitch(C.Body);
+                                       });
+            if (KeepDefault ? Entered(Rest) : Entered(Default))
+              continue;
+          } else if (Entered(Default)) {
+            continue;
+          }
+          HighStmt Absorbed = std::move(Switch);
+          // Falling out of the switch reaches D, as a failing value did.
+          if (!KeepDefault)
+            Absorbed.DefaultBody.clear();
+          size_t After = K + 1;
+          if (Guard.Addr != 0 && Guard.Addr != InvalidVA &&
+              Absorbed.Addr != Guard.Addr) {
+            // Keep the guard's label: a jump may still name it.
+            HighStmt Anchor;
+            Anchor.Kind = StmtKind::Block;
+            Anchor.Addr = Guard.Addr;
+            L[K] = std::move(Anchor);
+            L.insert(L.begin() + K + 1, std::move(Absorbed));
+            ++After;
+          } else {
+            L[K] = std::move(Absorbed);
+          }
+          if (KeepDefault)
+            L.erase(L.begin() + After, L.end());
+          Changed = true;
+          break;
+        }
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
 bool busiestExitFollowsTheSwitch(std::vector<HighStmt> &Body) {
   constexpr unsigned kMaxRounds = 64;
   auto IsTry = [](const HighStmt &S) {
