@@ -329,6 +329,20 @@ TEST(HeaderFor, StdioFunctions) {
   EXPECT_STREQ(headerFor("snprintf"), "stdio.h");
 }
 
+TEST(HeaderFor, PosixAndBsdRoutinesTheArityTablesName) {
+  // Absent from the header lists, each was declared `extern int` and lost
+  // its result: popen's FILE *, random's long, drand48's double.
+  for (const char *Name :
+       {"ctermid", "fmemopen", "getdelim", "getline", "getw", "open_memstream",
+        "pclose", "popen", "putw", "tempnam"})
+    EXPECT_STREQ(headerFor(Name), "stdio.h") << Name;
+  for (const char *Name :
+       {"arc4random", "drand48", "erand48", "getprogname", "initstate",
+        "jrand48", "lrand48", "mkdtemp", "mrand48", "nrand48", "random",
+        "reallocf", "seed48", "setprogname", "setstate", "srand48", "srandom"})
+    EXPECT_STREQ(headerFor(Name), "stdlib.h") << Name;
+}
+
 TEST(HeaderFor, UnknownReturnsNull) {
   EXPECT_EQ(headerFor("not_a_real_function"), nullptr);
   EXPECT_EQ(headerFor(""), nullptr);

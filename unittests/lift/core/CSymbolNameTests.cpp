@@ -430,4 +430,43 @@ TEST(CSymbolNames, FunctionAddressesReadAsTheirFunctions) {
   EXPECT_NE(Source.find("register_hook(0x1180);"), NotFound) << Source;
 }
 
+TEST(CSymbolNames, AFunctionWhoseAddressIsTakenIsDeclaredBeforeTheUse) {
+  const BinaryImage Img = startupImage();
+  // install passes on_exit_hook, whose body prints after it.
+  const std::string Source = emitWithImage(
+      {function("install", 0x1000,
+                {callStatement("register_hook", 0x2000, {address(0x1180)})}),
+       function("on_exit_hook", 0x1180, {})},
+      Img);
+  const size_t Declared = Source.find(" on_exit_hook(void);");
+  const size_t Used = Source.find("register_hook(on_exit_hook);");
+  ASSERT_NE(Declared, NotFound) << Source;
+  ASSERT_NE(Used, NotFound) << Source;
+  EXPECT_LT(Declared, Used) << Source;
+  EXPECT_EQ(Source.find("extern int on_exit_hook"), NotFound) << Source;
+  source_call_execution_test::compileAndRun(
+      Source + "int register_hook(void *Hook) { return Hook == 0; }\n"
+               "int main(void) { return (int)install(); }\n",
+      {"-Werror=int-conversion", "-Werror=incompatible-pointer-types"});
+}
+
+TEST(CSymbolNames, PosixRoutinesTheArityTablesNameTakeTheirHeaders) {
+  // Declared `extern int`, popen lost the upper half of its FILE * and
+  // drand48 read its double from the integer register.
+  const std::string Source = emitHighC(
+      {function("run", 0x1000,
+                {callStatement("popen", 0x2000,
+                               {HighExpr::makeConst(0, 8),
+                                HighExpr::makeConst(0, 8)}),
+                 callStatement("drand48", 0x2010),
+                 callStatement("srandom", 0x2020,
+                               {HighExpr::makeConst(1, 4)})})},
+      BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("#include <stdio.h>"), NotFound) << Source;
+  EXPECT_NE(Source.find("#include <stdlib.h>"), NotFound) << Source;
+  EXPECT_EQ(Source.find("extern int popen"), NotFound) << Source;
+  EXPECT_EQ(Source.find("extern int drand48"), NotFound) << Source;
+  EXPECT_EQ(Source.find("extern int srandom"), NotFound) << Source;
+}
+
 } // namespace

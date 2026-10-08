@@ -1632,9 +1632,13 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
 
   // Direct calls can precede the callee's body in address order. Declare the
   // recovered internal signature before any body so C does not infer an
-  // obsolete implicit int/no-parameter declaration at that call site.
+  // obsolete implicit int/no-parameter declaration at that call site.  A
+  // function whose address the code takes is named before its body the same
+  // way.
   for (const auto &[Name, Function] : DefinedFunctionsByIdentifier) {
-    if (!CallTargets.count(Name) || !Prototyped.insert(Function).second)
+    if ((!CallTargets.count(Name) &&
+         !AddressTakenDefinitions.count(Function)) ||
+        !Prototyped.insert(Function).second)
       continue;
     CurrentFunc = Function;
     Analysis = {};
@@ -1937,6 +1941,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   ImageBackings.clear();
   FunctionAddressNames.clear();
   AddressTakenFunctions.clear();
+  AddressTakenDefinitions.clear();
   if (!Opts.Image)
     return;
   VarKeyMap<va_t> ImageLoadVars;
@@ -2144,6 +2149,7 @@ void HighCWriter::noteFunctionAddress(va_t Addr,
   for (const HighFunc &Func : Funcs)
     if (Func.Entry == Addr && !Func.Name.empty()) {
       FunctionAddressNames.emplace(Addr, functionIdentifier(Func));
+      AddressTakenDefinitions.insert(&Func);
       return;
     }
   // A function the image names; this output declares it.

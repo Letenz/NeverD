@@ -799,6 +799,9 @@ public:
   /// The symbols of those functions this output does not define, declared as
   /// the functions it calls are.
   std::set<std::string> AddressTakenFunctions;
+  /// Those it defines, declared before any body: a use can precede the
+  /// definition as a call can.
+  std::set<const HighFunc *> AddressTakenDefinitions;
   void noteFunctionAddress(va_t Addr, const std::vector<HighFunc> &Funcs);
   /// A constant known to be an address, which a function entry there makes
   /// that function's.
