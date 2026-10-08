@@ -727,6 +727,30 @@
         <source>Stop treating the current function as one</source>
         <translation>현재 함수를 더 이상 함수로 취급하지 않습니다</translation>
     </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>데이터(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>현재 주소에 값을 정의합니다. 다시 누르면 다음 크기로 바뀝니다</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>문자열(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>현재 주소에서 시작하는 문자열을 정의합니다</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>정의 해제(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>현재 항목을 바이트로 표시합니다</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2119,6 +2143,18 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>%1의 함수를 삭제했습니다</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>%1의 바이트는 이미 정의되지 않은 상태입니다</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>%1의 항목 정의를 해제했습니다</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%2에 %1을(를) 정의했습니다</translation>
     </message>
 </context>
 </TS>

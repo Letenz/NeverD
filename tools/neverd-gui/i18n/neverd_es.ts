@@ -727,6 +727,30 @@
         <source>Stop treating the current function as one</source>
         <translation>Dejar de tratar la función actual como función</translation>
     </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>&amp;Datos</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>Definir un valor en la dirección actual; de nuevo para el siguiente tamaño</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>&amp;Cadena</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>Definir la cadena que empieza en la dirección actual</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>&amp;Quitar definición</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>Mostrar los bytes del elemento actual como bytes</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2122,6 +2146,18 @@ Con signo: %4</translation>
     <message>
         <source>Deleted the function at %1</source>
         <translation>Se eliminó la función en %1</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>Los bytes en %1 ya no están definidos</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>Se quitó la definición del elemento en %1</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%1 definido en %2</translation>
     </message>
 </context>
 </TS>

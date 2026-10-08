@@ -727,6 +727,30 @@
         <source>Stop treating the current function as one</source>
         <translation>Перестать считать текущую функцию функцией</translation>
     </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>&amp;Данные</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>Определить значение по текущему адресу; повторно — следующий размер</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>&amp;Строка</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>Определить строку, начинающуюся по текущему адресу</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>&amp;Отменить определение</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>Показать байты текущего элемента как байты</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2125,6 +2149,18 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>Удалена функция по адресу %1</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>Байты по адресу %1 уже не определены</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>Определение элемента по адресу %1 отменено</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%1 определено по адресу %2</translation>
     </message>
 </context>
 </TS>

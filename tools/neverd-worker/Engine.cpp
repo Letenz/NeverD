@@ -4,6 +4,7 @@
 #include "EngineSymbols.h"
 #include "GraphSnapshot.h"
 #include "Listing.h"
+#include "OperandFormat.h"
 #include "ProjectHistory.h"
 #include "TextFold.h"
 
@@ -14,6 +15,7 @@
 #include "neverd/support/ProjectWriteLock.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -908,19 +910,25 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         throw Error("unsaved_changes",
                     "Save or reload staged annotations before undoing a "
                     "rename or a function edit");
-      // The row the command changed goes back to its value on this side.
+      // The rows the command changed go back to their values on this side.
       auto state = store.committedState();
       auto &rows = state[ProjectHistory::tableOfKind(
           command.at("kind").get<std::string>())];
-      rows.erase(std::remove_if(
-                     rows.begin(), rows.end(),
-                     [&](const Json &row) {
-                       return parseAddress(row.at("addr").get<std::string>()) ==
-                              address;
-                     }),
-                 rows.end());
-      if (!value.is_null())
-        rows.push_back(value);
+      Json changes = command.value("rows", Json::array());
+      changes.push_back(command);
+      for (const auto &change : changes) {
+        const auto at = parseAddress(change.at("address").get<std::string>());
+        rows.erase(std::remove_if(
+                       rows.begin(), rows.end(),
+                       [&](const Json &row) {
+                         return parseAddress(
+                                    row.at("addr").get<std::string>()) == at;
+                       }),
+                   rows.end());
+        if (const auto &side = change.at(redo ? "after" : "before");
+            !side.is_null())
+          rows.push_back(side);
+      }
       const auto checkpoint = store;
       store.advance(redo);
       try {
@@ -1244,9 +1252,9 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   if (operation != "disasm" && operation != "bytes" &&
       operation != "annotation_set" && operation != "rename" &&
       operation != "function_create" && operation != "function_delete" &&
-      operation != "decompile" && operation != "cfg" &&
-      operation != "cfg_summary" && operation != "cfg_viewport" &&
-      operation != "xrefs")
+      operation != "item_define" && operation != "decompile" &&
+      operation != "cfg" && operation != "cfg_summary" &&
+      operation != "cfg_viewport" && operation != "xrefs")
     throw Error("unsupported", "Unknown worker operation: " + operation);
   const auto address = parseAddress(stringField(p, "address"));
   if (operation == "disasm") {
@@ -1437,6 +1445,116 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     ++revision_;
     return {
         {"address", hexAddress(address)}, {"created", create}, {"saved", true}};
+  }
+  if (operation == "item_define") {
+    requireWriter();
+    const auto &items = dataItems();
+    if (!items)
+      throw Error("unsupported", "This engine keeps no data items");
+    if (dirty_)
+      throw Error("unsaved_changes", "Save or reload staged annotations "
+                                     "before defining data");
+    const auto action = stringField(p, "action", {}, 16);
+    const Json at = listing().item(address);
+    if (at.is_null())
+      throw Error("invalid_request", "No image byte at " + hexAddress(address));
+    const auto kind = at.at("kind").get<std::string>();
+    if (kind == "instruction")
+      throw Error("invalid_request",
+                  "Code belongs to its function; delete the function to "
+                  "define data in its bytes");
+    // The item the cursor is in is the one the action changes.
+    const auto start = parseAddress(at.at("start").get<std::string>());
+    const auto user = at.value("user", std::string());
+    Json row;
+    std::uint64_t size = 0;
+    if (action == "data") {
+      // The data carousel: byte, word, dword, qword, then byte again.
+      static constexpr std::array<std::uint64_t, 4> Carousel = {1, 2, 4, 8};
+      size = sizeField(p, "size", 0, 8);
+      if (size &&
+          std::find(Carousel.begin(), Carousel.end(), size) == Carousel.end())
+        throw Error("invalid_request", "A value is 1, 2, 4 or 8 bytes");
+      if (!size) {
+        const auto current =
+            kind == "data" ? at.at("size").get<std::uint64_t>() : 0;
+        const auto next = std::find(Carousel.begin(), Carousel.end(), current);
+        size = next == Carousel.end() || next + 1 == Carousel.end()
+                   ? Carousel.front()
+                   : *(next + 1);
+      }
+      row = {{"kind", std::string(sizeKeywordOf(size))}};
+    } else if (action == "string") {
+      // The string the scan reads there, from its first character.
+      Json options = listing().stringOptions().empty()
+                         ? Json::object()
+                         : parseJson(listing().stringOptions());
+      options.erase("min_length");
+      const char *raw = items.stringAt(
+          session_, start, options.empty() ? nullptr : options.dump().c_str());
+      if (!raw)
+        throw Error("invalid_request", "No string starts at " +
+                                           hexAddress(start) + ": " + error());
+      const auto string = backendJson(raw);
+      size = string.at("length").get<std::uint64_t>() +
+             string.at("unit").get<std::uint64_t>();
+      row = {{"kind", StringItemKind},
+             {"encoding", string.at("encoding")},
+             {"size", size}};
+    } else if (action == "undefine") {
+      // Bytes the listing already shows one by one stay as they are.
+      if (user == UndefinedItemKind || kind == "byte" ||
+          kind == "uninitialized" || kind == "align")
+        return {{"address", hexAddress(start)},
+                {"kind", UndefinedItemKind},
+                {"size", at.at("size")},
+                {"saved", false}};
+      size = at.at("size").get<std::uint64_t>();
+      row = {{"kind", UndefinedItemKind}, {"size", size}};
+    } else {
+      throw Error("invalid_request",
+                  "action is \"data\", \"string\" or \"undefine\"");
+    }
+    auto &store = history();
+    auto state = store.committedState();
+    // The engine checks the item against the image and the other items;
+    // undefined bytes it covers stay undefined around it.
+    if (items.set(session_, start, row.dump().c_str()) != 0)
+      throw Error("invalid_request", error());
+    // One history step holds every row the edit changed, the item's first.
+    std::map<std::uint64_t, std::pair<Json, Json>> changed;
+    for (const auto &item : state.at("items"))
+      changed[parseAddress(item.at("addr").get<std::string>())].first = item;
+    state["items"] = dataItemRows();
+    for (const auto &item : state.at("items"))
+      changed[parseAddress(item.at("addr").get<std::string>())].second = item;
+    const Json after = changed[start].second;
+    Json command{{"kind", "item"},
+                 {"address", hexAddress(start)},
+                 {"before", changed[start].first},
+                 {"after", after}};
+    for (const auto &[itemStart, sides] : changed)
+      if (itemStart != start && sides.first != sides.second)
+        command["rows"].push_back({{"address", hexAddress(itemStart)},
+                                   {"before", sides.first},
+                                   {"after", sides.second}});
+    const auto checkpoint = store;
+    try {
+      store.stage(std::move(command));
+      store.persist(state);
+    } catch (...) {
+      store = checkpoint;
+      // The sidecar still holds the items before this one.
+      (void)items.load(session_);
+      invalidate();
+      throw;
+    }
+    invalidate();
+    ++revision_;
+    return {{"address", hexAddress(start)},
+            {"kind", after.at("kind")},
+            {"size", after.at("size")},
+            {"saved", true}};
   }
   if (operation == "decompile") {
     const auto representation = stringField(p, "representation", "c", 16);
