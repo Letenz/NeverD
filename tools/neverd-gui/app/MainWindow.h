@@ -106,6 +106,7 @@ private:
   void navigateExpression(const QString &text);
   /// Follow a name double-clicked in the code view \p view.
   void activateCodeName(CodeView *view, const QString &name);
+  void navigateHistory(bool forward);
   void synchronize(Address address, QObject *source);
   /// Show the current function in the code view \p view if it can be seen.
   void followFunction(CodeView *view);
@@ -184,6 +185,8 @@ private:
   QString lastPaletteCommand_;
   bool searchDown_ = true;
   bool synchronizing_ = false;
+  quint64 codeNavigationSerial_ = 0;
+  bool codeHistoryNavigation_ = false;
   bool hexActive_ = false;
   bool quitting_ = false;
   bool defaultSizesPending_ = false;

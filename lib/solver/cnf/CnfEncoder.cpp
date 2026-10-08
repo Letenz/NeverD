@@ -73,11 +73,11 @@ GatePolarity flip(GatePolarity P) {
 /// at any width a caller might hand over.
 constexpr size_t kMaxXorFanIn = 3;
 
-// Table placement is separate from the complete identity hash. Mix high bits
-// into low bits before selecting a power-of-two bucket.
-size_t gateBucket(uint64_t Hash, size_t Mask) {
+// Retain the low placement bits in a compact fingerprint. Equal
+// fingerprints still require the complete gate identity comparison.
+uint32_t gateFingerprint(uint64_t Hash) {
   Hash = (Hash ^ (Hash >> 32)) * 0x9e3779b97f4a7c15ULL;
-  return static_cast<size_t>(Hash ^ (Hash >> 32)) & Mask;
+  return static_cast<uint32_t>(Hash ^ (Hash >> 32));
 }
 
 // Gate operands are usually pairs or triples from adders. Keep their exact
@@ -348,7 +348,7 @@ void CnfEncoder::growGateTable() {
   for (const auto &Entry : GateTable) {
     if (!Entry.Index)
       continue;
-    auto Slot = gateBucket(Entry.Hash, Mask);
+    auto Slot = Entry.Hash & Mask;
     while (Next[Slot].Index)
       Slot = (Slot + 1) & Mask;
     Next[Slot] = Entry;
@@ -361,14 +361,15 @@ SatLit CnfEncoder::gate(GateKind Kind, llvm::ArrayRef<SatLit> Ins,
   uint64_t H = mixHash(0x51ed270bULL, static_cast<uint64_t>(Kind));
   for (SatLit L : Ins)
     H = mixHash(H, L.index());
+  const uint32_t Fingerprint = gateFingerprint(H);
   if (GateTable.empty())
     growGateTable();
   auto Mask = GateTable.size() - 1;
-  auto Slot = gateBucket(H, Mask);
+  auto Slot = Fingerprint & Mask;
   while (const auto Stored = GateTable[Slot].Index) {
     const uint32_t Index = Stored - 1;
     const Gate &G = Gates[Index];
-    if (GateTable[Slot].Hash == H && G.Kind == Kind &&
+    if (GateTable[Slot].Hash == Fingerprint && G.Kind == Kind &&
         G.NumOperands == Ins.size() &&
         std::equal(Ins.begin(), Ins.end(), operandsOf(G).begin())) {
       emit(Index, P);
@@ -381,7 +382,7 @@ SatLit CnfEncoder::gate(GateKind Kind, llvm::ArrayRef<SatLit> Ins,
   if (Gates.size() >= GateTable.size() - GateTable.size() / 4) {
     growGateTable();
     Mask = GateTable.size() - 1;
-    Slot = gateBucket(H, Mask);
+    Slot = Fingerprint & Mask;
     while (GateTable[Slot].Index)
       Slot = (Slot + 1) & Mask;
   }
@@ -394,7 +395,7 @@ SatLit CnfEncoder::gate(GateKind Kind, llvm::ArrayRef<SatLit> Ins,
   OperandPool.insert(OperandPool.end(), Ins.begin(), Ins.end());
   const auto Index = static_cast<uint32_t>(Gates.size());
   Gates.push_back(G);
-  GateTable[Slot] = {H, Index + 1};
+  GateTable[Slot] = {Fingerprint, Index + 1};
   emit(Index, P);
   return G.Out;
 }

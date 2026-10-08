@@ -21,6 +21,7 @@
 #include "MapParsers.h"
 
 #include "neverd/debug/MapDebugContextBase.h"
+#include "neverd/support/FilePath.h"
 
 #define DEBUG_TYPE "neverd-lld-map-loader"
 #include "llvm/ADT/StringRef.h"
@@ -78,10 +79,10 @@ LLDMapDebugContext::load(const std::filesystem::path &MapPath,
                          uint64_t ImageBase) {
   auto Ctx = std::unique_ptr<LLDMapDebugContext>(new LLDMapDebugContext());
 
-  auto BufOr = llvm::MemoryBuffer::getFile(MapPath.string());
+  auto BufOr = llvm::MemoryBuffer::getFile(pathToUTF8(MapPath));
   if (!BufOr) {
     llvm::WithColor::warning()
-        << "lld-map: cannot open " << MapPath.string() << "\n";
+        << "lld-map: cannot open " << pathToUTF8(MapPath) << "\n";
     return Ctx;
   }
 
@@ -95,8 +96,8 @@ LLDMapDebugContext::load(const std::filesystem::path &MapPath,
     FmtName = "ELF";
     break;
   case MapFormat::COFFStandard:
-    MapDebugContextBase::parseCOFFMapContent(Content, Ctx->Functions,
-                                             ImageBase, &Ctx->DataObjects);
+    MapDebugContextBase::parseCOFFMapContent(Content, Ctx->Functions, ImageBase,
+                                             &Ctx->DataObjects);
     FmtName = "COFF /MAP";
     break;
   case MapFormat::COFFLLDMap:
@@ -117,7 +118,7 @@ LLDMapDebugContext::load(const std::filesystem::path &MapPath,
   Ctx->Loaded = !Ctx->Functions.empty();
   LLVM_DEBUG(llvm::dbgs() << "lld-map: loaded " << Ctx->Functions.size()
                           << " function symbols from "
-                          << MapPath.filename().string() << " (" << FmtName
+                          << pathToUTF8(MapPath.filename()) << " (" << FmtName
                           << " style)\n");
   return Ctx;
 }

@@ -20,6 +20,7 @@
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
+#include "neverd/support/FilePath.h"
 #include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -671,7 +672,7 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   Root["instruction_mode"] = getInstructionModeName(S->Img.Mode);
   Root["format"] = S->Img.getFormatName();
   Root["bits"] = S->Img.is64Bit() ? 64 : 32;
-  Root["file_path"] = jsonSafeText(S->FilePath.string());
+  Root["file_path"] = jsonSafeText(pathToUTF8(S->FilePath));
 
   std::error_code EC;
   auto FileSz = std::filesystem::file_size(S->FilePath, EC);
@@ -840,8 +841,8 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
   llvm::json::Object Root;
 
   llvm::json::Object File;
-  File["path"] = jsonSafeText(S->FilePath.string());
-  File["name"] = jsonSafeText(S->FilePath.filename().string());
+  File["path"] = jsonSafeText(pathToUTF8(S->FilePath));
+  File["name"] = jsonSafeText(pathToUTF8(S->FilePath.filename()));
   File["format"] = S->Img.getFormatName();
   File["arch"] = getArchName(S->Img.Arch);
   File["instruction_mode"] = getInstructionModeName(S->Img.Mode);

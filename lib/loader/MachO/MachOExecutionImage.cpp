@@ -7,6 +7,7 @@
 
 #include "neverd/loader/BinaryImageFlags.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Object/MachO.h"
@@ -24,7 +25,7 @@ llvm::Error failure(llvm::StringRef Message) {
 }
 llvm::Expected<std::vector<uint8_t>> readFile(const std::filesystem::path &Path,
                                               uint64_t FileByteLimit) {
-  const auto Filename = Path.string();
+  const auto Filename = pathToUTF8(Path);
   if (Filename.empty() || Filename.find('\0') != std::string::npos)
     return failure("macho execution: invalid input path");
   // Reject ordinary non-file inputs before opening, then validate the opened
@@ -112,7 +113,7 @@ loadMachOExecutionImage(const std::filesystem::path &Path,
   Image.Raw = std::move(*Bytes);
   const llvm::StringRef Input(reinterpret_cast<const char *>(Image.Raw.data()),
                               Image.Raw.size());
-  const auto Filename = Path.string();
+  const auto Filename = pathToUTF8(Path);
   auto Object = llvm::object::ObjectFile::createMachOObjectFile(
       llvm::MemoryBufferRef(Input, Filename));
   if (!Object)

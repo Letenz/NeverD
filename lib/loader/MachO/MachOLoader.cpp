@@ -24,6 +24,7 @@
 #include "neverd/loader/ObjC/ObjCMethods.h"
 #include "neverd/loader/Rust/RustEH.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
@@ -490,7 +491,7 @@ MachOLoader::load(const std::filesystem::path &Path) {
   if (llvm::Error Err = verifyARMFunctionModeHints(Img, ARMFunctionModes))
     return std::move(Err);
 
-  runPostLoadDiscovery(Img, "macho: loaded " + Path.filename().string());
+  runPostLoadDiscovery(Img, "macho: loaded " + pathToUTF8(Path.filename()));
   // Classified before any table is read: a compact-unwind entry names a
   // personality slot, not a language, so what its LSDA means is settled by the
   // image's symbols and sections rather than by the entry.
