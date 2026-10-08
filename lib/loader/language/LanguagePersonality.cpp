@@ -21,12 +21,10 @@
 
 #include "neverd/loader/DWARF/ItaniumEH.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/SymbolSpelling.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Demangle/Demangle.h"
-
-#include <cstdlib>
 
 namespace neverd {
 
@@ -166,68 +164,12 @@ bool isMangledRustPersonality(llvm::StringRef Name) {
 } // namespace
 
 bool isRustMangledName(llvm::StringRef Name) {
-  llvm::StringRef Bare = Name;
-  Bare.consume_front("_");
-  if (Bare.starts_with("R"))
-    return true;
-  // Legacy Rust mangling is Itanium with a 17-character final component that
-  // is the letter 'h' followed by 16 lowercase hex digits.
-  if (!Name.starts_with("_ZN") && !Name.starts_with("__ZN"))
-    return false;
-  llvm::StringRef Tail = Name;
-  if (!Tail.consume_back("E"))
-    return false;
-  if (Tail.size() < 19)
-    return false;
-  llvm::StringRef Hash = Tail.take_back(17);
-  if (!Hash.starts_with("h"))
-    return false;
-  if (!Tail.drop_back(17).ends_with("17"))
-    return false;
-  for (char C : Hash.drop_front())
-    if (!llvm::isHexDigit(C) || (llvm::isAlpha(C) && !llvm::isLower(C)))
-      return false;
-  return true;
+  const SymbolScheme Scheme = symbolScheme(Name);
+  return Scheme == SymbolScheme::RustLegacy || Scheme == SymbolScheme::RustV0;
 }
 
 std::string demangleRustName(llvm::StringRef Name) {
-  std::string Input = Name.str();
-  // Darwin prefixes every C symbol with an underscore, which the demanglers
-  // do not expect ahead of the scheme marker.
-  if (llvm::StringRef(Input).starts_with("__Z") ||
-      llvm::StringRef(Input).starts_with("__R"))
-    Input.erase(0, 1);
-
-  if (llvm::StringRef(Input).starts_with("_R")) {
-    if (char *Demangled = llvm::rustDemangle(Input)) {
-      std::string Result(Demangled);
-      std::free(Demangled);
-      return Result;
-    }
-    return {};
-  }
-
-  if (!isRustMangledName(Input))
-    return {};
-  char *Demangled = llvm::itaniumDemangle(Input);
-  if (!Demangled)
-    return {};
-  std::string Result(Demangled);
-  std::free(Demangled);
-  // Legacy mangling appends the crate disambiguator as a final `::h<hex>`
-  // path component.  It is an artifact of the mangling, not part of the name.
-  llvm::StringRef Ref(Result);
-  if (Ref.size() > 19) {
-    llvm::StringRef Tail = Ref.take_back(19);
-    if (Tail.starts_with("::h")) {
-      bool AllHex = true;
-      for (char C : Tail.drop_front(3))
-        AllHex = AllHex && llvm::isHexDigit(C);
-      if (AllHex)
-        Result.resize(Result.size() - 19);
-    }
-  }
-  return Result;
+  return isRustMangledName(Name) ? readableSymbolName(Name) : std::string();
 }
 
 ExceptionPersonality classifyPersonalityName(llvm::StringRef Name) {

@@ -118,6 +118,12 @@ add_neverd_component_library(NeverDLoader
   language/LanguageEH.cpp
   language/LanguagePersonality.cpp
   language/LanguageRuntime.cpp
+  language/SymbolSpelling.cpp
+  language/SymbolSpellingCxx.cpp
+  language/SymbolSpellingD.cpp
+  language/SymbolSpellingObjC.cpp
+  language/SymbolSpellingRust.cpp
+  language/SymbolSpellingSwift.cpp
 
   LINK_COMPONENTS
   EVM

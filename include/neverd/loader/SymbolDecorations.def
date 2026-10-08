@@ -19,9 +19,18 @@
 #ifndef NEVERD_ABI_UNDERSCORE_ON
 #define NEVERD_ABI_UNDERSCORE_ON(Format, Arch)
 #endif
+// NEVERD_ABI_UNDECORATED_PREFIX(Format, Arch, Prefix): a name that starts
+// with Prefix is already the symbol and takes no underscore, as Microsoft's
+// C++ names (`?f@@YAXXZ`) and fastcall names (`@f@8`) on 32-bit Windows.
+#ifndef NEVERD_ABI_UNDECORATED_PREFIX
+#define NEVERD_ABI_UNDECORATED_PREFIX(Format, Arch, Prefix)
+#endif
 
 NEVERD_ABI_UNDERSCORE(MachO)
 NEVERD_ABI_UNDERSCORE_ON(COFF, X86)
+NEVERD_ABI_UNDECORATED_PREFIX(COFF, X86, "?")
+NEVERD_ABI_UNDECORATED_PREFIX(COFF, X86, "@")
 
 #undef NEVERD_ABI_UNDERSCORE
 #undef NEVERD_ABI_UNDERSCORE_ON
+#undef NEVERD_ABI_UNDECORATED_PREFIX
