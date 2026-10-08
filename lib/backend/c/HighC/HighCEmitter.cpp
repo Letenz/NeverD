@@ -1534,8 +1534,9 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   for (auto &F : Funcs)
     collectCallTargets(F.Body, CallTargets);
   // How many bytes of each callee's result the code reads: a call a
-  // statement assigns, its destination's; a call inside an expression may be
-  // read whole.  A function whose address the code only takes reads none.
+  // statement assigns, its destination's; a call inside an expression, its
+  // own type's, or all of it.  A function whose address the code only takes
+  // reads none.
   std::map<std::string, uint16_t> ResultBytes;
   const uint16_t RegisterBytes = pointerBytes(Opts.TheArch);
   for (const HighFunc &F : Funcs)
@@ -1546,7 +1547,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::None) {
           uint16_t &Bytes = ResultBytes[callIdentifier(E)];
           if (&E != Top)
-            Bytes = RegisterBytes;
+            Bytes = std::max<uint16_t>(Bytes,
+                                       E.Type ? E.Type->Size : RegisterBytes);
           else if (S.Kind == StmtKind::Assign && S.Dst)
             Bytes = std::max<uint16_t>(Bytes, S.Dst->Type ? S.Dst->Type->Size
                                                           : S.Dst->Var.Size);
