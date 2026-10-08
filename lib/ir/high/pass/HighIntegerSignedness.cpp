@@ -83,6 +83,15 @@ bool wrapsUnsigned(const HighExpr &E) {
          (E.Kind == ExprKind::UnaryOp && E.Op == NdOp::INT_NEG2);
 }
 
+/// Bitwise operations leave the same bits whatever the signedness of their
+/// operands, and C defines them on either.
+bool isBitwise(const HighExpr &E) {
+  return (E.Kind == ExprKind::BinOp &&
+          (E.Op == NdOp::INT_AND || E.Op == NdOp::INT_OR ||
+           E.Op == NdOp::INT_XOR)) ||
+         (E.Kind == ExprKind::UnaryOp && E.Op == NdOp::INT_NOT);
+}
+
 bool isPlainInteger(const TypeRef &Type) {
   return !Type || (Type->Kind == NdTypeKind::Int && !Type->IsEnum);
 }
@@ -189,6 +198,40 @@ void chooseIntegerSignedness(HighFunc &Func) {
       if (Operand && Operand->Type && Operand->Type->Size == E->Type->Size)
         Unsign(Operand);
   };
+  // A bitwise operation takes the signedness its reader wants, and passes it
+  // on to the bitwise operations feeding it: `x - ((x >> 1) & 0x55..)` needs
+  // no conversion either side of the mask.  Wrapping arithmetic it feeds
+  // turns unsigned only, which is what keeps it free of overflow.
+  std::function<void(const ExprPtr &, bool)> Settle = [&](const ExprPtr &E,
+                                                          bool Signed) {
+    if (!E || !E->Type || E->Type->Kind != NdTypeKind::Int || E->Type->IsEnum)
+      return;
+    if (!Signed && wrapsUnsigned(*E)) {
+      Unsign(E);
+      return;
+    }
+    if (!isBitwise(*E))
+      return;
+    if (E->Type->IsSigned != Signed)
+      E->Type = NdType::makeInt(E->Type->Size, Signed);
+    for (const ExprPtr &Operand : E->Operands)
+      if (Operand && Operand->Type && Operand->Type->Size == E->Type->Size)
+        Settle(Operand, Signed);
+  };
+  std::function<void(const ExprPtr &)> SettleOperands = [&](const ExprPtr &E) {
+    if (!E)
+      return;
+    for (size_t I = 0; I < E->Operands.size(); ++I) {
+      const ExprPtr &Operand = E->Operands[I];
+      if (!Operand)
+        continue;
+      if (const Reads Wanted = operandReads(*E, I); Wanted != Reads::Neither)
+        Settle(Operand, Wanted == Reads::Signed);
+      SettleOperands(Operand);
+    }
+    if (E->IndirectTarget)
+      SettleOperands(E->IndirectTarget);
+  };
   // A memory read has a single reader, the operation it is an operand of,
   // and reads the signedness that operation wants: `*(_QWORD *)p + 8`.  A
   // read a local receives whole has the local's.
@@ -214,6 +257,11 @@ void chooseIntegerSignedness(HighFunc &Func) {
         S.Dst->Type->Kind == NdTypeKind::Int && !S.Dst->Type->IsSigned &&
         localKey(*S.Dst))
       Unsign(S.Val);
+    if (S.Kind == StmtKind::Assign && S.Dst && S.Val && S.Dst->Type &&
+        isPlainInteger(S.Dst->Type) && localKey(*S.Dst) && S.Val->Type &&
+        S.Val->Type->Size == S.Dst->Type->Size && isBitwise(*S.Val))
+      Settle(S.Val, S.Dst->Type->IsSigned);
+    forEachExpr(S, SettleOperands);
     if (S.Kind == StmtKind::Assign && S.Dst && S.Val && localKey(*S.Dst) &&
         isPlainIntegerLoad(*S.Val) && isPlainInteger(S.Dst->Type) &&
         S.Dst->Type && S.Dst->Type->Size == S.Val->Type->Size)
