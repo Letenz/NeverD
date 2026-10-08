@@ -3966,8 +3966,13 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
   auto PeelReturnViews = [&](const HighExpr *Cur) {
     for (unsigned Peel = 0; Peel < limits::kMaxIntegerViewUnwrapDepth && Cur;
          ++Peel) {
+      // A view of an integer only: the bits of a floating value are no
+      // view of it, and C would convert the value they were peeled from.
       if ((Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast) &&
-          !Cur->Operands.empty() && Cur->Operands[0]) {
+          !Cur->Operands.empty() && Cur->Operands[0] &&
+          (!Cur->Operands[0]->Type ||
+           Cur->Operands[0]->Type->Kind == NdTypeKind::Int ||
+           Cur->Operands[0]->Type->Kind == NdTypeKind::Ptr)) {
         Cur = Cur->Operands[0].get();
         continue;
       }
