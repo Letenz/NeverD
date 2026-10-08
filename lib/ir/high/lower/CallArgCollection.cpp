@@ -25,6 +25,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 
@@ -132,6 +133,18 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
         break;
       }
     }
+
+    // The incoming value of a scratch register that carries no argument is
+    // undefined: storing it, as an alignment `push rax` does, passes nothing.
+    if (Scan.Convention && Scan.Convention->UndefinedIncomingScratchRegisters &&
+        Stored.Kind == MedVar::Reg && Stored.SSAVer == 0 &&
+        Stored.RegOff != Scan.SpRegOff && !preserved(Stored) &&
+        gprFamilyOf(Scan.TheArch, Stored.RegOff) &&
+        llvm::none_of(Layout.Registers, [&](uint64_t Reg) {
+          return gprFamilyOf(Scan.TheArch, Reg) ==
+                 gprFamilyOf(Scan.TheArch, Stored.RegOff);
+        }))
+      return;
 
     const MedVar &AddrVar = Prev.Inputs[0];
     int64_t StackOff = -1;
@@ -1245,8 +1258,7 @@ std::string MedToHighConverter::calleeDisplayName(va_t Target) const {
 }
 
 void MedToHighConverter::resolveCalleeNames(
-    const std::set<va_t> &Targets,
-    std::map<va_t, std::string> &Names) const {
+    const std::set<va_t> &Targets, std::map<va_t, std::string> &Names) const {
   if (!Image) {
     for (va_t Target : Targets)
       Names[Target] = calleeDisplayName(Target);
@@ -1324,18 +1336,26 @@ int MedToHighConverter::abiParamIndex(const MedVar &V) const {
   };
 
   if (V.Kind == MedVar::Param) {
-    int IdMatch = -1;
+    // Register and stack parameters number their ids apart: ARM32's r0 can
+    // carry id 8, the same as the ninth argument's stack slot.  An id of the
+    // same kind decides first.
+    int IdMatch = -1, AnyIdMatch = -1;
     for (size_t I = 0; I < CurMed->Params.size(); ++I) {
       const MedVar &P = CurMed->Params[I];
       if (P.Id < 0 || P.Id != V.Id)
         continue;
       if (V.RegOff != kNoParamReg && P.RegOff == V.RegOff)
         return static_cast<int>(I);
-      if (IdMatch < 0)
+      if (AnyIdMatch < 0)
+        AnyIdMatch = static_cast<int>(I);
+      if (IdMatch < 0 &&
+          (V.RegOff == kNoParamReg) == (P.RegOff == kNoParamReg))
         IdMatch = static_cast<int>(I);
     }
     if (IdMatch >= 0)
       return IdMatch;
+    if (AnyIdMatch >= 0)
+      return AnyIdMatch;
     const int ByReg = SlotByReg(V.RegOff);
     if (ByReg >= 0)
       return ByReg;

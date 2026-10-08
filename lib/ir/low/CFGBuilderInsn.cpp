@@ -17,6 +17,7 @@
 
 #include "IndirectTailFrame.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/DirectTailCall.h"
@@ -25,6 +26,9 @@
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
+#include "neverd/support/ProloguePatterns.h"
+
+#include <algorithm>
 
 namespace neverd {
 
@@ -344,6 +348,11 @@ bool CFGBuilder::isTailCallTarget(va_t Target) const {
 bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   if (!CurrentImg)
     return false;
+  // A compiler places nothing after a call that cannot return where it is
+  // made, such as error(3) with a constant nonzero status: a call that ends
+  // its function's own code range does not return, whatever the callee.
+  if (callEndsItsCodeRange(Rec))
+    return true;
   va_t Target = InvalidVA;
   for (const auto &Op : Rec.Ops) {
     if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
@@ -374,11 +383,46 @@ bool CFGBuilder::callIsFollowedByPadding(const InsnRecord &Rec) const {
   const va_t Next = Rec.Addr + Rec.Size;
   if (isKnownFunctionEntry(Next))
     return true;
-  if (CurrentImg->Arch != Arch::X86 && CurrentImg->Arch != Arch::X64)
-    return false;
+  const Arch A = CurrentImg->Arch;
   const Segment *Seg = CurrentImg->getSegmentFor(Next);
-  return Seg && Next >= Seg->VA && Next - Seg->VA < Seg->Data.size() &&
-         Seg->Data[static_cast<size_t>(Next - Seg->VA)] == x86::kInt3;
+  if (!Seg || Next < Seg->VA || Next - Seg->VA >= Seg->Data.size())
+    return false;
+  const uint8_t *Bytes = Seg->Data.data() + (Next - Seg->VA);
+  const size_t Available = Seg->Data.size() - (Next - Seg->VA);
+  const size_t Window =
+      std::min<size_t>(Available, limits::kMaxAlignmentPaddingBytes + 1);
+  // GCC and Clang align the next function with no-ops where MSVC pads with
+  // traps.  The same no-ops before a label of this function are reached by
+  // falling through, so only a run that ends at a trap, at another function's
+  // entry or at the end of the code counts.
+  size_t Skipped = 0;
+  while (Skipped < Window && !isTrapPaddingByte(A, Bytes[Skipped])) {
+    const size_t Length =
+        alignmentNopLength(A, Bytes + Skipped, Window - Skipped);
+    if (Length == 0)
+      break;
+    Skipped += Length;
+  }
+  if (Skipped > limits::kMaxAlignmentPaddingBytes)
+    return false;
+  if (Skipped != 0 && Skipped == Available)
+    return true;
+  return isTrapPaddingByte(A, Bytes[Skipped]) ||
+         (Skipped != 0 && isKnownFunctionEntry(Next + Skipped));
+}
+
+bool CFGBuilder::callEndsItsCodeRange(const InsnRecord &Rec) const {
+  const va_t Next = Rec.Addr + Rec.Size;
+  // Another fragment of this function may continue right where one ends.
+  if (isCurrentOwnedFragment(Next))
+    return false;
+  if (const ExceptionFunction *Owner =
+          CurrentImg->ExceptionMetadata.findFunction(Rec.Addr);
+      Owner && exceptionEncodingBoundsOneFunction(Owner->Encoding) &&
+      Owner->CodeRange.End == Next)
+    return true;
+  return CurrentImg->getFunctionMetadataEnd(CurrentFuncEntry,
+                                            ExecutableCodeOwners) == Next;
 }
 
 void CFGBuilder::restoreAdjacentNoReturnCall(InsnRecord &Rec,

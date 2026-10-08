@@ -41,6 +41,11 @@ struct CallArgumentConvention {
   /// A call to a summarized direct callee passes the argument registers the
   /// callee reads at entry (LowToMed publishes them as the CALL's inputs).
   bool RegisterArgumentsFromCalleeSummary = false;
+  /// An import whose libc prototype is fixed reads exactly its argument
+  /// registers, so its stub and the slot the loader binds have that summary,
+  /// and an indirect call through the slot passes them as a call to the stub
+  /// does.
+  bool ImportArgumentsFromPrototype = false;
   /// The callee's entry-read summary is not its parameter list, so the call
   /// passes no summarized arguments (a System V variadic prologue spills
   /// every argument register to its save area).  Null when every summary is.
@@ -55,6 +60,11 @@ struct CallArgumentConvention {
   bool VariadicFromSummary = false;
   /// The incoming stack-argument summary counts this convention's positions.
   bool StackArgumentSummary = false;
+  /// An integer register that carries no argument and that a call need not
+  /// preserve holds no defined value at entry (RAX beyond a variadic
+  /// callee's AL, R10, R11), so a store of that incoming value before a call
+  /// passes nothing: an alignment `push rax` is no stack argument.
+  bool UndefinedIncomingScratchRegisters = false;
   /// An indirect call whose own block sets no argument register takes the
   /// consecutive setup writes of the block before it, as IDA does.
   bool IndirectCallsTakePrecedingSetup = false;

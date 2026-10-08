@@ -1228,6 +1228,73 @@ std::string renderX86MsvcSegmentedLoad(Arch TheArch, unsigned SizeBytes,
   return std::string(Name) + "(" + Addr.str() + ")";
 }
 
+namespace {
+/// The C vector type an `_mm` intrinsic takes and returns in a register of
+/// \p Bytes, by the element kind its name gives: integers (`_epi8`,
+/// `_si128`), singles (`_ps`, `_ss`) or doubles (`_pd`, `_sd`).  Empty for
+/// any other name.
+std::string x86VectorCType(llvm::StringRef CName, uint16_t Bytes) {
+  if (!CName.starts_with("_mm") || (Bytes != 16 && Bytes != 32 && Bytes != 64))
+    return {};
+  const bool Integers = CName.contains("_epi") || CName.contains("_epu") ||
+                        CName.ends_with("_si128") ||
+                        CName.ends_with("_si256") || CName.ends_with("_si512");
+  const bool Doubles = CName.ends_with("_pd") || CName.ends_with("_sd");
+  if (!Integers && !Doubles && !CName.ends_with("_ps") &&
+      !CName.ends_with("_ss"))
+    return {};
+  return std::string(Bytes == 16   ? "__m128"
+                     : Bytes == 32 ? "__m256"
+                                   : "__m512") +
+         (Integers ? "i" : Doubles ? "d" : "");
+}
+
+/// An x86 vector intrinsic over registers HighC carries as same-width
+/// integers: each register operand converts to the intrinsic's vector type,
+/// and its result back.  Empty when \p Call is no such intrinsic.
+std::string
+renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
+                         std::function<std::string(const HighExpr &)> ExprFn,
+                         bool &HasCIntrinsics) {
+  if ((TheArch != Arch::X86 && TheArch != Arch::X64) || !Call.Type ||
+      Call.Type->Kind != NdTypeKind::Int)
+    return {};
+  const char *CName = intrinsicCName(Call.IntrinsicId);
+  if (!CName)
+    return {};
+  const llvm::StringRef Callee(CName);
+  const uint16_t Width = Call.Type->Size;
+  const std::string Vector = x86VectorCType(Callee, Width);
+  if (Vector.empty())
+    return {};
+  const std::string Raw = typeToC(NdType::makeInt(Width, false));
+  // A VEX/EVEX-widened form shares the SSE intrinsic ID; spell the
+  // intrinsic for the register width.
+  std::string Spelled = CName;
+  if (Width != 16 && Callee.starts_with("_mm_"))
+    Spelled =
+        (Width == 32 ? "_mm256_" : "_mm512_") + Callee.drop_front(4).str();
+  std::string S = "__builtin_bit_cast(" + Raw + ", " + Spelled + "(";
+  for (size_t I = 0; I < Call.Operands.size(); ++I) {
+    const HighExpr *Op = Call.Operands[I].get();
+    if (I > 0)
+      S += ", ";
+    if (!Op) {
+      S += "0";
+      continue;
+    }
+    if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&
+        Op->Type->Size == Width)
+      S += "__builtin_bit_cast(" + Vector + ", (" + Raw + ")(" + ExprFn(*Op) +
+           "))";
+    else
+      S += ExprFn(*Op);
+  }
+  HasCIntrinsics = true;
+  return S + "))";
+}
+} // namespace
+
 std::string
 renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
                             std::function<std::string(const HighExpr &)> ExprFn,
@@ -1330,7 +1397,7 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
                       Call.IntrinsicId == I::Gf2p8AffineInvQb;
   const bool IsVdbpsadbw = Call.IntrinsicId == I::Vdbpsadbw;
   if (!IsGfni && !IsVdbpsadbw)
-    return {};
+    return renderX86VectorIntrinsic(TheArch, Call, ExprFn, HasCIntrinsics);
   if (TheArch != Arch::X86 && TheArch != Arch::X64)
     llvm::report_fatal_error(
         "typed x86 vector intrinsic requires an x86 target");
