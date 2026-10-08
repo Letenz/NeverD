@@ -414,6 +414,9 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"unlinked-file", "75"},
           std::pair{"created-file", "63"},
           std::pair{"created-file-metadata", "71"},
+          std::pair{"directory-enumeration-mutations", "45"},
+          std::pair{"virtual-directory-enumeration",
+                    emulation::darwin_test::EnumerationMetadataHex},
           std::pair{"created-namespace-metadata", "4e"},
           std::pair{"virtual-created-namespace-metadata",
                     emulation::darwin_test::NamespaceMetadataHex},
@@ -672,6 +675,38 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     (*Directory)[field::DirectoryMutable] = true;
     (*Directory)[field::DirectorySwapRename] = true;
     (*Directory)[field::FileMetadata] = std::move(Parent);
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName == "directory-enumeration-mutations" ||
+      ModeName == "virtual-directory-enumeration") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
+    (*Files)[field::FileUmask] = 0027;
+    (*Files)[field::FileCreationPolicy] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::NamespaceCreationPolicyJSON));
+    auto *M = Files->getArray(field::Files)
+                  ->front()
+                  .getAsObject()
+                  ->getObject(field::FileMetadata);
+    (*M)[field::FileFlags] = 0;
+    (*M)[field::FileLinkCount] = 1;
+    auto Parent =
+        llvm::cantFail(llvm::json::parse(emulation::darwin_test::MetadataJSON));
+    auto *PM = Parent.getAsObject();
+    (*PM)[field::FileMode] = 0040755;
+    (*PM)[field::FileInode] = 41;
+    (*PM)[field::Size] = 0;
+    (*PM)[field::FileBlocks] = 0;
+    (*PM)[field::FileFlags] = 0;
+    auto *Directory =
+        Files->getArray(field::Directories)->front().getAsObject();
+    Directory->erase(field::DirectoryContents);
+    (*Directory)[field::DirectoryMutable] = true;
+    (*Directory)[field::DirectorySwapRename] = true;
+    (*Directory)[field::FileMetadata] = std::move(Parent);
+    (*Directory)[field::DirectoryEnumerationPolicy] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::EnumerationPolicyJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
   if (ModeName == "symbolic-links") {

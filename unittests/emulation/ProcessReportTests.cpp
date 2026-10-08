@@ -388,6 +388,56 @@ TEST(ProcessReport, DarwinNamespaceCreationPolicyIsStrictAndLossless) {
   Refused(V);
 }
 
+TEST(ProcessReport, DarwinVirtualEnumerationPolicyIsStrictAndLossless) {
+  auto Parent = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  auto *M = Parent.getAsObject();
+  (*M)["inode"] = 41;
+  (*M)["mode"] = 0040755;
+  (*M)["size"] = 0;
+  auto Parse = [&](const llvm::json::Value &Policy) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[],"directories":[{"path":"/","metadata":)" +
+        llvm::formatv("{0}", Parent).str() + R"(,"enumeration_policy":)" +
+        llvm::formatv("{0}", Policy).str() + "}]}}");
+  };
+  const auto Good = llvm::cantFail(llvm::json::parse(
+      R"({"minimum_buffer_size":1,"initial_minimum_buffer_size":64,"seek_offset":"18446744073709551615"})"));
+  auto Parsed = Parse(Good);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  const auto &P = Parsed->DarwinFiles->DirectoryEnumerationPolicies.at("/");
+  EXPECT_EQ(P.MinimumBufferSize, 1u);
+  EXPECT_EQ(P.InitialMinimumBufferSize, 64u);
+  EXPECT_EQ(P.SeekOffset, UINT64_MAX);
+  auto Refused = [&](const llvm::json::Value &V) {
+    auto Out = Parse(V);
+    EXPECT_FALSE(bool(Out)) << llvm::formatv("{0}", V).str();
+    llvm::consumeError(Out.takeError());
+  };
+  for (const char *Key :
+       {"minimum_buffer_size", "initial_minimum_buffer_size", "seek_offset"}) {
+    auto V = Good;
+    V.getAsObject()->erase(Key);
+    Refused(V);
+    for (const char *Bad :
+         {"null", "true", "-1", "1.5", "\"18446744073709551616\""}) {
+      (*V.getAsObject())[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      Refused(V);
+    }
+  }
+  for (const char *Bad : {"null", "[]", "{}", "false", "1"})
+    Refused(llvm::cantFail(llvm::json::parse(Bad)));
+  auto V = Good;
+  (*V.getAsObject())["extra"] = 1;
+  Refused(V);
+  V = Good;
+  (*V.getAsObject())["minimum_buffer_size"] = "134217728";
+  (*V.getAsObject())["initial_minimum_buffer_size"] = "134217728";
+  auto Max = Parse(V);
+  ASSERT_TRUE(bool(Max)) << llvm::toString(Max.takeError());
+  (*V.getAsObject())["minimum_buffer_size"] = "134217729";
+  Refused(V);
+}
+
 TEST(ProcessReport, DarwinDirectoriesAndWorkingDirectoryAreExplicitAndStrict) {
   auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[],
     "directories":[{"path":"/empty/deep"}],"working_directory":"/empty"}})");

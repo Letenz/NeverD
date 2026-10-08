@@ -243,6 +243,20 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     if (!Children.empty())
       return failure(diagnostic::DirectoryContentsOption);
   }
+  for (const auto &[Path, Policy] : Options.DirectoryEnumerationPolicies) {
+    const auto M = Options.Metadata.find(Path);
+    if (pathKind(Options, Path) != PathKind::Directory ||
+        Options.DirectoryContents.contains(Path) ||
+        M == Options.Metadata.end() || !M->second.Inode ||
+        !Policy.MinimumBufferSize ||
+        Policy.MinimumBufferSize > DirectoryPayloadLimit ||
+        Policy.InitialMinimumBufferSize > DirectoryPayloadLimit)
+      return failure(diagnostic::DirectoryEnumerationOption);
+    // Metadata already retains this directory's entry/path charge. The
+    // policy map keeps one additional fixed path reference, not a new entry.
+    if (auto E = PathInput(Path, true))
+      return E;
+  }
   if (Options.WorkingDirectory) {
     const auto &Path = *Options.WorkingDirectory;
     if (pathKind(Options, Path) != PathKind::Directory)
@@ -531,6 +545,9 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
   const auto Snapshot = Options->DirectoryContents.find(Path);
   if (Snapshot != Options->DirectoryContents.end())
     Node->Snapshot = &Snapshot->second;
+  const auto Enumeration = Options->DirectoryEnumerationPolicies.find(Path);
+  if (Enumeration != Options->DirectoryEnumerationPolicies.end())
+    Node->EnumerationPolicy = &Enumeration->second;
   Node->Mutable = Options->MutableDirectories.contains(Path);
   Node->Removable = Options->RemovableDirectories.contains(Path);
   Node->Movable = Options->MovableDirectories.contains(Path);
@@ -1089,6 +1106,7 @@ DarwinFiles::makeDirectory(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
   Node->Created = Node->Mutable = Node->NonMount = true;
   Node->PathCharge = Charge;
   Node->SwapSupport = Node->Parent->SwapSupport;
+  Node->EnumerationPolicy = Node->Parent->EnumerationPolicy;
   if (Policy) {
     Node->Policy = &*Policy->Namespace;
     Node->MutationTime = &Policy->Mutation.Time;
@@ -1224,6 +1242,11 @@ void DarwinFiles::updateNamespaceMetadata(LinkNode &Node) {
 void DarwinFiles::updateDirectoryMetadata(DirectoryNode &Node,
                                           bool ContentsChanged) {
   Node.Changed = true;
+  // A direct move can change dotdot; child-name changes can change ordinal
+  // positions. Saturation prevents old cursors becoming valid after wrap and
+  // allocates nothing after the namespace transaction has been published.
+  if (Node.EnumerationPolicy && Node.EnumerationVersion != UINT64_MAX)
+    ++Node.EnumerationVersion;
   if (!Node.CurrentMetadata)
     return;
   auto &M = *Node.CurrentMetadata;
@@ -1233,14 +1256,7 @@ void DarwinFiles::updateDirectoryMetadata(DirectoryNode &Node,
   // Membership comes from the committed object namespace, not textual prefix
   // counts. Held orphans and reused names must not become children again.
   uint16_t Count = 2;
-  auto CountNames = [&](const auto &Table) {
-    Count += llvm::count_if(Table, [&](const auto &Entry) {
-      return Entry.second->Parent.get() == &Node;
-    });
-  };
-  CountNames(Nodes);
-  CountNames(Links);
-  CountNames(Directories);
+  forEachDirectoryChild(Node, [&](const auto &) { ++Count; });
   M.LinkCount = Count;
   M.Size = uint64_t(Count) * Node.Policy->DirectoryEntrySize;
   M.ModificationTime = *Node.MutationTime;

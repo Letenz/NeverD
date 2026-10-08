@@ -68,6 +68,30 @@ directoryContents(const llvm::json::Value &Value) {
   }
   return Out;
 }
+llvm::Expected<DarwinDirectoryEnumerationPolicy>
+enumerationPolicy(const llvm::json::Value &Value) {
+  const auto *Object = Value.getAsObject();
+  if (!Object || Object->size() != 3)
+    return invalid(field::DirectoryEnumerationPolicy);
+  DarwinDirectoryEnumerationPolicy Out;
+  auto Number = [&](llvm::StringRef Key, auto &Destination) -> llvm::Error {
+    const auto *V = Object->get(Key);
+    using T = std::remove_reference_t<decltype(Destination)>;
+    auto N = V ? process_json::integer<T>(*V) : std::nullopt;
+    if (!N)
+      return invalid(Key);
+    Destination = *N;
+    return llvm::Error::success();
+  };
+  if (auto Error = Number(field::DirectoryMinimumBuffer, Out.MinimumBufferSize))
+    return Error;
+  if (auto Error = Number(field::DirectoryInitialMinimumBuffer,
+                          Out.InitialMinimumBufferSize))
+    return Error;
+  if (auto Error = Number(field::DirectorySeekOffset, Out.SeekOffset))
+    return Error;
+  return Out;
+}
 llvm::Expected<DarwinFileTime> fileTime(const llvm::json::Value *Value,
                                         llvm::StringRef Name) {
   const auto *Time = Value ? Value->getAsObject() : nullptr;
@@ -250,14 +274,16 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         return invalid(Name);
       for (const auto &Directory : *Directories) {
         const auto *D = Directory.getAsObject();
-        if (!D || D->size() !=
-                      1 + unsigned(bool(D->get(field::FileMetadata))) +
-                          unsigned(bool(D->get(field::DirectoryContents))) +
-                          unsigned(bool(D->get(field::DirectoryMutable))) +
-                          unsigned(bool(D->get(field::DirectoryRemovable))) +
-                          unsigned(bool(D->get(field::DirectoryMovable))) +
-                          unsigned(bool(D->get(field::DirectoryExchangeable))) +
-                          unsigned(bool(D->get(field::DirectorySwapRename))))
+        if (!D ||
+            D->size() !=
+                1 + unsigned(bool(D->get(field::FileMetadata))) +
+                    unsigned(bool(D->get(field::DirectoryContents))) +
+                    unsigned(bool(D->get(field::DirectoryEnumerationPolicy))) +
+                    unsigned(bool(D->get(field::DirectoryMutable))) +
+                    unsigned(bool(D->get(field::DirectoryRemovable))) +
+                    unsigned(bool(D->get(field::DirectoryMovable))) +
+                    unsigned(bool(D->get(field::DirectoryExchangeable))) +
+                    unsigned(bool(D->get(field::DirectorySwapRename))))
           return invalid(Name);
         auto Path = D->getString(field::Path);
         if (!Path || Path->size() >= Remaining ||
@@ -304,6 +330,12 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
           if (!Parsed)
             return Parsed.takeError();
           Out.DirectoryContents.emplace(Path->str(), std::move(*Parsed));
+        }
+        if (const auto *P = D->get(field::DirectoryEnumerationPolicy)) {
+          auto Parsed = enumerationPolicy(*P);
+          if (!Parsed)
+            return Parsed.takeError();
+          Out.DirectoryEnumerationPolicies.emplace(Path->str(), *Parsed);
         }
         if (const auto *M = D->get(field::FileMetadata)) {
           auto Parsed = metadata(*M);

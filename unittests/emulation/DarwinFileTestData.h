@@ -60,6 +60,16 @@ inline constexpr char NamespaceCreationPolicyJSON[] = R"({
     "mutation_time":{"seconds":-7,"nanoseconds":123456789}},
   "namespace_policy":{"symbolic_link_allocation_unit":512,
     "directory_entry_size":32,"directory_blocks":7}})";
+inline constexpr DarwinDirectoryEnumerationPolicy EnumerationPolicy{1, 64, 0};
+inline constexpr char EnumerationPolicyJSON[] = R"({
+  "minimum_buffer_size":1,"initial_minimum_buffer_size":64,"seek_offset":0})";
+// Literal LP64 records: a, its parent, d, f and l in virtual byte order.
+inline constexpr char EnumerationMetadataHex[] =
+    "1132547698badcfe000000000000000020000100042e00000000000000000000"
+    "2900000000000000000000000000000020000200042e2e000000000000000000"
+    "1332547698badcfe000000000000000020000100046400000000000000000000"
+    "1432547698badcfe000000000000000020000100086600000000000000000000"
+    "1532547698badcfe0000000000000000200001000a6c00000000000000000000";
 inline constexpr char NamespaceMetadataHex[] =
     "85ffffffe84102001132547698badcfee803000098badcfe0000000000000000"
     "edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000"

@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d6cf4a9eaef62161ba5aacaeaef8e029255bd713e98ca8101443ca888ec07871 -->
+<!-- i18n-source: 09a9f57ffaed31cda991a96fbaf04406bf26bedbcaf0214f6db5a6d6c28ac35a -->
 
 [← 文档索引](README.md)
 
@@ -909,3 +909,11 @@ readlink(58) 使用有符号低32位 count；readlinkat(473) 保留完整 size_t
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
 ```
+
+## 命名空间修改后的虚拟目录枚举
+
+可选 `directories[].enumeration_policy` 允许 `getdirentries64` 枚举当前名称；C++ 使用 `DarwinFileOptions::DirectoryEnumerationPolicies` 与 `DarwinDirectoryEnumerationPolicy`。严格对象必须恰好包含 `minimum_buffer_size`、`initial_minimum_buffer_size` 和 `seek_offset`：前者为正，两种最小值均不超过128 MiB，seek_offset 为无损 uint64。初始目录必须提供自身非零 inode 元数据，且不可同时声明不可变 `contents`；策略引用独立计入一次路径加 NUL 的费用。mkdir 继承实际父对象的策略，已有后代保留自身声明。枚举策略与修改授权独立。
+
+虚拟顺序明确为 `.`、`..`，再按无符号字节排序的直接链接名称。inode 来自已观察或进程创建的对象，`..` 沿实际保留父对象；任何子项或父对象身份缺失/为零，都在输出前停止。初始完整 stat 失效后仅保留 inode 身份，不复用其他过期字段。游标为从1开始的局部序号，d_seekoff 使用声明常量；dup 共享游标，独立 open 分开。成功修改成员或直接移动目录后，非零旧游标须先回绕到零；拒绝和同对象无操作不失效，祖先移动保留后代游标。版本耗尽明确停止，不回绕复用。保留的已删除空目录输出零条记录，名称复用也不会接管旧对象。
+
+沿用既有记录编码、完整记录装包、缓冲下限、负载上限、EOF 后缀和数据/游标/位置/标志的有序效果。初始父目录完整 stat 与不可变快照仍失效；缺少新策略时保留原有不支持行为，虚拟顺序和游标不模拟 APFS 世代。独立 ARM64 原生准备在原五秒期限内记录25个事件、16次枚举。`directory-enumeration-mutations` 核对原生名称/类型/inode 与保留对象；`virtual-directory-enumeration` 经客体、C/CLI 和 Python 核对160字节固定视图。Intel 原生、iOS 真机、ACL 执行、硬链接、初始目录可变 stat 与完整系统/框架仍未验证或不支持。

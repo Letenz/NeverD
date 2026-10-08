@@ -98,4 +98,6 @@ NEVERD_NATIVE_DARWIN_CASE(RuntimeCreatedSymbolicLinksCanBeRemoved)
 NEVERD_NATIVE_DARWIN_CASE(RuntimeCreatedSymbolicLinksCanBeRenamed)
 NEVERD_NATIVE_DARWIN_CASE(
     NamespaceCreationMetadataPreservesObjectIdentityAndVirtualRecords)
+NEVERD_NATIVE_DARWIN_CASE(
+    VirtualEnumerationTracksNamespaceChangesAndRetainedDirectories)
 #endif

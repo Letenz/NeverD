@@ -543,6 +543,14 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("unlinked-file", b"u"),
                                            ("created-file", b"c"),
                                            ("created-file-metadata", b"q"),
+                                           ("directory-enumeration-mutations", b"E"),
+                                           ("virtual-directory-enumeration", bytes.fromhex(
+                                               "1132547698badcfe000000000000000020000100042e00000000000000000000"
+                                               "2900000000000000000000000000000020000200042e2e000000000000000000"
+                                               "1332547698badcfe000000000000000020000100046400000000000000000000"
+                                               "1432547698badcfe000000000000000020000100086600000000000000000000"
+                                               "1532547698badcfe0000000000000000200001000a6c00000000000000000000"
+                                               )),
                                            ("created-namespace-metadata", b"N"),
                                            ("virtual-created-namespace-metadata", bytes.fromhex(
                                                "85ffffffe84102001132547698badcfee803000098badcfe0000000000000000"
@@ -796,7 +804,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                                 next(d for d in files["directories"]
                                      if d["path"] == "/")["metadata"] = parent
                             file_options = json.dumps(writable_options)
-                        if mode in ("created-namespace-metadata", "virtual-created-namespace-metadata"):
+                        if mode in ("created-namespace-metadata", "virtual-created-namespace-metadata",
+                                    "directory-enumeration-mutations", "virtual-directory-enumeration"):
                             namespace_options = json.loads(file_options)
                             namespace_options["instruction_quantum"] = 1024
                             namespace_options["timeout_microseconds"] = 5_000_000
@@ -816,6 +825,11 @@ class ProcessIntegrationTests(unittest.TestCase):
                             parent = dict(original, inode=41, mode=0o40755, size=0, blocks=0)
                             root = next(d for d in files["directories"] if d["path"] == "/")
                             root.update(mutable=True, swap_rename=True, metadata=parent)
+                            if mode in ("directory-enumeration-mutations", "virtual-directory-enumeration"):
+                                root.pop("contents", None)
+                                root["enumeration_policy"] = {
+                                    "minimum_buffer_size": 1,
+                                    "initial_minimum_buffer_size": 64, "seek_offset": 0}
                             file_options = json.dumps(namespace_options)
                         if mode == "symbolic-links":
                             symbolic_options = json.loads(file_options)

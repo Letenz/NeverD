@@ -1042,6 +1042,202 @@ static unsigned directory_names(const unsigned char *bytes, u64 size,
   }
   return seen;
 }
+/* Original live-namespace workload. Native order and cookies are not predicted;
+ * every record is checked against independently observed retained identities.
+ */
+struct enumeration_member {
+  char name[8];
+  u64 inode;
+  unsigned type;
+};
+static int enumeration_records(const unsigned char *bytes, u64 size,
+                               const struct enumeration_member *members,
+                               unsigned count) {
+  unsigned seen = 0;
+  for (u64 offset = 0; offset != size;) {
+    if (size - offset < 32)
+      return 0;
+    const unsigned char *record = bytes + offset;
+    u64 length = little_integer(record + 16, 2);
+    u64 name_length = little_integer(record + 18, 2);
+    if (length != 32 || name_length > 7 || record[21 + name_length] ||
+        little_integer(record + 8, 8))
+      return 0;
+    for (u64 i = 21 + name_length; i != length; ++i)
+      if (record[i])
+        return 0;
+    unsigned matched = count;
+    for (unsigned i = 0; i != count; ++i)
+      if (equal((const char *)record + 21, members[i].name))
+        matched = i;
+    if (matched == count || (seen & (1U << matched)) ||
+        little_integer(record, 8) != members[matched].inode ||
+        record[20] != members[matched].type)
+      return 0;
+    seen |= 1U << matched;
+    offset += length;
+  }
+  return seen == (1U << count) - 1;
+}
+static int enumeration_view(u64 fd, const struct enumeration_member *members,
+                            unsigned count, unsigned char *capture) {
+  unsigned error = 0;
+  u64 guarded_words[130];
+  unsigned char *guarded = (unsigned char *)guarded_words;
+  for (unsigned i = 0; i != 130; ++i)
+    guarded_words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  u64 position = (u64)-1;
+  if (call(199, fd, 0, 0, 0, 0, 0, &error) || error)
+    return 0;
+  u64 size =
+      call(344, fd, (u64)(guarded + 8), 1024, (u64)&position, 0, 0, &error);
+  if (error || size != 32 * count || position ||
+      !enumeration_records(guarded + 8, size, members, count) ||
+      little_integer(guarded + 1028, 4) != 1)
+    return 0;
+  if (guarded_words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      guarded_words[129] != 0xa5a5a5a5a5a5a5a5UL ||
+      guarded_words[128] != 0x00000001a5a5a5a5UL)
+    return 0;
+  for (u64 i = 1 + size / 8; i != 128; ++i)
+    if (guarded_words[i] != 0xa5a5a5a5a5a5a5a5UL)
+      return 0;
+  if (capture)
+    for (u64 i = 0; i != size; ++i)
+      capture[i] = guarded[8 + i];
+  return 1;
+}
+static int directory_enumeration_mutations(const char *path,
+                                           int virtual_bytes) {
+  unsigned error = 0;
+  int check = 80;
+#define ENUM_EXPECT(expression)                                                \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024];
+  unsigned last = 0, length = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  ENUM_EXPECT(path[0] == '/' && !path[length] && length > last + 1);
+  parent[last ? last : 1] = 0;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  unsigned char status[144], captured[160];
+  ENUM_EXPECT(call(339, root, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 root_inode = little_integer(status + 8, 8);
+  call(60, 0027, 0, 0, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(475, root, (u64) "a", 0700, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(475, root, (u64) "b", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 a = call(463, root, (u64) "a", 0x100000, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  u64 b = call(463, root, (u64) "b", 0x100000, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(339, a, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 a_inode = little_integer(status + 8, 8);
+  ENUM_EXPECT(call(339, b, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 b_inode = little_integer(status + 8, 8);
+  ENUM_EXPECT(call(475, a, (u64) "d", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 d = call(463, a, (u64) "d", 0x100000, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(339, d, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 d_inode = little_integer(status + 8, 8);
+  u64 f = call(463, a, (u64) "f", 0xa02, 0600, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(339, f, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 f_inode = little_integer(status + 8, 8);
+  ENUM_EXPECT(call(474, (u64) "f", a, (u64) "l", 0, 0, 0, &error) == 0 &&
+              !error);
+  ENUM_EXPECT(call(470, a, (u64) "l", (u64)status, 0x20, 0, 0, &error) == 0 &&
+              !error);
+  const u64 l_inode = little_integer(status + 8, 8);
+  struct enumeration_member a_members[5] = {{".", a_inode, 4},
+                                            {"..", root_inode, 4},
+                                            {"d", d_inode, 4},
+                                            {"f", f_inode, 8},
+                                            {"l", l_inode, 10}};
+  ENUM_EXPECT(enumeration_view(a, a_members, 5, captured));
+  u64 copy = call(41, a, 0, 0, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  u64 terminal = call(199, copy, 0, 1, 0, 0, 0, &error);
+  ENUM_EXPECT(!error && terminal);
+  ENUM_EXPECT(call(199, a, 0, 1, 0, 0, 0, &error) == terminal && !error);
+  ENUM_EXPECT(call(475, a, (u64) "d", 0700, 0, 0, 0, &error) == 17 && error);
+  u64 position = 0;
+  ENUM_EXPECT(call(344, copy, 0, 1, (u64)&position, 0, 0, &error) == 0 &&
+              !error && position == terminal);
+  ENUM_EXPECT(call(199, copy, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(199, a, 0, 1, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(488, a, (u64) "f", a, (u64) "z", 0, 0, &error) == 0 &&
+              !error);
+  a_members[3].name[0] = 'z';
+  ENUM_EXPECT(enumeration_view(copy, a_members, 5, 0));
+  u64 g = call(463, b, (u64) "g", 0xa02, 0600, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(339, g, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 g_inode = little_integer(status + 8, 8);
+  ENUM_EXPECT(call(488, a, (u64) "d", b, (u64) "g", 2, 0, &error) == 0 &&
+              !error);
+  a_members[2].inode = g_inode;
+  a_members[2].type = 8;
+  ENUM_EXPECT(enumeration_view(a, a_members, 5, 0));
+  struct enumeration_member b_members[3] = {
+      {".", b_inode, 4}, {"..", root_inode, 4}, {"g", d_inode, 4}};
+  ENUM_EXPECT(enumeration_view(b, b_members, 3, 0));
+  struct enumeration_member d_members[2] = {{".", d_inode, 4},
+                                            {"..", b_inode, 4}};
+  ENUM_EXPECT(enumeration_view(d, d_members, 2, 0));
+  ENUM_EXPECT(call(488, b, (u64) "g", root, (u64) "t", 0, 0, &error) == 0 &&
+              !error);
+  d_members[1].inode = root_inode;
+  ENUM_EXPECT(enumeration_view(d, d_members, 2, 0));
+  ENUM_EXPECT(enumeration_view(b, b_members, 2, 0));
+  ENUM_EXPECT(call(488, root, (u64) "a", root, (u64) "x", 0, 0, &error) == 0 &&
+              !error);
+  ENUM_EXPECT(enumeration_view(a, a_members, 5, 0));
+  ENUM_EXPECT(call(472, a, (u64) "d", 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, a, (u64) "z", 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, a, (u64) "l", 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(enumeration_view(a, a_members, 2, 0));
+  ENUM_EXPECT(call(13, d, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, root, (u64) "t", 0x80, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(enumeration_view(d, d_members, 0, 0));
+  ENUM_EXPECT(call(475, d, (u64) "fail", 0700, 0, 0, 0, &error) == 2 && error);
+  ENUM_EXPECT(call(475, root, (u64) "t", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 fresh = call(463, root, (u64) "t", 0x100000, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(339, fresh, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  d_members[0].inode = little_integer(status + 8, 8);
+  ENUM_EXPECT(d_members[0].inode != d_inode && d_members[0].inode);
+  ENUM_EXPECT(enumeration_view(fresh, d_members, 2, 0));
+  ENUM_EXPECT(enumeration_view(d, d_members, 0, 0));
+  ENUM_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, root, (u64) "x", 0x80, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, root, (u64) "b", 0x80, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, root, (u64) "t", 0x80, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, fresh, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, d, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, a, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, copy, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, b, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, f, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, g, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(4, 1, virtual_bytes ? (u64)captured : (u64) "E",
+                   virtual_bytes ? sizeof(captured) : 1, 0, 0, 0,
+                   &error) == (virtual_bytes ? sizeof(captured) : 1) &&
+              !error);
+#undef ENUM_EXPECT
+  return 37;
+}
+
 static int directory_entries(const char *path) {
   unsigned error = 0;
   int check = 40;
@@ -5065,6 +5261,12 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
     return argc < 3 ? 139
                     : file_calls(argv[2], equal(argv[1], "files-nocancel"));
+  if (equal(argv[1], "directory-enumeration-mutations") ||
+      equal(argv[1], "virtual-directory-enumeration"))
+    return argc < 3
+               ? 79
+               : directory_enumeration_mutations(
+                     argv[2], equal(argv[1], "virtual-directory-enumeration"));
   if (equal(argv[1], "directory-entries"))
     return argc < 3 ? 251 : directory_entries(argv[2]);
   if (equal(argv[1], "directories"))

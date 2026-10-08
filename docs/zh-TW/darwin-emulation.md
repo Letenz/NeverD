@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d6cf4a9eaef62161ba5aacaeaef8e029255bd713e98ca8101443ca888ec07871 -->
+<!-- i18n-source: 09a9f57ffaed31cda991a96fbaf04406bf26bedbcaf0214f6db5a6d6c28ac35a -->
 
 [← 文件索引](README.md)
 
@@ -807,3 +807,11 @@ readlink(58)使用有符號低32位count，readlinkat(473)保留完整size_t；�
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
 ```
+
+## 名稱空間修改後的虛擬目錄列舉
+
+可選 `directories[].enumeration_policy` 讓 `getdirentries64` 列舉目前名稱；C++ 使用 `DarwinFileOptions::DirectoryEnumerationPolicies` 與 `DarwinDirectoryEnumerationPolicy`。嚴格物件恰好要求 `minimum_buffer_size`、`initial_minimum_buffer_size`、`seek_offset`：前者為正，兩種下限不超過128 MiB，seek_offset 為無損 uint64。初始目錄須有自身非零 inode 中繼資料，不可同時提供不可變 `contents`；每個策略參照計入一次路徑加 NUL。mkdir 繼承實際父物件策略，既有子目錄保留自己的宣告；列舉與修改授權獨立。
+
+虛擬順序為 `.`、`..`，再按無符號位元組排序的直接連結名稱。inode 來自已觀察或行程建立的物件，`..` 沿實際保留父物件；子項或父身分缺失/為零會在輸出前停止。完整初始 stat 失效後只保留 inode 身分，不重用其他過期欄位。游標為從1開始的區域序號，d_seekoff 為宣告常數；dup 共用游標，open 各自獨立。成功成員變更或直接目錄移動後須先回捲到零，拒絕及同物件無操作不使游標失效，祖先移動保留後代游標。版本耗盡明確停止。保留的已刪除空目錄輸出零筆記錄，名稱重用不取代舊物件。
+
+沿用記錄編碼、完整記錄封裝、緩衝下限、負載上限、EOF 後綴及資料/游標/位置/旗標順序。初始父目錄完整 stat 與固定快照仍失效；省略策略維持先前不支援行為，並不模擬 APFS 世代。ARM64 原生準備在不變的五秒期限內記錄25個事件、16個視圖。`directory-enumeration-mutations` 核對原生身分與物件保留；`virtual-directory-enumeration` 經客體、C/CLI、Python 核對160位元組固定視圖。Intel 原生、iOS 實機、ACL、硬連結、初始目錄可變 stat 與完整系統/框架仍未驗證或不支援。

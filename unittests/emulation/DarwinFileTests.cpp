@@ -13,6 +13,8 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 
+#include <tuple>
+
 namespace neverd::emulation::darwin_model {
 namespace {
 TEST(DarwinFileOptions, AdmissionCountsPathsTerminatorsFilesAndInputTogether) {
@@ -355,6 +357,38 @@ protected:
   namespacePolicy(uint64_t First = darwin_test::CreationPolicy.FirstInode) {
     creationPolicy(First);
     Options->CreationPolicy->Namespace = darwin_test::NamespacePolicy;
+  }
+  void enumerationPolicy(uint64_t Seek = 0x1122334455667788ULL) {
+    namespacePolicy();
+    Options->Directories.insert("/");
+    Options->Metadata["/data"] = darwin_test::mutationMetadata(6);
+    Options->Metadata["/data"].Flags = 0;
+    Options->Metadata["/data"].LinkCount = 1;
+    Options->DirectoryEnumerationPolicies["/"] = {1, 64, Seek};
+  }
+  std::vector<uint8_t> directoryBytes(uint64_t FD, uint64_t Count = 1024) {
+    const uint64_t Buffer = Base + 256, Position = Base + Page;
+    std::vector<uint8_t> Canary(Count + 16, 0xa5);
+    llvm::cantFail(Space->write(Buffer - 8, Canary));
+    std::array<uint8_t, 24> PositionCanary;
+    PositionCanary.fill(0xa5);
+    llvm::cantFail(Space->write(Position - 8, PositionCanary));
+    const uint64_t Size =
+        ok(ServiceKind::GetDirEntries64, {FD, Buffer, Count, Position});
+    if (Size == UINT64_MAX || Size > Count)
+      return {};
+    llvm::cantFail(Space->read(Buffer - 8, Canary));
+    llvm::cantFail(Space->read(Position - 8, PositionCanary));
+    for (unsigned I = 0; I != 8; ++I) {
+      EXPECT_EQ(Canary[I], 0xa5);
+      EXPECT_EQ(Canary[Count + 8 + I], 0xa5);
+      EXPECT_EQ(PositionCanary[I], 0xa5);
+      EXPECT_EQ(PositionCanary[16 + I], 0xa5);
+    }
+    const uint64_t End = Count >= 1024 ? Count - 4 : Count;
+    EXPECT_TRUE(std::all_of(Canary.begin() + Size + 8, Canary.begin() + End + 8,
+                            [](uint8_t B) { return B == 0xa5; }));
+    return {Canary.begin() + 8, Canary.begin() + Size + 8};
   }
   std::array<uint8_t, 144> namespaceStatus(llvm::StringRef Name) {
     path(Name);
@@ -7131,6 +7165,389 @@ TEST_P(DarwinFileTest,
   EXPECT_EQ(llvm::cantFail(Space->readInteger(End, 2)), 0xaaaau);
   EXPECT_FALSE(invoke(ServiceKind::Fcntl, {0, 50, Buffer}));
   EXPECT_EQ(Result.Diagnostic, diagnostic::FilePathIdentity);
+}
+
+using VirtualDirectoryRecord =
+    std::tuple<std::string, uint64_t, uint8_t, uint64_t>;
+std::vector<VirtualDirectoryRecord>
+virtualDirectoryRecords(llvm::ArrayRef<uint8_t> Bytes) {
+  std::vector<VirtualDirectoryRecord> Out;
+  while (!Bytes.empty()) {
+    EXPECT_GE(Bytes.size(), 32u);
+    if (Bytes.size() < 32)
+      break;
+    const uint16_t Size = llvm::support::endian::read16le(Bytes.data() + 16);
+    const uint16_t Name = llvm::support::endian::read16le(Bytes.data() + 18);
+    EXPECT_LE(Size, Bytes.size());
+    EXPECT_EQ(Size % 8, 0u);
+    EXPECT_GE(Size, 25u + Name);
+    if (!Size || Size > Bytes.size() || 21u + Name >= Size)
+      break;
+    EXPECT_TRUE(std::all_of(Bytes.begin() + 21 + Name, Bytes.begin() + Size,
+                            [](uint8_t B) { return B == 0; }));
+    Out.emplace_back(
+        std::string(reinterpret_cast<const char *>(Bytes.data() + 21), Name),
+        llvm::support::endian::read64le(Bytes.data()), Bytes[20],
+        llvm::support::endian::read64le(Bytes.data() + 8));
+    Bytes = Bytes.drop_front(Size);
+  }
+  return Out;
+}
+
+TEST_P(DarwinFileTest, VirtualEnumerationUsesExactIdentityAndUnsignedOrder) {
+  enumerationPolicy(UINT64_MAX);
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  makeDirectory("/adir");
+  makeLink("/zlink", "missing");
+  const std::string Low = std::string(1, char(0x80)) + 'a';
+  const std::string High = std::string(1, char(0xff)) + 'a';
+  makeFile('/' + Low);
+  makeFile('/' + High);
+  const auto Bytes = directoryBytes(Root);
+  const auto Golden = llvm::fromHex(
+      "2900000000000000ffffffffffffffff20000100042e00000000000000000000"
+      "2900000000000000ffffffffffffffff20000200042e2e000000000000000000"
+      "1132547698badcfeffffffffffffffff20000400046164697200000000000000"
+      "1032547698badcfeffffffffffffffff20000400086461746100000000000000"
+      "1232547698badcfeffffffffffffffff200005000a7a6c696e6b000000000000"
+      "1332547698badcfeffffffffffffffff20000200088061000000000000000000"
+      "1432547698badcfeffffffffffffffff2000020008ff61000000000000000000");
+  EXPECT_EQ(llvm::toHex(Bytes), llvm::toHex(Golden));
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 7u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 8)), 0u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + 256 + 1020, 4)), 1u);
+  EXPECT_TRUE(directoryBytes(Root).empty());
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Root, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_EQ(Options->Metadata.at("/").Inode, 41u);
+  EXPECT_EQ(Options->DirectoryEnumerationPolicies.at("/").SeekOffset,
+            UINT64_MAX);
+}
+
+TEST_P(DarwinFileTest,
+       VirtualEnumerationRequiresRewindOnlyAfterCommittedChanges) {
+  enumerationPolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto A = ok(ServiceKind::Open, {Base});
+  const auto B = ok(ServiceKind::Dup, {A});
+  const auto Independent = ok(ServiceKind::Open, {Base});
+  error(ServiceKind::GetDirEntries64, {A, Base + 256, 63, Base + Page}, 22);
+  EXPECT_EQ(directoryBytes(A, 64).size(), 64u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 2u);
+  makeFile("/first");
+  std::array<uint8_t, 128> Canary;
+  Canary.fill(0xa5);
+  llvm::cantFail(Space->write(Base + 256, Canary));
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetDirEntries64, {B, Base + 256, 128, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryEnumerationVersion);
+  std::array<uint8_t, 128> After;
+  llvm::cantFail(Space->read(Base + 256, After));
+  EXPECT_EQ(After, Canary);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 2u);
+  EXPECT_EQ(directoryBytes(Independent).size(), 128u);
+  ok(ServiceKind::Lseek, {B, 0, 0});
+  EXPECT_EQ(directoryBytes(A, 64).size(), 64u);
+  path("/first");
+  error(ServiceKind::Mkdir, {Base, 0700}, 17);
+  renameFile("/first", "/first");
+  const auto Continued = virtualDirectoryRecords(directoryBytes(B, 64));
+  ASSERT_EQ(Continued.size(), 2u);
+  EXPECT_EQ(std::get<0>(Continued[0]), "data");
+  EXPECT_EQ(std::get<0>(Continued[1]), "first");
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 4u);
+  EXPECT_TRUE(directoryBytes(B).empty());
+  renameFile("/first", "/renamed");
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64, {A, 0, 1024, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryEnumerationVersion);
+  ok(ServiceKind::Lseek, {A, 0, 0});
+  EXPECT_EQ(directoryBytes(A).size(), 128u);
+  ok(ServiceKind::Lseek, {A, 99, 0});
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetDirEntries64, {A, Base + 256, 64, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryPosition);
+}
+
+TEST_P(DarwinFileTest,
+       VirtualEnumerationRetainsPoliciesAndActualParentsInSwaps) {
+  enumerationPolicy(42);
+  Options->Directories.insert("/fixed");
+  Options->Directories.insert("/fixed/old");
+  auto M = darwin_test::creationParentMetadata();
+  M.Inode = 77;
+  Options->Metadata["/fixed"] = M;
+  M.Inode = 78;
+  Options->Metadata["/fixed/old"] = M;
+  Options->MutableDirectories.insert("/fixed");
+  Options->SwapRenameDirectories = {"/", "/fixed"};
+  Options->ExchangeableDirectories.insert("/fixed");
+  Options->DirectoryEnumerationPolicies["/fixed"] = {1, 64, 7};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto First = darwin_test::CreationPolicy.FirstInode;
+  const auto P = makeDirectory("/p");
+  const auto D = makeDirectory("/p/d");
+  const auto File = makeFile("/p/d/f", "abc");
+  const auto Before = status(File);
+  path("/fixed");
+  const auto Fixed = ok(ServiceKind::Open, {Base});
+  path("/fixed/old");
+  const auto Old = ok(ServiceKind::Open, {Base});
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetDirEntries64, {Old, Base + 256, 64, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryContents);
+  EXPECT_EQ(directoryBytes(D, 64).size(), 64u);
+  swapFiles("/p/d", "/fixed");
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetDirEntries64, {D, Base + 256, 64, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryEnumerationVersion);
+  ok(ServiceKind::Lseek, {D, 0, 0});
+  auto Records = virtualDirectoryRecords(directoryBytes(D));
+  ASSERT_EQ(Records.size(), 3u);
+  EXPECT_EQ(Records[0], (VirtualDirectoryRecord{".", First + 1, 4, 42}));
+  EXPECT_EQ(Records[1], (VirtualDirectoryRecord{"..", 41, 4, 42}));
+  EXPECT_EQ(Records[2], (VirtualDirectoryRecord{"f", First + 2, 8, 42}));
+  Records = virtualDirectoryRecords(directoryBytes(Fixed));
+  ASSERT_EQ(Records.size(), 3u);
+  EXPECT_EQ(Records[0], (VirtualDirectoryRecord{".", 77, 4, 7}));
+  EXPECT_EQ(Records[1], (VirtualDirectoryRecord{"..", First, 4, 7}));
+  EXPECT_EQ(Records[2], (VirtualDirectoryRecord{"old", 78, 4, 7}));
+  const auto New = makeDirectory("/p/d/new");
+  Records = virtualDirectoryRecords(directoryBytes(New));
+  ASSERT_EQ(Records.size(), 2u);
+  EXPECT_EQ(Records[1], (VirtualDirectoryRecord{"..", 77, 4, 7}));
+  ok(ServiceKind::Lseek, {Fixed, 0, 0});
+  EXPECT_EQ(directoryBytes(Fixed, 64).size(), 64u);
+  renameFile("/p", "/moved");
+  Records = virtualDirectoryRecords(directoryBytes(Fixed, 64));
+  ASSERT_EQ(Records.size(), 2u);
+  EXPECT_EQ(std::get<0>(Records[0]), "new");
+  EXPECT_EQ(std::get<0>(Records[1]), "old");
+  EXPECT_EQ(status(File), Before);
+  EXPECT_EQ(llvm::support::endian::read64le(status(P).data() + 8), First);
+  EXPECT_EQ(Options->DirectoryEnumerationPolicies.at("/fixed").SeekOffset, 7u);
+}
+
+TEST_P(DarwinFileTest, VirtualEnumerationRetainsRemovedObjectsAcrossNameReuse) {
+  enumerationPolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto D = makeDirectory("/gone");
+  const auto Duplicate = ok(ServiceKind::Dup, {D});
+  ok(ServiceKind::Fchdir, {D});
+  EXPECT_EQ(directoryBytes(D).size(), 64u);
+  path("/gone");
+  ok(ServiceKind::Rmdir, {Base});
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64,
+                      {Duplicate, Base + 256, 1024, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryEnumerationVersion);
+  ok(ServiceKind::Lseek, {D, 0, 0});
+  EXPECT_TRUE(directoryBytes(Duplicate).empty());
+  EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 1}), 0u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + 256 + 1020, 4)), 1u);
+  const auto OldStat = status(D);
+  const auto New = makeDirectory("/gone");
+  EXPECT_EQ(directoryBytes(New).size(), 64u);
+  EXPECT_TRUE(directoryBytes(D).empty());
+  EXPECT_EQ(status(D), OldStat);
+  EXPECT_NE(llvm::support::endian::read64le(status(New).data() + 8),
+            llvm::support::endian::read64le(OldStat.data() + 8));
+  path("child");
+  error(ServiceKind::MkdirAt, {Duplicate, Base, 0700}, 2);
+  EXPECT_TRUE(directoryBytes(Duplicate).empty());
+}
+
+TEST_P(DarwinFileTest, VirtualEnumerationKeepsUnknownAndStableInodesSeparate) {
+  for (bool Zero : {false, true}) {
+    enumerationPolicy();
+    if (Zero)
+      Options->Metadata["/data"].Inode = 0;
+    else
+      Options->Metadata.erase("/data");
+    ASSERT_FALSE(bool(validateFileOptions(*Options)));
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    path("/");
+    const auto FD = ok(ServiceKind::Open, {Base});
+    EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64,
+                        {FD, Base + 256, 1024, Base + Page}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryEnumerationIdentity);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 0u);
+  }
+  enumerationPolicy();
+  Options->WritableFiles.insert("/data");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(directoryBytes(Root, 64).size(), 64u);
+  path("/data");
+  const auto File = ok(ServiceKind::Open, {Base, 2});
+  error(ServiceKind::Write, {File, 0, 1}, 14);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {File, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  auto Records = virtualDirectoryRecords(directoryBytes(Root, 32));
+  ASSERT_EQ(Records.size(), 1u);
+  EXPECT_EQ(std::get<0>(Records[0]), "data");
+  EXPECT_EQ(std::get<1>(Records[0]), 0xfedcba9876543210ULL);
+  // Own policy is known, but the actual initial parent has no inode.
+  Options->Directories.insert("/initial");
+  auto M = darwin_test::creationParentMetadata();
+  M.Inode = 43;
+  Options->Metadata["/initial"] = M;
+  Options->DirectoryEnumerationPolicies["/initial"] = {1, 64, 0};
+  Options->DirectoryEnumerationPolicies.erase("/");
+  Options->CreationPolicy.reset();
+  Options->Metadata.erase("/");
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/initial");
+  const auto Initial = ok(ServiceKind::Open, {Base});
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64,
+                      {Initial, Base + 256, 64, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryEnumerationIdentity);
+}
+
+TEST_P(DarwinFileTest, VirtualEnumerationCopiesRetainOrderedCursorEffects) {
+  enumerationPolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const uint64_t Buffer = Base + 256, Position = Base + Page;
+  error(ServiceKind::GetDirEntries64, {FD, 0, 64, Position}, 14);
+  ok(ServiceKind::Lseek, {FD, 2, 0});
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetDirEntries64, {FD, Buffer, 32, Position}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryEnumerationVersion);
+  ok(ServiceKind::Lseek, {FD, 0, 0});
+  error(ServiceKind::GetDirEntries64, {FD, Buffer, 64, 0}, 14);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 2u);
+  EXPECT_EQ(directoryBytes(FD, 32).size(), 32u);
+  ok(ServiceKind::Lseek, {FD, 0, 0});
+  error(ServiceKind::GetDirEntries64, {FD, Buffer, Page * 4, Position}, 14);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 3u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Position, 8)), 0u);
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {FD, 0, 1, Position}), 0u);
+  const auto End = Base + Page * 2 - 4;
+  ok(ServiceKind::Lseek, {FD, 0, 0});
+  llvm::cantFail(Space->writeInteger(End, 0xaaaaaaaa, 4));
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64, {FD, End, 64, Position}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryPartialData);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 0u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(End, 4)), 0xaaaaaaaau);
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64, {FD, Buffer, 64, End}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryPartialPosition);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 2u);
+  EXPECT_EQ(directoryBytes(FD, 32).size(), 32u);
+  ok(ServiceKind::Lseek, {FD, 0, 0});
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {FD, Buffer, 64, Buffer}), 64u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer, 8)), 0u);
+}
+
+TEST_P(DarwinFileTest, VirtualEnumerationBoundsLongRecordsAndFullNamespaces) {
+  enumerationPolicy();
+  const std::string Long(255, 'x');
+  Options->Files['/' + Long] = {};
+  auto M = darwin_test::mutationMetadata(0);
+  M.Flags = 0;
+  M.LinkCount = 1;
+  M.Inode = 43;
+  Options->Metadata['/' + Long] = M;
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(directoryBytes(FD, 96).size(), 96u);
+  error(ServiceKind::GetDirEntries64, {FD, Base + 256, 279, Base + Page}, 22);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 3u);
+  const auto Bytes = directoryBytes(FD, 280);
+  ASSERT_EQ(Bytes.size(), 280u);
+  EXPECT_EQ(virtualDirectoryRecords(Bytes),
+            (std::vector<VirtualDirectoryRecord>{
+                {Long, 43, 8, 0x1122334455667788ULL}}));
+  enumerationPolicy();
+  Options->Files.clear();
+  Options->Metadata.erase("/data");
+  Options->Metadata.erase('/' + Long);
+  for (unsigned I = 0; I != 255; ++I) {
+    const auto Name = "/f" + std::to_string(I);
+    Options->Files[Name] = {};
+    M.Inode = 80 + I;
+    Options->Metadata[Name] = M;
+  }
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto Full = ok(ServiceKind::Open, {Base});
+  size_t Records = 0;
+  for (unsigned I = 0; I != 10; ++I) {
+    const auto Batch = virtualDirectoryRecords(directoryBytes(Full));
+    Records += Batch.size();
+    if (Batch.empty())
+      break;
+  }
+  EXPECT_EQ(Records, 257u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Full, 0, 1}), 257u);
+  path("/overflow");
+  path("data", Base + 1024);
+  EXPECT_FALSE(invoke(ServiceKind::Symlink, {Base + 1024, Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkCreationLimit);
+  EXPECT_TRUE(directoryBytes(Full).empty());
+}
+
+TEST(DarwinFileOptions, VirtualEnumerationRequiresExplicitIdentityAndLimits) {
+  DarwinFileOptions O;
+  O.Directories.insert("/");
+  O.Metadata["/"] = darwin_test::creationParentMetadata();
+  O.DirectoryEnumerationPolicies["/"] = {1, 64, UINT64_MAX};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  auto Refused = [](const DarwinFileOptions &Input) {
+    auto E = validateFileOptions(Input);
+    EXPECT_EQ(llvm::toString(std::move(E)),
+              diagnostic::DirectoryEnumerationOption);
+  };
+  for (unsigned Case = 0; Case != 7; ++Case) {
+    auto Bad = O;
+    switch (Case) {
+    case 0:
+      Bad.DirectoryEnumerationPolicies["/"].MinimumBufferSize = 0;
+      break;
+    case 1:
+      Bad.DirectoryEnumerationPolicies["/"].MinimumBufferSize = 134217729;
+      break;
+    case 2:
+      Bad.DirectoryEnumerationPolicies["/"].InitialMinimumBufferSize =
+          134217729;
+      break;
+    case 3:
+      Bad.Metadata.clear();
+      break;
+    case 4:
+      Bad.Metadata["/"].Inode = 0;
+      break;
+    case 5:
+      Bad.DirectoryContents["/"] = {{{".", 41, 4, 1}, {"..", 41, 4, 2}}, 1};
+      break;
+    case 6:
+      Bad.DirectoryEnumerationPolicies["/missing"] = {1, 0, 0};
+      break;
+    }
+    Refused(Bad);
+  }
+  O.DirectoryEnumerationPolicies["/"] = {134217728, 134217728, 0};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+}
+
+TEST(DarwinFileOptions, VirtualEnumerationChargesOneFixedReference) {
+  DarwinFileOptions O;
+  O.Directories.insert("/");
+  O.Metadata["/"] = darwin_test::creationParentMetadata();
+  O.DirectoryEnumerationPolicies["/"] = {1, 0, 0};
+  O.Files["/a"] = std::vector<uint8_t>(darwin_file_limits::Bytes - 7);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/a"].push_back(0);
+  auto TooLarge = validateFileOptions(O);
+  EXPECT_EQ(llvm::toString(std::move(TooLarge)), diagnostic::FileOptionsLimit);
 }
 
 TEST_P(DarwinFileTest,

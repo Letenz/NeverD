@@ -9,6 +9,7 @@
 #include "DarwinKernel.h"
 
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 #include <variant>
 
@@ -76,6 +77,8 @@ private:
     const DarwinNamespaceCreationPolicy *Policy = nullptr;
     const DarwinFileTime *MutationTime = nullptr;
     const DarwinDirectoryContents *Snapshot = nullptr;
+    const DarwinDirectoryEnumerationPolicy *EnumerationPolicy = nullptr;
+    uint64_t EnumerationVersion = 0;
     uint64_t PathCharge = 0;
     bool Created = false;
     bool Linked = true;
@@ -145,6 +148,7 @@ private:
     std::shared_ptr<DirectoryNode> Directory;
     bool FinalParentUnlinked = false;
     std::shared_ptr<LinkNode> Link;
+    std::optional<uint64_t> DirectoryVersion;
     llvm::ArrayRef<uint8_t> bytes() const {
       return File ? File->bytes() : Link ? Link->bytes() : Input;
     }
@@ -206,6 +210,18 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   status(const Description &File, uint64_t Address, ProcessResult &Result);
   const DarwinFileMetadata *metadata(const Description &File) const;
+  struct DirectoryEntryIdentity {
+    llvm::StringRef Name;
+    uint8_t Type;
+    std::optional<uint64_t> Inode;
+  };
+  /// Linked membership and inode identity are independent of complete stat
+  /// validity. No allocation occurs while counting committed child names.
+  void forEachDirectoryChild(
+      const DirectoryNode &Node,
+      llvm::function_ref<void(const DirectoryEntryIdentity &)> Visit) const;
+  std::optional<DarwinDirectoryContents>
+  enumerationContents(const DirectoryNode &Node) const;
   llvm::Expected<std::optional<ServiceResult>>
   statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
              ProcessResult &Result, LinkPolicy Links = {true, false});

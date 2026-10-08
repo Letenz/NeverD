@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: d6cf4a9eaef62161ba5aacaeaef8e029255bd713e98ca8101443ca888ec07871 -->
+<!-- i18n-source: 09a9f57ffaed31cda991a96fbaf04406bf26bedbcaf0214f6db5a6d6c28ac35a -->
 
 [← فهرس الوثائق](README.md)
 
@@ -805,3 +805,11 @@ getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem و
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
 ```
+
+## تعداد افتراضي بعد تغيير الأسماء
+
+يفعل الحقل الاختياري `directories[].enumeration_policy` عرض الأسماء الحالية عبر `getdirentries64`؛ يستخدم C++ النوعين `DarwinFileOptions::DirectoryEnumerationPolicies` و`DarwinDirectoryEnumerationPolicy`. يتطلب الكائن الصارم فقط `minimum_buffer_size` و`initial_minimum_buffer_size` و`seek_offset`: الأول موجب، كلا الحدين حتى128 MiB، وseek_offset هو uint64 دون فقد. يلزم للدليل الأولي بياناته بمعرف inode غير صفري، ولا يقبل `contents` ثابتاً معه. تحسب كل إشارة تكلفة المسار+NUL مرة واحدة. يرث mkdir سياسة الأب الفعلي، وتحفظ الأدلة الموجودة تصريحاتها الخاصة. التعداد مستقل عن سلطة التعديل.
+
+الترتيب الافتراضي هو `.` ثم `..` ثم الأسماء المرتبطة مباشرة مرتبة ببايتات غير موقعة. تأتي inodes من الأجسام الملاحظة أو المنشأة، ويتبع `..` الأب الفعلي المحتفظ به. هوية طفل/أب مفقودة أو صفرية توقف قبل الإخراج. تبقى هوية inode وحدها بعد إبطال stat الأولي الكامل، دون استخدام حقول قديمة أخرى. المؤشرات أعداد ترتيبية محلية من1 وd_seekoff ثابت معلن. يشترك dup بالمؤشر وتستقل open. يتطلب تغير العضوية الملتزم أو النقل المباشر إرجاعاً للصفر؛ الرفض والعمليات بلا أثر يحفظانه. نقل الأسلاف يحفظ مؤشرات الأحفاد. نفاد الإصدارات يوقف صراحة. الدليل الفارغ المحذوف المحتفظ به يصدر صفر سجلات حتى بعد إعادة الاسم.
+
+يبقى المرمز والسجلات الكاملة وحدود المخزن والحمولة ولاحقة EOF وترتيب البيانات/المؤشر/الموضع/الأعلام مشتركاً. يبطل stat الكامل للأب الأولي واللقطات الثابتة؛ غياب السياسة يبقي الرفض السابق. لا تحاكي أجيال APFS. سجل التحضير المستقل ARM64 عدد25حدثاً/16عرضاً ضمن5ثوان بلا تغيير. يفحص `directory-enumeration-mutations` الهويات الأصلية والأجسام المحتفظ بها؛ ويقارن `virtual-directory-enumeration` عرضاً ثابتاً160بايت عبر الضيف وC/CLI وPython. Intel الأصلي وiOS المادي وACL والروابط الصلبة وstat الأولي القابل للتغيير وOS/framework الكامل تظل غير مثبتة أو غير مدعومة.

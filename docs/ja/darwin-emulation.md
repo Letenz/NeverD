@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d6cf4a9eaef62161ba5aacaeaef8e029255bd713e98ca8101443ca888ec07871 -->
+<!-- i18n-source: 09a9f57ffaed31cda991a96fbaf04406bf26bedbcaf0214f6db5a6d6c28ac35a -->
 
 [← ドキュメント一覧](README.md)
 
@@ -807,3 +807,11 @@ ARM64 macOS の独立40例は元の5秒期限で28削除成功、12エラー、1
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
 ```
+
+## 名前空間変更後の仮想ディレクトリ列挙
+
+任意の `directories[].enumeration_policy` は現在の名前を `getdirentries64` で列挙します。C++ は `DarwinFileOptions::DirectoryEnumerationPolicies` と `DarwinDirectoryEnumerationPolicy` を使用します。厳密なオブジェクトは `minimum_buffer_size`、`initial_minimum_buffer_size`、`seek_offset` の3項目を要求し、最初は正、両最小値は128 MiB以下、seek_offset は損失のない uint64 です。初期ディレクトリ自身の非ゼロ inode メタデータが必要で、不変 `contents` とは併用できません。参照ごとにパスと NUL を一度計上します。mkdir は実際の親の方針を継承し、既存の子孫は自身の宣言を保持します。列挙方針と変更権限は独立です。
+
+仮想順序は `.`、`..`、符号なしバイト順の直接リンク名です。inode は観測済みまたはプロセス生成のオブジェクトから取得し、`..` は保持された実際の親に従います。子/親の識別情報が不明またはゼロなら出力前に停止します。完全な初期 stat が無効でも inode のみ保持し、他の古いフィールドは再利用しません。カーソルは1からのローカル序数、d_seekoff は宣言定数です。dup は共有、open は独立です。確定したメンバー変更と直接移動後はゼロへの巻き戻しが必要で、拒否と同一物体の無操作は無効化しません。祖先移動は子孫カーソルを保持し、版の枯渇は明示停止します。保持された削除済み空ディレクトリは名前再利用後も0レコードです。
+
+既存の記録符号化、完全レコードの格納、バッファ下限、ペイロード上限、EOF末尾とデータ/カーソル/位置/フラグの順序を再利用します。初期親の完全 stat と固定スナップショットは無効化され、方針省略時は従来の未対応動作です。APFSの世代は再現しません。独立ARM64準備は変更のない5秒期限内に25イベント/16ビューを記録しました。`directory-enumeration-mutations` はネイティブ識別と保持物体、`virtual-directory-enumeration` は客体、C/CLI、Python経由の160バイト定数ビューを検証します。Intelネイティブ、実機iOS、ACL、ハードリンク、初期ディレクトリの可変 stat、完全OS/フレームワークは未検証または未対応です。

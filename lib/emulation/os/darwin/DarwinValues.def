@@ -449,6 +449,18 @@ NEVERD_DARWIN_DIAGNOSTIC(DirectoryContents,
                          "Darwin directory contents are not configured")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryContentsOption,
                          "invalid or incoherent Darwin directory contents")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryEnumerationOption,
+    "invalid Darwin virtual directory enumeration policy or identity")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryEnumerationIdentity,
+    "Darwin virtual directory enumeration requires known nonzero inodes")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryEnumerationVersion,
+    "Darwin virtual directory cursor requires rewind for the current namespace")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryEnumerationLimit,
+    "Darwin virtual directory generation capacity is exhausted")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryPosition,
                          "Darwin directory position is not in the snapshot")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryPartialData,

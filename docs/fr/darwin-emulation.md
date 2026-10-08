@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d6cf4a9eaef62161ba5aacaeaef8e029255bd713e98ca8101443ca888ec07871 -->
+<!-- i18n-source: 09a9f57ffaed31cda991a96fbaf04406bf26bedbcaf0214f6db5a6d6c28ac35a -->
 
 [← Index de la documentation](README.md)
 
@@ -805,3 +805,11 @@ Les temps initiaux utilisent creation_time. Les changements de noms enfants mett
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
 ```
+
+## Énumération virtuelle après modification des noms
+
+Le champ facultatif `directories[].enumeration_policy` active une vue actuelle via `getdirentries 64`; C++ utilise `DarwinFileOptions::DirectoryEnumerationPolicies` et `DarwinDirectoryEnumerationPolicy`. L'objet strict exige exactement `minimum_buffer_size`, `initial_minimum_buffer_size` et `seek_offset`: le premier est positif, les deux minima ne dépassent pas 128 MiB et seek_offset est un uint 64 sans perte. Le répertoire initial doit posséder des métadonnées avec inode non nul; `contents` immuable est incompatible. Chaque référence compte une fois le chemin+NUL. mkdir hérite de la politique du parent réel; les descendants existants conservent leurs déclarations. Cette politique est indépendante du droit de modification.
+
+L'ordre virtuel est `.`, `..`, puis les noms directement liés triés par octets non signés. Les inodes proviennent des objets observés ou créés et `..` suit le parent réel conservé. Une identité enfant/parent inconnue ou nulle arrête avant toute sortie. Seul l'inode peut subsister après invalidation du stat initial complet. Les cookies sont des ordinaux locaux depuis 1, d_seekoff une constante déclarée. dup partage le curseur, open reste indépendant. Une modification validée ou un déplacement direct impose un retour à zéro; refus et opérations identiques sans effet le préservent. Déplacer un ancêtre préserve les curseurs descendants. L'épuisement des versions arrête explicitement. Un répertoire vide supprimé et retenu émet zéro enregistrement, même après réutilisation du nom.
+
+L'encodeur, les enregistrements entiers, minima, plafond de charge, suffixe EOF et effets ordonnés données/curseur/position/drapeaux restent communs. Stat complet du parent initial et instantanés fixes restent invalidés; sans politique, les refus antérieurs restent. Les générations APFS ne sont pas reproduites. La préparation ARM 64 indépendante a enregistré 25 événements/16 vues sous le délai inchangé de 5 secondes. `directory-enumeration-mutations` vérifie les identités natives et objets retenus; `virtual-directory-enumeration` compare 160 octets littéraux par invité, C/CLI et Python. Intel natif, iOS physique, ACL, liens physiques, stat initial mutable et OS/frameworks complets restent non validés ou non pris en charge.

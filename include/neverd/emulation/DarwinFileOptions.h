@@ -123,6 +123,18 @@ struct DarwinDirectoryContents {
   uint32_t MinimumBufferSize = 0;
 };
 
+/// Explicit virtual enumeration: . and .. precede unsigned-byte-sorted live
+/// names; cookies are local ordinals and d_seekoff is the declared constant.
+/// Namespace changes require a zero rewind before reusing a cursor. Held
+/// removed directories enumerate no records. No APFS order/cookie is inferred.
+struct DarwinDirectoryEnumerationPolicy {
+  /// Positive payload minimum, including at EOF; at most 128 MiB.
+  uint32_t MinimumBufferSize = 0;
+  /// Additional minimum when starting at the first record; at most 128 MiB.
+  uint32_t InitialMinimumBufferSize = 0;
+  uint64_t SeekOffset = 0;
+};
+
 /// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup
 /// shares an open description. Ancestor directories are implicit.
@@ -199,6 +211,14 @@ struct DarwinFileOptions {
   /// domains may contain their targets; lookup observes current target names.
   /// Content mutations, descriptors and mappings retain the actual target.
   std::map<std::string, std::vector<uint8_t>> SymbolicLinks;
+  /// Optional per-object virtual enumeration for admitted initial directories
+  /// with nonzero observed inodes. mkdir inherits the actual parent's policy;
+  /// existing descendants retain their own declarations. Every listed child
+  /// and the actual parent must have a known nonzero inode. This is independent
+  /// of full stat validity, namespace grants and creation metadata. A directory
+  /// cannot also declare an immutable DirectoryContents snapshot.
+  std::map<std::string, DarwinDirectoryEnumerationPolicy>
+      DirectoryEnumerationPolicies;
 };
 } // namespace neverd::emulation
 #endif

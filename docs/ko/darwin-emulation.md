@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d6cf4a9eaef62161ba5aacaeaef8e029255bd713e98ca8101443ca888ec07871 -->
+<!-- i18n-source: 09a9f57ffaed31cda991a96fbaf04406bf26bedbcaf0214f6db5a6d6c28ac35a -->
 
 [← 문서 목록](README.md)
 
@@ -807,3 +807,11 @@ ARM64 macOS의150개 원시 기록은 관측기 실패4개를 유지하며 별�
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
 ```
+
+## 이름 공간 변경 후 가상 디렉터리 열거
+
+선택적 `directories[].enumeration_policy`로 `getdirentries64`가 현재 이름을 열거합니다. C++에서는 `DarwinFileOptions::DirectoryEnumerationPolicies`와 `DarwinDirectoryEnumerationPolicy`를 사용합니다. 엄격한 객체에는 `minimum_buffer_size`, `initial_minimum_buffer_size`, `seek_offset` 세 필드가 필요합니다. 첫 값은 양수, 두 하한은128 MiB 이하이며 seek_offset은 손실 없는 uint64입니다. 초기 디렉터리 자신의 0이 아닌 inode 메타데이터가 필요하며 불변 `contents`와 함께 선언할 수 없습니다. 정책 참조마다 경로+NUL 비용을 한 번 부과합니다. mkdir는 실제 부모 정책을 상속하고 기존 하위 디렉터리는 자신의 선언을 유지합니다. 열거 정책과 변경 권한은 독립입니다.
+
+가상 순서는 `.`, `..`, 부호 없는 바이트 순으로 정렬한 직접 연결 이름입니다. 관찰되거나 프로세스가 만든 객체의 inode를 사용하며 `..`는 유지된 실제 부모를 따릅니다. 자식/부모 신원이 없거나0이면 출력 전에 중단합니다. 초기 전체 stat이 무효화되어도 inode만 유지하고 다른 오래된 필드는 재사용하지 않습니다. 커서는1부터 시작하는 지역 순번이고 d_seekoff는 선언 상수입니다. dup는 공유하고 open은 독립입니다. 확정된 항목 변경이나 직접 디렉터리 이동 후에는0으로 되감아야 하며 거부와 동일 객체 무동작은 유지됩니다. 조상 이동은 후손 커서를 유지합니다. 버전 소진은 명시 중단하며 유지된 삭제 빈 디렉터리는 이름 재사용 후에도0개 레코드입니다.
+
+기존 레코드 인코더, 완전한 레코드 묶음, 버퍼 하한, 페이로드 상한, EOF 접미사와 데이터/커서/위치/플래그 순서를 재사용합니다. 초기 부모 전체 stat과 고정 스냅샷은 계속 무효화되며 정책을 생략하면 이전 미지원 동작입니다. APFS 세대는 재현하지 않습니다. 독립 ARM64 준비는 변경 없는5초 내에25이벤트/16뷰를 기록했습니다. `directory-enumeration-mutations`는 네이티브 신원과 객체 유지, `virtual-directory-enumeration`는 객체/C/CLI/Python의160바이트 고정 뷰를 검증합니다. Intel 네이티브, 실제 iOS, ACL, 하드 링크, 초기 디렉터리 가변 stat 및 전체 OS/프레임워크는 미검증 또는 미지원입니다.
