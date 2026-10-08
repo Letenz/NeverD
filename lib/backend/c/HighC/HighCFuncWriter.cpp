@@ -54,10 +54,6 @@ uint64_t checkedStackAlign(uint64_t Size) {
   return checkedStackAdd(Size, Mask) & ~Mask;
 }
 
-uint16_t pointerBytes(Arch A) {
-  return (A == Arch::X86 || A == Arch::ARM) ? 4 : 8;
-}
-
 llvm::StringRef debugCallConvAttribute(DebugCallConv CC) {
   switch (CC) {
   case DebugCallConv::Cdecl:
@@ -229,6 +225,10 @@ std::string x86CIntrinsicTargetFeatures(const HighFunc &Func) {
 }
 
 } // anonymous namespace
+
+uint16_t pointerBytes(Arch A) {
+  return (A == Arch::X86 || A == Arch::ARM) ? 4 : 8;
+}
 
 TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
   // A bound source ABI is authoritative even when optional debug information

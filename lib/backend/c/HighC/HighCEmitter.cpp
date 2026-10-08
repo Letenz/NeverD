@@ -1882,13 +1882,17 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
               : llvm::StringRef(Name);
       if (auto Arity = knownArity(Symbol, Name);
           Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
+        // Each argument fills one integer register: an int64_t on a 32-bit
+        // target would take two, and the arguments after it would move.
+        const std::string Register =
+            "int" + std::to_string(pointerBytes(Opts.TheArch) * 8) + "_t";
         if (Arity->IntArgs == 0)
           OS << "void";
         else {
           for (int I = 0; I < Arity->IntArgs; ++I) {
             if (I)
               OS << ", ";
-            OS << "int64_t";
+            OS << Register;
           }
         }
       }
