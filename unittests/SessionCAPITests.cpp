@@ -2310,6 +2310,12 @@ TEST(SessionNames, DemanglesAsIdentitiesDo) {
   EXPECT_EQ(takeString(neverd_demangle("__ZNK14QMessageLogger7warningEPKcz")),
             "QMessageLogger::warning(char const*, ...) const");
   EXPECT_EQ(takeString(neverd_demangle("?f@@YAXXZ")), "void __cdecl f(void)");
+  // Rust reads without the legacy hash, Swift as a declaration path.
+  EXPECT_EQ(
+      takeString(neverd_demangle("_ZN4core3fmt5write17h0123456789abcdefE")),
+      "core::fmt::write");
+  EXPECT_EQ(takeString(neverd_demangle("_$s4Demo3BoxC5countSivg")),
+            "Demo.Box.count.getter");
   EXPECT_EQ(takeString(neverd_demangle("main")), "main");
   EXPECT_EQ(neverd_demangle(nullptr), nullptr);
 }
