@@ -109,6 +109,26 @@ BODY U32 Query(void) {
   return DataValue;
 }
 #if defined(__x86_64__)
+__attribute__((naked, noinline, used)) static U64 selfQueryProxy(void) {
+  __asm__("pop %rax\n\t"
+          "lea 2(%rax), %rax\n\t"
+          "push %rax\n\t"
+          "lea Query(%rip), %rax\n\t"
+          "ret");
+}
+// The nearby API continuation makes the pure internal address helper visible
+// to import observation. Its result must remain an internal code pointer.
+__attribute__((naked, section(".body$m"), noinline)) static U64
+selfQueryAddress(void) {
+  __asm__("sub $40, %rsp\n\t"
+          "call selfQueryProxy\n\t"
+          ".byte 0xcc, 0xcc\n\t"
+          "mov %rax, 32(%rsp)\n\t"
+          "call *__imp_GetCurrentProcessId(%rip)\n\t"
+          "mov 32(%rsp), %rax\n\t"
+          "add $40, %rsp\n\t"
+          "ret");
+}
 // Keep the nested CALL near the outer continuation so discovery watches both
 // starts. The inner stop must not discard the outer helper's state.
 __attribute__((naked, section(".body$m"), noinline, used)) static U32
@@ -152,6 +172,7 @@ dependencyValue(void) {
           "ret");
 }
 #else
+static BODY U64 selfQueryAddress(void) { return (U64)Query; }
 static BODY U32 processID(void) { return GetCurrentProcessId(); }
 static BODY U32 dependencyValue(void) { return Dependency(); }
 #endif
@@ -206,6 +227,7 @@ int dllEntry(void *Base, U32 Reason, void *Reserved) {
   check(dependencyValue() == DependencyValue);
   if (Reason == 1) {
     check(Initializers == 1 && ThreadValue == InitialTLS + CallbackIncrement);
+    check(selfQueryAddress() == (U64)Query);
     ++Attached;
     ThreadValue += EntryIncrement;
     DataValue = ExportValue;
@@ -232,6 +254,10 @@ __attribute__((noinline)) static int wrappedEntry(void *Base, U32 Reason,
 __attribute__((noinline)) int loader(void *Base, U32 Reason, void *Reserved) {
   if (Reason == 1) {
     decode();
+    if (Pack.Mode == NoTLSCallbacksMode || Pack.Mode == EmptyTLSCallbacksMode) {
+      ++Initializers;
+      ThreadValue += CallbackIncrement;
+    }
     if (Pack.Mode == PrivateTLSMode) {
       Callbacks[0] = initializedTLS;
       initializedTLS(Base, Reason, Reserved);

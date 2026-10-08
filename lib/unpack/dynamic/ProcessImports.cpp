@@ -304,6 +304,13 @@ llvm::Error ImportObserver::complete(ProcessView &Process, uint64_t PC) {
   if (Pure && ReturnPC >= Base + C.RVA &&
       ReturnPC - (Base + C.RVA) <= C.Capacity)
     Site = x64::importSite(Code, ReturnPC - Base, !Call, C.RVA, Destination);
+  if (Pure) {
+    // An exported address inside the input remains an internal pointer.
+    // Importing it would introduce a self-dependency during loader startup.
+    // A DLL's modeled process host has separate ownership from its input.
+    const auto Input = Process.inputModule();
+    Pure = Input && (Gate < Input->Base || Gate - Input->Base >= Input->Size);
+  }
   std::optional<ExportBinding> Target;
   if (Pure && Site)
     for (auto &Export : Process.exports()) {

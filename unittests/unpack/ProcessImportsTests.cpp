@@ -22,6 +22,9 @@ public:
   std::vector<uint8_t> Bytes = std::vector<uint8_t>(8192);
   std::map<CPURegister, RegisterValue> Registers;
   uint64_t NativeCalls = 0;
+  bool Library = false;
+  std::vector<ProcessExportView> Exports = {
+      {Gate, "kernel32.dll", "GetCurrentProcessId", std::nullopt}};
 
   ImportProcess() {
     for (uint64_t Start : {Inner, Outer}) {
@@ -50,11 +53,15 @@ public:
                                        {4096, 4096, Read | Write, false}};
   }
   std::vector<ProcessModuleView> modules() override {
+    if (Library)
+      return {{"process-host.exe", Gate, 4096, Gate, true, true},
+              {"independent.dll", 0, 4096, Outer, false, false}};
     return {{"independent.exe", 0, 4096, Outer, true, false}};
   }
-  std::vector<ProcessExportView> exports() override {
-    return {{Gate, "kernel32.dll", "GetCurrentProcessId", std::nullopt}};
+  std::optional<ProcessModuleView> inputModule() override {
+    return modules().back();
   }
+  std::vector<ProcessExportView> exports() override { return Exports; }
   std::optional<ProcessStackView> stack() const override {
     return ProcessStackView{4096, 4096};
   }
@@ -176,6 +183,68 @@ TEST_F(ProcessImports, IncompleteAndRecursiveInvocationsWithdrawEvidence) {
       llvm::cantFail(O.invoking(P));
     EXPECT_TRUE(O.takeImports().empty());
   }
+}
+
+TEST_F(ProcessImports, InputExportAddressLoadsRemainInternalPointers) {
+  for (bool Library : {false, true}) {
+    SCOPED_TRACE(Library);
+    for (uint64_t Address : {uint64_t(0), uint64_t(2048), uint64_t(4095)}) {
+      SCOPED_TRACE(Address);
+      ImportProcess P;
+      P.Library = Library;
+      P.Exports = {{Address, "export-alias.dll", "Query", uint16_t(1)}};
+      const std::array<uint64_t, 1> Returns = {ImportProcess::Inner + 7};
+      ImportObserver O{Returns, Gates};
+      llvm::cantFail(O.started(P));
+      P.Registers[CPURegister::X64AX] = {0x55, 0};
+      P.stop(ImportProcess::Inner, ImportProcess::InitialSP);
+      llvm::cantFail(O.watched(P, ImportProcess::Inner));
+      P.Registers[CPURegister::X64AX] = {Address, 0};
+      P.stop(ImportProcess::Inner + 7, ImportProcess::InitialSP);
+      llvm::cantFail(O.watched(P, ImportProcess::Inner + 7));
+      EXPECT_TRUE(O.takeImports().empty());
+    }
+  }
+}
+
+TEST_F(ProcessImports, AnInternalResultWithdrawsEarlierExternalEvidence) {
+  for (bool Internal : {false, true}) {
+    SCOPED_TRACE(Internal);
+    ImportProcess P;
+    P.Library = true;
+    P.Exports.push_back({2048, "independent.dll", "Query", uint16_t(1)});
+    const std::array<uint64_t, 1> Returns = {ImportProcess::Inner + 7};
+    ImportObserver O{Returns, Gates};
+    llvm::cantFail(O.started(P));
+    for (uint64_t Address : {ImportProcess::Gate,
+                             Internal ? uint64_t(2048) : ImportProcess::Gate}) {
+      P.Registers[CPURegister::X64AX] = {0, 0};
+      P.stop(ImportProcess::Inner, ImportProcess::InitialSP);
+      llvm::cantFail(O.watched(P, ImportProcess::Inner));
+      P.Registers[CPURegister::X64AX] = {Address, 0};
+      P.stop(ImportProcess::Inner + 7, ImportProcess::InitialSP);
+      llvm::cantFail(O.watched(P, ImportProcess::Inner + 7));
+    }
+    EXPECT_EQ(O.takeImports().size(), Internal ? 0u : 1u);
+  }
+}
+
+TEST_F(ProcessImports, AProcessHostExportIsExternalToTheInputLibrary) {
+  ImportProcess P;
+  P.Library = true;
+  P.Exports = {{ImportProcess::Gate, "process-host.exe", "Query", uint16_t(1)}};
+  const std::array<uint64_t, 1> Returns = {ImportProcess::Inner + 7};
+  ImportObserver O{Returns, Gates};
+  llvm::cantFail(O.started(P));
+  P.stop(ImportProcess::Inner, ImportProcess::InitialSP);
+  llvm::cantFail(O.watched(P, ImportProcess::Inner));
+  P.Registers[CPURegister::X64AX] = {ImportProcess::Gate, 0};
+  P.stop(ImportProcess::Inner + 7, ImportProcess::InitialSP);
+  llvm::cantFail(O.watched(P, ImportProcess::Inner + 7));
+  const auto Imports = O.takeImports();
+  ASSERT_EQ(Imports.size(), 1u);
+  EXPECT_TRUE(Imports.front().AddressLoad);
+  EXPECT_EQ(Imports.front().Target.Module, "process-host.exe");
 }
 } // namespace
 } // namespace neverd::unpack
