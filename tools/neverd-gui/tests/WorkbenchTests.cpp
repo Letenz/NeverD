@@ -89,6 +89,28 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void unknownEntryBrowsesMappedCodeAndShowsDiagnostics() {
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("unknown-entry.bin"));
+    Workbench bench;
+    QSignalSpy messages(&bench.session, &Session::message);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(bench.session.entryAddress(), Address(0));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.window->disassembly()->currentAddress().has_value(),
+        OpenTimeoutMs);
+    QVERIFY(*bench.window->disassembly()->currentAddress() >= Base);
+    QVERIFY(*bench.window->disassembly()->currentAddress() < Base + 0x3000);
+    bool warned = false;
+    for (const auto &message : messages)
+      warned |= message.first().toString() ==
+                QLatin1String("Fixture PE entry is unknown.");
+    QVERIFY(warned);
+    QCOMPARE(bench.session.entryAddress(), Address(0));
+  }
+
   void initTestCase() {
     QVERIFY(settingsDirectory_.isValid());
     QCoreApplication::setOrganizationName(QStringLiteral("NeverDTests"));

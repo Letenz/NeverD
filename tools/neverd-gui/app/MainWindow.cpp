@@ -239,6 +239,7 @@ void MainWindow::buildMenusAndToolbars() {
     // Lists that arrived first name their rows' segments now.
     for (auto *chooser : std::as_const(choosers_))
       chooser->model().addressSpaceChanged();
+    navigateInitialAddress();
   });
   Q_UNUSED(toolbars);
 }
@@ -409,8 +410,12 @@ void MainWindow::buildDocks() {
           [this](Address address) { navigate(address); });
   connect(disassembly_, &DisassemblyView::contextMenuRequested, this,
           &MainWindow::contextMenu);
-  connect(disassembly_, &DisassemblyView::historyChanged, this,
-          &MainWindow::updateActions);
+  connect(disassembly_, &DisassemblyView::historyChanged, this, [this] {
+    // An explicit navigation supersedes a deferred restored location.
+    initialAddress_.reset();
+    restoreGraph_ = false;
+    updateActions();
+  });
   connect(disassembly_, &DisassemblyView::graphModeChanged, this,
           [this](bool graph) {
             if (graph)
@@ -1913,12 +1918,35 @@ void MainWindow::restoreProjectState() {
     output_->append(
         tr("The saved desktop of this database could not be restored."), 1);
   const auto address = addressValue(location.value(QStringLiteral("address")));
-  disassembly_->navigate(address.value_or(session_.entryAddress()), false);
-  if (location.value(QStringLiteral("graph")).toBool())
-    QTimer::singleShot(0, this, [this] {
-      if (session_.loaded() && !disassembly_->graphMode())
+  initialAddress_ = address.value_or(session_.entryAddress());
+  restoreGraph_ = location.value(QStringLiteral("graph")).toBool();
+  navigateInitialAddress();
+}
+
+void MainWindow::navigateInitialAddress() {
+  if (!initialAddress_ || !session_.loaded() || space_.empty())
+    return;
+  Address address = *initialAddress_;
+  initialAddress_.reset();
+  if (!space_.regionOf(address)) {
+    address = space_.first();
+    for (const auto &region : space_.regions())
+      if (region.exec) {
+        address = region.start;
+        break;
+      }
+  }
+  // This is a browsing position, never a reconstructed program entry point.
+  disassembly_->navigate(address, false);
+  if (restoreGraph_) {
+    const auto epoch = session_.epoch();
+    QTimer::singleShot(0, this, [this, epoch] {
+      if (session_.loaded() && session_.epoch() == epoch &&
+          !disassembly_->graphMode())
         toggleGraph();
     });
+  }
+  restoreGraph_ = false;
 }
 
 QJsonArray MainWindow::bookmarks() const {
