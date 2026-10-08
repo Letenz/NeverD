@@ -337,8 +337,15 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
   if (Raw.empty() && Img) {
     if (const Symbol *Sym = Img->findSymbolAt(Addr);
         Sym && !Sym->IsFunc && !Sym->Name.empty() &&
-        llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0)
-      Raw = stripLeadingUnderscores(Sym->Name).str();
+        llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0) {
+      // A mangled name keeps the underscores its scheme starts with
+      // (`_ZTV8QDomNode` is `QDomNode_vtable`).
+      const llvm::StringRef CName =
+          cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
+      Raw = symbolScheme(CName) != SymbolScheme::None
+                ? CName.str()
+                : stripLeadingUnderscores(Sym->Name).str();
+    }
   }
   if (Raw.empty()) {
     // As the listing names it: a pointer slot, or the size of its accesses.

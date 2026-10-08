@@ -500,6 +500,25 @@ canonicalizeCProjectionIdentifier(llvm::StringRef Raw,
   return Result;
 }
 
+/// Whether the C identifier of symbol \p CName is spelled from it rather than
+/// being the name itself: a demangled stem (`QDomNode_nodeType`,
+/// `core_fmt_write`), a name with punctuation (`fmt_pp_doPrintf`) or one C
+/// reserves (`nd_int`).  Such an identifier links by an `__asm__` label.  An
+/// import slot's name (`__imp_foo`) is not one: it names the slot, not the
+/// function.
+inline bool identifierSpelledFromSymbol(llvm::StringRef CName) {
+  return stripImportSymbolPrefix(CName) == CName &&
+         canonicalizeCProjectionIdentifier(CName) != CName;
+}
+
+/// Whether symbol \p CName has an MSVC stem, which the MSVC rules
+/// (MsvcCallees.def) share between the overloads of a family on purpose.
+inline bool hasMsvcStem(llvm::StringRef CName) {
+  return !msvcTemplateSpecialMemberStem(CName).empty() ||
+         !msvcTemplateFunctionStem(CName).empty() ||
+         !msvcDecorationStem(CName).empty();
+}
+
 /// Whether symbol \p Name can stand in a comment as the image spells it:
 /// valid UTF-8 without spaces or control characters.  A name is the image's
 /// choice, and such a name cannot make a comment span lines or read as code.

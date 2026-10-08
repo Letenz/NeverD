@@ -806,19 +806,21 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
         OS << ", ...";
     }
     OS << ")";
-    // A C++ import reads by its stem but links by its mangled symbol, which
-    // a comment spells demangled.
+    // An import whose identifier is spelled from its symbol links by the
+    // symbol, which a comment spells as its language does.
     std::string Comment;
     if (Fn.isDeclaration()) {
       const llvm::StringRef CName =
           llvm_name::cNameOfLLVMName(RawName, Opts.Format, Opts.TheArch);
-      if (CName != Name && !itaniumStem(CName).empty()) {
+      if (CName != Name && identifierSpelledFromSymbol(CName)) {
         std::string Label;
         llvm::raw_string_ostream(Label).write_escaped(
             symbolOfCName(CName, Opts.Format, Opts.TheArch));
         OS << " __asm__(\"" << Label << "\")";
-        if (Opts.EmitComments)
-          Comment = " /* " + demangledComment(CName) + " */";
+        // A name that reads as the label spells it needs no comment.
+        if (const std::string Readable = demangledComment(CName);
+            Opts.EmitComments && !Readable.empty() && Readable != CName)
+          Comment = " /* " + Readable + " */";
       }
     }
     OS << ";" << Comment << "\n";

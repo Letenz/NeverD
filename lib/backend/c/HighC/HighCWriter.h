@@ -775,6 +775,9 @@ public:
 
   struct ImageObject {
     std::string Name;
+    /// The symbol its name is spelled from, as its language spells it, for
+    /// the comment that declares it; empty when the name is the symbol.
+    std::string Readable;
     TypeRef Type;
     std::set<uint16_t> MemoryWidths;
     /// The code stores to it.

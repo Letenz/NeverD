@@ -689,4 +689,207 @@ TEST(CSymbolNames, AVoidRoutineLeavesNoResult) {
   EXPECT_EQ(Source.find("(int64_t)__cxa_finalize"), NotFound) << Source;
 }
 
+/// main.main calls two instances of one Rust generic, a Go method, an
+/// Objective-C method and a GCC clone.
+std::vector<HighFunc> otherLanguageCaller() {
+  return {function(
+      "main.main", 0x1000,
+      {callStatement("_RINvNtCs4NRVxsYgnAr_4core3ptr9drop_glueNtNtCscdodAO9FK5_"
+                     "5alloc6string6StringECs8vGhbR5OvgK_13rust_eh_probe",
+                     0x2000),
+       callStatement("_RINvNtCs4NRVxsYgnAr_4core3ptr9drop_glueNtNtCscdodAO9FK5_"
+                     "5alloc3vec3VecECs8vGhbR5OvgK_13rust_eh_probe",
+                     0x2010),
+       callStatement("fmt.(*pp).doPrintf", 0x2020),
+       callStatement("-[NSString length]", 0x2030),
+       callStatement("foo.constprop.0", 0x2040)})};
+}
+
+TEST(CSymbolNames, OtherLanguagesReadByTheirPathsAndLinkByTheirSymbols) {
+  const std::string Source =
+      emitHighC(otherLanguageCaller(), BinaryFormat::ELF, Arch::X64);
+  // The definition reads by its path and names its symbol above.
+  EXPECT_NE(Source.find("/* main.main */\n"), NotFound) << Source;
+  EXPECT_NE(Source.find(" main_main("), NotFound) << Source;
+  // Two instances of one generic stay distinct, each linking by its symbol
+  // and read in Rust.
+  EXPECT_NE(Source.find("core_ptr_drop_glue() __asm__(\"_RINvNtCs4NRVxsYgnAr_"
+                        "4core3ptr9drop_glueNtNtCscdodAO9FK5_5alloc6string6S"
+                        "tringECs8vGhbR5OvgK_13rust_eh_probe\"); /* core::ptr"
+                        "::drop_glue::<alloc::string::String> */"),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("core_ptr_drop_glue_2() __asm__("), NotFound) << Source;
+  EXPECT_NE(Source.find("core_ptr_drop_glue();"), NotFound) << Source;
+  EXPECT_NE(Source.find("core_ptr_drop_glue_2();"), NotFound) << Source;
+  // A name its label already spells takes no comment.
+  EXPECT_NE(Source.find("fmt_pp_doPrintf() __asm__(\"fmt.(*pp).doPrintf\");\n"),
+            NotFound)
+      << Source;
+  EXPECT_NE(
+      Source.find("_i_NSString__length() __asm__(\"-[NSString length]\");\n"),
+      NotFound)
+      << Source;
+  EXPECT_NE(Source.find("foo_constprop_0() __asm__(\"foo.constprop.0\");\n"),
+            NotFound)
+      << Source;
+  // No byte of a name is escaped.
+  EXPECT_EQ(Source.find("_x2E_"), NotFound) << Source;
+}
+
+TEST(CSymbolNames, LLVMCDeclaresOtherLanguagesByTheirSymbols) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+declare i64 @"fmt.(*pp).doPrintf"(i64)
+declare i64 @_ZN4core3fmt5write17h0123456789abcdefE(i64)
+define i64 @"main.main"(i64 %p) {
+  %a = call i64 @"fmt.(*pp).doPrintf"(i64 %p)
+  %b = call i64 @_ZN4core3fmt5write17h0123456789abcdefE(i64 %a)
+  ret i64 %b
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("fmt_pp_doPrintf(uint64_t) "
+                        "__asm__(\"fmt.(*pp).doPrintf\");\n"),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("core_fmt_write(uint64_t) __asm__(\"_ZN4core3fmt5write"
+                        "17h0123456789abcdefE\"); /* core::fmt::write */"),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("/* main.main */\n"), NotFound) << Source;
+  EXPECT_NE(Source.find(" main_main("), NotFound) << Source;
+}
+
+TEST(CSymbolNames, MicrosoftNamesAreTheirOwnSymbolsOn32BitWindows) {
+  // A C name takes the underscore 32-bit Windows adds; a decorated C++ or
+  // fastcall name is the symbol already.
+  EXPECT_EQ(symbolOfCName("printf", BinaryFormat::COFF, Arch::X86), "_printf");
+  EXPECT_EQ(symbolOfCName("?f@@YAXXZ", BinaryFormat::COFF, Arch::X86),
+            "?f@@YAXXZ");
+  EXPECT_EQ(symbolOfCName("@f@8", BinaryFormat::COFF, Arch::X86), "@f@8");
+  EXPECT_EQ(symbolOfCName("?f@@YAXXZ", BinaryFormat::COFF, Arch::X64),
+            "?f@@YAXXZ");
+}
+
+TEST(CSymbolNames, ObjectsReadByTheirPathsWithTheirSymbolsBeside) {
+  constexpr va_t Text = 0x1000, Data = 0x4000;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  Segment Code;
+  Code.Name = ".text";
+  Code.VA = Text;
+  Code.Data.assign(0x100, 0xC3);
+  Code.Size = Code.Data.size();
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Segments.push_back(std::move(Code));
+  Segment Values;
+  Values.Name = ".data";
+  Values.VA = Data;
+  Values.Data.assign(0x40, 0);
+  Values.Size = Values.Data.size();
+  Values.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Img.Segments.push_back(std::move(Values));
+  for (const auto &[Name, Addr] : {std::pair{"_ZTV8QDomNode", Data},
+                                   std::pair{"main.Flags", Data + 0x20}}) {
+    Symbol Object;
+    Object.Name = Name;
+    Object.Addr = Addr;
+    Object.Size = 8;
+    Img.Symbols.push_back(std::move(Object));
+  }
+  HighFunc Reader = function("reader", Text, {});
+  for (va_t Addr : {Data, Data + 0x20}) {
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = HighExpr::makeConst(Addr, 8);
+    Store.StoreVal = HighExpr::makeConst(1, 8);
+    Store.StoreVal->Type = NdType::makeInt(8, false);
+    Reader.Body.insert(Reader.Body.begin(), std::move(Store));
+  }
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Reader}, OS, Options));
+  EXPECT_NE(Source.find("/* neverd.image: 0x4000 vtable for QDomNode */\n"),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("QDomNode_vtable = 1;"), NotFound) << Source;
+  EXPECT_NE(Source.find("/* neverd.image: 0x4020 main.Flags */\n"), NotFound)
+      << Source;
+  EXPECT_NE(Source.find("main_Flags = 1;"), NotFound) << Source;
+}
+
+TEST(CSymbolNames, OtherLanguageLabelsLinkToTheirSymbols) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "links an ELF program on the host";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // The stubs define each callee under its symbol, as Go, Rust and
+  // Objective-C objects would; the emitted C must reach each one through its
+  // label.
+  const std::string Stubs = R"(
+#include <stdint.h>
+unsigned called;
+int64_t main_main(void);
+#define DEFINE(Stub, Symbol, Bit)                                              \
+  void Stub(void) __asm__(Symbol);                                             \
+  void Stub(void) { called |= Bit; }
+DEFINE(drop_string, "_RINvNtCs4NRVxsYgnAr_4core3ptr9drop_glueNtNtCscdodAO9FK5_"
+                    "5alloc6string6StringECs8vGhbR5OvgK_13rust_eh_probe", 1)
+DEFINE(drop_vec, "_RINvNtCs4NRVxsYgnAr_4core3ptr9drop_glueNtNtCscdodAO9FK5_"
+                 "5alloc3vec3VecECs8vGhbR5OvgK_13rust_eh_probe", 2)
+DEFINE(do_printf, "fmt.(*pp).doPrintf", 4)
+DEFINE(length, "-[NSString length]", 8)
+DEFINE(clone, "foo.constprop.0", 16)
+int main(void) { main_main(); return called == 31 ? 0 : 1; }
+)";
+  const std::string Source =
+      emitHighC(otherLanguageCaller(), BinaryFormat::ELF, Arch::X64);
+  llvm::SmallString<128> SourcePath, StubPath, BinaryPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-other-names", "c",
+                                                  SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-other-names-stubs",
+                                                  "c", StubPath));
+  llvm::FileRemover RemoveStubs(StubPath);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-other-names", "exe",
+                                                  BinaryPath));
+  llvm::FileRemover RemoveBinary(BinaryPath);
+  for (const auto &[Path, Text] : {std::pair{SourcePath.str(), Source},
+                                   std::pair{StubPath.str(), Stubs}}) {
+    std::error_code Error;
+    llvm::raw_fd_ostream Out(Path, Error);
+    ASSERT_FALSE(Error) << Error.message();
+    Out << Text;
+  }
+  std::string Message;
+  const int Compiled =
+      llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                {NEVERD_RUNTIME_FIXTURE_COMPILER, "-std=c11",
+                                 "-w", SourcePath, StubPath, "-o", BinaryPath},
+                                std::nullopt, {}, 60, 0, &Message);
+  ASSERT_EQ(Compiled, 0) << Message << '\n' << Source;
+  EXPECT_EQ(llvm::sys::ExecuteAndWait(BinaryPath, {BinaryPath}, std::nullopt,
+                                      {}, 30, 0, &Message),
+            0)
+      << Message << '\n'
+      << Source;
+#endif
+}
+
 } // namespace

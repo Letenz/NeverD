@@ -329,11 +329,13 @@ void HighCWriter::prepareFunctionIdentifiers(
     FunctionIdentifiersBySourceName.try_emplace(RenderedName.str(), Identifier);
   }
 
-  // Distinct external callees stay distinct.  Itanium C++ overloads and
-  // constructor variants share a stem (`_ZN12QDomNodeListC1Ev` and
-  // `...C2EP19...` are both `QDomNodeList_ctor`), so each symbol of a stem
-  // that an Itanium symbol shares takes its own identifier, in encounter
-  // order.  Other externs keep their stems, MSVC stems merging as before.
+  // Distinct external callees stay distinct.  Symbols whose identifiers are
+  // spelled from them can share a stem: Itanium C++ overloads and constructor
+  // variants (`_ZN12QDomNodeListC1Ev` and `...C2EP19...` are both
+  // `QDomNodeList_ctor`), instances of one Rust generic, Go and GCC names
+  // with punctuation.  Each symbol of such a stem takes its own identifier,
+  // in encounter order after a symbol that is its own identifier.  MSVC
+  // stems merge, as the MSVC rules want.
   std::map<std::string, std::vector<std::string>> SymbolsByStem;
   std::map<std::string, std::set<std::string>> SourcesBySymbol;
   std::set<const HighExpr *> Calls;
@@ -361,12 +363,16 @@ void HighCWriter::prepareFunctionIdentifiers(
   for (const auto &Func : Funcs)
     walkStmts(Func.Body,
               [&](const HighStmt &Stmt) { forEachExpr(Stmt, VisitCall); });
-  for (const auto &[Stem, Symbols] : SymbolsByStem) {
+  for (auto &[Stem, Symbols] : SymbolsByStem) {
     if (Symbols.size() < 2 ||
         llvm::none_of(Symbols, [](const std::string &Symbol) {
-          return !itaniumStem(Symbol).empty();
+          return identifierSpelledFromSymbol(Symbol) && !hasMsvcStem(Symbol);
         }))
       continue;
+    std::stable_partition(Symbols.begin(), Symbols.end(),
+                          [](const std::string &Symbol) {
+                            return !identifierSpelledFromSymbol(Symbol);
+                          });
     for (const std::string &Symbol : Symbols) {
       const std::string Identifier =
           GlobalIdentifierAllocator.allocate(Stem, "nd_external");
@@ -1769,8 +1775,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     const bool NoReturn = libc::isNoReturnFunction(Name) ||
                           libc::isNoReturnFunction(Identifier) ||
                           NoReturnCallTargets.count(Name);
-    // A C++ import reads by its stem but links by its mangled symbol, which
-    // a comment spells demangled.
+    // An import whose identifier is spelled from its symbol links by the
+    // symbol, which a comment spells as its language does.
     std::string LinkLabel, LinkComment;
     if (auto Sources = ExternalCallSources.find(Name);
         Sources != ExternalCallSources.end()) {
@@ -1779,13 +1785,15 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       if (Sources->second.size() == 1) {
         const llvm::StringRef CName =
             cNameOfSymbol(*Sources->second.begin(), Opts.Format, Opts.TheArch);
-        if (CName != Identifier && !itaniumStem(CName).empty()) {
+        if (CName != Identifier && identifierSpelledFromSymbol(CName)) {
           llvm::raw_string_ostream Label(LinkLabel);
           Label << " __asm__(\"";
           Label.write_escaped(symbolOfCName(CName, Opts.Format, Opts.TheArch));
           Label << "\")";
-          if (Opts.EmitComments)
-            LinkComment = " /* " + demangledComment(CName) + " */";
+          // A name that reads as the label spells it needs no comment.
+          if (const std::string Readable = demangledComment(CName);
+              Opts.EmitComments && !Readable.empty() && Readable != CName)
+            LinkComment = " /* " + Readable + " */";
         }
       }
     }
@@ -2260,7 +2268,8 @@ void HighCWriter::writeImageObjects() {
           makeDataName(Addr, PointerSlot, AccessBytes), "g");
     }
     if (Opts.EmitComments)
-      OS << "/* neverd.image: 0x" << llvm::utohexstr(Addr) << " */\n";
+      OS << "/* neverd.image: 0x" << llvm::utohexstr(Addr)
+         << (Obj.Readable.empty() ? "" : " ") << Obj.Readable << " */\n";
     // A definition so standalone HighC can link, with the value the image
     // holds.  LLVMC keeps `extern` because it projects LLVM `external global`.
     std::string Note;
