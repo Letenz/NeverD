@@ -188,18 +188,27 @@ TEST(PEBrowseCompatibility, BoundIATWithoutLookupNeverGuessesAnIdentity) {
   }
 }
 
-TEST(PEBrowseCompatibility, UnalignedAndExecutableIATNeverPublishIdentities) {
-  for (const uint32_t RVA : {0x2181u, 0x1080u}) {
-    Fixture F;
-    F.put32(F.IData + 16, RVA);
-    if (RVA == 0x1080)
-      F.word(0x280, F.ordinal(1));
-    auto Image = load(F);
-    ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
-    expectNoBindings(*Image);
-    EXPECT_EQ(Image->LoadDiagnostics.back().Code, "pe.import_storage_invalid");
-    EXPECT_EQ(Image->findImportAt(F.Base + RVA), nullptr);
-  }
+TEST(PEBrowseCompatibility, NoncanonicalIATRetainsOnlyDescriptorIdentities) {
+  for (const bool Wide : {false, true})
+    for (const uint32_t RVA : {0x2181u, 0x1080u}) {
+      Fixture F(Wide);
+      F.put32(F.IData + 16, RVA);
+      const size_t Offset = RVA == 0x1080 ? 0x280 : F.IData + 0x181;
+      F.word(Offset, F.ordinal(1));
+      F.word(Offset + F.Width, 0);
+      auto Image = load(F);
+      ASSERT_TRUE(static_cast<bool>(Image))
+          << llvm::toString(Image.takeError());
+      ASSERT_EQ(Image->Imports.size(), 1u);
+      EXPECT_EQ(Image->Imports[0].IATAddr, F.Base + RVA);
+      EXPECT_EQ(Image->Imports[0].Ordinal, 1u);
+      EXPECT_EQ(Image->Imports[0].Module, "example.dll");
+      EXPECT_NE(Image->findImportAt(F.Base + RVA), nullptr);
+      EXPECT_TRUE(Image->ImportStorageSlots.empty());
+      EXPECT_TRUE(Image->ImportPtrSlots.empty());
+      EXPECT_TRUE(Image->collectImportStorageSlots().Slots.empty());
+      EXPECT_TRUE(Image->LoadDiagnostics.empty());
+    }
 }
 
 TEST(PEBrowseCompatibility, LongNamesAndRepeatedDescriptorsStayBounded) {
