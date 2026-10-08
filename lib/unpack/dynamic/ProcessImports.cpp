@@ -191,6 +191,9 @@ ImportObserver::started(ProcessView &Process) {
   }
   // Start from actual export-call continuations rather than scanning the
   // protector's entire executable image. Overlapping windows are merged.
+  llvm::sort(Continuations);
+  Continuations.erase(std::unique(Continuations.begin(), Continuations.end()),
+                      Continuations.end());
   std::vector<std::pair<uint64_t, uint64_t>> Windows;
   for (uint64_t PC : Continuations) {
     if (PC < Base || PC - Base > Main->Size)
@@ -214,6 +217,12 @@ ImportObserver::started(ProcessView &Process) {
           std::min<uint64_t>(x64::MaxAddressLoadSize, Memory.size() - RVA);
       Candidate C{RVA, Capacity, *Call};
       std::copy_n(Memory.data() + RVA, Capacity, C.Bytes.begin());
+      for (auto I = llvm::lower_bound(Continuations, Base + RVA);
+           I != Continuations.end() && *I - (Base + RVA) <= Capacity; ++I)
+        if (x64::importSite(Memory, *I - Base, false, RVA)) {
+          C.ExportContinuation = true;
+          break;
+        }
       Candidates.push_back(C);
       Watches.push_back({Base + RVA, 1});
       for (unsigned Size = x64::MinAddressLoadSize; Size <= Capacity; ++Size)
@@ -343,6 +352,20 @@ ImportObserver::watched(ProcessView &Process, uint64_t PC) {
         (PC >= Start + x64::MinAddressLoadSize && PC - Start <= C.Capacity)) {
       if (auto E = complete(Process, PC))
         return std::move(E);
+    } else if (C.ExportContinuation) {
+      // A helper can pass another candidate's watch without completing its
+      // own call. Keep the one outer snapshot; its eventual state comparison
+      // still covers every nested effect. The inner invocation has no separate
+      // snapshot, so it must withdraw any earlier evidence for that site.
+      for (size_t I = 0; I < Candidates.size(); ++I) {
+        if (PC != Base + Candidates[I].RVA)
+          continue;
+        reject(I);
+        if (I == Active->Candidate)
+          Active.reset();
+        break;
+      }
+      return Watches;
     } else
       rejectActive();
   }
@@ -350,8 +373,8 @@ ImportObserver::watched(ProcessView &Process, uint64_t PC) {
     const auto &C = Candidates[I];
     if (PC != Base + C.RVA)
       continue;
-    // Only one active memory snapshot is retained. A nested candidate
-    // invalidates its parent's proof rather than multiplying memory use.
+    // A completed call may also arrive at another candidate's start. Retain
+    // only one memory snapshot for the new invocation.
     rejectActive();
     if (C.Rejected)
       break;

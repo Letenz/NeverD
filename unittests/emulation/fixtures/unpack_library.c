@@ -109,13 +109,23 @@ BODY U32 Query(void) {
   return DataValue;
 }
 #if defined(__x86_64__)
-__attribute__((naked, noinline, used)) static U32 processIDProxy(void) {
+// Keep the nested CALL near the outer continuation so discovery watches both
+// starts. The inner stop must not discard the outer helper's state.
+__attribute__((naked, section(".body$m"), noinline, used)) static U32
+processIDTail(void) {
+  __asm__("lea 16(%rsp), %rsp\n\t"
+          "jmp *__imp_GetCurrentProcessId(%rip)");
+}
+__attribute__((naked, section(".body$m"), noinline, used)) static U32
+processIDProxy(void) {
   __asm__("push %rax\n\t"
           "mov 8(%rsp), %rax\n\t"
           "lea 1(%rax), %rax\n\t"
           "mov %rax, 8(%rsp)\n\t"
           "pop %rax\n\t"
-          "jmp *__imp_GetCurrentProcessId(%rip)");
+          "push %rcx\n\t"
+          "call processIDTail\n\t"
+          ".byte 0xcc");
 }
 __attribute__((naked, section(".body$m"), noinline)) static U32
 processID(void) {

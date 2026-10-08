@@ -62,6 +62,7 @@ private:
     unsigned Capacity, CallOffset;
     std::array<uint8_t, x64::MaxAddressLoadSize> Bytes{};
     std::optional<x64::ImportSite> Proven;
+    bool ExportContinuation = false;
     bool Rejected = false;
   };
   struct Region {
