@@ -17,6 +17,7 @@
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/SmallString.h"
@@ -515,6 +516,116 @@ TEST(SysVCallContract, ACallThatEndsItsFunctionDoesNotReturn) {
   EXPECT_NE(Body.find("error("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("next("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+}
+
+TEST(SysVCallContract, AVariadicPrologueSpillReadsNoParameter) {
+  // A variadic panic(fmt, ...) spills RSI..R9 to its register save area
+  // around `test al, al`: GCC with a frame pointer off RBP (sed, patch),
+  // GCC and Clang without one off RSP, and Clang -O0 where the branch over
+  // the vector spills rejoins, beside a home slot for RDI.  wrapper(s) calls
+  // panic("%s", s) and caller(x) calls wrapper(x).  Decompiling caller alone
+  // summarizes the other two as its callees, the way the GUI does: the spills
+  // of registers wrapper never sets are no parameters of wrapper, so caller
+  // passes it exactly one argument.
+  const std::vector<std::vector<uint8_t>> Prologues = {
+      {0xF3, 0x0F, 0x1E, 0xFA,                    // endbr64
+       0x55,                                      // push rbp
+       0x48, 0x89, 0xE5,                          // mov rbp, rsp
+       0x53,                                      // push rbx
+       0x48, 0x89, 0xFB,                          // mov rbx, rdi
+       0x48, 0x81, 0xEC, 0xD8, 0x00, 0x00, 0x00,  // sub rsp, 0xd8
+       0x48, 0x89, 0xB5, 0x48, 0xFF, 0xFF, 0xFF,  // mov [rbp-0xb8], rsi
+       0x48, 0x89, 0x95, 0x50, 0xFF, 0xFF, 0xFF,  // mov [rbp-0xb0], rdx
+       0x48, 0x89, 0x8D, 0x58, 0xFF, 0xFF, 0xFF,  // mov [rbp-0xa8], rcx
+       0x4C, 0x89, 0x85, 0x60, 0xFF, 0xFF, 0xFF,  // mov [rbp-0xa0], r8
+       0x4C, 0x89, 0x8D, 0x68, 0xFF, 0xFF, 0xFF,  // mov [rbp-0x98], r9
+       0x84, 0xC0,                                // test al, al
+       0x74, 0x07,                                // je spilled
+       0x0F, 0x29, 0x85, 0x70, 0xFF, 0xFF, 0xFF}, // movaps [rbp-0x90], xmm0
+      {0xF3, 0x0F, 0x1E, 0xFA,                    // endbr64
+       0x53,                                      // push rbx
+       0x48, 0x89, 0xFB,                          // mov rbx, rdi
+       0x48, 0x81, 0xEC, 0xD0, 0x00, 0x00, 0x00,  // sub rsp, 0xd0
+       0x48, 0x89, 0x74, 0x24, 0x28,              // mov [rsp+0x28], rsi
+       0x48, 0x89, 0x54, 0x24, 0x30,              // mov [rsp+0x30], rdx
+       0x48, 0x89, 0x4C, 0x24, 0x38,              // mov [rsp+0x38], rcx
+       0x4C, 0x89, 0x44, 0x24, 0x40,              // mov [rsp+0x40], r8
+       0x4C, 0x89, 0x4C, 0x24, 0x48,              // mov [rsp+0x48], r9
+       0x84, 0xC0,                                // test al, al
+       0x74, 0x05,                                // je spilled
+       0x0F, 0x29, 0x44, 0x24, 0x50},             // movaps [rsp+0x50], xmm0
+      {0x55,                                      // push rbp
+       0x48, 0x89, 0xE5,                          // mov rbp, rsp
+       0x48, 0x81, 0xEC, 0xD0, 0x00, 0x00, 0x00,  // sub rsp, 0xd0
+       0x84, 0xC0,                                // test al, al
+       0x74, 0x07,                                // je spilled
+       0x0F, 0x29, 0x85, 0x60, 0xFF, 0xFF, 0xFF,  // movaps [rbp-0xa0], xmm0
+       0x4C, 0x89, 0x8D, 0x58, 0xFF, 0xFF, 0xFF,  // spilled: mov [rbp-0xa8], r9
+       0x4C, 0x89, 0x85, 0x50, 0xFF, 0xFF, 0xFF,  // mov [rbp-0xb0], r8
+       0x48, 0x89, 0x8D, 0x48, 0xFF, 0xFF, 0xFF,  // mov [rbp-0xb8], rcx
+       0x48, 0x89, 0x95, 0x40, 0xFF, 0xFF, 0xFF,  // mov [rbp-0xc0], rdx
+       0x48, 0x89, 0xB5, 0x38, 0xFF, 0xFF, 0xFF,  // mov [rbp-0xc8], rsi
+       0x48, 0x89, 0x7D, 0xF8,                    // mov [rbp-0x8], rdi
+       0x48, 0x8B, 0x5D, 0xF8}};                  // mov rbx, [rbp-0x8]
+  constexpr va_t Panic = Text, Wrapper = Text + 0x60, Caller = Text + 0x80,
+                 ExitStub = Text + 0xA0;
+  for (const std::vector<uint8_t> &Prologue : Prologues) {
+    SCOPED_TRACE(Prologue.size());
+    std::vector<uint8_t> Code(0xB0, 0xCC);
+    std::vector<uint8_t> PanicCode = Prologue;
+    for (uint8_t B : {0x48, 0x89, 0xDF, // mov rdi, rbx
+                      0xE8})            // call exit
+      PanicCode.push_back(B);
+    for (uint8_t B : rel32(Panic + PanicCode.size() + 4, ExitStub))
+      PanicCode.push_back(B);
+    ASSERT_LE(PanicCode.size(), Wrapper - Panic);
+    put(Code, Panic, PanicCode);
+    std::vector<uint8_t> WrapperCode = {0x48, 0x89, 0xFE, // mov rsi, rdi
+                                        0x31, 0xC0,       // xor eax, eax
+                                        0xBF, 0x00, 0x20,
+                                        0x40, 0x00, // mov edi, fmt
+                                        0xE8};      // call panic
+    for (uint8_t B : rel32(Wrapper + 15, Panic))
+      WrapperCode.push_back(B);
+    put(Code, Wrapper, WrapperCode);
+    std::vector<uint8_t> CallerCode = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                       0xE8};                  // call wrapper
+    for (uint8_t B : rel32(Caller + 9, Wrapper))
+      CallerCode.push_back(B);
+    for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                      0xC3})                  // ret
+      CallerCode.push_back(B);
+    put(Code, Caller, CallerCode);
+    const BinaryImage Img = makeImportImage(
+        Code, {{Panic, "panic"}, {Wrapper, "wrapper"}, {Caller, "caller"}},
+        {{ExitStub, "exit"}});
+    llvm::LLVMContext Ctx;
+    PipelineOptions Opts;
+    Opts.EmitDumpOutput = false;
+    Opts.OnlyFunctionEntries = {Caller};
+    const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    for (const va_t Entry : {Panic, Wrapper}) {
+      const auto Reads = Result.CallEntryReadGPRs.find(Entry);
+      ASSERT_NE(Reads, Result.CallEntryReadGPRs.end()) << std::hex << Entry;
+      for (const uint64_t Spilled :
+           {x86reg::RSI, x86reg::RDX, x86reg::RCX, x86reg::R8, x86reg::R9})
+        EXPECT_EQ(Reads->second[Spilled / 8], 0)
+            << std::hex << Entry << " reads " << Spilled;
+      EXPECT_EQ(Reads->second[x86reg::RDI / 8], 8) << std::hex << Entry;
+    }
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Img.Arch;
+    Options.Format = Img.Format;
+    Options.Image = &Img;
+    ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+    const std::string Body = body(Source, "caller");
+    ASSERT_FALSE(Body.empty()) << Source;
+    EXPECT_NE(Body.find("wrapper(arg0)"), std::string::npos) << Body;
+    EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+  }
 }
 
 TEST(SysVCallContract, ErrorCheckingWrapperEndsAtItsExitHelper) {
