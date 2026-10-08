@@ -86,11 +86,20 @@ protected:
 
 private:
   enum class Fetch { Jump, Before, After, Refresh };
+  /// Where a refresh puts the cursor back: the line of its item at \p sub,
+  /// or for a content line its place among the item's content lines, which
+  /// header lines added or removed above it (a function created or deleted
+  /// there) do not change.  A cursor in view stays in view.
+  struct CursorPlace {
+    Address item = 0;
+    int sub = 0;
+    int content = -1;
+    bool visible = false;
+  };
   void request(Fetch kind, Address address, int sub, int before, int after,
-               std::optional<Address> cursorItem = {}, int cursorSub = 0);
+               std::optional<CursorPlace> cursor = {});
   void accept(Fetch kind, const QJsonObject &payload, quint64 serial,
-              std::optional<Address> cursorItem, int cursorSub,
-              Address jumpAddress);
+              std::optional<CursorPlace> cursor, Address jumpAddress);
   void ensureLoaded();
   void trim();
   void scrollLines(int delta);
@@ -129,6 +138,9 @@ private:
   Address pendingScrollAddress_ = 0;
   bool updatingScrollBar_ = false;
   std::optional<Address> lastEmitted_;
+  /// The function of the last emitted location: the same address in a
+  /// function created or deleted there is a new location.
+  std::optional<Address> lastFunction_;
   bool contentReported_ = false;
   std::optional<Address> pendingJump_;
 };

@@ -711,6 +711,22 @@
         <source>List the instructions that refer to strings</source>
         <translation>List the instructions that refer to strings</translation>
     </message>
+    <message>
+        <source>Create &amp;function</source>
+        <translation>Create &amp;function</translation>
+    </message>
+    <message>
+        <source>Start a function at the current address</source>
+        <translation>Start a function at the current address</translation>
+    </message>
+    <message>
+        <source>&amp;Delete function</source>
+        <translation>&amp;Delete function</translation>
+    </message>
+    <message>
+        <source>Stop treating the current function as one</source>
+        <translation>Stop treating the current function as one</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1074,6 +1090,10 @@
     <message>
         <source>&amp;Help</source>
         <translation>&amp;Help</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>&amp;Functions</translation>
     </message>
 </context>
 <context>
@@ -2094,6 +2114,14 @@ Signed: %4</translation>
     <message>
         <source>Strings: %1, %2 first, at least %3 columns</source>
         <translation>Strings: %1, %2 first, at least %3 columns</translation>
+    </message>
+    <message>
+        <source>Created a function at %1</source>
+        <translation>Created a function at %1</translation>
+    </message>
+    <message>
+        <source>Deleted the function at %1</source>
+        <translation>Deleted the function at %1</translation>
     </message>
 </context>
 </TS>

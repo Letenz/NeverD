@@ -711,6 +711,22 @@
         <source>List the instructions that refer to strings</source>
         <translation>Listar las instrucciones que hacen referencia a cadenas</translation>
     </message>
+    <message>
+        <source>Create &amp;function</source>
+        <translation>Crear &amp;función</translation>
+    </message>
+    <message>
+        <source>Start a function at the current address</source>
+        <translation>Iniciar una función en la dirección actual</translation>
+    </message>
+    <message>
+        <source>&amp;Delete function</source>
+        <translation>&amp;Eliminar función</translation>
+    </message>
+    <message>
+        <source>Stop treating the current function as one</source>
+        <translation>Dejar de tratar la función actual como función</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1074,6 +1090,10 @@
     <message>
         <source>&amp;Help</source>
         <translation>Ay&amp;uda</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>&amp;Funciones</translation>
     </message>
 </context>
 <context>
@@ -2094,6 +2114,14 @@ Con signo: %4</translation>
     <message>
         <source>Strings: %1, %2 first, at least %3 columns</source>
         <translation>Cadenas: %1, primero %2, al menos %3 columnas</translation>
+    </message>
+    <message>
+        <source>Created a function at %1</source>
+        <translation>Se creó una función en %1</translation>
+    </message>
+    <message>
+        <source>Deleted the function at %1</source>
+        <translation>Se eliminó la función en %1</translation>
     </message>
 </context>
 </TS>

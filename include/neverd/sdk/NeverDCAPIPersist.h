@@ -56,6 +56,24 @@ NEVERD_API const char *neverd_renames_json(neverd_session_t Sess);
 NEVERD_API int neverd_renames_save(neverd_session_t Sess);
 NEVERD_API int neverd_renames_load(neverd_session_t Sess);
 
+/// Make \p Entry, an address in executable code where no function starts or
+/// one neverd_func_delete removed, the entry of a function.  The user's last
+/// edit at an address decides over the image, the detector and analysis.
+/// Returns 0, or -1 with neverd_last_error.  Analysis restarts with the new
+/// function list; neverd_functions_save keeps the edit.
+NEVERD_API int neverd_func_create(neverd_session_t Sess, neverd_va_t Entry);
+/// Stop treating the function entry \p Entry as one, whether the image,
+/// analysis or neverd_func_create made it; no source makes it one again.
+/// Returns 0, or -1 with neverd_last_error.
+NEVERD_API int neverd_func_delete(neverd_session_t Sess, neverd_va_t Entry);
+/// The user's function edits, [{"addr","state"}] in address order, where
+/// "state" is "created" or "deleted".  Free with neverd_free_string.
+NEVERD_API const char *neverd_functions_json(neverd_session_t Sess);
+/// Write or read the edits as `<input>.neverd-functions.json`, which
+/// neverd_session_load reads too.  Return 0, or -1 with neverd_last_error.
+NEVERD_API int neverd_functions_save(neverd_session_t Sess);
+NEVERD_API int neverd_functions_load(neverd_session_t Sess);
+
 #ifdef __cplusplus
 }
 #endif

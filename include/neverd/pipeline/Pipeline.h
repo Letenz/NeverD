@@ -78,6 +78,10 @@ struct PipelineOptions {
   /// CLI export on large PEs. Callers that later need a different subset must
   /// run a new pipeline.
   std::set<va_t> OnlyFunctionEntries;
+  /// The user's function edits: an address made the entry of a function
+  /// (true) or no longer one (false).  Whole-program detection follows them;
+  /// a restricted run lifts its OnlyFunctionEntries.
+  std::map<va_t, bool> FunctionEdits;
   /// Explicit declarations for source rendering only; never consumed in
   /// PatchMode or LiftMode and never promoted to transformation evidence.
   std::map<va_t, SourceFunctionTypeHint> SourceTypeHints;

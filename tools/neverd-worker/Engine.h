@@ -39,6 +39,8 @@ public:
   /// {state, done, total, generation} for heartbeats; null before a load.
   Json backgroundState() const;
   static std::string version();
+  /// Whether the engine keeps function edits (function_create/_delete).
+  static bool keepsFunctionEdits();
 
 private:
   neverd_session_t session_ = nullptr;
@@ -84,6 +86,16 @@ private:
   std::vector<std::size_t> functionOrder_;
   LoadProgressSink loadProgress_;
   void invalidate();
+  /// Read every user-edit sidecar into the Session; false when one fails.
+  bool reloadUserState();
+  /// Read the function edits sidecar: true when it loaded or the engine keeps
+  /// no function edits.  A changed function list restarts its analysis.
+  bool reloadFunctionEdits();
+  /// The engine's function edits as rows; none from an older engine.
+  Json functionEditRows() const;
+  /// The function list changed: analysis restarts function by function and
+  /// the reference index is built again.
+  void functionsChanged();
   void requireLoaded() const;
   void requireWriter() const;
   void analyze();

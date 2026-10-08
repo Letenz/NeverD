@@ -23,9 +23,13 @@ constexpr char StringMinLengthKey[] = "strings/minLength";
 constexpr int MaxRecentFiles = 10;
 
 bool isEdit(const QString &operation) {
-  static const QSet<QString> edits{
-      QStringLiteral("annotation_set"), QStringLiteral("rename"),
-      QStringLiteral("undo"), QStringLiteral("redo"), QStringLiteral("save")};
+  static const QSet<QString> edits{QStringLiteral("annotation_set"),
+                                   QStringLiteral("rename"),
+                                   QStringLiteral("function_create"),
+                                   QStringLiteral("function_delete"),
+                                   QStringLiteral("undo"),
+                                   QStringLiteral("redo"),
+                                   QStringLiteral("save")};
   return edits.contains(operation);
 }
 
@@ -129,6 +133,9 @@ void Session::receive(const QJsonObject &incoming) {
     }
     connected_ = true;
     starting_ = false;
+    capabilities_.clear();
+    for (const auto &value : incoming.value("capabilities").toArray())
+      capabilities_.insert(value.toString());
     queries_.setAvailable(true);
     emit message(tr("Analysis engine %1 ready")
                      .arg(incoming.value("engine_version").toString()),
@@ -598,6 +605,33 @@ bool Session::acceptsEdit(std::optional<quint64> epoch) {
     return false;
   }
   return true;
+}
+
+void Session::createFunction(Address address, std::optional<quint64> epoch) {
+  if (!acceptsEdit(epoch))
+    return;
+  // Like a rename, a function edit commits at once over saved comments.
+  if (dirty_)
+    save();
+  command(QStringLiteral("function_create"), {{"address", hexAddress(address)}},
+          [this, address](const QJsonObject &) {
+            refreshHistory();
+            emit message(
+                tr("Created a function at %1").arg(displayAddress(address)), 0);
+          });
+}
+
+void Session::deleteFunction(Address entry, std::optional<quint64> epoch) {
+  if (!acceptsEdit(epoch))
+    return;
+  if (dirty_)
+    save();
+  command(QStringLiteral("function_delete"), {{"address", hexAddress(entry)}},
+          [this, entry](const QJsonObject &) {
+            refreshHistory();
+            emit message(
+                tr("Deleted the function at %1").arg(displayAddress(entry)), 0);
+          });
 }
 
 void Session::rename(Address function, const QString &name,

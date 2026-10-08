@@ -711,6 +711,22 @@
         <source>List the instructions that refer to strings</source>
         <translation>문자열을 참조하는 명령어를 나열합니다</translation>
     </message>
+    <message>
+        <source>Create &amp;function</source>
+        <translation>함수 만들기(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Start a function at the current address</source>
+        <translation>현재 주소에서 함수를 시작합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Delete function</source>
+        <translation>함수 삭제(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Stop treating the current function as one</source>
+        <translation>현재 함수를 더 이상 함수로 취급하지 않습니다</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1074,6 +1090,10 @@
     <message>
         <source>&amp;Help</source>
         <translation>도움말(&amp;H)</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>함수(&amp;F)</translation>
     </message>
 </context>
 <context>
@@ -2091,6 +2111,14 @@ Signed: %4</source>
     <message>
         <source>Strings: %1, %2 first, at least %3 columns</source>
         <translation>문자열: %1, %2 우선, 최소 %3열</translation>
+    </message>
+    <message>
+        <source>Created a function at %1</source>
+        <translation>%1에 함수를 만들었습니다</translation>
+    </message>
+    <message>
+        <source>Deleted the function at %1</source>
+        <translation>%1의 함수를 삭제했습니다</translation>
     </message>
 </context>
 </TS>
