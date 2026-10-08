@@ -307,6 +307,29 @@ def run(executable):
         assert "stderr dq ?" in bss, bss
         assert "db 28h dup(?)" in bss, bss
         assert any(line.startswith("qword_FFFF800012343230 dq ? ; DATA XREF: function_7+6") for line in bss), bss
+        # The user's data items: D makes a value and, again, the next size; U
+        # shows the item's bytes as bytes; A the string that starts there.
+        # Each is one step of history, and code is no item's.
+        assert "item_define" in client.hello["capabilities"]
+        item = {"address": "0xffff800012343230", "action": "data"}
+        assert client.call("item_define", item)["payload"]["kind"] == "byte"
+        assert client.call("item_define", item)["payload"]["kind"] == "word"
+        bss = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343230", "before": 0, "after": 2})["payload"]["lines"]]
+        assert any(line.startswith("word_FFFF800012343230 dw ?") for line in bss), bss
+        undefined = client.call("item_define", {"address": "0xffff800012343230", "action": "undefine"})["payload"]
+        assert undefined["kind"] == "undefined" and undefined["size"] == 2, undefined
+        bss = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343230", "before": 0, "after": 2})["payload"]["lines"]]
+        assert any(line.startswith("unk_FFFF800012343230 db ?") for line in bss), bss
+        assert client.call("undo")["status"] == "ok"
+        string = client.call("item_define", {"address": "0xffff800012343108", "action": "string"})["payload"]
+        assert string == {"address": "0xffff800012343108", "kind": "string", "size": 10, "saved": True}, string
+        refused = client.call("item_define", {"address": BASE, "action": "data"})
+        assert refused["error"]["code"] == "invalid_request", refused
+        steps = [(step["kind"], step["address"]) for step in client.call("history")["payload"]["items"]
+                 if step["applied"] and step["kind"] == "item"]
+        assert steps == [("item", "0xffff800012343230")] * 2 + [("item", "0xffff800012343108")], steps
         client.call("string_options", {"encodings": ["ascii", "utf-8", "utf-16le"]})
         # Hex views ask for bytes as text in an encoding, a cell per byte.
         bytes_ = client.call("bytes", {"address": "0xffff800012343000", "size": 4, "text_encoding": "ascii"})["payload"]
@@ -355,6 +378,11 @@ def run(executable):
         assert reopened.call("open", {"path": str(binary)})["status"] == "ok"
         assert reopened.call("annotations")["payload"]["items"][0]["text"] == note
         assert reopened.call("functions", {"filter": "renamed_function"})["payload"]["total"] == 1
+        # The item is the user's; its label waits for the reference index.
+        assert reopened.call("xrefs", {"address": "0xffff800012343230"})["status"] == "ok"
+        bss = [" ".join(line["text"].split()) for line in reopened.call(
+            "listing", {"address": "0xffff800012343230", "before": 0, "after": 2})["payload"]["lines"]]
+        assert any(line.startswith("word_FFFF800012343230 dw ?") for line in bss), bss
         reopened.close()
 
     malformed = Client(executable)
