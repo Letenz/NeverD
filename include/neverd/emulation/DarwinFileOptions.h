@@ -111,7 +111,7 @@ struct DarwinFileOptions {
   std::optional<std::vector<uint8_t>> StandardInput;
   /// Exclusive FD ceiling, including the initially open descriptors 0/1/2.
   uint32_t DescriptorLimit = darwin_file_limits::DefaultDescriptors;
-  /// Optional metadata for existing files or directories, including ancestors.
+  /// Optional metadata for existing files, directories and symbolic links.
   std::map<std::string, DarwinFileMetadata> Metadata;
   /// Explicit directories, including empty ones; root and ancestors are
   /// implicit.
@@ -169,6 +169,11 @@ struct DarwinFileOptions {
   /// parent must be mutable; both actual parents still need SWAP support for
   /// distinct-object exchange. Fixed references charge path+NUL independently.
   std::set<std::string> ExchangeableDirectories;
+  /// Fixed initial symbolic-link names and exact nonempty, non-NUL target
+  /// bytes. Targets need not exist and are never normalized at admission.
+  /// Namespace mutation grants cannot coexist with a nonempty link catalogue;
+  /// regular-file content mutations remain owned by the actual target file.
+  std::map<std::string, std::vector<uint8_t>> SymbolicLinks;
 };
 } // namespace neverd::emulation
 #endif

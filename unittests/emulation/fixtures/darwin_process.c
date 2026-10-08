@@ -140,6 +140,49 @@ static int priority_errors_only(void) {
 
 /* Original read-only raw buffer workload. No host login literal, text decoding
  * or session setters; virtual mode publishes the declared bytes unchanged. */
+static void login_fill_canary(unsigned char *Out, unsigned Size) {
+  const u64 Pattern = 0xa5a5a5a5a5a5a5a5UL;
+  while (Size >= 8) {
+    __builtin_memcpy(Out, &Pattern, 8);
+    Out += 8;
+    Size -= 8;
+  }
+  while (Size--)
+    *Out++ = 0xa5;
+}
+static int login_equal_bytes(const unsigned char *Actual,
+                             const unsigned char *Expected, unsigned Size) {
+  while (Size >= 8) {
+    u64 A, E;
+    __builtin_memcpy(&A, Actual, 8);
+    __builtin_memcpy(&E, Expected, 8);
+    if (A != E)
+      return 0;
+    Actual += 8;
+    Expected += 8;
+    Size -= 8;
+  }
+  while (Size--) {
+    if (*Actual++ != *Expected++)
+      return 0;
+  }
+  return 1;
+}
+static int login_canary_bytes(const unsigned char *Actual, unsigned Size) {
+  while (Size >= 8) {
+    u64 A;
+    __builtin_memcpy(&A, Actual, 8);
+    if (A != 0xa5a5a5a5a5a5a5a5UL)
+      return 0;
+    Actual += 8;
+    Size -= 8;
+  }
+  while (Size--) {
+    if (*Actual++ != 0xa5)
+      return 0;
+  }
+  return 1;
+}
 static int login_zero_calls(void) {
   unsigned error;
   const u64 pointers[] = {0,
@@ -179,23 +222,17 @@ static int login_buffer(int emit_values) {
                          0xffffffff000000ffUL,
                          -1UL};
   for (unsigned i = 0; i != 12; ++i) {
-    for (unsigned j = 0; j != sizeof(out); ++j)
-      out[j] = 0xa5;
+    login_fill_canary(out, sizeof(out));
     if (call(49, (u64)(out + 3), lengths[i], -1UL, -1UL, -1UL, -1UL, &error) ||
         error || secondary)
       return 203;
     unsigned n = (unsigned)lengths[i];
     if (n > 255)
       n = 255;
-    for (unsigned j = 0; j != 3; ++j)
-      if (out[j] != 0xa5)
-        return 204;
-    for (unsigned j = 0; j != n; ++j)
-      if (out[3 + j] != snapshot[j])
-        return 204;
-    for (unsigned j = 3 + n; j != sizeof(out); ++j)
-      if (out[j] != 0xa5)
-        return 204;
+    if (!login_canary_bytes(out, 3) ||
+        !login_equal_bytes(out + 3, snapshot, n) ||
+        !login_canary_bytes(out + 3 + n, sizeof(out) - 3 - n))
+      return 204;
   }
   const u64 pointers[] = {0,
                           1,
@@ -3319,6 +3356,57 @@ static int file_access(const char *path) {
   u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
   ACCESS_EXPECT(!error && fd != dir);
   ACCESS_EXPECT(call(199, fd, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  const u64 lookup_flags[] = {0x100, 0x20000000, 0x1234567800000100UL,
+                              0xfedcba9820000000UL};
+  for (unsigned alias = 0; alias != 2; ++alias) {
+    for (unsigned i = 0; i != sizeof(lookup_flags) / sizeof(*lookup_flags);
+         ++i) {
+      // Resolve relative to the held parent; native /var and /tmp may be links.
+      u64 opened =
+          call(alias ? 464 : 463, 0x1234567800000000UL | dir, (u64)leaf,
+               lookup_flags[i] | 0x1000000, 0, 0, 0, &error);
+      ACCESS_EXPECT(!error && !secondary && opened != fd && opened != dir);
+      ACCESS_EXPECT(call(92, opened, 3, 0, 0, 0, 0, &error) == 0 && !error &&
+                    !secondary);
+      ACCESS_EXPECT(call(92, opened, 1, 0, 0, 0, 0, &error) == 1 && !error);
+      u64 dup = call(41, opened, 0, 0, 0, 0, 0, &error);
+      ACCESS_EXPECT(!error && dup != opened);
+      ACCESS_EXPECT(call(92, dup, 1, 0, 0, 0, 0, &error) == 0 && !error);
+      ACCESS_EXPECT(call(92, dup, 3, 0, 0, 0, 0, &error) == 0 && !error);
+      ACCESS_EXPECT(call(6, dup, 0, 0, 0, 0, 0, &error) == 0 && !error);
+      ACCESS_EXPECT(call(6, opened, 0, 0, 0, 0, 0, &error) == 0 && !error);
+    }
+    u64 opened = call(alias ? 398 : 5, (u64)path, 0x1234567800000100UL, 0, 0, 0,
+                      0, &error);
+    ACCESS_EXPECT(!error && !secondary);
+    ACCESS_EXPECT(call(92, opened, 3, 0, 0, 0, 0, &error) == 0 && !error);
+    ACCESS_EXPECT(call(6, opened, 0, 0, 0, 0, 0, &error) == 0 && !error);
+    ACCESS_EXPECT(call(alias ? 398 : 5, 1, 0x20000100, 0, 0, 0, 0, &error) ==
+                      22 &&
+                  error && !secondary);
+    ACCESS_EXPECT(
+        call(alias ? 464 : 463, -1UL, 1, 0x20000103, 0, 0, 0, &error) == 14 &&
+        error);
+#if defined(__aarch64__)
+    ACCESS_EXPECT(!secondary);
+#else
+    ACCESS_EXPECT(secondary == 0x20000103);
+#endif
+    ACCESS_EXPECT(call(alias ? 464 : 463, -1UL, (u64)leaf, 0x20000100, 0, 0, 0,
+                       &error) == 9 &&
+                  error);
+    ACCESS_EXPECT(call(alias ? 464 : 463, fd, (u64)leaf, 0x20000100, 0, 0, 0,
+                       &error) == 20 &&
+                  error);
+    ACCESS_EXPECT(call(alias ? 464 : 463, dir, (u64)leaf, 0x20000100, 0, 0, 0,
+                       &error) == 22 &&
+                  error);
+#if defined(__aarch64__)
+    ACCESS_EXPECT(!secondary);
+#else
+    ACCESS_EXPECT(secondary == 0x20000100);
+#endif
+  }
   const u64 modes[] = {0,        8,          0x80,       0x100,
                        0x400000, 0x80000000, 0xffc001f8, 0x1234567800000000UL};
   for (unsigned i = 0; i != sizeof(modes) / sizeof(*modes); ++i) {
@@ -3536,7 +3624,124 @@ static volatile unsigned char reclaimable[PAGE * 2]
 #ifdef DARWIN_THREAD_ENTRY
 #define main darwin_body
 #endif
+/* The caller supplies a disposable native parent or the closed guest root.
+ * Link targets stay relative so both use the same raw bytes and syscall path.
+ * Every copy checks all bytes, including the unmodified destination suffix. */
+static int symbolic_links(const char *input) {
+  unsigned error;
+  char root[1024];
+  unsigned length = 0, slash = 0;
+  while (input[length] && length < sizeof(root) - 1) {
+    root[length] = input[length];
+    if (input[length] == '/')
+      slash = length;
+    ++length;
+  }
+  if (!length || input[length] || !equal(input + slash + 1, "data"))
+    return 225;
+  root[slash ? slash : 1] = 0;
+  u64 dir = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 226;
+  const char names[][16] = {"link", "dangling", "cycle", "dirlink"};
+  const u64 flags[] = {0x100, 0x20000000};
+  for (unsigned i = 0; i != 4; ++i) {
+    for (unsigned j = 0; j != 2; ++j) {
+      if (call(463, dir, (u64)names[i], flags[j], 0, 0, 0, &error) != 62 ||
+          !error)
+        return 227;
+      if (call(463, dir, (u64)names[i], flags[j] | 0xa00, 0600, 0, 0, &error) !=
+              17 ||
+          !error)
+        return 228;
+    }
+    for (unsigned j = 0; j != 3; ++j) {
+      const u64 nofollow[] = {0x20, 0x800, 0x820};
+      if (call(466, dir, (u64)names[i], 0, nofollow[j], 0, 0, &error) ||
+          error || secondary)
+        return 229;
+    }
+  }
+  if (call(463, dir, (u64) "link", 0x100100, 0, 0, 0, &error) != 20 || !error)
+    return 230;
+  if (call(466, dir, (u64) "dirlink/../link", 0, 0x800, 0, 0, &error) != 62 ||
+      !error)
+    return 231;
+  u64 fd = call(463, dir, (u64) "link", 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 232;
+  unsigned char bytes[32];
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, fd, (u64)(bytes + 8), 2, 0, 0, 0, &error) != 2 || error ||
+      secondary)
+    return 233;
+  if (bytes[8] != '0' || bytes[9] != '1' || !login_canary_bytes(bytes, 8) ||
+      !login_canary_bytes(bytes + 10, 22))
+    return 234;
+  if (call(13, dir, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 235;
+  // Plain readlink narrows the count, while readlinkat retains size_t.
+  if (call(12, (u64)root, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 236;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(58, (u64) "link", (u64)(bytes + 8), 0x1234567800000002UL, 0, 0, 0,
+           &error) != 2 ||
+      error || secondary)
+    return 237;
+  if (bytes[8] != 'd' || bytes[9] != 'a' || !login_canary_bytes(bytes, 8) ||
+      !login_canary_bytes(bytes + 10, 22))
+    return 238;
+  if (call(473, dir, (u64) "link", (u64)(bytes + 8), 0x100000002UL, 0, 0,
+           &error) != 22 ||
+      !error)
+    return 239;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (u64)(bytes + 8))
+#endif
+    return 240;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(473, dir, (u64) "chain////", (u64)(bytes + 8), 32, 0, 0, &error) !=
+          4 ||
+      error || secondary ||
+      !login_equal_bytes(bytes + 8, (const unsigned char *)"data", 4) ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 12, 20))
+    return 241;
+  if (call(58, (u64) "link", -1UL, 0, 0, 0, 0, &error) || error || secondary)
+    return 242;
+  if (call(58, (u64) "data", -1UL, 0, 0, 0, 0, &error) != 22 || !error)
+    return 243;
+  if (call(58, 0, 0, 0x80000000UL, 0, 0, 0, &error) != 22 || !error)
+    return 244;
+  unsigned char target[144], link[144];
+  if (call(339, fd, (u64)target, 0, 0, 0, 0, &error) || error || secondary)
+    return 245;
+  if (call(470, dir, (u64) "link", (u64)link, 0x800, 0, 0, &error) || error ||
+      secondary)
+    return 246;
+  if ((little_integer(target + 4, 2) & 0xf000) != 0x8000 ||
+      little_integer(target + 96, 8) != 10 ||
+      (little_integer(link + 4, 2) & 0xf000) != 0xa000 ||
+      little_integer(link + 96, 8) != 4 ||
+      little_integer(target + 8, 8) == little_integer(link + 8, 8))
+    return 247;
+  if (call(470, fd, 0, (u64)link, 0xc20, 0, 0, &error) || error || secondary ||
+      !login_equal_bytes(link, target, sizeof(link)))
+    return 248;
+  if (call(6, fd, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(6, dir, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 249;
+  const char marker = 'y';
+  return call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error &&
+                 !secondary
+             ? 37
+             : 250;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
+  if (argc >= 2 && equal(argv[1], "symbolic-links"))
+    return argc < 3 ? 225 : symbolic_links(argv[2]);
   unsigned error = 0;
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
