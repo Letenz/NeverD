@@ -104,6 +104,16 @@ FiniteValues enumerateFiniteValues(FiniteDomainEncoding &Encoding,
                                    uint64_t MaxSymbolicNodes, uint64_t &Queries,
                                    FiniteValueObserver Observe = {});
 
+/// Same complete enumeration with its actual encoding failure. None for
+/// search, global budget, cardinality and successful outcomes.
+FiniteValues enumerateFiniteValues(FiniteDomainEncoding &Encoding,
+                                   symbolic::SymRef Predicate,
+                                   llvm::ArrayRef<symbolic::SymRef> Values,
+                                   uint32_t Limit, uint64_t MaxQueries,
+                                   uint64_t MaxSymbolicNodes, uint64_t &Queries,
+                                   solver::BlastError &EncodingError,
+                                   FiniteValueObserver Observe = {});
+
 } // namespace neverd::analysis::detail
 
 #endif // NEVERD_ANALYSIS_INTERPRETER_FINITEVALUES_H
