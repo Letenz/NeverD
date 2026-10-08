@@ -8,6 +8,7 @@
 
 #include "neverd/evm/bytecode/EVMMetadata.h"
 #include "neverd/evm/bytecode/EVMOpcodes.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -154,15 +155,15 @@ normalizeBytecode(llvm::ArrayRef<uint8_t> Original, BytecodeSourceKind Source,
 llvm::Expected<LoadedBytecode>
 loadBytecodeFile(const std::filesystem::path &Path,
                  const BytecodeLoadOptions &Options) {
-  auto Buffer = llvm::MemoryBuffer::getFile(Path.string(), /*IsText=*/false,
+  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path), /*IsText=*/false,
                                             /*RequiresNullTerminator=*/false);
   if (!Buffer)
-    return detail::inputError(Path.string(), "cannot open input file");
-  return decodeBytecodeInput((*Buffer)->getBuffer(), Path.string(), Options);
+    return detail::inputError(pathToUTF8(Path), "cannot open input file");
+  return decodeBytecodeInput((*Buffer)->getBuffer(), pathToUTF8(Path), Options);
 }
 
 bool hasEVMFileExtension(const std::filesystem::path &Path) {
-  std::string Extension = Path.extension().string();
+  std::string Extension = pathToUTF8(Path.extension());
   std::transform(Extension.begin(), Extension.end(), Extension.begin(),
                  [](char C) { return llvm::toLower(C); });
   return llvm::any_of(kEVMExtensions, [&](llvm::StringRef Known) {
@@ -171,7 +172,7 @@ bool hasEVMFileExtension(const std::filesystem::path &Path) {
 }
 
 bool looksLikeEVMInput(const std::filesystem::path &Path) {
-  auto Buffer = llvm::MemoryBuffer::getFile(Path.string(), /*IsText=*/false,
+  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path), /*IsText=*/false,
                                             /*RequiresNullTerminator=*/false);
   if (!Buffer || looksBinary((*Buffer)->getBuffer()))
     return false;
@@ -182,7 +183,7 @@ bool looksLikeEVMInput(const std::filesystem::path &Path) {
                        ? BytecodeInputFormat::Artifact
                        : BytecodeInputFormat::Hex;
   auto Loaded =
-      decodeBytecodeInput((*Buffer)->getBuffer(), Path.string(), Options);
+      decodeBytecodeInput((*Buffer)->getBuffer(), pathToUTF8(Path), Options);
   if (!Loaded) {
     llvm::consumeError(Loaded.takeError());
     return false;
