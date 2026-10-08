@@ -93,3 +93,28 @@ TEST(ARM32ThumbControl, CallWhoseHalfwordsLookLikeAUserRegisterLoad) {
   Ops.clear();
   EXPECT_THROW(ARMMode.lift(Insn.Raw, Ops), UnliftedInstruction);
 }
+
+TEST(ARM32ThumbControl, UndefinedInstructionWritesNoRegister) {
+  // `udf #0xfe`, MSVC's __debugbreak: the debugger resumes after it with
+  // every register as it was, so the trap must not define r0.
+  using namespace neverd;
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::ARM, InstructionMode::Thumb));
+  const uint8_t Break[] = {0xfe, 0xde};
+  DecodedInsn Insn{};
+  ASSERT_EQ(Dec.decodeOne(Break, sizeof(Break), 0x1000, Insn), 2);
+  ARMLifter L(Arch::ARM, InstructionMode::Thumb);
+  std::vector<LowOp> Ops;
+  L.lift(Insn.Raw, Ops);
+  bool Trap = false;
+  for (const LowOp &Op : Ops) {
+    if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
+        Op.Inputs[0].isConst() &&
+        Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::ArmUdf)) {
+      Trap = true;
+      EXPECT_FALSE(Op.Output.isReg());
+    }
+    EXPECT_FALSE(Op.Output.isReg() && Op.Output.Offset == armreg::R0);
+  }
+  EXPECT_TRUE(Trap);
+}
