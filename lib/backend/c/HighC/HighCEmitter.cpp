@@ -1509,6 +1509,28 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // the same headers and prototypes.
   for (auto &F : Funcs)
     collectCallTargets(F.Body, CallTargets);
+  // How many bytes of each callee's result the code reads: a call a
+  // statement assigns, its destination's; a call inside an expression may be
+  // read whole.  A function whose address the code only takes reads none.
+  std::map<std::string, uint16_t> ResultBytes;
+  const uint16_t RegisterBytes = pointerBytes(Opts.TheArch);
+  for (const HighFunc &F : Funcs)
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      const HighExpr *Top =
+          S.Kind == StmtKind::Call ? S.CallExpr.get() : S.Val.get();
+      std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+        if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::None) {
+          uint16_t &Bytes = ResultBytes[callIdentifier(E)];
+          if (&E != Top)
+            Bytes = RegisterBytes;
+          else if (S.Kind == StmtKind::Assign && S.Dst)
+            Bytes = std::max<uint16_t>(Bytes, S.Dst->Type ? S.Dst->Type->Size
+                                                          : S.Dst->Var.Size);
+        }
+        E.forEachChildExpr([&](const ExprPtr &Child) { Visit(*Child); });
+      };
+      forEachExpr(S, [&](const ExprPtr &E) { Visit(*E); });
+    });
   // A function whose address the code takes is declared as a callee is.
   CallTargets.insert(AddressTakenFunctions.begin(),
                      AddressTakenFunctions.end());
@@ -1903,13 +1925,20 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         if (!Prototype->ParamCount)
           OS << "void";
       } else {
-        OS << "extern int " << Identifier << "(";
+        const std::string Register =
+            "int" + std::to_string(pointerBytes(Opts.TheArch) * 8) + "_t";
+        // A callee nothing declares returns its register whole.  An int
+        // holds the result while the code reads at most an int of it; a
+        // 64-bit pointer read through one would lose its upper half.
+        const auto Read = ResultBytes.find(Name);
+        const bool WholeRegister =
+            Read != ResultBytes.end() && Read->second > sizeof(int32_t);
+        OS << "extern " << (WholeRegister ? Register : "int") << " "
+           << Identifier << "(";
         if (auto Arity = knownArity(Symbol, Name);
             Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
           // Each argument fills one integer register: an int64_t on a 32-bit
           // target would take two, and the arguments after it would move.
-          const std::string Register =
-              "int" + std::to_string(pointerBytes(Opts.TheArch) * 8) + "_t";
           if (Arity->IntArgs == 0)
             OS << "void";
           else {

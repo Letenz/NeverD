@@ -360,6 +360,27 @@ int main(void) { return probe(0) == 0xFFFF800012345679ull ? 0 : 1; }
 )");
 }
 
+TEST(HighCIntegerConversion, AnUndeclaredCalleeReturnsWhatItsCallersRead) {
+  // Nothing declares wide() or narrow().  The caller reads all eight bytes
+  // of wide()'s result, which an int would cut in half; an int holds what it
+  // reads of narrow()'s.
+  const TypeRef U64 = integer(8, false), U32 = integer(4, false);
+  HighFunc F =
+      function("probe", U64,
+               {assign(local(1, U64), HighExpr::makeCall("wide", 0x2000, {})),
+                assign(local(2, U32), HighExpr::makeCall("narrow", 0x2010, {})),
+                result(op(NdOp::INT_ADD, local(1, U64),
+                          extend(NdOp::INT_ZEXT, local(2, U32), U64), U64))});
+  const std::string Source = emit(F);
+  EXPECT_NE(Source.find("extern int64_t wide();"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("extern int narrow();"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+int64_t wide(void) { return INT64_C(0x7FFF800012345678); }
+int narrow(void) { return 5; }
+int main(void) { return probe(0) == 0x7FFF80001234567Dull ? 0 : 1; }
+)");
+}
+
 TEST(HighCIntegerConversion, ALandingPadDeclaresWhatTheUnwinderSets) {
   // A landing pad reads the exception object the unwinder hands it; no C
   // statement assigns it, and the name is declared all the same.

@@ -6148,7 +6148,7 @@ TEST(HighCPointerAddresses, SingleUseCallKeepsForwardedFrameBacking) {
 #include <string.h>
 static uintptr_t saved_home;
 static int step, bad;
-int CRecord_GetRecordName(int64_t self, uint64_t home) {
+int64_t CRecord_GetRecordName(int64_t self, uint64_t home) {
     uint64_t value = UINT64_C(0x9172635445362718);
     if (step++ != 0 || self != 19 || !home) bad = 1;
     saved_home = home;
@@ -6387,7 +6387,7 @@ TEST(HighCPointerAddresses, PostIfElseCallKeepsEarlierValueAndEvaluationPoint) {
       << Source;
   compileAndRunCallOrdering(Source + R"(
 static int step, bad, then_path;
-int old_format(int64_t name) {
+int64_t old_format(int64_t name) {
     if (step++ != 0 || name != 23) bad = 1;
     return -17;
 }
@@ -6399,7 +6399,7 @@ int format_value(int64_t name, int64_t format) {
     if (step++ != 1 || then_path || name != 23 || format != -17) bad = 1;
     return 0;
 }
-int next_format(int64_t name) {
+int64_t next_format(int64_t name) {
     if (step++ != 2 || name != 23) bad = 1;
     return 41;
 }
@@ -22967,7 +22967,7 @@ TEST(HighCPointerAddresses, EmptyIfCallReturnDoesNotLeaveUninitOrUnknownArgs) {
   // have to return their own defined value, and only one path calls out.
   compileAndRunCallOrdering(Source + R"(
 static int calls, bad, result;
-int CxxFrameHandler3(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
+int64_t CxxFrameHandler3(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
     ++calls;
     if (a != 13 || b != 17 || c != 19 || d != 23) bad = 1;
     return result;
@@ -32973,7 +32973,7 @@ TEST(HighCPointerAddresses, BareSiblingReturnMakesATailCallingFunctionVoid) {
   EXPECT_EQ(Source.find("unknown return value"), std::string::npos) << Source;
   compileAndRunCallOrdering(Source + R"(
 static int calls;
-int sub_14000173C(int64_t input) {
+int64_t sub_14000173C(int64_t input) {
     ++calls;
     return (int)input;
 }
@@ -43053,7 +43053,7 @@ TEST(HighCPointerAddresses, ImageFunctionNamedLikeLibcIsNotLibc) {
   Img.Symbols.push_back(GSym);
   const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
   EXPECT_EQ(HighC.find("<setjmp.h>"), std::string::npos) << HighC;
-  EXPECT_NE(HighC.find("extern int setjmp()"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("extern int64_t setjmp()"), std::string::npos) << HighC;
 }
 
 namespace {

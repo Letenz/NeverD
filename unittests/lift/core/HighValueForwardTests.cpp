@@ -255,9 +255,9 @@ int main(void) { return same_slot(7) == 7 && same_slot(9) == 9 ? 0 : 1; }
 
 TEST(HighValueForward, SlotLoadStaysBeforeAnAssignmentToItsSlot) {
   HighFunc F = reloaded("assigned_slot", 16);
-  F.Body[2] = assign(HighExpr::makeLoad(frameSlot(16),
-                                       NdType::makeInt(8, false)),
-                     constant(5));
+  F.Body[2] =
+      assign(HighExpr::makeLoad(frameSlot(16), NdType::makeInt(8, false)),
+             constant(5));
   const std::string Source = emit({F});
   EXPECT_NE(declarationOf(Source, "t1"), "") << Source;
   compileAndRun(Source + R"(
@@ -378,7 +378,7 @@ TEST(HighValueForward, StatusTestTakesTheCallItReads) {
       << Source;
   compileAndRun(Source + R"(
 static unsigned calls;
-int probe(uint64_t x) { ++calls; return (int)x - 10; }
+int64_t probe(uint64_t x) { ++calls; return (int64_t)x - 10; }
 int main(void) {
   for (uint64_t x = 0; x < 20; ++x) {
     calls = 0;
