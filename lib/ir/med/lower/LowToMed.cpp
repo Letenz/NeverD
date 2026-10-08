@@ -222,6 +222,14 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
       CallDispatchThunks->count(LOp.Inputs[0].Offset))
     return;
   const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
+  // A convention without register summaries still knows how many stack
+  // arguments a prototyped import reads (CallEntryStackArgs).
+  if (Convention && Convention->StackArgumentSummary &&
+      !Convention->RegisterArgumentsFromCalleeSummary && CallEntryStackArgs)
+    if (auto S = CallEntryStackArgs->find(LOp.Inputs[0].Offset);
+        S != CallEntryStackArgs->end())
+      MOp.CalleeStackArgs = static_cast<int8_t>(std::min(
+          S->second, static_cast<int>(std::numeric_limits<int8_t>::max())));
   const llvm::ArrayRef<uint64_t> ArgRegs = TRI.integerParamRegs(TargetFormat);
   const int8_t Slots =
       static_cast<int8_t>(std::min<size_t>(ArgRegs.size(), kTrackedArgSlots));

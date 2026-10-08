@@ -39,6 +39,20 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
          K < Found.size(); ++K)
       Found[K] = nullptr;
   }
+  // A tail jump leaves its own incoming stack arguments in place, so a slot
+  // the callee reads (a position below its CalleeStackArgs) that the body
+  // did not store passes the parameter there.  Stack positions start past
+  // the register ones, or past those used where they follow the used
+  // registers (i386).
+  const int FirstStackPosition =
+      Scan.Convention && Scan.Convention->StackArgumentsFollowUsedRegisters
+          ? Scan.FirstStackSlot
+          : static_cast<int>(RegisterPositions);
+  if (Scan.TailJump && Scan.OwnStackParam)
+    for (int K = FirstStackPosition;
+         K < Scan.CalleeStackArgs && K < static_cast<int>(Found.size()); ++K)
+      if (!Found[K])
+        Found[K] = Scan.OwnStackParam(K);
   // With positional slots a stack argument means every register argument is
   // passed, even the ones this block did not write (a pass-through of the
   // caller's own).

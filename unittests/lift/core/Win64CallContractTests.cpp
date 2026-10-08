@@ -189,13 +189,47 @@ TEST(Win64CallContract, AThunkJumpingThroughTheSlotForwardsTheArguments) {
     EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
 }
 
+TEST(Win64CallContract, AThunkForwardsTheStackArgumentsItsImportReads) {
+  // A MinGW thunk `jmp [__imp___getmainargs]`, called by wrap(a, b, c, d, e)
+  // with its own arguments: __getmainargs reads a fifth on the stack, which
+  // wrap stores at [rsp+20h] and the thunk leaves where its caller put it.
+  constexpr va_t Wrap = Text, Thunk = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> Body = {
+      0x48, 0x83, 0xEC, 0x38,       // sub rsp, 38h
+      0x48, 0x8B, 0x44, 0x24, 0x60, // mov rax, [rsp+60h]
+      0x48, 0x89, 0x44, 0x24, 0x20, // mov [rsp+20h], rax
+      0xE8};                        // call Thunk
+  for (uint8_t B : rel32(Wrap + Body.size() + 4, Thunk))
+    Body.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x38, 0xC3}) // add rsp, 38h; ret
+    Body.push_back(B);
+  put(Code, Wrap, Body);
+  put(Code, Thunk, throughSlot(Thunk, slot(0), /*Jump=*/true));
+  BinaryImage Img = makeImage(
+      Code, {{Wrap, "wrap"}, {Thunk, "getmainargs_thunk"}}, {"__getmainargs"});
+  // The PE loader records the thunk as the import's stub.
+  ASSERT_TRUE(Img.recordImportStub(Thunk, 0));
+  const std::string Source = liftEntries(Img, {Wrap, Thunk});
+  const std::string ThunkBody = body(Source, "getmainargs_thunk");
+  ASSERT_FALSE(ThunkBody.empty()) << Source;
+  EXPECT_NE(ThunkBody.find("arg4)"), std::string::npos) << ThunkBody;
+  const std::string WrapBody = body(Source, "wrap");
+  ASSERT_FALSE(WrapBody.empty()) << Source;
+  // A call to the stub names the import.
+  EXPECT_NE(WrapBody.find("__getmainargs("), std::string::npos) << WrapBody;
+  EXPECT_NE(WrapBody.find("arg4)"), std::string::npos) << WrapBody;
+  for (const std::string &Body : {ThunkBody, WrapBody})
+    EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+}
+
 TEST(Win64CallContract, TheRuntimesOwnPrototypeFixesWhatItsSlotReads) {
   // One function calls each import through its slot.  calloc reads RCX and
   // RDX by the C library's arity, _initterm by the Windows C runtime's own
   // prototype, and _lock reads RCX alone as that runtime declares it.
-  // __getmainargs takes a fifth argument on the stack, so its slot has no
-  // fixed reads, and neither has _pipe(fds, size, mode): POSIX pipe(fds)
-  // is another function.
+  // __getmainargs reads all four registers and a fifth argument on the
+  // stack.  _pipe(fds, size, mode) has no fixed reads: POSIX pipe(fds) is
+  // another function.
   const std::vector<const char *> Imports = {"calloc", "_initterm", "_lock",
                                              "__getmainargs", "_pipe"};
   constexpr va_t Caller = Text;
@@ -218,7 +252,12 @@ TEST(Win64CallContract, TheRuntimesOwnPrototypeFixesWhatItsSlotReads) {
   ASSERT_TRUE(Reads.count(slot(2)));
   EXPECT_EQ(Reads.at(slot(2))[family(x86reg::RCX)], 8u);
   EXPECT_EQ(Reads.at(slot(2))[family(x86reg::RDX)], 0u);
-  EXPECT_FALSE(Reads.count(slot(3)));
+  ASSERT_TRUE(Reads.count(slot(3)));
+  EXPECT_EQ(Reads.at(slot(3))[family(x86reg::R9)], 8u);
+  // Stack arguments count positions, the registers' included.
+  ASSERT_TRUE(Result.CallEntryStackArgs.count(slot(3)));
+  EXPECT_EQ(Result.CallEntryStackArgs.at(slot(3)), 5);
+  EXPECT_EQ(Result.CallEntryStackArgs.at(slot(0)), 0);
   EXPECT_FALSE(Reads.count(slot(4)));
 }
 

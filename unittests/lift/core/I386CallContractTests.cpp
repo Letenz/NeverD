@@ -164,4 +164,20 @@ TEST(I386CallContract, AStoreToALocalBetweenPushesIsNoArgument) {
   EXPECT_EQ(Call.find('7'), std::string::npos) << Call;
 }
 
+TEST(I386CallContract, AThunkJumpingThroughTheSlotForwardsItsArguments) {
+  // `jmp dword ptr [__imp__calloc]`: the thunk calls calloc, not the value
+  // it would load from an address, with the two arguments its caller left
+  // on the stack.
+  std::vector<uint8_t> Code = {0xFF,
+                               0x25, // jmp dword ptr [slot]
+                               static_cast<uint8_t>(slot(0)),
+                               static_cast<uint8_t>(slot(0) >> 8),
+                               static_cast<uint8_t>(slot(0) >> 16),
+                               static_cast<uint8_t>(slot(0) >> 24)};
+  const std::string Call = callIn(makeImage(Code, {"calloc"}), "calloc");
+  EXPECT_NE(Call.find("arg0"), std::string::npos) << Call;
+  EXPECT_NE(Call.find("arg1"), std::string::npos) << Call;
+  EXPECT_EQ(Call.find("unknown value"), std::string::npos) << Call;
+}
+
 } // namespace
