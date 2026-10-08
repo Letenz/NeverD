@@ -907,6 +907,14 @@ std::string_view dataNamePrefix(std::string_view sizeKeyword) {
   return {};
 }
 
+std::string_view sizeKeywordOf(std::uint64_t bytes) {
+#define NEVERD_DATA_SIZE_NAME(SizeKeyword, Bytes, Prefix)                      \
+  if (bytes == Bytes)                                                          \
+    return SizeKeyword;
+#include "neverd/DataNames.def"
+  return {};
+}
+
 std::optional<std::uint64_t> parseDummyName(std::string_view name) {
   static constexpr std::array prefixes = {
 #define NEVERD_DUMMY_NAME_PREFIX(Prefix) std::string_view(Prefix),

@@ -17,6 +17,10 @@ public:
   bool recovered() const { return recovered_; }
   const Json &committedState() const { return committedState_; }
   Json listing(std::size_t offset, std::size_t limit) const;
+  /// Record an edit: {"kind","address","before","after"}, the row of the
+  /// kind's table at that address on either side (null where none), and for
+  /// a table of rows, optional "rows" [{"address","before","after"}]: the
+  /// other rows the same edit changes, undone and redone with it.
   void stage(Json command);
   Json next(bool redo) const;
   void advance(bool redo);

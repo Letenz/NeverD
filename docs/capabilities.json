@@ -62,6 +62,11 @@
           "neverd_ir_llvm",
           "neverd_ir_low",
           "neverd_ir_med",
+          "neverd_item_clear",
+          "neverd_item_set",
+          "neverd_items_json",
+          "neverd_items_load",
+          "neverd_items_save",
           "neverd_last_error",
           "neverd_lift_dump",
           "neverd_lift_module",
@@ -100,6 +105,7 @@
           "neverd_proof_status_name",
           "neverd_read_bytes",
           "neverd_relocs_json",
+          "neverd_rename_addr",
           "neverd_rename_func",
           "neverd_renames_json",
           "neverd_renames_load",
@@ -172,10 +178,12 @@
           "neverd_sig_match_count",
           "neverd_sig_matches_json",
           "neverd_simplify_result_dispose",
+          "neverd_string_at",
           "neverd_string_encodings_json",
           "neverd_string_refs_json",
           "neverd_strings_ex_json",
           "neverd_strings_json",
+          "neverd_strings_page_json",
           "neverd_switches_json",
           "neverd_symbols_json",
           "neverd_synthesis_outcome_name",
@@ -402,6 +410,19 @@
           "neverd info --no-debug",
           "neverd info --pdb",
           "neverd info --v",
+          "neverd items",
+          "neverd items --arm-function-mode",
+          "neverd items --clear",
+          "neverd items --data",
+          "neverd items --encoding",
+          "neverd items --json",
+          "neverd items --map",
+          "neverd items --no-debug",
+          "neverd items --pdb",
+          "neverd items --size",
+          "neverd items --string",
+          "neverd items --undefine",
+          "neverd items --v",
           "neverd lift",
           "neverd lift --arm-function-mode",
           "neverd lift --dump-high",
@@ -486,7 +507,9 @@
           "neverd relocs --pdb",
           "neverd relocs --v",
           "neverd rename",
+          "neverd rename --addr",
           "neverd rename --arm-function-mode",
+          "neverd rename --clear",
           "neverd rename --func",
           "neverd rename --json",
           "neverd rename --list",
@@ -629,6 +652,7 @@
           "neverd_headers_json",
           "neverd_import_slots_json",
           "neverd_imports_json",
+          "neverd_items_json",
           "neverd_plugins_list_json",
           "neverd_pointer_refs_json",
           "neverd_relocs_json",
@@ -643,6 +667,7 @@
           "neverd_string_refs_json",
           "neverd_strings_ex_json",
           "neverd_strings_json",
+          "neverd_strings_page_json",
           "neverd_switches_json",
           "neverd_symbols_json",
           "neverd_unwind_frame_json",
@@ -12783,7 +12808,7 @@
         "External libraries, fixups, initialization/TLS, encrypted payloads, arm64e/PAC and unmodeled image contracts fail explicitly. No dyld linking, Objective-C/Swift runtime, Foundation/UIKit, AMFI, full application compatibility or native iOS-host HVF support is claimed.",
         "The complete regular input file, including unmapped metadata and trailing bytes, must fit memory_limit before parsing or copying. Reads use a bounded private snapshot; embedded-NUL paths, short reads and file-size changes are rejected. Host filesystem I/O has no hard wall-clock guarantee.",
         "Each available matching native backend is tested separately. Cross-ISA software execution and compilation cannot establish Intel HVF, Linux KVM or Windows WHP runtime coverage.",
-        "Fixed initial symbolic_links with raw target_hex share bounded guest namei, readlink/readlinkat and own metadata/snapshot admission.32 expansions and terminator-inclusive1024-byte paths are enforced. Nonempty links exclude namespace mutation grants; fixed-name writable regular targets retain file-object ownership. Dynamic/hard links, ACL enforcement and mutable link namespaces remain unsupported. Native ARM64 macOS observations do not establish physical iOS acceptance."
+        "Fixed initial symbolic_links with raw target_hex share bounded guest namei, readlink/readlinkat and own metadata/snapshot admission.32 expansions and terminator-inclusive1024-byte paths are enforced. Mutable directory names cannot contain fixed link names; separate mutable domains may contain targets created, moved, deleted or replaced at runtime. Existing grants and metadata policy apply; resolved FDs/CWD/mapping leases retain object ownership. Dynamic/hard links, ACL enforcement and mutable link namespaces remain unsupported. Native ARM64 macOS observations do not establish physical iOS acceptance."
       ],
       "tests": [
         {
@@ -12855,6 +12880,39 @@
           "target": "NeverDDarwinProcessTests",
           "source": "unittests/emulation/DarwinProcessTests.cpp",
           "filter": "*/DarwinProcess.SymbolicLinksPreserveRawTargetsMetadataAndNoFollowPolicies/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.FixedLinksObserveMutableTargetsAndRetainOldObjects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.FixedLinksObserveCreatedMovedAndReplacedTargets/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinMemoryTests.cpp",
+          "filter": "*/DarwinMemoryTest.FixedLinkReplacementSeparatesOldAndNewMappingLeases/*",
           "platforms": [
             "darwin",
             "linux",

@@ -76,6 +76,26 @@ NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 /// with neverd_last_error() for malformed options.
 NEVERD_API const char *neverd_strings_ex_json(neverd_session_t Sess,
                                               const char *OptionsJson);
+/// One page of neverd_strings_ex_json(): the strings that start at or after
+/// \p FirstAddr, at most \p MaxRows of them (clamped to 1..65536, but never
+/// splitting the strings that start at one address), as {"strings":[rows as
+/// that function lists them],"next_addr":"0x..."|null}.  The image is scanned
+/// once per options, so reading every page costs about one call of that
+/// function and no result grows with the image.  NULL with
+/// neverd_last_error() for malformed options.
+NEVERD_API const char *neverd_strings_page_json(neverd_session_t Sess,
+                                                const char *OptionsJson,
+                                                neverd_va_t FirstAddr,
+                                                int MaxRows);
+
+/// The string that starts at \p Addr, as neverd_strings_ex_json() reads one
+/// with \p OptionsJson (NULL for the default encodings), except that a single
+/// character is enough when the options name no "min_length".  Returns
+/// {"addr","length","chars","encoding","value"} as that function's rows, and
+/// "unit", the bytes of the encoding's code unit (and so of the terminator),
+/// or NULL with neverd_last_error() when no string starts there.
+NEVERD_API const char *neverd_string_at(neverd_session_t Sess, neverd_va_t Addr,
+                                        const char *OptionsJson);
 /// The encodings neverd_strings_ex_json() can search:
 /// [{"name","spelling","unit","default","legacy"},...], where "spelling" is
 /// how a listing names the encoding (empty for plain ASCII), "unit" the bytes

@@ -41,6 +41,8 @@ public:
   static std::string version();
   /// Whether the engine keeps function edits (function_create/_delete).
   static bool keepsFunctionEdits();
+  /// Whether the engine keeps the user's data items.
+  static bool keepsDataItems();
 
 private:
   neverd_session_t session_ = nullptr;
@@ -66,7 +68,6 @@ private:
   bool readOnly_ = false;
   std::uintmax_t loadedSize_ = 0;
   std::filesystem::file_time_type loadedTime_;
-  Json stringsCache_;
   /// neverd_strings_ex_json options as JSON text, empty for the defaults; a
   /// workbench preference that outlives the open file.
   std::string stringOptions_;
@@ -93,6 +94,11 @@ private:
   bool reloadFunctionEdits();
   /// The engine's function edits as rows; none from an older engine.
   Json functionEditRows() const;
+  /// Read the data items sidecar: true when it loaded or the engine keeps no
+  /// data items.  Changed items show in the listing.
+  bool reloadDataItems();
+  /// The user's data items as rows; none from an older engine.
+  Json dataItemRows() const;
   /// The function list changed: analysis restarts function by function and
   /// the reference index is built again.
   void functionsChanged();

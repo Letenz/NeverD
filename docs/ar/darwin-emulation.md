@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 21441b8b14985fbac413a4bb78aa57c696ad5eb07b70d439200550bdc6ce27a4 -->
+<!-- i18n-source: fab8f746a3afad0cc7aeaee21f82d848bf0bad20c33a1f8140b1f3c821e75281 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -738,7 +738,9 @@ getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem و
 
 يستخدم readlink(58) count موقعا من32 بت الدنيا، وreadlinkat(473) size_t كاملا؛ كلاهما يعيدint. تجاوزINT32_MAX يعيدEINVAL22 قبل المسار/FD. تنسخ min(count,الطول) بلاNUL ويفحص هذا الجزء فقط. الطول0 يفحص المسار/النوع ثم يتجاهل الخرج. غير الرابطEINVAL22؛ لا بايت قابل للكتابةEFAULT14؛ جزء قابل للكتابة: توقف قبل النسخ. تنتقل أخطاء النقل/ميزانية الذاكرة.
 
-تستبعد الروابط غير الفارغة عالميا MutableDirectories/RemovableDirectories/MovableDirectories/ExchangeableDirectories/SwapRenameDirectories/CreationPolicy. تستطيع WritableFiles/MutationPolicies الثابتة تغيير الملف الهدف. unlink/rename للرابط المحتفظ به يتوقفان قبل الأثر. الروابط الديناميكية/الصلبة وACL ومساحة الروابط القابلة للتغيير غير مدعومة. نجح مسبار ARM64 macOS في189 ملاحظة/115 مخزنا كاملا ضمن5 ثوان الأصلية؛ لا يثبت iOS الفعلي/Intel HVF/نظاما كاملا.
+تبقى أسماء الروابط وبايتات أهدافها الخام ثابتة. لا يجوز أن يكون MutableDirectories الجذر أو سلفاً بمقاطع المسار لاسم رابط ثابت؛ /work لا يحتوي /workspace/link. يمكن للمجالات القابلة للتغيير المنفصلة احتواء أهداف تُنشأ أو تُنقل أو تُحذف أو تُستبدل أثناء التنفيذ. تبقى فحوص الوالد والتركيب والأسماء البديلة والأعلام ودعم SWAP وسياسة الإنشاء؛ ويجب أن تتجاوز inode الجديدة كل قيم البيانات الوصفية واللقطات، بما فيها الروابط المحمية. تستطيع WritableFiles/MutationPolicies الثابتة تغيير الملف الهدف. unlink/rename للرابط المحتفظ به يتوقفان قبل الأثر. الروابط الديناميكية/الصلبة وACL ومساحة الروابط القابلة للتغيير غير مدعومة. نجح مسبار ARM64 macOS في189 ملاحظة/115 مخزنا كاملا ضمن5 ثوان الأصلية؛ لا يثبت iOS الفعلي/Intel HVF/نظاما كاملا.
+
+تسجل ضوابط ARM64 macOS DELETE/RENAME الإضافية البالغ عددها60 مخازن stat كاملة وحالة الأسماء قبل/بعد وهويات FD/CWD المحتفظ بها خلال حد5ث الأصلي. قد توسّع الشرطات النهائية رابطاً ثابتاً وتغيّر هدفه؛ ويرفض NOFOLLOW_ANY التوسيع اللازم مع ELOOP. يتحقق symbolic-link-mutations دون SDK من الإنشاء والأهداف المفقودة والنقل/الحذف/الاستبدال ووالد CWD المحتفظ به وكل البايتات الأصلية10 للملف قبل إغلاق FD، مع استمرار فحص بايتات التعيين10 بعد الإغلاق. لا يثبت ذلك iOS الفعلي أو Intel الأصلي.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"symbolic_links":[{"path":"/link","target_hex":"64617461"}],"working_directory":"/"}}
