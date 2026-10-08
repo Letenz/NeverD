@@ -727,6 +727,30 @@
         <source>Stop treating the current function as one</source>
         <translation>不再将当前函数视为函数</translation>
     </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>数据(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>在当前地址定义一个数值；再按一次换成下一个大小</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>字符串(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>定义从当前地址开始的字符串</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>取消定义(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>将当前项显示为原始字节</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2119,6 +2143,18 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>已删除 %1 处的函数</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>%1 处的字节已经是未定义的</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>已取消 %1 处的定义</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>已在 %2 定义 %1</translation>
     </message>
 </context>
 </TS>

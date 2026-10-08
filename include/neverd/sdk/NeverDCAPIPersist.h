@@ -79,8 +79,9 @@ NEVERD_API int neverd_functions_load(neverd_session_t Sess);
 /// {"kind":"string","encoding":E,"size":N} for a string of N bytes in
 /// encoding E (a name of neverd_string_encodings_json()), its zero terminator
 /// included, or {"kind":"undefined","size":N} for N bytes shown as bytes,
-/// whatever analysis reads there.  An item replaces the one at its address
-/// and may share no byte with another.  Returns 0, or -1 with
+/// whatever analysis reads there.  An item replaces the one at its address;
+/// undefined bytes it covers give way to it and stay undefined around it,
+/// and it may share no byte with another item.  Returns 0, or -1 with
 /// neverd_last_error.  neverd_items_save keeps the items.
 NEVERD_API int neverd_item_set(neverd_session_t Sess, neverd_va_t Addr,
                                const char *Row);

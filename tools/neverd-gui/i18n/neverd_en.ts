@@ -727,6 +727,30 @@
         <source>Stop treating the current function as one</source>
         <translation>Stop treating the current function as one</translation>
     </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>&amp;Data</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>Define a value at the current address; again for the next size</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>&amp;String</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>Define the string that starts at the current address</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>Undef&amp;ine</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>Show the current item&apos;s bytes as bytes</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2122,6 +2146,18 @@ Signed: %4</translation>
     <message>
         <source>Deleted the function at %1</source>
         <translation>Deleted the function at %1</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>The bytes at %1 are already undefined</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>Undefined the item at %1</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>Defined %1 at %2</translation>
     </message>
 </context>
 </TS>

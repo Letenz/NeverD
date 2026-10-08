@@ -35,6 +35,8 @@ using PointerAtFunction = int (*)(neverd_session_t, neverd_va_t, neverd_va_t *,
 using DataSymbolsFunction = const char *(*)(neverd_session_t);
 using StringsExFunction = const char *(*)(neverd_session_t, const char *);
 using ItemsFunction = const char *(*)(neverd_session_t);
+using StringAtFunction = const char *(*)(neverd_session_t, neverd_va_t,
+                                         const char *);
 using DecodeTextFunction = const char *(*)(const unsigned char *, int,
                                            const char *);
 using StringRefsFunction = const char *(*)(neverd_session_t, const char *,
@@ -204,8 +206,6 @@ bool isBranch(Flow flow) {
 #include "ListingVocabulary.def"
 #define NEVERD_DATA_ITEM_NAME(Id, Prefix)                                      \
   constexpr std::string_view Id = Prefix;
-#define NEVERD_DATA_ITEM_KIND(Id, Spelling)                                    \
-  constexpr std::string_view Id = Spelling;
 #include "neverd/DataNames.def"
 
 struct Region {
@@ -508,6 +508,7 @@ struct Listing::Impl {
   DataSymbolsFunction dataSymbols = nullptr;
   StringsExFunction stringsEx = nullptr;
   ItemsFunction itemsQuery = nullptr;
+  StringAtFunction stringAtQuery = nullptr;
   DecodeTextFunction decodeText = nullptr;
   /// The user's data items (neverd_items_json) by address: a value, a string
   /// or undefined bytes, over what analysis reads in them.
@@ -603,6 +604,7 @@ struct Listing::Impl {
     pointerAtQuery = engineSymbol<PointerAtFunction>("neverd_pointer_at");
     stringsEx = engineSymbol<StringsExFunction>("neverd_strings_ex_json");
     itemsQuery = engineSymbol<ItemsFunction>("neverd_items_json");
+    stringAtQuery = engineSymbol<StringAtFunction>("neverd_string_at");
     decodeText = engineSymbol<DecodeTextFunction>("neverd_decode_text_json");
     stringRefs = engineSymbol<StringRefsFunction>("neverd_string_refs_json");
     switchesQuery = engineSymbol<SwitchesFunction>("neverd_switches_json");
@@ -1280,12 +1282,26 @@ struct Listing::Impl {
       if (item.size <= string.unit)
         continue;
       string.length = item.size - string.unit;
-      string.value = decodedText(address, string.length, item.encoding);
+      string.value = userStringText(address, string.length, item.encoding);
       strings.push_back(std::move(string));
     }
   }
   /// \p length bytes from \p address read in \p encoding: a byte that reads as
   /// nothing shows as its escape.
+  /// The text of the user's string of \p length bytes at \p address: as the
+  /// scan reads a string, so it shows the same way, else decoded.
+  std::string userStringText(std::uint64_t address, std::uint64_t length,
+                             const std::string &encoding) {
+    if (stringAtQuery) {
+      const Json options{{"encodings", Json::array({encoding})}};
+      if (const auto row =
+              takeJson(stringAtQuery(session, address, options.dump().c_str()));
+          row.is_object() && jsonCount(row.value("length", Json())) == length)
+        return row.value("value", std::string());
+    }
+    return decodedText(address, length, encoding);
+  }
+
   std::string decodedText(std::uint64_t address, std::uint64_t length,
                           const std::string &encoding) {
     constexpr std::uint64_t MaxDecoded = 65536;
@@ -1301,10 +1317,27 @@ struct Listing::Impl {
             : Json();
     const auto decoded =
         cells.is_object() ? cells.value("cells", Json()) : Json();
+    std::size_t unit = 1;
+    if (auto it = stringEncodings.find(encoding); it != stringEncodings.end())
+      unit = std::max<std::size_t>(1, it->second.unit);
+    const bool bigEndian = encoding.find("BE") != std::string::npos;
     for (std::size_t i = 0; i < bytes.size(); ++i) {
       if (decoded.is_array() && i < decoded.size()) {
         if (decoded[i].is_string()) {
           text += decoded[i].get<std::string>();
+          continue;
+        }
+      }
+      // A control the scan keeps as itself, which shows as a number.
+      if (i % unit == 0 && i + unit <= bytes.size()) {
+        std::uint32_t code = 0;
+        for (std::size_t b = 0; b < unit; ++b)
+          code |= static_cast<std::uint32_t>(
+                      bytes[i + (bigEndian ? unit - 1 - b : b)])
+                  << (8 * b);
+        if (code < 0x80) {
+          text += static_cast<char>(code);
+          i += unit - 1;
           continue;
         }
       }

@@ -59,6 +59,8 @@ struct MockSession {
   std::string path, error;
   std::map<std::uint64_t, std::string> annotations, names;
   std::map<std::uint64_t, bool> functionEdits;
+  /// The user's data items, as neverd_items_json lists them.
+  std::map<std::uint64_t, Json> items;
   std::vector<std::uint64_t> functions = listedFunctions({});
   neverd_load_progress_fn progress = nullptr;
   void *progressUser = nullptr;
@@ -950,5 +952,103 @@ int neverd_functions_load(neverd_session_t s) {
   } catch (...) {
     return 1;
   }
+}
+// Data items as the engine keeps them: values, strings and undefined runs
+// that share no byte.
+int neverd_item_set(neverd_session_t s, neverd_va_t address, const char *text) {
+  auto &state = *session(s);
+  try {
+    const auto row = Json::parse(text);
+    const auto kind = row.at("kind").get<std::string>();
+    std::uint64_t size = kind == "byte"    ? 1
+                         : kind == "word"  ? 2
+                         : kind == "dword" ? 4
+                         : kind == "qword" ? 8
+                                           : 0;
+    if (!size && kind != "string" && kind != "undefined") {
+      state.error = "unknown data item kind " + kind;
+      return -1;
+    }
+    if (!size)
+      size = row.at("size").get<std::uint64_t>();
+    // Undefined bytes give way and stay undefined around the item.
+    std::map<std::uint64_t, Json> items;
+    for (const auto &[at, item] : state.items) {
+      const auto end = at + item.at("size").get<std::uint64_t>();
+      if (end <= address || at >= address + size) {
+        items[at] = item;
+        continue;
+      }
+      if (item.at("kind") != "undefined") {
+        if (at == address)
+          continue;
+        state.error = "the item shares bytes with the one at " + hexAddress(at);
+        return -1;
+      }
+      if (at < address)
+        items[at] = {{"addr", hexAddress(at)},
+                     {"kind", "undefined"},
+                     {"size", address - at}};
+      if (end > address + size)
+        items[address + size] = {{"addr", hexAddress(address + size)},
+                                 {"kind", "undefined"},
+                                 {"size", end - address - size}};
+    }
+    state.items = std::move(items);
+    Json stored{{"addr", hexAddress(address)}, {"kind", kind}, {"size", size}};
+    if (row.contains("encoding"))
+      stored["encoding"] = row["encoding"];
+    state.items[address] = std::move(stored);
+    return 0;
+  } catch (const Json::exception &) {
+    state.error = "invalid data item";
+    return -1;
+  }
+}
+int neverd_item_clear(neverd_session_t s, neverd_va_t address) {
+  if (!session(s)->items.erase(address)) {
+    session(s)->error = "no data item starts at " + hexAddress(address);
+    return -1;
+  }
+  return 0;
+}
+const char *neverd_items_json(neverd_session_t s) {
+  Json result = Json::array();
+  for (const auto &[address, item] : session(s)->items)
+    result.push_back(item);
+  return copy(result.dump());
+}
+int neverd_items_load(neverd_session_t s) {
+  try {
+    std::map<std::uint64_t, Json> items;
+    for (const auto &item : read(session(s)->path + ".neverd-items.json"))
+      items[parseAddress(item.at("addr").get<std::string>())] = item;
+    session(s)->items = std::move(items);
+    return 0;
+  } catch (...) {
+    return 1;
+  }
+}
+// The strings neverd_strings_ex_json lists, read from their first byte.
+const char *neverd_string_at(neverd_session_t s, neverd_va_t address,
+                             const char *) {
+  if (address == RodataBase)
+    return copy(Json{{"addr", hexAddress(address)},
+                     {"length", 6},
+                     {"chars", 2},
+                     {"encoding", "utf-8"},
+                     {"value", "\xe4\xb8\xad\xe6\x96\x87"},
+                     {"unit", 1}}
+                    .dump());
+  if (address == RodataBase + 8)
+    return copy(Json{{"addr", hexAddress(address)},
+                     {"length", 8},
+                     {"chars", 4},
+                     {"encoding", "utf-16le"},
+                     {"value", "Wide"},
+                     {"unit", 2}}
+                    .dump());
+  session(s)->error = "no string starts at " + hexAddress(address);
+  return nullptr;
 }
 }
