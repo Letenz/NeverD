@@ -1132,6 +1132,15 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                      ? Text
                      : "(" + UTy + ")" + Text;
       }
+      // So does an operation's text: a shift happens in an unsigned carrier
+      // whatever its type says, and `x << 24 < y << 24` compares unsigned.
+      if (Op->Kind != ExprKind::Call && !typedCallResult(Op)) {
+        std::string Text = exprStr(*Op, 99);
+        if (const auto Printed = printedIntegerType(*Op))
+          return Printed->first == CmpSize && Printed->second == NeedsSignedCast
+                     ? Text
+                     : "(" + UTy + ")" + Text;
+      }
       if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&
           Op->Type->Size == CmpSize && Op->Type->IsSigned == NeedsSignedCast)
         return exprStr(*Op, 99);

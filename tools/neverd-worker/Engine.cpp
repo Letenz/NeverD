@@ -577,6 +577,12 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
             page["text"].get_ref<const std::string &>();
         for (auto &row : page["rows"])
           full["rows"].push_back(std::move(row));
+        // A spelled page names the source names on it alone.
+        if (auto names = page.find("source_names");
+            names != page.end() && names->is_array() &&
+            full.contains("source_names") && full["source_names"].is_array())
+          for (auto &name : *names)
+            full["source_names"].push_back(std::move(name));
       }
       if (complete)
         break;
@@ -605,6 +611,15 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
                 span[field] =
                     base +
                     shiftedOffset(span[field].get<std::size_t>() - base, shift);
+    if (auto names = full.find("source_names");
+        names != full.end() && names->is_array())
+      for (auto &name : *names)
+        for (const char *field : {"begin_byte", "end_byte"})
+          if (name.contains(field) && name[field].is_number_unsigned() &&
+              name[field].get<std::size_t>() >= base)
+            name[field] =
+                base +
+                shiftedOffset(name[field].get<std::size_t>() - base, shift);
     // Renames before the definition move where it begins, not its line.
     if (auto prelude = full.find("prelude");
         prelude != full.end() && prelude->is_object() &&
@@ -641,9 +656,20 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
       rows.push_back(row);
   }
   page["rows"] = std::move(rows);
+  const std::size_t base = namedView_.value("byte_offset", std::size_t{0});
+  if (auto names = namedView_.find("source_names");
+      names != namedView_.end() && names->is_array()) {
+    Json onPage = Json::array();
+    for (const auto &name : *names) {
+      const auto begin = name.value("begin_byte", std::size_t{0});
+      const auto nameEnd = name.value("end_byte", std::size_t{0});
+      if (nameEnd > base + startByte && begin < base + endByte)
+        onPage.push_back(name);
+    }
+    page["source_names"] = std::move(onPage);
+  }
   page["offset"] = start;
-  page["byte_offset"] =
-      namedView_.value("byte_offset", std::size_t{0}) + startByte;
+  page["byte_offset"] = base + startByte;
   page["total_lines"] = total;
   page["complete"] = end == total;
   page["next_offset"] = end == total ? Json(nullptr) : Json(end);
@@ -1842,9 +1868,13 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   }
   if (operation == "decompile") {
     const auto representation = stringField(p, "representation", "c", 16);
+    // `source` reads in the function's own language; `rust` and `go` spell
+    // the HighC source in one, through the engine's view alone.
+    const bool spelled = representation == "source" ||
+                         representation == "rust" || representation == "go";
     if (representation != "c" && representation != "llvmc" &&
         representation != "low" && representation != "med" &&
-        representation != "high" && representation != "llvm")
+        representation != "high" && representation != "llvm" && !spelled)
       throw Error("unsupported", "Unknown code representation");
     const auto offset =
         sizeField(p, "offset", 0, std::numeric_limits<std::size_t>::max());
@@ -1854,7 +1884,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     prepareFunction(address);
     std::string mappingStatus = "unsupported_representation";
     if (representation == "low" || representation == "med" ||
-        representation == "c" || representation == "llvmc") {
+        representation == "c" || representation == "llvmc" || spelled) {
       if (auto named = namedViewPage(address, representation, offset, limit))
         return *named;
       if (const auto view = irViewFunction()) {
@@ -1878,6 +1908,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       } else
         mappingStatus = "unavailable_engine_api";
     }
+    if (spelled)
+      throw Error("unavailable", error().empty()
+                                     ? "This representation is unavailable"
+                                     : error());
     const auto key = hexAddress(address) + ":" + representation;
     if (textKey_ != key) {
       textKey_.clear();

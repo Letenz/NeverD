@@ -121,8 +121,9 @@ struct LocalRegisterEffect {
   /// bound: the stack pointer is lost, a pointer into the incoming arguments
   /// escapes, or control leaves for code no summary describes.
   bool UnknownStackReads = false;
-  /// Callees entered by a tail call at the entry stack pointer; they read
-  /// this function's incoming stack arguments as their own.
+  /// Callees entered by a tail call at the entry stack pointer, imports by
+  /// the stub or slot they are reached through; they read this function's
+  /// incoming stack arguments as their own.
   std::set<va_t> StackTailCallees;
   /// A Win64 variadic function (`f(fmt, ...)`): the register position of its
   /// first variadic argument, else -1.  Its prologue spills that register and
@@ -149,7 +150,7 @@ struct CallRegisterSummaries {
   std::map<va_t, GPRReadWidths> EntryReads;
   /// Positional arguments implied by the incoming stack slots a function
   /// reads, including through tail calls (0 when none), for functions whose
-  /// stack reads are bounded.
+  /// stack reads are bounded, and for the imports whose counts are fixed.
   std::map<va_t, int> EntryStackArgs;
   /// Register position of the first variadic argument of each variadic
   /// function (LocalRegisterEffect::VariadicFrom).
@@ -172,12 +173,16 @@ struct CallRegisterSummaries {
 /// prototype) reads exactly those bytes.  So does an import whose stub or
 /// bound slot it lists: a call to the import passes them, and a tail call
 /// into it forwards exactly them, while a tail call into any other import
-/// leaves the caller's entry reads unknown.
+/// leaves the caller's entry reads unknown.  Likewise an import whose stub
+/// or slot \p FixedEntryStackArgs lists reads that many stack arguments, and
+/// a tail call into it forwards them; a tail call into another import
+/// leaves the caller's stack reads unbounded.
 CallRegisterSummaries solveCallRegisterEffects(
     const std::map<va_t, LocalRegisterEffect> &Funcs,
     GPRFamilyMask VolatileFamilies, GPRFamilyMask ArgumentFamilies,
     const std::set<va_t> &DispatchThunks = {},
-    const std::map<va_t, GPRReadWidths> &FixedEntryReads = {});
+    const std::map<va_t, GPRReadWidths> &FixedEntryReads = {},
+    const std::map<va_t, int> &FixedEntryStackArgs = {});
 
 } // namespace neverd
 

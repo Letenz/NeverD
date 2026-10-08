@@ -21,9 +21,11 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/SymbolDecoration.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -336,6 +338,30 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
 }
 
 } // namespace call_args_detail
+
+unsigned MedToHighConverter::importVarArgFixedCount(
+    size_t CallIdx, const std::vector<MedOp> &Ops) const {
+  if (!Image || CallIdx >= Ops.size())
+    return 0;
+  const MedOp &Call = Ops[CallIdx];
+  if ((Call.Opcode != NdOp::CALL && Call.Opcode != NdOp::INDIR_CALL) ||
+      Call.SourceCallHint || Call.NumInputs < 1 || !Call.Inputs[0].isConst())
+    return 0;
+  const std::string Import = importCalleeName(*Image, Call.Inputs[0].ConstVal);
+  if (Import.empty())
+    return 0;
+  // A Mach-O bind names the symbol; a PE import entry is the C name.
+  const std::string Name =
+      importNamesAreCNames(Image->Format)
+          ? Import
+          : cNameOfSymbol(Import, Image->Format, Image->Arch).str();
+  if (const libc::LibCPrototype *Prototype =
+          libc::libcPrototype(Name, Image->Format))
+    return Prototype->Variadic ? Prototype->ParamCount : 0;
+  // The name rules fit the C library's own routines, not another library's
+  // `g_printf(fmt, ...)`.
+  return libc::isKnownFunction(Name) ? libc::varArgFixedCount(Name) : 0;
+}
 
 std::vector<ExprPtr>
 MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
@@ -662,6 +688,14 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     }
     if (Policy && Policy->ExtendWrittenArgs && MaxRegArg >= 0)
       Policy->ExtendWrittenArgs(Ctx, MaxRegArg, FillLast);
+    // A variadic C library import reads its fixed parameters however the
+    // call is reached: one set before this block, on each path into it, is
+    // the value reaching the call (`fprintf(stderr, fmt)` after a join).
+    if (const unsigned Fixed = importVarArgFixedCount(CallIdx, Ops))
+      FillLast =
+          std::max(FillLast, std::min(static_cast<int>(Fixed),
+                                      static_cast<int>(ParamRegs.size())) -
+                                 1);
     for (int K = 0; K <= FillLast && K < static_cast<int>(ParamRegs.size());
          ++K) {
       if (Found[K])
@@ -863,6 +897,14 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
                [&](const MedVar &P) { return P.RegOff == ParamRegs[Index]; });
   };
   Scan.IsOwnParameter = IsOwnParameter;
+  auto OwnStackParam = [&](int Index) -> ExprPtr {
+    if (CurMed)
+      for (const MedVar &P : CurMed->Params)
+        if (P.Kind == MedVar::Param && P.Id == Index && P.RegOff == kNoParamReg)
+          return medvarToExpr(P);
+    return nullptr;
+  };
+  Scan.OwnStackParam = OwnStackParam;
   std::function<std::optional<int64_t>(const MedVar &, int)> EntryOffset =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
     if (!CurMed || Depth > 8)
@@ -1348,8 +1390,7 @@ int MedToHighConverter::abiParamIndex(const MedVar &V) const {
         return static_cast<int>(I);
       if (AnyIdMatch < 0)
         AnyIdMatch = static_cast<int>(I);
-      if (IdMatch < 0 &&
-          (V.RegOff == kNoParamReg) == (P.RegOff == kNoParamReg))
+      if (IdMatch < 0 && (V.RegOff == kNoParamReg) == (P.RegOff == kNoParamReg))
         IdMatch = static_cast<int>(I);
     }
     if (IdMatch >= 0)

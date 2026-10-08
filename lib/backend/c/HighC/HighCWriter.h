@@ -108,6 +108,9 @@ public:
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
+  /// Records the functions and objects the text names in the source map
+  /// (HighCSourceNames.cpp).
+  void recordSourceNames(const std::vector<HighFunc> &Funcs);
   TypeRef declaredFunctionReturnType(const HighFunc &Func) const;
   void prepareFunctionReturns(std::vector<HighFunc> &Funcs) const;
   void prepareFunctionIdentifiers(const std::vector<HighFunc> &Funcs);
@@ -130,7 +133,6 @@ public:
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
-  void writeX87FpremHelpers();
   void writeX64SyscallHelper();
   void writeX64WindowsSyscallHelper();
   struct MemoryLoadDestination {
@@ -248,6 +250,16 @@ public:
   std::string resolvedCallTarget(const HighExpr &E) const;
   /// The C identifier a direct call names; see HighCExprWriter.cpp.
   std::string callIdentifier(const HighExpr &E) const;
+  /// The C name of the import slot call \p E goes through, itself or by the
+  /// stub that jumps through it: a function pointer (`__imp_calloc`), or
+  /// empty when it calls no import or the format names no slot.
+  std::string importSlotIdentifier(const HighExpr &E) const;
+  /// The function this file defines that call \p E runs, or null: one named
+  /// like it at another address is a different function.
+  const HighFunc *calledDefinition(const HighExpr &E) const;
+  /// Whether \p Func is the stub of a variadic C library import, which a
+  /// call runs as a call through the import's slot.
+  bool isVariadicImportStub(const HighFunc &Func) const;
   std::string renderCallExpr(const HighExpr &E);
   std::string renderSourceCallExpr(const HighExpr &E);
   const HighFunc *sourceCallDefinition(const SourceCallTypeHint &Hint,
@@ -586,7 +598,13 @@ public:
   /// Callees with a call that never returns (HighExpr::DoesNotReturn); their
   /// declarations say so, as for a routine the name list knows.
   std::set<std::string> NoReturnCallTargets;
+  /// Call identifiers that name an import's slot (importSlotIdentifier):
+  /// declared as function pointers, linked by their own names.
+  std::set<std::string> ImportSlotIdentifiers;
   std::map<std::string, std::string> ExternalSourceIdentifiers;
+  /// The identifiers functionIdentifier() spelled for functions no map
+  /// names, and the symbols they stand for (recordSourceNames()).
+  mutable std::map<std::string, std::string> ReferencedFunctionSymbols;
   std::set<va_t> GotoTargets;
   /// How many gotos target each address in the current function.
   std::map<va_t, unsigned> GotoTargetUses;
@@ -605,7 +623,16 @@ public:
   std::map<va_t, std::string> SEHExceptionCodeNames;
   void writeSEHExceptionCodeCapture(va_t HandlerVA, int Indent);
   std::string sehFilterValueText(const HighExpr &Value);
-  bool NeedsX87FpremHelpers = false;
+  /// The x87 helpers the output calls, and whether it computes with the
+  /// x87 extended `long double`.
+  std::set<X87CHelper> X87Helpers;
+  bool UsesX87Extended = false;
+  /// An x87 extended value: what `long double` holds.
+  static bool isX87Value(const HighExpr &E);
+  /// The x87 helper \p E prints through, if any.
+  std::optional<X87CHelper> x87HelperFor(const HighExpr &E) const;
+  /// The name of \p Helper, which the output must declare.
+  std::string useX87Helper(X87CHelper Helper) const;
   bool NeedsX64SyscallHelper = false;
   bool NeedsX64WindowsSyscallHelper = false;
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
@@ -783,6 +810,9 @@ public:
 
   struct ImageObject {
     std::string Name;
+    /// The name the user, debug information or a symbol gives it, which
+    /// \ref Name is spelled from; empty for a name the emitter made.
+    std::string Symbol;
     /// The symbol its name is spelled from, as its language spells it, for
     /// the comment that declares it; empty when the name is the symbol.
     std::string Readable;
@@ -816,6 +846,9 @@ public:
   /// cannot spell exactly.
   std::optional<std::string> imageObjectInitializer(va_t Addr,
                                                     const ImageObject &Obj);
+  /// The exact C constant for the float with bits \p Value.
+  std::optional<std::string> floatConstantText(uint64_t Value,
+                                               const TypeRef &Type) const;
   /// The address constant of a sized image object that \p Address indexes
   /// by a variable byte offset (`i + &table`), or null.  The constant may
   /// point into the object (`i + &table[2]`).
@@ -897,8 +930,8 @@ public:
   std::optional<std::string> relocatedSlotTarget(va_t Slot) const;
   /// A pointer-sized object at a relocated slot: the address it holds, as
   /// its initializer.
-  std::optional<std::string> relocatedSlotInitializer(va_t Addr,
-                                                      const ImageObject &Obj) const;
+  std::optional<std::string>
+  relocatedSlotInitializer(va_t Addr, const ImageObject &Obj) const;
   /// Declares the objects whose relocated pointer slots name other objects:
   /// the backings that hold them, as words, and the single slots \p Deferred.
   void writePointerBackings(const std::vector<va_t> &Deferred);

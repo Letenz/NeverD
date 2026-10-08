@@ -889,13 +889,21 @@ bool X86Lifter::liftControl(LiftState &S, const cs_insn *Insn,
       S.emit(NdOp::BRANCH, {},
              {NdVar::cst(static_cast<uint64_t>(X86.operands[0].imm), 8)});
     } else if (X86.operands[0].type == X86_OP_MEM &&
-               X86.operands[0].mem.base == X86_REG_RIP &&
                X86.operands[0].mem.index == X86_REG_INVALID &&
                LiftState::memoryAddressSpace(X86.operands[0]) ==
-                   NdMemoryAddressSpace::Default) {
+                   NdMemoryAddressSpace::Default &&
+               (X86.operands[0].mem.base == X86_REG_RIP ||
+                (TargetArch == Arch::X86 &&
+                 X86.operands[0].mem.base == X86_REG_INVALID))) {
+      // A jump through a constant slot, `jmp [rip+disp]` on x64 and
+      // `jmp dword ptr [disp32]` in an i386 import thunk, keeps the slot as
+      // its input, as the call form does.
+      const bool RipRelative = X86.operands[0].mem.base == X86_REG_RIP;
       uint64_t SlotAddr =
-          S.Addr + S.InsnSize + static_cast<uint64_t>(X86.operands[0].mem.disp);
-      S.emit(NdOp::INDIR_BR, {}, {NdVar::cst(SlotAddr, 8)});
+          RipRelative ? S.Addr + S.InsnSize +
+                            static_cast<uint64_t>(X86.operands[0].mem.disp)
+                      : static_cast<uint32_t>(X86.operands[0].mem.disp);
+      S.emit(NdOp::INDIR_BR, {}, {NdVar::cst(SlotAddr, RipRelative ? 8 : 4)});
     } else {
       NdVar Target = operandRead(S, X86.operands[0]);
       S.emit(NdOp::INDIR_BR, {}, {Target});

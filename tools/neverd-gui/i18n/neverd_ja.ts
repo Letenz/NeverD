@@ -1288,6 +1288,18 @@
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
     </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
+    </message>
+    <message>
+        <source>Rust</source>
+        <translation>Rust</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Go</translation>
+    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -1410,6 +1422,16 @@ Recognized library operation; click to show its code.</source>
 Double-click to go to the declaration.</source>
         <translation>%1
 ダブルクリックで宣言に移動します。</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>C で表示した宣言 %n 個</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1923,8 +1945,8 @@ Signed: %4</source>
         <translation>コマンドを入力</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>C ファイルを作成</translation>
+        <source>Create source file</source>
+        <translation>ソースファイルを作成</translation>
     </message>
     <message>
         <source>Create LST file</source>

@@ -683,17 +683,25 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   case NdOp::FLOAT_NEG:
     return "-" + exprStr(*E.Operands[0], 99);
   case NdOp::FLOAT_ABS:
-    return "__builtin_fabs(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_SQRT:
-    return "__builtin_sqrt(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_CEIL:
-    return "__builtin_ceil(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_FLOOR:
-    return "__builtin_floor(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_ROUND:
-    return "__builtin_round(" + exprStr(*E.Operands[0]) + ")";
-  case NdOp::FLOAT_ROUNDEVEN:
-    return "__builtin_nearbyint(" + exprStr(*E.Operands[0]) + ")";
+  case NdOp::FLOAT_ROUNDEVEN: {
+    // A `long double` computes through the `l` builtins; the x87 rounds and
+    // takes roots with its own instructions, which no C library need link.
+    const bool Extended = isX87Value(*E.Operands[0]);
+    if (const auto Helper = x87HelperFor(E))
+      return useX87Helper(*Helper) + "(" + exprStr(*E.Operands[0]) + ")";
+    const char *Name = E.Op == NdOp::FLOAT_ABS     ? "__builtin_fabs"
+                       : E.Op == NdOp::FLOAT_SQRT  ? "__builtin_sqrt"
+                       : E.Op == NdOp::FLOAT_CEIL  ? "__builtin_ceil"
+                       : E.Op == NdOp::FLOAT_FLOOR ? "__builtin_floor"
+                       : E.Op == NdOp::FLOAT_ROUND ? "__builtin_round"
+                                                   : "__builtin_nearbyint";
+    return std::string(Name) + (Extended ? "l(" : "(") +
+           exprStr(*E.Operands[0]) + ")";
+  }
   case NdOp::FLOAT_ISNAN:
     return "__builtin_isnan(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_INT2FLOAT:
@@ -704,6 +712,40 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     return "/* unary " + std::to_string(static_cast<int>(E.Op)) + " */ " +
            exprStr(*E.Operands[0]);
   }
+}
+
+bool HighCWriter::isX87Value(const HighExpr &E) {
+  return E.Type && E.Type->Kind == NdTypeKind::Float && E.Type->Size == 10;
+}
+
+std::optional<X87CHelper> HighCWriter::x87HelperFor(const HighExpr &E) const {
+  // The control word the function reads before setting it is the unit's.
+  if (E.Kind == ExprKind::Var && E.Var.SSAVer == 0 &&
+      isX87ControlWord(Opts.TheArch, E.Var))
+    return X87CHelper::ControlWord;
+  if (E.Kind == ExprKind::BitCast && E.Operands.size() == 1 && E.Operands[0]) {
+    if (isX87Value(E))
+      return X87CHelper::Value;
+    if (isX87Value(*E.Operands[0]))
+      return X87CHelper::Bits;
+  }
+  if (E.Kind == ExprKind::UnaryOp &&
+      (E.Op == NdOp::FLOAT_ROUNDEVEN || E.Op == NdOp::FLOAT_SQRT) &&
+      !E.Operands.empty() && E.Operands[0] && isX87Value(*E.Operands[0]))
+    return E.Op == NdOp::FLOAT_SQRT ? X87CHelper::Fsqrt : X87CHelper::Frndint;
+  if (E.Kind != ExprKind::Call)
+    return std::nullopt;
+  if (E.IntrinsicId == Intrinsic::X87Fprem ||
+      E.IntrinsicId == Intrinsic::X87Fprem1 ||
+      E.IntrinsicId == Intrinsic::X87ReadStatus)
+    return X87CHelper::Fprem;
+  return x87ValueHelper(E.IntrinsicId);
+}
+
+std::string HighCWriter::useX87Helper(X87CHelper Helper) const {
+  if (!X87Helpers.count(Helper))
+    throw std::runtime_error("HighC x87 helper was not collected");
+  return x87CHelperName(Helper);
 }
 
 /// A callee whose name renders to the identifier of a different function
@@ -717,15 +759,110 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
     return Name;
   auto It = DefinedFunctionsByIdentifier.find(Name);
   if (It == DefinedFunctionsByIdentifier.end() || !It->second ||
-      !It->second->Entry || It->second->Entry == E.CallAddr)
+      !It->second->Entry)
     return Name;
+  if (It->second->Entry == E.CallAddr) {
+    // A variadic import's stub (`fprintf: jmp [__imp_fprintf]`) has no C
+    // signature that passes `...` on, so its definition takes none of the
+    // call's arguments; the call goes through the slot it jumps through.
+    if (isVariadicImportStub(*It->second))
+      if (std::string Slot = importSlotIdentifier(E); !Slot.empty()) {
+        auto Declared = ExternalFunctionIdentifiers.find(Slot);
+        return Declared == ExternalFunctionIdentifiers.end() ? Slot
+                                                             : Declared->second;
+      }
+    return Name;
+  }
+  // A thunk named like the import it jumps to (`calloc: jmp [__imp_calloc]`)
+  // calls through the import's slot, as IDA prints it, by the identifier its
+  // declaration holds.
+  if (std::string Slot = importSlotIdentifier(E); !Slot.empty()) {
+    auto Declared = ExternalFunctionIdentifiers.find(Slot);
+    return Declared == ExternalFunctionIdentifiers.end() ? Slot
+                                                         : Declared->second;
+  }
   return Name + "_" + llvm::utohexstr(E.CallAddr);
+}
+
+bool HighCWriter::isVariadicImportStub(const HighFunc &Func) const {
+  if (!Opts.Image || !Func.Entry)
+    return false;
+  const Import *Imp = Opts.Image->findImportAt(Func.Entry);
+  if (!Imp || Imp->IATAddr == Func.Entry || Imp->Name.empty())
+    return false;
+  // A PE import entry is the C name; other formats name the symbol.
+  const std::string Name =
+      importNamesAreCNames(Opts.Format)
+          ? Imp->Name
+          : cNameOfSymbol(Imp->Name, Opts.Format, Opts.TheArch).str();
+  if (const libc::LibCPrototype *Prototype =
+          libc::libcPrototype(Name, Opts.Format))
+    return Prototype->Variadic;
+  return libc::isKnownFunction(Name) && libc::varArgFixedCount(Name) > 0;
+}
+
+const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {
+  if (E.IntrinsicId != Intrinsic::None || E.CallTarget.empty())
+    return nullptr;
+  auto It = DefinedFuncs.find(E.CallTarget);
+  if (It == DefinedFuncs.end() || !It->second)
+    return nullptr;
+  return functionIdentifier(*It->second) == callIdentifier(E) ? It->second
+                                                              : nullptr;
+}
+
+std::string HighCWriter::importSlotIdentifier(const HighExpr &E) const {
+  if (!Opts.Image || !E.CallAddr)
+    return {};
+  // The call goes through an import's slot, or to a stub that jumps through
+  // it, which the linker names on formats that name slots.
+  const Import *Imp = Opts.Image->findImportAt(E.CallAddr);
+  const llvm::StringRef Prefix = importSlotPrefix(Opts.Format);
+  if (!Imp || !Imp->IATAddr || Imp->Name.empty() || Prefix.empty())
+    return {};
+  // The image's own symbol for the slot names it as the program linked it:
+  // MinGW binds msvcrt's `__getmainargs` to `__imp____msvcrt_getmainargs`,
+  // and its `__imp____getmainargs` points to its own wrapper.  Otherwise the
+  // slot is the prefix and the import's symbol, `__imp_calloc` or
+  // `__imp___initterm` on 32-bit Windows, unless that names another object.
+  // C spells it without the format's underscore.
+  std::string SlotSymbol;
+  for (const Symbol &Sym : Opts.Image->Symbols)
+    if (Sym.Addr == Imp->IATAddr &&
+        llvm::StringRef(Sym.Name).starts_with(Prefix)) {
+      SlotSymbol = Sym.Name;
+      break;
+    }
+  if (SlotSymbol.empty()) {
+    SlotSymbol =
+        (Prefix + symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch))
+            .str();
+    if (const Symbol *Other = Opts.Image->findSymbol(SlotSymbol);
+        Other && Other->Addr != Imp->IATAddr)
+      return {};
+  }
+  std::string Identifier =
+      cNameOfSymbol(SlotSymbol, Opts.Format, Opts.TheArch).str();
+  for (char &Ch : Identifier)
+    if (!isCProjectionIdentifierByte(static_cast<unsigned char>(Ch)))
+      Ch = '_';
+  return Identifier;
 }
 
 std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
   std::string Name = E.CallTarget;
   if (Name.empty() && E.CallAddr)
     Name = (kAutoFuncPrefix + llvm::utohexstr(E.CallAddr)).str();
+  // Every name here is a symbol, but an import entry may name its function
+  // by the C name (SymbolDecorations.def): spell that as the symbol it links
+  // as, or the format's underscore would come off a C name (`_initterm`).
+  auto Spelled = [&](std::string Symbol) {
+    if (Opts.Image && E.CallAddr && Symbol == E.CallTarget)
+      if (const Import *Imp = Opts.Image->findImportAt(E.CallAddr);
+          Imp && Imp->Name == Symbol)
+        return symbolOfImportName(Symbol, Opts.Format, Opts.TheArch);
+    return Symbol;
+  };
   auto imageFunctionName = [&]() -> std::string {
     if (!Opts.Image || !E.CallAddr)
       return {};
@@ -739,7 +876,7 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
   if (!Dbg) {
     if (std::string FromImage = imageFunctionName(); !FromImage.empty())
       return FromImage;
-    return Name;
+    return Spelled(Name);
   }
   std::string DebugName;
   const bool OrdinalName = llvm::StringRef(Name).starts_with(kOrdinalPrefix);
@@ -778,13 +915,13 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
   if (DebugName.empty()) {
     if (std::string FromImage = imageFunctionName(); !FromImage.empty())
       return FromImage;
-    return Name;
+    return Spelled(Name);
   }
   if (Name.empty() || llvm::StringRef(Name).starts_with(kAutoFuncPrefix) ||
       OrdinalName || llvm::StringRef(Name).starts_with("__imp_") ||
       llvm::StringRef(Name).starts_with("_imp_"))
     return DebugName;
-  return Name;
+  return Spelled(Name);
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
@@ -798,7 +935,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   if (E.IntrinsicId != Intrinsic::None) {
     auto Typed = renderX86TypedIntrinsicCall(
         Opts.TheArch, E, [this](const HighExpr &Expr) { return exprStr(Expr); },
-        HasCIntrinsics);
+        HasCIntrinsics, Opts.Format != BinaryFormat::COFF);
     if (!Typed.empty())
       return Typed;
 
@@ -873,8 +1010,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       return Rendered;
   }
 
+  // The identifier the declarations use: a callee named like a different
+  // definition takes its own, and does not run that definition.
   if (E.IntrinsicId == Intrinsic::None)
-    Name = functionIdentifier(Name);
+    Name = callIdentifier(E);
   // A call through a parameter is named after it, but the parameter is only
   // callable in C when it is typed as a function pointer.
   if (E.IsIndirectCall && E.IndirectTarget &&
@@ -884,10 +1023,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
 
   // A callee defined in this file has a prototype: convert between pointer
   // and integer arguments the way the machine passed them, in the register.
-  const HighFunc *Defined = nullptr;
-  if (E.IntrinsicId == Intrinsic::None && !E.CallTarget.empty())
-    if (auto It = DefinedFuncs.find(E.CallTarget); It != DefinedFuncs.end())
-      Defined = It->second;
+  const HighFunc *Defined = calledDefinition(E);
   // Its printed signature also fixes how many arguments the call passes: a
   // value past its parameters is not read by it, and a parameter the call
   // site did not determine is an unknown value.
@@ -1133,8 +1269,8 @@ const HighExpr *HighCWriter::functionAddressArgument(const HighExpr &Arg) {
 const libc::LibCPrototype *
 HighCWriter::calleePrototype(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
-      E.IsIndirectCall || E.CallTarget.empty() ||
-      DefinedFuncs.count(E.CallTarget) || debugCallee(E))
+      E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E) ||
+      debugCallee(E))
     return nullptr;
   const std::string Name = callIdentifier(E);
   if (SourceNativeSignatures.count(Name) ||
@@ -1146,8 +1282,8 @@ HighCWriter::calleePrototype(const HighExpr &E) const {
 
 llvm::StringRef HighCWriter::headerDeclaredCallee(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
-      E.IsIndirectCall || E.CallTarget.empty() ||
-      DefinedFuncs.count(E.CallTarget) || debugCallee(E))
+      E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E) ||
+      debugCallee(E))
     return {};
   const std::string Name = callIdentifier(E);
   if (SourceNativeSignatures.count(Name) ||
@@ -1195,8 +1331,8 @@ bool HighCWriter::takesPointerArgument(const HighExpr &E, size_t Index,
   // A prototype printed in this file, from debug information or from a
   // source signature converts its arguments itself.
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
-      E.IsIndirectCall || E.CallTarget.empty() ||
-      DefinedFuncs.count(E.CallTarget) || debugCallee(E))
+      E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E) ||
+      debugCallee(E))
     return false;
   const std::string Name = callIdentifier(E);
   if (SourceNativeSignatures.count(Name) ||
@@ -1848,8 +1984,8 @@ HighCWriter::knownArity(llvm::StringRef Symbol, llvm::StringRef Identifier) {
 std::optional<size_t>
 HighCWriter::plainDeclarationArity(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
-      E.IsIndirectCall || E.CallTarget.empty() ||
-      DefinedFuncs.count(E.CallTarget) || debugCallee(E))
+      E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E) ||
+      debugCallee(E))
     return std::nullopt;
   // Source, debug and MSVC knowledge declare the function their own way.
   const std::string Name = callIdentifier(E);
@@ -2957,8 +3093,11 @@ std::string HighCWriter::unknownVarUse(const HighExpr &E,
       E.Var.SSAVer == 0 && Name == RawName && !AssignedNames.count(RawName) &&
       !isEmittedParamName(RawName) &&
       !(CurrentFunc &&
-        isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch)))
+        isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch))) {
+    if (x87HelperFor(E) == X87CHelper::ControlWord)
+      return useX87Helper(X87CHelper::ControlWord) + "()";
     return "(__builtin_trap(), 0 /* unknown register */)";
+  }
   return {};
 }
 
@@ -3151,9 +3290,8 @@ const HighExpr *HighCWriter::sameWidthVariable(const HighExpr &E) const {
   };
   const uint16_t Width = WidthOf(E);
   const HighExpr *Cur = &E;
-  for (unsigned Depth = 0; Cur && Width &&
-                           Depth < limits::kMaxIntegerViewUnwrapDepth;
-       ++Depth) {
+  for (unsigned Depth = 0;
+       Cur && Width && Depth < limits::kMaxIntegerViewUnwrapDepth; ++Depth) {
     if (Cur->Kind == ExprKind::Var || Cur->Kind == ExprKind::Phi)
       return WidthOf(*Cur) == Width ? Cur : nullptr;
     const bool View =
@@ -3650,8 +3788,13 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return *Slot;
       if (auto VA = constAddress(*E.Operands[0])) {
         const uint16_t Size = E.Type ? E.Type->Size : 0;
-        if (auto Imm = foldReadonlyScalar(*VA, Size))
+        if (auto Imm = foldReadonlyScalar(*VA, Size)) {
+          // A float read from constant data is its value: the bits printed
+          // as an integer would convert to another one.
+          if (const auto Float = floatConstantText(*Imm, E.Type))
+            return *Float;
           return constStr(*Imm);
+        }
         if (auto Name = imageObjectName(*VA)) {
           // A string's pointer reads as the integer the machine loads where
           // no parameter takes it as the pointer it is.
@@ -3760,6 +3903,12 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                          E.Type->IsSigned);
       return "(" + typeToC(E.Type) + ")" + exprStr(Src, 99);
     }
+    // An x87 value's 80 bits fill ten bytes of a wider C object, which
+    // __builtin_bit_cast cannot reinterpret: they are copied.
+    if (isX87Value(E))
+      return useX87Helper(X87CHelper::Value) + "(" + exprStr(Src) + ")";
+    if (isX87Value(Src))
+      return useX87Helper(X87CHelper::Bits) + "(" + exprStr(Src) + ")";
     // The explicit source cast prevents integer promotions (or an unsuffixed
     // constant) from changing the operand's byte width inside the builtin.
     return "__builtin_bit_cast(" + typeToC(E.Type) + ", (" + typeToC(Src.Type) +
@@ -3780,11 +3929,11 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       const HighExpr &Address = *Operand.Operands[0];
       return "(" + typeToC(Operand.Type) + " *)(" +
              (Address.Type && Address.Type->Kind == NdTypeKind::Int
-                  ? integerView(Address,
-                                NdType::makeInt(
-                                    getTargetRegInfo(Opts.TheArch).PointerSize,
-                                    false),
-                                0)
+                  ? integerView(
+                        Address,
+                        NdType::makeInt(
+                            getTargetRegInfo(Opts.TheArch).PointerSize, false),
+                        0)
                   : exprStr(Address)) +
              ")";
     }
@@ -3916,8 +4065,13 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
   auto PeelReturnViews = [&](const HighExpr *Cur) {
     for (unsigned Peel = 0; Peel < limits::kMaxIntegerViewUnwrapDepth && Cur;
          ++Peel) {
+      // A view of an integer only: the bits of a floating value are no
+      // view of it, and C would convert the value they were peeled from.
       if ((Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast) &&
-          !Cur->Operands.empty() && Cur->Operands[0]) {
+          !Cur->Operands.empty() && Cur->Operands[0] &&
+          (!Cur->Operands[0]->Type ||
+           Cur->Operands[0]->Type->Kind == NdTypeKind::Int ||
+           Cur->Operands[0]->Type->Kind == NdTypeKind::Ptr)) {
         Cur = Cur->Operands[0].get();
         continue;
       }
@@ -4223,10 +4377,13 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                   ? CName.str()
                   : stripLeadingUnderscores(Sym->Name).str();
         Obj.Readable = demangledComment(CName);
+        Obj.Symbol = Sym->Name;
       }
     }
     if (!Raw.empty())
       Obj.Name = GlobalIdentifierAllocator.allocate(Raw, "g");
+    if (Obj.Symbol.empty())
+      Obj.Symbol = Raw;
   }
   auto NamedDisplayPointer = [](const TypeRef &Type) {
     return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&

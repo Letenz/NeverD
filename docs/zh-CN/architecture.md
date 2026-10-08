@@ -664,7 +664,7 @@ NeverD 依赖，不穷举 CMake helper 统一提供的 LLVM 和 Capstone 库。
 | `lib/decode` | Capstone/native 解码并分派到架构 lifter | `NeverDIR`、`NeverDLift` |
 | `lib/ir` | 公共类型以及 LowIR、MedIR、HighIR、intrinsic 定义/转换 | 四个 IR 子组件 |
 | `lib/pipeline` | 函数检测与 Low/Med/High/LLVM 路径编排 | IR、decode、lift、LLVM backend、调试信息、IR pass |
-| `lib/backend/c` | HighIR 到 C 与 LLVM IR 到 C 的渲染 | IR |
+| `lib/backend/c` | HighIR 到 C 与 LLVM IR 到 C 的渲染，以及 HighC 的 Rust、Go 写法 | IR |
 | `lib/backend/llvm` | MedIR 到 LLVM 的 lowering | IR |
 | `lib/backend/codegen` | 目标代码生成及 PE/ELF/Mach-O patch 与原地重写 | IR、loader |
 | `lib/sdk` | 公共 C ABI、session 生命周期、查询、持久化、插件、lift/decompile/patch/audit/hunt 入口 | 将引擎组件聚合为 `libneverd` |

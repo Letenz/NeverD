@@ -39,8 +39,11 @@ TOOLS = [
          {**PAGE, "filter": {"type": "string", "maxLength": 256}}),
     tool("read_disassembly", "disasm", "Read an instruction window at a virtual address.",
          {"address": ADDRESS, "limit": PAGE["limit"]}, ("address",)),
-    tool("read_decompilation", "decompile", "Read C or IR for one function. May require analysis.",
-         {**PAGE, "address": ADDRESS, "representation": {"type": "string", "enum": ["c", "low", "med", "high", "llvm"]}}, ("address",)),
+    tool("read_decompilation", "decompile",
+         "Read pseudocode (in the function's own language with \"source\", or C, Rust or Go) or IR for one "
+         "function. May require analysis.",
+         {**PAGE, "address": ADDRESS, "representation": {"type": "string", "enum": [
+             "source", "c", "rust", "go", "llvmc", "low", "med", "high", "llvm"]}}, ("address",)),
     tool("read_bytes", "bytes", "Read up to 4096 mapped bytes at a virtual address.",
          {"address": ADDRESS, "size": {"type": "integer", "minimum": 1, "maximum": 4096}}, ("address",)),
     tool("list_xrefs", "xrefs", "Read references associated with a virtual address.",

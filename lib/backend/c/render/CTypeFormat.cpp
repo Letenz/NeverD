@@ -532,7 +532,9 @@ std::string typeToC(const TypeRef &Ty) {
   case NdTypeKind::Float:
     if (!Ty->SourceName.empty())
       return Ty->SourceName;
-    return Ty->Size == 4 ? "float" : "double";
+    // A 10-byte float is the x87 extended format: `long double` on the x86
+    // targets whose output asserts that width (see the x87 prelude).
+    return Ty->Size == 4 ? "float" : Ty->Size == 10 ? "long double" : "double";
   case NdTypeKind::Ptr:
     if (!Ty->Pointee || Ty->Pointee->Kind == NdTypeKind::Void)
       return "void*";

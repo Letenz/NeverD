@@ -124,8 +124,9 @@ conditional (green/red) and unconditional edges routed around blocks; panning
 and zooming are local, and text is dropped at low zoom. The graph overview
 shows the whole function and the visible area.
 
-**Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
-MedIR, HighIR or LLVM IR of the current function and follow the disassembly
+**Pseudocode** (F5, Tab) and **IR** windows show pseudocode in the function's
+own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of
+the current function and follow the disassembly
 unless their lock is set. A window hidden behind another tab catches up when it
 is shown, so moving through the disassembly never waits for a decompile no one
 sees, and F5 pressed while a jump is loading decompiles the function the jump
@@ -220,6 +221,33 @@ functions the C runtime defines itself (`_start` reads `start`). A name an
 image spells with control characters, and that no scheme reads, is never
 copied into a comment.
 
+**Pseudocode** reads in the language the function was written in: a Rust
+function as Rust, a Go function as Go and any other as C. The choice is made
+for each function, from its symbol, and for a function without one from the
+language the image was built in; the window says when it is not C
+(`Pseudocode-A (Rust)`). **C**, **Rust** and **Go** in the window's menu show
+every function in one of them. The Rust and Go views spell exactly what the C
+says. Each conversion C makes on its own is written out (`a as u32 + b as u32`,
+`uint32(a) + uint32(b)`), conditions compare with zero (`v != 0`,
+`!p.is_null()`, `p != nil`), memory is read and written through a pointer made
+from the address (`*((v0 + 8) as *mut i64)`, `*(*int64)(v0 + 8)`), and names
+read as their language spells them (`core::fmt::write`,
+`<&str as core::fmt::Display>::fmt`, `internal/cpu.Initialize`). Such a name is
+one name: a click highlights it everywhere, a double-click goes to it, and
+hovering it shows the C identifier and the symbol it reads. A few forms keep
+C's meaning where the language has none, as the first lines of the view say:
+integers wrap, `abort()` and `trap()` stand for a value the decompiler does not
+know and trap when computed, Go converts booleans and pointers as plainly as
+integers, and `goto`, SEH and C++ handlers and inline assembly keep their C
+spelling. A declaration a view cannot spell, such as a pointer into another
+address space, is shown as C with the reason above it, and the status line
+counts them. Rust that avoids those forms compiles: the test suite builds the
+Rust view of a set of functions with rustc and checks that it computes what the
+C does. `neverd decompile --language=rust`, `go` or `source` prints the same
+views for the whole program or, with `--func`, one function; `source` reads
+native code in the image's language, EVM bytecode as Solidity and an SBF
+program as Rust.
+
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
 code pages: windows-1252, GBK, Big5, Shift-JIS and EUC-KR, all in one pass.
@@ -276,7 +304,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Esc / Ctrl+Enter | Previous / next position (mouse Back/Forward work too) |
 | Enter / Alt+Enter | Follow the operand / follow it in a new view |
 | Space | Toggle graph and text view |
-| F5 / Tab | Pseudocode / switch between disassembly and pseudocode |
+| F5 / Tab | Pseudocode in the function's own language / switch between disassembly and pseudocode |
 | X / Ctrl+X / Ctrl+J | References to the operand / to the item / from the item |
 | N | Rename the name under the cursor, or the address: a function at its entry, data, a label in code |
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |

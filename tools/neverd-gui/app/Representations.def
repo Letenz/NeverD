@@ -10,12 +10,20 @@
 ///
 //===----------------------------------------------------------------------===//
 
-// NEVERD_REPRESENTATION(Name, Title, Dialect): Dialect is C, IR or LLVM.
+// NEVERD_REPRESENTATION(Name, Title, Dialect): Dialect is C, Rust, Go, IR or
+// LLVM, or Source for the one the page names.
 #ifndef NEVERD_REPRESENTATION
 #define NEVERD_REPRESENTATION(Name, Title, Dialect)
 #endif
-NEVERD_REPRESENTATION("c", QT_TRANSLATE_NOOP("Representations", "Pseudocode"),
-                      C)
+// Pseudocode reads in the function's own language: the engine chooses C,
+// Rust or Go and the page says which.
+NEVERD_REPRESENTATION("source",
+                      QT_TRANSLATE_NOOP("Representations", "Pseudocode"),
+                      Source)
+NEVERD_REPRESENTATION("c", QT_TRANSLATE_NOOP("Representations", "C"), C)
+NEVERD_REPRESENTATION("rust", QT_TRANSLATE_NOOP("Representations", "Rust"),
+                      Rust)
+NEVERD_REPRESENTATION("go", QT_TRANSLATE_NOOP("Representations", "Go"), Go)
 NEVERD_REPRESENTATION("llvmc", QT_TRANSLATE_NOOP("Representations", "LLVM C"),
                       C)
 NEVERD_REPRESENTATION("low", QT_TRANSLATE_NOOP("Representations", "LowIR"), IR)

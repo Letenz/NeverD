@@ -131,16 +131,16 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
           if (DebugName.empty())
             if (const Import *Imp = Img->findImportStubAt(Addr);
                 Imp && !Imp->Name.empty())
-              DebugName = Imp->Name;
+              DebugName =
+                  symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch);
         }
       }
     }
     // An image symbol carries the format's decoration; an LLVM name may have
     // lost it already.  A definition steps aside from the C runtime's names.
     llvm::StringRef CName =
-        DebugName.empty()
-            ? llvm_name::cNameOfLLVMName(Name, Opts.Format, Opts.TheArch)
-            : cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch);
+        DebugName.empty() ? cNameOfGlobal(Name, Fn.isDeclaration())
+                          : cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch);
     FunctionSymbolNames.emplace(&Fn, CName.str());
     if (!Fn.isDeclaration())
       CName = cDefinitionName(CName, Opts.Format);
@@ -152,11 +152,17 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
 std::string LLVMCWriter::functionIdentifier(const llvm::Function &Fn) const {
   if (auto It = FunctionIdentifiers.find(&Fn); It != FunctionIdentifiers.end())
     return It->second;
-  llvm::StringRef CName =
-      llvm_name::cNameOfLLVMName(Fn.getName(), Opts.Format, Opts.TheArch);
+  llvm::StringRef CName = cNameOfGlobal(Fn.getName(), Fn.isDeclaration());
   if (!Fn.isDeclaration())
     CName = cDefinitionName(CName, Opts.Format);
   return canonicalizeCProjectionIdentifier(CName, "nd_function");
+}
+
+llvm::StringRef LLVMCWriter::cNameOfGlobal(llvm::StringRef Name,
+                                           bool Declaration) const {
+  if (Declaration && ImportEntryCNames.contains(Name))
+    return Name;
+  return llvm_name::cNameOfLLVMName(Name, Opts.Format, Opts.TheArch);
 }
 
 void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
@@ -810,8 +816,7 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
     // a comment spells as its language does.
     std::string Comment;
     if (Fn.isDeclaration()) {
-      const llvm::StringRef CName =
-          llvm_name::cNameOfLLVMName(RawName, Opts.Format, Opts.TheArch);
+      const llvm::StringRef CName = cNameOfGlobal(RawName, true);
       if (linksByLabel(CName, Name)) {
         std::string Label;
         llvm::raw_string_ostream(Label).write_escaped(
