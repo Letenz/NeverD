@@ -721,14 +721,23 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     if (E.Operands[1]->Kind == ExprKind::Const &&
         E.Operands[1]->ConstVal >= Size * 8u)
       return "0";
+    // The shift happens in an unsigned carrier and comes back at the
+    // operation's width, unsigned, whatever its type says.
     // A constant or masked count below the width needs no overshift guard.
     if (countBelow(*E.Operands[1], Size * 8u))
-      return AtCarrier && getOpPrecedence(NdOp::INT_LEFT) > ParentPrec ? Shifted
-                                                                       : Shift;
+      return typedText(E,
+                       AtCarrier && getOpPrecedence(NdOp::INT_LEFT) > ParentPrec
+                           ? Shifted
+                           : Shift,
+                       Size, /*IsSigned=*/false);
     const auto CountType = typeToC(NdType::makeInt(
         E.Operands[1]->Type ? E.Operands[1]->Type->Size : 8, false));
-    return "((" + CountType + ")" + Right + " < " + std::to_string(Size * 8u) +
-           " ? " + Shift + " : 0)";
+    std::string Guarded = "((" + CountType + ")" + Right + " < " +
+                          std::to_string(Size * 8u) + " ? " + Shift + " : 0)";
+    // Below int, the conditional promotes its arms back to int.
+    if (Size < 4)
+      return Guarded;
+    return typedText(E, std::move(Guarded), Size, /*IsSigned=*/false);
   }
   case NdOp::SUBBYTES: {
     if (const HighExpr *Call = typedCallResult(&E))
