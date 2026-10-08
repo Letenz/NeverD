@@ -58,16 +58,12 @@ void compileAndRun(const std::string &Source,
                                 : "-fsanitize-undefined-trap-on-error";
   for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
     const llvm::SmallVector<llvm::StringRef, 12> Arguments{
-        Compiler,
-        "-std=c11",
-        Optimization,
-        "-Werror=uninitialized",
-        "-Werror=return-type",
-        "-fsanitize=undefined",
-        SanitizerTrap,
-        SourcePath,
-        "-o",
-        BinaryPath};
+        Compiler, "-std=c11", Optimization, "-Werror=uninitialized",
+        "-Werror=return-type", "-fsanitize=undefined",
+        // Decompiled C is built as its prelude says: for a target with
+        // unaligned access, without strict aliasing.
+        "-fno-sanitize=alignment", "-fno-strict-aliasing", SanitizerTrap,
+        SourcePath, "-o", BinaryPath};
     std::string Error;
     int Result = llvm::sys::ExecuteAndWait(Compiler, Arguments, std::nullopt,
                                            Redirects, 30, 0, &Error);
