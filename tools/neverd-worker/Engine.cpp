@@ -361,7 +361,7 @@ void Engine::requireWriter() const {
     throw Error("read_only", "This session is read-only");
 }
 void Engine::invalidate() {
-  graph_.reset();
+  graphs_.clear();
   if (listing_)
     listing_->invalidate();
   stringsCache_ = nullptr;
@@ -484,7 +484,6 @@ void Engine::prepareFunction(std::uint64_t address) {
   // replaces a previous restriction; IR, CFG and LLVM views then read it.
   (void)ownedString(neverd_decompile(session_, address));
   preparedFunction_ = address;
-  graph_.reset();
   textKey_.clear();
 }
 Listing &Engine::newListing() {
@@ -1390,7 +1389,6 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         {"revision", revision()}};
   }
   if (operation == "cfg_summary") {
-    prepareFunction(address);
     const auto key = hexAddress(address);
     // Client text metrics size each node to its formatted listing rows.
     GraphMetrics metrics;
@@ -1414,25 +1412,36 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                             std::to_string(metrics.lineHeight) + "/" +
                             std::to_string(metrics.padding) + "/" +
                             std::to_string(metrics.titleHeight);
-    if (!graph_ || graph_->address() != key || graphMetrics_ != metricsKey) {
-      auto snapshot = std::make_unique<GraphSnapshot>(
-          backendJson(neverd_cfg_json(session_, address), true), key,
-          projectId_ + ":" + revision() + ":" + key + ":" + metricsKey, metrics,
-          metrics.valid()
-              ? GraphRows([this](std::uint64_t start, std::uint64_t end) {
-                  return listing().blockLines(start, end);
-                })
-              : GraphRows());
-      graph_ = std::move(snapshot);
-      graphMetrics_ = metricsKey;
-    }
-    return graph_->summary();
+    for (auto it = graphs_.begin(); it != graphs_.end(); ++it)
+      if (it->address == key && it->metrics == metricsKey) {
+        graphs_.splice(graphs_.begin(), graphs_, it);
+        return graphs_.front().snapshot->summary();
+      }
+    prepareFunction(address);
+    const auto layout =
+        projectId_ + ":" + revision() + ":" + key + ":" + metricsKey;
+    auto snapshot = std::make_unique<GraphSnapshot>(
+        backendJson(neverd_cfg_json(session_, address), true), key, layout,
+        metrics,
+        metrics.valid()
+            ? GraphRows([this](std::uint64_t start, std::uint64_t end) {
+                return listing().blockLines(start, end);
+              })
+            : GraphRows());
+    graphs_.push_front({key, metricsKey, layout, std::move(snapshot)});
+    if (graphs_.size() > MaxGraphs)
+      graphs_.pop_back();
+    return graphs_.front().snapshot->summary();
   }
   if (operation == "cfg_viewport") {
-    if (!graph_ || graph_->address() != hexAddress(address))
-      throw Error("stale_layout",
-                  "No matching graph snapshot; request cfg_summary first");
-    return graph_->viewport(p);
+    // The layout the client names, else the function's newest.
+    const auto key = hexAddress(address);
+    const auto layout = stringField(p, "layout_revision", {}, 256);
+    for (const auto &graph : graphs_)
+      if (graph.address == key && (layout.empty() || graph.revision == layout))
+        return graph.snapshot->viewport(p);
+    throw Error("stale_layout",
+                "No matching graph snapshot; request cfg_summary first");
   }
   if (operation == "cfg") {
     prepareFunction(address);

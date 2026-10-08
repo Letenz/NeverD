@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <list>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -44,8 +45,15 @@ private:
   std::unique_ptr<ProjectLock> lock_;
   std::unique_ptr<ProjectHistory> history_;
   std::unique_ptr<Contributions> contributions_;
-  std::unique_ptr<GraphSnapshot> graph_;
-  std::string graphMetrics_;
+  /// A function's graph laid out for the client metrics it was sized with.
+  struct LaidOutGraph {
+    std::string address, metrics, revision;
+    std::unique_ptr<GraphSnapshot> snapshot;
+  };
+  /// The graphs shown last, the newest first: returning to one neither
+  /// analyzes its function again nor lays it out.
+  std::list<LaidOutGraph> graphs_;
+  static constexpr std::size_t MaxGraphs = 64;
   std::unique_ptr<Listing> listing_;
   // The function whose restricted pipeline the session currently holds.
   std::optional<std::uint64_t> preparedFunction_;
