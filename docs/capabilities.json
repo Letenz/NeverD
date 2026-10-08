@@ -13081,7 +13081,7 @@
         },
         {
           "runner": "gtest",
-          "target": "NeverDDarwinProcessPublicTests",
+          "target": "NeverDDarwinProcessTests",
           "source": "unittests/emulation/DarwinFileTests.cpp",
           "filter": "*/DarwinFileTest.RuntimeLinkSubtreesExchangeOpaqueAndMixedDescendants/*",
           "platforms": [
@@ -13092,7 +13092,7 @@
         },
         {
           "runner": "gtest",
-          "target": "NeverDDarwinProcessPublicTests",
+          "target": "NeverDDarwinProcessTests",
           "source": "unittests/emulation/DarwinFileTests.cpp",
           "filter": "*/DarwinFileTest.RuntimeLinkSubtreesRebindRelativeTargetsAcrossParents/*",
           "platforms": [
@@ -13103,7 +13103,7 @@
         },
         {
           "runner": "gtest",
-          "target": "NeverDDarwinProcessPublicTests",
+          "target": "NeverDDarwinProcessTests",
           "source": "unittests/emulation/DarwinFileTests.cpp",
           "filter": "*/DarwinFileTest.RuntimeLinkSubtreesReserveNamesAndRefundExactlyOnce/*",
           "platforms": [
@@ -13114,7 +13114,7 @@
         },
         {
           "runner": "gtest",
-          "target": "NeverDDarwinProcessPublicTests",
+          "target": "NeverDDarwinProcessTests",
           "source": "unittests/emulation/DarwinFileTests.cpp",
           "filter": "*/DarwinFileTest.RuntimeLinkSubtreesPreflightUnopenedLinkPaths/*",
           "platforms": [
@@ -13125,7 +13125,7 @@
         },
         {
           "runner": "gtest",
-          "target": "NeverDDarwinProcessPublicTests",
+          "target": "NeverDDarwinProcessTests",
           "source": "unittests/emulation/DarwinFileTests.cpp",
           "filter": "*/DarwinFileTest.RuntimeLinkSubtreesNeedNoFreeEntryDescriptorOrInode/*",
           "platforms": [
@@ -13136,7 +13136,7 @@
         },
         {
           "runner": "gtest",
-          "target": "NeverDDarwinProcessPublicTests",
+          "target": "NeverDDarwinProcessTests",
           "source": "unittests/emulation/DarwinFileTests.cpp",
           "filter": "*/DarwinFileTest.RuntimeLinkSubtreesKeepActualGrantsAndMountsProtected/*",
           "platforms": [
