@@ -558,8 +558,10 @@ uint64_t sizedItemBytes(llvm::StringRef Kind) {
   return 0;
 }
 
-std::string itemsPath(const Session *S) {
-  return S->FilePath.string() + ".neverd-items.json";
+std::filesystem::path itemsPath(const Session *S) {
+  auto Path = S->FilePath;
+  Path += ".neverd-items.json";
+  return Path;
 }
 
 /// The item \p Row describes at \p Addr, checked against the image; none

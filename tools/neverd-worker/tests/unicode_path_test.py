@@ -74,11 +74,21 @@ def run(worker):
             assert functions.exists()
             assert any(int(row["addr"], 16) == created_address and row["state"] == "created"
                        for row in json.loads(functions.read_text(encoding="utf-8")))
+            item_address = base + 0x21c0
+            defined = ok(client, "item_define", {"address": hex(item_address),
+                                                "action": "data", "size": 4})
+            assert defined["kind"] == "dword" and defined["saved"], defined
+            items = Path(str(path) + ".neverd-items.json")
+            assert any(int(row["addr"], 16) == item_address and row["kind"] == "dword"
+                       for row in json.loads(items.read_text(encoding="utf-8")))
             ok(client, "reload")
             assert ok(client, "annotations")["items"][0]["text"] == note
             assert ok(client, "functions", {"filter": "unicode_entry"})["total"] == 1
             assert created_address in {int(row["address"], 16) for row in
                                        ok(client, "functions", {"limit": 512})["items"]}
+            listing = ok(client, "listing", {"address": hex(item_address),
+                                              "before": 0, "after": 1})
+            assert listing["lines"][0]["user"] == "dword", listing
             assert hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(data).digest()
 
         with Client(worker) as client:
@@ -87,6 +97,9 @@ def run(worker):
             assert ok(client, "functions", {"filter": "unicode_entry"})["total"] == 1
             assert created_address in {int(row["address"], 16) for row in
                                        ok(client, "functions", {"limit": 512})["items"]}
+            listing = ok(client, "listing", {"address": hex(item_address),
+                                              "before": 0, "after": 1})
+            assert listing["lines"][0]["user"] == "dword", listing
             evm = root / "\u4e2d\u6587\u76ee\u5f55" / "\u5408\u7ea6.hex"
             evm.write_text("600160005500", encoding="ascii")
             payload = ok(client, "open", {"path": str(evm), "read_only": True})
