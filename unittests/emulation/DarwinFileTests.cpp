@@ -6583,7 +6583,7 @@ TEST_P(DarwinFileTest, OpenAtFirstBytePrecedesFlagsAndFullPathImport) {
       }
     }
   }
-  for (auto Address : {0ULL, UserEnd, UINT64_MAX}) {
+  for (auto Address : {uint64_t(0), UserEnd, UINT64_MAX}) {
     error(ServiceKind::OpenAt, {999, Address, 0x20000103}, 14);
     error(ServiceKind::Open, {Address, 0x20000100}, 22);
     error(ServiceKind::OpenAt, {0xfffffffe, Address, 0x20000100}, 22);
