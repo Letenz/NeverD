@@ -2698,8 +2698,9 @@ TEST(COFFExceptionIR,
     Builder.CreateRetVoid();
     Function->setMetadata(windows_eh_md::FunctionAttachment, Payload);
   };
+  // `-` separates words, so both names read `collision_name`.
   AddAttachedEmptyFunction("collision-name");
-  AddAttachedEmptyFunction("collision_x2D_name");
+  AddAttachedEmptyFunction("collision_name");
 
   llvm::FunctionType *VarArgType = llvm::FunctionType::get(
       llvm::Type::getVoidTy(Context), /*isVarArg=*/true);
@@ -2714,8 +2715,8 @@ TEST(COFFExceptionIR,
   EXPECT_NE(Source.find("llvmc_varargs()"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("llvmc_varargs(...)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("nd_for"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("collision_x2D_name()"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("collision_x2D_name_2()"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("collision_name()"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("collision_name_2()"), std::string::npos) << Source;
 
   EXPECT_NE(Source.find("nd_for"), std::string::npos) << Source;
 }

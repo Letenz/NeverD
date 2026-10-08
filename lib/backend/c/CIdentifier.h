@@ -17,10 +17,13 @@
 
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/loader/SymbolSpelling.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Demangle/Demangle.h"
+#include "llvm/Support/ConvertUTF.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -369,17 +372,48 @@ inline std::string itaniumStem(llvm::StringRef Raw) {
   return cxxQualifiedStem(Context + "::" + Name);
 }
 
-/// The demangled spelling of mangled C name \p Name for a comment above its
-/// definition (`QDomNode::nodeType() const`), with `*/` broken apart; empty
-/// when \p Name is not mangled.
-inline std::string demangledComment(llvm::StringRef Name) {
-  std::string Demangled = llvm::demangle(Name);
-  if (Demangled == Name)
+/// \p Name up to the parameter list a demangled function name ends in:
+/// `Foo::f() const` is `Foo::f`.  A scope such as `(anonymous namespace)` is
+/// not a parameter list.
+inline llvm::StringRef cxxNameWithoutParameters(llvm::StringRef Name) {
+  unsigned Angles = 0;
+  for (size_t I = 0; I < Name.size(); ++I) {
+    if (Name[I] == '<')
+      ++Angles;
+    else if (Name[I] == '>' && Angles)
+      --Angles;
+    else if (Name[I] == '(' && !Angles &&
+             !Name.substr(I).starts_with("(anonymous namespace)"))
+      return Name.take_front(I);
+  }
+  return Name;
+}
+
+/// The C identifier stem of Itanium C++ symbol \p Raw when it names no
+/// function: a variable's scopes and name joined by `_`
+/// (`_ZN8QDomNode16staticMetaObjectE` is `QDomNode_staticMetaObject`), and
+/// for an object or thunk the ABI emits for something else, that thing's stem
+/// and what the object is (CxxSpecialNames.def: `_ZTV8QDomNode` is
+/// `QDomNode_vtable`).  Empty for other names.
+inline std::string itaniumObjectStem(llvm::StringRef Raw) {
+  if (symbolScheme(Raw) != SymbolScheme::Itanium)
     return {};
-  for (size_t At = Demangled.find("*/"); At != std::string::npos;
-       At = Demangled.find("*/", At + 2))
-    Demangled.replace(At, 2, "* /");
-  return Demangled;
+  const std::string Readable = readableSymbolName(Raw);
+  llvm::StringRef Rest = Readable;
+  llvm::StringRef Suffix;
+#define NEVERD_CXX_SPECIAL_NAME(Prefix, Stem)                                  \
+  if (Suffix.empty() && Rest.consume_front(Prefix))                            \
+    Suffix = Stem;
+#include "neverd/backend/c/CxxSpecialNames.def"
+  Rest = cxxNameWithoutParameters(Rest);
+  if (Rest.empty())
+    return {};
+  std::string Stem = cxxQualifiedStem(Rest);
+  if (Stem.empty())
+    Stem = cxxDropAngleArgs(Rest);
+  if (!Suffix.empty())
+    Stem += ("_" + Suffix).str();
+  return Stem;
 }
 
 /// \p Name, without one leading underscore where the C runtime's start files
@@ -398,23 +432,23 @@ inline std::string
 canonicalizeCProjectionIdentifier(llvm::StringRef Raw,
                                   llvm::StringRef Fallback = "nd_symbol") {
   Raw = stripImportSymbolPrefix(Raw);
-  const std::string TemplateMember = msvcTemplateSpecialMemberStem(Raw);
-  const std::string TemplateFunction = msvcTemplateFunctionStem(Raw);
-  const std::string Decorated = msvcDecorationStem(Raw);
-  const std::string Qualified = cxxQualifiedStem(Raw);
-  const std::string Itanium = itaniumStem(Raw);
-  std::string Stripped;
-  if (!TemplateMember.empty()) {
-    Raw = TemplateMember;
-  } else if (!TemplateFunction.empty()) {
-    Raw = TemplateFunction;
-  } else if (!Decorated.empty()) {
-    Raw = Decorated;
-  } else if (!Qualified.empty()) {
-    Raw = Qualified;
-  } else if (!Itanium.empty()) {
-    Raw = Itanium;
-  } else {
+  // The first rule that reads the name gives its stem.  Rust, Swift, D and
+  // Objective-C names are read by SymbolSpelling.h; legacy Rust is
+  // Itanium-shaped, so that comes before the Itanium rules.
+  std::string Stem = msvcTemplateSpecialMemberStem(Raw);
+  if (Stem.empty())
+    Stem = msvcTemplateFunctionStem(Raw);
+  if (Stem.empty())
+    Stem = msvcDecorationStem(Raw);
+  if (Stem.empty())
+    Stem = symbolIdentifierStem(Raw);
+  if (Stem.empty())
+    Stem = cxxQualifiedStem(Raw);
+  if (Stem.empty())
+    Stem = itaniumStem(Raw);
+  if (Stem.empty())
+    Stem = itaniumObjectStem(Raw);
+  if (Stem.empty()) {
     llvm::StringRef Rest = Raw;
     while (Rest.consume_front("`anonymous namespace'::") ||
            Rest.consume_front("<anonymous namespace>::") ||
@@ -423,12 +457,24 @@ canonicalizeCProjectionIdentifier(llvm::StringRef Raw,
       ;
     if (const size_t Lt = Rest.find('<'); Lt != llvm::StringRef::npos)
       Rest = Rest.take_front(Lt);
-    Stripped = Rest.str();
-    Raw = Stripped;
+    Stem = Rest.str();
   }
+  Raw = Stem;
+  // ASCII punctuation separates words, as `.`, `(*` and `)` do in Go's
+  // `fmt.(*pp).doPrintf` (`fmt_pp_doPrintf`) and `.` in GCC's
+  // `foo.constprop.0`: a run of it is one underscore between words.  Other
+  // bytes, such as a UTF-8 identifier's, keep their value as `_xHH_`.
   std::string Result;
   Result.reserve(Raw.size());
+  bool Separate = false;
   for (unsigned char Ch : Raw.bytes()) {
+    if (Ch < 0x80 && !isCProjectionIdentifierByte(Ch)) {
+      Separate = !Result.empty();
+      continue;
+    }
+    if (Separate)
+      Result.push_back('_');
+    Separate = false;
     if (isCProjectionIdentifierByte(Ch)) {
       Result.push_back(static_cast<char>(Ch));
       continue;
@@ -452,6 +498,42 @@ canonicalizeCProjectionIdentifier(llvm::StringRef Raw,
   if (isCProjectionKeyword(Result))
     Result.insert(0, "nd_");
   return Result;
+}
+
+/// Whether symbol \p Name can stand in a comment as the image spells it:
+/// valid UTF-8 without spaces or control characters.  A name is the image's
+/// choice, and such a name cannot make a comment span lines or read as code.
+inline bool isPlainSymbolText(llvm::StringRef Name) {
+  if (llvm::any_of(Name.bytes(),
+                   [](unsigned char Ch) { return Ch <= ' ' || Ch == 0x7F; }))
+    return false;
+  const auto *Begin = reinterpret_cast<const llvm::UTF8 *>(Name.begin());
+  return llvm::isLegalUTF8String(
+      &Begin, reinterpret_cast<const llvm::UTF8 *>(Name.end()));
+}
+
+/// How the comment beside the C identifier of symbol \p Name spells the
+/// symbol: demangled (`QDomNode::nodeType() const`, `core::fmt::write`), or
+/// as the image spells a name C cannot (`fmt.(*pp).doPrintf` for
+/// `fmt_pp_doPrintf`) when that is plain symbol text.  Control characters
+/// read `?` and `*/` is broken apart.  Empty when the identifier is the name
+/// itself.
+inline std::string demangledComment(llvm::StringRef Name) {
+  std::string Readable = readableSymbolName(Name);
+  if (Readable.empty()) {
+    const llvm::StringRef Bare = stripImportSymbolPrefix(Name);
+    if (canonicalizeCProjectionIdentifier(Bare) == Bare ||
+        !isPlainSymbolText(Name))
+      return {};
+    Readable = Name.str();
+  }
+  for (char &Ch : Readable)
+    if (static_cast<unsigned char>(Ch) < ' ' || Ch == 0x7F)
+      Ch = '?';
+  for (size_t At = Readable.find("*/"); At != std::string::npos;
+       At = Readable.find("*/", At + 2))
+    Readable.replace(At, 2, "* /");
+  return Readable;
 }
 
 /// C++ TPI spellings (`ATL::CStringT<wchar_t, ...>`) become a C tag
