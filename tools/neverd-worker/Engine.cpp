@@ -86,6 +86,25 @@ const FunctionEditFunctions &functionEdits() {
       engineSymbol<SessionLoadFunction>("neverd_functions_load")};
   return functions;
 }
+// Additive C ABI capability: the user's data items.
+using ItemSetFunction = int (*)(neverd_session_t, neverd_va_t, const char *);
+using StringAtFunction = const char *(*)(neverd_session_t, neverd_va_t,
+                                         const char *);
+struct DataItemFunctions {
+  ItemSetFunction set;
+  SessionJsonFunction rows;
+  SessionLoadFunction load;
+  StringAtFunction stringAt;
+  explicit operator bool() const { return set && rows && load && stringAt; }
+};
+const DataItemFunctions &dataItems() {
+  static const DataItemFunctions functions{
+      engineSymbol<ItemSetFunction>("neverd_item_set"),
+      engineSymbol<SessionJsonFunction>("neverd_items_json"),
+      engineSymbol<SessionLoadFunction>("neverd_items_load"),
+      engineSymbol<StringAtFunction>("neverd_string_at")};
+  return functions;
+}
 IRViewFunction irViewFunction() {
   // Additive C ABI capability: an older matching engine can still run the GUI.
   static const auto function =
@@ -379,11 +398,28 @@ void Engine::requireWriter() const {
     throw Error("read_only", "This session is read-only");
 }
 bool Engine::keepsFunctionEdits() { return static_cast<bool>(functionEdits()); }
+bool Engine::keepsDataItems() { return static_cast<bool>(dataItems()); }
 bool Engine::reloadUserState() {
   const bool annotations = neverd_annotations_load(session_) == 0;
   const bool renames = neverd_renames_load(session_) == 0;
   const bool functions = reloadFunctionEdits();
-  return annotations && renames && functions;
+  const bool items = reloadDataItems();
+  return annotations && renames && functions && items;
+}
+bool Engine::reloadDataItems() {
+  const auto &items = dataItems();
+  if (!items)
+    return true;
+  const auto before = dataItemRows();
+  if (items.load(session_) != 0)
+    return false;
+  if (dataItemRows() != before)
+    invalidate();
+  return true;
+}
+Json Engine::dataItemRows() const {
+  const auto &items = dataItems();
+  return items ? backendJson(items.rows(session_)) : Json::array();
 }
 bool Engine::reloadFunctionEdits() {
   const auto &edits = functionEdits();
@@ -610,7 +646,8 @@ ProjectHistory &Engine::history() {
     history_->verifyLoadedState(
         {{"annotations", backendJson(neverd_annotations_json(session_))},
          {"renames", backendJson(neverd_renames_json(session_))},
-         {"functions", functionEditRows()}});
+         {"functions", functionEditRows()},
+         {"items", dataItemRows()}});
   }
   return *history_;
 }
@@ -805,6 +842,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       warnings.push_back("Renames sidecar could not be loaded");
     if (!reloadFunctionEdits())
       warnings.push_back("Function edits sidecar could not be loaded");
+    if (!reloadDataItems())
+      warnings.push_back("Data items sidecar could not be loaded");
     auto result = metadata();
     result["warnings"] = warnings;
     return result;
@@ -1183,18 +1222,21 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     const bool annotationsLoaded = neverd_annotations_load(session_) == 0;
     const bool renamesLoaded = neverd_renames_load(session_) == 0;
     const bool functionsLoaded = reloadFunctionEdits();
+    const bool itemsLoaded = reloadDataItems();
     // Each existing API can change its own table independently. Publish a new
     // revision even on partial failure so clients cannot retain stale pages.
     invalidate();
     ++revision_;
     history_.reset();
-    if (!annotationsLoaded || !renamesLoaded || !functionsLoaded)
+    if (!annotationsLoaded || !renamesLoaded || !functionsLoaded ||
+        !itemsLoaded)
       throw Error("load_failed",
-                  "Could not reload the annotations, renames or function "
-                  "edits sidecar",
+                  "Could not reload the annotations, renames, function edits "
+                  "or data items sidecar",
                   {{"annotations_loaded", annotationsLoaded},
                    {"renames_loaded", renamesLoaded},
                    {"functions_loaded", functionsLoaded},
+                   {"items_loaded", itemsLoaded},
                    {"state_changed", true}});
     dirty_ = false;
     return metadata();

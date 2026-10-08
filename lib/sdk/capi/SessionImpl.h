@@ -312,6 +312,18 @@ struct Session {
   /// address made the entry of a function (true) or no longer one (false).
   std::map<va_t, bool> FunctionEdits;
 
+  /// A data item the user defines (neverd_item_set): what the bytes from its
+  /// address are, over what analysis reads there.
+  struct DataItem {
+    /// A size keyword (`qword`), "string" or "undefined" (DataNames.def).
+    std::string Kind;
+    uint64_t Size = 0;
+    /// A string's encoding, as strings::encodingName spells it.
+    std::string Encoding;
+    bool operator==(const DataItem &) const = default;
+  };
+  std::map<va_t, DataItem> DataItems;
+
   bool isDeletedFunction(va_t Entry) const {
     const auto Edit = FunctionEdits.find(Entry);
     return Edit != FunctionEdits.end() && !Edit->second;

@@ -34,6 +34,9 @@ using PointerAtFunction = int (*)(neverd_session_t, neverd_va_t, neverd_va_t *,
                                   neverd_va_t *);
 using DataSymbolsFunction = const char *(*)(neverd_session_t);
 using StringsExFunction = const char *(*)(neverd_session_t, const char *);
+using ItemsFunction = const char *(*)(neverd_session_t);
+using DecodeTextFunction = const char *(*)(const unsigned char *, int,
+                                           const char *);
 using StringRefsFunction = const char *(*)(neverd_session_t, const char *,
                                            neverd_va_t, int);
 using StringEncodingsFunction = const char *(*)();
@@ -199,6 +202,8 @@ bool isBranch(Flow flow) {
 #include "ListingVocabulary.def"
 #define NEVERD_DATA_ITEM_NAME(Id, Prefix)                                      \
   constexpr std::string_view Id = Prefix;
+#define NEVERD_DATA_ITEM_KIND(Id, Spelling)                                    \
+  constexpr std::string_view Id = Spelling;
 #include "neverd/DataNames.def"
 
 struct Region {
@@ -320,7 +325,9 @@ enum class ItemKind : std::uint8_t {
   /// A data slot the loader relocated to hold a pointer.
   Pointer,
   /// A slot of a switch's jump table.
-  SwitchEntry
+  SwitchEntry,
+  /// A value of one to eight bytes the user defined.
+  Data
 };
 struct Item {
   std::uint64_t start = 0, size = 1;
@@ -490,6 +497,15 @@ struct Listing::Impl {
   PointerAtFunction pointerAtQuery = nullptr;
   DataSymbolsFunction dataSymbols = nullptr;
   StringsExFunction stringsEx = nullptr;
+  ItemsFunction itemsQuery = nullptr;
+  DecodeTextFunction decodeText = nullptr;
+  /// The user's data items (neverd_items_json) by address: a value, a string
+  /// or undefined bytes, over what analysis reads in them.
+  struct UserItem {
+    std::uint64_t size = 1;
+    std::string kind, encoding;
+  };
+  std::map<std::uint64_t, UserItem> userItems;
   StringRefsFunction stringRefs = nullptr;
   SwitchesFunction switchesQuery = nullptr;
   DemangleFunction demangle = nullptr;
@@ -566,6 +582,8 @@ struct Listing::Impl {
         "neverd_session_discover_functions");
     pointerAtQuery = engineSymbol<PointerAtFunction>("neverd_pointer_at");
     stringsEx = engineSymbol<StringsExFunction>("neverd_strings_ex_json");
+    itemsQuery = engineSymbol<ItemsFunction>("neverd_items_json");
+    decodeText = engineSymbol<DecodeTextFunction>("neverd_decode_text_json");
     stringRefs = engineSymbol<StringRefsFunction>("neverd_string_refs_json");
     switchesQuery = engineSymbol<SwitchesFunction>("neverd_switches_json");
     demangle = engineSymbol<DemangleFunction>("neverd_demangle");
@@ -1063,22 +1081,23 @@ struct Listing::Impl {
         if (item.address && item.length)
           strings.push_back(std::move(item));
       }
-      std::sort(strings.begin(), strings.end(),
-                [](const StringItem &a, const StringItem &b) {
-                  return a.address < b.address;
-                });
-      std::unordered_map<std::string, unsigned> used;
-      for (auto &item : strings) {
-        if (auto it = dataNames.find(item.address); it != dataNames.end()) {
-          item.name = it->second;
-          continue;
-        }
-        const auto base = stringName(item);
-        auto &count = used[base];
-        item.name = count ? base + "_" + std::to_string(count - 1) : base;
-        ++count;
-        listingNames.emplace(item.name, item.address);
+    }
+    loadUserItems();
+    std::sort(strings.begin(), strings.end(),
+              [](const StringItem &a, const StringItem &b) {
+                return a.address < b.address;
+              });
+    std::unordered_map<std::string, unsigned> used;
+    for (auto &item : strings) {
+      if (auto it = dataNames.find(item.address); it != dataNames.end()) {
+        item.name = it->second;
+        continue;
       }
+      const auto base = stringName(item);
+      auto &count = used[base];
+      item.name = count ? base + "_" + std::to_string(count - 1) : base;
+      ++count;
+      listingNames.emplace(item.name, item.address);
     }
     for (const auto &[address, name] : dataNames) {
       listingNames.emplace(name, address);
@@ -1089,6 +1108,85 @@ struct Listing::Impl {
     for (const auto &entry : slots)
       namedData.push_back(entry.first);
     std::sort(namedData.begin(), namedData.end());
+  }
+
+  /// Read the user's data items. Their strings join the scan's, and replace
+  /// what the scan read in their bytes.
+  void loadUserItems() {
+    userItems.clear();
+    if (!itemsQuery)
+      return;
+    if (const auto rows = takeJson(itemsQuery(session)); rows.is_array())
+      for (const auto &row : rows) {
+        const auto address = jsonAddress(row.value("addr", Json()));
+        UserItem item;
+        item.size = jsonCount(row.value("size", Json()));
+        item.kind = row.value("kind", std::string());
+        item.encoding = row.value("encoding", std::string());
+        if (address && item.size)
+          userItems.emplace(address, std::move(item));
+      }
+    std::erase_if(strings, [&](const StringItem &string) {
+      return userItemOverlapping(string.address, string.length + string.unit);
+    });
+    for (const auto &[address, item] : userItems) {
+      if (item.kind != StringItemKind)
+        continue;
+      StringItem string;
+      string.address = address;
+      string.encoding = item.encoding;
+      if (auto it = stringEncodings.find(item.encoding);
+          it != stringEncodings.end())
+        string.unit = it->second.unit;
+      if (item.size <= string.unit)
+        continue;
+      string.length = item.size - string.unit;
+      string.value = decodedText(address, string.length, item.encoding);
+      strings.push_back(std::move(string));
+    }
+  }
+  /// \p length bytes from \p address read in \p encoding: a byte that reads as
+  /// nothing shows as its escape.
+  std::string decodedText(std::uint64_t address, std::uint64_t length,
+                          const std::string &encoding) {
+    constexpr std::uint64_t MaxDecoded = 65536;
+    std::vector<unsigned char> bytes(std::min(length, MaxDecoded));
+    const int read = neverd_read_bytes(session, address, bytes.data(),
+                                       static_cast<int>(bytes.size()));
+    bytes.resize(read > 0 ? static_cast<std::size_t>(read) : 0);
+    std::string text;
+    const auto cells =
+        decodeText
+            ? takeJson(decodeText(bytes.data(), static_cast<int>(bytes.size()),
+                                  encoding.c_str()))
+            : Json();
+    const auto decoded =
+        cells.is_object() ? cells.value("cells", Json()) : Json();
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+      if (decoded.is_array() && i < decoded.size()) {
+        if (decoded[i].is_string()) {
+          text += decoded[i].get<std::string>();
+          continue;
+        }
+      }
+      static constexpr char Hex[] = "0123456789ABCDEF";
+      text += "\\x";
+      text += Hex[bytes[i] >> 4];
+      text += Hex[bytes[i] & 15];
+    }
+    return text;
+  }
+  /// The user item that shares a byte with [\p start, \p start + \p size).
+  const std::pair<const std::uint64_t, UserItem> *
+  userItemOverlapping(std::uint64_t start, std::uint64_t size) const {
+    auto it = userItems.upper_bound(start);
+    if (it != userItems.begin())
+      if (const auto before = std::prev(it);
+          before->first + before->second.size > start)
+        return &*before;
+    if (it != userItems.end() && it->first < start + size)
+      return &*it;
+    return nullptr;
   }
 
   /// Automatic string label: `a` followed by the capitalized words.
@@ -1556,6 +1654,59 @@ struct Listing::Impl {
   }
 
   std::optional<Item> itemAt(std::uint64_t address) {
+    // The user's items come first, and what analysis reads in their bytes
+    // gives way to them.
+    if (const auto *user = userItemOverlapping(address, 1)) {
+      const int r = regionIndex(address);
+      if (r < 0)
+        return std::nullopt;
+      Item item;
+      item.region = r;
+      if (regions[r].exec)
+        item.function = functionIndex(address);
+      const auto &[start, row] = *user;
+      const auto *string =
+          row.kind == StringItemKind ? stringAt(start) : nullptr;
+      if (row.kind == UndefinedItemKind ||
+          (row.kind == StringItemKind &&
+           (!string || string->address != start))) {
+        item.start = address;
+      } else if (string) {
+        item.kind = ItemKind::String;
+        item.start = start;
+        item.size = row.size;
+        item.index = static_cast<std::size_t>(string - strings.data());
+      } else {
+        item.kind = ItemKind::Data;
+        item.start = start;
+        item.size = row.size;
+      }
+      return item;
+    }
+    auto item = autoItemAt(address);
+    if (item && item->size > 1 &&
+        userItemOverlapping(item->start, item->size)) {
+      if (item->kind == ItemKind::Uninitialized) {
+        // An unwritten span stops at the user's items.
+        std::uint64_t start = item->start, end = item->start + item->size;
+        const auto next = userItems.upper_bound(address);
+        if (next != userItems.end() && next->first < end)
+          end = next->first;
+        if (next != userItems.begin())
+          if (const auto previous = std::prev(next);
+              previous->first + previous->second.size > start)
+            start = previous->first + previous->second.size;
+        item->start = start;
+        item->size = end - start;
+      } else {
+        item->kind = ItemKind::Byte;
+        item->start = address;
+        item->size = 1;
+      }
+    }
+    return item;
+  }
+  std::optional<Item> autoItemAt(std::uint64_t address) {
     const int r = regionIndex(address);
     if (r < 0)
       return std::nullopt;
@@ -1674,6 +1825,15 @@ struct Listing::Impl {
       return {slot->second.label, ListingRole::ImportName, address};
     if (auto data = dataNames.find(address); data != dataNames.end())
       return {data->second, ListingRole::DataName, address};
+    // The user's value is named by its size, as a sized operand names data.
+    if (const auto user = userItems.find(address); user != userItems.end()) {
+      if (const auto sized = dataNamePrefix(user->second.kind); !sized.empty())
+        return {std::string(sized) + upperHex(address),
+                ListingRole::DummyDataName, address};
+      if (user->second.kind == UndefinedItemKind)
+        return {std::string(UnknownNamePrefix) + upperHex(address),
+                ListingRole::DummyDataName, address};
+    }
     if (auto table = switchTables.find(address); table != switchTables.end())
       return {switchTableName(table->second), ListingRole::DummyDataName,
               address};
@@ -1812,6 +1972,7 @@ struct Listing::Impl {
     case ItemKind::Uninitialized:
     case ItemKind::Pointer:
     case ItemKind::SwitchEntry:
+    case ItemKind::Data:
       return AddressClass::Data;
     }
     return AddressClass::Unexplored;
@@ -2357,6 +2518,26 @@ struct Listing::Impl {
       target = slot.target;
       if (slot.address == table.table)
         comment = SwitchTableComment;
+      break;
+    }
+    case ItemKind::Data: {
+      named(ListingRole::Plain);
+      head.padTo(base);
+      head.append(dataDirective(static_cast<unsigned>(item.size)),
+                  ListingRole::Directive);
+      head.padTo(base + 3);
+      unsigned char bytes[8] = {};
+      const int size = static_cast<int>(std::min<std::uint64_t>(item.size, 8));
+      if (neverd_read_bytes(session, item.start, bytes, size) == size) {
+        std::uint64_t value = 0;
+        for (int i = 0; i < size; ++i)
+          value |= static_cast<std::uint64_t>(bytes[i]) << (8 * i);
+        head.append(dialect == OperandDialect::X86 ? x86Number(value)
+                                                   : hexAddress(value),
+                    ListingRole::Number);
+      } else {
+        head.append("?", ListingRole::Number);
+      }
       break;
     }
     case ItemKind::Align:
@@ -3177,6 +3358,50 @@ std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
       address && d.regionIndex(*address) >= 0)
     return address;
   return std::nullopt;
+}
+
+namespace {
+std::string_view itemKindName(ItemKind kind) {
+  switch (kind) {
+  case ItemKind::Instruction:
+    return "instruction";
+  case ItemKind::Byte:
+    return "byte";
+  case ItemKind::String:
+    return "string";
+  case ItemKind::Align:
+    return "align";
+  case ItemKind::Uninitialized:
+    return "uninitialized";
+  case ItemKind::Slot:
+    return "slot";
+  case ItemKind::Pointer:
+    return "pointer";
+  case ItemKind::SwitchEntry:
+    return "switch_entry";
+  case ItemKind::Data:
+    return "data";
+  }
+  return "byte";
+}
+} // namespace
+
+Json Listing::item(std::uint64_t address) {
+  impl_->build();
+  const auto item = impl_->itemAt(address);
+  if (!item)
+    return nullptr;
+  Json result{{"start", hexAddress(item->start)},
+              {"size", item->size},
+              {"kind", itemKindName(item->kind)}};
+  if (const auto user = impl_->userItems.find(item->start);
+      user != impl_->userItems.end())
+    result["user"] = user->second.kind;
+  return result;
+}
+
+const std::string &Listing::stringOptions() const {
+  return impl_->stringOptions;
 }
 
 void Listing::reindex() {

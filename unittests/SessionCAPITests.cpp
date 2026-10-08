@@ -3414,6 +3414,70 @@ TEST_F(SessionCAPITest, UserFunctionEditsShapeTheListAnalysisAndSidecar) {
   EXPECT_LT(neverd_func_find_by_addr(Session, Second), 0);
 }
 
+TEST_F(SessionCAPITest, UserDataItemsDefineBytesAndPersist) {
+  // After the entry routine: "hello", then a word, in the image's one
+  // segment.
+  const auto Input = write(
+      "items.elf", makeNativeELF(false, 0x400000,
+                                 std::string_view("hello\0\x34\x12\0\0", 10)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  const auto Text = Entry + 6, Word = Entry + 12;
+  const std::string TextHex = "0x" + llvm::utohexstr(Text);
+  const std::string WordHex = "0x" + llvm::utohexstr(Word);
+
+  // The string reads where it starts, however short.
+  EXPECT_EQ(takeString(neverd_string_at(Session, Text, nullptr)),
+            "{\"addr\":\"" + TextHex +
+                "\",\"chars\":5,\"encoding\":\"ascii\",\"length\":5,"
+                "\"unit\":1,\"value\":\"hello\"}");
+  EXPECT_EQ(neverd_string_at(Session, Text + 5, nullptr), nullptr);
+
+  // Values of a size, strings in an encoding and undefined bytes.
+  ASSERT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"word\"}"), 0)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_item_set(Session, Text,
+                            "{\"kind\":\"string\",\"encoding\":\"utf-8\","
+                            "\"size\":6}"),
+            0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_items_json(Session)),
+            "[{\"addr\":\"" + TextHex +
+                "\",\"encoding\":\"utf-8\",\"kind\":\"string\","
+                "\"size\":6},{\"addr\":\"" +
+                WordHex + "\",\"kind\":\"word\",\"size\":2}]");
+  // An item may not share bytes with another, a string ends in its
+  // terminator, and a kind is one the tables name.
+  EXPECT_EQ(neverd_item_set(Session, Text + 2, "{\"kind\":\"byte\"}"), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("overlaps"),
+            std::string::npos);
+  EXPECT_EQ(neverd_item_set(Session, Text,
+                            "{\"kind\":\"string\",\"encoding\":\"utf-8\","
+                            "\"size\":5}"),
+            -1);
+  EXPECT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"oword\"}"), -1);
+  // Four bytes remain in the segment: a dword fits, a qword does not.
+  EXPECT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"qword\"}"), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("segment"),
+            std::string::npos);
+  EXPECT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"dword\"}"), 0);
+  ASSERT_EQ(
+      neverd_item_set(Session, Word, "{\"kind\":\"undefined\",\"size\":2}"), 0);
+
+  // Saved, the items come back with the input.
+  ASSERT_EQ(neverd_items_save(Session), 0)
+      << takeString(neverd_last_error(Session));
+  const std::string Saved = takeString(neverd_items_json(Session));
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_items_json(Reopened)), Saved);
+    neverd_session_destroy(Reopened);
+  }
+  ASSERT_EQ(neverd_item_clear(Session, Word), 0);
+  EXPECT_EQ(neverd_item_clear(Session, Word), -1);
+}
+
 TEST_F(SessionCAPITest, SignatureJSONPreservesASCIINameAndMatchFields) {
   expectSignatureJSONName("ascii_function");
 }
