@@ -2031,9 +2031,54 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (auto VA = imageLoadVA(*S.Val))
         ImageLoadVars[varKey(S.Dst->Var)] = *VA;
     });
+  // Symbols size the objects; the largest one at an address is the object.
+  SizedObjects.clear();
+  SizedObjectReach.clear();
+  for (const Symbol &Sym : Opts.Image->Symbols)
+    if (!Sym.IsFunc && Sym.Size && isImageDataAddress(Sym.Addr) &&
+        Sym.Size <= std::numeric_limits<va_t>::max() - Sym.Addr)
+      SizedObjects.emplace_back(Sym.Addr, Sym.Size);
+  llvm::sort(SizedObjects, [](const auto &A, const auto &B) {
+    return A.first != B.first ? A.first < B.first : A.second > B.second;
+  });
+  SizedObjects.erase(std::unique(SizedObjects.begin(), SizedObjects.end(),
+                                 [](const auto &A, const auto &B) {
+                                   return A.first == B.first;
+                                 }),
+                     SizedObjects.end());
+  for (const auto &[Addr, Size] : SizedObjects)
+    SizedObjectReach.push_back(std::max(
+        SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
+        Addr + Size));
+  // The code reaches all of an object through an address that varies or
+  // points into it: the object is declared whole, as bytes.
+  auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written) {
+    const auto Object = sizedObjectAt(Addr);
+    if (!Object)
+      return;
+    noteImageObject(Object->first, Access, Written, Access != nullptr);
+    ImageObject &Obj = ImageObjects[Object->first];
+    Obj.IndexedBytes = std::max(Obj.IndexedBytes, Object->second);
+  };
+  // The constant addresses the code reads or writes at, as opposed to those
+  // it uses as values.
+  std::set<const HighExpr *> AccessAddresses;
+  auto NoteAccessAddress = [&](const HighExpr *Address) {
+    if (const HighExpr *Inner = unwrapIntegerView(Address);
+        Inner && Inner->Kind == ExprKind::Const)
+      AccessAddresses.insert(Inner);
+  };
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
     if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
       noteFunctionAddress(E.ConstVal, Funcs);
+    // An address into an object, not at its start, that the code keeps as a
+    // value is a pointer it walks over the object (`p = &sig[2]; p++`).
+    if (E.Kind == ExprKind::Const && !AccessAddresses.count(&E) &&
+        (E.ConstProvenance == ConstantAddressProvenance::Address ||
+         E.ConstProvenance == ConstantAddressProvenance::DataAddress))
+      if (const auto Object = sizedObjectAt(E.ConstVal);
+          Object && Object->first != E.ConstVal)
+        NoteWhole(E.ConstVal, nullptr, false);
     if (E.Kind == ExprKind::Const && isImageDataAddress(E.ConstVal) &&
         !imageStringLiteral(Opts.Image, E.ConstVal)) {
       bool Named = false;
@@ -2051,12 +2096,16 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       }
       // Empty/non-ASCII rdata stays a named object (`&pwstr`), not a hex
       // immediate. Printable C/wchar literals still fold at the call site.
-      if (Named)
+      if (Named) {
         noteImageAddress(E.ConstVal);
+        if (!AccessAddresses.count(&E))
+          ImageObjects[E.ConstVal].AddressTaken = true;
+      }
     }
     if (E.Kind == ExprKind::Load &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         !E.Operands.empty() && E.Operands[0]) {
+      NoteAccessAddress(E.Operands[0].get());
       if (auto VA = constAddress(*E.Operands[0])) {
         const uint16_t Size = E.Type ? E.Type->Size : 0;
         if (!foldReadonlyScalar(*VA, Size))
@@ -2067,21 +2116,18 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     if ((E.Kind == ExprKind::Load || E.Kind == ExprKind::Store) &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         !E.Operands.empty() && E.Operands[0])
-      if (const HighExpr *Base = indexedImageBase(*E.Operands[0])) {
-        const TypeRef Access =
-            E.Kind == ExprKind::Load
-                ? E.Type
-                : (E.Operands.size() > 1 && E.Operands[1] ? E.Operands[1]->Type
-                                                          : nullptr);
-        noteImageObject(Base->ConstVal, Access, E.Kind == ExprKind::Store,
-                        true);
-        ImageObject &Obj = ImageObjects[Base->ConstVal];
-        Obj.IndexedBytes = std::max(
-            Obj.IndexedBytes, Opts.Image->dataObjectSizeAt(Base->ConstVal));
-      }
+      if (const HighExpr *Base = indexedImageBase(*E.Operands[0]))
+        NoteWhole(Base->ConstVal,
+                  E.Kind == ExprKind::Load
+                      ? E.Type
+                      : (E.Operands.size() > 1 && E.Operands[1]
+                             ? E.Operands[1]->Type
+                             : nullptr),
+                  E.Kind == ExprKind::Store);
     if (E.Kind == ExprKind::Store &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         E.Operands.size() >= 2 && E.Operands[0]) {
+      NoteAccessAddress(E.Operands[0].get());
       if (auto VA = constAddress(*E.Operands[0]))
         noteImageObject(*VA, E.Operands[1] ? E.Operands[1]->Type : nullptr,
                         true, true);
@@ -2090,8 +2136,10 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         E.Operands[0]->Kind == ExprKind::Load &&
         E.Operands[0]->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         !E.Operands[0]->Operands.empty() && E.Operands[0]->Operands[0]) {
-      if (auto VA = constAddress(*E.Operands[0]->Operands[0]))
+      if (auto VA = constAddress(*E.Operands[0]->Operands[0])) {
         noteImageObject(*VA, E.Operands[0]->Type, false);
+        ImageObjects[*VA].AddressTaken = true;
+      }
     }
     // An indirect callee is no printed operand, but the slot it loads is
     // image data all the same, named as the slot the code calls through.
@@ -2121,6 +2169,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (S.Kind == StmtKind::Store &&
           S.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           S.StoreAddr) {
+        NoteAccessAddress(S.StoreAddr.get());
         if (auto VA = constAddress(*S.StoreAddr))
           noteImageObject(*VA, S.StoreVal ? S.StoreVal->Type : nullptr, true,
                           true);
@@ -2180,6 +2229,15 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     }
   }
 
+  // An object whose address the code uses as a value is reached whole
+  // through it, unless its string or pointer declaration holds it already:
+  // the integer that stands in for it holds at most eight of its bytes.
+  for (auto &[Addr, Obj] : ImageObjects)
+    if (Obj.AddressTaken && !Obj.String && !Obj.PointsTo && Obj.Type)
+      if (const auto Object = sizedObjectAt(Addr);
+          Object && Object->first == Addr && Object->second > Obj.Type->Size)
+        Obj.IndexedBytes = std::max(Obj.IndexedBytes, Object->second);
+
   // A C _BitInt(80) object can occupy 16 bytes while the guest x87 value
   // occupies 10. Also, independently declared globals cannot represent two
   // image accesses whose guest address ranges overlap. Project each connected
@@ -2187,12 +2245,18 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   va_t GroupBase = 0, GroupEnd = 0;
   unsigned GroupCount = 0;
   bool NeedsBacking = false;
+  // A backing that starts at a named object takes its name; the object is
+  // only ever printed through the backing.
   auto FinishGroup = [&] {
-    if (GroupCount && NeedsBacking)
-      ImageBackings.push_back(
-          {GroupBase, GroupEnd,
-           GlobalIdentifierAllocator.allocate(
-               makeSyntheticGlobalName(GroupBase) + "_bytes", "g")});
+    if (!GroupCount || !NeedsBacking)
+      return;
+    const auto First = ImageObjects.find(GroupBase);
+    ImageBackings.push_back(
+        {GroupBase, GroupEnd,
+         First != ImageObjects.end() && !First->second.Name.empty()
+             ? First->second.Name
+             : GlobalIdentifierAllocator.allocate(
+                   makeSyntheticGlobalName(GroupBase) + "_bytes", "g")});
   };
   for (const auto &[Addr, Obj] : ImageObjects) {
     const uint64_t Size = std::max<uint64_t>(

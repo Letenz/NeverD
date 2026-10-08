@@ -392,8 +392,8 @@ TEST(CImageObjects, AnIndexedTableIsDeclaredWhole) {
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(HighCEmitter().emit({Lookup}, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("_bytes[16] = {"), NotFound) << Source;
-  EXPECT_NE(Source.find("_bytes[0] + (uint64_t)(arg0 & 15)"), NotFound)
+  EXPECT_NE(Source.find("table[16] = {"), NotFound) << Source;
+  EXPECT_NE(Source.find("&table[0] + (uint64_t)(arg0 & 15)"), NotFound)
       << Source;
   source_call_execution_test::compileAndRun(Source + R"(
 int main(void) {
@@ -403,6 +403,116 @@ int main(void) {
   return 0;
 }
 )");
+}
+
+TEST(CImageObjects, AnAddressIntoAnObjectReachesAllOfIt) {
+  // `p = &vals[1]` and `vals[1 + i]` start inside the object: the whole
+  // object is declared, and each address is the place in it.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  std::vector<uint8_t> Rodata(0x20, 0);
+  for (unsigned I = 0; I < 4; ++I)
+    Rodata[4 * I] = static_cast<uint8_t>(10 * (I + 1));
+  Img.Segments.push_back(
+      segment(".text", TextVA, std::vector<uint8_t>(0x10),
+              SegmentFlags::Readable | SegmentFlags::Executable));
+  Img.Segments.push_back(
+      segment(".rodata", RodataVA, std::move(Rodata), SegmentFlags::Readable));
+  Img.Symbols = {dataSymbol("vals", RodataVA, 16)};
+  const TypeRef U64 = NdType::makeInt(8, false);
+  const TypeRef I32 = NdType::makeInt(4, true);
+  MedVar Index;
+  Index.Kind = MedVar::Param;
+  Index.Id = 0;
+  Index.Size = 8;
+  Index.TheArch = Arch::X64;
+  auto Scaled = HighExpr::makeBinop(
+      NdOp::INT_MULT, HighExpr::makeVar(Index, U64), HighExpr::makeConst(4, 8));
+  Scaled->Type = U64;
+  auto Address = HighExpr::makeBinop(
+      NdOp::INT_ADD, Scaled,
+      HighExpr::makeConst(RodataVA + 4, 8, ConstantAddressProvenance::Address));
+  Address->Type = U64;
+  HighFunc After = function("after_first", I32, TextVA);
+  After.Params = {{"arg0", U64}};
+  After.Body = {returnStatement(HighExpr::makeLoad(Address, I32))};
+  HighFunc Third = function("third", I32, TextVA + 4);
+  Third.Body = {returnStatement(HighExpr::makeLoad(
+      HighExpr::makeConst(RodataVA + 8, 8, ConstantAddressProvenance::Address),
+      I32))};
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({After, Third}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("vals[16] = {"), NotFound) << Source;
+  source_call_execution_test::compileAndRun(Source + R"(
+int main(void) {
+  if (after_first(0) != 20 || after_first(2) != 40)
+    return 1;
+  return third() != 30;
+}
+)");
+}
+
+TEST(CImageObjects, AnAddressTheCodeKeepsReachesTheWholeObject) {
+  // `return vals;` and `return &vals[2];` hand out pointers that the caller
+  // reads past their first element: the whole object is declared.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  // Control characters: no string literal stands in for any part of it.
+  std::vector<uint8_t> Rodata(0x20, 0);
+  for (unsigned I = 0; I < 16; ++I)
+    Rodata[I] = static_cast<uint8_t>(0x11 + I / 4);
+  Img.Segments.push_back(
+      segment(".text", TextVA, std::vector<uint8_t>(0x10),
+              SegmentFlags::Readable | SegmentFlags::Executable));
+  Img.Segments.push_back(
+      segment(".rodata", RodataVA, std::move(Rodata), SegmentFlags::Readable));
+  Img.Symbols = {dataSymbol("vals", RodataVA, 16)};
+  const TypeRef U64 = NdType::makeInt(8, false);
+  HighFunc Whole = function("whole", U64, TextVA);
+  Whole.Body = {returnStatement(
+      HighExpr::makeConst(RodataVA, 8, ConstantAddressProvenance::Address))};
+  HighFunc Third = function("third_place", U64, TextVA + 4);
+  Third.Body = {returnStatement(HighExpr::makeConst(
+      RodataVA + 8, 8, ConstantAddressProvenance::Address))};
+  for (const bool BothFunctions : {true, false}) {
+    std::vector<HighFunc> Funcs = {Third};
+    if (BothFunctions)
+      Funcs.push_back(Whole);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::ELF;
+    Options.Image = &Img;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(HighCEmitter().emit(Funcs, OS, Options));
+    OS.flush();
+    EXPECT_NE(Source.find("vals[16] = {"), NotFound) << Source;
+    source_call_execution_test::compileAndRun(
+        Source + std::string(BothFunctions ? R"(
+int main(void) {
+  const int32_t *all = (const int32_t *)(uintptr_t)whole();
+  const int32_t *third = (const int32_t *)(uintptr_t)third_place();
+  return all[3] != 0x14141414 || third[0] != 0x13131313 ||
+         third[1] != 0x14141414;
+}
+)"
+                                           : R"(
+int main(void) {
+  const int32_t *third = (const int32_t *)(uintptr_t)third_place();
+  return third[-2] != 0x11111111 || third[1] != 0x14141414;
+}
+)"));
+  }
 }
 
 TEST(CImageObjects, LiteralsSpellExactlyTheirBytes) {

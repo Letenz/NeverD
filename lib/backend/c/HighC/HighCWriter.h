@@ -784,6 +784,8 @@ public:
     bool WeakType = false;
     /// The code calls or jumps through the pointer it holds.
     bool CallSlot = false;
+    /// The code uses its address as a value, not only to access it there.
+    bool AddressTaken = false;
     /// A string referenced by its address alone: declared as its array, with
     /// \ref ArrayBytes elements' bytes, initialized by the string.
     std::optional<ImageCString> String;
@@ -802,8 +804,16 @@ public:
   std::optional<std::string> imageObjectInitializer(va_t Addr,
                                                     const ImageObject &Obj);
   /// The address constant of a sized image object that \p Address indexes
-  /// by a variable byte offset (`i + &table`), or null.
+  /// by a variable byte offset (`i + &table`), or null.  The constant may
+  /// point into the object (`i + &table[2]`).
   const HighExpr *indexedImageBase(const HighExpr &Address) const;
+  /// The address and size of the outermost data object, sized by its
+  /// symbol, that holds \p Addr.
+  std::optional<std::pair<va_t, uint64_t>> sizedObjectAt(va_t Addr) const;
+  /// The image's sized data objects by address, each as large as the
+  /// largest symbol there, and the furthest end of any object up to each.
+  std::vector<std::pair<va_t, uint64_t>> SizedObjects;
+  std::vector<va_t> SizedObjectReach;
   /// The image object a call argument prints as when it is a string: the
   /// array's address, or a load of a pointer to one.  The expression is the
   /// one that prints the object's name.

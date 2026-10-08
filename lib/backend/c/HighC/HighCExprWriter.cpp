@@ -4155,14 +4155,28 @@ const HighExpr *HighCWriter::indexedImageBase(const HighExpr &Address) const {
     }
     if (Term->ConstProvenance == ConstantAddressProvenance::Scalar ||
         Term->ConstProvenance == ConstantAddressProvenance::AddressFragment ||
-        !isImageDataAddress(Term->ConstVal) ||
-        !Opts.Image->dataObjectSizeAt(Term->ConstVal))
+        !isImageDataAddress(Term->ConstVal) || !sizedObjectAt(Term->ConstVal))
       continue;
     if (Base)
       return nullptr;
     Base = Term;
   }
   return Varies ? Base : nullptr;
+}
+
+std::optional<std::pair<va_t, uint64_t>>
+HighCWriter::sizedObjectAt(va_t Addr) const {
+  const auto After = llvm::upper_bound(
+      SizedObjects, Addr,
+      [](va_t A, const std::pair<va_t, uint64_t> &O) { return A < O.first; });
+  // Walk back while an object at or before this one may still reach Addr:
+  // the last object that holds it encloses the others.
+  std::optional<std::pair<va_t, uint64_t>> Outermost;
+  for (size_t I = After - SizedObjects.begin();
+       I > 0 && SizedObjectReach[I - 1] > Addr; --I)
+    if (Addr - SizedObjects[I - 1].first < SizedObjects[I - 1].second)
+      Outermost = SizedObjects[I - 1];
+  return Outermost;
 }
 
 std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {
