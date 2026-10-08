@@ -504,6 +504,37 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
           MaxIdx = std::max(MaxIdx, LastSlot);
         }
 
+  // A tail jump at the entry stack pointer hands its callee this function's
+  // incoming arguments: the slots of the positions the callee is known to
+  // read (MedOp::CalleeStackArgs) are parameters passed through, though the
+  // body never loads them, as in a thunk `jmp [__imp__calloc]`.
+  for (const auto &Blk : Func.Blocks)
+    for (size_t I = 0; I + 1 < Blk.Ops.size(); ++I) {
+      const MedOp &Call = Blk.Ops[I];
+      if ((Call.Opcode != NdOp::CALL && Call.Opcode != NdOp::INDIR_CALL) ||
+          Call.CalleeStackArgs <= 0 || Blk.Ops[I + 1].Opcode != NdOp::RETURN ||
+          Blk.Ops[I + 1].Addr != Call.Addr)
+        continue;
+      // The stack pointer at the call: the block's last write before it, else
+      // the entry block's incoming one.
+      std::optional<int64_t> CallOff;
+      bool Written = false;
+      for (size_t J = I; J-- > 0 && !Written;)
+        if (const MedVar &Out = Blk.Ops[J].Output;
+            Out.Kind == MedVar::Reg && Out.RegOff == SpOff && Out.Size > 0) {
+          CallOff = traceOff(Out, 0);
+          Written = true;
+        }
+      if (!Written && Blk.Preds.empty())
+        CallOff = 0;
+      if (CallOff != 0)
+        continue;
+      for (int K = 0; K < Call.CalleeStackArgs; ++K) {
+        Offsets.insert(4 + 4 * K);
+        MaxIdx = std::max(MaxIdx, K);
+      }
+    }
+
   if (Offsets.empty())
     return;
   Func.CC = CallingConv::CDECL;

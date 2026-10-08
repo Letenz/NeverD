@@ -913,6 +913,29 @@ TEST(RuntimeMetadata, ChoosesExportSymbolThenAutomaticFunctionName) {
   EXPECT_EQ(Img.getFunctionNameAt(0x2000), "sub_2000");
 }
 
+TEST(RuntimeMetadata, NamesAFunctionByItsFunctionSymbol) {
+  // A MinGW import thunk starts its import library object's `.text`: the
+  // section's own symbol comes first at the address, the thunk's is calloc.
+  BinaryImage Img;
+  Symbol Section;
+  Section.Name = ".text";
+  Section.Addr = 0x1000;
+  Img.Symbols.push_back(Section);
+  Symbol Function;
+  Function.Name = "calloc";
+  Function.Addr = 0x1000;
+  Function.IsFunc = true;
+  Img.Symbols.push_back(Function);
+  // A start analysis made names no function a stated label names.
+  Img.Symbols.push_back(Symbol::makeFunc(0x2000));
+  Symbol Label;
+  Label.Name = "handler";
+  Label.Addr = 0x2000;
+  Img.Symbols.push_back(Label);
+  EXPECT_EQ(Img.getFunctionNameAt(0x1000), "calloc");
+  EXPECT_EQ(Img.getFunctionNameAt(0x2000), "handler");
+}
+
 TEST(RuntimeMetadata, ParsesRVADelayImportWithExactIATSlot) {
   DelayImportImage Fixture =
       makeDelayImportImage(/*Is64=*/false, /*LegacyVA=*/false,

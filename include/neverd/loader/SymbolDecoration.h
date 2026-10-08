@@ -65,6 +65,35 @@ inline std::string symbolOfCName(llvm::StringRef Name, BinaryFormat Format,
   return (llvm::StringRef(Underscore ? "_" : "") + Name).str();
 }
 
+/// The prefix the linker of \p Format gives the symbol of an import's
+/// address slot (SymbolDecorations.def), or empty when it names none.
+inline llvm::StringRef importSlotPrefix(BinaryFormat Format) {
+#define NEVERD_IMPORT_SLOT_PREFIX(FormatId, Prefix)                            \
+  if (Format == BinaryFormat::FormatId)                                        \
+    return Prefix;
+#include "neverd/loader/SymbolDecorations.def"
+  return {};
+}
+
+/// Whether an import entry of \p Format names its function by the C name
+/// rather than by its symbol (SymbolDecorations.def).
+inline bool importNamesAreCNames(BinaryFormat Format) {
+#define NEVERD_IMPORT_C_NAMES(FormatId)                                        \
+  if (Format == BinaryFormat::FormatId)                                        \
+    return true;
+#include "neverd/loader/SymbolDecorations.def"
+  return false;
+}
+
+/// The symbol the import its import entry names \p Name links as, so that
+/// cNameOfSymbol gives that name back: 32-bit Windows' `_initterm` is the
+/// symbol `__initterm`, not the C name `initterm`.
+inline std::string symbolOfImportName(llvm::StringRef Name, BinaryFormat Format,
+                                      Arch Target) {
+  return importNamesAreCNames(Format) ? symbolOfCName(Name, Format, Target)
+                                      : Name.str();
+}
+
 } // namespace neverd
 
 #endif // NEVERD_LOADER_SYMBOLDECORATION_H

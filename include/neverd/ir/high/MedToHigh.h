@@ -339,6 +339,11 @@ private:
   /// Prefer a non-synthetic FuncNames entry, then an import or image symbol.
   std::string calleeDisplayName(va_t Target) const;
 
+  /// The fixed parameter count of the variadic C library import that call
+  /// \p CallIdx of \p Ops reaches by its stub or slot, else 0.
+  unsigned importVarArgFixedCount(size_t CallIdx,
+                                  const std::vector<MedOp> &Ops) const;
+
   std::vector<ExprPtr> collectCallArgs(const MedBlock &CurBlock,
                                        size_t CallIdx);
 

@@ -512,12 +512,19 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
             S.erase(StackKey{false, Family});
         continue;
       }
-      // A tail call hands this function's stack to its target.
+      // A tail call hands this function's stack to its target: a function,
+      // or an import by the stub or slot it names, whose stack arguments its
+      // prototype may fix (solveCallRegisterEffects).
       const bool EntryStack =
           stackValueOf(S, NdVar::reg(TRI.StackPointer, 8)) == StackValue::at(0);
-      if (DirectTarget && Op.Opcode != NdOp::INDIR_CALL &&
-          Op.Opcode != NdOp::INDIR_BR && EntryStack &&
-          !Img.findImportAt(Op.Inputs[0].Offset))
+      const bool ImportTarget =
+          DirectTarget && Op.Opcode != NdOp::INDIR_BR &&
+          (Op.Opcode == NdOp::INDIR_CALL
+               ? !importCalleeName(Img, Op.Inputs[0].Offset).empty()
+               : Img.findImportAt(Op.Inputs[0].Offset) != nullptr);
+      if (DirectTarget && EntryStack &&
+          (ImportTarget ||
+           (Op.Opcode != NdOp::INDIR_CALL && Op.Opcode != NdOp::INDIR_BR)))
         Effect.StackTailCallees.insert(Op.Inputs[0].Offset);
       else
         Unknown = true;
@@ -840,7 +847,8 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
                          GPRFamilyMask VolatileFamilies,
                          GPRFamilyMask ArgumentFamilies,
                          const std::set<va_t> &DispatchThunks,
-                         const std::map<va_t, GPRReadWidths> &FixedEntryReads) {
+                         const std::map<va_t, GPRReadWidths> &FixedEntryReads,
+                         const std::map<va_t, int> &FixedEntryStackArgs) {
   CallRegisterSummaries Result;
   // Unknown is absorbing: a function is unknown if it or any callee is.
   std::set<va_t> Unknown;
@@ -952,7 +960,8 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
       if (UnknownStack.count(Entry))
         continue;
       if (llvm::any_of(Effect.StackTailCallees, [&](va_t Callee) {
-            return !Funcs.count(Callee) || UnknownStack.count(Callee);
+            return Funcs.count(Callee) ? UnknownStack.count(Callee) != 0
+                                       : !FixedEntryStackArgs.count(Callee);
           })) {
         UnknownStack.insert(Entry);
         Changed = true;
@@ -966,14 +975,21 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   for (const auto &[Entry, Effect] : Funcs)
     if (!UnknownStack.count(Entry))
       StackArgs[Entry] = Effect.StackArgs;
+  for (const auto &[Entry, Count] : FixedEntryStackArgs)
+    if (!Funcs.count(Entry))
+      StackArgs[Entry] = Count;
   for (bool Changed = true; Changed;) {
     Changed = false;
-    for (auto &[Entry, Count] : StackArgs)
-      for (va_t Callee : Funcs.at(Entry).StackTailCallees)
+    for (auto &[Entry, Count] : StackArgs) {
+      auto Func = Funcs.find(Entry);
+      if (Func == Funcs.end())
+        continue;
+      for (va_t Callee : Func->second.StackTailCallees)
         if (StackArgs.at(Callee) > Count) {
           Count = StackArgs.at(Callee);
           Changed = true;
         }
+    }
   }
   return Result;
 }

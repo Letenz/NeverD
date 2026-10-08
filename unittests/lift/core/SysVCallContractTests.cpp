@@ -427,6 +427,38 @@ TEST(SysVCallContract, PassThroughArgumentsReachAPrototypedImport) {
   }
 }
 
+TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
+  // wrap(flag) picks the format in either arm of an `if` and calls
+  // __fprintf_chk(0, 2, fmt) after the join: the format reaches the call as
+  // the value of EDX on both paths, not as a value the call site never set.
+  constexpr va_t Wrap = Text, Stub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> WrapCode = {
+      0x48, 0x83, 0xEC, 0x08,       // sub rsp, 8
+      0x85, 0xFF,                   // test edi, edi
+      0x74, 0x07,                   // je L1
+      0xBA, 0x11, 0x11, 0x00, 0x00, // mov edx, 0x1111
+      0xEB, 0x05,                   // jmp L2
+      0xBA, 0x22, 0x22, 0x00, 0x00, // L1: mov edx, 0x2222
+      0xBE, 0x02, 0x00, 0x00, 0x00, // L2: mov esi, 2
+      0x31, 0xFF,                   // xor edi, edi
+      0x31, 0xC0,                   // xor eax, eax
+      0xE8};                        // call __fprintf_chk
+  for (uint8_t B : rel32(Wrap + WrapCode.size() + 4, Stub))
+    WrapCode.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                    0xC3})                  // ret
+    WrapCode.push_back(B);
+  put(Code, Wrap, WrapCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Wrap, "wrap"}}, {{Stub, "__fprintf_chk"}});
+  const std::string Source = liftEntries(Img, {Wrap});
+  const std::string Body = body(Source, "wrap");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("__fprintf_chk("), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+}
+
 TEST(SysVCallContract, ACallThroughALoaderBoundSlotPassesThePrototype) {
   // Built with -fno-plt, wrap(s, f) calls fputs through the GOT slot that a
   // GLOB_DAT relocation binds, which no import directory entry lists.
