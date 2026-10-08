@@ -42001,6 +42001,27 @@ TEST(HighCPointerAddresses, IntegerVectorIntrinsicsTakeVectorOperands) {
   expectCompilesForMsvc("#include <immintrin.h>\n" + HighC);
 }
 
+TEST(HighCPointerAddresses, FloatVectorIntrinsicsTakeTheirVectorTypes) {
+  // `_mm_shuffle_ps` takes __m128 and `_mm_unpacklo_pd` __m128d, which C
+  // does not convert from an integer vector.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x0f, 0xc6, 0xc1, 0x1b,       // shufps xmm0, xmm1, 0x1b
+      0x0f, 0x11, 0x01,             // movups [rcx], xmm0
+      0x66, 0x0f, 0x14, 0xd3,       // unpcklpd xmm2, xmm3
+      0x66, 0x0f, 0x11, 0x12,       // movupd [rdx], xmm2
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("_mm_shuffle_ps(__builtin_bit_cast(__m128, "),
+            std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("_mm_unpacklo_pd(__builtin_bit_cast(__m128d, "),
+            std::string::npos)
+      << HighC;
+  expectCompilesForMsvc("#include <immintrin.h>\n" + HighC);
+}
+
 TEST(HighCPointerAddresses, SelfLoopTargetKeepsItsLabel) {
   // `jmp $` spins forever.  The branch into it must stay a jump to a label
   // whose statement loops, not fall through or reference a missing label.
