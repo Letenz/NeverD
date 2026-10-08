@@ -244,10 +244,11 @@ LanguageRuntimeInfo detectLanguageRuntime(const BinaryImage &Img) {
     if (E.Order == EvidenceOrder::Fallback && Found.empty() &&
         evidenceHolds(Img, E.Id))
       record(E.Runtime, E.Description.str());
-  Info.Version = findGoVersion(Img);
-
   if (Found.empty())
     return Info;
+  // `go1.` is only a Go release in a Go image.
+  if (llvm::is_contained(Found, SourceLanguageRuntime::Go))
+    Info.Version = findGoVersion(Img);
 
   Info.Runtime = Found.front();
   Info.IsMixed = Found.size() > 1;

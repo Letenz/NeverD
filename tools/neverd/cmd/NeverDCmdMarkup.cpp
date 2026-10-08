@@ -544,4 +544,80 @@ int runItems(neverd_session_t Sess) {
   return 0;
 }
 
+int runOperands(neverd_session_t Sess) {
+  if (!OperandAddr.empty()) {
+    const std::optional<uint64_t> Addr = parseAddrArg(OperandAddr);
+    if (!Addr) {
+      WithColor::error() << "invalid instruction address\n";
+      return 1;
+    }
+    std::string Format;
+    if (!OperandClear)
+      Format = formatv("{0}", json::Value(json::Object{
+                                  {"base", OperandBase.getValue()},
+                                  {"negate", OperandNegate.getValue()},
+                                  {"invert", OperandInvert.getValue()}}))
+                   .str();
+    if (neverd_operand_format_set(Sess, *Addr, static_cast<int>(OperandIndex),
+                                  OperandClear ? nullptr : Format.c_str()) !=
+        0) {
+      WithColor::error() << "format failed: " << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    if (neverd_operand_formats_save(Sess) != 0) {
+      WithColor::error() << "operand formats save failed: "
+                         << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    if (!JsonOutput)
+      outs() << (OperandClear ? "Cleared operand " : "Formatted operand ")
+             << OperandIndex << " at 0x" << utohexstr(*Addr) << "\n";
+  }
+  // The formats, after any edit.
+  const char *Json = neverd_operand_formats_json(Sess);
+  if (JsonOutput) {
+    outs() << (Json ? Json : "[]") << "\n";
+  } else {
+    outs() << "\nOperand formats:\n";
+    outs() << format("  %-18s %-8s %-10s %s\n", "Address", "Operand", "Base",
+                     "Changes");
+    outs() << "  " << std::string(50, '-') << "\n";
+    size_t Count = 0;
+    auto Parsed = json::parse(Json ? Json : "[]");
+    if (!Parsed) {
+      consumeError(Parsed.takeError());
+    } else if (const json::Array *Rows = Parsed->getAsArray()) {
+      for (const json::Value &Row : *Rows) {
+        const json::Object *Object = Row.getAsObject();
+        const json::Array *Operands =
+            Object ? Object->getArray("operands") : nullptr;
+        if (!Operands)
+          continue;
+        for (const json::Value &Entry : *Operands) {
+          const json::Object *Operand = Entry.getAsObject();
+          if (!Operand)
+            continue;
+          std::string Changes;
+          if (Operand->getBoolean("negate").value_or(false))
+            Changes += "sign ";
+          if (Operand->getBoolean("invert").value_or(false))
+            Changes += "bits ";
+          outs() << format(
+              "  %-18s %-8lld %-10s %s\n",
+              Object->getString("addr").value_or("").str().c_str(),
+              static_cast<long long>(
+                  Operand->getInteger("operand").value_or(0)),
+              Operand->getString("base").value_or("").str().c_str(),
+              Changes.c_str());
+          ++Count;
+        }
+      }
+    }
+    if (Count == 0)
+      outs() << "  (none)\n";
+  }
+  neverd_free_string(Json);
+  return 0;
+}
+
 } // namespace neverd::cli

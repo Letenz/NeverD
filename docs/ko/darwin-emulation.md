@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: fab8f746a3afad0cc7aeaee21f82d848bf0bad20c33a1f8140b1f3c821e75281 -->
+<!-- i18n-source: 78e6754f811bc16b1a89770eb1987a7d484301f161646eba212d6fd496e19372 -->
 
 [← 문서 목록](README.md)
 
@@ -740,7 +740,7 @@ stat64/open/access/truncate/chdir는 끝 링크를 따르고 lstat64/readlink는
 
 readlink(58)는 부호 있는 하위32비트count, readlinkat(473)는 전체size_t이며int를 반환합니다. INT32_MAX 초과는 경로/FD보다 먼저EINVAL22. min(count,대상 길이)만 복사하고NUL을 추가하지 않으며 실제 범위만 검사합니다.0길이도 경로/유형 검사 후 출력 포인터를 무시합니다. 비링크EINVAL22, 모두 쓰기 불가EFAULT14, 부분 쓰기는 복사 전에 중지합니다. 전송/메모리 예산 오류를 전달합니다.
 
-고정 링크 이름과 원시 대상 바이트는 변하지 않습니다. MutableDirectories는 루트 또는 고정 링크 이름의 경로 구간 조상이 될 수 없으며 /work는 /workspace/link를 포함하지 않습니다. 별도의 가변 디렉터리에서 대상 이름을 실행 중 생성, 이동, 삭제, 교체할 수 있습니다. 기존 부모, 마운트, 별칭, 플래그, SWAP 지원, 생성 정책 검증은 유지되며 새 inode는 보호 링크를 포함한 모든 메타데이터/스냅샷 inode보다 커야 합니다. 고정 WritableFiles/MutationPolicies는 최종 일반 파일을 변경할 수 있습니다. 링크unlink/rename은 효과 전에 중지합니다. 동적/하드 링크,ACL,가변 링크 이름 공간은 미지원입니다. ARM64 macOS 독립 프로브는 기존5초 내189관찰/115전체 버퍼를 통과했으며 물리iOS/Intel HVF/전체OS를 입증하지 않습니다.
+고정 링크 이름과 원시 대상 바이트는 변하지 않습니다. MutableDirectories는 루트 또는 고정 링크 이름의 경로 구간 조상이 될 수 없으며 /work는 /workspace/link를 포함하지 않습니다. 별도의 가변 디렉터리에서 대상 이름을 실행 중 생성, 이동, 삭제, 교체할 수 있습니다. 기존 부모, 마운트, 별칭, 플래그, SWAP 지원, 생성 정책 검증은 유지되며 새 inode는 보호 링크를 포함한 모든 메타데이터/스냅샷 inode보다 커야 합니다. 고정 WritableFiles/MutationPolicies는 최종 일반 파일을 변경할 수 있습니다. 링크unlink/rename은 효과 전에 중지합니다. 실행 중 링크 생성은 다음 절에 설명합니다. 하드 링크,ACL,가변 초기 링크 목록은 미지원입니다. ARM64 macOS 독립 프로브는 기존5초 내189관찰/115전체 버퍼를 통과했으며 물리iOS/Intel HVF/전체OS를 입증하지 않습니다.
 
 추가 ARM64 macOS DELETE/RENAME 60개 제어는 기존5초 내 전체 stat 버퍼, 변경 전후 이름 공간과 유지 FD/CWD 식별을 기록합니다. 끝 슬래시는 링크를 펼쳐 실제 대상을 변경할 수 있고 NOFOLLOW_ANY는 필요한 펼침을 ELOOP로 거부합니다. SDK 없는 symbolic-link-mutations는 생성, 없는 대상, 이동/삭제/교체, 유지 CWD 부모, FD 종료 전 원래 파일10바이트 전체와 종료 후에도 유지된 매핑10바이트 전체를 검사합니다. 물리 iOS나 네이티브 Intel 증거는 아닙니다.
 
@@ -749,3 +749,49 @@ readlink(58)는 부호 있는 하위32비트count, readlinkat(473)는 전체size
 ```
 
 [XNU namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_lookup.c), [XNU readlink / AT](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU open authorization](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_subr.c).
+
+## 실행 중 심볼릭 링크 생성
+
+원시 `symlink(57)`와 `symlinkat(474)`는 변경을 허용한 디렉터리에 프로세스 로컬 링크를 만들고 int를 반환합니다. dirfd는 하위32비트이며 절대 목적지 이름은 FD를 무시합니다. 목적지 검사 전에 첫 NUL까지 대상을 읽습니다.0..1023바이트는 빈 값, 비UTF-8, 점, 반복 슬래시를 허용합니다.1024바이트에 NUL이 없으면 ENAMETOOLONG63, 먼저 읽을 수 없는 바이트를 만나면 EFAULT14입니다. 초기 JSON 대상은 계속1..1023바이트입니다.
+
+현재 링크 표가 실제 이름, 부모와 대상 바이트를 보유합니다. 기존 말단은 EEXIST17입니다. 소모한 마지막 슬래시는 dangling 링크의 실제 대상 이름에서 생성을 허용하며 기존 링크는 바뀌지 않습니다. 빈 대상 확장은 ENOENT2입니다. 빈 대상 readlink는 양의 용량에서도 출력 포인터에 접근하지 않고0을 반환하지만 count/경로/유형을 먼저 검사합니다.
+
+이름/NUL과 대상은 한 번만 계산하며256항목/16 MiB를 공유합니다. 거부는 노드, 부모, FD, 일반 파일 inode를 바꾸지 않습니다. 새 링크의 전체 메타데이터는 알 수 없으며 일반 파일 CreationPolicy나 재사용 이름의 이전 관측을 상속하지 않습니다. 생성 후 부모 stat/스냅샷은 알 수 없습니다. 대상 삭제/교체 후에도 FD/CWD/매핑은 원래 객체를 유지합니다. rmdir와 디렉터리 교체는 링크 자식을 검사합니다. 이동/SWAP 양쪽 중 보호된 초기 링크가 있는 쪽이 있으면 효과 전에 중지합니다. 링크/디렉터리 교체, 하드 링크, ACL, 가변 초기 링크 목록은 미지원이며 별칭은 실제 부모의 권한을 옮기지 않습니다.
+
+ARM64 macOS의150개 원시 기록은 관측기 실패4개를 유지하며 별도10개로 실제 새 대상과 빈 링크 경계를 확인합니다. SDK 없는 `symbolic-link-creation`은 두 진입점, 대상/버퍼 경계, 부모, 교체 파일 및 기존 FD/매핑10바이트 전체를 확인합니다. 물리 iOS, 네이티브 Intel, 전체 OS 호환성 증거는 아닙니다.
+
+[XNU symlink / symlinkat](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU empty-link expansion](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_lookup.c).
+
+## 런타임에 만든 심볼릭 링크 삭제
+
+`unlink(10)`과 `unlinkat(472)`는 실제 부모에 변경 권한이 있는 런타임 링크를 삭제합니다. 초기 고정 링크는 계속 보호됩니다. 단독 `AT_SYMLINK_NOFOLLOW_ANY`는 마지막 링크를 유지하므로 끊긴 대상, 순환 또는 빈 대상도 삭제할 수 있습니다. 중간 경로나 끝 슬래시의 확장이 필요하면 ELOOP62입니다. 플래그 없이 `a → b → target`의 `a/`를 삭제하면 `b`만 삭제하고 `a`와 최종 대상을 유지합니다. 기존 플래그·경로·dirfd 오류 순서는 같습니다.
+
+성공하면 동적 항목 하나와 현재 경로/NUL/대상 바이트 비용을 한 번 반환하고 실제 부모의 전체 stat/열거 관측만 무효화합니다. 빈 FD나 생성 inode는 필요 없습니다. 대상 내용·변경 정책·설명자·공유 커서·CWD·매핑은 원래 객체를 유지합니다. 이름 재사용은 이전 링크를 복원하지 않으며 거부는 상태나 비용을 바꾸지 않습니다. 실행 중 생성된 링크의 전체 메타데이터는 여전히 알 수 없습니다. 링크/디렉터리 교체와 보호된 초기 링크가 남은 하위 트리 이동/SWAP은 미지원입니다.
+
+독립 ARM64 macOS 40개 관측은 기존 5초 제한에서 삭제 성공28개, 오류12개, 재삭제 ENOENT17개와 FD/CWD/비공개 매핑 보존을 기록했습니다. 게스트·실제 iOS·Intel 검증은 아닙니다. `symbolic-link-unlink` 및 공개 API 검사는 별도입니다.
+
+## 실행 중 생성한 심볼릭 링크 이름 변경
+
+`rename(128)`, `renameat(465)`, `renameatx_np(488)`는 일반 이동과 `RENAME_EXCL=4`를 지원합니다. 실행 중 링크를 빈 이름으로 이동하거나 링크/링크, 링크/일반 파일, 일반 파일/링크를 교체할 수 있습니다. 실제 양쪽 부모는 확인된 동일 마운트에서 수정 권한이 있어야 하며 초기 링크는 불변입니다. 공유 해석기가 실제 노드를 선택하고 빈·누락·순환·비UTF-8 대상 바이트를 유지합니다. 상대 대상은 새 부모에서 해석합니다. 단독 `RENAME_NOFOLLOW_ANY=16`는 마지막 링크를 유지하며 중간 확장이 필요하면 ELOOP62입니다. 다른 기존 EXCL 대상은 EEXIST17이며 같은 객체 EXCL은 파일 시스템 대소문자 계약 없이 미지원입니다.
+
+이름을 게시하기 전에 새 경로/NUL 비용을 예약하며 NUL 포함1024바이트로 제한합니다. 교체된 실행 중 링크의 현재 경로/NUL/대상 비용은 대상 FD나 매핑과 무관하게 한 번 반환합니다. 교체된 일반 파일의 내용/동적 경로 비용은 모든 설명자와 매핑 임대가 해제될 때 회수하며 즉시 회수 가능한 일반 대상만 예약 크레딧을 제공합니다. 추가 항목, FD, 일반 파일 생성 inode는 불필요합니다. 거부는 두 노드를 유지하고 성공은 실제 부모의 전체 stat/열거 관측을 무효화합니다. 실행 중 링크의 전체 메타데이터는 알 수 없습니다. 링크/디렉터리 교체, 하드 링크, 보호된 초기 링크가 남은 하위 트리 이동/SWAP은 미지원입니다.
+
+독립 ARM64 macOS19사례는 기존5초 제한에서14성공과5개 EEXIST/ELOOP를 기록하고 링크 inode/원시 바이트, 상대 대상 재결합, 유지된 FD/dup/커서/CWD/개인 매핑을 검사합니다. SDK 없는 `symbolic-link-rename`와 공개 SDK/CLI 검사는 별도입니다. 원시 참고만으로 실제 iOS, 네이티브 Intel, 전체 OS 호환성을 증명하지 않습니다.
+
+[XNU rename / namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c).
+
+## 실행 중 생성한 심볼릭 링크 교환
+
+`renameatx_np(488)`는 `RENAME_SWAP=2`로 링크/링크, 링크/일반 파일, 일반 파일/링크를 교환합니다. 실제 양쪽 부모가 확인된 동일 마운트에서 수정과 SWAP 권한을 제공해야 합니다. 같은 이름은 추가 SWAP 선언 없이 효과 없이 성공합니다. 대상 누락은 ENOENT2, `SWAP|NOFOLLOW_ANY=18`은 마지막 링크를 유지하고 필요한 중간 확장을 ELOOP62로 거부하며 `SWAP|EXCL=6`은 경로 읽기 전에 EINVAL22입니다. 원시 바이트는 유지하고 상대 대상은 양쪽 새 부모에서 해석합니다.
+
+두 경로/NUL 비용을 이름 게시 전에 예약합니다. 두 객체는 연결 상태를 유지하며 데이터나 매핑 임대로 교체 크레딧을 얻지 않습니다. 초기 파일은 첫 교환에서 동적 경로 비용을 얻고 되돌릴 때도 재사용합니다. 항목, FD, 생성 inode를 소비하지 않습니다. 파일 정체성, nlink, 설명자, 커서, CWD, 매핑을 유지하고 부모의 전체 관측은 알 수 없게 됩니다. 실행 중 링크 전체 메타데이터, 실제 디렉터리/링크, 보호된 초기 링크를 포함한 하위 트리 이동/SWAP은 미지원입니다. ARM64 macOS 22사례는 원래 5초 제한에서 14교환, 같은 객체 2성공, 6오류를 기록했습니다. `symbolic-link-rename`와 SDK/CLI/Python이 교환과 오류를 검사하지만 실제 iOS, 네이티브 Intel, 전체 OS 호환성은 증명하지 않습니다.
+
+[XNU rename / namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c).
+
+## 실행 중 링크를 포함한 트리 이동
+
+일반/EXCL 디렉터리 이동과 SWAP은 실행 중 링크 자손을 포함하고 디렉터리/파일 교환도 지원합니다. 기존 트랜잭션은 모든 디렉터리·파일·링크 새 이름과 NUL 포함1024바이트 한도를 검사하며 세 테이블을 모두 추출한 뒤 이름을 게시합니다. 대상 바이트와 비용은 그대로 유지하고 현재 경로/NUL 비용만 바꿉니다. SWAP은 교체 크레딧을 제공하지 않고 새 항목·FD·생성 inode도 소비하지 않습니다.
+
+링크는 이동하는 실제 부모 객체를 유지하며 상대 대상은 새 경로에서 해석합니다. 설명자, 공유 커서, CWD, 삭제된 노드와 매핑 임대는 원래 객체를 유지합니다. 보호된 초기 링크와 해당 트리, 루트 디렉터리/링크 조합, 링크 전체 메타데이터, 하드 링크, ACL은 미지원입니다. ARM64 macOS25대조는 기존5초 제한에서5이동·10교환·같은 객체2성공·이름 변경 없는8거부를 기록했습니다. 부모 간 대조는 원시 바이트 유지와 새 상대 해석을 확인하고 `symbolic-link-rename`가C++/SDK/CLI/Python을 검사합니다. 실제 iOS·네이티브 Intel·전체 OS를 입증하지 않습니다.
+
+[XNU rename / namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c).

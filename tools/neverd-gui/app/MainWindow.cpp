@@ -955,6 +955,21 @@ void MainWindow::connectActions() {
     if (const auto function = currentFunction())
       session_.deleteFunction(*function);
   });
+  // An operand's number shows in the base the user picks, with its sign or
+  // bits changed: the number under the cursor, else the line's last number.
+  const auto formatOperand = [this](const QString &action) {
+    if (focusedCodeView())
+      return;
+    if (const auto address = currentAddress())
+      session_.formatOperand(*address, disassembly_->currentOperand(), action);
+  };
+  for (const auto &[id, action] : {
+#define NEVERD_OPERAND_BASE(Id, Spelling)                                      \
+  std::pair{ActionId::EditOperand##Id, QStringLiteral(Spelling)},
+#include "neverd/OperandFormats.def"
+           std::pair{ActionId::EditOperandNegate, QStringLiteral("negate")},
+           std::pair{ActionId::EditOperandInvert, QStringLiteral("invert")}})
+    on(id, [formatOperand, action] { formatOperand(action); });
   // Data items are the disassembly's; a pseudocode window keeps its keys.
   for (const auto &[id, action] :
        {std::pair{ActionId::EditDefineData, QStringLiteral("data")},
@@ -1218,6 +1233,14 @@ void MainWindow::updateActions() {
   for (const auto id : {ActionId::EditDefineData, ActionId::EditDefineString,
                         ActionId::EditUndefine})
     actions_.action(id)->setEnabled(dataItems);
+  const bool operandFormats =
+      location && !session_.readOnly() && session_.keepsOperandFormats();
+  for (const auto id :
+       {ActionId::EditOperandNumber, ActionId::EditOperandHex,
+        ActionId::EditOperandDecimal, ActionId::EditOperandBinary,
+        ActionId::EditOperandChar, ActionId::EditOperandOffset,
+        ActionId::EditOperandNegate, ActionId::EditOperandInvert})
+    actions_.action(id)->setEnabled(operandFormats);
   actions_.action(ActionId::EditComment)
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::EditRepeatableComment)

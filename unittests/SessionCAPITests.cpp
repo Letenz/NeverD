@@ -2338,6 +2338,12 @@ TEST(SessionNames, DemanglesAsIdentitiesDo) {
   EXPECT_EQ(takeString(neverd_demangle("__ZNK14QMessageLogger7warningEPKcz")),
             "QMessageLogger::warning(char const*, ...) const");
   EXPECT_EQ(takeString(neverd_demangle("?f@@YAXXZ")), "void __cdecl f(void)");
+  // Rust reads without the legacy hash, Swift as a declaration path.
+  EXPECT_EQ(
+      takeString(neverd_demangle("_ZN4core3fmt5write17h0123456789abcdefE")),
+      "core::fmt::write");
+  EXPECT_EQ(takeString(neverd_demangle("_$s4Demo3BoxC5countSivg")),
+            "Demo.Box.count.getter");
   EXPECT_EQ(takeString(neverd_demangle("main")), "main");
   EXPECT_EQ(neverd_demangle(nullptr), nullptr);
 }
@@ -2493,6 +2499,64 @@ TEST_F(SessionCAPITest, SidecarWritesRespectWorkerOwnership) {
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "saved_name");
   EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-annotations.json"));
   EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-renames.json"));
+}
+
+TEST_F(SessionCAPITest, OperandFormatsPersistByInstructionAndOperand) {
+  const auto Input = write("operands.elf", makeNativeELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Entry = neverd_session_entry_addr(Session);
+  const std::string EntryHex = "0x" + llvm::utohexstr(Entry);
+  ASSERT_EQ(
+      neverd_operand_format_set(Session, Entry, 1, R"({"base":"decimal"})"), 0)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_operand_format_set(Session, Entry, 0,
+                                      R"({"base":"hex","negate":true})"),
+            0);
+  const std::string Rows =
+      "[{\"addr\":\"" + EntryHex +
+      "\",\"operands\":[{\"base\":\"hex\",\"invert\":false,\"negate\":true,"
+      "\"operand\":0},{\"base\":\"decimal\",\"invert\":false,\"negate\":"
+      "false,\"operand\":1}]}]";
+  EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), Rows);
+  // A base the table does not name, an operand past the eighth and a flag
+  // that is no boolean are refused.
+  EXPECT_EQ(neverd_operand_format_set(Session, Entry, 1, R"({"base":"octal"})"),
+            -1);
+  EXPECT_EQ(neverd_operand_format_set(Session, Entry, 8, R"({"base":"hex"})"),
+            -1);
+  EXPECT_EQ(neverd_operand_format_set(Session, Entry, 1,
+                                      R"({"base":"hex","negate":1})"),
+            -1);
+  EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), Rows);
+  // Saved, the formats come back with the input.
+  ASSERT_EQ(neverd_operand_formats_save(Session), 0)
+      << takeString(neverd_last_error(Session));
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_operand_formats_json(Reopened)), Rows);
+    neverd_session_destroy(Reopened);
+  }
+  // The listing's own spelling, or none, forgets an operand's format.
+  ASSERT_EQ(
+      neverd_operand_format_set(Session, Entry, 0, R"({"base":"number"})"), 0);
+  ASSERT_EQ(neverd_operand_format_set(Session, Entry, 1, nullptr), 0);
+  EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), "[]");
+  // Formats belong to code; data takes none.
+  const auto Data = write("operands-data.elf",
+                          makeDataELF(std::string_view("\x01\x02\x03\x04", 4)));
+  neverd_session_t DataSession = neverd_session_create();
+  ASSERT_EQ(neverd_session_load(DataSession, Data.c_str()), 1);
+  EXPECT_EQ(neverd_operand_format_set(DataSession, DataELFData, 0,
+                                      R"({"base":"hex"})"),
+            -1);
+  EXPECT_NE(takeString(neverd_last_error(DataSession)).find("executable"),
+            std::string::npos);
+  EXPECT_EQ(neverd_operand_format_set(DataSession, DataELFEntry, 0,
+                                      R"({"base":"hex"})"),
+            0);
+  neverd_session_destroy(DataSession);
 }
 
 TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {
@@ -3209,10 +3273,12 @@ TEST_F(SessionCAPITest, LibrarySourcePagesPreserveTextAndReloadEvidence) {
 }
 
 TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
-  const auto Path =
-      (std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) / "accessors-inline.o")
-          .string();
-  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+  // A copy: renaming writes its sidecar beside the input.
+  const auto Input = Directory / "kept-emission.o";
+  std::filesystem::copy_file(std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) /
+                                 "accessors-inline.o",
+                             Input);
+  ASSERT_EQ(neverd_session_load(Session, Input.string().c_str()), 1)
       << takeString(neverd_last_error(Session));
   int Index = neverd_func_find_by_name(Session, "_nd_vector_u32_data_inline");
   if (Index < 0)
@@ -3263,7 +3329,20 @@ TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
               "/* kept */\n");
     EXPECT_EQ(Decompile(HighC), "/* kept */\n");
   }
+  // The user's names are the emitters' input too (data and labels take them,
+  // UserNamesNameDataInSymbolsAndC): naming anything emits the source again.
+  const std::string Old = takeString(
+      neverd_func_name(Session, neverd_func_find_by_addr(Session, Entry)));
+  ASSERT_EQ(neverd_rename_func(Session, Old.c_str(), "kept_accessor"), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_TRUE(State.FunctionSources.empty());
+  EXPECT_EQ(Decompile(true).find("/* kept */"), std::string::npos);
+  Decompile(false);
+  ASSERT_EQ(neverd_rename_addr(Session, Entry, nullptr), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_TRUE(State.FunctionSources.empty());
   // A new pipeline emits the source again.
+  Decompile(true);
   neverd_session_restrict_function(Session, 0);
   EXPECT_TRUE(State.FunctionSources.empty());
   EXPECT_EQ(Decompile(true), HighCText);

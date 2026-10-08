@@ -182,8 +182,8 @@ TEST(LanguageRuntimeDetection, IdentifiesGoFromBuildInfoInDataNotText) {
   EXPECT_EQ(Info.Runtime, SourceLanguageRuntime::Go);
 
   BinaryImage TextOnly = makeImage();
-  ASSERT_TRUE(TextOnly.writeVA(kTextVA, reinterpret_cast<const uint8_t *>(Banner),
-                              sizeof(Banner) - 1));
+  ASSERT_TRUE(TextOnly.writeVA(
+      kTextVA, reinterpret_cast<const uint8_t *>(Banner), sizeof(Banner) - 1));
   LanguageRuntimeInfo TextInfo = detectLanguageRuntime(TextOnly);
   EXPECT_EQ(TextInfo.Runtime, SourceLanguageRuntime::Unknown);
 }
@@ -223,6 +223,35 @@ TEST(LanguageRuntimeDetection, LeavesAPlainImageUnclassified) {
   BinaryImage Img = makeImage();
   LanguageRuntimeInfo Info = detectLanguageRuntime(Img);
   EXPECT_EQ(Info.Runtime, SourceLanguageRuntime::Unknown);
+}
+
+TEST(LanguageRuntimeDetection, ReadsGoReleasesOnlyInGoImages) {
+  const char Release[] = "go1.26.5";
+  BinaryImage Plain = makeImage();
+  ASSERT_TRUE(Plain.writeVA(kDataVA, reinterpret_cast<const uint8_t *>(Release),
+                            sizeof(Release) - 1));
+  EXPECT_TRUE(detectLanguageRuntime(Plain).Version.empty());
+
+  BinaryImage Go = makeImage();
+  ASSERT_TRUE(Go.writeVA(kDataVA, reinterpret_cast<const uint8_t *>(Release),
+                         sizeof(Release) - 1));
+  Section Pcln;
+  Pcln.Name = ".gopclntab";
+  Pcln.VA = kDataVA + 0x800;
+  Pcln.Size = 0x40;
+  Go.Sections.push_back(std::move(Pcln));
+  EXPECT_EQ(detectLanguageRuntime(Go).Version, "go1.26.5");
+}
+
+TEST(LanguageRuntimeDetection, IdentifiesSwiftFromMachOSymbols) {
+  // Mach-O adds an underscore to every symbol, `$s` included.
+  BinaryImage Img = makeImage();
+  Symbol Sym;
+  Sym.Name = "_$s4Demo6answers5Int32VyF";
+  Sym.Addr = kTextVA + 0x40;
+  Sym.IsFunc = true;
+  Img.Symbols.push_back(std::move(Sym));
+  EXPECT_EQ(detectLanguageRuntime(Img).Runtime, SourceLanguageRuntime::Swift);
 }
 
 //===----------------------------------------------------------------------===//

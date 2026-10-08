@@ -81,6 +81,14 @@ def run(worker):
             items = Path(str(path) + ".neverd-items.json")
             assert any(int(row["addr"], 16) == item_address and row["kind"] == "dword"
                        for row in json.loads(items.read_text(encoding="utf-8")))
+            # mov rax, 2Ah shows its number in binary.
+            formatted = ok(client, "operand_format", {"address": address, "operand": 1,
+                                                      "action": "binary"})
+            assert formatted["format"]["base"] == "binary" and formatted["saved"], formatted
+            operands = Path(str(path) + ".neverd-operands.json")
+            assert any(int(row["addr"], 16) == base + 0x1000
+                       and row["operands"][0]["base"] == "binary"
+                       for row in json.loads(operands.read_text(encoding="utf-8")))
             ok(client, "reload")
             assert ok(client, "annotations")["items"][0]["text"] == note
             assert ok(client, "functions", {"filter": "unicode_entry"})["total"] == 1
@@ -91,6 +99,10 @@ def run(worker):
             line = listing["lines"][0]
             assert (line["address"], line["kind"], line["text"].split()) == (
                 hex(item_address), "data", ["dd", "0"]), listing
+            # The segment's header lines come first.
+            code = ok(client, "listing", {"address": address, "before": 0, "after": 40})
+            assert any(line["text"].split()[:3] == ["mov", "rax,", "101010b"]
+                       for line in code["lines"]), code
             assert hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(data).digest()
 
         with Client(worker) as client:
@@ -104,6 +116,10 @@ def run(worker):
             line = listing["lines"][0]
             assert (line["address"], line["kind"], line["text"].split()) == (
                 hex(item_address), "data", ["dd", "0"]), listing
+            # The segment's header lines come first.
+            code = ok(client, "listing", {"address": address, "before": 0, "after": 40})
+            assert any(line["text"].split()[:3] == ["mov", "rax,", "101010b"]
+                       for line in code["lines"]), code
             evm = root / "\u4e2d\u6587\u76ee\u5f55" / "\u5408\u7ea6.hex"
             evm.write_text("600160005500", encoding="ascii")
             payload = ok(client, "open", {"path": str(evm), "read_only": True})
