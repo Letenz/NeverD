@@ -381,6 +381,36 @@ int main(void) { return probe(0) == 0x7FFF80001234567Dull ? 0 : 1; }
 )");
 }
 
+TEST(HighCIntegerConversion, ASelectHasItsOwnSignedness) {
+  // x / (d == 0 ? 1 : d), signed, with d an unsigned local: C would convert
+  // both arms to uint64_t and divide unsigned.  Each arm takes the select's
+  // type.
+  const TypeRef U64 = integer(8, false), I64 = integer(8, true);
+  auto Select = std::make_shared<HighExpr>();
+  Select->Kind = ExprKind::BinOp;
+  Select->Op = NdOp::SELECT;
+  Select->Operands = {
+      op(NdOp::INT_EQUAL, local(1, U64), constant(0), integer(1, false)),
+      constant(1), local(1, U64)};
+  Select->Type = I64;
+  HighFunc F = function(
+      "quotient", I64,
+      {assign(local(1, U64), op(NdOp::INT_AND, input(), constant(15), U64)),
+       result(op(NdOp::INT_SDIV, typed(input(), I64), Select, I64))});
+  const std::string Source = emit(F);
+  compileAndRun(Source + R"(
+int main(void) {
+  const int64_t xs[] = {-100, -1, 0, 7, 100, -16, 15};
+  for (unsigned i = 0; i < sizeof xs / sizeof xs[0]; ++i) {
+    const int64_t d = (int64_t)((uint64_t)xs[i] & 15);
+    if (quotient((uint64_t)xs[i]) != xs[i] / (d == 0 ? 1 : d))
+      return 1;
+  }
+  return 0;
+}
+)");
+}
+
 TEST(HighCIntegerConversion, ALandingPadDeclaresWhatTheUnwinderSets) {
   // A landing pad reads the exception object the unwinder hands it; no C
   // statement assigns it, and the name is declared all the same.

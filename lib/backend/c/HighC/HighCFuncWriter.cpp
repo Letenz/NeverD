@@ -5319,8 +5319,13 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     auto emitParam = [&](TypeRef Ty, std::string Name) {
       if (Emitted > 0)
         Declarator += ", ";
-      Declarator +=
-          declarationToC(Ty, ParameterIdentifiers.allocate(Name, "nd_arg"));
+      const std::string Identifier =
+          ParameterIdentifiers.allocate(Name, "nd_arg");
+      Declarator += declarationToC(Ty, Identifier);
+      // A parameter's name has its declared type, as a local's has.
+      if (const TypeRef Display = cDisplayType(Ty);
+          Display && Display->Kind == NdTypeKind::Int && !Display->IsEnum)
+        DeclaredCTypes.emplace(Identifier, Display);
       ++Emitted;
     };
     const bool HighIRIncludesSret =
