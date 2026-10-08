@@ -34,6 +34,10 @@ enum class PathKind { Missing, File, Directory, SymbolicLink };
 std::string parentPath(const std::string &Path) {
   return Path.substr(0, std::max<size_t>(1, Path.rfind('/')));
 }
+bool containsPath(llvm::StringRef Directory, llvm::StringRef Path) {
+  return Directory == "/" || Path == Directory ||
+         (Path.consume_front(Directory) && Path.starts_with('/'));
+}
 bool declaredNonMountSubtree(const DarwinFileOptions &Options,
                              llvm::StringRef Path) {
   for (const auto *Roots :
@@ -100,13 +104,14 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
   if (Options.DescriptorLimit < 3 ||
       Options.DescriptorLimit > limits::Descriptors || Entries > limits::Files)
     return failure(diagnostic::FileOptionsLimit);
-  if (!Options.SymbolicLinks.empty() &&
-      (!Options.MutableDirectories.empty() ||
-       !Options.RemovableDirectories.empty() ||
-       !Options.MovableDirectories.empty() ||
-       !Options.ExchangeableDirectories.empty() ||
-       !Options.SwapRenameDirectories.empty() || Options.CreationPolicy))
-    return failure(diagnostic::SymbolicLinkNamespace);
+  // Every admitted deletion/rekey subtree needs a mutable parent. Excluding
+  // fixed link names from those parents also protects them from subtree moves
+  // and inherited creation grants. Target bytes may name mutable objects.
+  for (const auto &Directory : Options.MutableDirectories)
+    if (llvm::any_of(Options.SymbolicLinks, [&](const auto &Link) {
+          return containsPath(Directory, Link.first);
+        }))
+      return failure(diagnostic::SymbolicLinkNamespace);
   uint64_t Total = Options.StandardInput ? Options.StandardInput->size() : 0;
   if (Total > limits::Bytes)
     return failure(diagnostic::FileOptionsLimit);

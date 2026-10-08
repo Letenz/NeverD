@@ -473,6 +473,7 @@ public:
   void propagateFrameSlotCopyTypes(const HighFunc &Func);
   void hideInteriorRecordFieldSlots();
   void overlayPackedValueHomes(const HighFunc &Func);
+  void collectFieldLoadTypes(const HighFunc &Func);
   void collectFieldLoadForward(const HighFunc &Func);
   void collectEnumConstForward(const HighFunc &Func);
   void collectTypedPointerArgDests(const HighFunc &Func);
@@ -487,8 +488,9 @@ public:
   bool isForwardableValueExpr(const HighExpr &E) const;
   bool isImageObjectLoad(const HighExpr &E) const;
   bool isTypedMemberLoad(const HighExpr &E) const;
-  bool isReloadableLoad(const HighExpr &E) const {
-    return isImageObjectLoad(E) || isTypedMemberLoad(E);
+  bool isTypedIndexLoad(const HighExpr &E);
+  bool isReloadableLoad(const HighExpr &E) {
+    return isImageObjectLoad(E) || isTypedMemberLoad(E) || isTypedIndexLoad(E);
   }
   /// `!(x == 0 || x < 0)` → `!(x <= 0)` so the cond mentions `x` once.
   void foldSignedJleConds(std::vector<HighStmt> &Stmts);

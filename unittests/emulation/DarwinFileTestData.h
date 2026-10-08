@@ -108,5 +108,33 @@ inline constexpr char SymbolicLinksJSON[] = R"([
   {"path":"/dangling","target_hex":"6d697373696e67"},
   {"path":"/cycle","target_hex":"6379636c65"},
   {"path":"/dirlink","target_hex":"656d707479"}])";
+inline DarwinFileOptions mixedSymbolicLinkOptions() {
+  DarwinFileOptions O;
+  O.Files["/work/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  O.Metadata["/work/data"] = mutationMetadata();
+  O.WritableFiles.insert("/work/data");
+  O.MutationPolicies["/work/data"] = MutationPolicy;
+  O.Directories = {"/static", "/work"};
+  O.MutableDirectories.insert("/work");
+  O.Metadata["/work"] = creationParentMetadata();
+  O.CreationPolicy = CreationPolicy;
+  O.InitialUmask = 0027;
+  O.WorkingDirectory = "/";
+  O.SymbolicLinks = {
+      {"/static/alias", {'.', '.', '/', 'w', 'o', 'r', 'k'}},
+      {"/static/data-link",
+       {'.', '.', '/', 'w', 'o', 'r', 'k', '/', 'd', 'a', 't', 'a'}},
+      {"/static/missing-link",
+       {'.', '.', '/', 'w', 'o', 'r', 'k', '/', 'n', 'e', 'w'}}};
+  auto &M = O.Metadata["/static/data-link"];
+  M = mutationMetadata(12);
+  M.Mode = 0120777;
+  M.Inode = 123;
+  return O;
+}
+inline constexpr char MixedSymbolicLinksJSON[] = R"([
+  {"path":"/static/alias","target_hex":"2e2e2f776f726b"},
+  {"path":"/static/data-link","target_hex":"2e2e2f776f726b2f64617461"},
+  {"path":"/static/missing-link","target_hex":"2e2e2f776f726b2f6e6577"}])";
 } // namespace neverd::emulation::darwin_test
 #endif
