@@ -84,6 +84,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/real_engine_test.py"
                 "$<TARGET_FILE:neverd-worker>")
       set_tests_properties(NeverDWorkerRealEngine PROPERTIES TIMEOUT 60)
+      add_test(NAME NeverDWorkerUnicodePaths
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/unicode_path_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerUnicodePaths PROPERTIES TIMEOUT 90)
       add_test(NAME NeverDWorkerNativeMapping
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_mapping_test.py"
                 "$<TARGET_FILE:neverd-worker>")

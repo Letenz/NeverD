@@ -43,6 +43,12 @@ set `NEVERD_ENGINE_LIBRARY` to the runtime DLL and `NEVERD_ENGINE_IMPLIB` to its
 matching import `.lib`; make runtime dependencies available alongside the
 worker.
 
+Local file paths passed between the GUI, worker, CLI and C ABI use UTF-8 on
+all platforms. Windows paths are converted to native filesystem paths before
+loading binaries, companion PDB/MAP files, signatures and project sidecars.
+Chinese names, spaces and other Unicode characters are supported without
+changing the Windows system code page.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.

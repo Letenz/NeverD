@@ -29,6 +29,7 @@
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BranchEncoding.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/COFF.h"
@@ -878,7 +879,7 @@ COFFLoader::load(const std::filesystem::path &Path) {
     return std::move(E);
   if (llvm::Error E = verifyARMFunctionModeHints(Img, ARMFunctionModes))
     return std::move(E);
-  runPostLoadDiscovery(Img, "coff: loaded " + Path.filename().string());
+  runPostLoadDiscovery(Img, "coff: loaded " + pathToUTF8(Path.filename()));
   // Classified before any table is read.  A PE is the format where schema and
   // language diverge most: Delphi and MSVC share the registration chain, Rust
   // and C++ share the `FuncInfo`, and a MinGW image carries Itanium tables
