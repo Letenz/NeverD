@@ -174,8 +174,8 @@ TEST(Win64CallContract, AThunkJumpingThroughTheSlotForwardsTheArguments) {
     Call.push_back(B);
   put(Code, Wrap, framed({Call}));
   put(Code, Thunk, throughSlot(Thunk, slot(0), /*Jump=*/true));
-  const BinaryImage Img = makeImage(
-      Code, {{Wrap, "wrap"}, {Thunk, "fputs_thunk"}}, {"fputs"});
+  const BinaryImage Img =
+      makeImage(Code, {{Wrap, "wrap"}, {Thunk, "fputs_thunk"}}, {"fputs"});
   const std::string Source = liftEntries(Img, {Wrap, Thunk});
   const std::string ThunkBody = body(Source, "fputs_thunk");
   ASSERT_FALSE(ThunkBody.empty()) << Source;

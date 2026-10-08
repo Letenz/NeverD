@@ -2867,9 +2867,9 @@ importPrototypeEntryReads(const BinaryImage &Img,
     if (const libc::LibCPrototype *Prototype =
             libc::libcPrototype(Name, Img.Format)) {
       if (Prototype->Variadic ||
-          llvm::any_of(llvm::ArrayRef(Prototype->Params.data(),
-                                      Prototype->ParamCount),
-                       libc::isFloatingType))
+          llvm::any_of(
+              llvm::ArrayRef(Prototype->Params.data(), Prototype->ParamCount),
+              libc::isFloatingType))
         return std::nullopt;
       return Prototype->ParamCount;
     }
