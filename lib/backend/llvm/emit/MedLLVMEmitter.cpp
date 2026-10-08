@@ -44,6 +44,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/MC/BinaryRewrite.h"
 #include "llvm/Support/Debug.h"
@@ -899,8 +900,13 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       ModuleSuppressibleJumpTableRelocationSlots.insert(Slot);
 
   const char *Triple = llvmEmitTriple(TheArch, Fmt);
-  if (Triple)
+  if (Triple) {
     Mod_->setTargetTriple(llvm::Triple(Triple));
+    // Registration callbacks recover pointer-sized cells before target
+    // codegen creates a TargetMachine. Use LLVM's target layout here too.
+    if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
+      Mod_->setDataLayout(Mod_->getTargetTriple().computeDataLayout());
+  }
   if (Fmt == BinaryFormat::COFF && Img) {
     uint32_t GuardFlags = Img->DynInfo.GuardFlags;
     if ((GuardFlags & uint32_t(llvm::COFF::GuardFlags::CF_INSTRUMENTED)) != 0)
@@ -922,14 +928,22 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   // original runtime thunk authoritative, and resolves both spellings to it.
   std::map<va_t, std::string> NativePersonalityNames;
   std::set<va_t> ConflictingPersonalityAddresses;
-  if ((TheArch == Arch::X64 || TheArch == Arch::ARM ||
+  if ((TheArch == Arch::X86 || TheArch == Arch::X64 || TheArch == Arch::ARM ||
        TheArch == Arch::AArch64) &&
       Fmt == BinaryFormat::COFF) {
     for (const MedFunc &F : Funcs) {
       if (!F.ExceptionMetadata || F.ExceptionMetadata->PersonalityVA == 0)
         continue;
       const ExceptionPersonality Personality = F.ExceptionMetadata->Personality;
-      if (Personality != ExceptionPersonality::CSpecificHandler &&
+      const bool Registration =
+          TheArch == Arch::X86 &&
+          (Personality == ExceptionPersonality::ExceptHandler3 ||
+           Personality == ExceptionPersonality::ExceptHandler4) &&
+          classifyWindowsEHNativeSource(*F.ExceptionMetadata, TheArch, Fmt,
+                                        WindowsEHNativeCapability::IRLowering)
+              .canLowerNativeIR();
+      if (!Registration &&
+          Personality != ExceptionPersonality::CSpecificHandler &&
           !((TheArch == Arch::X64 &&
              (Personality == ExceptionPersonality::CxxFrameHandler3 ||
               Personality == ExceptionPersonality::CxxFrameHandler4 ||
@@ -961,9 +975,17 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     auto Personality = NativePersonalityNames.find(F.Entry);
     llvm::StringRef SourceName(F.Name);
     SourceName.consume_front("\01");
+    std::string PersonalityObjectName;
+    if (TheArch == Arch::X86 && Personality != NativePersonalityNames.end()) {
+      llvm::raw_string_ostream OS(PersonalityObjectName);
+      llvm::Mangler::getNameWithPrefix(OS, Personality->second,
+                                       Mod_->getDataLayout());
+    }
     if (Personality != NativePersonalityNames.end() &&
         !ConflictingPersonalityAddresses.count(F.Entry) &&
-        SourceName == Personality->second)
+        (SourceName == Personality->second ||
+         (!PersonalityObjectName.empty() &&
+          SourceName == PersonalityObjectName)))
       EmittedName = (kAutoFuncPrefix + llvm::utohexstr(F.Entry)).str();
     else if (hasObjectFunctionNameAt(Img, Fmt, F.Entry, F.Name))
       EmittedName = llvm_name::fromObjectSymbol(F.Name, Fmt).str();
@@ -1023,6 +1045,27 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       EmittedFuncCodeEnds[Func.Entry] = End;
   }
   initializeCxxContinuationPlans(Funcs, BodyMask);
+
+  // PE32 registration prologues push the executable runtime handler address.
+  // An import veneer may intentionally have no lifted body. Its checked EH
+  // identity still supplies the exact declaration needed by that address use.
+  if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
+    for (const auto &[Address, Name] : NativePersonalityNames) {
+      if (ConflictingPersonalityAddresses.count(Address) ||
+          EmittedFuncNames.count(Address))
+        continue;
+      auto *Type =
+          llvm::FunctionType::get(llvm::Type::getInt32Ty(*Ctx), {}, true);
+      auto *Existing = Mod_->getFunction(Name);
+      if (Mod_->getNamedValue(Name) &&
+          (!Existing || !Existing->isDeclaration() ||
+           Existing->getFunctionType() != Type))
+        continue;
+      auto *Declaration = llvm::cast<llvm::Function>(
+          Mod_->getOrInsertFunction(Name, Type).getCallee());
+      rewrite_source::setOriginalVA(*Declaration, Address);
+      FuncNames[Address] = Name;
+    }
 
   // Build every ordinary block skeleton before emitting the first operation.
   // A code-pointer mirror requested by an early consumer can then name an

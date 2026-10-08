@@ -103,6 +103,29 @@ LowFunc makeBranchingFrame() {
   return F;
 }
 
+TEST(RegistrationState, IncomingCallerFrameUsesTheFinalCFGValue) {
+  for (bool Agree : {false, true}) {
+    LowFunc F = makeBranchingFrame();
+    for (unsigned I = 1; I != 3; ++I)
+      emitOp(F.Blocks[I], F.Blocks[I].StartAddr, NdOp::INT_ADD,
+             NdVar::reg(x86reg::RAX, 4),
+             {NdVar::reg(x86reg::RBP, 4),
+              NdVar::cst(I == 1 || Agree ? 8 : 12, 4)});
+    emitOp(F.Blocks[3], 0x1030, NdOp::LOAD, NdVar::tmp(9, 4),
+           {NdVar::reg(x86reg::RAX, 4)});
+    auto Result = analyzeRegistrationStates(F);
+    ASSERT_TRUE(Result.Complete);
+    EXPECT_EQ(Result.IncomingFrameAccessesComplete, Agree);
+    if (Agree) {
+      ASSERT_EQ(Result.IncomingFrameAccesses.size(), 1u);
+      EXPECT_EQ(Result.IncomingFrameAccesses.front().Offset, 8);
+      EXPECT_EQ(Result.IncomingFrameAccesses.front().Width, 4u);
+      EXPECT_FALSE(Result.IncomingFrameAccesses.front().Write);
+    } else
+      EXPECT_TRUE(Result.IncomingFrameAccesses.empty());
+  }
+}
+
 TEST(RegistrationState, RetainsBothStatesAtJoin) {
   LowFunc F = makeBranchingFrame();
   auto Result = analyzeRegistrationStates(F);
@@ -428,6 +451,150 @@ TEST(RegistrationState, FinallyCanDispatchToItsEnclosingScope) {
   EXPECT_EQ(Result.Blocks[4].Levels, (std::vector<int32_t>{0}));
   EXPECT_TRUE(Result.Blocks[5].CallbackOnly);
   EXPECT_FALSE(Result.Blocks[5].CanDispatch);
+}
+
+TEST(RegistrationState, AtomicFrameWritesInvalidateEvenWhenTheResultIsDead) {
+  for (NdOp Opcode : {NdOp::ATOMIC_ADD, NdOp::ATOMIC_CMPXCHG}) {
+    LowFunc F = makeUnlinkedFrame();
+    emitOp(F.Blocks[1], 0x1010, Opcode, NdVar::tmp(24, 4),
+           {NdVar::tmp(0, 4), NdVar::cst(0, 4), NdVar::cst(1, 4)});
+    auto Result = analyzeRegistrationStates(F);
+    EXPECT_FALSE(Result.Complete);
+    EXPECT_FALSE(Result.ChainOperationsComplete);
+    EXPECT_TRUE(Result.FrameValues.empty());
+  }
+}
+
+TEST(RegistrationState, AtomicFSWritesCannotBypassChainOwnership) {
+  for (NdOp Opcode : {NdOp::ATOMIC_ADD, NdOp::ATOMIC_CMPXCHG}) {
+    LowFunc F = makeUnlinkedFrame();
+    emitOp(F.Blocks[1], 0x1010, Opcode, NdVar::tmp(24, 4),
+           {NdVar::cst(0, 4), NdVar::cst(0, 4), NdVar::cst(1, 4)},
+           NdMemoryAddressSpace::X86FS);
+    auto Result = analyzeRegistrationStates(F);
+    EXPECT_FALSE(Result.Complete);
+    EXPECT_FALSE(Result.ChainOperationsComplete);
+    EXPECT_TRUE(Result.ChainAccesses.empty());
+  }
+}
+
+TEST(RegistrationState, PublishesFramePointerProvenanceAfterSpillAndReload) {
+  LowFunc F = makeUnlinkedFrame();
+  emitOp(F.Blocks[1], 0x1010, NdOp::INT_ADD, NdVar::tmp(8, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-32), 4)});
+  emitOp(F.Blocks[1], 0x1010, NdOp::STORE, {},
+         {NdVar::tmp(8, 4), NdVar::tmp(0, 4)});
+  emitOp(F.Blocks[3], 0x1030, NdOp::INT_ADD, NdVar::tmp(24, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-32), 4)});
+  emitOp(F.Blocks[3], 0x1030, NdOp::LOAD, NdVar::reg(x86reg::RDI, 4),
+         {NdVar::tmp(24, 4)});
+  const int ReloadSeq = F.Blocks[3].Ops.back().Seq;
+  auto Result = analyzeRegistrationStates(F);
+  ASSERT_TRUE(Result.Complete);
+  auto Reload =
+      std::find_if(Result.FrameValues.begin(), Result.FrameValues.end(),
+                   [&](const RegistrationFrameValue &Value) {
+                     return Value.Address == 0x1030 && Value.OpSeq == ReloadSeq;
+                   });
+  ASSERT_NE(Reload, Result.FrameValues.end());
+  EXPECT_EQ(Reload->EstablishedFrameOffset, -4);
+}
+
+TEST(RegistrationState, NarrowSpillsCannotLaunderFramePointerProvenance) {
+  LowFunc F = makeUnlinkedFrame();
+  emitOp(F.Blocks[1], 0x1010, NdOp::INT_ADD, NdVar::tmp(8, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-32), 4)});
+  emitOp(F.Blocks[1], 0x1010, NdOp::STORE, {},
+         {NdVar::tmp(8, 4), NdVar::reg(x86reg::RBP, 2)});
+  emitOp(F.Blocks[1], 0x1010, NdOp::INT_ADD, NdVar::tmp(16, 4),
+         {NdVar::tmp(8, 4), NdVar::cst(2, 4)});
+  emitOp(F.Blocks[1], 0x1010, NdOp::INT_RIGHT, NdVar::tmp(24, 2),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(16, 1)});
+  emitOp(F.Blocks[1], 0x1010, NdOp::STORE, {},
+         {NdVar::tmp(16, 4), NdVar::tmp(24, 2)});
+  emitOp(F.Blocks[3], 0x1030, NdOp::INT_ADD, NdVar::tmp(24, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-32), 4)});
+  emitOp(F.Blocks[3], 0x1030, NdOp::LOAD, NdVar::reg(x86reg::RDI, 4),
+         {NdVar::tmp(24, 4)});
+  const int ReloadSeq = F.Blocks[3].Ops.back().Seq;
+  auto Result = analyzeRegistrationStates(F);
+  ASSERT_TRUE(Result.Complete);
+  auto Reload =
+      std::find_if(Result.FrameValues.begin(), Result.FrameValues.end(),
+                   [&](const RegistrationFrameValue &Value) {
+                     return Value.Address == 0x1030 && Value.OpSeq == ReloadSeq;
+                   });
+  ASSERT_NE(Reload, Result.FrameValues.end());
+  EXPECT_FALSE(Reload->EstablishedFrameOffset);
+}
+
+TEST(RegistrationState, AtomicDesiredValueCannotExportTheRegistrationFrame) {
+  LowFunc F = makeUnlinkedFrame();
+  emitOp(
+      F.Blocks[1], 0x1010, NdOp::ATOMIC_CMPXCHG, NdVar::tmp(24, 4),
+      {NdVar::cst(0x800000, 4), NdVar::cst(0, 4), NdVar::reg(x86reg::RBP, 4)});
+  auto Result = analyzeRegistrationStates(F);
+  EXPECT_FALSE(Result.Complete);
+  EXPECT_FALSE(Result.ChainOperationsComplete);
+  EXPECT_TRUE(Result.FrameValues.empty());
+}
+
+TEST(RegistrationState,
+     ImageReadClosureIncludesAtomicsAndRejectsUnknownMemory) {
+  for (unsigned Kind = 0; Kind != 3; ++Kind) {
+    LowFunc F = makeUnlinkedFrame();
+    if (Kind == 1)
+      emitOp(F.Blocks[1], 0x1010, NdOp::ATOMIC_ADD, NdVar::tmp(24, 4),
+             {NdVar::cst(0x800002, 4), NdVar::cst(1, 4)});
+    else
+      emitOp(
+          F.Blocks[1], 0x1010, NdOp::LOAD, NdVar::tmp(24, 4),
+          {Kind == 2 ? NdVar::reg(x86reg::RAX, 4) : NdVar::cst(0x800002, 4)});
+    auto Result = analyzeRegistrationStates(F);
+    ASSERT_TRUE(Result.Complete);
+    EXPECT_EQ(Result.ImageReadsComplete, Kind != 2);
+    if (Kind != 2) {
+      ASSERT_EQ(Result.ImageReads.size(), 1u);
+      EXPECT_EQ(Result.ImageReads.front().Begin, 0x800002u);
+      EXPECT_EQ(Result.ImageReads.front().End, 0x800006u);
+    }
+  }
+}
+
+TEST(RegistrationState, CallsInvalidatePreviouslyClearedVolatileRegisterFacts) {
+  for (uint64_t Register : {x86reg::XMM0, x86reg::ZF}) {
+    LowFunc F = makeUnlinkedFrame();
+    emitOp(F.Blocks[1], 0x1010, NdOp::COPY, NdVar::reg(Register, 1),
+           {NdVar::cst(0, 1)});
+    emitOp(F.Blocks[1], 0x1010, NdOp::CALL, {}, {NdVar::cst(0x900000, 4)});
+    emitOp(F.Blocks[1], 0x1010, NdOp::COPY, NdVar::tmp(24, 1),
+           {NdVar::reg(Register, 1)});
+    const int Seq = F.Blocks[1].Ops.back().Seq;
+    auto Result = analyzeRegistrationStates(F);
+    ASSERT_TRUE(Result.Complete);
+    auto Value = llvm::find_if(Result.FrameValues, [&](const auto &V) {
+      return V.Address == 0x1010 && V.OpSeq == Seq;
+    });
+    ASSERT_NE(Value, Result.FrameValues.end());
+    EXPECT_FALSE(Value->EstablishedFrameOffset);
+  }
+}
+
+TEST(RegistrationState, OpaqueEntryRegistersKeepTheirPossibleFrameIdentity) {
+  for (uint64_t Register :
+       {x86reg::RAX, x86reg::RCX, x86reg::RBX, x86reg::ZF}) {
+    LowFunc F = makeUnlinkedFrame();
+    emitOp(F.Blocks[1], 0x1010, NdOp::COPY, NdVar::tmp(24, 1),
+           {NdVar::reg(Register, 1)});
+    const int Seq = F.Blocks[1].Ops.back().Seq;
+    auto Result = analyzeRegistrationStates(F);
+    ASSERT_TRUE(Result.Complete);
+    auto Value = llvm::find_if(Result.FrameValues, [&](const auto &V) {
+      return V.Address == 0x1010 && V.OpSeq == Seq;
+    });
+    ASSERT_NE(Value, Result.FrameValues.end());
+    EXPECT_FALSE(Value->EstablishedFrameOffset);
+  }
 }
 
 } // namespace

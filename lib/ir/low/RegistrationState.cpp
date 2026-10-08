@@ -164,6 +164,12 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
   };
   std::map<va_t, std::pair<int, LowInstructionBoundary>> Boundaries;
   std::set<std::pair<va_t, int>> ChainOccurrences;
+  std::map<std::pair<va_t, int>, FrameValue> FrameValues;
+  std::map<std::pair<va_t, int>, std::optional<RegistrationIncomingFrameAccess>>
+      IncomingAccesses;
+  bool ConsistentIncomingAccesses = true;
+  bool CompleteImageReads = true;
+  std::set<std::pair<va_t, va_t>> ImageReads;
   for (const LowBlock &Block : Function.Blocks) {
     for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries) {
       if (!Charge(1))
@@ -179,10 +185,13 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
     for (const LowOp &Op : Block.Ops) {
       if (!Charge(1))
         break;
-      if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS &&
-          (Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE) &&
-          (Op.Seq < 0 || !ChainOccurrences.emplace(Op.Addr, Op.Seq).second))
-        CompleteChainOperations = false;
+      const auto Memory = lowMemoryOperands(Op);
+      if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS) {
+        if (!Memory.Complete ||
+            (Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE) ||
+            Op.Seq < 0 || !ChainOccurrences.emplace(Op.Addr, Op.Seq).second)
+          CompleteChainOperations = false;
+      }
     }
     if (Exhausted)
       break;
@@ -207,8 +216,11 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
       CompleteChainOperations = false;
   };
   auto Merge = [&](size_t Target, const Domain &Source) {
-    if (Exhausted || !Charge(Source.Levels.size() + Source.Frame.Cells.size() +
-                             Incoming[Target].Frame.Cells.size() + 9))
+    if (Exhausted ||
+        !Charge(Source.Levels.size() + Source.Frame.Cells.size() +
+                Source.Frame.OtherRegisterBytes.size() +
+                Incoming[Target].Frame.Cells.size() +
+                Incoming[Target].Frame.OtherRegisterBytes.size() + 9))
       return;
     Domain &Dest = Incoming[Target];
     bool Changed = !Dest.Reached;
@@ -244,6 +256,9 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
       return;
     Domain Root;
     Root.Levels = {Level};
+    for (auto &Register : Root.Frame.Registers)
+      Register.MayBeFrame = true;
+    Root.Frame.OtherRegistersMayBeFrame = true;
     Root.Frame.Cells = Source.Frame.Cells;
     Root.Frame.Cells[*Chain.TryLevelOffset] =
         FrameValue::constant(uint32_t(Level));
@@ -260,6 +275,13 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
   };
 
   Domain Initial;
+  // No register-parameter convention has been proved for this PE32 entry.
+  // Retain opaque incoming values (including saved caller EBP) until an
+  // explicit source definition replaces them; native emission may not seed
+  // them with zero and then expose the invented value.
+  for (auto &Register : Initial.Frame.Registers)
+    Register.MayBeFrame = true;
+  Initial.Frame.OtherRegistersMayBeFrame = true;
   // After push EBP, the canonical direct prologue establishes EBP at this
   // incoming SP minus four bytes. Do not assume later reads still name it.
   Initial.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
@@ -297,10 +319,69 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
     for (const LowOp &Op : Block.Ops) {
       // Ambiguous frame loads inspect every tracked cell. Charge that work,
       // not just the number of lifted operations, before entering the scan.
-      if (!Charge(1 + (Op.Opcode == NdOp::LOAD ? After.Frame.Cells.size() : 0)))
+      size_t RegisterBytes = Op.Output.Size;
+      for (unsigned Input = 0; Input != Op.NumInputs; ++Input)
+        RegisterBytes += Op.Inputs[Input].Size;
+      if (!Charge(1 + RegisterBytes +
+                  ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE)
+                       ? After.Frame.Cells.size()
+                       : 0)))
         break;
       Transfer.beginInstruction(Op.Addr);
       const FrameValue Value = Transfer.evaluate(Op, After.Installed);
+      if (Op.Seq >= 0 && Op.Output.Size != 0 && Value.MayBeFrame) {
+        if (!Charge(1))
+          break;
+        auto [It, New] =
+            FrameValues.emplace(std::make_pair(Op.Addr, Op.Seq), Value);
+        if (!New)
+          It->second = registration_state::join(It->second, Value);
+      }
+      const auto Memory = lowMemoryOperands(Op);
+      if (Op.Opcode == NdOp::INTRINSIC)
+        CompleteImageReads = false;
+      if (Memory.Address && Op.Opcode != NdOp::STORE &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+        if (!Charge(1))
+          break;
+        const auto Address = Transfer.read(*Memory.Address);
+        if (!Memory.Complete)
+          CompleteImageReads = false;
+        else if (Address.Offset) {
+          // The established private frame cannot alias an image allocation.
+        } else if (Address.Constant && !Address.MayBeFrame)
+          ImageReads.emplace(*Address.Constant,
+                             va_t(*Address.Constant) + Memory.AccessSize);
+        else
+          CompleteImageReads = false;
+      }
+      if (Memory.Complete &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          (Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE)) {
+        const auto Address = Transfer.read(*Memory.Address);
+        const uint16_t Width =
+            Op.Opcode == NdOp::LOAD ? Op.Output.Size : Memory.StoredValue->Size;
+        std::optional<RegistrationIncomingFrameAccess> Access;
+        if (Address.MayBeFrame && !Address.Offset)
+          ConsistentIncomingAccesses = false;
+        if (Address.Offset && int64_t(*Address.Offset) + Width > 4)
+          Access =
+              RegistrationIncomingFrameAccess{Op.Addr, Op.Seq, *Address.Offset,
+                                              Width, Op.Opcode == NdOp::STORE};
+        auto [It, Inserted] =
+            IncomingAccesses.emplace(std::make_pair(Op.Addr, Op.Seq), Access);
+        ConsistentIncomingAccesses &= Inserted || It->second == Access;
+      }
+      if (Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
+          Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
+        // An RMW is a write even when its scalar result is dead. This domain
+        // does not guess a conditional registration state or frame-cell value.
+        if (!Memory.Complete ||
+            Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS ||
+            Transfer.read(*Memory.Address).MayBeFrame ||
+            Transfer.read(*Memory.StoredValue).MayBeFrame)
+          Invalidate();
+      }
       if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1 &&
           Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS) {
         const FrameValue Address = Transfer.read(Op.Inputs[0]);
@@ -321,6 +402,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
         const FrameValue Address = Transfer.read(Op.Inputs[0]);
         const FrameValue Stored = Transfer.read(Op.Inputs[1]);
         const uint16_t Width = Op.Inputs[1].Size;
+        if (Stored.MayBeFrame && !Charge((size_t(Width) + 3) / 4))
+          break;
         if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS &&
             (!Address.Constant ||
              overlaps(int32_t(*Address.Constant), Width, 0, 4))) {
@@ -502,6 +585,34 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function) {
   if (Result.ChainOperationsComplete)
     for (const auto &[Identity, Access] : ChainAccesses)
       Result.ChainAccesses.push_back(Access);
+  Result.IncomingFrameAccessesComplete = ConsistentIncomingAccesses;
+  Result.ImageReadsComplete = Result.Complete &&
+                              Result.CallbackStatesComplete &&
+                              CompleteImageReads && !Exhausted;
+  if (Result.ImageReadsComplete)
+    for (const auto &[Begin, End] : ImageReads)
+      Result.ImageReads.push_back({Begin, End});
+  if (Result.Complete && Result.CallbackStatesComplete &&
+      ConsistentIncomingAccesses)
+    for (const auto &[Identity, Access] : IncomingAccesses)
+      if (Access)
+        Result.IncomingFrameAccesses.push_back(*Access);
+  if (!ConsistentIncomingAccesses)
+    Result.Diagnostics.push_back(
+        "incoming caller frame projection is not exact");
+  if (Result.Complete && Result.CallbackStatesComplete) {
+    if (!Charge(FrameValues.size())) {
+      Result.Complete = Result.ChainOperationsComplete =
+          Result.ImageReadsComplete = false;
+      Result.ChainAccesses.clear();
+      Result.Diagnostics.push_back(
+          "registration-frame output budget exhausted");
+      return Result;
+    }
+    for (const auto &[Identity, Value] : FrameValues)
+      Result.FrameValues.push_back(
+          {Identity.first, Identity.second, Value.Offset});
+  }
   return Result;
 }
 

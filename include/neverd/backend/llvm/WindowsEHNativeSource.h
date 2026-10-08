@@ -31,6 +31,7 @@ enum class WindowsEHNativeSourceModel : uint8_t {
   SEH,
   CxxFH3,
   CxxFH4,
+  X86RegistrationSEH,
 };
 
 /// The operation for which a normalized Windows exception source is being
@@ -90,6 +91,7 @@ enum class WindowsEHNativeSourceReason : uint8_t {
   UnsupportedCxxContinuation,
   OutputReconstructionUnavailable,
   UnsupportedSEHCallbackABI,
+  IncompleteRegistrationFrame,
 };
 
 struct WindowsEHNativeSourceClassification {

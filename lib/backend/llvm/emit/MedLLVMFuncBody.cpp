@@ -298,12 +298,16 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     SourceMap->Functions[Func.Entry] = LLVMFunc;
   VarAllocs.clear();
   CallSiteAddrs.clear();
+  RegistrationChainIR.clear();
+  RegistrationIncomingIR.clear();
+  RegistrationMemoryIR.clear();
   ParamArgs.clear();
   ParamRegoffMap.clear();
   DynVlaBases.clear();
   PendingDispatchStores.clear();
   FrameAlloca = nullptr;
   FrameBaseInt = nullptr;
+  FrameEntrySPOffset = 0;
   EHExceptionAlloca = nullptr;
   EHSelectorAlloca = nullptr;
   SEHExceptionCodeSlots.clear();
@@ -356,6 +360,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
           syntheticEntryStackResidue(TargetArch, TargetFormat, Func.EntryKind);
       uint64_t FrameBaseOffset =
           checkedSyntheticStackAdd(AlignedFrameSize, EntryResidue);
+      FrameEntrySPOffset = FrameBaseOffset;
       // A variadic function reads its overflow (incoming-stack) arguments at
       // entry_sp + base + i*slot, above frame_end.  Reserve headroom there
       // (kept separate from frame_end so the SP self-copy stays at frame_end)
@@ -1009,7 +1014,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   // table-based COFF frame, native MSVC C++ EH needs x64 or AArch64 COFF, and
   // Itanium EH needs an LSDA. The first lowering that recognizes the function
   // is the only one that can apply.
-  if (!emitNativeSEH(Func, *LLVMFunc, BBMap) &&
+  if (!emitNativeX86RegistrationSEH(Func, *LLVMFunc, BBMap) &&
+      !emitNativeSEH(Func, *LLVMFunc, BBMap) &&
       !emitNativeCxxEH(Func, *LLVMFunc, BBMap))
     emitNativeItaniumEH(Func, *LLVMFunc, BBMap);
 

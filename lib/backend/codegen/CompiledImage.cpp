@@ -80,6 +80,13 @@ struct WinEHSemanticEmissionShape {
   std::string HandlerSymbol;
   uint32_t RecordSize = 0;
   bool HasProtectedRange = false;
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+  std::string ContainerEndSymbol;
+  std::string FilterSymbol;
+  uint32_t GeneratedState = UINT32_MAX;
+  int32_t EnclosingState = -1;
+  std::array<int32_t, 4> RegistrationCookieOffsets{};
+#endif
 
   friend bool operator==(const WinEHSemanticEmissionShape &,
                          const WinEHSemanticEmissionShape &) = default;
@@ -96,6 +103,13 @@ std::vector<WinEHSemanticEmissionShape> collectWinEHSemanticEmissionShape(
                      Record.OwnerSymbol, Record.ContainerSymbol,
                      Record.BeginSymbol, Record.EndSymbol, Record.HandlerSymbol,
                      Record.RecordSize, HasProtectedRange});
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+    Shape.back().ContainerEndSymbol = Record.ContainerEndSymbol;
+    Shape.back().FilterSymbol = Record.FilterSymbol;
+    Shape.back().GeneratedState = Record.GeneratedState;
+    Shape.back().EnclosingState = Record.EnclosingState;
+    Shape.back().RegistrationCookieOffsets = Record.RegistrationCookieOffsets;
+#endif
   }
   llvm::sort(Shape, [](const WinEHSemanticEmissionShape &Left,
                        const WinEHSemanticEmissionShape &Right) {
@@ -103,12 +117,26 @@ std::vector<WinEHSemanticEmissionShape> collectWinEHSemanticEmissionShape(
                     Left.BeginSymbol, Left.EndSymbol, Left.HandlerSymbol,
                     Left.Token.Kind, Left.Token.Region, Left.Token.Clause,
                     Left.Token.Digest, Left.Encoding, Left.RecordSize,
-                    Left.HasProtectedRange) <
+                    Left.HasProtectedRange
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+                    ,
+                    Left.ContainerEndSymbol, Left.FilterSymbol,
+                    Left.GeneratedState, Left.EnclosingState,
+                    Left.RegistrationCookieOffsets
+#endif
+                    ) <
            std::tie(Right.SourceFunction, Right.OwnerSymbol,
                     Right.ContainerSymbol, Right.BeginSymbol, Right.EndSymbol,
                     Right.HandlerSymbol, Right.Token.Kind, Right.Token.Region,
                     Right.Token.Clause, Right.Token.Digest, Right.Encoding,
-                    Right.RecordSize, Right.HasProtectedRange);
+                    Right.RecordSize, Right.HasProtectedRange
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+                    ,
+                    Right.ContainerEndSymbol, Right.FilterSymbol,
+                    Right.GeneratedState, Right.EnclosingState,
+                    Right.RegistrationCookieOffsets
+#endif
+           );
   });
   return Shape;
 }

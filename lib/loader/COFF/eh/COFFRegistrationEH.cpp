@@ -224,6 +224,14 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
   }
 
   for (ExceptionFunction &F : Recovered) {
+    // An untyped PE export alone is not a callable entry. The exact decoded
+    // direct registration prologue supplies that missing instruction evidence.
+    if (F.ParseStatus == ExceptionParseStatus::Complete && F.Registration &&
+        F.Registration->RegistrationOffset && F.Registration->TryLevelOffset &&
+        Img.hasExecutableCodeOwnerRange(
+            F.CodeRange.Begin,
+            F.Registration->RegistrationOffset == -12 ? 24 : 29))
+      Img.VerifiedFunctionEntries.insert(F.CodeRange.Begin);
     Img.ExceptionMetadata.ParseStatus = mergeExceptionParseStatus(
         Img.ExceptionMetadata.ParseStatus, F.ParseStatus);
     Img.ExceptionMetadata.addModel(F.model());

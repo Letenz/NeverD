@@ -582,7 +582,8 @@ void addRegistrationCandidates(const ExceptionFunction &EH,
     HighEHClause Clause;
     Clause.Kind = Scope.IsFinally ? HighEHClauseKind::SEHFinally
                                   : HighEHClauseKind::SEHExcept;
-    Clause.FilterOrActionVA = Scope.IsFinally ? Scope.HandlerVA : Scope.FilterVA;
+    Clause.FilterOrActionVA =
+        Scope.IsFinally ? Scope.HandlerVA : Scope.FilterVA;
     Clause.HandlerVA = Scope.HandlerVA;
     Candidate.Clauses.push_back(std::move(Clause));
     Candidates.push_back(std::move(Candidate));
@@ -1923,7 +1924,8 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
         HighEHClause Clause;
         Clause.Kind = Scope.IsFinally ? HighEHClauseKind::SEHFinally
                                       : HighEHClauseKind::SEHExcept;
-        Clause.FilterOrActionVA = Scope.IsFinally ? Scope.HandlerVA : Scope.FilterVA;
+        Clause.FilterOrActionVA =
+            Scope.IsFinally ? Scope.HandlerVA : Scope.FilterVA;
         Clause.HandlerVA = Scope.HandlerVA;
         Try.EHClauses.push_back(std::move(Clause));
         Try.EHClauseBodies.emplace_back();

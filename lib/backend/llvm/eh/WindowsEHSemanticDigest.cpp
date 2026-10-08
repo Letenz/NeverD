@@ -28,6 +28,7 @@ constexpr llvm::StringLiteral GSFH4Domain("windows-eh.gs-fh4");
 constexpr uint8_t SEHGraphKind = 1;
 constexpr uint8_t FH3GraphKind = 2;
 constexpr uint8_t FH4GraphKind = 3;
+constexpr uint8_t RegistrationSEHGraphKind = 4;
 static_assert(GraphDomain.size() <= std::numeric_limits<uint32_t>::max());
 static_assert(TokenDomain.size() <= std::numeric_limits<uint32_t>::max());
 
@@ -214,6 +215,54 @@ getSEHGraphDigest(const ExceptionFunction &EH, Arch TargetArch) {
 }
 
 std::optional<std::array<uint8_t, 32>>
+getRegistrationSEHGraphDigest(const ExceptionFunction &EH) {
+  if (!EH.Registration || EH.SEH || EH.Cxx || EH.GSCookie ||
+      EH.ParseStatus != ExceptionParseStatus::Complete ||
+      (EH.Encoding != ExceptionEncoding::X86ScopeTableEH3 &&
+       EH.Encoding != ExceptionEncoding::X86ScopeTableEH4))
+    return std::nullopt;
+  const RegistrationChainInfo &Chain = *EH.Registration;
+  CanonicalBytes Bytes;
+  if (!appendGraphHeader(Bytes, RegistrationSEHGraphKind, Arch::X86,
+                         EH.CodeRange) ||
+      !appendCount(Bytes, Chain.Scopes.size()))
+    return std::nullopt;
+  Bytes.appendU8(EH.Encoding == ExceptionEncoding::X86ScopeTableEH4 ? 2 : 1);
+  Bytes.appendU64(EH.PersonalityVA);
+  Bytes.appendU64(EH.HandlerDataVA);
+  Bytes.appendU64(Chain.HandlerVA);
+  Bytes.appendU64(Chain.ScopeTableVA);
+  for (const auto &Offset :
+       {Chain.TryLevelOffset, Chain.SeededTryLevel, Chain.RegistrationOffset}) {
+    Bytes.appendU8(Offset.has_value());
+    if (Offset)
+      Bytes.appendI32(*Offset);
+  }
+  Bytes.appendU8(Chain.HasSecurityCookies);
+  Bytes.appendI32(Chain.GSCookieOffset);
+  Bytes.appendI32(Chain.GSCookieXOROffset);
+  Bytes.appendI32(Chain.EHCookieOffset);
+  Bytes.appendI32(Chain.EHCookieXOROffset);
+  Bytes.appendU32(Chain.ScopeTableMagic);
+  Bytes.appendU64(Chain.ChainInstallVA);
+  Bytes.appendU64(Chain.ChainRemoveVA);
+  for (const RegistrationScopeRecord &Scope : Chain.Scopes) {
+    Bytes.appendI32(Scope.EnclosingLevel);
+    Bytes.appendU64(Scope.FilterVA);
+    Bytes.appendU64(Scope.HandlerVA);
+    Bytes.appendU8(Scope.IsFinally);
+  }
+  if (!appendCount(Bytes, Chain.TryLevelStores.size()))
+    return std::nullopt;
+  for (const RegistrationTryLevelStore &Store : Chain.TryLevelStores) {
+    Bytes.appendU64(Store.StoreVA);
+    Bytes.appendU64(Store.EndVA);
+    Bytes.appendI32(Store.Level);
+  }
+  return llvm::SHA256::hash(Bytes.bytes());
+}
+
+std::optional<std::array<uint8_t, 32>>
 getCxxGraphDigest(const ExceptionFunction &EH, Arch TargetArch) {
   if (!EH.Cxx || EH.SEH || EH.ParseStatus != ExceptionParseStatus::Complete ||
       EH.model() != ExceptionModel::WindowsTable ||
@@ -349,10 +398,13 @@ makeToken(const std::array<uint8_t, 32> &GraphDigest,
 std::optional<llvm::mc_rewrite::RewriteWinEHSemanticToken>
 getSEHScopeSemanticToken(const ExceptionFunction &EH, Arch TargetArch,
                          uint32_t ScopeIndex) {
-  if (!EH.SEH || ScopeIndex >= EH.SEH->Scopes.size())
+  const bool Registration = TargetArch == Arch::X86 && EH.Registration;
+  if (Registration ? ScopeIndex >= EH.Registration->Scopes.size()
+                   : (!EH.SEH || ScopeIndex >= EH.SEH->Scopes.size()))
     return std::nullopt;
   const std::optional<std::array<uint8_t, 32>> GraphDigest =
-      getSEHGraphDigest(EH, TargetArch);
+      Registration ? getRegistrationSEHGraphDigest(EH)
+                   : getSEHGraphDigest(EH, TargetArch);
   if (!GraphDigest)
     return std::nullopt;
   return makeToken(*GraphDigest,

@@ -17,6 +17,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryUtils.h"
 #include "neverd/backend/codegen/COFF/COFFExceptionPatch.h"
+#include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/backend/codegen/COFF/COFFReloc.h"
 #include "neverd/object/PELayout.h"
 
@@ -26,6 +27,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/Debug.h"
@@ -427,6 +429,29 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
         }
 
         InstructionMode ResolveMode = CachedMode;
+        std::map<std::string, uint64_t> OriginalCallees;
+        for (const llvm::Function &Function : *CompileMod) {
+          if (!Function.isDeclaration())
+            continue;
+          auto Address = rewrite_source::getOriginalVA(Function);
+          if (!Address) {
+            llvm::WithColor::error()
+                << llvm::toString(Address.takeError()) << "\n";
+            return false;
+          }
+          if (!*Address || !CachedImage->isCodeAddress(**Address) ||
+              !CachedImage->readVA(**Address, 1))
+            continue;
+          // A direct call can name executable source code whose body was not
+          // selected for lifting. Resolve its exact emitted symbol, including
+          // the target's calling-convention decoration, to that source entry.
+          llvm::SmallString<64> ObjectName;
+          llvm::Mangler Mangler;
+          Mangler.getNameWithPrefix(ObjectName, &Function, false);
+          if (!OriginalCallees.emplace(ObjectName.str().str(), **Address)
+                   .second)
+            return false;
+        }
         auto SerializeResolvedCode = [&](uint64_t VA, bool IsCode) {
           return IsCode ? serializeCodePointer(VA, TargetArch, ResolveMode)
                         : VA;
@@ -444,6 +469,9 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
             if (auto Personality =
                     findCOFFExceptionPersonalityVA(*CachedImage, Sym))
               return SerializeResolvedCode(*Personality, true);
+          if (auto Callee = OriginalCallees.find(Name);
+              Callee != OriginalCallees.end())
+            return SerializeResolvedCode(Callee->second, true);
           std::string Key = resolveSymbolAlias(Name, Layout.IATMap);
           auto It = Layout.IATMap.find(Key);
           if (It != Layout.IATMap.end())
@@ -550,13 +578,17 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
               &InstalledFunctions);
         }
 
-        auto EHUpdateOrErr = prepareCOFFExceptionDirectory(
-            Binary, *CachedImage, Img, PatchedOriginalEntries,
-            PatchedEntryMappings, CodeVA, TargetArch, CompileMod.get());
-        if (!EHUpdateOrErr) {
-          llvm::WithColor::error()
-              << llvm::toString(EHUpdateOrErr.takeError()) << "\n";
-          return false;
+        COFFExceptionDirectoryUpdate EHUpdate;
+        if (TargetArch != Arch::X86) {
+          auto Prepared = prepareCOFFExceptionDirectory(
+              Binary, *CachedImage, Img, PatchedOriginalEntries,
+              PatchedEntryMappings, CodeVA, TargetArch, CompileMod.get());
+          if (!Prepared) {
+            llvm::WithColor::error()
+                << llvm::toString(Prepared.takeError()) << "\n";
+            return false;
+          }
+          EHUpdate = std::move(*Prepared);
         }
         auto GuardUpdateOrErr = prepareCOFFGuardTables(
             Binary, *CachedImage, Img, PatchedEntryMappings, CodeVA, TargetArch,
@@ -565,6 +597,20 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
           llvm::WithColor::error()
               << llvm::toString(GuardUpdateOrErr.takeError()) << "\n";
           return false;
+        }
+
+        COFFRegistrationPatchUpdate RegistrationUpdate;
+        if (TargetArch == Arch::X86 &&
+            !EHPlanOrErr->ExceptionFunctionEntries.empty()) {
+          auto Prepared = prepareCOFFRegistrationPatch(
+              Binary, *CachedImage, Img, PatchedEntryMappings, CodeVA,
+              *CompileMod, &*GuardUpdateOrErr);
+          if (!Prepared) {
+            llvm::WithColor::error()
+                << llvm::toString(Prepared.takeError()) << "\n";
+            return false;
+          }
+          RegistrationUpdate = std::move(*Prepared);
         }
 
         uint64_t TextSize = Img.Bytes.size();
@@ -577,7 +623,7 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
           return false;
         }
         if (llvm::Error Err =
-                applyCOFFExceptionDirectoryUpdate(Binary, *EHUpdateOrErr)) {
+                applyCOFFExceptionDirectoryUpdate(Binary, EHUpdate)) {
           llvm::WithColor::error() << llvm::toString(std::move(Err)) << "\n";
           return false;
         }
@@ -586,10 +632,19 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
           llvm::WithColor::error() << llvm::toString(std::move(Err)) << "\n";
           return false;
         }
+        if (llvm::Error Err =
+                applyCOFFRegistrationPatch(Binary, RegistrationUpdate)) {
+          llvm::WithColor::error() << llvm::toString(std::move(Err)) << "\n";
+          return false;
+        }
+        if (llvm::Error Err =
+                validateCOFFRegistrationPatch(Binary, RegistrationUpdate)) {
+          llvm::WithColor::error() << llvm::toString(std::move(Err)) << "\n";
+          return false;
+        }
         if (llvm::Error Err = validatePatchedCOFFImage(
-                Binary, TargetArch,
-                EHUpdateOrErr->Apply && EHUpdateOrErr->Size != 0,
-                *EHUpdateOrErr)) {
+                Binary, TargetArch, EHUpdate.Apply && EHUpdate.Size != 0,
+                EHUpdate)) {
           llvm::WithColor::error() << llvm::toString(std::move(Err)) << "\n";
           return false;
         }

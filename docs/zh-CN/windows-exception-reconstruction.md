@@ -29,7 +29,8 @@ NeverD 在加载、提升、反编译和二进制重写的全过程中携带 Win
 | `__CxxFrameHandler3` | unwind map、try map、catch、catch-object/frame offset、continuation 与 IP-to-state map | 可规约状态区间变为显式 C++ HighIR，并带 C 兼容类型注释 | 对下文所述严格受限且 verifier-clean 的子集执行原生 x64 重建 |
 | `__CxxFrameHandler4` | 有界变长解码到公共 C++ 图，包括 action kind 与 object offset | 同一 HighIR 图并保留 FH4 来源 | 仅分析；拒绝修改涉及的函数 |
 | `__GSHandlerCheck_SEH/EH/EH4` | 包装后的 personality 与经检查的 GS cookie 来源 | 基础语言图加 wrapper 注释 | 仅分析；拒绝修改涉及的函数，不做降级 |
-| x86 registration-chain EH | EH3/EH4 scope table 与 cookie 字段、绝对指针 C++ FuncInfo，以及基于 CFG 的 try-level 状态集合 | 可规约且状态无歧义的区域生成显式 EH 节点；有歧义或不完整的状态保留原生注释 | 支持分析与反编译；尚未开放原生重建 |
+| x86 registration-chain SEH3 | 经检查的 scope 图、实际 FS:[0] 操作、callback root 与基于 CFG 的 try-level 状态集合 | 可规约且无歧义的区域生成显式 EH 节点；其他状态保留原生注释 | 对下文固定栈帧、caller-cleanup 的已证明子集支持原生 PE32 重建 |
+| x86 registration-chain SEH4 与 C++ EH | EH4 cookie 字段、绝对指针 C++ FuncInfo 与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 支持分析与反编译；仍拒绝原生安装 |
 
 畸形记录绝不会按普通完整记录处理。部分解码记录仍可用于检查，但不能授权生成原生
 元数据。如果 ARM xdata header 仍能证明一个有界可执行 fragment 范围，而后续 unwind
@@ -75,9 +76,28 @@ MedIR 单独携带这些推导结果，不修改 patch 事务认证的 loader �
 直接 MSVC prologue 必须证明实际 FS:[0] 写入与 registration/state 字段的位置；普通局部
 变量中恰好相同的整数序列不能替代这一证据。
 
-状态分析尚不能证明新物理栈帧的 registration 契约。原生 x86 重建还需要 callback
-frame recovery、平衡的 FS:[0] 安装/移除、EH4 cookie 保留、生成 handler 的 SafeSEH
-成员关系，以及绝对指针的 PE base relocation。实现这些条件前，patch 仍拒绝 x86 契约。
+SEH3 原生重建还会证明固定且私有的源栈帧、平衡的 FS:[0] 操作，以及每个普通 CFG
+block 唯一的活动状态。LLVM 拥有新的物理 registration；独立 filter 与 termination
+callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有经过认证的源
+链操作才会被替换。每个活动区间都有显式异步 scope 边界，包括内层 handler 进入外层
+保护区的入口。原函数和保留的直接被调函数必须证明 caller-cleanup 栈行为；间接调用
+或无法证明的栈清理约定仍被拒绝。
+
+cdecl 的传入栈槽在原内存操作发生处映射到真实调用者栈帧，独立 callback 中的读写也
+使用这一映射。保留 callee 的整个调用图必须证明栈帧私有：读取已初始化的栈字节，
+访问限于当前已分配区域，并恢复 callee-saved 寄存器和 SP。flags、vector 别名、spill
+和调用不会清洗栈帧来源。返回地址探针可以记录真实生成调用点供外部观察，但源函数或
+保留调用图内不能重新读取该值。除经过认证的 `RaiseException` 外，未知 import 和没有
+已检查内存访问契约的 intrinsic 不属于这一原生子集。
+
+编译器为 scope 行发射索引、精确表范围、外层状态、filter/handler 目标及源语义凭据。
+PE 事务检查实际字节和 DIR32 fixup，合并 SafeSEH 与 HIGHLOW relocation，并重新解析
+最终映像。新建的 Guard CF/EH continuation 表指针也会获得独立的 base relocation。
+注册链函数在 `section` 与 `inplace` 模式下都使用这个完整事务。
+
+该路径要求 LLVM fork 提供 `LLVM_NEVERD_X86_REGISTRATION_EH` 契约；旧的已发布 r3
+预编译包会拒绝原生安装。EH4 的 cookie-aware 源重建以及 x86 C++ FuncInfo 的原生
+安装仍是独立的后续要求，不能用已有的分析元数据替代。
 
 ## IR 契约
 

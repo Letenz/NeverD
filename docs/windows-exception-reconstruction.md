@@ -34,7 +34,8 @@ Analysis support does not imply native reconstruction support.
 | `__CxxFrameHandler3` | Unwind map, try map, catches, catch-object/frame offsets, continuations, and IP-to-state map | Reducible state intervals become explicit C++ HighIR with C-compatible typed annotations | Native x64 reconstruction for the deliberately narrow, verifier-clean subset described below |
 | `__CxxFrameHandler4` | Bounded variable-length decoding into the common C++ graph, including action kinds and object offsets | Same HighIR graph with FH4 provenance | Analysis only; a touched function is rejected |
 | `__GSHandlerCheck_SEH/EH/EH4` | Wrapped personality plus checked GS cookie provenance | Base-language graph and wrapper annotation | Analysis only; a touched function is rejected rather than downgraded |
-| x86 registration-chain EH | EH3/EH4 scope tables and cookie fields, absolute-pointer C++ FuncInfo, and CFG-derived reaching try levels | Reducible, unambiguous regions become explicit EH nodes; ambiguous or incomplete state flow retains native annotations | Analysis and decompilation; native reconstruction is not yet accepted |
+| x86 registration-chain SEH3 | Checked scope graph, actual FS:[0] administration, callback roots and CFG-derived reaching try levels | Reducible, unambiguous regions become explicit EH nodes; other state flow retains native annotations | Native PE32 reconstruction for the checked fixed-frame, caller-cleanup subset below |
+| x86 registration-chain SEH4 and C++ EH | EH4 cookie fields, absolute-pointer C++ FuncInfo and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Analysis and decompilation; native installation remains rejected |
 
 Malformed records are never treated as ordinary complete records. A partially
 decoded record remains useful for inspection, but cannot authorize native
@@ -92,11 +93,38 @@ inventing an IP-to-state map.
 Direct MSVC prologues must prove the actual FS:[0] write and the registration
 and state-field offsets; matching integer sequences in locals are insufficient.
 
-This state analysis does not prove ownership of a new physical registration
-frame. Native x86 reconstruction additionally requires callback frame recovery,
-balanced FS:[0] administration, EH4 cookie preservation, generated SafeSEH
-handler membership and absolute-pointer PE base relocations. Patch planning
-continues to reject x86 contracts until those obligations are implemented.
+Native SEH3 reconstruction additionally proves a fixed private source frame,
+balanced FS:[0] administration and one active state at each ordinary CFG block.
+LLVM owns the new physical registration. Outlined filters and termination
+callbacks recover source EBP/ESP and exception pointers through its escaped
+frame; source chain operations are replaced only at authenticated occurrences.
+Every active interval has explicit asynchronous scope boundaries, including
+nested handler entry into its outer scope. Original functions and preserved
+direct callees must have checked caller-cleanup stack behavior. Indirect or
+unproved cleanup conventions remain rejected.
+
+Incoming cdecl stack slots are projected onto the real caller frame at their
+original memory-operation occurrences, including reads and writes in outlined
+callbacks. Preserved callees need a closed, frame-private call graph: stack
+reads must be initialized, accesses must stay within their live allocation,
+and callee-saved registers and SP must be restored. Frame provenance survives
+flags, vector aliases, spills and calls. A return-address observer may record
+the regenerated call site for an external observer; reloading that value inside
+the source/callee closure is rejected. Opaque imports other than authenticated
+`RaiseException`, and memory intrinsics without a checked access contract, are
+outside this native subset.
+
+The compiler emits indexed scope rows with exact table extent, enclosing state,
+filter/handler targets and source semantic receipts. The PE transaction checks
+their physical bytes and DIR32 fixups, merges SafeSEH and HIGHLOW relocations,
+and reparses the installed image. A new Guard CF/EH continuation table pointer
+also receives its own base relocation. Both `section` and `inplace` patch modes
+use this complete transaction for registration functions.
+
+This path needs the LLVM fork's `LLVM_NEVERD_X86_REGISTRATION_EH` contract;
+the older published r3 package rejects native installation. EH4 cookie-aware
+source reconstruction and native x86 C++ FuncInfo installation are separate
+remaining requirements, even though their metadata is available for analysis.
 
 ## IR contract
 

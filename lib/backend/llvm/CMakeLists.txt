@@ -38,6 +38,7 @@ add_neverd_component_library(NeverDBackendLLVM
   eh/MedLLVMNativeCxxEH.cpp
   eh/MedLLVMNativeItaniumEH.cpp
   eh/MedLLVMNativeSEH.cpp
+  eh/MedLLVMNativeRegistration.cpp
   emit/MedLLVMCall.cpp
   emit/MedLLVMEmitter.cpp
   emit/MedLLVMFloatEmitter.cpp

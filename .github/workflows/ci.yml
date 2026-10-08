@@ -33,6 +33,11 @@ on:
         required: true
         type: boolean
         default: false
+      windows_eh_llvm_artifact_run:
+        description: 'Optional exact-revision LLVM build run for native PE32 rewrite execution'
+        required: false
+        type: string
+        default: ''
       native_cpu_backend:
         description: 'Native x64 transport for the native_cpu_only profile'
         required: true
@@ -2110,8 +2115,53 @@ jobs:
         run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame -v
       - name: Observe original x86 SEH and C++ EH across GS and optimization modes
         run: python scripts/check_windows_registration_eh.py --output build-windows-eh/evidence/original-runtime --wine-prefix "$RUNNER_TEMP/neverd-wine32"
+      - name: Fetch the exact compiler build for native registration reconstruction
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LLVM_BUILD_RUN: ${{ inputs.windows_eh_llvm_artifact_run }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, re, subprocess, tarfile
+          from pathlib import Path
+          run = os.environ['LLVM_BUILD_RUN']
+          assert re.fullmatch(r'[1-9][0-9]*', run), 'invalid compiler run ID'
+          repo = 'NeverSight/llvm-project'
+          info = json.loads(subprocess.check_output([
+              'gh', 'run', 'view', run, '--repo', repo,
+              '--json', 'headSha,status,conclusion']))
+          revision = subprocess.check_output([
+              'git', '-C', 'third_party/llvm-project', 'rev-parse', 'HEAD'], text=True).strip()
+          assert info == {'headSha': revision, 'status': 'completed',
+                          'conclusion': 'success'}, info
+          destination = Path(os.environ['RUNNER_TEMP']) / 'registration-llvm'
+          destination.mkdir()
+          subprocess.run(['gh', 'run', 'download', run, '--repo', repo,
+                          '--name', 'neverd-llvm-linux-x86_64',
+                          '--dir', str(destination)], check=True)
+          archive = destination / 'neverd-llvm-linux-x86_64.tar.xz'
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          expected = archive.with_suffix('.xz.sha256').read_text().split()[0]
+          assert digest == expected, 'compiler archive hash differs'
+          with tarfile.open(archive) as package:
+              buildinfo = package.extractfile('neverd-llvm-linux-x86_64/BUILDINFO.txt').read().decode()
+              assert re.findall(r'^llvm_commit: (.+)$', buildinfo, re.M) == [revision], buildinfo
+              header = package.extractfile('neverd-llvm-linux-x86_64/include/llvm/MC/BinaryRewrite.h').read()
+              assert b'#define LLVM_NEVERD_X86_REGISTRATION_EH 1' in header
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'REGISTRATION_LLVM_ARCHIVE_DIR={destination}\n')
+              output.write(f'REGISTRATION_LLVM_ARCHIVE_SHA256={digest}\n')
+          PY
       - name: Configure focused loader, IR and rewrite checks
         run: |
+          compiler_args=()
+          if [[ -n "${REGISTRATION_LLVM_ARCHIVE_DIR:-}" ]]; then
+            compiler_args+=(
+              "-DNEVERD_LLVM_PREBUILT_TAG=registration-ci-${GITHUB_RUN_ID}"
+              "-DNEVERD_LLVM_PREBUILT_BASE_URL=file://${REGISTRATION_LLVM_ARCHIVE_DIR}"
+              "-DNEVERD_LLVM_PREBUILT_SHA256=${REGISTRATION_LLVM_ARCHIVE_SHA256}"
+              "-DNEVERD_LLVM_PREBUILT_CACHE_DIR=${RUNNER_TEMP}/registration-llvm-cache")
+          fi
           cmake -S . -B build-windows-eh -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
@@ -2119,14 +2169,15 @@ jobs:
             -DNEVERD_LLVM_PREBUILT=ON -DNEVERD_BUILD_GUI=OFF \
             -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
             -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_DRIVER_EMULATION=OFF \
-            -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=ON
+            -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=ON \
+            "${compiler_args[@]}"
       - name: Build x86 and ARM32 exception owners
         run: |
           cmake --build build-windows-eh --parallel 4 --target \
             NeverDRegistrationStateTests NeverDRegistrationEHTests NeverDLiftTests \
             NeverDWindowsRegistrationFrameTests \
             NeverDWindowsEHMetadataEncoderTests NeverDWindowsEHCorpusTests \
-            NeverDCOFFExceptionPatchTests
+            NeverDCOFFExceptionPatchTests NeverDWindowsRegistrationNativeTests neverd
       - name: Verify registration state and canonical LLVM metadata
         env:
           NEVERD_REGISTRATION_RUNTIME_OBJECT: build-windows-eh/evidence/frame-runtime.obj
@@ -2150,6 +2201,19 @@ jobs:
           build-windows-eh/bin/NeverDWindowsEHCorpusTests \
             --gtest_filter='WindowsEHCorpus.RecoversX86RegistrationChains:WindowsEHCorpus.MasksThumbBitInARM32LanguageTables:WindowsEHCorpus.DecodesARMUnwindOperations:WindowsEHCorpus.ParsesDeclaredExceptionMetadata' \
             --gtest_output=xml:build-windows-eh/evidence/corpus.xml
+      - name: Execute reconstructed SEH3 source through both CLI modes and rebasing
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        run: |
+          build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
+            --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract \
+            --gtest_output=xml:build-windows-eh/evidence/native.xml
+          for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write; do
+            python scripts/check_windows_registration_rewrite.py \
+              --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
+              --patch-binary build-windows-eh/bin/neverd --case "$registration_case" \
+              --output "build-windows-eh/evidence/source-${registration_case}" \
+              --wine-prefix "$RUNNER_TEMP/neverd-wine32"
+          done
       - name: Require executed checks without missing-fixture skips
         run: |
           python - <<'PY'

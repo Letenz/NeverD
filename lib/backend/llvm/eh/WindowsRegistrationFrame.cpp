@@ -8,6 +8,8 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
+#include "neverd/backend/llvm/RegistrationFrameAddress.h"
+#include "neverd/backend/llvm/WindowsEHMetadata.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/CFG.h"
@@ -22,6 +24,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Errc.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
@@ -40,6 +43,20 @@ llvm::Error reject(llvm::StringRef Detail) {
   return llvm::createStringError(llvm::errc::invalid_argument,
                                  "x86 registration callback: %s",
                                  Detail.str().c_str());
+}
+
+llvm::Value *filterResult(const llvm::ReturnInst &Return) {
+  llvm::Value *Value = Return.getReturnValue();
+  if (Value && Value->getType()->isIntegerTy(32))
+    return Value;
+  const auto *Extension = llvm::dyn_cast_or_null<llvm::CastInst>(Value);
+  if (Extension &&
+      (Extension->getOpcode() == llvm::Instruction::ZExt ||
+       Extension->getOpcode() == llvm::Instruction::SExt) &&
+      Extension->getSrcTy()->isIntegerTy(32) &&
+      Extension->getDestTy()->isIntegerTy(64))
+    return Extension->getOperand(0);
+  return nullptr;
 }
 
 bool isStaticEntryAlloca(const llvm::AllocaInst &Slot,
@@ -90,12 +107,26 @@ bool isEntryAddressRecipe(const llvm::Instruction &Instruction,
 
 struct CallbackPlan {
   const X86RegistrationCallbackRequest *Request = nullptr;
+  X86RegistrationCallbackFrame Frame;
   std::set<llvm::AllocaInst *> Needed;
   std::set<llvm::Argument *> Arguments;
   std::vector<llvm::Instruction *> Recipes;
   std::map<llvm::StoreInst *, X86RegistrationRootKind> Seeds;
   std::set<llvm::AllocaInst *> PrivateSlots;
 };
+
+bool isPrivateSlotInitializer(const llvm::User *User,
+                              const llvm::AllocaInst &Slot) {
+  const auto *Store = llvm::dyn_cast<llvm::StoreInst>(User);
+  const auto *Zero =
+      Store ? llvm::dyn_cast<llvm::ConstantInt>(Store->getValueOperand())
+            : nullptr;
+  return Store && Zero && Zero->isZero() &&
+         Store->getPointerOperand() == &Slot &&
+         Store->getValueOperand()->getType() == Slot.getAllocatedType() &&
+         !Store->isAtomic() && !Store->isVolatile() &&
+         Store->getParent() == &Slot.getFunction()->getEntryBlock();
+}
 
 // A private stack is valid only for bounded scratch cells below entry ESP.
 // Reject observable addresses, return-address reads and unproved SSA copies.
@@ -105,7 +136,7 @@ llvm::Error checkPrivateStack(
     const llvm::DataLayout &Layout, llvm::BasicBlock &Entry,
     const std::set<llvm::BasicBlock *> &Body,
     const std::map<llvm::StoreInst *, X86RegistrationRootKind> &Seeds,
-    const X86RegistrationCallbackFrame &Frame,
+    X86RegistrationCallbackFrame &Frame,
     std::set<llvm::AllocaInst *> &PrivateSlots, size_t &WorkUsed) {
   std::map<llvm::Value *, int64_t> Offsets;
   std::vector<llvm::Value *> Work;
@@ -117,6 +148,7 @@ llvm::Error checkPrivateStack(
   std::map<llvm::Instruction *, ScratchAccess> Accesses;
   bool Invalid = false;
   bool Exhausted = false;
+  int64_t MinOffset = 0;
   auto Charge = [&](size_t Amount) {
     if (Amount > limits::kMaxRegistrationEHStateWork - WorkUsed) {
       Exhausted = true;
@@ -129,6 +161,9 @@ llvm::Error checkPrivateStack(
     if (!Charge(1))
       return;
     auto [It, Inserted] = Offsets.emplace(Value, Offset);
+    MinOffset = std::min(MinOffset, Offset);
+    if (Frame.InferStackBounds && Offset > 0)
+      Invalid = true;
     Invalid |= !Inserted && It->second != Offset;
     if (Inserted)
       Work.push_back(Value);
@@ -200,11 +235,10 @@ llvm::Error checkPrivateStack(
         continue;
       }
       if (auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(User)) {
-        llvm::APInt Delta(32, 0);
-        if (Use.getOperandNo() != 0 || GEP->getPointerAddressSpace() != 0 ||
-            !GEP->accumulateConstantOffset(Layout, Delta))
+        auto Delta = registration_frame::checkedByteGEPOffset(GEP);
+        if (Use.getOperandNo() != 0 || !Delta)
           return reject("private callback stack has an unproved GEP");
-        const int64_t Next = Offset + Delta.getSExtValue();
+        const int64_t Next = Offset + *Delta;
         if (Next < -int64_t(Frame.StackBytes) || Next > Frame.StackBytes)
           return reject("private callback stack GEP is out of bounds");
         if (GEP->hasNoUnsignedWrap() ||
@@ -256,7 +290,7 @@ llvm::Error checkPrivateStack(
             return reject(
                 "private callback stack SSA uses exceed the work budget");
           auto *Load = llvm::dyn_cast<llvm::LoadInst>(SlotUser);
-          if (SlotUser == Store)
+          if (SlotUser == Store || isPrivateSlotInitializer(SlotUser, *Slot))
             continue;
           if (!Load || Load->getType() != Slot->getAllocatedType() ||
               !Body.count(Load->getParent()) || Load->isVolatile() ||
@@ -278,6 +312,15 @@ llvm::Error checkPrivateStack(
     return reject("private callback stack values exceed the work budget");
   if (Invalid)
     return reject("private callback stack has inconsistent SSA offsets");
+  if (Frame.InferStackBounds) {
+    const uint64_t Bytes = llvm::alignTo(uint64_t(-MinOffset), uint64_t(16));
+    if (Bytes > limits::kMaxRegistrationEHStateWork)
+      return reject("inferred private callback stack exceeds the work budget");
+    // A seed used only to transport entry ESP still needs a valid private
+    // pointer. It cannot be dereferenced at offset zero by the checks above.
+    Frame.StackBytes = static_cast<uint32_t>(std::max<uint64_t>(Bytes, 16));
+    Frame.StackPointerOffset = Frame.StackBytes;
+  }
 
   // Memory below the dispatcher's incoming ESP is not automatically scratch:
   // a read must be preceded by writes on every callback path. Solve definite
@@ -399,7 +442,7 @@ prepareCallback(llvm::Function &Parent,
       Kind != X86RegistrationCallbackKind::Finally)
     return reject("unknown callback kind");
   llvm::StringRef Name = Request.Name;
-  const X86RegistrationCallbackFrame &Frame = Request.Frame;
+  X86RegistrationCallbackFrame Frame = Request.Frame;
   llvm::Module *Module = Parent.getParent();
   if (!Module || Parent.empty() || !Parent.getEntryBlock().getTerminator())
     return reject("parent has no complete entry block");
@@ -498,7 +541,7 @@ prepareCallback(llvm::Function &Parent,
     for (llvm::User *User : Slot->users()) {
       if (++WorkUsed > limits::kMaxRegistrationEHStateWork)
         return reject("callback runtime seed uses exceed the work budget");
-      if (User == Definition)
+      if (User == Definition || isPrivateSlotInitializer(User, *Slot))
         continue;
       auto *Load = llvm::dyn_cast<llvm::LoadInst>(User);
       if (!Load || Load->getType() != Slot->getAllocatedType() ||
@@ -518,6 +561,12 @@ prepareCallback(llvm::Function &Parent,
     default:
       return reject("unknown runtime register seed kind");
     }
+  }
+  if (Frame.InferStackBounds) {
+    if (!NeedsSP || Frame.StackBytes || Frame.StackPointerOffset)
+      return reject("inferred private stack conflicts with explicit bounds");
+    Frame.StackBytes = limits::kMaxRegistrationEHStateWork;
+    Frame.StackPointerOffset = Frame.StackBytes;
   }
   if (NeedsSP != (Frame.StackBytes != 0) ||
       NeedsSP != Frame.StackPointerOffset.has_value() ||
@@ -648,8 +697,7 @@ prepareCallback(llvm::Function &Parent,
       if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(&Instruction)) {
         HasReturn = true;
         if (Kind == X86RegistrationCallbackKind::Filter &&
-            (!Return->getReturnValue() ||
-             !Return->getReturnValue()->getType()->isIntegerTy(32)))
+            !filterResult(*Return))
           return reject("filter does not return an exact i32 result");
       }
       for (llvm::Use &Operand : Instruction.operands()) {
@@ -663,9 +711,13 @@ prepareCallback(llvm::Function &Parent,
     return reject("callback return or parent-value dependencies are unproven");
   if (Frame.SyntheticFrame)
     Needed.insert(Frame.SyntheticFrame);
-  return CallbackPlan{
-      &Request,           std::move(Needed), std::move(Arguments),
-      std::move(Recipes), std::move(Seeds),  std::move(PrivateSlots)};
+  return CallbackPlan{&Request,
+                      Frame,
+                      std::move(Needed),
+                      std::move(Arguments),
+                      std::move(Recipes),
+                      std::move(Seeds),
+                      std::move(PrivateSlots)};
 }
 
 llvm::Function *
@@ -678,7 +730,7 @@ commitCallback(llvm::Function &Parent, const CallbackPlan &Plan,
   llvm::ArrayRef<llvm::BasicBlock *> Blocks = Request.Blocks;
   const auto Kind = Request.Kind;
   llvm::StringRef Name = Request.Name;
-  const auto &Frame = Request.Frame;
+  const auto &Frame = Plan.Frame;
   const auto &Needed = Plan.Needed;
   const auto &Recipes = Plan.Recipes;
   const bool HasExceptionCell = Frame.ExceptionPointersOffset.has_value();
@@ -800,6 +852,17 @@ commitCallback(llvm::Function &Parent, const CallbackPlan &Plan,
     auto *Clone = llvm::cast<llvm::StoreInst>(Values[Definition]);
     Clone->setOperand(0,
                       Kind == X86RegistrationRootKind::FramePointer ? FP : SP);
+    const uint64_t Offset = Kind == X86RegistrationRootKind::FramePointer
+                                ? *Frame.EstablishedFramePointerOffset
+                                : *Frame.StackPointerOffset;
+    Clone->setMetadata(
+        windows_eh_md::RegistrationRootAttachment,
+        llvm::MDNode::get(
+            Parent.getContext(),
+            {llvm::ConstantAsMetadata::get(
+                 llvm::ConstantInt::get(I8Ty, static_cast<uint8_t>(Kind))),
+             llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                 llvm::Type::getInt64Ty(Parent.getContext()), Offset))}));
   }
   for (llvm::BasicBlock *Block : Blocks) {
     auto *Clone = llvm::cast<llvm::BasicBlock>(Values[Block]);
@@ -810,12 +873,18 @@ commitCallback(llvm::Function &Parent, const CallbackPlan &Plan,
       Instruction.setMetadata(language_eh_md::InternalSourceCallAttachment,
                               nullptr);
     }
-    if (Kind == X86RegistrationCallbackKind::Finally)
-      if (auto *Return =
-              llvm::dyn_cast<llvm::ReturnInst>(Clone->getTerminator())) {
-        llvm::IRBuilder<>(Return).CreateRetVoid();
+    if (auto *Return =
+            llvm::dyn_cast<llvm::ReturnInst>(Clone->getTerminator())) {
+      if (Kind == X86RegistrationCallbackKind::Finally ||
+          !Return->getReturnValue()->getType()->isIntegerTy(32)) {
+        llvm::IRBuilder<> B(Return);
+        if (Kind == X86RegistrationCallbackKind::Finally)
+          B.CreateRetVoid();
+        else
+          B.CreateRet(filterResult(*Return));
         Return->eraseFromParent();
       }
+    }
   }
   Builder.CreateBr(llvm::cast<llvm::BasicBlock>(Values[&Entry]));
   return Callback;

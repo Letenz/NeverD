@@ -84,10 +84,12 @@ bool propagateInvariantConstants(MedFunc &Func) {
     for (const auto &Op : Block.Ops) {
       if (Op.NumInputs > Op.Inputs.size())
         return false;
-      const bool Copy = Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
-                        !Op.Dead && !Op.SourceCallHint &&
-                        Op.MemoryOrdering == NdMemoryOrdering::None &&
-                        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+      const bool Copy =
+          Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+          Op.RegistrationRoot == MedOp::RegistrationRootKind::None &&
+          !Op.Dead && !Op.SourceCallHint &&
+          Op.MemoryOrdering == NdMemoryOrdering::None &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
       Add(Op.Output, Copy ? std::vector{Op.Inputs[0]} : std::vector<MedVar>{},
           Copy);
     }

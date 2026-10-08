@@ -14,6 +14,7 @@
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/BinaryUtils.h"
 #include "neverd/backend/codegen/COFF/COFFExceptionPatch.h"
+#include "neverd/backend/codegen/COFF/COFFPatch.h"
 #include "neverd/support/TargetCodegenInfo.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -120,6 +121,28 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
         << "inplace: rewriting requires a single instruction mode (got "
         << getInstructionModeName(Image.Mode) << ")\n";
     return PatchResult{};
+  }
+
+  const BinaryFormat Fmt = getBinaryFormat();
+  bool RequireGeneratedEHContinuations = false;
+  if (Fmt == BinaryFormat::COFF) {
+    auto EHPlanOrErr = planCOFFExceptionPatch(Mod, Image, TargetArch);
+    if (!EHPlanOrErr) {
+      llvm::WithColor::error()
+          << llvm::toString(EHPlanOrErr.takeError()) << "\n";
+      return PatchResult{};
+    }
+    RequireGeneratedEHContinuations =
+        !EHPlanOrErr->LanguageExceptionFunctionEntries.empty();
+    if (TargetArch == Arch::X86 && RequireGeneratedEHContinuations) {
+      // Registration callbacks and their localrecover frame are one module
+      // contract. Use its authenticated source VAs before name-only matching
+      // or per-function probes can discard that identity or its helpers.
+      COFFPatcher Patcher;
+      Patcher.setImageContext(&Image);
+      Patcher.setTextSectionOverride(TextSectionOverride);
+      return Patcher.patch(InputPath, OutputPath, Mod, TargetArch);
+    }
   }
 
   auto BufOrErr = llvm::MemoryBuffer::getFile(InputPath.string());
@@ -268,23 +291,11 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
   if (!Resolver->populateFromImage(Image, TargetArch))
     Resolver->parse(State.Binary, TargetArch);
 
-  BinaryFormat Fmt = getBinaryFormat();
   if (Fmt == BinaryFormat::MachO && TargetArch == Arch::ARM) {
     llvm::WithColor::error()
         << "inplace: ARM Mach-O requires a function-level ABI target; use "
            "the transactional section patch path\n";
     return PatchResult{};
-  }
-  bool RequireGeneratedEHContinuations = false;
-  if (Fmt == BinaryFormat::COFF) {
-    auto EHPlanOrErr = planCOFFExceptionPatch(Mod, Image, TargetArch);
-    if (!EHPlanOrErr) {
-      llvm::WithColor::error()
-          << llvm::toString(EHPlanOrErr.takeError()) << "\n";
-      return PatchResult{};
-    }
-    RequireGeneratedEHContinuations =
-        !EHPlanOrErr->LanguageExceptionFunctionEntries.empty();
   }
   auto SerializeResolvedCode = [&](uint64_t VA,
                                    bool IsCode) -> std::optional<uint64_t> {

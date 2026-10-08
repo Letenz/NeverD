@@ -35,6 +35,17 @@ sequence. `LowIR -> MedIR` is shared. Structured decompilation then uses
 `MedIR -> LLVM IR` route. In particular, patch and lift modes deliberately skip
 HighIR.
 
+Windows registration-chain EH has separate source and generated contracts.
+The COFF loader owns the checked SEH/FuncInfo records. LowIR's
+`analyzeRegistrationStates` owns reaching levels, callback roots and chain
+lifetime; HighIR and native LLVM lowering consume that same result.
+`hasCallerCleanupRegistrationABI` owns the current PE32 stack-cleanup check,
+which the writer replays against immutable input. Native LLVM lowering owns
+the physical registration and callback frame recovery. The COFF transaction
+authenticates emitted scope rows, SafeSEH and absolute relocations before
+installing the complete module through either patch mode. Analysis facts alone
+cannot authorize native installation.
+
 Library feature recognition reads the shared MedIR boundary before the source
 routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;
 MedIR analyses prove typed expressions and bounded COM ownership sequences.

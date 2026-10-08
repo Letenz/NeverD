@@ -17,6 +17,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
@@ -438,6 +439,10 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   Func.UnsafeIndirectBranchAddresses = Low.UnsafeIndirectBranchAddresses;
   Func.ExceptionMetadata = Low.ExceptionMetadata;
   Func.RegistrationStates = Low.RegistrationStates;
+  Func.CalleePopBytes = Low.CalleePopBytes;
+  if (Low.RegistrationStates && Image)
+    Func.RegistrationCallerCleanupABIComplete =
+        hasCallerCleanupRegistrationABI(Low, *Image);
   if (SourceCallHintsEnabled && Image && Fmt == BinaryFormat::MachO &&
       TheArch == Arch::AArch64 && Image->Arch == TheArch) {
     Func.RegisterCopyProjections = sourceRegisterCopies(*Image, Low);

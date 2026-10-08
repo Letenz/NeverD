@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -52,6 +53,27 @@ struct RegistrationChainAccess {
   Kind AccessKind = Kind::ReadPreviousHead;
 };
 
+/// Frame-derived values at exact source occurrences. The shared transfer
+/// follows register aliases and frame spills; a missing offset retains the
+/// possible frame identity rather than turning it into an unrelated scalar.
+struct RegistrationFrameValue {
+  va_t Address = InvalidVA;
+  int OpSeq = -1;
+  std::optional<int32_t> EstablishedFrameOffset;
+};
+
+/// An incoming caller-stack memory access, relative to established source EBP.
+/// Keep its exact occurrence so native callbacks can access the real caller's
+/// stack at the original execution point instead of reading an unseeded copy.
+struct RegistrationIncomingFrameAccess {
+  va_t Address = InvalidVA;
+  int OpSeq = -1;
+  int32_t Offset = 0;
+  uint16_t Width = 0;
+  bool Write = false;
+  bool operator==(const RegistrationIncomingFrameAccess &) const = default;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
@@ -62,7 +84,29 @@ struct RegistrationStateAnalysis {
   /// lifetime and callback state proof. This is not a native output receipt.
   bool ChainOperationsComplete = false;
   std::vector<RegistrationChainAccess> ChainAccesses;
+  std::vector<RegistrationFrameValue> FrameValues;
+  bool IncomingFrameAccessesComplete = true;
+  std::vector<RegistrationIncomingFrameAccess> IncomingFrameAccesses;
+  /// May-read image extents across all reachable ordinary and runtime roots.
+  /// Exact frame-relative reads cannot alias these extents. Unknown addresses
+  /// make the set incomplete rather than silently omitting a possible alias.
+  bool ImageReadsComplete = false;
+  std::vector<ExceptionAddressRange> ImageReads;
   std::vector<std::string> Diagnostics;
+
+  const RegistrationIncomingFrameAccess *incomingFrameAccess(va_t Address,
+                                                             int Seq) const {
+    const auto Key = std::make_pair(Address, Seq);
+    auto It = std::lower_bound(
+        IncomingFrameAccesses.begin(), IncomingFrameAccesses.end(), Key,
+        [](const auto &Access, auto Identity) {
+          return std::make_pair(Access.Address, Access.OpSeq) < Identity;
+        });
+    return It != IncomingFrameAccesses.end() &&
+                   std::make_pair(It->Address, It->OpSeq) == Key
+               ? &*It
+               : nullptr;
+  }
 };
 
 /// Solve ordinary and runtime-dispatch state transfers together. Stores take

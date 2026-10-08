@@ -738,6 +738,10 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       Low.ExceptionMetadata->ParseStatus == ExceptionParseStatus::Complete &&
       (Low.ExceptionMetadata->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||
        Low.ExceptionMetadata->Encoding == ExceptionEncoding::X86ScopeTableEH4);
+  const bool HasDirectX86RegistrationFrame =
+      HasX86SEHFrame && Low.ExceptionMetadata->Registration &&
+      Low.ExceptionMetadata->Registration->RegistrationOffset == -16 &&
+      Low.ExceptionMetadata->Registration->TryLevelOffset == -4;
   auto IsSEHRestored = [&](const MedVar &V) {
     if (TargetArch == Arch::X86)
       return HasX86SEHFrame && V.Kind == MedVar::Reg &&
@@ -954,6 +958,23 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         Init.Opcode = NdOp::COPY;
         Init.Output = VIt->second;
         MedVar Input = VIt->second;
+        if (HasDirectX86RegistrationFrame && IsSEHHandlerRoot &&
+            Input.Kind == MedVar::Reg && Input.Size == 4) {
+          if (Input.RegOff == TRI.FramePointer)
+            Init.RegistrationRoot =
+                MedOp::RegistrationRootKind::EstablishedFramePointer;
+          else if (Input.RegOff == TRI.StackPointer &&
+                   std::any_of(Func.Blocks[Root].ExceptionalPreds.begin(),
+                               Func.Blocks[Root].ExceptionalPreds.end(),
+                               [](const ExceptionalEdge &Edge) {
+                                 return Edge.Kind ==
+                                            ExceptionalEdgeKind::SEHFilter ||
+                                        Edge.Kind ==
+                                            ExceptionalEdgeKind::SEHFinally;
+                               }))
+            Init.RegistrationRoot =
+                MedOp::RegistrationRootKind::CallbackStackPointer;
+        }
         if (IsItaniumEHRoot && Input.Kind == MedVar::Reg &&
             Input.RegOff == TRI.IntReturnReg) {
           Input.Kind = MedVar::EHException;
@@ -982,7 +1003,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         // preserve; EAX, the exception code, is defined separately.
         if (IsSEHHandlerRoot &&
             ((Input.Kind == MedVar::Reg && !TRI.isStackPointer(Input.RegOff) &&
-              !TRI.isFrameOrLinkReg(Input.RegOff) && !IsNonvolatile(Input)) ||
+              !TRI.isFrameOrLinkReg(Input.RegOff) &&
+              (HasX86SEHFrame || !IsNonvolatile(Input))) ||
              Input.Kind == MedVar::Flag))
           Input = MedVar::makeUnspecified(Input.Size, TargetArch);
         Init.addInput(Input);
@@ -1253,6 +1275,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       if (Seed.Addr != Func.Blocks[Root].StartAddr)
         break;
       if (Seed.Opcode != NdOp::COPY || Seed.NumInputs != 1)
+        continue;
+      if (Seed.RegistrationRoot != MedOp::RegistrationRootKind::None)
         continue;
       MedVar &In = Seed.Inputs[0];
       const bool ProtectedSP =

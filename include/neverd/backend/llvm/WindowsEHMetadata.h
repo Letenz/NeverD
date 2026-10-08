@@ -33,6 +33,7 @@ enum class NativeProvenanceModel : unsigned {
   SEH = 1,
   CxxFH3 = 2,
   CxxFH4 = 3,
+  X86RegistrationSEH = 4,
 };
 
 enum class NativeProvenanceRole : unsigned {
@@ -43,7 +44,24 @@ enum class NativeProvenanceRole : unsigned {
   RangeExit = 5,
   RangeEnterTarget = 6,
   RangeExitTarget = 7,
+  RegistrationChainAccess = 8,
+  RegistrationCallback = 9,
 };
+
+inline constexpr llvm::StringLiteral
+    RegistrationFrameAttachment("neverd.windows.registration.frame");
+inline constexpr llvm::StringLiteral
+    RegistrationRootAttachment("neverd.windows.registration.root");
+inline constexpr llvm::StringLiteral RegistrationCallerFrameAttachment(
+    "neverd.windows.registration.caller-frame");
+inline constexpr llvm::StringLiteral RegistrationIncomingFrameAttachment(
+    "neverd.windows.registration.incoming-frame");
+inline constexpr llvm::StringLiteral
+    RegistrationBlockAttachment("neverd.windows.registration.source-block");
+inline constexpr llvm::StringLiteral RegistrationOperationAttachment(
+    "neverd.windows.registration.source-operation");
+inline constexpr llvm::StringLiteral RegistrationFinallyCallAttachment(
+    "neverd.windows.registration.finally-call");
 
 enum ProvenanceOperand : unsigned {
   ProvenanceVersion = 0,

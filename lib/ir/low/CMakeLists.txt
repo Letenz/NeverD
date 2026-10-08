@@ -20,6 +20,7 @@ add_neverd_component_library(NeverDIRLow
   FuncDetectorARM.cpp
   FuncDetectorAArch64.cpp
   IndirectTailFrame.cpp
+  RegistrationABI.cpp
   NdOpEmulator.cpp
   NdOpEmulatorExec.cpp
   NdOpEmulatorFloatConvert.cpp

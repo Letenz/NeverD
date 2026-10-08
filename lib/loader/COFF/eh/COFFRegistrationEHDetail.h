@@ -61,6 +61,13 @@ std::optional<T> readScalar(const BinaryImage &Img, va_t Address) {
 class FunctionRangeMap {
 public:
   explicit FunctionRangeMap(const BinaryImage &Img) {
+    // PE export entries and the image entry are format-owned boundaries even
+    // when no COFF symbol table or preceding padding made them discoverable.
+    for (const Export &Entry : Img.Exports)
+      if (isExecutableAddress(Img, Entry.Addr))
+        Starts.push_back(Entry.Addr);
+    if (isExecutableAddress(Img, Img.Entry))
+      Starts.push_back(Img.Entry);
     for (const Symbol &Sym : Img.Symbols) {
       if (!Sym.IsFunc || !isExecutableAddress(Img, Sym.Addr))
         continue;

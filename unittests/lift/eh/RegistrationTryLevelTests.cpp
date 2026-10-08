@@ -186,6 +186,34 @@ TEST(RegistrationTryLevel, ReadsTheSlotTheStoresAgreeOn) {
   EXPECT_EQ(levels(*Chain), (std::vector<int32_t>{0, -1}));
 }
 
+TEST(RegistrationTryLevel, ExportAndImageEntriesOwnSymbolFreePrologues) {
+  ImageBuilder B;
+  B.addScope(-1, kText + 0x40, kText + 0x50);
+  B.endScopes();
+  emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+  emitFrameStore(B.Text, -4, 0);
+  emitFrameStore(B.Text, -4, -1);
+  B.Text.push_back(0xC3);
+  for (bool Exported : {false, true}) {
+    auto Image = B.build({});
+    ASSERT_EQ(chainAt(Image, kText), nullptr);
+    if (Exported) {
+      Export Entry;
+      Entry.Name = "guarded";
+      Entry.Addr = kText;
+      Image.Exports.push_back(Entry);
+    } else {
+      Image.Entry = kText;
+    }
+    coff_loader::parseX86RegistrationExceptions(Image);
+    const auto *Chain = chainAt(Image, kText);
+    ASSERT_NE(Chain, nullptr);
+    EXPECT_EQ(Chain->RegistrationOffset, -16);
+    EXPECT_EQ(Chain->TryLevelOffset, -4);
+    EXPECT_TRUE(Image.hasAuthenticatedFunctionEntryAt(kText));
+  }
+}
+
 TEST(RegistrationTryLevel, LeavesItsThunksToTheFunctionThatInstalledIt) {
   // A filter runs in the frame of the function that installed the record, and
   // its handler continues that function after the unwind.  The guesses the
@@ -367,6 +395,40 @@ TEST(RegistrationTryLevel, GuardsOnlyTheBlocksTheTryLevelIsCurrentIn) {
   EXPECT_EQ(edgesAt(Func, Leave),
             (std::vector<std::string>{"seh-filter@64", "seh-handler@80"}));
   EXPECT_TRUE(edgesAt(Func, After).empty());
+}
+
+TEST(RegistrationTryLevel, ScopePointerRelocationsKeepTheirDispatchRole) {
+  ImageBuilder B;
+  B.addScope(-1, kText + 0x40, kText + 0x50);
+  B.endScopes();
+  B.RData.resize(0x44, 0);
+  writeLE<uint32_t>(B.RData.data() + 0x40, kText + 0x40);
+  emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+  emitFrameStore(B.Text, -4, 0);
+  B.Text.push_back(0x90);
+  emitFrameStore(B.Text, -4, -1);
+  B.Text.push_back(0xC3);
+  B.Text.resize(0x40, 0xCC);
+  B.addStub();
+  B.Text.resize(0x50, 0xCC);
+  B.addStub();
+  auto Image = B.build({{"guarded", kText}});
+  Image.CodePtrRelocSlots = {kRData + 4, kRData + 8};
+  auto Function = liftEntry(Image, kText);
+  ASSERT_TRUE(Function.RegistrationStates);
+  EXPECT_TRUE(Function.RegistrationStates->Complete);
+  EXPECT_FALSE(Function.OrdinaryModuleAnalysisRoots.count(kText + 0x40));
+  EXPECT_FALSE(Function.OrdinaryModuleAnalysisRoots.count(kText + 0x50));
+  const auto *Filter = Function.blockFor(kText + 0x40);
+  ASSERT_NE(Filter, nullptr);
+  EXPECT_TRUE(Function.RegistrationStates->Blocks[Filter->Id].CallbackOnly);
+
+  // A second table's reference is independent evidence of ordinary entry.
+  Image.CodePtrRelocSlots.insert(kRData + 0x40);
+  Function = liftEntry(Image, kText);
+  EXPECT_TRUE(Function.OrdinaryModuleAnalysisRoots.count(kText + 0x40));
+  ASSERT_TRUE(Function.RegistrationStates);
+  EXPECT_FALSE(Function.RegistrationStates->Complete);
 }
 
 TEST(RegistrationTryLevel, EH3DoesNotAcceptTheEH4EnclosingSentinel) {

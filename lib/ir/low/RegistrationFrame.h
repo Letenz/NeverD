@@ -24,6 +24,12 @@ struct FrameValue {
   std::optional<uint32_t> Constant;
   bool PreviousChain = false;
   bool MayBeFrame = false;
+  /// An opaque call result is not a proven local/caller frame address. Keep
+  /// its possible provenance for memory and escape sinks, while allowing an
+  /// otherwise private preserved helper to return it to its checked caller.
+  bool FrameOnlyFromCall = false;
+  uint8_t SavedRegister = 0;
+  bool ReturnPC = false;
 
   static FrameValue frame(int32_t Offset) { return {Offset, {}, false, true}; }
   static FrameValue constant(uint32_t Value) {
@@ -36,11 +42,23 @@ struct FrameValue {
 inline FrameValue join(FrameValue Left, const FrameValue &Right) {
   if (Left == Right)
     return Left;
-  return {{}, {}, false, Left.MayBeFrame || Right.MayBeFrame};
+  const bool MayBeFrame = Left.MayBeFrame || Right.MayBeFrame;
+  return {{},
+          {},
+          false,
+          MayBeFrame,
+          MayBeFrame && (!Left.MayBeFrame || Left.FrameOnlyFromCall) &&
+              (!Right.MayBeFrame || Right.FrameOnlyFromCall)};
 }
 
 struct FrameState {
   std::array<FrameValue, 8> Registers;
+  /// Flags and vector registers carry conservative byte taint. They cannot
+  /// acquire an exact frame offset through a truncation or vector alias.
+  std::map<uint64_t, FrameValue> OtherRegisterBytes;
+  /// Calls may define any volatile flag/vector byte. Explicit subsequent
+  /// writes override this default; a missing map entry is not a zero value.
+  bool OtherRegistersMayBeFrame = false;
   std::map<int32_t, FrameValue> Cells;
 
   bool merge(const FrameState &Other) {
@@ -50,6 +68,30 @@ struct FrameState {
       Changed |= Merged != Registers[I];
       Registers[I] = Merged;
     }
+    const FrameValue Default = OtherRegistersMayBeFrame
+                                   ? FrameValue{{}, {}, false, true, true}
+                                   : FrameValue{};
+    const FrameValue OtherDefault = Other.OtherRegistersMayBeFrame
+                                        ? FrameValue{{}, {}, false, true, true}
+                                        : FrameValue{};
+    for (auto &[Offset, Value] : OtherRegisterBytes)
+      if (!Other.OtherRegisterBytes.count(Offset)) {
+        const auto Merged = join(Value, OtherDefault);
+        Changed |= Value != Merged;
+        Value = Merged;
+      }
+    for (const auto &[Offset, Value] : Other.OtherRegisterBytes) {
+      auto [It, New] = OtherRegisterBytes.emplace(Offset, join(Default, Value));
+      if (New)
+        Changed = true;
+      else {
+        const auto Merged = join(It->second, Value);
+        Changed |= It->second != Merged;
+        It->second = Merged;
+      }
+    }
+    Changed |= Other.OtherRegistersMayBeFrame && !OtherRegistersMayBeFrame;
+    OtherRegistersMayBeFrame |= Other.OtherRegistersMayBeFrame;
     for (auto &[Offset, Value] : Cells) {
       const auto It = Other.Cells.find(Offset);
       const FrameValue Merged =
@@ -85,6 +127,14 @@ struct FrameState {
     }
     if (Width == 4 && Value != FrameValue{})
       Cells[Offset] = Value;
+    else if (Value.MayBeFrame)
+      // A pointer can be split into narrow writes and reconstructed by a
+      // later load. Retain conservative four-byte coverage for every written
+      // chunk, including a final partial chunk, rather than dropping its
+      // provenance merely because this store is not a full pointer width.
+      for (uint32_t I = 0; I < Width; I += 4)
+        Cells[static_cast<int32_t>(uint32_t(Offset) + I)] = {
+            {}, {}, false, true};
   }
 };
 
@@ -112,6 +162,16 @@ public:
         return Register;
       return {{}, {}, false, Register.MayBeFrame};
     }
+    if (Value.isReg()) {
+      FrameValue Result;
+      for (uint64_t Byte = 0; Byte < Value.Size; ++Byte)
+        if (auto It = State.OtherRegisterBytes.find(Value.Offset + Byte);
+            It != State.OtherRegisterBytes.end())
+          Result = join(Result, It->second);
+        else if (State.OtherRegistersMayBeFrame)
+          Result = join(Result, {{}, {}, false, true, true});
+      return Result;
+    }
     if (Value.isTemp()) {
       auto It = Temps.find(Value.Offset);
       if (It != Temps.end())
@@ -122,8 +182,15 @@ public:
 
   FrameValue evaluate(const LowOp &Op, bool Installed) const {
     FrameValue Result;
-    for (unsigned I = 0; I < Op.NumInputs; ++I)
-      Result.MayBeFrame |= read(Op.Inputs[I]).MayBeFrame;
+    for (unsigned I = 0; I < Op.NumInputs; ++I) {
+      const FrameValue Input = read(Op.Inputs[I]);
+      if (Input.MayBeFrame) {
+        Result.FrameOnlyFromCall =
+            (!Result.MayBeFrame || Result.FrameOnlyFromCall) &&
+            Input.FrameOnlyFromCall;
+        Result.MayBeFrame = true;
+      }
+    }
     if ((Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT) &&
         Op.NumInputs == 1)
       return read(Op.Inputs[0]);
@@ -174,16 +241,18 @@ public:
   void write(const LowOp &Op, FrameValue Value) {
     if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
       State.Registers[x86reg::RAX / x86reg::GeneralRegStride] = {
-          {}, {}, false, true};
+          {}, {}, false, true, true};
       State.Registers[x86reg::RCX / x86reg::GeneralRegStride] = {
-          {}, {}, false, true};
+          {}, {}, false, true, true};
       State.Registers[x86reg::RDX / x86reg::GeneralRegStride] = {
-          {}, {}, false, true};
+          {}, {}, false, true, true};
       // LowIR's call alone does not prove the callee's PE32 stack-pop ABI.
       // A later explicit SP restoration can recover the frame value.
       State.Registers[x86reg::RSP / x86reg::GeneralRegStride] = {
           {}, {}, false, true};
-      Value = {{}, {}, false, true};
+      State.OtherRegisterBytes.clear();
+      State.OtherRegistersMayBeFrame = true;
+      Value = {{}, {}, false, true, true};
     }
     if (Op.Output.isTemp())
       Temps[Op.Output.Offset] = Value;
@@ -196,6 +265,13 @@ public:
         Register = Value;
       else
         Register = {{}, {}, false, Register.MayBeFrame || Value.MayBeFrame};
+    } else if (Op.Output.isReg()) {
+      for (uint64_t Byte = 0; Byte < Op.Output.Size; ++Byte)
+        if (Value.MayBeFrame || State.OtherRegistersMayBeFrame)
+          State.OtherRegisterBytes[Op.Output.Offset + Byte] = {
+              {}, {}, false, Value.MayBeFrame, Value.FrameOnlyFromCall};
+        else
+          State.OtherRegisterBytes.erase(Op.Output.Offset + Byte);
     }
   }
 

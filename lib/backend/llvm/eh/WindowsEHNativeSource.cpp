@@ -6,8 +6,11 @@
 
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 
+#include "neverd/Limits.h"
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/support/BinaryEncoding.h"
+
+#include "llvm/MC/BinaryRewrite.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -495,6 +498,71 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
     return reject(WindowsEHNativeSourceModel::None,
                   WindowsEHNativeSourceReason::UnsupportedObjectFormat,
                   Capability);
+  if (TargetArch == Arch::X86 &&
+      (EH.Personality == ExceptionPersonality::ExceptHandler3 ||
+       EH.Personality == ExceptionPersonality::ExceptHandler4)) {
+    const auto Model = WindowsEHNativeSourceModel::X86RegistrationSEH;
+    if (EH.Kind != RuntimeFunctionKind::Primary)
+      return reject(Model,
+                    WindowsEHNativeSourceReason::NonPrimaryRuntimeFunction,
+                    Capability);
+    if (!EH.CodeRange.isValid())
+      return reject(Model, WindowsEHNativeSourceReason::InvalidCodeRange,
+                    Capability);
+    if (EH.ParseStatus != ExceptionParseStatus::Complete)
+      return reject(Model, WindowsEHNativeSourceReason::IncompleteDecode,
+                    Capability);
+    const bool EH4 = EH.Personality == ExceptionPersonality::ExceptHandler4;
+    if (EH.Encoding != (EH4 ? ExceptionEncoding::X86ScopeTableEH4
+                            : ExceptionEncoding::X86ScopeTableEH3))
+      return reject(Model,
+                    WindowsEHNativeSourceReason::UnsupportedUnwindEncoding,
+                    Capability);
+    if (!EH.Registration || EH.SEH || EH.Cxx || EH.GSCookie || EH.Rust ||
+        EH.ObjC || EH.Dwarf || EH.Itanium || EH.ARMEHABI || EH.Compact ||
+        EH.Delphi || EH.DelphiScopes || EH.Go)
+      return reject(Model,
+                    WindowsEHNativeSourceReason::ConflictingLanguageModel,
+                    Capability);
+    const RegistrationChainInfo &Chain = *EH.Registration;
+    const int32_t Sentinel = EH4 ? -2 : -1;
+    if (!EH.PersonalityVA || Chain.HandlerVA != EH.PersonalityVA ||
+        !Chain.ScopeTableVA || Chain.ScopeTableVA != EH.HandlerDataVA ||
+        Chain.RegistrationOffset != -16 || Chain.TryLevelOffset != -4 ||
+        Chain.SeededTryLevel != Sentinel ||
+        !EH.CodeRange.contains(Chain.ChainInstallVA) ||
+        Chain.HasSecurityCookies != (EH4 && Chain.GSCookieOffset != -2))
+      return reject(Model,
+                    WindowsEHNativeSourceReason::IncompleteRegistrationFrame,
+                    Capability);
+    if (Chain.Scopes.empty() ||
+        Chain.Scopes.size() > limits::kMaxRegistrationEHRecords ||
+        Chain.TryLevelStores.size() > limits::kMaxRegistrationEHRecords)
+      return reject(Model, WindowsEHNativeSourceReason::EmptySEHScopeTable,
+                    Capability);
+    for (size_t I = 0; I < Chain.Scopes.size(); ++I) {
+      const RegistrationScopeRecord &Scope = Chain.Scopes[I];
+      if ((Scope.EnclosingLevel != Sentinel &&
+           (Scope.EnclosingLevel < 0 || uint32_t(Scope.EnclosingLevel) >= I)) ||
+          !EH.CodeRange.contains(Scope.HandlerVA) ||
+          Scope.IsFinally != (Scope.FilterVA == 0) ||
+          (!Scope.IsFinally && !EH.CodeRange.contains(Scope.FilterVA)))
+        return reject(Model, WindowsEHNativeSourceReason::InvalidSEHScope,
+                      Capability);
+    }
+    // The PE32 writer requires indexed compiler receipts; older prebuilt
+    // LLVMs retain analysis support. EH4 runtime-cookie installation remains
+    // gated independently until its execution contract is established.
+    bool OutputAvailable = false;
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+    OutputAvailable = !EH4;
+#endif
+    if (Capability == WindowsEHNativeCapability::IRLowering || OutputAvailable)
+      return {Model, WindowsEHNativeSourceReason::Eligible, Capability};
+    return reject(Model,
+                  WindowsEHNativeSourceReason::OutputReconstructionUnavailable,
+                  Capability);
+  }
   if (TargetArch != Arch::X64 && TargetArch != Arch::ARM &&
       TargetArch != Arch::AArch64)
     return reject(WindowsEHNativeSourceModel::None,
@@ -742,6 +810,8 @@ getWindowsEHNativeSourceReasonName(WindowsEHNativeSourceReason Reason) {
     return "output-reconstruction-unavailable";
   case WindowsEHNativeSourceReason::UnsupportedSEHCallbackABI:
     return "unsupported-seh-callback-abi";
+  case WindowsEHNativeSourceReason::IncompleteRegistrationFrame:
+    return "incomplete-registration-frame";
   }
   return "unknown";
 }

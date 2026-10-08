@@ -1739,6 +1739,46 @@ targets, and the reloaded IP-to-state graph.
 See [Windows Exception Reconstruction](windows-exception-reconstruction.md)
 for the analysis/native support matrix and the fail-closed patch contract.
 
+PE32 registration changes also require the focused state, frame and native
+targets. Native installation needs a source build of the LLVM fork exposing
+`LLVM_NEVERD_X86_REGISTRATION_EH`; the published r3 compiler has no such receipt.
+
+```bash
+cmake --build build --parallel 4 --target neverd \
+  NeverDRegistrationStateTests NeverDRegistrationEHTests \
+  NeverDWindowsRegistrationFrameTests NeverDWindowsRegistrationNativeTests
+build/bin/NeverDRegistrationStateTests
+build/bin/NeverDRegistrationEHTests
+build/bin/NeverDWindowsRegistrationFrameTests
+build/bin/NeverDWindowsRegistrationNativeTests \
+  --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract
+for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write; do
+  python scripts/check_windows_registration_rewrite.py \
+    --test-binary build/bin/NeverDWindowsRegistrationNativeTests \
+    --patch-binary build/bin/neverd --case "$registration_case" \
+    --output "build/evidence/registration-${registration_case}"
+done
+```
+
+The runtime runner builds an actual SEH3 source image, lifts its protected
+function and executes the original, manual installer, public COFF patcher,
+import-name collision and both CLI modes. Every image runs at its preferred
+base and at a forced relocated base. Assertions cover return values, ordered
+filter/finally traces, actual generated caller PCs, four repeated calls,
+restored FS:[0], SafeSEH and a newly installed Guard CF table-pointer relocation.
+The cdecl cases additionally read and write the actual caller-owned parameter
+slot through exceptional callbacks; synthetic frame initialization alone cannot
+satisfy those observations.
+Original-corpus and callback-only runs remain distinct evidence. Missing Wine,
+compiler receipts or skipped reconstruction cannot count as a pass.
+
+The `ci.yml` `windows_eh_only` profile runs the x86 original/callback probes
+and ARM32 cross-target PE checks. Supplying `windows_eh_llvm_artifact_run` adds
+all source reconstruction runs using a successful compiler build whose commit,
+archive checksum and BUILDINFO match the checked-out LLVM submodule. ARM32
+cross-target codegen and PE validation do not establish Windows ARM32 runtime
+execution.
+
 ### Language exception models
 
 Everything that is not the Windows table model lives in one focused target.

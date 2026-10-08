@@ -59,6 +59,10 @@ struct X86RegistrationCallbackFrame {
   /// observable addresses or reads of the original entry/return-address cell.
   uint32_t StackBytes = 0;
   std::optional<uint32_t> StackPointerOffset;
+  /// Derive the allocation from the complete checked LLVM use closure of the
+  /// ESP seed. No source frame-size estimate is used. Explicit sizes/anchors
+  /// must be absent; positive or observable ESP uses still fail.
+  bool InferStackBounds = false;
 };
 
 struct X86RegistrationCallbackRequest {

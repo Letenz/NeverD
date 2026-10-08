@@ -189,6 +189,11 @@ struct PhiNode {
 };
 
 struct MedOp {
+  enum class RegistrationRootKind : uint8_t {
+    None,
+    EstablishedFramePointer,
+    CallbackStackPointer,
+  };
   NdOp Opcode = NdOp::NOP;
   NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None;
   NdMemoryAddressSpace MemoryAddressSpace = NdMemoryAddressSpace::Default;
@@ -207,6 +212,10 @@ struct MedOp {
   /// public Low occurrence can be rebound only to its exact surviving op after
   /// all SSA/fixup/propagation passes have completed.
   int OriginSeq = -1;
+  /// An implicit runtime entry definition proved by SSA's x86 registration
+  /// frame owner. Keep it as a definition: substituting its ordinary incoming
+  /// register would lose the callback's distinct ABI context.
+  RegistrationRootKind RegistrationRoot = RegistrationRootKind::None;
   uint32_t CallSiteId = 0;
   std::shared_ptr<const SourceCallTypeHint> SourceCallHint;
   /// RETURN's final input is the separately published Swift error value.
@@ -351,6 +360,10 @@ struct MedFunc {
   SourceRegisterCopies RegisterCopyProjections;
   SourceClassGetterCalls ClassGetterCallFacts;
   CallingConv CC = CallingConv::Unknown;
+  /// Source x86 return cleanup, retained independently of inferred signatures.
+  int CalleePopBytes = 0;
+  /// Source and preserved callees have a checked caller-cleanup stack contract.
+  bool RegistrationCallerCleanupABIComplete = false;
   /// Bytes reserved below and above the synthetic entry stack pointer.
   int64_t FrameSize = 0;
   int64_t FrameHeadroom = 0;

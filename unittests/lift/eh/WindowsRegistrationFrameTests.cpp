@@ -41,11 +41,11 @@ struct Fixture {
   llvm::BasicBlock *Filter = nullptr;
   llvm::AllocaInst *Local = nullptr;
 
-  Fixture(bool Variadic = false) {
+  Fixture(bool Variadic = false, unsigned ReturnBits = 32) {
     Module.setTargetTriple(llvm::Triple("i686-pc-windows-msvc"));
     Module.setDataLayout("e-m:x-p:32:32-i64:64-n8:16:32-S32");
     Parent = llvm::Function::Create(
-        llvm::FunctionType::get(llvm::Type::getInt32Ty(Context),
+        llvm::FunctionType::get(llvm::IntegerType::get(Context, ReturnBits),
                                 {llvm::Type::getInt32Ty(Context)}, Variadic),
         llvm::GlobalValue::ExternalLinkage, "parent", Module);
     auto *PersonalityTy =
@@ -57,10 +57,13 @@ struct Fixture {
     llvm::IRBuilder<> B(Entry);
     Local = B.CreateAlloca(B.getInt32Ty(), nullptr, "local");
     B.CreateStore(Parent->getArg(0), Local);
-    B.CreateRet(B.getInt32(0));
+    B.CreateRet(llvm::ConstantInt::get(Parent->getReturnType(), 0));
     Filter = llvm::BasicBlock::Create(Context, "filter", Parent);
     llvm::IRBuilder<> F(Filter);
-    F.CreateRet(F.CreateLoad(F.getInt32Ty(), Local));
+    auto *Result = F.CreateLoad(F.getInt32Ty(), Local);
+    F.CreateRet(ReturnBits == 32
+                    ? Result
+                    : F.CreateZExt(Result, Parent->getReturnType()));
   }
 
   void clearFilter() {
@@ -146,6 +149,33 @@ TEST(WindowsRegistrationFrame, FilterRecoversTheParentsActualLocal) {
   std::string Errors;
   llvm::raw_string_ostream OS(Errors);
   EXPECT_FALSE(llvm::verifyModule(F.Module, &OS)) << Errors;
+}
+
+TEST(WindowsRegistrationFrame, ProjectsAnExtendedEAXReturnToTheFilterABI) {
+  Fixture F(false, 64);
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_FALSE(llvm::verifyModule(F.Module, &llvm::errs()));
+  for (const auto &Block : **Result)
+    if (const auto *Return =
+            llvm::dyn_cast<llvm::ReturnInst>(Block.getTerminator()))
+      EXPECT_TRUE(Return->getReturnValue()->getType()->isIntegerTy(32));
+}
+
+TEST(WindowsRegistrationFrame, RejectsAnUnprovedWideFilterReturnAtomically) {
+  Fixture F(false, 64);
+  F.clearFilter();
+  llvm::IRBuilder<> B(F.Filter);
+  B.CreateRet(B.getInt64(uint64_t(1) << 40));
+  const auto Before = F.text();
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined");
+  ASSERT_FALSE(bool(Result));
+  llvm::consumeError(Result.takeError());
+  EXPECT_EQ(F.text(), Before);
 }
 
 TEST(WindowsRegistrationFrame, FinallyUsesItsParentFrameArgument) {
@@ -270,6 +300,68 @@ TEST(WindowsRegistrationFrame, CallbackStackDoesNotOverwriteTheParentESPSlot) {
       for (llvm::Value *Operand : Instruction.operands())
         EXPECT_NE(Operand, ESP);
   EXPECT_FALSE(llvm::verifyModule(F.Module));
+}
+
+TEST(WindowsRegistrationFrame, InfersScratchBoundsFromTheCompleteUseClosure) {
+  Fixture F;
+  llvm::IRBuilder<> B(F.Entry->getTerminator());
+  auto *ESP = B.CreateAlloca(B.getInt32Ty(), nullptr, "esp.root");
+  auto *Copy = B.CreateAlloca(B.getInt32Ty(), nullptr, "esp.copy");
+  B.CreateStore(B.getInt32(0), ESP);
+  B.CreateStore(B.getInt32(0), Copy);
+  F.clearFilter();
+  llvm::IRBuilder<> FB(F.Filter);
+  auto *Seed = FB.CreateStore(F.Parent->getArg(0), ESP);
+  FB.CreateStore(
+      FB.CreateSub(FB.CreateLoad(FB.getInt32Ty(), ESP), FB.getInt32(36)), Copy);
+  auto *Cell =
+      FB.CreateIntToPtr(FB.CreateLoad(FB.getInt32Ty(), Copy), FB.getPtrTy());
+  FB.CreateStore(FB.getInt32(17), Cell)->setAlignment(llvm::Align(1));
+  auto *Read = FB.CreateLoad(FB.getInt32Ty(), Cell);
+  Read->setAlignment(llvm::Align(1));
+  FB.CreateRet(Read);
+  X86RegistrationRootSeed Root{Seed, X86RegistrationRootKind::StackPointer};
+  X86RegistrationCallbackFrame Spec;
+  Spec.RootSeeds = llvm::ArrayRef(Root);
+  Spec.InferStackBounds = true;
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined", Spec);
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  unsigned StackCount = 0;
+  for (llvm::Instruction &Instruction : (*Result)->getEntryBlock())
+    if (auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(&Instruction);
+        Slot && Slot->getName() == "callback.stack") {
+      ++StackCount;
+      EXPECT_EQ(llvm::cast<llvm::ArrayType>(Slot->getAllocatedType())
+                    ->getNumElements(),
+                48u);
+    }
+  EXPECT_EQ(StackCount, 1u);
+  EXPECT_FALSE(llvm::verifyModule(F.Module));
+}
+
+TEST(WindowsRegistrationFrame,
+     InferredScratchRejectsPositiveESPUsesAtomically) {
+  Fixture F;
+  llvm::IRBuilder<> B(F.Entry->getTerminator());
+  auto *ESP = B.CreateAlloca(B.getInt32Ty(), nullptr, "esp.root");
+  F.clearFilter();
+  llvm::IRBuilder<> FB(F.Filter);
+  auto *Seed = FB.CreateStore(F.Parent->getArg(0), ESP);
+  FB.CreateRet(
+      FB.CreateAdd(FB.CreateLoad(FB.getInt32Ty(), ESP), FB.getInt32(4)));
+  X86RegistrationRootSeed Root{Seed, X86RegistrationRootKind::StackPointer};
+  X86RegistrationCallbackFrame Spec;
+  Spec.RootSeeds = llvm::ArrayRef(Root);
+  Spec.InferStackBounds = true;
+  const std::string Before = F.text();
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined", Spec);
+  ASSERT_FALSE(static_cast<bool>(Result));
+  llvm::consumeError(Result.takeError());
+  EXPECT_EQ(F.text(), Before);
 }
 
 TEST(WindowsRegistrationFrame,

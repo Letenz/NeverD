@@ -164,6 +164,9 @@ private:
   void emitExceptionMetadata(const MedFunc &Func, llvm::Function &LLVMFunc);
   bool emitNativeSEH(const MedFunc &Func, llvm::Function &LLVMFunc,
                      const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
+  bool emitNativeX86RegistrationSEH(
+      const MedFunc &Func, llvm::Function &LLVMFunc,
+      const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
   bool
   emitNativeCxxEH(const MedFunc &Func, llvm::Function &LLVMFunc,
                   const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
@@ -1964,6 +1967,11 @@ private:
   /// Itanium call-site range be matched to the calls it protects.  Cleared per
   /// function alongside the other per-function emitter state.
   std::map<const llvm::CallInst *, va_t> CallSiteAddrs;
+  /// Exact surviving FS operation occurrences, consumed only after native
+  /// registration lowering has matched the shared LowIR ownership proof.
+  std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationChainIR;
+  std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationIncomingIR;
+  std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationMemoryIR;
   /// LLVM symbol chosen for each lifted function body. Usually identical to
   /// MedFunc::Name; an address-backed native personality body uses its stable
   /// auto name so the canonical ABI name remains an external declaration.
@@ -2065,6 +2073,7 @@ private:
 
   llvm::AllocaInst *FrameAlloca = nullptr;
   llvm::Value *FrameBaseInt = nullptr;
+  uint64_t FrameEntrySPOffset = 0;
   /// Shared landing-pad live-in slots.  MedIR models the Itanium ABI's
   /// exception object and selector as implicit values at exceptional roots;
   /// each emitted landingpad stores its pair here before the recovered handler

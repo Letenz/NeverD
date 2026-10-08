@@ -86,6 +86,27 @@ struct RegistrationChainInfo {
   /// bound the region in which the registration record is live.
   va_t ChainInstallVA = 0;
   va_t ChainRemoveVA = 0;
+
+  /// An absolute code-pointer field owned by this decoded SEH table. These
+  /// references are runtime dispatch entries, not ordinary address-taken CFG
+  /// roots. Independent references to the same code keep their own role.
+  std::optional<va_t> scopePointerTarget(va_t Slot) const {
+    if (!ScopeTableVA || (SeededTryLevel != -1 && SeededTryLevel != -2))
+      return std::nullopt;
+    const uint64_t Header = SeededTryLevel == -2 ? 16 : 0;
+    if (ScopeTableVA > InvalidVA - Header || Slot < ScopeTableVA + Header)
+      return std::nullopt;
+    const uint64_t Offset = Slot - ScopeTableVA - Header;
+    const uint64_t Index = Offset / 12;
+    if (Index >= Scopes.size())
+      return std::nullopt;
+    const auto &Scope = Scopes[Index];
+    if (Offset % 12 == 4 && Scope.FilterVA)
+      return Scope.FilterVA;
+    if (Offset % 12 == 8 && Scope.HandlerVA)
+      return Scope.HandlerVA;
+    return std::nullopt;
+  }
 };
 
 } // namespace neverd

@@ -6,10 +6,13 @@
 
 #include "neverd/backend/codegen/COFF/COFFExceptionPatch.h"
 
+#include "COFFNativeEHProvenance.h"
+
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/COFF/COFFFH4Encoding.h"
+#include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/backend/llvm/WindowsEHMetadataEncoder.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
@@ -27,6 +30,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Object/COFF.h"
@@ -36,6 +40,7 @@
 #include "llvm/Support/MemoryBufferRef.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/Win64EH.h"
+#include "llvm/TargetParser/Triple.h"
 
 #include <algorithm>
 #include <array>
@@ -495,88 +500,9 @@ previousSemanticInstruction(const llvm::Instruction &Instruction) {
   return Previous;
 }
 
-std::optional<uint64_t> provenanceUInt(const llvm::OperandBundleUse &Bundle,
-                                       unsigned Index, unsigned BitWidth) {
-  if (Index >= Bundle.Inputs.size())
-    return std::nullopt;
-  const auto *Value =
-      llvm::dyn_cast<llvm::ConstantInt>(Bundle.Inputs[Index].get());
-  if (!Value || Value->getBitWidth() != BitWidth)
-    return std::nullopt;
-  return Value->getZExtValue();
-}
-
-struct NativeEHProvenance {
-  windows_eh_md::NativeProvenanceModel Model =
-      windows_eh_md::NativeProvenanceModel::SEH;
-  windows_eh_md::NativeProvenanceRole Role =
-      windows_eh_md::NativeProvenanceRole::ProtectedInvoke;
-  va_t FunctionVA = 0;
-  va_t SourceVA = 0;
-  uint32_t Region = 0;
-  uint32_t Clause = 0;
-  va_t AuxVA = 0;
-  uint32_t Flags = 0;
-};
-
-std::optional<NativeEHProvenance>
-parseNativeEHProvenance(const llvm::CallInst &Anchor) {
-  const llvm::Function *Callee = Anchor.getCalledFunction();
-  if (!Callee || Callee->getIntrinsicID() != llvm::Intrinsic::sideeffect ||
-      Anchor.countOperandBundlesOfType(windows_eh_md::ProvenanceBundle) != 1)
-    return std::nullopt;
-  auto Bundle = Anchor.getOperandBundle(windows_eh_md::ProvenanceBundle);
-  if (!Bundle || Bundle->Inputs.size() != windows_eh_md::ProvenanceOperandCount)
-    return std::nullopt;
-
-  auto Version = provenanceUInt(*Bundle, windows_eh_md::ProvenanceVersion, 32);
-  auto Model = provenanceUInt(*Bundle, windows_eh_md::ProvenanceModel, 8);
-  auto Role = provenanceUInt(*Bundle, windows_eh_md::ProvenanceRole, 8);
-  auto FunctionVA =
-      provenanceUInt(*Bundle, windows_eh_md::ProvenanceFunctionVA, 64);
-  auto SourceVA =
-      provenanceUInt(*Bundle, windows_eh_md::ProvenanceSourceVA, 64);
-  auto Region = provenanceUInt(*Bundle, windows_eh_md::ProvenanceRegion, 32);
-  auto Clause = provenanceUInt(*Bundle, windows_eh_md::ProvenanceClause, 32);
-  auto AuxVA = provenanceUInt(*Bundle, windows_eh_md::ProvenanceAuxVA, 64);
-  auto Flags = provenanceUInt(*Bundle, windows_eh_md::ProvenanceFlags, 32);
-  if (!Version || *Version != windows_eh_md::ProvenanceSchemaVersion ||
-      !Model || !Role || !FunctionVA || !SourceVA || !Region || !Clause ||
-      !AuxVA || !Flags)
-    return std::nullopt;
-  if (*Model !=
-          static_cast<unsigned>(windows_eh_md::NativeProvenanceModel::SEH) &&
-      *Model !=
-          static_cast<unsigned>(windows_eh_md::NativeProvenanceModel::CxxFH3) &&
-      *Model !=
-          static_cast<unsigned>(windows_eh_md::NativeProvenanceModel::CxxFH4))
-    return std::nullopt;
-  if (*Role != static_cast<unsigned>(
-                   windows_eh_md::NativeProvenanceRole::ProtectedInvoke) &&
-      *Role != static_cast<unsigned>(
-                   windows_eh_md::NativeProvenanceRole::RegionDispatch) &&
-      *Role != static_cast<unsigned>(
-                   windows_eh_md::NativeProvenanceRole::HandlerTarget) &&
-      *Role != static_cast<unsigned>(
-                   windows_eh_md::NativeProvenanceRole::RangeEnter) &&
-      *Role != static_cast<unsigned>(
-                   windows_eh_md::NativeProvenanceRole::RangeExit) &&
-      *Role != static_cast<unsigned>(
-                   windows_eh_md::NativeProvenanceRole::RangeEnterTarget) &&
-      *Role != static_cast<unsigned>(
-                   windows_eh_md::NativeProvenanceRole::RangeExitTarget))
-    return std::nullopt;
-
-  return NativeEHProvenance{
-      static_cast<windows_eh_md::NativeProvenanceModel>(*Model),
-      static_cast<windows_eh_md::NativeProvenanceRole>(*Role),
-      *FunctionVA,
-      *SourceVA,
-      static_cast<uint32_t>(*Region),
-      static_cast<uint32_t>(*Clause),
-      *AuxVA,
-      static_cast<uint32_t>(*Flags)};
-}
+using coff_native_eh::NativeEHProvenance;
+using coff_native_eh::parseNativeEHProvenance;
+using coff_native_eh::provenanceUInt;
 
 struct NativeEHClause {
   const llvm::CatchPadInst *CatchPad = nullptr;
@@ -1368,6 +1294,10 @@ llvm::Error validateExceptionRecord(const ExceptionFunction &EH,
     if (EH.Encoding != ExceptionEncoding::ARM32Packed &&
         EH.Encoding != ExceptionEncoding::ARM32Unpacked)
       return patchError("unsupported ARM32 unwind encoding in " + Context);
+  } else if (TargetArch == Arch::X86) {
+    if (EH.Encoding != ExceptionEncoding::X86ScopeTableEH3 &&
+        EH.Encoding != ExceptionEncoding::X86ScopeTableEH4)
+      return patchError("unsupported x86 registration encoding in " + Context);
   } else {
     return patchError("table-based exception regeneration is unsupported for " +
                       Context);
@@ -1385,6 +1315,9 @@ llvm::Error validateExceptionRecord(const ExceptionFunction &EH,
         classifyWindowsEHNativeSource(EH, TargetArch, BinaryFormat::COFF,
                                       WindowsEHNativeCapability::OutputPatch);
     const bool ModelMatchesPersonality =
+        ((EH.Personality == ExceptionPersonality::ExceptHandler3 ||
+          EH.Personality == ExceptionPersonality::ExceptHandler4) &&
+         Source.Model == WindowsEHNativeSourceModel::X86RegistrationSEH) ||
         (EH.Personality == ExceptionPersonality::CSpecificHandler &&
          Source.Model == WindowsEHNativeSourceModel::SEH) ||
         (EH.Personality == ExceptionPersonality::CxxFrameHandler3 &&
@@ -2055,9 +1988,16 @@ std::optional<va_t> findCOFFExceptionPersonalityVA(const BinaryImage &Image,
         EH.Personality == ExceptionPersonality::Unknown ||
         EH.PersonalityVA == 0)
       continue;
-    if (AddressAlias
-            ? *AddressAlias != EH.PersonalityVA
-            : SymbolName != getExceptionPersonalityName(EH.Personality))
+    const llvm::StringRef Canonical =
+        getExceptionPersonalityName(EH.Personality);
+    llvm::SmallString<64> ObjectName;
+    if (Image.Arch == Arch::X86)
+      llvm::Mangler::getNameWithPrefix(
+          ObjectName, Canonical,
+          llvm::DataLayout(
+              llvm::Triple("i686-pc-windows-msvc").computeDataLayout()));
+    if (AddressAlias ? *AddressAlias != EH.PersonalityVA
+                     : SymbolName != Canonical && SymbolName != ObjectName)
       continue;
     const Segment *Target = Image.getSegmentFor(EH.PersonalityVA);
     if (Target && Target->isExecutable() && Image.readVA(EH.PersonalityVA, 1))
@@ -2101,7 +2041,13 @@ planCOFFExceptionPatch(const llvm::Module &Mod, const BinaryImage &Image,
   for (const CanonicalWindowsEHFunction &Entry : *CanonicalFunctions) {
     const llvm::Function &F = *Entry.Function;
     const ExceptionFunction &EH = *Entry.Source;
-    if (llvm::Error Err = validateExceptionFunction(F, EH, TargetArch))
+    if (TargetArch == Arch::X86) {
+      if (llvm::Error Err = validateExceptionRecord(
+              EH, TargetArch, llvm::Twine("function ") + F.getName()))
+        return std::move(Err);
+      if (llvm::Error Err = validateCOFFRegistrationIR(F, EH, Image))
+        return std::move(Err);
+    } else if (llvm::Error Err = validateExceptionFunction(F, EH, TargetArch))
       return std::move(Err);
     Plan.ExceptionFunctionEntries.push_back(EH.CodeRange.Begin);
     if (EH.Personality != ExceptionPersonality::None)
@@ -3842,6 +3788,9 @@ static llvm::Error validatePatchedCOFFImageImpl(
     return patchError("final image is not a COFF object");
   uint16_t ExpectedMachine = 0;
   switch (TargetArch) {
+  case Arch::X86:
+    ExpectedMachine = llvm::COFF::IMAGE_FILE_MACHINE_I386;
+    break;
   case Arch::X64:
     ExpectedMachine = llvm::COFF::IMAGE_FILE_MACHINE_AMD64;
     break;

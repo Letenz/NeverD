@@ -225,6 +225,16 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
 
   switch (Op.Opcode) {
   case NdOp::COPY: {
+    if (Op.RegistrationRoot != MedOp::RegistrationRootKind::None &&
+        TargetArch == Arch::X86 && FrameBaseInt && Op.Output.Size == 4) {
+      auto *SP = Builder.CreateTrunc(FrameBaseInt, Builder.getInt32Ty());
+      Result = Op.RegistrationRoot ==
+                       MedOp::RegistrationRootKind::EstablishedFramePointer
+                   ? Builder.CreateSub(SP, Builder.getInt32(4),
+                                       "registration.source.ebp")
+                   : SP;
+      break;
+    }
     if (CurMedFunc && CurMedFunc->SkippedSSA) {
       Result = GetInput(0);
       break;
@@ -911,6 +921,28 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
                       "segmentptr");
     }
     auto *LI = Builder.CreateLoad(ValTy, Ptr, "ld");
+    if (CurMedFunc && CurMedFunc->RegistrationStates && Op.OriginSeq >= 0 &&
+        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      auto [It, Inserted] = RegistrationMemoryIR.emplace(
+          std::make_pair(Op.Addr, Op.OriginSeq), LI);
+      if (!Inserted)
+        It->second = nullptr;
+    }
+    if (CurMedFunc && CurMedFunc->RegistrationStates && Op.OriginSeq >= 0 &&
+        CurMedFunc->RegistrationStates->incomingFrameAccess(Op.Addr,
+                                                            Op.OriginSeq)) {
+      auto [It, Inserted] = RegistrationIncomingIR.emplace(
+          std::make_pair(Op.Addr, Op.OriginSeq), LI);
+      if (!Inserted)
+        It->second = nullptr;
+    }
+    if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS &&
+        Op.OriginSeq >= 0) {
+      auto [It, Inserted] = RegistrationChainIR.emplace(
+          std::make_pair(Op.Addr, Op.OriginSeq), LI);
+      if (!Inserted)
+        It->second = nullptr;
+    }
     // A machine address does not inherit the accessed type's ABI alignment.
     // Keep ordinary accesses byte-aligned; atomic requirements remain below.
     LI->setAlignment(llvm::Align(1));
@@ -1121,6 +1153,28 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         Val = Builder.CreatePtrToInt(Sym, Val->getType());
     }
     auto *SI = Builder.CreateStore(Val, Ptr);
+    if (CurMedFunc && CurMedFunc->RegistrationStates && Op.OriginSeq >= 0 &&
+        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      auto [It, Inserted] = RegistrationMemoryIR.emplace(
+          std::make_pair(Op.Addr, Op.OriginSeq), SI);
+      if (!Inserted)
+        It->second = nullptr;
+    }
+    if (CurMedFunc && CurMedFunc->RegistrationStates && Op.OriginSeq >= 0 &&
+        CurMedFunc->RegistrationStates->incomingFrameAccess(Op.Addr,
+                                                            Op.OriginSeq)) {
+      auto [It, Inserted] = RegistrationIncomingIR.emplace(
+          std::make_pair(Op.Addr, Op.OriginSeq), SI);
+      if (!Inserted)
+        It->second = nullptr;
+    }
+    if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS &&
+        Op.OriginSeq >= 0) {
+      auto [It, Inserted] = RegistrationChainIR.emplace(
+          std::make_pair(Op.Addr, Op.OriginSeq), SI);
+      if (!Inserted)
+        It->second = nullptr;
+    }
     if (SourceMap && Op.Addr != InvalidVA && Op.OriginSeq >= 0)
       SourceMap->Observations.push_back(
           {CurMedFunc->Entry, {Op.Addr, Op.OriginSeq}, SI});
