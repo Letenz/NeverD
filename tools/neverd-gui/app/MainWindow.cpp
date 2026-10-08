@@ -823,6 +823,14 @@ void MainWindow::connectActions() {
     if (const auto target = disassembly_->operandTarget())
       navigate(*target);
   });
+  on(ActionId::EditCreateFunction, [this] {
+    if (const auto address = currentAddress())
+      session_.createFunction(*address);
+  });
+  on(ActionId::EditDeleteFunction, [this] {
+    if (const auto function = currentFunction())
+      session_.deleteFunction(*function);
+  });
   on(ActionId::JumpBack, [this] { disassembly_->goBack(); });
   on(ActionId::JumpForward, [this] { disassembly_->goForward(); });
   on(ActionId::JumpNextFunction, [this] { stepFunction(true); });
@@ -1061,6 +1069,15 @@ void MainWindow::updateActions() {
   actions_.action(ActionId::FileSave)->setEnabled(loaded && session_.dirty());
   actions_.action(ActionId::EditRename)
       ->setEnabled(location && !session_.readOnly());
+  // A function starts where none starts yet; the one the cursor is in can
+  // stop being one.
+  const bool functionEdits =
+      location && !session_.readOnly() && session_.keepsFunctionEdits();
+  const auto function = functionEdits ? currentFunction() : std::nullopt;
+  actions_.action(ActionId::EditCreateFunction)
+      ->setEnabled(functionEdits && function != currentAddress());
+  actions_.action(ActionId::EditDeleteFunction)
+      ->setEnabled(functionEdits && function.has_value());
   actions_.action(ActionId::EditComment)
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::EditRepeatableComment)
@@ -1734,6 +1751,10 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   for (const auto id :
        {ActionId::EditRename, ActionId::EditComment, ActionId::EditBookmark})
     menu.addAction(actions_.action(id));
+  for (const auto id :
+       {ActionId::EditCreateFunction, ActionId::EditDeleteFunction})
+    if (auto *action = actions_.action(id); action->isEnabled())
+      menu.addAction(action);
   menu.addSeparator();
   for (const auto id : {ActionId::ViewToggleGraph, ActionId::ViewPseudocode,
                         ActionId::ViewMedIR})
