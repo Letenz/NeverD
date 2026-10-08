@@ -2282,6 +2282,12 @@ jobs:
       - name: Diagnose an existing original-image baseline
         if: ${{ inputs.windows_eh_replay_artifact_run != '' }}
         run: python scripts/check_windows_registration_native_diagnostics.py --root build-windows-eh
+      - name: Select the native x86 MSVC compiler
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x86
+      - name: Establish genuine C++ cleanup and catch-object ABI baselines
+        run: python scripts/check_windows_registration_cxx.py --output build-windows-eh/cxx-original
       - name: Execute the exact original and reconstructed images with the Windows CRT
         run: python scripts/replay_windows_registration.py --evidence-root build-windows-eh/evidence --source-profile ${{ inputs.windows_eh_replay_artifact_run != '' && 'seh3-eh4' || 'all' }} --output build-windows-eh/native-replay.json
       - name: Preserve native loader evidence
@@ -2292,5 +2298,6 @@ jobs:
           path: |
             build-windows-eh/native-replay.json
             build-windows-eh/runtime-diagnostics.json
+            build-windows-eh/cxx-original/
           if-no-files-found: error
           retention-days: 14

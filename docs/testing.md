@@ -1791,6 +1791,12 @@ as separate evidence. ARM32
 cross-target codegen and PE validation do not establish Windows ARM32 runtime
 execution.
 
+The native Windows job also builds `registration_cxx_runtime.cpp` with MSVC
+and its actual runtime libraries. Value and reference catches must preserve
+the caught object, destructor trace `213`, repeated calls and FS:[0] at both
+load bases. `check_windows_registration_cxx.py` labels these original-program
+ABI baselines separately; they do not establish native C++ reconstruction.
+
 ### Language exception models
 
 Everything that is not the Windows table model lives in one focused target.
