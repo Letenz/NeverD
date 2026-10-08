@@ -43,7 +43,7 @@ neverd unpack packed.exe -o unpacked.exe \
 
 各节保持原有 RVA，并保存观察到的内存和页面权限，包括已经执行的初始化器产生的变化。末尾的 `.neverd` 节保存新的导入目录；已存在的导出地址单元保持原位，修复导出调用和地址加载所需的新增 IAT 单元只放入新节，保留原有零填充存储。`imports` 中的 `origin` 区分由输入导入目录绑定的 `static` 单元，以及由来宾写入或为修复调用而增加的 `runtime` 单元。镜像固定在观察到的基址：生成内容的重定位未经观察，因此移除重定位目录并设置 `IMAGE_FILE_RELOCS_STRIPPED`。
 
-用户态节范围将 `VirtualSize`（为零时取 `SizeOfRawData`）向上对齐到来宾页；`SectionAlignment` 只定位 RVA。最后一个有效页内的节原始数据尾部保留，超出该范围的字节不映射。重建保留 `FileAlignment`，文件对齐填充补零，不从节间隙借读。此规则的原生证据仅覆盖 x64 Windows DLL。运行时仍拒绝零 `VirtualSize`，驱动映射不在此规则范围内。
+用户态节范围将 `VirtualSize`（为零时取 `SizeOfRawData`）向上对齐到来宾页；`SectionAlignment` 只定位 RVA。最后一个有效页内的节原始数据尾部保留，超出该范围的字节不映射。重建保留 `FileAlignment`，文件对齐填充补零，不从节间隙借读。此规则的原生证据仅覆盖 x64 Windows DLL。运行时准入、元数据读取和固定镜像校验共享未按页对齐的逻辑范围。零 `VirtualSize` 使用 `SizeOfRawData`，非零值仍约束元数据。加载器使用私有读取视图兼容 LLVM，并为执行、调试身份和字节认证保留原始数据。驱动映射不在用户态分页规则范围内。
 
 只有调试目录和每个保留的载荷都有完整的文件支撑，才会重定位调试数据的文件偏移。当 `AddressOfRawData == 0` 且载荷完整位于保留的 overlay 中时，保留其在 overlay 内的相对偏移，并重定位到 overlay 的新文件位置。非零但无效的 RVA 不能回退到 overlay。
 

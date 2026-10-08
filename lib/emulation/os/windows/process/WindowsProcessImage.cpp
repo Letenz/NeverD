@@ -27,6 +27,9 @@ uint64_t pages(uint64_t N) { return (N + PageSize - 1) & ~(PageSize - 1); }
 struct Section {
   coff_section Header;
   llvm::ArrayRef<uint8_t> Raw;
+  uint64_t contentSize() const {
+    return getPESectionContentSize(Header.VirtualSize, Header.SizeOfRawData);
+  }
 };
 class Reader {
 public:
@@ -61,11 +64,11 @@ public:
     }
     for (const auto &S : Sections) {
       const uint64_t Start = S.Header.VirtualAddress;
-      if (RVA < Start || RVA - Start >= S.Header.VirtualSize)
+      if (RVA < Start || RVA - Start >= S.contentSize())
         continue;
       const uint64_t Offset = RVA - Start;
       if (Offset > S.Raw.size() || Size > S.Raw.size() - Offset ||
-          Size > uint64_t(S.Header.VirtualSize) - Offset)
+          Size > S.contentSize() - Offset)
         return failure(text::Metadata);
       return S.Raw.slice(Offset, Size);
     }
@@ -74,8 +77,8 @@ public:
   bool accessible(uint64_t RVA, uint64_t Size, uint32_t Rights) const {
     for (const auto &S : Sections) {
       const uint64_t Start = S.Header.VirtualAddress;
-      if (RVA >= Start && RVA - Start < S.Header.VirtualSize &&
-          Size <= uint64_t(S.Header.VirtualSize) - (RVA - Start) &&
+      if (RVA >= Start && RVA - Start < S.contentSize() &&
+          Size <= S.contentSize() - (RVA - Start) &&
           (S.Header.Characteristics & Rights) == Rights)
         return true;
     }
@@ -400,8 +403,10 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
       return failure(text::Headers);
     const uint64_t Span =
         getPEUserSectionMappedSize(S.VirtualSize, S.SizeOfRawData, PageSize);
+    const uint64_t ContentSize =
+        getPESectionContentSize(S.VirtualSize, S.SizeOfRawData);
     const uint64_t FileOffset = S.PointerToRawData, RawSize = S.SizeOfRawData;
-    if (!S.VirtualSize || S.VirtualAddress % PE.SectionAlignment ||
+    if (!ContentSize || S.VirtualAddress % PE.SectionAlignment ||
         S.VirtualAddress < Previous || S.VirtualAddress >= Size ||
         Span > Size - S.VirtualAddress || S.NumberOfRelocations ||
         S.PointerToRelocations ||
@@ -429,7 +434,7 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
         RawSize ? R.Raw.slice(FileOffset, RawSize) : llvm::ArrayRef<uint8_t>{};
     R.Sections.push_back({S, Raw});
     ImageRegion Region{Base + S.VirtualAddress, Permissions,
-                       std::vector<uint8_t>(Span), S.VirtualSize, RawSize};
+                       std::vector<uint8_t>(Span), ContentSize, RawSize};
     std::copy_n(Raw.begin(), std::min<uint64_t>(Raw.size(), Span),
                 Region.Bytes.begin());
     Out.Regions.push_back(std::move(Region));
@@ -607,7 +612,7 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
     return failure(text::LoaderDisagreement);
   for (size_t I = 0; I < R.Sections.size(); ++I)
     if (Decoded->Segments[I].VA != Out.Regions[I].Address ||
-        Decoded->Segments[I].Size != R.Sections[I].Header.VirtualSize)
+        Decoded->Segments[I].Size != Out.Regions[I].ContentSize)
       return failure(text::LoaderDisagreement);
   for (const auto &Import : Out.Imports)
     if (std::none_of(Decoded->Imports.begin(), Decoded->Imports.end(),
