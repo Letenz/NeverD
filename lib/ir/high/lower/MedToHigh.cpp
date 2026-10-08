@@ -1035,6 +1035,8 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
           (Phase != 0 && rotateLoopsToTheirEntry(Func.Body)) |
           (Phase != 0 && hoistLoopExitTests(Func.Body)) |
           (Phase != 0 && moveLoopTailsToTheirBreak(Func.Body)) |
+          (Phase != 0 && moveSwitchTailsToTheirExit(Func.Body)) |
+          (Phase != 0 && absorbSwitchRangeGuards(Func.Body)) |
           (Phase != 0 && unwrapLoopsThatNeverRepeat(Func.Body)) |
           (Phase != 0 && LateJoinSink && sinkJoinDefaultsLate(Func)) |
           (Phase != 0 && hoistLoopEntryLabels(Func.Body)) |
@@ -1305,8 +1307,13 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   // Names merge last: every earlier pass may still move statements as if
   // each local had the definitions it had in SSA.
   coalesceHighPhiCopies(Func);
+  // A read used once by the next statement moves into it, and a copy back
+  // from a temporary joins its definition, once names merged.
+  inlineAdjacentLoads(Func);
+  foldCopiesIntoDefinitions(Func);
   // Signedness follows the merged names: one declaration, one type.
   chooseIntegerSignedness(Func);
+  nameRepeatedValues(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 

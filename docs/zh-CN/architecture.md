@@ -1177,6 +1177,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读�
 
 Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及当前进程的 `FlushInstructionCache`。OS 层管理预留区域，`AddressSpace` 统一管理已提交页面、权限和物理存储。测试覆盖动态代码改写、访问故障和内存额度回收。
 
+`WriteProcessMemory` 对不超过 4 KiB 的当前进程写入，遵循 x64/ARM64 原生实测的已提交页面语义。它保留各区域的权限、已复制前缀、字节数和 LastError，包括 `ERROR_NOACCESS`、`ERROR_PARTIAL_COPY` 以及 RX 前缀写入后返回成功的情况。`WindowsMemoryWriteTests.cpp` 检查全部 25 种权限组合；`check_windows_memory_write.py` 在原生 Windows CI 上验证同一份原创可执行文件。未提交的目标区域仍明确不受支持。
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 Windows 进程时间策略归 `os/windows/process/` 中的 `WindowsProcessTime.cpp` 管理。`std::chrono` 区分主机墙上时钟与单调计数器，`WindowsProcess.def` 定义客户时间单位及有限等待上限；CPU 后端不承载 Windows 时间策略。
@@ -1184,6 +1186,10 @@ Windows 进程时间策略归 `os/windows/process/` 中的 `WindowsProcessTime.c
 `lib/unpack` 分四层恢复加壳镜像。`core` 负责编排和格式注册表。`format/pe` 校验容器并重建观察到的内存、导入和元数据；`PETLS.cpp` 依据加载器分配信息和实际观察到的回调校验替换的 TLS 记录。不使用保护器注册表或静态外壳签名选择入口。`dynamic` 通过 `observeProcess` 观察来宾进程：`Observation.def` 把每种容器与指令集映射到一个进程配置，并给出每种指令集的栈指针和指令窗口。新增一个目标只需一行表项和一个模块目录，表中没有对应行的输入会被按名称拒绝。`ExecutionSession` 负责执行监视；`ProcessObserver` 读取已停止的进程并选择下一个停止点，但不能改变来宾状态。模拟层只知道 `defer_unmodeled`，它把未建模的导入绑定到一旦执行就停止的不透明入口。参见[脱壳](unpack.md)。 延迟加载允许可执行回调或入口目标位于零填充内存，由先前的初始化器生成其代码。回调数组和 TLS 分配元数据仍要求经过校验的文件内容；普通严格加载保留文件覆盖检查。操作系统模型提供调用归属，并在准备调用或恢复挂起的调用者时通知观察器。转移监视在这些边界重新布置，覆盖回调与生成入口同处一页的情况。
 
 `MemoryProjection` 负责物理 RAM 写入失效记录，`ExecutionSession` 负责相应的停止和续接。x64 页表构建器为直接执行施加临时写保护，不包含镜像或保护器策略。Windows 进程观察在恢复执行前重新检查服务期间的写入。只有 `dynamic/ProcessTransfer` 依据实际解码的指令字节判定代际，并保持对混合代际页面的观察。
+
+`arch/x86_64/X64Watch.cpp` 负责控制流计划和标志敏感指令的续接；`X64PageTables.cpp` 与 `X64WatchTables.cpp` 负责投影构建和监视权限更新。传输层只安装执行停止点并保存实际 CPU 状态。 传输观察器只在已观察到的指令起点复用代际证据，并要求完整解码字节保持一致。操作数和跨页写入会重新布防；返回旧代码时会撤销上一代的执行证据。
+
+只有前一次写监视覆盖的内存不可能发生变化时，执行观察点交接才通过 `ProcessView::watchedMemoryUnchanged()` 提供未变证据。OS 服务以及异常或调用续执行保守地撤销该保证。转移观察器在干净交接时复用已验证快照，但首次访问页面仍刷新可能跨页的取指尾部。WHP 在确认完成的单步之间保留实际捕获的粘滞调试状态，并在自由执行前重置，避免每条受检查指令都重复安装寄存器，同时保留私有停止点的认证。
 
 `arch/X64Imports.cpp` 统一负责 x64 导入指令的解码和生成。`dynamic/ProcessImports.cpp` 通过只读进程观察证明纯导出调用和地址加载结果；PE 写入器消费这些证据，不重复定义指令规则。
 

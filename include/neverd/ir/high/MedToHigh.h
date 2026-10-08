@@ -123,6 +123,26 @@ bool hoistLoopExitTests(std::vector<HighStmt> &Body);
 /// `while (1) { ..break..; X: .. } T...` where T never falls through and
 /// jumps back to X: T moves to the break, its only way in.
 bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body);
+/// `switch (..) { ..break.. default: .. } T...` where one break, or one
+/// case running off its end, is the switch's only way out and T never falls
+/// through: T moves there, so `case 18: break; } return f();` reads
+/// `case 18: return f(); }`.  T is straight-line code that nothing jumps
+/// into.
+bool moveSwitchTailsToTheirExit(std::vector<HighStmt> &Body);
+/// `if (c) { switch (x) {..} } D...` where every case label passes c and the
+/// default runs D (a jump to it or a copy of it): a value that fails c
+/// matches no case and reaches D through the default anyway, so the switch
+/// alone does the same.  This drops the range check a jump table needs.
+bool absorbSwitchRangeGuards(std::vector<HighStmt> &Body);
+/// `t = e; S...; x = t;` where t has no other use and S neither touches x
+/// nor t, nor leaves nor is entered: `x = e; S...;`.  Out of SSA a loop
+/// update reads `t = i + 1; ...; i = t;`; it reads `i = i + 1;`.
+bool foldCopiesIntoDefinitions(HighFunc &Func);
+/// `t = *p; S;` where t has no other use and S, the next statement, reads
+/// its operands before any effect of its own: S reads *p in t's place, as
+/// `*q = *p;`.  The read keeps its place among the program's effects; a
+/// loop condition, which runs again, never takes it.
+bool inlineAdjacentLoads(HighFunc &Func);
 /// A loop whose body never reaches its end and has no break or continue
 /// runs its body once: the body replaces the loop.
 bool unwrapLoopsThatNeverRepeat(std::vector<HighStmt> &Body);
@@ -171,6 +191,10 @@ bool mergeJumpsIntoNextIfArms(HighFunc &Func);
 /// of its uses read, so that wrapping arithmetic, logical shifts and
 /// unsigned comparisons print without casts.  Value bits do not change.
 void chooseIntegerSignedness(HighFunc &Func);
+/// A large value one statement reads several times is assigned to a fresh
+/// local before it, when evaluating the value earlier cannot fault or have
+/// an effect.  The C writer prints each read of a shared node in full.
+bool nameRepeatedValues(HighFunc &Func);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);

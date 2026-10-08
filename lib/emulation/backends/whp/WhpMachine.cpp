@@ -54,6 +54,18 @@ public:
     return static_cast<WhpX64Processor &>(**Active).run(State, Root, Control,
                                                         MXCSRMask);
   }
+  bool supportsExecutionStops() const override { return true; }
+  llvm::Error runTo(X64MachineState &State, uint64_t Root,
+                    MachineRunControl Control,
+                    llvm::ArrayRef<uint64_t> Stops) override {
+    if (auto E = validateX64FPState(State.FP))
+      return E;
+    auto Active = Binding.acquire(Control);
+    if (!Active)
+      return Active.takeError();
+    return static_cast<WhpX64Processor &>(**Active).run(State, Root, Control,
+                                                        MXCSRMask, Stops);
+  }
 
 private:
   WhpResourceBinding<WhpVirtualProcessor> Binding;

@@ -301,4 +301,93 @@ int main(void) {
 )");
 }
 
+HighStmt branch(ExprPtr Cond, std::vector<HighStmt> Then,
+                std::vector<HighStmt> Else) {
+  HighStmt S;
+  S.Kind = StmtKind::IfElse;
+  S.Cond = std::move(Cond);
+  S.Body = std::move(Then);
+  S.ElseBody = std::move(Else);
+  return S;
+}
+
+TEST(HighValueForward, JoinOnlyHiddenCodeReadsStaysHidden) {
+  // v3 joins t1 - 5 and 0.  In join_unread only a branch whose arms assign
+  // a value nothing reads tests v3, so that branch prints nothing, and v3
+  // with t1 must not print either: v3 without t1 names an undeclared
+  // variable.  In join_read the return reads v3, which prints with t1.
+  auto Body = [](HighStmt Last) {
+    std::vector<HighStmt> Stmts{
+        assign(local(1), op(NdOp::INT_MULT, input(), constant(3))),
+        branch(op(NdOp::INT_AND, input(), constant(1)),
+               {assign(renamed(3), op(NdOp::INT_SUB, local(1), constant(5)))},
+               {assign(renamed(3), constant(0))})};
+    Stmts.push_back(std::move(Last));
+    return Stmts;
+  };
+  std::vector<HighStmt> Unread = Body(
+      branch(op(NdOp::INT_EQUAL, renamed(3), constant(7), true),
+             {assign(local(4), constant(1))}, {assign(local(4), constant(2))}));
+  Unread.push_back(result(input()));
+  HighFunc Hidden = function("join_unread", std::move(Unread));
+  HighFunc Read = function("join_read", Body(result(renamed(3))));
+  const std::string Source = emit({Hidden, Read});
+  const size_t ReadAt = Source.find("join_read(");
+  ASSERT_NE(ReadAt, std::string::npos) << Source;
+  EXPECT_EQ(Source.substr(0, ReadAt).find(" - 5"), std::string::npos) << Source;
+  EXPECT_NE(Source.find(" - 5", ReadAt), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+int main(void) {
+  for (uint64_t x = 0; x < 30; ++x) {
+    if (join_unread(x) != x) return 1;
+    if (join_read(x) != ((x & 1) ? x * 3 - 5 : 0)) return 2;
+  }
+  return 0;
+}
+)");
+}
+
+TEST(HighValueForward, StatusTestTakesTheCallItReads) {
+  // t1 = probe(x) is read once, by the test right after it: the test calls
+  // probe.  In tested_against_local the test also reads t2, so the call
+  // keeps its statement.
+  auto Probe = [] {
+    auto Call = HighExpr::makeCall("probe", 0x2000, {input()});
+    Call->Type = NdType::makeInt(8, true);
+    return Call;
+  };
+  HighFunc Tested =
+      function("tested", {assign(local(1), Probe()),
+                          when(op(NdOp::INT_SLESS, local(1), constant(0), true),
+                               {result(constant(1))}),
+                          result(constant(2))});
+  HighFunc Local =
+      function("tested_against_local",
+               {assign(local(2), op(NdOp::INT_ADD, input(), constant(1))),
+                assign(local(1), Probe()),
+                when(op(NdOp::INT_SLESS, local(1), local(2), true),
+                     {result(constant(1))}),
+                result(local(2))});
+  const std::string Source = emit({Tested, Local});
+  const size_t LocalAt = Source.find("tested_against_local(");
+  ASSERT_NE(LocalAt, std::string::npos) << Source;
+  EXPECT_NE(Source.substr(0, LocalAt).find("if (probe(arg0) < 0)"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("t1 = probe(arg0);", LocalAt), std::string::npos)
+      << Source;
+  compileAndRun(Source + R"(
+static unsigned calls;
+int probe(uint64_t x) { ++calls; return (int)x - 10; }
+int main(void) {
+  for (uint64_t x = 0; x < 20; ++x) {
+    calls = 0;
+    if (tested(x) != (x < 10 ? 1 : 2) || calls != 1) return 1;
+    if (tested_against_local(x) != 1 || calls != 2) return 2;
+  }
+  return 0;
+}
+)");
+}
+
 } // namespace

@@ -211,7 +211,31 @@ bool isPlainInteger(const TypeRef &T) {
   return T && T->Kind == NdTypeKind::Int && !T->IsEnum &&
          (T->Size == 1 || T->Size == 2 || T->Size == 4 || T->Size == 8);
 }
+
 } // anonymous namespace
+
+bool printsTruthValue(const HighExpr &E) {
+  if (E.Kind == ExprKind::UnaryOp)
+    return E.Op == NdOp::BOOL_NOT;
+  if (E.Kind != ExprKind::BinOp)
+    return false;
+  switch (E.Op) {
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_NOTEQUAL:
+  case NdOp::INT_LESS:
+  case NdOp::INT_LESSEQUAL:
+  case NdOp::INT_SLESS:
+  case NdOp::INT_SLESSEQUAL:
+  case NdOp::BOOL_AND:
+  case NdOp::BOOL_OR:
+  case NdOp::INT_CARRY:
+  case NdOp::INT_SOVF:
+  case NdOp::INT_SBOR:
+    return true;
+  default:
+    return false;
+  }
+}
 
 std::optional<std::pair<uint16_t, bool>>
 HighCWriter::printedIntegerType(const HighExpr &E) const {
@@ -542,6 +566,9 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
       return exprStr(Inner, ParentPrec);
     if (Inner.Type && E.Type && Inner.Type->Size == E.Type->Size)
       return exprStr(Inner, ParentPrec);
+    if (isPlainInteger(E.Type) && printsTruthValue(Inner))
+      return typedText(E, "(" + typeToC(E.Type) + ")" + exprStr(Inner, 99),
+                       E.Type->Size, E.Type->IsSigned);
     // Zero extension converts the source's unsigned view.
     if (isPlainInteger(Inner.Type) && isPlainInteger(E.Type))
       return typedText(
@@ -569,6 +596,9 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     auto &Inner = *E.Operands[0];
     if (Inner.Type && E.Type && Inner.Type->Size == E.Type->Size)
       return exprStr(Inner, ParentPrec);
+    if (isPlainInteger(E.Type) && printsTruthValue(Inner))
+      return typedText(E, "(" + typeToC(E.Type) + ")" + exprStr(Inner, 99),
+                       E.Type->Size, E.Type->IsSigned);
     // Sign extension converts the source's signed view.
     if (isPlainInteger(Inner.Type) && isPlainInteger(E.Type))
       return typedText(
@@ -1249,6 +1279,17 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
                            BaseTy->Pointee &&
                            BaseTy->Pointee->Kind == NdTypeKind::Int &&
                            BaseTy->Pointee->Size == 1;
+      // addrStr gives a pointer variable as the pointer itself.  A void or
+      // byte pointer offsets by bytes (GNU C for void *), so the access needs
+      // no integer round trip: `*(_QWORD *)(p + 8)`; another pointer type
+      // takes its integer view for a byte offset.
+      if (ProjectImageBacking && isBarePointerName(*Base, B)) {
+        if (BytePtr || pointsToVoid(declaredTypeOf(*Base, B))) {
+          std::string S = B + (Minus ? " - " : " + ") + constStr(Off->ConstVal);
+          return ParentPrec >= AddPrec ? "(" + S + ")" : S;
+        }
+        B = "(uintptr_t)" + B;
+      }
       // Byte offsets from an unsigned pointer-width integer already wrap
       // like the machine address: the frame base, or a local or parameter
       // declared that way.
@@ -1298,9 +1339,53 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
   // unsigned carrier.
   const HighExpr &Printed = Inner != &E ? *Inner : E;
   std::string Text = exprStr(Printed, ParentPrec);
+  // A pointer variable is the address itself: every access converts it.
+  if (ProjectImageBacking)
+    if (auto Pointer = declaredPointerName(Printed, Text))
+      return *Pointer;
   if (auto Carrier = unsignedCarrierText(Printed, ParentPrec))
     return *Carrier;
   return Text;
+}
+
+bool HighCWriter::isBarePointerName(const HighExpr &E,
+                                    llvm::StringRef Text) const {
+  return (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+         !Text.empty() &&
+         (llvm::isAlpha(Text.front()) || Text.front() == '_') &&
+         llvm::all_of(Text,
+                      [](char C) { return llvm::isAlnum(C) || C == '_'; }) &&
+         pointerNeedsIntegerView(declaredTypeOf(E, Text));
+}
+
+std::optional<std::string>
+HighCWriter::declaredPointerName(const HighExpr &E,
+                                 llvm::StringRef Text) const {
+  // Only the integer view a pointer variable prints with, around its name.
+  if (E.Kind != ExprKind::Var && E.Kind != ExprKind::Phi)
+    return std::nullopt;
+  if (!Text.consume_front("(uintptr_t)") || Text.empty() ||
+      !(llvm::isAlpha(Text.front()) || Text.front() == '_') ||
+      !llvm::all_of(Text, [](char C) { return llvm::isAlnum(C) || C == '_'; }))
+    return std::nullopt;
+  if (!pointerNeedsIntegerView(declaredTypeOf(E, Text)))
+    return std::nullopt;
+  return Text.str();
+}
+
+TypeRef HighCWriter::declaredTypeOf(const HighExpr &E,
+                                    llvm::StringRef Name) const {
+  if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi)
+    if (TypeRef Param = declaredParamType(E.Var))
+      return Param;
+  if (auto It = DeclaredCTypes.find(Name.str()); It != DeclaredCTypes.end())
+    return It->second;
+  return nullptr;
+}
+
+bool HighCWriter::pointsToVoid(const TypeRef &Ty) {
+  return Ty && Ty->Kind == NdTypeKind::Ptr &&
+         (!Ty->Pointee || Ty->Pointee->Kind == NdTypeKind::Void);
 }
 
 bool HighCWriter::isIntegerViewOfScalar(const HighExpr &E) const {
@@ -3183,13 +3268,22 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       return "(*" + varName(E.Operands.front()->Var) + ")";
     if (E.Operands.empty())
       return "/* bad load */";
+    // A plain access through an integer alias has exactly the alias's type:
+    // `*(_QWORD *)p` is a uint64_t.
+    auto Access = [&](std::string Text) {
+      if (!isPlainInteger(E.Type) ||
+          E.MemoryOrdering != NdMemoryOrdering::None ||
+          E.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        return Text;
+      return typedText(E, std::move(Text), E.Type->Size, E.Type->IsSigned);
+    };
     if (E.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       if (auto VA = constAddress(*E.Operands[0])) {
         if (imageBackingAddress(*VA))
-          return bareLoad(memoryLoadExpr(E.Type, addrStr(*E.Operands[0]),
-                                         E.MemoryOrdering, E.MemoryAddressSpace,
-                                         true, Destination),
-                          ParentPrec);
+          return Access(bareLoad(
+              memoryLoadExpr(E.Type, addrStr(*E.Operands[0]), E.MemoryOrdering,
+                             E.MemoryAddressSpace, true, Destination),
+              ParentPrec));
       }
     }
     if (E.MemoryOrdering == NdMemoryOrdering::None &&
@@ -3225,12 +3319,13 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
            E.Type->Size == 2 || E.Type->Size == 4 || E.Type->Size == 8 ||
            E.Type->Size == 16 || E.Type->Size == 32 || E.Type->Size == 64) &&
           equalSourceTypes(AddressType->Pointee, E.Type))
-        return bareLoad("(*(" + memoryTypeName(E.Type) + " *)(" + Addr + "))",
-                        ParentPrec);
+        return Access(bareLoad(
+            "(*(" + memoryTypeName(E.Type) + " *)(" + Addr + "))", ParentPrec));
     }
-    return bareLoad(memoryLoadExpr(E.Type, Addr, E.MemoryOrdering,
-                                   E.MemoryAddressSpace, false, Destination),
-                    ParentPrec);
+    return Access(
+        bareLoad(memoryLoadExpr(E.Type, Addr, E.MemoryOrdering,
+                                E.MemoryAddressSpace, false, Destination),
+                 ParentPrec));
   }
   case ExprKind::Store: {
     if (E.Operands.size() < 2)
@@ -3494,8 +3589,14 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
         return exprStr(Inner);
       // Keep the source-width interpretation of zext/sext when narrowing the
       // final C return type; a direct C cast from a signed input would turn
-      // zero extension into sign extension.
-      return "(" + typeToC(FuncReturnType) + ")(" + exprStr(Expr) + ")";
+      // zero extension into sign extension.  An extension printed as the
+      // return type already is the value returned.
+      std::string Text = exprStr(Expr);
+      if (const auto Printed = printedIntegerType(Expr);
+          Printed && Printed->first == FuncReturnType->Size &&
+          Printed->second == FuncReturnType->IsSigned)
+        return Text;
+      return "(" + typeToC(FuncReturnType) + ")(" + Text + ")";
     }
   }
 

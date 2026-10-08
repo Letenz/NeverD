@@ -30,6 +30,22 @@ namespace neverd::symbolic {
 
 namespace {
 
+// Compare a constant with the largest value of a zero extension. Bound this
+// optional inspection before copying the APInt, and never inspect the source
+// expression: its width alone establishes the unsigned range.
+std::optional<int> compareConstantWithZExtMaximum(const SymContext &Ctx,
+                                                  SymRef Extension,
+                                                  SymRef Constant) {
+  if (Ctx.op(Extension) != SymOp::ZExt || !Ctx.isConst(Constant) ||
+      (Ctx.width(Constant) - 1) / 64 + 1 > 64)
+    return std::nullopt;
+  const unsigned Narrow = Ctx.width(Ctx.operand(Extension, 0));
+  const llvm::APInt Value = Ctx.constValue(Constant);
+  if (Value.getActiveBits() > Narrow)
+    return 1;
+  return Value.isMask(Narrow) ? 0 : -1;
+}
+
 // Prove only a constant window, without constructing projected expressions.
 // Windows are at most one APInt word. Copying a source constant costs its
 // complete word count; repeated DAG visits (including depth-limited ones) and
@@ -448,6 +464,12 @@ SymRef SymContext::mkUlt(SymRef A, SymRef B) {
   // Nothing is below zero, and nothing is at or above the maximum.
   if (isConstZero(B))
     return mkFalse();
+  if (auto Order = compareConstantWithZExtMaximum(*this, B, A))
+    if (*Order >= 0)
+      return mkFalse();
+  if (auto Order = compareConstantWithZExtMaximum(*this, A, B))
+    if (*Order > 0)
+      return mkTrue();
   if (isConstOnes(B) && !isConst(A))
     return mkNe(A, B);
   return intern(SymOp::Ult, 1, {A, B}, 0);
@@ -461,6 +483,12 @@ SymRef SymContext::mkUle(SymRef A, SymRef B) {
     return constValue(A).ule(constValue(B)) ? mkTrue() : mkFalse();
   if (isConstZero(A))
     return mkTrue();
+  if (auto Order = compareConstantWithZExtMaximum(*this, A, B))
+    if (*Order >= 0)
+      return mkTrue();
+  if (auto Order = compareConstantWithZExtMaximum(*this, B, A))
+    if (*Order > 0)
+      return mkFalse();
   if (isConstOnes(B))
     return mkTrue();
   return intern(SymOp::Ule, 1, {A, B}, 0);

@@ -50,8 +50,18 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
                     K < static_cast<int>(Found.size());
          ++K)
       if (!Found[K]) {
-        // A slot the callee does not read still occupies its position.
-        Found[K] = Scan.ReachingRegArg(K);
+        // A slot the callee does not read still occupies its position.  A
+        // direct callee whose summary gave the register arguments reads none
+        // past them, so a stale or unknown value the caller left there
+        // cannot be observed; a dispatcher's count only says which registers
+        // the caller set, and this function's own parameter still passes
+        // through as an untouched forwarder's does.
+        const bool Unread = Scan.CalleeRegisterArgs >= 0 &&
+                            K >= Scan.CalleeRegisterArgs &&
+                            (*Scan.Ops)[Scan.CallIdx].Opcode == NdOp::CALL &&
+                            !(Scan.IsOwnParameter && Scan.IsOwnParameter(K));
+        if (!Unread)
+          Found[K] = Scan.ReachingRegArg(K);
         if (!Found[K])
           Found[K] = HighExpr::makeConst(0, 8);
       }

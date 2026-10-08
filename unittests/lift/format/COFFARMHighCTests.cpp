@@ -124,7 +124,7 @@ TEST_F(COFFARMPipeline, HighCLoadLvaluesAndAddressesRemainValidC) {
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Opts));
   OS.flush();
 
-  EXPECT_NE(C.find("= (uintptr_t)((uintptr_t)arg0);"), std::string::npos) << C;
+  EXPECT_NE(C.find("= (uintptr_t)(arg0);"), std::string::npos) << C;
   EXPECT_NE(C.find("= 7;"), std::string::npos) << C;
   EXPECT_NE(C.find("__builtin_memcpy((void *)"), std::string::npos) << C;
   EXPECT_NE(C.find("return (int32_t *)((uintptr_t)arg0);"), std::string::npos)
@@ -318,8 +318,7 @@ TEST_F(COFFARMPipeline, HighCAddressOfLoadDoesNotDeleteStore) {
 
   auto Body = cFunctionBody(C, "address_preserves_store");
   ASSERT_TRUE(Body.has_value()) << C;
-  EXPECT_NE(Body->find("= (uintptr_t)((uintptr_t)arg0);"), std::string::npos)
-      << *Body;
+  EXPECT_NE(Body->find("= (uintptr_t)(arg0);"), std::string::npos) << *Body;
   EXPECT_NE(Body->find("= 7;"), std::string::npos) << *Body;
   EXPECT_NE(Body->find("__builtin_memcpy((void *)"), std::string::npos)
       << *Body;

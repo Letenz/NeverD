@@ -558,6 +558,7 @@ TEST(MedSEHEstablisherFrame, HighCPreservesTheCertifiedHandlerSlot) {
   const std::string AfterHandler = Source.substr(Handler);
   EXPECT_TRUE(AfterHandler.find("return var_m64;") != std::string::npos ||
               AfterHandler.find("var_m64 + 20);") != std::string::npos ||
+              AfterHandler.find("return var_m64 + 20;") != std::string::npos ||
               std::regex_search(AfterHandler,
                                 std::regex(R"((\w+) = var_m64;\s+return \1;)")))
       << Source;

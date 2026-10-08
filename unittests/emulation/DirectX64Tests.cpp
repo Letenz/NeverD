@@ -184,6 +184,238 @@ TEST_P(DirectX64, ResumedSelfBranchReachesTheSameWatchAgain) {
   EXPECT_EQ(Budget->instructions(), 0u);
 }
 
+TEST_P(DirectX64, PartialWatchCanRunALongLoopInTheSamePage) {
+  // mov ecx, 10000000; dec ecx; jnz -4; jmp to the watched instruction.
+  constexpr uint8_t Bytes[] = {0xb9, 0x80, 0x96, 0x98, 0x00, 0xff,
+                               0xc9, 0x75, 0xfc, 0xeb, 0x75};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeInteger(Code + 128, 0x90, 1));
+  auto S = start(5000000);
+  llvm::cantFail(S->watchExecution({{Code + 128, 1}}));
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 128);
+  EXPECT_EQ(reg(*S, CPURegister::X64CX), 0u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, FragmentedWatchesAllowRepeatedPageCrossings) {
+  constexpr uint8_t Start[] = {0xb9, 0xe8, 0x03, 0x00, 0x00,
+                               0xe9, 0xf6, 0x0f, 0x00, 0x00};
+  constexpr uint8_t Loop[] = {0xff, 0xc9, 0x0f, 0x85, 0xfd, 0xef, 0xff,
+                              0xff, 0xe9, 0x73, 0xf0, 0xff, 0xff};
+  llvm::cantFail(CPU->write(Code, Start));
+  llvm::cantFail(CPU->write(Code + PageSize, Loop));
+  llvm::cantFail(CPU->writeInteger(Code + 128, 0x90, 1));
+  std::vector<ExecutionWatch> Watches{{Code + 128, 1}};
+  for (uint64_t I = 0; I < 100000; ++I)
+    Watches.push_back({0x1000000 + I * 32, 1});
+  auto S = start(10000000);
+  llvm::cantFail(S->watchExecution(Watches));
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 128);
+  EXPECT_EQ(reg(*S, CPURegister::X64CX), 0u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, WatchedCrossPageInstructionStopsBeforeItsEffects) {
+  constexpr uint8_t Jump[] = {0xe9, 0xf9, 0x0f, 0, 0};
+  constexpr uint8_t Tail[] = {0x48, 0xff, 0xc0, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Jump));
+  llvm::cantFail(CPU->write(Code + PageSize - 2, Tail));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code + PageSize - 2, 1}}));
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + PageSize - 2);
+  EXPECT_EQ(reg(*S, CPURegister::X64AX), 0u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, FullNamespacePageCoverDoesNotWrap) {
+  constexpr uint8_t Bytes[] = {0x48, 0xff, 0xc0, 0x90};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{0, UINT64_MAX}}));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64AX), 0u);
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 3);
+  EXPECT_EQ(reg(*S, CPURegister::X64AX), 1u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, AliasedCodeWriteInvalidatesAPlannedBranch) {
+  // Change a forward jump from the service instruction to the watch, through
+  // another mapping of the code's physical page. The private code guard must
+  // replan before that branch without publishing a public memory-write stop.
+  constexpr uint64_t Alias = 0x30000;
+  constexpr uint8_t Bytes[] = {0xc6, 0x01, 0x7b, 0xeb, 0x00, 0x0f, 0x05};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeInteger(Code + 128, 0x90, 1));
+  llvm::cantFail(
+      CPU->mapAlias(Alias, Code, PageSize, Read | Write | UserAccessible));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64CX, {Alias + 4, 0}));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code + 128, 1}}));
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 128);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Code + 4, 1)), 0x7bu);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, InactivePagePlansRevalidateWritesThroughPhysicalAliases) {
+  constexpr uint64_t Alias = 0x30000;
+  constexpr uint8_t Jump[] = {0xe9, 0xfb, 0x0f, 0, 0};
+  constexpr uint8_t Watch[] = {0x48, 0xff, 0xc0, 0x0f, 0x0b};
+  // Rewrite the first page's jump through an alias while the second page
+  // executes. The old plan had no stop inside its page; the new one must
+  // stop at the watched increment before its effects.
+  constexpr uint8_t Rewrite[] = {0xc7, 0x05, 0xf7, 0xef, 0x01, 0,    0x7b, 0,
+                                 0,    0,    0xe9, 0xf1, 0xef, 0xff, 0xff};
+  llvm::cantFail(CPU->write(Code, Jump));
+  llvm::cantFail(CPU->write(Code + 128, Watch));
+  llvm::cantFail(CPU->write(Code + PageSize, Rewrite));
+  llvm::cantFail(
+      CPU->mapAlias(Alias, Code, PageSize, Read | Write | UserAccessible));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code + 128, 1}}));
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 128);
+  EXPECT_EQ(reg(*S, CPURegister::X64AX), 0u);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Code + 1, 4)), 0x7bu);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, UnwatchedPageCanReturnToAPartialPageWatch) {
+  // A direct branch leaves the partially watched page; an indirect branch on
+  // an unwatched page returns to the watch before the increment executes.
+  constexpr uint8_t Branch[] = {0xe9, 0xfb, 0x0f, 0x00, 0x00};
+  constexpr uint8_t Return[] = {0xff, 0xe1};
+  constexpr uint8_t Increment[] = {0x48, 0xff, 0xc0};
+  llvm::cantFail(CPU->write(Code, Branch));
+  llvm::cantFail(CPU->write(Code + PageSize, Return));
+  llvm::cantFail(CPU->write(Code + 128, Increment));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64CX, {Code + 128, 0}));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code + 128, 1}}));
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 128);
+  EXPECT_EQ(reg(*S, CPURegister::X64AX), 0u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, GuestTrapFlagOutranksAPartialPageWatch) {
+  // push 0x302; popfq; nop; inc rax. TF takes effect after the NOP.
+  constexpr uint8_t Bytes[] = {0x68, 0x02, 0x03, 0x00, 0x00,
+                               0x9d, 0x90, 0x48, 0xff, 0xc0};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64SP, {Data + 0x800, 0}));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code + 128, 1}}));
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::CPU);
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap);
+  ASSERT_TRUE(Exit.CPU->Fault);
+  EXPECT_EQ(Exit.CPU->Fault->Interrupt, 1u);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 7);
+  EXPECT_EQ(reg(*S, CPURegister::X64AX), 0u);
+  EXPECT_EQ(reg(*S, CPURegister::X64FLAGS) & 0x100, 0x100u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, IndirectFrontierDoesNotLeakASingleStepFlag) {
+  constexpr uint8_t Indirect[] = {0xff, 0xe0};          // jmp rax
+  constexpr uint8_t Flags[] = {0x9c, 0x5a, 0xeb, 0x6c}; // pushfq; pop rdx; jmp
+  llvm::cantFail(CPU->write(Code, Indirect));
+  llvm::cantFail(CPU->write(Code + 16, Flags));
+  llvm::cantFail(CPU->writeInteger(Code + 128, 0x90, 1));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {Code + 16, 0}));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64SP, {Data + 0x800, 0}));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code + 128, 1}}));
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 128);
+  EXPECT_EQ(reg(*S, CPURegister::X64DX) & 0x100, 0u);
+  EXPECT_EQ(reg(*S, CPURegister::X64FLAGS) & 0x100, 0u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, ManyControlFlowFrontiersPreservePushedFlags) {
+  // Five untaken conditional branches lead to independent indirect branches.
+  // A bounded execution-stop plan must retain PUSHFQ's original guest flags.
+  constexpr uint8_t Bytes[] = {0x39, 0xc9, 0x9c, 0x5a, 0x75, 0x3a, 0x75, 0x40,
+                               0x75, 0x46, 0x75, 0x4c, 0x75, 0x52, 0xeb, 0x70};
+  constexpr uint8_t Indirect[] = {0xff, 0xe0};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  for (uint64_t Offset : {64, 72, 80, 88, 96})
+    llvm::cantFail(CPU->write(Code + Offset, Indirect));
+  llvm::cantFail(CPU->writeInteger(Code + 128, 0x90, 1));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {Code + 128, 0}));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64SP, {Data + 0x800, 0}));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code + 128, 1}}));
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 128);
+  EXPECT_EQ(reg(*S, CPURegister::X64DX) & 0x100, 0u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, ResumedPushFlagsWritesOnlyTheGuestFlags) {
+  constexpr uint8_t Bytes[] = {0x9c, 0x5a, 0x0f, 0x05};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64SP, {Data + 0x800, 0}));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code, 1}}));
+  llvm::cantFail(S->watchMemoryWrites({{Data + 0x7f8, 8}}));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::ExecutionWatch);
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 1);
+  EXPECT_EQ(reg(*S, CPURegister::X64SP), Data + 0x7f8);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data + 0x7f8, 8)), 0x202u);
+  llvm::cantFail(S->watchMemoryWrites({}));
+  const auto Exit = llvm::cantFail(S->run(Code + 1, 1));
+  ASSERT_TRUE(Exit.CPU);
+  EXPECT_EQ(Exit.CPU->Kind, ExecutionExitKind::ServiceRequest);
+  EXPECT_EQ(reg(*S, CPURegister::X64DX), 0x202u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, ResumedPopFlagsPreservesTheNextGuestDebugTrap) {
+  constexpr uint8_t Bytes[] = {0x9d, 0x90, 0x48, 0xff, 0xc0};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeInteger(Data + 0x800, 0x302, 8));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64SP, {Data + 0x800, 0}));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code, 2}}));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::ExecutionWatch);
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 1);
+  EXPECT_EQ(reg(*S, CPURegister::X64SP), Data + 0x808);
+  EXPECT_EQ(reg(*S, CPURegister::X64FLAGS) & 0x100, 0x100u);
+  const auto Exit = llvm::cantFail(S->run(Code + 1, 1));
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap);
+  ASSERT_TRUE(Exit.CPU->Fault);
+  EXPECT_EQ(Exit.CPU->Fault->Interrupt, 1u);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 2);
+  EXPECT_EQ(reg(*S, CPURegister::X64AX), 0u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
 TEST_P(DirectX64, WriteInAResumedFetchWatchIsCommittedExactlyOnce) {
   constexpr uint8_t Bytes[] = {0x48, 0xff, 0x01, 0x0f, 0x05};
   llvm::cantFail(CPU->write(Code, Bytes));

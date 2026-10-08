@@ -1189,6 +1189,8 @@ UIButton の `contentEdgeInsets`、`imageEdgeInsets`、`titleEdgeInsets` の get
 
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 
+`WriteProcessMemory` は、現在のプロセスへの最大 4 KiB の書き込みについて、x64/ARM64 の実測に基づくコミット済みページの動作に従います。各領域の保護属性、コピー済みの先頭部分、バイト数、LastError を保持し、`ERROR_NOACCESS`、`ERROR_PARTIAL_COPY`、RX 領域の先頭部分を書き込んだ後の成功も再現します。`WindowsMemoryWriteTests.cpp` は全 25 通りの保護属性の組み合わせを検査し、`check_windows_memory_write.py` は同じ独自の実行ファイルをネイティブ Windows CI で検証します。未コミットの書き込み先は明示的に未対応です。
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 Windows プロセスの時刻ポリシーは `os/windows/process/` の `WindowsProcessTime.cpp` が管理します。`std::chrono` でホストの実時間と単調カウンターを分離し、`WindowsProcess.def` でゲストの時間単位と有限の待機上限を定義します。CPU バックエンドに Windows の時刻ポリシーは置きません。
@@ -1196,6 +1198,10 @@ Windows プロセスの時刻ポリシーは `os/windows/process/` の `WindowsP
 `lib/unpack` は 4 層でパックされたイメージを復元します。`core` は実行の調整と形式の登録を担当します。`format/pe` はコンテナを検証し、観測したメモリ、インポート、メタデータを再構築します。`PETLS.cpp` はローダーの割り当てと観測済みコールバックに基づき置換 TLS レコードを検証します。プロテクター登録や静的なスタブ署名で入口を選択しません。`dynamic` は `observeProcess` を通じてゲストプロセスを観測します。`Observation.def` は各コンテナと命令セットをプロセスプロファイルに対応付け、各命令セットのスタックポインタと命令ウィンドウを与えます。新しい対象は表の 1 行とモジュールのディレクトリ 1 つであり、行のない入力は名前を挙げて拒否されます。`ExecutionSession` が実行ウォッチを所有します。`ProcessObserver` は停止したプロセスを読み取り、次の停止位置を選びますが、ゲストの状態を変えることはできません。エミュレーション層が知っているのは `defer_unmodeled` だけです。これは未モデルのインポートを、実行された時点で停止する不透明なエントリに束縛します。[アンパック](unpack.md)を参照してください。 遅延ロードでは、先行する初期化処理がコードを生成するゼロ埋めメモリを、実行可能なコールバックや入口の対象にできます。コールバック配列と TLS 割り当てメタデータには検証済みのファイル内容が必要で、通常の厳格ロードはファイル裏付け検査を維持します。OS モデルは呼び出しの帰属を示し、呼び出しの準備時や中断した呼び出し元の復元時に観察器へ通知します。これらの境界で転送監視を再設定し、コールバックと生成された入口が同じページにある場合も扱います。
 
 `MemoryProjection` が物理 RAM 書き込みの無効化を、`ExecutionSession` が停止と継続を所有します。x64 ページテーブル構築は direct 実行に一時的な書き込み保護を適用し、イメージや保護製品の方針を持ちません。Windows プロセス監視は再開前にサービス中の書き込みを再検査します。`dynamic/ProcessTransfer` だけが実際にデコードした命令バイトから世代を分類し、世代が混在するページの観測を維持します。
+
+`arch/x86_64/X64Watch.cpp` は制御フロー計画とフラグに影響される命令の再開を担当し、`X64PageTables.cpp` と `X64WatchTables.cpp` は投影の構築と監視権限の更新を担当します。転送層は実行停止点の設定と実際の CPU 状態の取得を行います。 転送観測は、デコードした全バイトが一致する場合に限り、観測済みの命令開始位置で世代の証拠を再利用します。オペランドやページ境界をまたぐ書き込みで監視を再設定し、古いコードへの復帰では前の実行証拠を破棄します。
+
+実行監視点の引き継ぎでは、直前の書き込み監視範囲のメモリーが変更されていないと保証できる場合にのみ `ProcessView::watchedMemoryUnchanged()` を公開します。OS サービス、例外、呼び出しの継続では保守的にこの保証を撤回します。転送オブザーバーは変更のない引き継ぎで検証済みスナップショットを再利用しますが、初めて訪れたページではページをまたぐ可能性のある命令フェッチ末尾を更新します。WHP は確認済みの単一ステップ間で取得したスティッキーなデバッグ状態を保持し、自由実行前にリセットします。これにより私有停止点の認証を維持しつつ、検査済み命令ごとの冗長なレジスタ設定を避けます。
 
 `arch/X64Imports.cpp` が x64 インポート命令のデコードと出力を担当します。`dynamic/ProcessImports.cpp` は読み取り専用のプロセス観測で純粋なエクスポート呼び出しとアドレス読み込み結果を証明し、PE 出力側は命令規則を重複させずに証拠を使います。
 

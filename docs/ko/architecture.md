@@ -1166,6 +1166,8 @@ UIButton의 `contentEdgeInsets`, `imageEdgeInsets`, `titleEdgeInsets` getter/set
 
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 
+`WriteProcessMemory`는 현재 프로세스에 최대 4 KiB를 쓸 때 x64/ARM64에서 실측한 커밋된 페이지의 동작을 따릅니다. 각 영역의 보호 속성, 복사된 앞부분, 바이트 수와 LastError를 보존하며 `ERROR_NOACCESS`, `ERROR_PARTIAL_COPY`, RX 앞부분을 쓴 뒤 성공을 반환하는 동작도 재현합니다. `WindowsMemoryWriteTests.cpp`는 보호 속성의 25가지 조합을 모두 검사하고, `check_windows_memory_write.py`는 같은 자체 제작 실행 파일을 네이티브 Windows CI에서 검증합니다. 커밋되지 않은 대상 영역은 명시적으로 지원하지 않습니다.
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 Windows 프로세스 시간 정책은 `os/windows/process/`의 `WindowsProcessTime.cpp`가 담당합니다. `std::chrono`는 호스트 벽시계와 단조 카운터를 구분하고 `WindowsProcess.def`는 게스트 시간 단위와 유한 대기 한도를 정의합니다. CPU 백엔드에는 Windows 시간 정책을 두지 않습니다.
@@ -1173,6 +1175,10 @@ Windows 프로세스 시간 정책은 `os/windows/process/`의 `WindowsProcessTi
 `lib/unpack`는 네 계층으로 압축 이미지를 복구합니다. `core`는 조정과 형식 레지스트리를 관리합니다. `format/pe`는 컨테이너를 검증하고 관찰한 메모리, 가져오기와 메타데이터를 재구성합니다. `PETLS.cpp`는 로더 할당과 관찰한 콜백을 기준으로 대체 TLS 레코드를 검증합니다. 보호기 레지스트리나 정적 스텁 서명으로 진입점을 선택하지 않습니다. `dynamic`은 `observeProcess`를 통해 게스트 프로세스를 관찰합니다. `Observation.def`는 각 컨테이너와 명령어 집합을 프로세스 프로필에 대응시키고, 각 명령어 집합의 스택 포인터와 명령 창을 제공합니다. 새 대상은 표의 한 행과 모듈 디렉터리 하나이며, 행이 없는 입력은 이름과 함께 거부됩니다. `ExecutionSession`이 실행 감시를 소유합니다. `ProcessObserver`는 멈춘 프로세스를 읽고 다음 정지 지점을 고르지만 게스트 상태를 바꿀 수는 없습니다. 에뮬레이션 계층이 아는 것은 `defer_unmodeled`뿐입니다. 이는 모델링되지 않은 임포트를, 실행되는 순간 멈추는 불투명 진입점에 바인딩합니다. [언패킹](unpack.md)을 참고하십시오. 지연 로딩은 앞선 초기화 함수가 코드를 생성할 0으로 채운 메모리를 실행 가능한 콜백이나 진입 대상으로 허용합니다. 콜백 배열과 TLS 할당 메타데이터는 검증된 파일 내용이 필요하며 일반 엄격 로딩은 파일 뒷받침 검사를 유지합니다. OS 모델은 호출 소속을 제공하고 호출 준비 또는 일시 중단된 호출자 복원 시 관찰자에게 알립니다. 이 경계에서 전이 감시를 다시 설정하여 콜백과 생성된 진입점이 같은 페이지인 경우도 처리합니다.
 
 `MemoryProjection`은 물리 RAM 쓰기 무효화를, `ExecutionSession`은 정지와 재개를 소유합니다. x64 페이지 테이블 생성기는 direct 실행에 임시 쓰기 보호를 적용하며 이미지나 보호 제품 정책은 포함하지 않습니다. Windows 프로세스 관찰은 재개 전에 서비스 중 쓰기를 다시 확인합니다. `dynamic/ProcessTransfer`만 실제 디코딩한 명령 바이트로 세대를 분류하고 세대가 섞인 페이지를 계속 관찰합니다.
+
+`arch/x86_64/X64Watch.cpp`는 제어 흐름 계획과 플래그에 민감한 명령의 재개를 담당합니다. `X64PageTables.cpp`와 `X64WatchTables.cpp`는 투영 구성과 감시 권한 갱신을 담당합니다. 전송 계층은 실행 중단점을 설치하고 실제 CPU 상태를 캡처합니다. 전이 관찰자는 디코딩한 모든 바이트가 동일할 때만 관찰된 명령 시작점의 세대 증거를 재사용합니다. 피연산자 쓰기와 페이지 경계를 넘는 쓰기는 감시를 다시 설정하며, 이전 코드로 돌아가면 기존 실행 증거를 폐기합니다.
+
+실행 감시점 인계는 직전 쓰기 감시 범위의 메모리가 변경되지 않았음을 보장할 때만 `ProcessView::watchedMemoryUnchanged()`를 제공합니다. OS 서비스와 예외 또는 호출 재개는 이 보장을 보수적으로 철회합니다. 전이 관찰자는 변경 없는 인계에서 검증된 스냅샷을 재사용하지만, 처음 방문한 페이지에서는 페이지 경계를 넘을 수 있는 명령어 인출 꼬리를 갱신합니다. WHP는 확인된 단일 단계 사이에 캡처한 유지형 디버그 상태를 보존하고 자유 실행 전에 초기화합니다. 따라서 비공개 중단점 인증을 유지하면서 검사 명령어마다 불필요하게 레지스터를 다시 설정하지 않습니다.
 
 `arch/X64Imports.cpp`는 x64 가져오기 명령의 디코딩과 출력을 담당합니다. `dynamic/ProcessImports.cpp`는 읽기 전용 프로세스 관찰로 순수 내보내기 호출과 주소 로드 결과를 입증하며 PE 작성기는 명령 규칙을 중복하지 않고 이 증거를 사용합니다.
 

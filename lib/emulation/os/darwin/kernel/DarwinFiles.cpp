@@ -30,7 +30,7 @@ bool canonicalPath(llvm::StringRef Path, bool AllowRoot = false) {
     return !Part.empty() && Part != "." && Part != "..";
   });
 }
-enum class PathKind { Missing, File, Directory };
+enum class PathKind { Missing, File, Directory, SymbolicLink };
 std::string parentPath(const std::string &Path) {
   return Path.substr(0, std::max<size_t>(1, Path.rfind('/')));
 }
@@ -53,15 +53,20 @@ std::string initialMountDomain(const DarwinFileOptions &Options,
 PathKind pathKind(const DarwinFileOptions &Options, const std::string &Path) {
   if (Options.Files.contains(Path))
     return PathKind::File;
+  if (Options.SymbolicLinks.contains(Path))
+    return PathKind::SymbolicLink;
   if (Path == "/" || Options.Directories.contains(Path))
     return PathKind::Directory;
   const auto Prefix = Path + '/';
   auto File = Options.Files.lower_bound(Prefix);
   auto Directory = Options.Directories.lower_bound(Prefix);
+  auto Link = Options.SymbolicLinks.lower_bound(Prefix);
   if ((File != Options.Files.end() &&
        llvm::StringRef(File->first).starts_with(Prefix)) ||
       (Directory != Options.Directories.end() &&
-       llvm::StringRef(*Directory).starts_with(Prefix)))
+       llvm::StringRef(*Directory).starts_with(Prefix)) ||
+      (Link != Options.SymbolicLinks.end() &&
+       llvm::StringRef(Link->first).starts_with(Prefix)))
     return PathKind::Directory;
   return PathKind::Missing;
 }
@@ -90,10 +95,18 @@ llvm::Expected<FileFootprint>
 fileOptionsFootprint(const DarwinFileOptions &Options) {
   if (Options.InitialUmask && *Options.InitialUmask > 07777)
     return failure(diagnostic::FileUmaskOption);
-  uint64_t Entries = Options.Files.size() + Options.Directories.size();
+  uint64_t Entries = Options.Files.size() + Options.Directories.size() +
+                     Options.SymbolicLinks.size();
   if (Options.DescriptorLimit < 3 ||
       Options.DescriptorLimit > limits::Descriptors || Entries > limits::Files)
     return failure(diagnostic::FileOptionsLimit);
+  if (!Options.SymbolicLinks.empty() &&
+      (!Options.MutableDirectories.empty() ||
+       !Options.RemovableDirectories.empty() ||
+       !Options.MovableDirectories.empty() ||
+       !Options.ExchangeableDirectories.empty() ||
+       !Options.SwapRenameDirectories.empty() || Options.CreationPolicy))
+    return failure(diagnostic::SymbolicLinkNamespace);
   uint64_t Total = Options.StandardInput ? Options.StandardInput->size() : 0;
   if (Total > limits::Bytes)
     return failure(diagnostic::FileOptionsLimit);
@@ -106,11 +119,13 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     if (llvm::any_of(Parts,
                      [](llvm::StringRef P) { return P.size() > limits::Name; }))
       return failure(diagnostic::FileOptionPath);
-    if (Directory && Options.Files.contains(Path))
+    if (Directory &&
+        (Options.Files.contains(Path) || Options.SymbolicLinks.contains(Path)))
       return failure(diagnostic::FileOptionPath);
     for (size_t I = Path.find('/', 1); I != std::string::npos;
          I = Path.find('/', I + 1))
-      if (Options.Files.contains(Path.substr(0, I)))
+      if (Options.Files.contains(Path.substr(0, I)) ||
+          Options.SymbolicLinks.contains(Path.substr(0, I)))
         return failure(diagnostic::FileOptionPath);
     const uint64_t Cost = Path.size() + 1;
     if (Cost > limits::Bytes - Total || Bytes > limits::Bytes - Total - Cost)
@@ -118,9 +133,21 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     Total += Cost + Bytes;
     return llvm::Error::success();
   };
-  for (const auto &[Path, Bytes] : Options.Files)
+  for (const auto &[Path, Bytes] : Options.Files) {
+    if (Options.SymbolicLinks.contains(Path))
+      return failure(diagnostic::FileOptionPath);
     if (auto E = PathInput(Path, false, Bytes.size()))
       return E;
+  }
+  for (const auto &[Path, Target] : Options.SymbolicLinks) {
+    if (Options.Files.contains(Path) || Options.Directories.contains(Path))
+      return failure(diagnostic::FileOptionPath);
+    if (Target.empty() || Target.size() >= limits::Path ||
+        llvm::is_contained(Target, uint8_t(0)))
+      return failure(diagnostic::SymbolicLinkTarget);
+    if (auto E = PathInput(Path, false, Target.size()))
+      return E;
+  }
   for (const auto &Path : Options.Directories)
     if (auto E = PathInput(Path, true))
       return E;
@@ -134,10 +161,13 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
       if (auto E = PathInput(Path, true))
         return E;
     }
-    const auto Mode =
-        Kind == PathKind::File ? FileRegularMode : FileDirectoryMode;
+    const auto Mode = Kind == PathKind::File           ? FileRegularMode
+                      : Kind == PathKind::SymbolicLink ? FileSymbolicLinkMode
+                                                       : FileDirectoryMode;
     if ((M.Mode & ~FilePermissionMask) != Mode || M.Size > INT64_MAX ||
         (Kind == PathKind::File && M.Size != Options.Files.at(Path).size()) ||
+        (Kind == PathKind::SymbolicLink &&
+         M.Size != Options.SymbolicLinks.at(Path).size()) ||
         M.Blocks > INT64_MAX || M.BlockSize > INT32_MAX)
       return failure(diagnostic::FileMetadataOption);
     for (auto T : {M.AccessTime, M.ModificationTime, M.ChangeTime, M.BirthTime})
@@ -174,6 +204,8 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
       Child(File);
     for (const auto &Directory : Options.Directories)
       Child(Directory);
+    for (const auto &[Link, Target] : Options.SymbolicLinks)
+      Child(Link);
     std::set<uint64_t> Cookies;
     for (const auto &Entry : Contents.Entries) {
       if (Entry.Name.empty() || Entry.Name.size() > limits::Name ||
@@ -188,8 +220,11 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
       if (Entry.Name == "..")
         Target = Path.substr(0, std::max<size_t>(1, Path.rfind('/')));
       const auto Kind = pathKind(Options, Target);
-      const uint8_t Type = Kind == PathKind::File ? 8 : 4;
-      if (Kind == PathKind::Missing || (Entry.Type && Entry.Type != Type))
+      const uint8_t Type = Kind == PathKind::File           ? 8
+                           : Kind == PathKind::SymbolicLink ? 10
+                                                            : 4;
+      if (Kind == PathKind::Missing || (Entry.Type && Entry.Type != Type) ||
+          (Kind == PathKind::SymbolicLink && Entry.Type != 10))
         return failure(diagnostic::DirectoryContentsOption);
       auto [Known, Inserted] = Inodes.emplace(Target, Entry.Inode);
       if (!Inserted && Known->second != Entry.Inode)
@@ -415,6 +450,8 @@ void DarwinFiles::initializeNamespace() {
       Node->Policy = &Policy->second;
     Nodes.emplace(Path, std::move(Node));
   }
+  for (const auto &[Path, Target] : Options->SymbolicLinks)
+    initialDirectoryNode(parentPath(Path));
   NamespaceReady = true;
   if (Options->WorkingDirectory)
     CurrentDirectory = Directories.at(*Options->WorkingDirectory);
@@ -534,26 +571,80 @@ llvm::Expected<DarwinFiles::Pathname> DarwinFiles::readPath(uint64_t Address) {
   return uint32_t(NameTooLong);
 }
 
+DarwinFiles::DirectoryLookup
+DarwinFiles::directoryDescriptor(uint32_t FD) const {
+  const auto I = Descriptors.find(FD);
+  if (I == Descriptors.end())
+    return uint32_t(BadDescriptor);
+  if (I->second.Open->Type == Kind::File)
+    return uint32_t(NotDirectory);
+  if (I->second.Open->Type != Kind::Directory)
+    return diagnostic::FileDirectoryKind;
+  return I->second.Open->Directory;
+}
+
+llvm::Expected<std::optional<DarwinFiles::Lookup>>
+DarwinFiles::directoryPrefix(uint64_t Address, uint32_t DirectoryFD) {
+  // nameiat/open1at copy exactly one byte before looking up a relative dirfd.
+  // Keep this separate from the full import: open validates flags/capacity
+  // between these phases, while other *at services enter nameiat directly.
+  if (DirectoryFD != AtCurrentDirectory) {
+    if (Address >= UserLimit)
+      return std::optional<Lookup>(uint32_t(BadAddress));
+    auto Access = Memory.canAccess(Address, 1, Read | UserAccessible);
+    if (!Access)
+      return Access.takeError();
+    if (!*Access)
+      return std::optional<Lookup>(uint32_t(BadAddress));
+    auto Byte = Memory.readInteger(Address, 1);
+    if (!Byte)
+      return Byte.takeError();
+    if (*Byte != '/') {
+      auto Directory = directoryDescriptor(DirectoryFD);
+      if (auto *Error = std::get_if<uint32_t>(&Directory))
+        return std::optional<Lookup>(*Error);
+      if (auto *Reason = std::get_if<const char *>(&Directory))
+        return std::optional<Lookup>(*Reason);
+    }
+  }
+  return std::optional<Lookup>();
+}
+
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
                   uint32_t Mode, ProcessResult &Result) {
   if (!Options)
     return unsupported(Result, diagnostic::FileInputs);
+  auto Prefix = directoryPrefix(Address, DirectoryFD);
+  if (!Prefix)
+    return Prefix.takeError();
+  if (*Prefix) {
+    if (auto *Error = std::get_if<uint32_t>(&**Prefix))
+      return returned(*Error, true);
+    return unsupported(Result, std::get<const char *>(**Prefix));
+  }
   if ((Flags & OpenAccessMask) == OpenAccessMask)
     return returned(InvalidArgument, true);
   if (Flags & ~uint32_t(OpenCloseOnExec | OpenDirectory | OpenAccessMask |
-                        OpenAppend | OpenTruncate | OpenCreate | OpenExclusive))
+                        OpenAppend | OpenTruncate | OpenCreate | OpenExclusive |
+                        OpenNoFollow | OpenNoFollowAny))
     return unsupported(Result, diagnostic::FileOpenFlags);
   // XNU reserves the descriptor before resolving the pathname. A failed
   // open does not retain that reservation.
   const uint32_t FD = freeDescriptor();
   if (FD == limit())
     return returned(TooManyFiles, true);
+  if ((Flags & OpenNoFollow) && (Flags & OpenNoFollowAny))
+    return returned(InvalidArgument, true);
   if ((Flags & OpenCreate) && (Flags & OpenDirectory))
     return returned(InvalidArgument, true);
+  const bool ExclusiveCreate = (Flags & OpenCreate) && (Flags & OpenExclusive);
   auto Resolved = resolvePath(Address, DirectoryFD,
                               Flags & OpenCreate ? LookupMode::CreateFile
-                                                 : LookupMode::Existing);
+                                                 : LookupMode::Existing,
+                              {!(Flags & OpenNoFollow) && !ExclusiveCreate,
+                               bool(Flags & OpenNoFollowAny)},
+                              false);
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
@@ -564,6 +655,10 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
   const bool Created = File.Type == Kind::Missing;
   if (!Created && (Flags & OpenCreate) && (Flags & OpenExclusive))
     return returned(FileExists, true);
+  if ((Flags & OpenDirectory) && File.Type == Kind::SymbolicLink)
+    return returned(NotDirectory, true);
+  if (File.Type == Kind::SymbolicLink)
+    return returned(TooManyLinks, true);
   if (Created) {
     auto Made = create(File, Mode, Result);
     if (!Made || !*Made || (**Made).Error)
@@ -590,28 +685,34 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
 
 llvm::Expected<DarwinFiles::Lookup>
 DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
-                         LookupMode Mode) {
+                         LookupMode Mode, LinkPolicy Links,
+                         bool CheckDirectoryPrefix) {
   if (!Options)
     return diagnostic::FileInputs;
   initializeNamespace();
+  if (CheckDirectoryPrefix) {
+    auto Prefix = directoryPrefix(Address, DirectoryFD);
+    if (!Prefix)
+      return Prefix.takeError();
+    if (*Prefix)
+      return std::move(**Prefix);
+  }
   auto Imported = readPath(Address);
   if (!Imported)
     return Imported.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Imported))
     return *Error;
-  const auto &Path = std::get<std::string>(*Imported);
+  std::string Path = std::move(std::get<std::string>(*Imported));
   const bool Absolute = llvm::StringRef(Path).starts_with('/');
   auto Directory = directoryNode("/");
   if (!Absolute) {
     if (DirectoryFD != AtCurrentDirectory) {
-      auto FD = Descriptors.find(DirectoryFD);
-      if (FD == Descriptors.end())
-        return uint32_t(BadDescriptor);
-      if (FD->second.Open->Type == Kind::File)
-        return uint32_t(NotDirectory);
-      if (FD->second.Open->Type != Kind::Directory)
-        return diagnostic::FileDirectoryKind;
-      Directory = FD->second.Open->Directory;
+      auto Found = directoryDescriptor(DirectoryFD);
+      if (auto *Error = std::get_if<uint32_t>(&Found))
+        return *Error;
+      if (auto *Reason = std::get_if<const char *>(&Found))
+        return *Reason;
+      Directory = std::get<std::shared_ptr<DirectoryNode>>(std::move(Found));
     } else if (!Path.empty()) {
       if (!CurrentDirectory)
         return diagnostic::FileWorkingDirectory;
@@ -620,100 +721,141 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
   }
   if (Path.empty())
     return uint32_t(NoEntry);
-  const auto Trimmed = llvm::StringRef(Path).rtrim('/');
-  const auto Slash = Trimmed.rfind('/');
-  const auto Leaf =
-      Slash == llvm::StringRef::npos ? Trimmed : Trimmed.substr(Slash + 1);
-  const Terminal FinalComponent = Leaf == "."    ? Terminal::Dot
-                                  : Leaf == ".." ? Terminal::DotDot
-                                                 : Terminal::Ordinary;
-  llvm::SmallVector<llvm::StringRef> Parts;
-  llvm::StringRef(Path).split(Parts, '/');
-  std::string Prefix = Directory->Path;
-  auto Type = PathKind::Directory;
-  bool FinalParentUnlinked = false;
-  // Walk objects before reducing dots. An unlinked directory keeps its own
-  // identity and parent; its last path must never resolve into a reused name.
-  for (size_t Index = Absolute; Index < Parts.size(); ++Index) {
-    const auto Part = Parts[Index];
-    if (Type != PathKind::Directory)
-      return uint32_t(NotDirectory);
-    if (Part.size() > limits::Name)
-      return uint32_t(NameTooLong);
-    if (Part.empty())
-      continue;
-    // RENAME rejects its terminal dot before looking up that component.
-    // Earlier missing/file/removed ancestors still take precedence.
-    if ((Mode == LookupMode::RenameTarget ||
-         Mode == LookupMode::RenameDirectoryTarget) &&
-        (Part == "." || Part == "..") &&
-        llvm::all_of(
-            llvm::ArrayRef<llvm::StringRef>(Parts).drop_front(Index + 1),
-            [](llvm::StringRef Part) { return Part.empty(); }))
-      return uint32_t(InvalidArgument);
-    if (Part == ".")
-      continue;
-    if (Part == "..") {
-      FinalParentUnlinked = !Directory->Linked;
-      if (Directory->Parent)
-        Directory = Directory->Parent;
-      // LOOKUP can follow the retained parent vnode. Namespace operations
-      // cannot traverse a removed parent, even to a later dot or ancestor.
-      if (Mode != LookupMode::Existing && !Directory->Linked)
-        return uint32_t(NoEntry);
-      Prefix = Directory->Path;
-      continue;
-    }
-    if (!Directory->Linked)
-      return uint32_t(NoEntry);
-    Prefix = Directory->Path;
-    if (Prefix != "/")
-      Prefix += '/';
-    Prefix.append(Part.data(), Part.size());
-    auto ChildDirectory = directoryNode(Prefix);
-    Type = Nodes.contains(Prefix) ? PathKind::File
-           : ChildDirectory       ? PathKind::Directory
-                                  : PathKind::Missing;
-    if (Type == PathKind::Missing) {
-      const bool CreatesFile =
-          Mode == LookupMode::CreateFile || Mode == LookupMode::RenameTarget;
-      const bool CreatesDirectory = Mode == LookupMode::CreateDirectory ||
-                                    Mode == LookupMode::RenameDirectoryTarget;
-      const bool Final = Index + 1 == Parts.size();
-      const bool DirectoryTail =
-          CreatesDirectory &&
+  unsigned Expansions = 0;
+  while (true) {
+    const bool RestartAbsolute = llvm::StringRef(Path).starts_with('/');
+    const auto Trimmed = llvm::StringRef(Path).rtrim('/');
+    const auto Slash = Trimmed.rfind('/');
+    const auto Leaf =
+        Slash == llvm::StringRef::npos ? Trimmed : Trimmed.substr(Slash + 1);
+    const Terminal FinalComponent = Leaf == "."    ? Terminal::Dot
+                                    : Leaf == ".." ? Terminal::DotDot
+                                                   : Terminal::Ordinary;
+    llvm::SmallVector<llvm::StringRef> Parts;
+    llvm::StringRef(Path).split(Parts, '/');
+    std::string Prefix = Directory->Path;
+    auto Type = PathKind::Directory;
+    bool FinalParentUnlinked = false;
+    bool Restart = false;
+    // Walk objects before reducing dots. An unlinked directory keeps its own
+    // identity and parent; its last path must never resolve into a reused name.
+    for (size_t Index = RestartAbsolute; Index < Parts.size(); ++Index) {
+      const auto Part = Parts[Index];
+      if (Type != PathKind::Directory)
+        return uint32_t(NotDirectory);
+      if (Part.size() > limits::Name)
+        return uint32_t(NameTooLong);
+      if (Part.empty())
+        continue;
+      // RENAME rejects its terminal dot before looking up that component.
+      // Earlier missing/file/removed ancestors still take precedence.
+      if ((Mode == LookupMode::RenameTarget ||
+           Mode == LookupMode::RenameDirectoryTarget) &&
+          (Part == "." || Part == "..") &&
           llvm::all_of(
               llvm::ArrayRef<llvm::StringRef>(Parts).drop_front(Index + 1),
-              [](llvm::StringRef Part) { return Part.empty(); });
-      if (((CreatesFile || CreatesDirectory) && Final) || DirectoryTail)
-        return Description{Kind::Missing, {}, 0, nullptr, std::move(Prefix)};
-      return uint32_t(NoEntry);
+              [](llvm::StringRef Part) { return Part.empty(); }))
+        return uint32_t(InvalidArgument);
+      if (Part == ".")
+        continue;
+      if (Part == "..") {
+        FinalParentUnlinked = !Directory->Linked;
+        if (Directory->Parent)
+          Directory = Directory->Parent;
+        // LOOKUP can follow the retained parent vnode. Namespace operations
+        // cannot traverse a removed parent, even to a later dot or ancestor.
+        if (Mode != LookupMode::Existing && !Directory->Linked)
+          return uint32_t(NoEntry);
+        Prefix = Directory->Path;
+        continue;
+      }
+      if (!Directory->Linked)
+        return uint32_t(NoEntry);
+      Prefix = Directory->Path;
+      if (Prefix != "/")
+        Prefix += '/';
+      Prefix.append(Part.data(), Part.size());
+      auto ChildDirectory = directoryNode(Prefix);
+      const auto Link = Options->SymbolicLinks.find(Prefix);
+      Type = Nodes.contains(Prefix)                 ? PathKind::File
+             : ChildDirectory                       ? PathKind::Directory
+             : Link != Options->SymbolicLinks.end() ? PathKind::SymbolicLink
+                                                    : PathKind::Missing;
+      if (Type == PathKind::SymbolicLink &&
+          (Links.FollowFinal || Index + 1 < Parts.size())) {
+        if (Links.NoExpansion || Expansions++ >= MaxSymbolicLinks)
+          return uint32_t(TooManyLinks);
+        // Lookup consumes terminal slashes before expanding a link. The new
+        // target may supply its own slashes, but the consumed suffix is only
+        // NUL.
+        auto Suffix = llvm::StringRef(Path).substr(
+            size_t(Part.data() + Part.size() - Path.data()));
+        // namei consumes repeated separators at this component before
+        // charging ni_pathlen. Later suffix components remain unprocessed.
+        while (Suffix.size() > 1 && Suffix[0] == '/' && Suffix[1] == '/')
+          Suffix = Suffix.drop_front();
+        if (Suffix == "/")
+          Suffix = {};
+        const llvm::StringRef Target(
+            reinterpret_cast<const char *>(Link->second.data()),
+            Link->second.size());
+        if (Target.size() + Suffix.size() + 1 > limits::Path)
+          return uint32_t(NameTooLong);
+        Path = (Target + Suffix).str();
+        if (llvm::StringRef(Path).starts_with('/'))
+          Directory = directoryNode("/");
+        Restart = true;
+        break;
+      }
+      if (Type == PathKind::Missing) {
+        const bool CreatesFile =
+            Mode == LookupMode::CreateFile || Mode == LookupMode::RenameTarget;
+        const bool CreatesDirectory = Mode == LookupMode::CreateDirectory ||
+                                      Mode == LookupMode::RenameDirectoryTarget;
+        const bool Final = Index + 1 == Parts.size();
+        const bool DirectoryTail =
+            CreatesDirectory &&
+            llvm::all_of(
+                llvm::ArrayRef<llvm::StringRef>(Parts).drop_front(Index + 1),
+                [](llvm::StringRef Part) { return Part.empty(); });
+        if (((CreatesFile || CreatesDirectory) && Final) || DirectoryTail)
+          return Description{Kind::Missing, {}, 0, nullptr, std::move(Prefix)};
+        return uint32_t(NoEntry);
+      }
+      if (ChildDirectory)
+        Directory = std::move(ChildDirectory);
+      FinalParentUnlinked = false;
     }
-    if (ChildDirectory)
-      Directory = std::move(ChildDirectory);
-    FinalParentUnlinked = false;
+    if (Restart)
+      continue;
+    Description File{Type == PathKind::File           ? Kind::File
+                     : Type == PathKind::SymbolicLink ? Kind::SymbolicLink
+                                                      : Kind::Directory,
+                     {},
+                     0,
+                     Directory->Metadata,
+                     std::move(Prefix)};
+    if (Type == PathKind::File) {
+      File.File = Nodes.at(File.Path);
+      File.Metadata = nullptr;
+    } else if (Type == PathKind::SymbolicLink) {
+      File.Input = Options->SymbolicLinks.at(File.Path);
+      const auto M = Options->Metadata.find(File.Path);
+      File.Metadata = M == Options->Metadata.end() ? nullptr : &M->second;
+    } else {
+      File.Directory = std::move(Directory);
+    }
+    File.FinalComponent = FinalComponent;
+    File.FinalParentUnlinked =
+        FinalComponent == Terminal::DotDot && FinalParentUnlinked;
+    return File;
   }
-  Description File{Type == PathKind::File ? Kind::File : Kind::Directory,
-                   {},
-                   0,
-                   Directory->Metadata,
-                   std::move(Prefix)};
-  if (Type == PathKind::File) {
-    File.File = Nodes.at(File.Path);
-    File.Metadata = nullptr;
-  } else {
-    File.Directory = std::move(Directory);
-  }
-  File.FinalComponent = FinalComponent;
-  File.FinalParentUnlinked =
-      FinalComponent == Terminal::DotDot && FinalParentUnlinked;
-  return File;
 }
 
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::access(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
-                    ProcessResult &Result) {
-  auto Resolved = resolvePath(Path, DirectoryFD);
+                    ProcessResult &Result, LinkPolicy Links) {
+  auto Resolved = resolvePath(Path, DirectoryFD, LookupMode::Existing, Links);
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
@@ -763,8 +905,8 @@ DarwinFiles::status(const Description &File, uint64_t Address,
 
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
-                        ProcessResult &Result) {
-  auto Resolved = resolvePath(Path, DirectoryFD);
+                        ProcessResult &Result, LinkPolicy Links) {
+  auto Resolved = resolvePath(Path, DirectoryFD, LookupMode::Existing, Links);
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
@@ -775,9 +917,39 @@ DarwinFiles::statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
 }
 
 llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::readLink(uint64_t Path, uint64_t Address, uint64_t Size,
+                      uint32_t DirectoryFD, ProcessResult &Result) {
+  // readlink passes a signed low32 count; readlinkat preserves size_t. Both
+  // enter the same internal INT32_MAX check before importing path or dirfd.
+  if (Size > INT32_MAX)
+    return returned(InvalidArgument, true);
+  auto Resolved =
+      resolvePath(Path, DirectoryFD, LookupMode::Existing, {false, false});
+  if (!Resolved)
+    return Resolved.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*Resolved))
+    return returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&*Resolved))
+    return unsupported(Result, *Reason);
+  const auto &Link = std::get<Description>(*Resolved);
+  if (Link.Type != Kind::SymbolicLink)
+    return returned(InvalidArgument, true);
+  if (!Size)
+    return returned(0);
+  const auto Bytes =
+      Link.Input.take_front(std::min<uint64_t>(Size, Link.Input.size()));
+  auto Copied =
+      copyout(Address, Bytes, diagnostic::SymbolicLinkPartialOutput, Result);
+  if (Copied && *Copied && !(**Copied).Error)
+    (**Copied).Value = Bytes.size();
+  return Copied;
+}
+
+llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::makeDirectory(uint64_t Path, uint32_t DirectoryFD,
                            ProcessResult &Result) {
-  auto Resolved = resolvePath(Path, DirectoryFD, LookupMode::CreateDirectory);
+  auto Resolved = resolvePath(Path, DirectoryFD, LookupMode::CreateDirectory,
+                              {false, false});
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
@@ -822,8 +994,9 @@ std::optional<uint32_t> DarwinFiles::rootRemovalError(const Description &File) {
 
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::removeDirectory(uint64_t Path, uint32_t DirectoryFD,
-                             ProcessResult &Result) {
-  auto Resolved = resolvePath(Path, DirectoryFD, LookupMode::DeleteDirectory);
+                             ProcessResult &Result, bool NoExpansion) {
+  auto Resolved = resolvePath(Path, DirectoryFD, LookupMode::DeleteDirectory,
+                              {false, NoExpansion});
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
@@ -864,9 +1037,10 @@ DarwinFiles::removeDirectory(uint64_t Path, uint32_t DirectoryFD,
 }
 
 llvm::Expected<std::optional<ServiceResult>>
-DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD,
-                    ProcessResult &Result) {
-  auto Resolved = resolvePath(Path, DirectoryFD, LookupMode::DeleteFile);
+DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result,
+                    bool NoExpansion) {
+  auto Resolved = resolvePath(Path, DirectoryFD, LookupMode::DeleteFile,
+                              {false, NoExpansion});
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
@@ -878,6 +1052,8 @@ DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD,
     return returned(*Error, true);
   if (File.Type == Kind::Directory)
     return returned(OperationNotPermitted, true);
+  if (File.Type == Kind::SymbolicLink)
+    return unsupported(Result, diagnostic::SymbolicLinkMutation);
   const auto Parent = parentPath(File.Path);
   if (!mutableDirectory(Parent))
     return unsupported(Result, diagnostic::DirectoryNotMutable);
@@ -905,8 +1081,9 @@ void DarwinFiles::updateNamespaceMetadata(Contents &Node, bool Removed) {
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
                     uint64_t TargetPath, uint32_t TargetDirectory,
-                    RenameMode Mode, ProcessResult &Result) {
-  auto From = resolvePath(SourcePath, SourceDirectory, LookupMode::DeleteFile);
+                    RenameMode Mode, ProcessResult &Result, bool NoExpansion) {
+  auto From = resolvePath(SourcePath, SourceDirectory, LookupMode::DeleteFile,
+                          {false, NoExpansion});
   if (!From)
     return From.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*From))
@@ -914,6 +1091,8 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (auto *Reason = std::get_if<const char *>(&*From))
     return unsupported(Result, *Reason);
   auto &Source = std::get<Description>(*From);
+  if (Source.Type == Kind::SymbolicLink)
+    return unsupported(Result, diagnostic::SymbolicLinkMutation);
   if (Source.Type == Kind::Directory &&
       (!Source.Directory->Linked ||
        (!Source.Directory->Created &&
@@ -925,7 +1104,8 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   auto To = resolvePath(TargetPath, TargetDirectory,
                         Source.Type == Kind::Directory
                             ? LookupMode::RenameDirectoryTarget
-                            : LookupMode::RenameTarget);
+                            : LookupMode::RenameTarget,
+                        {false, NoExpansion});
   if (!To)
     return To.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*To))
@@ -933,6 +1113,8 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (auto *Reason = std::get_if<const char *>(&*To))
     return unsupported(Result, *Reason);
   auto &Target = std::get<Description>(*To);
+  if (Target.Type == Kind::SymbolicLink)
+    return unsupported(Result, diagnostic::SymbolicLinkMutation);
   if (Mode == RenameMode::Exclusive && (Target.File || Target.Directory)) {
     // Same-object exclusive rename depends on filesystem case sensitivity.
     // Exact catalogue keys do not supply that missing filesystem property.
@@ -1473,6 +1655,10 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     CurrentUmask = A[0] & 07777;
     return returned(Previous);
   }
+  if (Service == ServiceKind::ReadLink)
+    return readLink(A[0], A[1], uint32_t(A[2]), AtCurrentDirectory, Result);
+  if (Service == ServiceKind::ReadLinkAt)
+    return readLink(A[1], A[2], A[3], uint32_t(A[0]), Result);
   if (Service == ServiceKind::Open)
     return open(A[0], A[1], AtCurrentDirectory, A[2], Result);
   if (Service == ServiceKind::OpenAt)
@@ -1489,7 +1675,9 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     const uint32_t Flags = A[3];
     if (Flags & ~uint32_t(AtEffectiveAccess | AtNoFollow | AtNoFollowAny))
       return returned(InvalidArgument, true);
-    return access(A[1], A[0], A[2], Result);
+    return access(
+        A[1], A[0], A[2], Result,
+        {!(Flags & (AtNoFollow | AtNoFollowAny)), bool(Flags & AtNoFollowAny)});
   }
   if (Service == ServiceKind::Rename)
     return rename(A[0], AtCurrentDirectory, A[1], AtCurrentDirectory,
@@ -1509,7 +1697,9 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
              : Flags & RenameExclusive ? RenameMode::Exclusive
                                        : RenameMode::Replace;
     }
-    return rename(A[1], A[0], A[3], A[2], Mode, Result);
+    return rename(A[1], A[0], A[3], A[2], Mode, Result,
+                  Service == ServiceKind::RenameAtX &&
+                      bool(uint32_t(A[4]) & RenameNoFollowAny));
   }
   if (Service == ServiceKind::Unlink)
     return unlink(A[0], AtCurrentDirectory, Result);
@@ -1521,8 +1711,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     if (Flags & (AtRemoveDatalessDirectory | AtSystemDiscarded))
       return unsupported(Result, diagnostic::UnlinkFlags);
     if (Flags & AtRemoveDirectory)
-      return removeDirectory(A[1], A[0], Result);
-    return unlink(A[1], A[0], Result);
+      return removeDirectory(A[1], A[0], Result, bool(Flags & AtNoFollowAny));
+    return unlink(A[1], A[0], Result, bool(Flags & AtNoFollowAny));
   }
   if (Service == ServiceKind::Truncate || Service == ServiceKind::Ftruncate) {
     if (A[1] > INT64_MAX)
@@ -1542,7 +1732,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     }
   }
   if (Service == ServiceKind::Stat64 || Service == ServiceKind::Lstat64)
-    return statusPath(A[0], A[1], AtCurrentDirectory, Result);
+    return statusPath(A[0], A[1], AtCurrentDirectory, Result,
+                      {Service == ServiceKind::Stat64, false});
   if (Service == ServiceKind::FstatAt64) {
     const uint32_t Flags = A[3];
     if (Flags & ~uint32_t(AtNoFollow | AtNoFollowAny | AtFDOnly | AtRealDevice))
@@ -1550,7 +1741,9 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     if (Flags & AtRealDevice)
       return unsupported(Result, diagnostic::FileStatFlags);
     if (!(Flags & AtFDOnly))
-      return statusPath(A[1], A[2], A[0], Result);
+      return statusPath(A[1], A[2], A[0], Result,
+                        {!(Flags & (AtNoFollow | AtNoFollowAny)),
+                         bool(Flags & AtNoFollowAny)});
     // AT_FDONLY ignores the pathname completely, including invalid pointers.
   }
   if (Service == ServiceKind::Chdir) {

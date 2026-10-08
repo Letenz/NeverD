@@ -43,6 +43,76 @@ void joinReads(GPRReadWidths &Into, const GPRReadWidths &From) {
     Into[I] = std::max(Into[I], From[I]);
 }
 
+/// The byte and word writes in \p Block that the lifter spells as a masked
+/// merge inside one instruction, `t = R & ~low; u = t | x; R = u` (`setbe
+/// r8b` keeps R8[63:8]).  The old R reaches only the bytes the merge keeps,
+/// so the AND is no read of R and the copy writes only R's low bytes, as a
+/// direct byte write does.  \p Writes maps the copy's op index to the bytes
+/// it writes; \p Reads gets the AND's.
+void findMaskedMerges(const LowBlock &Block, std::map<size_t, uint8_t> &Writes,
+                      std::set<size_t> &Reads) {
+  auto Same = [](const NdVar &A, const NdVar &B) {
+    return A.Space == B.Space && A.Offset == B.Offset && A.Size == B.Size;
+  };
+  for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries) {
+    const size_t First = Boundary.FirstOp;
+    const size_t End =
+        std::min<size_t>(First + Boundary.OpCount, Block.Ops.size());
+    for (size_t I = First; I < End; ++I) {
+      const LowOp &And = Block.Ops[I];
+      if (And.Opcode != NdOp::INT_AND || And.NumInputs != 2 ||
+          !And.Output.isTemp() || !And.Inputs[0].isReg() ||
+          !And.Inputs[1].isConst() || And.Inputs[0].Offset % 8 != 0)
+        continue;
+      const NdVar &Reg = And.Inputs[0];
+      const unsigned Width = Reg.Size;
+      if (Width < 2 || Width > 8 || And.Output.Size != Width)
+        continue;
+      const uint64_t All =
+          Width == 8 ? ~uint64_t{0} : (uint64_t{1} << (Width * 8)) - 1;
+      const uint64_t Mask = And.Inputs[1].Offset & All;
+      unsigned Low = 0;
+      while (Low < Width && ((Mask >> (Low * 8)) & 0xFF) == 0)
+        ++Low;
+      if (Low == 0 || Low >= Width ||
+          (Mask | ((uint64_t{1} << (Low * 8)) - 1)) != All)
+        continue;
+      // The first OR of t, and the copy of its result back into R.
+      size_t Or = End, Copy = End;
+      for (size_t J = I + 1; J < End && Or == End; ++J) {
+        const LowOp &Op = Block.Ops[J];
+        if (Op.Opcode == NdOp::INT_OR && Op.NumInputs == 2 &&
+            Op.Output.isTemp() && Op.Output.Size == Width &&
+            (Same(Op.Inputs[0], And.Output) || Same(Op.Inputs[1], And.Output)))
+          Or = J;
+      }
+      for (size_t K = Or + 1; K < End && Copy == End; ++K) {
+        const LowOp &Op = Block.Ops[K];
+        if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+            Same(Op.Inputs[0], Block.Ops[Or].Output) && Same(Op.Output, Reg))
+          Copy = K;
+      }
+      if (Copy == End)
+        continue;
+      // Nothing else in the instruction reads t or u or writes R meanwhile.
+      bool Clean = true;
+      for (size_t J = First; J < End && Clean; ++J) {
+        const LowOp &Op = Block.Ops[J];
+        for (uint8_t In = 0; In < Op.NumInputs; ++In)
+          Clean &= (J == Or || !Same(Op.Inputs[In], And.Output)) &&
+                   (J == Copy || !Same(Op.Inputs[In], Block.Ops[Or].Output));
+        if (J > I && J < Copy && Op.Output.isReg() &&
+            Op.Output.Offset / 8 == Reg.Offset / 8)
+          Clean = false;
+      }
+      if (!Clean)
+        continue;
+      Reads.insert(I);
+      Writes[Copy] = static_cast<uint8_t>(Low);
+    }
+  }
+}
+
 /// A value's relation to the stack pointer at function entry: unrelated, an
 /// entry-relative byte offset in [Lo, Hi], or a stack address whose offset is
 /// not known.
@@ -279,6 +349,10 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
               : Op.Opcode != NdOp::INDIR_BR || Block.Succs.empty();
       if (!LeavesFunction)
         continue;
+      if (Op.Opcode == NdOp::CALL && DirectTarget && !TailCall &&
+          libc::stackProbeEffect(Img, Op.Inputs[0].Offset) ==
+              libc::StackProbeEffect::Probe)
+        continue;
       Unknown |= ArgumentsEscape();
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
           !TailCall) {
@@ -416,6 +490,9 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
     for (int Succ : Block.Succs)
       if (auto It = IndexOfId.find(Succ); It != IndexOfId.end())
         Out.Succs.push_back(It->second);
+    std::map<size_t, uint8_t> MergeWrites;
+    std::set<size_t> MergeReads;
+    findMaskedMerges(Block, MergeWrites, MergeReads);
     auto ControlOf = [&](size_t OpIndex) {
       for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
         if (OpIndex >= Boundary.FirstOp &&
@@ -443,9 +520,14 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
           (hasLowInstructionControlFlag(Flags,
                                         LowInstructionControlFlag::NoReturn) ||
            (TailCall && EntersNoReturnFunction));
+      // A stack probe changes no register its caller can observe.
+      if (Op.Opcode == NdOp::CALL && DirectTarget && !TailCall &&
+          libc::stackProbeEffect(Img, Op.Inputs[0].Offset) ==
+              libc::StackProbeEffect::Probe)
+        continue;
       RegisterStep Step;
       for (uint8_t In = 0; In < Op.NumInputs; ++In)
-        if (Op.Inputs[In].isReg())
+        if (Op.Inputs[In].isReg() && !(In == 0 && MergeReads.count(I)))
           addRead(Img.Arch, Step.Reads, Op.Inputs[In].Offset,
                   Op.Inputs[In].Size);
       // The result of a call that never returns reaches no one.
@@ -457,7 +539,11 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
         // A 32- or 64-bit write defines the whole register; a byte or word
         // write keeps the rest of the old value, which stays live exactly as
         // wide as a later read needs it.
-        if (Op.Output.Size >= 4)
+        if (auto Merge = MergeWrites.find(I); Merge != MergeWrites.end()) {
+          if (auto Family = gprFamilyOf(Img.Arch, Op.Output.Offset))
+            Step.LowWrites[*Family] =
+                std::max(Step.LowWrites[*Family], Merge->second);
+        } else if (Op.Output.Size >= 4)
           Step.Kills |= Bit;
         else if (auto Family = gprFamilyOf(Img.Arch, Op.Output.Offset);
                  Family && Op.Output.Offset % 8 == 0)

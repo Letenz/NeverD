@@ -3238,6 +3238,107 @@ TEST(HighCPointerAddresses, RotateOrPrintsBuiltin) {
       << Source;
 }
 
+TEST(HighCPointerAddresses, PointerParameterIsTheAccessAddress) {
+  // return *(int64_t *)p + *(int64_t *)(p + 8) for `void *p`: the access
+  // takes the pointer itself, offset by bytes; an int pointer offset by
+  // bytes still goes through its integer view.
+  auto Emit = [](TypeRef ParamType) {
+    HighFunc Func;
+    Func.Name = "fields";
+    Func.ReturnType = NdType::makeInt(8);
+    Func.Params = {{"arg0", ParamType}};
+    auto Load = [&](ExprPtr Address) {
+      auto L = std::make_shared<HighExpr>();
+      L->Kind = ExprKind::Load;
+      L->Type = NdType::makeInt(8);
+      L->Operands = {std::move(Address)};
+      return L;
+    };
+    auto Offset = HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, ParamType),
+                                      HighExpr::makeConst(8, 8));
+    Offset->Type = NdType::makeInt(8, false);
+    auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, Load(parameter(0, ParamType)),
+                                   Load(Offset));
+    Sum->Type = NdType::makeInt(8);
+    returnValue(Func, Sum);
+    return emitFunctions({Func});
+  };
+  const std::string Void = Emit(NdType::makePtr());
+  EXPECT_EQ(Void.find("(uintptr_t)arg0"), std::string::npos) << Void;
+  EXPECT_NE(Void.find(" *)arg0"), std::string::npos) << Void;
+  EXPECT_NE(Void.find(" *)(arg0 + 8)"), std::string::npos) << Void;
+  const std::string Int = Emit(NdType::makePtr(NdType::makeInt(4)));
+  EXPECT_NE(Int.find("(uintptr_t)arg0 + 8"), std::string::npos) << Int;
+}
+
+TEST(HighCPointerAddresses, MaskedShiftCountNeedsNoOvershiftGuard) {
+  // `shl rax, cl` shifts by cl & 63, which is below 64 whatever cl holds, so
+  // C needs no guard; an unmasked count keeps it.
+  auto Emit = [](bool Masked) {
+    HighFunc Func;
+    Func.Name = "shift";
+    Func.ReturnType = NdType::makeInt(8, false);
+    Func.Params = {{"arg0", NdType::makeInt(8, false)},
+                   {"arg1", NdType::makeInt(8, false)}};
+    ExprPtr Count = parameter(1, NdType::makeInt(8, false));
+    if (Masked) {
+      Count =
+          HighExpr::makeBinop(NdOp::INT_AND, Count, HighExpr::makeConst(63, 8));
+      Count->Type = NdType::makeInt(8, false);
+    }
+    auto Left = HighExpr::makeBinop(
+        NdOp::INT_LEFT, parameter(0, NdType::makeInt(8, false)), Count);
+    Left->Type = NdType::makeInt(8, false);
+    auto Right = HighExpr::makeBinop(NdOp::INT_RIGHT, Left, Count);
+    Right->Type = NdType::makeInt(8, false);
+    returnValue(Func, Right);
+    return emitFunctions({Func});
+  };
+  const std::string Masked = Emit(true);
+  EXPECT_EQ(Masked.find("< 64 ?"), std::string::npos) << Masked;
+  EXPECT_NE(Masked.find("<< (arg1 & 63)"), std::string::npos) << Masked;
+  const std::string Unmasked = Emit(false);
+  EXPECT_NE(Unmasked.find("< 64 ?"), std::string::npos) << Unmasked;
+}
+
+TEST(HighCPointerAddresses, ShiftOperandOfTheSourceTypeKeepsItsText) {
+  // `t >> 32` and `t << 3` for a uint64_t local t need no conversion of t.
+  HighFunc Func;
+  Func.Name = "halves";
+  Func.ReturnType = NdType::makeInt(8, false);
+  Func.Params = {{"arg0", NdType::makeInt(8, false)}};
+  MedVar Temp;
+  Temp.Kind = MedVar::Temp;
+  Temp.Id = 1;
+  Temp.Size = 8;
+  Temp.TheArch = Arch::X64;
+  HighStmt Copy;
+  Copy.Kind = StmtKind::Assign;
+  Copy.Dst = HighExpr::makeVar(Temp, NdType::makeInt(8, false));
+  auto Twice = HighExpr::makeBinop(NdOp::INT_MULT,
+                                   parameter(0, NdType::makeInt(8, false)),
+                                   HighExpr::makeConst(2, 8));
+  Twice->Type = NdType::makeInt(8, false);
+  Copy.Val = Twice;
+  Func.Body.push_back(std::move(Copy));
+  auto Local = [&] {
+    return HighExpr::makeVar(Temp, NdType::makeInt(8, false));
+  };
+  auto High =
+      HighExpr::makeBinop(NdOp::INT_RIGHT, Local(), HighExpr::makeConst(32, 8));
+  High->Type = NdType::makeInt(8, false);
+  auto Scaled =
+      HighExpr::makeBinop(NdOp::INT_LEFT, Local(), HighExpr::makeConst(3, 8));
+  Scaled->Type = NdType::makeInt(8, false);
+  auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, High, Scaled);
+  Sum->Type = NdType::makeInt(8, false);
+  returnValue(Func, Sum);
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("t1 >> 32"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("t1 << 3"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(uint64_t)t1"), std::string::npos) << Source;
+}
+
 TEST(HighCPointerAddresses, OmitsCopyForwardedTempDeclarations) {
   HighFunc Func;
   Func.Name = "fwd_temp";
@@ -9733,7 +9834,8 @@ TEST(HighCPointerAddresses, FallthroughKeepsRecalledPredCall) {
   Func.Body = {First, Skip, Find, Second, Inner, Ret};
   invertSkipGotos(Func);
   const std::string Source = emitFunctions({Func});
-  const auto FirstAt = Source.find("t8_1 = IsMediaPayload(arg0);");
+  // The first result is only tested, so the test may make the call.
+  const auto FirstAt = Source.find("IsMediaPayload(arg0)");
   const auto FindAt = Source.find("Find(arg0);");
   const auto SecondAt = Source.find("t8_2 = IsMediaPayload(arg0);");
   ASSERT_NE(FirstAt, std::string::npos) << Source;
@@ -33986,7 +34088,15 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   EXPECT_NE((*OuterCtor)[0].find("v0 + 32"), std::string_view::npos) << Source;
   EXPECT_EQ(llvm::StringRef((*OuterCtor)[1]).trim(), "1") << Source;
   expectPortableStore(Source, "uint32_t", "v0 + 44", "0xFFFFFF9C");
-  EXPECT_NE(Source.find("(uint32_t)(__builtin_memcpy(&"), std::string::npos)
+  // The returned 32-bit slot is read unsigned, so it widens by zero.
+  std::smatch Returned;
+  ASSERT_TRUE(std::regex_search(
+      Source, Returned,
+      std::regex(
+          R"(return \(int64_t\)\(__builtin_memcpy\(&(memory_value_\d+))")))
+      << Source;
+  EXPECT_NE(Source.find("uint32_t " + Returned[1].str() + ";"),
+            std::string::npos)
       << Source;
   const auto ReturnedSlot = lastCallArguments(Source, "__builtin_memcpy");
   ASSERT_TRUE(ReturnedSlot.has_value()) << Source;
@@ -42234,7 +42344,7 @@ TEST(HighCPointerAddresses, GuardDispatchPassesOnlyRegistersTheCallerSet) {
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("guard_dispatch_icall"), std::string::npos) << HighC;
   EXPECT_TRUE(std::regex_search(
-      HighC, std::regex(R"(\(\*\(void \*\*\)\(arg0\)\)\)\([^,()]+\))")))
+      HighC, std::regex(R"(\(\*\(void \*\*\)\(arg0\)\)\)\([^,;]+\);)")))
       << HighC;
 }
 
@@ -42273,7 +42383,7 @@ TEST(HighCPointerAddresses, ForwarderToTheGuardDispatchPointerIsADispatcher) {
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("140001020"), std::string::npos) << HighC;
   EXPECT_TRUE(std::regex_search(
-      HighC, std::regex(R"(\(\*\(void \*\*\)\(arg0\)\)\)\([^,()]+\))")))
+      HighC, std::regex(R"(\(\*\(void \*\*\)\(arg0\)\)\)\([^,;]+\);)")))
       << HighC;
 }
 
@@ -42332,7 +42442,7 @@ TEST(HighCPointerAddresses, DocumentedKernelRoutineTakesItsPrototypeArguments) {
   const std::string Caller = highcOnlyFunction(Build(), Entry);
   EXPECT_EQ(Caller.find("arg1"), std::string::npos) << Caller;
   EXPECT_TRUE(std::regex_search(
-      Caller, std::regex(R"(ExReleaseResourceLite\([^,()]+\))")))
+      Caller, std::regex(R"(ExReleaseResourceLite\([^,;]+\);)")))
       << Caller;
   const std::string Definition = highcOnlyFunction(Build(), Routine);
   EXPECT_NE(Definition.find("ExReleaseResourceLite(int64_t arg0)"),
@@ -42465,7 +42575,7 @@ TEST(HighCPointerAddresses, SplitScopeRangesFormOneTry) {
   EXPECT_EQ(HighC.find("__try {", Try + 1), std::string::npos) << HighC;
   const std::string Protected = HighC.substr(Try, Except - Try);
   EXPECT_NE(Protected.find("arg0"), std::string::npos) << HighC;
-  EXPECT_NE(Protected.find("2)"), std::string::npos) << HighC;
+  EXPECT_NE(Protected.find("arg2"), std::string::npos) << HighC;
   EXPECT_NE(
       HighC.substr(Except, HighC.find('}', Except + 1) - Except).find(" = 3;"),
       std::string::npos)
@@ -42495,7 +42605,7 @@ TEST(HighCPointerAddresses, ContextCaptureTakesOnlyItsRecord) {
   Img.Symbols.push_back(RSym);
   const std::string Caller = highcOnlyFunction(std::move(Img), Entry);
   EXPECT_TRUE(
-      std::regex_search(Caller, std::regex(R"(RtlCaptureContext2\([^,()]+\))")))
+      std::regex_search(Caller, std::regex(R"(RtlCaptureContext2\([^,;]+\);)")))
       << Caller;
   EXPECT_EQ(Caller.find("unknown"), std::string::npos) << Caller;
 }
@@ -42619,8 +42729,8 @@ TEST(HighCPointerAddresses, SwapgsLeavesRaxAsItWas) {
   EXPECT_EQ(HighC.find("= __swapgs("), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("= __halt("), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("__swapgs();"), std::string::npos) << HighC;
-  expectPortableStore(HighC, "int64_t", "(uintptr_t)arg1)", "arg0");
-  expectPortableStore(HighC, "int64_t", "(uintptr_t)arg1 + 8", "arg0");
+  expectPortableStore(HighC, "int64_t", "(uintptr_t)(arg1)", "arg0");
+  expectPortableStore(HighC, "int64_t", "(arg1 + 8)", "arg0");
 }
 
 TEST(HighCPointerAddresses, MaskedGlobalAddressIsAnIntegerOperand) {
@@ -42781,7 +42891,7 @@ TEST(HighCPointerAddresses, CalleeSettingAllOnesTakesNoSuchArgument) {
   EXPECT_EQ(HighC.find("arg3"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
   EXPECT_TRUE(
-      std::regex_search(HighC, std::regex(R"(sub_140001030\([^,()]+\))")))
+      std::regex_search(HighC, std::regex(R"(sub_140001030\([^,;]+\);)")))
       << HighC;
 }
 
@@ -42819,7 +42929,7 @@ TEST(HighCPointerAddresses, VariadicCalleeTakesOnlyTheArgumentsPassed) {
   EXPECT_EQ(HighC.find("arg3"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
   EXPECT_TRUE(std::regex_search(
-      HighC, std::regex(R"(sub_140001040\([^,()]+, [^,()]+\))")))
+      HighC, std::regex(R"(sub_140001040\([^,;]+, [^,;]+\);)")))
       << HighC;
 }
 
@@ -42868,7 +42978,7 @@ TEST(HighCPointerAddresses, PrototypeBoundsStackArgumentsOfACall) {
   Img.Symbols.push_back(RSym);
   const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
   EXPECT_TRUE(std::regex_search(
-      HighC, std::regex(R"(ExAcquireFastMutexUnsafe\([^,()]+\))")))
+      HighC, std::regex(R"(ExAcquireFastMutexUnsafe\([^,;]+\);)")))
       << HighC;
 }
 

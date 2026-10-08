@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_X64_MACHINE_VALUE
 NEVERD_X64_MACHINE_VALUE(PageSize, memory::PageSize)
+NEVERD_X64_MACHINE_VALUE(WatchRegionCacheEntries, 64)
 NEVERD_X64_MACHINE_VALUE(PageBits, 12)
 NEVERD_X64_MACHINE_VALUE(TableBits, 9)
 NEVERD_X64_MACHINE_VALUE(TableLevels, 4)
@@ -86,6 +87,7 @@ NEVERD_X64_MACHINE_VALUE(ReservedFlag, 0x2)
 NEVERD_X64_MACHINE_VALUE(AllowedFlags, 0xed7)
 NEVERD_X64_MACHINE_VALUE(DebugVector, 1)
 NEVERD_X64_MACHINE_VALUE(DebugSingleStep, 1ull << 14)
+NEVERD_X64_MACHINE_VALUE(InitialDebugStatus, 0xffff0ff0)
 NEVERD_X64_MACHINE_VALUE(MaxCR8, 0xf)
 NEVERD_X64_MACHINE_VALUE(UserPage, 1ull << 2)
 NEVERD_X64_MACHINE_VALUE(UserPrivilege, 3)

@@ -11,6 +11,12 @@ NEVERD_WHP_X64_CONTROL(Cr4, x64::CR4 | x64::fp::OSXsave)
 NEVERD_WHP_X64_CONTROL(XCr0, x64::fp::FPAndSSE)
 NEVERD_WHP_X64_CONTROL(Efer, x64::EFER)
 NEVERD_WHP_X64_CONTROL(Cr8, State.reg(X64Register::CR8))
+NEVERD_WHP_X64_CONTROL(Dr0, Stops.size() > 0 ? Stops[0] : 0)
+NEVERD_WHP_X64_CONTROL(Dr1, Stops.size() > 1 ? Stops[1] : 0)
+NEVERD_WHP_X64_CONTROL(Dr2, Stops.size() > 2 ? Stops[2] : 0)
+NEVERD_WHP_X64_CONTROL(Dr3, Stops.size() > 3 ? Stops[3] : 0)
+NEVERD_WHP_X64_CONTROL(Dr6, x64::InitialDebugStatus)
+NEVERD_WHP_X64_CONTROL(Dr7, x64::executionStopControl(Stops.size()))
 #endif
 #ifdef NEVERD_WHP_X64_SEGMENT
 NEVERD_WHP_X64_SEGMENT(Cs, true, 0)

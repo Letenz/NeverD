@@ -469,6 +469,25 @@ TEST_P(DarwinProcess, DirectoryMutationsPreserveNamespaceAndOrphanFiles) {
              Event.Error == false;
     })) << Number;
 }
+TEST_P(DarwinProcess,
+       SymbolicLinksPreserveRawTargetsMetadataAndNoFollowPolicies) {
+  Options.DarwinFiles = darwin_test::symbolicLinkOptions();
+  Options.Arguments[2] = "/data";
+  auto Result = run("symbolic-links");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "y");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {58u, 473u, 470u, 466u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Error == false;
+    })) << Number;
+}
+
 TEST_P(DarwinProcess, FileExistenceUsesNativeModeBitsAndPathErrorOrder) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
@@ -488,6 +507,21 @@ TEST_P(DarwinProcess, FileExistenceUsesNativeModeBitsAndPathErrorOrder) {
       return Event.Number == Class + Number && Event.Result == 0 &&
              Event.Error == false;
     })) << Number;
+  for (auto Number : {463u, 464u})
+    for (uint32_t Flags : {0x100u, 0x20000000u})
+      EXPECT_TRUE(llvm::any_of(Result->Services,
+                               [&](const auto &Event) {
+                                 return Event.Number == Class + Number &&
+                                        uint32_t(Event.Arguments[2]) ==
+                                            (Flags | 0x1000000) &&
+                                        Event.Result && *Event.Result >= 3 &&
+                                        Event.Error == false;
+                               }))
+          << Number << ":" << Flags;
+  EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+    return Event.Number == Class + 92 && Event.Arguments[1] == 3 &&
+           Event.Result == 0 && Event.Error == false;
+  }));
 }
 TEST_P(DarwinProcess,
        VectorIOPreservesCopyOrderFaultPrefixesAndAggregateOffsets) {
@@ -1416,6 +1450,15 @@ TEST_P(DarwinProcess, EventAndOutputLimitsStopBeforeServiceEffects) {
   ASSERT_TRUE(bool(Output)) << llvm::toString(Output.takeError());
   EXPECT_EQ(Output->Stop, ProcessStopReason::OutputLimit) << Output->Diagnostic;
   EXPECT_TRUE(Output->StandardOutput.empty());
+  Options.DarwinFiles = darwin_test::symbolicLinkOptions();
+  Options.Arguments[2] = "/data";
+  Options.Limits.Events = 1;
+  auto Links = run("symbolic-links");
+  ASSERT_TRUE(bool(Links)) << llvm::toString(Links.takeError());
+  EXPECT_EQ(Links->Stop, ProcessStopReason::EventLimit) << Links->Diagnostic;
+  EXPECT_EQ(Links->Events, 1u);
+  EXPECT_EQ(Links->Services.size(), 1u);
+  EXPECT_TRUE(Links->StandardOutput.empty());
 }
 TEST_P(DarwinProcess, ExplicitProfileCannotBeReplacedByHostPlatform) {
   auto Wrong = emulateProcess(Path,

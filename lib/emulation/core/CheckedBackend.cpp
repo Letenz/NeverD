@@ -233,18 +233,20 @@ llvm::Error CheckedBackend::setMemoryWriteWatches(
 llvm::Expected<bool> CheckedBackend::decodeInstruction(uint64_t PC) {
   if (PC % InstructionAlignment)
     return false;
-  size_t Count = 0;
-  for (; Count < InstructionBytes.size() && Count <= UINT64_MAX - PC; ++Count) {
-    if (Memory->check(PC + Count, 1, executionPermissions(Execute)))
-      break;
-    if (auto E = Memory->read(
-            PC + Count,
-            llvm::MutableArrayRef<uint8_t>(&InstructionBytes[Count], 1),
-            Execute))
-      return std::move(E);
-  }
+  size_t Count = InstructionBytes.size();
+  if (Count - 1 > UINT64_MAX - PC)
+    Count = UINT64_MAX - PC + 1;
+  const unsigned Permissions = executionPermissions(Execute);
+  if (auto Failure = Memory->firstAccessFailure(PC, Count, Permissions))
+    Count = Failure->Address - PC;
   if (!Count)
     return false;
+  // Fetch one accessible prefix. Decoding a short instruction still succeeds
+  // at a page boundary, without reading a faulting tail or locking per byte.
+  if (auto E = Memory->read(
+          PC, llvm::MutableArrayRef(InstructionBytes).take_front(Count),
+          Permissions))
+    return std::move(E);
   const uint8_t *Input = InstructionBytes.data();
   uint64_t DecodePC = PC;
   return cs_disasm_iter(Decoder, &Input, &Count, &DecodePC, Decoded);

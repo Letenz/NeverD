@@ -54,10 +54,6 @@ uint64_t checkedStackAlign(uint64_t Size) {
   return checkedStackAdd(Size, Mask) & ~Mask;
 }
 
-uint16_t pointerBytes(Arch A) {
-  return (A == Arch::X86 || A == Arch::ARM) ? 4 : 8;
-}
-
 llvm::StringRef debugCallConvAttribute(DebugCallConv CC) {
   switch (CC) {
   case DebugCallConv::Cdecl:
@@ -229,6 +225,10 @@ std::string x86CIntrinsicTargetFeatures(const HighFunc &Func) {
 }
 
 } // anonymous namespace
+
+uint16_t pointerBytes(Arch A) {
+  return (A == Arch::X86 || A == Arch::ARM) ? 4 : 8;
+}
 
 TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
   // A bound source ABI is authoritative even when optional debug information
@@ -655,6 +655,27 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     UsedVars.try_emplace(Name, NdType::makeInt(4, false));
     VisibleAssigned.insert(Name);
   }
+  // A landing pad receives the exception object and its selector from the
+  // unwinder, which no C statement models: the names are declared wherever
+  // the pad's code reads them.
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &Root) {
+      std::vector<const HighExpr *> Work{Root.get()};
+      while (!Work.empty()) {
+        const HighExpr *E = Work.back();
+        Work.pop_back();
+        if (!E)
+          continue;
+        if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
+            (E->Var.Kind == MedVar::EHException ||
+             E->Var.Kind == MedVar::EHSelector))
+          VisibleAssigned.insert(varName(E->Var));
+        for (const ExprPtr &Operand : E->Operands)
+          Work.push_back(Operand.get());
+        Work.push_back(E->IndirectTarget.get());
+      }
+    });
+  });
 
   // Every variable the IR mentions, under its own and its forwarded name, is
   // a candidate for a late declaration if the rendered body names it.
@@ -1254,27 +1275,76 @@ void HighCWriter::invalidateJoinPhiFrameAliases(const HighFunc &Func) {
   }
   if (AmbiguousFrameAliases.empty())
     return;
-  std::function<void(const std::vector<HighStmt> &)> Revive;
-  Revive = [&](const std::vector<HighStmt> &Stmts) {
-    for (const HighStmt &S : Stmts) {
-      if (S.Kind == StmtKind::Assign && S.Dst &&
-          (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi)) {
-        const std::string Name = varName(S.Dst->Var);
-        if (AmbiguousFrameAliases.count(Name)) {
-          Analysis.DeadStmts.erase(&S);
-          Analysis.DeadVars.erase(Name);
-        }
+  // Each variable \p S reads, the address of an assigned memory location
+  // included.
+  auto ForEachRead = [&](const HighStmt &S,
+                         const std::function<void(std::string)> &Fn) {
+    std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+      if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+        if (std::string Name = varName(E.Var); !Name.empty())
+          Fn(std::move(Name));
+        return;
       }
-      Revive(S.Body);
-      Revive(S.ElseBody);
-      for (const auto &C : S.Cases)
-        Revive(C.Body);
-      Revive(S.DefaultBody);
-      for (const auto &ClauseBody : S.EHClauseBodies)
-        Revive(ClauseBody);
-    }
+      E.forEachChildExpr([&](const ExprPtr &Child) {
+        if (Child)
+          Visit(*Child);
+      });
+    };
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (E && (E != S.Dst ||
+                (E->Kind != ExprKind::Var && E->Kind != ExprKind::Phi)))
+        Visit(*E);
+    });
   };
-  Revive(Func.Body);
+  std::map<std::string, std::vector<const HighStmt *>> Definitions;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && S.Dst &&
+        (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi))
+      Definitions[varName(S.Dst->Var)].push_back(&S);
+  });
+  // The alias prints by name, so its definitions print again only when a
+  // printed statement reads it.  Reads continue through the definitions of
+  // each name read, since a hidden definition may print where it is
+  // forwarded.  The definitions of a name nothing printed reads stay hidden.
+  std::set<std::string> Read;
+  std::vector<std::string> Work;
+  auto Reach = [&](std::string Name) {
+    if (Read.insert(Name).second)
+      Work.push_back(std::move(Name));
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (!Analysis.DeadStmts.count(&S))
+      ForEachRead(S, Reach);
+  });
+  while (!Work.empty()) {
+    const std::string Name = std::move(Work.back());
+    Work.pop_back();
+    for (const HighStmt *Def : Definitions[Name])
+      ForEachRead(*Def, Reach);
+  }
+  for (auto It = AmbiguousFrameAliases.begin();
+       It != AmbiguousFrameAliases.end();)
+    It = Read.count(*It) ? std::next(It) : AmbiguousFrameAliases.erase(It);
+  // A revived definition prints, so every definition it reads must print as
+  // well, though an earlier pass may have dropped it as unused.
+  std::set<std::string> Revived;
+  auto Revive = [&](std::string Name) {
+    if (Revived.insert(Name).second)
+      Work.push_back(std::move(Name));
+  };
+  for (const std::string &Name : AmbiguousFrameAliases) {
+    Analysis.DeadVars.erase(Name);
+    Revive(Name);
+  }
+  while (!Work.empty()) {
+    const std::string Name = std::move(Work.back());
+    Work.pop_back();
+    for (const HighStmt *Def : Definitions[Name])
+      if (Analysis.DeadStmts.erase(Def)) {
+        Analysis.DeadVars.erase(Name);
+        ForEachRead(*Def, Revive);
+      }
+  }
 }
 
 void HighCWriter::applyDebugCallSlotTypes(const HighFunc &Func) {
@@ -3024,6 +3094,71 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     return false;
   };
 
+  // A test of the result right after the call moves nothing either:
+  // `v = f(x); if (v < 0)` is `if (f(x) < 0)`.  The condition holds no
+  // other variable, whose own folding could put a read beside the call, and
+  // reaches the result only through operators that print each operand once
+  // and always evaluate it, so the call runs once, where it ran.
+  auto callResultTestedNext = [&](const HighStmt &Def, const Site &Info) {
+    const HighExpr &Call = *Def.Val;
+    if (Call.Kind != ExprKind::Call || Info.Cleanup || Info.Handler ||
+        Def.Dst->Var.Kind == MedVar::Stack ||
+        Call.IntrinsicId != Intrinsic::None || !Call.IntrinsicOutputs.empty() ||
+        Call.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        (Call.CallTarget.empty() && Call.CallAddr == 0) ||
+        isNoreturnCallExpr(Call) || isMsvcCxxThrowCallName(Call.CallTarget) ||
+        knownVoidCall(Call) || isVoidSelfCall(Call))
+      return false;
+    const auto SeqIt = Linear.find(Info.Region);
+    if (SeqIt == Linear.end())
+      return false;
+    const std::vector<const HighStmt *> &Seq = SeqIt->second;
+    const std::string Name = varName(Def.Dst->Var);
+    for (size_t I = Info.Index + 1; I < Seq.size(); ++I) {
+      const HighStmt &Next = *Seq[I];
+      if (isLabelAddress(Next.Addr))
+        return false;
+      if (Analysis.DeadStmts.count(&Next) || stmtHiddenFromC(Next) ||
+          Next.Kind == StmtKind::Block)
+        continue;
+      if ((Next.Kind != StmtKind::If && Next.Kind != StmtKind::IfElse) ||
+          !Next.Cond)
+        return false;
+      unsigned Reads = 0;
+      std::function<bool(const HighExpr &)> Plain = [&](const HighExpr &E) {
+        if (E.Kind == ExprKind::Const)
+          return true;
+        if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+          ++Reads;
+          return varName(E.Var) == Name;
+        }
+        const bool Once =
+            (E.Kind == ExprKind::Cast || E.Kind == ExprKind::BitCast) ||
+            (E.Kind == ExprKind::UnaryOp &&
+             (E.Op == NdOp::INT_ZEXT || E.Op == NdOp::INT_SEXT ||
+              E.Op == NdOp::BOOL_NOT)) ||
+            (E.Kind == ExprKind::BinOp &&
+             (E.Op == NdOp::INT_EQUAL || E.Op == NdOp::INT_NOTEQUAL ||
+              E.Op == NdOp::INT_LESS || E.Op == NdOp::INT_LESSEQUAL ||
+              E.Op == NdOp::INT_SLESS || E.Op == NdOp::INT_SLESSEQUAL ||
+              E.Op == NdOp::INT_AND || E.Op == NdOp::SUBBYTES));
+        if (!Once || E.IntrinsicId != Intrinsic::None ||
+            !E.IntrinsicOutputs.empty() || E.IndirectTarget)
+          return false;
+        if (E.Kind == ExprKind::BinOp && E.Op == NdOp::SUBBYTES &&
+            (E.Operands.size() != 2 || !E.Operands[1] ||
+             E.Operands[1]->Kind != ExprKind::Const ||
+             E.Operands[1]->ConstVal != 0))
+          return false;
+        return llvm::all_of(E.Operands, [&](const ExprPtr &Operand) {
+          return Operand && Plain(*Operand);
+        });
+      };
+      return Plain(*Next.Cond) && Reads == 1;
+    }
+    return false;
+  };
+
   struct Candidate {
     const HighStmt *Stmt = nullptr;
     std::string Name;
@@ -3067,13 +3202,14 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       if (SourceNamed)
         continue;
     }
-    if (Stmt->IsPhiCopy)
+    if (Stmt->IsPhiCopy || Stmt->KeepsName)
       continue;
     const bool SavedEH = InEHClauseBody;
     if (Info.Handler)
       InEHClauseBody = true;
     const bool Fwdable = isForwardableValueExpr(*Stmt->Val) ||
-                         callResultReturnedNext(*Stmt, Info);
+                         callResultReturnedNext(*Stmt, Info) ||
+                         callResultTestedNext(*Stmt, Info);
     const HighExpr *Src = peelIntegerViewOps(Stmt->Val.get());
     const bool NamedSlotLoad = Src && Src->Kind == ExprKind::Load &&
                                !Src->Operands.empty() && Src->Operands[0] &&
