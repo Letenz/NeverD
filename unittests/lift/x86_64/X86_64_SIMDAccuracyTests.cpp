@@ -372,8 +372,9 @@ TEST_F(X86SIMDAccuracy, SIMDWideBroadcastAndBlendRepeatWithinLanes) {
 }
 
 TEST_F(X86SIMDAccuracy, SIMDShuffleZeroControlsProduceDefinedZeros) {
-  if (!llvm::sys::getHostCPUFeatures().lookup("avx2"))
-    GTEST_SKIP() << "native AVX2 execution is unavailable";
+  const auto Features = llvm::sys::getHostCPUFeatures();
+  if (!Features.lookup("avx2") || !Features.lookup("ssse3"))
+    GTEST_SKIP() << "native AVX2/SSSE3 execution is unavailable";
   for (uint8_t Control : {0, 15, 16, 17, 31, 32, 0x7e, 0xff}) {
     SCOPED_TRACE(static_cast<unsigned>(Control));
     compareSIMD({0x66, 0x0f, 0x3a, 0x0f, 0xc1, Control});
@@ -387,8 +388,9 @@ TEST_F(X86SIMDAccuracy, SIMDShuffleZeroControlsProduceDefinedZeros) {
 }
 
 TEST_F(X86SIMDAccuracy, SIMDStringResultsAndFlagsReadOriginalAliasedInputs) {
-  if (!llvm::sys::getHostCPUFeatures().lookup("avx"))
-    GTEST_SKIP() << "native AVX execution is unavailable";
+  const auto Features = llvm::sys::getHostCPUFeatures();
+  if (!Features.lookup("avx") || !Features.lookup("sse4.2"))
+    GTEST_SKIP() << "native AVX/SSE4.2 execution is unavailable";
   for (uint8_t Opcode : {0x60, 0x61, 0x62, 0x63})
     for (uint8_t Control : {0, 0x0c, 0x40, 0x7e}) {
       SCOPED_TRACE(static_cast<unsigned>(Opcode));
