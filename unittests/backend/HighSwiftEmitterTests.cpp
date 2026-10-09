@@ -13,6 +13,7 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <set>
@@ -506,15 +507,26 @@ nativeMarker("native-end\n")
       llvm::SmallVector<llvm::StringRef, 2> Arguments{Executable};
       if (!Mode.empty())
         Arguments.push_back(Mode);
+      Error.clear();
+      const auto Began = std::chrono::steady_clock::now();
       const int NativeStatus = llvm::sys::ExecuteAndWait(
           Executable, Arguments, std::nullopt, NativeRedirects, 5, 0, &Error);
+      const auto Milliseconds =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now() - Began)
+              .count();
       std::ifstream NativeLog(StandardError);
       const std::string NativeDiagnostics(
           (std::istreambuf_iterator<char>(NativeLog)),
           std::istreambuf_iterator<char>());
       EXPECT_EQ(NativeStatus, 0)
           << Optimization.str() << " " << Mode.str() << ": " << Error << "\n"
+          << "Native execution elapsed " << Milliseconds << " ms\n"
           << NativeDiagnostics;
+      if (std::getenv("NEVERD_KEEP_SWIFT_EXECUTION_ARTIFACTS"))
+        llvm::errs() << "Swift SSE native execution: " << Optimization << " "
+                     << Mode << " status=" << NativeStatus
+                     << " elapsed_ms=" << Milliseconds << "\n";
     };
     if (!TrapsOnly) {
       Run({});
