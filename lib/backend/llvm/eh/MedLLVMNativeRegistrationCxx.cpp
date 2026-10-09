@@ -419,6 +419,32 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     Type = new llvm::GlobalVariable(*Mod, I8, false,
                                     llvm::GlobalValue::ExternalLinkage, nullptr,
                                     makeNdDataSymbol(Catch.TypeDescriptorVA));
+  // Bind retained source occurrences to exact block intervals before calls
+  // split the blocks and before the runtime catch entry is installed.
+  auto *SideEffect =
+      llvm::Intrinsic::getOrInsertDeclaration(Mod, llvm::Intrinsic::sideeffect);
+  std::map<int, llvm::CallInst *> SourceExits;
+  for (const auto &Block : Func.Blocks) {
+    auto State = BlockStates.find(Block.Id);
+    if (State == BlockStates.end())
+      continue;
+    auto *IR = OriginalBlockMap.at(Block.Id);
+    for (bool Enter : {true, false}) {
+      llvm::IRBuilder<> B(Enter ? &*IR->getFirstInsertionPt()
+                                : IR->getTerminator());
+      auto *Anchor = B.CreateCall(SideEffect);
+      Anchor->setMetadata(
+          windows_eh_md::RegistrationBlockAttachment,
+          llvm::MDNode::get(
+              *Ctx, {med_llvm_eh::mdUInt(*Ctx, EH.CodeRange.Begin, 64),
+                     med_llvm_eh::mdUInt(*Ctx, Block.StartAddr, 64),
+                     med_llvm_eh::mdUInt(*Ctx, Block.EndAddr, 64),
+                     med_llvm_eh::mdUInt(*Ctx, State->second->BlockId, 32),
+                     med_llvm_eh::mdUInt(*Ctx, Enter, 1)}));
+      if (!Enter)
+        SourceExits.emplace(State->second->BlockId, Anchor);
+    }
+  }
   auto *None = llvm::ConstantTokenNone::get(*Ctx);
   auto *Dispatch =
       llvm::BasicBlock::Create(*Ctx, "registration.cxx.dispatch", &Parent);
@@ -527,6 +553,15 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     if (Plan.Throw)
       Call->setDoesNotReturn();
     Call->copyMetadata(*Old);
+    if (Plan.Throw) {
+      // A noreturn normal edge cannot execute an anchor after the invoke.
+      // Bind the terminal source boundary to the call occurrence itself.
+      auto *Exit = SourceExits.at(Plan.State->BlockId);
+      Call->setMetadata(
+          windows_eh_md::RegistrationBlockAttachment,
+          Exit->getMetadata(windows_eh_md::RegistrationBlockAttachment));
+      Exit->eraseFromParent();
+    }
     for (auto &Operation : Operations)
       if (Operation.IR == Old)
         Operation.IR = Call;

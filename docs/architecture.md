@@ -125,6 +125,14 @@ try and handler tables and bind each cleanup to its generated state and range.
 The COFF table validator reparses source metadata, checks all raw table edges,
 matches the physical catch subfield and authenticates every absolute pointer
 fixup. SEH and C++ share generated-section and pointer-field ownership checks.
+The emitter fixes original image storage identity before materializing any
+function or shard, including masked native C++ sources. Preserved callee
+footprints and ordinary helper bodies therefore share the same canonical image
+storage. The independent C++ control validator replays source analysis, binds
+source ranges to stable LowIR identities and checks every source operation,
+catch, cleanup, invoke, chain occurrence and continuation. A no-return call
+carries its terminal block boundary because its normal successor cannot execute
+an anchor. SEH and C++ share the source-segment and whole-frame identity owner.
 This IR and machine-code capability does not grant installation:
 edited IR, the complete generated FuncInfo and the final PE still require
 independent validation.

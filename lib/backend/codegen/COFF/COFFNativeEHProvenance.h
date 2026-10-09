@@ -71,7 +71,9 @@ parseNativeEHProvenance(const llvm::CallInst &Anchor) {
       *Model !=
           static_cast<unsigned>(windows_eh_md::NativeProvenanceModel::CxxFH4) &&
       *Model != static_cast<unsigned>(
-                    windows_eh_md::NativeProvenanceModel::X86RegistrationSEH))
+                    windows_eh_md::NativeProvenanceModel::X86RegistrationSEH) &&
+      *Model != static_cast<unsigned>(
+                    windows_eh_md::NativeProvenanceModel::X86RegistrationCxx))
     return std::nullopt;
   if (*Role != static_cast<unsigned>(
                    windows_eh_md::NativeProvenanceRole::ProtectedInvoke) &&

@@ -62,6 +62,14 @@ validateCOFFRegistrationSemanticRows(const llvm::Function &Function,
                                      const ExceptionFunction &Source,
                                      const CompiledImage &Compiled);
 
+/// Replay the C++ source execution graph and authenticate edited catch,
+/// cleanup, invoke and resumption edges. Frame effects and native installation
+/// require their separate validators.
+llvm::Error
+validateCOFFRegistrationCxxControlIR(const llvm::Function &Function,
+                                     const ExceptionFunction &Source,
+                                     const BinaryImage &Image);
+
 /// Checked PE32 C++ compiler table closure. This receipt authenticates raw
 /// language-table bytes and absolute pointer fields, not edited IR effects or
 /// permission to install the generated function.

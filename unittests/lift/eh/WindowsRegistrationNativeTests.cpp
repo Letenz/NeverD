@@ -134,6 +134,172 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
     Module->print(llvm::errs(), nullptr);
   ASSERT_TRUE(Parent->getMetadata(windows_eh_md::NativeAttachment));
   ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+  auto Control =
+      validateCOFFRegistrationCxxControlIR(*Parent, *Source, *Loaded);
+  ASSERT_FALSE(bool(Control)) << llvm::toString(std::move(Control));
+  // Reparse the unchanged input for every post-emission edit. A completeness
+  // marker alone cannot bind a moved source operation or runtime control edge.
+  for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {
+    auto Edited = llvm::CloneModule(*Module);
+    auto *Function = Edited->getFunction(Parent->getName());
+    llvm::CatchPadInst *CatchPad = nullptr;
+    llvm::CleanupPadInst *CleanupPad = nullptr;
+    llvm::InvokeInst *Invoke = nullptr;
+    llvm::CatchReturnInst *CatchReturn = nullptr;
+    llvm::CallInst *CleanupCall = nullptr;
+    llvm::Instruction *BlockAnchor = nullptr;
+    llvm::Instruction *SourceOperation = nullptr;
+    llvm::IntrinsicInst *Escape = nullptr;
+    llvm::LoadInst *Head = nullptr;
+    for (auto &Block : *Function)
+      for (auto &I : Block) {
+        if (auto *Pad = llvm::dyn_cast<llvm::CatchPadInst>(&I))
+          CatchPad = Pad;
+        if (auto *Pad = llvm::dyn_cast<llvm::CleanupPadInst>(&I))
+          CleanupPad = Pad;
+        if (auto *Call = llvm::dyn_cast<llvm::InvokeInst>(&I))
+          Invoke = Call;
+        if (auto *Return = llvm::dyn_cast<llvm::CatchReturnInst>(&I))
+          CatchReturn = Return;
+        if (I.getMetadata(windows_eh_md::RegistrationBlockAttachment))
+          BlockAnchor = &I;
+        if (I.getMetadata(windows_eh_md::RegistrationOperationAttachment))
+          SourceOperation = &I;
+        if (auto *Call = llvm::dyn_cast<llvm::IntrinsicInst>(&I);
+            Call && Call->getIntrinsicID() == llvm::Intrinsic::localescape)
+          Escape = Call;
+        if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&I);
+            Load && Load->getPointerAddressSpace() == 257)
+          Head = Load;
+      }
+    ASSERT_TRUE(CatchPad && CleanupPad && Invoke && CatchReturn &&
+                BlockAnchor && SourceOperation && Escape && Head);
+    for (auto &I : *CleanupPad->getParent())
+      if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&I);
+          Call && !llvm::isa<llvm::IntrinsicInst>(Call))
+        CleanupCall = Call;
+    ASSERT_TRUE(CleanupCall);
+    auto AlterMetadata = [&](llvm::Instruction &I, llvm::StringRef Name,
+                             unsigned Index, uint64_t Value, unsigned Width) {
+      auto *MD = I.getMetadata(Name);
+      llvm::SmallVector<llvm::Metadata *, 8> Operands;
+      for (const auto &Operand : MD->operands())
+        Operands.push_back(Operand.get());
+      Operands[Index] = llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+          llvm::IntegerType::get(Context, Width), Value));
+      I.setMetadata(Name, llvm::MDNode::get(Context, Operands));
+    };
+    switch (Mutation) {
+    case 0:
+      Function->setMetadata(windows_eh_md::NativeAttachment, nullptr);
+      break;
+    case 1:
+      Function->removeFnAttr(llvm::RewriteWinX86CxxFrameAttribute);
+      break;
+    case 2:
+      Function->setCallingConv(Function->getCallingConv() ==
+                                       llvm::CallingConv::C
+                                   ? llvm::CallingConv::X86_ThisCall
+                                   : llvm::CallingConv::C);
+      break;
+    case 3:
+      rewrite_source::setOriginalVA(
+          *llvm::cast<llvm::Function>(Function->getPersonalityFn()),
+          Source->PersonalityVA);
+      break;
+    case 4:
+      BlockAnchor->setMetadata(windows_eh_md::RegistrationBlockAttachment,
+                               nullptr);
+      break;
+    case 5:
+      AlterMetadata(*BlockAnchor, windows_eh_md::RegistrationBlockAttachment, 1,
+                    Source->CodeRange.Begin, 64);
+      break;
+    case 6: {
+      auto *Duplicate = BlockAnchor->clone();
+      Duplicate->insertBefore(BlockAnchor->getIterator());
+      break;
+    }
+    case 7:
+      SourceOperation->setMetadata(
+          windows_eh_md::RegistrationOperationAttachment, nullptr);
+      break;
+    case 8:
+      AlterMetadata(*SourceOperation,
+                    windows_eh_md::RegistrationOperationAttachment, 2, 999, 32);
+      break;
+    case 9: {
+      auto *Duplicate = SourceOperation->clone();
+      Duplicate->insertBefore(SourceOperation->getIterator());
+      break;
+    }
+    case 10:
+      Invoke->setUnwindDest(CatchPad->getCatchSwitch()->getParent());
+      break;
+    case 11:
+      Invoke->setCallingConv(llvm::CallingConv::X86_ThisCall);
+      break;
+    case 12:
+      rewrite_source::setOriginalVA(*Invoke->getCalledFunction(),
+                                    Source->CodeRange.Begin);
+      break;
+    case 13:
+      Invoke->removeFnAttr(llvm::Attribute::NoReturn);
+      Invoke->getCalledFunction()->removeFnAttr(llvm::Attribute::NoReturn);
+      break;
+    case 14:
+      CatchPad->setMetadata(llvm::mc_rewrite::RewriteWinEHSemanticAttachment,
+                            nullptr);
+      break;
+    case 15:
+      CleanupPad->setMetadata(llvm::mc_rewrite::RewriteWinEHSemanticAttachment,
+                              nullptr);
+      break;
+    case 16:
+      AlterMetadata(*CatchPad, llvm::RewriteWinX86CxxCatchObjectAttachment, 1,
+                    0, 32);
+      break;
+    case 17:
+      AlterMetadata(*CatchPad, llvm::RewriteWinX86CxxCatchObjectAttachment, 2,
+                    1, 32);
+      break;
+    case 18:
+      CatchPad->setArgOperand(
+          0, new llvm::GlobalVariable(*Edited, llvm::Type::getInt8Ty(Context),
+                                      false, llvm::GlobalValue::ExternalLinkage,
+                                      nullptr, "unproved_type"));
+      break;
+    case 19:
+      llvm::cast<llvm::CleanupReturnInst>(
+          CleanupPad->getParent()->getTerminator())
+          ->setUnwindDest(CleanupPad->getParent());
+      break;
+    case 20:
+      CatchReturn->setSuccessor(&Function->getEntryBlock());
+      break;
+    case 21:
+      CleanupCall->clone()->insertBefore(CleanupCall->getIterator());
+      break;
+    case 22:
+      Head->setOperand(
+          0, llvm::ConstantExpr::getIntToPtr(
+                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(Context), 4),
+                 Head->getPointerOperand()->getType()));
+      break;
+    case 23: {
+      llvm::IRBuilder<> B(Escape);
+      Escape->setArgOperand(0, B.CreateAlloca(B.getInt32Ty()));
+      break;
+    }
+    }
+    auto Changed =
+        validateCOFFRegistrationCxxControlIR(*Function, *Source, *Loaded);
+    EXPECT_TRUE(bool(Changed)) << Mutation;
+    if (Changed)
+      llvm::consumeError(std::move(Changed));
+  }
+#endif
   auto CheckSharedImageRoots = [&](const llvm::Module &M, size_t Minimum = 2) {
     size_t SharedRoots = 0;
     for (const auto &Global : M.globals()) {

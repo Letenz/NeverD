@@ -7,6 +7,8 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFReloc.cpp
   COFF/COFFRegistrationPatch.cpp
   COFF/COFFRegistrationCxx.cpp
+  COFF/COFFRegistrationCxxIR.cpp
+  COFF/COFFRegistrationIRProof.cpp
   CodeGen.cpp
   CodeGenAArch64.cpp
   CodeGenARM.cpp

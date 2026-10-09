@@ -1839,6 +1839,14 @@ NEVERD_REGISTRATION_INPUT_CXX_PE32=/absolute/path/to/original.exe \
   --gtest_filter='WindowsRegistrationCxxSource.*'
 ```
 
+The genuine C++ input unit also checks original image storage when an ordinary
+helper is emitted first, an emitter is reused and a helper-only shard masks the
+native parent. Its independent source/control validator rejects 24 edits to
+block and operation identities, call ABI and source targets, semantic pads,
+catch subfields, unwind/resumption edges, chain reads and localescape. Terminal
+no-return boundaries remain indexed after unreachable-code pruning. These
+control and compiler-table checks still do not establish source PE installation.
+
 The runtime runner builds actual SEH3, no-GS EH4 and initialized-GS EH4 source
 images, including explicit source exit checks, lifts their protected
 function and executes the original, manual installer, public COFF patcher,
