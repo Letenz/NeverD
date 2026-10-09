@@ -70,6 +70,13 @@ validateCOFFRegistrationCxxControlIR(const llvm::Function &Function,
                                      const ExceptionFunction &Source,
                                      const BinaryImage &Image);
 
+/// Authenticate source control, actual LLVM frame/object borrows, definite
+/// initialization, runtime reference identities and original image effects.
+/// Generated tables, the compiler handler and final PE still need validation.
+llvm::Error validateCOFFRegistrationCxxIR(const llvm::Function &Function,
+                                          const ExceptionFunction &Source,
+                                          const BinaryImage &Image);
+
 /// Checked PE32 C++ compiler table closure. This receipt authenticates raw
 /// language-table bytes and absolute pointer fields, not edited IR effects or
 /// permission to install the generated function.

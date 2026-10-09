@@ -782,13 +782,32 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         for (const auto *Ranges : {&Contract.ImageReads, &Contract.ImageWrites,
                                    &Contract.CallerPCWrites})
           for (const auto &Range : *Ranges) {
-            if (!Range.isValid() || Range.End > UINT32_MAX)
+            if (!Range.isValid() || Range.End > uint64_t(UINT32_MAX) + 1)
               return false;
             PreservedRegistrationImageStorageRanges.push_back(Range);
           }
         return true;
       };
       bool Complete = true;
+      for (const auto &Range : States.ImageReads) {
+        if (!Range.isValid() || Range.End > uint64_t(UINT32_MAX) + 1) {
+          Complete = false;
+          break;
+        }
+        PreservedRegistrationImageStorageRanges.push_back(Range);
+      }
+      // Parent image writes can be in a separate writable run from every
+      // preserved helper. Give all writable image storage one shared identity.
+      for (const auto &Segment : Img->Segments)
+        if (Segment.isWritable() && Segment.Size) {
+          if (Segment.VA > UINT32_MAX ||
+              Segment.Size > uint64_t(UINT32_MAX) + 1 - Segment.VA) {
+            Complete = false;
+            break;
+          }
+          PreservedRegistrationImageStorageRanges.push_back(
+              {Segment.VA, Segment.VA + Segment.Size});
+        }
       for (const auto &Contract : States.CalleeContracts)
         Complete &= Preserve(Contract);
       for (const auto &Contract : States.CleanupContracts)

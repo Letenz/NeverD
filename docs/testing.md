@@ -1846,6 +1846,14 @@ block and operation identities, call ABI and source targets, semantic pads,
 catch subfields, unwind/resumption edges, chain reads and localescape. Terminal
 no-return boundaries remain indexed after unreachable-code pruning. These
 control and compiler-table checks still do not establish source PE installation.
+The full C++ IR validator additionally replays actual affine frame addresses,
+scalar destructor borrows, definite byte initialization on normal and exceptional
+edges, typed runtime reference accesses, and original image storage. Its frame
+mutations keep the independent control proof valid while changing object bases,
+initialization width, undefined values, pointer-bearing scalar objects, private
+global storage, runtime reference homes and immutable metadata/runtime writes.
+Both value and reference inputs must pass the complete proof; a table receipt
+alone does not authenticate these effects or enable final PE installation.
 
 The runtime runner builds actual SEH3, no-GS EH4 and initialized-GS EH4 source
 images, including explicit source exit checks, lifts their protected

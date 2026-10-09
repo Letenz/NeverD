@@ -133,6 +133,12 @@ source ranges to stable LowIR identities and checks every source operation,
 catch, cleanup, invoke, chain occurrence and continuation. A no-return call
 carries its terminal block boundary because its normal successor cannot execute
 an anchor. SEH and C++ share the source-segment and whole-frame identity owner.
+The full C++ IR proof uses that same frame-address owner to authenticate actual
+object borrows, scalar pointer privacy, every-path byte initialization and typed
+runtime reference accesses. Reads and writes retain original image storage;
+language metadata, CRT dispatch and readonly image ranges remain immutable.
+Catch writes seed only the checked object home, and callee may-writes do not
+establish initialization. Control and table receipts cannot replace this proof.
 This IR and machine-code capability does not grant installation:
 edited IR, the complete generated FuncInfo and the final PE still require
 independent validation.

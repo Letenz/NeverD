@@ -138,6 +138,8 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
   auto Control =
       validateCOFFRegistrationCxxControlIR(*Parent, *Source, *Loaded);
   ASSERT_FALSE(bool(Control)) << llvm::toString(std::move(Control));
+  auto FrameContract = validateCOFFRegistrationCxxIR(*Parent, *Source, *Loaded);
+  ASSERT_FALSE(bool(FrameContract)) << llvm::toString(std::move(FrameContract));
   // Reparse the unchanged input for every post-emission edit. A completeness
   // marker alone cannot bind a moved source operation or runtime control edge.
   for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {
@@ -295,6 +297,165 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
     }
     auto Changed =
         validateCOFFRegistrationCxxControlIR(*Function, *Source, *Loaded);
+    EXPECT_TRUE(bool(Changed)) << Mutation;
+    if (Changed)
+      llvm::consumeError(std::move(Changed));
+  }
+#endif
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+  for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+    const bool Reference = Low.RegistrationStates->CxxCatchObjects[0].Reference;
+    if (!Reference && Mutation >= 12)
+      continue;
+    auto Edited = llvm::CloneModule(*Module);
+    auto *Function = Edited->getFunction(Parent->getName());
+    llvm::AllocaInst *Frame = nullptr;
+    llvm::CallInst *Borrow = nullptr;
+    llvm::StoreInst *Initialize = nullptr;
+    llvm::StoreInst *SourceStore = nullptr;
+    llvm::LoadInst *RuntimeLoad = nullptr;
+    llvm::CatchPadInst *CatchPad = nullptr;
+    uint64_t EntrySP = 0;
+    for (auto &Block : *Function)
+      for (auto &I : Block) {
+        if (auto *Pad = llvm::dyn_cast<llvm::CatchPadInst>(&I))
+          CatchPad = Pad;
+        if (auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(&I))
+          if (auto *MD = Slot->getMetadata(
+                  windows_eh_md::RegistrationFrameAttachment)) {
+            Frame = Slot;
+            EntrySP =
+                llvm::mdconst::extract<llvm::ConstantInt>(MD->getOperand(1))
+                    ->getZExtValue();
+          }
+        if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&I);
+            Call && !llvm::isa<llvm::IntrinsicInst>(Call) &&
+            Call->arg_size() == 1)
+          Borrow = Call;
+        if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
+            Store && Store->getMetadata(
+                         windows_eh_md::RegistrationOperationAttachment)) {
+          SourceStore = Store;
+          auto *Value =
+              llvm::dyn_cast<llvm::ConstantInt>(Store->getValueOperand());
+          if (Value && Value->getBitWidth() == 32 && Value->getZExtValue() == 1)
+            Initialize = Store;
+        }
+        if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&I))
+          if (auto *MD = Load->getMetadata(
+                  windows_eh_md::RegistrationOperationAttachment))
+            for (const auto &Access :
+                 Low.RegistrationStates->RuntimeObjectAccesses)
+              if (!Access.Write &&
+                  llvm::mdconst::extract<llvm::ConstantInt>(MD->getOperand(1))
+                          ->getZExtValue() == Access.Address &&
+                  llvm::mdconst::extract<llvm::ConstantInt>(MD->getOperand(2))
+                          ->getZExtValue() == uint32_t(Access.OpSeq))
+                RuntimeLoad = Load;
+      }
+    ASSERT_TRUE(Frame && Borrow && Initialize && SourceStore);
+    llvm::IRBuilder<> B(Borrow);
+    switch (Mutation) {
+    case 0:
+      Borrow->setArgOperand(0, Frame);
+      break;
+    case 1:
+      Borrow->setArgOperand(
+          0, B.CreateInBoundsGEP(B.getInt8Ty(), Frame, B.getInt32(1)));
+      break;
+    case 2: {
+      llvm::IRBuilder<> Entry(Function->getEntryBlock().getTerminator());
+      Borrow->setArgOperand(0, Entry.CreateAlloca(Entry.getInt32Ty()));
+      break;
+    }
+    case 3: {
+      llvm::IRBuilder<> Entry(Function->getEntryBlock().getTerminator());
+      Initialize->setOperand(1, Entry.CreateAlloca(Entry.getInt32Ty()));
+      break;
+    }
+    case 4:
+      Initialize->setOperand(0, llvm::UndefValue::get(B.getInt32Ty()));
+      break;
+    case 5:
+      Initialize->setOperand(0, llvm::PoisonValue::get(B.getInt32Ty()));
+      break;
+    case 6:
+      Initialize->setOperand(0, B.getInt8(1));
+      break;
+    case 7: {
+      llvm::IRBuilder<> At(Initialize);
+      Initialize->setOperand(0, At.CreatePtrToInt(Frame, At.getInt32Ty()));
+      break;
+    }
+    case 8: {
+      auto *Frozen = new llvm::GlobalVariable(
+          *Edited, B.getInt8Ty(), false, llvm::GlobalValue::ExternalLinkage,
+          nullptr, makeNdDataSymbol(Source->Registration->ScopeTableVA));
+      SourceStore->setOperand(1, Frozen);
+      break;
+    }
+    case 9: {
+      auto Runtime =
+          coff_loader::getCheckedX86CxxPersonalityABI(*Loaded, *Source);
+      ASSERT_TRUE(Runtime);
+      auto *Frozen = new llvm::GlobalVariable(
+          *Edited, B.getInt8Ty(), false, llvm::GlobalValue::ExternalLinkage,
+          nullptr, makeNdDataSymbol(Runtime->IATVA));
+      SourceStore->setOperand(1, Frozen);
+      break;
+    }
+    case 10:
+      for (auto &Global : Edited->globals())
+        if (parseNdCodePtrSymbol(Global.getName()) ==
+            Loaded
+                ->getSegmentFor(Low.RegistrationStates->CleanupContracts[0]
+                                    .Leaf.ImageWrites[0]
+                                    .Begin)
+                ->VA) {
+          Global.setInitializer(
+              llvm::Constant::getNullValue(Global.getValueType()));
+          break;
+        }
+      break;
+    case 11:
+      SourceStore->setOperand(1, llvm::ConstantPointerNull::get(B.getPtrTy()));
+      break;
+    case 12:
+      ASSERT_TRUE(RuntimeLoad);
+      RuntimeLoad->setOperand(0, Frame);
+      break;
+    case 13:
+      ASSERT_TRUE(RuntimeLoad);
+      {
+        llvm::IRBuilder<> At(RuntimeLoad);
+        RuntimeLoad->setOperand(
+            0, At.CreateInBoundsGEP(At.getInt8Ty(),
+                                    RuntimeLoad->getPointerOperand(),
+                                    At.getInt32(4)));
+      }
+      break;
+    case 14: {
+      ASSERT_TRUE(CatchPad);
+      llvm::StoreInst *CatchStore = nullptr;
+      for (auto &I : *CatchPad->getParent())
+        if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
+            Store &&
+            Store->getMetadata(windows_eh_md::RegistrationOperationAttachment))
+          CatchStore = Store;
+      ASSERT_TRUE(CatchStore);
+      llvm::IRBuilder<> At(CatchStore);
+      const auto Home = Low.RegistrationStates->CxxCatchObjects[0].FrameOffset;
+      CatchStore->setOperand(
+          1, At.CreateInBoundsGEP(At.getInt8Ty(), Frame,
+                                  At.getInt32(int64_t(EntrySP) - 4 + Home)));
+      break;
+    }
+    }
+    auto StillControl =
+        validateCOFFRegistrationCxxControlIR(*Function, *Source, *Loaded);
+    ASSERT_FALSE(bool(StillControl))
+        << Mutation << ": " << llvm::toString(std::move(StillControl));
+    auto Changed = validateCOFFRegistrationCxxIR(*Function, *Source, *Loaded);
     EXPECT_TRUE(bool(Changed)) << Mutation;
     if (Changed)
       llvm::consumeError(std::move(Changed));
