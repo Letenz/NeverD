@@ -935,6 +935,17 @@ runtime en `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
 `WindowsNoReturn.inc`). Así, admitir otro objetivo añade un archivo o una
 entrada de tabla en lugar de una rama en el pase compartido.
 
+Los símbolos no definidos de un objeto reubicable se resuelven en una capa
+compartida, `include/neverd/loader/ObjectExterns.h`. El cargador de cada formato
+recoge los símbolos que nombran sus reubicaciones, si una llamada o un salto
+alcanza cada uno (`<Format>ObjectRelocations.def`), sus símbolos comunes y las
+celdas a través de las cuales algunas referencias alcanzan un símbolo (entradas
+GOT de ELF y Mach-O, punteros `__imp_` de COFF). La capa los coloca tras las
+secciones del objeto, en un segmento `extern` escribible y un segmento de celdas
+de solo lectura. Un externo llamado es allí una importación y un dato es un
+símbolo; una referencia débil no recibe dirección, porque la comprobación de
+nulo que hace su código pertenece al programa.
+
 <a id="support-and-test-depth"></a>
 
 ### Soporte y profundidad de pruebas

@@ -833,6 +833,8 @@ KVM、WHP 和 Unicorn 的 checked x64/ARM64 可请求 `ExecutionFeature::Paralle
 
 共享 pass 中新增的目标专属规则应放在按目标划分的表中，而不是内联判断架构或格式。ISA 的事实是一个 `TargetRegInfo` 特性，在该 ISA 的 `lib/ir/TargetRegInfo<ISA>.cpp` 中设置。调用约定规则是一个 `CallArgumentConvention` 条目，定义在独立的 `lib/ir/med/abi/MedCallConvention<Name>.cpp` 中，并在 `MedCallConvention.cpp` 中登记。永不返回的函数按运行时分别列在 `include/neverd/libc` 下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）。这样支持新目标只需新增文件或表项，而无需在共享 pass 中加分支。
 
+可重定位目标文件中未定义符号的解析由一个共享层负责：`include/neverd/loader/ObjectExterns.h`。各格式的加载器收集重定位所引用的符号、是否有调用或分支到达每个符号（`<Format>ObjectRelocations.def`）、其 common 符号，以及某些引用经由其到达符号的单元（ELF 与 Mach-O 的 GOT 项、COFF 的 `__imp_` 指针）。该层把它们放在目标文件各节之后：一个可写的 `extern` 段和一个只读的单元段。被调用的外部符号在那里是导入，数据则是符号；弱引用不分配地址，因为代码对它所做的空值判断属于程序本身。
+
 <a id="support-and-test-depth"></a>
 
 ### 支持范围与测试深度

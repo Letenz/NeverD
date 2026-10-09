@@ -1,0 +1,46 @@
+//===- MachOObjectRelocations.def - Relocations of Mach-O objects -*- C++ -*-//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Relocations of a Mach-O object whose meaning the loader models, per
+/// architecture.  Types are llvm::MachO enumerators.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_MACHO_BRANCH_REFERENCE(Arch, Type): the relocation of a call or
+// branch instruction, so an undefined symbol it names is a function.
+#ifndef NEVERD_MACHO_BRANCH_REFERENCE
+#define NEVERD_MACHO_BRANCH_REFERENCE(Arch, Type)
+#endif
+NEVERD_MACHO_BRANCH_REFERENCE(X64, X86_64_RELOC_BRANCH)
+NEVERD_MACHO_BRANCH_REFERENCE(AArch64, ARM64_RELOC_BRANCH26)
+NEVERD_MACHO_BRANCH_REFERENCE(ARM, ARM_RELOC_BR24)
+NEVERD_MACHO_BRANCH_REFERENCE(ARM, ARM_THUMB_RELOC_BR22)
+#undef NEVERD_MACHO_BRANCH_REFERENCE
+
+// NEVERD_MACHO_GOT_REFERENCE(Arch, GotType, DirectType): a relocation that
+// reaches its symbol through a GOT entry the linker creates.  The loader makes
+// that entry, holding the symbol's address, and applies DirectType against the
+// entry instead of the symbol.
+#ifndef NEVERD_MACHO_GOT_REFERENCE
+#define NEVERD_MACHO_GOT_REFERENCE(Arch, GotType, DirectType)
+#endif
+NEVERD_MACHO_GOT_REFERENCE(X64, X86_64_RELOC_GOT_LOAD, X86_64_RELOC_SIGNED)
+NEVERD_MACHO_GOT_REFERENCE(X64, X86_64_RELOC_GOT, X86_64_RELOC_SIGNED)
+NEVERD_MACHO_GOT_REFERENCE(AArch64, ARM64_RELOC_GOT_LOAD_PAGE21,
+                           ARM64_RELOC_PAGE21)
+NEVERD_MACHO_GOT_REFERENCE(AArch64, ARM64_RELOC_GOT_LOAD_PAGEOFF12,
+                           ARM64_RELOC_PAGEOFF12)
+#undef NEVERD_MACHO_GOT_REFERENCE
+
+// NEVERD_MACHO_GOT_POINTER(Arch, Type): a data field that holds the address
+// of the GOT entry of its symbol, or its distance from the field when the
+// relocation is PC-relative (a personality routine in unwind data).
+#ifndef NEVERD_MACHO_GOT_POINTER
+#define NEVERD_MACHO_GOT_POINTER(Arch, Type)
+#endif
+NEVERD_MACHO_GOT_POINTER(AArch64, ARM64_RELOC_POINTER_TO_GOT)
+#undef NEVERD_MACHO_GOT_POINTER

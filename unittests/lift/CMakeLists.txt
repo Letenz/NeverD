@@ -45,6 +45,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_MemTests.cpp
   arm32/ARM32_MulDivTests.cpp
   arm32/ARM32_PipelineE2ETests.cpp
+  arm32/ARM32_PredicatedStackTests.cpp
   arm32/ARM32_ShiftTests.cpp
   x86_32/X86_32_ArithTests.cpp
   x86_32/X86_32_BitOpsTests.cpp
@@ -235,6 +236,8 @@ add_neverd_unittest(NeverDLiftTests
   core/HighSwitchFollowTests.cpp
   core/MedNoReturnTests.cpp
   core/InternalNoReturnTests.cpp
+  core/ObjectExternTests.cpp
+  core/HighCReturnJoinTests.cpp
   eh/RegistrationTryLevelTests.cpp
   format/COFFARMFormatTests.cpp
   format/COFFARMFormatFragmentTests.cpp
@@ -2128,6 +2131,9 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_mask_equal_bound.s
   x86_64/test_module_address_owner_induction.s
   x86_64/test_module_readonly_table_writer.s
+  x86_64/test_extern_calls.c
+  x86_64/test_extern_calls_nopic.c
+  x86_64/test_return_join.c
   x86_64/test_twolevel_switch.c
   x86_64/test_jumptable_masked_abs.c
   x86_64/test_jumptable_worldclass.c
@@ -2137,6 +2143,9 @@ set(X86_64_TEST_SOURCES
 )
 
 set(X86_32_TEST_SOURCES
+  x86_32/test_extern_calls_i386.c
+  x86_32/test_extern_calls_nopic_i386.c
+  x86_32/test_return_join_i386.c
   x86_32/test_i386_direct_gotoff_group.s
   x86_32/test_i386_gotpc_model.s
   x86_32/test_i386_gotoff_forcepeel.s
@@ -2165,6 +2174,9 @@ set(X86_32_TEST_SOURCES
 )
 
 set(AARCH64_TEST_SOURCES
+  aarch64/test_extern_calls_a64.c
+  aarch64/test_extern_calls_nopic_a64.c
+  aarch64/test_return_join_a64.c
   aarch64/test_param_phi_a64.s
   aarch64/test_jumptable_index_identity_a64.s
   aarch64/test_pageoff_wrong_base_a64.s
@@ -2202,6 +2214,10 @@ set(AARCH64_TEST_SOURCES
 )
 
 set(ARM32_TEST_SOURCES
+  arm32/test_extern_calls_arm.c
+  arm32/test_extern_calls_nopic_arm.c
+  arm32/test_return_join_arm.c
+  arm32/test_predicated_pop_arm.s
   arm32/test_inline_state_domain_arm.s
   arm32/test_frame_pointer_void_arm.s
   arm32/test_arm_rel32_reaching.s
@@ -2253,6 +2269,39 @@ add_custom_command(
   DEPENDS ${thumb_jt_incomplete_domain_src}
   COMMENT "Compiling Thumb-2 incomplete-domain fixture (ARMNT COFF)")
 list(APPEND TEST_OBJECTS ${thumb_jt_incomplete_domain_obj})
+
+# One source of undefined functions and data, an import library's function
+# pointer and a common symbol, compiled as an x64, x86 and ARM64 COFF object.
+set(coff_externs_src "${CMAKE_CURRENT_SOURCE_DIR}/format/test_coff_externs.c")
+foreach(coff_target "x86_64-pc-windows-msvc" "i686-pc-windows-msvc"
+                    "aarch64-pc-windows-msvc")
+  string(REGEX MATCH "^[a-z0-9_]+" coff_machine "${coff_target}")
+  set(coff_externs_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_coff_externs_${coff_machine}.obj")
+  add_custom_command(
+    OUTPUT ${coff_externs_obj}
+    COMMAND ${CLANG_EXEC} -target ${coff_target} -O2 -fcommon
+            -c ${coff_externs_src} -o ${coff_externs_obj}
+    DEPENDS ${coff_externs_src}
+    COMMENT "Compiling COFF extern fixture for ${coff_target}")
+  list(APPEND TEST_OBJECTS ${coff_externs_obj})
+endforeach()
+
+# The ELF extern fixture as Mach-O objects, which reach data and some calls
+# through GOT entries.
+set(macho_externs_src "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_extern_calls.c")
+foreach(macho_target "x86_64-apple-macos11" "arm64-apple-macos11")
+  string(REGEX MATCH "^[a-z0-9_]+" macho_arch "${macho_target}")
+  set(macho_externs_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_extern_calls_macho_${macho_arch}.o")
+  add_custom_command(
+    OUTPUT ${macho_externs_obj}
+    COMMAND ${CLANG_EXEC} -target ${macho_target} -O2 -fcommon -c
+            ${macho_externs_src} -o ${macho_externs_obj}
+    DEPENDS ${macho_externs_src}
+    COMMENT "Compiling Mach-O extern fixture for ${macho_target}")
+  list(APPEND TEST_OBJECTS ${macho_externs_obj})
+endforeach()
 
 set(macho_i386_src
     "${CMAKE_CURRENT_SOURCE_DIR}/format/test_macho_i386.c")
@@ -2374,6 +2423,18 @@ if(APPLE)
                            ${writable_pointer_induction_x64_macho_exe})
 endif()
 
+# A fixture for another architecture can include the x86-64 source of the
+# same name; it is rebuilt when that source changes.
+function(neverd_shared_fixture_source src out)
+  set(shared)
+  foreach(name test_extern_calls test_return_join)
+    if(src MATCHES "/${name}_")
+      set(shared ${CMAKE_CURRENT_SOURCE_DIR}/x86_64/${name}.c)
+    endif()
+  endforeach()
+  set(${out} ${shared} PARENT_SCOPE)
+endfunction()
+
 foreach(src ${X86_64_TEST_SOURCES})
   get_filename_component(base ${src} NAME_WE)
   set(obj "${CMAKE_CURRENT_BINARY_DIR}/${base}.o")
@@ -2396,6 +2457,13 @@ foreach(src ${X86_64_TEST_SOURCES})
   elseif(src MATCHES "test_debug_records")
     # The records under test come from the DWARF description.
     set(extra_flags -g)
+  elseif(src MATCHES "test_return_join")
+    set(extra_flags -O2)
+  elseif(src MATCHES "test_extern_calls_nopic")
+    set(extra_flags -O2 -fno-pic -fcommon)
+  elseif(src MATCHES "test_extern_calls")
+    # Position-independent, so its data references go through the GOT.
+    set(extra_flags -O2 -fPIC -fcommon)
   endif()
   add_custom_command(
     OUTPUT ${obj}
@@ -2409,18 +2477,25 @@ foreach(src ${X86_64_TEST_SOURCES})
 endforeach()
 
 foreach(src ${X86_32_TEST_SOURCES})
+  neverd_shared_fixture_source(${src} shared_src)
   get_filename_component(base ${src} NAME_WE)
   set(obj "${CMAKE_CURRENT_BINARY_DIR}/${base}.o")
   set(x86_32_extra_flags)
   if(src MATCHES "test_fp32")
     set(x86_32_extra_flags -msse2)
+  elseif(src MATCHES "test_return_join")
+    set(x86_32_extra_flags -O2)
+  elseif(src MATCHES "test_extern_calls_nopic")
+    set(x86_32_extra_flags -O2 -fno-pic -fcommon)
+  elseif(src MATCHES "test_extern_calls")
+    set(x86_32_extra_flags -O2 -fPIC -fcommon)
   endif()
   add_custom_command(
     OUTPUT ${obj}
     COMMAND ${CLANG_EXEC} -target i386-linux-gnu -m32 -nostdlib -static
             -O0 -fno-stack-protector -fno-pie ${x86_32_extra_flags} -c
             ${CMAKE_CURRENT_SOURCE_DIR}/${src} -o ${obj}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src} ${shared_src}
     COMMENT "Compiling ${src} -> ${base}.o (i386 ELF)"
   )
   list(APPEND TEST_OBJECTS ${obj})
@@ -2499,6 +2574,7 @@ add_custom_command(
 list(APPEND TEST_OBJECTS ${i386_adjacent_function_pointer_obj})
 
 foreach(src ${AARCH64_TEST_SOURCES})
+  neverd_shared_fixture_source(${src} shared_src)
   get_filename_component(base ${src} NAME_WE)
   set(obj "${CMAKE_CURRENT_BINARY_DIR}/${base}.o")
   set(a64_extra_flags)
@@ -2526,31 +2602,44 @@ foreach(src ${AARCH64_TEST_SOURCES})
     set(a64_extra_flags -march=armv8.3-a+pauth)
   elseif(src MATCHES "test_sve_(length|state|store)_a64")
     set(a64_extra_flags -march=armv8.2-a+sve -msve-vector-bits=256)
+  elseif(src MATCHES "test_return_join")
+    set(a64_extra_flags -O2)
+  elseif(src MATCHES "test_extern_calls_nopic")
+    set(a64_extra_flags -O2 -fno-pic -fcommon)
+  elseif(src MATCHES "test_extern_calls")
+    set(a64_extra_flags -O2 -fPIC -fcommon)
   endif()
   add_custom_command(
     OUTPUT ${obj}
     COMMAND ${CLANG_EXEC} -target aarch64-linux-gnu -nostdlib -static
             -O0 -fno-stack-protector ${a64_extra_flags} -c
             ${CMAKE_CURRENT_SOURCE_DIR}/${src} -o ${obj}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src} ${shared_src}
     COMMENT "Compiling ${src} -> ${base}.o (AArch64 ELF)"
   )
   list(APPEND TEST_OBJECTS ${obj})
 endforeach()
 
 foreach(src ${ARM32_TEST_SOURCES})
+  neverd_shared_fixture_source(${src} shared_src)
   get_filename_component(base ${src} NAME_WE)
   set(obj "${CMAKE_CURRENT_BINARY_DIR}/${base}.o")
   set(arm_extra_flags)
   if(src MATCHES "test_switch|test_jumptable")
     set(arm_extra_flags -O1)
+  elseif(src MATCHES "test_return_join")
+    set(arm_extra_flags -O2)
+  elseif(src MATCHES "test_extern_calls_nopic")
+    set(arm_extra_flags -O2 -fno-pic -fcommon)
+  elseif(src MATCHES "test_extern_calls")
+    set(arm_extra_flags -O2 -fPIC -fcommon)
   endif()
   add_custom_command(
     OUTPUT ${obj}
     COMMAND ${CLANG_EXEC} -target arm-linux-gnueabi -march=armv7-a -nostdlib -static
             -O0 -fno-stack-protector -marm ${arm_extra_flags} -c
             ${CMAKE_CURRENT_SOURCE_DIR}/${src} -o ${obj}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src} ${shared_src}
     COMMENT "Compiling ${src} -> ${base}.o (ARM32 ELF)"
   )
   list(APPEND TEST_OBJECTS ${obj})

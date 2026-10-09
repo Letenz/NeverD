@@ -2891,6 +2891,16 @@ Functions that never return are listed per runtime under `include/neverd/libc`
 Supporting another target then adds a file or a table entry instead of a branch
 in the shared pass.
 
+A relocatable object's undefined symbols resolve in one shared layer,
+`include/neverd/loader/ObjectExterns.h`. Each format's loader collects the
+symbols its relocations name, whether a call or branch reaches each
+(`<Format>ObjectRelocations.def`), its common symbols, and the cells some
+references reach a symbol through (ELF and Mach-O GOT entries, COFF `__imp_`
+pointers). The layer places them past the object's sections in a writable
+`extern` segment and a read-only cell segment. A called extern is an import
+there and data a symbol; a weak reference takes no address, since the null test
+its code makes is the program's.
+
 <a id="support-and-test-depth"></a>
 
 ### Support and test depth

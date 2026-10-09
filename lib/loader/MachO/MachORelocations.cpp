@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "MachOObjectExterns.h"
 #include "MachORelocationsDetail.h"
 
 #include "neverd/loader/DirectBranch.h"
@@ -91,14 +92,21 @@ RelocationMetadata relocationMetadata(const MachOObjectFile &Obj,
   return Result;
 }
 
-std::optional<ResolvedSymbol> resolveExternalSymbol(const MachOObjectFile &Obj,
-                                                    const RelocationRef &Reloc,
-                                                    const BinaryImage &Img) {
+std::optional<ResolvedSymbol>
+resolveExternalSymbol(const MachOObjectFile &Obj, const RelocationRef &Reloc,
+                      const BinaryImage &Img, const ObjectExterns &Externs,
+                      bool Branch) {
   auto SymIt = Reloc.getSymbol();
   if (SymIt == Obj.symbol_end())
     return std::nullopt;
   const std::optional<uint8_t> SectionNumber = symbolSectionNumber(Obj, SymIt);
-  if (!SectionNumber || *SectionNumber > Img.Sections.size())
+  if (!SectionNumber) {
+    // An undefined or common symbol resolves to its extern address.
+    if (const auto Extern = resolveObjectExtern(Obj, Externs, SymIt, Branch))
+      return ResolvedSymbol{Extern->first, Extern->second};
+    return std::nullopt;
+  }
+  if (*SectionNumber > Img.Sections.size())
     return std::nullopt;
   auto AddrOrErr = SymIt->getAddress();
   if (!AddrOrErr) {
@@ -119,12 +127,13 @@ std::optional<ResolvedSymbol> resolveExternalSymbol(const MachOObjectFile &Obj,
 
 std::optional<ResolvedSymbol>
 resolveRelocationTarget(const MachOObjectFile &Obj, const RelocationRef &Reloc,
-                        const RelocationMetadata &Info,
-                        const BinaryImage &Img) {
+                        const RelocationMetadata &Info, const BinaryImage &Img,
+                        const ObjectExterns &Externs) {
   if (Info.IsScattered)
     return std::nullopt;
   if (Info.IsExternal)
-    return resolveExternalSymbol(Obj, Reloc, Img);
+    return resolveExternalSymbol(Obj, Reloc, Img, Externs,
+                                 isBranchReference(Img.Arch, Info.Type));
   if (Info.SymbolNumber == 0 || Info.SymbolNumber > Img.Sections.size())
     return std::nullopt;
   const Section &Owner = Img.Sections[Info.SymbolNumber - 1];
@@ -378,7 +387,7 @@ bool applySubtractorPair(const MachOObjectFile &Obj,
                          const RelocationRef &Unsigned,
                          const RelocationMetadata &UnsignedInfo,
                          uint64_t SegmentOffset, BinaryImage &Img,
-                         Segment &ApplySeg) {
+                         Segment &ApplySeg, const ObjectExterns &Externs) {
   if (SubtractorInfo.IsScattered || UnsignedInfo.IsScattered ||
       SubtractorInfo.IsPCRel || UnsignedInfo.IsPCRel ||
       !SubtractorInfo.IsExternal ||
@@ -387,7 +396,8 @@ bool applySubtractorPair(const MachOObjectFile &Obj,
       (SubtractorInfo.Length != 2 && SubtractorInfo.Length != 3))
     return false;
 
-  auto From = resolveExternalSymbol(Obj, Subtractor, Img);
+  auto From =
+      resolveExternalSymbol(Obj, Subtractor, Img, Externs, /*Branch=*/false);
   const uint8_t Width = uint8_t(1u << SubtractorInfo.Length);
   if (!From || !rangeInBounds(SegmentOffset, Width, ApplySeg.Data.size()))
     return false;
@@ -403,7 +413,8 @@ bool applySubtractorPair(const MachOObjectFile &Obj,
 
   uint64_t Minuend = RawField;
   if (UnsignedInfo.IsExternal) {
-    auto To = resolveExternalSymbol(Obj, Unsigned, Img);
+    auto To =
+        resolveExternalSymbol(Obj, Unsigned, Img, Externs, /*Branch=*/false);
     if (!To)
       return false;
     const int64_t Addend = Width == 4 ? static_cast<int32_t>(RawField)
@@ -412,7 +423,8 @@ bool applySubtractorPair(const MachOObjectFile &Obj,
     if (!Target)
       return false;
     Minuend = *Target;
-  } else if (!resolveRelocationTarget(Obj, Unsigned, UnsignedInfo, Img)) {
+  } else if (!resolveRelocationTarget(Obj, Unsigned, UnsignedInfo, Img,
+                                      Externs)) {
     return false;
   }
 
@@ -520,6 +532,14 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
     return llvm::Error::success();
   }
 
+  // The undefined and common symbols of the object take addresses past every
+  // section, beside the GOT entries its GOT references reach.
+  auto ExternsOr = planObjectExterns(Obj, Img);
+  if (!ExternsOr)
+    return ExternsOr.takeError();
+  const ObjectExterns Externs = std::move(*ExternsOr);
+  addObjectExterns(Obj, Externs, Img);
+
   for (const llvm::object::SectionRef &SecRef : Obj.sections()) {
     uint64_t SecAddr = SecRef.getAddress();
     Segment *ApplySeg = nullptr;
@@ -588,16 +608,29 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
         const uint64_t SegOff = SectionOff + RAddr;
         if (!applySubtractorPair(Obj, Relocations[RelocationIndex], Info,
                                  Relocations[UnsignedIndex], UnsignedInfo,
-                                 SegOff, Img, *ApplySeg))
+                                 SegOff, Img, *ApplySeg, Externs))
           return relocationError("malformed or overflowing SUBTRACTOR pair",
                                  SecAddr, RAddr);
         continue;
       }
 
       const RelocationRef &Reloc = Relocations[RelocationIndex];
+      // A GOT reference applies its direct form against the GOT entry, which
+      // holds the symbol's address.
+      std::optional<va_t> GOTEntry;
+      if (!Info.IsScattered && Info.IsExternal)
+        if (auto It = Externs.GOTCells.find(Info.SymbolNumber);
+            It != Externs.GOTCells.end()) {
+          GOTEntry = It->second;
+          if (auto Direct = directTypeOfGOTReference(Img.Arch, Info.Type))
+            Info.Type = *Direct;
+        }
       const uint64_t RAddr = Info.Address;
       const uint32_t RType = Info.Type;
-      auto Resolved = resolveRelocationTarget(Obj, Reloc, Info, Img);
+      auto Resolved =
+          GOTEntry ? std::optional<ResolvedSymbol>(
+                         ResolvedSymbol{*GOTEntry, Externs.CellBase})
+                   : resolveRelocationTarget(Obj, Reloc, Info, Img, Externs);
       const uint64_t SymVal = Resolved ? Resolved->Address : 0;
       const uint64_t SymOwnerVA = Resolved ? Resolved->OwnerVA : InvalidVA;
       uint64_t SectionOff = SecAddr - ApplySeg->VA;
@@ -745,6 +778,27 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
               return relocationError("ARM64 materialized address overflows",
                                      SecAddr, RAddr);
             recordARMAddressMaterialization(Img, P, *Target, SymOwnerVA);
+          }
+        } else if (isGOTPointerReference(Img.Arch, RType) && GOTEntry) {
+          // The field holds the GOT entry's address, or its distance from the
+          // field when the relocation is PC-relative.
+          if (Info.IsPCRel && Info.Length == 2 &&
+              rangeInBounds(SegOff, 4, ApplySeg->Data.size())) {
+            auto Delta = signedDifference(*GOTEntry, P);
+            if (!Delta || *Delta < std::numeric_limits<int32_t>::min() ||
+                *Delta > std::numeric_limits<int32_t>::max())
+              return relocationError("ARM64 GOT distance is not representable",
+                                     SecAddr, RAddr);
+            const int32_t Val = static_cast<int32_t>(*Delta);
+            std::memcpy(ApplySeg->Data.data() + SegOff, &Val, 4);
+          } else if (!Info.IsPCRel && Info.Length == 3 &&
+                     rangeInBounds(SegOff, 8, ApplySeg->Data.size())) {
+            const uint64_t Val = *GOTEntry;
+            std::memcpy(ApplySeg->Data.data() + SegOff, &Val, 8);
+            recordAbsolutePointerRelocation(Img, P, Val, Externs.CellBase);
+          } else {
+            return relocationError("invalid ARM64 GOT pointer metadata",
+                                   SecAddr, RAddr);
           }
         } else if (RType == ARM64_RELOC_GOT_LOAD_PAGE21 ||
                    RType == ARM64_RELOC_GOT_LOAD_PAGEOFF12 ||

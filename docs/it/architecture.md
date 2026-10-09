@@ -932,6 +932,17 @@ runtime in `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
 `WindowsNoReturn.inc`). Supportare un altro target aggiunge quindi un file o una
 voce di tabella invece di un ramo nel pass condiviso.
 
+I simboli non definiti di un oggetto rilocabile si risolvono in un unico livello
+condiviso, `include/neverd/loader/ObjectExterns.h`. Il loader di ogni formato
+raccoglie i simboli che le sue rilocazioni nominano, se una chiamata o un salto
+raggiunge ciascuno (`<Format>ObjectRelocations.def`), i suoi simboli common e le
+celle attraverso cui alcuni riferimenti raggiungono un simbolo (voci GOT di ELF
+e Mach-O, puntatori `__imp_` di COFF). Il livello li colloca dopo le sezioni
+dell'oggetto, in un segmento `extern` scrivibile e in un segmento di celle in
+sola lettura. Un extern chiamato vi è un import, un dato un simbolo; un
+riferimento debole non riceve indirizzo, perché il controllo di nullità che fa
+il suo codice appartiene al programma.
+
 <a id="support-and-test-depth"></a>
 
 ### Supporto e profondità dei test

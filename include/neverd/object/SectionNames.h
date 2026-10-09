@@ -24,6 +24,10 @@
 namespace neverd {
 namespace section_names {
 
+// The segment the loader synthesizes past a relocatable object's sections for
+// the symbols it does not define; no object format names a section so.
+constexpr const char *SynthesizedExtern = "extern";
+
 namespace elf {
 constexpr const char *Text = ".text";
 // Function/section split produced by -ffunction-sections and hot/cold
