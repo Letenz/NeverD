@@ -1019,10 +1019,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   };
   auto EntryOffsetOf = [&](const MedVar &V) { return EntryOffset(V, 0); };
   Scan.EntryOffsetOf = EntryOffsetOf;
-  // i386 places an outgoing argument by the stack pointer the call is made
-  // with (CallArgCollectionX86.cpp): the last one its block defines, or else
-  // the one reaching the block.
-  if (TargetArch == Arch::X86) {
+  // An outgoing stack argument is placed by the stack pointer the call is
+  // made with (CallArgCollectionX86.cpp): the last one its block defines, or
+  // else the one reaching the block.
+  {
     MedVar CallStack;
     bool Known = false;
     for (size_t J = CallIdx; J-- > 0;)
@@ -1214,14 +1214,21 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   if (Hinted.empty() && CurMed) {
     if (const MedCallInfo *CI =
             CurMed->findCall(CurBlock.Id, static_cast<int>(CallIdx))) {
-      if (!CI->Args.empty()) {
+      // Where call-setup recovery gives a call its arguments, it gives a
+      // direct call all of them, none included.  The scan below bounds an
+      // indirect call's by the setup its own block writes, since nothing
+      // bounds them by the callee's signature.
+      const bool SetupConvention =
+          Convention && Convention->ArgumentsFromCallSetup;
+      const bool CompleteSetup = SetupConvention && !CI->IsIndirect;
+      if (SetupConvention ? CompleteSetup : !CI->Args.empty()) {
         std::vector<ExprPtr> FromABI;
         FromABI.reserve(CI->Args.size());
         for (const MedVar &A : CI->Args)
           FromABI.push_back(medvarToExpr(A));
         size_t End = FromABI.size();
-        while (End < static_cast<size_t>(MaxArgs) && Found[End] &&
-               Found[End]->Kind != ExprKind::Undef)
+        while (!CompleteSetup && End < static_cast<size_t>(MaxArgs) &&
+               Found[End] && Found[End]->Kind != ExprKind::Undef)
           ++End;
         for (size_t I = FromABI.size(); I < End; ++I)
           FromABI.push_back(Found[I]);
@@ -1466,17 +1473,26 @@ void MedToHighConverter::resolveCalleeNames(
 
   // BinaryImage keeps publicly editable metadata vectors, so build these
   // exact-address indexes for this immutable pipeline stage rather than
-  // caching them on the image. Preserve the *first* matching entry, including
-  // an empty name, just as findImportAt/findExportAt/findSymbolAt do.
+  // caching them on the image.  They choose what calleeDisplayName does: the
+  // *first* import or export at an address, including an empty name, as
+  // findImportAt and findExportAt do, and the symbol getFunctionNameAt
+  // chooses.  The first symbol at a MinGW function's start is often its
+  // object's `.text` section symbol.
   std::map<va_t, const Import *> ImportsByIAT;
   for (const Import &Imp : Image->Imports)
     ImportsByIAT.try_emplace(Imp.IATAddr, &Imp);
   std::map<va_t, std::string> ExportsByAddr;
   for (const Export &Exp : Image->Exports)
     ExportsByAddr.try_emplace(Exp.Addr, Exp.Name);
-  std::map<va_t, std::string> SymbolsByAddr;
-  for (const Symbol &Sym : Image->Symbols)
-    SymbolsByAddr.try_emplace(Sym.Addr, Sym.Name);
+  std::map<va_t, const Symbol *> SymbolsByAddr;
+  for (const Symbol &Sym : Image->Symbols) {
+    if (Sym.Name.empty())
+      continue;
+    auto [It, Inserted] = SymbolsByAddr.try_emplace(Sym.Addr, &Sym);
+    if (!Inserted && BinaryImage::functionNameRank(Sym) >
+                         BinaryImage::functionNameRank(*It->second))
+      It->second = &Sym;
+  }
 
   auto Usable = [](llvm::StringRef Name) {
     return !Name.empty() && !Name.starts_with(kAutoFuncPrefix);
@@ -1510,8 +1526,8 @@ void MedToHighConverter::resolveCalleeNames(
     llvm::StringRef FromImage;
     if (Exp != ExportsByAddr.end() && !Exp->second.empty())
       FromImage = Exp->second;
-    else if (Sym != SymbolsByAddr.end() && !Sym->second.empty())
-      FromImage = Sym->second;
+    else if (Sym != SymbolsByAddr.end())
+      FromImage = Sym->second->Name;
     Names[Target] = Usable(FromImage)
                         ? FromImage.str()
                         : (kAutoFuncPrefix + llvm::utohexstr(Target)).str();

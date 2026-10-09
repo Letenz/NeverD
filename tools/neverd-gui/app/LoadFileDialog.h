@@ -36,6 +36,9 @@ public:
   /// such as the one picked last time; none at first.
   void setBinaryProcessor(const QString &processor);
 
+protected:
+  void resizeEvent(QResizeEvent *event) override;
+
 private:
   void select(int row);
   /// Whether the chosen row reads the file as a binary file.
@@ -51,6 +54,10 @@ private:
   QString identification() const;
   /// Enable OK and explain what keeps it disabled.
   void update();
+  /// Fit the file's path into the heading, keeping its name.
+  void elidePath();
+  QString path_;
+  QLabel *heading_;
   QJsonArray rows_;
   QListWidget *loaders_;
   QLabel *processorHeading_;

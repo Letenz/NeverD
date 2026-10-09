@@ -1997,6 +1997,10 @@ Con signo: %4</translation>
         <translation>Archivos recientes:</translation>
     </message>
     <message>
+        <source>No recent files. Choose New, or drop a file here.</source>
+        <translation>No hay archivos recientes. Elija «Nuevo» o suelte un archivo aquí.</translation>
+    </message>
+    <message>
         <source>Open binary or database</source>
         <translation>Abrir binario o base de datos</translation>
     </message>

@@ -62,9 +62,11 @@ loading binaries, companion PDB/MAP files, signatures and project sidecars.
 Chinese names, spaces and other Unicode characters are supported without
 changing the Windows system code page.
 
-The default application and code font is Consolas at 10 points when that
-family is installed. Otherwise, the system fixed-width font is used. A saved
-code-font choice continues to override the default for code views.
+Code views, the output window and text fields use the code font: Consolas at
+10 points when that family is installed, otherwise the system fixed-width font.
+Menus, tabs, lists, buttons and labels keep the system font, as in the classic
+disassembler's default font settings. A saved code-font choice overrides the
+default for code views and text fields.
 
 Double-clicking a function name in a code view follows it in that same window,
 keeping its C or LLVM C representation even when the window is locked. Back and
@@ -93,10 +95,12 @@ files) over the default desktop:
 - the status bar with the background analysis indicator (`AU: idle` or busy
   with progress), the search direction and free disk space.
 
-Every window is a dock: drag tabs to split, stack or float them. **Windows →
-Save desktop** remembers an arrangement and **Reset desktop** returns to the
-default. **Graph overview** appears under the function list in graph view, and
-the pseudocode and IR windows open beside the disassembly.
+Every window is a dock: drag tabs to split, stack or float them. Docked windows
+are one hairline apart; drag the line to resize its neighbors, or double-click
+it to share their space evenly. **Windows → Save desktop** remembers an
+arrangement and **Reset desktop** returns to the default. **Graph overview**
+appears under the function list in graph view, and the pseudocode and IR windows
+open beside the disassembly.
 
 ## Views
 

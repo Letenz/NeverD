@@ -748,6 +748,8 @@ KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::Paralle
 
 共用 pass 中新增的目標專屬規則應放在依目標劃分的表中，而不是內聯判斷架構或格式。ISA 的事實是一個 `TargetRegInfo` 特性，在該 ISA 的 `lib/ir/TargetRegInfo<ISA>.cpp` 中設定。呼叫慣例規則是一個 `CallArgumentConvention` 條目，定義在獨立的 `lib/ir/med/abi/MedCallConvention<Name>.cpp` 中，並在 `MedCallConvention.cpp` 中登記。永不返回的函式依執行環境分別列在 `include/neverd/libc` 下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）。如此支援新目標只需新增檔案或表項，而無需在共用 pass 中加分支。
 
+可重定位目的檔中未定義符號的解析由一個共用層負責：`include/neverd/loader/ObjectExterns.h`。各格式的載入器收集重定位所引用的符號、是否有呼叫或分支到達每個符號（`<Format>ObjectRelocations.def`）、其 common 符號，以及某些參照經由其到達符號的單元（ELF 與 Mach-O 的 GOT 項、COFF 的 `__imp_` 指標）。該層把它們放在目的檔各節之後：一個可寫的 `extern` 區段和一個唯讀的單元區段。被呼叫的外部符號在那裡是匯入，資料則是符號；弱參照不配置位址，因為程式碼對它所做的空值判斷屬於程式本身。
+
 <a id="support-and-test-depth"></a>
 
 ### 支援範圍與測試深度
@@ -1192,6 +1194,8 @@ Combine 的精確強匯入 `Publisher.sink(receiveValue:)` 多載在 `Failure ==
 HighIR 在複製尾部呼叫前查詢 `SourceCallTypeHint::requiresUniqueSourceOccurrence`。布林結果、回呼參數、不可變目標、框架中的值見證、虛擬分派和原生 Swift 接收者憑據各自對應一次原始機器呼叫；返回尾部、跳轉尾部和巢狀出口改寫均保留共用求值位置，即使複製後的原始碼路徑互斥也不複製憑據。一般呼叫宣告繼續使用原有複製規則。發布仍重新證明目前的機器、ABI、運算元和動態目標，並要求唯一原始碼求值。測試涵蓋全部憑據類型、巢狀運算式、一般呼叫最佳化，以及完整 ARM64 共用儲存和回呼尾部與產生 C 在 O0/O2 下的對照。
 
 共用 `SourceABI` 所有者區分邏輯上的按值結構體與實體位址載體。Darwin ARM64 C 宣告中的六個或十六個 double 保留完整結構體型別，透過八位元組整數暫存器或自然對齊堆疊槽傳參，獨立於浮點引數暫存器與 x8 返回指標。ABI 相等判斷與投影分組保留此區別、呼叫慣例及引數角色，拒絕部分、重疊、不相容或過時載體。僅有宣告不能繫結 LowIR 呼叫、投影入口、輸出 HighC 呼叫或授權框架借用，仍需獨立副本儲存證明。編譯器與原生 ABI 測試涵蓋暫存器耗盡、堆疊配置、任意浮點位元模式、副本改寫隔離及獨立間接返回；這不是完整 `setTransform:` 恢復測試。
+
+除錯簽名依參數的到達位置而非序號為復原出的參數命名。`SourceParameterPlacement` 依目標的一般呼叫慣例放置每個原始碼參數：System V x86-64、Microsoft x64、AAPCS64 及 i386 cdecl/stdcall，各佔一個檔案。它給出承載各參數片段的暫存器與堆疊槽，以及隱藏的返回指標。HighC 將復原出的參數繫結到其暫存器或入口堆疊偏移處的片段；後續片段以參數名加位元組偏移命名（`p_8`），僅當該位置以原始位元組承載完整值時才採用宣告型別。放置在規則無法確定位置的第一個參數處停止：原始碼未說明傳遞方式的結構體、寬於暫存器的純量、對齊未知的記憶體傳遞結構體，或 Apple arm64 的堆疊緊湊排列。其後的參數保留機器名稱；Go 等擁有自身呼叫慣例的語言中的函式不做任何繫結。DWARF 載入器只為參數與返回型別提供傳遞方式和純量配置：C 結構體按值傳遞，C++ 類別依 `DW_AT_calling_convention` 的說明傳遞，`_Complex` 值按複數傳遞。Rust 結構體維持未知，因為 Rust 自身 ABI 與 `extern "C"` 對部分結構體的傳遞方式不同。PDB 結構體遵循 Microsoft C++ ABI：i386 以原始位元組傳遞，x64 則在同一位置以原始位元組或位址傳遞。呼叫原型與引數轉換仍只來自可依位置對應的簽名，即參數全為整數或全為浮點值。
 
 共享的 `SourceFrameAnalysis` 在獨立效果憑據說明消費方及完整間接結果產生者後，可驗證原始呼叫處已初始化的私有傳值副本。分析涵蓋全部到達路徑和迴圈回邊、精確有效範圍、其他引數別名及後續使用。消費副本會使初始化事實和已儲存位元組身分失效；後續讀取必須先有新的確定寫入。可能寫入和堆疊框架釋放也會清除初始化事實，同時保留 Swift scratch 的有效生命週期義務。查詢只有在完整框架恢復證明通過後才傳回引數範圍，不授予機器身分、SDK 效果、呼叫繫結或原始碼發布權限。測試涵蓋分支、迴圈、部分寫入、別名及保留的 scratch；真實 ObjC/CALayer 的 ARM64 案例拒絕讀取已消費副本，接受獨立證明已初始化且可捨棄的副本。
 

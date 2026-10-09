@@ -254,6 +254,15 @@ public:
   /// stub that jumps through it: a function pointer (`__imp_calloc`), or
   /// empty when it calls no import or the format names no slot.
   std::string importSlotIdentifier(const HighExpr &E) const;
+  /// The identifier of the import slot at \p Addr when \p Addr is an
+  /// import's own slot in the import address table, not a stub that jumps
+  /// through it; empty otherwise.
+  std::string importDataSlotIdentifier(va_t Addr) const;
+  /// The import slot a read of \p Size bytes at \p Address reads as data, a
+  /// data import's address: the slot at a constant address, or the slot a
+  /// read-only pointer holds (MinGW's `.refptr.__imp__fmode`).
+  std::optional<va_t> importDataSlotRead(const HighExpr &Address,
+                                         uint16_t Size) const;
   /// The function this file defines that call \p E runs, or null: one named
   /// like it at another address is a different function.
   const HighFunc *calledDefinition(const HighExpr &E) const;
@@ -271,6 +280,30 @@ public:
   /// The type \p Func's definition declares its HighIR parameter \p Index
   /// with, which its prototype and every use of the parameter share.
   TypeRef emittedParamType(const HighFunc &Func, size_t Index) const;
+  /// What a parameter holds of its function's debug signature, matched by
+  /// where the convention passes each (SourceParameterPlacement), never by
+  /// position: System V passes `f(double x, int n)` with n in the first
+  /// integer register.
+  struct DebugParamBinding {
+    /// The debug parameter it holds a piece of, or -1.
+    int Index = -1;
+    /// Where the piece starts in that parameter's value.
+    uint16_t Offset = 0;
+    /// It holds the whole value the debug type describes.
+    bool Whole = false;
+    /// It holds the hidden pointer to the result's storage.
+    bool Result = false;
+  };
+  DebugParamBinding debugParamBinding(const HighFunc &Func, size_t Index) const;
+  /// The name \p Func's parameter \p Index reads as by its debug signature:
+  /// the debug parameter's, `<name>_<offset>` for a later piece of one, or
+  /// empty.
+  std::string debugParamName(const HighFunc &Func, size_t Index) const;
+  /// Whether a call passes \p FS's parameters in signature order: one
+  /// integer or one floating value each, and no hidden result pointer.  A
+  /// call's arguments come in the convention's order, integer registers
+  /// first, so another signature cannot type them by position.
+  bool positionalDebugSignature(const FunctionSym &FS) const;
   TypeRef debugParamType(const MedVar &V) const;
   TypeRef declaredRecordPointee(const HighExpr &Base) const;
   std::optional<std::pair<const HighExpr *, uint64_t>>
@@ -338,6 +371,10 @@ public:
   /// (`(int32_t)(int8_t)v` is not `v`).
   const HighExpr *sameWidthVariable(const HighExpr &E) const;
   const HighExpr *forwardedExpr(const HighExpr *E) const;
+  /// \p Operand's text as an operand of a floating-point operator.  An
+  /// operation whose type C may compute wider (CFloatTypes.def) is cast to
+  /// that type, which rounds it where the instruction rounded.
+  std::string floatOperandStr(const HighExpr &Operand, int ParentPrec);
   /// True when \p E prints as an unsigned integer of exactly \p Width bytes.
   /// Widening views and untyped add/sub/mul stay wrapped.
   bool isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const;
@@ -398,11 +435,22 @@ public:
   /// integer bits carry the value.
   std::optional<std::string> floatArgumentText(const HighExpr &Arg,
                                                const TypeRef &Expected);
-  /// \p E as the argument of a parameter of type \p Expected.  For a callee
-  /// this file defines, whose prototype it prints (\p DefinedCallee), a
-  /// variable declared as an integer converts to a pointer parameter.
-  std::string exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected,
-                                bool DefinedCallee = false);
+  /// \p E as the argument of a parameter of type \p Expected, which a
+  /// prototype declares: an integer converts to a pointer parameter, and a
+  /// string or an address to an integer one.
+  std::string exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected);
+  /// The text \p E passes to a parameter of type \p Expected, before a
+  /// pointer converts to an integer parameter.
+  std::string typedArgumentText(const HighExpr &E, const TypeRef &Expected);
+  /// Whether \p E, printed as \p Text, has an integer type in C that a
+  /// pointer parameter does not take as it is (not a null pointer constant).
+  bool printsAsInteger(const HighExpr &E, llvm::StringRef Text) const;
+  /// Whether \p Text prints a pointer: a string, an address, or a name the
+  /// function declares as a pointer.
+  bool printsAsPointer(llvm::StringRef Text) const;
+  /// The type this function declares for the identifier \p Text: a local,
+  /// a parameter or a named frame slot; null for anything else.
+  TypeRef declaredTypeNamed(llvm::StringRef Text) const;
   bool looksLikeHiddenSretOperand(const HighExpr *Op) const;
   bool debugExternUsesHiddenSret(const FunctionSym &FS,
                                  llvm::StringRef ExternName) const;
@@ -634,6 +682,11 @@ public:
   /// Call identifiers that name an import's slot (importSlotIdentifier):
   /// declared as function pointers, linked by their own names.
   std::set<std::string> ImportSlotIdentifiers;
+  /// Import slots the code reads as data (importDataSlotRead), and the
+  /// identifiers that read them once declared: a pointer linked by the
+  /// slot's own name, or the function pointer a call through it declares.
+  std::set<va_t> ImportDataSlotReads;
+  std::map<va_t, std::string> ImportDataSlotNames;
   std::map<std::string, std::string> ExternalSourceIdentifiers;
   /// The identifiers functionIdentifier() spelled for functions no map
   /// names, and the symbols they stand for (recordSourceNames()).
@@ -661,30 +714,6 @@ public:
   std::set<X87CHelper> X87Helpers;
   std::map<std::pair<Intrinsic, unsigned>, std::string> X86FPStateHelpers;
   bool UsesX87Extended = false;
-  /// How a function's debug declaration names and types its parameters.
-  struct DebugParamBinding {
-    enum class Kind : uint8_t {
-      /// By position: the declaration's index is the parameter's.
-      Positional,
-      /// By the register the ABI passes each declared parameter in.
-      Located,
-    };
-    Kind TheKind = Kind::Positional;
-    /// Under a located binding, the declared parameter of each parameter
-    /// the body reads from a register that passes one.
-    std::map<int, size_t> DebugOfId;
-    /// The parameters the body reads.
-    std::set<int> ReadIds;
-  };
-  /// By function and entry: a unit can hold two bodies of one entry.
-  mutable std::map<std::pair<const HighFunc *, va_t>, DebugParamBinding>
-      DebugParamBindings;
-  const DebugParamBinding &debugParamBinding(const HighFunc &Func) const;
-  /// The declared parameter that parameter \p ParamId of \p Func takes its
-  /// name and type from; \p Adjusted is the position a hidden result pointer
-  /// shifts it to under a positional binding.
-  std::optional<size_t> debugParamIndex(const HighFunc &Func, int ParamId,
-                                        size_t Adjusted) const;
   /// The bytes a plain access of the C memory type \p Type copies inline: 0
   /// for its whole object, the value's bytes for a bit-precise integer
   /// narrower than its storage on a little-endian target, none when only
@@ -762,10 +791,25 @@ public:
   bool InferredVoid = false;
   TypeRef FuncReturnType;
   const HighFunc *CurrentFunc = nullptr;
-  /// emittedParamType's answers for the function it last answered for.
-  mutable const HighFunc *EmittedParamTypesOf = nullptr;
-  mutable va_t EmittedParamTypesEntry = 0;
+  /// The parameter bindings and emitted types of the function last asked
+  /// about.
+  mutable const HighFunc *ParamCacheOf = nullptr;
+  mutable va_t ParamCacheEntry = 0;
+  mutable std::vector<DebugParamBinding> ParamBindings;
   mutable std::vector<TypeRef> EmittedParamTypes;
+  mutable std::vector<std::string> ParamDebugNames;
+  /// The convention's rules placed the cached function's debug parameters
+  /// by where they arrive, rather than by position.
+  mutable bool ParamsPlaced = false;
+  /// Fills the cache for \p Func.
+  void bindParams(const HighFunc &Func) const;
+  /// Where a stack parameter of \p Func arrives, from the entry stack
+  /// pointer; none for a register parameter or an unknown location.
+  std::optional<int64_t> stackParamOffset(const HighFunc &Func,
+                                          size_t Index) const;
+  /// emittedParamIndices' answers, which walk the function's body.
+  mutable std::map<std::pair<const HighFunc *, va_t>, std::vector<size_t>>
+      EmittedParamIndices;
   CSourceRecorder *SourceRecorder = nullptr;
   /// Win64 hidden sret parameter name (`result`) when TPI returns a class.
   std::string IndirectReturnName;
@@ -906,6 +950,9 @@ public:
     /// The code indexes the object (`table[i]`): its whole extent, as the
     /// image's symbol sizes it, is declared, as bytes.
     uint64_t IndexedBytes = 0;
+    /// The widest atomic access (an ordered load or store, or a
+    /// read-modify-write) at its address: C keeps it as aligned as the image.
+    uint16_t AtomicBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
   /// The C initializer of an object's scalar value, as the image holds it;
@@ -990,6 +1037,11 @@ public:
     /// bytes: its C object, and the slots, each word-aligned in it.
     std::string Words;
     std::vector<va_t> PointerSlots;
+    /// The alignment of the bytes, and the bytes before Base that keep each
+    /// address as aligned modulo it as in the image: an atomic access in them
+    /// needs that.  1 and 0 for a backing without one.
+    unsigned Align = 1;
+    uint64_t Pad = 0;
   };
   std::vector<ImageBacking> ImageBackings;
   /// The C address a relocated pointer slot holds: the function or data it

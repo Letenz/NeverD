@@ -17,6 +17,7 @@
 #define NEVERD_LIB_LOADER_ELF_ELFLOADERDETAIL_H
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ObjectExterns.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -26,6 +27,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <optional>
+#include <set>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -90,15 +96,53 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
                         llvm::StringRef ShStrTab, const uint8_t *Data,
                         size_t Size, bool IsRelocatable, BinaryImage &Img);
 
+/// The addresses a relocatable object's relocations resolve against that no
+/// section of the object holds (ELFLoaderExterns.cpp): its externs, laid out
+/// by the shared object-extern layer, and the GOT entry the linker would
+/// create for each symbol a GOT reference names, by (symbol table section,
+/// symbol index), which holds the symbol's address.  The cells are the GOT.
+struct ObjectExterns : object_externs::ExternLayout {
+  std::map<std::pair<uint32_t, uint32_t>, va_t> GOTEntries;
+};
+
+/// The relocation a GOT reference \p Type of \p A applies against the GOT
+/// entry of its symbol (ELFObjectRelocations.def), or nullopt.
+std::optional<uint32_t> directTypeOfGOTReference(Arch A, uint32_t Type);
+
+/// True when \p Type relocates a call or branch of \p A, so the symbol it
+/// names is a function (ELFObjectRelocations.def).
+bool isBranchReference(Arch A, uint32_t Type);
+
+/// Place the undefined and common symbols of a relocatable object, and the
+/// GOT entries its GOT references reach, past \p ImageEnd, the end of its
+/// allocated sections.
+template <typename ELFT>
+llvm::Expected<ObjectExterns>
+planObjectExterns(const llvm::object::ELFFile<ELFT> &ELF,
+                  llvm::ArrayRef<typename ELFT::Shdr> Sections,
+                  const uint8_t *Data, size_t Size, Arch A, va_t ImageEnd);
+
+/// Add the planned extern segment and GOT to \p Img with their sections, the
+/// undefined symbols as symbols and the called ones as imports, and the GOT
+/// entries holding their symbols' addresses.
+template <typename ELFT>
+void addObjectExterns(const llvm::object::ELFFile<ELFT> &ELF,
+                      llvm::ArrayRef<typename ELFT::Shdr> Sections,
+                      const std::vector<va_t> &SecBase,
+                      const ObjectExterns &Externs, BinaryImage &Img);
+
 /// Apply the relocations of a relocatable object in place, patching the
 /// segment bytes the lifter reads and recording the address-taken targets and
-/// pointer slots the emitter needs in order to symbolize them again.
+/// pointer slots the emitter needs in order to symbolize them again.  An
+/// undefined or common symbol resolves to its address in \p Externs, and a GOT
+/// reference to its symbol's GOT entry.
 template <typename ELFT>
 llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
                              llvm::ArrayRef<typename ELFT::Shdr> Sections,
                              const uint8_t *Data, size_t Size,
                              const std::vector<va_t> &SecBase,
-                             bool IsRelocatable, BinaryImage &Img);
+                             bool IsRelocatable, const ObjectExterns &Externs,
+                             BinaryImage &Img);
 
 /// Apply full-width dynamic-loader-relative relocations in a linked ELF image
 /// at its link-time virtual addresses, and normalize their pointer provenance
@@ -113,11 +157,14 @@ void applyDynamicRelativeRelocations(
 /// Record the defined symbols of every SHT_SYMTAB / SHT_DYNSYM section in
 /// `Img.Symbols`, and every global or weak function among them in
 /// `Img.Exports`.
+/// A common symbol takes its address in \p CommonSlots.
 template <typename ELFT>
 llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
                            llvm::ArrayRef<typename ELFT::Shdr> Sections,
                            size_t Size, const std::vector<va_t> &SecBase,
-                           bool IsRelocatable, BinaryImage &Img);
+                           bool IsRelocatable,
+                           const std::map<std::string, va_t> &CommonSlots,
+                           BinaryImage &Img);
 
 } // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail
 } // namespace elf_loader

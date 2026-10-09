@@ -19,6 +19,7 @@
 #include <array>
 #include <deque>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -136,6 +137,9 @@ findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
   // `test al, al` reads AL alone, where an alignment `push rax` reads RAX.
   bool TestsAL = false;
   std::vector<std::optional<Spill>> Stored(Registers.size());
+  // The stack slots holding a register's incoming value, by family: GCC's
+  // `push rax; pop rax` puts RAX back unchanged before `test al, al`.
+  std::map<std::tuple<unsigned, unsigned, int64_t>, unsigned> EntryValueSlots;
   auto SlotOf = [&](const NdVar &V) -> std::optional<Slot> {
     if (V.isTemp()) {
       if (auto It = TempSlots.find(V.Offset); It != TempSlots.end())
@@ -146,6 +150,16 @@ findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
                                 ? gprFamilyOf(Img.Arch, V.Offset)
                                 : std::nullopt)
       return Slot{*Family, Versions[*Family], 0};
+    return std::nullopt;
+  };
+  // The temporaries a pop loads such an incoming value into, by family.
+  std::map<uint64_t, unsigned> EntryValueTemps;
+  auto EntryValueAt = [&](const NdVar &Address) -> std::optional<unsigned> {
+    if (auto Slot = SlotOf(Address))
+      if (auto It = EntryValueSlots.find(
+              {Slot->Family, Slot->Version, Slot->Displacement});
+          It != EntryValueSlots.end())
+        return It->second;
     return std::nullopt;
   };
   const std::optional<unsigned> VectorCount =
@@ -167,6 +181,13 @@ findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
         }
       if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
           Op.Inputs[1].isReg() && Op.Inputs[1].Size == TRI.PointerSize)
+        if (const auto Family = gprFamilyOf(Img.Arch, Op.Inputs[1].Offset);
+            Family && !((Written >> *Family) & 1))
+          if (auto Address = SlotOf(Op.Inputs[0]))
+            EntryValueSlots[{Address->Family, Address->Version,
+                             Address->Displacement}] = *Family;
+      if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
+          Op.Inputs[1].isReg() && Op.Inputs[1].Size == TRI.PointerSize)
         for (size_t K = 0; K < Registers.size(); ++K)
           if (Op.Inputs[1].Offset == Registers[K] && !Stored[K] &&
               !((Written >> (Registers[K] / 8)) & 1))
@@ -175,6 +196,11 @@ findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
       // The lifter forms an address in a temporary, `t = base; t = t + d`,
       // and reuses the temporary in later instructions.
       if (Op.Output.isTemp()) {
+        EntryValueTemps.erase(Op.Output.Offset);
+        if (Op.Opcode == NdOp::LOAD && Op.NumInputs >= 1 &&
+            Op.Output.Size == TRI.PointerSize)
+          if (auto Family = EntryValueAt(Op.Inputs[0]))
+            EntryValueTemps[Op.Output.Offset] = *Family;
         std::optional<Slot> Address;
         if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
           Address = SlotOf(Op.Inputs[0]);
@@ -192,6 +218,18 @@ findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
       }
       if (Op.Output.isReg())
         if (const auto Family = gprFamilyOf(Img.Arch, Op.Output.Offset)) {
+          // Reloading a register's own incoming value leaves it unwritten.
+          std::optional<unsigned> Reloaded;
+          if (Op.Opcode == NdOp::LOAD && Op.NumInputs >= 1)
+            Reloaded = EntryValueAt(Op.Inputs[0]);
+          else if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+                   Op.Inputs[0].isTemp())
+            if (auto It = EntryValueTemps.find(Op.Inputs[0].Offset);
+                It != EntryValueTemps.end())
+              Reloaded = It->second;
+          if (Reloaded == *Family && Op.Output.Size == TRI.PointerSize &&
+              !((Written >> *Family) & 1))
+            continue;
           ++Versions[*Family];
           Written |= GPRFamilyMask(1) << *Family;
         }
@@ -404,21 +442,25 @@ StackValue stackValueOf(const StackState &S, const NdVar &V) {
   return It == S.end() ? StackValue{} : It->second;
 }
 
-/// Bound the incoming stack-argument slots \p F reads, per Win64: the body
-/// reads slot K when it loads from the entry stack pointer plus
-/// EntryStackBase + K * SlotBytes, directly or through a tail call made at
-/// the entry stack pointer.  Anything that could read those slots out of
-/// sight makes the bound unknown.
+/// Bound the incoming stack-argument slots \p F reads: the body reads slot K
+/// when it loads from the entry stack pointer plus EntryStackBase +
+/// K * SlotBytes, directly or through a tail call made at the entry stack
+/// pointer.  Anything that could read those slots out of sight makes the
+/// bound unknown.
 void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
                                  const std::map<int, size_t> &IndexOfId,
                                  const std::set<va_t> &BlockStarts,
                                  LocalRegisterEffect &Effect) {
-  if (Img.Arch != Arch::X64 || Img.abiFormat() != BinaryFormat::COFF) {
+  if (Img.Arch != Arch::X64) {
     Effect.UnknownStackReads = true;
     return;
   }
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
-  const IntegerArgumentLayout Layout = TRI.integerArgumentLayout(true);
+  const IntegerArgumentLayout Layout =
+      TRI.integerArgumentLayout(Img.abiFormat());
+  // Win64 reserves a home slot for each register argument just above the
+  // return address; System V passes the first stack argument there.
+  const bool HomeSlots = Layout.CallStackBase > 0;
   const StackKey SP{false, TRI.StackPointer};
   const size_t NumArgRegs = Layout.Registers.size();
   // The home slot of argument register K lies just above the return address.
@@ -556,8 +598,8 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
         // other code read them.
         Unknown |= Escapes(In(1));
         const StackValue A = In(0);
-        if (&Block == &F.Blocks.front() && A.K == StackValue::Range &&
-            A.Lo == A.Hi && Op.NumInputs >= 2)
+        if (HomeSlots && &Block == &F.Blocks.front() &&
+            A.K == StackValue::Range && A.Lo == A.Hi && Op.NumInputs >= 2)
           for (size_t K = 0; K < NumArgRegs; ++K)
             if (A.Lo == HomeSlot(K) &&
                 Op.Inputs[1] == NdVar::reg(Layout.Registers[K], 8) &&
@@ -676,7 +718,7 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
   // load reads back, with no pointer to the incoming area escaping, reads
   // nothing either: only this function could observe its home slots.
   int VariadicFrom = -1;
-  if (LowestEscape && *LowestEscape >= HomeSlot(1) &&
+  if (HomeSlots && LowestEscape && *LowestEscape >= HomeSlot(1) &&
       (*LowestEscape - HomeSlot(0)) % Layout.SlotBytes == 0) {
     const size_t First =
         static_cast<size_t>((*LowestEscape - HomeSlot(0)) / Layout.SlotBytes);

@@ -17,7 +17,9 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -414,7 +416,10 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
   const TypeRef DeclaredReturn = declaredFunctionReturnType(Func);
   InferredVoid = DeclaredReturn
                      ? DeclaredReturn->Kind == NdTypeKind::Void
-                     : analyzeVoidReturn(Analysis, Func, VarFn, ExprFn);
+                     : analyzeVoidReturn(Analysis, Func, VarFn, ExprFn,
+                                         [this](const HighExpr &Call) {
+                                           return knownVoidCall(Call);
+                                         });
 
   HiLoPairs.clear();
   auto RegisterHiLo = [this](const HighStmt &S, const HighExpr &CE) {
@@ -2318,6 +2323,10 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
 
 void HighCWriter::noteDebugExtern(const std::string &Name,
                                   const FunctionSym &FS) {
+  // A prototype in signature order would not take a call's arguments, which
+  // come in the convention's order; the callee is declared without it.
+  if (!positionalDebugSignature(FS))
+    return;
   auto [It, Added] = DebugExternSigs.emplace(Name, FS);
   if (Added)
     return;
@@ -4270,161 +4279,241 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
   });
 }
 
-const HighCWriter::DebugParamBinding &
-HighCWriter::debugParamBinding(const HighFunc &Func) const {
-  auto [It, Inserted] =
-      DebugParamBindings.try_emplace(std::make_pair(&Func, Func.Entry));
-  DebugParamBinding &Binding = It->second;
-  if (!Inserted)
-    return Binding;
-  // The registers the body reads its parameters from, whatever numbering the
-  // lift gave them, and whether it reads one from the stack.
-  std::map<int, uint64_t> RegisterOfId;
-  bool StackParameter = false;
-  std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
-    if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
-        E.Var.Kind == MedVar::Param) {
-      Binding.ReadIds.insert(E.Var.Id);
-      if (E.Var.RegOff == kNoParamReg)
-        StackParameter = true;
-      else
-        RegisterOfId.emplace(E.Var.Id, E.Var.RegOff);
-    }
-    E.forEachChildExpr([&](const ExprPtr &Child) { Walk(*Child); });
-  };
-  walkStmts(Func.Body, [&](const HighStmt &S) {
-    forEachExpr(S, [&](const ExprPtr &E) {
-      if (E)
-        Walk(*E);
-    });
-  });
-  // A source signature and a hidden result pointer keep their positions, as
-  // do the targets, stack parameters and declarations placed by no rule
-  // below.
-  const auto DebugFn = debugFunction(Dbg, Func.Entry);
-  if (!DebugFn || DebugFn->Params.empty() || Func.SourceTypeHint ||
-      isMsvcIndirectReturn(DebugFn->ReturnType) || StackParameter ||
-      RegisterOfId.empty() ||
-      (Opts.TheArch != Arch::X64 && Opts.TheArch != Arch::AArch64))
-    return Binding;
-  // Where each declared parameter arrives: a register, or none for the
-  // stack.  Every parameter's place depends on those before it, so one of a
-  // type the placement does not model, such as a record, leaves all of them
-  // by position.
-  const auto &TRI = getTargetRegInfo(Opts.TheArch);
-  const bool Positional =
-      Opts.TheArch == Arch::X64 && Opts.Format == BinaryFormat::COFF;
-  const auto IntRegs = TRI.integerParamRegs(Opts.Format);
-  const auto &FPRegs = TRI.FPParamRegs;
-  // Parameters the lift did not place in distinct parameter registers, as
-  // in IR built by hand, keep their positions.
-  std::set<uint64_t> Placed;
-  for (const auto &[Id, Register] : RegisterOfId)
-    if ((!llvm::is_contained(IntRegs, Register) &&
-         !llvm::is_contained(FPRegs, Register)) ||
-        !Placed.insert(Register).second)
-      return Binding;
-  std::vector<std::optional<uint64_t>> Arrives;
-  size_t NextInt = 0, NextFP = 0;
-  for (size_t DI = 0; DI < DebugFn->Params.size(); ++DI) {
-    const TypeRef Ty = cDisplayType(DebugFn->Params[DI].second);
-    if (!Ty)
-      return Binding;
-    const bool Integer = (Ty->Kind == NdTypeKind::Int && Ty->Size <= 8) ||
-                         Ty->Kind == NdTypeKind::Ptr;
-    const bool Scalar =
-        Ty->Kind == NdTypeKind::Float && (Ty->Size == 4 || Ty->Size == 8);
-    // System V passes the x87 long double in memory; AArch64 passes its
-    // binary128 in a vector register.
-    const bool Extended = Ty->Kind == NdTypeKind::Float && Ty->Size > 8;
-    if (!Integer && !Scalar && !Extended)
-      return Binding;
-    if (Positional) {
-      if (Extended)
-        return Binding;
-      // Microsoft x64 passes the first four parameters, of either class,
-      // in the register of their position.
-      const auto &Regs = Integer ? IntRegs : FPRegs;
-      Arrives.push_back(DI < IntRegs.size() && DI < Regs.size()
-                            ? std::optional<uint64_t>(Regs[DI])
-                            : std::nullopt);
-    } else if (Integer) {
-      Arrives.push_back(NextInt < IntRegs.size()
-                            ? std::optional<uint64_t>(IntRegs[NextInt++])
-                            : std::nullopt);
-    } else if (Scalar || Opts.TheArch == Arch::AArch64) {
-      Arrives.push_back(NextFP < FPRegs.size()
-                            ? std::optional<uint64_t>(FPRegs[NextFP++])
-                            : std::nullopt);
-    } else {
-      Arrives.push_back(std::nullopt);
-    }
-  }
-  // A register no declared parameter arrives in, such as one the body reads
-  // before writing, keeps its own name.
-  for (const auto &[Id, Register] : RegisterOfId)
-    if (const auto At = llvm::find(Arrives, std::optional<uint64_t>(Register));
-        At != Arrives.end())
-      Binding.DebugOfId.emplace(Id, static_cast<size_t>(At - Arrives.begin()));
-  Binding.TheKind = DebugParamBinding::Kind::Located;
-  return Binding;
+std::optional<int64_t> HighCWriter::stackParamOffset(const HighFunc &Func,
+                                                     size_t Index) const {
+  const HighParam &Param = Func.Params[Index];
+  if (Param.RegOff != kNoParamReg || Param.MedIndex < 0)
+    return std::nullopt;
+  const auto Layout =
+      getTargetRegInfo(Opts.TheArch).integerArgumentLayout(Opts.Format);
+  if (!Layout.SlotBytes)
+    return std::nullopt;
+  // Stack arguments are numbered after every register position, or after the
+  // registers the function uses where they follow those (i386 regparm).
+  int First = static_cast<int>(Layout.Registers.size());
+  if (const CallArgumentConvention *Convention =
+          callArgumentConvention(Opts.TheArch, Opts.Format);
+      Convention && Convention->StackArgumentsFollowUsedRegisters)
+    First =
+        static_cast<int>(llvm::count_if(Func.Params, [](const HighParam &P) {
+          return P.RegOff != kNoParamReg;
+        }));
+  if (Param.MedIndex < First)
+    return std::nullopt;
+  return Layout.EntryStackBase +
+         static_cast<int64_t>(Param.MedIndex - First) * Layout.SlotBytes;
 }
 
-std::optional<size_t> HighCWriter::debugParamIndex(const HighFunc &Func,
-                                                   int ParamId,
-                                                   size_t Adjusted) const {
-  const DebugParamBinding &Binding = debugParamBinding(Func);
-  if (Binding.TheKind == DebugParamBinding::Kind::Positional)
-    return Adjusted;
-  if (const auto It = Binding.DebugOfId.find(ParamId);
-      It != Binding.DebugOfId.end())
-    return It->second;
-  return std::nullopt;
+void HighCWriter::bindParams(const HighFunc &Func) const {
+  if (ParamCacheOf == &Func && ParamCacheEntry == Func.Entry &&
+      ParamBindings.size() == Func.Params.size())
+    return;
+  ParamCacheOf = &Func;
+  ParamCacheEntry = Func.Entry;
+  ParamBindings.assign(Func.Params.size(), {});
+  ParamDebugNames.assign(Func.Params.size(), {});
+  ParamsPlaced = false;
+  EmittedParamTypes.clear();
+  for (const HighParam &Param : Func.Params)
+    EmittedParamTypes.push_back(Param.Type);
+  // A bound source ABI spells its own parameters (sourceParameterType).  A
+  // function of a language with conventions of its own, such as Go, has no
+  // rules that say where its parameters arrive.
+  const auto DebugFn = debugFunction(Dbg, Func.Entry);
+  if (!DebugFn || Func.SourceTypeHint || !DebugFn->PlatformConvention)
+    return;
+  const size_t Count = DebugFn->Params.size();
+  auto Bind = [&](size_t PI, size_t DI) {
+    ParamBindings[PI] = {static_cast<int>(DI), 0, true, false};
+  };
+  if (isMsvcIndirectReturn(DebugFn->ReturnType)) {
+    // MSVC's hidden result pointer keeps its own positions.
+    const bool HighIRIncludesSret =
+        highIRIncludesIndirectReturn(Func, *DebugFn);
+    const int SretId = indirectReturnParamId(*DebugFn);
+    for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
+      if (HighIRIncludesSret && static_cast<int>(PI) == SretId) {
+        ParamBindings[PI].Result = true;
+        // The definition's `result`, a pointer to the record it returns.
+        if (const TypeRef Result = declaredFunctionReturnType(Func);
+            Result && Result->Kind == NdTypeKind::Ptr)
+          EmittedParamTypes[PI] = Result;
+        continue;
+      }
+      const size_t DI =
+          HighIRIncludesSret && static_cast<int>(PI) > SretId ? PI - 1 : PI;
+      if (DI < Count)
+        Bind(PI, DI);
+    }
+  } else {
+    std::vector<TypeRef> Types;
+    for (const auto &[Name, Type] : DebugFn->Params) {
+      (void)Name;
+      if (Type)
+        Dbg->completeType(Type);
+      Types.push_back(Type);
+    }
+    if (DebugFn->ReturnType)
+      Dbg->completeType(DebugFn->ReturnType);
+    // fastcall and thiscall pass leading values in registers that the
+    // ordinary i386 rules do not describe, and a function built without
+    // lowering does not say where its parameters arrive.
+    const bool OrdinaryConvention =
+        Opts.TheArch != Arch::X86 ||
+        DebugFn->CallConv == DebugCallConv::Unknown ||
+        DebugFn->CallConv == DebugCallConv::Cdecl ||
+        DebugFn->CallConv == DebugCallConv::Stdcall;
+    const bool Located = llvm::any_of(Func.Params, [](const HighParam &P) {
+      return P.RegOff != kNoParamReg || P.MedIndex >= 0;
+    });
+    const auto Placement =
+        OrdinaryConvention && Located
+            ? placeSourceParameters(Opts.TheArch, Opts.Format,
+                                    DebugFn->ReturnType, Types)
+            : std::nullopt;
+    if (Placement) {
+      ParamsPlaced = true;
+      for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
+        const HighParam &Param = Func.Params[PI];
+        const std::optional<int64_t> Stack = stackParamOffset(Func, PI);
+        auto At = [&](const SourceABIValueLocation &Where, int64_t &Delta) {
+          Delta = 0;
+          if (Where.Kind == SourceABICarrierKind::Stack) {
+            if (!Stack || *Stack < Where.EntryStackOffset ||
+                *Stack >= Where.EntryStackOffset +
+                              std::max<int64_t>(Where.ValueBytes, 1))
+              return false;
+            Delta = *Stack - Where.EntryStackOffset;
+            return true;
+          }
+          return Param.RegOff != kNoParamReg &&
+                 Where.RegisterOffset == Param.RegOff;
+        };
+        int64_t Delta = 0;
+        if (Placement->ResultPointer && At(*Placement->ResultPointer, Delta)) {
+          ParamBindings[PI].Result = true;
+          continue;
+        }
+        for (size_t DI = 0; DI < Placement->Parameters.size(); ++DI)
+          for (const SourceParameterPiece &Piece : Placement->Parameters[DI]) {
+            if (!At(Piece.Location, Delta))
+              continue;
+            const TypeRef &Declared = Types[DI];
+            const uint16_t Size = Declared ? Declared->Size : 0;
+            const uint16_t Held = Param.Type ? Param.Type->Size : 0;
+            // A record is the location's value only where the source says
+            // the call passes its bytes: a C++ class can arrive as the
+            // address of a copy at the same place.
+            const bool Bytes = !Declared ||
+                               Declared->Kind != NdTypeKind::Struct ||
+                               Declared->IsEnum ||
+                               Declared->Passing == NdRecordPassing::ByValue;
+            DebugParamBinding &B = ParamBindings[PI];
+            B.Index = static_cast<int>(DI);
+            B.Offset = static_cast<uint16_t>(Piece.Offset + Delta);
+            B.Whole = Bytes && !Piece.Indirect && Piece.Offset == 0 &&
+                      Delta == 0 && Piece.Location.ValueBytes >= Size &&
+                      (Piece.Location.Kind != SourceABICarrierKind::Stack ||
+                       Held >= Size);
+          }
+      }
+    } else {
+      // Without rules or locations, a debug parameter is the one at its
+      // position only while each before it fills one integer slot, as in
+      // every convention.
+      const uint16_t Word = pointerBytes(Opts.TheArch);
+      for (size_t PI = 0; PI < std::min(Func.Params.size(), Count); ++PI) {
+        const TypeRef &Type = DebugFn->Params[PI].second;
+        if (!Type || Type->Size > Word ||
+            !(Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr ||
+              (Type->Kind == NdTypeKind::Struct && Type->IsEnum)))
+          break;
+        Bind(PI, PI);
+      }
+    }
+  }
+  for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
+    const DebugParamBinding &B = ParamBindings[PI];
+    if (B.Result)
+      ParamDebugNames[PI] = "result";
+    if (B.Index < 0 || static_cast<size_t>(B.Index) >= Count)
+      continue;
+    // A later piece of a value, such as a record's second register, is named
+    // after the value and where the piece starts in it.
+    const std::string &Name = DebugFn->Params[B.Index].first;
+    ParamDebugNames[PI] = Name.empty() || B.Whole || B.Offset == 0
+                              ? Name
+                              : Name + "_" + std::to_string(B.Offset);
+    if (!B.Whole)
+      continue;
+    // A debug record's byte size alone does not describe a C type: a type C
+    // cannot spell, such as a pointer to a record without a printable name or
+    // validated fields, keeps the recovered machine parameter.
+    if (const TypeRef DebugType = cDisplayType(DebugFn->Params[B.Index].second);
+        DebugType && hasCSpelling(DebugType))
+      EmittedParamTypes[PI] = DebugType;
+  }
+  // A piece's name, `result` or a source name such as `arg1` can meet another
+  // parameter's name; every parameter keeps its machine name then.
+  std::set<std::string> Spelled;
+  for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
+    const std::string &Machine = Func.Params[PI].Name;
+    const std::string Name = !ParamDebugNames[PI].empty() ? ParamDebugNames[PI]
+                             : !Machine.empty() ? Machine
+                                                : "arg" + std::to_string(PI);
+    if (!Spelled.insert(Name).second) {
+      ParamDebugNames.assign(Func.Params.size(), {});
+      break;
+    }
+  }
+}
+
+HighCWriter::DebugParamBinding
+HighCWriter::debugParamBinding(const HighFunc &Func, size_t Index) const {
+  if (Index >= Func.Params.size())
+    return {};
+  bindParams(Func);
+  return ParamBindings[Index];
+}
+
+std::string HighCWriter::debugParamName(const HighFunc &Func,
+                                        size_t Index) const {
+  if (Index >= Func.Params.size())
+    return {};
+  bindParams(Func);
+  return ParamDebugNames[Index];
+}
+
+bool HighCWriter::positionalDebugSignature(const FunctionSym &FS) const {
+  if (!FS.PlatformConvention)
+    return false;
+  if (isMsvcIndirectReturn(FS.ReturnType))
+    return true;
+  const uint16_t Word = pointerBytes(Opts.TheArch);
+  // A record result in memory takes the first argument.
+  if (FS.ReturnType && FS.ReturnType->Kind == NdTypeKind::Struct &&
+      !FS.ReturnType->IsEnum && FS.ReturnType->Size > 2 * Word)
+    return false;
+  // i386 passes a double in two stack slots, which a call lists apart.
+  bool Integers = true, Floats = Opts.TheArch != Arch::X86;
+  for (const auto &[Name, Type] : FS.Params) {
+    (void)Name;
+    if (!Type)
+      return false;
+    Integers &=
+        Type->Size <= Word &&
+        (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr ||
+         (Type->Kind == NdTypeKind::Struct && Type->IsEnum));
+    Floats &= Type->Kind == NdTypeKind::Float && Type->Size <= sizeof(double);
+  }
+  return Integers || Floats;
 }
 
 TypeRef HighCWriter::emittedParamType(const HighFunc &Func,
                                       size_t Index) const {
   if (Index >= Func.Params.size())
     return nullptr;
-  if (EmittedParamTypesOf != &Func || EmittedParamTypesEntry != Func.Entry ||
-      EmittedParamTypes.size() != Func.Params.size()) {
-    EmittedParamTypesOf = &Func;
-    EmittedParamTypesEntry = Func.Entry;
-    EmittedParamTypes.clear();
-    for (const HighParam &Param : Func.Params)
-      EmittedParamTypes.push_back(Param.Type);
-    // A bound source ABI spells its own parameters (sourceParameterType).
-    const auto DebugFn = debugFunction(Dbg, Func.Entry);
-    if (DebugFn && !Func.SourceTypeHint) {
-      const bool HighIRIncludesSret =
-          isMsvcIndirectReturn(DebugFn->ReturnType) &&
-          highIRIncludesIndirectReturn(Func, *DebugFn);
-      const int SretId = indirectReturnParamId(*DebugFn);
-      for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
-        // The hidden result pointer is the definition's `result`, a pointer
-        // to the record the function returns.
-        if (HighIRIncludesSret && static_cast<int>(PI) == SretId) {
-          if (const TypeRef Result = declaredFunctionReturnType(Func);
-              Result && Result->Kind == NdTypeKind::Ptr)
-            EmittedParamTypes[PI] = Result;
-          continue;
-        }
-        size_t DI = PI;
-        if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
-          DI = PI - 1;
-        DI = debugParamIndex(Func, static_cast<int>(PI), DI)
-                 .value_or(DebugFn->Params.size());
-        if (DI >= DebugFn->Params.size())
-          continue;
-        // A debug record's byte size alone does not describe a C type: a type
-        // C cannot spell, such as a pointer to a record without a printable
-        // name or validated fields, keeps the recovered machine parameter.
-        if (const TypeRef DebugType = cDisplayType(DebugFn->Params[DI].second);
-            DebugType && hasCSpelling(DebugType))
-          EmittedParamTypes[PI] = DebugType;
-      }
-    }
-  }
+  bindParams(Func);
   return EmittedParamTypes[Index];
 }
 
@@ -4443,27 +4532,10 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
       All[I] = I;
     return All;
   }
-  if (const DebugParamBinding &Binding = debugParamBinding(Func);
-      DebugFn && !DebugFn->Params.empty() &&
-      Binding.TheKind == DebugParamBinding::Kind::Positional) {
-    // The declaration's parameters, and any later one the body reads: the
-    // lift can split a parameter, such as a record, across registers.
-    size_t Count = std::min(N, DebugFn->Params.size());
-    if (!Binding.ReadIds.empty() && *Binding.ReadIds.rbegin() >= 0)
-      Count = std::max(
-          Count,
-          std::min(N, static_cast<size_t>(*Binding.ReadIds.rbegin()) + 1));
-    All.resize(Count);
-    for (size_t I = 0; I < Count; ++I)
-      All[I] = I;
-    return All;
-  }
-  if (Func.SourceTypeHint) {
-    All.resize(N);
-    for (size_t I = 0; I < N; ++I)
-      All[I] = I;
-    return All;
-  }
+  const auto Key = std::make_pair(&Func, Func.Entry);
+  if (auto It = EmittedParamIndices.find(Key);
+      It != EmittedParamIndices.end() && It->second.size() <= N)
+    return It->second;
   std::set<int> Used;
   // An indirect call's target is a use too.
   std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
@@ -4478,6 +4550,37 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
         Walk(*E);
     });
   });
+  if (DebugFn && !DebugFn->Params.empty()) {
+    bindParams(Func);
+    if (ParamsPlaced) {
+      // Placed by location, a parameter is one the signature describes or
+      // the code reads; the lift's other registers are none, as they are
+      // without a signature.
+      std::set<int> Kept = Used;
+      for (size_t I = 0; I < N; ++I)
+        if (ParamBindings[I].Index >= 0 || ParamBindings[I].Result)
+          Kept.insert(static_cast<int>(I));
+      Used = std::move(Kept);
+    } else {
+      // As many parameters as the debug signature lists (a stdcall
+      // definition pops what they fill), and every one up to the last the
+      // code reads.
+      size_t Count = std::min(N, DebugFn->Params.size());
+      for (size_t I = 0; I < N; ++I)
+        if (ParamBindings[I].Index >= 0 || Used.count(static_cast<int>(I)))
+          Count = std::max(Count, I + 1);
+      All.resize(Count);
+      for (size_t I = 0; I < Count; ++I)
+        All[I] = I;
+      EmittedParamIndices[Key] = All;
+      return All;
+    }
+  } else if (Func.SourceTypeHint) {
+    All.resize(N);
+    for (size_t I = 0; I < N; ++I)
+      All[I] = I;
+    return All;
+  }
   size_t Unused = 0;
   for (size_t I = 0; I < N; ++I)
     if (!Used.count(static_cast<int>(I)))
@@ -5680,15 +5783,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       if (auto It = ParamDisplayNames.find(static_cast<int>(PI));
           It != ParamDisplayNames.end())
         Name = It->second;
-      if (DebugFn && !Func.SourceTypeHint) {
-        size_t DI = PI;
-        if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
-          DI = PI - 1;
-        DI = debugParamIndex(Func, static_cast<int>(PI), DI)
-                 .value_or(DebugFn->Params.size());
-        if (DI < DebugFn->Params.size() && !DebugFn->Params[DI].first.empty())
-          Name = DebugFn->Params[DI].first;
-      }
+      if (DebugFn && !Func.SourceTypeHint)
+        if (std::string Debug = debugParamName(Func, PI); !Debug.empty())
+          Name = std::move(Debug);
       if (Func.SourceTypeHint && PI < Func.SourceTypeHint->Parameters.size()) {
         if (Emitted)
           Declarator += ", ";
@@ -5748,6 +5845,11 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     for (const auto &Param : DebugFn->Params)
       if (!Param.first.empty())
         ParamNames.insert(Param.first);
+    // What the parameters print as, such as `p_8` for a record's second
+    // register.
+    for (size_t PI = 0; PI < Func.Params.size(); ++PI)
+      if (std::string Name = debugParamName(Func, PI); !Name.empty())
+        ParamNames.insert(std::move(Name));
   }
   for (const auto &[_, Name] : ParamDisplayNames)
     if (!Name.empty())

@@ -2846,6 +2846,13 @@ files.
 
 ## Strict lifting contract
 
+The pinned Capstone x86 decoder owns LOCK/MOV-to-CS encoding validity and UD1
+instruction extent and operand details. NeverD's detailed, lightweight and
+lifting decode routes consume that result, including REX2 forms. Illegal
+encodings fail decoding even when strict lifting is disabled. UD1 remains an
+explicit invalid-opcode intrinsic; its encoded operands do not imply an
+ordinary memory access.
+
 `Decoder` and every architecture lifter start in strict mode. If Capstone can
 decode an instruction but the selected lifter has no implementation, the
 lifter throws `UnliftedInstruction`. The exception records the instruction
@@ -2890,6 +2897,16 @@ Functions that never return are listed per runtime under `include/neverd/libc`
 (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`).
 Supporting another target then adds a file or a table entry instead of a branch
 in the shared pass.
+
+A relocatable object's undefined symbols resolve in one shared layer,
+`include/neverd/loader/ObjectExterns.h`. Each format's loader collects the
+symbols its relocations name, whether a call or branch reaches each
+(`<Format>ObjectRelocations.def`), its common symbols, and the cells some
+references reach a symbol through (ELF and Mach-O GOT entries, COFF `__imp_`
+pointers). The layer places them past the object's sections in a writable
+`extern` segment and a read-only cell segment. A called extern is an import
+there and data a symbol; a weak reference takes no address, since the null test
+its code makes is the program's.
 
 <a id="support-and-test-depth"></a>
 
@@ -3367,6 +3384,8 @@ Finite multi-target indirect dispatch also retains deferred guard dependencies: 
 HighIR tail copying consults `SourceCallTypeHint::requiresUniqueSourceOccurrence` before duplicating a call. Boolean, callback-parameter, immutable-target, frame-witness, virtual-dispatch and native-Swift-receiver receipts each name one original machine occurrence; return tails, jump tails and nested exit rewrites keep that evaluation shared, even when source copies would execute on mutually exclusive paths. Ordinary call declarations retain the existing copying rules. Publication still rebuilds the current machine, ABI, operands and dynamic target proof and requires one source evaluation. Tests cover all receipt kinds, nested expressions, unchanged plain-call optimization, and a complete ARM64 shared-store/callback tail against generated C at O0/O2.
 
 The shared `SourceABI` owner distinguishes a logical by-value record from its physical address carrier. Darwin ARM64 C declarations for six or sixteen doubles keep the complete record type and use an eight-byte integer-register or naturally aligned stack carrier, independently of floating argument registers and the x8 result pointer. ABI equality and projection batching retain this distinction, calling convention and parameter roles. Partial, overlapping, incompatible or stale carriers are rejected. This declaration alone does not bind LowIR calls, project entries, emit HighC calls or authorize frame borrows: those require a separate copy-storage proof. Compiler and native ABI tests cover register exhaustion, stack packing, arbitrary floating bits, copy mutation isolation and independent indirect results; they are not a complete `setTransform:` recovery test.
+
+Debug signatures name recovered parameters by where they arrive, never by position. `SourceParameterPlacement` places each source parameter under the ordinary convention of its target: System V x86-64, Microsoft x64, AAPCS64 and i386 cdecl/stdcall, each in its own file. It returns the registers and stack slots that hold each parameter's pieces, and the hidden result pointer. HighC binds a recovered parameter to the piece at its register or entry stack offset. A later piece is named after its parameter and byte offset (`p_8`), and the declared type applies only where the location holds the whole value as its bytes. Placement stops at the first parameter whose place the rules cannot be sure of: a record whose passing the source does not state, a scalar wider than a register, a memory record of unknown alignment, or Apple arm64 stack packing. Later parameters keep their machine names, and functions of languages with their own conventions, such as Go, bind nothing. The DWARF loader gives parameter and result types alone a passing mode and scalar layout: C records pass by value, C++ classes as `DW_AT_calling_convention` states, and `_Complex` values as complex numbers. Rust records stay unknown, because Rust's own ABI and `extern "C"` pass some records differently. PDB records follow the Microsoft C++ ABI: i386 passes them as their bytes, while x64 passes them as their bytes or as an address in the same position. Call prototypes and argument casts still come only from signatures that map by position, whose parameters are all integers or all floating values.
 
 The shared `SourceFrameAnalysis` can check initialized private by-value copies at an original call when independent effect certificates describe the consumer and any complete indirect-result producer. It checks all reaching paths and loop backedges, exact active ranges, other argument aliases and later uses. Consuming a copy invalidates its initialization and saved-byte identities; a later read requires a new definite write. Initialization facts also expire on possible writes and frame release, while retained Swift scratch obligations remain intact. The query returns parameter extents only after complete frame restoration; it grants no machine identity, SDK effect, call binding or source-publication permission. Tests include branches, loops, partial writes, aliases and retained scratch; native ARM64 fixtures with real ObjC/CALayer reject reads of consumed copies and accept independently initialized disposable copies.
 

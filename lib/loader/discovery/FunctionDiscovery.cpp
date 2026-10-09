@@ -42,8 +42,19 @@ const Import *BinaryImage::decodeImportThunkAt(va_t Addr) const {
 
   if (Arch == Arch::X64 || Arch == Arch::X86) {
     const uint8_t *Bytes = readVA(Addr, x86::kJmpIndirectLen);
-    if (!Bytes || Bytes[0] != x86::kJmpIndirectOp ||
-        Bytes[1] != x86::kJmpIndirectModRM)
+    if (!Bytes || Bytes[0] != x86::kJmpIndirectOp)
+      return nullptr;
+    // An i386 PIC PLT entry jumps through its GOT entry by the base the
+    // dynamic section names, DT_PLTGOT, which its caller holds in EBX.
+    if (Arch == Arch::X86 && Bytes[1] == x86::kJmpIndirectGOTModRM) {
+      if (!DynInfo.PltGotAddr)
+        return nullptr;
+      int32_t Disp = 0;
+      std::memcpy(&Disp, Bytes + x86::kJmpIndirectDispOffset, sizeof(Disp));
+      return ByIAT(static_cast<va_t>(static_cast<uint32_t>(
+          DynInfo.PltGotAddr + static_cast<int64_t>(Disp))));
+    }
+    if (Bytes[1] != x86::kJmpIndirectModRM)
       return nullptr;
     va_t Slot = 0;
     if (Arch == Arch::X64) {

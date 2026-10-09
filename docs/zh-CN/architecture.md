@@ -833,6 +833,8 @@ KVM、WHP 和 Unicorn 的 checked x64/ARM64 可请求 `ExecutionFeature::Paralle
 
 共享 pass 中新增的目标专属规则应放在按目标划分的表中，而不是内联判断架构或格式。ISA 的事实是一个 `TargetRegInfo` 特性，在该 ISA 的 `lib/ir/TargetRegInfo<ISA>.cpp` 中设置。调用约定规则是一个 `CallArgumentConvention` 条目，定义在独立的 `lib/ir/med/abi/MedCallConvention<Name>.cpp` 中，并在 `MedCallConvention.cpp` 中登记。永不返回的函数按运行时分别列在 `include/neverd/libc` 下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）。这样支持新目标只需新增文件或表项，而无需在共享 pass 中加分支。
 
+可重定位目标文件中未定义符号的解析由一个共享层负责：`include/neverd/loader/ObjectExterns.h`。各格式的加载器收集重定位所引用的符号、是否有调用或分支到达每个符号（`<Format>ObjectRelocations.def`）、其 common 符号，以及某些引用经由其到达符号的单元（ELF 与 Mach-O 的 GOT 项、COFF 的 `__imp_` 指针）。该层把它们放在目标文件各节之后：一个可写的 `extern` 段和一个只读的单元段。被调用的外部符号在那里是导入，数据则是符号；弱引用不分配地址，因为代码对它所做的空值判断属于程序本身。
+
 <a id="support-and-test-depth"></a>
 
 ### 支持范围与测试深度
@@ -1252,6 +1254,8 @@ Combine 的精确强导入 `Publisher.sink(receiveValue:)` 重载在 `Failure ==
 HighIR 在复制尾部调用前查询 `SourceCallTypeHint::requiresUniqueSourceOccurrence`。布尔结果、回调参数、不可变目标、帧中值见证、虚分派和原生 Swift 接收者凭据各自对应一次原始机器调用；返回尾部、跳转尾部和嵌套出口改写均保留共享求值位置，即使复制后的源码路径互斥也不复制凭据。普通调用声明继续使用原有复制规则。发布仍重新证明当前机器、ABI、操作数和动态目标，并要求唯一源码求值。测试覆盖全部凭据类型、嵌套表达式、普通调用优化，以及完整 ARM64 共享存储和回调尾部与生成 C 在 O0/O2 下的对照。
 
 共享 `SourceABI` 所有者区分逻辑上的按值结构体与物理地址载体。Darwin ARM64 C 声明中的六个或十六个 double 保留完整结构体类型，通过八字节整数寄存器或自然对齐栈槽传参，独立于浮点参数寄存器和 x8 返回指针。ABI 相等判断与投影分组保留该区别、调用约定及参数角色，拒绝部分、重叠、不兼容或陈旧载体。仅有声明不能绑定 LowIR 调用、投影入口、输出 HighC 调用或授权帧借用，仍需独立副本存储证明。编译器与原生 ABI 测试覆盖寄存器耗尽、栈布局、任意浮点位型、副本改写隔离及独立间接返回；这不是完整 `setTransform:` 恢复测试。
+
+调试签名按参数的到达位置而非序号为恢复出的参数命名。`SourceParameterPlacement` 按目标的普通调用约定放置每个源码参数：System V x86-64、Microsoft x64、AAPCS64 及 i386 cdecl/stdcall，各占一个文件。它给出承载各参数片段的寄存器与栈槽，以及隐藏的返回指针。HighC 把恢复出的参数绑定到其寄存器或入口栈偏移处的片段；后续片段以参数名加字节偏移命名（`p_8`），仅当该位置以原始字节承载完整值时才采用声明类型。放置在规则无法确定位置的第一个参数处停止：源码未说明传递方式的结构体、宽于寄存器的标量、对齐未知的内存传递结构体，或 Apple arm64 的栈紧凑排布。其后的参数保留机器名；Go 等自有调用约定的语言中的函数不做任何绑定。DWARF 加载器只为参数与返回类型提供传递方式和标量布局：C 结构体按值传递，C++ 类按 `DW_AT_calling_convention` 的说明传递，`_Complex` 值按复数传递。Rust 结构体保持未知，因为 Rust 自身 ABI 与 `extern "C"` 对部分结构体的传递方式不同。PDB 结构体遵循 Microsoft C++ ABI：i386 以原始字节传递，x64 则在同一位置以原始字节或地址传递。调用原型与实参转换仍只来自可按位置映射的签名，即参数全为整数或全为浮点值。
 
 共享的 `SourceFrameAnalysis` 在独立效果凭据说明消费方及完整间接结果生产者后，可核验原始调用处已初始化的私有按值副本。分析覆盖全部到达路径和循环回边、精确活动范围、其他实参别名及后续使用。消费副本会使初始化事实和保存字节身份失效；后续读取必须先有新的确定写入。可能写入和帧释放也会清除初始化事实，同时保留 Swift scratch 的活跃生命周期义务。查询只有在完整帧恢复证明通过后才返回实参范围，不授予机器身份、SDK 效果、调用绑定或源码发布权限。测试覆盖分支、循环、部分写入、别名及保留的 scratch；真实 ObjC/CALayer 的 ARM64 用例拒绝读取已消费副本，接受独立证明已初始化且可丢弃的副本。
 

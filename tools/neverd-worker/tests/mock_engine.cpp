@@ -46,9 +46,10 @@ constexpr std::uint64_t CodeSize = 16 * ImageFunctions;
 /// The image's functions, one every 16 bytes, with the user's edits applied
 /// (true created, false deleted), in address order.
 std::vector<std::uint64_t>
-listedFunctions(const std::map<std::uint64_t, bool> &edits) {
+listedFunctions(const std::map<std::uint64_t, bool> &edits,
+                int imageFunctions = ImageFunctions) {
   std::vector<std::uint64_t> result;
-  for (int i = 0; i < ImageFunctions; ++i)
+  for (int i = 0; i < imageFunctions; ++i)
     if (!edits.count(Base + 16 * i))
       result.push_back(Base + 16 * i);
   for (const auto &[address, created] : edits)
@@ -61,6 +62,7 @@ struct MockSession {
   std::string path, error;
   /// Whether loading reads the debug information beside the input.
   bool debugInfo = true;
+  int imageFunctions = ImageFunctions;
   std::map<std::uint64_t, std::string> annotations, names;
   std::map<std::uint64_t, bool> functionEdits;
   /// The user's data items, as neverd_items_json lists them.
@@ -120,6 +122,10 @@ int neverd_session_load(neverd_session_t s, const char *path) {
                                : session(s)->requestedLoad;
   if (!session(s)->loadedWith.is_object())
     session(s)->loadedWith = {{"loader", "auto"}};
+  // A large table for GUI paging tests; its functions are never executed.
+  session(s)->imageFunctions =
+      session(s)->path.ends_with("many-functions.bin") ? 20000 : ImageFunctions;
+  session(s)->functions = listedFunctions({}, session(s)->imageFunctions);
   notify("ready", 1);
   return 1;
 }
@@ -179,7 +185,11 @@ const char *neverd_version_number() { return copy("test-1.0"); }
 // engine lists a header's loader, before the binary file.
 const char *neverd_identify_json(const char *path) {
   std::error_code error;
-  if (!path || !std::filesystem::is_regular_file(path, error))
+  const auto input =
+      path
+          ? std::filesystem::path(std::u8string(path, path + std::strlen(path)))
+          : std::filesystem::path();
+  if (!path || !std::filesystem::is_regular_file(input, error))
     return copy(Json{
         {"rows", Json::array()},
         {"error", std::string("not a regular file: ") + (path ? path : "")}}
@@ -1181,7 +1191,7 @@ int neverd_func_create(neverd_session_t s, neverd_va_t address) {
     return -1;
   }
   state.functionEdits[address] = true;
-  state.functions = listedFunctions(state.functionEdits);
+  state.functions = listedFunctions(state.functionEdits, state.imageFunctions);
   return 0;
 }
 int neverd_func_delete(neverd_session_t s, neverd_va_t address) {
@@ -1191,7 +1201,7 @@ int neverd_func_delete(neverd_session_t s, neverd_va_t address) {
     return -1;
   }
   state.functionEdits[address] = false;
-  state.functions = listedFunctions(state.functionEdits);
+  state.functions = listedFunctions(state.functionEdits, state.imageFunctions);
   return 0;
 }
 const char *neverd_functions_json(neverd_session_t s) {
@@ -1208,7 +1218,8 @@ int neverd_functions_load(neverd_session_t s) {
       edits[parseAddress(item.at("addr").get<std::string>())] =
           item.at("state").get<std::string>() == "created";
     session(s)->functionEdits = std::move(edits);
-    session(s)->functions = listedFunctions(session(s)->functionEdits);
+    session(s)->functions =
+        listedFunctions(session(s)->functionEdits, session(s)->imageFunctions);
     return 0;
   } catch (...) {
     return 1;

@@ -453,6 +453,12 @@ struct MedFunc {
   /// reads (8 on x86-64 past the return address, 0 on AArch64/ARM).
   int64_t VariadicOverflowBase = 0;
 
+  /// The position of the first integer argument register a variadic
+  /// function's register save area spills (AAPCS64): the registers before it
+  /// carry its named parameters, the rest only what each caller passes.  -1
+  /// where unknown.
+  int VariadicFirstRegister = -1;
+
   /// Number of NAMED stack parameters that precede the variadic overflow area
   /// (the fixed prefix passed on the stack rather than in registers).  Nonzero
   /// only for a Darwin AArch64 variadic function with more than 8 named integer

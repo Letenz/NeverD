@@ -7,6 +7,7 @@ add_neverd_component_library(NeverDIRMed
   abi/MedABIPassWin64.cpp
   abi/MedCallConvention.cpp
   abi/MedCallConventionAAPCS32.cpp
+  abi/MedCallConventionAAPCS64.cpp
   abi/MedCallConventionDarwinAArch64.cpp
   abi/MedCallConventionI386.cpp
   abi/MedCallConventionSysV.cpp

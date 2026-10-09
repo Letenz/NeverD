@@ -33,6 +33,15 @@ namespace limits {
 /// real .bss, so legitimate binaries are unaffected.
 constexpr uint64_t kMaxSegmentZeroFill = 1ull << 30; // 1 GiB
 
+/// Address room the ELF loader leaves after an undefined data symbol of a
+/// relocatable object, past the furthest offset a relocation states: code
+/// reaches a field of an undefined struct at an offset no relocation states
+/// when it adds the offset to the address a GOT entry holds, and that address
+/// must not be another extern's.
+constexpr uint64_t kObjectExternDataReach = 0x100;
+/// The furthest stated offset past one undefined data symbol the room covers.
+constexpr uint64_t kMaxObjectExternStatedReach = 0x10000;
+
 //===----------------------------------------------------------------------===//
 // Jump-table resolution
 //===----------------------------------------------------------------------===//
@@ -181,6 +190,12 @@ constexpr uint32_t kMaxJumpTableTerminalUseEvidenceWork = 16777216;
 /// ceiling prevents a single adversarial linear chain from exhausting the C++
 /// call stack before the work counter can fail the proof closed.
 constexpr uint32_t kMaxJumpTableGuardExpressionDepth = 64;
+
+/// Blocks searched straight back through single predecessors for an earlier
+/// load of the address a table index loads again.  GCC bounds a switch on a
+/// structure field as `cmp dword [rcx], 6; ja default` and loads the index
+/// with `mov eax, [rcx]` in the next block.
+constexpr uint32_t kMaxJumpTableReloadSearchBlocks = 4;
 
 /// Target/address-role and mask fixed-point value reconstruction can cross
 /// several independently authenticated loop back edges in one expanded O0

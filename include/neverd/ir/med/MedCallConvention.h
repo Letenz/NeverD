@@ -108,9 +108,24 @@ struct CallArgumentConvention {
   /// Register arguments fill the argument registers in order with no gap
   /// (regparm), so a live register after an unread one is not an argument.
   bool RegisterArgumentsFillInOrder = false;
+  /// Whether an external routine of \p Img takes its floating-point
+  /// arguments in the integer argument registers, as the base AAPCS (ARM
+  /// softfp) passes them, rather than in the floating-point registers the
+  /// image's own functions may use.  Null where it never does.
+  bool (*ExternalFloatsInCoreRegisters)(const BinaryImage &Img) = nullptr;
   /// The argument count a platform prototype gives a named function (the
   /// WDK's, for Windows kernel routines), or nullopt.
   std::optional<size_t> (*PrototypeArgCount)(llvm::StringRef Name) = nullptr;
+  /// No callee summary gives a call its arguments: the HighIR route
+  /// recovers them, and the parameters a forwarder passes straight through,
+  /// from the setup each caller writes before its calls, as the LLVM route
+  /// does for every convention (recoverModuleCallAbi).
+  bool ArgumentsFromCallSetup = false;
+  /// A function-pointer value spilled to the caller's frame is still there
+  /// after a call to a leaf function whose writes all stay below its own
+  /// entry stack pointer, so an indirect call's target can be followed
+  /// through that spill (findFrameLocalLeafCallees).
+  bool TargetSpillsSurviveLeafCalls = false;
   /// A printf-family call whose format is a constant string passes the
   /// arguments its conversions name in registers, each class in its own
   /// bank as for any other call: the call reads exactly those, in the

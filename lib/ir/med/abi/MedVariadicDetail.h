@@ -126,6 +126,7 @@ private:
 
 /// Whether the function has the variadic prologue of each convention.
 bool hasX64VariadicPrologue(VariadicScan &S);
+std::optional<int> aapcs64FirstVariadicRegister(VariadicScan &S);
 bool hasI386VariadicPrologue(VariadicScan &S);
 bool hasAAPCS64VariadicPrologue(VariadicScan &S);
 bool hasDarwinVariadicPrologue(VariadicScan &S);

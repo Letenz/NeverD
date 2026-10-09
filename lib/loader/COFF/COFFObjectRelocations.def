@@ -1,0 +1,42 @@
+//===- COFFObjectRelocations.def - Relocations of COFF objects --*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Relocations of a COFF object whose meaning the loader models, per machine.
+/// Machines and types are llvm::COFF enumerators.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_COFF_BRANCH_REFERENCE(Machine, Type): the relocation of a call or
+// branch instruction, so an undefined symbol it names is a function.  Only
+// one in executable code counts: i386 has no PC-relative data operand, but its
+// data sections hold REL32 displacements.
+#ifndef NEVERD_COFF_BRANCH_REFERENCE
+#define NEVERD_COFF_BRANCH_REFERENCE(Machine, Type)
+#endif
+NEVERD_COFF_BRANCH_REFERENCE(IMAGE_FILE_MACHINE_I386, IMAGE_REL_I386_REL32)
+NEVERD_COFF_BRANCH_REFERENCE(IMAGE_FILE_MACHINE_ARM64, IMAGE_REL_ARM64_BRANCH26)
+NEVERD_COFF_BRANCH_REFERENCE(IMAGE_FILE_MACHINE_ARM64, IMAGE_REL_ARM64_BRANCH19)
+NEVERD_COFF_BRANCH_REFERENCE(IMAGE_FILE_MACHINE_ARM64, IMAGE_REL_ARM64_BRANCH14)
+NEVERD_COFF_BRANCH_REFERENCE(IMAGE_FILE_MACHINE_ARMNT, IMAGE_REL_ARM_BRANCH24)
+NEVERD_COFF_BRANCH_REFERENCE(IMAGE_FILE_MACHINE_ARMNT, IMAGE_REL_ARM_BLX24)
+NEVERD_COFF_BRANCH_REFERENCE(IMAGE_FILE_MACHINE_ARMNT, IMAGE_REL_ARM_BRANCH20T)
+NEVERD_COFF_BRANCH_REFERENCE(IMAGE_FILE_MACHINE_ARMNT, IMAGE_REL_ARM_BRANCH24T)
+NEVERD_COFF_BRANCH_REFERENCE(IMAGE_FILE_MACHINE_ARMNT, IMAGE_REL_ARM_BLX23T)
+#undef NEVERD_COFF_BRANCH_REFERENCE
+
+// NEVERD_COFF_BRANCH_BY_OPCODE(Machine, Type, Opcode): a relocation that is a
+// call or branch when the byte before its field is Opcode.  x86-64 relocates
+// RIP-relative data operands with REL32 too, but a ModRM byte precedes those,
+// and none is E8 (call rel32) or E9 (jmp rel32).
+#ifndef NEVERD_COFF_BRANCH_BY_OPCODE
+#define NEVERD_COFF_BRANCH_BY_OPCODE(Machine, Type, Opcode)
+#endif
+NEVERD_COFF_BRANCH_BY_OPCODE(IMAGE_FILE_MACHINE_AMD64, IMAGE_REL_AMD64_REL32,
+                             0xE8)
+NEVERD_COFF_BRANCH_BY_OPCODE(IMAGE_FILE_MACHINE_AMD64, IMAGE_REL_AMD64_REL32,
+                             0xE9)
+#undef NEVERD_COFF_BRANCH_BY_OPCODE

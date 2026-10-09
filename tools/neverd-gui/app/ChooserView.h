@@ -7,7 +7,6 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QSet>
 #include <QTimer>
 #include <QVector>
 #include <QWidget>
@@ -59,7 +58,7 @@ public:
   /// Redraw the columns that name segments once the regions change.
   void addressSpaceChanged();
   int total() const { return total_; }
-  bool loading() const { return !inFlight_.isEmpty(); }
+  bool loading() const { return !pageRequests_.isEmpty(); }
   QJsonObject rowObject(int row) const;
   std::optional<Address> addressAt(int row) const;
   /// The item a row stands for when its cross references are listed: a
@@ -91,7 +90,8 @@ private:
   QVector<Column> columns_;
   mutable QHash<int, QJsonArray> pages_;
   mutable std::list<int> pageOrder_;
-  mutable QSet<int> inFlight_;
+  mutable QHash<int, quint64> pageRequests_;
+  mutable std::list<int> requestOrder_;
   QJsonArray local_;
   bool localRows_ = false;
   int total_ = 0;

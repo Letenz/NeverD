@@ -4,6 +4,7 @@
 #include "CodeView.h"
 #include "ConnectionsDialog.h"
 #include "DisassemblyView.h"
+#include "Docking.h"
 #include "ExtensionsView.h"
 #include "GraphView.h"
 #include "HexView.h"
@@ -16,6 +17,7 @@
 #include "OutputWindow.h"
 #include "ProjectDatabase.h"
 #include "Resolve.h"
+#include "SecondaryTextDelegate.h"
 #include "Session.h"
 #include "Theme.h"
 #include "mcp/GuiSessionBroker.h"
@@ -59,9 +61,11 @@
 #include <QSet>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QStorageInfo>
+#include <QStyle>
 #include <QTextStream>
 #include <QToolBar>
 #include <QTreeView>
@@ -96,6 +100,11 @@ constexpr int MinimumOutputHeight = 120, MaximumOutputHeight = 260;
 constexpr int OverviewHeight = 170;
 constexpr int StatusRefreshMs = 30000;
 constexpr int MaxOpcodeBytes = 12;
+// Input dialogs leave room for a full name, comment or expression.
+constexpr int InputDialogWidth = 420;
+// The quick start dims a recent file's folder after its name.
+constexpr qreal QuickStartFolderOpacity = 0.6;
+constexpr int QuickStartColumnGap = 24;
 
 // Dock identifiers; titles follow the classic window names.
 constexpr char FunctionsDock[] = "functions";
@@ -133,7 +142,12 @@ public:
     layout->addWidget(view_);
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    layout->addWidget(buttons);
+    // The list runs to the dialog's edges; the buttons keep the usual margin.
+    auto *footer = new QVBoxLayout;
+    const int margin = style()->pixelMetric(QStyle::PM_LayoutRightMargin);
+    footer->setContentsMargins(margin, 0, margin, margin);
+    footer->addWidget(buttons);
+    layout->addLayout(footer);
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
       chosen_ = view_->currentAddress();
       accept();
@@ -160,6 +174,7 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
       session_(session), mcp_(mcp), broker_(broker), actions_(this) {
   instance_ = this;
   setWindowIcon(icon(QStringLiteral("app")));
+  setCenterWidgetMargins(dockAreaMargins());
   setAcceptDrops(true);
   // Mouse Back/Forward buttons walk the navigation history anywhere inside.
   qApp->installEventFilter(this);
@@ -235,6 +250,9 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
       return true;
     }
   }
+  if (event->type() == QEvent::Show)
+    if (auto *input = qobject_cast<QInputDialog *>(object))
+      input->setMinimumWidth(InputDialogWidth);
   // A code view shown again follows the function it missed while hidden,
   // after whatever showed it has chosen its own.
   if (event->type() == QEvent::Show && followsDisassembly(object)) {
@@ -464,7 +482,7 @@ void MainWindow::buildDocks() {
     chooserDock(kind);
 
   connect(functions_, &ChooserView::activated, this,
-          [this](Address address) { navigate(address); });
+          &MainWindow::activateFunction);
   connect(disassembly_, &DisassemblyView::locationChanged, this,
           [this](Address address) { synchronize(address, disassembly_); });
   connect(disassembly_, &DisassemblyView::navigateRequested, this,
@@ -496,6 +514,12 @@ void MainWindow::buildDocks() {
           [this](QWidget *, QWidget *now) {
             for (auto it = docks_.cbegin(); it != docks_.cend(); ++it)
               if (*it && (*it)->isAncestorOf(now)) {
+                // Choosers and auxiliary windows keep the analysis context.
+                if (auto *view = qobject_cast<CodeView *>((*it)->widget()))
+                  lastCodeView_ = view;
+                else if (it.key() == QLatin1String(DisassemblyDock) ||
+                         it.key() == QLatin1String(HexDock))
+                  lastCodeView_.clear();
                 if (it.key() != QLatin1String(OutputDock))
                   hexActive_ = it.key() == QLatin1String(HexDock);
                 return;
@@ -648,6 +672,8 @@ void MainWindow::showOverview() {
 
 void MainWindow::buildStatusBar() {
   auto *bar = statusBar();
+  // The window manager resizes the window from its edges.
+  bar->setSizeGripEnabled(false);
   analysisLabel_ = new QLabel(bar);
   directionLabel_ = new QLabel(bar);
   diskLabel_ = new QLabel(bar);
@@ -756,6 +782,38 @@ std::optional<Address> MainWindow::currentFunction() const {
   return disassembly_ ? disassembly_->currentFunction() : std::nullopt;
 }
 
+void MainWindow::activateFunction(Address address) {
+  ++codeNavigationSerial_;
+  if (!session_.loaded())
+    return;
+  auto *view = lastCodeView_.data();
+  if (!view || !view->isVisible()) {
+    navigate(address);
+    return;
+  }
+  const auto position = view->text()->currentAddress();
+  navigateCodeFunction(view, address, address,
+                       position ? position : view->text()->function());
+}
+
+void MainWindow::navigateCodeFunction(CodeView *view, Address address,
+                                      Address function,
+                                      std::optional<Address> from) {
+  // The shared history and background listing follow without changing the
+  // originating code window or its representation, including a pinned view.
+  disassembly_->navigate(address, true, from);
+  if (view->text()->function() != function)
+    view->showFunction(function);
+  for (auto *dock : std::as_const(docks_))
+    if (dock && dock->widget() == view) {
+      dock->raise();
+      break;
+    }
+  view->window()->activateWindow();
+  view->text()->setFocus();
+  updateActions();
+}
+
 void MainWindow::navigate(Address address) {
   ++codeNavigationSerial_;
   if (!session_.loaded())
@@ -799,13 +857,8 @@ void MainWindow::activateCodeName(CodeView *view, const QString &name) {
         const auto address = addressValue(payload.value("address"));
         const auto function = addressValue(payload.value("function_address"));
         if (function && !payload.value("import").toBool()) {
-          // Keep the originating tab and representation. The assembly still
-          // follows in the background and owns the shared address history.
-          disassembly_->navigate(address.value_or(*function), true, from);
-          if (view->text()->function() != function)
-            view->showFunction(*function);
-          view->text()->setFocus();
-          updateActions();
+          navigateCodeFunction(view, address.value_or(*function), *function,
+                               from);
         } else if (address) {
           // Data and import slots retain ordinary address navigation.
           jump(*address);
@@ -1809,12 +1862,15 @@ void MainWindow::showShortcuts() {
 
 void MainWindow::showCommandPalette() {
   QDialog dialog(this, Qt::Popup | Qt::FramelessWindowHint);
+  dialog.setObjectName(QStringLiteral("commandPalette"));
   dialog.setWindowTitle(tr("Command palette"));
   dialog.resize(560, 420);
   auto *layout = new QVBoxLayout(&dialog);
   auto *filter = new QLineEdit(&dialog);
   filter->setPlaceholderText(tr("Type a command"));
   auto *list = new QListWidget(&dialog);
+  // Shortcuts line up at the right of their commands.
+  list->setItemDelegate(new SecondaryTextDelegate(std::nullopt, list));
   layout->addWidget(filter);
   layout->addWidget(list, 1);
   const auto populate = [this, list](const QString &text) {
@@ -1825,14 +1881,9 @@ void MainWindow::showCommandPalette() {
       const QString label = action->text().remove(QLatin1Char('&'));
       if (!text.isEmpty() && !label.contains(text, Qt::CaseInsensitive))
         continue;
-      auto *item = new QListWidgetItem(
-          action->icon(),
-          action->shortcut().isEmpty()
-              ? label
-              : QStringLiteral("%1    %2")
-                    .arg(label,
-                         action->shortcut().toString(QKeySequence::NativeText)),
-          list);
+      auto *item = new QListWidgetItem(action->icon(), label, list);
+      item->setData(SecondaryTextDelegate::SecondaryTextRole,
+                    action->shortcut().toString(QKeySequence::NativeText));
       item->setData(Qt::UserRole, action->objectName());
     }
     if (list->count())
@@ -2081,13 +2132,50 @@ void MainWindow::showQuickStart() {
     row->addWidget(button);
   }
   layout->addLayout(row);
-  auto *recent = new QListWidget(&dialog);
-  for (const auto &file : QSettings().value(RecentFilesKey).toStringList())
-    recent->addItem(file);
-  if (recent->count())
-    recent->setCurrentRow(0);
+  // Each recent file reads as its name, then its folder.
+  auto *recent = new QTreeWidget(&dialog);
+  recent->setObjectName(QStringLiteral("recentFiles"));
+  recent->setColumnCount(2);
+  recent->setHeaderHidden(true);
+  recent->setRootIsDecorated(false);
+  recent->setUniformRowHeights(true);
+  recent->setAllColumnsShowFocus(true);
+  // A long folder keeps both its root and its nearest directory.
+  recent->setTextElideMode(Qt::ElideMiddle);
+  QColor folder = Theme::instance().chrome(QStringLiteral("Text"));
+  folder.setAlphaF(QuickStartFolderOpacity);
+  for (const auto &file : QSettings().value(RecentFilesKey).toStringList()) {
+    const QFileInfo info(file);
+    auto *item = new QTreeWidgetItem(
+        recent,
+        {info.fileName(), QDir::toNativeSeparators(info.absolutePath())});
+    item->setData(0, Qt::UserRole, file);
+    item->setForeground(1, folder);
+    item->setToolTip(0, file);
+    item->setToolTip(1, file);
+  }
+  recent->resizeColumnToContents(0);
+  recent->setColumnWidth(0, recent->columnWidth(0) + QuickStartColumnGap);
+  // Without recent files, the list says how to begin.
+  auto *none = new QLabel(
+      tr("No recent files. Choose New, or drop a file here."), &dialog);
+  none->setObjectName(QStringLiteral("recentFilesEmpty"));
+  none->setProperty("placeholder", true);
+  none->setAlignment(Qt::AlignCenter);
+  none->setWordWrap(true);
+  auto *files = new QStackedWidget(&dialog);
+  files->addWidget(recent);
+  files->addWidget(none);
+  const bool hasRecent = recent->topLevelItemCount() > 0;
+  files->setCurrentWidget(hasRecent ? static_cast<QWidget *>(recent) : none);
+  previousButton->setEnabled(hasRecent);
+  (hasRecent ? previousButton : newButton)->setDefault(true);
+  if (hasRecent) {
+    recent->setCurrentItem(recent->topLevelItem(0));
+    recent->setFocus();
+  }
   layout->addWidget(new QLabel(tr("Recent files:"), &dialog));
-  layout->addWidget(recent, 1);
+  layout->addWidget(files, 1);
   QString choice;
   connect(newButton, &QPushButton::clicked, &dialog, [&] {
     choice = QStringLiteral("new");
@@ -2097,11 +2185,11 @@ void MainWindow::showQuickStart() {
   const auto previous = [&] {
     if (!recent->currentItem())
       return;
-    choice = recent->currentItem()->text();
+    choice = recent->currentItem()->data(0, Qt::UserRole).toString();
     dialog.accept();
   };
   connect(previousButton, &QPushButton::clicked, &dialog, previous);
-  connect(recent, &QListWidget::itemActivated, &dialog, previous);
+  connect(recent, &QTreeWidget::itemActivated, &dialog, previous);
   if (dialog.exec() != QDialog::Accepted)
     return;
   if (choice == QLatin1String("new"))
