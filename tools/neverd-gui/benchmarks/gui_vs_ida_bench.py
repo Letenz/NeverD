@@ -59,9 +59,13 @@ def percentiles(values):
 
 
 def start_display(number):
+    if Path(f"/tmp/.X11-unix/X{number}").exists() or Path(f"/tmp/.X{number}-lock").exists():
+        raise RuntimeError(f"display :{number} is in use; pass another --display")
     server = subprocess.Popen(["Xvfb", f":{number}", "-screen", "0", "1600x1000x24", "-nolisten",
                                "tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(100):
+    for _ in range(200):
+        if server.poll() is not None:
+            break
         if Path(f"/tmp/.X11-unix/X{number}").exists():
             return server
         time.sleep(.05)
@@ -76,12 +80,18 @@ def run_neverd(gui, worker, binary, display, scratch, timeout):
                    if key not in ("WAYLAND_DISPLAY", "XAUTHORITY")}
     environment.update(DISPLAY=f":{display}", QT_QPA_PLATFORM="xcb", XDG_SESSION_TYPE="x11")
     command = [str(gui), "--worker", str(worker), "--startup-benchmark", str(report_path),
-               "--startup-benchmark-timeout", str(round(timeout * 1000)), "--fresh-layout",
+               # The GUI accepts at most five minutes for its own deadline.
+               "--startup-benchmark-timeout", str(round(min(timeout, 300) * 1000)),
+               "--fresh-layout",
                str(binary)]
     launched = time.monotonic()
-    subprocess.run(command, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                   timeout=timeout + 10)
+    process = subprocess.run(command, env=environment, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True, errors="replace",
+                             timeout=timeout + 10)
     exited = time.monotonic()
+    if not report_path.exists():
+        raise RuntimeError(f"the workbench wrote no report (exit {process.returncode}): "
+                           f"{process.stdout[-2000:]}")
     report = json.loads(report_path.read_text())
     if not report.get("success"):
         raise RuntimeError(f"the workbench did not finish: {report.get('failure_reason')}")

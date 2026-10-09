@@ -311,6 +311,37 @@ Both keep every raw sample beside nearest-rank percentiles. OS file caches
 stay warm, and other activity on the machine is not controlled: the GUI
 runner records the load average.
 
+Recorded on 2026-10-09 on Linux x86-64 (Intel Core i9-13900H, 20 threads,
+shared with other work: load average 40 to 50), NeverD at 96e29352d against
+IDA 9.4 with its decompiler; three samples per binary, each decompiling the
+same 100 functions both found (up to 100). Times are p50 unless named.
+
+| Binary | Functions (NeverD / IDA) | Browsable (NeverD / IDA) | Analysis complete | F5 p50 | F5 p95 | F5 max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| xxd (23 KB) | 46 / 111 | 18 ms / 259 ms | 49 ms / 410 ms | 4 / 1 ms | 52 / 33 ms | 2.4 / 2.6 s |
+| libQt6Xml (0.2 MB) | 718 / 940 | 60 / 312 ms | 125 ms / 1.7 s | 9 / 5 ms | 48 / 37 ms | 114 / 76 ms |
+| libzstd (0.8 MB) | 938 / 864 | 49 / 362 ms | 198 ms / 6.5 s | 49 / 20 ms | 8.1 / 0.9 s | 68.6 / 2.0 s |
+| libsqlite3 (1.5 MB) | 2858 / 2977 | 90 / 492 ms | 271 ms / 15.7 s | 50 / 14 ms | 30.6 / 0.2 s | 61.0 / 8.2 s |
+| libcrypto (6.1 MB) | 13519 / 12562 | 511 ms / 2.1 s | 1.6 / 55.9 s | 142 / 8 ms | 13.2 / 0.1 s | 15.6 / 0.5 s |
+
+The windows, from launch, on Xvfb (three launches after one warm-up):
+
+| Binary | NeverD first frame | NeverD listing of the file | IDA window with the file | IDA auto-analysis done |
+| --- | ---: | ---: | ---: | ---: |
+| xxd | 327 ms | 540 ms | 1.16 s | 1.31 s |
+| libQt6Xml | 334 ms | 545 ms | 1.38 s | 2.85 s |
+| libzstd | 303 ms | 482 ms | 1.23 s | 8.96 s |
+| libsqlite3 | 412 ms | 648 ms | 1.94 s | 19.81 s |
+| libcrypto | 301 ms | 836 ms | 2.98 s | 54.69 s |
+
+The workbench shows a file two to four times sooner than IDA and has its
+references complete ten to thirty-five times sooner, because it decompiles a
+function when F5 asks for it rather than analyzing the whole program first.
+That moves the cost to F5: IDA's decompiler runs on a finished analysis and
+answers faster, most of all on large functions, where the workbench's
+MedIR-to-HighIR clean-up dominates (the p95 and maximum columns). IDA counts
+PLT and import thunks as functions; the workbench lists them as thunks.
+
 ## Synthetic viewport harness
 
 Build and run the Qt harness independently:

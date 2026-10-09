@@ -242,6 +242,8 @@ def main():
         return 0
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--worker", type=Path, required=True, help="the neverd-worker executable")
+    parser.add_argument("--engine", type=Path,
+                        help="the libneverd the worker loads, recorded by its SHA-256")
     parser.add_argument("--ida-python", type=Path, required=True,
                         help="a Python interpreter with IDA's idapro package activated")
     parser.add_argument("--samples", type=int, default=3)
@@ -258,6 +260,9 @@ def main():
                   machine=platform.machine(), cpus=os.cpu_count(), samples=args.samples,
                   decompile=args.decompile, seed=args.seed, page_lines=PAGE_LINES,
                   worker_sha256=hashlib.sha256(args.worker.read_bytes()).hexdigest(),
+                  engine_sha256=(hashlib.sha256(args.engine.read_bytes()).hexdigest()
+                                 if args.engine else None),
+                  load_average=[round(value, 1) for value in os.getloadavg()],
                   caveats=["Warm OS caches; fresh processes and databases for every sample.",
                            "Browsable: the workbench's open, first function-list page and "
                            "first listing page; IDA's load without analysis (its GUI shows "
