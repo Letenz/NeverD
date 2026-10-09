@@ -21,9 +21,6 @@ NEVERD_REPRESENTATION("source",
                       QT_TRANSLATE_NOOP("Representations", "Pseudocode"),
                       Source)
 NEVERD_REPRESENTATION("c", QT_TRANSLATE_NOOP("Representations", "C"), C)
-NEVERD_REPRESENTATION("rust", QT_TRANSLATE_NOOP("Representations", "Rust"),
-                      Rust)
-NEVERD_REPRESENTATION("go", QT_TRANSLATE_NOOP("Representations", "Go"), Go)
 NEVERD_REPRESENTATION("llvmc", QT_TRANSLATE_NOOP("Representations", "LLVM C"),
                       C)
 NEVERD_REPRESENTATION("low", QT_TRANSLATE_NOOP("Representations", "LowIR"), IR)

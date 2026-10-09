@@ -461,6 +461,78 @@ void expectPortableStore(std::string_view Source, std::string_view Type,
   EXPECT_TRUE(hasPortableStore(Source, Type, Address, Value)) << Source;
 }
 
+TEST(HighCPointerAddresses, DebugTypedParametersOffsetInBytes) {
+  // The machine passes `out` in a register; the debug information declares
+  // `int32_t *out`.  Its uses, its definition and its prototype all take the
+  // declared type: four bytes past `out` is `out[1]`, which `out + 4` would
+  // read as `out[4]`.
+  class ClassifyDbg : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x401000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "classify";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeInt(4);
+      FS.Params = {{"k", NdType::makeInt(4)},
+                   {"out", NdType::makePtr(NdType::makeInt(4))}};
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+
+  HighFunc Classify;
+  Classify.Name = "classify";
+  Classify.Entry = 0x401000;
+  Classify.ReturnType = NdType::makeInt(4);
+  Classify.Params = {{"arg0", NdType::makeInt(4)},
+                     {"arg1", NdType::makeInt(8, false)}};
+  const auto Word = NdType::makeInt(8, false);
+  returnValue(Classify,
+              HighExpr::makeBinop(
+                  NdOp::INT_ADD,
+                  HighExpr::makeLoad(
+                      HighExpr::makeBinop(NdOp::INT_ADD, parameter(1, Word),
+                                          HighExpr::makeConst(4, 8)),
+                      NdType::makeInt(4)),
+                  HighExpr::makeLoad(parameter(1, Word), NdType::makeInt(4))));
+
+  // A caller placed first needs the prototype.
+  HighFunc Caller;
+  Caller.Name = "first_two";
+  Caller.Entry = 0x400F00;
+  Caller.ReturnType = NdType::makeInt(4);
+  Caller.Params = {{"arg0", Word}};
+  auto Call = HighExpr::makeCall(
+      "classify", 0x401000, {HighExpr::makeConst(0, 4), parameter(0, Word)});
+  Call->Type = NdType::makeInt(4);
+  returnValue(Caller, Call);
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({Caller, Classify}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("int32_t classify(int32_t k, int32_t* out)"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("int32_t classify(int32_t, int32_t*);"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("(uintptr_t)out + 4"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(out + 4)"), std::string::npos) << Source;
+  compileAndRunCallOrdering(Source + R"c(
+int main(void) {
+  int32_t values[4] = {1, 2, 3, 1000};
+  if (classify(0, values) != 3)
+    return 1;
+  return first_two((uint64_t)(uintptr_t)values) == 3 ? 0 : 2;
+}
+)c");
+}
+
 TEST(HighCPointerAddresses, TypedAndMachineWidthParametersUseByteOffsets) {
   for (Arch TheArch : {Arch::X64, Arch::AArch64}) {
     for (bool TypedExpr : {false, true}) {
@@ -1061,6 +1133,68 @@ TEST(HighCPointerAddresses, StringLiteralInIntegerMaskUsesItsAddress) {
   const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
   EXPECT_NE(Source.find("(uintptr_t)L\"%s\" & "), std::string::npos) << Source;
   EXPECT_NE(Source.find("Format(L\"%s\")"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, HeaderBytesAreNoStringLiteral) {
+  // An image loaded at zero maps its file header, where a small integer
+  // lands: 32 is `e_phoff`, whose bytes 40 00 00 00 read as L"@".  No
+  // section holds them, so 32 stays a number; a string in a section still
+  // reads as its literal.
+  std::vector<uint8_t> Bytes(0x60, 0);
+  Bytes[0x20] = 0x40;
+  const char Text[] = "%d\n";
+  std::copy(std::begin(Text), std::end(Text), Bytes.begin() + 0x40);
+  BinaryImage Img = makeImageObjectFixture(0, Bytes, false);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Section Rodata;
+  Rodata.Name = ".rodata";
+  Rodata.VA = 0x40;
+  Rodata.Size = 0x20;
+  Rodata.Flags = SegmentFlags::Readable;
+  Img.Sections.push_back(Rodata);
+
+  HighFunc Func;
+  Func.Name = "print_both";
+  Func.ReturnType = NdType::makeVoid();
+  for (va_t Addr : {0x20, 0x40}) {
+    HighStmt Call;
+    Call.Kind = StmtKind::Call;
+    Call.CallExpr =
+        HighExpr::makeCall("Format", 0x1000, {HighExpr::makeConst(Addr, 8)});
+    Func.Body.push_back(std::move(Call));
+  }
+  const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
+  EXPECT_EQ(Source.find("L\"@\""), std::string::npos) << Source;
+  EXPECT_NE(Source.find("Format(32)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("Format(\"%d\\n\")"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, GoImageBytesAreNoCString) {
+  // Go keeps a string's length beside its pointer and packs the bytes
+  // without a NUL, so bytes that end with one, such as a type descriptor's
+  // first field, are text by coincidence: no literal stands for them in a
+  // Go image, as one does in a C image.
+  for (bool Go : {false, true}) {
+    SCOPED_TRACE(Go);
+    BinaryImage Img = makeImageObjectFixture(
+        0x4A3AE0, {'t', 'y', 'p', 'e', 0x00, 0x00, 0x00, 0x00}, false);
+    Img.Format = BinaryFormat::ELF;
+    if (Go)
+      Img.ExceptionMetadata.Runtime.Runtime = SourceLanguageRuntime::Go;
+    HighFunc Func;
+    Func.Name = "grow";
+    Func.ReturnType = NdType::makeVoid();
+    HighStmt Call;
+    Call.Kind = StmtKind::Call;
+    Call.CallExpr = HighExpr::makeCall("runtime_growslice", 0x1000,
+                                       {HighExpr::makeConst(0x4A3AE0, 8)});
+    Func.Body.push_back(std::move(Call));
+    const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
+    EXPECT_EQ(Source.find("runtime_growslice(\"type\")") != std::string::npos,
+              !Go)
+        << Source;
+  }
 }
 
 TEST(HighCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
@@ -3992,10 +4126,12 @@ TEST(HighCPointerAddresses, MemberSretKeepsThisInRcx) {
                         "CRecord* this, CStringT* result)"),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("CRecord_GetRecordName(this, result)"),
-            std::string::npos)
+  // An unprototyped callee takes the pointers' integer views.
+  EXPECT_NE(
+      Source.find("CRecord_GetRecordName((uintptr_t)this, (uintptr_t)result)"),
+      std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("CRecord_GetRecordName(result, this)"),
+  EXPECT_EQ(Source.find("CRecord_GetRecordName((uintptr_t)result"),
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("return result;"), std::string::npos) << Source;
@@ -4311,9 +4447,13 @@ TEST(HighCPointerAddresses, MemberSretCallKeepsLiveInThis) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CRecord_GetRecordName(this"), std::string::npos)
+  EXPECT_NE(Source.find("CRecord_GetRecordName((uintptr_t)this"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("CRecord_GetRecordName(result"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("CRecord_GetRecordName((uintptr_t)result"),
+            std::string::npos)
       << Source;
 }
 
@@ -4471,8 +4611,11 @@ TEST(HighCPointerAddresses, MemberSretCallRecoversUnwrittenLiveInThis) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("GetRecordName(this"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("GetRecordName((uintptr_t)this"), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("GetRecordName(result"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("GetRecordName((uintptr_t)result"), std::string::npos)
+      << Source;
   const auto Args = lastCallArguments(Source, "CRecord_GetRecordName");
   ASSERT_TRUE(Args) << Source;
   EXPECT_EQ(Args->size(), 2u) << Source;
@@ -23102,9 +23245,13 @@ TEST(HighCPointerAddresses, Win64MemberCallUsesRewrittenRcxNotSret) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos)
+  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("CRecord_GetRank(result)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("CRecord_GetRank((uintptr_t)result)"),
+            std::string::npos)
       << Source;
 }
 
@@ -23241,7 +23388,8 @@ TEST(HighCPointerAddresses, FrameHomeDoesNotReuseParamName) {
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
   EXPECT_EQ(Source.find("record ="), std::string::npos) << Source;
-  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos)
+  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"),
+            std::string::npos)
       << Source;
 }
 
@@ -40020,6 +40168,37 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
             std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("var_m14"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, CorpusRustFormatKeepsTheEntryStackPointer) {
+  // alloc::fmt::format at -O0 drops a call's result and stores what the
+  // frame holds next.  The entry stack pointer is never assigned, but the
+  // frame storage defines it: taking it for the dropped result forwarded
+  // `frame_base` into a value that reads `frame_base`, and the writer
+  // recursed until the stack ran out.
+  if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
+    GTEST_SKIP() << "rust-eh corpus root is not configured";
+  const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                    "corpus/rust-eh/x86_64-unknown-linux-gnu/unwind/o0/bin/"
+                    "rust_eh_probe-x86_64-unknown-linux-gnu-unwind-o0";
+  if (!std::filesystem::exists(Path))
+    GTEST_SKIP() << Path.string() << " is missing";
+
+  constexpr va_t Entry = 0x18C70;
+  BinaryLoadOptions FuncOpts;
+  FuncOpts.OnlyFunctionEntries.insert(Entry);
+  auto Img = loadBinary(Path, FuncOpts);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
+  ASSERT_NE(Source.find("const uintptr_t frame_base = "), std::string::npos)
+      << Source;
+  const auto Call =
+      Source.find("core_slice_raw_from_raw_parts_precondition_check(");
+  ASSERT_NE(Call, std::string::npos) << Source;
+  // What follows the call reads the frame, not the dropped result.
+  EXPECT_NE(Source.find("= *(int64_t *)(frame_base - 72);", Call),
+            std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, RsdsPdbNamesFrameSlotsOnSafetyFixture) {
