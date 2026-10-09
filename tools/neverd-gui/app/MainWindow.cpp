@@ -97,6 +97,8 @@ constexpr int MinimumOutputHeight = 120, MaximumOutputHeight = 260;
 constexpr int OverviewHeight = 170;
 constexpr int StatusRefreshMs = 30000;
 constexpr int MaxOpcodeBytes = 12;
+// Input dialogs leave room for a full name, comment or expression.
+constexpr int InputDialogWidth = 420;
 
 // Dock identifiers; titles follow the classic window names.
 constexpr char FunctionsDock[] = "functions";
@@ -237,6 +239,9 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
       return true;
     }
   }
+  if (event->type() == QEvent::Show)
+    if (auto *input = qobject_cast<QInputDialog *>(object))
+      input->setMinimumWidth(InputDialogWidth);
   // A code view shown again follows the function it missed while hidden,
   // after whatever showed it has chosen its own.
   if (event->type() == QEvent::Show && followsDisassembly(object)) {
@@ -656,6 +661,8 @@ void MainWindow::showOverview() {
 
 void MainWindow::buildStatusBar() {
   auto *bar = statusBar();
+  // The window manager resizes the window from its edges.
+  bar->setSizeGripEnabled(false);
   analysisLabel_ = new QLabel(bar);
   directionLabel_ = new QLabel(bar);
   diskLabel_ = new QLabel(bar);

@@ -7,6 +7,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QFontMetrics>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
@@ -36,6 +37,19 @@ constexpr ChooserSpec Specs[] = {
 };
 
 /// The digit widths a column of \p format starts at (ChooserFormats.def).
+/// Addresses and hex values print in the code font, at the list's size.
+bool codeFormat(ChooserModel::Format format) {
+  return format == ChooserModel::Format::Address ||
+         format == ChooserModel::Format::Hex ||
+         format == ChooserModel::Format::SegmentAddress;
+}
+
+QFont codeColumnFont() {
+  QFont font = Theme::instance().codeFont();
+  font.setPointSize(QApplication::font().pointSize());
+  return font;
+}
+
 int columnChars(ChooserModel::Format format) {
   switch (format) {
 #define NEVERD_CHOOSER_FORMAT(Id, Columns)                                     \
@@ -380,12 +394,8 @@ QVariant ChooserModel::data(const QModelIndex &index, int role) const {
     }
     return {};
   case Qt::FontRole:
-    if (column.format == Format::Address || column.format == Format::Hex ||
-        column.format == Format::SegmentAddress) {
-      QFont font = Theme::instance().codeFont();
-      font.setPointSize(QApplication::font().pointSize());
-      return font;
-    }
+    if (codeFormat(column.format))
+      return codeColumnFont();
     return {};
   case Qt::TextAlignmentRole:
     if (column.format == Format::Hex || column.format == Format::Decimal)
@@ -476,11 +486,16 @@ ChooserView::ChooserView(Session &session, const AddressSpace &space,
   connect(model_, &ChooserModel::failed, this,
           [this](const QString &message) { status_->setText(message); });
   // Each column but the last, which stretches, starts as wide as its
-  // format needs.
-  const int digit = table_->fontMetrics().horizontalAdvance(QLatin1Char('0'));
-  for (int i = 0; i + 1 < model_->columnCount(); ++i)
-    table_->header()->resizeSection(i, columnChars(model_->column(i).format) *
-                                           digit);
+  // format needs in the font it prints in.
+  const int textDigit =
+      table_->fontMetrics().horizontalAdvance(QLatin1Char('0'));
+  const int codeDigit =
+      QFontMetrics(codeColumnFont()).horizontalAdvance(QLatin1Char('0'));
+  for (int i = 0; i + 1 < model_->columnCount(); ++i) {
+    const auto format = model_->column(i).format;
+    table_->header()->resizeSection(
+        i, columnChars(format) * (codeFormat(format) ? codeDigit : textDigit));
+  }
   updateStatus();
 }
 

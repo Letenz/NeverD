@@ -26,6 +26,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFontMetricsF>
+#include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -37,6 +38,7 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -974,6 +976,17 @@ private slots:
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        settingsDirectory_.path());
     configureDocking();
+  }
+
+  void windowChromeLeavesRoomToType() {
+    Workbench bench;
+    // The window manager resizes the window from its edges.
+    QVERIFY(!bench.window->statusBar()->isSizeGripEnabled());
+    // Input dialogs leave room for a full name, comment or expression.
+    QInputDialog input(bench.window.get());
+    input.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&input));
+    QVERIFY2(input.width() >= 420, qPrintable(QString::number(input.width())));
   }
 
   void hexViewShownBeforeOpeningLoadsItsBytes() {
