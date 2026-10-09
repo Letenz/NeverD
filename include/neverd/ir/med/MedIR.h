@@ -220,6 +220,23 @@ struct MedOp {
   /// Win64 register arguments the direct callee reads (RCX, RDX, R8, R9 in
   /// order), published as Inputs[1..N]; -1 when the callee is unsummarized.
   int8_t CalleeRegisterArgs = -1;
+  /// The vector argument registers the summarized callee reads, published
+  /// after the register arguments as Inputs[1 + CalleeRegisterArgs..]; -1
+  /// when the convention publishes none.
+  int8_t CalleeVectorArgs = -1;
+  /// The bytes of each of those whole vector registers the callee reads:
+  /// four bits per argument, in four-byte units (1 float, 2 double, 4 all).
+  uint32_t CalleeVectorArgWidths = 0;
+  /// The bytes the callee reads of input \p Input, a vector argument, or 0.
+  uint16_t vectorArgumentWidth(unsigned Input) const {
+    if (CalleeVectorArgs <= 0 || CalleeRegisterArgs < 0 ||
+        Input < 1u + CalleeRegisterArgs ||
+        Input >= 1u + CalleeRegisterArgs + CalleeVectorArgs)
+      return 0;
+    const unsigned K = Input - 1 - CalleeRegisterArgs;
+    return static_cast<uint16_t>(((CalleeVectorArgWidths >> (4 * K)) & 0xF) *
+                                 4);
+  }
   /// Positional arguments implied by the incoming stack slots that same
   /// summarized callee reads (0 when it reads none); -1 when unbounded.
   int8_t CalleeStackArgs = -1;

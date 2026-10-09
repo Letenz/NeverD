@@ -300,6 +300,24 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
           Count = Passed;
         }
       MOp.CalleeRegisterArgs = Count;
+      // The floating arguments follow, each in the next vector register the
+      // callee reads: the whole register, whose value every write reaches,
+      // and the bytes the callee reads of it.
+      if (Convention->VectorArgumentsFromCalleeSummary) {
+        int8_t Vectors = 0;
+        uint32_t Widths = 0;
+        for (size_t K = 0; K < TRI.FPParamRegs.size() &&
+                           K < kX64VectorArgumentFamilies;
+             ++K)
+          if (const uint8_t Width = R->second[kX64VectorFamilyBase + K]) {
+            const uint32_t Units = Width <= 4 ? 1 : Width <= 8 ? 2 : 4;
+            MOp.addInput(ndVarToMedVar(NdVar::reg(TRI.FPParamRegs[K], 16)));
+            Widths |= Units << (4 * Vectors);
+            ++Vectors;
+          }
+        MOp.CalleeVectorArgs = Vectors;
+        MOp.CalleeVectorArgWidths = Widths;
+      }
       if (CallEntryStackArgs && Convention->StackArgumentSummary)
         if (auto S = CallEntryStackArgs->find(Key);
             S != CallEntryStackArgs->end())

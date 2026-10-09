@@ -2863,8 +2863,10 @@ struct ImportPrototypeArguments {
 /// listed: one of the image format's own runtime (LibCPrototype, such as the
 /// Windows C runtime's `_initterm`), else one the arity tables give
 /// (LibCNames.h), by the exact name where the import entry is the C name.
-/// No argument may be in a vector register, and each register argument is
-/// read pointer-wide.  The arguments past the registers are on the stack,
+/// Each integer register argument is read pointer-wide.  A floating argument
+/// is listed only under System V, which passes it in the next vector
+/// register at its width, and only when every argument has a register.
+/// The arguments past the registers are on the stack,
 /// which only a convention that summarizes stack arguments (\p
 /// StackArguments) counts; elsewhere such a routine is not listed.  Without
 /// \p RegisterArguments an import takes every argument on the stack.
@@ -2879,26 +2881,51 @@ importPrototypeArguments(const BinaryImage &Img,
           ? llvm::ArrayRef<uint64_t>(
                 TRI.integerArgumentLayout(Img.abiFormat()).Registers)
           : llvm::ArrayRef<uint64_t>();
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(Img.Arch, Img.abiFormat());
+  const bool VectorArguments = RegisterArguments && Img.Arch == Arch::X64 &&
+                               Convention &&
+                               !Convention->PositionalArgumentSlots;
+  // The integer arguments of a routine, and the widths of its floating
+  // ones, which take vector registers.
+  struct Arguments {
+    int Integers = 0;
+    std::vector<uint8_t> Floats;
+  };
   // A runtime's own prototype names its routine exactly, where stripping
   // leading underscores for the arity tables could reach another runtime's.
-  auto IntegerArguments = [&](const std::string &Name) -> std::optional<int> {
+  auto RoutineArguments =
+      [&](const std::string &Name) -> std::optional<Arguments> {
     if (const libc::LibCPrototype *Prototype =
             libc::libcPrototype(Name, Img.abiFormat())) {
-      if (Prototype->Variadic ||
-          llvm::any_of(
-              llvm::ArrayRef(Prototype->Params.data(), Prototype->ParamCount),
-              libc::isFloatingType))
+      if (Prototype->Variadic)
         return std::nullopt;
-      return Prototype->ParamCount;
+      Arguments Result;
+      for (const std::string_view Type :
+           llvm::ArrayRef(Prototype->Params.data(), Prototype->ParamCount)) {
+        if (!libc::isFloatingType(Type)) {
+          ++Result.Integers;
+          continue;
+        }
+        if (Type != "float" && Type != "double")
+          return std::nullopt;
+        Result.Floats.push_back(Type == "float" ? sizeof(float)
+                                                : sizeof(double));
+      }
+      return Result;
     }
     // A PE import entry is the C name: MSVC's `_pipe(fds, size, mode)` is
     // not POSIX `pipe(fds)`, which stripping its underscore would reach.
     const auto Arity = importNamesAreCNames(Img.Format)
                            ? libc::libcArity(Name)
                            : libc::libcArityForSymbol(Name);
-    if (!Arity || Arity->FpArgs != 0 || Arity->IntArgs < 0)
+    if (!Arity || Arity->IntArgs < 0)
       return std::nullopt;
-    return Arity->IntArgs;
+    Arguments Result;
+    Result.Integers = Arity->IntArgs;
+    Result.Floats.assign(Arity->FpArgs,
+                         Arity->FpIsFloat ? sizeof(float) : sizeof(double));
+    return Result;
   };
   ImportPrototypeArguments Result;
   std::set<va_t> Seen;
@@ -2908,7 +2935,14 @@ importPrototypeArguments(const BinaryImage &Img,
     const std::string Name = importCalleeName(Img, Addr);
     if (Name.empty())
       return;
-    const std::optional<int> Count = IntegerArguments(Name);
+    const std::optional<Arguments> Routine = RoutineArguments(Name);
+    if (Routine && !Routine->Floats.empty() &&
+        (!VectorArguments ||
+         Routine->Floats.size() > kX64VectorArgumentFamilies ||
+         Routine->Integers > static_cast<int>(Registers.size())))
+      return;
+    const std::optional<int> Count =
+        Routine ? std::optional<int>(Routine->Integers) : std::nullopt;
     const int InRegisters =
         std::min(Count.value_or(0), static_cast<int>(Registers.size()));
     if (!Count || (*Count > InRegisters && !StackArguments))
@@ -2917,6 +2951,8 @@ importPrototypeArguments(const BinaryImage &Img,
     for (int K = 0; K < InRegisters; ++K)
       if (const auto Family = gprFamilyOf(Img.Arch, Registers[K]))
         Widths[*Family] = static_cast<uint8_t>(TRI.PointerSize);
+    for (size_t K = 0; K < Routine->Floats.size(); ++K)
+      Widths[kX64VectorFamilyBase + K] = Routine->Floats[K];
     Result.Reads[Addr] = Widths;
     // Counted as positions, the registers' included, as the stack summary
     // counts them (LocalRegisterEffect::StackArgs); 0 for none on the stack.
@@ -3035,6 +3071,10 @@ void computeCallRegisterEffects(
     Volatile |= Family(x86reg::RSI) | Family(x86reg::RDI);
     Arguments |= Family(x86reg::RSI) | Family(x86reg::RDI);
   }
+  // A call clobbers the vector argument registers Win64 does not preserve
+  // (XMM6 and up are callee-saved there).  Code no summary describes takes
+  // no vector argument: an import that does has a prototype.
+  Volatile |= vectorArgumentFamilies(Win64 ? 6 : kX64VectorArgumentFamilies);
   // Documented contracts (WindowsKernelRoutines.inc): a Control Flow Guard
   // dispatcher is an indirect call, and a WDK routine reads exactly its
   // prototype's parameters however its body forwards registers.  A forwarder
