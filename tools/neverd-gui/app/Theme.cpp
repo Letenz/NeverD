@@ -60,6 +60,10 @@ constexpr auto navigationColors() {
 constexpr char ModeKey[] = "appearance/theme";
 constexpr char FontKey[] = "appearance/codeFont";
 constexpr char StyleSheetResource[] = ":/neverd/theme.qss";
+// ${Mode} in the style sheet stands for the theme's name, and ${CodeFont} for
+// the code font at its default size, in which text fields type.
+constexpr char ModePlaceholder[] = "Mode";
+constexpr char CodeFontPlaceholder[] = "CodeFont";
 constexpr int DefaultCodePointSize = 10;
 constexpr int MinimumCodePointSize = 6;
 constexpr int MaximumCodePointSize = 48;
@@ -134,9 +138,15 @@ QFont Theme::defaultCodeFont() {
 }
 
 void Theme::setCodeFont(const QFont &font) {
+  const bool family = font.family() != codeFont_.family();
   codeFont_ = font;
   QSettings().setValue(FontKey, font.toString());
-  emit changed();
+  // Text fields take the family, but not the zoomed size, from the style
+  // sheet.
+  if (family)
+    apply();
+  else
+    emit changed();
 }
 
 void Theme::zoomCodeFont(int steps) {
@@ -170,7 +180,6 @@ void Theme::apply() {
     emit changed();
     return;
   }
-  application->setFont(defaultCodeFont());
   // Fusion renders the palette faithfully on every platform.
   if (application->style()->name().compare("fusion", Qt::CaseInsensitive))
     application->setStyle(QStyleFactory::create("Fusion"));
@@ -194,7 +203,20 @@ void Theme::apply() {
     for (auto it = placeholder.globalMatch(sheet); it.hasNext();) {
       const auto match = it.next();
       resolved += QStringView(sheet).mid(last, match.capturedStart() - last);
-      resolved += chrome_.value(match.captured(1)).name();
+      const QString name = match.captured(1);
+      if (name == QLatin1String(ModePlaceholder))
+        resolved += modeName(mode_);
+      else if (name == QLatin1String(CodeFontPlaceholder))
+        // Zooming the code views leaves text fields alone.
+        resolved += QStringLiteral("%1pt \"%2\"")
+                        .arg(DefaultCodePointSize)
+                        .arg(codeFont_.family());
+      else if (const auto color = chrome_.constFind(name);
+               color != chrome_.cend())
+        resolved += color->name();
+      else
+        qWarning("Theme style sheet names unknown color ${%s}",
+                 qPrintable(name));
       last = match.capturedEnd();
     }
     resolved += QStringView(sheet).mid(last);

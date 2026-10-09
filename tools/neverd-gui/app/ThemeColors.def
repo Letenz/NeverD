@@ -65,7 +65,7 @@ NEVERD_THEME_COLOR(PrefixUnexplored, "#8A8A3C", "#9A9A5A")
 NEVERD_THEME_COLOR(PrefixExternal, "#AF00DB", "#C586C0")
 
 // Navigation band: one per entry of AddressClasses.def, plus markers.
-NEVERD_THEME_COLOR(NavUnmapped, "#E5E5E5", "#2D2D2D")
+NEVERD_THEME_COLOR(NavUnmapped, "#E5E5E5", "#252526")
 NEVERD_THEME_COLOR(NavRegularFunction, "#007ACC", "#007ACC")
 NEVERD_THEME_COLOR(NavLibraryFunction, "#4EC9B0", "#4EC9B0")
 NEVERD_THEME_COLOR(NavInstruction, "#C97C55", "#CE9178")
