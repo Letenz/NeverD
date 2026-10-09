@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -238,23 +239,35 @@ bool relocationApplicationFails(Arch TargetArch, uint32_t CPUType,
   return true;
 }
 
+std::optional<BinaryImage>
+relocatedImage(Arch TargetArch, uint32_t CPUType,
+               llvm::ArrayRef<uint8_t> SectionData,
+               llvm::ArrayRef<RawRelocation> Relocations,
+               llvm::ArrayRef<SymbolSpec> Symbols) {
+  auto Bytes =
+      makeObjectWithSymbols(CPUType, SectionData, Relocations, Symbols);
+  auto Obj = parseObject(Bytes);
+  if (!Obj)
+    return std::nullopt;
+  BinaryImage Image = makeImage(TargetArch, SectionData);
+  if (llvm::Error Err =
+          neverd::macho_loader::applyObjectRelocations(*Obj, Image)) {
+    ADD_FAILURE() << llvm::toString(std::move(Err));
+    return std::nullopt;
+  }
+  return Image;
+}
+
 std::vector<uint8_t>
 applyRelocationsWithSymbols(Arch TargetArch, uint32_t CPUType,
                             llvm::ArrayRef<uint8_t> SectionData,
                             llvm::ArrayRef<RawRelocation> Relocations,
                             llvm::ArrayRef<SymbolSpec> Symbols) {
-  auto Bytes =
-      makeObjectWithSymbols(CPUType, SectionData, Relocations, Symbols);
-  auto Obj = parseObject(Bytes);
-  if (!Obj)
+  auto Image =
+      relocatedImage(TargetArch, CPUType, SectionData, Relocations, Symbols);
+  if (!Image)
     return {};
-  BinaryImage Image = makeImage(TargetArch, SectionData);
-  if (llvm::Error Err =
-          neverd::macho_loader::applyObjectRelocations(*Obj, Image)) {
-    ADD_FAILURE() << llvm::toString(std::move(Err));
-    return {};
-  }
-  return Image.Segments.front().Data;
+  return Image->Segments.front().Data;
 }
 
 uint32_t readInstruction(llvm::ArrayRef<uint8_t> Data, size_t Offset = 0) {
@@ -428,16 +441,30 @@ TEST(MachOARM64Relocation, InvalidInstructionMetadataFailsClosed) {
                                          {Reloc}, {SectionVA + 0x1000}));
 }
 
-TEST(MachOARM64Relocation, UndefinedExternalDoesNotPatchInstruction) {
+TEST(MachOARM64Relocation, UndefinedExternalReachesItsExternAddress) {
+  // An undefined external has the address the loader gives it past the
+  // object's sections, in writable storage another module defines; its adrp
+  // takes that page, not page zero.
   std::vector<uint8_t> Data(0x3000);
   writeInstruction(Data, 0x20, 0x90000008u);
   const std::vector<SymbolSpec> Symbols = {SymbolSpec{
       0, static_cast<uint8_t>(N_UNDF) | static_cast<uint8_t>(N_EXT), 0}};
-  auto Patched = applyRelocationsWithSymbols(
+  auto Image = relocatedImage(
       Arch::AArch64, CPU_TYPE_ARM64, Data,
       {arm64InstructionRelocation(0x20, ARM64_RELOC_PAGE21)}, Symbols);
-  ASSERT_FALSE(Patched.empty());
-  EXPECT_EQ(readInstruction(Patched, 0x20), 0x90000008u);
+  ASSERT_TRUE(Image);
+  const Symbol *Extern = Image->findSymbol("_target0");
+  ASSERT_NE(Extern, nullptr);
+  EXPECT_GE(Extern->Addr, SectionVA + Data.size());
+  const Segment *Storage = Image->getSegmentFor(Extern->Addr);
+  ASSERT_NE(Storage, nullptr);
+  EXPECT_TRUE(Storage->isWritable());
+  const uint64_t PageDelta = (Extern->Addr & ~uint64_t{0xfff}) -
+                             ((SectionVA + 0x20) & ~uint64_t{0xfff});
+  const uint32_t ImmLo = static_cast<uint32_t>(PageDelta >> 12) & 0x3u;
+  const uint32_t ImmHi = static_cast<uint32_t>(PageDelta >> 14) & 0x7ffffu;
+  EXPECT_EQ(readInstruction(Image->Segments.front().Data, 0x20),
+            0x90000008u | (ImmLo << 29) | (ImmHi << 5));
 }
 
 TEST(MachORelocation, LocalUnsignedCompletesSubtractorPair) {
