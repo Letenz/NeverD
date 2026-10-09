@@ -96,6 +96,14 @@ protected:
     Options.Process.Limits.TimeoutMicroseconds = TimeoutMicroseconds;
 #endif
   }
+  void useTLSHeapFixture() {
+#ifdef NEVERD_UNPACK_GENERATED_FIXTURE_DIR
+    Original = test::readImage(
+        std::filesystem::path(NEVERD_UNPACK_GENERATED_FIXTURE_DIR) /
+        GetParam().Directory / TLSHeapProgramFile);
+    ASSERT_FALSE(HasFailure());
+#endif
+  }
   void TearDown() override {
     if (!Scratch.empty())
       std::filesystem::remove_all(Scratch);
@@ -593,56 +601,83 @@ TEST_P(UnpackGenerated, LoaderThatLeavesForTheProgramYieldsTheLinkedImage) {
 
 TEST_P(UnpackGenerated,
        LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage) {
-  const auto Packed = pack(HeapStateMode);
-  ASSERT_FALSE(HasFailure());
-  const auto OriginalRun = run(Packed);
-  ASSERT_EQ(OriginalRun.Stop, ProcessStopReason::Exited)
-      << OriginalRun.Diagnostic;
-  EXPECT_EQ(OriginalRun.ExitStatus, ExitStatus);
-  EXPECT_EQ(OriginalRun.StandardOutput, Message);
-  const auto Result = unpack(HeapStateMode);
-  ASSERT_FALSE(HasFailure());
-  EXPECT_EQ(Result.Outcome, UnpackOutcome::UnsupportedState);
-  EXPECT_EQ(Result.EntryRVA, Original.Entry);
-  EXPECT_TRUE(Result.Image.empty());
-  EXPECT_TRUE(Result.RuntimeState.HeapInventoryKnown);
-  EXPECT_GT(Result.RuntimeState.PossibleHeapReferences, 0u);
-  EXPECT_FALSE(Result.RuntimeState.HeapReferences.empty());
-  EXPECT_NE(Result.Diagnostic.find("heap allocations"), std::string::npos);
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    ASSERT_FALSE(HasFailure());
+    const auto Packed = pack(HeapStateMode);
+    ASSERT_FALSE(HasFailure());
+    const auto OriginalRun = run(Packed);
+    ASSERT_EQ(OriginalRun.Stop, ProcessStopReason::Exited)
+        << OriginalRun.Diagnostic;
+    EXPECT_EQ(OriginalRun.ExitStatus, ExitStatus);
+    EXPECT_EQ(OriginalRun.StandardOutput, Message);
+    const auto Result = unpack(HeapStateMode);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(Result.Outcome, UnpackOutcome::UnsupportedState);
+    EXPECT_EQ(Result.EntryRVA, Original.Entry);
+    EXPECT_TRUE(Result.Image.empty());
+    EXPECT_TRUE(Result.RuntimeState.HeapInventoryKnown);
+    EXPECT_GT(Result.RuntimeState.PossibleHeapReferences, 0u);
+    EXPECT_FALSE(Result.RuntimeState.HeapReferences.empty());
+    EXPECT_NE(Result.Diagnostic.find("heap allocations"), std::string::npos);
+    if (TLSOnly) {
+      unsigned TLSReferences = 0;
+      for (const auto &Reference : Result.RuntimeState.HeapReferences)
+        if (Reference.Location == UnpackHeapReference::Storage::ThreadLocal) {
+          ++TLSReferences;
+          EXPECT_EQ(Reference.Offset, 3u);
+        }
+      EXPECT_EQ(TLSReferences, 1u);
+    }
+  }
 }
 
 TEST_P(UnpackGenerated, ExplicitSnapshotsKeepExternalHeapDependenciesVisible) {
-  Options.SnapshotOnly = true;
-  const auto Result = unpack(HeapStateMode);
-  ASSERT_FALSE(HasFailure());
-  ASSERT_EQ(Result.Outcome, UnpackOutcome::Snapshot) << Result.Diagnostic;
-  ASSERT_FALSE(Result.Image.empty());
-  EXPECT_GT(Result.RuntimeState.PossibleHeapReferences, 0u);
-  const auto Path = Scratch / RebuiltFile;
-  test::writeFile(Path, Result.Image);
-  const auto Replay = run(Path);
-  EXPECT_EQ(Replay.Stop, ProcessStopReason::CPUFailure) << Replay.Diagnostic;
-  EXPECT_FALSE(Replay.ExitStatus);
-  EXPECT_TRUE(Replay.StandardOutput.empty());
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    ASSERT_FALSE(HasFailure());
+    Options.SnapshotOnly = true;
+    const auto Result = unpack(HeapStateMode);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_EQ(Result.Outcome, UnpackOutcome::Snapshot) << Result.Diagnostic;
+    ASSERT_FALSE(Result.Image.empty());
+    EXPECT_GT(Result.RuntimeState.PossibleHeapReferences, 0u);
+    const auto Path = Scratch / RebuiltFile;
+    test::writeFile(Path, Result.Image);
+    const auto Replay = run(Path);
+    EXPECT_EQ(Replay.Stop, ProcessStopReason::CPUFailure) << Replay.Diagnostic;
+    EXPECT_FALSE(Replay.ExitStatus);
+    EXPECT_TRUE(Replay.StandardOutput.empty());
+  }
 }
 
 TEST_P(UnpackGenerated, ReleasedHeapStateDoesNotBlockRecovery) {
-  const auto Packed = pack(ReleasedHeapStateMode);
-  ASSERT_FALSE(HasFailure());
-  const auto Expected = run(Packed);
-  ASSERT_EQ(Expected.Stop, ProcessStopReason::Exited) << Expected.Diagnostic;
-  EXPECT_EQ(Expected.ExitStatus, ExitStatus);
-  const auto Result = unpack(ReleasedHeapStateMode);
-  ASSERT_FALSE(HasFailure());
-  ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
-  EXPECT_TRUE(Result.RuntimeState.HeapInventoryKnown);
-  EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
-  const auto Path = Scratch / RebuiltFile;
-  test::writeFile(Path, Result.Image);
-  const auto Actual = run(Path);
-  EXPECT_EQ(Actual.Stop, Expected.Stop) << Actual.Diagnostic;
-  EXPECT_EQ(Actual.ExitStatus, Expected.ExitStatus);
-  EXPECT_EQ(Actual.StandardOutput, Expected.StandardOutput);
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    ASSERT_FALSE(HasFailure());
+    const auto Packed = pack(ReleasedHeapStateMode);
+    ASSERT_FALSE(HasFailure());
+    const auto Expected = run(Packed);
+    ASSERT_EQ(Expected.Stop, ProcessStopReason::Exited) << Expected.Diagnostic;
+    EXPECT_EQ(Expected.ExitStatus, ExitStatus);
+    const auto Result = unpack(ReleasedHeapStateMode);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
+    EXPECT_TRUE(Result.RuntimeState.HeapInventoryKnown);
+    EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+    const auto Path = Scratch / RebuiltFile;
+    test::writeFile(Path, Result.Image);
+    const auto Actual = run(Path);
+    EXPECT_EQ(Actual.Stop, Expected.Stop) << Actual.Diagnostic;
+    EXPECT_EQ(Actual.ExitStatus, Expected.ExitStatus);
+    EXPECT_EQ(Actual.StandardOutput, Expected.StandardOutput);
+  }
 }
 
 TEST_P(UnpackGenerated, LoaderGeneratesItsEntryInThePageItIsExecuting) {

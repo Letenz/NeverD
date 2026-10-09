@@ -8,7 +8,8 @@
 /// \file
 /// x86 and x86-64 import thunk recognition for heuristic function discovery.
 /// Recognizes the indirect-jump trampolines emitted for PE IAT entries and
-/// ELF PLT slots (jmp [rip+disp32] on x86-64, jmp [abs32] on x86), including
+/// ELF PLT slots (jmp [rip+disp32] on x86-64, jmp [abs32] on x86, and the
+/// PIC PLT entry's jmp [ebx+disp32] from the DT_PLTGOT base in EBX), including
 /// the indirect-branch-tracking form that starts with an endbr marker and may
 /// give the jump a bnd prefix (`.plt.sec`).
 ///
@@ -31,13 +32,23 @@ size_t scanImportThunksX86(BinaryImage &Img, const Segment &Seg,
     return 0;
 
   const bool Is64 = Img.Arch == Arch::X64;
+  // An i386 PIC PLT entry jumps through its GOT entry by the base the
+  // dynamic section names, DT_PLTGOT, which its caller holds in EBX.
+  const va_t PltGot = Is64 ? 0 : Img.DynInfo.PltGotAddr;
   size_t Added = 0;
   for (size_t I = 0; I + x86::kJmpIndirectLen <= N; ++I) {
-    if (D[I] != x86::kJmpIndirectOp || D[I + 1] != x86::kJmpIndirectModRM)
+    const bool ThroughGOT = PltGot && D[I] == x86::kJmpIndirectOp &&
+                            D[I + 1] == x86::kJmpIndirectGOTModRM;
+    if (!ThroughGOT &&
+        (D[I] != x86::kJmpIndirectOp || D[I + 1] != x86::kJmpIndirectModRM))
       continue;
     va_t InsnVA = Seg.VA + I;
     va_t Target;
-    if (Is64) {
+    if (ThroughGOT) {
+      int32_t Disp;
+      std::memcpy(&Disp, D + I + x86::kJmpIndirectDispOffset, sizeof(Disp));
+      Target = static_cast<uint32_t>(PltGot + static_cast<int64_t>(Disp));
+    } else if (Is64) {
       int32_t Disp;
       std::memcpy(&Disp, D + I + x86::kJmpIndirectDispOffset, sizeof(Disp));
       Target = InsnVA + x86::kJmpIndirectLen + static_cast<int64_t>(Disp);

@@ -13,6 +13,12 @@
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
+
+#include <iterator>
+
 namespace neverd {
 
 namespace {
@@ -86,6 +92,179 @@ renderMopsCopyPrologue(const std::vector<MedVar> &Outputs,
   return Result;
 }
 
+/// A value of an ACLE type, bit cast from the integer type of the same width
+/// HighC carries it in.
+std::string neonValue(const char *ValueType, const char *RawType,
+                      const std::string &Operand) {
+  return std::string("__builtin_bit_cast(") + ValueType + ", (" + RawType +
+         ")(" + Operand + "))";
+}
+
+/// An AArch64 floating-point estimate or step (NeonIntrinsicSpellings.def):
+/// its last operand is the element width, which with the result's width
+/// picks the intrinsic's shape.
+std::string renderNeonFloatOperation(Intrinsic Id,
+                                     const std::vector<std::string> &Ops,
+                                     uint16_t ResultBytes,
+                                     bool &HasCIntrinsics) {
+  struct Operation {
+    Intrinsic Id;
+    const char *Base;
+    size_t Operands;
+  };
+  static constexpr Operation Operations[] = {
+#define NEVERD_NEON_FLOAT_OPERATION(ID, Base, Operands)                        \
+  {Intrinsic::ID, Base, Operands},
+#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+  };
+  struct Shape {
+    uint16_t ResultBytes;
+    const char *ElementBytes;
+    const char *RawType;
+    const char *ValueType;
+    const char *Suffix;
+  };
+  static constexpr Shape Shapes[] = {
+#define NEVERD_NEON_FLOAT_SHAPE(ResultBytes, ElementBytes, RawType, ValueType, \
+                                Suffix)                                        \
+  {ResultBytes, #ElementBytes, RawType, ValueType, Suffix},
+#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+  };
+  const auto *Op = llvm::find_if(
+      Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
+  if (Op == std::end(Operations) || Ops.size() != Op->Operands + 1)
+    return {};
+  const auto *S = llvm::find_if(Shapes, [&](const Shape &Entry) {
+    return Entry.ResultBytes == ResultBytes && Ops.back() == Entry.ElementBytes;
+  });
+  if (S == std::end(Shapes))
+    return {};
+  HasCIntrinsics = true;
+  std::string Call = std::string(Op->Base) + S->Suffix + "(";
+  for (size_t I = 0; I < Op->Operands; ++I)
+    Call += (I ? ", " : "") + neonValue(S->ValueType, S->RawType, Ops[I]);
+  return std::string("__builtin_bit_cast(") + S->RawType + ", " + Call + "))";
+}
+
+/// URECPE or URSQRTE on the 32-bit lanes of a 64- or 128-bit vector.
+std::string renderNeonU32Estimate(Intrinsic Id,
+                                  const std::vector<std::string> &Ops,
+                                  uint16_t ResultBytes, bool &HasCIntrinsics) {
+  struct Operation {
+    Intrinsic Id;
+    const char *Base;
+  };
+  static constexpr Operation Operations[] = {
+#define NEVERD_NEON_U32_OPERATION(ID, Base) {Intrinsic::ID, Base},
+#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+  };
+  struct Shape {
+    uint16_t ResultBytes;
+    const char *RawType;
+    const char *ValueType;
+    const char *Suffix;
+  };
+  static constexpr Shape Shapes[] = {
+#define NEVERD_NEON_U32_SHAPE(ResultBytes, RawType, ValueType, Suffix)         \
+  {ResultBytes, RawType, ValueType, Suffix},
+#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+  };
+  const auto *Op = llvm::find_if(
+      Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
+  const auto *S = llvm::find_if(Shapes, [&](const Shape &Entry) {
+    return Entry.ResultBytes == ResultBytes;
+  });
+  if (Op == std::end(Operations) || S == std::end(Shapes) || Ops.size() != 1)
+    return {};
+  HasCIntrinsics = true;
+  return std::string("__builtin_bit_cast(") + S->RawType + ", " + Op->Base +
+         S->Suffix + "(" + neonValue(S->ValueType, S->RawType, Ops[0]) + "))";
+}
+
+/// The C element type prefix (`uint`) an ACLE suffix letter (`u`) names, or
+/// null.
+const char *neonElementTypePrefix(llvm::StringRef Letter) {
+  struct Kind {
+    const char *Letter;
+    const char *TypePrefix;
+  };
+  static constexpr Kind Kinds[] = {
+#define NEVERD_NEON_ELEMENT_KIND(Letter, TypePrefix) {Letter, TypePrefix},
+#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+  };
+  const auto *K = llvm::find_if(
+      Kinds, [&](const Kind &Entry) { return Letter == Entry.Letter; });
+  return K == std::end(Kinds) ? nullptr : K->TypePrefix;
+}
+
+/// A saturating add or subtract the lifter keeps as one scalar intrinsic of
+/// the result's width (vqaddd_s64).
+std::string renderNeonSaturating(Intrinsic Id,
+                                 const std::vector<std::string> &Ops,
+                                 uint16_t ResultBytes, bool &HasCIntrinsics) {
+  struct Operation {
+    Intrinsic Id;
+    const char *Base;
+    bool Signed;
+  };
+  static constexpr Operation Operations[] = {
+#define NEVERD_NEON_SATURATING_OPERATION(ID, Base, Signed)                     \
+  {Intrinsic::ID, Base, Signed},
+#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+  };
+  struct Width {
+    uint16_t Bytes;
+    const char *Letter;
+    const char *Bits;
+  };
+  static constexpr Width Widths[] = {
+#define NEVERD_NEON_SATURATING_WIDTH(Bytes, Letter, Bits) {Bytes, Letter, Bits},
+#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+  };
+  const auto *Op = llvm::find_if(
+      Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
+  const auto *W = llvm::find_if(
+      Widths, [&](const Width &Entry) { return Entry.Bytes == ResultBytes; });
+  if (Op == std::end(Operations) || W == std::end(Widths) || Ops.size() != 2)
+    return {};
+  const llvm::StringRef Kind = Op->Signed ? "s" : "u";
+  const char *Prefix = neonElementTypePrefix(Kind);
+  if (!Prefix)
+    return {};
+  const std::string Type = (llvm::Twine(Prefix) + W->Bits + "_t").str();
+  HasCIntrinsics = true;
+  return (llvm::Twine(Op->Base) + W->Letter + "_" + Kind + W->Bits + "((" +
+          Type + ")(" + Ops[0] + "), (" + Type + ")(" + Ops[1] + "))")
+      .str();
+}
+
+/// FCVTXN, narrowing doubles to floats rounding to odd.
+std::string renderNeonFcvtxn(const std::vector<std::string> &Ops,
+                             uint16_t ResultBytes, bool &HasCIntrinsics) {
+  struct Form {
+    uint16_t ResultBytes;
+    const char *Name;
+    const char *SourceRawType;
+    const char *SourceType;
+    const char *ResultRawType;
+  };
+  static constexpr Form Forms[] = {
+#define NEVERD_NEON_FCVTXN(ResultBytes, Name, SourceRawType, SourceType,       \
+                           ResultRawType)                                      \
+  {ResultBytes, Name, SourceRawType, SourceType, ResultRawType},
+#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+  };
+  const auto *F = llvm::find_if(Forms, [&](const Form &Entry) {
+    return Entry.ResultBytes == ResultBytes;
+  });
+  if (F == std::end(Forms) || Ops.size() != 1)
+    return {};
+  HasCIntrinsics = true;
+  return std::string("__builtin_bit_cast(") + F->ResultRawType + ", " +
+         F->Name + "(" + neonValue(F->SourceType, F->SourceRawType, Ops[0]) +
+         "))";
+}
+
 } // anonymous namespace
 
 llvm::SmallVector<const char *, 3> getARMIntrinsicHeaders() {
@@ -115,8 +294,7 @@ renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
 
 std::string renderARMIntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
-                                   uint16_t ResultBytes,
-                                   bool &HasCIntrinsics) {
+                                   uint16_t ResultBytes, bool &HasCIntrinsics) {
   using I = Intrinsic;
   switch (Id) {
   case I::A64_Rbit: {
@@ -150,7 +328,7 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
     const char *Name = Ops[1] == "2"   ? "svdup_n_u16"
                        : Ops[1] == "4" ? "svdup_n_u32"
                        : Ops[1] == "8" ? "svdup_n_u64"
-                                        : "svdup_n_u8";
+                                       : "svdup_n_u8";
     return std::string(Name) + "(" + Ops[0] + ")";
   }
   case I::A64_SveIndex: {
@@ -175,7 +353,7 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
     const char *Name = Ops[2] == "2"   ? "svlastb_u16"
                        : Ops[2] == "4" ? "svlastb_u32"
                        : Ops[2] == "8" ? "svlastb_u64"
-                                        : "svlastb_u8";
+                                       : "svlastb_u8";
     return std::string(Name) + "(" + Ops[0] + ", " + Ops[1] + ")";
   }
   case I::A64_SveSt1:
@@ -244,8 +422,8 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
     if (Ops.size() < 2)
       return {};
     HasCIntrinsics = true;
-    return "__builtin_arm_pacga((uint64_t)(" + Ops[0] +
-           "), (uint64_t)(" + Ops[1] + "))";
+    return "__builtin_arm_pacga((uint64_t)(" + Ops[0] + "), (uint64_t)(" +
+           Ops[1] + "))";
   case I::Addg:
   case I::Subg: {
     if (Ops.size() < 3)
@@ -476,13 +654,64 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   case I::ArmIsb:
     return "__isb(0xF)";
   case I::A64_Clrex:
+  case I::ArmClrex:
     HasCIntrinsics = true;
     return "__builtin_arm_clrex()";
-  case I::ArmClrex:
-    return "__clrex()";
+#define NEVERD_NEON_FLOAT_OPERATION(ID, Base, Operands) case I::ID:
+#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+    return renderNeonFloatOperation(Id, Ops, ResultBytes, HasCIntrinsics);
+#define NEVERD_NEON_U32_OPERATION(ID, Base) case I::ID:
+#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+    return renderNeonU32Estimate(Id, Ops, ResultBytes, HasCIntrinsics);
+#define NEVERD_NEON_SATURATING_OPERATION(ID, Base, Signed) case I::ID:
+#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+    return renderNeonSaturating(Id, Ops, ResultBytes, HasCIntrinsics);
+  case I::A64_Fcvtxn:
+    return renderNeonFcvtxn(Ops, ResultBytes, HasCIntrinsics);
   default:
     return {};
   }
+}
+
+std::string renderNeonVectorIntrinsic(Intrinsic Id,
+                                      const std::vector<std::string> &Ops,
+                                      llvm::ArrayRef<uint16_t> OperandBytes,
+                                      uint16_t ResultBytes,
+                                      bool &HasCIntrinsics) {
+  const char *CName = intrinsicCName(Id);
+  if (!CName || OperandBytes.size() != Ops.size())
+    return {};
+  const llvm::StringRef Name(CName);
+  const size_t Underscore = Name.rfind('_');
+  if (!Name.starts_with("v") || Underscore == llvm::StringRef::npos)
+    return {};
+  const llvm::StringRef Element = Name.drop_front(Underscore + 1);
+  if (Element.empty())
+    return {};
+  const char *Prefix = neonElementTypePrefix(Element.take_front(1));
+  unsigned Bits = 0;
+  if (!Prefix || Element.drop_front(1).getAsInteger(10, Bits) ||
+      (Bits != 8 && Bits != 16 && Bits != 32 && Bits != 64))
+    return {};
+  // A `q` ends the name before the element of a 128-bit vector intrinsic.
+  const uint16_t VectorBytes =
+      Name.take_front(Underscore).ends_with("q") ? 16 : 8;
+  if (ResultBytes != VectorBytes)
+    return {};
+  const std::string Vector = (llvm::Twine(Prefix) + llvm::Twine(Bits) + "x" +
+                              llvm::Twine(VectorBytes * 8 / Bits) + "_t")
+                                 .str();
+  const std::string Raw = typeToC(NdType::makeInt(VectorBytes, false));
+  std::string Call = std::string(CName) + "(";
+  for (size_t I = 0; I < Ops.size(); ++I) {
+    if (I > 0)
+      Call += ", ";
+    Call += OperandBytes[I] == VectorBytes
+                ? neonValue(Vector.c_str(), Raw.c_str(), Ops[I])
+                : Ops[I];
+  }
+  HasCIntrinsics = true;
+  return "__builtin_bit_cast(" + Raw + ", " + Call + "))";
 }
 
 std::string renderARMAsmStatement(const char *Mnemonic,

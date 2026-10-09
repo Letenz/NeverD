@@ -4,6 +4,7 @@
 
 #include "NeverDLiftFixture.h"
 
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
@@ -215,6 +216,7 @@ public:
         if (!(Name.starts_with("llvm.lifetime.") ||
               Name.starts_with("llvm.aarch64.fjcvtzs") ||
               Name.starts_with("llvm.experimental.constrained.") ||
+              Name.starts_with("llvm.is.fpclass.") ||
               Name.starts_with("llvm.nearbyint.") ||
               Name.starts_with("llvm.read_register.") ||
               Name.starts_with("llvm.read_volatile_register.") ||
@@ -307,6 +309,22 @@ public:
         return llvm::APInt(1, *Left == *Right);
       if (Compare->getPredicate() == llvm::CmpInst::ICMP_NE)
         return llvm::APInt(1, *Left != *Right);
+    }
+    // Whether a double, bound as its bits, has a class the mask selects.
+    if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(Value)) {
+      const auto *Callee = Call->getCalledFunction();
+      const auto *Mask =
+          Call->arg_size() == 2
+              ? llvm::dyn_cast<llvm::ConstantInt>(Call->getArgOperand(1))
+              : nullptr;
+      if (Callee && Callee->getName().starts_with("llvm.is.fpclass.") && Mask &&
+          Call->getArgOperand(0)->getType()->isDoubleTy()) {
+        auto Bits = integer(Call->getArgOperand(0), Inputs, Depth + 1);
+        if (!Bits || Bits->getBitWidth() != 64)
+          return std::nullopt;
+        const llvm::APFloat Number(llvm::APFloat::IEEEdouble(), *Bits);
+        return llvm::APInt(1, (Number.classify() & Mask->getZExtValue()) != 0);
+      }
     }
     if (const auto *Select = llvm::dyn_cast<llvm::SelectInst>(Value)) {
       auto Condition = integer(Select->getCondition(), Inputs, Depth + 1);

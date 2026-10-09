@@ -2,6 +2,10 @@
 
 #include "llvm/ADT/StringRef.h"
 
+#include <fstream>
+#include <iterator>
+#include <regex>
+
 class AArch64_CallAbi : public NeverDLiftTest {};
 
 static fs::path callAbiObj() {
@@ -150,8 +154,7 @@ TEST_F(AArch64_CallAbi, DarwinVaListWrapperKeepsFixedRegisterPrefix) {
   ASSERT_NE(ContextArg, std::string::npos) << CallLine;
   size_t FixedArg = CallLine.find("i64 ", ContextArg);
   ASSERT_NE(FixedArg, std::string::npos) << CallLine;
-  EXPECT_NE(CallLine.find("i64 ", FixedArg + 4), std::string::npos)
-      << CallLine;
+  EXPECT_NE(CallLine.find("i64 ", FixedArg + 4), std::string::npos) << CallLine;
 }
 
 TEST_F(AArch64_CallAbi, FixedPointerArgumentUsesFullWidthPhiAlias) {
@@ -258,4 +261,74 @@ TEST_F(AArch64_CallAbi, AllStagesPass) {
     GTEST_SKIP() << "AArch64 Mach-O ABI fixture is only built on Apple hosts";
   verifyAllStages(callAbiObj());
   verifyLLVMIRNoVerifierErrors(callAbiObj());
+}
+
+// AAPCS64 passes floating-point arguments in S and D registers numbered apart
+// from the integer X registers, and an optimizing compiler reduces a
+// forwarder to a branch that passes its own incoming registers on.  The C
+// route must recover both: compile the kernels for AArch64, decompile them
+// to C, and run that C on the host against the same source built natively.
+TEST_F(AArch64_CallAbi, HighCPassesFloatAndForwardedArguments) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target execution requires Clang";
+  // Every product and sum stays exact, so a fused multiply-add rounds alike.
+  const std::string Kernels = R"C(
+__attribute__((noinline)) float hf(float a, float b) { return a * b - b; }
+long ff(long a) { float x = (float)a; return (long)hf(x * 1.5f, x - 2.0f); }
+__attribute__((noinline)) double hm(double a, int k, double b) {
+  return a * k - b;
+}
+long mix(long a) {
+  double x = (double)a;
+  return (long)hm(x * 1.25, (int)a & 7, x + 3.0);
+}
+__attribute__((noinline)) long g2(long a, long b) { return a * 3 + b; }
+long fwd2(long a, long b) { return g2(a, b); }
+)C";
+  const auto Source = tmpFile("call-args-a64.c");
+  const auto Object = tmpFile("call-args-a64.o");
+  std::ofstream(Source) << Kernels;
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG, {"-target", "aarch64-linux-gnu", "-O2", "-c",
+                               Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+
+  const auto Decompiled = decompileToHighC(Object);
+  ASSERT_EQ(Decompiled.exitCode, 0) << Decompiled.err;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  ASSERT_TRUE(Input.good());
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  ASSERT_EQ(C.find("unknown value"), std::string::npos) << C;
+  EXPECT_NE(C.find("float hf(float "), std::string::npos) << C;
+
+  std::string Reference = Kernels;
+  for (const char *Name : {"hf", "ff", "hm", "mix", "g2", "fwd2"})
+    Reference = std::regex_replace(
+        Reference, std::regex(std::string("\\b") + Name + "\\("),
+        std::string("ref_") + Name + "(");
+  const auto Program = tmpFile("call-args-a64.c.host");
+  std::ofstream(tmpFile("call-args-a64-host.c")) << C << "\n"
+                                                 << Reference << R"C(
+int main(void) {
+  static const long Values[] = {-5, 0, 3, 7, 1000};
+  for (unsigned I = 0; I != sizeof(Values) / sizeof(Values[0]); ++I) {
+    const long A = Values[I];
+    if (ff(A) != ref_ff(A))
+      return 1;
+    if (mix(A) != ref_mix(A))
+      return 2;
+    if (fwd2(A, A + 11) != ref_fwd2(A, A + 11))
+      return 3;
+  }
+  return 0;
+}
+)C";
+  const auto Built =
+      exec(NEVERD_TEST_CLANG,
+           {"-std=gnu11", "-O2", tmpFile("call-args-a64-host.c").string(),
+            "-lm", "-o", Program.string()});
+  ASSERT_EQ(Built.exitCode, 0) << Built.err << "\n" << C;
+  const auto Run = exec(Program.string(), {});
+  EXPECT_EQ(Run.exitCode, 0) << C;
 }
