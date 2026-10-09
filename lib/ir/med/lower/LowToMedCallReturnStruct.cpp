@@ -115,11 +115,7 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
       if (Image && Op.Opcode == NdOp::CALL && Op.Inputs[0].isConst())
         if (const Import *Imp = Image->findImportStubAt(Op.Inputs[0].ConstVal))
           if (const auto Signature = libc::libcArityForSymbol(Imp->Name);
-              Signature && !Signature->FpRetLongDouble &&
-              !Signature->FpRetComplex &&
-              (Signature->FpRet ||
-               (Signature->FpArgs > 0 &&
-                (Signature->IntArgs == 0 || Signature->FpFirst))))
+              Signature && libc::floatReturnBytes(*Signature))
             continue;
 
       // Which candidate return registers does the caller read straight-line

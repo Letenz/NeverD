@@ -49,6 +49,15 @@ committed. The concrete evaluator runs the same scalar state matrix against
 an independent native SSE oracle; malformed contracts and unknown callee state
 must refuse. Standalone source also checks typed state bits, helper-name
 collisions and unaligned state memory at C O0/O2 with UB traps.
+Actual scalar C return observers verify numerical bit patterns and MXCSR,
+including NaN payloads and signed zeros, at both source optimization levels.
+MedIR controls distinguish a complete numerical slice from the whole state
+aggregate, status bytes, a partial slice or a narrowed copy. The accompanying
+`NeverDSysVCallContractTests` execute internal and loader-bound math calls,
+including mixed FP/integer parameters, while retaining mixed-aggregate evidence
+for unknown imports and same-name local functions. Windows uses Clang's own
+dynamic ASan runtime beside each private test executable; both address and
+undefined-behavior checks remain enabled.
 Native execution requires an x64 host and Clang; the in-process SSE oracle
 additionally requires GCC/Clang. Skips on other hosts are explicit.
 This suite does not establish packed FP, VEX or x87 state coverage.
