@@ -16,7 +16,6 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
-#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -74,22 +73,6 @@ std::optional<FunctionSym> debugFunction(DebugContext *Dbg, va_t Entry) {
   if (!Dbg)
     return std::nullopt;
   return Dbg->resolveFunction(Entry);
-}
-
-// A debug record's byte size alone does not describe a C type. Keep the
-// recovered machine parameter when its pointer target has no printable name
-// or validated fields; receiver identity evidence is independent of this
-// presentation choice.
-bool hasUnsupportedAnonymousPointee(TypeRef Type) {
-  if (!Type || Type->Kind != NdTypeKind::Ptr)
-    return false;
-  for (unsigned Depth = 0; Type && Depth < 64; ++Depth) {
-    if (Type->Kind != NdTypeKind::Ptr)
-      return Type->Kind == NdTypeKind::Struct && Type->SourceName.empty() &&
-             sourceAggregateMembers(Type).empty();
-    Type = Type->Pointee;
-  }
-  return true;
 }
 
 bool isWindowsLanguagePersonality(ExceptionPersonality Personality) {
@@ -271,6 +254,10 @@ TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
         NdType::makeNamedRecord(cNamedTypeSpelling(Record->SourceName),
                                 Record->Size ? Record->Size : 8));
   }
+  // A return type C cannot spell keeps the recovered machine type, as a
+  // parameter's does.
+  if (!hasCSpelling(cDisplayType(DebugFn->ReturnType)))
+    return {};
   return DebugFn->ReturnType;
 }
 
@@ -736,8 +723,10 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     emitIndent(1);
     TypeRef Ty = Local.Type;
     if (Dbg && CurrentFunc) {
+      // A debug type C cannot spell leaves the local its recovered type, as
+      // debugTypeForDisplacement does.
       if (auto Var = Dbg->resolveVariable(CurrentFunc->Entry, Local.StackOff);
-          Var && Var->Type)
+          Var && Var->Type && hasCSpelling(cDisplayType(Var->Type)))
         Ty = cDisplayType(Var->Type);
     }
     auto ExplicitTy = ExplicitDeclarations.find(Name);
@@ -4169,6 +4158,9 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
     } else if (const MsvcCallee *Msvc =
                    msvcCallee(callIdentifier(*S.Val), Opts.Format))
       ReturnType = msvcSyntheticReturn(Msvc->ReturnKind);
+    // A result whose type C cannot spell keeps the destination's type.
+    if (ReturnType && !hasCSpelling(ReturnType))
+      ReturnType = nullptr;
     if (ReturnType)
       CallResultTypes[Name] = ReturnType;
     std::string Stem = callResultStem(callIdentifier(*S.Val));
@@ -5416,10 +5408,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   writeExceptionAnnotation(Func);
   if (Opts.EmitComments && DebugFn) {
     OS << "/* neverd.debug: return=";
-    if (DebugFn->ReturnType)
-      OS << typeToC(cDisplayType(DebugFn->ReturnType));
-    else
+    if (const TypeRef Return = cDisplayType(DebugFn->ReturnType); !Return)
       OS << "(none)";
+    else if (hasCSpelling(Return))
+      OS << typeToC(Return);
+    else
+      OS << "(no C type)";
     OS << " params=" << DebugFn->Params.size() << " */\n";
   }
 
@@ -5481,9 +5475,14 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
           DI = PI - 1;
         if (DI < DebugFn->Params.size()) {
-          if (const TypeRef &DebugType = DebugFn->Params[DI].second;
-              DebugType && !hasUnsupportedAnonymousPointee(DebugType))
-            Ty = cDisplayType(DebugType);
+          // A debug record's byte size alone does not describe a C type:
+          // a type C cannot spell, such as a pointer to a record without a
+          // printable name or validated fields, keeps the recovered machine
+          // parameter.
+          if (const TypeRef DebugType =
+                  cDisplayType(DebugFn->Params[DI].second);
+              DebugType && hasCSpelling(DebugType))
+            Ty = DebugType;
           if (!DebugFn->Params[DI].first.empty())
             Name = DebugFn->Params[DI].first;
         }

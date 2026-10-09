@@ -267,6 +267,12 @@ static const char *keptSource(Session &S, va_t Entry,
   return Result;
 }
 
+/// Why C emission refused: the C type layer throws for a type C cannot
+/// spell, which ends the decompile with that reason, not the process.
+static std::string emissionFailure(const std::exception &Error) {
+  return std::string("C emission failed: ") + Error.what();
+}
+
 static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
                                   CSourceMap *SourceMap) {
   auto *S = toSession(Sess);
@@ -344,8 +350,13 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     SourceMap->HighSources = &S->PipeResult.HighSources;
     Opts.SourceMap = SourceMap;
   }
-  HighCEmitter Emitter;
-  Emitter.emit(Single, OS, Opts, S->Dbg.get());
+  try {
+    HighCEmitter Emitter;
+    Emitter.emit(Single, OS, Opts, S->Dbg.get());
+  } catch (const std::exception &Error) {
+    S->setError(emissionFailure(Error));
+    return dupStr(std::string());
+  }
 
   return keptSource(*S, FuncEntry, Session::SourceRoute::HighC, std::move(Out),
                     SourceMap);
@@ -418,8 +429,13 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
     SourceMap->LLVMSources = Native->Sources.get();
     Opts.SourceMap = SourceMap;
   }
-  LLVMCEmitter Emitter;
-  Emitter.emit(*Native->Module, OS, Opts, S->Dbg.get(), &S->Img, LF);
+  try {
+    LLVMCEmitter Emitter;
+    Emitter.emit(*Native->Module, OS, Opts, S->Dbg.get(), &S->Img, LF);
+  } catch (const std::exception &Error) {
+    S->setError(emissionFailure(Error));
+    return dupStr(std::string());
+  }
   return keptSource(*S, FuncEntry, Route, std::move(Out), SourceMap);
 }
 
@@ -1173,8 +1189,14 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.TheArch = R.Img.Arch;
     COpts.Format = R.Img.Format;
     COpts.UserNames = S ? &S->Renames : nullptr;
-    LLVMCEmitter Emitter;
-    Emitter.emit(*R.Result.LlvmModule, OS, COpts, R.Dbg.get(), &R.Img);
+    try {
+      LLVMCEmitter Emitter;
+      Emitter.emit(*R.Result.LlvmModule, OS, COpts, R.Dbg.get(), &R.Img);
+    } catch (const std::exception &Error) {
+      if (S)
+        S->setError(emissionFailure(Error));
+      return nullptr;
+    }
   } else {
     CEmitterOptions COpts;
     COpts.TheArch = R.Img.Arch;
@@ -1184,8 +1206,14 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     std::vector<CSourceName> Names;
     if (Dialect)
       COpts.SourceNames = &Names;
-    HighCEmitter Emitter;
-    Emitter.emit(R.Result.HighFuncs, OS, COpts, R.Dbg.get());
+    try {
+      HighCEmitter Emitter;
+      Emitter.emit(R.Result.HighFuncs, OS, COpts, R.Dbg.get());
+    } catch (const std::exception &Error) {
+      if (S)
+        S->setError(emissionFailure(Error));
+      return nullptr;
+    }
     if (Dialect) {
       SourceDialectOptions Options;
       Options.Dialect = *Dialect;

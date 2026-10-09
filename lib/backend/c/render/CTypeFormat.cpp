@@ -596,6 +596,17 @@ std::string typeToC(const TypeRef &Ty) {
   }
 }
 
+bool hasCSpelling(const TypeRef &Ty) {
+  // typeToC is the authority on what C spells; ask it rather than restate
+  // its rules.
+  try {
+    (void)typeToC(Ty);
+    return true;
+  } catch (const std::invalid_argument &) {
+    return false;
+  }
+}
+
 static std::string anonymousAggregateName(llvm::Type *Ty) {
   std::string Text;
   llvm::raw_string_ostream Stream(Text);

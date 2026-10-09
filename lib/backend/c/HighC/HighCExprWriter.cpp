@@ -91,7 +91,12 @@ TypeRef HighCWriter::debugTypeForDisplacement(va_t Entry, int64_t Disp) const {
     Ty = Accept(Dbg->resolveVariable(Entry, Disp));
   if (Ty)
     Dbg->completeType(Ty);
-  return cDisplayType(Ty);
+  // A local whose type C cannot spell keeps the type its accesses give it,
+  // as a parameter keeps its machine type.
+  TypeRef Display = cDisplayType(Ty);
+  if (Display && !hasCSpelling(Display))
+    return {};
+  return Display;
 }
 
 std::string HighCWriter::varName(const MedVar &V) const {
@@ -1531,8 +1536,10 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   const std::string Name = callIdentifier(E);
   if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format))
     return msvcSyntheticReturn(Msvc->ReturnKind);
+  // A result whose type C cannot spell is the register it arrives in.
   if (const auto Callee = debugCallee(E))
-    return Callee->ReturnType;
+    if (hasCSpelling(cDisplayType(Callee->ReturnType)))
+      return Callee->ReturnType;
   return {};
 }
 
@@ -2047,25 +2054,29 @@ TypeRef HighCWriter::expectedDebugCallArgType(const FunctionSym &FS,
     if (TypeRef Record = msvcIndirectReturnRecordType(FS.ReturnType))
       Sret = NdType::makePtr(cDisplayType(Record));
   }
+  // The callee's declaration gives a parameter whose type C cannot spell the
+  // register it travels in (debugExternPrototype).
+  auto Declared = [&](size_t Param) -> TypeRef {
+    if (Param >= FS.Params.size())
+      return nullptr;
+    const TypeRef &Ty = FS.Params[Param].second;
+    if (Ty && !hasCSpelling(cDisplayType(Ty)))
+      return NdType::makeInt(pointerBytes(Opts.TheArch), false);
+    return Ty;
+  };
   if (Member) {
     if (Index == 0)
-      return FS.Params.empty() ? nullptr : FS.Params[0].second;
+      return Declared(0);
     if (Index == 1)
       return Sret;
-    if (Index - 1 < FS.Params.size())
-      return FS.Params[Index - 1].second;
-    return nullptr;
+    return Declared(Index - 1);
   }
   if (Indirect) {
     if (Index == 0)
       return Sret;
-    if (Index - 1 < FS.Params.size())
-      return FS.Params[Index - 1].second;
-    return nullptr;
+    return Declared(Index - 1);
   }
-  if (Index < FS.Params.size())
-    return FS.Params[Index].second;
-  return nullptr;
+  return Declared(Index);
 }
 
 std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
@@ -2175,15 +2186,20 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
 }
 
 std::string HighCWriter::debugSignatureKey(const FunctionSym &FS) {
+  // A type C cannot spell is declared as its machine type, the same for
+  // every such type.
+  auto Spell = [](const TypeRef &Ty) {
+    return hasCSpelling(Ty) ? typeToC(Ty) : std::string("?");
+  };
   std::string Key;
   if (FS.ReturnType)
-    Key += typeToC(FS.ReturnType);
+    Key += Spell(FS.ReturnType);
   Key += "/";
   for (const auto &Param : FS.Params) {
     Key += Param.first;
     Key += ":";
     if (Param.second)
-      Key += typeToC(Param.second);
+      Key += Spell(Param.second);
     Key += ";";
   }
   return Key;
@@ -2237,6 +2253,9 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
   TypeRef ReturnType = FS.ReturnType
                            ? cDisplayType(FS.ReturnType)
                            : NdType::makeInt(pointerBytes(Opts.TheArch), false);
+  // So does one whose type C cannot spell.
+  if (!hasCSpelling(ReturnType))
+    ReturnType = NdType::makeInt(pointerBytes(Opts.TheArch), false);
   TypeRef SretPtr;
   const bool Indirect = debugExternUsesHiddenSret(
       FS, ExternName.empty() ? Identifier : ExternName);
@@ -2258,6 +2277,9 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
     Ty = cDisplayType(Ty);
     if (!Ty)
       Ty = NdType::makeInt(8);
+    // A parameter whose type C cannot spell is the register it travels in.
+    if (!hasCSpelling(Ty))
+      Ty = NdType::makeInt(pointerBytes(Opts.TheArch), false);
     // MSVC x64 passes a named class through a hidden pointer. The PDB
     // still records the class. Enums stay in a register.
     if (Opts.TheArch == Arch::X64 && isMsvcClassValueReturn(Ty))
