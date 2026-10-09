@@ -36,6 +36,13 @@ NEVERD_DARWIN_VALUE(IllegalSeek, 29)
 NEVERD_DARWIN_VALUE(SeekHole, 3)
 NEVERD_DARWIN_VALUE(SeekData, 4)
 NEVERD_DARWIN_VALUE(NameTooLong, 63)
+NEVERD_DARWIN_VALUE(NoAttribute, 93)
+NEVERD_DARWIN_VALUE(XattrNoFollow, 1)
+NEVERD_DARWIN_VALUE(XattrCreate, 2)
+NEVERD_DARWIN_VALUE(XattrReplace, 4)
+NEVERD_DARWIN_VALUE(XattrNoSecurity, 8)
+NEVERD_DARWIN_VALUE(XattrNoDefault, 16)
+NEVERD_DARWIN_VALUE(XattrNoFollowAny, 64)
 NEVERD_DARWIN_VALUE(DirectoryNotEmpty, 66)
 NEVERD_DARWIN_VALUE(TooManyLinks, 62)
 NEVERD_DARWIN_VALUE(MaxSymbolicLinks, 32)
@@ -186,6 +193,10 @@ NEVERD_DARWIN_SERVICE(FpathConf, 192, Int)
 NEVERD_DARWIN_SERVICE(GetAttrList, 220, Int)
 NEVERD_DARWIN_SERVICE(FgetAttrList, 228, Int)
 NEVERD_DARWIN_SERVICE(GetAttrListAt, 476, Int)
+NEVERD_DARWIN_SERVICE(GetXattr, 234, Wide)
+NEVERD_DARWIN_SERVICE(FgetXattr, 235, Wide)
+NEVERD_DARWIN_SERVICE(ListXattr, 240, Wide)
+NEVERD_DARWIN_SERVICE(FlistXattr, 241, Wide)
 NEVERD_DARWIN_SERVICE(Truncate, 200, Int)
 NEVERD_DARWIN_SERVICE(Ftruncate, 201, Int)
 NEVERD_DARWIN_SERVICE(Sysctl, 202, Int)
@@ -516,6 +527,24 @@ NEVERD_DARWIN_DIAGNOSTIC(
     FilePathConfKind, "Darwin pathconf native descriptor kind is not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(FileAttributeSelection,
                          "Darwin selected file attributes are not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(ExtendedAttributeOption,
+                         "invalid Darwin extended-attribute observations")
+NEVERD_DARWIN_DIAGNOSTIC(ExtendedAttributeUnknown,
+                         "Darwin extended-attribute observations are unknown")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ExtendedAttributeKind,
+    "Darwin extended-attribute descriptor kind is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ExtendedAttributeSpecial,
+    "Darwin special extended-attribute semantics are not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(ExtendedAttributeFlags,
+                         "Darwin extended-attribute options are not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ExtendedAttributeEmptyNegative,
+    "Darwin empty attribute list with negative buffer size is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ExtendedAttributeOutput,
+    "Darwin extended-attribute buffer is not completely writable")
 NEVERD_DARWIN_DIAGNOSTIC(FileAttributeOptions,
                          "Darwin attribute-list options are not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(

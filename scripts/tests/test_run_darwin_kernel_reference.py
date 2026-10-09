@@ -73,7 +73,7 @@ class DarwinKernelReferenceTests(unittest.TestCase):
                 self.assertTrue((path.parent / "cycle").is_symlink())
                 self.assertEqual((path.parent / "dirlink").readlink(), Path("empty"))
                 self.assertFalse((path.parent / "dangling").exists())
-            elif command[1] in ("kernel-pathconf", "common-attributes"):
+            elif command[1] in ("kernel-pathconf", "common-attributes", "extended-attributes"):
                 self.assertEqual({item.name for item in path.parent.iterdir()},
                                  {"data", "empty", "alias", "dangling", "cycle"})
                 self.assertEqual((path.parent / "alias").readlink(), Path("data"))
@@ -107,7 +107,8 @@ class DarwinKernelReferenceTests(unittest.TestCase):
             else:
                 self.assertEqual({item.name for item in path.parent.iterdir()}, {"data", "empty"})
             return subprocess.CompletedProcess(command, 37, b"", b"")
-        with mock.patch.object(reference.subprocess, "run", side_effect=execute):
+        with (mock.patch.object(reference.subprocess, "run", side_effect=execute),
+              mock.patch.object(reference, "set_native_attribute") as attributes):
             results = reference.execute_cases(Path("native"),
                 [("directory-entries", 37, b""), ("symbolic-links", 37, b""),
                  ("symbolic-link-mutations", 37, b""),
@@ -117,11 +118,17 @@ class DarwinKernelReferenceTests(unittest.TestCase):
                  ("mutable-initial-links", 37, b""),
                  ("directory-link-roots", 37, b""),
                  ("directory-entries", 37, b""),
-                 ("kernel-pathconf", 37, b""), ("common-attributes", 37, b"")])
+                 ("kernel-pathconf", 37, b""), ("common-attributes", 37, b""),
+                 ("extended-attributes", 37, b"")])
+            self.assertEqual(attributes.call_count, 3)
+            self.assertEqual([(call.args[1], call.args[2]) for call in attributes.call_args_list],
+                             [("user.neverd.beta", b"\x00\xffA\x00\x80B\n"),
+                              ("user.neverd.alpha", b"alpha"), ("user.neverd.empty", b"")])
         self.assertTrue(all(result["passed"] for result in results))
         self.assertEqual(roots[0], roots[8])
         self.assertNotIn(roots[9], roots[:9])
         self.assertNotIn(roots[10], roots[:10])
+        self.assertNotIn(roots[11], roots[:11])
         self.assertNotEqual(roots[0], roots[1])
         self.assertNotIn(roots[2], roots[:2])
         self.assertNotIn(roots[3], roots[:3])
@@ -130,6 +137,19 @@ class DarwinKernelReferenceTests(unittest.TestCase):
         self.assertNotIn(roots[6], roots[:6])
         self.assertNotIn(roots[7], roots[:7])
         self.assertTrue(all(not path.exists() for path in roots))
+
+    def test_native_attribute_setup_failures_preserve_the_case_and_do_not_run_it(self):
+        with (mock.patch.object(reference, "set_native_attribute",
+                                side_effect=OSError(1, "private seed refused")),
+              mock.patch.object(reference.subprocess, "run") as execute):
+            result = reference.execute_cases(Path("native"),
+                                             [("extended-attributes", 37, b"X")])
+        execute.assert_not_called()
+        self.assertEqual(len(result), 1)
+        self.assertFalse(result[0]["passed"])
+        self.assertIsNone(result[0]["exit_status"])
+        self.assertEqual(result[0]["error"], "native attribute setup failed")
+        self.assertIn("private seed refused", result[0]["setup_error"])
 
     def test_native_file_cases_receive_real_isolated_input_bytes(self):
         paths = []

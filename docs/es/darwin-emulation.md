@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
+<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
 
 [← Índice de documentación](README.md)
 
@@ -881,3 +881,16 @@ common-attributes-unsupported
 ```
 
 [XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).
+
+
+## Lectura explícita de atributos extendidos
+
+getxattr(234), fgetxattr(235), listxattr(240) y flistxattr(241) leen observaciones ordinarias completas y ordenadas de darwin_files. Archivos, directorios y enlaces pueden declarar extended_attributes como una matriz estricta de {name,bytes_hex}. La omisión sigue siendo desconocida; [] declara una lista vacía conocida. Los nombres UTF-8 tienen 1..127 bytes y admiten barras; los valores son bytes opacos, se rechazan duplicados y se conserva el orden. Límite: 4096 atributos. Nombres, NUL y valores entran en el presupuesto existente de 16 MiB sin cobrar dos veces la ruta existente.
+
+Las observaciones pertenecen al objeto tras dup, movimiento, eliminación, CWD y reutilización del nombre, independientemente del stat completo y la enumeración. Los nuevos objetos son desconocidos. Escrituras, truncado exitoso y fallos ambiguos de copia no vacía invalidan atributos; el rechazo previo de un búfer parcial los conserva. Las consultas conservan cursores, entradas, metadatos y presupuestos de objetos/FD/inode.
+
+ABI: FD/options/position low32, size full64 y BSD user_ssize_t/carry/secondary. NULL ignora position. Para valores no vacíos, ruta nonNULL size0 devuelve ERANGE; FD size0 consulta la longitud. Solo UINT32_MAX/UINT64_MAX del get por ruta son consultas heredadas; FD limita a INT32_MAX. Las listas positivas cortas publican nombres completos antes de ERANGE; tamaños negativos full64 nonNULL dan ERANGE para listas no vacías. No se verificó una lista nativa vacía: ese caso negativo con vacío declarado sigue siendo UnsupportedService. La salida inaccesible se detiene antes de copiar. NOFOLLOW1 y NOFOLLOW_ANY64 son independientes;8/16 se rechazan antes de buscar, FD1/64 antes de FD/nombre. CREATE2/REPLACE4 se ignoran; SHOWCOMPRESSION32 y bits desconocidos no se admiten. com.apple.system.*, ResourceFork, FinderInfo, decmpfs, escritura/eliminación, permisos/ACL e inferencias del sistema de archivos quedan excluidos.
+
+extended-attributes / extended-attributes-values / extended-attributes-unsupported comprueban el programa nativo compartido, bytes virtuales y parada desconocida conservando la salida. Sin cambios: guest/Python5,000,000us/quantum1024, API pública10s, nativo5s. Preparación privada ARM64:320 comparaciones raw/SDK con todos288 bytes de guarda y carry/secondary idénticos. com.apple.provenance automático es una observación, no un vacío predeterminado. Intel nativo/iOS físico siguen sin verificar; dyld, Mach IPC, Objective-C/Swift y frameworks completos siguen incompletos.
+
+Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.

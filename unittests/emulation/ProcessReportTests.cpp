@@ -113,6 +113,61 @@ TEST(ProcessReport, DarwinFileInputsAreLosslessAndRequireDarwinProfiles) {
   ASSERT_TRUE(EOFInput->DarwinFiles->StandardInput);
   EXPECT_TRUE(EOFInput->DarwinFiles->StandardInput->empty());
 }
+TEST(ProcessReport, DarwinXattrInputKeepsOpaqueBytesOrderAndKnownEmpty) {
+  auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[
+    {"path":"/data","bytes_hex":"00ff","extended_attributes":[
+      {"name":"z/slash","bytes_hex":"00FF80"},
+      {"name":"α","bytes_hex":""},
+      {"name":"a","bytes_hex":"78"}]},
+    {"path":"/unknown","bytes_hex":""}],
+    "directories":[{"path":"/dir","extended_attributes":[]}],
+    "symbolic_links":[{"path":"/link","target_hex":"2f64617461",
+      "extended_attributes":[{"name":"user.link","bytes_hex":"42"}]}]}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  const auto &A = O->DarwinFiles->ExtendedAttributes.at("/data");
+  ASSERT_EQ(A.size(), 3u);
+  EXPECT_EQ(A[0].Name, "z/slash");
+  EXPECT_EQ(A[0].Bytes, (std::vector<uint8_t>{0, 255, 128}));
+  EXPECT_EQ(A[1].Name, "α");
+  EXPECT_TRUE(A[1].Bytes.empty());
+  EXPECT_EQ(A[2].Name, "a");
+  EXPECT_FALSE(O->DarwinFiles->ExtendedAttributes.contains("/unknown"));
+  EXPECT_TRUE(O->DarwinFiles->ExtendedAttributes.at("/dir").empty());
+  EXPECT_EQ(O->DarwinFiles->ExtendedAttributes.at("/link")[0].Bytes,
+            (std::vector<uint8_t>{66}));
+}
+TEST(ProcessReport, DarwinXattrInputRejectsMalformedAndUnknownFields) {
+  for (const char *Attributes :
+       {"null", "{}", "[null]", "[{\"name\":\"a\"}]",
+        "[{\"name\":\"a\",\"bytes_hex\":\"\",\"extra\":0}]",
+        "[{\"name\":\"\",\"bytes_hex\":\"\"}]",
+        "[{\"name\":\"a\\u0000b\",\"bytes_hex\":\"\"}]",
+        "[{\"name\":\"a\",\"bytes_hex\":\"0\"}]",
+        "[{\"name\":\"a\",\"bytes_hex\":\"gg\"}]",
+        "[{\"name\":\"a\",\"bytes_hex\":1}]",
+        "[{\"name\":1,\"bytes_hex\":\"\"}]",
+        "[{\"name\":\"a\",\"bytes_hex\":\"\"},{\"name\":\"a\",\"bytes_hex\":"
+        "\"\"}]",
+        "[{\"name\":\"com.apple.ResourceFork\",\"bytes_hex\":\"\"}]"})
+    for (unsigned Kind = 0; Kind != 3; ++Kind) {
+      std::string Entry = "{\"path\":\"/data\",\"extended_attributes\":";
+      Entry += Attributes;
+      if (Kind == 0)
+        Entry += ",\"bytes_hex\":\"\"";
+      if (Kind == 2)
+        Entry += ",\"target_hex\":\"78\"";
+      Entry += '}';
+      const auto Text =
+          Kind == 0
+              ? "{\"darwin_files\":{\"files\":[" + Entry + "]}}"
+              : "{\"darwin_files\":{\"files\":[],\"" +
+                    std::string(Kind == 1 ? "directories" : "symbolic_links") +
+                    "\":[" + Entry + "]}}";
+      auto O = processOptionsFromJSON(Text);
+      ASSERT_FALSE(bool(O)) << Text;
+      llvm::consumeError(O.takeError());
+    }
+}
 TEST(ProcessReport,
      DarwinSymbolicLinkTargetsAreLosslessAndRequireDarwinProfiles) {
   auto Good =

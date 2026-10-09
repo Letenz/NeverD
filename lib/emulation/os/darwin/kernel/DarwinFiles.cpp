@@ -11,6 +11,7 @@
 #include "DarwinUserMemory.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
@@ -257,6 +258,35 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     if (auto E = PathInput(Path, true))
       return E;
   }
+  uint64_t AttributeCount = 0;
+  for (const auto &[Path, Attributes] : Options.ExtendedAttributes) {
+    const auto Kind = pathKind(Options, Path);
+    if (Kind == PathKind::Missing)
+      return failure(diagnostic::ExtendedAttributeOption);
+    if (Kind == PathKind::Directory && !Options.Directories.contains(Path) &&
+        !Options.Metadata.contains(Path) &&
+        !Options.DirectoryContents.contains(Path)) {
+      if (++Entries > limits::Files)
+        return failure(diagnostic::FileOptionsLimit);
+      if (auto E = PathInput(Path, true))
+        return E;
+    }
+    if (Attributes.size() > limits::ExtendedAttributes - AttributeCount)
+      return failure(diagnostic::FileOptionsLimit);
+    AttributeCount += Attributes.size();
+    std::set<llvm::StringRef> Names;
+    for (const auto &Attribute : Attributes) {
+      if (!validExtendedAttributeName(Attribute.Name) ||
+          !ordinaryExtendedAttributeName(Attribute.Name) ||
+          !Names.insert(Attribute.Name).second)
+        return failure(diagnostic::ExtendedAttributeOption);
+      const uint64_t Cost = Attribute.Name.size() + 1;
+      if (Cost > limits::Bytes - Total ||
+          Attribute.Bytes.size() > limits::Bytes - Total - Cost)
+        return failure(diagnostic::FileOptionsLimit);
+      Total += Cost + Attribute.Bytes.size();
+    }
+  }
   for (const auto &[Path, Policy] : Options.DirectoryMutationPolicies) {
     const auto M = Options.Metadata.find(Path);
     if (pathKind(Options, Path) != PathKind::Directory ||
@@ -293,7 +323,8 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
       return failure(diagnostic::DirectoryMutableOption);
     if (!Options.Directories.contains(Path) &&
         !Options.Metadata.contains(Path) &&
-        !Options.DirectoryContents.contains(Path) && ++Entries > limits::Files)
+        !Options.DirectoryContents.contains(Path) &&
+        !Options.ExtendedAttributes.contains(Path) && ++Entries > limits::Files)
       return failure(diagnostic::FileOptionsLimit);
     if (auto E = PathInput(Path, true))
       return E;
@@ -461,6 +492,19 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
 }
 } // namespace
 
+bool validExtendedAttributeName(llvm::StringRef Name) {
+  if (Name.empty() || Name.size() > limits::ExtendedAttributeName ||
+      Name.contains('\0'))
+    return false;
+  const auto *Start = reinterpret_cast<const llvm::UTF8 *>(Name.data());
+  return llvm::isLegalUTF8String(&Start, Start + Name.size());
+}
+bool ordinaryExtendedAttributeName(llvm::StringRef Name) {
+  return !Name.starts_with("com.apple.system.") &&
+         Name != "com.apple.ResourceFork" && Name != "com.apple.FinderInfo" &&
+         Name != "com.apple.decmpfs";
+}
+
 llvm::Error validateFileOptions(const DarwinFileOptions &Options) {
   auto Size = fileOptionsFootprint(Options);
   return Size ? llvm::Error::success() : Size.takeError();
@@ -508,6 +552,9 @@ void DarwinFiles::initializeNamespace() {
     Node->Path = Path;
     Node->Parent = initialDirectoryNode(parentPath(Path));
     Node->Writable = Options->WritableFiles.contains(Path);
+    const auto Attributes = Options->ExtendedAttributes.find(Path);
+    if (Attributes != Options->ExtendedAttributes.end())
+      Node->ExtendedAttributes = &Attributes->second;
     const auto Metadata = Options->Metadata.find(Path);
     if (Metadata != Options->Metadata.end())
       Node->InitialMetadata = &Metadata->second;
@@ -522,6 +569,9 @@ void DarwinFiles::initializeNamespace() {
     Node->Path = Path;
     Node->Parent = initialDirectoryNode(parentPath(Path));
     Node->Protected = !Options->MutableSymbolicLinks.contains(Path);
+    const auto Attributes = Options->ExtendedAttributes.find(Path);
+    if (Attributes != Options->ExtendedAttributes.end())
+      Node->ExtendedAttributes = &Attributes->second;
     const auto Metadata = Options->Metadata.find(Path);
     if (Metadata != Options->Metadata.end())
       Node->Metadata = &Metadata->second;
@@ -579,6 +629,9 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
   Node->Path = Path;
   if (Path != "/")
     Node->Parent = initialDirectoryNode(parentPath(Path));
+  const auto Attributes = Options->ExtendedAttributes.find(Path);
+  if (Attributes != Options->ExtendedAttributes.end())
+    Node->ExtendedAttributes = &Attributes->second;
   const auto Metadata = Options->Metadata.find(Path);
   if (Metadata != Options->Metadata.end()) {
     Node->Metadata = &Metadata->second;
@@ -2018,6 +2071,8 @@ void DarwinFiles::publish(
   *StorageUsed = *StorageUsed - File.bytes().size() + Bytes.size();
   auto &Node = *File.File;
   Node.Modified = std::move(Bytes);
+  // Content mutation does not prove any provider's xattr retention rule.
+  Node.ExtendedAttributes = nullptr;
   if (!Node.Policy || Node.MetadataInvalidated) {
     Node.MetadataInvalidated = true;
     return;
@@ -2172,6 +2227,9 @@ llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
                     ProcessResult &Result) {
   const auto &A = Event.Arguments;
+  if (Service == ServiceKind::GetXattr || Service == ServiceKind::FgetXattr ||
+      Service == ServiceKind::ListXattr || Service == ServiceKind::FlistXattr)
+    return extendedAttributeRead(Service, Event, Result);
   if (Service == ServiceKind::Umask) {
     if (!Options || !Options->InitialUmask)
       return unsupported(Result, diagnostic::FileUmask);

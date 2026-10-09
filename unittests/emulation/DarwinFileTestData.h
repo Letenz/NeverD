@@ -8,6 +8,8 @@
 
 #include "neverd/emulation/DarwinFileOptions.h"
 
+#include <string_view>
+
 namespace neverd::emulation::darwin_test {
 inline constexpr char KernelPathConfHex[] =
     "0100000000000000010000000000000001000000000000000000000000000000"
@@ -44,6 +46,90 @@ inline DarwinFileMetadata metadata(uint64_t Size = 10) {
 }
 // Independent raw common-attribute records, including full mode and signed
 // times.
+inline constexpr char ExtendedAttributesHex[] =
+    "00ff410080420a757365722e6e65766572642e6265746100757365722e6e65766572642e61"
+    "6c70686100757365722e6e65766572642e656d70747900";
+inline DarwinFileOptions extendedAttributesOptions() {
+  DarwinFileOptions O;
+  O.Files["/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  O.Files["/unknown"] = {};
+  O.Files["/known-empty"] = {};
+  O.ExtendedAttributes["/data"] = {
+      {"user.neverd.beta", {0, 255, 'A', 0, 128, 'B', '\n'}},
+      {"user.neverd.alpha", {'a', 'l', 'p', 'h', 'a'}},
+      {"user.neverd.empty", {}}};
+  O.ExtendedAttributes["/known-empty"] = {};
+  O.Directories.insert("/");
+  O.MutableDirectories.insert("/");
+  O.WorkingDirectory = "/";
+  for (const auto &[Name, Target] :
+       {std::pair{"/alias", "data"}, std::pair{"/dangling", "missing"},
+        std::pair{"/cycle", "cycle"}}) {
+    O.SymbolicLinks[Name] =
+        std::vector<uint8_t>(Target, Target + std::string_view(Target).size());
+    O.MutableSymbolicLinks.insert(Name);
+    O.ExtendedAttributes[Name] = {};
+  }
+  return O;
+}
+inline constexpr char ExtendedAttributesJSON[] = R"({
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "30313233343536373839",
+      "extended_attributes": [
+        {
+          "name": "user.neverd.beta",
+          "bytes_hex": "00ff410080420a"
+        },
+        {
+          "name": "user.neverd.alpha",
+          "bytes_hex": "616c706861"
+        },
+        {
+          "name": "user.neverd.empty",
+          "bytes_hex": ""
+        }
+      ]
+    },
+    {
+      "path": "/unknown",
+      "bytes_hex": ""
+    },
+    {
+      "path": "/known-empty",
+      "bytes_hex": "",
+      "extended_attributes": []
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "mutable": true
+    }
+  ],
+  "symbolic_links": [
+    {
+      "path": "/alias",
+      "target_hex": "64617461",
+      "mutable": true,
+      "extended_attributes": []
+    },
+    {
+      "path": "/dangling",
+      "target_hex": "6d697373696e67",
+      "mutable": true,
+      "extended_attributes": []
+    },
+    {
+      "path": "/cycle",
+      "target_hex": "6379636c65",
+      "mutable": true,
+      "extended_attributes": []
+    }
+  ],
+  "working_directory": "/"
+})";
 inline constexpr char CommonAttributesHex[] =
     "780000000a9e07820000000000000000000000000000000085ffffff01000000"
     "fbffffffffffffff0600000000000000ffffffffffffff7fffc99a3b00000000"

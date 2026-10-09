@@ -216,6 +216,171 @@ static int common_record(const unsigned char *record,
       return 247;
   return 0;
 }
+/* Original ordinary-xattr controls. The native provider may list additional
+ * automatic attributes; derive name boundaries from its actual complete list.
+ * Model-only literal/unknown observations never enter the native inventory. */
+static int xattr_result(u64 n, u64 a0, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5,
+                        u64 expected, unsigned failure) {
+  unsigned error;
+  if (call(n, a0, a1, a2, a3, a4, a5, &error) != expected || error != failure)
+    return 221;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (failure ? a2 : 0))
+#endif
+    return 222;
+  return 0;
+}
+static void xattr_canary(u64 *words) {
+  for (unsigned i = 0; i != 36; i += 4)
+    words[i] = words[i + 1] = words[i + 2] = words[i + 3] =
+        0xa5a5a5a5a5a5a5a5UL;
+}
+static int xattr_bytes(const u64 *words, const unsigned char *expected,
+                       unsigned count) {
+  unsigned whole = count / 8, partial = count % 8;
+  for (unsigned i = 0; i != 36; ++i) {
+    u64 value = 0xa5a5a5a5a5a5a5a5UL;
+    if (i >= 2 && i < 2 + whole)
+      value = little_integer(expected + (i - 2) * 8, 8);
+    else if (i == 2 + whole && partial) {
+      u64 mask = (1UL << (partial * 8)) - 1;
+      /* Assemble only the partial bytes: no read past the proved record. */
+      value = little_integer(expected + whole * 8, partial) | (value & ~mask);
+    }
+    if (words[i] != value)
+      return 223;
+  }
+  return 0;
+}
+static int extended_attributes(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 224;
+  parent[last ? last : 1] = 0;
+  u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 225;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary || xattr_result(13, root, 0, 0, 0, 0, 0, 0, 0))
+    return 226;
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || xattr_result(199, file, 37, 0, 0, 0, 0, 37, 0))
+    return 227;
+  const char *beta = "user.neverd.beta", *empty = "user.neverd.empty";
+  const unsigned char value[7] = {0, 255, 'A', 0, 128, 'B', '\n'};
+  u64 words[36];
+  unsigned char *out = (unsigned char *)words + 16;
+  xattr_canary(words);
+  if (xattr_result(234, (u64) "data", (u64)beta, (u64)out, 7, 0, 0, 7, 0) ||
+      xattr_bytes(words, value, 7))
+    return 228;
+  unsigned char names[256];
+  u64 total = call(240, (u64) "data", 0, 0, 0, -1UL, -1UL, &error);
+  if (error || secondary || !total || total > 256 ||
+      xattr_result(241, file, (u64)names, 256, 0, -1UL, -1UL, total, 0))
+    return 229;
+  unsigned start = 0, found = 0;
+  while (start < total) {
+    unsigned end = start;
+    while (end < total && names[end])
+      ++end;
+    if (end == total || end == start)
+      return 230;
+    if (equal((const char *)names + start, beta))
+      found |= 1;
+    if (equal((const char *)names + start, "user.neverd.alpha"))
+      found |= 2;
+    if (equal((const char *)names + start, empty))
+      found |= 4;
+    start = end + 1;
+  }
+  if (found != 7)
+    return 231;
+  if (mode == 1) {
+    /* An explicit virtual known-empty file, not an inferred native default. */
+    if (xattr_result(240, (u64) "known-empty", -1UL, 128, 0, 0, 0, 0, 0) ||
+        xattr_result(4, 1, (u64)value, 7, 0, 0, 0, 7, 0) ||
+        xattr_result(4, 1, (u64)names, total, 0, 0, 0, total, 0))
+      return 232;
+    return 37;
+  }
+  if (mode == 2) {
+    if (xattr_result(4, 1, (u64) "X", 1, 0, 0, 0, 1, 0))
+      return 233;
+    call(234, (u64) "unknown", (u64)beta, 0, 0, 0, 0, &error);
+    return 234;
+  }
+  /* Check one complete-name boundary before, at and beyond its ending NUL.
+   * Every full buffer byte/guard is compared; the provider's order is retained.
+   */
+  unsigned end = 0;
+  while (end < total && names[end])
+    ++end;
+  ++end;
+  for (unsigned route = 0; route != 2; ++route)
+    for (unsigned delta = 0; delta != 3; ++delta) {
+      u64 size = end + delta - 1;
+      unsigned prefix = 0;
+      for (unsigned i = 0; i < total && i < size; ++i)
+        if (!names[i])
+          prefix = i + 1;
+      xattr_canary(words);
+      if (xattr_result(route ? 241 : 240, route ? copy : (u64) "data", (u64)out,
+                       size, 0, -1UL, -1UL, size < total ? 34 : total,
+                       size < total) ||
+          xattr_bytes(words, names, prefix))
+        return 235;
+    }
+  for (unsigned route = 0; route != 2; ++route) {
+    u64 object = route ? copy | 0xabcdef1200000000UL : (u64) "data";
+    u64 get = route ? 235 : 234, list = route ? 241 : 240;
+    xattr_canary(words);
+    if (xattr_result(get, object, (u64)beta, 0, -1UL, -1UL, 0, 7, 0) ||
+        xattr_result(get, object, (u64)beta, (u64)out, 6, 0, 0, 34, 1) ||
+        xattr_bytes(words, value, 0) ||
+        xattr_result(get, object, (u64)beta, (u64)out, 0, 0, 0, route ? 7 : 34,
+                     !route) ||
+        xattr_bytes(words, value, 0) ||
+        xattr_result(get, object, (u64)empty, -1UL, 7, 0, 0, 0, 0) ||
+        xattr_result(get, object, (u64) "missing", 0, 0, 0, 0, 93, 1) ||
+        xattr_result(get, object, (u64) "missing", (u64)out, 7, 1, 0, 22, 1) ||
+        xattr_result(list, object, 0, -1UL, 0, -1UL, -1UL, total, 0) ||
+        xattr_result(list, object, (u64)out, -1UL, 0, -1UL, -1UL, 34, 1) ||
+        xattr_result(199, copy, 0, 1, 0, 0, 0, 37, 0))
+      return 236;
+  }
+  if (xattr_result(234, (u64) "alias", (u64)beta, 0, 0, 0, 64, 62, 1) ||
+      xattr_result(234, (u64) "alias", (u64)beta, 0, 0, 0, 65, 93, 1) ||
+      xattr_result(234, (u64) "dangling", 0, 0, 0, 0, 0, 2, 1) ||
+      xattr_result(234, (u64) "cycle", 0, 0, 0, 0, 0, 62, 1) ||
+      xattr_result(234, 0, 0, 0, 0, 0, 8, 22, 1) ||
+      xattr_result(235, -1UL, 0, 0, 0, 0, 64, 22, 1) ||
+      xattr_result(241, -1UL, 0, 0, 0, 0, 0, 9, 1))
+    return 237;
+  if (xattr_result(128, (u64) "data", (u64) "moved", 0, 0, 0, 0, 0, 0) ||
+      xattr_result(234, (u64) "moved", (u64)beta, 0, 0, 0, 0, 7, 0) ||
+      xattr_result(10, (u64) "moved", 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(235, copy, (u64)beta, 0, 0, 0, 0, 7, 0) ||
+      xattr_result(241, copy, 0, 0, 0, 0, 0, total, 0) ||
+      xattr_result(199, file, 0, 1, 0, 0, 0, 37, 0) ||
+      xattr_result(6, copy, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, file, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, root, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(4, 1, (u64) "X", 1, 0, 0, 0, 1, 0))
+    return 238;
+  return 37;
+}
+
 static int common_attributes(const char *path, unsigned mode) {
   unsigned error;
   char parent[1024];
@@ -6021,6 +6186,16 @@ int main(int argc, char **argv, char **envp, char **apple) {
                ? 79
                : mutable_initial_links(
                      argv[2], equal(argv[1], "virtual-mutable-initial-links"));
+  if (equal(argv[1], "extended-attributes") ||
+      equal(argv[1], "extended-attributes-values") ||
+      equal(argv[1], "extended-attributes-unsupported"))
+    return argc < 3
+               ? 79
+               : extended_attributes(
+                     argv[2],
+                     equal(argv[1], "extended-attributes-values")        ? 1
+                     : equal(argv[1], "extended-attributes-unsupported") ? 2
+                                                                         : 0);
   if (equal(argv[1], "common-attributes") ||
       equal(argv[1], "common-attributes-values") ||
       equal(argv[1], "common-attributes-unsupported"))

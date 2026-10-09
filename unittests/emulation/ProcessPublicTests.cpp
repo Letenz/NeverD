@@ -410,6 +410,10 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"common-attributes-values",
                     emulation::darwin_test::CommonAttributesHex},
           std::pair{"common-attributes-unsupported", "41"},
+          std::pair{"extended-attributes", "58"},
+          std::pair{"extended-attributes-values",
+                    emulation::darwin_test::ExtendedAttributesHex},
+          std::pair{"extended-attributes-unsupported", "58"},
           std::pair{"kernel-pathconf", "43"},
           std::pair{"kernel-pathconf-values",
                     emulation::darwin_test::KernelPathConfHex},
@@ -517,7 +521,9 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       (UnlinkLinks || RenameLinks) && ModeName.ends_with("-protected");
   const bool UnknownPathConf = ModeName == "kernel-pathconf-unsupported";
   const bool UnknownAttributes = ModeName == "common-attributes-unsupported";
-  const bool Incomplete = ProtectedLink || UnknownPathConf || UnknownAttributes;
+  const bool UnknownXattrs = ModeName == "extended-attributes-unsupported";
+  const bool Incomplete =
+      ProtectedLink || UnknownPathConf || UnknownAttributes || UnknownXattrs;
   const bool X64 = llvm::StringRef(File).ends_with("x86_64");
   SCOPED_TRACE(File);
   Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
@@ -934,6 +940,13 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::json::parse(emulation::darwin_test::CommonAttributesJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (ModeName.starts_with("extended-attributes")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::ExtendedAttributesJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
   if (ModeName.starts_with("kernel-pathconf")) {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     (*Input.getAsObject())[field::Quantum] = 1024;
@@ -969,6 +982,19 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     ASSERT_NE(Last->get(field::Result), nullptr);
     EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
     EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+  }
+  if (UnknownXattrs) {
+    EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
+              "Darwin extended-attribute observations are unknown");
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    ASSERT_FALSE(Services->empty());
+    const auto *Last = Services->back().getAsObject();
+    ASSERT_NE(Last, nullptr);
+    EXPECT_EQ(Last->getString(field::Number), X64 ? "20000ea" : "ea");
+    EXPECT_EQ(Last->get(field::Error), nullptr);
+    ASSERT_NE(Last->get(field::Result), nullptr);
+    EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
   }
   if (UnknownPathConf) {
     const auto *Services = Report->getAsObject()->getArray(field::Services);

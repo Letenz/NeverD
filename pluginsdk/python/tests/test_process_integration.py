@@ -537,6 +537,9 @@ class ProcessIntegrationTests(unittest.TestCase):
                     with self.assertRaises(NeverDError):
                         session.emulate_process(path, wrong, options)
                     for mode, expected in (("files", b"f"), ("files-nocancel", b"f"),
+                                           ("extended-attributes", b"X"),
+                                           ("extended-attributes-values", bytes.fromhex("00ff410080420a757365722e6e65766572642e6265746100757365722e6e65766572642e616c70686100757365722e6e65766572642e656d70747900")),
+                                           ("extended-attributes-unsupported", b"X"),
                                            ("common-attributes", b"A"),
                                            ("common-attributes-values", bytes.fromhex(
                                                "780000000a9e07820000000000000000000000000000000085ffffff01000000"
@@ -1133,7 +1136,73 @@ class ProcessIntegrationTests(unittest.TestCase):
                                     for name, target in (("alias", "data"), ("dangling", "missing"),
                                                          ("cycle", "cycle"))]}
                             file_options = json.dumps(query_options)
-                        incomplete = protected_link or unknown_pathconf or unknown_attributes
+                        unknown_xattrs = mode == "extended-attributes-unsupported"
+                        if mode.startswith("extended-attributes"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = json.loads(r'''
+{
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "30313233343536373839",
+      "extended_attributes": [
+        {
+          "name": "user.neverd.beta",
+          "bytes_hex": "00ff410080420a"
+        },
+        {
+          "name": "user.neverd.alpha",
+          "bytes_hex": "616c706861"
+        },
+        {
+          "name": "user.neverd.empty",
+          "bytes_hex": ""
+        }
+      ]
+    },
+    {
+      "path": "/unknown",
+      "bytes_hex": ""
+    },
+    {
+      "path": "/known-empty",
+      "bytes_hex": "",
+      "extended_attributes": []
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "mutable": true
+    }
+  ],
+  "symbolic_links": [
+    {
+      "path": "/alias",
+      "target_hex": "64617461",
+      "mutable": true,
+      "extended_attributes": []
+    },
+    {
+      "path": "/dangling",
+      "target_hex": "6d697373696e67",
+      "mutable": true,
+      "extended_attributes": []
+    },
+    {
+      "path": "/cycle",
+      "target_hex": "6379636c65",
+      "mutable": true,
+      "extended_attributes": []
+    }
+  ],
+  "working_directory": "/"
+}
+''')
+                            file_options = json.dumps(query_options)
+                        incomplete = protected_link or unknown_pathconf or unknown_attributes or unknown_xattrs
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"],
                                          "unsupported_service" if incomplete else "exited",
@@ -1141,6 +1210,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                         self.assertEqual(result["exit_status"], None if incomplete else 37, mode)
                         self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
                         self.assertEqual(result["stderr_hex"], "")
+                        if unknown_xattrs:
+                            last = result["services"][-1]
+                            self.assertEqual(last["number"], "20000ea" if architecture == "x86_64" else "ea")
+                            self.assertIsNone(last["result"])
+                            self.assertNotIn("error", last)
+                            self.assertEqual(result["diagnostic"], "Darwin extended-attribute observations are unknown")
                         if unknown_attributes:
                             last = result["services"][-1]
                             self.assertEqual(last["number"], "20000dc" if architecture == "x86_64" else "dc")

@@ -1746,3 +1746,14 @@ NEVERD_EMULATION_DOC_TOKEN(NativeMethodSerialPolicy,
                            "NativeMethodExecution.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeMethodSerialPolicy, "RUN_SERIAL")
 #endif
+// Additional ordinary attribute read vocabulary.
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "getxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "fgetxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "listxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "flistxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended_attributes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes-unsupported")
+#endif

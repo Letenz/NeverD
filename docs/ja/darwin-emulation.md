@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
+<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
 
 [← ドキュメント一覧](README.md)
 
@@ -883,3 +883,16 @@ common-attributes-unsupported
 ```
 
 [XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).
+
+
+## 明示された拡張属性の読み取り
+
+getxattr(234)、fgetxattr(235)、listxattr(240)、flistxattr(241) は darwin_files の完全な順序付き観測を読み取る。ファイル・ディレクトリ・リンクの extended_attributes は厳密な {name,bytes_hex} 配列であり、省略は不明、[] は既知の空リストを表す。名前はスラッシュを含められる 1..127 バイトの UTF-8、値は不透明なバイト列である。重複を拒否して宣言順を保つ。上限は 4096 属性。名前と NUL と値を既存の 16 MiB 予算に計上し、既存オブジェクトのパスを二重計上しない。
+
+観測は dup、移動、削除、CWD、名前の再利用でもオブジェクトに属し、stat や列挙の有効性とは独立する。新規オブジェクトは不明。内容書き込み、成功した切り詰め、不確定な非空コピー失敗は観測を無効化するが、コピー前の部分バッファ拒否は保つ。問い合わせはカーソル・入力・メタデータ・条目/FD/inode 予算を変更しない。
+
+ABI は低32ビット FD/options/position、全64ビット size、BSD user_ssize_t/carry/secondary を使う。NULL 問い合わせは position を無視する。非空値に対するパスの非NULL size0 は ERANGE、FD size0 は長さ照会。パス get の UINT32_MAX/UINT64_MAX だけが旧式照会で、FD get は INT32_MAX に制限する。正の短いリストは完全な名前の接頭辞を出力して ERANGE、非空リストの非NULL負64ビット長は ERANGE。原生の空リストを確認できなかったため、明示的な空リストの負長は UnsupportedService。出力が完全に書けない場合はコピー前に停止する。NOFOLLOW1 と NOFOLLOW_ANY64 は独立。8/16 は検索前、FD1/64 は FD/名前の前に拒否する。読み取りで CREATE2/REPLACE4 は無視し、SHOWCOMPRESSION32 と未知のビットは未対応。com.apple.system.*、ResourceFork、FinderInfo、decmpfs、設定/削除、権限/ACL、ファイルシステム推定は範囲外。
+
+extended-attributes / extended-attributes-values / extended-attributes-unsupported は共通の原生挙動、仮想の明示バイト、不明時に既存出力を保持する停止を検証する。guest/Python5,000,000us/quantum1024、公開API10s、原生5s は不変。ARM64 私有準備では320組の raw/SDK、全288ガードバイト、carry/secondary が一致。自動 com.apple.provenance は観測であり空リストの既定値ではない。原生 Intel と iOS 実機は未検証。完全な dyld、Mach IPC、Objective-C/Swift とフレームワークは未完成。
+
+Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.

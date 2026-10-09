@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
+<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
 
 [← Index de la documentation](README.md)
 
@@ -881,3 +881,16 @@ common-attributes-unsupported
 ```
 
 [XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).
+
+
+## Lecture explicite des attributs étendus
+
+getxattr(234), fgetxattr(235), listxattr(240) et flistxattr(241) lisent les observations ordinaires complètes et ordonnées de darwin_files. Chaque fichier, répertoire ou lien peut fournir extended_attributes, tableau strict de {name,bytes_hex}. Une omission reste inconnue ; [] déclare une liste vide connue. Les noms UTF-8 de 1..127 octets acceptent la barre oblique, les valeurs sont opaques, les doublons sont refusés et l’ordre est conservé. Limite : 4096 attributs. Noms, NUL et valeurs entrent dans le budget existant de 16 MiB sans compter deux fois le chemin existant.
+
+Les observations appartiennent aux objets après dup, déplacement, suppression, CWD et réutilisation du nom, indépendamment du stat complet et de l’énumération. Les nouveaux objets restent inconnus. Écriture, troncature réussie et échec ambigu de copie non vide invalident les attributs ; un refus préalable du tampon partiel les conserve. Les lectures préservent curseurs, entrées, métadonnées et budgets des objets/FD/inode.
+
+ABI : FD/options/position low32, size full64, BSD user_ssize_t/carry/secondary. NULL ignore position. Pour une valeur non vide, le chemin nonNULL size0 donne ERANGE, FD size0 interroge la longueur. Seuls UINT32_MAX/UINT64_MAX du get par chemin sont des requêtes historiques ; FD limite à INT32_MAX. Une liste positive courte publie des noms complets avant ERANGE ; une taille négative full64 nonNULL donne ERANGE pour une liste non vide. Aucune liste vide native n’a été vérifiée : ce cas négatif sur une liste vide déclarée reste UnsupportedService. Une sortie inaccessible s’arrête avant copie. NOFOLLOW1 et NOFOLLOW_ANY64 sont indépendants ;8/16 sont refusés avant recherche, FD1/64 avant FD/nom. CREATE2/REPLACE4 sont ignorés ; SHOWCOMPRESSION32 et bits inconnus restent non pris en charge. com.apple.system.*, ResourceFork, FinderInfo, decmpfs, modification/suppression, autorisation/ACL et déduction du système de fichiers sont exclus.
+
+extended-attributes / extended-attributes-values / extended-attributes-unsupported vérifient le programme commun natif, les octets virtuels et l’arrêt inconnu conservant la sortie. Budgets inchangés : guest/Python5,000,000us/quantum1024, API publique10s, natif5s. Préparation privée ARM64 :320 comparaisons raw/SDK avec tous288 octets de garde et carry/secondary identiques. com.apple.provenance automatique est une observation, pas une liste vide par défaut. Intel natif/iOS physique restent non vérifiés ; dyld, Mach IPC, Objective-C/Swift et frameworks complets restent inachevés.
+
+Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.

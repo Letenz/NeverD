@@ -497,6 +497,37 @@ TEST_P(DarwinProcess, CommonAttributesPreserveRecordAndDescriptorState) {
     }
   }
 }
+TEST_P(DarwinProcess, ExtendedAttributesPreserveValuesNamesAndObjectLifetime) {
+  Options.DarwinFiles = darwin_test::extendedAttributesOptions();
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode : {"extended-attributes", "extended-attributes-values",
+                           "extended-attributes-unsupported"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    const bool Unknown = llvm::StringRef(Mode).ends_with("-unsupported");
+    ASSERT_EQ(Result->Stop, Unknown ? ProcessStopReason::UnsupportedService
+                                    : ProcessStopReason::Exited)
+        << Result->Diagnostic;
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "extended-attributes-values"
+                  ? darwin_test::ExtendedAttributesHex
+                  : "58");
+    EXPECT_TRUE(Result->StandardError.empty());
+    ASSERT_FALSE(Result->Services.empty());
+    if (Unknown) {
+      EXPECT_EQ(Result->Diagnostic,
+                "Darwin extended-attribute observations are unknown");
+      const auto &Last = Result->Services.back();
+      EXPECT_EQ(uint32_t(Last.Number) & 0x00ffffff, 234u);
+      EXPECT_FALSE(Last.Result);
+      EXPECT_FALSE(Last.Error);
+    } else {
+      EXPECT_EQ(Result->ExitStatus, 37);
+    }
+  }
+}
 
 TEST_P(DarwinProcess, KernelPathConfPreservesLookupAndDescriptorState) {
   Options.DarwinFiles = darwin_test::kernelPathConfOptions();

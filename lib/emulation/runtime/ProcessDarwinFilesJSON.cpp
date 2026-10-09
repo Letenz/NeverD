@@ -206,6 +206,30 @@ bytes(const llvm::json::Value &Value, uint64_t &Remaining,
   const auto Data = llvm::fromHex(*Hex);
   return std::vector<uint8_t>(Data.begin(), Data.end());
 }
+llvm::Expected<std::vector<DarwinExtendedAttribute>>
+extendedAttributes(const llvm::json::Value &Value, uint64_t &Remaining,
+                   uint64_t &Count) {
+  const auto *Array = Value.getAsArray();
+  if (!Array || Array->size() > darwin_file_limits::ExtendedAttributes - Count)
+    return invalid(field::ExtendedAttributes);
+  Count += Array->size();
+  std::vector<DarwinExtendedAttribute> Out;
+  for (const auto &Value : *Array) {
+    const auto *Attribute = Value.getAsObject();
+    if (!Attribute || Attribute->size() != 2)
+      return invalid(field::ExtendedAttributes);
+    const auto Name = Attribute->getString(field::Name);
+    const auto *ValueBytes = Attribute->get(field::Bytes);
+    if (!Name || !ValueBytes || Name->size() >= Remaining)
+      return invalid(field::ExtendedAttributes);
+    Remaining -= Name->size() + 1;
+    auto Data = bytes(*ValueBytes, Remaining);
+    if (!Data)
+      return Data.takeError();
+    Out.push_back({Name->str(), std::move(*Data)});
+  }
+  return Out;
+}
 llvm::Expected<DarwinFileCreationPolicy>
 creationPolicy(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
@@ -266,6 +290,17 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
     return invalid(field::DarwinFiles);
   DarwinFileOptions Out;
   uint64_t Remaining = darwin_file_limits::Bytes;
+  uint64_t AttributeCount = 0;
+  auto Attributes = [&](const llvm::json::Object &Object,
+                        llvm::StringRef Path) -> llvm::Error {
+    if (const auto *Value = Object.get(field::ExtendedAttributes)) {
+      auto Parsed = extendedAttributes(*Value, Remaining, AttributeCount);
+      if (!Parsed)
+        return Parsed.takeError();
+      Out.ExtendedAttributes.emplace(Path.str(), std::move(*Parsed));
+    }
+    return llvm::Error::success();
+  };
   for (const auto &[Key, V] : *Object) {
     const llvm::StringRef Name = Key;
     if (Name == field::DescriptorLimit) {
@@ -303,6 +338,7 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         if (!D ||
             D->size() !=
                 1 + unsigned(bool(D->get(field::FileMetadata))) +
+                    unsigned(bool(D->get(field::ExtendedAttributes))) +
                     unsigned(bool(D->get(field::DirectoryContents))) +
                     unsigned(bool(D->get(field::DirectoryEnumerationPolicy))) +
                     unsigned(bool(D->get(field::DirectoryMutationPolicy))) +
@@ -317,6 +353,8 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
             !Out.Directories.emplace(Path->str()).second)
           return invalid(field::Path);
         Remaining -= Path->size() + 1;
+        if (auto E = Attributes(*D, *Path))
+          return E;
         if (const auto *M = D->get(field::DirectoryMutable)) {
           auto Mutable = M->getAsBoolean();
           if (!Mutable)
@@ -386,6 +424,7 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         if (!Link || !Link->get(field::SymbolicLinkTarget) ||
             Link->size() !=
                 2 + unsigned(bool(Link->get(field::FileMetadata))) +
+                    unsigned(bool(Link->get(field::ExtendedAttributes))) +
                     unsigned(bool(Link->get(field::SymbolicLinkMutable))) +
                     unsigned(
                         bool(Link->get(field::SymbolicLinkMutationPolicy))))
@@ -400,6 +439,8 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
           return Target.takeError();
         if (!Out.SymbolicLinks.emplace(Path->str(), std::move(*Target)).second)
           return invalid(field::Path);
+        if (auto E = Attributes(*Link, *Path))
+          return E;
         if (const auto *M = Link->get(field::SymbolicLinkMutable)) {
           auto Mutable = M->getAsBoolean();
           if (!Mutable)
@@ -428,6 +469,7 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         const auto *F = File.getAsObject();
         if (!F || !F->get(field::Bytes) ||
             F->size() != 2 + unsigned(bool(F->get(field::FileMetadata))) +
+                             unsigned(bool(F->get(field::ExtendedAttributes))) +
                              unsigned(bool(F->get(field::FileWritable))) +
                              unsigned(bool(F->get(field::FileMutationPolicy))))
           return invalid(Name);
@@ -440,6 +482,8 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
           return Data.takeError();
         if (!Out.Files.emplace(Path->str(), std::move(*Data)).second)
           return invalid(field::Path);
+        if (auto E = Attributes(*F, *Path))
+          return E;
         if (const auto *W = F->get(field::FileWritable)) {
           auto Writable = W->getAsBoolean();
           if (!Writable)

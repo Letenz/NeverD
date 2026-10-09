@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
+<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
 
 [← فهرس الوثائق](README.md)
 
@@ -881,3 +881,16 @@ common-attributes-unsupported
 ```
 
 [XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).
+
+
+## قراءة السمات الممتدة الصريحة
+
+تقرأ getxattr(234) و fgetxattr(235) و listxattr(240) و flistxattr(241) المشاهدات العادية الكاملة والمرتبة من darwin_files. يمكن للملف أو الدليل أو الرابط تحديد extended_attributes بمصفوفة صارمة من {name,bytes_hex}. الحذف يعني حالة مجهولة و [] تعني قائمة فارغة معروفة. الأسماء UTF-8 بطول 1..127 بايت ويمكن أن تحتوي على شرطة مائلة؛ القيم بايتات معتمة، وتُرفض الأسماء المكررة ويُحفظ الترتيب. الحد 4096 سمة، وتحسب الأسماء و NUL والقيم ضمن ميزانية 16 MiB الحالية دون احتساب المسار الموجود مرتين.
+
+تتبع المشاهدات الكائن بعد dup والنقل والإزالة و CWD وإعادة استخدام الاسم، مستقلة عن stat الكامل والتعداد. الكائنات الجديدة مجهولة. الكتابة والاقتطاع الناجح وفشل النسخ غير الفارغ ذي الأثر غير الواضح تبطل السمات؛ الرفض قبل نسخ مخزن جزئي يحفظها. لا تغير الاستعلامات المؤشرات أو المدخلات أو البيانات الوصفية أو ميزانيات الكائنات و FD و inode.
+
+ABI: FD/options/position low32 و size full64 و BSD user_ssize_t/carry/secondary. تتجاهل NULL قيمة position. للقيم غير الفارغة يعيد المسار nonNULL size0 الخطأ ERANGE بينما يستعلم FD size0 عن الطول. فقط UINT32_MAX/UINT64_MAX في get عبر المسار استعلامان قديمان؛ يقيد FD الحجم إلى INT32_MAX. قد تكتب القائمة الموجبة القصيرة أسماء كاملة قبل ERANGE؛ الحجم السالب full64 nonNULL يعيد ERANGE للقائمة غير الفارغة. لم تثبت قائمة أصلية فارغة: يبقى الحجم السالب لقائمة فارغة معلنة UnsupportedService. يتوقف الخرج غير المتاح قبل النسخ. NOFOLLOW1 و NOFOLLOW_ANY64 مستقلان؛ تُرفض8/16 قبل البحث و FD1/64 قبل FD/الاسم. تُتجاهل CREATE2/REPLACE4 في القراءة؛ SHOWCOMPRESSION32 والبتات المجهولة غير مدعومة. com.apple.system.* و ResourceFork و FinderInfo و decmpfs والتعيين/الإزالة والصلاحيات/ACL واستنتاج نظام الملفات خارج النطاق.
+
+تتحقق extended-attributes / extended-attributes-values / extended-attributes-unsupported من البرنامج الأصلي المشترك والبايتات الافتراضية والتوقف المجهول مع حفظ الخرج. الميزانيات ثابتة: guest/Python5,000,000us/quantum1024 والواجهة العامة10s والتنفيذ الأصلي5s. تحضير ARM64 الخاص:320 مقارنة raw/SDK تطابقت فيها جميع288 بايت حراسة و carry/secondary. com.apple.provenance التلقائي مشاهدة وليس قائمة فارغة افتراضية. Intel الأصلي و iOS الفعلي غير متحققين؛ ما زال dyld و Mach IPC و Objective-C/Swift والأطر الكاملة غير مكتملة.
+
+Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.

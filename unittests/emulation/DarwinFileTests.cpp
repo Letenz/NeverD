@@ -374,6 +374,37 @@ protected:
     Options->Metadata["/data"].Blocks = Unit / 512;
     Options->MutationPolicies["/data"] = {Unit, {-7, 123456789}};
   }
+  void xattrs() {
+    Options->ExtendedAttributes["/data"] = {
+        {"user.neverd.beta", {0, 255, 'A', 0, 128, 'B', '\n'}},
+        {"user.neverd.alpha", {'a', 'l', 'p', 'h', 'a'}},
+        {"user.neverd.empty", {}}};
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    path("user.neverd.beta", Base + 128);
+  }
+  void xattrBuffer(ServiceKind Service, std::array<uint64_t, 6> Args,
+                   llvm::StringRef Hex, uint64_t Value, bool Error = false) {
+    const auto Expected = llvm::fromHex(Hex);
+    const uint64_t Address = Base + Page + 16;
+    std::array<uint8_t, 288> Bytes;
+    Bytes.fill(0xa5);
+    llvm::cantFail(Space->write(Base + Page, Bytes));
+    auto Got = invoke(Service, Args);
+    ASSERT_TRUE(Got.has_value()) << Result.Diagnostic;
+    EXPECT_EQ(Got->Value, Value);
+    EXPECT_EQ(Got->Error, Error);
+    llvm::cantFail(Space->read(Base + Page, Bytes));
+    EXPECT_TRUE(llvm::all_of(llvm::ArrayRef(Bytes).take_front(16),
+                             [](uint8_t B) { return B == 0xa5; }));
+    EXPECT_EQ(
+        llvm::ArrayRef(Bytes).slice(Address - Base - Page, Expected.size()),
+        llvm::ArrayRef<uint8_t>(
+            reinterpret_cast<const uint8_t *>(Expected.data()),
+            Expected.size()));
+    EXPECT_TRUE(
+        llvm::all_of(llvm::ArrayRef(Bytes).drop_front(16 + Expected.size()),
+                     [](uint8_t B) { return B == 0xa5; }));
+  }
   void creationPolicy(uint64_t First = darwin_test::CreationPolicy.FirstInode) {
     Options->MutableDirectories.insert("/");
     Options->Metadata["/"] = darwin_test::creationParentMetadata();
@@ -12367,6 +12398,457 @@ TEST_P(DarwinFileTest,
   EXPECT_FALSE(invoke(ServiceKind::GetAttrList, {Base, Base + 128, 0, 512}));
   EXPECT_EQ(Result.Diagnostic, diagnostic::FileInputs);
   error(ServiceKind::FgetAttrList, {99, 0, 0, 0}, 9);
+}
+
+TEST_P(DarwinFileTest, XattrReadsOpaqueBytesWithLowCarriersAndStableCursor) {
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 37, 0}), 37u);
+  for (auto Service : {ServiceKind::GetXattr, ServiceKind::FgetXattr})
+    for (uint64_t Carrier :
+         {0ULL, 0xabcdef1200000000ULL, 0xffffffff00000000ULL})
+      for (uint64_t Flags : {0u, 2u, 4u, 6u}) {
+        const auto Object =
+            Service == ServiceKind::GetXattr ? Base : Carrier | FD;
+        for (uint64_t Size : {7u, 8u, 256u})
+          xattrBuffer(Service,
+                      {Object, Base + 128, Base + Page + 16, Size, Carrier,
+                       Carrier | Flags},
+                      "00ff410080420a", 7);
+        EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 37u);
+      }
+  EXPECT_EQ(Options->ExtendedAttributes.at("/data")[0].Bytes,
+            (std::vector<uint8_t>{0, 255, 'A', 0, 128, 'B', '\n'}));
+}
+
+TEST_P(DarwinFileTest, XattrZeroAndLegacySizesKeepDistinctPathAndFDContracts) {
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  for (auto Service : {ServiceKind::GetXattr, ServiceKind::FgetXattr}) {
+    const auto Object = Service == ServiceKind::GetXattr ? Base : FD;
+    for (uint64_t Size :
+         std::array<uint64_t, 6>{0, 1, UINT32_MAX, 0x100000000ULL,
+                                 0x8000000000000000ULL, UINT64_MAX}) {
+      xattrBuffer(Service, {Object, Base + 128, 0, Size, UINT64_MAX}, "", 7);
+      const bool Query = Service == ServiceKind::FgetXattr
+                             ? Size == 0
+                             : Size == UINT32_MAX || Size == UINT64_MAX;
+      const bool Short = !Query && Size < 7;
+      xattrBuffer(Service, {Object, Base + 128, Base + Page + 16, Size},
+                  Query || Short ? "" : "00ff410080420a", Short ? 34 : 7,
+                  Short);
+      if (Query)
+        xattrBuffer(Service, {Object, Base + 128, UINT64_MAX, Size, 1}, "", 7);
+    }
+  }
+  for (auto Service : {ServiceKind::GetXattr, ServiceKind::FgetXattr}) {
+    const auto Object = Service == ServiceKind::GetXattr ? Base : FD;
+    path("user.neverd.empty", Base + 128);
+    for (uint64_t Size : {0u, 1u, 7u})
+      xattrBuffer(Service, {Object, Base + 128, UINT64_MAX, Size}, "", 0);
+    path("user.neverd.beta", Base + 128);
+    for (uint64_t Size : {1u, 6u})
+      xattrBuffer(Service, {Object, Base + 128, UINT64_MAX, Size}, "", 34,
+                  true);
+  }
+}
+
+TEST_P(DarwinFileTest, XattrPositionAndMissingNameOrderMatchesNativeControls) {
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  for (auto Service : {ServiceKind::GetXattr, ServiceKind::FgetXattr}) {
+    const auto Object = Service == ServiceKind::GetXattr ? Base : FD;
+    for (const char *Name :
+         {"user.neverd.beta", "user.neverd.empty", "missing"}) {
+      path(Name, Base + 128);
+      const uint64_t Value = llvm::StringRef(Name) == "missing"         ? 93
+                             : llvm::StringRef(Name).ends_with("empty") ? 0
+                                                                        : 7;
+      for (uint64_t Size : {0u, 7u}) {
+        const bool UIO = Service == ServiceKind::GetXattr || Size;
+        xattrBuffer(Service, {Object, Base + 128, 0, Size, 1}, "", Value,
+                    Value == 93);
+        xattrBuffer(Service, {Object, Base + 128, Base + Page + 16, Size, 1},
+                    "", UIO ? 22 : Value, UIO || Value == 93);
+      }
+    }
+    path("", Base + 128);
+    error(Service, {Object, Base + 128, 0, 0, 1}, 22);
+    path(llvm::StringRef("\xc0\xaf", 2), Base + 128);
+    error(Service, {Object, Base + 128, 0, 0}, 22);
+    path(std::string(128, 'x'), Base + 128);
+    error(Service, {Object, Base + 128, 0, 0}, 63);
+    path(std::string(127, 'x'), Base + 128);
+    error(Service, {Object, Base + 128, 0, 0}, 93);
+  }
+}
+
+TEST_P(DarwinFileTest, XattrListPublishesOnlyCompleteOrderedNamePrefixes) {
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const std::string Names = std::string("user.neverd.beta\0", 17) +
+                            std::string("user.neverd.alpha\0", 18) +
+                            std::string("user.neverd.empty\0", 18);
+  for (auto Service : {ServiceKind::ListXattr, ServiceKind::FlistXattr}) {
+    const auto Object = Service == ServiceKind::ListXattr ? Base : FD;
+    for (uint64_t Size :
+         {0u, 1u, 16u, 17u, 18u, 34u, 35u, 36u, 52u, 53u, 54u}) {
+      const auto Count = Size >= 53   ? 53
+                         : Size >= 35 ? 35
+                         : Size >= 17 ? 17
+                                      : 0;
+      const bool Short = Size && Size < Names.size();
+      xattrBuffer(
+          Service, {Object, Base + Page + 16, Size},
+          llvm::toHex(llvm::StringRef(Names).take_front(Size ? Count : 0)),
+          Short ? 34 : 53, Short);
+      xattrBuffer(Service, {Object, 0, Size}, "", 53);
+    }
+    for (uint64_t Size : std::array<uint64_t, 7>{
+             0x7fffffff, 0x80000000, UINT32_MAX, 0x100000000ULL, INT64_MAX,
+             0x8000000000000000ULL, UINT64_MAX}) {
+      const bool Negative = Size > INT64_MAX;
+      xattrBuffer(Service, {Object, Base + Page + 16, Size},
+                  Negative ? "" : llvm::toHex(Names), Negative ? 34 : 53,
+                  Negative);
+      xattrBuffer(Service, {Object, 0, Size}, "", 53);
+    }
+  }
+}
+
+TEST_P(DarwinFileTest, XattrKnownEmptyAndUnknownAreDifferentObservations) {
+  for (bool Known : {false, true}) {
+    Options->ExtendedAttributes.clear();
+    if (Known)
+      Options->ExtendedAttributes["/data"] = {};
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    const auto FD = ok(ServiceKind::Open, {Base});
+    path("missing", Base + 128);
+    for (auto Service : {ServiceKind::ListXattr, ServiceKind::FlistXattr}) {
+      const auto Object = Service == ServiceKind::ListXattr ? Base : FD;
+      if (Known) {
+        for (uint64_t Size : std::array<uint64_t, 4>{0, 1, 256, INT64_MAX})
+          xattrBuffer(Service, {Object, UINT64_MAX, Size}, "", 0);
+        xattrBuffer(Service, {Object, 0, UINT64_MAX}, "", 0);
+        EXPECT_FALSE(invoke(Service, {Object, Base + Page, UINT64_MAX}));
+        EXPECT_EQ(Result.Diagnostic,
+                  diagnostic::ExtendedAttributeEmptyNegative);
+      } else {
+        EXPECT_FALSE(invoke(Service, {Object, 0, 0}));
+        EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeUnknown);
+      }
+    }
+    if (Known)
+      error(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}, 93);
+    else
+      EXPECT_FALSE(invoke(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}));
+  }
+}
+
+TEST_P(DarwinFileTest, XattrLookupAndOptionErrorsPrecedeAttributeImports) {
+  xattrs();
+  for (uint64_t Flag : {8u, 16u}) {
+    error(ServiceKind::GetXattr, {0, 0, 0, 0, 0, Flag}, 22);
+    error(ServiceKind::ListXattr, {0, 0, 0, Flag}, 22);
+  }
+  for (uint64_t Flag : {1u, 8u, 16u, 64u, 65u}) {
+    error(ServiceKind::FgetXattr, {99, 0, 0, 0, 0, Flag}, 22);
+    error(ServiceKind::FlistXattr, {99, 0, 0, Flag}, 22);
+  }
+  error(ServiceKind::FgetXattr, {UINT64_MAX, 0, 0, 0}, 9);
+  error(ServiceKind::FlistXattr, {UINT64_MAX, 0, 0}, 9);
+  path("/missing");
+  error(ServiceKind::GetXattr, {Base, 0, 0, 0}, 2);
+  error(ServiceKind::ListXattr, {Base, 0, 0}, 2);
+  path("/data/child");
+  error(ServiceKind::GetXattr, {Base, 0, 0, 0}, 20);
+  path("/data");
+  error(ServiceKind::GetXattr, {Base, 0, 0, 0}, 14);
+  const auto FD = ok(ServiceKind::Open, {Base});
+  error(ServiceKind::FgetXattr, {FD, 0, 0, 0}, 14);
+  for (uint64_t Flag : {32u, 128u, 0x80000000u}) {
+    EXPECT_FALSE(
+        invoke(ServiceKind::GetXattr, {Base, Base + 128, 0, 0, 0, Flag}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeFlags);
+  }
+  for (const char *Name : {"com.apple.system.foo", "com.apple.ResourceFork",
+                           "com.apple.FinderInfo", "com.apple.decmpfs"}) {
+    path(Name, Base + 128);
+    EXPECT_FALSE(invoke(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeSpecial);
+  }
+  EXPECT_FALSE(invoke(ServiceKind::FgetXattr, {1, 0, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeKind);
+}
+
+TEST_P(DarwinFileTest, XattrPathsUseIndependentLinkPoliciesAndActualCWD) {
+  Options->Directories.insert("/dir");
+  Options->Files["/dir/file"] = {};
+  Options->SymbolicLinks = {{"/alias", {'/', 'd', 'a', 't', 'a'}},
+                            {"/diralias", {'/', 'd', 'i', 'r'}},
+                            {"/dangling", {'/', 'n', 'o'}},
+                            {"/cycle", {'/', 'c', 'y', 'c', 'l', 'e'}}};
+  Options->ExtendedAttributes["/alias"] = {{"user.neverd.link", {42}}};
+  Options->ExtendedAttributes["/dir"] = {{"user.neverd.dir", {43}}};
+  Options->ExtendedAttributes["/dir/file"] = {{"user.neverd.beta", {44}}};
+  Options->WorkingDirectory = "/";
+  xattrs();
+  path("alias");
+  xattrBuffer(ServiceKind::GetXattr, {Base, Base + 128, Base + Page + 16, 7},
+              "00ff410080420a", 7);
+  error(ServiceKind::GetXattr, {Base, Base + 128, 0, 0, 0, 64}, 62);
+  for (uint64_t Flags : {1u, 65u}) {
+    error(ServiceKind::GetXattr, {Base, Base + 128, 0, 0, 0, Flags}, 93);
+    path("user.neverd.link", Base + 128);
+    xattrBuffer(ServiceKind::GetXattr,
+                {Base, Base + 128, Base + Page + 16, 1, 0, Flags}, "2a", 1);
+    path("user.neverd.beta", Base + 128);
+  }
+  path("/diralias/file");
+  xattrBuffer(ServiceKind::GetXattr,
+              {Base, Base + 128, Base + Page + 16, 1, 0, 1}, "2c", 1);
+  error(ServiceKind::GetXattr, {Base, Base + 128, 0, 0, 0, 65}, 62);
+  path("/dangling");
+  error(ServiceKind::GetXattr, {Base, 0, 0, 0}, 2);
+  path("/cycle");
+  error(ServiceKind::GetXattr, {Base, 0, 0, 0}, 62);
+  path("/dir");
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base}), 0u);
+  path("file");
+  xattrBuffer(ServiceKind::GetXattr, {Base, Base + 128, Base + Page + 16, 1},
+              "2c", 1);
+  path(".");
+  path("user.neverd.dir", Base + 128);
+  xattrBuffer(ServiceKind::GetXattr, {Base, Base + 128, Base + Page + 16, 1},
+              "2b", 1);
+}
+
+TEST_P(DarwinFileTest, XattrObservationsFollowMovedRemovedAndReusedObjects) {
+  Options->MutableDirectories.insert("/");
+  Options->Directories.insert("/dir");
+  Options->RemovableDirectories.insert("/dir");
+  Options->ExtendedAttributes["/dir"] = {{"user.neverd.beta", {44}}};
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const auto Dup = ok(ServiceKind::Dup, {FD});
+  path("/new", Base + 64);
+  EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 64}), 0u);
+  path("/new");
+  xattrBuffer(ServiceKind::GetXattr, {Base, Base + 128, Base + Page + 16, 7},
+              "00ff410080420a", 7);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/data");
+  const auto New = ok(ServiceKind::Open, {Base, 0x202});
+  EXPECT_FALSE(invoke(ServiceKind::FgetXattr, {New, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeUnknown);
+  for (uint64_t Held : {FD, Dup})
+    xattrBuffer(ServiceKind::FgetXattr, {Held, Base + 128, Base + Page + 16, 7},
+                "00ff410080420a", 7);
+  path("/dir");
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Directory}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base, 0755}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::GetXattr, {Base, Base + 128, 0, 0}));
+  path(".");
+  for (auto Service : {ServiceKind::GetXattr, ServiceKind::FgetXattr})
+    xattrBuffer(Service,
+                {Service == ServiceKind::GetXattr ? Base : Directory,
+                 Base + 128, Base + Page + 16, 1},
+                "2c", 1);
+  EXPECT_TRUE(Options->ExtendedAttributes.contains("/data"));
+  EXPECT_EQ(Options->ExtendedAttributes.at("/dir")[0].Bytes,
+            (std::vector<uint8_t>{44}));
+}
+
+TEST_P(DarwinFileTest, XattrNamespaceChangesDoNotDependOnCompleteStatValidity) {
+  Options->MutableDirectories = {"/", "/dir"};
+  Options->Directories.insert("/dir");
+  Options->SymbolicLinks["/link"] = {'/', 'd', 'a', 't', 'a'};
+  Options->MutableSymbolicLinks.insert("/link");
+  Options->ExtendedAttributes["/link"] = {{"user.neverd.beta", {45}}};
+  Options->ExtendedAttributes["/dir"] = {{"user.neverd.beta", {46}}};
+  Options->Metadata["/data"] = darwin_test::metadata(6);
+  Options->Metadata["/data"].Flags = 0;
+  Options->Metadata["/data"].LinkCount = 1;
+  xattrs();
+  path("/link");
+  path("/moved", Base + 64);
+  EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 64}), 0u);
+  path("/moved");
+  xattrBuffer(ServiceKind::GetXattr,
+              {Base, Base + 128, Base + Page + 16, 1, 0, 1}, "2d", 1);
+  path("/dir/child");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base, 0755}), 0u);
+  path("/dir");
+  xattrBuffer(ServiceKind::GetXattr, {Base, Base + 128, Base + Page + 16, 1},
+              "2e", 1);
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(Options->ExtendedAttributes.at("/data").size(), 3u);
+}
+
+TEST_P(DarwinFileTest, XattrContentChangesAndAmbiguousCopyinInvalidateFacts) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    mutationPolicy();
+    xattrs();
+    const auto FD = ok(ServiceKind::Open, {Base, 2});
+    EXPECT_EQ(ok(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}), 7u);
+    EXPECT_EQ(ok(ServiceKind::Pwrite, {FD, 0, 0, 0}), 0u);
+    EXPECT_EQ(ok(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}), 7u);
+    if (Mutation == 0)
+      EXPECT_EQ(ok(ServiceKind::Pwrite, {FD, Base + 128, 1, 0}), 1u);
+    if (Mutation == 1)
+      EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, 6}), 0u);
+    if (Mutation == 2)
+      error(ServiceKind::Pwrite, {FD, 0, 1, 0}, 14);
+    if (Mutation == 3) {
+      llvm::cantFail(
+          Space->write(Base + Page * 2 - 1, std::array<uint8_t, 1>{'x'}));
+      EXPECT_FALSE(
+          invoke(ServiceKind::Pwrite, {FD, Base + Page * 2 - 1, 2, 0}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::FilePartialWrite);
+      EXPECT_EQ(ok(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}), 7u);
+      contents(FD, Options->Files.at("/data"));
+      continue;
+    }
+    if (Mutation == 4) {
+      std::array<uint8_t, 32> Vectors{};
+      llvm::support::endian::write64le(Vectors.data(), Base + 128);
+      llvm::support::endian::write64le(Vectors.data() + 8, 1);
+      llvm::support::endian::write64le(Vectors.data() + 24, 1);
+      llvm::cantFail(Space->write(Base + 256, Vectors));
+      error(ServiceKind::Pwritev, {FD, Base + 256, 2, 0}, 14);
+    }
+    EXPECT_FALSE(invoke(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeUnknown);
+    EXPECT_EQ(Options->ExtendedAttributes.at("/data")[0].Bytes.size(), 7u);
+  }
+}
+
+TEST_P(DarwinFileTest,
+       XattrOutputPreflightKeepsAliasesAndInaccessibleTailsSafe) {
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::GetXattr, {Base, Base + 128, Base + 128, 7}), 7u);
+  std::array<uint8_t, 7> Alias;
+  llvm::cantFail(Space->read(Base + 128, Alias));
+  EXPECT_EQ(Alias, (std::array<uint8_t, 7>{0, 255, 'A', 0, 128, 'B', '\n'}));
+  path("user.neverd.beta", Base + 128);
+  std::array<uint8_t, 53> Canary;
+  Canary.fill(0xa5);
+  const auto Out = Base + Page - 17;
+  llvm::cantFail(Space->write(Out, Canary));
+  llvm::cantFail(Space->protect(Base + Page, Page, Read | UserAccessible));
+  EXPECT_FALSE(invoke(ServiceKind::FlistXattr, {FD, Out, 53}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeOutput);
+  std::array<uint8_t, 53> After;
+  llvm::cantFail(Space->read(Out, After));
+  EXPECT_EQ(After, Canary);
+  error(ServiceKind::FlistXattr, {FD, Out, 17}, 34);
+  llvm::cantFail(Space->read(Out, After));
+  EXPECT_EQ(llvm::ArrayRef(After).take_front(17),
+            llvm::ArrayRef<uint8_t>(
+                reinterpret_cast<const uint8_t *>("user.neverd.beta\0"), 17));
+  EXPECT_EQ(llvm::ArrayRef(After).drop_front(17),
+            llvm::ArrayRef(Canary).drop_front(17));
+  EXPECT_FALSE(
+      invoke(ServiceKind::FgetXattr, {FD, Base + 128, Base + Page - 3, 7}));
+  EXPECT_FALSE(invoke(ServiceKind::FgetXattr, {FD, Base + 128, UINT64_MAX, 7}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeOutput);
+}
+
+TEST_P(DarwinFileTest,
+       XattrTransportFailuresPreserveOutputCursorAndObservations) {
+  xattrs();
+  FailingFileInput Input(*Space);
+  Files = std::make_unique<DarwinFiles>(Input, Options);
+  const auto FD = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 37, 0}), 37u);
+  std::array<uint8_t, 16> Canary;
+  Canary.fill(0xa5);
+  llvm::cantFail(Space->write(Base + Page, Canary));
+  for (unsigned Phase = 0; Phase != 4; ++Phase)
+    for (bool Budget : {false, true}) {
+      Input.FailureAddress = Phase < 2 ? Base + 128 : Base + Page;
+      Input.FailAccess = Phase == 0 || Phase == 2;
+      Input.FailRead = Phase == 1;
+      Input.FailWrite = Phase == 3;
+      Input.FailBudget = Budget;
+      auto Failed = Files->handle(
+          ServiceKind::FgetXattr,
+          {0, 0, {FD, Base + 128, Base + Page, 7}, std::nullopt}, Result);
+      ASSERT_FALSE(bool(Failed));
+      llvm::consumeError(Failed.takeError());
+      Input.FailAccess = Input.FailRead = Input.FailWrite = Input.FailBudget =
+          false;
+      std::array<uint8_t, 16> After;
+      llvm::cantFail(Space->read(Base + Page, After));
+      EXPECT_EQ(After, Canary);
+      EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 37u);
+      EXPECT_EQ(ok(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}), 7u);
+    }
+}
+
+TEST(DarwinFileOptions, XattrAdmissionValidatesShapeAndOrdinaryScope) {
+  DarwinFileOptions Good;
+  Good.Files["/data"] = {};
+  Good.ExtendedAttributes["/data"] = {
+      {"user/name", {0, 255}}, {"\xce\xb1", {}}, {std::string(127, 'x'), {}}};
+  EXPECT_FALSE(bool(validateFileOptions(Good)));
+  auto Refused = [](const DarwinFileOptions &O) {
+    auto E = validateFileOptions(O);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  };
+  for (std::string Name :
+       {std::string(), std::string("a\0b", 3), std::string(128, 'x'),
+        std::string("\xc0\xaf", 2), std::string("com.apple.system.foo"),
+        std::string("com.apple.ResourceFork"),
+        std::string("com.apple.FinderInfo"),
+        std::string("com.apple.decmpfs")}) {
+    auto Bad = Good;
+    Bad.ExtendedAttributes["/data"][0].Name = Name;
+    Refused(Bad);
+  }
+  auto Bad = Good;
+  Bad.ExtendedAttributes["/data"].push_back(Bad.ExtendedAttributes["/data"][0]);
+  Refused(Bad);
+  Bad = Good;
+  Bad.ExtendedAttributes["/missing"] = {};
+  Refused(Bad);
+}
+
+TEST(DarwinFileOptions, XattrAdmissionChargesBytesAndImplicitDirectoriesOnce) {
+  DarwinFileOptions O;
+  O.Files["/data"] = {};
+  O.ExtendedAttributes["/data"] = {
+      {"a", std::vector<uint8_t>(darwin_file_limits::Bytes - 8)}};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.ExtendedAttributes["/data"][0].Bytes.push_back(0);
+  auto Large = validateFileOptions(O);
+  EXPECT_TRUE(bool(Large));
+  llvm::consumeError(std::move(Large));
+  O = {};
+  O.Files["/dir/child"] = {};
+  O.ExtendedAttributes["/dir"] = {{"a", {}}};
+  O.MutableDirectories.insert("/dir");
+  for (unsigned I = 0; I != 254; ++I)
+    O.Files["/f" + std::to_string(I)] = {};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/extra"] = {};
+  auto Many = validateFileOptions(O);
+  EXPECT_TRUE(bool(Many));
+  llvm::consumeError(std::move(Many));
+  O = {};
+  O.Files["/data"] = {};
+  for (unsigned I = 0; I != darwin_file_limits::ExtendedAttributes; ++I)
+    O.ExtendedAttributes["/data"].push_back({std::to_string(I), {}});
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.ExtendedAttributes["/data"].push_back({"extra", {}});
+  auto Count = validateFileOptions(O);
+  EXPECT_TRUE(bool(Count));
+  llvm::consumeError(std::move(Count));
 }
 
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));

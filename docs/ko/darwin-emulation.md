@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
+<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
 
 [← 문서 목록](README.md)
 
@@ -883,3 +883,16 @@ common-attributes-unsupported
 ```
 
 [XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).
+
+
+## 명시적 확장 속성 읽기
+
+getxattr(234), fgetxattr(235), listxattr(240), flistxattr(241)은 darwin_files의 완전하고 순서가 있는 관찰 값을 읽는다. 파일·디렉터리·링크는 엄격한 {name,bytes_hex} 배열 extended_attributes를 제공한다. 생략은 알 수 없음, []는 알려진 빈 목록이다. 이름은 슬래시도 허용하는 1..127바이트 UTF-8이고 값은 불투명 바이트다. 중복은 거부하며 선언 순서를 보존한다. 최대 4096개이며 이름과 NUL 및 값을 기존 16 MiB 예산에 계산하고 기존 객체 경로는 중복 계산하지 않는다.
+
+관찰 값은 dup, 이동, 삭제, CWD, 이름 재사용 후에도 객체에 속하며 stat와 열거 유효성과 독립적이다. 새 객체는 알 수 없다. 내용 쓰기, 성공한 절단, 불확실한 비어 있지 않은 복사 실패는 속성을 무효화한다. 복사 전 부분 버퍼 거부는 값을 보존한다. 조회는 오프셋·입력·메타데이터·항목/FD/inode 예산을 바꾸지 않는다.
+
+ABI는 낮은32비트 FD/options/position, 전체64비트 size와 BSD user_ssize_t/carry/secondary를 사용한다. NULL 조회는 position을 무시한다. 비어 있지 않은 값에서 경로의 비NULL size0은 ERANGE, FD size0은 길이 조회다. 경로 get의 UINT32_MAX/UINT64_MAX만 이전 길이 조회이고 FD get은 INT32_MAX로 제한한다. 양의 짧은 목록은 완전한 이름 접두사를 기록한 뒤 ERANGE를 반환하며 비어 있지 않은 목록의 비NULL 음수64비트 길이도 ERANGE다. 네이티브 빈 목록은 검증하지 못했으므로 명시적 빈 목록의 음수 길이는 UnsupportedService다. 완전히 쓸 수 없는 출력은 복사 전에 중단한다. NOFOLLOW1과 NOFOLLOW_ANY64는 독립적이다. 8/16은 검색 전, FD1/64는 FD/이름 전에 거부한다. CREATE2/REPLACE4는 읽기에서 무시하고 SHOWCOMPRESSION32 및 알 수 없는 비트는 미지원이다. com.apple.system.*, ResourceFork, FinderInfo, decmpfs, 설정/삭제, 권한/ACL, 파일시스템 추론은 범위 밖이다.
+
+extended-attributes / extended-attributes-values / extended-attributes-unsupported는 공유 네이티브 동작, 명시적 가상 바이트, 기존 출력을 보존하는 미지원 중단을 검증한다. guest/Python5,000,000us/quantum1024, 공개API10s, 네이티브5s는 그대로다. ARM64 전용 준비의320 raw/SDK 비교에서 전체288 보호 바이트와 carry/secondary가 일치했다. 자동 com.apple.provenance는 관찰 값이며 기본 빈 목록을 뜻하지 않는다. 네이티브 Intel과 실제 iOS 장치는 미검증이며 전체 dyld, Mach IPC, Objective-C/Swift, 프레임워크는 미완성이다.
+
+Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.

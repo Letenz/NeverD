@@ -22,11 +22,20 @@ inline constexpr uint32_t DirectoryEntries = 4096;
 inline constexpr uint64_t Bytes = 16 * 1024 * 1024;
 inline constexpr uint32_t Path = 1024;
 inline constexpr uint32_t Name = 255;
+inline constexpr uint32_t ExtendedAttributeName = 127;
+inline constexpr uint32_t ExtendedAttributes = 4096;
 } // namespace darwin_file_limits
 
 struct DarwinFileTime {
   int64_t Seconds = 0;
   int64_t Nanoseconds = 0;
+};
+
+/// One ordinary opaque extended attribute. Names are UTF-8, including slash;
+/// bytes are independent of file contents and stat metadata.
+struct DarwinExtendedAttribute {
+  std::string Name;
+  std::vector<uint8_t> Bytes;
 };
 
 /// Fixed stat64 observations. Regular-file Size must match its bytes; directory
@@ -164,6 +173,14 @@ struct DarwinFileOptions {
   uint32_t DescriptorLimit = darwin_file_limits::DefaultDescriptors;
   /// Optional metadata for existing files, directories and symbolic links.
   std::map<std::string, DarwinFileMetadata> Metadata;
+  /// Complete ordered initial observations for existing objects. Omission is
+  /// unknown; an empty vector declares a known empty list. Namespace changes
+  /// retain these observations on the object, including held removed objects.
+  /// Content writes/truncate invalidate them; new objects start unknown.
+  /// Protected system attributes, ResourceFork, FinderInfo and decmpfs are
+  /// excluded. Neither permissions nor host attributes are inferred.
+  std::map<std::string, std::vector<DarwinExtendedAttribute>>
+      ExtendedAttributes;
   /// Explicit directories, including empty ones; root and ancestors are
   /// implicit.
   std::set<std::string> Directories;

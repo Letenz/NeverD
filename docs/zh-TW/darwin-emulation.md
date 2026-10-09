@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
+<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
 
 [← 文件索引](README.md)
 
@@ -883,3 +883,16 @@ common-attributes-unsupported
 ```
 
 [XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).
+
+
+## 明確的延伸屬性讀取
+
+getxattr(234)、fgetxattr(235)、listxattr(240)、flistxattr(241) 讀取 darwin_files 中完整、有序的一般屬性觀察值。檔案、目錄、連結可提供 extended_attributes 陣列，嚴格使用 {name,bytes_hex}。省略代表未知，[] 代表已知空清單。名稱是 1..127 位元組 UTF-8，可含斜線；值為不透明位元組。拒絕重複名稱並保留順序。最多 4096 個屬性，名稱加 NUL 與值計入原有 16 MiB 預算，不重複計算既有物件路徑。
+
+屬性隨物件經歷 dup、移動、刪除、CWD 與名稱重用，獨立於完整 stat 與目錄列舉的有效性。新物件未知；內容寫入、成功截斷與不明確的非空複製失敗使屬性未知，複製前拒絕部分緩衝區則保留觀察值。查詢不改變偏移、輸入、中繼資料或條目/FD/inode 預算。
+
+ABI 使用低32位 FD/options/position、完整64位 size 與 BSD user_ssize_t/carry/secondary。NULL 查詢忽略 position；非空值的路徑介面在非NULL size0 時回傳 ERANGE，FD size0 查詢長度。只有路徑 get 的 UINT32_MAX/UINT64_MAX 是相容長度查詢；FD get 限制為 INT32_MAX。正長度短清單可先寫完整名稱前綴再回傳 ERANGE；非空清單的非NULL負64位長度回傳 ERANGE。未取得原生空清單證據，因此宣告為空的負長度清單仍為 UnsupportedService。輸出無法完整寫入時在複製前停止。NOFOLLOW1 與 NOFOLLOW_ANY64 獨立；8/16 在查找前拒絕，FD1/64 在 FD/名稱前拒絕。CREATE2/REPLACE4 在讀取中忽略；SHOWCOMPRESSION32 與未知位不支援。受保護的 com.apple.system.*、ResourceFork、FinderInfo、decmpfs、設定/刪除、權限/ACL 與檔案系統推測不在讀取契約內。
+
+extended-attributes / extended-attributes-values / extended-attributes-unsupported 分別驗證原生共用行為、虛擬字面值及保留先前輸出的未知觀察停止。guest/Python5,000,000us/quantum1024、公開介面10s、原生5s 不變。ARM64 私有準備完成320組 raw/SDK 對照，全部288位元組保護區、carry、secondary 一致。自動 com.apple.provenance 是觀察值，不能推測預設空清單。Intel 原生與 iOS 真機未驗證；完整 dyld、Mach IPC、Objective-C/Swift 與框架仍未完成。
+
+Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.

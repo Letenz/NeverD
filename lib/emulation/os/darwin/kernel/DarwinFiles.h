@@ -15,6 +15,8 @@
 
 namespace neverd::emulation::darwin_model {
 llvm::Error validateFileOptions(const DarwinFileOptions &Options);
+bool validExtendedAttributeName(llvm::StringRef Name);
+bool ordinaryExtendedAttributeName(llvm::StringRef Name);
 
 class DarwinFiles {
 public:
@@ -73,6 +75,7 @@ private:
     std::shared_ptr<DirectoryNode> Parent;
     std::optional<DirectoryIdentity> Identity;
     const DarwinFileMetadata *Metadata = nullptr;
+    const std::vector<DarwinExtendedAttribute> *ExtendedAttributes = nullptr;
     std::optional<DarwinFileMetadata> CurrentMetadata;
     uint32_t DirectoryEntrySize = 0;
     const DarwinFileTime *MutationTime = nullptr;
@@ -104,6 +107,7 @@ private:
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> Modified;
     const DarwinFileMetadata *InitialMetadata = nullptr;
+    const std::vector<DarwinExtendedAttribute> *ExtendedAttributes = nullptr;
     std::optional<DarwinFileMetadata> CurrentMetadata;
     const DarwinFileMutationPolicy *Policy = nullptr;
     std::optional<llvm::BitVector> Allocated;
@@ -127,6 +131,7 @@ private:
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> CreatedTarget;
     const DarwinFileMetadata *Metadata = nullptr;
+    const std::vector<DarwinExtendedAttribute> *ExtendedAttributes = nullptr;
     std::optional<DarwinFileMetadata> CurrentMetadata;
     const DarwinFileTime *MutationTime = nullptr;
     std::string Path;
@@ -228,6 +233,17 @@ private:
   };
   using AttributeInput = std::variant<AttributeRequest, uint32_t, const char *>;
   llvm::Expected<AttributeInput> readAttributes(uint64_t Address);
+  llvm::Expected<Pathname> readExtendedAttributeName(uint64_t Address);
+  const std::vector<DarwinExtendedAttribute> *
+  extendedAttributes(const Description &File) const;
+  llvm::Expected<std::optional<ServiceResult>>
+  extendedAttributeRead(ServiceKind Service, const ProcessServiceEvent &Event,
+                        ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  extendedAttributeResult(const Description &File,
+                          std::optional<llvm::StringRef> Name, uint64_t Address,
+                          uint64_t Size, uint32_t Position, uint32_t Flags,
+                          bool Held, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   attributeList(const Description &File, const AttributeRequest &Request,
                 uint64_t Address, uint64_t Size, uint64_t Options,

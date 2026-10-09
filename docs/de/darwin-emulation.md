@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
+<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -881,3 +881,16 @@ common-attributes-unsupported
 ```
 
 [XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).
+
+
+## Explizite Leseabfragen für erweiterte Attribute
+
+getxattr(234), fgetxattr(235), listxattr(240) und flistxattr(241) lesen vollständige geordnete Beobachtungen in darwin_files. Dateien, Verzeichnisse und Links können extended_attributes als strenges Array von {name,bytes_hex} angeben. Fehlende Angaben bleiben unbekannt; [] bedeutet eine bekannte leere Liste. UTF-8-Namen haben 1..127 Bytes und dürfen Schrägstriche enthalten. Werte sind opaque Bytes; Duplikate werden abgewiesen und die Reihenfolge bleibt erhalten. Höchstens 4096 Attribute; Namen, NUL und Werte belasten das bestehende 16-MiB-Budget ohne einen vorhandenen Objektpfad doppelt zu zählen.
+
+Beobachtungen gehören auch nach dup, Verschieben, Entfernen, CWD und Namenswiederverwendung zum Objekt, unabhängig von vollständigem stat und Auflistung. Neue Objekte bleiben unbekannt. Inhaltsänderungen, erfolgreiche Kürzung und unklare nichtleere Kopierfehler machen Attribute unbekannt; eine Ablehnung vor der Kopie erhält sie. Abfragen erhalten Cursor, Eingaben, Metadaten und Objekt/FD/inode-Budgets.
+
+ABI: FD/options/position low32, size full64, BSD user_ssize_t/carry/secondary. NULL ignoriert position. Für nichtleere Werte liefert Pfad nonNULL size0 ERANGE; FD size0 fragt die Länge ab. Nur Pfad-get UINT32_MAX/UINT64_MAX sind ältere Abfragen; FD begrenzt auf INT32_MAX. Kurze positive Listen können vollständige Namen vor ERANGE ausgeben; negative full64 nonNULL-Längen ergeben bei nichtleeren Listen ERANGE. Eine native leere Liste wurde nicht verifiziert: dieser negative Fall bleibt bei deklarierter Leere UnsupportedService. Unzugängliche Ausgaben stoppen vor dem Kopieren. NOFOLLOW1 und NOFOLLOW_ANY64 sind unabhängig;8/16 werden vor Suche, FD1/64 vor FD/Name abgewiesen. CREATE2/REPLACE4 werden ignoriert; SHOWCOMPRESSION32 und unbekannte Bits bleiben ununterstützt. com.apple.system.*, ResourceFork, FinderInfo, decmpfs, Setzen/Löschen, Berechtigungen/ACL und Dateisystemannahmen sind ausgeschlossen.
+
+extended-attributes / extended-attributes-values / extended-attributes-unsupported prüfen den gemeinsamen nativen Ablauf, virtuelle Bytes und unbekannte Beobachtungen mit erhaltener Ausgabe. Unverändert: guest/Python5,000,000us/quantum1024, öffentliche API10s, nativ5s. Private ARM64-Vorbereitung:320 raw/SDK-Vergleiche mit allen288 Schutzbytes und gleichem carry/secondary. Automatisches com.apple.provenance ist eine Beobachtung, kein leerer Standard. Natives Intel/physisches iOS bleiben unverifiziert; vollständiges dyld, Mach IPC, Objective-C/Swift und Frameworks bleiben unvollständig.
+
+Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.
