@@ -413,17 +413,19 @@ int runDecompile(neverd_session_t Sess) {
 
   const neverd_output_language_t Language = OutputLanguage.getValue();
   const bool DedicatedLanguage = Language != NEVERD_OUTPUT_C;
-  // Rust, Go and the program's own language spell a native function's HighC
-  // source, one function as well as the whole program.
-  const char *SourceStage = Language == NEVERD_OUTPUT_RUST     ? "rust"
+  // C++, Rust, Go and the program's own language spell a native function's
+  // HighC source, one function as well as the whole program.
+  const char *SourceStage = Language == NEVERD_OUTPUT_CPP      ? "cpp"
+                            : Language == NEVERD_OUTPUT_RUST   ? "rust"
                             : Language == NEVERD_OUTPUT_GO     ? "go"
                             : Language == NEVERD_OUTPUT_SOURCE ? "source"
                                                                : nullptr;
   if (JsonOutput &&
       (ExportFunc.empty() || (DedicatedLanguage && !SourceStage) ||
        Devirtualize || NoOpt)) {
-    WithColor::error() << "--json requires --func with the default HighC, "
-                          "--llvm, Rust, Go or program-language source view\n";
+    WithColor::error()
+        << "--json requires --func with the default HighC, "
+           "--llvm, C++, Rust, Go or program-language source view\n";
     return 1;
   }
   if (DedicatedLanguage && LlvmRoute) {
@@ -432,7 +434,7 @@ int runDecompile(neverd_session_t Sess) {
     return 1;
   }
   if (!ExportFunc.empty() && DedicatedLanguage && !SourceStage) {
-    WithColor::error() << "--func is supported only for C, Rust, Go and "
+    WithColor::error() << "--func is supported only for C, C++, Rust, Go and "
                           "program-language output\n";
     return 1;
   }

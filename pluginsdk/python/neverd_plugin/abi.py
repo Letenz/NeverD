@@ -33,6 +33,7 @@ class OutputLanguage(IntEnum):
     RUST = 2
     GO = 3
     SOURCE = 4
+    CPP = 5
 
 
 class PluginType(IntEnum):

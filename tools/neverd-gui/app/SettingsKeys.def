@@ -20,5 +20,7 @@ NEVERD_SETTINGS_KEY(RecentFiles, "files/recent")
 NEVERD_SETTINGS_KEY(RecentOpened, "files/recentOpened")
 // Whether the quick start dialog greets a workbench started without a file.
 NEVERD_SETTINGS_KEY(QuickStart, "ui/quickStart")
+// The user's preferred size of the resizable quick start dialog.
+NEVERD_SETTINGS_KEY(QuickStartSize, "ui/quickStartSize")
 
 #undef NEVERD_SETTINGS_KEY

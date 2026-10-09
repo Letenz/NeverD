@@ -166,12 +166,16 @@ NEVERD_LANGUAGE_PROBE(ItaniumSymbol, Symbol, "__gxx_personality_seh0")
 NEVERD_LANGUAGE_PROBE(ItaniumSymbol, SymbolPrefix, "_ZSt")
 NEVERD_LANGUAGE_PROBE(ItaniumSymbol, SymbolPrefix, "_ZNSt")
 NEVERD_LANGUAGE_PROBE(ItaniumSymbol, SymbolPrefix, "__ZNSt")
+// C++ without exceptions or a linked standard library still has C++ names.
+// These probes validate the whole mangling and exclude legacy Rust names.
+NEVERD_LANGUAGE_PROBE(ItaniumSymbol, Itanium, "")
 NEVERD_LANGUAGE_EVIDENCE(MicrosoftSymbol, CxxMSVC, Chain,
                          "microsoft c++ runtime symbol")
 NEVERD_LANGUAGE_PROBE(MicrosoftSymbol, Symbol, "__CxxFrameHandler3")
 NEVERD_LANGUAGE_PROBE(MicrosoftSymbol, Symbol, "__CxxFrameHandler4")
 NEVERD_LANGUAGE_PROBE(MicrosoftSymbol, Symbol, "__CxxFrameHandler")
 NEVERD_LANGUAGE_PROBE(MicrosoftSymbol, SymbolPrefix, "??_7type_info")
+NEVERD_LANGUAGE_PROBE(MicrosoftSymbol, Microsoft, "")
 
 //===----------------------------------------------------------------------===//
 // Objective-C and Swift.  Apple's section names and Apple's personality are

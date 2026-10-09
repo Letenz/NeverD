@@ -167,6 +167,7 @@ llvm::Error Lifetime::beginExit(uint32_t Status, bool InitializationFailed) {
   if (Kind == Mode::Exit)
     return failure(text::ReentrantExit);
   ExitStatus = Status;
+  StartupFailed = InitializationFailed;
   Kind = Mode::Exit;
   Running = false;
   Position = 0;

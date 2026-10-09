@@ -1,6 +1,6 @@
 **اللغات**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](project.md)
 
-<!-- i18n-source: 934c42e0e1d78e358704871ac0e7ae6d031da8dfd32a03cd2a66155bca954555 -->
+<!-- i18n-source: f83891280e2285b090cdbf4ab4982b2e42ef40fa5e1a8e529fdbf816c0007f08 -->
 
 <div align="center" dir="rtl">
 
@@ -139,8 +139,9 @@ cmake --build build
 ./build/bin/neverd decompile -o out.c binary
 ./build/bin/neverd patch -hello -o patched binary
 
-# شيفرة زائفة بلغة البرنامج نفسه (Rust أو Go أو C)
+# شيفرة زائفة بلغة البرنامج نفسه (C++ أو Rust أو Go أو C)
 ./build/bin/neverd decompile --language=source -o out.rs rust-binary
+./build/bin/neverd decompile --language=cpp -o out.cpp cpp-binary
 ./build/bin/neverd decompile --language=go --func main.main go-binary
 
 # EVM

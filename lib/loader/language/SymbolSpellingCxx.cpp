@@ -24,8 +24,11 @@
 
 #include "SymbolSpellingDetail.h"
 
+#include "neverd/loader/SymbolSpelling.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Demangle/Demangle.h"
+#include "llvm/Demangle/MicrosoftDemangle.h"
 
 #include <optional>
 #include <vector>
@@ -266,6 +269,45 @@ std::string simplifyCxxText(llvm::StringRef Text) {
 }
 
 } // namespace
+
+std::string neverd::readableCxxTypeName(llvm::StringRef Name) {
+  return simplifyCxxText(Name);
+}
+
+std::string neverd::cxxSourceName(llvm::StringRef Name) {
+  switch (symbolScheme(Name)) {
+  case SymbolScheme::Itanium: {
+    if (Name.starts_with("__Z"))
+      Name = Name.drop_front();
+    const std::string Mangled = Name.str();
+    llvm::ItaniumPartialDemangler D;
+    if (D.partialDemangle(Mangled.c_str()) || D.isSpecialName())
+      return {};
+    if (D.isFunction())
+      return simplifyCxxText(
+          takeDemangled(D.getFunctionName(nullptr, nullptr)));
+    if (D.isData())
+      return simplifyCxxText(takeDemangled(D.finishDemangle(nullptr, nullptr)));
+    return {};
+  }
+  case SymbolScheme::Microsoft: {
+    if (Name.starts_with("_?"))
+      Name = Name.drop_front();
+    std::string_view Remaining = Name;
+    llvm::ms_demangle::Demangler D;
+    const auto *Node = D.parse(Remaining);
+    using llvm::ms_demangle::NodeKind;
+    if (D.Error || !Remaining.empty() || !Node || !Node->Name ||
+        (Node->kind() != NodeKind::FunctionSymbol &&
+         Node->kind() != NodeKind::VariableSymbol))
+      return {};
+    return simplifyCxxText(
+        Node->Name->toString(llvm::ms_demangle::OF_NoTagSpecifier));
+  }
+  default:
+    return {};
+  }
+}
 
 bool symbol_spelling::claimsItaniumName(llvm::StringRef) { return true; }
 

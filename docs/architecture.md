@@ -10,6 +10,37 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 
 ## System boundary
 
+The Qt workbench keeps project writes and browsing in one `neverd-worker` and
+runs source/IR and graph reads in a disposable read-only worker. The owner
+exports loader choices, loaded-input identity, user edits, staged comments,
+signature inputs and string options. The replica verifies the input and
+committed edits before applying the remaining in-memory state; a mismatch
+fails explicitly. Owner revision changes invalidate the replica and its cache.
+Cancelling its final subscriber retires the process, since a synchronous C API
+analysis call cannot be interrupted safely. Replica revisions and analysis
+discovery never advance the writable project's state. Both workers use the
+same public C API; this split does not duplicate engine semantics.
+
+Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
+the fallback. Validated Itanium/MSVC names also identify C++ without an
+exception runtime. The C++ printer uses the shared symbol spelling rules for
+namespaces, STL aliases and qualified ATL types; non-default template arguments
+and explicit ABI arguments remain visible. DWARF record identities supply type
+spellings, not guessed layouts or implicit member-call conventions. The GUI
+offers a separate C choice for non-C images and omits it when only C is offered.
+Explicit C keeps native throw calls and separate handler entries with unwind
+metadata in comments; C++ keeps structured exception syntax. Their caches are
+separate. The C exception view depends on the image's original runtime and
+tables; it is not a portable implementation of that unwinder.
+
+DWARF subprogram extents are collected, sorted and swept once before publication
+instead of comparing every pair during ingestion. Duplicate entries, overlaps
+and malformed ranges remain untrusted. Large inputs with at least eight compile
+units can parse disjoint unit groups in parallel using independent LLVM object
+and DWARF contexts, then merge facts in source order. Only immutable input bytes
+are shared. Small and compressed inputs stay serial to avoid setup costs and
+per-worker decompression memory; `NEVERD_THREADS=1` selects the serial path.
+
 ```mermaid
 flowchart LR
   CLI["tools/neverd CLI"] --> CAPI["libneverd C API"]
@@ -2824,7 +2855,7 @@ libraries supplied by the CMake helper.
 | `lib/decode` | Capstone/native decode and dispatch into the architecture lifters | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | Common types plus LowIR, MedIR, HighIR, and intrinsic definitions/transforms | Its four IR subcomponents |
 | `lib/pipeline` | Function detection and Low/Med/High/LLVM route orchestration | IR, decode, lift, LLVM backend, debug info, IR passes |
-| `lib/backend/c` | HighIR-to-C and LLVM-IR-to-C rendering, and HighC spelled in Rust and Go | IR |
+| `lib/backend/c` | HighIR-to-C and LLVM-IR-to-C rendering, and HighC spelled in C++, Rust and Go | IR |
 | `lib/backend/llvm` | MedIR-to-LLVM lowering | IR |
 | `lib/backend/codegen` | Target code generation plus PE/ELF/Mach-O patch and in-place rewrite | IR, loader |
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |

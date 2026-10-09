@@ -17,6 +17,7 @@
 #include <array>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace neverd::emulation::windows_process {
@@ -149,6 +150,13 @@ public:
   }
   std::optional<std::vector<uint64_t>> encodedPointers() const override {
     return OS.encodedPointers();
+  }
+  llvm::Expected<std::optional<ProcessDynamicThreadLocalState>>
+  dynamicThreadLocalState() override {
+    auto State = OS.dynamicThreadLocalState();
+    if (!State)
+      return State.takeError();
+    return std::optional(*State);
   }
   std::optional<uint64_t> nativeCallCount() const override {
     return Result.NativeCalls.size();
@@ -309,8 +317,12 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   std::vector<uint64_t> Initializers;
   uint64_t ExpectedSP = 0, ExpectedGate = 0;
   uint64_t RootStackPointer = StackTop;
+  std::optional<FLSCleanup> ExitCleanup;
+  uint32_t NextExitSlot = 0;
+  bool ExitCleanupDone = false;
   struct Continuation {
-    Loader::Operation Operation;
+    using Work = std::variant<Loader::Operation, FLSCleanup>;
+    Work Operation;
     std::unique_ptr<BackendContext> Context;
     uint64_t StackPointer, ExpectedSP, ExpectedGate;
     size_t Event;
@@ -348,7 +360,14 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     return CPU.writeRegister(PCRegister, {Result.PC, 0});
   };
   auto CurrentLife = [&]() -> Lifetime & {
-    return Pending.empty() ? Life : *Pending.back().Operation.Notifications;
+    return Pending.empty()
+               ? Life
+               : *std::get<Loader::Operation>(Pending.back().Operation)
+                      .Notifications;
+  };
+  auto CurrentCleanup = [&]() -> FLSCleanup * {
+    return Pending.empty() ? (ExitCleanup ? &*ExitCleanup : nullptr)
+                           : std::get_if<FLSCleanup>(&Pending.back().Operation);
   };
   StoppedProcess Stopped(CPU, **Space, *ABI, *Program, *Env, Active,
                          Initializers, Result, OS,
@@ -383,12 +402,52 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         return E;
     return (*Session)->watchMemoryWrites(Observer->writeWatches());
   };
+  auto Resume = [&](uint64_t Value, uint32_t Error) -> llvm::Error {
+    auto &C = Pending.back();
+    if (auto E = CPU.restoreContext(*C.Context))
+      return E;
+    if (Error)
+      if (auto E = CPU.writeInteger(TEB + TebLastError, Error, DWordSize))
+        return E;
+    if (auto E = Return(C.StackPointer, C.Event, Value))
+      return E;
+    Active = std::move(C.Active);
+    ExpectedSP = C.ExpectedSP;
+    ExpectedGate = C.ExpectedGate;
+    Pending.pop_back();
+    return Invoking();
+  };
   auto Prepare = [&]() -> llvm::Expected<bool> {
     while (true) {
-      auto Next = CurrentLife().next(CPU);
-      if (!Next)
-        return Next.takeError();
-      Active = std::move(*Next);
+      // Root thread cleanup precedes DLL/TLS process-detach notifications.
+      // Keep the cursor across guest calls so a callback can initialize a
+      // later slot without replaying an already completed callback.
+      if (Pending.empty() && Life.exitsNormally() && !ExitCleanup &&
+          !ExitCleanupDone) {
+        auto Next = OS.exitCleanup(NextExitSlot);
+        if (!Next)
+          return Next.takeError();
+        ExitCleanup = std::move(*Next);
+        ExitCleanupDone = !ExitCleanup;
+      }
+      if (const auto *Cleanup = CurrentCleanup()) {
+        auto Executable =
+            CPU.canAccess(Cleanup->Function, 1, Execute | UserAccessible);
+        if (!Executable)
+          return Executable.takeError();
+        if (!*Executable || (!X64 && Cleanup->Function % DWordSize))
+          return failure(text::FLSCallback);
+        Active = Lifetime::Call{Lifetime::CallKind::FLS,
+                                Cleanup->Function,
+                                AttachReturnGate,
+                                {Cleanup->Argument},
+                                false};
+      } else {
+        auto Next = CurrentLife().next(CPU);
+        if (!Next)
+          return Next.takeError();
+        Active = std::move(*Next);
+      }
       if (Active) {
         const uint64_t Top =
             (Pending.empty() ? RootStackPointer : Pending.back().StackPointer) &
@@ -410,27 +469,27 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       }
       if (Pending.empty())
         return false;
-      auto &C = Pending.back();
-      if (auto E = Modules.complete(C.Operation))
+      auto &Operation = std::get<Loader::Operation>(Pending.back().Operation);
+      if (auto E = Modules.complete(Operation))
         return std::move(E);
-      if (C.Operation.Notifications)
+      if (Operation.Notifications)
         continue;
-      if (auto E = CPU.restoreContext(*C.Context))
-        return std::move(E);
-      if (C.Operation.Error)
-        if (auto E = CPU.writeInteger(TEB + TebLastError, C.Operation.Error,
-                                      DWordSize))
-          return std::move(E);
-      if (auto E = Return(C.StackPointer, C.Event, C.Operation.Value))
-        return std::move(E);
-      Active = std::move(C.Active);
-      ExpectedSP = C.ExpectedSP;
-      ExpectedGate = C.ExpectedGate;
-      Pending.pop_back();
-      if (auto E = Invoking())
+      if (auto E = Resume(Operation.Value, Operation.Error))
         return std::move(E);
       return true;
     }
+  };
+  auto BeginContinuation = [&](Continuation::Work Work, uint64_t StackPointer,
+                               size_t Event) -> llvm::Error {
+    auto Context = CPU.saveContext();
+    if (!Context)
+      return Context.takeError();
+    Pending.push_back({std::move(Work), std::move(*Context), StackPointer,
+                       ExpectedSP, ExpectedGate, Event, std::move(Active)});
+    auto More = Prepare();
+    if (!More)
+      return More.takeError();
+    return *More ? llvm::Error::success() : failure(text::Return);
   };
   auto Prepared = Prepare();
   if (!Prepared)
@@ -605,22 +664,37 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     }
     if (!Exceptions.activeAt(Pending.size()) && Request->PC == ExpectedGate &&
         (*SP)[0] == ExpectedSP) {
-      auto V = CPU.readRegister(ABI->info().Result);
-      if (!V) {
-        Failed(V.takeError());
-        break;
+      if (const auto *Cleanup = CurrentCleanup()) {
+        if (auto E = OS.complete(*Cleanup)) {
+          Failed(std::move(E));
+          break;
+        }
+        if (!Pending.empty()) {
+          if (auto E = Resume(1, 0)) {
+            Failed(std::move(E));
+            break;
+          }
+          continue;
+        }
+        ExitCleanup.reset();
+      } else {
+        auto V = CPU.readRegister(ABI->info().Result);
+        if (!V) {
+          Failed(V.takeError());
+          break;
+        }
+        if (Active->Kind == Lifetime::CallKind::Entry)
+          Result.ReturnValue = (*V)[0];
+        if (auto E = CurrentLife().returned((*V)[0])) {
+          Failed(std::move(E));
+          break;
+        }
+        auto Input = inputModule(*Program);
+        if (Active->Kind == Lifetime::CallKind::TLS && Input &&
+            Active->Arguments[0] == Program->Modules[*Input].Loaded.Base &&
+            Active->Arguments[1] == DLLProcessAttach)
+          Initializers.push_back(Active->PC);
       }
-      if (Active->Kind == Lifetime::CallKind::Entry)
-        Result.ReturnValue = (*V)[0];
-      if (auto E = CurrentLife().returned((*V)[0])) {
-        Failed(std::move(E));
-        break;
-      }
-      auto Input = inputModule(*Program);
-      if (Active->Kind == Lifetime::CallKind::TLS && Input &&
-          Active->Arguments[0] == Program->Modules[*Input].Loaded.Base &&
-          Active->Arguments[1] == DLLProcessAttach)
-        Initializers.push_back(Active->PC);
       auto More = Prepare();
       if (!More) {
         Failed(More.takeError());
@@ -802,9 +876,25 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Result.PC = Transfer->PC;
       continue;
     }
+    // Loader and service callbacks share one bounded continuation stack.
+    // Check before a loader request can acquire references or map modules.
+    if ((V->Cleanup || V->Request) && Pending.size() >= MaxContinuationDepth) {
+      Failed(failure(text::ModuleBudget));
+      break;
+    }
+    if (V->Cleanup) {
+      if (auto E = BeginContinuation(*V->Cleanup, StackPointer, EventIndex)) {
+        Failed(std::move(E));
+        break;
+      }
+      continue;
+    }
     if (V->Request) {
-      if (Pending.size() >= MaxLoaderDepth) {
-        Failed(failure(text::ModuleBudget));
+      // Loader operations during termination do not share the ordinary
+      // load/unload contract. Stop before acquiring or releasing references.
+      if (ExitCleanup) {
+        Result.Stop = ProcessStopReason::UnsupportedService;
+        Result.Diagnostic = text::FLSExitLoader;
         break;
       }
       auto Operation = Modules.begin(*V->Request);
@@ -813,17 +903,9 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         break;
       }
       if (Operation->Notifications) {
-        auto Context = CPU.saveContext();
-        if (!Context) {
-          Failed(Context.takeError());
-          break;
-        }
-        Pending.push_back({std::move(*Operation), std::move(*Context),
-                           StackPointer, ExpectedSP, ExpectedGate, EventIndex,
-                           std::move(Active)});
-        auto More = Prepare();
-        if (!More) {
-          Failed(More.takeError());
+        if (auto E = BeginContinuation(std::move(*Operation), StackPointer,
+                                       EventIndex)) {
+          Failed(std::move(E));
           break;
         }
         continue;

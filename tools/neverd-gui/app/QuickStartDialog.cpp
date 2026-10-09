@@ -12,17 +12,20 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontMetricsF>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
-#include <QRadialGradient>
+#include <QScreen>
 #include <QScrollBar>
 #include <QSettings>
 #include <QShortcut>
+#include <QStyle>
 #include <QStyledItemDelegate>
 #include <QSvgRenderer>
 #include <QVBoxLayout>
@@ -36,39 +39,26 @@ namespace {
 
 constexpr char DarkLogo[] = ":/neverd/icons/app.svg";
 constexpr char LightLogo[] = ":/neverd/brand/logo-light.svg";
-constexpr QSize DialogSize(820, 500);
+constexpr QSize DialogSize(900, 560);
+constexpr QSize MinimumDialogSize(720, 460);
 /// The side pane: the product, above its ways to start.
 constexpr int SideWidth = 300;
-constexpr int SideTop = 44;
-constexpr int LogoSize = 64;
-/// The glow the logo sits in, and its strength in the dark and the light
-/// theme.
-constexpr int GlowRadius = 150;
-constexpr qreal DarkGlow = 0.11;
-constexpr qreal LightGlow = 0.07;
+constexpr int SideTop = 32;
+constexpr int LogoSize = 56;
 constexpr int ActionHeight = 56;
-constexpr int TileSize = 36;
-constexpr qreal TileRadius = 9;
-constexpr int GlyphSize = 20;
-constexpr qreal RowRadius = 8;
+constexpr int ActionGlyphSlot = 36;
+constexpr int GlyphSize = 24;
+constexpr qreal RowRadius = 5;
 constexpr qreal DisabledOpacity = 0.45;
 /// The recent files.
-constexpr int RecentRowHeight = 58;
+constexpr int RecentRowHeight = 60;
 constexpr int BadgeSize = 36;
-constexpr qreal BadgeRadius = 8;
-/// How strongly a badge is tinted with its format's color, in the dark and
-/// the light theme.
-constexpr qreal DarkBadgeTint = 0.16;
-constexpr qreal LightBadgeTint = 0.11;
-/// How far the list fades out at an edge more files lie beyond.
-constexpr int FadeHeight = 28;
 constexpr int EmptyGlyphSize = 44;
 constexpr int EmptyTextWidth = 300;
 constexpr int DropGlyphSize = 40;
 constexpr int DropInset = 14;
-constexpr qreal DropVeilOpacity = 0.97;
 /// Pixel sizes of the dialog's type, from the largest down.
-constexpr int BrandPixels = 26;
+constexpr int BrandPixels = 24;
 constexpr int EmptyPixels = 15;
 constexpr int TitlePixels = 14;
 constexpr int NamePixels = 14;
@@ -219,23 +209,54 @@ QString folderOf(const QString &path) {
   return QDir::toNativeSeparators(folder);
 }
 
-/// A key the way a keyboard shows it: a small cap with a deeper lower edge.
+/// A compact, flat keycap.
 void drawKey(QPainter &painter, const QRect &cap, const QString &key,
              const QFont &font) {
   const QRectF edge = QRectF(cap).adjusted(0.5, 0.5, -0.5, -0.5);
   painter.setPen(QPen(chrome("QuickStartKeyBorder"), 1));
-  painter.setBrush(chrome("QuickStartKey"));
-  painter.drawRoundedRect(edge, 4, 4);
-  painter.setPen(QPen(chrome("QuickStartKeyBorder").darker(115), 1));
-  painter.drawLine(QPointF(edge.left() + 3, edge.bottom()),
-                   QPointF(edge.right() - 3, edge.bottom()));
+  painter.setBrush(Qt::NoBrush);
+  painter.drawRoundedRect(edge, 3, 3);
   painter.setFont(font);
   painter.setPen(chrome("QuickStartKeyText"));
   painter.drawText(cap, Qt::AlignCenter, key);
 }
 
-/// The side pane's color, a soft glow around the logo, and the hairline
-/// between the pane and the recent files.
+/// A file outline with a folded corner and a readable format label.
+void drawFileBadge(QPainter &painter, const QRect &bounds, const QString &label,
+                   const QColor &color, const QFont &font) {
+  const QRectF page = QRectF(bounds).adjusted(3.5, 1.5, -3.5, -1.5);
+  constexpr qreal fold = 7;
+  constexpr qreal corner = 2;
+  QPainterPath outline;
+  outline.moveTo(page.left() + corner, page.top());
+  outline.lineTo(page.right() - fold, page.top());
+  outline.lineTo(page.right(), page.top() + fold);
+  outline.lineTo(page.right(), page.bottom() - corner);
+  outline.quadTo(page.bottomRight(),
+                 QPointF(page.right() - corner, page.bottom()));
+  outline.lineTo(page.left() + corner, page.bottom());
+  outline.quadTo(page.bottomLeft(),
+                 QPointF(page.left(), page.bottom() - corner));
+  outline.lineTo(page.left(), page.top() + corner);
+  outline.quadTo(page.topLeft(), QPointF(page.left() + corner, page.top()));
+  outline.closeSubpath();
+  painter.setPen(QPen(color, 1));
+  painter.setBrush(Qt::NoBrush);
+  painter.drawPath(outline);
+  QPainterPath crease;
+  crease.moveTo(page.right() - fold, page.top());
+  crease.lineTo(page.right() - fold, page.top() + fold);
+  crease.lineTo(page.right(), page.top() + fold);
+  painter.drawPath(crease);
+  painter.setPen(color);
+  QFont labelFont = sized(font, BadgePixels, QFont::Medium);
+  if (QFontMetricsF(labelFont).horizontalAdvance(label) > page.width() - 4)
+    labelFont.setPixelSize(BadgePixels - 1);
+  painter.setFont(labelFont);
+  painter.drawText(page.adjusted(0, fold + 1, 0, -3), Qt::AlignCenter, label);
+}
+
+/// The side pane's solid color and the hairline beside the recent files.
 class SidePane final : public QWidget {
 public:
   using QWidget::QWidget;
@@ -243,23 +264,14 @@ public:
 protected:
   void paintEvent(QPaintEvent *) override {
     QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
     painter.fillRect(rect(), chrome("QuickStartSide"));
-    const QPointF logo(width() / 2.0, SideTop + LogoSize / 2.0);
-    QColor glow = chrome("QuickStartGlyph");
-    glow.setAlphaF(Theme::instance().dark() ? DarkGlow : LightGlow);
-    QRadialGradient gradient(logo, GlowRadius);
-    gradient.setColorAt(0, glow);
-    glow.setAlphaF(0);
-    gradient.setColorAt(1, glow);
-    painter.fillRect(rect(), gradient);
     painter.fillRect(QRect(width() - 1, 0, 1, height()),
                      blend(chrome("QuickStartSide"), chrome("Border"), 0.6));
   }
 };
 
-/// A way to start: a tile with its glyph, a title over what it does, and
-/// its key.  The way Enter takes has its tile outlined.
+/// A way to start: a line glyph, a title over what it does, and its key.
+/// The way Enter takes has a subtle background across the row.
 class StartButton final : public QPushButton {
 public:
   StartButton(QString glyphName, const QString &title,
@@ -293,57 +305,54 @@ protected:
     painter.setRenderHint(QPainter::Antialiasing);
     if (!isEnabled())
       painter.setOpacity(DisabledOpacity);
+    const bool defaultAction = isDefault() && isEnabled();
     const QRectF row = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
     painter.setPen(Qt::NoPen);
     if (isEnabled() && isDown())
       painter.setBrush(chrome("QuickStartPressed"));
     else if (isEnabled() && underMouse())
-      painter.setBrush(chrome("Hover"));
+      painter.setBrush(chrome("QuickStartActionHover"));
+    else if (defaultAction)
+      painter.setBrush(chrome("QuickStartDefaultAction"));
     else
       painter.setBrush(Qt::NoBrush);
     painter.drawRoundedRect(row, RowRadius, RowRadius);
     if (hasFocus() && window()->testAttribute(Qt::WA_KeyboardFocusChange)) {
-      painter.setPen(QPen(chrome("Focus"), 1));
+      painter.setPen(QPen(chrome("QuickStartFocus"), 1));
       painter.setBrush(Qt::NoBrush);
       painter.drawRoundedRect(row, RowRadius, RowRadius);
     }
 
     const int middle = height() / 2;
-    const QRect tile(12, middle - TileSize / 2, TileSize, TileSize);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(chrome("QuickStartTile"));
-    painter.drawRoundedRect(QRectF(tile), TileRadius, TileRadius);
-    if (isDefault() && isEnabled()) {
-      painter.setPen(QPen(chrome("QuickStartGlyph"), 1.5));
-      painter.setBrush(Qt::NoBrush);
-      painter.drawRoundedRect(QRectF(tile).adjusted(0.75, 0.75, -0.75, -0.75),
-                              TileRadius - 0.75, TileRadius - 0.75);
-    }
-    painter.drawPixmap(tile.left() + (TileSize - GlyphSize) / 2,
-                       tile.top() + (TileSize - GlyphSize) / 2,
-                       glyph(glyph_, GlyphSize, chrome("QuickStartGlyph"),
+    const QRect glyphArea(12, middle - ActionGlyphSlot / 2, ActionGlyphSlot,
+                          ActionGlyphSlot);
+    painter.drawPixmap(glyphArea.left() + (ActionGlyphSlot - GlyphSize) / 2,
+                       glyphArea.top() + (ActionGlyphSlot - GlyphSize) / 2,
+                       glyph(glyph_, GlyphSize,
+                             chrome(defaultAction ? "QuickStartDefaultGlyph"
+                                                  : "QuickStartGlyph"),
                              devicePixelRatioF()));
 
     const QFont keyFont = sized(font(), KeyPixels, QFont::Medium);
     const int capWidth =
         std::max(20, QFontMetrics(keyFont).horizontalAdvance(key_) + 12);
-    const QRect cap(width() - 14 - capWidth, middle - 10, capWidth, 20);
+    const QRect cap(width() - 12 - capWidth, middle - 10, capWidth, 20);
     drawKey(painter, cap, key_, keyFont);
 
-    const int left = tile.right() + 1 + 14;
+    const int left = glyphArea.right() + 1 + 12;
     const int width = cap.left() - 12 - left;
-    const QFont titleFont = sized(font(), TitlePixels, QFont::DemiBold);
+    const QFont titleFont = sized(font(), TitlePixels, QFont::Medium);
     const QFont bodyFont = sized(font(), BodyPixels);
     const QFontMetrics titleMetrics(titleFont), bodyMetrics(bodyFont);
-    int top = middle - (titleMetrics.height() + 2 + bodyMetrics.height()) / 2;
+    int top = middle - (titleMetrics.height() + 4 + bodyMetrics.height()) / 2;
     painter.setFont(titleFont);
     painter.setPen(chrome("QuickStartTitle"));
     painter.drawText(QRect(left, top, width, titleMetrics.height()),
                      Qt::AlignLeft | Qt::AlignVCenter,
                      titleMetrics.elidedText(title_, Qt::ElideRight, width));
-    top += titleMetrics.height() + 2;
+    top += titleMetrics.height() + 4;
     painter.setFont(bodyFont);
-    painter.setPen(chrome("PlaceholderText"));
+    painter.setPen(chrome("QuickStartSecondaryText"));
     painter.drawText(
         QRect(left, top, width, bodyMetrics.height()),
         Qt::AlignLeft | Qt::AlignVCenter,
@@ -376,26 +385,28 @@ public:
       painter->setPen(Qt::NoPen);
       painter->setBrush(selected ? chrome("QuickStartSelection")
                                  : chrome("Hover"));
-      painter->drawRoundedRect(QRectF(option.rect).adjusted(0, 1, 0, -1),
+      painter->drawRoundedRect(QRectF(option.rect).adjusted(0, 2, 0, -2),
                                RowRadius, RowRadius);
     }
-    const QRect content = option.rect.adjusted(11, 0, -14, 0);
+    if ((option.state & QStyle::State_HasFocus) && option.widget &&
+        option.widget->window()->testAttribute(Qt::WA_KeyboardFocusChange)) {
+      painter->setPen(QPen(chrome("QuickStartFocus"), 1));
+      painter->setBrush(Qt::NoBrush);
+      painter->drawRoundedRect(
+          QRectF(option.rect).adjusted(0.5, 2.5, -0.5, -2.5), RowRadius,
+          RowRadius);
+    }
+    const QRect content = option.rect.adjusted(12, 0, -12, 0);
     const int middle = content.center().y();
 
     const QRect badge(content.left(), middle - BadgeSize / 2, BadgeSize,
                       BadgeSize);
-    const QColor hue =
-        Theme::instance().chrome(index.data(BadgeRole).toString());
-    QColor tint = hue;
-    tint.setAlphaF(Theme::instance().dark() ? DarkBadgeTint : LightBadgeTint);
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(tint);
-    painter->drawRoundedRect(QRectF(badge), BadgeRadius, BadgeRadius);
-    QFont badgeFont = sized(option.font, BadgePixels, QFont::Bold);
-    badgeFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.4);
-    painter->setFont(badgeFont);
-    painter->setPen(hue);
-    painter->drawText(badge, Qt::AlignCenter, index.data(LabelRole).toString());
+    const QColor badgeColor =
+        selected && !missing
+            ? chrome("RecentBadgeSelectedText")
+            : Theme::instance().chrome(index.data(BadgeRole).toString());
+    drawFileBadge(*painter, badge, index.data(LabelRole).toString(), badgeColor,
+                  option.font);
 
     const QColor name = missing    ? chrome("DisabledText")
                         : selected ? chrome("QuickStartSelectionText")
@@ -404,39 +415,44 @@ public:
                              : selected
                                  ? blend(chrome("QuickStartSelection"),
                                          chrome("QuickStartSelectionText"), 0.7)
-                                 : chrome("PlaceholderText");
-    const int left = badge.right() + 1 + 14;
+                                 : chrome("QuickStartSecondaryText");
+    const int left = badge.right() + 1 + 12;
     const int width = content.right() + 1 - left;
     const QFont nameFont = sized(option.font, NamePixels, QFont::Medium);
     const QFont smallFont = sized(option.font, BodyPixels);
     const QFontMetrics nameMetrics(nameFont), smallMetrics(smallFont);
-    int top = middle - (nameMetrics.height() + 3 + smallMetrics.height()) / 2;
-    const QString when = index.data(WhenRole).toString();
-    const int whenWidth =
-        when.isEmpty() ? 0 : smallMetrics.horizontalAdvance(when);
-    if (whenWidth) {
-      painter->setFont(smallFont);
-      painter->setPen(secondary);
-      painter->drawText(
-          QRect(left + width - whenWidth, top, whenWidth, nameMetrics.height()),
-          Qt::AlignRight | Qt::AlignVCenter, when);
-    }
-    const int nameWidth = width - (whenWidth ? whenWidth + 16 : 0);
+    int top = middle - (nameMetrics.height() + 4 + smallMetrics.height()) / 2;
     painter->setFont(nameFont);
     painter->setPen(name);
     painter->drawText(
-        QRect(left, top, nameWidth, nameMetrics.height()),
+        QRect(left, top, width, nameMetrics.height()),
         Qt::AlignLeft | Qt::AlignVCenter,
         nameMetrics.elidedText(index.data(Qt::DisplayRole).toString(),
-                               Qt::ElideRight, nameWidth));
-    top += nameMetrics.height() + 3;
+                               Qt::ElideMiddle, width));
+    top += nameMetrics.height() + 4;
     painter->setFont(smallFont);
+    // Metadata shares the second line so the filename keeps the full width.
+    const QString when = index.data(WhenRole).toString();
+    const int whenWidth =
+        when.isEmpty()
+            ? 0
+            : std::min(smallMetrics.horizontalAdvance(when) + 2, width / 3);
+    if (whenWidth) {
+      painter->setPen(selected || missing ? secondary
+                                          : chrome("QuickStartMetadataText"));
+      painter->drawText(
+          QRect(left + width - whenWidth, top, whenWidth,
+                smallMetrics.height()),
+          Qt::AlignRight | Qt::AlignVCenter,
+          smallMetrics.elidedText(when, Qt::ElideRight, whenWidth));
+    }
+    const int folderWidth = width - (whenWidth ? whenWidth + 16 : 0);
     painter->setPen(secondary);
     painter->drawText(
-        QRect(left, top, width, smallMetrics.height()),
+        QRect(left, top, folderWidth, smallMetrics.height()),
         Qt::AlignLeft | Qt::AlignVCenter,
         smallMetrics.elidedText(folderOf(index.data(PathRole).toString()),
-                                Qt::ElideMiddle, width));
+                                Qt::ElideMiddle, folderWidth));
     painter->restore();
   }
 };
@@ -460,11 +476,9 @@ protected:
 
   void paintEvent(QPaintEvent *event) override {
     QListWidget::paintEvent(event);
-    QPainter painter(viewport());
-    if (count()) {
-      fadeEdges(painter);
+    if (count())
       return;
-    }
+    QPainter painter(viewport());
     painter.setRenderHint(QPainter::Antialiasing);
     const QRect area = viewport()->rect();
     int top = area.center().y() - 64;
@@ -491,32 +505,6 @@ protected:
                                     "The files you open appear here. Choose "
                                     "New, or drop a file on this window."));
   }
-
-private:
-  /// Fades the list into the dialog at each edge more files lie beyond.
-  void fadeEdges(QPainter &painter) {
-    const QScrollBar *bar = verticalScrollBar();
-    const QRect area = viewport()->rect();
-    QColor solid = chrome("Base");
-    QColor clear = solid;
-    clear.setAlphaF(0);
-    if (bar->value() > bar->minimum()) {
-      QLinearGradient top(0, area.top(), 0, area.top() + FadeHeight);
-      top.setColorAt(0, solid);
-      top.setColorAt(1, clear);
-      painter.fillRect(QRect(area.left(), area.top(), area.width(), FadeHeight),
-                       top);
-    }
-    if (bar->value() < bar->maximum()) {
-      QLinearGradient bottom(0, area.bottom() + 1 - FadeHeight, 0,
-                             area.bottom() + 1);
-      bottom.setColorAt(0, clear);
-      bottom.setColorAt(1, solid);
-      painter.fillRect(QRect(area.left(), area.bottom() + 1 - FadeHeight,
-                             area.width(), FadeHeight),
-                       bottom);
-    }
-  }
 };
 
 /// What dropping the file dragged over the dialog does: open it.
@@ -532,9 +520,7 @@ protected:
   void paintEvent(QPaintEvent *) override {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    QColor veil = chrome("Base");
-    veil.setAlphaF(DropVeilOpacity);
-    painter.fillRect(rect(), veil);
+    painter.fillRect(rect(), chrome("Base"));
     QPen frame(chrome("Focus"), 1.5);
     frame.setDashPattern({4, 3});
     painter.setPen(frame);
@@ -564,11 +550,11 @@ QuickStartDialog::QuickStartDialog(QWidget *parent) : QDialog(parent) {
   setObjectName(QStringLiteral("quickStartDialog"));
   setWindowTitle(tr("Quick start"));
   setWindowIcon(icon(QStringLiteral("app")));
-  // A dialog of fixed size: its title bar has nothing but Close.
   setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
-                 Qt::WindowCloseButtonHint);
+                 Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
   setAcceptDrops(true);
-  setFixedSize(DialogSize);
+  setMinimumSize(MinimumDialogSize);
+  setSizeGripEnabled(true);
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
@@ -577,7 +563,7 @@ QuickStartDialog::QuickStartDialog(QWidget *parent) : QDialog(parent) {
   auto *side = new SidePane(this);
   side->setFixedWidth(SideWidth);
   auto *sideLayout = new QVBoxLayout(side);
-  sideLayout->setContentsMargins(16, SideTop, 17, 16);
+  sideLayout->setContentsMargins(16, SideTop, 17, 20);
   sideLayout->setSpacing(0);
   auto *logo = new QLabel(side);
   logo->setFixedSize(LogoSize, LogoSize);
@@ -588,7 +574,7 @@ QuickStartDialog::QuickStartDialog(QWidget *parent) : QDialog(parent) {
   };
   paintLogo();
   sideLayout->addWidget(logo, 0, Qt::AlignHCenter);
-  sideLayout->addSpacing(14);
+  sideLayout->addSpacing(12);
   auto *title = new QLabel(QStringLiteral("NeverD"), side);
   title->setObjectName(QStringLiteral("quickStartTitle"));
   title->setFont(sized(title->font(), BrandPixels, QFont::DemiBold));
@@ -609,7 +595,7 @@ QuickStartDialog::QuickStartDialog(QWidget *parent) : QDialog(parent) {
   version->setFont(sized(version->font(), BodyPixels));
   version->setAlignment(Qt::AlignCenter);
   sideLayout->addWidget(version);
-  sideLayout->addSpacing(34);
+  sideLayout->addSpacing(32);
   auto *newButton =
       new StartButton(QStringLiteral("start_new"), tr("&New"),
                       tr("Disassemble a new file"), QStringLiteral("N"), side);
@@ -620,13 +606,14 @@ QuickStartDialog::QuickStartDialog(QWidget *parent) : QDialog(parent) {
                               tr("Load the selected recent file"),
                               QStringLiteral("P"), side);
   sideLayout->addWidget(newButton);
-  sideLayout->addSpacing(2);
+  sideLayout->addSpacing(4);
   sideLayout->addWidget(goButton);
-  sideLayout->addSpacing(2);
+  sideLayout->addSpacing(4);
   sideLayout->addWidget(previous_);
   sideLayout->addStretch(1);
   auto *atStartup = new QCheckBox(tr("&Display at startup"), side);
   atStartup->setObjectName(QStringLiteral("quickStartAtStartup"));
+  atStartup->setFont(sized(atStartup->font(), BodyPixels));
   atStartup->setChecked(QSettings().value(settings::QuickStart, true).toBool());
   connect(atStartup, &QCheckBox::toggled, this, [](bool shown) {
     QSettings().setValue(settings::QuickStart, shown);
@@ -640,12 +627,12 @@ QuickStartDialog::QuickStartDialog(QWidget *parent) : QDialog(parent) {
   // The recent files.
   auto *files = new QWidget(this);
   auto *filesLayout = new QVBoxLayout(files);
-  filesLayout->setContentsMargins(16, 28, 16, 16);
-  filesLayout->setSpacing(10);
+  filesLayout->setContentsMargins(20, 32, 20, 20);
+  filesLayout->setSpacing(12);
   auto *heading = new QLabel(tr("Recent files"), files);
   heading->setObjectName(QStringLiteral("quickStartSection"));
   heading->setFont(sized(heading->font(), TitlePixels, QFont::DemiBold));
-  heading->setContentsMargins(11, 0, 0, 0);
+  heading->setContentsMargins(12, 0, 0, 0);
   filesLayout->addWidget(heading);
   auto *recentList = new RecentList(files);
   recentList->forget = [this] { removeSelected(); };
@@ -661,9 +648,11 @@ QuickStartDialog::QuickStartDialog(QWidget *parent) : QDialog(parent) {
   recent_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
   recent_->setContextMenuPolicy(Qt::CustomContextMenu);
   recent_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  // Scrolling moves the faded edges with the files; paint them anew.
-  connect(recent_->verticalScrollBar(), &QScrollBar::valueChanged,
-          recent_->viewport(), qOverload<>(&QWidget::update));
+  auto *scrollbar = recent_->verticalScrollBar();
+  scrollbar->setObjectName(QStringLiteral("quickStartScrollBar"));
+  // QAbstractScrollArea polishes its scrollbar before we can name it.
+  scrollbar->style()->unpolish(scrollbar);
+  scrollbar->style()->polish(scrollbar);
   filesLayout->addWidget(recent_, 1);
   layout->addWidget(files, 1);
 
@@ -700,6 +689,19 @@ QuickStartDialog::QuickStartDialog(QWidget *parent) : QDialog(parent) {
     newButton->setDefault(true);
     newButton->setFocus();
   }
+
+  QSize preferred =
+      QSettings().value(settings::QuickStartSize, DialogSize).toSize();
+  if (!preferred.isValid())
+    preferred = DialogSize;
+  if (const QScreen *display = screen())
+    preferred = preferred.boundedTo(display->availableGeometry().size() -
+                                    QSize(48, 80));
+  resize(preferred.expandedTo(minimumSize()));
+  connect(this, &QDialog::finished, this, [this] {
+    QSettings().setValue(settings::QuickStartSize,
+                         isMaximized() ? normalGeometry().size() : size());
+  });
 }
 
 void QuickStartDialog::showDropTarget(bool shown) {
@@ -775,7 +777,10 @@ void QuickStartDialog::fillRecent() {
     item->setData(WhenRole, missing
                                 ? tr("Missing")
                                 : whenOpened(opened.value(path).toDateTime()));
-    item->setToolTip(QDir::toNativeSeparators(path));
+    QString details = QDir::toNativeSeparators(path);
+    if (const QString when = item->data(WhenRole).toString(); !when.isEmpty())
+      details += u'\n' + (missing ? when : tr("Last opened: %1").arg(when));
+    item->setToolTip(details);
   }
   if (recent_->count())
     recent_->setCurrentRow(0);

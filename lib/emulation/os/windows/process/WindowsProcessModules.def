@@ -60,7 +60,7 @@ NEVERD_WINDOWS_PROCESS_TEXT(LoaderReentrant,
 #endif
 #ifdef NEVERD_WINDOWS_PROCESS_VALUE
 NEVERD_WINDOWS_PROCESS_VALUE(ErrorDLLInitFailed, 1114)
-NEVERD_WINDOWS_PROCESS_VALUE(MaxLoaderDepth, 64)
+NEVERD_WINDOWS_PROCESS_VALUE(MaxContinuationDepth, 64)
 #endif
 
 // Deferred loader facts. Opaque entries occupy the second half of the gate

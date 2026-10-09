@@ -76,6 +76,9 @@ public:
   // cannot stop a synchronous engine call by itself. Live subscribers receive
   // worker_stopped. setAvailable(false) performs the same retirement.
   void resetSession();
+  /// Retire a read replica and bind its replies/cache to the authoritative
+  /// project's version. The caller must retire its old transport first.
+  void resetReadContext(const QString &project, const QString &revision);
   void setAvailable(bool available);
   bool available() const;
   QString projectId() const;

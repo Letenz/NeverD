@@ -241,9 +241,10 @@ void neverd_session_set_debug_info_enabled(neverd_session_t s, int enabled) {
 const char *neverd_headers_json(neverd_session_t s) {
   // The Rust and Go fixtures read in their own language too.
   const std::string runtime =
-      session(s)->path.ends_with("pseudocode-rust.bin") ? "rust"
-      : session(s)->path.ends_with("pseudocode-go.bin") ? "go"
-                                                        : "c";
+      session(s)->path.ends_with("pseudocode-rust.bin")  ? "rust"
+      : session(s)->path.ends_with("pseudocode-go.bin")  ? "go"
+      : session(s)->path.ends_with("pseudocode-cpp.bin") ? "cpp"
+                                                         : "c";
   Json pseudocode = Json::array({"c"});
   if (runtime != "c")
     pseudocode.push_back(runtime);
@@ -603,6 +604,11 @@ const char *neverd_unwind_frame_json(neverd_session_t, neverd_va_t address) {
   return copy("null");
 }
 const char *neverd_decompile(neverd_session_t s, neverd_va_t address) {
+  if (session(s)->path.ends_with("pseudocode-slow.bin") && address == Base) {
+    std::puts("fixture slow decompile started");
+    std::fflush(stdout);
+    std::this_thread::sleep_for(std::chrono::seconds(30));
+  }
   if (session(s)->path.ends_with("pseudocode-import.bin"))
     return copy("int caller(void) {\n  return function_22();\n}\n");
   if (session(s)->path.ends_with("pseudocode-global.bin"))
@@ -644,14 +650,19 @@ std::string spelledPage(neverd_session_t s, neverd_va_t address,
                         std::size_t limit) {
   std::string language = representation;
   if (representation == "source")
-    language = session(s)->path.ends_with("pseudocode-rust.bin") ? "rust"
-               : session(s)->path.ends_with("pseudocode-go.bin") ? "go"
-                                                                 : "c";
+    language = session(s)->path.ends_with("pseudocode-rust.bin")  ? "rust"
+               : session(s)->path.ends_with("pseudocode-go.bin")  ? "go"
+               : session(s)->path.ends_with("pseudocode-cpp.bin") ? "cpp"
+                                                                  : "c";
   std::string full;
   if (language == "c") {
     const char *c = neverd_decompile(s, address);
     full = c;
     std::free(const_cast<char *>(c));
+  } else if (language == "cpp") {
+    full = "int Demo::length(const std::string *text) {\n"
+           "    return text->size();\n"
+           "}\n";
   } else if (language == "rust") {
     full = "// NeverD pseudocode in Rust syntax\n"
            "unsafe fn rust_probe::main() -> i64 {\n"
@@ -751,7 +762,8 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
         "extern uint64_t qword_10; /* 0x10 */\n",
         "\n",
         "/* neverd.entry */\n"};
-    for (int i = 0; i < 700; ++i) {
+    const bool large = session(s)->path.ends_with("pseudocode-large.bin");
+    for (int i = 0; i < (large ? 20000 : 700); ++i) {
       if (session(s)->path.ends_with("pseudocode-navigation.bin") && i < 3) {
         if (i == 0)
           lines.push_back("int caller(void) {\n");
@@ -760,6 +772,10 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                                   : "  return 42;\n");
         else
           lines.push_back("}\n");
+      } else if (large) {
+        lines.push_back(
+            "  value = (value ^ 12345) + helper(value); // code line " +
+            std::to_string(i) + "\n");
       } else {
         lines.push_back("// code line " + std::to_string(i) + "\n");
       }

@@ -29,21 +29,21 @@
 #define NEVERD_RECENT_MISSING(Label, Badge)
 #endif
 
-NEVERD_RECENT_DATABASE("NDDB", RecentBadgeDatabase)
-NEVERD_RECENT_BINARY("BIN", RecentBadgeOther)
-NEVERD_RECENT_MISSING("?", RecentBadgeMissing)
+NEVERD_RECENT_DATABASE("NDDB", RecentBadgeText)
+NEVERD_RECENT_BINARY("BIN", RecentBadgeText)
+NEVERD_RECENT_MISSING("?", DisabledText)
 
 NEVERD_RECENT_FORMAT("\x7F"
                      "ELF",
-                     "ELF", RecentBadgeElf)
-NEVERD_RECENT_FORMAT("MZ", "PE", RecentBadgePe)
-NEVERD_RECENT_FORMAT("\xCF\xFA\xED\xFE", "MACH", RecentBadgeMachO)
-NEVERD_RECENT_FORMAT("\xCE\xFA\xED\xFE", "MACH", RecentBadgeMachO)
-NEVERD_RECENT_FORMAT("\xFE\xED\xFA\xCF", "MACH", RecentBadgeMachO)
-NEVERD_RECENT_FORMAT("\xFE\xED\xFA\xCE", "MACH", RecentBadgeMachO)
-NEVERD_RECENT_FORMAT("\xCA\xFE\xBA\xBE", "MACH", RecentBadgeMachO)
-NEVERD_RECENT_FORMAT("dex\n", "DEX", RecentBadgeOther)
-NEVERD_RECENT_FORMAT("\0asm", "WASM", RecentBadgeOther)
+                     "ELF", RecentBadgeText)
+NEVERD_RECENT_FORMAT("MZ", "PE", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\xCF\xFA\xED\xFE", "MACH", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\xCE\xFA\xED\xFE", "MACH", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\xFE\xED\xFA\xCF", "MACH", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\xFE\xED\xFA\xCE", "MACH", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\xCA\xFE\xBA\xBE", "MACH", RecentBadgeText)
+NEVERD_RECENT_FORMAT("dex\n", "DEX", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\0asm", "WASM", RecentBadgeText)
 
 #undef NEVERD_RECENT_FORMAT
 #undef NEVERD_RECENT_DATABASE
