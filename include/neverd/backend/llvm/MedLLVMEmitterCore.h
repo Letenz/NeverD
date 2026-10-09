@@ -1971,6 +1971,10 @@ private:
   /// MedFunc::Name; an address-backed native personality body uses its stable
   /// auto name so the canonical ABI name remains an external declaration.
   std::map<va_t, std::string> EmittedFuncNames;
+  /// The C names of a PE image's imports (PEImportShadow.h): a local function
+  /// whose symbol spells one is another function, which a call reaches by its
+  /// own name.
+  std::set<std::string> PEImportCNames;
   std::map<va_t, std::string> FuncNames;
   // Ordinary LLVM blocks are created for every body-emitted MedFunc before
   // any body operation runs.  This makes blockaddress resolution independent

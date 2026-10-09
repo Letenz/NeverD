@@ -65,7 +65,7 @@ enum class X87CHelper : uint8_t {
   Fprem,       ///< fprem, fprem1 and the status word they leave
 #define NEVERD_X87_VALUE_HELPER(Intrinsic, Name, Asm, Operands, PopsST1)       \
   Intrinsic,
-#include "neverd/backend/c/render/HighC/X87ValueHelpers.def"
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
 };
 const char *x87CHelperName(X87CHelper Helper);
 /// The helper that runs the x87 value intrinsic \p Id, if it is one.

@@ -384,6 +384,10 @@ constexpr unsigned kMaxNoReturnProofDepth = 4;
 /// than the widest function alignment compilers use (64); a longer run is
 /// not taken as padding.
 constexpr size_t kMaxAlignmentPaddingBytes = 64;
+/// A callee whose code range holds no return instruction is worth a no-return
+/// proof even where no padding follows the call.  Functions that never return
+/// are small error helpers; a larger range is not decoded for the check.
+constexpr uint64_t kMaxNoReturnScreenBytes = 0x4000;
 /// Revisits of one block before a callee's incoming-stack-read summary widens
 /// a still-changing stack offset (a pointer stepped around a loop) to unknown.
 constexpr unsigned kMaxStackOffsetJoinVisits = 8;

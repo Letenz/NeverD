@@ -292,6 +292,17 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     return nullptr;
 
   auto *LLVMFunc = declareFunc(Func);
+  // PUSHF/POPF assembly writes below the compiler's stack pointer. A memory
+  // clobber does not reserve that footprint: SysV spills must use a real frame.
+  if (TargetArch == Arch::X86 || TargetArch == Arch::X64)
+    for (const auto &Block : Func.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+            Op.Inputs[0].isConst() &&
+            (static_cast<Intrinsic>(Op.Inputs[0].ConstVal) ==
+                 Intrinsic::Pushf ||
+             static_cast<Intrinsic>(Op.Inputs[0].ConstVal) == Intrinsic::Popf))
+          LLVMFunc->addFnAttr(llvm::Attribute::NoRedZone);
   emitExceptionMetadata(Func, *LLVMFunc);
   CurFunc = LLVMFunc;
   if (SourceMap)

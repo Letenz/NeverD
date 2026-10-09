@@ -18,6 +18,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/med/MedNoReturn.h"
 
+#include <optional>
 #include <vector>
 
 namespace neverd {
@@ -125,6 +126,42 @@ bool InternalNoReturnIndex::neverReturns(va_t Target, unsigned Depth) const {
   }
   std::lock_guard<std::mutex> Lock(Mutex);
   return Proofs.emplace(Key, Proved).first->second;
+}
+
+bool InternalNoReturnIndex::mayNeverReturn(va_t Target) const {
+  {
+    std::lock_guard<std::mutex> Lock(Mutex);
+    if (auto It = Screens.find(Target); It != Screens.end())
+      return It->second;
+  }
+  bool NothingReturns = false;
+  va_t End = Img.getFunctionMetadataEnd(Target, CodeOwners);
+  if (const ExceptionFunction *Unwind =
+          Img.ExceptionMetadata.findFunctionEntry(Target);
+      Unwind && Unwind->Kind == RuntimeFunctionKind::Primary &&
+      Unwind->CodeRange.isValid())
+    End = Unwind->CodeRange.End;
+  const Segment *Seg = Img.getSegmentFor(Target);
+  Decoder Dec;
+  if (End != InvalidVA && End > Target &&
+      End - Target <= limits::kMaxNoReturnScreenBytes && Seg &&
+      Target >= Seg->VA && End - Seg->VA <= Seg->Data.size() && Dec.init(Img)) {
+    NothingReturns = true;
+    for (va_t At = Target; NothingReturns && At < End;) {
+      DecodedInsn Insn;
+      const int Size =
+          Dec.selectMode(Img, At)
+              ? Dec.decodeOne(Seg->Data.data() + (At - Seg->VA),
+                              static_cast<size_t>(End - At), At, Insn)
+              : 0;
+      const std::optional<bool> Returns =
+          Size > 0 ? Dec.returnsToCaller(Insn) : std::nullopt;
+      NothingReturns = Returns && !*Returns;
+      At += static_cast<va_t>(Size);
+    }
+  }
+  std::lock_guard<std::mutex> Lock(Mutex);
+  return Screens.emplace(Target, NothingReturns).first->second;
 }
 
 } // namespace neverd

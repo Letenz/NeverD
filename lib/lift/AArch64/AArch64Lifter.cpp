@@ -412,6 +412,22 @@ bool AArch64Lifter::isFunctionTerminator(const cs_insn *I) {
   }
 }
 
+bool AArch64Lifter::isReturn(const cs_insn *I) {
+  switch (I->id) {
+  case AARCH64_INS_RET:
+  case AARCH64_INS_RETAA:
+  case AARCH64_INS_RETAB:
+  case AARCH64_INS_RETAASPPC:
+  case AARCH64_INS_RETABSPPC:
+  case AARCH64_INS_ERET:
+  case AARCH64_INS_ERETAA:
+  case AARCH64_INS_ERETAB:
+    return true;
+  default:
+    return false;
+  }
+}
+
 va_t AArch64Lifter::directCallTarget(const cs_insn *I) {
   if (!I->detail)
     return InvalidVA;

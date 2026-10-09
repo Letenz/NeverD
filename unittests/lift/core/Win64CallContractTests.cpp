@@ -261,4 +261,61 @@ TEST(Win64CallContract, TheRuntimesOwnPrototypeFixesWhatItsSlotReads) {
   EXPECT_FALSE(Reads.count(slot(4)));
 }
 
+TEST(Win64CallContract, AFloatArgumentTakesItsSlotsVectorRegister) {
+  // scale(x, n) = x * n reads x in xmm0, the first slot's vector register,
+  // and n in edx, the second slot's integer one. twice(x) = x + x;
+  // quadruple(x) doubles twice(x), passing x on in xmm0.
+  constexpr va_t Scale = Text, Twice = Text + 0x10, Quadruple = Text + 0x20;
+  std::vector<uint8_t> Code(0x40, 0xCC);
+  put(Code, Scale,
+      {0xF3, 0x0F, 0x2A, 0xCA, // cvtsi2ss xmm1, edx
+       0xF3, 0x0F, 0x59, 0xC1, // mulss xmm0, xmm1
+       0xC3});                 // ret
+  put(Code, Twice,
+      {0xF2, 0x0F, 0x58, 0xC0, // addsd xmm0, xmm0
+       0xC3});                 // ret
+  std::vector<uint8_t> QuadrupleCode = {0x48, 0x83, 0xEC, 0x28, // sub rsp, 28h
+                                        0xE8};                  // call twice
+  for (uint8_t B : rel32(Quadruple + 9, Twice))
+    QuadrupleCode.push_back(B);
+  for (uint8_t B : {0xF2, 0x0F, 0x58, 0xC0, // addsd xmm0, xmm0
+                    0x48, 0x83, 0xC4, 0x28, // add rsp, 28h
+                    0xC3})                  // ret
+    QuadrupleCode.push_back(B);
+  put(Code, Quadruple, QuadrupleCode);
+  const BinaryImage Img = makeImage(
+      Code, {{Scale, "scale"}, {Twice, "twice"}, {Quadruple, "quadruple"}}, {});
+  const std::string Source = liftEntries(Img, {Scale, Twice, Quadruple});
+  EXPECT_NE(Source.find("float scale(float arg0, int32_t arg1)"),
+            std::string::npos)
+      << Source;
+  const std::string Body = body(Source, "quadruple");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("double quadruple(double arg0)"), std::string::npos)
+      << Body;
+  EXPECT_NE(Body.find("twice(arg0)"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+}
+
+TEST(Win64CallContract, AFloatArgumentReachesItsImportsSlot) {
+  // sin_twice(x) = sin(x + x) through the import's slot: sin's double
+  // parameter takes the first slot's vector register.
+  constexpr va_t SinTwice = Text;
+  std::vector<uint8_t> Code(0x20, 0xCC);
+  std::vector<uint8_t> SinTwiceCode = {0x48, 0x83, 0xEC, 0x28,  // sub rsp, 28h
+                                       0xF2, 0x0F, 0x58, 0xC0}; // addsd
+  for (uint8_t B : throughSlot(SinTwice + 8, slot(0)))
+    SinTwiceCode.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x28, // add rsp, 28h
+                    0xC3})                  // ret
+    SinTwiceCode.push_back(B);
+  put(Code, SinTwice, SinTwiceCode);
+  const BinaryImage Img = makeImage(Code, {{SinTwice, "sin_twice"}}, {"sin"});
+  const std::string Body = body(liftEntries(Img, {SinTwice}), "sin_twice");
+  ASSERT_FALSE(Body.empty());
+  EXPECT_NE(Body.find("double sin_twice(double arg0)"), std::string::npos)
+      << Body;
+  EXPECT_NE(Body.find("sin(arg0 + arg0)"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+}
 } // namespace
