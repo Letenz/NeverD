@@ -626,6 +626,13 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
     Effect.Unknown = true;
     Effect.Incomplete = true;
     Effect.UnknownStackReads = true;
+    // The body's own effect is unknown, but the functions it calls directly
+    // still have summaries of their own, which its call sites pass on.
+    for (const LowBlock &Block : F.Blocks)
+      for (const LowOp &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs > 0 &&
+            Op.Inputs[0].isConst() && !Img.findImportAt(Op.Inputs[0].Offset))
+          Effect.Callees.insert(Op.Inputs[0].Offset);
     return Effect;
   }
   std::map<int, size_t> IndexOfId;

@@ -267,6 +267,26 @@ TEST(InternalNoReturn, CallEndingItsFunctionsCodeRangeEndsItsBlock) {
   }
 }
 
+TEST(InternalNoReturn, CallerWithAnUnresolvedBranchStillListsItsCallees) {
+  // caller: call b; int3.  A switch the caller cannot resolve leaves its own
+  // effect unknown, but b's summary does not depend on it: the caller still
+  // lists b, so b is lifted and the call passes b's parameters.
+  const auto Image =
+      imageWith(callerThen({0xc3}), {{Base, "caller"}, {0x1010, "b"}});
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Image.Arch));
+  std::set<va_t> Entries{Base, 0x1010};
+  CFGBuilder Builder;
+  Builder.setKnownFuncEntries(&Entries);
+  LowFunc Caller = Builder.build(Image, Dec, Base, "caller");
+  Caller.UnsafeIndirectBranchAddresses.insert(Base);
+  const LocalRegisterEffect Effect =
+      localRegisterEffect(Image, Caller, nullptr);
+  EXPECT_TRUE(Effect.Incomplete);
+  EXPECT_TRUE(Effect.Unknown);
+  EXPECT_EQ(Effect.Callees, std::set<va_t>{0x1010});
+}
+
 TEST(InternalNoReturn, SummaryStillLiftsAProvedCalleeForItsParameters) {
   // caller: call b; int3, with b ending in `int 0x29`.  b's writes reach no
   // caller, but its reads give the call its parameters, so the summary lifts
