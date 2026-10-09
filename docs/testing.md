@@ -62,6 +62,21 @@ Native execution requires an x64 host and Clang; the in-process SSE oracle
 additionally requires GCC/Clang. Skips on other hosts are explicit.
 This suite does not establish packed FP, VEX or x87 state coverage.
 
+`HighSwiftEmitter` checks typed scalar SSE transports, malformed shapes,
+definite local assignment, bounded 96-bit slices and module-wide helper names.
+Generated Swift executes at Onone/O with rounding, DAZ/FTZ, sticky status,
+subnormals, signed zeros, NaN payloads and exact numerical/MXCSR observations.
+A separate bounded divide-by-zero control requires native x86_64 macOS;
+Rosetta forces exception masks even for raw SSE, so its unmasked-trap coverage
+is unavailable. `SwiftSourceProperties` compiles actual class members with
+file-level compiler declarations. `MobileIOSNative` rejects false source,
+missing or malformed preamble prefixes and mismatched method identities.
+The unchanged `scripts/test_mobile_swift_backend.py` acceptance workflow
+recompiles and executes arm64/x86_64 with classic/default fixups, checks all
+858 original behavior oracles per variant, and verifies the callable inventory.
+Swift execution requires swiftc; other hosts retain explicit skips. Native
+Intel hardware, Intel HVF and physical iOS are separate validation surfaces.
+
 `NeverDX86FPConversionAccuracyTests` separately covers signed scalar
 CVTSS2SI/CVTSD2SI and CVTTSS2SI/CVTTSD2SI, including their VEX forms. Independent
 32/64-bit source and destination widths, register and memory sources, every

@@ -912,6 +912,17 @@ profile. Generic external FLOAT operations, packed FP, VEX arithmetic and
 remaining x87 control/TOP/tag semantics retain their separate contracts;
 this scalar state surface does not certify them.
 
+Swift consumes the same typed HighIR state contract for scalar SSE arithmetic.
+Its x86_64-only compiler pointer intrinsics import and commit MXCSR; numerical
+helpers disable optimization so arithmetic stays between those effects. The
+96-bit double-result/state carrier supports defined local copies and bounded
+byte extraction, not general memory or arithmetic. File-level declarations
+belong to the module preamble, separate from member bodies.
+`assembleSwiftSourceUnits` is the shared SDK and mobile-validation owner: each
+unit includes its exact preamble prefix, while the complete file places each
+distinct preamble once before the ordered unit bodies. Module-wide storage
+and declaration names participate in helper allocation before emission.
+
 The experimental [interpreter recovery stage](interpreter-recovery.md)
 specializes strictly lifted LowIR before the common MedIR boundary. Its
 provider owns immutable image evidence, `SymExec` owns instruction semantics,
