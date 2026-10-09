@@ -657,13 +657,21 @@ TEST(SysVCallContract, ACallerReturnsTheFloatItsImportReturns) {
   put(Code, SinTwice, SinTwiceCode);
   const BinaryImage Img = makeImportImage(
       Code, {{SinTwice, "sin_twice"}, {Stub, "sin_stub"}}, {{Stub, "sin"}});
-  const std::string Body =
-      body(liftEntries(Img, {SinTwice, Stub}), "sin_twice");
+  const std::string Source = liftEntries(Img, {SinTwice, Stub});
+  const std::string Body = body(Source, "sin_twice");
   ASSERT_FALSE(Body.empty());
   EXPECT_NE(Body.find("double sin_twice(double arg0)"), std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("return sin(arg0 + arg0);"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("return sin("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+  compileAndRun("#include <math.h>\n#define sin neverd_test_sine\n"
+                "double sin(double);\n" +
+                Source + R"(
+double sin(double value) { return value + 0.5; }
+int main(void) {
+  return sin_twice(1.5) == 3.5 && sin_twice(-0.25) == 0.0 ? 0 : 1;
+}
+)");
 }
 
 TEST(SysVCallContract, AForwarderReturnsTheFloatItsCalleeReturns) {
