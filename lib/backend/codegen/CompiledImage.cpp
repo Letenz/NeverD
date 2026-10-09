@@ -93,6 +93,10 @@ struct WinEHSemanticEmissionShape {
   std::array<uint64_t, 4> CxxTableSizes{};
   std::array<int64_t, 4> CxxFrame{};
 #endif
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+  std::string CxxRegistrationHandlerSymbol;
+  std::array<int64_t, 3> CxxRegistrationFrame{};
+#endif
 
   friend bool operator==(const WinEHSemanticEmissionShape &,
                          const WinEHSemanticEmissionShape &) = default;
@@ -121,6 +125,11 @@ std::vector<WinEHSemanticEmissionShape> collectWinEHSemanticEmissionShape(
       auto &Item = Shape.back();
       Item.HasX86CxxLayout = true;
       Item.CxxFrame = Record.X86CxxLayout->Frame;
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+      Item.CxxRegistrationHandlerSymbol =
+          Record.X86CxxLayout->RegistrationHandlerSymbol;
+      Item.CxxRegistrationFrame = Record.X86CxxLayout->RegistrationFrame;
+#endif
       for (unsigned I = 0; I != 4; ++I) {
         const auto &Table = Record.X86CxxLayout->Tables[I];
         Item.CxxTableSymbols[I] = {Table.BeginSymbol, Table.EndSymbol};
@@ -147,6 +156,10 @@ std::vector<WinEHSemanticEmissionShape> collectWinEHSemanticEmissionShape(
                     Left.HasX86CxxLayout, Left.CxxTableSymbols,
                     Left.CxxTableSizes, Left.CxxFrame
 #endif
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+                    ,
+                    Left.CxxRegistrationHandlerSymbol, Left.CxxRegistrationFrame
+#endif
                     ) <
            std::tie(Right.SourceFunction, Right.OwnerSymbol,
                     Right.ContainerSymbol, Right.BeginSymbol, Right.EndSymbol,
@@ -163,6 +176,11 @@ std::vector<WinEHSemanticEmissionShape> collectWinEHSemanticEmissionShape(
                     ,
                     Right.HasX86CxxLayout, Right.CxxTableSymbols,
                     Right.CxxTableSizes, Right.CxxFrame
+#endif
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+                    ,
+                    Right.CxxRegistrationHandlerSymbol,
+                    Right.CxxRegistrationFrame
 #endif
            );
   });
@@ -215,6 +233,9 @@ void captureFixupReference(std::vector<CapturedFixupReference> &Captured,
   Item.Reference.IsResolved = Context.IsResolved;
   Item.Reference.BitWidth = Context.BitWidth;
   Item.Reference.ResolvedValue = Value;
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+  Item.Reference.KindName = Context.KindName.str();
+#endif
   if (Context.SectionName == section_names::macho::CompactUnwind) {
     const uint64_t PointerWidth =
         TargetArch == Arch::X86 || TargetArch == Arch::ARM ? 4 : 8;

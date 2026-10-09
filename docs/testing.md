@@ -1854,6 +1854,13 @@ initialization width, undefined values, pointer-bearing scalar objects, private
 global storage, runtime reference homes and immutable metadata/runtime writes.
 Both value and reference inputs must pass the complete proof; a table receipt
 alone does not authenticate these effects or enable final PE installation.
+With `LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS`, the fixture additionally checks the
+actual generated registration handler's private owner, parent range and physical
+node. Thirty-three changes to its opcodes, FuncInfo/runtime targets, exact
+fixups, decoded parent store and SafeSEH metadata must reject while the complete
+language-table proof still succeeds. MC checks changed handler identities,
+cross-row agreement and bounded node layouts separately. These checks do not
+execute an installed source C++ PE.
 
 The runtime runner builds actual SEH3, no-GS EH4 and initialized-GS EH4 source
 images, including explicit source exit checks, lifts their protected

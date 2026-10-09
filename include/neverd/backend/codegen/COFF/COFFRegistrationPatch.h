@@ -7,6 +7,7 @@
 #define NEVERD_BACKEND_CODEGEN_COFF_COFFREGISTRATIONPATCH_H
 
 #include "neverd/Common.h"
+#include "neverd/loader/ExceptionCommon.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -92,6 +93,20 @@ getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
                                           const ExceptionFunction &Source,
                                           const BinaryImage &Image,
                                           const CompiledImage &Compiled);
+
+/// Checked compiler-created registration handler and its raw FuncInfo load,
+/// exact runtime branch, parent pointer fixups and SafeSEH symbol-index row.
+/// This receipt does not replace the independent source IR proof.
+struct COFFRegistrationCxxHandlerReceipt {
+  COFFRegistrationCxxTableReceipt Tables;
+  ExceptionAddressRange CodeRange;
+  std::vector<va_t> AbsolutePointerFields;
+};
+llvm::Expected<COFFRegistrationCxxHandlerReceipt>
+getCheckedCOFFRegistrationCxxHandlerReceipt(const llvm::Function &Function,
+                                            const ExceptionFunction &Source,
+                                            const BinaryImage &Image,
+                                            const CompiledImage &Compiled);
 llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
     llvm::ArrayRef<uint8_t> OriginalBinary, const BinaryImage &Image,
     CompiledImage &Compiled,

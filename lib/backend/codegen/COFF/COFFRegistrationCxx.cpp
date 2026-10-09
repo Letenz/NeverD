@@ -9,6 +9,7 @@
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
+#include "neverd/decode/Decoder.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
 
@@ -256,6 +257,204 @@ getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
                          Receipt.AbsolutePointerFields.end()) !=
       Receipt.AbsolutePointerFields.end())
     return rejectCxx("language pointer fields overlap");
+  return Receipt;
+#endif
+}
+llvm::Expected<COFFRegistrationCxxHandlerReceipt>
+getCheckedCOFFRegistrationCxxHandlerReceipt(const llvm::Function &Function,
+                                            const ExceptionFunction &Source,
+                                            const BinaryImage &Image,
+                                            const CompiledImage &Compiled) {
+#ifndef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+  return rejectCxx("LLVM does not provide PE32 C++ handler receipts");
+#else
+  auto Tables = getCheckedCOFFRegistrationCxxTableReceipt(Function, Source,
+                                                          Image, Compiled);
+  if (!Tables)
+    return Tables.takeError();
+  const auto Runtime =
+      coff_loader::getCheckedX86CxxPersonalityABI(Image, Source);
+  const auto Row =
+      llvm::find_if(Compiled.WinEHSemanticRecords, [&](const auto &R) {
+        return R.SourceFunction == Function.getName() &&
+               R.Token.Kind ==
+                   llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCatch;
+      });
+  if (!Runtime || Row == Compiled.WinEHSemanticRecords.end() ||
+      !Row->X86CxxLayout)
+    return rejectCxx(
+        "registration handler lost source runtime or table identity");
+  const auto &Layout = *Row->X86CxxLayout;
+  const CompiledFunctionRange *Handler = nullptr, *Parent = nullptr;
+  for (const auto &Range : Compiled.FunctionRanges) {
+    if (Range.OwnerSymbol == Layout.RegistrationHandlerSymbol) {
+      if (Handler)
+        return rejectCxx("registration handler has multiple generated ranges");
+      Handler = &Range;
+    }
+    if (Range.OwnerSymbol == Row->OwnerSymbol) {
+      if (Parent)
+        return rejectCxx("registration parent has multiple generated ranges");
+      Parent = &Range;
+    }
+  }
+  if (!Handler || !Parent || Handler->BeginVA != Layout.RegistrationHandlerVA ||
+      Handler->EndVA - Handler->BeginVA != 10 ||
+      Handler->ParentOwnerSymbol != Row->OwnerSymbol ||
+      Handler->ParentOwnerVA != Row->OwnerVA)
+    return rejectCxx(
+        "registration handler has no exact parent-owned code range");
+  using SectionKind = llvm::mc_rewrite::RewriteSectionKind;
+  const auto *Code = coff_registration::sectionAt(Compiled, Handler->BeginVA,
+                                                  10, SectionKind::Code);
+  const auto *Body = coff_registration::sectionAt(
+      Compiled, Parent->BeginVA, Parent->EndVA - Parent->BeginVA,
+      SectionKind::Code);
+  if (!Code || !Body)
+    return rejectCxx("registration code has no unique executable placement");
+  const uint8_t *Bytes =
+      Compiled.Bytes.data() + Handler->BeginVA - Compiled.BaseVA;
+  const uint32_t Delta = readLE<uint32_t>(Bytes + 6);
+  if (Bytes[0] != 0xb8 || Bytes[5] != 0xe9 ||
+      readLE<uint32_t>(Bytes + 1) != Tables->FuncInfoVA ||
+      uint32_t(Handler->BeginVA + 10 + Delta) != Runtime->RuntimeVA ||
+      !coff_registration::exactPointerFixup(*Code, Handler->BeginVA + 1,
+                                            Layout.Tables[0].BeginSymbol,
+                                            Tables->FuncInfoVA))
+    return rejectCxx(
+        "handler changed its FuncInfo load or original CRT branch");
+  const auto *Personality =
+      Function.hasPersonalityFn()
+          ? llvm::dyn_cast<llvm::Function>(
+                Function.getPersonalityFn()->stripPointerCasts())
+          : nullptr;
+  if (!Personality)
+    return rejectCxx("handler lost its exact personality symbol");
+  auto RuntimeIdentity = rewrite_source::getOriginalVA(*Personality);
+  if (!RuntimeIdentity)
+    return RuntimeIdentity.takeError();
+  if (*RuntimeIdentity != Runtime->RuntimeVA || !Personality->isDeclaration() ||
+      !Personality->hasExternalLinkage())
+    return rejectCxx("handler personality lost its original CRT identity");
+  llvm::SmallString<64> RuntimeSymbol;
+  llvm::Mangler Mangler;
+  Mangler.getNameWithPrefix(RuntimeSymbol, Personality, false);
+  const CompiledFixupReference *Branch = nullptr;
+  const va_t BranchField = Handler->BeginVA + 6;
+  size_t Work = 0;
+  for (const auto &Fixup : Code->FixupReferences) {
+    const uint64_t Width =
+        Fixup.BitWidth ? (uint64_t(Fixup.BitWidth) + 7) / 8 : 8;
+    if (++Work > limits::kMaxRegistrationEHStateWork ||
+        !rangeInBounds(Fixup.Offset, Width, Code->Size))
+      return rejectCxx("handler fixup leaves its bounded section");
+    const uint64_t Offset = BranchField - Code->VA;
+    if (Fixup.Offset < Offset + 4 && Offset < Fixup.Offset + Width) {
+      if (Branch || Fixup.Offset != Offset || Fixup.BitWidth != 32 ||
+          !Fixup.IsPCRel || !Fixup.IsResolved || Fixup.Specifier ||
+          !Fixup.SubtractSymbol.empty() || Fixup.Symbol != RuntimeSymbol ||
+          Fixup.Addend || Fixup.KindName != "FK_Data_4" ||
+          Fixup.Kind != llvm::FK_Data_4 ||
+          uint32_t(Fixup.ResolvedValue) != Delta)
+        return rejectCxx("CRT branch lost its exact compiler fixup: kind=" +
+                         llvm::Twine(Fixup.Kind) + "/" + Fixup.KindName +
+                         " symbol=" + Fixup.Symbol +
+                         " expected=" + RuntimeSymbol +
+                         " addend=" + llvm::Twine(Fixup.Addend) +
+                         " width=" + llvm::Twine(Fixup.BitWidth) +
+                         " pcrel=" + llvm::Twine(Fixup.IsPCRel) +
+                         " resolved=" + llvm::Twine(Fixup.IsResolved) +
+                         " value=" + llvm::Twine(Fixup.ResolvedValue) +
+                         " encoded=" + llvm::Twine(Delta));
+      Branch = &Fixup;
+    }
+  }
+  if (!Branch)
+    return rejectCxx("CRT branch has no compiler fixup");
+  const auto &Node = Layout.RegistrationFrame;
+  const unsigned Base = Node[0] == 3   ? X86_REG_EBX
+                        : Node[0] == 5 ? X86_REG_EBP
+                        : Node[0] == 6 ? X86_REG_ESI
+                                       : X86_REG_EDI;
+  std::set<va_t> ParentPointers;
+  for (const auto &Fixup : Body->FixupReferences) {
+    if (++Work > limits::kMaxRegistrationEHStateWork)
+      return rejectCxx(
+          "parent handler pointer proof exhausted its work budget");
+    if (!coff_registration::absolutePointer(Fixup) ||
+        Fixup.ResolvedValue != Handler->BeginVA)
+      continue;
+    const va_t Field = Body->VA + Fixup.Offset;
+    if (Field < Parent->BeginVA || Field + 4 > Parent->EndVA ||
+        !coff_registration::exactPointerFixup(
+            *Body, Field, Layout.RegistrationHandlerSymbol, Handler->BeginVA) ||
+        !ParentPointers.insert(Field).second)
+      return rejectCxx("registration pointer lost its exact parent occurrence");
+  }
+  if (ParentPointers.size() != 1)
+    return rejectCxx("registration parent has no unique handler installation");
+  const va_t Field = *ParentPointers.begin();
+  Decoder Decode;
+  if (!Decode.init(Arch::X86))
+    return rejectCxx("registration parent decoder is unavailable");
+  bool Installed = false;
+  for (va_t Cursor = Parent->BeginVA; Cursor < Parent->EndVA;) {
+    DecodedInsn I{};
+    if (++Work > limits::kMaxRegistrationEHStateWork ||
+        !Decode.decodeOne(Compiled.Bytes.data() + Cursor - Compiled.BaseVA,
+                          Parent->EndVA - Cursor, Cursor, I) ||
+        !I.Size || I.Size > Parent->EndVA - Cursor || !I.Raw || !I.Raw->detail)
+      return rejectCxx("registration parent has no complete decoded body");
+    if (Cursor <= Field && Field < Cursor + I.Size) {
+      const auto &X = I.Raw->detail->x86;
+      if (I.Id != X86_INS_MOV || X.op_count != 2 ||
+          X.operands[0].type != X86_OP_MEM || X.operands[0].size != 4 ||
+          X.operands[0].mem.segment != X86_REG_INVALID ||
+          X.operands[0].mem.base != Base ||
+          X.operands[0].mem.index != X86_REG_INVALID ||
+          X.operands[0].mem.disp != Node[1] + 8 ||
+          X.operands[1].type != X86_OP_IMM || X.encoding.imm_size != 4 ||
+          Cursor + X.encoding.imm_offset != Field ||
+          uint32_t(X.operands[1].imm) != Handler->BeginVA)
+        return rejectCxx("handler pointer is not stored to its compiler node");
+      Installed = true;
+    }
+    Cursor += I.Size;
+  }
+  if (!Installed)
+    return rejectCxx("registration handler store has no decoded occurrence");
+  size_t SafeRows = 0;
+  for (const auto &Section : Compiled.Sections) {
+    if (Section.Name != ".sxdata")
+      continue;
+    if (Section.IsAllocated || Section.IsInImage || Section.Size % 4 ||
+        Section.ExternalBytes.size() != Section.Size ||
+        Section.SymbolIndexReferences.size() != Section.Size / 4)
+      return rejectCxx("registration handler has malformed SafeSEH metadata");
+    std::set<uint64_t> Offsets;
+    for (const auto &Reference : Section.SymbolIndexReferences) {
+      if (++Work > limits::kMaxRegistrationEHStateWork ||
+          Reference.Offset % 4 ||
+          !rangeInBounds(Reference.Offset, 4, Section.Size) ||
+          !Offsets.insert(Reference.Offset).second)
+        return rejectCxx("SafeSEH row has no bounded unique occurrence");
+      if (Reference.Symbol == Layout.RegistrationHandlerSymbol ||
+          Reference.TargetVA == Handler->BeginVA) {
+        if (Reference.Symbol != Layout.RegistrationHandlerSymbol ||
+            Reference.TargetVA != Handler->BeginVA || ++SafeRows != 1)
+          return rejectCxx("SafeSEH changed registration handler identity");
+      }
+    }
+  }
+  if (SafeRows != 1)
+    return rejectCxx("registration handler is absent from compiler SafeSEH");
+  COFFRegistrationCxxHandlerReceipt Receipt;
+  Receipt.Tables = std::move(*Tables);
+  Receipt.CodeRange = {Handler->BeginVA, Handler->EndVA};
+  Receipt.AbsolutePointerFields = Receipt.Tables.AbsolutePointerFields;
+  Receipt.AbsolutePointerFields.push_back(Handler->BeginVA + 1);
+  Receipt.AbsolutePointerFields.push_back(Field);
+  llvm::sort(Receipt.AbsolutePointerFields);
   return Receipt;
 #endif
 }

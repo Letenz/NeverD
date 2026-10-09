@@ -32,6 +32,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/MC/MCFixup.h"
 #ifdef LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS
 #include "llvm/IR/WinEHFrame.h"
 #endif
@@ -680,6 +681,16 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
   EXPECT_EQ(TableReceipt->AbsolutePointerFields.size(), 7u);
   EXPECT_EQ(TableReceipt->SourceToGeneratedStates.size(),
             Source->Cxx->UnwindMap.size() + 1);
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+  auto HandlerReceipt = getCheckedCOFFRegistrationCxxHandlerReceipt(
+      *Parent, *Source, *Loaded, Compiled);
+  ASSERT_TRUE(bool(HandlerReceipt))
+      << llvm::toString(HandlerReceipt.takeError());
+  EXPECT_EQ(HandlerReceipt->CodeRange.Begin, Layout.RegistrationHandlerVA);
+  EXPECT_EQ(HandlerReceipt->CodeRange.End - HandlerReceipt->CodeRange.Begin,
+            10u);
+  EXPECT_EQ(HandlerReceipt->AbsolutePointerFields.size(), 9u);
+#endif
   const auto TableSection =
       llvm::find_if(Compiled.Sections, [&](const auto &S) {
         return S.VA <= Info.BeginVA && Info.EndVA <= S.VA + S.Size;
@@ -815,6 +826,189 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
     if (!Rejected)
       llvm::consumeError(Rejected.takeError());
   }
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+  // Table validation remains valid for these edits to executable handler,
+  // parent registration and linker metadata. Its success cannot substitute
+  // for independently authenticating the actual dispatch contract.
+  const va_t RegistrationVA = HandlerReceipt->CodeRange.Begin;
+  const auto CodeSection = llvm::find_if(Compiled.Sections, [&](const auto &S) {
+    return S.VA <= RegistrationVA && RegistrationVA + 10 <= S.VA + S.Size;
+  });
+  ASSERT_NE(CodeSection, Compiled.Sections.end());
+  const size_t CodeIndex = CodeSection - Compiled.Sections.begin();
+  const auto FindFixup = [&](va_t Field) {
+    return llvm::find_if(CodeSection->FixupReferences, [&](const auto &F) {
+      return CodeSection->VA + F.Offset == Field;
+    });
+  };
+  const auto FuncInfoFixup = FindFixup(RegistrationVA + 1);
+  const auto RuntimeFixup = FindFixup(RegistrationVA + 6);
+  ASSERT_NE(FuncInfoFixup, CodeSection->FixupReferences.end());
+  ASSERT_NE(RuntimeFixup, CodeSection->FixupReferences.end());
+  const size_t InfoIndex = FuncInfoFixup - CodeSection->FixupReferences.begin();
+  const size_t RuntimeIndex =
+      RuntimeFixup - CodeSection->FixupReferences.begin();
+  const auto ParentFixup =
+      llvm::find_if(CodeSection->FixupReferences, [&](const auto &F) {
+        return !F.IsPCRel && F.ResolvedValue == RegistrationVA;
+      });
+  ASSERT_NE(ParentFixup, CodeSection->FixupReferences.end());
+  const size_t ParentIndex = ParentFixup - CodeSection->FixupReferences.begin();
+  const va_t ParentField = CodeSection->VA + ParentFixup->Offset;
+  neverd::Decoder RegistrationDecode;
+  ASSERT_TRUE(RegistrationDecode.init(Arch::X86));
+  va_t StoreVA = 0, DisplacementVA = 0;
+  uint8_t DisplacementWidth = 0;
+  for (va_t Cursor = Row.OwnerVA; Cursor <= ParentField;) {
+    DecodedInsn I{};
+    ASSERT_TRUE(RegistrationDecode.decodeOne(
+        Compiled.Bytes.data() + Cursor - Compiled.BaseVA,
+        Compiled.Bytes.size() - (Cursor - Compiled.BaseVA), Cursor, I));
+    ASSERT_TRUE(I.Raw && I.Raw->detail && I.Size);
+    if (Cursor + I.Size > ParentField) {
+      const auto &X = I.Raw->detail->x86;
+      StoreVA = Cursor;
+      DisplacementVA = Cursor + X.encoding.disp_offset;
+      DisplacementWidth = X.encoding.disp_size;
+      ASSERT_EQ(Compiled.Bytes[StoreVA - Compiled.BaseVA], 0xc7);
+      break;
+    }
+    Cursor += I.Size;
+  }
+  ASSERT_TRUE(StoreVA);
+  ASSERT_TRUE(DisplacementWidth == 1 || DisplacementWidth == 4);
+  const auto SafeSection = llvm::find_if(
+      Compiled.Sections, [](const auto &S) { return S.Name == ".sxdata"; });
+  ASSERT_NE(SafeSection, Compiled.Sections.end());
+  const size_t SafeIndex = SafeSection - Compiled.Sections.begin();
+  const auto SafeRow =
+      llvm::find_if(SafeSection->SymbolIndexReferences, [&](const auto &R) {
+        return R.TargetVA == RegistrationVA;
+      });
+  ASSERT_NE(SafeRow, SafeSection->SymbolIndexReferences.end());
+  const size_t SafeRowIndex =
+      SafeRow - SafeSection->SymbolIndexReferences.begin();
+  for (unsigned Mutation = 0; Mutation != 33; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Compiled;
+    auto &Fixups = Changed.Sections[CodeIndex].FixupReferences;
+    auto &Safe = Changed.Sections[SafeIndex];
+    auto Write = [&](va_t Address, uint32_t Value) {
+      llvm::support::endian::write32le(
+          Changed.Bytes.data() + Address - Changed.BaseVA, Value);
+    };
+    switch (Mutation) {
+    case 0:
+      Changed.Bytes[RegistrationVA - Changed.BaseVA] = 0xb9;
+      break;
+    case 1:
+      Changed.Bytes[RegistrationVA + 5 - Changed.BaseVA] = 0xe8;
+      break;
+    case 2:
+      Write(RegistrationVA + 1, Source->Cxx->NativeFuncInfoVA);
+      break;
+    case 3:
+      Write(RegistrationVA + 6,
+            uint32_t(Source->PersonalityVA - RegistrationVA - 10));
+      break;
+    case 4:
+      Fixups.erase(Fixups.begin() + InfoIndex);
+      break;
+    case 5:
+      Fixups[InfoIndex].Symbol = "foreign.funcinfo";
+      break;
+    case 6:
+      Fixups[InfoIndex].Addend = 4;
+      break;
+    case 7:
+      Fixups[InfoIndex].BitWidth = 16;
+      break;
+    case 8:
+      Fixups[InfoIndex].ResolvedValue++;
+      break;
+    case 9:
+      Fixups.push_back(Fixups[InfoIndex]);
+      break;
+    case 10:
+      Fixups.erase(Fixups.begin() + RuntimeIndex);
+      break;
+    case 11:
+      Fixups[RuntimeIndex].Kind = llvm::FK_Data_2;
+      break;
+    case 12:
+      Fixups[RuntimeIndex].KindName = "FK_Data_2";
+      break;
+    case 13:
+      Fixups[RuntimeIndex].IsPCRel = false;
+      break;
+    case 14:
+      Fixups[RuntimeIndex].IsResolved = false;
+      break;
+    case 15:
+      Fixups[RuntimeIndex].Symbol = "foreign.runtime";
+      break;
+    case 16:
+      Fixups[RuntimeIndex].Addend = 4;
+      break;
+    case 17:
+      Fixups[RuntimeIndex].ResolvedValue++;
+      break;
+    case 18:
+      Fixups.push_back(Fixups[RuntimeIndex]);
+      break;
+    case 19:
+      Fixups[RuntimeIndex].BitWidth = 64;
+      break;
+    case 20:
+      Fixups.erase(Fixups.begin() + ParentIndex);
+      break;
+    case 21:
+      Fixups[ParentIndex].Symbol = "foreign.handler";
+      break;
+    case 22:
+      Write(ParentField, Source->PersonalityVA);
+      break;
+    case 23:
+      Fixups[ParentIndex].Addend = 4;
+      break;
+    case 24:
+      Fixups.push_back(Fixups[ParentIndex]);
+      break;
+    case 25:
+      Safe.SymbolIndexReferences[SafeRowIndex].Symbol = "foreign.handler";
+      break;
+    case 26:
+      Safe.SymbolIndexReferences[SafeRowIndex].TargetVA++;
+      break;
+    case 27:
+      Safe.SymbolIndexReferences.clear();
+      break;
+    case 28:
+      Safe.SymbolIndexReferences[SafeRowIndex].Offset++;
+      break;
+    case 29:
+      Safe.IsAllocated = true;
+      break;
+    case 30:
+      Changed.Bytes[StoreVA - Changed.BaseVA] = 0x81;
+      break;
+    case 31:
+      ++Changed.Bytes[DisplacementVA - Changed.BaseVA];
+      break;
+    case 32:
+      Changed.Bytes[StoreVA + 1 - Changed.BaseVA] ^= 1;
+      break;
+    }
+    auto StillTables = getCheckedCOFFRegistrationCxxTableReceipt(
+        *Parent, *Source, *Loaded, Changed);
+    ASSERT_TRUE(bool(StillTables)) << llvm::toString(StillTables.takeError());
+    auto Rejected = getCheckedCOFFRegistrationCxxHandlerReceipt(
+        *Parent, *Source, *Loaded, Changed);
+    EXPECT_FALSE(bool(Rejected));
+    if (!Rejected)
+      llvm::consumeError(Rejected.takeError());
+  }
+#endif
   for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Rows = Compiled.WinEHSemanticRecords;

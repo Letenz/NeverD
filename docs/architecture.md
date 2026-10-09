@@ -139,6 +139,12 @@ runtime reference accesses. Reads and writes retain original image storage;
 language metadata, CRT dispatch and readonly image ranges remain immutable.
 Catch writes seed only the checked object home, and callee may-writes do not
 establish initialization. Control and table receipts cannot replace this proof.
+The x86 state pass also records its actual compiler-created registration handler
+as a private derived owner of the parent. MC closes that handler's exact range,
+table identity and physical registration-node base/offset. The COFF handler
+validator checks its FuncInfo load and original CRT tail branch, exact fixups,
+the decoded parent store into that node and the compiler's SafeSEH row. Kind,
+PC-relative flag and final encoded displacement retain separate meanings.
 This IR and machine-code capability does not grant installation:
 edited IR, the complete generated FuncInfo and the final PE still require
 independent validation.

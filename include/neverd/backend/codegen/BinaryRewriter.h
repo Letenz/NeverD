@@ -168,6 +168,8 @@ struct CompiledFixupReference {
   /// Exact pre-encoding value supplied by MC for this final fixup. For an
   /// ARM PC-relative branch this retains the halfword bit a BL cannot encode.
   uint64_t ResolvedValue = 0;
+  /// Stable target spelling of Kind when provided by the compiler receipt.
+  std::string KindName;
 };
 
 /// One native section produced for a CompiledImage.  Allocated in-image
