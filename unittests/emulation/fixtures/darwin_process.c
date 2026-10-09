@@ -824,17 +824,34 @@ static int attribute_names(const char *path, unsigned mode) {
       0,  0, 0, 0, 0, 0, 0,   0,   0,   12,  0, 0, 0, 5, 0,
       0,  0, 1, 0, 0, 0, 'd', 'a', 't', 'a', 0, 0, 0, 0};
   u64 words[10];
+  u64 literal[6];
+  for (unsigned i = 0; i != 5; ++i)
+    literal[i] = little_integer(expected + i * 8, 8);
+  literal[5] = little_integer(expected + 40, 4);
   unsigned char *bytes = (unsigned char *)words, observed[44];
   if (attribute_result(228, copy, (u64)request, (u64)observed, 44, 0, 0, 0, 0))
     return 229;
   for (unsigned i = 0; i != 5; ++i)
-    if (little_integer(observed + i * 8, 8) !=
-        little_integer(expected + i * 8, 8))
+    if (little_integer(observed + i * 8, 8) != literal[i])
       return 230;
-  if (little_integer(observed + 40, 4) != little_integer(expected + 40, 4))
+  if (little_integer(observed + 40, 4) != literal[5])
     return 230;
   const u64 sizes[] = {4, 7, 24, 27, 31, 35, 36, 40, 41, 43, 44, 512};
-  for (unsigned i = 0; i != 12; ++i)
+  for (unsigned i = 0; i != 12; ++i) {
+    const unsigned count = sizes[i] < 44 ? (unsigned)sizes[i] : 44;
+    const unsigned whole = count / 8, partial = count % 8;
+    // Each route compares the complete guarded buffer with this independent
+    // literal. Construct its identical size-specific prefix only once.
+    u64 wanted[10];
+    for (unsigned j = 0; j != 10; ++j) {
+      wanted[j] = 0xa5a5a5a5a5a5a5a5UL;
+      if (j >= 1 && j < 1 + whole)
+        wanted[j] = literal[j - 1];
+      else if (j == 1 + whole && partial) {
+        const u64 mask = (1UL << (partial * 8)) - 1;
+        wanted[j] = (literal[whole] & mask) | (wanted[j] & ~mask);
+      }
+    }
     for (unsigned route = 0; route != 3; ++route) {
       for (unsigned j = 0; j != 10; ++j)
         words[j] = 0xa5a5a5a5a5a5a5a5UL;
@@ -850,23 +867,13 @@ static int attribute_names(const char *path, unsigned mode) {
                                  (u64)(bytes + 8), sizes[i], flags, 0, 0);
       if (failed)
         return 231;
-      const unsigned count = sizes[i] < 44 ? (unsigned)sizes[i] : 44;
       // Compare all 80 bytes in ten words. A partial final word keeps its
       // exact output prefix and every unwritten canary byte, as above.
-      const unsigned whole = count / 8, partial = count % 8;
-      for (unsigned j = 0; j != 10; ++j) {
-        u64 wanted = 0xa5a5a5a5a5a5a5a5UL;
-        if (j >= 1 && j < 1 + whole)
-          wanted = little_integer(expected + (j - 1) * 8, 8);
-        else if (j == 1 + whole && partial) {
-          const u64 mask = (1UL << (partial * 8)) - 1;
-          wanted =
-              little_integer(expected + whole * 8, partial) | (wanted & ~mask);
-        }
-        if (words[j] != wanted)
+      for (unsigned j = 0; j != 10; ++j)
+        if (words[j] != wanted[j])
           return 232;
-      }
     }
+  }
   if (attribute_result(220, (u64) "alias", (u64)request, (u64)bytes, 80, 1, 0,
                        0, 0) ||
       attribute_name_record(bytes, "alias", 5) ||
