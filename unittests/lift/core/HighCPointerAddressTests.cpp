@@ -4126,10 +4126,12 @@ TEST(HighCPointerAddresses, MemberSretKeepsThisInRcx) {
                         "CRecord* this, CStringT* result)"),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("CRecord_GetRecordName(this, result)"),
-            std::string::npos)
+  // An unprototyped callee takes the pointers' integer views.
+  EXPECT_NE(
+      Source.find("CRecord_GetRecordName((uintptr_t)this, (uintptr_t)result)"),
+      std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("CRecord_GetRecordName(result, this)"),
+  EXPECT_EQ(Source.find("CRecord_GetRecordName((uintptr_t)result"),
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("return result;"), std::string::npos) << Source;
@@ -4445,9 +4447,13 @@ TEST(HighCPointerAddresses, MemberSretCallKeepsLiveInThis) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CRecord_GetRecordName(this"), std::string::npos)
+  EXPECT_NE(Source.find("CRecord_GetRecordName((uintptr_t)this"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("CRecord_GetRecordName(result"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("CRecord_GetRecordName((uintptr_t)result"),
+            std::string::npos)
       << Source;
 }
 
@@ -4605,8 +4611,11 @@ TEST(HighCPointerAddresses, MemberSretCallRecoversUnwrittenLiveInThis) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("GetRecordName(this"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("GetRecordName((uintptr_t)this"), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("GetRecordName(result"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("GetRecordName((uintptr_t)result"), std::string::npos)
+      << Source;
   const auto Args = lastCallArguments(Source, "CRecord_GetRecordName");
   ASSERT_TRUE(Args) << Source;
   EXPECT_EQ(Args->size(), 2u) << Source;
@@ -23236,9 +23245,13 @@ TEST(HighCPointerAddresses, Win64MemberCallUsesRewrittenRcxNotSret) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos)
+  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("CRecord_GetRank(result)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("CRecord_GetRank((uintptr_t)result)"),
+            std::string::npos)
       << Source;
 }
 
@@ -23269,8 +23282,8 @@ TEST(HighCPointerAddresses, IncomingParamIsNotReassignedFromOtherParam) {
   returnValue(Func, parameter(0, Func.Params[0].Type));
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("record ="), std::string::npos) << Source;
-  // CRecord_GetRank has no prototype: the pointer passes as it is.
-  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos)
+  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"),
+            std::string::npos)
       << Source;
 }
 
@@ -23307,8 +23320,8 @@ TEST(HighCPointerAddresses, IncomingParamIsNotReassignedFromTemp) {
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("record ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
-  // CRecord_GetRank has no prototype: the pointer passes as it is.
-  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos)
+  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"),
+            std::string::npos)
       << Source;
 }
 
@@ -23375,7 +23388,8 @@ TEST(HighCPointerAddresses, FrameHomeDoesNotReuseParamName) {
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
   EXPECT_EQ(Source.find("record ="), std::string::npos) << Source;
-  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos)
+  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"),
+            std::string::npos)
       << Source;
 }
 

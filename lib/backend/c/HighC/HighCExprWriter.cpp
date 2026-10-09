@@ -1188,13 +1188,6 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     std::string Arg = exprStr(Imm ? *Imm : *Op);
     if (PointerArgument)
       PointerArgumentOperands.erase(PointerArgument);
-    // A function declared without a prototype takes a pointer variable as the
-    // pointer it is: the default argument promotions pass the same register
-    // bits as its integer view.
-    if (UnprototypedExterns.count(Name))
-      if (const HighExpr *Value = unwrapIntegerView(Op))
-        if (auto Pointer = declaredPointerName(*Value, Arg))
-          Arg = *Pointer;
     // A signed result of at least an int's width passes the same register
     // bits as its unsigned carrier, unless a prototype widens it.
     const TypeRef DefinedParam = Defined && I < Defined->Params.size()

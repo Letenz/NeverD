@@ -714,9 +714,6 @@ public:
   bool InferredVoid = false;
   TypeRef FuncReturnType;
   const HighFunc *CurrentFunc = nullptr;
-  /// The external functions declared without a prototype (`extern int f();`),
-  /// whose calls pass their arguments by C's default argument promotions.
-  std::set<std::string> UnprototypedExterns;
   /// emittedParamType's answers for the function it last answered for.
   mutable const HighFunc *EmittedParamTypesOf = nullptr;
   mutable va_t EmittedParamTypesEntry = 0;

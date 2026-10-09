@@ -2027,8 +2027,6 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
               OS << Register;
             }
           }
-        } else {
-          UnprototypedExterns.insert(Name);
         }
       }
       OS << ")" << LinkLabel;
