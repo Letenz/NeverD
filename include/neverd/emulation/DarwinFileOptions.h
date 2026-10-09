@@ -160,6 +160,11 @@ struct DarwinDirectoryEnumerationPolicy {
   /// Additional minimum when starting at the first record; at most 128 MiB.
   uint32_t InitialMinimumBufferSize = 0;
   uint64_t SeekOffset = 0;
+  /// Explicit virtual TYPE bulk enumeration: sorted live child names, local
+  /// ordinals and independent iteration/EOF state. Does not infer APFS cookies.
+  /// This initial object grant is not inherited by newly created directories.
+  /// The two buffer minima and SeekOffset above apply only to getdirentries64.
+  bool BulkAttributes = false;
 };
 
 /// Closed initial catalogue, with canonical absolute guest paths. No host

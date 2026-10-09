@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
+<!-- i18n-source: 3d8ffe1d66c00abb1d60b3d786625b140504809467f73d6d11e5c7bea8c580fc -->
 
 [← 문서 목록](README.md)
 
@@ -902,3 +902,13 @@ Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distribut
 ATTR_CMN_NAME=1은 getattrlist220/fgetattrlist228/getattrlistat476에서 명시적 카탈로그의 이름이 유일한 비루트 객체를 지원합니다. 리프 이름은 유효한 UTF-8 1..255바이트입니다. F_GETPATH와 공유하는 실제 객체 경로는 dup, CWD, 이동, SWAP, 삭제와 이름 재사용 뒤에도 마지막 연결 이름을 유지하며 호출자 별칭을 사용하지 않습니다. 이름과 유형은 stat 없이 조회하지만 선택한 stat 필드는 완전한 유효 관찰이 필요합니다. 루트/마운트 이름, 잘못된 이름, 하드 링크·대소문자 별칭, 정규화와 전체 경로 속성은 미지 상태입니다.
 
 8바이트 attrreference_t는 다른 공통 필드보다 앞에 있고 attr_dataoffset은 참조 자체 기준이며 attr_length는 NUL을 포함합니다. 이름 영역은4바이트 정렬됩니다. 짧은 출력은 전체 필요 길이와 UTF-8 중간을 포함한 정확한 접두 바이트를 유지합니다. attribute-names / attribute-names-values / attribute-names-unsupported는 guest/C/CLI/Python에서 원시 동작, 독립 바이트와 기존 출력을 유지하는 루트 이름 중단을 확인합니다. ARM64 준비는601 raw 조회,453 전체 보호 버퍼 SDK 비교,384 접두 검사를 통과했습니다. SDK15.5에는 raw476 형식 선언이 없습니다. native5s, guest/Python5,000,000us/quantum1024, 기존 공개10s는 그대로입니다. 원시 Intel, 실제 iOS, 전체 런타임/프레임워크는 미검증 또는 미완성입니다.
+
+## 제한된 디렉터리 일괄 속성
+
+getattrlistbulk(461)은 명시적인 enumeration_policy.bulk_attributes=true가 필요하며 생략 또는 false는 권한을 주지 않는다. 이 가상 TYPE 계약은 현재 직계 자식 이름을 부호 없는 바이트 순서로 반환한다. 점 항목 없이 로컬 서수를 사용하며 네이티브 파일 시스템 cookie를 추론하지 않는다. 초기 디렉터리 객체는 dup, 이동, SWAP, 삭제, 이름 재사용 후에도 권한을 유지하고 새 디렉터리는 일괄 권한을 상속하지 않는다. minimum_buffer_size, initial_minimum_buffer_size, seek_offset은 getdirentries64 전용이다.
+
+NAME|OBJTYPE|RETURNED_ATTRS (0x80000009)가 필수이며 선택한 관측이 유효하면 기존 열한 공통 필드를 사용할 수 있다. Options0/8을 허용한다. bulk는 두16비트 bitmap/reserved 워드를 독립 attrlist 검증과 별도로 무시한다. 단일 속성 인코더가 attrreference_t와 stat64 유효성을 공유한다. 완전한 레코드만 반환하며 공간이 충분하면8바이트 패딩, 마지막 그룹은4바이트 크기도 허용한다. 첫 그룹이 맞지 않으면 ERANGE로 출력과 커서를 유지한다. 필요한 출력 일부만 쓰기 가능하면 복사 전에 명시적으로 중단한다. 실제 반환 바이트만 쓰기 가능한 메모리가 필요하다.
+
+dup는 진행을 공유하고 별도 open은 독립적이다. 0이 아닌 완료 순회는 이름 공간 변경 뒤에도 EOF를 유지하고 요청 검증 후 크기/출력 검사를 건너뛴다. 처음 빈 디렉터리 offset0은 뷰를 다시 확인한다. 0 lseek는 반복을 재설정한다. EOF 전 구성 변경, 임의의 0 아닌 seek, getdirentries64/bulk 혼합은 중단한다. NAME-only 경로, ERROR 항목, 스냅샷, ACL/권한 판단, 호스트 순서와 다른 mask/options는 미지원이다. bulk-attributes / bulk-attributes-values / bulk-attributes-unsupported는 네이티브 공통 동작, 가상 리터럴과 이전 출력을 보존하는 미지원 선택을 검사한다. ARM64 비공개 준비에서 보호된 raw/SDK 비교728개가 통과했다. native5s, guest/Python5,000,000us/quantum1024, public10s는 그대로다. 네이티브 Intel, 실제 iOS, 완전한 런타임/프레임워크는 미검증 또는 미완성이다.
+
+Sources: [XNU bulk ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/man/man2/getattrlistbulk.2), [XNU attribute definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h). Original implementation and probes; no Apple implementation copied.

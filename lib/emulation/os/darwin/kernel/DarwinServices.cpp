@@ -183,6 +183,7 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::GetAttrList:
   case ServiceKind::FgetAttrList:
   case ServiceKind::GetAttrListAt:
+  case ServiceKind::GetAttrListBulk:
   case ServiceKind::GetXattr:
   case ServiceKind::FgetXattr:
   case ServiceKind::ListXattr:

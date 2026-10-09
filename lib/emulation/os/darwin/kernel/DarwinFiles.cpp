@@ -20,6 +20,10 @@ namespace neverd::emulation::darwin_model {
 using namespace value;
 namespace {
 namespace limits = darwin_file_limits;
+constexpr uint32_t StatAttributeMask =
+    AttributeDevice | AttributeBirthTime | AttributeModificationTime |
+    AttributeChangeTime | AttributeAccessTime | AttributeUID | AttributeGID |
+    AttributeMode | AttributeFlags | AttributeInode;
 bool canonicalPath(llvm::StringRef Path, bool AllowRoot = false) {
   if (AllowRoot && Path == "/")
     return true;
@@ -642,8 +646,10 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
   if (Snapshot != Options->DirectoryContents.end())
     Node->Snapshot = &Snapshot->second;
   const auto Enumeration = Options->DirectoryEnumerationPolicies.find(Path);
-  if (Enumeration != Options->DirectoryEnumerationPolicies.end())
+  if (Enumeration != Options->DirectoryEnumerationPolicies.end()) {
     Node->EnumerationPolicy = &Enumeration->second;
+    Node->BulkAttributes = Enumeration->second.BulkAttributes;
+  }
   const auto Mutation = Options->DirectoryMutationPolicies.find(Path);
   if (Mutation != Options->DirectoryMutationPolicies.end()) {
     Node->DirectoryEntrySize = Mutation->second.DirectoryEntrySize;
@@ -1096,59 +1102,41 @@ DarwinFiles::readAttributes(uint64_t Address) {
   return AttributeInput(Request);
 }
 
-llvm::Expected<std::optional<ServiceResult>> DarwinFiles::attributeList(
-    const Description &File, const AttributeRequest &Request, uint64_t Address,
-    uint64_t Size, uint64_t Options, ProcessResult &Result) {
-  if (Size < 4)
-    return returned(ResultTooLarge, true);
-  if (Request.BitmapCount != AttributeBitmapCount)
-    return returned(InvalidArgument, true);
-  if (llvm::any_of(llvm::ArrayRef(Request.Masks).drop_front(),
-                   [](uint32_t Mask) { return Mask != 0; }))
-    return unsupported(Result, diagnostic::FileAttributeSelection);
-  const uint32_t Mask = Request.Masks[0];
-  if ((Options & AttributePackInvalid) && !(Mask & AttributeReturned))
-    return returned(InvalidArgument, true);
-  if (Options & ~uint64_t(AttributeNoFollow | AttributeFullSize |
-                          AttributePackInvalid | AttributeNoFollowAny))
-    return unsupported(Result, diagnostic::FileAttributeOptions);
-  constexpr uint32_t StatMask =
-      AttributeDevice | AttributeBirthTime | AttributeModificationTime |
-      AttributeChangeTime | AttributeAccessTime | AttributeUID | AttributeGID |
-      AttributeMode | AttributeFlags | AttributeInode;
-  if (Mask &
-      ~(StatMask | AttributeName | AttributeObjectType | AttributeReturned))
-    return unsupported(Result, diagnostic::FileAttributeSelection);
+bool DarwinFiles::supportedAttributeMask(uint32_t Mask) {
+  return !(Mask & ~(StatAttributeMask | AttributeName | AttributeObjectType |
+                    AttributeReturned));
+}
+
+DarwinFiles::AttributeRecord
+DarwinFiles::attributeRecord(const Description &File, uint32_t Mask) const {
+  if (!supportedAttributeMask(Mask))
+    return diagnostic::FileAttributeSelection;
   const uint32_t Type = File.Type == Kind::File           ? 1
                         : File.Type == Kind::Directory    ? 2
                         : File.Type == Kind::SymbolicLink ? 5
                                                           : 0;
   if (!Type)
-    return unsupported(Result, diagnostic::FileAttributeKind);
+    return diagnostic::FileAttributeKind;
   std::optional<llvm::StringRef> Name;
   if (Mask & AttributeName) {
     const auto Path = File.path();
     // The root's label is a mount observation, not its synthetic guest path.
     // Select the declared object's spelling, never the caller's path alias.
     if (Path.empty() || Path == "/")
-      return unsupported(Result, diagnostic::FileAttributeName);
+      return diagnostic::FileAttributeName;
     Name = Path.substr(Path.rfind('/') + 1);
     const auto *Start = reinterpret_cast<const llvm::UTF8 *>(Name->data());
     if (Name->empty() || Name->size() > limits::Name ||
         !llvm::isLegalUTF8String(&Start, Start + Name->size()))
-      return unsupported(Result, diagnostic::FileAttributeName);
+      return diagnostic::FileAttributeName;
   }
   const DarwinFileMetadata *Metadata = nullptr;
-  if (Mask & StatMask) {
+  if (Mask & StatAttributeMask) {
     auto Selected = statusMetadata(File);
     if (auto *Reason = std::get_if<const char *>(&Selected))
-      return unsupported(Result, *Reason);
+      return *Reason;
     Metadata = std::get<const DarwinFileMetadata *>(Selected);
   }
-  // uio rejects a size_t which cannot be represented in its signed residual.
-  // The original native control reaches this after a valid attribute request.
-  if (Size > INT64_MAX)
-    return returned(InvalidArgument, true);
   std::vector<uint8_t> Bytes(4);
   auto Put = [&](uint64_t Value, unsigned Width) {
     const size_t Offset = Bytes.size();
@@ -1203,6 +1191,32 @@ llvm::Expected<std::optional<ServiceResult>> DarwinFiles::attributeList(
   // Admitted native queries report their complete required size,
   // including short buffers, independently of FULLSIZE/RETURNED_ATTRS.
   llvm::support::endian::write32le(Bytes.data(), Bytes.size());
+  return Bytes;
+}
+
+llvm::Expected<std::optional<ServiceResult>> DarwinFiles::attributeList(
+    const Description &File, const AttributeRequest &Request, uint64_t Address,
+    uint64_t Size, uint64_t Options, ProcessResult &Result) {
+  if (Size < 4)
+    return returned(ResultTooLarge, true);
+  if (Request.BitmapCount != AttributeBitmapCount)
+    return returned(InvalidArgument, true);
+  if (llvm::any_of(llvm::ArrayRef(Request.Masks).drop_front(),
+                   [](uint32_t Mask) { return Mask != 0; }))
+    return unsupported(Result, diagnostic::FileAttributeSelection);
+  const uint32_t Mask = Request.Masks[0];
+  if ((Options & AttributePackInvalid) && !(Mask & AttributeReturned))
+    return returned(InvalidArgument, true);
+  if (Options & ~uint64_t(AttributeNoFollow | AttributeFullSize |
+                          AttributePackInvalid | AttributeNoFollowAny))
+    return unsupported(Result, diagnostic::FileAttributeOptions);
+  auto Built = attributeRecord(File, Mask);
+  if (auto *Reason = std::get_if<const char *>(&Built))
+    return unsupported(Result, *Reason);
+  // Signed residual admission stays after selected object observations.
+  if (Size > INT64_MAX)
+    return returned(InvalidArgument, true);
+  const auto &Bytes = std::get<std::vector<uint8_t>>(Built);
   return copyout(
       Address,
       llvm::ArrayRef(Bytes).take_front(std::min<uint64_t>(Size, Bytes.size())),
@@ -2195,6 +2209,12 @@ ServiceResult DarwinFiles::seek(Description &File, uint64_t Offset,
     Base -= Magnitude;
   }
   File.Offset = Base;
+  if (File.Type == Kind::Directory && !Base) {
+    File.Iteration = DirectoryIteration::None;
+    File.BulkCursor = 0;
+    File.BulkEOF = false;
+    File.DirectoryVersion.reset();
+  }
   return {Base, false};
 }
 
@@ -2344,6 +2364,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       return resize(File, A[1], Result);
     }
   }
+  if (Service == ServiceKind::GetAttrListBulk)
+    return bulkAttributes(uint32_t(A[0]), A[1], A[2], A[3], A[4], Result);
   if (Service == ServiceKind::GetAttrList ||
       Service == ServiceKind::GetAttrListAt ||
       Service == ServiceKind::FgetAttrList) {

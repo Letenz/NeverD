@@ -1390,3 +1390,7 @@ Swift SDK Published 的 enclosing-instance 存取器保留四個指標載體：�
 ## 行動端原始碼組裝
 
 Objective-C 原始碼匯出器對完整原生單元與各方法單元同時關閉 `CEmitterOptions::EmitRecordGuards` 與 `CEmitterOptions::UseUnalignedPointers`。精確寬度的位元組複製保留非對齊記憶體存取語意，並使產生的巨集不進入行動端剖析器；條件指令與修改巨集的指令仍被拒絕。
+
+## 有界目錄批次屬性
+
+DarwinFiles 負責共通屬性匯入、名稱/stat 有效性與紀錄編碼；DarwinDirectory 負責批次分組、明確物件授權與描述物件擁有的迭代/游標/EOF 狀態，與 getdirentries64 共用目前子項投影。dup 共用同一描述物件，零 seek 重設迭代契約。JSON 提供明確策略輸入，服務派送不推斷檔案系統觀察。

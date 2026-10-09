@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
+<!-- i18n-source: 3d8ffe1d66c00abb1d60b3d786625b140504809467f73d6d11e5c7bea8c580fc -->
 
 [← 文件索引](README.md)
 
@@ -902,3 +902,13 @@ Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distribut
 ATTR_CMN_NAME=1 經 getattrlist220/fgetattrlist228/getattrlistat476 支援明確目錄中名稱唯一的非根物件。葉名稱須為 1..255 位元組合法 UTF-8。與 F_GETPATH 共用的實際物件路徑在 dup、CWD、移動、SWAP、刪除與名稱重用後保留最後連結的拼寫；呼叫者別名不覆蓋它。名稱與類型不依賴 stat；所選 stat 欄位仍需完整有效觀察。根/掛載標籤、非法名稱、硬連結或大小寫別名、正規化與完整路徑屬性保持未知。
 
 8 位元組 attrreference_t 位於其他共通欄位之前；attr_dataoffset 相對於引用本身，attr_length 包含 NUL，末尾名稱區域按四位元組填補。短輸出保留完整所需長度及精確前綴，包括截斷的 UTF-8。attribute-names / attribute-names-values / attribute-names-unsupported 經 guest/C/CLI/Python 檢查原生行為、獨立位元組及保留既有輸出的根名稱停止。ARM64 私有對照通過 601 次原始查詢、453 次完整保護緩衝區 SDK 比較與 384 次前綴檢查。SDK15.5 無 raw476 類型宣告。native5s、guest/Python5,000,000us/quantum1024、既有公開測試10s 不變。原生 Intel、實體 iOS 與完整執行階段/框架仍未驗證或未完成。
+
+## 有界目錄批次屬性
+
+getattrlistbulk(461) 需要明確 enumeration_policy.bulk_attributes=true；省略或 false 不授權。此虛擬 TYPE 契約依無號位元組順序回傳目前直接子項名稱，不含點項目，使用本地序號而非原生檔案系統 cookie。初始目錄物件跨 dup、移動、SWAP、刪除與名稱重用保留授權；新建目錄不繼承批次授權。既有 minimum_buffer_size、initial_minimum_buffer_size、seek_offset 僅用於 getdirentries64。
+
+必須選擇 NAME|OBJTYPE|RETURNED_ATTRS (0x80000009)，選取的觀察仍有效時可用已有十一項共通欄位。支援 Options0/8；bulk 忽略兩個16位元 bitmap/reserved 字，與獨立 attrlist 驗證分離。唯一屬性編碼器共用 attrreference_t 與 stat64 有效性。只回傳完整紀錄：放得下時依8位元組填補，否則允許最後一組為4位元組大小。首組放不下時回傳 ERANGE，輸出與游標不變；所需輸出僅部分可寫時在複製前明確停止。只有實際回傳的位元組需要可寫記憶體。
+
+dup 共用進度，獨立 open 各自前進。非零已完成遍歷在命名空間變化後仍保留 EOF，在請求驗證後略過大小與輸出檢查；初始空目錄 offset0 重新檢查檢視。零 lseek 重設迭代；EOF 前成員變化、任意非零 seek、混用 getdirentries64/bulk 明確停止。NAME-only 回退、含 ERROR 的項目、快照、ACL/權限判斷、主機順序及其他 mask/options 不支援。bulk-attributes / bulk-attributes-values / bulk-attributes-unsupported 檢查原生共同行為、虛擬字面位元組及保留既有輸出的未知選擇停止。ARM64 私有準備通過728組含保護區的 raw/SDK 比較。native5s、guest/Python5,000,000us/quantum1024、public10s 不變。原生 Intel、iOS 真機及完整執行期/框架仍未驗證或未完成。
+
+Sources: [XNU bulk ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/man/man2/getattrlistbulk.2), [XNU attribute definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h). Original implementation and probes; no Apple implementation copied.

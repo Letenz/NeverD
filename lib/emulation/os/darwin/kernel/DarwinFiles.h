@@ -81,6 +81,8 @@ private:
     const DarwinFileTime *MutationTime = nullptr;
     const DarwinDirectoryContents *Snapshot = nullptr;
     const DarwinDirectoryEnumerationPolicy *EnumerationPolicy = nullptr;
+    /// Bulk authorization belongs to an initial object, never its children.
+    bool BulkAttributes = false;
     uint64_t EnumerationVersion = 0;
     uint64_t PathCharge = 0;
     bool Created = false;
@@ -147,6 +149,7 @@ private:
       return PathCharge + (CreatedTarget ? CreatedTarget->size() : 0);
     }
   };
+  enum class DirectoryIteration { None, Entries, Bulk };
   struct Description {
     Kind Type;
     llvm::ArrayRef<uint8_t> Input;
@@ -160,6 +163,9 @@ private:
     bool FinalParentUnlinked = false;
     std::shared_ptr<LinkNode> Link;
     std::optional<uint64_t> DirectoryVersion;
+    DirectoryIteration Iteration = DirectoryIteration::None;
+    uint64_t BulkCursor = 0;
+    bool BulkEOF = false;
     llvm::ArrayRef<uint8_t> bytes() const {
       return File ? File->bytes() : Link ? Link->bytes() : Input;
     }
@@ -238,6 +244,12 @@ private:
     std::array<uint32_t, 5> Masks;
   };
   using AttributeInput = std::variant<AttributeRequest, uint32_t, const char *>;
+  using AttributeRecord = std::variant<std::vector<uint8_t>, const char *>;
+  static bool supportedAttributeMask(uint32_t Mask);
+  AttributeRecord attributeRecord(const Description &File, uint32_t Mask) const;
+  llvm::Expected<std::optional<ServiceResult>>
+  bulkAttributes(uint32_t FD, uint64_t Input, uint64_t Address, uint64_t Size,
+                 uint64_t Options, ProcessResult &Result);
   llvm::Expected<AttributeInput> readAttributes(uint64_t Address);
   llvm::Expected<Pathname> readExtendedAttributeName(uint64_t Address);
   const std::vector<DarwinExtendedAttribute> *

@@ -194,6 +194,7 @@ NEVERD_DARWIN_SERVICE(FpathConf, 192, Int)
 NEVERD_DARWIN_SERVICE(GetAttrList, 220, Int)
 NEVERD_DARWIN_SERVICE(FgetAttrList, 228, Int)
 NEVERD_DARWIN_SERVICE(GetAttrListAt, 476, Int)
+NEVERD_DARWIN_SERVICE(GetAttrListBulk, 461, Int)
 NEVERD_DARWIN_SERVICE(GetXattr, 234, Wide)
 NEVERD_DARWIN_SERVICE(FgetXattr, 235, Wide)
 NEVERD_DARWIN_SERVICE(ListXattr, 240, Wide)
@@ -385,6 +386,17 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     DirectorySwapOption,
     "Darwin swap rename support requires an explicit mutable initial directory")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryBulkPolicy,
+                         "Darwin bulk attribute enumeration is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryIterationMixed,
+                         "Darwin directory iteration requires an explicit zero "
+                         "rewind before changing APIs")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryBulkPosition,
+    "Darwin bulk attribute cursor does not match its virtual iteration")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryBulkPartialOutput,
+    "Darwin bulk attributes into a partially writable buffer are unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(FileInput, "Darwin standard input is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadataOption,
                          "invalid Darwin file or directory metadata or size")

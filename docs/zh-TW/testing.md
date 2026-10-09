@@ -1552,3 +1552,7 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: `ProcessCPUClocksRetainIdentityAndIdleSeparation`、`ProcessCPUClocksKeepMissingObservationBoundaries` 與 `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` 檢查八種固定版本的 raw／Bionic 身份、PROF／VIRT／SCHED、低 32 位引數、目標校驗先於指標故障、觀察值缺失、別名、CPU 非負值及牆鍾／CPU 空閒分離。`AndroidTimeTests.cpp` 檢查輸出和哨兵；協作式 syscall 樣例檢查當前非首領 TID 的程序組樣本。
 
 `ZeroTimeoutPollRetainsReadinessAndOrderedCopies` 覆蓋八個 GKI 分支的 O0／O2 原始呼叫，檢查存活／負數／已關閉描述符、重複計數、引數收窄、超時／掩碼順序、只讀零 timespec、全部元資料先於就緒，以及後續故障保留較早 `revents`。`ZeroTimeoutPollKeepsUnobservedBoundaries` 保留核心、限額、掩碼、等待和就緒狀態的未知邊界。Android 的 `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` 在六種打包配置中複驗共享表和 errno 所有權。
+
+## 有界目錄批次屬性
+
+bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護區、low32 FD、bitmap 字、原生錯誤、dup 共用進度、獨立 open、快取 EOF 與零 rewind。字面值與未知模式僅用於虛擬環境。模型另涵蓋完整 stat、失效、NFD/255位元組名稱、輸入/輸出別名、傳輸/預算失敗、移動/SWAP/刪除/重用及明確授權。每個平台必需63個工作負載：ARM64 為189例，Intel 為126例；本地僅驗證匹配的 ARM64 HVF。native5s、guest/Python5,000,000us/quantum1024、public10s 不變。

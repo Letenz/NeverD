@@ -425,6 +425,29 @@ protected:
     Options->Metadata["/data"].LinkCount = 1;
     Options->DirectoryEnumerationPolicies["/"] = {1, 64, Seek};
   }
+  uint64_t bulkRoot() {
+    enumerationPolicy();
+    Options->DirectoryEnumerationPolicies["/"].BulkAttributes = true;
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    path("/");
+    const auto Root = ok(ServiceKind::Open, {Base});
+    attributeRequest(0x80000009);
+    return Root;
+  }
+  void bulkBuffer(uint64_t FD, uint64_t Size, llvm::StringRef Hex,
+                  uint64_t Value, bool Error = false) {
+    const auto Expected = llvm::fromHex(Hex);
+    std::vector<uint8_t> Bytes(544, 0xa5), Wanted = Bytes;
+    std::copy(Expected.begin(), Expected.end(), Wanted.begin() + 16);
+    llvm::cantFail(Space->write(Base + Page, Bytes));
+    auto Got = invoke(ServiceKind::GetAttrListBulk,
+                      {FD, Base + 128, Base + Page + 16, Size});
+    ASSERT_TRUE(Got.has_value()) << Result.Diagnostic;
+    EXPECT_EQ(Got->Value, Value);
+    EXPECT_EQ(Got->Error, Error);
+    llvm::cantFail(Space->read(Base + Page, Bytes));
+    EXPECT_EQ(Bytes, Wanted);
+  }
   std::vector<uint8_t> directoryBytes(uint64_t FD, uint64_t Count = 1024) {
     const uint64_t Buffer = Base + 256, Position = Base + Page;
     std::vector<uint8_t> Canary(Count + 16, 0xa5);
@@ -13248,6 +13271,438 @@ TEST(DarwinFileOptions, XattrAdmissionChargesBytesAndImplicitDirectoriesOnce) {
   auto Count = validateFileOptions(O);
   EXPECT_TRUE(bool(Count));
   llvm::consumeError(std::move(Count));
+}
+
+TEST_P(DarwinFileTest, AttributeBulkUsesLiteralNamesTypesAndCompleteGroups) {
+  const auto Root = bulkRoot();
+  makeDirectory("/adir");
+  makeLink("/zlink", "missing");
+  const char *Golden =
+      "3000000009000080000000000000000000000000000000000c00000005000000"
+      "02000000616469720000000000000000"
+      "3000000009000080000000000000000000000000000000000c00000005000000"
+      "01000000646174610000000000000000"
+      "3000000009000080000000000000000000000000000000000c00000006000000"
+      "050000007a6c696e6b00000000000000";
+  bulkBuffer(Root, 512, Golden, 3);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 3u);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Root, Base + 128, UINT64_MAX, UINT64_MAX}),
+            0u);
+}
+
+TEST_P(DarwinFileTest, AttributeBulkBoundariesRetainAllOutputAndGuardBytes) {
+  const auto Root = bulkRoot();
+  const auto Wide = 0xabcdef1200000000ULL | Root;
+  for (uint64_t Size : {0u, 1u, 31u, 32u, 35u, 36u, 39u, 40u, 43u, 44u, 45u,
+                        47u, 48u, 49u, 63u, 64u, 512u}) {
+    SCOPED_TRACE(Size);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 0}), 0u);
+    if (!Size || Size < 44) {
+      bulkBuffer(Wide, Size, "", !Size ? 22 : 34, true);
+      EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 0u);
+    } else {
+      bulkBuffer(Wide, Size,
+                 Size < 48 ? darwin_test::AttributeNamesHex
+                           : "3000000009000080000000000000000000000000000000000"
+                             "c00000005000000"
+                             "01000000646174610000000000000000",
+                 1);
+      EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 1u);
+    }
+  }
+}
+
+TEST_P(DarwinFileTest, AttributeBulkIgnoresBitmapWordsWithoutChangingAttrlist) {
+  const auto Root = bulkRoot();
+  for (uint16_t Count : {0, 1, 4, 5, 6, 65535}) {
+    SCOPED_TRACE(Count);
+    attributeRequest(0x80000009, Count, 0xffff);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 0}), 0u);
+    EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+                 {Root, Base + 128, Base + Page + 16, 512, 8}),
+              1u);
+    EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+                 {Root, Base + 128, UINT64_MAX, UINT64_MAX, 8}),
+              0u);
+  }
+  path("/data");
+  const auto File = ok(ServiceKind::Open, {Base});
+  error(ServiceKind::FgetAttrList, {File, Base + 128, Base + Page + 16, 512},
+        22);
+}
+
+TEST_P(DarwinFileTest,
+       AttributeBulkChecksFDTypeImportAndRequiredMasksBeforeEOF) {
+  Options->WritableFiles.insert("/data");
+  const auto Root = bulkRoot();
+  path("/data");
+  const auto File = ok(ServiceKind::Open, {Base});
+  const auto WriteOnly = ok(ServiceKind::Open, {Base, 1});
+  error(ServiceKind::GetAttrListBulk, {UINT64_MAX, UINT64_MAX, UINT64_MAX, 0},
+        9);
+  error(ServiceKind::GetAttrListBulk, {File, UINT64_MAX, UINT64_MAX, 0}, 20);
+  error(ServiceKind::GetAttrListBulk, {WriteOnly, UINT64_MAX, UINT64_MAX, 0},
+        9);
+  error(ServiceKind::GetAttrListBulk, {Root, UINT64_MAX, UINT64_MAX, 0}, 14);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Root, Base + 128, Base + Page + 16, 512}),
+            1u);
+  error(ServiceKind::GetAttrListBulk, {Root, UINT64_MAX, UINT64_MAX, 0}, 14);
+  for (uint32_t Mask : {0x80000008u, 9u}) {
+    attributeRequest(Mask);
+    error(ServiceKind::GetAttrListBulk, {Root, Base + 128, UINT64_MAX, 0}, 22);
+  }
+  attributeRequest(0x80000009, 5, 0, {1, 0, 0, 0});
+  error(ServiceKind::GetAttrListBulk, {Root, Base + 128, UINT64_MAX, 0}, 22);
+}
+
+TEST_P(DarwinFileTest, AttributeBulkDupSharesProgressAndZeroSeekResetsMixing) {
+  const auto Root = bulkRoot();
+  makeFile("/z");
+  const auto Copy = ok(ServiceKind::Dup, {Root});
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Root, Base + 128, Base + Page + 16, 48}),
+            1u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Copy, 0, 1}), 1u);
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64,
+                      {Copy, Base + 256, 1024, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryIterationMixed);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Copy, Base + 128, Base + Page + 16, 512}),
+            1u);
+  path("/");
+  const auto Separate = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Separate, Base + 128, Base + Page + 16, 512}),
+            2u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Copy, 0, 0}), 0u);
+  EXPECT_EQ(directoryBytes(Root).size(), 128u);
+  EXPECT_FALSE(invoke(ServiceKind::GetAttrListBulk,
+                      {Root, Base + 128, Base + Page + 16, 512}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryIterationMixed);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Root, Base + 128, Base + Page + 16, 512}),
+            2u);
+}
+
+TEST_P(DarwinFileTest, AttributeBulkEOFAndVersionRulesRemainIndependent) {
+  const auto Root = bulkRoot();
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Root, Base + 128, Base + Page + 16, 512}),
+            1u);
+  makeFile("/after");
+  for (uint64_t Size : {uint64_t(0), uint64_t(1), uint64_t(INT64_MAX),
+                        uint64_t(INT64_MAX) + 1, UINT64_MAX})
+    EXPECT_EQ(
+        ok(ServiceKind::GetAttrListBulk, {Root, Base + 128, UINT64_MAX, Size}),
+        0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Root, Base + 128, Base + Page + 16, 48}),
+            1u);
+  makeFile("/z");
+  EXPECT_FALSE(invoke(ServiceKind::GetAttrListBulk,
+                      {Root, Base + 128, Base + Page + 16, 512}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryEnumerationVersion);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 99, 0}), 99u);
+  EXPECT_FALSE(invoke(ServiceKind::GetAttrListBulk,
+                      {Root, Base + 128, Base + Page + 16, 512}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryBulkPosition);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Root, Base + 128, Base + Page + 16, 512}),
+            3u);
+}
+
+TEST_P(DarwinFileTest, AttributeBulkEmptyRefreshesAndIgnoresUnusedOutput) {
+  enumerationPolicy();
+  Options->Directories.insert("/empty");
+  Options->Metadata["/empty"] = darwin_test::creationParentMetadata();
+  Options->Metadata["/empty"].Inode = 77;
+  Options->MutableDirectories.insert("/empty");
+  Options->RemovableDirectories.insert("/empty");
+  Options->DirectoryEnumerationPolicies["/empty"] = {1, 64, 0, true};
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/empty");
+  const auto Empty = ok(ServiceKind::Open, {Base});
+  attributeRequest(0x80000009);
+  error(ServiceKind::GetAttrListBulk, {Empty, Base + 128, UINT64_MAX, 0}, 22);
+  EXPECT_EQ(
+      ok(ServiceKind::GetAttrListBulk, {Empty, Base + 128, UINT64_MAX, 1}), 0u);
+  const auto Child = makeFile("/empty/new");
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Empty, Base + 128, Base + Page + 16, 512}),
+            1u);
+  path("/empty/new");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Child}), 0u);
+  path("/empty");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Empty, 0, 0}), 0u);
+  EXPECT_EQ(
+      ok(ServiceKind::GetAttrListBulk, {Empty, Base + 128, UINT64_MAX, 1}), 0u);
+  const auto New = makeDirectory("/empty");
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetAttrListBulk, {New, Base + 128, UINT64_MAX, 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryBulkPolicy);
+}
+
+TEST_P(DarwinFileTest, AttributeBulkUnknownSelectionsAndPolicyNeverInventData) {
+  enumerationPolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  attributeRequest(0x80000009);
+  EXPECT_FALSE(invoke(ServiceKind::GetAttrListBulk,
+                      {Root, Base + 128, Base + Page + 16, 512}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryBulkPolicy);
+  Options->DirectoryEnumerationPolicies["/"].BulkAttributes = true;
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto Granted = ok(ServiceKind::Open, {Base});
+  for (uint32_t Mask : {0x80000001u, 0xa0000009u, 0x80400009u}) {
+    attributeRequest(Mask);
+    EXPECT_FALSE(invoke(ServiceKind::GetAttrListBulk,
+                        {Granted, Base + 128, Base + Page + 16, 512}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileAttributeSelection);
+  }
+}
+
+TEST_P(DarwinFileTest, AttributeBulkBadAndPartialOutputPreserveCursorAndBytes) {
+  const auto Root = bulkRoot();
+  error(ServiceKind::GetAttrListBulk, {Root, Base + 128, UINT64_MAX, 512}, 34);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 0u);
+  const uint64_t End = Base + Page * 2;
+  std::array<uint8_t, 64> Bytes;
+  Bytes.fill(0xa5);
+  llvm::cantFail(Space->write(End - 64, Bytes));
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetAttrListBulk, {Root, Base + 128, End - 44, 512}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryBulkPartialOutput);
+  std::array<uint8_t, 64> After;
+  llvm::cantFail(Space->read(End - 64, After));
+  EXPECT_EQ(After, Bytes);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk, {Root, Base + 128, End - 48, 512}),
+            1u);
+}
+
+TEST_P(DarwinFileTest, AttributeBulkRequestOutputAliasingImportsExactlyOnce) {
+  const auto Root = bulkRoot();
+  EXPECT_EQ(
+      ok(ServiceKind::GetAttrListBulk, {Root, Base + 128, Base + 128, 48}), 1u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + 128, 4)), 48u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 1u);
+}
+
+TEST_P(DarwinFileTest, AttributeBulkSharesStatValidityAndIndependentFullBytes) {
+  enumerationPolicy();
+  Options->DirectoryEnumerationPolicies["/"].BulkAttributes = true;
+  Options->Metadata["/data"] = darwin_test::metadata(6);
+  Options->CreationPolicy.reset();
+  Options->MutableDirectories.clear();
+  auto Validated = validateFileOptions(*Options);
+  ASSERT_FALSE(bool(Validated)) << llvm::toString(std::move(Validated));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  attributeRequest(0x82079e0b);
+  bulkBuffer(Root, 512, darwin_test::CommonNameAttributesHex, 1);
+
+  enumerationPolicy();
+  Options->DirectoryEnumerationPolicies["/"].BulkAttributes = true;
+  Options->WritableFiles.insert("/data");
+  Options->MutationPolicies.clear();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto ChangedRoot = ok(ServiceKind::Open, {Base});
+  path("/data");
+  const auto File = ok(ServiceKind::Open, {Base, 2});
+  EXPECT_EQ(ok(ServiceKind::Write, {File, Base + 512, 1}), 1u);
+  attributeRequest(0x82079e0b);
+  EXPECT_FALSE(invoke(ServiceKind::GetAttrListBulk,
+                      {ChangedRoot, Base + 128, Base + Page + 16, 512}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {ChangedRoot, 0, 1}), 0u);
+  attributeRequest(0x80000009);
+  bulkBuffer(ChangedRoot, 44, darwin_test::AttributeNamesHex, 1);
+}
+
+TEST_P(DarwinFileTest,
+       AttributeBulkTransportFailuresKeepOutputAndCursorPrivate) {
+  bulkRoot();
+  FailingFileInput Input(*Space);
+  Files = std::make_unique<DarwinFiles>(Input, Options);
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  std::array<uint8_t, 64> Canary;
+  Canary.fill(0xa5);
+  llvm::cantFail(Space->write(Base + Page, Canary));
+  for (unsigned Phase = 0; Phase != 4; ++Phase)
+    for (bool Budget : {false, true}) {
+      SCOPED_TRACE(Phase);
+      SCOPED_TRACE(Budget);
+      Input.FailureAddress = Phase < 2 ? Base + 128 : Base + Page;
+      Input.FailAccess = Phase == 0 || Phase == 2;
+      Input.FailRead = Phase == 1;
+      Input.FailWrite = Phase == 3;
+      Input.FailBudget = Budget;
+      auto Failed = Files->handle(
+          ServiceKind::GetAttrListBulk,
+          {0, 0, {Root, Base + 128, Base + Page + 8, 48}, std::nullopt},
+          Result);
+      ASSERT_FALSE(bool(Failed));
+      if (Budget)
+        llvm::consumeError(Failed.takeError());
+      else
+        EXPECT_EQ(llvm::toString(Failed.takeError()),
+                  Phase == 0 || Phase == 2 ? "file input preflight failed"
+                  : Phase == 1             ? "file input transport failed"
+                                           : "file output transport failed");
+      Input.FailAccess = Input.FailRead = Input.FailWrite = Input.FailBudget =
+          false;
+      std::array<uint8_t, 64> After;
+      llvm::cantFail(Space->read(Base + Page, After));
+      EXPECT_EQ(After, Canary);
+      EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 0u);
+    }
+  bulkBuffer(Root, 44, darwin_test::AttributeNamesHex, 1);
+}
+
+TEST_P(DarwinFileTest, AttributeBulkKeepsNFDAndMaximumNamesInCompleteGroups) {
+  const auto Root = bulkRoot();
+  makeFile("/e\xcc\x81");
+  makeFile("/" + std::string(255, 'z'));
+  attributeRequest(0x80000009);
+  const std::string Short =
+      "3000000009000080000000000000000000000000000000000c00000005000000"
+      "01000000646174610000000000000000"
+      "2800000009000080000000000000000000000000000000000c00000004000000"
+      "0100000065cc8100";
+  // Literal header/reference and255 original bytes, independent of the codec.
+  std::string Long =
+      "2801000009000080000000000000000000000000000000000c00000000010000"
+      "01000000";
+  for (unsigned I = 0; I != 255; ++I)
+    Long += "7a";
+  Long += "0000000000";
+  bulkBuffer(Root, 88, Short, 2);
+  bulkBuffer(Root, 291, "", 34, true);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 2u);
+  auto LastFour = Long;
+  LastFour.replace(0, 8, "24010000");
+  LastFour.resize(LastFour.size() - 8);
+  bulkBuffer(Root, 292, LastFour, 1);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 0}), 0u);
+  bulkBuffer(Root, 512, Short + Long, 3);
+}
+
+TEST_P(DarwinFileTest, AttributeBulkGrantsFollowHeldMoveAndSwapObjects) {
+  enumerationPolicy();
+  Options->Directories.insert("/a");
+  Options->Directories.insert("/b");
+  Options->MovableDirectories = {"/a", "/b"};
+  Options->ExchangeableDirectories = {"/a", "/b"};
+  Options->SwapRenameDirectories.insert("/");
+  for (const char *Name : {"/a", "/b"}) {
+    auto M = darwin_test::creationParentMetadata();
+    M.Inode = llvm::StringRef(Name) == "/a" ? 71 : 72;
+    Options->Metadata[Name] = M;
+  }
+  Options->Files["/a/x"] = {};
+  Options->Metadata["/a/x"] = darwin_test::mutationMetadata(0);
+  Options->Metadata["/a/x"].Inode = 73;
+  Options->DirectoryEnumerationPolicies["/a"] = {1, 64, 0, true};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/a");
+  const auto Held = ok(ServiceKind::Open, {Base});
+  const auto Copy = ok(ServiceKind::Dup, {Held});
+  attributeRequest(0x80000009);
+  const char *X =
+      "2800000009000080000000000000000000000000000000000c00000002000000"
+      "0100000078000000";
+  bulkBuffer(Held, 40, X, 1);
+  swapFiles("/a", "/b");
+  attributeRequest(0x80000009);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk, {Copy, Base + 128, UINT64_MAX, 0}),
+            0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Copy, 0, 0}), 0u);
+  bulkBuffer(Held, 40, X, 1);
+  path("/a");
+  const auto Ungranted = ok(ServiceKind::Open, {Base});
+  EXPECT_FALSE(invoke(ServiceKind::GetAttrListBulk,
+                      {Ungranted, Base + 128, UINT64_MAX, 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryBulkPolicy);
+  path("/b");
+  path("/moved", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 128}), 0u);
+  attributeRequest(0x80000009);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Held, 0, 0}), 0u);
+  bulkBuffer(Copy, 40, X, 1);
+  const auto Reused = makeDirectory("/b");
+  attributeRequest(0x80000009);
+  EXPECT_FALSE(invoke(ServiceKind::GetAttrListBulk,
+                      {Reused, Base + 128, UINT64_MAX, 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryBulkPolicy);
+}
+
+TEST_P(DarwinFileTest, AttributeBulkDoesNotConsumeDescriptorsOrCatalogueSlots) {
+  Options->DescriptorLimit = 4;
+  enumerationPolicy();
+  Options->DirectoryEnumerationPolicies["/"].BulkAttributes = true;
+  for (unsigned I = 0; I != 254; ++I) {
+    const auto Name = "/f" + std::to_string(I);
+    Options->Files[Name] = {};
+    Options->Metadata[Name] = darwin_test::mutationMetadata(0);
+    Options->Metadata[Name].Inode = 101 + I;
+  }
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  error(ServiceKind::Open, {Base}, 24);
+  attributeRequest(0x80000009);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Root, Base + 128, Base + Page + 16, 48}),
+            1u);
+  error(ServiceKind::Open, {Base}, 24);
+  EXPECT_EQ(Options->Files.size(), 255u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Root}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Open, {Base}), Root);
+}
+
+TEST_P(DarwinFileTest,
+       AttributeBulkSeparatesFreshSizesInputFaultsAndCachedEOF) {
+  const auto Root = bulkRoot();
+  for (uint64_t Size : {uint64_t(INT64_MAX) + 1, UINT64_MAX})
+    bulkBuffer(Root, Size, "", 22, true);
+  EXPECT_FALSE(invoke(ServiceKind::GetAttrListBulk,
+                      {Root, Base + Page * 2 - 12, UINT64_MAX, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileAttributePartialInput);
+  EXPECT_FALSE(invoke(ServiceKind::GetAttrListBulk,
+                      {Root, Base + 128, UINT64_MAX, 0, 0x100000008ULL}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileAttributeOptions);
+  bulkBuffer(Root, 44, darwin_test::AttributeNamesHex, 1);
+  for (uint16_t Count : {0, 4, 65535}) {
+    attributeRequest(0x80000009, Count, 0xffff);
+    for (uint64_t Size : {uint64_t(0), uint64_t(INT64_MAX) + 1, UINT64_MAX})
+      EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+                   {Root, Base + 128, UINT64_MAX, Size, 8}),
+                0u);
+  }
+}
+
+TEST_P(DarwinFileTest, AttributeBulkDoesNotInheritIntoCreatedDirectories) {
+  bulkRoot();
+  const auto Child = makeDirectory("/new");
+  attributeRequest(0x80000009);
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetAttrListBulk, {Child, Base + 128, UINT64_MAX, 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryBulkPolicy);
+  EXPECT_EQ(directoryBytes(Child).size(), 64u);
 }
 
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));

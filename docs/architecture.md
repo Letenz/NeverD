@@ -3607,3 +3607,7 @@ Frame-offset proof keys normalize a top-level 64-bit address sum by removing its
 ## Mobile source assembly
 
 The Objective-C source exporter clears `CEmitterOptions::EmitRecordGuards` and `CEmitterOptions::UseUnalignedPointers` for the complete native unit and individual method units. Exact-width byte copies preserve unaligned memory access while keeping generated macros outside the mobile parser; conditional and mutating directives remain rejected.
+
+## Bounded bulk directory attributes
+
+DarwinFiles owns common attribute import, name/stat validity and record encoding. DarwinDirectory owns bulk grouping, explicit object authorization and description-owned iteration/cursor/EOF state, sharing the live child membership projection with getdirentries64. Dup shares one description; zero seek resets its iteration contract. JSON supplies explicit policy inputs, and service dispatch delegates without inventing filesystem observations.

@@ -1768,3 +1768,12 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names-values")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names-unsupported")
 #endif
+
+// Bounded TYPE-provider directory bulk vocabulary.
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "getattrlistbulk(461)")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "enumeration_policy.bulk_attributes=true")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "bulk-attributes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "bulk-attributes-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "bulk-attributes-unsupported")
+#endif

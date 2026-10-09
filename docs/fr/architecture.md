@@ -1592,3 +1592,7 @@ Les clés de preuve des décalages de trame normalisent la somme de premier nive
 ## Assemblage des sources mobiles
 
 L’exporteur de sources Objective-C désactive `CEmitterOptions::EmitRecordGuards` et `CEmitterOptions::UseUnalignedPointers` pour l’unité native complète et chaque unité de méthode. Les copies d’octets de largeur exacte préservent les accès mémoire non alignés sans introduire de macros générées dans l’analyseur mobile ; les directives conditionnelles et celles qui modifient des macros restent refusées.
+
+## Attributs de répertoire groupés bornés
+
+DarwinFiles possède import commun, validité nom/stat et encodage des enregistrements. DarwinDirectory possède groupes, autorisation d’objet et état itération/curseur/EOF de la description ; il partage la projection des enfants actuels avec getdirentries64. dup partage une description ; seek zéro réinitialise son contrat. JSON fournit les politiques explicites, sans observation de système de fichiers inventée par le dispatch.

@@ -582,6 +582,7 @@ TEST(ProcessReport, DarwinVirtualEnumerationPolicyIsStrictAndLossless) {
   EXPECT_EQ(P.MinimumBufferSize, 1u);
   EXPECT_EQ(P.InitialMinimumBufferSize, 64u);
   EXPECT_EQ(P.SeekOffset, UINT64_MAX);
+  EXPECT_FALSE(P.BulkAttributes);
   auto Refused = [&](const llvm::json::Value &V) {
     auto Out = Parse(V);
     EXPECT_FALSE(bool(Out)) << llvm::formatv("{0}", V).str();
@@ -600,6 +601,21 @@ TEST(ProcessReport, DarwinVirtualEnumerationPolicyIsStrictAndLossless) {
   }
   for (const char *Bad : {"null", "[]", "{}", "false", "1"})
     Refused(llvm::cantFail(llvm::json::parse(Bad)));
+  for (bool Enabled : {false, true}) {
+    auto V = Good;
+    (*V.getAsObject())["bulk_attributes"] = Enabled;
+    auto Out = Parse(V);
+    ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+    EXPECT_EQ(
+        Out->DarwinFiles->DirectoryEnumerationPolicies.at("/").BulkAttributes,
+        Enabled);
+  }
+  for (const char *Bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto V = Good;
+    (*V.getAsObject())["bulk_attributes"] =
+        llvm::cantFail(llvm::json::parse(Bad));
+    Refused(V);
+  }
   auto V = Good;
   (*V.getAsObject())["extra"] = 1;
   Refused(V);

@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
+<!-- i18n-source: 3d8ffe1d66c00abb1d60b3d786625b140504809467f73d6d11e5c7bea8c580fc -->
 
 [← فهرس الوثائق](README.md)
 
@@ -900,3 +900,13 @@ Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distribut
 يدعم ATTR_CMN_NAME=1 عبر getattrlist220/fgetattrlist228/getattrlistat476 كائنًا غير جذري له اسم فريد في الكتالوج الصريح. اسم الورقة UTF-8 صالح بطول1..255 بايت. المسار الفعلي المشترك مع F_GETPATH يحتفظ بآخر تهجئة مرتبطة عبر dup وCWD والنقل وSWAP والحذف وإعادة استخدام الاسم؛ لا تحل أسماء المستدعي البديلة محلها. الاسم والنوع لا يحتاجان stat، أما حقول stat المختارة فتحتاج ملاحظات كاملة صالحة. تبقى تسميات الجذر/التركيب والأسماء غير الصالحة وأسماء الروابط الصلبة أو حالة الأحرف والتطبيع والمسار الكامل مجهولة.
 
 يسبق attrreference_t بطول8 بايت بقية الحقول؛ attr_dataoffset نسبي إلى المرجع، وattr_length يتضمن NUL، وتُحشى منطقة الاسم إلى4 بايت. يحتفظ الإخراج القصير بالطول الكامل والبادئات الدقيقة حتى مع UTF-8 جزئي. تتحقق attribute-names / attribute-names-values / attribute-names-unsupported عبر guest/C/CLI/Python من السلوك الأصلي والبايتات المستقلة والتوقف عند اسم الجذر مع حفظ الإخراج السابق. ARM64:601 استعلام raw و453 مقارنة SDK لكامل المخزن المحمي و384 فحص بادئة. SDK15.5 لا يعلن raw476. native5s وguest/Python5,000,000us/quantum1024 وpublic10s دون تغيير. Native Intel وiOS الفعلي وruntime/framework الكامل تبقى غير مكتملة أو غير متحققة.
+
+## سمات دليل مجمعة محدودة
+
+يتطلب getattrlistbulk(461) التصريح الصريح enumeration_policy.bulk_attributes=true؛ الإغفال أو false لا يمنح صلاحية. يعيد عقد TYPE الافتراضي أسماء الأبناء المباشرين الحالية بترتيب البايتات غير الموقعة، دون عناصر النقطة، وبترتيب محلي بدل cookie نظام الملفات الأصلي. يحتفظ كائن الدليل الأولي بالصلاحية عبر dup والنقل وSWAP والحذف وإعادة استعمال الاسم؛ ولا ترثها الأدلة الجديدة. minimum_buffer_size وinitial_minimum_buffer_size وseek_offset تخص getdirentries64 فقط.
+
+يلزم NAME|OBJTYPE|RETURNED_ATTRS (0x80000009)، وتتاح الحقول المشتركة الأحد عشر الموجودة عندما تظل الملاحظات المختارة صالحة. يسمح Options0/8. يتجاهل bulk كلمتي bitmap/reserved من16 بت بصورة مستقلة عن تحقق attrlist العادي. يشترك مشفر واحد في attrreference_t وصلاحية stat64. لا تعاد إلا سجلات كاملة: حشو8 بايت حين يتسع، وإلا يسمح بحجم4 بايت للمجموعة الأخيرة. عدم اتساع أول مجموعة يعيد ERANGE دون تغيير الإخراج أو المؤشر؛ وتوقف منطقة الإخراج المطلوبة القابلة للكتابة جزئياً قبل النسخ. تحتاج البايتات المعادة فعلياً فقط إلى ذاكرة قابلة للكتابة.
+
+يشترك dup في التقدم وتبقى عمليات open المنفصلة مستقلة. يحفظ الاجتياز المكتمل غير الصفري EOF بعد تغييرات مساحة الأسماء ويتجاوز الحجم/الإخراج بعد تحقق الطلب. يعيد الدليل الفارغ أولياً عند offset0 فحص العرض. يعيد lseek الصفري ضبط التكرار. تغير العضوية قبل EOF وseek غير صفري عشوائي وخلط getdirentries64/bulk توقف صراحة. NAME-only وعناصر ERROR واللقطات وACL/الأذونات وترتيب المضيف وغيرها من mask/options غير مدعومة. تتحقق bulk-attributes / bulk-attributes-values / bulk-attributes-unsupported من السلوك الأصلي المشترك والبايتات الافتراضية الحرفية والاختيار المجهول مع حفظ الإخراج السابق. نجح إعداد ARM64 الخاص في728 مقارنة raw/SDK محمية. تبقى native5s وguest/Python5,000,000us/quantum1024 وpublic10s بلا تغيير. Intel الأصلي وiOS الفعلي والبيئات الكاملة غير متحققة أو غير مكتملة.
+
+Sources: [XNU bulk ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/man/man2/getattrlistbulk.2), [XNU attribute definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h). Original implementation and probes; no Apple implementation copied.

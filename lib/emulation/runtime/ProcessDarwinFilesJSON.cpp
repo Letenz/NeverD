@@ -71,7 +71,9 @@ directoryContents(const llvm::json::Value &Value) {
 llvm::Expected<DarwinDirectoryEnumerationPolicy>
 enumerationPolicy(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
-  if (!Object || Object->size() != 3)
+  if (!Object ||
+      Object->size() !=
+          3 + unsigned(bool(Object->get(field::DirectoryBulkAttributes))))
     return invalid(field::DirectoryEnumerationPolicy);
   DarwinDirectoryEnumerationPolicy Out;
   auto Number = [&](llvm::StringRef Key, auto &Destination) -> llvm::Error {
@@ -90,6 +92,12 @@ enumerationPolicy(const llvm::json::Value &Value) {
     return Error;
   if (auto Error = Number(field::DirectorySeekOffset, Out.SeekOffset))
     return Error;
+  if (const auto *Value = Object->get(field::DirectoryBulkAttributes)) {
+    const auto Enabled = Value->getAsBoolean();
+    if (!Enabled)
+      return invalid(field::DirectoryBulkAttributes);
+    Out.BulkAttributes = *Enabled;
+  }
   return Out;
 }
 llvm::Expected<DarwinFileTime> fileTime(const llvm::json::Value *Value,

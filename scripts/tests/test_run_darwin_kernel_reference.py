@@ -73,7 +73,7 @@ class DarwinKernelReferenceTests(unittest.TestCase):
                 self.assertTrue((path.parent / "cycle").is_symlink())
                 self.assertEqual((path.parent / "dirlink").readlink(), Path("empty"))
                 self.assertFalse((path.parent / "dangling").exists())
-            elif command[1] in ("kernel-pathconf", "common-attributes", "extended-attributes", "attribute-names"):
+            elif command[1] in ("kernel-pathconf", "common-attributes", "extended-attributes", "attribute-names", "bulk-attributes"):
                 self.assertEqual({item.name for item in path.parent.iterdir()},
                                  {"data", "empty", "alias", "dangling", "cycle"})
                 self.assertEqual((path.parent / "alias").readlink(), Path("data"))
@@ -119,7 +119,7 @@ class DarwinKernelReferenceTests(unittest.TestCase):
                  ("directory-link-roots", 37, b""),
                  ("directory-entries", 37, b""),
                  ("kernel-pathconf", 37, b""), ("common-attributes", 37, b""),
-                 ("extended-attributes", 37, b""), ("attribute-names", 37, b"")])
+                 ("extended-attributes", 37, b""), ("attribute-names", 37, b""), ("bulk-attributes", 37, b"")])
             self.assertEqual(attributes.call_count, 3)
             self.assertEqual([(call.args[1], call.args[2]) for call in attributes.call_args_list],
                              [("user.neverd.beta", b"\x00\xffA\x00\x80B\n"),
@@ -130,6 +130,7 @@ class DarwinKernelReferenceTests(unittest.TestCase):
         self.assertNotIn(roots[10], roots[:10])
         self.assertNotIn(roots[11], roots[:11])
         self.assertNotIn(roots[12], roots[:12])
+        self.assertNotIn(roots[13], roots[:13])
         self.assertNotEqual(roots[0], roots[1])
         self.assertNotIn(roots[2], roots[:2])
         self.assertNotIn(roots[3], roots[:3])

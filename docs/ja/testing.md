@@ -1606,3 +1606,7 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: 八つの固定版で raw／Bionic の識別、PROF／VIRT／SCHED、下位 32 ビット、ポインター故障より先の対象検証、標本欠落、別名、非負 CPU 時間、壁時計と CPU のアイドル分離を確認します。`AndroidTimeTests.cpp` は出力とカナリアを、協調 syscall は現在の非リーダー TID を確認します。
 
 `ZeroTimeoutPollRetainsReadinessAndOrderedCopies` は八版の O0／O2 生呼び出しで、生存・負・閉じた記述子、重複件数、引数の縮小、タイムアウトとマスクの順序、読み取り専用ゼロ timespec、全メタデータの先行取り込み、後続障害で残る `revents` を検証します。`ZeroTimeoutPollKeepsUnobservedBoundaries` は未観測のカーネル、上限、マスク、待機、準備状態を維持します。Android の `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` は六つの梱包形式で共有表と errno の所有者を確認します。
+
+## 有界ディレクトリ一括属性
+
+bulk-attributes は完全なグループ、名前/型の集合、未使用バイトの保護、low32 FD、bitmap ワード、ネイティブエラー、dup、独立 open、EOF、ゼロ rewind を確認する。リテラル/未対応モードは仮想専用。モデルは完全な stat と無効化、NFD/255バイト名、入出力の別名、転送/予算エラー、移動/SWAP/削除/再使用、明示権限も確認する。必須在庫はプラットフォーム当たり63項目、ARM64 は189件、Intel は126件。本機で検証した実行は一致する ARM64 HVF のみ。native5s、guest/Python5,000,000us/quantum1024、public10s は不変。
