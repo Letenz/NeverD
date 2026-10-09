@@ -1586,16 +1586,13 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   // A C library routine returns the floating type its declaration names,
   // or a math routine the one its arguments have.
   if (const libc::LibCPrototype *Prototype = calleePrototype(E)) {
-    if (Prototype->Return == "double")
-      return NdType::makeFloat(sizeof(double));
-    if (Prototype->Return == "float")
-      return NdType::makeFloat(sizeof(float));
+    if (const uint16_t Bytes = libc::floatReturnBytes(*Prototype))
+      return NdType::makeFloat(Bytes);
+    return {};
   }
-  if (const auto Arity = libc::libcArityForSymbol(Name);
-      Arity && !Arity->FpRetLongDouble && !Arity->FpRetComplex &&
-      (Arity->FpRet || Arity->FpFirst ||
-       (Arity->FpArgs > 0 && Arity->IntArgs == 0)))
-    return NdType::makeFloat(Arity->FpIsFloat ? sizeof(float) : sizeof(double));
+  if (const auto Arity = libc::libcArityForSymbol(Name))
+    if (const uint16_t Bytes = libc::floatReturnBytes(*Arity))
+      return NdType::makeFloat(Bytes);
   return {};
 }
 

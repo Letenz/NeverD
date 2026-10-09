@@ -490,6 +490,64 @@ TEST(SysVCallContract, AFloatArgumentReachesAPrototypedImport) {
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
 }
 
+TEST(SysVCallContract, ACallerReturnsTheFloatItsImportReturns) {
+  // sin_twice(x) = sin(x + x): the result sin leaves in xmm0 is the one
+  // sin_twice returns, though no instruction of its own writes it.
+  constexpr va_t SinTwice = Text, Stub = Text + 0x20;
+  std::vector<uint8_t> Code(0x30, 0xCC);
+  std::vector<uint8_t> SinTwiceCode = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                       0xF2, 0x0F, 0x58,
+                                       0xC0,  // addsd xmm0, xmm0
+                                       0xE8}; // call sin
+  for (uint8_t B : rel32(SinTwice + 13, Stub))
+    SinTwiceCode.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                    0xC3})                  // ret
+    SinTwiceCode.push_back(B);
+  put(Code, SinTwice, SinTwiceCode);
+  const BinaryImage Img = makeImportImage(
+      Code, {{SinTwice, "sin_twice"}, {Stub, "sin_stub"}}, {{Stub, "sin"}});
+  const std::string Body =
+      body(liftEntries(Img, {SinTwice, Stub}), "sin_twice");
+  ASSERT_FALSE(Body.empty());
+  EXPECT_NE(Body.find("double sin_twice(double arg0)"), std::string::npos)
+      << Body;
+  EXPECT_NE(Body.find("sin(arg0 + arg0)"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+}
+
+TEST(SysVCallContract, AForwarderReturnsTheFloatItsCalleeReturns) {
+  // forward(x) = twice(x) passes x on and returns twice's result in xmm0,
+  // writing neither itself.
+  constexpr va_t Twice = Text, Forward = Text + 0x10;
+  std::vector<uint8_t> Code(0x20, 0xCC);
+  put(Code, Twice,
+      {0xF2, 0x0F, 0x58, 0xC0,               // addsd xmm0, xmm0
+       0xC3});                               // ret
+  std::vector<uint8_t> ForwardCode = {0x50,  // push rax
+                                      0xE8}; // call twice
+  for (uint8_t B : rel32(Forward + 6, Twice))
+    ForwardCode.push_back(B);
+  for (uint8_t B : {0x59,  // pop rcx
+                    0xC3}) // ret
+    ForwardCode.push_back(B);
+  put(Code, Forward, ForwardCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Twice, "twice"}, {Forward, "forward"}}, {});
+  const std::string Source = liftEntries(Img, {Twice, Forward});
+  const std::string Body = body(Source, "forward");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("double forward(double arg0)"), std::string::npos)
+      << Body;
+  EXPECT_NE(Body.find("twice(arg0)"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+  compileAndRun(Source + R"(
+int main(void) {
+  return forward(1.5) == 3.0 && forward(-0.25) == -0.5 ? 0 : 1;
+}
+)");
+}
+
 TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
   // wrap(flag) picks the format in either arm of an `if` and calls
   // __fprintf_chk(0, 2, fmt) after the join: the format reaches the call as
