@@ -17,6 +17,8 @@
 #include "neverd/ir/low/NdOpEmulator.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedTypePass.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -730,6 +732,63 @@ TEST(X86FPStateContract, TypedNumericalStateResultIsRejected) {
                    Arch::X64, Call, [](const HighExpr &) { return "unused"; },
                    HasCIntrinsics, true),
                "requires raw bits");
+}
+
+TEST(X86FPStateContract, OnlyCompleteNumericalBitsEstablishAFloatReturn) {
+  for (unsigned Mode = 0; Mode < 6; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Function;
+    MedBlock Block;
+    Block.Id = 0;
+    const auto Temp = [](int Id, uint16_t Bytes) {
+      return MedVar{.Kind = MedVar::Temp, .Id = Id, .Size = Bytes};
+    };
+    const auto Reg = [](int Id, uint64_t Offset, uint16_t Bytes) {
+      MedVar Value{.Kind = MedVar::Reg,
+                   .TheArch = Arch::X64,
+                   .Id = Id,
+                   .SSAVer = 1,
+                   .Size = Bytes};
+      Value.RegOff = Offset;
+      return Value;
+    };
+    const auto Emit = [&](NdOp Opcode, MedVar Output,
+                          std::initializer_list<MedVar> Inputs) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      Block.Ops.push_back(Op);
+    };
+    const auto Integer = Reg(90, x86reg::RAX, 8);
+    Emit(NdOp::COPY, Integer, {MedVar::makeConst(7, 8)});
+    Emit(NdOp::INTRINSIC, Temp(1, 12),
+         {MedVar::makeConst(static_cast<unsigned>(Intrinsic::X86FPAddState), 2),
+          MedVar::makeConst(UINT64_C(0x3ff0000000000000), 8),
+          MedVar::makeConst(0, 8), MedVar::makeConst(0x1f80, 4)});
+    Emit(NdOp::SUBBYTES, Temp(2, 8), {Temp(1, 12), MedVar::makeConst(0, 4)});
+    MedVar Value = Temp(2, 8);
+    if (Mode == 1 || Mode == 3) {
+      Value = Temp(3, Mode == 1 ? 8 : 4);
+      Emit(NdOp::COPY, Value, {Temp(2, 8)});
+    } else if (Mode == 2 || Mode == 4) {
+      Value = Temp(3, 4);
+      Emit(NdOp::SUBBYTES, Value,
+           {Mode == 2 ? Temp(2, 8) : Temp(1, 12),
+            MedVar::makeConst(Mode == 2 ? 4 : 8, 4)});
+    } else if (Mode == 5)
+      Value = Temp(1, 12);
+    Emit(NdOp::CONCAT, Reg(100, x86reg::XMM0, 16),
+         {MedVar::makeConst(0, static_cast<uint16_t>(16 - Value.Size)), Value});
+    Emit(NdOp::RETURN, {}, {Integer});
+    Function.Blocks.push_back(Block);
+    inferMedTypes(Function, Arch::X64);
+    ASSERT_NE(Function.ReturnType, nullptr);
+    EXPECT_EQ(Function.ReturnType->Kind,
+              Mode < 2 ? NdTypeKind::Float : NdTypeKind::Int);
+    EXPECT_EQ(Function.ReturnType->Size, 8);
+  }
 }
 
 TEST(X86FPStateContract, AuxiliaryDefinitionsCannotInventStateResults) {
