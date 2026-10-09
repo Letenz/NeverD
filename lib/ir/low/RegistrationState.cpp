@@ -27,6 +27,7 @@ using registration_state::FrameValue;
 struct Domain {
   std::set<int32_t> Levels;
   FrameState Frame;
+  std::set<int32_t> InitializedFrameBytes;
   bool Reached = false;
   bool Unknown = false;
   bool Parent = false;
@@ -43,6 +44,7 @@ struct BlockFacts {
   bool Invalid = false;
   bool InstalledAtExit = false;
   bool CxxContinuationAtExit = false;
+  bool NoReturnAtExit = false;
 };
 
 int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx) {
@@ -62,9 +64,9 @@ bool overlaps(int32_t Offset, uint16_t Width, int32_t Slot,
 
 } // namespace
 
-RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
-                                                    va_t SecurityCookieVA,
-                                                    va_t CookieCheckVA) {
+RegistrationStateAnalysis analyzeRegistrationStates(
+    const LowFunc &Function, va_t SecurityCookieVA, va_t CookieCheckVA,
+    const std::vector<RegistrationCalleeFrameContract> *Callees) {
   RegistrationStateAnalysis Result;
   if (!Function.ExceptionMetadata || !Function.ExceptionMetadata->Registration)
     return Result;
@@ -203,6 +205,59 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
     WorkUsed += Amount;
     return true;
   };
+  const bool CheckCalls = Callees != nullptr;
+  std::map<va_t, uint32_t> CalleeIndices;
+  if (CheckCalls) {
+    auto ValidObjects = [&](const auto &Ranges) {
+      int32_t PreviousEnd = 0;
+      for (const auto &Range : Ranges) {
+        if (!Charge(1) || Range.Begin < PreviousEnd ||
+            Range.End <= Range.Begin ||
+            Range.End > int64_t(limits::kMaxRegistrationEHStateWork))
+          return false;
+        PreviousEnd = Range.End;
+      }
+      return true;
+    };
+    auto ValidImageRanges = [&](const auto &Ranges) {
+      va_t PreviousEnd = 0;
+      for (const auto &Range : Ranges) {
+        if (!Charge(1) || !Range.isValid() || Range.Begin < PreviousEnd ||
+            Range.End > uint64_t(UINT32_MAX) + 1)
+          return false;
+        PreviousEnd = Range.End;
+      }
+      return true;
+    };
+    if (Callees->size() > 256) {
+      Result.Diagnostics.push_back("registration callee count exceeds budget");
+      return Result;
+    }
+    for (const auto &Callee : *Callees) {
+      const bool Leaf =
+          Callee.CalleeKind == RegistrationCalleeFrameContract::Kind::Leaf;
+      const bool Throw = Callee.CalleeKind ==
+                         RegistrationCalleeFrameContract::Kind::PrivateThrow;
+      if (!Charge(1) || !Callee.Target || Callee.Target > UINT32_MAX ||
+          Callee.StackPopBytes || (!Leaf && !Throw) ||
+          Callee.DoesNotReturn != Throw ||
+          (Leaf && (Callee.ThrownTypeVA || Callee.ThrownObjectSize)) ||
+          (Throw &&
+           (!Callee.ThrownTypeVA || Callee.ThrownTypeVA > UINT32_MAX ||
+            !Callee.ThrownObjectSize ||
+            Callee.ThrownObjectSize > limits::kMaxRegistrationEHStateWork ||
+            !Callee.ECXReads.empty() || !Callee.ECXWrites.empty())) ||
+          !ValidObjects(Callee.ECXReads) || !ValidObjects(Callee.ECXWrites) ||
+          !ValidImageRanges(Callee.ImageReads) ||
+          !ValidImageRanges(Callee.ImageWrites) ||
+          !ValidImageRanges(Callee.CallerPCWrites) ||
+          !CalleeIndices.emplace(Callee.Target, CalleeIndices.size()).second) {
+        Result.Diagnostics.push_back("registration callee contract is invalid");
+        return Result;
+      }
+    }
+    Result.CalleeContracts = *Callees;
+  }
   std::map<va_t, std::pair<int, LowInstructionBoundary>> Boundaries;
   std::set<std::pair<va_t, int>> ChainOccurrences;
   std::map<std::pair<va_t, int>, FrameValue> FrameValues;
@@ -213,6 +268,9 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
       IncomingAccesses;
   bool ConsistentIncomingAccesses = true;
   bool CompleteImageReads = true;
+  bool CompleteCalls = CheckCalls;
+  std::map<std::pair<va_t, int>, RegistrationCallFrameEffect> CallEffects;
+  std::set<std::pair<va_t, int>> InvalidCalls;
   std::set<std::pair<va_t, va_t>> ImageReads;
   const bool EH4 = EH.Personality == ExceptionPersonality::ExceptHandler4;
   bool CompleteCookies =
@@ -309,12 +367,15 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
       CompleteChainOperations = false;
   };
   auto Merge = [&](size_t Target, const Domain &Source) {
-    if (Exhausted || !Charge(Source.Levels.size() + Source.Frame.Cells.size() +
-                             Source.Frame.OtherRegisterBytes.size() +
-                             Incoming[Target].Frame.Cells.size() +
-                             Incoming[Target].Frame.OtherRegisterBytes.size() +
-                             Source.CxxCatchStacks.size() +
-                             Incoming[Target].CxxCatchStacks.size() + 10))
+    if (Exhausted ||
+        !Charge(Source.Levels.size() + Source.Frame.Cells.size() +
+                Source.Frame.OtherRegisterBytes.size() +
+                Incoming[Target].Frame.Cells.size() +
+                Incoming[Target].Frame.OtherRegisterBytes.size() +
+                Source.CxxCatchStacks.size() +
+                Incoming[Target].CxxCatchStacks.size() +
+                Source.InitializedFrameBytes.size() +
+                Incoming[Target].InitializedFrameBytes.size() + 10))
       return;
     Domain &Dest = Incoming[Target];
     bool Changed = !Dest.Reached;
@@ -326,6 +387,13 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
       Dest.Levels.insert(Source.Levels.begin(), Source.Levels.end());
       Changed |= Before != Dest.Levels.size();
       Changed |= Dest.Frame.merge(Source.Frame);
+      for (auto It = Dest.InitializedFrameBytes.begin();
+           It != Dest.InitializedFrameBytes.end();)
+        if (!Source.InitializedFrameBytes.count(*It)) {
+          It = Dest.InitializedFrameBytes.erase(It);
+          Changed = true;
+        } else
+          ++It;
       auto MergeFlag = [&](bool &Value, bool Other) {
         Changed |= Other && !Value;
         Value |= Other;
@@ -365,6 +433,7 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
       Register.MayBeFrame = true;
     Root.Frame.OtherRegistersMayBeFrame = true;
     Root.Frame.Cells = Source.Frame.Cells;
+    Root.InitializedFrameBytes = Source.InitializedFrameBytes;
     Root.Frame.Cells[*Chain.TryLevelOffset] =
         FrameValue::constant(uint32_t(Level));
     Root.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride] =
@@ -446,6 +515,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
                            EH4 ? SecurityCookieVA : 0);
     std::set<va_t> ProvenStores;
     std::optional<RegistrationCxxContinuation> CatchReturn;
+    bool NoReturnAtExit = false;
+    va_t NoReturnEnd = InvalidVA;
     auto Invalidate = [&] {
       Facts[I].Invalid = true;
       After.Unknown = true;
@@ -576,8 +647,15 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
               RegistrationCookieCheck{
                   Op.Addr, Op.Addr + Boundary->second.second.Size, Op.Seq});
       }
-      if (Op.Opcode == NdOp::INTRINSIC)
+      if (Op.Opcode == NdOp::INTRINSIC) {
         CompleteImageReads = false;
+        if (CheckCalls) {
+          CompleteCalls = false;
+          After.InitializedFrameBytes.clear();
+          for (auto &[Offset, Cell] : After.Frame.Cells)
+            Cell = registration_state::join(Cell, {});
+        }
+      }
       if (Memory.Address && Op.Opcode != NdOp::STORE &&
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
         if (!Charge(1))
@@ -729,6 +807,18 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
             if (!Charge(After.Frame.Cells.size() + 1))
               break;
             After.Frame.store(*Address.Offset, Width, Stored);
+            if (CheckCalls) {
+              const auto SP =
+                  After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
+                      .Offset;
+              const int64_t End = int64_t(*Address.Offset) + Width;
+              if (SP && *Address.Offset >= *SP && End <= 0) {
+                if (!Charge(Width))
+                  break;
+                for (int64_t Byte = *Address.Offset; Byte < End; ++Byte)
+                  After.InitializedFrameBytes.insert(int32_t(Byte));
+              }
+            }
             if (Address.Offset == Chain.TryLevelOffset &&
                 ProvenStores.count(Op.Addr) && After.Levels.size() == 1)
               After.Frame.Cells[*Chain.TryLevelOffset] =
@@ -738,26 +828,177 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
             // be bounded by this frame-value domain.
             Invalidate();
           }
+          if (CheckCalls && !Address.Offset && !Address.Constant) {
+            After.InitializedFrameBytes.clear();
+            for (auto &[Offset, Cell] : After.Frame.Cells)
+              Cell = registration_state::join(Cell, {});
+          }
+        }
+      }
+      std::optional<int32_t> CallSP;
+      if (CheckCalls &&
+          (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)) {
+        const auto Identity = std::make_pair(Op.Addr, Op.Seq);
+        const auto Boundary = Boundaries.find(Op.Addr);
+        const auto Callee = Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+                                    Op.Inputs[0].isConst() &&
+                                    Op.Inputs[0].Size == 4
+                                ? CalleeIndices.find(Op.Inputs[0].Offset)
+                                : CalleeIndices.end();
+        const auto SP =
+            After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
+                .Offset;
+        bool Valid =
+            !After.Unknown && !Facts[I].Invalid && Op.Seq >= 0 &&
+            Boundary != Boundaries.end() &&
+            Boundary->second.first == Block.Id &&
+            Boundary->second.second.Control == LowInstructionControl::Call &&
+            Callee != CalleeIndices.end() && SP;
+        RegistrationCallFrameEffect Effect;
+        if (Valid) {
+          const auto &Contract = Result.CalleeContracts[Callee->second];
+          Effect.Address = Op.Addr;
+          Effect.EndAddress =
+              Boundary->second.second.Address + Boundary->second.second.Size;
+          Effect.OpSeq = Op.Seq;
+          Effect.Target = Contract.Target;
+          Effect.CalleeIndex = Callee->second;
+          Effect.StackPopBytes = Contract.StackPopBytes;
+          Effect.DoesNotReturn = Contract.DoesNotReturn;
+          const bool BorrowsObject =
+              !Contract.ECXReads.empty() || !Contract.ECXWrites.empty();
+          if (BorrowsObject)
+            Effect.ECXFrameOffset =
+                After.Frame.Registers[x86reg::RCX / x86reg::GeneralRegStride]
+                    .Offset;
+          Valid &= !BorrowsObject || Effect.ECXFrameOffset.has_value();
+          auto Project = [&](const auto &Extents, auto &Projected, bool Reads) {
+            for (const auto &Extent : Extents) {
+              if (!Valid || !Charge(1))
+                return false;
+              const int64_t Begin =
+                  int64_t(*Effect.ECXFrameOffset) + Extent.Begin;
+              const int64_t End = int64_t(*Effect.ECXFrameOffset) + Extent.End;
+              // The registration fields, SavedESP, saved EBP and caller PC
+              // are runtime/caller administration, never a borrowed object.
+              if (Begin < *SP ||
+                  Begin < -int64_t(limits::kMaxRegistrationEHStateWork) ||
+                  End > 0 ||
+                  (Begin < int64_t(*Chain.TryLevelOffset) + 4 &&
+                   int64_t(*Chain.RegistrationOffset) - (KnownCxx ? 4 : 0) <
+                       End) ||
+                  !Charge(size_t(End - Begin) + After.Frame.Cells.size()))
+                return false;
+              if (Reads) {
+                for (int64_t Byte = Begin; Byte < End; ++Byte)
+                  if (!After.InitializedFrameBytes.count(int32_t(Byte)))
+                    return false;
+                // Scalar object bytes must not carry a private frame pointer
+                // through the callee's image writes or return value.
+                for (const auto &[Cell, Value] : After.Frame.Cells)
+                  if (Value.MayBeFrame && int64_t(Cell) < End &&
+                      Begin < int64_t(Cell) + 4)
+                    return false;
+              }
+              Projected.push_back({int32_t(Begin), int32_t(End)});
+            }
+            return true;
+          };
+          Valid &= Project(Contract.ECXReads, Effect.FrameReads, true);
+          Valid &= Project(Contract.ECXWrites, Effect.FrameWrites, false);
+          if (Valid && !Charge(Contract.ImageReads.size() +
+                               Effect.FrameWrites.size() + 1))
+            Valid = false;
+          if (Valid) {
+            for (const auto &Read : Contract.ImageReads)
+              ImageReads.emplace(Read.Begin, Read.End);
+            for (const auto &Write : Effect.FrameWrites) {
+              if (!Charge(After.Frame.Cells.size())) {
+                Valid = false;
+                break;
+              }
+              // Callee writes are may-effects. They invalidate value facts
+              // without inventing definite initialization on untaken paths.
+              for (auto It = After.Frame.Cells.begin();
+                   It != After.Frame.Cells.end();)
+                if (int64_t(It->first) < Write.End &&
+                    Write.Begin < int64_t(It->first) + 4) {
+                  if (It->second.MayBeFrame &&
+                      (Write.Begin > It->first ||
+                       int64_t(It->first) + 4 > Write.End)) {
+                    It->second = {{}, {}, false, true};
+                    ++It;
+                  } else
+                    It = After.Frame.Cells.erase(It);
+                } else
+                  ++It;
+            }
+          }
+        }
+        if (Valid && !InvalidCalls.count(Identity)) {
+          const auto [It, Inserted] = CallEffects.emplace(Identity, Effect);
+          Valid = Inserted || It->second == Effect;
+        } else
+          Valid = false;
+        if (!Valid) {
+          InvalidCalls.insert(Identity);
+          CallEffects.erase(Identity);
+          CompleteCalls = CompleteImageReads = false;
+          After.InitializedFrameBytes.clear();
+          // A callee without a checked borrow may change cells reached by an
+          // escaped register or stack pointer. Keep taint but drop identities.
+          for (auto &[Offset, Cell] : After.Frame.Cells)
+            Cell = registration_state::join(Cell, {});
+        } else {
+          CallSP = *SP;
+          NoReturnAtExit = Effect.DoesNotReturn;
+          if (NoReturnAtExit)
+            NoReturnEnd = Effect.EndAddress;
         }
       }
       Transfer.write(Op, Value, CookieCheckVA);
+      if (CallSP)
+        After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
+            FrameValue::frame(*CallSP);
+      if (CheckCalls && Op.Output.isReg() &&
+          Op.Output.Offset / x86reg::GeneralRegStride ==
+              x86reg::RSP / x86reg::GeneralRegStride) {
+        const auto SP =
+            After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
+                .Offset;
+        if (!SP)
+          After.InitializedFrameBytes.clear();
+        else {
+          if (!Charge(After.InitializedFrameBytes.size()))
+            break;
+          After.InitializedFrameBytes.erase(
+              After.InitializedFrameBytes.begin(),
+              After.InitializedFrameBytes.lower_bound(*SP));
+        }
+      }
+      if (NoReturnAtExit)
+        break;
     }
     for (auto It = Stores.lower_bound(Block.StartAddr);
          It != Stores.end() && It->first < Block.EndAddr; ++It)
-      if (!ProvenStores.count(It->first))
+      if ((!NoReturnAtExit || It->first < NoReturnEnd) &&
+          !ProvenStores.count(It->first))
         Invalidate();
     if (Facts[I].Invalid)
       After.Unknown = true;
     Facts[I].InstalledAtExit = After.Installed;
     Facts[I].CxxContinuationAtExit = CatchReturn.has_value();
-    for (int Successor : Block.Succs) {
-      auto It = Index.find(Successor);
-      if (It == Index.end()) {
-        Result.Diagnostics.push_back(
-            "registration-state CFG has a missing edge");
-        return Result;
+    Facts[I].NoReturnAtExit = NoReturnAtExit;
+    if (!NoReturnAtExit) {
+      for (int Successor : Block.Succs) {
+        auto It = Index.find(Successor);
+        if (It == Index.end()) {
+          Result.Diagnostics.push_back(
+              "registration-state CFG has a missing edge");
+          return Result;
+        }
+        Merge(It->second, After);
       }
-      Merge(It->second, After);
     }
     if (CatchReturn) {
       const auto Resume = Entries.find(CatchReturn->TargetVA);
@@ -872,10 +1113,11 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
     if (!CallbackOnly && Unknown)
       Result.Complete = false;
     if (State.Parent && State.Reached &&
-        (Unknown || (Block.Succs.empty() && Facts[I].InstalledAtExit)))
+        (Unknown || (Block.Succs.empty() && Facts[I].InstalledAtExit &&
+                     !Facts[I].NoReturnAtExit)))
       Result.RegistrationLifetimeComplete = false;
     if (!State.CxxCatchStacks.empty() && State.Reached && Block.Succs.empty() &&
-        !Facts[I].CxxContinuationAtExit)
+        !Facts[I].CxxContinuationAtExit && !Facts[I].NoReturnAtExit)
       Result.CxxContinuationsComplete = false;
   }
   Result.RegistrationLifetimeComplete &= Result.CxxContinuationsComplete;
@@ -894,6 +1136,14 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
     for (const auto &[Identity, Access] : ChainAccesses)
       Result.ChainAccesses.push_back(Access);
   Result.IncomingFrameAccessesComplete = ConsistentIncomingAccesses;
+  Result.CallFrameEffectsComplete = CompleteCalls && Result.Complete &&
+                                    Result.CallbackStatesComplete &&
+                                    Result.RegistrationLifetimeComplete;
+  for (const auto &[Identity, Call] : CallEffects)
+    Result.CallFrameEffects.push_back(Call);
+  if (CheckCalls && !Result.CallFrameEffectsComplete)
+    Result.Diagnostics.push_back(
+        "registration call stack or initialized object borrow is not proven");
   Result.ImageReadsComplete = Result.Complete &&
                               Result.CallbackStatesComplete &&
                               CompleteImageReads && !Exhausted;
@@ -922,7 +1172,9 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
   if (Result.Complete && Result.CallbackStatesComplete) {
     if (!Charge(FrameValues.size())) {
       Result.Complete = Result.ChainOperationsComplete =
-          Result.ImageReadsComplete = Result.SecurityCookiesComplete = false;
+          Result.ImageReadsComplete = Result.SecurityCookiesComplete =
+              Result.CallFrameEffectsComplete = false;
+      Result.CallFrameEffects.clear();
       Result.SecurityCookieVA = 0;
       Result.CookieCheckVA = 0;
       Result.CookieChecks.clear();

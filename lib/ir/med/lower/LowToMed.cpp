@@ -612,6 +612,13 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
             MOp.DoesNotReturn = hasLowInstructionControlFlag(
                 Boundary.ControlFlags, LowInstructionControlFlag::NoReturn);
         }
+        if (Low.RegistrationStates)
+          if (const auto *Call =
+                  Low.RegistrationStates->callFrameEffect(LOp.Addr, LOp.Seq))
+            if (LOp.Opcode == NdOp::CALL && LOp.NumInputs == 1 &&
+                LOp.Inputs[0].isConst() && LOp.Inputs[0].Size == 4 &&
+                LOp.Inputs[0].Offset == Call->Target)
+              MOp.DoesNotReturn |= Call->DoesNotReturn;
       }
 
       if (LOp.Output.Size > 0)

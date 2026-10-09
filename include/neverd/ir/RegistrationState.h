@@ -8,6 +8,7 @@
 #ifndef NEVERD_IR_REGISTRATIONSTATE_H
 #define NEVERD_IR_REGISTRATIONSTATE_H
 
+#include "neverd/ir/RegistrationCall.h"
 #include "neverd/loader/ExceptionCommon.h"
 
 #include <algorithm>
@@ -116,6 +117,11 @@ struct RegistrationStateAnalysis {
   std::vector<RegistrationFrameValue> FrameValues;
   bool IncomingFrameAccessesComplete = true;
   std::vector<RegistrationIncomingFrameAccess> IncomingFrameAccesses;
+  /// Per-occurrence stack and initialized-object projections, rechecked from
+  /// callee evidence across every reaching ordinary and runtime path.
+  bool CallFrameEffectsComplete = false;
+  std::vector<RegistrationCalleeFrameContract> CalleeContracts;
+  std::vector<RegistrationCallFrameEffect> CallFrameEffects;
   /// EH4 source initialization, encoding and immutable cookie lifetime have
   /// been checked across every ordinary and runtime path. This does not prove
   /// the compiler's physical cookie; native codegen validates that separately.
@@ -129,6 +135,20 @@ struct RegistrationStateAnalysis {
   bool ImageReadsComplete = false;
   std::vector<ExceptionAddressRange> ImageReads;
   std::vector<std::string> Diagnostics;
+
+  const RegistrationCallFrameEffect *callFrameEffect(va_t Address,
+                                                     int Seq) const {
+    const auto Key = std::make_pair(Address, Seq);
+    auto It = std::lower_bound(CallFrameEffects.begin(), CallFrameEffects.end(),
+                               Key, [](const auto &Call, auto Identity) {
+                                 return std::make_pair(Call.Address,
+                                                       Call.OpSeq) < Identity;
+                               });
+    return It != CallFrameEffects.end() &&
+                   std::make_pair(It->Address, It->OpSeq) == Key
+               ? &*It
+               : nullptr;
+  }
 
   const RegistrationCxxContinuation *cxxContinuation(va_t Address,
                                                      int Seq) const {
@@ -175,9 +195,9 @@ struct RegistrationStateAnalysis {
 /// Solve ordinary and runtime-dispatch state transfers together. Stores take
 /// effect only after their exact decoded instruction retires. A union at a
 /// join is retained; address order never selects a predecessor's state.
-RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
-                                                    va_t SecurityCookieVA = 0,
-                                                    va_t CookieCheckVA = 0);
+RegistrationStateAnalysis analyzeRegistrationStates(
+    const LowFunc &Function, va_t SecurityCookieVA = 0, va_t CookieCheckVA = 0,
+    const std::vector<RegistrationCalleeFrameContract> *Callees = nullptr);
 
 /// Return exact address intervals only if every reaching state agrees about
 /// membership. An ambiguous join cannot be flattened into a lexical try range.

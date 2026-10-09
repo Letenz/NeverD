@@ -12,6 +12,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -126,6 +127,14 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   const ExceptionFunction &Metadata = *Func.ExceptionMetadata;
   Func.RegistrationStates.reset();
   if (Metadata.Registration) {
+    std::optional<std::vector<RegistrationCalleeFrameContract>> Callees;
+    const bool CheckCalls = CurrentImg && Metadata.Cxx.has_value();
+    if (CheckCalls) {
+      if (!RegistrationCallees)
+        RegistrationCallees =
+            std::make_shared<RegistrationCallCalleeIndex>(*CurrentImg);
+      Callees = RegistrationCallees->contracts(Func);
+    }
     va_t CookieCheckVA = 0;
     if (CurrentImg &&
         Metadata.Personality == ExceptionPersonality::ExceptHandler4 &&
@@ -140,7 +149,10 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
         CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
             ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
             : 0,
-        CookieCheckVA);
+        CookieCheckVA, CheckCalls && Callees ? &*Callees : nullptr);
+    if (CheckCalls && !Callees)
+      Func.RegistrationStates->Diagnostics.push_back(
+          "registration callee proof budget exhausted");
   }
 
   std::map<va_t, LowBlock *> BlocksByAddress;

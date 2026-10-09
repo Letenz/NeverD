@@ -631,6 +631,7 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
   // return address, is lifted again as an ordinary call; anything else that
   // cannot be proven makes the return that breaks the proof unsupported.
   KeptOwnInteriorCallTargets.clear();
+  RegistrationCallees.reset();
   for (;;) {
     LowFunc Func = buildOnce(Img, Dec, EntryAddr, FuncName);
     if (OwnInteriorCallSites.empty())

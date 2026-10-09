@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/ir/RegistrationState.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/lift/X86Regs.h"
 
@@ -570,6 +571,268 @@ TEST(RegistrationState, CxxCatchResumesWithTheRuntimeStackAndState) {
   EXPECT_EQ(Result.Blocks[5].CxxMinimumTryLevel, 1);
   EXPECT_FALSE(Result.Blocks[6].CallbackOnly);
   EXPECT_EQ(Result.Blocks[6].Levels, (std::vector<int32_t>{1}));
+}
+
+namespace {
+LowFunc makeCxxObjectCall() {
+  auto F = makeCxxCatchContinuation();
+  LowBlock Setup;
+  emitOp(Setup, 0x1013, NdOp::INT_ADD, NdVar::reg(x86reg::RCX, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-24), 4)});
+  emitOp(Setup, 0x1013, NdOp::STORE, {},
+         {NdVar::reg(x86reg::RCX, 4), NdVar::cst(7, 4)});
+  auto &Body = F.Blocks[1];
+  auto BeforeState =
+      std::find_if(Body.Ops.begin(), Body.Ops.end(),
+                   [](const auto &Op) { return Op.Addr == 0x1016; });
+  Body.Ops.insert(BeforeState, Setup.Ops.begin(), Setup.Ops.end());
+  for (size_t I = 0; I < Body.Ops.size(); ++I)
+    Body.Ops[I].Seq = I;
+  LowBlock Call;
+  Call.Id = 7;
+  Call.StartAddr = 0x1100;
+  Call.EndAddr = 0x1105;
+  Call.Succs = {2};
+  LowInstructionBoundary Boundary;
+  Boundary.Address = Call.StartAddr;
+  Boundary.Size = 5;
+  Boundary.Control = LowInstructionControl::Call;
+  Call.InstructionBoundaries.push_back(Boundary);
+  emitOp(Call, 0x1100, NdOp::CALL, {}, {NdVar::cst(0x2100, 4)});
+  Body.Succs = {7};
+  F.Blocks.push_back(std::move(Call));
+  return F;
+}
+
+RegistrationCalleeFrameContract objectLeafContract() {
+  RegistrationCalleeFrameContract C;
+  C.Target = 0x2100;
+  C.ECXReads = {{0, 4}};
+  C.ImageReads = {{0x3000, 0x3004}};
+  C.ImageWrites = {{0x3000, 0x3004}};
+  return C;
+}
+} // namespace
+
+TEST(RegistrationState, ProjectsTheInitializedObjectAtTheExactSourceCall) {
+  const auto F = makeCxxObjectCall();
+  const std::vector Contracts{objectLeafContract()};
+  const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
+  EXPECT_TRUE(A.Complete);
+  EXPECT_TRUE(A.RegistrationLifetimeComplete);
+  EXPECT_TRUE(A.CallFrameEffectsComplete);
+  EXPECT_TRUE(A.ImageReadsComplete);
+  ASSERT_EQ(A.CallFrameEffects.size(), 1u);
+  const auto *Call = A.callFrameEffect(0x1100, 0);
+  ASSERT_NE(Call, nullptr);
+  EXPECT_EQ(Call->EndAddress, 0x1105u);
+  EXPECT_EQ(Call->Target, 0x2100u);
+  EXPECT_EQ(Call->ECXFrameOffset, -24);
+  EXPECT_EQ(Call->FrameReads,
+            (std::vector<RegistrationObjectExtent>{{-24, -20}}));
+  EXPECT_FALSE(Call->DoesNotReturn);
+  EXPECT_EQ(A.callFrameEffect(0x1100, 1), nullptr);
+  EXPECT_EQ(A.callFrameEffect(0x1101, 0), nullptr);
+  ASSERT_EQ(A.ImageReads.size(), 1u);
+  EXPECT_EQ(A.ImageReads.front().Begin, 0x3000u);
+}
+
+TEST(RegistrationState, RejectsUnprovenObjectAndCallProjections) {
+  for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
+    auto F = makeCxxObjectCall();
+    std::vector Contracts{objectLeafContract()};
+    auto &Body = F.Blocks[1];
+    auto ObjectStore =
+        std::find_if(Body.Ops.begin(), Body.Ops.end(), [](const auto &Op) {
+          return Op.Opcode == NdOp::STORE && Op.Inputs[0].isReg() &&
+                 Op.Inputs[0].Offset == x86reg::RCX;
+        });
+    auto ObjectAddress =
+        std::find_if(Body.Ops.begin(), Body.Ops.end(), [](const auto &Op) {
+          return Op.Opcode == NdOp::INT_ADD && Op.Output.isReg() &&
+                 Op.Output.Offset == x86reg::RCX;
+        });
+    ASSERT_NE(ObjectStore, Body.Ops.end());
+    ASSERT_NE(ObjectAddress, Body.Ops.end());
+    switch (Mutation) {
+    case 0:
+      Body.Ops.erase(ObjectStore);
+      break;
+    case 1:
+      ObjectStore->Inputs[1] = NdVar::cst(7, 2);
+      break;
+    case 2:
+      ObjectStore->Inputs[1] = NdVar::reg(x86reg::RBP, 4);
+      break;
+    case 3:
+      ObjectAddress->Inputs[1] = NdVar::cst(uint32_t(-12), 4);
+      break;
+    case 4:
+      ObjectAddress->Inputs[1] = NdVar::cst(uint32_t(-32), 4);
+      break;
+    case 5:
+      ObjectAddress->Opcode = NdOp::INT_XOR;
+      ObjectAddress->Inputs[1] = ObjectAddress->Inputs[0];
+      break;
+    case 6:
+      F.Blocks[7].InstructionBoundaries[0].Control =
+          LowInstructionControl::None;
+      break;
+    case 7:
+      Contracts[0].StackPopBytes = 4;
+      break;
+    case 8:
+      F.Blocks[7].Ops[0].Inputs[0] = NdVar::cst(0x2200, 4);
+      break;
+    case 9:
+      F.Blocks[7].Ops[0].Opcode = NdOp::INDIR_CALL;
+      break;
+    case 10:
+      Contracts.push_back(Contracts.front());
+      break;
+    case 11:
+      Contracts[0].ECXReads = {{0, 4}, {2, 6}};
+      break;
+    }
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
+    EXPECT_FALSE(A.CallFrameEffectsComplete) << Mutation;
+    EXPECT_TRUE(A.CallFrameEffects.empty()) << Mutation;
+  }
+}
+
+TEST(RegistrationState, ObjectInitializationMustHoldOnEveryPredecessor) {
+  for (bool BothInitialized : {false, true}) {
+    auto F = makeCxxObjectCall();
+    const std::vector Contracts{objectLeafContract()};
+    auto &Body = F.Blocks[1];
+    auto Store =
+        std::find_if(Body.Ops.begin(), Body.Ops.end(), [](const auto &Op) {
+          return Op.Opcode == NdOp::STORE && Op.Inputs[0].isReg() &&
+                 Op.Inputs[0].Offset == x86reg::RCX;
+        });
+    ASSERT_NE(Store, Body.Ops.end());
+    Body.Ops.erase(Store);
+    Body.Succs = {8, 9};
+    for (int Id : {8, 9}) {
+      LowBlock B;
+      B.Id = Id;
+      B.StartAddr = 0x1120 + (Id - 8) * 8;
+      B.EndAddr = B.StartAddr + 7;
+      B.InstructionBoundaries = {{B.StartAddr, 7}};
+      B.Succs = {7};
+      if (Id == 8 || BothInitialized)
+        emitOp(B, B.StartAddr, NdOp::STORE, {},
+               {NdVar::reg(x86reg::RCX, 4), NdVar::cst(7, 4)});
+      F.Blocks.push_back(std::move(B));
+    }
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
+    EXPECT_EQ(A.CallFrameEffectsComplete, BothInitialized);
+    EXPECT_EQ(A.CallFrameEffects.size(), BothInitialized ? 1u : 0u);
+  }
+}
+
+TEST(RegistrationState, PrivateThrowStopsOrdinaryFlowAndKeepsCatchResumption) {
+  for (bool TrailingState : {false, true}) {
+    auto F = makeCxxObjectCall();
+    if (TrailingState) {
+      auto &Call = F.Blocks[7];
+      Call.EndAddr = 0x110d;
+      Call.InstructionBoundaries.push_back({0x1105, 1});
+      Call.InstructionBoundaries.push_back({0x1106, 7});
+      F.ExceptionMetadata->Registration->TryLevelStores.push_back(
+          {0x1106, 0x110d, -1});
+      LowBlock DeadStore;
+      DeadStore.StartAddr = 0x1106;
+      addSlotStore(DeadStore, -1);
+      Call.Ops.insert(Call.Ops.end(), DeadStore.Ops.begin(),
+                      DeadStore.Ops.end());
+    }
+    RegistrationCalleeFrameContract Throw;
+    Throw.CalleeKind = RegistrationCalleeFrameContract::Kind::PrivateThrow;
+    Throw.Target = 0x2100;
+    Throw.DoesNotReturn = true;
+    Throw.ThrownTypeVA = 0x3000;
+    Throw.ThrownObjectSize = 4;
+    const std::vector Contracts{Throw};
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
+    EXPECT_TRUE(A.Complete);
+    EXPECT_TRUE(A.CallFrameEffectsComplete);
+    EXPECT_TRUE(A.RegistrationLifetimeComplete);
+    EXPECT_TRUE(A.CxxContinuationsComplete);
+    ASSERT_EQ(A.CallFrameEffects.size(), 1u);
+    EXPECT_TRUE(A.CallFrameEffects[0].DoesNotReturn);
+    EXPECT_EQ(A.CallFrameEffects[0].EndAddress, 0x1105u);
+    EXPECT_TRUE(A.Blocks[2].Levels.empty());
+    ASSERT_EQ(A.CxxContinuations.size(), 1u);
+    EXPECT_EQ(A.CxxContinuations[0].TargetVA, 0x1900u);
+  }
+}
+
+TEST(RegistrationState, FreedOrOpaqueFrameBytesCannotAuthorizeObjectReads) {
+  for (bool Opaque : {false, true}) {
+    auto F = makeCxxObjectCall();
+    const std::vector Contracts{objectLeafContract()};
+    LowBlock Effects;
+    if (Opaque)
+      emitOp(Effects, 0x1013, NdOp::INTRINSIC, {},
+             {NdVar::cst(uint64_t(Intrinsic::Syscall), 2)});
+    else {
+      emitOp(Effects, 0x1013, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(12, 4)});
+      emitOp(Effects, 0x1013, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(12, 4)});
+    }
+    auto &Body = F.Blocks[1];
+    auto BeforeState =
+        std::find_if(Body.Ops.begin(), Body.Ops.end(),
+                     [](const auto &Op) { return Op.Addr == 0x1016; });
+    Body.Ops.insert(BeforeState, Effects.Ops.begin(), Effects.Ops.end());
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
+    EXPECT_FALSE(A.CallFrameEffectsComplete) << Opaque;
+    EXPECT_TRUE(A.CallFrameEffects.empty()) << Opaque;
+  }
+}
+
+TEST(RegistrationState, APartialCalleeWriteCannotLaunderTheObjectPointer) {
+  auto F = makeCxxObjectCall();
+  auto &Body = F.Blocks[1];
+  auto Store =
+      std::find_if(Body.Ops.begin(), Body.Ops.end(), [](const auto &Op) {
+        return Op.Opcode == NdOp::STORE && Op.Inputs[0].isReg() &&
+               Op.Inputs[0].Offset == x86reg::RCX;
+      });
+  ASSERT_NE(Store, Body.Ops.end());
+  Store->Inputs[1] = NdVar::reg(x86reg::RBP, 4);
+  auto Writer = objectLeafContract();
+  Writer.ECXReads.clear();
+  Writer.ECXWrites = {{0, 1}};
+  auto Reader = objectLeafContract();
+  Reader.Target = 0x2200;
+  const std::vector Contracts{Writer, Reader};
+  F.Blocks[7].Succs = {8};
+  LowBlock Reload;
+  Reload.Id = 8;
+  Reload.StartAddr = 0x1110;
+  Reload.EndAddr = 0x1113;
+  Reload.InstructionBoundaries = {{0x1110, 3}};
+  Reload.Succs = {9};
+  emitOp(Reload, 0x1110, NdOp::INT_ADD, NdVar::reg(x86reg::RCX, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-24), 4)});
+  LowBlock Read = F.Blocks[7];
+  Read.Id = 9;
+  Read.StartAddr = 0x1120;
+  Read.EndAddr = 0x1125;
+  Read.Succs = {2};
+  Read.InstructionBoundaries[0].Address = 0x1120;
+  Read.Ops[0].Addr = 0x1120;
+  Read.Ops[0].Inputs[0] = NdVar::cst(0x2200, 4);
+  F.Blocks.push_back(std::move(Reload));
+  F.Blocks.push_back(std::move(Read));
+  const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
+  EXPECT_FALSE(A.CallFrameEffectsComplete);
+  ASSERT_EQ(A.CallFrameEffects.size(), 1u);
+  EXPECT_EQ(A.CallFrameEffects[0].Target, 0x2100u);
+  EXPECT_EQ(A.callFrameEffect(0x1120, 0), nullptr);
 }
 
 TEST(RegistrationState,

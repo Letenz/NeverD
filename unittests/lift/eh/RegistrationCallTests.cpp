@@ -6,6 +6,8 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/Limits.h"
+#include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -272,4 +274,51 @@ TEST(RegistrationCallABI, UsesTheExactScalarObjectWidth) {
     if (P)
       EXPECT_EQ(P->ThrowInfo.ObjectSize, Width);
   }
+}
+
+TEST(RegistrationCallABI, SharesTheBudgetAcrossFailedAndSuccessfulProofs) {
+  ThrowImage F;
+  size_t Work = 0;
+  EXPECT_FALSE(getCheckedX86RegistrationLeafCalleeABI(
+      F.Image, ThrowImage::TextVA, &Work));
+  EXPECT_GT(Work, 0u);
+  const size_t FailedWork = Work;
+  ASSERT_TRUE(getCheckedX86RegistrationThrowCalleeABI(
+      F.Image, ThrowImage::TextVA, &Work));
+  EXPECT_GT(Work, FailedWork);
+  Work = limits::kMaxRegistrationEHStateWork;
+  EXPECT_FALSE(getCheckedX86RegistrationLeafCalleeABI(
+      F.Image, ThrowImage::TextVA, &Work));
+  EXPECT_FALSE(getCheckedX86RegistrationThrowCalleeABI(
+      F.Image, ThrowImage::TextVA, &Work));
+  EXPECT_EQ(Work, limits::kMaxRegistrationEHStateWork);
+}
+
+TEST(RegistrationCallABI, BindsTheMemoizedContractToOneBuildImage) {
+  ThrowImage F;
+  LowFunc Caller;
+  Caller.Blocks.resize(1);
+  LowOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.addInput(NdVar::cst(ThrowImage::TextVA, 4));
+  Caller.Blocks[0].Ops = {Call, Call};
+  RegistrationCallCalleeIndex Index(F.Image);
+  const auto Contracts = Index.contracts(Caller);
+  ASSERT_TRUE(Contracts);
+  ASSERT_EQ(Contracts->size(), 1u);
+  const auto &C = Contracts->front();
+  EXPECT_EQ(C.CalleeKind, RegistrationCalleeFrameContract::Kind::PrivateThrow);
+  EXPECT_TRUE(C.DoesNotReturn);
+  EXPECT_EQ(C.ThrownTypeVA, ThrowImage::DataVA);
+  EXPECT_EQ(C.ThrownObjectSize, 4u);
+  EXPECT_TRUE(C.ECXReads.empty());
+  EXPECT_TRUE(C.ECXWrites.empty());
+  ASSERT_EQ(C.CallerPCWrites.size(), 1u);
+  EXPECT_EQ(C.CallerPCWrites[0].Begin, ThrowImage::CallerPCVA);
+  EXPECT_EQ(Index.contracts(Caller)->size(), 1u);
+  F.Image.Imports[0].Name = "unknown_throw";
+  RegistrationCallCalleeIndex NextBuild(F.Image);
+  const auto Changed = NextBuild.contracts(Caller);
+  ASSERT_TRUE(Changed);
+  EXPECT_TRUE(Changed->empty());
 }

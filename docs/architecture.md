@@ -77,6 +77,14 @@ immutable CatchableType graph. The call ABI owner binds that graph to an exact
 CRT import and a fully initialized private exception object, retaining real
 caller-PC observations and rejecting metadata mutation. This still describes
 a preserved helper, rather than authorizing a rewritten parent.
+One CFG construction memoizes these callee proofs under a shared budget that
+also charges failed attempts. Registration-state analysis projects each exact
+source call into the caller's allocated frame, intersects byte initialization
+at joins and excludes the registration record and SavedESP from object borrows.
+May-writes discard old value facts without inventing definite initialization.
+A checked private throw stops ordinary flow while retaining runtime dispatch
+and catch resumption; LowToMed consumes its source-indexed no-return fact.
+These call facts remain separate from a compiler or installation receipt.
 Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction
 authenticates emitted scope rows, SafeSEH and absolute relocations before

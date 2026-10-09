@@ -1752,6 +1752,11 @@ observations and metadata mutation. The leaf-callee matrix also checks separate
 private-stack/object spills, pointer escape, bounds, unknown addresses and
 nonvolatile-register preservation. These proofs do not enable native source
 C++ reconstruction on their own.
+The state target also checks source-call identity, initialized ECX object
+borrows, registration/SavedESP separation, partial stores, pointer taint,
+conflicting predecessors and preserved catch resumption after a private throw.
+The native call target checks cumulative failed-proof budgets and fresh-image
+callee indices.
 Native installation needs a source build of the LLVM fork exposing
 `LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need

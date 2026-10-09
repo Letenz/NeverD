@@ -8,9 +8,11 @@
 #ifndef NEVERD_IR_LOW_REGISTRATIONABI_H
 #define NEVERD_IR_LOW_REGISTRATIONABI_H
 
+#include "neverd/ir/RegistrationCall.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionCommon.h"
 
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -21,12 +23,6 @@ struct LowFunc;
 /// A leaf's two separate address domains: its private invocation frame and
 /// the bounded object borrowed through entry ECX. Object offsets are relative
 /// to that object, never invented image addresses or private stack offsets.
-struct RegistrationObjectExtent {
-  int32_t Begin = 0;
-  int32_t End = 0;
-  bool operator==(const RegistrationObjectExtent &) const = default;
-};
-
 struct RegistrationLeafCalleeABI {
   va_t Target = InvalidVA;
   uint32_t StackPopBytes = 0;
@@ -42,7 +38,8 @@ struct RegistrationLeafCalleeABI {
 /// the callee only: each caller must still prove object bounds, initialization
 /// and separation from its registration fields before using the projection.
 std::optional<RegistrationLeafCalleeABI>
-getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target);
+getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
+                                       size_t *CumulativeWork = nullptr);
 
 struct RegistrationThrowCalleeABI {
   va_t Target = InvalidVA;
@@ -63,7 +60,24 @@ struct RegistrationThrowCalleeABI {
 /// original helper is preserved; no source frame pointer may escape except
 /// its checked object argument and an observable real caller PC.
 std::optional<RegistrationThrowCalleeABI>
-getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target);
+getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target,
+                                        size_t *CumulativeWork = nullptr);
+
+/// Memoized checked callees for one CFG construction and its continuation
+/// closure. A shared work budget includes failed proofs; a new CFG build gets
+/// a fresh index so edits to an image cannot reuse stale callee evidence.
+class RegistrationCallCalleeIndex {
+public:
+  explicit RegistrationCallCalleeIndex(const BinaryImage &Image)
+      : Image(Image) {}
+  std::optional<std::vector<RegistrationCalleeFrameContract>>
+  contracts(const LowFunc &Function);
+
+private:
+  const BinaryImage &Image;
+  size_t Work = 0;
+  std::map<va_t, std::optional<RegistrationCalleeFrameContract>> Cache;
+};
 
 /// Native registration lowering currently emits caller-cleanup calls. Require
 /// the source and every preserved direct callee to have that same stack

@@ -28,12 +28,15 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <tuple>
 #include <vector>
 
 namespace neverd {
+
+class RegistrationCallCalleeIndex;
 
 namespace libc {
 class NoReturnTargetIndex;
@@ -2644,6 +2647,7 @@ private:
   /// saves no register: it has no unwind record or one without operations.
   bool CurrentFuncIsFramelessLeaf = false;
   const BinaryImage *CurrentImg = nullptr;
+  std::shared_ptr<RegistrationCallCalleeIndex> RegistrationCallees;
   /// One-build reverse index for image-global 32-bit relative-code
   /// relocations.  rebuildBlocks may run many times during resolver fixed-point
   /// replay; scanning every image slot on every stage multiplies unrelated

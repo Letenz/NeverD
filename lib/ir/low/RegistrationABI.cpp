@@ -67,6 +67,24 @@ bool callerPCIsNotReadBack(const ImageFrameEffects &Effects) {
   return true;
 }
 
+bool chargeCalleeWork(size_t &Work, size_t Amount) {
+  if (Work > limits::kMaxRegistrationEHStateWork ||
+      Amount > limits::kMaxRegistrationEHStateWork - Work) {
+    Work = limits::kMaxRegistrationEHStateWork;
+    return false;
+  }
+  Work += Amount;
+  return true;
+}
+
+bool chargeDecodedCallee(size_t &Work, const LowFunc &Function) {
+  for (const auto &Block : Function.Blocks)
+    if (!chargeCalleeWork(Work, Block.Ops.size() +
+                                    Block.InstructionBoundaries.size() + 1))
+      return false;
+  return true;
+}
+
 bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                            size_t &Work, ImageFrameEffects &Effects,
                            bool BorrowECX = false,
@@ -381,19 +399,25 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
 } // namespace
 
 std::optional<RegistrationLeafCalleeABI>
-getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target) {
+getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
+                                       size_t *CumulativeWork) {
   if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
       Image.Format != BinaryFormat::COFF || Target > UINT32_MAX ||
       !Image.isCodeAddress(Target) ||
       Image.ExceptionMetadata.findFunction(Target))
+    return std::nullopt;
+  size_t LocalWork = 0;
+  size_t &Work = CumulativeWork ? *CumulativeWork : LocalWork;
+  if (!chargeCalleeWork(Work, 1))
     return std::nullopt;
   Decoder Decoder;
   if (!Decoder.init(Image))
     return std::nullopt;
   CFGBuilder Builder;
   const LowFunc Callee = Builder.build(Image, Decoder, Target, "abi-leaf");
-  if (Callee.CalleePopBytes || !Callee.hasCompleteLiftCoverage() ||
-      Callee.Blocks.empty() || Callee.ExceptionMetadata)
+  if (!chargeDecodedCallee(Work, Callee) || Callee.CalleePopBytes ||
+      !Callee.hasCompleteLiftCoverage() || Callee.Blocks.empty() ||
+      Callee.ExceptionMetadata)
     return std::nullopt;
   for (const auto &Block : Callee.Blocks) {
     if (Block.Succs.empty() &&
@@ -403,7 +427,6 @@ getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target) {
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
         return std::nullopt;
   }
-  size_t Work = 0;
   ImageFrameEffects Effects;
   if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, true))
     return std::nullopt;
@@ -420,20 +443,25 @@ getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target) {
 }
 
 std::optional<RegistrationThrowCalleeABI>
-getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target) {
+getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target,
+                                        size_t *CumulativeWork) {
   if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
       Image.Format != BinaryFormat::COFF || Target > UINT32_MAX ||
       !Image.isCodeAddress(Target) ||
       Image.ExceptionMetadata.findFunction(Target))
+    return std::nullopt;
+  size_t LocalWork = 0;
+  size_t &Work = CumulativeWork ? *CumulativeWork : LocalWork;
+  if (!chargeCalleeWork(Work, 1))
     return std::nullopt;
   Decoder Decoder;
   if (!Decoder.init(Image))
     return std::nullopt;
   CFGBuilder Builder;
   const LowFunc Callee = Builder.build(Image, Decoder, Target, "abi-throw");
-  if (Callee.CalleePopBytes || !Callee.hasCompleteLiftCoverage() ||
-      Callee.Blocks.empty() || Callee.ExceptionMetadata ||
-      !lowFunctionNeverReturns(Callee, Arch::X86))
+  if (!chargeDecodedCallee(Work, Callee) || Callee.CalleePopBytes ||
+      !Callee.hasCompleteLiftCoverage() || Callee.Blocks.empty() ||
+      Callee.ExceptionMetadata || !lowFunctionNeverReturns(Callee, Arch::X86))
     return std::nullopt;
   RegistrationThrowCalleeABI Result;
   Result.Target = Target;
@@ -478,7 +506,6 @@ getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target) {
   if (Calls != 1)
     return std::nullopt;
   ImageFrameEffects Effects;
-  size_t Work = 0;
   if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, false, &Result) ||
       Result.ThrowInfo.Address == InvalidVA || !callerPCIsNotReadBack(Effects))
     return std::nullopt;
@@ -486,6 +513,7 @@ getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target) {
   if (Effects.Writes.size() > (limits::kMaxRegistrationEHStateWork - Work) /
                                   (Info.ReadOnlyRanges.size() + 1))
     return std::nullopt;
+  Work += Effects.Writes.size() * (Info.ReadOnlyRanges.size() + 1);
   for (const auto &[Begin, End] : Effects.Writes) {
     const ExceptionAddressRange Write{Begin, End};
     if (Write.overlaps(Info.TypeDescriptorRange))
@@ -497,6 +525,66 @@ getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target) {
   copyExtents(Effects.Reads, Result.ImageReads);
   copyExtents(Effects.Writes, Result.ImageWrites);
   copyExtents(Effects.CallerPCWrites, Result.CallerPCWrites);
+  return Result;
+}
+
+std::optional<std::vector<RegistrationCalleeFrameContract>>
+RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
+  std::set<va_t> Targets;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!chargeCalleeWork(Work, 1))
+        return std::nullopt;
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+          Op.Inputs[0].isConst() && Op.Inputs[0].Size == 4)
+        Targets.insert(Op.Inputs[0].Offset);
+      if (Targets.size() > 256)
+        return std::nullopt;
+    }
+  std::vector<RegistrationCalleeFrameContract> Result;
+  for (va_t Target : Targets) {
+    auto Existing = Cache.find(Target);
+    if (Existing == Cache.end()) {
+      if (Cache.size() == 256)
+        return std::nullopt;
+      std::optional<RegistrationCalleeFrameContract> Contract;
+      if (auto Leaf =
+              getCheckedX86RegistrationLeafCalleeABI(Image, Target, &Work)) {
+        Contract.emplace();
+        Contract->Target = Target;
+        Contract->ECXReads = std::move(Leaf->ECXReads);
+        Contract->ECXWrites = std::move(Leaf->ECXWrites);
+        Contract->ImageReads = std::move(Leaf->ImageReads);
+        Contract->ImageWrites = std::move(Leaf->ImageWrites);
+        Contract->CallerPCWrites = std::move(Leaf->CallerPCWrites);
+      } else if (auto Throw = getCheckedX86RegistrationThrowCalleeABI(
+                     Image, Target, &Work)) {
+        Contract.emplace();
+        Contract->CalleeKind =
+            RegistrationCalleeFrameContract::Kind::PrivateThrow;
+        Contract->Target = Target;
+        Contract->DoesNotReturn = true;
+        Contract->ThrownTypeVA = Throw->ThrowInfo.TypeDescriptorVA;
+        Contract->ThrownObjectSize = Throw->ThrowInfo.ObjectSize;
+        Contract->ImageReads = std::move(Throw->ImageReads);
+        Contract->ImageWrites = std::move(Throw->ImageWrites);
+        Contract->CallerPCWrites = std::move(Throw->CallerPCWrites);
+      }
+      if (Work == limits::kMaxRegistrationEHStateWork)
+        return std::nullopt;
+      Existing = Cache.emplace(Target, std::move(Contract)).first;
+    }
+    if (Existing->second) {
+      const auto &Contract = *Existing->second;
+      if (!chargeCalleeWork(Work, Contract.ECXReads.size() +
+                                      Contract.ECXWrites.size() +
+                                      Contract.ImageReads.size() +
+                                      Contract.ImageWrites.size() +
+                                      Contract.CallerPCWrites.size() + 1))
+        return std::nullopt;
+      Result.push_back(Contract);
+    }
+  }
   return Result;
 }
 
