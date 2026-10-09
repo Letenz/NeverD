@@ -11,15 +11,19 @@
 #include "MainWindow.h"
 #include "OutputWindow.h"
 #include "ProjectDatabase.h"
+#include "QuickStartDialog.h"
 #include "Session.h"
+#include "SettingsKeys.h"
 #include "Theme.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
@@ -35,6 +39,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QScopeGuard>
 #include <QScrollBar>
 #include <QSettings>
@@ -916,6 +921,70 @@ private slots:
     QApplication::sendEvent(bench.window.get(), &plainText);
     QVERIFY(!plainText.isAccepted());
     QVERIFY(bench.session.filePath().isEmpty());
+  }
+
+  void quickStartShowsRecentFilesAndStartsAsChosen() {
+    // As IDA's Quick start: New, Go and Previous, the recent files and
+    // whether it greets the next start.  Each recent file shows its format,
+    // name, folder and when it was last opened.
+    QTemporaryDir directory;
+    const QString elf = directory.filePath(QStringLiteral("program"));
+    {
+      QFile file(elf);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(QByteArray("\x7F"
+                            "ELF\x02\x01\x01\0",
+                            8));
+    }
+    const QString missing = directory.filePath(QStringLiteral("gone.bin"));
+    QSettings().setValue(settings::RecentFiles, QStringList{elf, missing});
+    QSettings().setValue(settings::RecentOpened,
+                         QVariantMap{{elf, QDateTime::currentDateTime()}});
+    const auto restore = qScopeGuard([] {
+      QSettings().remove(settings::RecentFiles);
+      QSettings().remove(settings::RecentOpened);
+      QSettings().remove(settings::QuickStart);
+    });
+
+    QuickStartDialog dialog;
+    auto *recent =
+        dialog.findChild<QListWidget *>(QStringLiteral("quickStartRecent"));
+    QVERIFY(recent);
+    QCOMPARE(recent->count(), 2);
+    QCOMPARE(recent->item(0)->text(), QStringLiteral("program"));
+    QCOMPARE(recent->item(0)->data(Qt::UserRole + 1).toString(),
+             QStringLiteral("ELF"));
+    QVERIFY(recent->item(0)
+                ->data(Qt::UserRole + 3)
+                .toString()
+                .startsWith(QStringLiteral("Today, ")));
+    QCOMPARE(recent->item(1)->data(Qt::UserRole + 3).toString(),
+             QStringLiteral("Missing"));
+
+    // Delete forgets the selected file.
+    recent->setCurrentRow(1);
+    QTest::keyClick(recent, Qt::Key_Delete);
+    QCOMPARE(recent->count(), 1);
+    QCOMPARE(QSettings().value(settings::RecentFiles).toStringList(),
+             QStringList{elf});
+
+    // Display at startup is the setting the next start reads.
+    auto *atStartup = dialog.findChild<QCheckBox *>();
+    QVERIFY(atStartup && atStartup->isChecked());
+    atStartup->setChecked(false);
+    QVERIFY(!QSettings().value(settings::QuickStart, true).toBool());
+
+    // Previous loads the selected file.
+    QPushButton *previous = nullptr;
+    for (auto *button : dialog.findChildren<QPushButton *>())
+      if (button->text() == QStringLiteral("&Previous"))
+        previous = button;
+    QVERIFY(previous && previous->isEnabled() && previous->isDefault());
+    recent->setCurrentRow(0);
+    previous->click();
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QCOMPARE(dialog.start(), QuickStartDialog::Start::Previous);
+    QCOMPARE(dialog.file(), elf);
   }
 
   void fileDropOpensFromQuickStart() {

@@ -6,6 +6,7 @@
 #include "app/ListingView.h"
 #include "app/MainWindow.h"
 #include "app/Session.h"
+#include "app/SettingsKeys.h"
 #include "app/StartupMetrics.h"
 #include "app/Theme.h"
 #include "mcp/GuiSessionBroker.h"
@@ -32,7 +33,6 @@
 using namespace neverd::gui;
 
 namespace {
-constexpr char QuickStartKey[] = "ui/quickStart";
 constexpr char GeometryKey[] = "ui/geometry";
 constexpr int CaptureDelayMs = 6000;
 constexpr int SmokeDelayMs = 1500;
@@ -249,7 +249,7 @@ int main(int argc, char **argv) {
     window.openFile(
         QFileInfo(parser.positionalArguments().first()).absoluteFilePath());
   else if (!automated && !parser.isSet(QStringLiteral("capture")) &&
-           QSettings().value(QuickStartKey, true).toBool())
+           QSettings().value(settings::QuickStart, true).toBool())
     new OnFirstExpose(*window.windowHandle(),
                       [&window] { window.showQuickStart(); });
 

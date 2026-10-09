@@ -1969,38 +1969,6 @@ Signed: %4</source>
         <translation>没有已保存的桌面布局</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD：快速开始</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>新建</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>反汇编一个新文件</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>直接开始</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>自行开始工作</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>最近</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>加载所选的最近文件</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>最近的文件：</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>打开二进制文件或数据库</translation>
     </message>
@@ -2134,6 +2102,93 @@ Signed: %4</source>
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     列出引用字符串的指令</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>快速开始</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>交互式反汇编器与反编译器</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>版本 %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>开始</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>最近的文件</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>新建(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>反汇编一个新文件</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>直接开始(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>自行开始工作</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>最近(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>加载所选的最近文件</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>启动时显示(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>将文件拖放到此处即可打开</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>已丢失</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>加载(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>复制路径(&amp;C)</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>从列表中移除(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>今天 %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>昨天 %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>没有最近的文件</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>你打开过的文件会显示在这里。选择“新建”，或将文件拖放到此窗口。</translation>
     </message>
 </context>
 <context>

@@ -1973,38 +1973,6 @@ Signed: %4</translation>
         <translation>No saved desktop</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: Quick start</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>New</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>Disassemble a new file</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Go</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>Work on your own</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>Previous</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>Load the selected recent file</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>Recent files:</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>Open binary or database</translation>
     </message>
@@ -2138,6 +2106,93 @@ Signed: %4</translation>
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     list the instructions that refer to strings</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>Quick start</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>Interactive disassembler and decompiler</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>Version %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>Start</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>Recent files</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;New</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>Disassemble a new file</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>&amp;Go</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>Work on your own</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>&amp;Previous</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>Load the selected recent file</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>&amp;Display at startup</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>Drop a file here to open it</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>Missing</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>&amp;Load</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>&amp;Copy path</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>&amp;Remove from list</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>Today, %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>Yesterday, %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>No recent files</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>The files you open appear here. Choose New, or drop a file on this window.</translation>
     </message>
 </context>
 <context>

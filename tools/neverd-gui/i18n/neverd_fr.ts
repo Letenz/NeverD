@@ -1973,38 +1973,6 @@ Signé : %4</translation>
         <translation>Aucun bureau enregistré</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD : Démarrage rapide</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>Nouveau</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>Désassembler un nouveau fichier</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Continuer</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>Travailler sans fichier</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>Précédent</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>Charger le fichier récent sélectionné</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>Fichiers récents :</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>Ouvrir un binaire ou une base de données</translation>
     </message>
@@ -2138,6 +2106,93 @@ Signé : %4</translation>
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [texte]    lister les instructions qui font référence à des chaînes</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>Démarrage rapide</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>Désassembleur et décompilateur interactif</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>Version %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>Commencer</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>Fichiers récents</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;Nouveau</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>Désassembler un nouveau fichier</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>&amp;Continuer</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>Travailler sans fichier</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>&amp;Précédent</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>Charger le fichier récent sélectionné</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>&amp;Afficher au démarrage</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>Déposez un fichier ici pour l'ouvrir</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>Introuvable</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>Char&amp;ger</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>&amp;Copier le chemin</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>&amp;Retirer de la liste</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>Aujourd'hui, %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>Hier, %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>Aucun fichier récent</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>Les fichiers que vous ouvrez apparaissent ici. Choisissez Nouveau ou déposez un fichier sur cette fenêtre.</translation>
     </message>
 </context>
 <context>

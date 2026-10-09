@@ -1977,38 +1977,6 @@ Signed: %4</source>
         <translation>Нет сохранённого рабочего стола</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: быстрый старт</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>Новый</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>Дизассемблировать новый файл</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Начать</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>Работать самостоятельно</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>Предыдущий</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>Загрузить выбранный недавний файл</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>Недавние файлы:</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>Открыть двоичный файл или базу данных</translation>
     </message>
@@ -2142,6 +2110,93 @@ Signed: %4</source>
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     показать инструкции, ссылающиеся на строки</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>Быстрый старт</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>Интерактивный дизассемблер и декомпилятор</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>Версия %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>Начало</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>Недавние файлы</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;Новый</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>Дизассемблировать новый файл</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>Н&amp;ачать</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>Работать самостоятельно</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>&amp;Предыдущий</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>Загрузить выбранный недавний файл</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>&amp;Показывать при запуске</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>Перетащите файл сюда, чтобы открыть его</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>Отсутствует</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>&amp;Загрузить</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>&amp;Копировать путь</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>&amp;Удалить из списка</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>Сегодня, %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>Вчера, %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>Нет недавних файлов</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>Здесь появляются открытые вами файлы. Выберите «Новый» или перетащите файл в это окно.</translation>
     </message>
 </context>
 <context>

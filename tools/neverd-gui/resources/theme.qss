@@ -84,3 +84,16 @@ QTabWidget::pane { border: none; }
 QToolTip { background: ${ToolTipBase}; color: ${ToolTipText}; border: 1px solid ${MenuSeparator}; padding: 3px; }
 QSplitter::handle { background: ${Border}; }
 QAbstractScrollArea { border: none; }
+#quickStartHeader { background: ${Base}; border-bottom: 1px solid ${Border}; }
+#quickStartFooter { background: ${Window}; border-top: 1px solid ${Border}; }
+QLabel#quickStartTitle { color: ${TabActiveText}; }
+QLabel#quickStartSubtitle, QLabel#quickStartVersion, QLabel#quickStartHint, QLabel#quickStartSection { color: ${PlaceholderText}; }
+QPushButton#quickStartAction, QPushButton#quickStartAction:default { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 0; }
+QPushButton#quickStartAction:hover, QPushButton#quickStartAction:default:hover { background: ${Hover}; border-color: ${Border}; }
+QPushButton#quickStartAction:pressed { background: ${MenuBarSelection}; }
+QPushButton#quickStartAction:focus, QPushButton#quickStartAction:default:focus { border-color: ${Focus}; }
+QPushButton#quickStartAction:disabled { background: transparent; border-color: transparent; }
+QListWidget#quickStartRecent { background: ${Base}; border: 1px solid ${Border}; border-radius: 6px; padding: 4px; }
+QListWidget#quickStartRecent::item { border-radius: 4px; padding: 0; margin: 1px 0; }
+QListWidget#quickStartRecent::item:hover { background: ${Hover}; }
+QListWidget#quickStartRecent::item:selected { background: ${Highlight}; }

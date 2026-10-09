@@ -1989,38 +1989,6 @@ Signed: %4</source>
         <translation>لا يوجد سطح مكتب محفوظ</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: البدء السريع</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>جديد</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>تفكيك ملف جديد</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>ابدأ</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>العمل بمفردك</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>السابق</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>تحميل الملف المحدد من الملفات الأخيرة</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>الملفات الأخيرة:</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>فتح ملف ثنائي أو قاعدة بيانات</translation>
     </message>
@@ -2154,6 +2122,93 @@ Signed: %4</source>
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     سرد التعليمات التي تشير إلى سلاسل نصية</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>بدء سريع</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>أداة تفاعلية لفك التجميع وفك الترجمة</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>الإصدار %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>البدء</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>الملفات الأخيرة</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;جديد</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>تفكيك ملف جديد</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>اب&amp;دأ</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>العمل بمفردك</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>ال&amp;سابق</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>تحميل الملف المحدد من الملفات الأخيرة</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>&amp;عرض عند بدء التشغيل</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>أفلِت ملفًا هنا لفتحه</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>مفقود</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>&amp;تحميل</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>&amp;نسخ المسار</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>إ&amp;زالة من القائمة</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>اليوم، %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>أمس، %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>لا توجد ملفات حديثة</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>تظهر هنا الملفات التي تفتحها. اختر «جديد» أو أفلِت ملفًا على هذه النافذة.</translation>
     </message>
 </context>
 <context>

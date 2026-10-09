@@ -16,8 +16,10 @@
 #include "NavigationBand.h"
 #include "OutputWindow.h"
 #include "ProjectDatabase.h"
+#include "QuickStartDialog.h"
 #include "Resolve.h"
 #include "Session.h"
+#include "SettingsKeys.h"
 #include "Theme.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
@@ -78,7 +80,6 @@ namespace {
 using KDDockWidgets::InitialOption;
 
 constexpr char LayoutFileName[] = "desktop.json";
-constexpr char RecentFilesKey[] = "files/recent";
 constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
 constexpr char AnalysisIndicatorKey[] = "analysis/indicator";
 constexpr char BinaryProcessorKey[] = "load/binaryProcessor";
@@ -320,7 +321,8 @@ void MainWindow::fillPlaceholder(QMenu *menu, const QString &name) {
       for (auto *action : menu->actions())
         if (action->property("recent").toBool())
           menu->removeAction(action), action->deleteLater();
-      const auto files = QSettings().value(RecentFilesKey).toStringList();
+      const auto files =
+          QSettings().value(settings::RecentFiles).toStringList();
       QAction *before = nullptr;
       for (auto *action : menu->actions())
         if (action->objectName() == QLatin1String("recentAnchor"))
@@ -2130,57 +2132,14 @@ void MainWindow::cycleWindows(bool forward) {
 }
 
 void MainWindow::showQuickStart() {
-  QDialog dialog(this);
+  QuickStartDialog dialog(this);
   quickStart_ = &dialog;
-  dialog.setObjectName(QStringLiteral("quickStartDialog"));
-  dialog.setAcceptDrops(true);
-  dialog.setWindowTitle(tr("NeverD: Quick start"));
-  dialog.setWindowIcon(icon(QStringLiteral("app")));
-  dialog.resize(560, 380);
-  auto *layout = new QVBoxLayout(&dialog);
-  auto *row = new QHBoxLayout;
-  auto *newButton =
-      new QPushButton(icon(QStringLiteral("open")), tr("New"), &dialog);
-  newButton->setToolTip(tr("Disassemble a new file"));
-  auto *goButton =
-      new QPushButton(icon(QStringLiteral("jump_entry")), tr("Go"), &dialog);
-  goButton->setToolTip(tr("Work on your own"));
-  auto *previousButton =
-      new QPushButton(icon(QStringLiteral("back")), tr("Previous"), &dialog);
-  previousButton->setToolTip(tr("Load the selected recent file"));
-  for (auto *button : {newButton, goButton, previousButton}) {
-    button->setIconSize(QSize(32, 32));
-    button->setMinimumHeight(56);
-    row->addWidget(button);
-  }
-  layout->addLayout(row);
-  auto *recent = new QListWidget(&dialog);
-  for (const auto &file : QSettings().value(RecentFilesKey).toStringList())
-    recent->addItem(file);
-  if (recent->count())
-    recent->setCurrentRow(0);
-  layout->addWidget(new QLabel(tr("Recent files:"), &dialog));
-  layout->addWidget(recent, 1);
-  QString choice;
-  connect(newButton, &QPushButton::clicked, &dialog, [&] {
-    choice = QStringLiteral("new");
-    dialog.accept();
-  });
-  connect(goButton, &QPushButton::clicked, &dialog, &QDialog::reject);
-  const auto previous = [&] {
-    if (!recent->currentItem())
-      return;
-    choice = recent->currentItem()->text();
-    dialog.accept();
-  };
-  connect(previousButton, &QPushButton::clicked, &dialog, previous);
-  connect(recent, &QListWidget::itemActivated, &dialog, previous);
   if (dialog.exec() != QDialog::Accepted)
     return;
-  if (choice == QLatin1String("new"))
+  if (dialog.start() == QuickStartDialog::Start::New)
     openDialog();
-  else if (!choice.isEmpty())
-    openFile(choice);
+  else if (dialog.start() == QuickStartDialog::Start::Previous)
+    openFile(dialog.file());
 }
 
 QHash<QString, QByteArray> MainWindow::projectState() const {

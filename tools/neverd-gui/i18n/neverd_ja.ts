@@ -1969,38 +1969,6 @@ Signed: %4</source>
         <translation>保存されたデスクトップがありません</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: クイックスタート</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>新規</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>新しいファイルを逆アセンブルします</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>開始</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>ファイルを開かずに作業を始めます</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>前回</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>選択した最近のファイルを読み込みます</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>最近使ったファイル：</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>バイナリまたはデータベースを開く</translation>
     </message>
@@ -2134,6 +2102,93 @@ Signed: %4</source>
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     文字列を参照する命令を一覧表示</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>クイックスタート</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>対話型の逆アセンブラーおよび逆コンパイラー</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>バージョン %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>開始</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>最近使ったファイル</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>新規(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>新しいファイルを逆アセンブルします</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>開始(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>ファイルを開かずに作業を始めます</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>前回(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>選択した最近のファイルを読み込みます</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>起動時に表示(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>ここにファイルをドロップすると開きます</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>見つかりません</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>読み込む(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>パスをコピー(&amp;C)</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>一覧から削除(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>今日 %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>昨日 %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>最近使ったファイルはありません</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>開いたファイルがここに表示されます。[新規] を選ぶか、このウィンドウにファイルをドロップしてください。</translation>
     </message>
 </context>
 <context>

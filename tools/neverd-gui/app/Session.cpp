@@ -1,9 +1,11 @@
 #include "Session.h"
 
 #include "ProjectDatabase.h"
+#include "SettingsKeys.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -17,7 +19,6 @@
 namespace neverd::gui {
 namespace {
 constexpr int CacheMiB = 256;
-constexpr char RecentFilesKey[] = "files/recent";
 constexpr char StringEncodingsKey[] = "strings/encodings";
 constexpr char StringPreferredKey[] = "strings/preferred";
 constexpr char StringMinLengthKey[] = "strings/minLength";
@@ -447,13 +448,21 @@ void Session::sendOpen(const QString &requested, const QString &path,
         databasePath_ = database;
         databaseState_ = state;
         loaded_ = true;
-        QSettings settings;
-        auto recent = settings.value(RecentFilesKey).toStringList();
+        QSettings store;
+        auto recent = store.value(settings::RecentFiles).toStringList();
         recent.removeAll(requested);
         recent.prepend(requested);
         while (recent.size() > MaxRecentFiles)
           recent.removeLast();
-        settings.setValue(RecentFilesKey, recent);
+        store.setValue(settings::RecentFiles, recent);
+        // When each was last opened, for the quick start.
+        QVariantMap openedAt;
+        const QVariantMap known = store.value(settings::RecentOpened).toMap();
+        for (const QString &file : recent)
+          if (known.contains(file))
+            openedAt.insert(file, known.value(file));
+        openedAt.insert(requested, QDateTime::currentDateTime());
+        store.setValue(settings::RecentOpened, openedAt);
         for (const auto &warning : payload.value("warnings").toArray())
           emit message(warning.toString(), 1);
         emit message(

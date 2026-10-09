@@ -1969,38 +1969,6 @@ Signed: %4</source>
         <translation>저장된 데스크톱이 없습니다</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: 빠른 시작</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>새 파일</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>새 파일을 디스어셈블합니다</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>시작</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>파일을 열지 않고 작업을 시작합니다</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>이전</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>선택한 최근 파일을 불러옵니다</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>최근 파일:</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>바이너리 또는 데이터베이스 열기</translation>
     </message>
@@ -2134,6 +2102,93 @@ Signed: %4</source>
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     문자열을 참조하는 명령어 나열</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>빠른 시작</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>대화형 디스어셈블러 및 디컴파일러</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>버전 %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>시작</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>최근 파일</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>새 파일(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>새 파일을 디스어셈블합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>시작(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>파일을 열지 않고 작업을 시작합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>이전(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>선택한 최근 파일을 불러옵니다</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>시작할 때 표시(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>여기에 파일을 놓으면 열립니다</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>없음</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>불러오기(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>경로 복사(&amp;C)</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>목록에서 제거(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>오늘 %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>어제 %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>최근 파일이 없습니다</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>연 파일이 여기에 표시됩니다. [새 파일]을 선택하거나 이 창에 파일을 놓으세요.</translation>
     </message>
 </context>
 <context>
