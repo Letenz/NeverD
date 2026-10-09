@@ -171,8 +171,9 @@ TEST(InternalNoReturn, ProofsStopAtTheDepthLimit) {
 }
 
 TEST(InternalNoReturn, CallFollowedByCodeIsNotProved) {
-  // caller: call callee; ret -- no padding follows, so the callee that
-  // never returns is not lifted and the fall-through stays.
+  // caller: call callee; ret -- no padding follows and no metadata gives the
+  // callee a code range to check, so the callee that never returns is not
+  // lifted and the fall-through stays.
   std::vector<uint8_t> Code(0x10, 0xcc);
   putCall(Code, Base, Base + 0x10);
   Code[5] = 0xc3;
@@ -285,6 +286,49 @@ TEST(InternalNoReturn, CallerWithAnUnresolvedBranchStillListsItsCallees) {
   EXPECT_TRUE(Effect.Incomplete);
   EXPECT_TRUE(Effect.Unknown);
   EXPECT_EQ(Effect.Callees, std::set<va_t>{0x1010});
+}
+
+TEST(InternalNoReturn, CallToACalleeWithNothingThatReturnsIsProved) {
+  // caller: call b; ret -- code follows the call, but b's sized symbol
+  // covers only `int 0x29`, which does not return, so b is proved.  A b that
+  // also holds a `ret`, even one no path reaches, is not worth the proof.
+  for (bool HoldsReturn : {false, true}) {
+    SCOPED_TRACE(HoldsReturn);
+    std::vector<uint8_t> Code(0x10, 0xcc);
+    putCall(Code, Base, Base + 0x10);
+    Code[5] = 0xc3;
+    Code.insert(Code.end(), {0xcd, 0x29, 0xc3});
+    Code.resize(0x20, 0xcc);
+    auto Image = imageWith(Code, {{Base, "caller"}, {0x1010, "b"}});
+    Image.Symbols.back().Size = HoldsReturn ? 3 : 2;
+    EXPECT_EQ(callAtBaseEndsItsBlock(Image), !HoldsReturn);
+  }
+}
+
+TEST(InternalNoReturn, CalleeThatLeavesByAJumpIsNotProvedByItsScreen) {
+  // caller: call b; ret -- b holds no `ret`, so the screen sends it to the
+  // proof, but b leaves by a jump: to c, which returns, or through RAX to
+  // code no one knows.  Either may come back, so the call keeps its
+  // fall-through.
+  const std::vector<std::vector<uint8_t>> Bodies = {
+      {0xe9, 0x0b, 0x00, 0x00, 0x00}, // jmp c (b + 0x10)
+      {0xff, 0xe0}};                  // jmp rax
+  for (const std::vector<uint8_t> &Body : Bodies) {
+    SCOPED_TRACE(Body.size());
+    std::vector<uint8_t> Code(0x10, 0xcc);
+    putCall(Code, Base, Base + 0x10);
+    Code[5] = 0xc3;
+    Code.insert(Code.end(), Body.begin(), Body.end());
+    Code.resize(0x20, 0xcc);
+    Code.push_back(0xc3); // c: ret
+    Code.resize(0x30, 0xcc);
+    auto Image =
+        imageWith(Code, {{Base, "caller"}, {0x1010, "b"}, {0x1020, "c"}});
+    for (Symbol &Sym : Image.Symbols)
+      if (Sym.Name == "b")
+        Sym.Size = Body.size();
+    EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+  }
 }
 
 TEST(InternalNoReturn, SummaryStillLiftsAProvedCalleeForItsParameters) {

@@ -49,6 +49,12 @@ public:
 
   bool neverReturns(va_t Target, unsigned Depth) const override;
 
+  /// True when the code range unwind or symbol metadata gives the function at
+  /// \p Target holds no instruction that returns, decoded in order from its
+  /// start.  Without such a range, past limits::kMaxNoReturnScreenBytes, or
+  /// where a byte does not decode, the function may return.  Memoized.
+  bool mayNeverReturn(va_t Target) const override;
+
 private:
   const BinaryImage &Img;
   const std::set<va_t> *KnownFuncEntries;
@@ -57,6 +63,7 @@ private:
   const ExecutableCodeOwnerIndex *CodeOwners;
   mutable std::mutex Mutex;
   mutable std::map<std::pair<va_t, unsigned>, bool> Proofs;
+  mutable std::map<va_t, bool> Screens;
 };
 
 } // namespace neverd

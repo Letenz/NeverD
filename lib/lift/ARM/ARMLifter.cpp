@@ -304,6 +304,11 @@ bool ARMLifter::isFunctionTerminator(const cs_insn *I) {
   return false;
 }
 
+bool ARMLifter::isReturn(const cs_insn *I) {
+  const ControlKind Kind = classifyControl(I, InstructionMode::Default).Kind;
+  return Kind == ControlKind::Return || Kind == ControlKind::ExceptionReturn;
+}
+
 va_t ARMLifter::directCallTarget(const cs_insn *I) {
   if (!I->detail)
     return InvalidVA;

@@ -41,6 +41,10 @@ public:
   /// Whether \p I ends a function's straight-line decode (ret/b/br/eret).
   static bool isFunctionTerminator(const cs_insn *I);
 
+  /// Whether \p I returns to a caller: `ret`, `eret`, or a form of them that
+  /// authenticates the return address.
+  static bool isReturn(const cs_insn *I);
+
   /// Direct (immediate) call target of \p I, or InvalidVA if \p I is not a
   /// direct call.
   static va_t directCallTarget(const cs_insn *I);

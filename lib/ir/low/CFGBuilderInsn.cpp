@@ -372,10 +372,13 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
     return false;
   if (libc::isNoReturnTarget(*CurrentImg, Target, NoReturnTargets))
     return true;
-  // An internal callee needs a proof, which lifts it; padding after the call
-  // is where a compiler that knew the callee never returns left its trace.
+  // An internal callee needs a proof, which lifts it.  Padding after the call
+  // is where a compiler that knew the callee never returns left its trace;
+  // a call followed by more code still deserves the proof when the callee
+  // holds nothing that returns.
   return NoReturnCallees && CurrentImg->hasExecutableCodeOwnerAt(Target) &&
-         callIsFollowedByPadding(Rec) &&
+         (callIsFollowedByPadding(Rec) ||
+          NoReturnCallees->mayNeverReturn(Target)) &&
          NoReturnCallees->neverReturns(Target, NoReturnCalleeDepth);
 }
 

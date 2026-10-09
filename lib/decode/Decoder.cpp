@@ -508,6 +508,18 @@ bool Decoder::isFunctionTerminator(const DecodedInsn &Insn) const {
   return false;
 }
 
+std::optional<bool> Decoder::returnsToCaller(const DecodedInsn &Insn) const {
+  if (!Insn.Raw)
+    return std::nullopt;
+  if (X86)
+    return X86Lifter::isReturn(Insn.Raw);
+  if (AArch64)
+    return AArch64Lifter::isReturn(Insn.Raw);
+  if (ARM)
+    return ARMLifter::isReturn(Insn.Raw);
+  return std::nullopt;
+}
+
 bool Decoder::isResumableTrap(const DecodedInsn &Insn) const {
   if (!Insn.Raw || !X86)
     return false;
