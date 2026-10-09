@@ -153,6 +153,7 @@ DarwinFiles::write(Description &File, llvm::ArrayRef<Buffer> Buffers,
     // Filesystem times after EFAULT are not proved by the virtual success
     // policy. Keep transferred bytes, but invalidate the complete observation.
     File.File->MetadataInvalidated = true;
+    File.File->ExtendedAttributes = nullptr;
     return returned(BadAddress, true);
   }
   return returned(Readable);

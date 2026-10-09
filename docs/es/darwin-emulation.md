@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 78e6754f811bc16b1a89770eb1987a7d484301f161646eba212d6fd496e19372 -->
+<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
 
 [← Índice de documentación](README.md)
 
@@ -136,7 +136,7 @@ Solo insertar invalida las observaciones del padre. Objetos nuevos/antiguos hom�
 
 El `darwin_files.umask` opcional (C++ `InitialUmask`) declara la máscara inicial entre 0 y 07777 octal, independientemente del permiso de creación. `umask(60)` devuelve la anterior y guarda los bits bajos 07777, sin acceder a memoria invitada ni necesitar un FD libre. Omitirla significa desconocida, sin inferir valores del host o predeterminados. Se inicializa una sola vez y los cambios afectan únicamente a futuras creaciones, sin modificar la entrada. El ejemplo usa 18 decimal, equivalente a 0022 octal.
 
-El `darwin_files.creation_policy` opcional (C++ `CreationPolicy`) aporta metadatos completos a objetos nuevos. Su objeto estricto contiene exactamente `first_inode`, `block_size`, `generation`, `creation_time`, `mutation_policy`; tiempos y política de mutación usan los formatos existentes. Exige umask explícita, al menos un padre mutable y metadata completa de todos los padres autorizados. block_size está en 1..INT32_MAX, generation es uint32; la unidad de asignación es una potencia de dos entre 512 y 16 MiB, independiente del bloque/página VM, y los nanosegundos están en [0,1000000000). first_inode es uint64 positivo mayor que todos los inode de stat/instantáneas, incluso de otros dispositivos. Las cadenas decimales conservan enteros fuera del rango exacto de JSON.
+Sin `namespace_policy`: El `darwin_files.creation_policy` opcional (C++ `CreationPolicy`) aporta metadatos completos a objetos nuevos. Su objeto estricto contiene exactamente `first_inode`, `block_size`, `generation`, `creation_time`, `mutation_policy`; tiempos y política de mutación usan los formatos existentes. Exige umask explícita, al menos un padre mutable y metadata completa de todos los padres autorizados. block_size está en 1..INT32_MAX, generation es uint32; la unidad de asignación es una potencia de dos entre 512 y 16 MiB, independiente del bloque/página VM, y los nanosegundos están en [0,1000000000). first_inode es uint64 positivo mayor que todos los inode de stat/instantáneas, incluso de otros dispositivos. Las cadenas decimales conservan enteros fuera del rango exacto de JSON.
 
 Solo insertar un objeto nuevo con éxito consume la secuencia global inode. UINT64_MAX la agota permanentemente; close/unlink/reutilización de nombre/umask/consultas no la reinician. Los rechazos por exclusividad, FD, ruta, entradas o bytes no publican nombre/FD ni avanzan el contador; O_CREAT existente no consume ninguno. stat64 nuevo hereda device/GID del padre directo, UID efectivo invitado seleccionado (1000 por defecto), mode `S_IFREG | (mode & 0777 & ~umask)`, nlink=1 y size/blocks/flags=0. Bloque, generation y cuatro tiempos iniciales fijos proceden de la política. Tras invalidar stat/enumeración completos del padre se conservan device/GID, sin restaurar el registro completo.
 
@@ -730,7 +730,7 @@ El `file-access` original usa FD relativos de directorio para NOFOLLOW_ANY y evi
 
 ## Enlaces simbólicos iniciales fijos
 
-`DarwinFileOptions::SymbolicLinks` / `darwin_files.symbolic_links` declaran `path` absoluto canónico, `target_hex` hexadecimal sin transformar y `metadata` opcional del propio enlace. Objetivos de1..1023 bytes noNUL conservan noUTF-8, barras repetidas y puntos; pueden faltar. `files` sigue obligatorio aunque vacío. Se rechazan colisiones y descendientes declarados bajo enlaces. Ruta/NUL/objetivo comparten256 entradas/16 MiB. Se requiere S_IFLNK, size=longitud, DT_LNK=10 e inode coherente; CWD debe ser directorio real.
+Los nombres iniciales siguientes están protegidos por defecto; la última sección describe los permisos explícitos de modificación. `DarwinFileOptions::SymbolicLinks` / `darwin_files.symbolic_links` declaran `path` absoluto canónico, `target_hex` hexadecimal sin transformar y `metadata` opcional del propio enlace. Objetivos de1..1023 bytes noNUL conservan noUTF-8, barras repetidas y puntos; pueden faltar. `files` sigue obligatorio aunque vacío. Se rechazan colisiones y descendientes declarados bajo enlaces. Ruta/NUL/objetivo comparten256 entradas/16 MiB. Se requiere S_IFLNK, size=longitud, DT_LNK=10 e inode coherente; CWD debe ser directorio real.
 
 Se expanden enlaces antes de puntos: objetivos relativos desde el padre real y absolutos desde la raíz invitada. Cada reinicio reinterpreta barras finales; las ya consumidas no pasan al objetivo. Hasta32 expansiones, la33 devuelveELOOP62; objetivo+sufijo+NUL sobre1024 bytes devuelveENAMETOOLONG63. FD/CWD/F_GETPATH/mmap conservan el objeto resuelto.
 
@@ -793,3 +793,110 @@ Los movimientos ordinarios/EXCL y SWAP de directorios incluyen descendientes con
 Los enlaces conservan sus padres reales al moverlos; los destinos relativos usan las rutas nuevas. Descripciones, cursores, CWD, nodos eliminados y reservas de mapas conservan sus objetos. Enlaces iniciales protegidos y sus árboles, pares raíz directorio/enlace, metadatos completos del enlace, enlaces duros y ACL siguen excluidos.25 controles ARM64 macOS registran cinco movimientos, diez intercambios, dos éxitos sin efecto y ocho rechazos sin cambiar nombres dentro de los cinco segundos originales. Los controles entre padres verifican bytes intactos y nueva resolución relativa; `symbolic-link-rename` cubre C++/SDK/CLI/Python sin probar iOS físico, Intel nativo ni SO completo.
 
 [XNU rename / namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c).
+
+## Metadatos de enlaces y directorios nuevos
+
+La opción `creation_policy.namespace_policy` (C++ `DarwinFileCreationPolicy::Namespace`) añade a los cinco campos obligatorios un objeto estricto con `symbolic_link_allocation_unit`, `directory_entry_size` y `directory_blocks`. La unidad del enlace es potencia de dos entre512 y16 MiB; el tamaño de entrada es positivo hasta16 MiB; los bloques son uint64 hastaINT64_MAX y admiten cadenas decimales. Se mantienen metadatos parentales, umask inicial e inodes nuevos. Sin extensión, los metadatos desconocidos y el consumo de inode solo para archivos ordinarios de secciones anteriores siguen siendo el comportamiento predeterminado.
+
+Las inserciones correctas de archivo,symlink,mkdir comparten una secuencia con agotamiento permanente enUINT64_MAX; errores y nombres existentes no consumen inodes. Device/GID proceden del padre real, UID de la identidad efectiva invitada. El enlace usa S_IFLNK con `0777 & ~umask`, nlink1, size de bytes brutos incluso vacíos/noUTF-8 y bloques512bytes redondeados a la unidad declarada. El directorio usa S_IFDIR con `mode & 0777 & ~umask`, nlink2 más todos los nombres directos enlazados, size=nlink por tamaño de entrada y blocks fijos, también para directorios vacíos retirados pero retenidos. Es un contrato virtual explícito, no una regla APFS inferida.
+
+Los tiempos iniciales usan creation_time. Cambiar nombres hijos actualiza mtime/ctime del padre creado; mover directamente cambia solo ctime con mutation_time. Mover ancestros preserva descendientes. Los registros completos pertenecen al objeto durante dup/CWD/reemplazo/SWAP/borrado/reutilización. La extensión de creación por sí sola no conserva el stat completo inicial ni snapshots fijos; las políticas independientes siguientes ofrecen stat y enumeración actual. ACL, mutaciones de enlaces iniciales sin permiso individual y transacciones generales raíz directorio/enlace siguen pendientes. `created-namespace-metadata` verifica observaciones nativas comunes; `virtual-created-namespace-metadata` compara144bytes constantes completos porC++/SDK/CLI/Python. Pasaron11 modelos/admisiones,1JSON estricto,43 workloads nativos bajo los5segundos originales,8 invitados（12 omitidos por backend ausente,3HVF requeridos ejecutados）y10 casos públicos. Se conservan el fallo de tabla de punteros y la corrección estáticaARM64. iOS físico e Intel nativo siguen sin validar.
+
+```json
+{"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
+```
+
+## Enumeración virtual tras cambios de nombres
+
+El campo opcional `directories[].enumeration_policy` habilita vistas actuales por `getdirentries 64`; C++ usa `DarwinFileOptions::DirectoryEnumerationPolicies` y `DarwinDirectoryEnumerationPolicy`. El objeto estricto exige `minimum_buffer_size`, `initial_minimum_buffer_size` y `seek_offset`: el primero positivo, ambos mínimos hasta 128 MiB y seek_offset uint 64 sin pérdidas. El directorio inicial requiere metadatos propios con inode no nulo; no admite `contents` inmutable simultáneo. Cada referencia cuenta ruta+NUL una vez. mkdir hereda la política del padre real; los descendientes existentes mantienen sus declaraciones. Enumerar y modificar son autorizaciones independientes.
+
+El orden virtual es `.`, `..` y nombres directamente enlazados ordenados por bytes sin signo. Los inodes proceden de objetos observados o creados; `..` sigue el padre real retenido. Una identidad hija/padre ausente o nula detiene antes de escribir. Solo inode sobrevive a la invalidación del stat inicial completo. Cookies son ordinales locales desde 1 y d_seekoff una constante declarada. dup comparte cursor, open es independiente. Cambios confirmados y movimientos directos requieren rebobinar a cero; rechazos y operaciones sin efecto lo conservan. Mover un ancestro conserva cursores descendientes. Agotar versiones detiene explícitamente. Directorios vacíos eliminados y retenidos dan cero registros incluso tras reutilizar el nombre.
+
+Este párrafo documenta la preparación con solo enumeración, sin la política stat inicial siguiente. Se reutilizan codificador, registros completos, mínimos, límite de carga, sufijo EOF y efectos datos/cursor/posición/flags. Stat completo del padre inicial e instantáneas fijas siguen invalidándose; omitir la política conserva los rechazos anteriores. No reproduce generaciones APFS. La preparación ARM 64 independiente registró 25 eventos/16 vistas dentro de los 5 segundos sin cambios. `directory-enumeration-mutations` comprueba identidades nativas y objetos retenidos; `virtual-directory-enumeration` compara 160 bytes literales por invitado, C/CLI y Python. Intel nativo, iOS físico, ACL, enlaces duros y OS/frameworks completos siguen sin validar o soportar.
+
+## Mutación explícita del stat de directorios iniciales
+
+La opción `directories[].mutation_policy` conserva el stat completo de un directorio inicial admitido tras cambios del espacio de nombres. C++ usa `DarwinDirectoryMutationPolicy` y `DarwinFileOptions::DirectoryMutationPolicies`. El objeto estricto contiene exactamente `directory_entry_size` y `mutation_time`. El tamaño es positivo y como máximo 16 MiB; el tiempo usa segundos de 64 bits con signo sin pérdida y nanosegundos en [0,1000000000). Se requieren metadata completas propias con inode no nulo. Cada referencia cuenta una vez ruta y NUL; el tamaño proyectado no asigna bytes de archivo. La política no otorga autoridad de modificación ni permisos, y no exige políticas de creación o enumeración.
+
+El registro observado completo permanece intacto hasta el primer cambio realmente confirmado, que copia sus escalares al objeto sin asignación. Cambiar nombres hijos fija nlink en dos más todos los nombres directamente enlazados de cualquier tipo, size en nlink por directory_entry_size y mtime/ctime en mutation_time. Mover directamente, SWAP o borrar solo cambia ctime; mover un ancestro conserva descendientes. Rechazos y operaciones sin efecto sobre el mismo objeto no cambian nada. Device, inode, mode, propietario, blocks, tamaño de bloque, flags, generation, atime y birthtime conservan valores observados. Son reglas virtuales declaradas, sin inferir asignación, número de enlaces o reloj APFS.
+
+El registro y la política siguen al objeto original por dup, FD retenidos, CWD, reemplazo, borrado y reutilización del nombre. Un nuevo mkdir usa la política de creación separada, si existe, sin heredar la política stat inicial del padre ni del objeto homónimo antiguo. Los snapshots inmutables siguen siendo desconocidos tras cambios; una enumeration_policy independiente puede ofrecer vistas actuales. Sin esta política stat, las metadata completas de directorios iniciales modificados siguen siendo desconocidas.
+
+Una preparación nativa ARM64 independiente conservó 27 vistas stat brutas protegidas y 15 operaciones dentro de los cinco segundos sin modificar, verificando la ABI SDK de 144 bytes y la identidad retenida sin generalizar tiempos o asignación. El ensayo original `initial-directory-metadata` verifica observaciones nativas comunes; `virtual-initial-directory-metadata` compara un registro literal completo de 144 bytes por guest, C/CLI y Python. Los modelos también cubren primer borrado, ausencia de autoridad, omisión de creación e independencia snapshot/enumeración. Intel nativo, iOS físico, ACL, enlaces físicos, mutaciones de enlaces iniciales sin permiso individual y OS/frameworks completos siguen sin validar o sin soporte.
+
+```json
+{"mutation_policy":{"directory_entry_size":17,"mutation_time":{"seconds":-11,"nanoseconds":321}}}
+```
+
+## Mutación explícita de enlaces simbólicos iniciales
+
+`symbolic_links[].mutable:true` y C++ `DarwinFileOptions::MutableSymbolicLinks` autorizan el nombre del objeto inicial, con permiso independiente del padre real. Se rechazan flags conocidos, mode especial, link_count≠1, alias de identidad y dispositivos contradictorios. Sin declaración el nombre queda protegido y no puede estar en un dominio ancestral mutable. Cada permiso reserva una referencia path/NUL fija, sin entrada ni inode de creación. Los destinos iniciales no cambian.
+
+unlink, rename normal/EXCL, SWAP de hojas link/file/link y transacciones de subárboles declarados conservan requisitos de padre real, mount y SWAP. Destinos relativos se resuelven en el nuevo padre; FD/dup, CWD y leases de mapping conservan sus referentes. Costes iniciales siguen reservados tras borrar/reemplazar; el primer cambio reserva otro nombre dinámico. Solo se devuelven costes dinámicos propios y solo enlaces creados cuentan como entradas dinámicas. Rechazos y operaciones sin efecto no publican cambios.
+
+`symbolic_links[].mutation_policy` usa `DarwinSymbolicLinkMutationPolicy` y `DarwinFileOptions::SymbolicLinkMutationPolicies`. El único campo estricto `mutation_time` tiene segundos signed 64-bit sin pérdida y nanosegundos [0, 1000000000), con permiso y metadatos completos de inode no cero. El primer movimiento directo/SWAP copia escalares sin asignar y cambia solo ctime; blocks y el resto se conservan. Ancestros/rechazos/no-ops preservan el registro. Sin política, stat completo pasa a desconocido, pero inode de enumeración y contradicciones de dispositivo permanecen. Referencia path/NUL fija; nombres reutilizados y nuevos symlink no heredan la política inicial, sino la namespace policy de creación separada.
+
+La preparación ARM64 privada retiene 14 vistas guarded raw-stat, 11 operaciones, ABI SDK independiente de 144 bytes, límites compile120s/native5s/drain1s/reap1s y limpieza. `mutable-initial-links` comprueba identidad, resolución y referentes nativos; `virtual-mutable-initial-links` comprueba stat completo en cinco guest, C/CLI y Python. Modelos cubren dos páginas, SWAP de subárboles, costes exactos y agotamiento entry/inode. Intel e iOS físico no están validados; hard links, ACL, OS/runtime/framework completo quedan pendientes.
+
+```json
+{"mutable":true,"mutation_policy":{"mutation_time":{"seconds":-13,"nanoseconds":456}}}
+```
+
+## Transacciones raíz de directorio y enlace simbólico
+
+`renameatx_np(RENAME_SWAP)` intercambia un directorio real y un enlace en ambos órdenes, incluso con subárboles no vacíos. El directorio inicial requiere `exchangeable`, el enlace inicial `mutable` y ambos padres reales permisos de modificación/SWAP dentro de un mount establecido. Los descendientes iniciales protegidos siguen rechazándose. Con permisos ordinarios existentes, directorio→enlace devuelve ENOTDIR20, el inverso EISDIR21 y EXCL sobre nombres distintos existentes EEXIST17. Ambos ciclos directorio/enlace descendiente devuelven EINVAL22 antes de cambios. Se intercambia el propio enlace: una autorreferencia resultante puede ser válida y seguirla después devuelve ELOOP62.
+
+La transacción de tres tablas comprueba raíces, descendientes enlazados o retenidos, rutas completas y espacio dinámico antes de publicar. Nombres/objetivos/referencias iniciales, contenido y leases de mapping no dan crédito SWAP. La primera clave nueva reserva su ruta/NUL dinámica; los intercambios repetidos sustituyen su coste anterior una vez. No consumen entrada, FD ni inode de creación adicionales. La pertenencia sigue padres reales, sin incorporar objetos huérfanos antiguos por reutilizar nombres. Los objetivos crudos permanecen y la resolución relativa cambia de padre; FD/dup, cursores, CWD, referentes y mappings sobreviven. Las raíces directas aplican sus propias políticas stat solo a ctime; mover ancestros conserva descendientes. Sin política, stat completo queda desconocido, mientras el inode sigue disponible para enumeración viva y las versiones siguen el contrato de rebobinado existente. Sin campos JSON ni permisos nuevos.
+
+La preparación ARM64 original conserva 36 vistas stat protegidas de 144 bytes, 16 raw rename, compile120s/native5s/drain1s/reap1s y recuperación/limpieza confirmadas. `directory-link-roots` y `virtual-directory-link-roots` comprueban identidad y stat completo constante en cinco guest, C/CLI y Python. Los modelos de dos tamaños de página cubren presupuestos exactos, desbordamientos sin abrir, huérfanos y agotamiento FD/entrada/inode. Esta sección amplía las exclusiones anteriores dentro de esos permisos. Intel nativo, iOS físico, hard links, ACL y OS/runtime/framework completo siguen pendientes.
+
+## Consultas pathconf fijas del núcleo
+
+pathconf(191) / fpathconf(192) admiten constantes vnode XNU:15/16/17→1,19/25→0,20/22/23→4096,21→65536,24→255. Las observaciones de enlaces, asignación, I/O y transferencia no habilitan ejecución asíncrona ni autorización; no se deducen de páginas o presupuestos del catálogo.
+
+La resolución completa de ruta siguiendo enlaces o búsqueda del FD precede al selector low32. Se conservan CWD y EFAULT/ENOENT/ENOTDIR/ELOOP; FD ausente/cerrado devuelve EBADF. Los objetos archivo/directorio retenidos siguen consultables sin stat completo tras dup, movimiento, eliminación y reutilización del nombre. El tipo nativo de flujos capturados queda desconocido. Se mantiene BSD int/carry/registro secundario sin copiar salida, alterar cursor, metadatos/enumeración ni reservar entrada/FD/inode. NAME_MAX, propiedades de mayúsculas y selectores desconocidos siguen sin soporte tras búsqueda; no se usan valores del host ni EINVAL supuestos.
+
+kernel-pathconf, kernel-pathconf-values y kernel-pathconf-unsupported verifican semántica común,80 bytes literales independientes y parada conservando salida previa en invitado/C/CLI/Python. Preparación privada ARM64:250 consultas,249 comparaciones SDK,0.262s con límite5s intacto. Intel nativo/iOS físico/ACL/enlaces duros/runtime y frameworks completos siguen sin validar o implementar.
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.
+
+## Listas de atributos comunes fijos
+
+getattrlist(220), fgetattrlist(228) y getattrlistat(476) consultan once campos comunes del catálogo explícito: dispositivo, tipo, cuatro tiempos, propietario/grupo, modo completo, indicadores e ID. Comparten con stat64 la validez del registro completo; observaciones ausentes o invalidadas siguen desconocidas. Tipo y selección vacía no requieren stat. NAME de raíz/montaje, volumen, máscaras de directorio/archivo/fork, ACL y opciones desconocidas siguen sin soporte explícito incluso con máscara devuelta; no se infieren datos del host ni nombres de montaje.
+
+Ruta/at importan24 bytes antes de buscar; FD valida primero low32 FD y tipo nativo. reserved se ignora. CWD, FD relativo y enlaces mantienen errores nativos antes de tamaño/bitmap. Formato little-endian, alineación4, st_mode completo y segundos con signo; con máscara120 bytes, sin ella100. Un búfer corto recibe sólo el prefijo solicitado, pero informa la longitud completa. Acceso parcial se detiene antes de esa copia; tamaño fuera de signed-uio produce EINVAL tras solicitud válida y soportada. No cambian cursores, metadatos, enumeración ni presupuestos entrada/FD/inode; se conserva la vida dup/eliminación/reuso de nombre.
+
+Tres modos verifican comportamiento común, bytes configurados independientes y ATTR_CMN_EXTENDED_SECURITY sin soporte conservando salida por guest/C/CLI/Python. Preparación ARM64 privada:187 consultas raw/176 comparaciones SDK ruta-FD dentro de native5s sin cambios. SDK15.5 no declara getattrlistat; raw476 separado. Nuevos guest/Python:5,000,000us/quantum1024; públicos existentes:10s. Intel nativo, iOS físico, datos FS, enlaces duros, permisos/ACL y runtimes/frameworks completos siguen incompletos o sin validar.
+
+```text
+ATTR_CMN_RETURNED_ATTRS=0x80000000
+FSOPT_NOFOLLOW=1, FSOPT_REPORT_FULLSIZE=4
+FSOPT_PACK_INVAL_ATTRS=8 (requires ATTR_CMN_RETURNED_ATTRS)
+FSOPT_NOFOLLOW_ANY=0x800
+common-attributes
+common-attributes-values
+common-attributes-unsupported
+```
+
+[XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).
+
+
+## Lectura explícita de atributos extendidos
+
+getxattr(234), fgetxattr(235), listxattr(240) y flistxattr(241) leen observaciones ordinarias completas y ordenadas de darwin_files. Archivos, directorios y enlaces pueden declarar extended_attributes como una matriz estricta de {name,bytes_hex}. La omisión sigue siendo desconocida; [] declara una lista vacía conocida. Los nombres UTF-8 tienen 1..127 bytes y admiten barras; los valores son bytes opacos, se rechazan duplicados y se conserva el orden. Límite: 4096 atributos. Nombres, NUL y valores entran en el presupuesto existente de 16 MiB sin cobrar dos veces la ruta existente.
+
+Las observaciones pertenecen al objeto tras dup, movimiento, eliminación, CWD y reutilización del nombre, independientemente del stat completo y la enumeración. Los nuevos objetos son desconocidos. Escrituras, truncado exitoso y fallos ambiguos de copia no vacía invalidan atributos; el rechazo previo de un búfer parcial los conserva. Las consultas conservan cursores, entradas, metadatos y presupuestos de objetos/FD/inode.
+
+ABI: FD/options/position low32, size full64 y BSD user_ssize_t/carry/secondary. NULL ignora position. Para valores no vacíos, ruta nonNULL size0 devuelve ERANGE; FD size0 consulta la longitud. Solo UINT32_MAX/UINT64_MAX del get por ruta son consultas heredadas; FD limita a INT32_MAX. Las listas positivas cortas publican nombres completos antes de ERANGE; tamaños negativos full64 nonNULL dan ERANGE para listas no vacías. No se verificó una lista nativa vacía: ese caso negativo con vacío declarado sigue siendo UnsupportedService. La salida inaccesible se detiene antes de copiar. NOFOLLOW1 y NOFOLLOW_ANY64 son independientes;8/16 se rechazan antes de buscar, FD1/64 antes de FD/nombre. CREATE2/REPLACE4 se ignoran; SHOWCOMPRESSION32 y bits desconocidos no se admiten. com.apple.system.*, ResourceFork, FinderInfo, decmpfs, escritura/eliminación, permisos/ACL e inferencias del sistema de archivos quedan excluidos.
+
+extended-attributes / extended-attributes-values / extended-attributes-unsupported comprueban el programa nativo compartido, bytes virtuales y parada desconocida conservando la salida. Sin cambios: guest/Python5,000,000us/quantum1024, API pública10s, nativo5s. Preparación privada ARM64:320 comparaciones raw/SDK con todos288 bytes de guarda y carry/secondary idénticos. com.apple.provenance automático es una observación, no un vacío predeterminado. Intel nativo/iOS físico siguen sin verificar; dyld, Mach IPC, Objective-C/Swift y frameworks completos siguen incompletos.
+
+Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.
+
+## Nombres de objetos acotados
+
+ATTR_CMN_NAME=1 se admite mediante getattrlist220/fgetattrlist228/getattrlistat476 para objetos no raíz con nombre único en el catálogo explícito. El nombre final es UTF-8 válido de1..255 bytes. La ruta real compartida con F_GETPATH conserva la última grafía enlazada tras dup, CWD, movimientos, SWAP, eliminación y reutilización; los alias del llamador no la reemplazan. Nombre y tipo no requieren stat; los campos stat seleccionados necesitan observaciones completas válidas. Etiquetas raíz/montaje, nombres inválidos, alias de enlaces duros o mayúsculas, normalización y atributos de ruta completa siguen desconocidos.
+
+attrreference_t ocupa8 bytes antes de los otros campos; attr_dataoffset es relativo a la referencia, attr_length incluye NUL y el área final se rellena a4 bytes. Las salidas cortas conservan longitud total y prefijos exactos, incluso UTF-8 parcial. attribute-names / attribute-names-values / attribute-names-unsupported comprueban comportamiento nativo, bytes independientes y parada en nombre raíz conservando salida por guest/C/CLI/Python. ARM64:601 consultas raw,453 comparaciones SDK del búfer protegido completo,384 prefijos. SDK15.5 no declara raw476. Native5s, guest/Python5,000,000us/quantum1024 y public10s sin cambios. Intel nativo, iOS físico y runtimes/frameworks completos siguen incompletos o sin validar.
