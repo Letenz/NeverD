@@ -47,16 +47,35 @@ llvm::Value *MedLLVMEmitter::emitAesIntrinsic(const MedOp &Op, Intrinsic IC,
       {I::AesDec, llvm::Intrinsic::x86_aesni_aesdec, "aesdec"},
       {I::AesDecLast, llvm::Intrinsic::x86_aesni_aesdeclast, "aesdeclast"},
   };
-  if (Op.Output.Size == 16 && Op.NumInputs >= 3) {
+  if ((Op.Output.Size == 16 || Op.Output.Size == 32 || Op.Output.Size == 64) &&
+      Op.NumInputs >= 3) {
     auto *A = widenToI128(GetInput(1), Builder);
     auto *B = widenToI128(GetInput(2), Builder);
-    if (A->getType()->isIntegerTy(128) && B->getType()->isIntegerTy(128)) {
+    const unsigned Bits = Op.Output.Size * 8;
+    if (A->getType()->isIntegerTy() && B->getType()->isIntegerTy() &&
+        Op.Inputs[1].Size == Op.Output.Size &&
+        Op.Inputs[2].Size == Op.Output.Size) {
+      A = Builder.CreateZExtOrTrunc(A, sizeToType(Op.Output.Size));
+      B = Builder.CreateZExtOrTrunc(B, sizeToType(Op.Output.Size));
       for (auto &P : Pairs) {
         if (IC == P.Code) {
           auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(Mod, P.IID);
-          auto *R = Builder.CreateCall(
-              Fn, {toVec(A, V2I64, Builder), toVec(B, V2I64, Builder)}, P.Name);
-          return fromVec(R, Builder);
+          llvm::Value *Result =
+              llvm::ConstantInt::get(sizeToType(Op.Output.Size), 0);
+          for (unsigned Offset = 0; Offset < Bits; Offset += 128) {
+            auto Lane = [&](llvm::Value *V) {
+              return Builder.CreateZExtOrTrunc(Builder.CreateLShr(V, Offset),
+                                               llvm::Type::getInt128Ty(*Ctx));
+            };
+            auto *R = Builder.CreateCall(Fn,
+                                         {toVec(Lane(A), V2I64, Builder),
+                                          toVec(Lane(B), V2I64, Builder)},
+                                         P.Name);
+            auto *Wide = Builder.CreateZExtOrTrunc(fromVec(R, Builder),
+                                                   sizeToType(Op.Output.Size));
+            Result = Builder.CreateOr(Result, Builder.CreateShl(Wide, Offset));
+          }
+          return Result;
         }
       }
     }
@@ -199,8 +218,7 @@ llvm::Value *MedLLVMEmitter::emitGfniIntrinsic(const MedOp &Op, Intrinsic IC,
                                                llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
 
-  if (IC != I::Gf2p8MulB && IC != I::Gf2p8AffineQb &&
-      IC != I::Gf2p8AffineInvQb)
+  if (IC != I::Gf2p8MulB && IC != I::Gf2p8AffineQb && IC != I::Gf2p8AffineInvQb)
     return nullptr;
 
   const bool IsMul = IC == I::Gf2p8MulB;
@@ -219,8 +237,7 @@ llvm::Value *MedLLVMEmitter::emitGfniIntrinsic(const MedOp &Op, Intrinsic IC,
     llvm::report_fatal_error("invalid GFNI intrinsic shape");
 
   const unsigned NumBytes = Op.Output.Size;
-  auto *VTy =
-      llvm::FixedVectorType::get(llvm::Type::getInt8Ty(*Ctx), NumBytes);
+  auto *VTy = llvm::FixedVectorType::get(llvm::Type::getInt8Ty(*Ctx), NumBytes);
   auto GetInput = [&](unsigned Idx) {
     return toVec(getVar(Op.Inputs[Idx], Builder), VTy, Builder);
   };
@@ -242,12 +259,12 @@ llvm::Value *MedLLVMEmitter::emitGfniIntrinsic(const MedOp &Op, Intrinsic IC,
       Result = Builder.CreateXor(
           Result, Builder.CreateSelect(UseA, A, Splat(0)), "gfni.mul.acc");
 
-      auto *Reduce = Builder.CreateICmpNE(
-          Builder.CreateAnd(A, Splat(0x80)), Splat(0), "gfni.mul.reduce");
+      auto *Reduce = Builder.CreateICmpNE(Builder.CreateAnd(A, Splat(0x80)),
+                                          Splat(0), "gfni.mul.reduce");
       A = Builder.CreateShl(A, Splat(1), "gfni.mul.shift");
-      A = Builder.CreateXor(
-          A, Builder.CreateSelect(Reduce, Splat(0x1b), Splat(0)),
-          "gfni.mul.poly");
+      A = Builder.CreateXor(A,
+                            Builder.CreateSelect(Reduce, Splat(0x1b), Splat(0)),
+                            "gfni.mul.poly");
       B = Builder.CreateLShr(B, Splat(1), "gfni.mul.next");
     }
     return Result;
@@ -286,17 +303,16 @@ llvm::Value *MedLLVMEmitter::emitGfniIntrinsic(const MedOp &Op, Intrinsic IC,
     llvm::Value *Row =
         Builder.CreateShuffleVector(Matrix, Matrix, RowMask, "gfni.row");
     llvm::Value *Parity = Builder.CreateAnd(Row, X, "gfni.dot");
-    Parity = Builder.CreateXor(
-        Parity, Builder.CreateLShr(Parity, Splat(4)), "gfni.parity4");
-    Parity = Builder.CreateXor(
-        Parity, Builder.CreateLShr(Parity, Splat(2)), "gfni.parity2");
-    Parity = Builder.CreateXor(
-        Parity, Builder.CreateLShr(Parity, Splat(1)), "gfni.parity1");
+    Parity = Builder.CreateXor(Parity, Builder.CreateLShr(Parity, Splat(4)),
+                               "gfni.parity4");
+    Parity = Builder.CreateXor(Parity, Builder.CreateLShr(Parity, Splat(2)),
+                               "gfni.parity2");
+    Parity = Builder.CreateXor(Parity, Builder.CreateLShr(Parity, Splat(1)),
+                               "gfni.parity1");
     Parity = Builder.CreateAnd(Parity, Splat(1));
     if ((Imm >> Bit) & 1)
       Parity = Builder.CreateXor(Parity, Splat(1));
-    Result = Builder.CreateOr(Result,
-                              Builder.CreateShl(Parity, Splat(Bit)),
+    Result = Builder.CreateOr(Result, Builder.CreateShl(Parity, Splat(Bit)),
                               "gfni.affine.acc");
   }
   return fromVec(Result, Builder);
