@@ -3929,6 +3929,46 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
 static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
                                    llvm::function_ref<bool(va_t)> IsTarget) {
   bool Changed = false;
+  // Which statements of the function read each variable, as stmtReadsVar
+  // reads it, for the prefix checks below.  One walk serves every check
+  // until a fold rewrites the body.
+  using VarKey = std::tuple<int, int, int>;
+  std::optional<std::map<VarKey, std::vector<const HighStmt *>>> Readers;
+  const auto readOutside = [&](const MedVar &V,
+                               const std::set<const HighStmt *> &Skip) {
+    if (!Readers) {
+      Readers.emplace();
+      walkStmts(IfElseFunctionBody ? *IfElseFunctionBody : Body,
+                [&](const HighStmt &S) {
+                  std::set<VarKey> Read;
+                  HighExprSet Seen;
+                  llvm::SmallVector<const HighExpr *, 32> Work;
+                  for (const ExprPtr *Slot :
+                       {&S.Val, &S.Cond, &S.CallExpr, &S.RetVal, &S.StoreAddr,
+                        &S.StoreVal, &S.SwitchExpr})
+                    Work.push_back(Slot->get());
+                  if (S.Dst && S.Dst->Kind != ExprKind::Var &&
+                      S.Dst->Kind != ExprKind::Phi)
+                    Work.push_back(S.Dst.get());
+                  while (!Work.empty()) {
+                    const HighExpr *E = Work.pop_back_val();
+                    if (!E || !Seen.insert(E).second)
+                      continue;
+                    if (E->Kind == ExprKind::Var)
+                      Read.emplace(E->Var.Kind, E->Var.Id, E->Var.SSAVer);
+                    E->forEachChildExpr([&](const ExprPtr &Child) {
+                      Work.push_back(Child.get());
+                    });
+                  }
+                  for (const VarKey &Key : Read)
+                    (*Readers)[Key].push_back(&S);
+                });
+    }
+    const auto It = Readers->find({V.Kind, V.Id, V.SSAVer});
+    return It != Readers->end() &&
+           llvm::any_of(It->second,
+                        [&](const HighStmt *S) { return !Skip.count(S); });
+  };
   for (int I = 0; I < static_cast<int>(Body.size()); ++I) {
     HighStmt &Stmt = Body[I];
     if (Stmt.Kind != StmtKind::If || !Stmt.Cond || !bodyIsSkipGoto(Stmt.Body))
@@ -3971,7 +4011,7 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
       if (Prefix.Kind != StmtKind::Assign || !Prefix.Dst ||
           Prefix.Dst->Kind != ExprKind::Var ||
           exprHasObservableEffect(Prefix.Val.get()) ||
-          functionReadsVar(Body, Prefix.Dst->Var, FoldedRange)) {
+          readOutside(Prefix.Dst->Var, FoldedRange)) {
         PrefixSafe = false;
         break;
       }
@@ -3994,6 +4034,7 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
       Body.erase(Body.begin() + static_cast<long>(I) + 1,
                  Body.begin() + static_cast<long>(J) + 1);
       Changed = true;
+      Readers.reset();
       --I;
       continue;
     }
@@ -4004,6 +4045,7 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
     Body.erase(Body.begin() + static_cast<long>(I) + 1,
                Body.begin() + static_cast<long>(J) + 1);
     Changed = true;
+    Readers.reset();
     --I;
   }
   return Changed;
