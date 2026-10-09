@@ -1624,3 +1624,23 @@ Original kernel-pathconf checks both calls and carrier/error transitions; kernel
 [XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
 
 `pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.
+
+## Fixed common attribute lists
+
+getattrlist(220), fgetattrlist(228) and getattrlistat(476) query eleven fixed common fields in the explicit catalogue: device, object type, four timestamps, owner/group, full mode, flags and file ID. They share the complete-stat validity decision with stat64; a missing or invalidated observation stays unknown. Object type and an empty selection need no stat record. NAME, volume, directory/file/fork-specific masks, ACLs and unknown options stay explicitly unsupported, even when a returned mask was requested. No host metadata or mount label is inferred.
+
+The 24-byte request is imported before path/at lookup; fgetattrlist validates the low32 FD and native kind first. The reserved word is ignored. Shared CWD, relative-FD and link resolution preserve native errors before the size/bitmap checks. Known fixed records use little-endian, four-byte alignment, full st_mode and signed seconds. A returned-mask record is 120 bytes; the corresponding plain record is 100. Short user buffers receive only the requested prefix but still report the full required size. Partially accessible copies stop before that copy; unrepresentable signed-uio sizes give EINVAL only after a valid supported request. Queries preserve cursors, metadata, enumeration and entry/FD/inode budgets. Held objects keep the existing dup/removal/name-reuse lifetime.
+
+The three workload modes check native common behavior, independent configured bytes and an unsupported NAME query preserving previous output through guest, C, CLI and Python routes. Private ARM64 preparation passed 187 raw queries and 176 typed SDK path/FD cross-checks within the unchanged 5-second native bound. SDK15.5 has no getattrlistat declaration; raw476 controls are separate. New guest/Python workloads keep 5,000,000us/quantum1024 and existing public tests keep 10s. Native Intel, physical iOS, filesystem-specific facts, hard links, permissions/ACL enforcement and full runtimes/frameworks remain unverified or incomplete.
+
+```text
+ATTR_CMN_RETURNED_ATTRS=0x80000000
+FSOPT_NOFOLLOW=1, FSOPT_REPORT_FULLSIZE=4
+FSOPT_PACK_INVAL_ATTRS=8 (requires ATTR_CMN_RETURNED_ATTRS)
+FSOPT_NOFOLLOW_ANY=0x800
+common-attributes
+common-attributes-values
+common-attributes-unsupported
+```
+
+[XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).

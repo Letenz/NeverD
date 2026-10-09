@@ -42,6 +42,180 @@ inline DarwinFileMetadata metadata(uint64_t Size = 10) {
           {-3, 4},
           {-5, 6}};
 }
+// Independent raw common-attribute records, including full mode and signed
+// times.
+inline constexpr char CommonAttributesHex[] =
+    "780000000a9e07820000000000000000000000000000000085ffffff01000000"
+    "fbffffffffffffff0600000000000000ffffffffffffff7fffc99a3b00000000"
+    "fdffffffffffffff040000000000000001000000000000800100000000000000"
+    "efcdab8998badcfea4810000341200001032547698badcfe";
+inline constexpr char PlainCommonAttributesHex[] =
+    "6400000085ffffff01000000fbffffffffffffff0600000000000000ffffffff"
+    "ffffff7fffc99a3b00000000fdffffffffffffff040000000000000001000000"
+    "000000800100000000000000efcdab8998badcfea48100003412000010325476"
+    "98badcfe";
+inline DarwinFileOptions commonAttributesOptions() {
+  auto O = kernelPathConfOptions();
+  O.Metadata["/data"] = metadata();
+  auto Parent = metadata(0);
+  Parent.Mode = 0040755;
+  Parent.Inode = 41;
+  O.Metadata["/"] = Parent;
+  Parent.Inode = 42;
+  O.Metadata["/empty"] = Parent;
+  auto Link = metadata(4);
+  Link.Mode = 0120777;
+  Link.Inode = 123;
+  O.Metadata["/alias"] = Link;
+  return O;
+}
+inline constexpr char CommonAttributesJSON[] = R"({
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "30313233343536373839",
+      "metadata": {
+        "device": -123,
+        "inode": "18364758544493064720",
+        "mode": 33188,
+        "link_count": 3,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 10,
+        "block_size": 4096,
+        "blocks": 8,
+        "flags": 4660,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      }
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "metadata": {
+        "device": -123,
+        "inode": 41,
+        "mode": 16877,
+        "link_count": 3,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 8,
+        "flags": 4660,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      }
+    },
+    {
+      "path": "/empty",
+      "metadata": {
+        "device": -123,
+        "inode": 42,
+        "mode": 16877,
+        "link_count": 3,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 8,
+        "flags": 4660,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      }
+    }
+  ],
+  "working_directory": "/empty",
+  "symbolic_links": [
+    {
+      "path": "/alias",
+      "target_hex": "64617461",
+      "metadata": {
+        "device": -123,
+        "inode": 123,
+        "mode": 41471,
+        "link_count": 3,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 4,
+        "block_size": 4096,
+        "blocks": 8,
+        "flags": 4660,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      }
+    },
+    {
+      "path": "/dangling",
+      "target_hex": "6d697373696e67"
+    },
+    {
+      "path": "/cycle",
+      "target_hex": "6379636c65"
+    }
+  ]
+})";
 inline DarwinFileMetadata mutationMetadata(uint64_t Size = 10) {
   auto M = metadata(Size);
   M.LinkCount = 1;

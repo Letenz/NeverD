@@ -406,6 +406,10 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
     for (const auto &[Mode, Expected] :
          {std::pair{"files", "66"},
           std::pair{"files-nocancel", "66"},
+          std::pair{"common-attributes", "41"},
+          std::pair{"common-attributes-values",
+                    emulation::darwin_test::CommonAttributesHex},
+          std::pair{"common-attributes-unsupported", "41"},
           std::pair{"kernel-pathconf", "43"},
           std::pair{"kernel-pathconf-values",
                     emulation::darwin_test::KernelPathConfHex},
@@ -512,7 +516,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   const bool ProtectedLink =
       (UnlinkLinks || RenameLinks) && ModeName.ends_with("-protected");
   const bool UnknownPathConf = ModeName == "kernel-pathconf-unsupported";
-  const bool Incomplete = ProtectedLink || UnknownPathConf;
+  const bool UnknownAttributes = ModeName == "common-attributes-unsupported";
+  const bool Incomplete = ProtectedLink || UnknownPathConf || UnknownAttributes;
   const bool X64 = llvm::StringRef(File).ends_with("x86_64");
   SCOPED_TRACE(File);
   Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
@@ -922,6 +927,13 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     }
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (ModeName.starts_with("common-attributes")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::CommonAttributesJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
   if (ModeName.starts_with("kernel-pathconf")) {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     (*Input.getAsObject())[field::Quantum] = 1024;
@@ -944,6 +956,20 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
   }
   EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
+  if (UnknownAttributes) {
+    EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
+              "Darwin selected file attributes are not modeled");
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    ASSERT_FALSE(Services->empty());
+    const auto *Last = Services->back().getAsObject();
+    ASSERT_NE(Last, nullptr);
+    EXPECT_EQ(Last->getString(field::Number), X64 ? "20000dc" : "dc");
+    EXPECT_EQ(Last->get(field::Error), nullptr);
+    ASSERT_NE(Last->get(field::Result), nullptr);
+    EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+    EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+  }
   if (UnknownPathConf) {
     const auto *Services = Report->getAsObject()->getArray(field::Services);
     ASSERT_NE(Services, nullptr);

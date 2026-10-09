@@ -76,6 +76,24 @@ NEVERD_DARWIN_VALUE(GetFileFlags, 3)
 NEVERD_DARWIN_VALUE(SetFileFlags, 4)
 NEVERD_DARWIN_VALUE(DuplicateCloseOnExec, 67)
 NEVERD_DARWIN_VALUE(FileStatusSize, 144)
+NEVERD_DARWIN_VALUE(AttributeRequestSize, 24)
+NEVERD_DARWIN_VALUE(AttributeBitmapCount, 5)
+NEVERD_DARWIN_VALUE(AttributeDevice, 0x00000002)
+NEVERD_DARWIN_VALUE(AttributeObjectType, 0x00000008)
+NEVERD_DARWIN_VALUE(AttributeBirthTime, 0x00000200)
+NEVERD_DARWIN_VALUE(AttributeModificationTime, 0x00000400)
+NEVERD_DARWIN_VALUE(AttributeChangeTime, 0x00000800)
+NEVERD_DARWIN_VALUE(AttributeAccessTime, 0x00001000)
+NEVERD_DARWIN_VALUE(AttributeUID, 0x00008000)
+NEVERD_DARWIN_VALUE(AttributeGID, 0x00010000)
+NEVERD_DARWIN_VALUE(AttributeMode, 0x00020000)
+NEVERD_DARWIN_VALUE(AttributeFlags, 0x00040000)
+NEVERD_DARWIN_VALUE(AttributeInode, 0x02000000)
+NEVERD_DARWIN_VALUE(AttributeReturned, 0x80000000)
+NEVERD_DARWIN_VALUE(AttributeNoFollow, 0x1)
+NEVERD_DARWIN_VALUE(AttributeFullSize, 0x4)
+NEVERD_DARWIN_VALUE(AttributePackInvalid, 0x8)
+NEVERD_DARWIN_VALUE(AttributeNoFollowAny, 0x800)
 NEVERD_DARWIN_VALUE(FileRegularMode, 0x8000)
 NEVERD_DARWIN_VALUE(FileDirectoryMode, 0x4000)
 NEVERD_DARWIN_VALUE(FileSymbolicLinkMode, 0xa000)
@@ -165,6 +183,9 @@ NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
 NEVERD_DARWIN_SERVICE(GetRlimit, 194, Int)
 NEVERD_DARWIN_SERVICE(PathConf, 191, Int)
 NEVERD_DARWIN_SERVICE(FpathConf, 192, Int)
+NEVERD_DARWIN_SERVICE(GetAttrList, 220, Int)
+NEVERD_DARWIN_SERVICE(FgetAttrList, 228, Int)
+NEVERD_DARWIN_SERVICE(GetAttrListAt, 476, Int)
 NEVERD_DARWIN_SERVICE(Truncate, 200, Int)
 NEVERD_DARWIN_SERVICE(Ftruncate, 201, Int)
 NEVERD_DARWIN_SERVICE(Sysctl, 202, Int)
@@ -493,6 +514,19 @@ NEVERD_DARWIN_DIAGNOSTIC(
     "Darwin filesystem-dependent pathconf selector is not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(
     FilePathConfKind, "Darwin pathconf native descriptor kind is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(FileAttributeSelection,
+                         "Darwin selected file attributes are not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(FileAttributeOptions,
+                         "Darwin attribute-list options are not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAttributeKind,
+    "Darwin attribute-list native descriptor kind is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAttributePartialInput,
+    "Darwin partially readable attribute list is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAttributePartialOutput,
+    "Darwin partially writable attribute output is not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(FileSeek, "unsupported Darwin data/hole seek")
 NEVERD_DARWIN_DIAGNOSTIC(
     FilePartialRead,

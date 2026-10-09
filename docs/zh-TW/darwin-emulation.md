@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
+<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
 
 [← 文件索引](README.md)
 
@@ -863,3 +863,23 @@ kernel-pathconf、kernel-pathconf-values、kernel-pathconf-unsupported 檢查共
 [XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
 
 `pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.
+
+## 固定共通屬性列表
+
+getattrlist(220)、fgetattrlist(228)、getattrlistat(476) 查詢明確目錄中的十一項固定共通屬性：裝置、物件類型、四種時間、擁有者/群組、完整模式、旗標及檔案 ID。與 stat64 共用完整中繼資料的有效性判斷；缺失或失效的觀察維持未知。類型與空選擇不需 stat。NAME、卷宗、目錄/檔案/fork 專用屬性、ACL 及未知選項明確不支援，即使要求回傳遮罩也不省略未知資訊；不推斷主機資料或掛載名稱。
+
+路徑/at 入口先匯入 24 位元組請求，FD 入口先檢查 low32 FD 與原生類型，忽略 reserved 字。共用 CWD、相對 FD、連結解析，在大小/位圖檢查前保留原生錯誤。記錄採小端、四位元組對齊、完整 st_mode 與有號秒數；含回傳遮罩為 120 位元組，普通記錄為 100。短緩衝區僅接收指定前綴，長度仍報告完整需求。部分可存取的複製在該次複製前停止；超出有號 uio 大小只於有效且受支援的請求後回傳 EINVAL。查詢不改變游標、資料、列舉或項目/FD/inode 預算，持有物件沿用 dup、刪除、名稱重用生命週期。
+
+三個模式經 guest、C、CLI、Python 檢查原生共通行為、獨立設定位元組與保留既有輸出的未知 NAME。ARM64 私有準備通過 187 次原始查詢及 176 次路徑/FD SDK 對照，原生 5 秒限制不變；SDK15.5 未宣告 getattrlistat，raw476 另記。新增 guest/Python 保持 5,000,000us/quantum1024，既有公開測試保持 10s。原生 Intel、實體 iOS、檔案系統專用資訊、硬連結、權限/ACL 與完整執行階段/框架仍未驗證或未完成。
+
+```text
+ATTR_CMN_RETURNED_ATTRS=0x80000000
+FSOPT_NOFOLLOW=1, FSOPT_REPORT_FULLSIZE=4
+FSOPT_PACK_INVAL_ATTRS=8 (requires ATTR_CMN_RETURNED_ATTRS)
+FSOPT_NOFOLLOW_ANY=0x800
+common-attributes
+common-attributes-values
+common-attributes-unsupported
+```
+
+[XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).

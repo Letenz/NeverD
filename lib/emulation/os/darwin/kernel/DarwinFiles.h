@@ -218,6 +218,20 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   status(const Description &File, uint64_t Address, ProcessResult &Result);
   const DarwinFileMetadata *metadata(const Description &File) const;
+  // Complete records have one validity decision, distinct from retained
+  // identity observations used for namespace consistency.
+  using StatusMetadata = std::variant<const DarwinFileMetadata *, const char *>;
+  StatusMetadata statusMetadata(const Description &File) const;
+  struct AttributeRequest {
+    uint16_t BitmapCount;
+    std::array<uint32_t, 5> Masks;
+  };
+  using AttributeInput = std::variant<AttributeRequest, uint32_t, const char *>;
+  llvm::Expected<AttributeInput> readAttributes(uint64_t Address);
+  llvm::Expected<std::optional<ServiceResult>>
+  attributeList(const Description &File, const AttributeRequest &Request,
+                uint64_t Address, uint64_t Size, uint64_t Options,
+                ProcessResult &Result);
   struct DirectoryEntryIdentity {
     llvm::StringRef Name;
     uint8_t Type;

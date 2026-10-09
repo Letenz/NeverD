@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
+<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
 
 [← 문서 목록](README.md)
 
@@ -863,3 +863,23 @@ kernel-pathconf, kernel-pathconf-values, kernel-pathconf-unsupported는 공통 �
 [XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
 
 `pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.
+
+## 고정 공통 속성 목록
+
+getattrlist(220), fgetattrlist(228), getattrlistat(476)는 명시적 카탈로그의 고정 공통 속성11개를 조회합니다: 장치, 객체 유형, 네 시간, 소유자/그룹, 전체 모드, 플래그, 파일ID. stat64와 완전한 메타데이터 유효성 판단을 공유하며 누락/무효화 관찰은 미지 상태로 남습니다. 유형과 빈 선택은 stat이 필요 없습니다. NAME, 볼륨, 디렉터리/파일/fork 전용 마스크, ACL 및 미지 옵션은 반환 마스크를 요청해도 명시적으로 미지원이며 호스트 정보나 마운트 이름을 추론하지 않습니다.
+
+경로/at는24바이트 요청을 먼저 읽고 FD는 low32 FD와 원래 유형을 먼저 검사합니다. reserved는 무시합니다. 공통 CWD/상대FD/링크 해석은 크기/비트맵 검사 전에 원래 오류를 유지합니다. 리틀엔디언/4바이트 정렬, 전체 st_mode, 부호 있는 초를 사용하며 반환 마스크 포함120바이트/일반100바이트입니다. 짧은 버퍼에는 요청한 앞부분만 복사하지만 전체 필요 길이를 보고합니다. 부분 접근은 해당 복사 전에 중단하고 signed-uio 초과 크기는 유효한 지원 요청 후 EINVAL입니다. 커서, 메타데이터, 열거 및 항목/FD/inode 예산은 변하지 않으며 dup/삭제/이름 재사용 수명은 유지됩니다.
+
+세 모드는 guest/C/CLI/Python에서 공통 동작, 독립 설정 바이트, 기존 출력을 유지하는 미지원 NAME을 검사합니다. ARM64 전용 준비는187 raw 조회/176 SDK 경로-FD 비교를 통과했고 native5초 제한은 그대로입니다. SDK15.5는 getattrlistat를 선언하지 않아 raw476은 별도 기록합니다. 새 guest/Python은5,000,000us/quantum1024, 기존 공개 테스트는10s입니다. 원시 Intel/실제 iOS/FS 특성/하드 링크/권한·ACL/전체 런타임·프레임워크는 미검증 또는 미완성입니다.
+
+```text
+ATTR_CMN_RETURNED_ATTRS=0x80000000
+FSOPT_NOFOLLOW=1, FSOPT_REPORT_FULLSIZE=4
+FSOPT_PACK_INVAL_ATTRS=8 (requires ATTR_CMN_RETURNED_ATTRS)
+FSOPT_NOFOLLOW_ANY=0x800
+common-attributes
+common-attributes-values
+common-attributes-unsupported
+```
+
+[XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).

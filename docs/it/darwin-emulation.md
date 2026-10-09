@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
+<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
 
 [← Indice della documentazione](README.md)
 
@@ -861,3 +861,23 @@ kernel-pathconf, kernel-pathconf-values e kernel-pathconf-unsupported verificano
 [XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
 
 `pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.
+
+## Liste di attributi comuni fissi
+
+getattrlist(220), fgetattrlist(228) e getattrlistat(476) interrogano undici campi comuni del catalogo esplicito: dispositivo, tipo, quattro tempi, proprietario/gruppo, modo completo, flag e ID. Condividono con stat64 la validità del record completo; osservazioni mancanti o invalidate restano ignote. Tipo e selezione vuota non richiedono stat. NAME, volume, maschere directory/file/fork, ACL e opzioni ignote restano esplicitamente non supportati anche con maschera restituita; nessun dato host o nome di mount viene dedotto.
+
+Percorso/at importano24 byte prima della ricerca; FD verifica prima low32 FD e tipo nativo. reserved è ignorato. CWD/FD relativo/link condividono gli errori nativi prima di dimensione/bitmap. Little-endian, allineamento4, st_mode completo e secondi con segno; con maschera120 byte, senza100. Un buffer corto riceve solo il prefisso richiesto ma riporta la dimensione completa. Accesso parziale si ferma prima della copia; dimensione fuori signed-uio dà EINVAL dopo richiesta valida supportata. Cursori, metadati, enumerazione e budget voce/FD/inode restano invariati; durata dup/rimozione/riuso nome preservata.
+
+Tre modalità verificano comportamento comune, byte configurati indipendenti e NAME non supportato con output conservato via guest/C/CLI/Python. Preparazione ARM64 privata:187 query raw/176 confronti SDK percorso-FD, native5s invariato. SDK15.5 non dichiara getattrlistat; raw476 separato. Nuovi guest/Python:5,000,000us/quantum1024; test pubblici esistenti:10s. Intel nativo, iOS fisico, dati FS, hard link, permessi/ACL e runtime/framework completi restano incompleti o non verificati.
+
+```text
+ATTR_CMN_RETURNED_ATTRS=0x80000000
+FSOPT_NOFOLLOW=1, FSOPT_REPORT_FULLSIZE=4
+FSOPT_PACK_INVAL_ATTRS=8 (requires ATTR_CMN_RETURNED_ATTRS)
+FSOPT_NOFOLLOW_ANY=0x800
+common-attributes
+common-attributes-values
+common-attributes-unsupported
+```
+
+[XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).

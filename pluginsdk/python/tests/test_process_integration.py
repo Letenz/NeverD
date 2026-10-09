@@ -537,6 +537,13 @@ class ProcessIntegrationTests(unittest.TestCase):
                     with self.assertRaises(NeverDError):
                         session.emulate_process(path, wrong, options)
                     for mode, expected in (("files", b"f"), ("files-nocancel", b"f"),
+                                           ("common-attributes", b"A"),
+                                           ("common-attributes-values", bytes.fromhex(
+                                               "780000000a9e07820000000000000000000000000000000085ffffff01000000"
+                                               "fbffffffffffffff0600000000000000ffffffffffffff7fffc99a3b00000000"
+                                               "fdffffffffffffff040000000000000001000000000000800100000000000000"
+                                               "efcdab8998badcfea4810000341200001032547698badcfe")),
+                                           ("common-attributes-unsupported", b"A"),
                                            ("kernel-pathconf", b"C"),
                                            ("kernel-pathconf-values", bytes.fromhex(
                                                "0100000000000000010000000000000001000000000000000000000000000000"
@@ -957,6 +964,161 @@ class ProcessIntegrationTests(unittest.TestCase):
                                     "symbolic-link-rename" if rename_links else "symbolic-link-unlink")
                                 mixed_options["arguments"].append("protected")
                             file_options = json.dumps(mixed_options)
+                        unknown_attributes = mode == "common-attributes-unsupported"
+                        if mode.startswith("common-attributes"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = json.loads(r'''
+{
+    "files": [
+        {
+            "path": "/data",
+            "bytes_hex": "30313233343536373839",
+            "metadata": {
+                "device": -123,
+                "inode": "18364758544493064720",
+                "mode": 33188,
+                "link_count": 3,
+                "uid": 2309737967,
+                "gid": 4275878552,
+                "size": 10,
+                "block_size": 4096,
+                "blocks": 8,
+                "flags": 4660,
+                "generation": 2309737967,
+                "access_time": {
+                    "seconds": "-9223372036854775807",
+                    "nanoseconds": 1
+                },
+                "modification_time": {
+                    "seconds": "9223372036854775807",
+                    "nanoseconds": 999999999
+                },
+                "change_time": {
+                    "seconds": -3,
+                    "nanoseconds": 4
+                },
+                "birth_time": {
+                    "seconds": -5,
+                    "nanoseconds": 6
+                }
+            }
+        }
+    ],
+    "directories": [
+        {
+            "path": "/",
+            "metadata": {
+                "device": -123,
+                "inode": 41,
+                "mode": 16877,
+                "link_count": 3,
+                "uid": 2309737967,
+                "gid": 4275878552,
+                "size": 0,
+                "block_size": 4096,
+                "blocks": 8,
+                "flags": 4660,
+                "generation": 2309737967,
+                "access_time": {
+                    "seconds": "-9223372036854775807",
+                    "nanoseconds": 1
+                },
+                "modification_time": {
+                    "seconds": "9223372036854775807",
+                    "nanoseconds": 999999999
+                },
+                "change_time": {
+                    "seconds": -3,
+                    "nanoseconds": 4
+                },
+                "birth_time": {
+                    "seconds": -5,
+                    "nanoseconds": 6
+                }
+            }
+        },
+        {
+            "path": "/empty",
+            "metadata": {
+                "device": -123,
+                "inode": 42,
+                "mode": 16877,
+                "link_count": 3,
+                "uid": 2309737967,
+                "gid": 4275878552,
+                "size": 0,
+                "block_size": 4096,
+                "blocks": 8,
+                "flags": 4660,
+                "generation": 2309737967,
+                "access_time": {
+                    "seconds": "-9223372036854775807",
+                    "nanoseconds": 1
+                },
+                "modification_time": {
+                    "seconds": "9223372036854775807",
+                    "nanoseconds": 999999999
+                },
+                "change_time": {
+                    "seconds": -3,
+                    "nanoseconds": 4
+                },
+                "birth_time": {
+                    "seconds": -5,
+                    "nanoseconds": 6
+                }
+            }
+        }
+    ],
+    "working_directory": "/empty",
+    "symbolic_links": [
+        {
+            "path": "/alias",
+            "target_hex": "64617461",
+            "metadata": {
+                "device": -123,
+                "inode": 123,
+                "mode": 41471,
+                "link_count": 3,
+                "uid": 2309737967,
+                "gid": 4275878552,
+                "size": 4,
+                "block_size": 4096,
+                "blocks": 8,
+                "flags": 4660,
+                "generation": 2309737967,
+                "access_time": {
+                    "seconds": "-9223372036854775807",
+                    "nanoseconds": 1
+                },
+                "modification_time": {
+                    "seconds": "9223372036854775807",
+                    "nanoseconds": 999999999
+                },
+                "change_time": {
+                    "seconds": -3,
+                    "nanoseconds": 4
+                },
+                "birth_time": {
+                    "seconds": -5,
+                    "nanoseconds": 6
+                }
+            }
+        },
+        {
+            "path": "/dangling",
+            "target_hex": "6d697373696e67"
+        },
+        {
+            "path": "/cycle",
+            "target_hex": "6379636c65"
+        }
+    ]
+}
+''')
+                            file_options = json.dumps(query_options)
                         unknown_pathconf = mode == "kernel-pathconf-unsupported"
                         if mode.startswith("kernel-pathconf"):
                             query_options = json.loads(file_options)
@@ -971,7 +1133,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                     for name, target in (("alias", "data"), ("dangling", "missing"),
                                                          ("cycle", "cycle"))]}
                             file_options = json.dumps(query_options)
-                        incomplete = protected_link or unknown_pathconf
+                        incomplete = protected_link or unknown_pathconf or unknown_attributes
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"],
                                          "unsupported_service" if incomplete else "exited",
@@ -979,6 +1141,13 @@ class ProcessIntegrationTests(unittest.TestCase):
                         self.assertEqual(result["exit_status"], None if incomplete else 37, mode)
                         self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
                         self.assertEqual(result["stderr_hex"], "")
+                        if unknown_attributes:
+                            last = result["services"][-1]
+                            self.assertEqual(last["number"], "20000dc" if architecture == "x86_64" else "dc")
+                            self.assertIsNone(last["result"])
+                            self.assertNotIn("error", last)
+                            self.assertEqual(result["diagnostic"],
+                                             "Darwin selected file attributes are not modeled")
                         if unknown_pathconf:
                             last = result["services"][-1]
                             self.assertEqual(last["number"], "20000bf" if architecture == "x86_64" else "bf")

@@ -176,6 +176,160 @@ static int kernel_pathconf(const char *path, unsigned mode) {
   return 37;
 }
 
+/* Fixed common fields only. The separate SDK probe established their packing;
+ * this original workload compares each atom with a raw stat64 observation. */
+static int attribute_result(u64 number, u64 a0, u64 a1, u64 a2, u64 a3, u64 a4,
+                            u64 a5, u64 expected, unsigned failure) {
+  unsigned error;
+  u64 value = call(number, a0, a1, a2, a3, a4, a5, &error);
+  if (value != expected || error != failure)
+    return 243;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (failure ? a2 : 0))
+#endif
+    return 244;
+  return 0;
+}
+static int common_record(const unsigned char *record,
+                         const unsigned char *status) {
+  const unsigned offsets[] = {24, 32, 40, 48,  56,  64,  72,
+                              80, 88, 96, 100, 104, 108, 112};
+  const unsigned sources[] = {0,  80, 88, 48, 56, 64,  72,
+                              32, 40, 16, 20, 4,  116, 8};
+  const unsigned widths[] = {4, 8, 8, 8, 8, 8, 8, 8, 8, 4, 4, 4, 4, 8};
+  if (little_integer(record, 4) != 120 ||
+      little_integer(record + 4, 4) != 0x82079e0aUL ||
+      little_integer(record + 8, 8) || little_integer(record + 16, 8))
+    return 245;
+  u64 mode = little_integer(status + 4, 2);
+  unsigned kind = (mode & 0170000) == 0100000   ? 1
+                  : (mode & 0170000) == 0040000 ? 2
+                  : (mode & 0170000) == 0120000 ? 5
+                                                : 0;
+  if (!kind || little_integer(record + 28, 4) != kind)
+    return 246;
+  for (unsigned i = 0; i != 14; ++i)
+    if (little_integer(record + offsets[i], widths[i]) !=
+        little_integer(status + sources[i], i == 11 ? 2 : widths[i]))
+      return 247;
+  return 0;
+}
+static int common_attributes(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 248;
+  parent[last ? last : 1] = 0;
+  u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 249;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 250;
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || call(199, file, 37, 0, 0, 0, 0, &error) != 37 ||
+      error || secondary || call(13, root, 0, 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 251;
+  unsigned request[6] = {0xffff0005, 0x82079e0a, 0, 0, 0, 0};
+  unsigned char status[144], observed[120], guarded[160];
+  if (attribute_result(339, file, (u64)status, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, file, (u64)request, (u64)observed, 120, 0, -1UL, 0,
+                       0) ||
+      common_record(observed, status))
+    return 252;
+  const u64 sizes[] = {4, 7, 24, 27, 100, 119, 120, 512};
+  for (unsigned i = 0; i != 8; ++i) {
+    for (unsigned j = 0; j != sizeof(guarded); ++j)
+      guarded[j] = 0xa5;
+    u64 flags = i % 3 == 0 ? 0 : i % 3 == 1 ? 4 : 8;
+    int failed =
+        i % 3 == 0
+            ? attribute_result(220, (u64) "alias", (u64)request,
+                               (u64)(guarded + 16), sizes[i], flags, -1UL, 0, 0)
+        : i % 3 == 1
+            ? attribute_result(228, copy | 0x1234567800000000UL, (u64)request,
+                               (u64)(guarded + 16), sizes[i], flags, -1UL, 0, 0)
+            : attribute_result(476, root, (u64) "data", (u64)request,
+                               (u64)(guarded + 16), sizes[i], flags, 0, 0);
+    if (failed)
+      return 253;
+    unsigned count = sizes[i] < 120 ? (unsigned)sizes[i] : 120;
+    for (unsigned j = 0; j != sizeof(guarded); ++j)
+      if (guarded[j] != (j >= 16 && j < 16 + count ? observed[j - 16] : 0xa5))
+        return 254;
+  }
+  if (attribute_result(476, -1UL, (u64)path, (u64)request, (u64)guarded, 120, 0,
+                       0, 0) ||
+      common_record(guarded, status) ||
+      attribute_result(339, root, (u64)status, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, root, (u64)request, (u64)guarded, 120, 0, 0, 0,
+                       0) ||
+      common_record(guarded, status) ||
+      attribute_result(340, (u64) "alias", (u64)status, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(220, (u64) "alias", (u64)request, (u64)guarded, 120, 1,
+                       0, 0, 0) ||
+      common_record(guarded, status))
+    return 255;
+  // These failures precede any output and preserve native carry/secondary ABI.
+  request[0] = 4;
+  if (attribute_result(220, (u64) "missing", (u64)request, -1UL, 0, 0, 0, 2,
+                       1) ||
+      attribute_result(220, (u64) "data", (u64)request, -1UL, 0, 0, 0, 34, 1) ||
+      attribute_result(220, (u64) "data", (u64)request, -1UL, 120, 0, 0, 22,
+                       1) ||
+      attribute_result(220, -1UL, -1UL, -1UL, 0, 0, 0, 14, 1) ||
+      attribute_result(476, -1UL, (u64) "data", -1UL, -1UL, 0, 0, 14, 1) ||
+      attribute_result(228, -1UL, -1UL, -1UL, 0, 0, 0, 9, 1))
+    return 201;
+  request[0] = 5;
+  if (attribute_result(220, (u64) "dangling", (u64)request, -1UL, 0, 0, 0, 2,
+                       1) ||
+      attribute_result(220, (u64) "cycle", (u64)request, -1UL, 0, 0, 0, 62,
+                       1) ||
+      attribute_result(476, file, (u64) "data", (u64)request, -1UL, 0, 0, 20,
+                       1) ||
+      attribute_result(220, (u64) "data", (u64)request, -1UL, 120, 0, 0, 14,
+                       1) ||
+      attribute_result(228, file, (u64)request, (u64)guarded, -1UL, 0, 0, 22,
+                       1))
+    return 202;
+  request[1] = 8;
+  if (attribute_result(220, (u64) "alias", (u64)request, (u64)guarded, 8, 0x800,
+                       0, 0, 0) ||
+      little_integer(guarded, 4) != 8 || little_integer(guarded + 4, 4) != 5 ||
+      attribute_result(220, (u64) "data", (u64)request, -1UL, 8, 8, 0, 22, 1) ||
+      call(199, copy, 0, 1, 0, 0, 0, &error) != 37 || error || secondary ||
+      call(6, file, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      attribute_result(228, file, -1UL, -1UL, 0, 0, 0, 9, 1) ||
+      attribute_result(228, copy, (u64)request, (u64)guarded, 8, 0, 0, 0, 0) ||
+      little_integer(guarded + 4, 4) != 1 ||
+      call(6, copy, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(6, root, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 203;
+  const char marker = 'A';
+  if (call(4, 1, mode == 1 ? (u64)observed : (u64)&marker,
+           mode == 1 ? sizeof(observed) : 1, 0, 0, 0,
+           &error) != (mode == 1 ? sizeof(observed) : 1) ||
+      error || secondary)
+    return 204;
+  if (mode == 2) {
+    request[1] = 1; // NAME needs additional naming/mount observations.
+    call(220, (u64) "data", (u64)request, (u64)guarded, 120, 0, 0, &error);
+    return 205;
+  }
+  return 37;
+}
+
 /* One read-only native workload. Its captured value is stable during these
  * calls; explicit guest nice values use the identical raw instruction path. */
 static int process_priority(int emit_values) {
@@ -5813,6 +5967,16 @@ int main(int argc, char **argv, char **envp, char **apple) {
                ? 79
                : mutable_initial_links(
                      argv[2], equal(argv[1], "virtual-mutable-initial-links"));
+  if (equal(argv[1], "common-attributes") ||
+      equal(argv[1], "common-attributes-values") ||
+      equal(argv[1], "common-attributes-unsupported"))
+    return argc < 3
+               ? 79
+               : common_attributes(
+                     argv[2], equal(argv[1], "common-attributes-values") ? 1
+                              : equal(argv[1], "common-attributes-unsupported")
+                                  ? 2
+                                  : 0);
   if (equal(argv[1], "kernel-pathconf") ||
       equal(argv[1], "kernel-pathconf-values") ||
       equal(argv[1], "kernel-pathconf-unsupported"))

@@ -527,11 +527,11 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 with self.subTest(backend=backend, host=host):
                     owners, required = native.darwin_inventory(native.ROOT, backend, host)
                     self.assertEqual(owners, ["NeverDDarwinProcessTests"])
-                    self.assertEqual(len(required), 59 * len(platforms))
+                    self.assertEqual(len(required), 60 * len(platforms))
                     for platform in platforms:
                         self.assertIn(
                             "Transports/DarwinProcess."
-                            "KernelPathConfPreservesLookupAndDescriptorState/"
+                            "CommonAttributesPreserveRecordAndDescriptorState/"
                             f"{platform}_{backend}", required,
                         )
                     for platform in platforms:

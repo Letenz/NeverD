@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
+<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
 
 [← فهرس الوثائق](README.md)
 
@@ -861,3 +861,23 @@ getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem و
 [XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
 
 `pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.
+
+## قوائم السمات المشتركة الثابتة
+
+تستعلم getattrlist(220) وfgetattrlist(228) وgetattrlistat(476) عن11 حقلاً في الكتالوج الصريح: الجهاز والنوع وأربعة أوقات والمالك/المجموعة والوضع الكامل والأعلام ومعرف الملف. تشترك مع stat64 في صلاحية السجل الكامل؛ الملاحظات الغائبة أو المبطلة تبقى مجهولة. النوع والاختيار الفارغ لا يحتاجان stat. NAME والمجلد الحجمي وأقنعة الدليل/الملف/fork وACL والخيارات المجهولة غير مدعومة صراحة حتى مع قناع الإرجاع؛ لا تستنتج بيانات المضيف أو اسم التركيب.
+
+يستورد مسار/at الطلب24 بايت قبل البحث؛ يفحص FD أولاً low32 FD والنوع الأصلي. يتجاهل reserved. يحافظ حل CWD وFD النسبي والروابط المشترك على الأخطاء الأصلية قبل الحجم/bitmap. التنسيق little-endian ومحاذاة4 مع st_mode كامل وثوان موقعة؛ مع القناع120 بايت وبدونه100. يتلقى المخزن القصير المقدمة المطلوبة فقط لكنه يبلغ الحجم الكامل. يتوقف الوصول الجزئي قبل النسخ؛ الحجم خارج signed-uio يعطي EINVAL بعد طلب صالح مدعوم. لا تتغير المؤشرات أو البيانات أو التعداد أو ميزانية عنصر/FD/inode؛ تبقى دورة حياة dup/الإزالة/إعادة الاسم.
+
+تختبر ثلاثة أوضاع السلوك المشترك والبايتات المستقلة وNAME غير المدعوم مع حفظ المخرجات عبر guest/C/CLI/Python. تحضير ARM64 خاص:187 استعلام raw و176 مقارنة SDK مسار-FD، وحد native5s لم يتغير. SDK15.5 لا يعلن getattrlistat؛ raw476 مستقل. guest/Python الجديد5,000,000us/quantum1024 والاختبارات العامة الحالية10s. Native Intel وiOS الفعلي وحقائق FS والروابط الصلبة والصلاحيات/ACL وruntime/framework الكاملة ما زالت غير مكتملة أو غير متحققة.
+
+```text
+ATTR_CMN_RETURNED_ATTRS=0x80000000
+FSOPT_NOFOLLOW=1, FSOPT_REPORT_FULLSIZE=4
+FSOPT_PACK_INVAL_ATTRS=8 (requires ATTR_CMN_RETURNED_ATTRS)
+FSOPT_NOFOLLOW_ANY=0x800
+common-attributes
+common-attributes-values
+common-attributes-unsupported
+```
+
+[XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).

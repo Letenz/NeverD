@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
+<!-- i18n-source: 8065658dc5a4cdcb476194f4addf4cd505b12f6e216227f3814a22b73f7b30af -->
 
 [← ドキュメント一覧](README.md)
 
@@ -863,3 +863,23 @@ kernel-pathconf、kernel-pathconf-values、kernel-pathconf-unsupported は共通
 [XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
 
 `pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.
+
+## 固定共通属性リスト
+
+getattrlist(220)、fgetattrlist(228)、getattrlistat(476) は明示カタログの固定共通属性11項目を照会します：デバイス、型、4種類の時刻、所有者/グループ、完全なモード、フラグ、ファイルID。stat64 と完全メタデータの有効性判定を共有し、欠落・無効化された観測は未知のままです。型と空選択は stat 不要です。NAME、ボリューム、ディレクトリ/ファイル/fork 固有マスク、ACL、未知オプションは返却マスク要求時も明示的に未対応です。ホスト情報やマウント名を推測しません。
+
+パス/at は24バイト要求を先に読み、FD は low32 FD とネイティブ型を先に検証します。reserved は無視します。共有 CWD/相対FD/リンク解決はサイズ・ビットマップ検証より前のエラーを保持します。リトルエンディアン・4バイト整列で完全な st_mode と符号付き秒を格納します。返却マスク付きは120バイト、通常は100バイト。短いバッファには指定した接頭部のみ書き、必要長は全体のままです。部分アクセスはそのコピー前に停止し、符号付き uio 範囲外の長さは有効な対応要求後に EINVAL。カーソル、メタデータ、列挙、項目/FD/inode予算は変わらず、dup/削除/名前再利用の既存寿命を保ちます。
+
+3モードが guest/C/CLI/Python で共通動作、独立した設定バイト、既存出力を保つ未対応 NAME を検証します。ARM64 私有準備は187 raw照会、176 SDKパス/FD比較に成功し、native5秒は不変です。SDK15.5 に getattrlistat 宣言がなく raw476 は別記。新guest/Python は5,000,000us/quantum1024、既存公開テストは10s。ネイティブIntel・実機iOS・FS固有情報・ハードリンク・権限/ACL・完全なランタイム/フレームワークは未検証または未完成です。
+
+```text
+ATTR_CMN_RETURNED_ATTRS=0x80000000
+FSOPT_NOFOLLOW=1, FSOPT_REPORT_FULLSIZE=4
+FSOPT_PACK_INVAL_ATTRS=8 (requires ATTR_CMN_RETURNED_ATTRS)
+FSOPT_NOFOLLOW_ANY=0x800
+common-attributes
+common-attributes-values
+common-attributes-unsupported
+```
+
+[XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).
