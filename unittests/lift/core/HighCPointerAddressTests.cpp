@@ -40799,22 +40799,35 @@ TEST(HighCPointerAddresses, DestructorDoesNotReturnItsTailCallResult) {
 
 TEST(HighCPointerAddresses, ReadOfADestructorResultIsUnknown) {
   // A caller that is not a destructor itself still reads RAX after the call.
-  // The callee returns nothing, so the read has no defined value.
-  HighFunc Func;
-  Func.Name = "release_disk";
-  Func.Entry = 0x140001000;
-  Func.ReturnType = NdType::makeInt(8);
-  Func.Params = {{"arg0", NdType::makeInt(8)}};
-  const MedVar Result = temporary(1, 1);
-  Func.Body = {
-      assignTo(Result, HighExpr::makeCall("??1SC_DEVICE@@QEAA@XZ", 0x140002000,
-                                          {parameter(0)}))};
-  returnValue(Func, HighExpr::makeVar(Result));
-  const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("    SC_DEVICE_dtor(arg0);"), std::string::npos)
-      << Source;
-  EXPECT_NE(Source.find(" = 0 /* unknown */;"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("= SC_DEVICE_dtor("), std::string::npos) << Source;
+  // The callee returns nothing, so the read has no defined value.  A caller
+  // that only returns what the destructor left there returns nothing either.
+  for (const bool OnlyReturned : {false, true}) {
+    SCOPED_TRACE(OnlyReturned);
+    HighFunc Func;
+    Func.Name = "release_disk";
+    Func.Entry = 0x140001000;
+    Func.ReturnType = NdType::makeInt(8);
+    Func.Params = {{"arg0", NdType::makeInt(8)}};
+    const MedVar Result = temporary(1, 1);
+    Func.Body = {
+        assignTo(Result, HighExpr::makeCall("??1SC_DEVICE@@QEAA@XZ",
+                                            0x140002000, {parameter(0)}))};
+    ExprPtr Read = HighExpr::makeVar(Result);
+    returnValue(Func, OnlyReturned
+                          ? Read
+                          : HighExpr::makeBinop(NdOp::INT_ADD, Read,
+                                                HighExpr::makeConst(1, 8)));
+    const std::string Source = emitFunctions({Func});
+    EXPECT_NE(Source.find("    SC_DEVICE_dtor(arg0);"), std::string::npos)
+        << Source;
+    EXPECT_EQ(Source.find(" = 0 /* unknown */;") != std::string::npos,
+              !OnlyReturned)
+        << Source;
+    EXPECT_EQ(Source.find("void release_disk(") != std::string::npos,
+              OnlyReturned)
+        << Source;
+    EXPECT_EQ(Source.find("= SC_DEVICE_dtor("), std::string::npos) << Source;
+  }
 }
 
 TEST(HighCPointerAddresses, UnprovenIndirectBranchTrapsInsteadOfNamingNoLabel) {
