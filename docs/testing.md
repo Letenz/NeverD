@@ -1933,10 +1933,12 @@ sections, missing/overlapping fixups, width, addend and target changes. The LLVM
 MC regression separately closes table extents, generated indices and object
 bounds. These receipts still do not authenticate edited IR effects or final PE
 installation.
-Native installation needs a source build of the LLVM fork exposing
+Native installation needs the LLVM fork exposing
 `LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need
-`LLVM_NEVERD_X86_REGISTRATION_GS`. The published r3 compiler has no such receipt.
+`LLVM_NEVERD_X86_REGISTRATION_GS`. The pinned r4 packages and their matching
+source commit provide these receipts, including the C++ catch-subfield,
+function-range and handler receipts needed by native C++ reconstruction.
 
 ```bash
 cmake --build build --parallel 4 --target neverd \
