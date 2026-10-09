@@ -578,7 +578,36 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       break;
     }
 
+    const bool ScalarMove =
+        InsnId == X86_INS_VMOVSS || InsnId == X86_INS_VMOVSD;
+    const unsigned ScalarSize = InsnId == X86_INS_VMOVSS ? 4 : 8;
+    if (ScalarMove && X86.op_count == 3) {
+      if (X86.operands[0].type != X86_OP_REG ||
+          X86.operands[1].type != X86_OP_REG ||
+          X86.operands[2].type != X86_OP_REG)
+        return false;
+      NdVar Base = L.operandRead(S, X86.operands[1]);
+      NdVar Source = L.operandRead(S, X86.operands[2]);
+      NdVar Dst = L.operandWrite(X86.operands[0]);
+      if (Dst.Size != 16 || Base.Size != 16 || Source.Size != 16)
+        return false;
+      NdVar Low = S.makeTemp(ScalarSize);
+      NdVar High = S.makeTemp(16 - ScalarSize);
+      S.emit(NdOp::SUBBYTES, Low, {Source, NdVar::cst(0, 4)});
+      S.emit(NdOp::SUBBYTES, High, {Base, NdVar::cst(ScalarSize, 4)});
+      S.emit(NdOp::CONCAT, Dst, {High, Low});
+      break;
+    }
     NdVar Src = L.operandRead(S, X86.operands[1]);
+    unsigned SelectedSize = ScalarMove                ? ScalarSize
+                            : InsnId == X86_INS_VMOVD ? 4
+                            : InsnId == X86_INS_VMOVQ ? 8
+                                                      : 0;
+    if (SelectedSize && Src.Size > SelectedSize) {
+      NdVar Low = S.makeTemp(SelectedSize);
+      S.emit(NdOp::SUBBYTES, Low, {Src, NdVar::cst(0, 4)});
+      Src = Low;
+    }
     if (X86.operands[0].type == X86_OP_MEM) {
       // Memory destination (store form, e.g. `vmovdqa [mem], xmm`).  As with
       // the SSE MOV* path, L.operandWrite() on a memory operand yields a
@@ -602,6 +631,11 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
         NdVar Lo = S.makeTemp(Dst.Size);
         S.emit(NdOp::SUBBYTES, Lo, {Src, NdVar::cst(0, 4)});
         Src = Lo;
+      }
+      if (SelectedSize && Src.Size < Dst.Size) {
+        NdVar Wide = S.makeTemp(Dst.Size);
+        S.emit(NdOp::INT_ZEXT, Wide, {Src});
+        Src = Wide;
       }
       S.emit(NdOp::COPY, Dst, {Src});
     }
@@ -1039,7 +1073,17 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   }
 
   case X86_INS_VBROADCASTF128:
-  case X86_INS_VBROADCASTI128:
+  case X86_INS_VBROADCASTI128: {
+    if (X86.op_count != 2 || X86.operands[0].type != X86_OP_REG ||
+        X86.operands[1].type != X86_OP_MEM)
+      return false;
+    NdVar Dst = L.operandWrite(X86.operands[0]);
+    NdVar Src = L.operandRead(S, X86.operands[1]);
+    if (Dst.Size != 32 || Src.Size != 16)
+      return false;
+    S.emit(NdOp::CONCAT, Dst, {Src, Src});
+    break;
+  }
   case X86_INS_VBLENDMPS:
   case X86_INS_VBLENDMPD: {
     if (X86.op_count < 2)

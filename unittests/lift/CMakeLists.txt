@@ -2127,6 +2127,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_selector_occurrence.s
   x86_64/test_jumptable_mask_equal_bound.s
   x86_64/test_module_address_owner_induction.s
+  x86_64/test_module_readonly_table_writer.s
   x86_64/test_twolevel_switch.c
   x86_64/test_jumptable_masked_abs.c
   x86_64/test_jumptable_worldclass.c
@@ -3470,3 +3471,9 @@ target_sources(NeverDLibraryRecognitionTests PRIVATE core/LibcLibraryRecognition
 add_dependencies(NeverDLibraryRecognitionTests neverd-library-libc-fixtures)
 target_compile_definitions(NeverDLibraryRecognitionTests PRIVATE
   NEVERD_LIBRARY_LIBC_FIXTURE_DIR="${_library_libc_dir}")
+
+add_neverd_unittest(NeverDX86SIMDAccuracyTests
+  x86_64/X86_64_SIMDAccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86SIMDAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)

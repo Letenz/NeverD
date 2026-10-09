@@ -376,6 +376,10 @@ public:
   std::string intrinsicOperandStr(const HighExpr &E);
   /// Cast / zext / `SUBBYTES` 0 of a Var/Phi. Not add/sub/mul, Call, or Load.
   bool isIntegerViewOfScalar(const HighExpr &E) const;
+  /// The call whose result \p Bits are, under integer views that keep their
+  /// low bytes or a forwarded copy, when it returns \p Float; else null.
+  const HighExpr *floatCallResult(const HighExpr &Bits,
+                                  const TypeRef &Float) const;
   /// \p Arg passed to a parameter of floating type \p Expected, when its
   /// integer bits carry the value.
   std::optional<std::string> floatArgumentText(const HighExpr &Arg,

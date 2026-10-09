@@ -17,6 +17,8 @@
 
 #include "llvm/ADT/SmallVector.h"
 
+#include <map>
+
 namespace neverd {
 namespace med_variadic_detail {
 
@@ -31,6 +33,10 @@ bool hasX64VariadicPrologue(VariadicScan &S) {
   // The va_start GP/FP-offset word identifies a variadic prologue; pairing it
   // with a parameter-register spill keeps a stray constant from qualifying.
   bool HasVaWord = false;
+  // GCC may also store the word's two 32-bit fields one at a time, gp_offset
+  // at the va_list and fp_offset right after it: the constant each 4-byte
+  // store writes, by its entry-SP offset.
+  std::map<int64_t, uint64_t> FieldStores;
   for (const auto &Blk : Func.Blocks)
     for (const auto &Op : Blk.Ops) {
       if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -38,7 +44,17 @@ bool hasX64VariadicPrologue(VariadicScan &S) {
       for (uint8_t I = 0; I < Op.NumInputs; ++I)
         if (Op.Inputs[I].isConst() && isX64VaStartWord(Op.Inputs[I].ConstVal))
           HasVaWord = true;
+      if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
+          Op.Inputs[1].isConst() && Op.Inputs[1].Size == sizeof(uint32_t))
+        if (auto Delta = entrySpDelta(S.values(), S.SpOff, Op.Inputs[0], 0))
+          FieldStores[*Delta] = Op.Inputs[1].ConstVal & 0xFFFFFFFFu;
     }
+  for (const auto &[Delta, GpOffset] : FieldStores)
+    if (auto FpOffset =
+            FieldStores.find(Delta + static_cast<int64_t>(sizeof(uint32_t)));
+        FpOffset != FieldStores.end() &&
+        isX64VaStartWord(GpOffset | (FpOffset->second << 32)))
+      HasVaWord = true;
   Marked = HasVaWord && countParamRegSpills(Func, TRI.IntParamRegs) >= 1;
   return Marked;
 }

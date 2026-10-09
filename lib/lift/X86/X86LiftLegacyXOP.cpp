@@ -323,23 +323,7 @@ bool liftLegacyXOP(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   }
 
   // ========================================================================
-  // AVX VPCMPESTRI/M, VPCMPISTRI/M → intrinsic (sets RCX + EFLAGS).
-  // ========================================================================
-  case X86_INS_VPCMPESTRI:
-    S.emitIntrinsic(Intrinsic::Pcmpestri);
-    break;
-  case X86_INS_VPCMPESTRM:
-    S.emitIntrinsic(Intrinsic::Pcmpestrm);
-    break;
-  case X86_INS_VPCMPISTRI:
-    S.emitIntrinsic(Intrinsic::Pcmpistri);
-    break;
-  case X86_INS_VPCMPISTRM:
-    S.emitIntrinsic(Intrinsic::Pcmpistrm);
-    break;
-
-  // ========================================================================
-  // AVX-512 VTESTPD/PS — set ZF/CF from AND/ANDN of packed floats.
+  // VTESTPD/PS — test only the sign bits of the floating-point elements.
   // ========================================================================
   case X86_INS_VTESTPD:
   case X86_INS_VTESTPS: {
@@ -349,14 +333,30 @@ bool liftLegacyXOP(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     NdVar B = L.operandRead(S, X86.operands[1]);
     NdVar AndR = S.makeTemp(A.Size);
     S.emit(NdOp::INT_AND, AndR, {A, B});
-    S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::ZF, 1),
-           {AndR, NdVar::cst(0, AndR.Size)});
     NdVar InvA = S.makeTemp(A.Size);
     S.emit(NdOp::INT_NOT, InvA, {A});
     NdVar AndnR = S.makeTemp(A.Size);
     S.emit(NdOp::INT_AND, AndnR, {InvA, B});
+    const unsigned ElementSize = InsnId == X86_INS_VTESTPS ? 4 : 8;
+    NdVar AnyAnd = NdVar::cst(0, 1), AnyAndn = NdVar::cst(0, 1);
+    for (unsigned Offset = ElementSize - 1; Offset < A.Size;
+         Offset += ElementSize) {
+      auto AccumulateSign = [&](NdVar Bits, NdVar Acc) {
+        NdVar Byte = S.makeTemp(1), Sign = S.makeTemp(1), Next = S.makeTemp(1);
+        S.emit(NdOp::SUBBYTES, Byte, {Bits, NdVar::cst(Offset, 4)});
+        S.emit(NdOp::INT_AND, Sign, {Byte, NdVar::cst(0x80, 1)});
+        S.emit(NdOp::INT_OR, Next, {Acc, Sign});
+        return Next;
+      };
+      AnyAnd = AccumulateSign(AndR, AnyAnd);
+      AnyAndn = AccumulateSign(AndnR, AnyAndn);
+    }
+    S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::ZF, 1),
+           {AnyAnd, NdVar::cst(0, 1)});
     S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::CF, 1),
-           {AndnR, NdVar::cst(0, AndnR.Size)});
+           {AnyAndn, NdVar::cst(0, 1)});
+    for (uint64_t Flag : {x86reg::OF, x86reg::SF, x86reg::AF, x86reg::PF})
+      S.emit(NdOp::COPY, NdVar::reg(Flag, 1), {NdVar::cst(0, 1)});
     break;
   }
 

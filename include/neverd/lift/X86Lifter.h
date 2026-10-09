@@ -112,6 +112,9 @@ public:
   /// Whether \p I ends a function's straight-line decode (ret/jmp/ud2/...).
   static bool isFunctionTerminator(const cs_insn *I);
 
+  /// Whether \p I returns to a caller: `ret`, `retf` or `iret`.
+  static bool isReturn(const cs_insn *I);
+
   /// Whether \p I is a trap that execution can continue past.
   ///
   /// `int3` is the only one: it raises a breakpoint a debugger routinely
