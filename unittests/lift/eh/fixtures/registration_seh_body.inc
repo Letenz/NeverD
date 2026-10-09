@@ -1,3 +1,4 @@
+// clang-format off: this include contains x86 assembly.
 // Shared semantic cases for the SEH3 and EH4 runtime probes.
 #if REGISTRATION_CASE == 1 || REGISTRATION_CASE == 2 || REGISTRATION_CASE == 4
   mov dword ptr [ebp-4],1

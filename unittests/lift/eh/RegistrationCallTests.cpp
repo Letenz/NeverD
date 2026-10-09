@@ -158,10 +158,12 @@ TEST(RegistrationCallABI, ChecksImmutableSimpleThrowInfo) {
                 F.Image.Segments[2].Data.end(), 'H');
       break;
     case 19:
-      F.Image.Segments[1].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      F.Image.Segments[1].Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
       break;
     case 20:
-      F.Image.Segments[1].Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      F.Image.Segments[1].Flags =
+          SegmentFlags::Readable | SegmentFlags::Executable;
       break;
     case 21:
       F.Image.Arch = Arch::X64;

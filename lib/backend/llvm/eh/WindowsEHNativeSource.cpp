@@ -85,8 +85,7 @@ WindowsEHNativeSourceReason validateSEH(const ExceptionFunction &EH,
   for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
     const std::optional<ExceptionAddressRange> SemanticRange =
         getSemanticSEHGuardedRange(Scope, TargetArch, EH.CodeRange);
-    if (Scope.ParseStatus != ExceptionParseStatus::Complete ||
-        !SemanticRange)
+    if (Scope.ParseStatus != ExceptionParseStatus::Complete || !SemanticRange)
       return WindowsEHNativeSourceReason::InvalidSEHScope;
 
     switch (Scope.Kind) {
@@ -109,8 +108,7 @@ WindowsEHNativeSourceReason validateSEH(const ExceptionFunction &EH,
       break;
     case SEHScopeKind::Filter:
       if (Scope.NormalizedFilterVA != 0 || Scope.FilterOrFinallyVA == 0 ||
-          Scope.HandlerVA == 0 ||
-          Scope.ContinuationVA != Scope.HandlerVA ||
+          Scope.HandlerVA == 0 || Scope.ContinuationVA != Scope.HandlerVA ||
           EH.CodeRange.contains(Scope.FilterOrFinallyVA) ||
           !EH.CodeRange.contains(Scope.HandlerVA) ||
           SemanticRange->contains(Scope.HandlerVA))
@@ -318,8 +316,7 @@ WindowsEHNativeSourceReason validateCxxFH4(const ExceptionFunction &EH) {
   // reproduces exactly one protected interval bracketed by the empty state.
   if (Cxx.IPMap.size() != 3 || Cxx.IPMap[0].IP != EH.CodeRange.Begin ||
       Cxx.IPMap[0].State != -1 || Cxx.IPMap[1].State != 0 ||
-      Cxx.IPMap[2].State != -1 ||
-      !EH.CodeRange.contains(Cxx.IPMap[1].IP) ||
+      Cxx.IPMap[2].State != -1 || !EH.CodeRange.contains(Cxx.IPMap[1].IP) ||
       (Cxx.IPMap[2].IP != EH.CodeRange.End &&
        !EH.CodeRange.contains(Cxx.IPMap[2].IP)))
     return WindowsEHNativeSourceReason::InvalidCxxStateGraph;
@@ -737,8 +734,7 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
                   Capability);
 
   WindowsEHNativeSourceReason Reason =
-      Model == WindowsEHNativeSourceModel::SEH
-          ? validateSEH(EH, TargetArch)
+      Model == WindowsEHNativeSourceModel::SEH ? validateSEH(EH, TargetArch)
       : Model == WindowsEHNativeSourceModel::CxxFH3 ? validateCxxFH3(EH)
                                                     : validateCxxFH4(EH);
   // Output patch stays fail-closed for every unwind action and for an
@@ -757,11 +753,11 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
   if (Reason != WindowsEHNativeSourceReason::Eligible)
     return reject(Model, Reason, Capability);
   if (Model == WindowsEHNativeSourceModel::SEH) {
-    const bool HasNormalizedFilter = std::any_of(
-        EH.SEH->Scopes.begin(), EH.SEH->Scopes.end(),
-        [](const SEHScopeRecord &Scope) {
-          return Scope.NormalizedFilterVA != 0;
-        });
+    const bool HasNormalizedFilter =
+        std::any_of(EH.SEH->Scopes.begin(), EH.SEH->Scopes.end(),
+                    [](const SEHScopeRecord &Scope) {
+                      return Scope.NormalizedFilterVA != 0;
+                    });
     if (TargetArch != Arch::AArch64 && HasNormalizedFilter)
       return reject(Model, WindowsEHNativeSourceReason::InvalidSEHScope,
                     Capability);
@@ -785,9 +781,9 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
                       [](const SEHScopeRecord &Scope) {
                         return Scope.Kind != SEHScopeKind::CatchAll;
                       }))
-        return reject(
-            Model, WindowsEHNativeSourceReason::UnsupportedSEHCallbackABI,
-            Capability);
+        return reject(Model,
+                      WindowsEHNativeSourceReason::UnsupportedSEHCallbackABI,
+                      Capability);
       return {Model, Reason, Capability};
     }
     if (std::any_of(EH.SEH->Scopes.begin(), EH.SEH->Scopes.end(),
@@ -809,9 +805,9 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
                     [](const SEHScopeRecord &Scope) {
                       return Scope.Kind != SEHScopeKind::CatchAll;
                     }))
-      return reject(
-          Model, WindowsEHNativeSourceReason::UnsupportedSEHCallbackABI,
-          Capability);
+      return reject(Model,
+                    WindowsEHNativeSourceReason::UnsupportedSEHCallbackABI,
+                    Capability);
   }
   return {Model, Reason, Capability};
 }

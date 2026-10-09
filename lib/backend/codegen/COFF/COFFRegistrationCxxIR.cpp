@@ -298,11 +298,13 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
   }
   std::map<std::pair<va_t, uint32_t>, const llvm::CallBase *> CallsAt;
   for (const auto *Call : ActualCalls)
-    if (const auto *MD = Call->getMetadata(windows_eh_md::RegistrationOperationAttachment)) {
+    if (const auto *MD =
+            Call->getMetadata(windows_eh_md::RegistrationOperationAttachment)) {
       auto Address = metadataInteger(*MD, 1, 64);
       auto Seq = metadataInteger(*MD, 2, 32);
       if (!Address || !Seq ||
-          !CallsAt.emplace(std::make_pair(*Address, uint32_t(*Seq)), Call).second)
+          !CallsAt.emplace(std::make_pair(*Address, uint32_t(*Seq)), Call)
+               .second)
         return rejectIR("C++ source call occurrence was duplicated");
     }
   size_t Protected = 0;

@@ -628,8 +628,7 @@ TEST(COFFExceptionPatch, AcceptsTargetAwareCanonicalSourceReencoding) {
   Image.ExceptionMetadata.Functions.push_back(std::move(EH));
   Image.ExceptionMetadata.rebuildIndex();
 
-  llvm::Error Error =
-      validateCOFFExceptionSourceIdentityClosure(Module, Image);
+  llvm::Error Error = validateCOFFExceptionSourceIdentityClosure(Module, Image);
   EXPECT_FALSE(static_cast<bool>(Error)) << llvm::toString(std::move(Error));
 }
 
@@ -1494,8 +1493,8 @@ TEST(COFFExceptionPatch,
   CompletePatchInput Input = makeCompletePatchInput(Context);
   ASSERT_NE(Input.Module, nullptr);
   ASSERT_NE(Input.Function, nullptr);
-  llvm::Function *Replaceable = addCompletePatchFunction(
-      Input, Context, "sub_140002000", 0x140002000);
+  llvm::Function *Replaceable =
+      addCompletePatchFunction(Input, Context, "sub_140002000", 0x140002000);
   ASSERT_NE(Replaceable, nullptr);
   addMixedSourceLayout(Input, 0x140001000, 0x140002000);
 
@@ -1518,8 +1517,8 @@ TEST(COFFExceptionPatch,
   const std::string Before = moduleIR(*Input.Module);
   SourceFunctionPreparation Preparation;
   std::string Detail;
-  EXPECT_FALSE(SourcePreparationProbe::prepare(
-      *Input.Module, &Input.Image, Preparation, Detail));
+  EXPECT_FALSE(SourcePreparationProbe::prepare(*Input.Module, &Input.Image,
+                                               Preparation, Detail));
   EXPECT_EQ(Detail,
             "coff exception patch: Windows EH metadata does not match the "
             "input image for function sub_140001000");
@@ -1751,18 +1750,17 @@ TEST(COFFExceptionPatch,
   CompletePatchInput Input = makeCompletePatchInput(Context);
   ASSERT_NE(Input.Module, nullptr);
   ASSERT_NE(Input.Function, nullptr);
-  llvm::Function *Replaceable = addCompletePatchFunction(
-      Input, Context, "sub_140002000", 0x140002000);
+  llvm::Function *Replaceable =
+      addCompletePatchFunction(Input, Context, "sub_140002000", 0x140002000);
   ASSERT_NE(Replaceable, nullptr);
   addMixedSourceLayout(Input, 0x140001000, 0x140002000);
 
   SourceFunctionPreparation Preparation;
   std::string Detail;
-  ASSERT_TRUE(SourcePreparationProbe::prepare(
-      *Input.Module, &Input.Image, Preparation, Detail))
+  ASSERT_TRUE(SourcePreparationProbe::prepare(*Input.Module, &Input.Image,
+                                              Preparation, Detail))
       << Detail;
-  EXPECT_EQ(Preparation.PreservedOriginalVAs.at("sub_140001000"),
-            0x140001000u);
+  EXPECT_EQ(Preparation.PreservedOriginalVAs.at("sub_140001000"), 0x140001000u);
   EXPECT_EQ(Preparation.ReplaceableOriginalVAs.at("sub_140002000"),
             0x140002000u);
   EXPECT_TRUE(Input.Function->isDeclaration());
@@ -1776,8 +1774,8 @@ TEST(COFFExceptionPatch,
   ASSERT_EQ(Table->getNumOperands(), 1u);
   llvm::MDNode *Row = Table->getOperand(0);
   ASSERT_NE(Row, nullptr);
-  const auto *FunctionValue = llvm::dyn_cast<llvm::ValueAsMetadata>(
-      Row->getOperand(0).get());
+  const auto *FunctionValue =
+      llvm::dyn_cast<llvm::ValueAsMetadata>(Row->getOperand(0).get());
   ASSERT_NE(FunctionValue, nullptr);
   EXPECT_EQ(FunctionValue->getValue(), Replaceable);
 

@@ -343,22 +343,19 @@ TEST(WindowsEHMetadataEncoder, PreservesSchemaV10Projection) {
   const auto *CxxHeader = llvm::dyn_cast<llvm::MDNode>(
       Payload->getOperand(windows_eh_md::CxxHeader).get());
   ASSERT_NE(CxxHeader, nullptr);
-  ASSERT_EQ(CxxHeader->getNumOperands(),
-            windows_eh_md::CxxHeaderOperandCount);
-  EXPECT_EQ(metadataInteger(*CxxHeader,
-                            windows_eh_md::CxxNativeFuncInfoVA, 64),
+  ASSERT_EQ(CxxHeader->getNumOperands(), windows_eh_md::CxxHeaderOperandCount);
+  EXPECT_EQ(metadataInteger(*CxxHeader, windows_eh_md::CxxNativeFuncInfoVA, 64),
             EH.Cxx->NativeFuncInfoVA);
   const auto *Scopes = llvm::dyn_cast<llvm::MDNode>(
       Payload->getOperand(windows_eh_md::SEHScopes).get());
   ASSERT_NE(Scopes, nullptr);
   ASSERT_EQ(Scopes->getNumOperands(), 1u);
-  const auto *Scope =
-      llvm::dyn_cast<llvm::MDNode>(Scopes->getOperand(0).get());
+  const auto *Scope = llvm::dyn_cast<llvm::MDNode>(Scopes->getOperand(0).get());
   ASSERT_NE(Scope, nullptr);
   ASSERT_EQ(Scope->getNumOperands(), windows_eh_md::SEHScopeOperandCount);
-  EXPECT_EQ(metadataInteger(*Scope,
-                            windows_eh_md::SEHScopeNormalizedFilterVA, 64),
-            EH.SEH->Scopes.front().NormalizedFilterVA);
+  EXPECT_EQ(
+      metadataInteger(*Scope, windows_eh_md::SEHScopeNormalizedFilterVA, 64),
+      EH.SEH->Scopes.front().NormalizedFilterVA);
   EXPECT_EQ(fingerprintDigest(*Payload), RichSchemaV10Fingerprint);
 }
 
@@ -873,20 +870,17 @@ TEST(WindowsEHNativeSource,
       WindowsEHNativeSourceReason::UnsupportedSEHScopeGraph);
 
   EH.SEH->Scopes = {Inner, Outer};
-  EXPECT_TRUE(
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF)
-          .canPatchOutput());
+  EXPECT_TRUE(classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF)
+                  .canPatchOutput());
 
   EH.Encoding = ExceptionEncoding::ARM64Unpacked;
   const WindowsEHNativeSourceClassification IRSource =
-      classifyWindowsEHNativeSource(
-          EH, Arch::AArch64, BinaryFormat::COFF,
-          WindowsEHNativeCapability::IRLowering);
+      classifyWindowsEHNativeSource(EH, Arch::AArch64, BinaryFormat::COFF,
+                                    WindowsEHNativeCapability::IRLowering);
   EXPECT_TRUE(IRSource.canLowerNativeIR());
   const WindowsEHNativeSourceClassification PatchSource =
-      classifyWindowsEHNativeSource(
-          EH, Arch::AArch64, BinaryFormat::COFF,
-          WindowsEHNativeCapability::OutputPatch);
+      classifyWindowsEHNativeSource(EH, Arch::AArch64, BinaryFormat::COFF,
+                                    WindowsEHNativeCapability::OutputPatch);
   EXPECT_FALSE(PatchSource.canPatchOutput());
   EXPECT_EQ(PatchSource.Reason,
             WindowsEHNativeSourceReason::UnsupportedSEHScopeGraph);
@@ -903,20 +897,17 @@ TEST(WindowsEHNativeSource,
   EXPECT_EQ(SemanticLegacyRange->End, RawLegacyRange.End + 3);
   EXPECT_EQ(EH.SEH->Scopes.front().GuardedRange.End, RawLegacyRange.End);
   const WindowsEHNativeSourceClassification LegacyIRSource =
-      classifyWindowsEHNativeSource(
-          EH, Arch::AArch64, BinaryFormat::COFF,
-          WindowsEHNativeCapability::IRLowering);
+      classifyWindowsEHNativeSource(EH, Arch::AArch64, BinaryFormat::COFF,
+                                    WindowsEHNativeCapability::IRLowering);
   EXPECT_TRUE(LegacyIRSource.canLowerNativeIR());
   const WindowsEHNativeSourceClassification LegacyPatchSource =
-      classifyWindowsEHNativeSource(
-          EH, Arch::AArch64, BinaryFormat::COFF,
-          WindowsEHNativeCapability::OutputPatch);
+      classifyWindowsEHNativeSource(EH, Arch::AArch64, BinaryFormat::COFF,
+                                    WindowsEHNativeCapability::OutputPatch);
   EXPECT_TRUE(LegacyPatchSource.canPatchOutput());
 
   ++EH.SEH->Scopes.front().GuardedRange.End;
-  EXPECT_EQ(classifyWindowsEHNativeSource(
-                EH, Arch::AArch64, BinaryFormat::COFF,
-                WindowsEHNativeCapability::IRLowering)
+  EXPECT_EQ(classifyWindowsEHNativeSource(EH, Arch::AArch64, BinaryFormat::COFF,
+                                          WindowsEHNativeCapability::IRLowering)
                 .Reason,
             WindowsEHNativeSourceReason::InvalidSEHScope);
 }
@@ -926,8 +917,8 @@ TEST(WindowsEHNativeSource,
   constexpr va_t Max = std::numeric_limits<va_t>::max();
   SEHScopeRecord Overflow;
   Overflow.GuardedRange = {Max - 7, Max - 2};
-  EXPECT_FALSE(getSemanticSEHGuardedRange(
-      Overflow, Arch::AArch64, ExceptionAddressRange{Max - 7, Max}));
+  EXPECT_FALSE(getSemanticSEHGuardedRange(Overflow, Arch::AArch64,
+                                          ExceptionAddressRange{Max - 7, Max}));
 
   SEHScopeRecord EscapesOwner;
   EscapesOwner.GuardedRange = {0x140001000, 0x140001011};

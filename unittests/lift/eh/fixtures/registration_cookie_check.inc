@@ -1,3 +1,4 @@
+// clang-format off: this include contains x86 assembly.
 // The canonical leaf CRT success path is observable only on a bad cookie.
 .text
 .p2align 4,0x90
