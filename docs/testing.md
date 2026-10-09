@@ -1752,6 +1752,11 @@ observations and metadata mutation. The leaf-callee matrix also checks separate
 private-stack/object spills, pointer escape, bounds, unknown addresses and
 nonvolatile-register preservation. These proofs do not enable native source
 C++ reconstruction on their own.
+Cleanup-relay tests cover both EBP displacement widths, exact thiscall object
+reads, PE32 relative-branch wrapping, nonwrapping storage, writable/overlapping
+code, fixups, call substitutions, callee stack pops and FS-dependent effects.
+The independently loaded MSVC fixture also checks its two actual relays and
+their destructor footprints.
 The state target also checks source-call identity, initialized ECX object
 borrows, registration/SavedESP separation, partial stores, pointer taint,
 conflicting predecessors and preserved catch resumption after a private throw.

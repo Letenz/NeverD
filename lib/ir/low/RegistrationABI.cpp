@@ -13,6 +13,8 @@
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include <deque>
 #include <set>
@@ -526,6 +528,40 @@ getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target,
   copyExtents(Effects.Writes, Result.ImageWrites);
   copyExtents(Effects.CallerPCWrites, Result.CallerPCWrites);
   return Result;
+}
+
+std::optional<RegistrationCleanupRelayABI>
+getCheckedX86RegistrationCleanupRelayABI(const BinaryImage &Image, va_t Target,
+                                         size_t *CumulativeWork) {
+  if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
+      Image.Format != BinaryFormat::COFF || Target > UINT32_MAX ||
+      !Image.isCodeAddress(Target) ||
+      Image.ExceptionMetadata.findFunction(Target))
+    return std::nullopt;
+  size_t LocalWork = 0;
+  size_t &Work = CumulativeWork ? *CumulativeWork : LocalWork;
+  if (!chargeCalleeWork(Work, 1))
+    return std::nullopt;
+  auto Header = readImmutableCodeBytes(Image, Target, 3);
+  if (!Header || (*Header)[0] != 0x8d ||
+      ((*Header)[1] != 0x4d && (*Header)[1] != 0x8d))
+    return std::nullopt;
+  const unsigned JumpOffset = (*Header)[1] == 0x4d ? 3 : 6;
+  const unsigned Size = JumpOffset + 5;
+  const va_t End = Target + Size;
+  if (End > uint64_t(UINT32_MAX) + 1 || !chargeCalleeWork(Work, Size))
+    return std::nullopt;
+  auto Bytes = readImmutableCodeBytes(Image, Target, Size);
+  if (!Bytes || (*Bytes)[JumpOffset] != 0xe9)
+    return std::nullopt;
+  const int32_t Offset = JumpOffset == 3 ? int8_t((*Bytes)[2])
+                                         : readLE<int32_t>(Bytes->data() + 2);
+  const uint32_t LeafTarget =
+      uint32_t(End) + readLE<uint32_t>(Bytes->data() + JumpOffset + 1);
+  auto Leaf = getCheckedX86RegistrationLeafCalleeABI(Image, LeafTarget, &Work);
+  if (!Leaf)
+    return std::nullopt;
+  return RegistrationCleanupRelayABI{Target, End, Offset, std::move(*Leaf)};
 }
 
 std::optional<std::vector<RegistrationCalleeFrameContract>>

@@ -405,3 +405,160 @@ TEST(RegistrationCallABI, PreservedCalleesCannotChangeEitherSEHScopeFormat) {
     }
   }
 }
+
+namespace {
+struct CleanupRelayImage {
+  static constexpr va_t RelayVA = 0x401000;
+  static constexpr va_t LeafVA = RelayVA + 0x40;
+  BinaryImage Image;
+
+  CleanupRelayImage(bool Wide = false, int32_t ObjectOffset = -24) {
+    Image.Arch = Arch::X86;
+    Image.Bits = Bitness::Bits32;
+    Image.Format = BinaryFormat::COFF;
+    Image.Base = 0x400000;
+    Image.Entry = RelayVA;
+    Segment Text;
+    Text.Name = ".text";
+    Text.VA = RelayVA;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(0x80, 0xcc);
+    Text.Data[0] = 0x8d;
+    Text.Data[1] = Wide ? 0x8d : 0x4d;
+    const unsigned Jump = Wide ? 6 : 3;
+    if (Wide)
+      writeLE<int32_t>(Text.Data.data() + 2, ObjectOffset);
+    else
+      Text.Data[2] = uint8_t(ObjectOffset);
+    Text.Data[Jump] = 0xe9;
+    writeLE<uint32_t>(Text.Data.data() + Jump + 1,
+                      uint32_t(LeafVA - (RelayVA + Jump + 5)));
+    // A returning thiscall leaf reading exactly the borrowed scalar.
+    Text.Data[0x40] = 0x8b;
+    Text.Data[0x41] = 0x01;
+    Text.Data[0x42] = 0xc3;
+    Text.Size = Text.FileSz = Text.Data.size();
+    Image.Segments.push_back(Text);
+    Section Section;
+    Section.Name = Text.Name;
+    Section.VA = Text.VA;
+    Section.Size = Section.FileSz = Text.Size;
+    Section.Flags = Text.Flags;
+    Image.Sections.push_back(Section);
+  }
+};
+} // namespace
+
+TEST(RegistrationCallABI, ChecksMSVCParentFrameCleanupRelays) {
+  for (bool Wide : {false, true})
+    for (int32_t Offset : {0, -24, 100}) {
+      SCOPED_TRACE(Wide);
+      SCOPED_TRACE(Offset);
+      CleanupRelayImage F(Wide, Offset);
+      const auto P = getCheckedX86RegistrationCleanupRelayABI(
+          F.Image, CleanupRelayImage::RelayVA);
+      ASSERT_TRUE(P);
+      EXPECT_EQ(P->Target, CleanupRelayImage::RelayVA);
+      EXPECT_EQ(P->EndAddress, CleanupRelayImage::RelayVA + (Wide ? 11 : 8));
+      EXPECT_EQ(P->ObjectFrameOffset, Offset);
+      EXPECT_EQ(P->Leaf.Target, CleanupRelayImage::LeafVA);
+      EXPECT_EQ(P->Leaf.StackPopBytes, 0u);
+      ASSERT_EQ(P->Leaf.ECXReads.size(), 1u);
+      EXPECT_EQ(P->Leaf.ECXReads[0].Begin, 0);
+      EXPECT_EQ(P->Leaf.ECXReads[0].End, 4);
+      EXPECT_TRUE(P->Leaf.ECXWrites.empty());
+    }
+}
+
+TEST(RegistrationCallABI, RejectsUnprovedCleanupRelayStorageAndEffects) {
+  for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    CleanupRelayImage F;
+    auto &Text = F.Image.Segments[0];
+    switch (Mutation) {
+    case 0:
+      Text.Flags = Text.Flags | SegmentFlags::Writable;
+      break;
+    case 1:
+      F.Image.Sections.clear();
+      break;
+    case 2:
+      F.Image.Sections.push_back(F.Image.Sections.front());
+      break;
+    case 3:
+      F.Image.Segments.push_back(Text);
+      break;
+    case 4:
+      Text.FileSz = 7;
+      break;
+    case 5:
+      Text.Data[0] = 0x66;
+      break;
+    case 6:
+      Text.Data[1] = 0x45; // EAX does not carry the thiscall object.
+      break;
+    case 7:
+      Text.Data[3] = 0xe8; // CALL changes the invocation frame.
+      break;
+    case 8:
+      Text.Data[3] = 0x90;
+      break;
+    case 9:
+      F.Image.BaseRelocations.push_back({CleanupRelayImage::RelayVA + 4, 3});
+      break;
+    case 10:
+      Text.Data[0x42] = 0xc2;
+      Text.Data[0x43] = 4;
+      Text.Data[0x44] = 0;
+      break;
+    case 11:
+      Text.Data[0x40] = 0x64; // An FS-dependent leaf is not frame-private.
+      Text.Data[0x41] = 0xa1;
+      std::fill(Text.Data.begin() + 0x42, Text.Data.begin() + 0x46, 0);
+      Text.Data[0x46] = 0xc3;
+      break;
+    case 12:
+      F.Image.IsRelocatable = true;
+      break;
+    case 13:
+      F.Image.Arch = Arch::X64;
+      break;
+    case 14:
+      F.Image.Format = BinaryFormat::ELF;
+      break;
+    }
+    EXPECT_FALSE(getCheckedX86RegistrationCleanupRelayABI(
+        F.Image, CleanupRelayImage::RelayVA));
+  }
+  CleanupRelayImage F;
+  size_t Work = limits::kMaxRegistrationEHStateWork;
+  EXPECT_FALSE(getCheckedX86RegistrationCleanupRelayABI(
+      F.Image, CleanupRelayImage::RelayVA, &Work));
+  EXPECT_EQ(Work, limits::kMaxRegistrationEHStateWork);
+}
+
+TEST(RegistrationCallABI, UsesPE32RelativeBranchWrapWithoutWrappingStorage) {
+  CleanupRelayImage F;
+  auto Relay = F.Image.Segments.front();
+  auto Section = F.Image.Sections.front();
+  Relay.VA = Section.VA = uint64_t(UINT32_MAX) + 1 - 8;
+  Relay.Data.resize(8);
+  Relay.Size = Relay.FileSz = Section.Size = Section.FileSz = 8;
+  writeLE<uint32_t>(Relay.Data.data() + 4, CleanupRelayImage::LeafVA);
+  F.Image.Segments.push_back(Relay);
+  F.Image.Sections.push_back(Section);
+  size_t Work = 0;
+  const auto P =
+      getCheckedX86RegistrationCleanupRelayABI(F.Image, Relay.VA, &Work);
+  ASSERT_TRUE(P);
+  EXPECT_EQ(P->EndAddress, uint64_t(UINT32_MAX) + 1);
+  EXPECT_EQ(P->Leaf.Target, CleanupRelayImage::LeafVA);
+  EXPECT_GT(Work, 8u);
+  auto &Last = F.Image.Segments.back();
+  ++Last.VA;
+  ++F.Image.Sections.back().VA;
+  const size_t EarlierWork = Work;
+  EXPECT_FALSE(
+      getCheckedX86RegistrationCleanupRelayABI(F.Image, Last.VA, &Work));
+  EXPECT_GT(Work, EarlierWork);
+}

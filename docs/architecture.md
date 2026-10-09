@@ -72,6 +72,12 @@ callee-private stack and borrowed ECX object domains, with separate spill
 storage. Its exact object/image footprints describe a returning leaf; a caller
 still needs bounds, initialization and registration-separation proof. A leaf
 summary alone cannot establish a source call or native C++ capability.
+The same ABI owner authenticates immutable MSVC cleanup relays that derive
+ECX from the establisher EBP and tail-jump to a checked leaf. PE32 relative
+branches wrap at the architectural width; instruction storage does not wrap.
+This relay describes an object offset, without granting a parent-frame borrow
+at an unwind dispatch. The shared immutable-code reader verifies unique
+file-backed PE32 storage without pointer fixups before decoding the relay.
 The COFF loader separately owns bounded scalar ThrowInfo decoding and its
 immutable CatchableType graph. The call ABI owner binds that graph to an exact
 CRT import and a fully initialized private exception object, retaining real

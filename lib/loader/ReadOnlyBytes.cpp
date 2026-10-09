@@ -14,6 +14,8 @@ bool supportedImage(const BinaryImage &Image) {
 
 bool supportedImmutableCodeImage(const BinaryImage &Image) {
   return supportedImage(Image) ||
+         (Image.Format == BinaryFormat::COFF && !Image.IsRelocatable &&
+          Image.Arch == Arch::X86 && Image.Bits == Bitness::Bits32) ||
          (Image.Format == BinaryFormat::ELF && !Image.IsRelocatable &&
           Image.Arch == Arch::ARM && Image.Bits == Bitness::Bits32);
 }

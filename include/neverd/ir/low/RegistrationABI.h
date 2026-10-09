@@ -41,6 +41,20 @@ std::optional<RegistrationLeafCalleeABI>
 getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
                                        size_t *CumulativeWork = nullptr);
 
+/// A checked MSVC cleanup relay borrows its object from the establisher EBP
+/// and tail-jumps to a separately checked leaf. The parent still proves this
+/// object's bounds, initialization and separation at every unwind dispatch.
+struct RegistrationCleanupRelayABI {
+  va_t Target = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int32_t ObjectFrameOffset = 0;
+  RegistrationLeafCalleeABI Leaf;
+};
+
+std::optional<RegistrationCleanupRelayABI>
+getCheckedX86RegistrationCleanupRelayABI(const BinaryImage &Image, va_t Target,
+                                         size_t *CumulativeWork = nullptr);
+
 struct RegistrationThrowCalleeABI {
   va_t Target = InvalidVA;
   va_t ImportVA = InvalidVA;
