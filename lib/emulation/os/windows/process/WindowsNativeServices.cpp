@@ -3,11 +3,14 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "WindowsProcess.h"
+#include "WindowsNativeServices.h"
 
 #include "neverd/emulation/CPU.h"
 
+#include "llvm/Support/Endian.h"
+
 #include <algorithm>
+#include <array>
 #include <string_view>
 
 namespace neverd::emulation::windows_process {
@@ -45,6 +48,63 @@ std::optional<uint32_t> nativeServiceNumber(llvm::StringRef Name) {
 const NativeService *findNativeService(uint64_t Number) {
   return Number < std::size(NativeServices) ? &NativeServices[Number] : nullptr;
 }
+
+std::array<uint8_t, value::NativeSyscallOffset>
+nativeServicePrologue(uint32_t Number) {
+  std::array<uint8_t, value::NativeSyscallOffset> Bytes{0x4c, 0x8b, 0xd1, 0xb8};
+  llvm::support::endian::write32le(Bytes.data() + 4, Number);
+  return Bytes;
+}
+
+NativeEntryEvidence::NativeEntryEvidence(llvm::ArrayRef<Import> Gates) {
+  for (const auto &Gate : Gates)
+    if (Gate.Module == text::NTDLL)
+      if (auto Number = nativeServiceNumber(Gate.Name))
+        Entries.emplace(Gate.Gate, *Number);
+}
+std::vector<ExecutionWatch> NativeEntryEvidence::watches() const {
+  if (Entries.empty())
+    return {};
+  const uint64_t Begin = Entries.begin()->first;
+  return {{Begin,
+           Entries.rbegin()->first - Begin + value::NativeSyscallOffset + 1}};
+}
+void NativeEntryEvidence::invalidate() {
+  Entry.reset();
+  ExpectedPC.reset();
+  VerifiedPC.reset();
+}
+llvm::Error NativeEntryEvidence::watched(ExecutionBackend &CPU, uint64_t PC) {
+  if (ExpectedPC && PC == *ExpectedPC) {
+    if (PC == *Entry + 3)
+      ExpectedPC = *Entry + value::NativeSyscallOffset;
+    else {
+      VerifiedPC = PC;
+      ExpectedPC.reset();
+    }
+    return llvm::Error::success();
+  }
+  invalidate();
+  auto Found = Entries.find(PC);
+  if (Found == Entries.end())
+    return llvm::Error::success();
+  std::array<uint8_t, value::NativeSyscallOffset> Bytes;
+  if (auto E = CPU.read(PC, Bytes))
+    return E;
+  // Only this straight-line mov r10,rcx / mov eax,imm32 prologue supplies
+  // evidence. Modified bytes and interior entries keep their numeric binding.
+  if (Bytes == nativeServicePrologue(Found->second)) {
+    Entry = PC;
+    ExpectedPC = PC + 3;
+  }
+  return llvm::Error::success();
+}
+bool NativeEntryEvidence::take(uint64_t PC) {
+  const bool Matched = VerifiedPC && *VerifiedPC == PC;
+  invalidate();
+  return Matched;
+}
+
 llvm::Expected<uint64_t>
 readNativeServiceArgument(ExecutionBackend &CPU, uint64_t SP, unsigned Index) {
   if (CPU.architecture() != GuestArchitecture::X64)

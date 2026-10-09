@@ -37,6 +37,13 @@ interiorThreadQuery(void *Thread, U32 Class, void *Data, U32 Size,
           "movl 0x38(%rsp), %eax\n\t"
           "jmpq *0x30(%rsp)\n\t");
 }
+__attribute__((naked, noinline)) static U32
+equalInteriorThreadQuery(void *Thread, U32 Class, void *Data, U32 Size,
+                         U32 *Returned, const void *Interior, U32 Number) {
+  __asm__("movq %rcx, %r10\n\t"
+          "movl 0x38(%rsp), %eax\n\t"
+          "jmpq *0x30(%rsp)\n\t");
+}
 #endif
 static void nativeServices(void *Native, U32 Mode) {
   void *CurrentThread = (void *)~1ull;
@@ -90,6 +97,13 @@ static void nativeServices(void *Native, U32 Mode) {
     Status = interiorThreadQuery(CurrentThread, 0x11, Data.Hidden, 1,
                                  &Returned.Length, Address + 8, Number);
     require(Status == 0 && Data.Hidden[0] == 0 && Returned.Length == 1, 98);
+    // Equal first-argument registers must not make this interior entry look
+    // like an executed export prologue.
+    Data.Hidden[0] = 0xa5;
+    Returned.Length = 0xeeeeeeee;
+    Status = equalInteriorThreadQuery(CurrentThread, 0x11, Data.Hidden, 1,
+                                      &Returned.Length, Address + 8, Number);
+    require(Status == 0 && Data.Hidden[0] == 0 && Returned.Length == 1, 99);
 #endif
     require(Data.Before == 0xabcdef01 && Data.After == 0x10fedcba &&
                 Data.Hidden[1] == 0x5a && Data.Hidden[2] == 0x6b &&

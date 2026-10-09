@@ -297,6 +297,7 @@ PROGRAM_CODE static U32 status(U32 Written) {
 
 #if defined(__x86_64__)
 static volatile U32 NativeDelayNumber;
+static volatile U64 NativeDelayInterior;
 __attribute__((naked, noinline)) static U32
 directDelay(U64 Alert, const long long *Interval, U32 Number) {
   __asm__("movq %rcx, %r10\n\t"
@@ -304,11 +305,21 @@ directDelay(U64 Alert, const long long *Interval, U32 Number) {
           "syscall\n\t"
           "retq\n\t");
 }
+__attribute__((naked, noinline)) static U32
+interiorDelay(U64 Alert, const long long *Interval, U32 Number, U64 Interior) {
+  __asm__("movq %rcx, %r10\n\t"
+          "movl %r8d, %eax\n\t"
+          "jmpq *%r9\n\t");
+}
 // Keep the failure exit outside .prog so the ordinary tail-call oracle still
 // executes every import call that its independent packer transforms.
 __attribute__((noinline)) static void useDirectService(void) {
   const long long Interval = -1;
-  if (directDelay(0, &Interval, NativeDelayNumber) != 0)
+  const U32 Result =
+      Pack.Mode == LateDirectServiceMode
+          ? interiorDelay(0, &Interval, NativeDelayNumber, NativeDelayInterior)
+          : directDelay(0, &Interval, NativeDelayNumber);
+  if (Result != 0)
     ExitProcess(FailureStatus);
 }
 #endif
@@ -379,6 +390,7 @@ __declspec(dllexport) U32 loader(void) {
         Gate[3] != 0xb8)
       ExitProcess(FailureStatus);
     NativeDelayNumber = *(const U32 *)(Gate + 4);
+    NativeDelayInterior = (U64)(Gate + 8);
     if (Pack.Mode == DirectServiceMode)
       useDirectService();
   }

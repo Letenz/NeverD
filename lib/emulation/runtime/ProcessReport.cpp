@@ -10,9 +10,9 @@
 #include "ProcessDarwinSystemJSON.h"
 #include "ProcessDarwinTimeJSON.h"
 #include "ProcessLinuxFilesJSON.h"
-#include "ProcessLinuxSignalsJSON.h"
-#include "ProcessLinuxPriorityJSON.h"
 #include "ProcessLinuxKernelJSON.h"
+#include "ProcessLinuxPriorityJSON.h"
+#include "ProcessLinuxSignalsJSON.h"
 #include "ProcessLinuxTimeJSON.h"
 #include "ProcessWindowsJSON.h"
 

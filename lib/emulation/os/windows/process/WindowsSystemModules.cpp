@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "WindowsNativeServices.h"
 #include "WindowsProcessModules.h"
 
 #include "llvm/BinaryFormat/COFF.h"
@@ -125,9 +126,8 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
         // Whole-instruction prologue reads stay within this service gate.
         std::array<uint8_t, NativeGateStride> Stub{};
         Stub.fill(0xcc);
-        const uint8_t Prefix[] = {0x4c, 0x8b, 0xd1, 0xb8};
-        std::copy(std::begin(Prefix), std::end(Prefix), Stub.begin());
-        llvm::support::endian::write32le(Stub.data() + 4, *Syscall);
+        const auto Prologue = nativeServicePrologue(*Syscall);
+        std::copy(Prologue.begin(), Prologue.end(), Stub.begin());
         Stub[NativeSyscallOffset] = 0x0f;
         Stub[NativeSyscallOffset + 1] = 0x05;
         Stub[NativeSyscallOffset + 2] = 0xc3;

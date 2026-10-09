@@ -152,7 +152,8 @@ llvm::Expected<Image> loadProgramImage(const std::filesystem::path &Path,
                                        std::optional<bool> DLL,
                                        bool DeferUnmodeled = false);
 llvm::Error relocateImage(Image &Image, uint64_t Base, ImageReadBudget &Budget);
-/// A null observer runs unobserved, without execution watches.
+/// A null observer runs without caller observation. The model may still
+/// watch native entry prologues to establish export-call provenance.
 llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
                                          const ProcessOptions &Options,
                                          ProcessObserver *Observer = nullptr);

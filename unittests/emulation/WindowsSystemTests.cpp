@@ -111,7 +111,34 @@ TEST_P(WindowsSystem, ExecutesOriginalSystemModuleScenarios) {
       // ARM64 uses named calls; the copied x64 boundary has no function-return
       // evidence and must not be reported as a repairable imported call.
       if (GetParam().ISA == GuestArchitecture::X64)
-        EXPECT_EQ(Raw, 4);
+        EXPECT_EQ(Raw, 6);
+      struct ExportObservation : ProcessObserver {
+        unsigned NativeExports = 0;
+        llvm::Expected<std::vector<ExecutionWatch>>
+        started(ProcessView &) override {
+          return std::vector<ExecutionWatch>{};
+        }
+        llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+        watched(ProcessView &, uint64_t) override {
+          ADD_FAILURE() << "internal service watches leaked to the observer";
+          return std::nullopt;
+        }
+        llvm::Error exporting(ProcessView &, const ProcessExportView &Export,
+                              std::optional<uint64_t>) override {
+          if (Export.Name == "NtQueryInformationThread" ||
+              Export.Name == "ZwQueryInformationThread")
+            ++NativeExports;
+          return llvm::Error::success();
+        }
+      } Observer;
+      auto Observed =
+          observeProcess(Path, ProcessProfile::WindowsPE64, Options, Observer);
+      ASSERT_TRUE(bool(Observed)) << llvm::toString(Observed.takeError());
+      EXPECT_EQ(Observed->Stop, R->Stop) << Observed->Diagnostic;
+      EXPECT_EQ(Observed->ExitStatus, R->ExitStatus);
+      EXPECT_EQ(Observed->StandardOutput, R->StandardOutput);
+      EXPECT_EQ(Observed->StandardError, R->StandardError);
+      EXPECT_EQ(Observer.NativeExports, 2u);
     }
     if (llvm::StringRef(C.Argument) == ReturnArgument)
       EXPECT_EQ(R->ReturnValue, ExitStatus);

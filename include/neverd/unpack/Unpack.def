@@ -27,7 +27,8 @@ NEVERD_UNPACK_EVIDENCE(UPXEntryStub, "upx_entry_stub")
 // image at that boundary was rebuilt. NoEntry: the bounded run ended first;
 // the transfers it did observe and the process stop reason say why.
 // UnsupportedState: the accepted image has runtime dependencies whose
-// reconstruction is unsupported. Snapshot: the caller explicitly requested image bytes only.
+// reconstruction is unsupported. Snapshot: the caller explicitly requested
+// image bytes only.
 #ifdef NEVERD_UNPACK_OUTCOME
 NEVERD_UNPACK_OUTCOME(Unpacked, "unpacked")
 NEVERD_UNPACK_OUTCOME(NoEntry, "no_entry")

@@ -4,11 +4,13 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../../../runtime/RuntimeValues.h"
+#include "WindowsNativeServices.h"
 #include "WindowsProcessExceptions.h"
 #include "WindowsProcessLoader.h"
 
 #include "neverd/emulation/ExecutionSession.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 
@@ -348,6 +350,16 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   StoppedProcess Stopped(CPU, **Space, *ABI, *Program, *Env, Active,
                          Initializers, Result, OS,
                          {StackBase, Options.StackSize});
+  NativeEntryEvidence NativeEntries(X64 ? llvm::ArrayRef(Program->Gates)
+                                        : llvm::ArrayRef<Import>{});
+  const auto NativeWatches = NativeEntries.watches();
+  std::vector<ExecutionWatch> ObserverWatches;
+  auto SetWatches = [&](std::vector<ExecutionWatch> Watches) {
+    ObserverWatches = std::move(Watches);
+    auto Combined = ObserverWatches;
+    Combined.insert(Combined.end(), NativeWatches.begin(), NativeWatches.end());
+    return (*Session)->watchExecution(std::move(Combined));
+  };
   bool Observing = false;
   auto Invoking = [&]() -> llvm::Error {
     if (!Observing || !Observer)
@@ -356,7 +368,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     if (!Watches)
       return Watches.takeError();
     if (*Watches)
-      if (auto E = (*Session)->watchExecution(std::move(**Watches)))
+      if (auto E = SetWatches(std::move(**Watches)))
         return E;
     return (*Session)->watchMemoryWrites(Observer->writeWatches());
   };
@@ -416,8 +428,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     auto Watches = Observer->started(Stopped);
     if (!Watches)
       return Watches.takeError();
-    if (auto E = (*Session)->watchExecution(std::move(*Watches)))
+    if (auto E = SetWatches(std::move(*Watches)))
       return std::move(E);
+  } else if (auto E = SetWatches({})) {
+    return std::move(E);
   }
   Observing = true;
   auto Failed = [&](llvm::Error E) {
@@ -437,7 +451,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         break;
       }
       if (*Watches)
-        if (auto E = (*Session)->watchExecution(std::move(**Watches))) {
+        if (auto E = SetWatches(std::move(**Watches))) {
           Failed(std::move(E));
           break;
         }
@@ -467,8 +481,17 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       continue;
     if (Exit->Kind == SessionExitKind::ExecutionWatch) {
       Stopped.setWatchedMemoryUnchanged(true);
-      // Only an observer installs watches. The watched instruction has not
-      // been admitted, so the process is exactly at its boundary.
+      // The watched instruction has not executed. Internal native-entry
+      // watches are independent of the caller's observation contract.
+      if (auto E = NativeEntries.watched(CPU, Result.PC)) {
+        Failed(std::move(E));
+        break;
+      }
+      if (!Observer ||
+          !llvm::any_of(ObserverWatches, [&](const ExecutionWatch &W) {
+            return Result.PC >= W.Address && Result.PC - W.Address < W.Size;
+          }))
+        continue;
       auto Next = Observer->watched(Stopped, Result.PC);
       if (!Next) {
         Failed(Next.takeError());
@@ -479,7 +502,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         Result.Diagnostic = runtime::ObserverStop;
         break;
       }
-      if (auto E = (*Session)->watchExecution(std::move(**Next))) {
+      if (auto E = SetWatches(std::move(**Next))) {
         Failed(std::move(E));
         break;
       }
@@ -512,6 +535,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       break;
     }
     if (Fault) {
+      NativeEntries.invalidate();
       auto Raised = (*Session)->takeRecoverableFault();
       if (!Raised) {
         Failed(Raised.takeError());
@@ -535,6 +559,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Failed(Request.takeError());
       break;
     }
+    const bool EnteredNativeExport = NativeEntries.take(Request->PC);
     auto SP = CPU.readRegister(ABI->info().StackPointer);
     if (!SP) {
       Failed(SP.takeError());
@@ -613,23 +638,11 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         Failed(Number.takeError());
         break;
       }
-      // A generated export supplies provenance only if its declared number
-      // still matches the actual request. Copied/inline gates are services,
-      // not evidence of an exported function call or a repairable import.
-      if (Export && nativeServiceNumber(Export->Name) != *Number)
+      // Witness the complete prologue and the actual declared number. Equal
+      // RCX/R10 values alone cannot distinguish a call from an interior jump.
+      if (Export && (!EnteredNativeExport ||
+                     nativeServiceNumber(Export->Name) != *Number))
         Export = nullptr;
-      if (Export) {
-        auto First = CPU.reg(X64Register::CX);
-        auto NativeFirst = CPU.reg(X64Register::R10);
-        if (!First || !NativeFirst) {
-          Failed(llvm::joinErrors(First.takeError(), NativeFirst.takeError()));
-          break;
-        }
-        // Jumping into the middle of a gate can bypass its argument move.
-        // Such a request has no Win64 export-call proof when RCX differs.
-        if (*First != *NativeFirst)
-          Export = nullptr;
-      }
       Import = nullptr;
       if (const auto *Native = findNativeService(*Number)) {
         NativeImport.Module = text::NTDLL;
