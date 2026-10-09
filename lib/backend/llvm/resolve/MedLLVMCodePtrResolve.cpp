@@ -1631,6 +1631,38 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
       }
 
       if (Def->Opcode == NdOp::LOAD) {
+        // MinGW reaches another object's data through a read-only pointer
+        // slot (`.refptr.__imp__fmode`), as ARM reaches a PIC table base
+        // through its literal pool.  Where a relocation names the slot, the
+        // load is an absolute data-pointer load whose value is already the
+        // symbolized pointer to its targets; otherwise the loaded word is the
+        // table address itself, a raw VA.
+        std::set<uint64_t> LoadedTargets;
+        if (recoverAbsoluteDataPointerLoadTargets(Value, LoadedTargets)) {
+          std::optional<uint64_t> Run;
+          for (uint64_t Target : LoadedTargets) {
+            const Segment *Seg = Img->getSegmentFor(Target);
+            if (!Seg || Seg->isExecutable() ||
+                !belongsToClaimedCodeTableRun(Target) ||
+                (Run && *Run != pointerTableRunStart(Seg))) {
+              Run.reset();
+              break;
+            }
+            Run = pointerTableRunStart(Seg);
+          }
+          if (Run)
+            return tableProof(*Run, AddressModel::Symbolized);
+        } else {
+          bool SawLiteralLoad = false;
+          auto LiteralBase = traceTableBaseConst(Value, 0, &SawLiteralLoad);
+          if (LiteralBase && SawLiteralLoad &&
+              Def->Output.Size == Img->getPointerSize()) {
+            const Segment *Seg = Img->getSegmentFor(*LiteralBase);
+            if (Seg && !Seg->isExecutable() &&
+                belongsToClaimedCodeTableRun(*LiteralBase))
+              return tableProof(pointerTableRunStart(Seg));
+          }
+        }
         std::vector<MedVar> Sources;
         if (!collectFrameReloadSources(*Def, Sources) || Sources.empty())
           return scalarProof();

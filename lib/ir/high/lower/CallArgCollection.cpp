@@ -1473,17 +1473,26 @@ void MedToHighConverter::resolveCalleeNames(
 
   // BinaryImage keeps publicly editable metadata vectors, so build these
   // exact-address indexes for this immutable pipeline stage rather than
-  // caching them on the image. Preserve the *first* matching entry, including
-  // an empty name, just as findImportAt/findExportAt/findSymbolAt do.
+  // caching them on the image.  They choose what calleeDisplayName does: the
+  // *first* import or export at an address, including an empty name, as
+  // findImportAt and findExportAt do, and the symbol getFunctionNameAt
+  // chooses.  The first symbol at a MinGW function's start is often its
+  // object's `.text` section symbol.
   std::map<va_t, const Import *> ImportsByIAT;
   for (const Import &Imp : Image->Imports)
     ImportsByIAT.try_emplace(Imp.IATAddr, &Imp);
   std::map<va_t, std::string> ExportsByAddr;
   for (const Export &Exp : Image->Exports)
     ExportsByAddr.try_emplace(Exp.Addr, Exp.Name);
-  std::map<va_t, std::string> SymbolsByAddr;
-  for (const Symbol &Sym : Image->Symbols)
-    SymbolsByAddr.try_emplace(Sym.Addr, Sym.Name);
+  std::map<va_t, const Symbol *> SymbolsByAddr;
+  for (const Symbol &Sym : Image->Symbols) {
+    if (Sym.Name.empty())
+      continue;
+    auto [It, Inserted] = SymbolsByAddr.try_emplace(Sym.Addr, &Sym);
+    if (!Inserted && BinaryImage::functionNameRank(Sym) >
+                         BinaryImage::functionNameRank(*It->second))
+      It->second = &Sym;
+  }
 
   auto Usable = [](llvm::StringRef Name) {
     return !Name.empty() && !Name.starts_with(kAutoFuncPrefix);
@@ -1517,8 +1526,8 @@ void MedToHighConverter::resolveCalleeNames(
     llvm::StringRef FromImage;
     if (Exp != ExportsByAddr.end() && !Exp->second.empty())
       FromImage = Exp->second;
-    else if (Sym != SymbolsByAddr.end() && !Sym->second.empty())
-      FromImage = Sym->second;
+    else if (Sym != SymbolsByAddr.end())
+      FromImage = Sym->second->Name;
     Names[Target] = Usable(FromImage)
                         ? FromImage.str()
                         : (kAutoFuncPrefix + llvm::utohexstr(Target)).str();

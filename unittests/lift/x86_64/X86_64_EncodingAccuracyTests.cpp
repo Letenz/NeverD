@@ -7,44 +7,77 @@
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include <algorithm>
 #include <vector>
 
 using namespace neverd;
 
-TEST(X86EncodingAccuracy, InvalidLockAndMovCsCannotPublishEffects) {
+namespace {
+int decodeRoute(Decoder &Decode, unsigned Route, const uint8_t *Bytes,
+                size_t Size, DecodedInsn &Out) {
+  if (Route == 0)
+    return Decode.decodeOne(Bytes, Size, 0x1000, Out);
+  if (Route == 1)
+    return Decode.decodeOneLight(Bytes, Size, 0x1000, Out);
+  return Decode.decodeOneForLift(Bytes, Size, 0x1000, Out);
+}
+} // namespace
+
+TEST(X86EncodingAccuracy, InvalidLockAndMovCsRejectedByEveryDecodeRoute) {
   const std::vector<std::vector<uint8_t>> Invalid = {
       {0xf0, 0x33, 0x02},       // LOCK XOR EAX,[EDX/RDX]: register destination.
+      {0xf0, 0x03, 0x02},       // LOCK ADD with a memory source.
+      {0xf0, 0x0b, 0x02},       // LOCK OR with a memory source.
+      {0xf0, 0x13, 0x02},       // LOCK ADC with a memory source.
+      {0xf0, 0x1b, 0x02},       // LOCK SBB with a memory source.
+      {0xf0, 0x23, 0x02},       // LOCK AND with a memory source.
+      {0xf0, 0x2b, 0x02},       // LOCK SUB with a memory source.
       {0xf0, 0x01, 0xc0},       // LOCK ADD EAX,EAX.
       {0xf0, 0x89, 0x02},       // LOCK MOV [EDX/RDX],EAX.
       {0xf0, 0x39, 0x02},       // LOCK CMP [EDX/RDX],EAX.
       {0xf0, 0x0f, 0xa3, 0x02}, // LOCK BT: no write.
-      {0x8e, 0xc8},             // MOV CS,AX.
-      {0x8e, 0x0a},             // MOV CS,[EDX/RDX].
+      {0xf0, 0x0f, 0x1f, 0x00}, // LOCK multi-byte NOP.
+      {0xf2, 0xf0, 0x33, 0x02}, // HLE cannot legalize a register destination.
+      {0xf0, 0xf2, 0x33, 0x02},
+      {0x8e, 0xc8}, // MOV CS,AX.
+      {0x8e, 0x0a}, // MOV CS,[EDX/RDX].
       {0x66, 0x8e, 0xc8}};
   for (Arch Target : {Arch::X86, Arch::X64})
-    for (bool Strict : {false, true}) {
-      Decoder Decode;
-      ASSERT_TRUE(Decode.init(Target));
-      Decode.setStrict(Strict);
-      for (const auto &Bytes : Invalid) {
-        SCOPED_TRACE(static_cast<unsigned>(Target));
-        SCOPED_TRACE(Strict);
-        SCOPED_TRACE(testing::PrintToString(Bytes));
-        DecodedInsn Instruction;
-        std::vector<LowOp> Ops(1);
-        Ops[0].Addr = 0x50;
-        if (Decode.decodeOne(Bytes.data(), Bytes.size(), 0x1000, Instruction))
-          EXPECT_THROW(Decode.liftToLow(Instruction, Ops), UnliftedInstruction);
-        ASSERT_EQ(Ops.size(), 1U);
-        EXPECT_EQ(Ops[0].Addr, 0x50U);
-      }
-    }
+    for (bool Strict : {false, true})
+      for (bool Detail : {false, true})
+        for (bool Text : {false, true})
+          for (unsigned Route : {0U, 1U, 2U}) {
+            Decoder Decode;
+            ASSERT_TRUE(Decode.init(Target));
+            Decode.setStrict(Strict);
+            Decode.setDetail(Detail);
+            Decode.setText(Text);
+            auto Cases = Invalid;
+            if (Target == Arch::X64) {
+              Cases.push_back({0xf0, 0xd5, 0x58, 0x33, 0x02});
+              Cases.push_back({0xd5, 0x44, 0x8e, 0xc8});
+            }
+            for (const auto &Bytes : Cases) {
+              SCOPED_TRACE(static_cast<unsigned>(Target));
+              SCOPED_TRACE(Strict);
+              SCOPED_TRACE(Detail);
+              SCOPED_TRACE(Text);
+              SCOPED_TRACE(Route);
+              SCOPED_TRACE(testing::PrintToString(Bytes));
+              DecodedInsn Instruction;
+              EXPECT_EQ(decodeRoute(Decode, Route, Bytes.data(), Bytes.size(),
+                                    Instruction),
+                        0);
+            }
+          }
 }
 
 TEST(X86EncodingAccuracy, LegalMemoryLockAndSegmentMovesStillLift) {
   const std::vector<std::vector<uint8_t>> Valid = {{0xf0, 0x31, 0x02},
+                                                   {0xf2, 0xf0, 0x31, 0x02},
+                                                   {0xf0, 0xf2, 0x31, 0x02},
                                                    {0xf0, 0x01, 0x02},
                                                    {0xf0, 0x0f, 0xab, 0x02},
                                                    {0xf0, 0x0f, 0xb1, 0x02},
@@ -88,15 +121,20 @@ TEST(X86EncodingAccuracy, Ud1ConsumesCompleteAddressAndAllRoutesAgree) {
           ASSERT_TRUE(Decode.init(Target));
           Decode.setDetail(Detail);
           Decode.setText(Text);
-          for (const auto &Bytes : Complete) {
+          auto Cases = Complete;
+          if (Target == Arch::X64) {
+            Cases.push_back({0x66, 0x0f, 0xb9, 0xc1});
+            Cases.push_back({0x48, 0x0f, 0xb9, 0xc1});
+            Cases.push_back({0xd5, 0x80, 0xb9, 0xc1});
+            Cases.push_back({0xd5, 0xc0, 0xb9, 0xc1});
+            Cases.push_back({0xd5, 0xa0, 0xb9, 0x04, 0x50});
+            Cases.push_back({0x67, 0xd5, 0xa0, 0xb9, 0x04, 0x50});
+          }
+          for (const auto &Bytes : Cases) {
             SCOPED_TRACE(testing::PrintToString(Bytes));
             const auto Read = [&](const uint8_t *Data, size_t Size,
                                   DecodedInsn &Out) {
-              if (Route == 0)
-                return Decode.decodeOne(Data, Size, 0x1000, Out);
-              if (Route == 1)
-                return Decode.decodeOneLight(Data, Size, 0x1000, Out);
-              return Decode.decodeOneForLift(Data, Size, 0x1000, Out);
+              return decodeRoute(Decode, Route, Data, Size, Out);
             };
             DecodedInsn Instruction;
             for (unsigned Truncated = 0; Truncated < Bytes.size(); ++Truncated)
@@ -114,6 +152,29 @@ TEST(X86EncodingAccuracy, Ud1ConsumesCompleteAddressAndAllRoutesAgree) {
             EXPECT_EQ(Instruction.Id, X86_INS_NOP);
           }
         }
+}
+
+TEST(X86EncodingAccuracy, Ud1OperandsDoNotBecomeMemoryOrArithmeticEffects) {
+  for (Arch Target : {Arch::X86, Arch::X64}) {
+    Decoder Decode;
+    ASSERT_TRUE(Decode.init(Target));
+    const std::vector<std::vector<uint8_t>> Cases = {
+        {0x0f, 0xb9, 0xc1}, {0x0f, 0xb9, 0x9c, 0xf6, 0xdd, 0xcc, 0xbb, 0xaa}};
+    for (const auto &Bytes : Cases) {
+      DecodedInsn Instruction;
+      ASSERT_EQ(Decode.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000,
+                                        Instruction),
+                static_cast<int>(Bytes.size()));
+      ASSERT_EQ(Instruction.Raw->detail->x86.op_count, 2);
+      std::vector<LowOp> Ops;
+      Decode.liftToLow(Instruction, Ops);
+      ASSERT_EQ(Ops.size(), 1U);
+      EXPECT_EQ(Ops[0].Opcode, NdOp::INTRINSIC);
+      ASSERT_EQ(Ops[0].NumInputs, 1);
+      EXPECT_TRUE(Ops[0].Inputs[0].isConst());
+      EXPECT_EQ(Ops[0].Inputs[0].Offset, static_cast<uint64_t>(Intrinsic::Ud1));
+    }
+  }
 }
 
 TEST(X86EncodingAccuracy, Ud1AddressOverridesAndLengthLimitAreExplicit) {
@@ -144,4 +205,19 @@ TEST(X86EncodingAccuracy, Ud1AddressOverridesAndLengthLimitAreExplicit) {
   Maximum.insert(Maximum.begin(), 0x66);
   EXPECT_EQ(
       Decode.decodeOne(Maximum.data(), Maximum.size(), 0x1000, Instruction), 0);
+}
+
+TEST(X86EncodingAccuracy, MandatoryPrefixPreservesI386AddressOverride) {
+  Decoder Decode;
+  ASSERT_TRUE(Decode.init(Arch::X86));
+  const uint8_t Bytes[] = {0x67, 0xf2, 0x0f, 0x2d, 0x00};
+  DecodedInsn Instruction;
+  ASSERT_EQ(Decode.decodeOne(Bytes, sizeof(Bytes), 0x1000, Instruction), 5);
+  EXPECT_EQ(Instruction.Id, X86_INS_CVTSD2SI);
+  const auto &X86 = Instruction.Raw->detail->x86;
+  ASSERT_EQ(X86.op_count, 2);
+  EXPECT_EQ(X86.addr_size, 2);
+  EXPECT_EQ(X86.operands[1].type, X86_OP_MEM);
+  EXPECT_EQ(X86.operands[1].mem.base, X86_REG_BX);
+  EXPECT_EQ(X86.operands[1].mem.index, X86_REG_SI);
 }

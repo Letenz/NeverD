@@ -445,6 +445,11 @@ Services::mapSection(const Service &S, const NativeCallEvent &Event) {
        !(ImageView && uint32_t(*Protect) == PageReadWrite)))
     return Refuse(std::string("tail ") + llvm::utohexstr(*Allocation) + " " +
                   llvm::utohexstr(*Protect));
+  // OpenSection currently grants only query/read access. SEC_IMAGE determines
+  // page protections, but does not bypass the section handle's access check.
+  if (ImageView && uint32_t(*Protect) == PageReadWrite)
+    return std::optional<uint64_t>(
+        uint64_t(int64_t(int32_t(StatusAccessDenied))));
   auto Preferred = Word(A[2], PointerSize);
   if (!Preferred)
     return Preferred.takeError();
@@ -747,6 +752,10 @@ Services::queryThread(const Service &S, const NativeCallEvent &Event) {
     return Refuse(std::string("class ") + llvm::utohexstr(A[1]));
   if (A[0] != CurrentThread)
     return Refuse("thread");
+  if (Class == ThreadHideFromDebugger && Length >= DWordSize &&
+      (A[2] & (DWordSize - 1)))
+    return std::optional<uint64_t>(
+        uint64_t(int64_t(int32_t(StatusDatatypeMisalignment))));
   if (Class == ThreadHideFromDebugger && Length != 1)
     return std::optional<uint64_t>(
         uint64_t(int64_t(int32_t(StatusInfoLengthMismatch))));
@@ -828,12 +837,18 @@ Services::setThread(const Service &S, const NativeCallEvent &Event) {
     auto Mask = CPU.readInteger(A[2], PointerSize);
     if (!Mask)
       return Mask.takeError();
-    // The process model exposes one processor. Its only nonempty affinity
-    // is the same mask reported by ThreadBasicInformation.
-    if (*Mask != ProcessorMask)
-      return Refuse("affinity mask");
+    // Native affinity intersects the request with the process mask. In this
+    // one-processor model every nonempty intersection retains that processor.
+    if (!(*Mask & ProcessorMask))
+      return std::optional<uint64_t>(
+          uint64_t(int64_t(int32_t(StatusInvalidParameter))));
     return std::optional<uint64_t>(0);
   }
+  // Native setters probe nonempty input with ULONG alignment before checking
+  // this information class's required zero length.
+  if (uint32_t(A[3]) && (A[2] & (DWordSize - 1)))
+    return std::optional<uint64_t>(
+        uint64_t(int64_t(int32_t(StatusDatatypeMisalignment))));
   if (uint32_t(A[3]) != 0)
     return std::optional<uint64_t>(
         uint64_t(int64_t(int32_t(StatusInfoLengthMismatch))));

@@ -99,6 +99,8 @@ private:
   /// The pseudocode or IR window holding the keyboard focus, if one does.
   CodeView *focusedCodeView() const;
   std::optional<Address> currentFunction() const;
+  /// Open a function in the code window used before the chooser took focus.
+  void activateFunction(Address address);
   void navigate(Address address);
   /// Jump in the active address view: the hex view when it was the last
   /// analysis view used, otherwise the disassembly.
@@ -106,6 +108,8 @@ private:
   void navigateExpression(const QString &text);
   /// Follow a name double-clicked in the code view \p view.
   void activateCodeName(CodeView *view, const QString &name);
+  void navigateCodeFunction(CodeView *view, Address address, Address function,
+                            std::optional<Address> from);
   void navigateHistory(bool forward);
   void synchronize(Address address, QObject *source);
   /// Show the current function in the code view \p view if it can be seen.
@@ -179,6 +183,7 @@ private:
   QHash<QString, Dock *> docks_;
   QHash<int, ChooserView *> choosers_;
   QPointer<CodeView> pseudocode_;
+  QPointer<CodeView> lastCodeView_;
   std::optional<Address> initialAddress_;
   bool restoreGraph_ = false;
   QPointer<QDialog> quickStart_;

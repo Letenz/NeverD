@@ -155,47 +155,53 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
 #ifndef NEVERD_UNPACK_GENERATED_FIXTURE_DIR
   GTEST_SKIP() << generated::MissingTools;
 #else
-  const auto Original =
-      readImage(std::filesystem::path(NEVERD_UNPACK_GENERATED_FIXTURE_DIR) /
-                generated::X64Dir / generated::ProgramFile);
-  const auto Packed =
-      generated::pack(Original, Original.File, generated::HeapStateMode);
-  ASSERT_FALSE(HasFailure());
-  const auto Input = (Directory / generated::PackedFile).string();
-  const auto Output = (Directory / FirstOutput).string();
-  writeFile(Input, Packed);
-  auto Report = api(Input, Output, nullptr);
-  if (!Report) {
-    const std::string Reason = neverd_last_error(Session);
-    if (Reason.find(Unavailable) != std::string::npos ||
-        Reason == text::Disabled)
-      GTEST_SKIP() << Reason;
-    FAIL() << Reason;
-  }
-  EXPECT_EQ(Report->getString(text::OutcomeField),
-            text::UnsupportedStateOutcome);
-  ASSERT_NE(Report->get(text::OutputField), nullptr);
-  EXPECT_EQ(Report->get(text::OutputField)->kind(), llvm::json::Value::Null);
-  const auto *State = Report->getObject(text::RuntimeStateField);
-  ASSERT_NE(State, nullptr);
-  EXPECT_EQ(State->getBoolean(text::HeapKnownField), true);
-  ASSERT_TRUE(State->getInteger(text::HeapReferenceCountField));
-  EXPECT_GT(*State->getInteger(text::HeapReferenceCountField), 0);
-  EXPECT_FALSE(std::filesystem::exists(Output));
-  EXPECT_EQ(cli(Input, Output, text::EmptyOptions).first,
-            unpack_cli::Incomplete);
-  EXPECT_FALSE(std::filesystem::exists(Output));
+  for (const char *File :
+       {generated::ProgramFile, generated::TLSHeapProgramFile}) {
+    SCOPED_TRACE(File);
+    const auto Original =
+        readImage(std::filesystem::path(NEVERD_UNPACK_GENERATED_FIXTURE_DIR) /
+                  generated::X64Dir / File);
+    const auto Packed =
+        generated::pack(Original, Original.File, generated::HeapStateMode);
+    ASSERT_FALSE(HasFailure());
+    const auto Input =
+        (Directory / (std::string(File) + generated::PackedFile)).string();
+    const auto Output =
+        (Directory / (std::string(File) + FirstOutput)).string();
+    writeFile(Input, Packed);
+    auto Report = api(Input, Output, nullptr);
+    if (!Report) {
+      const std::string Reason = neverd_last_error(Session);
+      if (Reason.find(Unavailable) != std::string::npos ||
+          Reason == text::Disabled)
+        GTEST_SKIP() << Reason;
+      FAIL() << Reason;
+    }
+    EXPECT_EQ(Report->getString(text::OutcomeField),
+              text::UnsupportedStateOutcome);
+    ASSERT_NE(Report->get(text::OutputField), nullptr);
+    EXPECT_EQ(Report->get(text::OutputField)->kind(), llvm::json::Value::Null);
+    const auto *State = Report->getObject(text::RuntimeStateField);
+    ASSERT_NE(State, nullptr);
+    EXPECT_EQ(State->getBoolean(text::HeapKnownField), true);
+    ASSERT_TRUE(State->getInteger(text::HeapReferenceCountField));
+    EXPECT_GT(*State->getInteger(text::HeapReferenceCountField), 0);
+    EXPECT_FALSE(std::filesystem::exists(Output));
+    EXPECT_EQ(cli(Input, Output, text::EmptyOptions).first,
+              unpack_cli::Incomplete);
+    EXPECT_FALSE(std::filesystem::exists(Output));
 
-  const std::vector<uint8_t> Existing{'k', 'e', 'e', 'p'};
-  writeFile(Output, Existing);
-  Report = api(Input, Output, nullptr);
-  ASSERT_TRUE(Report) << neverd_last_error(Session);
-  EXPECT_EQ(Report->getString(text::OutcomeField),
-            text::UnsupportedStateOutcome);
-  EXPECT_EQ(readFile(Output), Existing);
-  const auto [Status, Text] = cli(Input, Output, text::EmptyOptions);
-  EXPECT_EQ(Status, unpack_cli::Incomplete) << Text;
-  EXPECT_EQ(readFile(Output), Existing);
+    const std::vector<uint8_t> Existing{'k', 'e', 'e', 'p'};
+    writeFile(Output, Existing);
+    Report = api(Input, Output, nullptr);
+    ASSERT_TRUE(Report) << neverd_last_error(Session);
+    EXPECT_EQ(Report->getString(text::OutcomeField),
+              text::UnsupportedStateOutcome);
+    EXPECT_EQ(readFile(Output), Existing);
+    const auto [Status, Text] = cli(Input, Output, text::EmptyOptions);
+    EXPECT_EQ(Status, unpack_cli::Incomplete) << Text;
+    EXPECT_EQ(readFile(Output), Existing);
+  }
 #endif
 }
 

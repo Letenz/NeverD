@@ -173,10 +173,33 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       if (!Entry || *Entry < *Scan.CallStackEntryOffset)
         return true;
       const int64_t Offset = *Entry - *Scan.CallStackEntryOffset;
-      if (Offset % SlotBytes == 0 && Offset / SlotBytes < Scan.MaxArgs)
-        if (ExprPtr &Slot = Slots[static_cast<size_t>(Offset / SlotBytes)];
-            !Slot)
-          Slot = Scan.ToExpr(Store.Inputs[1]);
+      if (Offset % SlotBytes != 0)
+        return true;
+      // A store wider than a slot, clang's `movsd [esp], xmm0` copying an
+      // eight-byte structure, fills each slot it covers with its piece.
+      const int64_t Width = Store.Inputs[1].Size;
+      const int64_t Pieces =
+          Width > SlotBytes && Width % SlotBytes == 0 ? Width / SlotBytes : 1;
+      for (int64_t Piece = 0; Piece < Pieces; ++Piece) {
+        const int64_t Index = Offset / SlotBytes + Piece;
+        if (Index >= Scan.MaxArgs)
+          break;
+        ExprPtr &Slot = Slots[static_cast<size_t>(Index)];
+        if (Slot)
+          continue;
+        ExprPtr Value = Scan.ToExpr(Store.Inputs[1]);
+        if (Pieces > 1) {
+          if (!Value->Type || Value->Type->Kind != NdTypeKind::Int)
+            Value = HighExpr::makeBitCast(
+                Value, NdType::makeInt(static_cast<uint16_t>(Width), false));
+          Value = HighExpr::makeBinop(
+              NdOp::SUBBYTES, Value,
+              HighExpr::makeConst(static_cast<uint64_t>(Piece * SlotBytes), 4));
+          Value->Type =
+              NdType::makeInt(static_cast<uint16_t>(SlotBytes), false);
+        }
+        Slot = std::move(Value);
+      }
       return true;
     });
     size_t Placed = 0;
