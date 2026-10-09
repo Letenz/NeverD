@@ -457,6 +457,17 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
         continue;
       SizedRanges.push_back({Sym.Addr, Sym.Addr + Sym.Size});
     }
+    // A decoded FDE supplies an exact extent even when a pre-existing COFF
+    // function symbol has no size. KnownCodeRanges can also contain coarse
+    // coverage, so only the format-authenticated FDE contributes here.
+    for (const ExceptionFunction &EH : Img.ExceptionMetadata.Functions)
+      if (EH.Kind == RuntimeFunctionKind::Primary &&
+          EH.Encoding == ExceptionEncoding::DwarfFDE && EH.Dwarf &&
+          EH.ParseStatus != ExceptionParseStatus::Malformed &&
+          EH.CodeRange.isValid())
+        SizedRanges.emplace_back(EH.FunctionEntry ? EH.FunctionEntry
+                                                  : EH.CodeRange.Begin,
+                                 EH.CodeRange.End);
     if (!SizedRanges.empty()) {
       // Sorted by start, with the furthest end any range up to each one
       // reaches: A is strictly inside some range exactly when a range that

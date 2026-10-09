@@ -919,6 +919,11 @@ COFFLoader::load(const std::filesystem::path &Path) {
     return std::move(E);
   if (llvm::Error E = verifyARMFunctionModeHints(Img, ARMFunctionModes))
     return std::move(E);
+  // MinGW supplies exact function extents through .eh_frame even on x86,
+  // where no .pdata directory exists. Publish those ranges before a padding
+  // or data-pointer heuristic can turn an interior instruction into a symbol.
+  // Personality resolution still follows import-veneer discovery below.
+  dwarf_eh::recordFrameExtents(Img);
   runPostLoadDiscovery(Img, "coff: loaded " + pathToUTF8(Path.filename()));
   // Classified before any table is read.  A PE is the format where schema and
   // language diverge most: Delphi and MSVC share the registration chain, Rust

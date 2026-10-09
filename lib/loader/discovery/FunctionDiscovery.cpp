@@ -380,6 +380,12 @@ void scanDataFuncPointers(BinaryImage &Img) {
     if (ScanLen < PtrSize || ScanLen > InvalidVA - Start)
       return;
     const va_t End = Start + ScanLen;
+    // Even overlapping or unreadable section metadata must not let a coarse
+    // segment fallback reinterpret debug records as runtime pointer storage.
+    for (const Section &Sec : Img.Sections)
+      if (Sec.isDebugInfo() && Sec.Size &&
+          (Sec.VA <= Start ? Start - Sec.VA < Sec.Size : Sec.VA < End))
+        return;
     va_t Cur = Start;
     const uint64_t Misalignment = Cur % PtrSize;
     if (Misalignment != 0)
@@ -410,11 +416,12 @@ void scanDataFuncPointers(BinaryImage &Img) {
   };
 
   for (const Section &Sec : Img.Sections)
-    if (Sec.Size != 0 && Sec.isReadable() && !Sec.isWritable() &&
-        !Img.isCodeAddress(Sec.VA))
+    if (!Sec.isDebugInfo() && Sec.Size != 0 && Sec.isReadable() &&
+        !Sec.isWritable() && !Img.isCodeAddress(Sec.VA))
       ScanRange(Img.getSegmentFor(Sec.VA), Sec.VA, Sec.Size);
   for (const Segment &Seg : Img.Segments) {
-    if (Img.segmentHasReadableSectionMetadata(Seg) || !Seg.isReadable() ||
+    if (section_names::isDebugSectionName(Seg.Name) || Seg.Name == "__DWARF" ||
+        Img.segmentHasReadableSectionMetadata(Seg) || !Seg.isReadable() ||
         Seg.isExecutable() || Seg.isWritable())
       continue;
     ScanRange(&Seg, Seg.VA, Seg.Data.size());
