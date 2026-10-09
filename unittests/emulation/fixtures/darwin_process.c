@@ -432,9 +432,12 @@ static int attribute_names(const char *path, unsigned mode) {
   unsigned char *bytes = (unsigned char *)words, observed[44];
   if (attribute_result(228, copy, (u64)request, (u64)observed, 44, 0, 0, 0, 0))
     return 229;
-  for (unsigned i = 0; i != 44; ++i)
-    if (observed[i] != expected[i])
+  for (unsigned i = 0; i != 5; ++i)
+    if (little_integer(observed + i * 8, 8) !=
+        little_integer(expected + i * 8, 8))
       return 230;
+  if (little_integer(observed + 40, 4) != little_integer(expected + 40, 4))
+    return 230;
   const u64 sizes[] = {4, 7, 24, 27, 31, 35, 36, 40, 41, 43, 44, 512};
   for (unsigned i = 0; i != 12; ++i)
     for (unsigned route = 0; route != 3; ++route) {
@@ -453,9 +456,21 @@ static int attribute_names(const char *path, unsigned mode) {
       if (failed)
         return 231;
       const unsigned count = sizes[i] < 44 ? (unsigned)sizes[i] : 44;
-      for (unsigned j = 0; j != 80; ++j)
-        if (bytes[j] != (j >= 8 && j < 8 + count ? expected[j - 8] : 0xa5))
+      // Compare all 80 bytes in ten words. A partial final word keeps its
+      // exact output prefix and every unwritten canary byte, as above.
+      const unsigned whole = count / 8, partial = count % 8;
+      for (unsigned j = 0; j != 10; ++j) {
+        u64 wanted = 0xa5a5a5a5a5a5a5a5UL;
+        if (j >= 1 && j < 1 + whole)
+          wanted = little_integer(expected + (j - 1) * 8, 8);
+        else if (j == 1 + whole && partial) {
+          const u64 mask = (1UL << (partial * 8)) - 1;
+          wanted =
+              little_integer(expected + whole * 8, partial) | (wanted & ~mask);
+        }
+        if (words[j] != wanted)
           return 232;
+      }
     }
   if (attribute_result(220, (u64) "alias", (u64)request, (u64)bytes, 80, 1, 0,
                        0, 0) ||

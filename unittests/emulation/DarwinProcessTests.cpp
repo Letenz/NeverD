@@ -504,12 +504,14 @@ TEST_P(DarwinProcess, AttributeNamesPreserveReferencesAndRetainedIdentity) {
   Options.Limits.TimeoutMicroseconds = 5000000;
   for (const char *Mode : {"attribute-names", "attribute-names-values",
                            "attribute-names-unsupported"}) {
+    SCOPED_TRACE(Mode);
     auto Result = run(Mode);
     ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
     const bool Unknown = llvm::StringRef(Mode).ends_with("-unsupported");
     ASSERT_EQ(Result->Stop, Unknown ? ProcessStopReason::UnsupportedService
                                     : ProcessStopReason::Exited)
-        << Result->Diagnostic;
+        << Result->Diagnostic << "; instructions=" << Result->Instructions
+        << "; services=" << Result->Services.size();
     EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
               llvm::StringRef(Mode) == "attribute-names-values"
                   ? darwin_test::AttributeNamesHex
@@ -537,12 +539,14 @@ TEST_P(DarwinProcess, ExtendedAttributesPreserveValuesNamesAndObjectLifetime) {
   Options.Limits.TimeoutMicroseconds = 5000000;
   for (const char *Mode : {"extended-attributes", "extended-attributes-values",
                            "extended-attributes-unsupported"}) {
+    SCOPED_TRACE(Mode);
     auto Result = run(Mode);
     ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
     const bool Unknown = llvm::StringRef(Mode).ends_with("-unsupported");
     ASSERT_EQ(Result->Stop, Unknown ? ProcessStopReason::UnsupportedService
                                     : ProcessStopReason::Exited)
-        << Result->Diagnostic;
+        << Result->Diagnostic << "; instructions=" << Result->Instructions
+        << "; services=" << Result->Services.size();
     EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
               llvm::StringRef(Mode) == "extended-attributes-values"
                   ? darwin_test::ExtendedAttributesHex
