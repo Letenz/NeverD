@@ -10,6 +10,17 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 
 ## System boundary
 
+The Qt workbench keeps project writes and browsing in one `neverd-worker` and
+runs source/IR and graph reads in a disposable read-only worker. The owner
+exports loader choices, loaded-input identity, user edits, staged comments,
+signature inputs and string options. The replica verifies the input and
+committed edits before applying the remaining in-memory state; a mismatch
+fails explicitly. Owner revision changes invalidate the replica and its cache.
+Cancelling its final subscriber retires the process, since a synchronous C API
+analysis call cannot be interrupted safely. Replica revisions and analysis
+discovery never advance the writable project's state. Both workers use the
+same public C API; this split does not duplicate engine semantics.
+
 ```mermaid
 flowchart LR
   CLI["tools/neverd CLI"] --> CAPI["libneverd C API"]

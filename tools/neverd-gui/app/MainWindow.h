@@ -186,6 +186,8 @@ private:
   QHash<QString, Dock *> docks_;
   QHash<int, ChooserView *> choosers_;
   QPointer<CodeView> pseudocode_;
+  bool pseudocodeEnabled_ = false;
+  QTimer followTimer_;
   QPointer<CodeView> lastCodeView_;
   std::optional<Address> initialAddress_;
   bool restoreGraph_ = false;

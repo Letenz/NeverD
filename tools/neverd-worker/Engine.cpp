@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <set>
 #include <string_view>
 #include <system_error>
@@ -44,6 +45,28 @@
 namespace neverd::worker {
 namespace fs = std::filesystem;
 namespace {
+// A signature source is external to the image. Never silently replay a
+// different file/tree into a replica of an already loaded project.
+Json signatureStamp(const fs::path &path) {
+  if (!fs::exists(path))
+    return nullptr;
+  std::map<std::string, Json> files;
+  const auto add = [&](const fs::path &file) {
+    const auto name = file.generic_u8string();
+    files[std::string(name.begin(), name.end())] = {
+        fs::file_size(file),
+        fs::last_write_time(file).time_since_epoch().count()};
+  };
+  if (fs::is_directory(path)) {
+    for (const auto &entry : fs::recursive_directory_iterator(path))
+      if (entry.is_regular_file())
+        add(entry.path());
+  } else {
+    add(path);
+  }
+  return files;
+}
+
 using IRViewFunction = const char *(*)(neverd_session_t, neverd_va_t,
                                        const char *, std::size_t, std::size_t);
 using StringEncodingsFunction = const char *(*)();
@@ -832,7 +855,100 @@ Json Engine::metadata() const {
                                : Json::object()}};
 }
 
+std::string Engine::inputHash() const {
+  static const auto hash =
+      engineSymbol<SessionJsonFunction>("neverd_session_input_sha256");
+  return hash ? ownedString(hash(session_))
+              : backendJson(neverd_dashboard_json(session_))
+                    .value("hashes", Json::object())
+                    .value("sha256", std::string());
+}
+
+Json Engine::userState() const {
+  return {{"annotations", backendJson(neverd_annotations_json(session_))},
+          {"renames", backendJson(neverd_renames_json(session_))},
+          {"functions", functionEditRows()},
+          {"items", dataItemRows()},
+          {"operands", operandFormatRows()}};
+}
+
+Json Engine::analysisSnapshot() {
+  requireLoaded();
+  for (const auto &input : signatureInputs_)
+    if (signatureStamp(utf8Path(input.at("path").get<std::string>())) !=
+        input.at("stamp"))
+      throw Error("input_changed", "Loaded signatures changed; reload them");
+  auto options = openOptions_;
+  if (loadOptions()) {
+    const auto actual = backendJson(loadOptions().json(session_));
+    const auto loader = actual.value("loader", std::string());
+    if (loader == "binary" || loader == "evm")
+      for (const char *key : {"loader", "processor", "base", "offset", "size",
+                              "entry", "platform"})
+        if (actual.contains(key))
+          options[key] = actual.at(key);
+  }
+  options["path"] = ownedString(neverd_session_file_path(session_));
+  options["analysis"] = false;
+  options["read_only"] = true;
+  return {{"schema", 1},
+          {"open", options},
+          {"input_sha256", inputHash()},
+          {"state", userState()},
+          {"signatures", signatureInputs_},
+          {"string_options", stringOptions_.empty()
+                                 ? Json::object()
+                                 : Json::parse(stringOptions_)}};
+}
+
+Json Engine::restoreAnalysis(const Json &snapshot) {
+  // This operation only initializes a fresh process. It cannot replace the
+  // writable owner's project or commit anything to its sidecars/history.
+  if (!projectId_.empty() || snapshot.value("schema", 0) != 1 ||
+      !snapshot.contains("open") || !snapshot.contains("state"))
+    throw Error("invalid_request",
+                "Analysis restore needs a fresh worker and a snapshot");
+  auto options = snapshot.at("open");
+  options["read_only"] = true;
+  options["analysis"] = false;
+  execute("open", options);
+  if (inputHash() != snapshot.at("input_sha256").get<std::string>())
+    throw Error("input_changed",
+                "The analysis input differs from the open project");
+  const auto actual = userState();
+  const auto &expected = snapshot.at("state");
+  // Committed edits have one writer. Loading them is safe only when they
+  // still match the version exported by that writer. A racing edit causes
+  // rejection; the GUI retires this replica on the new owner revision.
+  for (const char *table : {"renames", "functions", "items", "operands"})
+    if (actual.at(table) != expected.at(table))
+      throw Error("stale_snapshot",
+                  "Project edits changed while opening analysis");
+  for (const auto &row : actual.at("annotations"))
+    neverd_annotation_set(session_,
+                          parseAddress(row.at("addr").get<std::string>()), "");
+  for (const auto &row : expected.at("annotations"))
+    neverd_annotation_set(
+        session_, parseAddress(row.at("addr").get<std::string>()),
+        row.at("text").get_ref<const std::string &>().c_str());
+  for (const auto &input : snapshot.at("signatures")) {
+    const auto path = utf8Path(input.at("path").get<std::string>());
+    if (signatureStamp(path) != input.at("stamp"))
+      throw Error("input_changed", "Loaded signatures changed; reload them");
+    execute("signatures_load", input);
+    if (signatureStamp(path) != input.at("stamp"))
+      throw Error("input_changed",
+                  "Signatures changed during analysis restore");
+  }
+  execute("string_options", snapshot.at("string_options"));
+  return metadata();
+}
+
 Json Engine::execute(const std::string &operation, const Json &p) {
+  if (operation == "analysis_snapshot")
+    return analysisSnapshot();
+  if (operation == "analysis_restore")
+    return restoreAnalysis(p);
   if (operation == "identify") {
     // How each loader would read a file, before it is opened.
     const auto identify = identifyFunction();
@@ -1018,6 +1134,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (!reuseLock)
       lock_ = std::move(nextLock);
     readOnly_ = readOnly;
+    openOptions_ = p;
+    signatureInputs_ = Json::array();
     backgroundAnalysis_ = p.value("analysis", true);
     dirty_ = false;
     analyzed_ = false;
@@ -1073,11 +1191,14 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (path.empty() || (mode != "file" && mode != "auto"))
       throw Error("invalid_request",
                   "A signature path and file/auto mode are required");
+    const auto stamp = signatureStamp(utf8Path(path));
     const int matches =
         mode == "auto" ? neverd_auto_apply_signatures(session_, path.c_str())
                        : neverd_apply_signature_file(session_, path.c_str());
     if (matches < 0)
       throw Error("signature_load_failed", error());
+    signatureInputs_.push_back(
+        {{"path", path}, {"mode", mode}, {"stamp", stamp}});
     // This changes analysis evidence only. It is also available on a read-only
     // image and never stages a sidecar edit or modifies the binary.
     analyzed_ = false;

@@ -29,6 +29,7 @@
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QFontMetricsF>
@@ -173,6 +174,103 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void slowPseudocodeKeepsBrowsingAndFollowsLatestFunction() {
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto path =
+        writeFixture(directory, QStringLiteral("pseudocode-slow.bin"));
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    QVERIFY(!bench.codeView(QStringLiteral("source")));
+    QTest::qWait(250);
+    QVERIFY(!diagnostics.join('\n').contains("fixture slow decompile started"));
+    bench.session.setComment(Base, QStringLiteral("unsaved comment"));
+    QTRY_VERIFY(bench.session.dirty());
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    QTRY_VERIFY(view->isVisible() && bench.window->disassembly()->isVisible());
+    QVERIFY(view->mapToGlobal(QPoint()).x() >
+            bench.window->disassembly()->mapToGlobal(QPoint()).x());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture slow decompile started"),
+        5000);
+    // An uncached page and listing must finish while the 30-second engine
+    // call is still running, not just leave the Qt event loop responsive.
+    bool functions = false, listing = false;
+    bench.session.read("functions", {{"offset", 512}, {"limit", 32}}, this,
+                       [&](const QJsonObject &p) {
+                         functions = !p.value("items").toArray().isEmpty();
+                       });
+    bench.session.read("listing",
+                       {{"address", hexAddress(Base + 16)}, {"after", 16}},
+                       this, [&](const QJsonObject &) { listing = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(functions && listing, 1500);
+    QVERIFY(view->text()->loading());
+    bench.window->disassembly()->navigate(Base + 16);
+    QTRY_COMPARE_WITH_TIMEOUT(view->text()->function(),
+                              std::optional<Address>(Base + 16), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !view->text()->loading() &&
+            view->text()->allText().contains("code line 699"),
+        5000);
+    QVERIFY(bench.session.dirty());
+    QVERIFY(!QFile::exists(path + ".neverd-annotations.json"));
+    // Tab changes focus without removing either side of the split.
+    view->text()->setFocus();
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    QVERIFY(view->isVisible() && bench.window->disassembly()->isVisible());
+    for (auto *dock :
+         bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->widget() == view)
+        dock->forceClose();
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    QTest::qWait(300);
+    QCOMPARE(diagnostics.join('\n').count("fixture slow decompile started"), 1);
+  }
+
+  void largePseudocodeKeepsProcessingEvents() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-large.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY(bench.window->disassembly()->currentFunction().has_value());
+    QElapsedTimer elapsed;
+    elapsed.start();
+    qint64 longest = 0;
+    int ticks = 0;
+    QTimer heartbeat;
+    connect(&heartbeat, &QTimer::timeout, this, [&] {
+      longest = std::max(longest, elapsed.restart());
+      ++ticks;
+    });
+    heartbeat.start(5);
+    bench.action(ActionId::ViewLLVMC)->trigger();
+    auto *view = bench.codeView(QStringLiteral("llvmc"));
+    QVERIFY(view);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !view->text()->loading() &&
+            view->text()->allText().contains("code line 19999"),
+        15000);
+    QTest::qWait(10);
+    QVERIFY(view->text()->preludeFolded());
+    QVERIFY(view->text()->lineCount() >= 20000);
+    QVERIFY(ticks > 1);
+    QVERIFY2(longest < 500,
+             qPrintable(QStringLiteral("UI event gap: %1 ms").arg(longest)));
+    qInfo() << "Largest event gap while rendering 20,000 source lines:"
+            << longest << "ms";
+  }
+
   void codeAddressLinksRetainAddressNavigation_data() {
     QTest::addColumn<bool>("global");
     QTest::newRow("import-with-function-address") << false;
@@ -555,9 +653,27 @@ private slots:
           dock->forceClose();
       QTRY_VERIFY(!view->isVisible());
     } else {
+      // Users can still put the two views in one tab group. Their default
+      // arrangement is now a split, so create that hidden-view case here.
+      KDDockWidgets::QtWidgets::DockWidget *codeDock = nullptr,
+                                           *listingDock = nullptr;
+      for (auto *dock :
+           bench.window
+               ->findChildren<KDDockWidgets::QtWidgets::DockWidget *>()) {
+        if (dock->widget() == view)
+          codeDock = dock;
+        if (dock->widget() == disassembly)
+          listingDock = dock;
+      }
+      QVERIFY(codeDock && listingDock);
+      listingDock->addDockWidgetAsTab(codeDock);
       bench.action(ActionId::ViewDisassembly)->trigger();
       disassembly->focusContent();
       QTRY_VERIFY(disassembly->isVisible());
+      const auto revision = bench.session.revision();
+      bench.session.rename(Base, QStringLiteral("renamed_while_hidden"));
+      QTRY_VERIFY(bench.session.revision() != revision);
+      QVERIFY(view->text()->interrupted());
     }
     auto *table = bench.functions()->table();
     QTRY_VERIFY(!bench.functions()->model().rowObject(22).isEmpty());
@@ -569,6 +685,16 @@ private slots:
                  std::optional<Address>(Base + 0x160));
     QVERIFY(disassembly->isVisible());
     QVERIFY(!view->isVisible());
+    if (!closed) {
+      // Showing the existing tab catches up to the new owner revision.
+      for (auto *dock :
+           bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+        if (dock->widget() == view)
+          dock->raise();
+      QTRY_COMPARE(view->text()->function(),
+                   std::optional<Address>(Base + 0x160));
+      QTRY_VERIFY(!view->text()->loading() && !view->text()->interrupted());
+    }
   }
 
   void changingFiltersRetiresObsoletePages() {
@@ -1907,6 +2033,10 @@ private slots:
       bench.window->disassembly()->navigate(Base + 0x140);
       QTRY_COMPARE(bench.window->disassembly()->currentItem(),
                    std::optional<Address>(Base + 0x140));
+      bench.action(ActionId::ViewPseudocode)->trigger();
+      auto *view = bench.codeView(QStringLiteral("source"));
+      QVERIFY(view);
+      QTRY_VERIFY(view->isVisible() && !view->text()->loading());
       bench.session.setComment(Base + 0x140, QStringLiteral("packed comment"));
       QTRY_VERIFY(bench.session.dirty());
       QSignalSpy saved(&bench.session, &Session::databaseSaved);
@@ -1932,6 +2062,11 @@ private slots:
       QTRY_COMPARE_WITH_TIMEOUT(bench.window->disassembly()->currentItem(),
                                 std::optional<Address>(Base + 0x140),
                                 OpenTimeoutMs);
+      QTest::qWait(250);
+      if (auto *view = bench.codeView(QStringLiteral("source"))) {
+        QVERIFY(!view->isVisible());
+        QVERIFY(!view->text()->function());
+      }
       QString comment;
       bench.session.read(QStringLiteral("resolve"),
                          {{"query", hexAddress(Base + 0x140)}}, &bench.session,

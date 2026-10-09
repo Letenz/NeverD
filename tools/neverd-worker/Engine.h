@@ -67,6 +67,13 @@ private:
   std::optional<std::uint64_t> preparedFunction_;
   std::uint64_t revision_ = 0;
   std::string projectId_;
+  Json openOptions_, signatureInputs_ = Json::array();
+  /// A read-only replica is checked against the owner's loaded input and
+  /// committed sidecars before any expensive operation is admitted.
+  Json analysisSnapshot();
+  Json restoreAnalysis(const Json &snapshot);
+  Json userState() const;
+  std::string inputHash() const;
   bool analyzed_ = false;
   bool dirty_ = false;
   bool readOnly_ = false;

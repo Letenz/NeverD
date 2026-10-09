@@ -46,6 +46,14 @@ LLVM C and IR windows, multiple windows, pinned views and back/forward history.
 The file-drop cases wait for the worker's loader-identification capability and
 check UTF-8 filenames through the Windows fixture boundary.
 
+The controller also starts a controlled 30-second decompile, proves uncached
+function and listing reads complete while it is running, then switches
+functions and checks cancellation without losing staged comments. A 20,000-line
+source fixture checks event-loop responsiveness and folded declarations across
+pages. `NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
+unchanged owner files, staged comments, signature replay and stale-input
+rejection. Database restore coverage keeps pseudocode closed until requested.
+
 ```sh
 cmake --build build-gui --target neverd-gui-tests neverd-gui-query-tests
 ctest --test-dir build-gui -R '^NeverDGui' --output-on-failure

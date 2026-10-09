@@ -1,14 +1,16 @@
 # NeverD desktop workbench
 
-The desktop workbench is a Qt Widgets application with a separate
-`neverd-worker` process. It starts in the classic interactive disassembler
-layout and keeps that layout's window names, menus and default shortcuts, so
+The desktop workbench is a Qt Widgets application with separate
+`neverd-worker` processes for browsing and expensive analysis views. It starts
+in the classic interactive disassembler layout and keeps that layout's window
+names, menus and default shortcuts, so
 existing muscle memory carries over; colors follow the Visual Studio Code Dark+
 (default) and Light+ themes, and every icon is original NeverD artwork. The
-worker links the same `libneverd` shared library as the CLI through its public C
+workers link the same `libneverd` shared library as the CLI through its public C
 ABI: analysis, function discovery and decompilation stay in that library, and Qt
-owns presentation and request coordination. A crash or a long engine call in the
-worker never blocks or takes down the window. The GUI executable does not link
+owns presentation and request coordination. Source and graph requests use a
+disposable read-only worker, so a long decompile does not hold up uncached
+function-list pages or disassembly requests. The GUI executable does not link
 LLVM or the CLI, and no model service is needed to browse binaries.
 
 ## Build
@@ -142,14 +144,24 @@ conditional (green/red) and unconditional edges routed around blocks; panning
 and zooming are local, and text is dropped at low zoom. The graph overview
 shows the whole function and the visible area.
 
-**Pseudocode** (F5, Tab) and **IR** windows show pseudocode in the function's
+Opening a file or database starts with disassembly and does not generate
+pseudocode, including when a saved desktop had it open. **F5** or **Tab** opens
+Pseudocode on the right of disassembly. Tab from Pseudocode returns focus to
+disassembly while keeping both panes visible. Once opened, Pseudocode follows
+the current function after a 200 ms pause in navigation; leaving an unfinished
+function cancels its analysis when no other view needs it. Closing or hiding
+the pane stops its requests until it is shown again.
+
+**Pseudocode** and **IR** windows show pseudocode in the function's
 own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of
 the current function and follow the disassembly
 unless their lock is set. A window hidden behind another tab catches up when it
 is shown, so moving through the disassembly never waits for a decompile no one
 sees, and F5 pressed while a jump is loading decompiles the function the jump
-lands in. The engine emits a function's source once and pages it from there; a
-function longer than one page keeps the listing's names, such as `main`. The
+lands in. Source arrives in 256-line pages; the view appends new lines without
+recoloring all preceding pages. The engine emits a function's source once and
+pages it from there; a function longer than one page keeps the listing's names,
+such as `main`. The
 LLVM views translate the current function alone,
 with the others declared, so a function the engine refuses to translate shows
 its reason without affecting other functions. Rows mapped to instructions move

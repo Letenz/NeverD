@@ -27,7 +27,7 @@
 
 namespace neverd::gui {
 namespace {
-constexpr int PageLines = 2048;
+constexpr int PageLines = 256;
 constexpr int Margin = 6;
 constexpr int WheelLines = 3;
 /// The fold over the lines before a C definition.
@@ -180,8 +180,12 @@ CodeText::CodeText(Session &session, QWidget *parent)
     viewport()->update();
   });
   connect(&session_, &Session::revisionChanged, this, [this] {
-    if (function_)
+    if (!function_)
+      return;
+    if (isVisible())
       load(*function_, representation_);
+    else
+      interrupted_ = true;
   });
   connect(&session_, &Session::unloaded, this, &CodeText::clear);
 }
@@ -202,12 +206,9 @@ void CodeText::updateRange() {
   verticalScrollBar()->setRange(
       0, std::max(0, int(lines_.size()) - visibleLines() + 1));
   verticalScrollBar()->setPageStep(visibleLines());
-  int widest = 0;
-  for (const auto &line : lines_)
-    widest = std::max(widest, int(line.styled.text.size()));
-  horizontalScrollBar()->setRange(
-      0,
-      std::max(0, int(widest * charWidth_) + textLeft() - viewport()->width()));
+  horizontalScrollBar()->setRange(0, std::max(0, int(widestLine_ * charWidth_) +
+                                                     textLeft() -
+                                                     viewport()->width()));
   horizontalScrollBar()->setPageStep(viewport()->width());
 }
 
@@ -218,10 +219,22 @@ void CodeText::resizeEvent(QResizeEvent *event) {
 
 void CodeText::scrollContentsBy(int, int) { viewport()->update(); }
 
-void CodeText::clear() {
+void CodeText::cancel() {
   ++serial_;
-  loading_ = false;
+  session_.analysisQueries().unsubscribeOwner(this);
+  if (loading_) {
+    interrupted_ = true;
+    loading_ = false;
+    status_ = tr("Cancelled");
+    emit statusChanged();
+  }
+}
+
+void CodeText::clear() {
+  cancel();
   source_.clear();
+  sourceBytes_ = renderedChars_ = renderedRows_ = widestLine_ = 0;
+  interrupted_ = false;
   sourceRows_.clear();
   lineStarts_.clear();
   regions_ = {};
@@ -248,18 +261,21 @@ void CodeText::clear() {
 }
 
 void CodeText::load(Address function, const QString &representation) {
+  cancel();
   const bool same = function_ == function && representation_ == representation;
   function_ = function;
   representation_ = representation;
   const quint64 serial = ++serial_;
   if (!same) {
     lines_.clear();
+    widestLine_ = 0;
     cursorLine_ = cursorColumn_ = 0;
     anchor_.reset();
     verticalScrollBar()->setValue(0);
   }
   inComment_ = false;
   loading_ = true;
+  interrupted_ = false;
   // Folding state survives a refresh of the same function as "fold all";
   // a new function opens at its definition, its prelude folded.
   foldAfterLoad_ = same && library_.libraryFolded();
@@ -287,7 +303,7 @@ void CodeText::request(int offset, quint64 serial) {
         appendPage(payload, offset);
         const auto next = payload.value("next_offset");
         if (!next.isNull() && next.toInt() > offset) {
-          rebuildLines();
+          rebuildLines(true);
           request(next.toInt(), serial);
           return;
         }
@@ -300,7 +316,9 @@ void CodeText::request(int offset, quint64 serial) {
           library_.setFolded(true);
         if (foldPreludeAfterLoad_)
           library_.setRegionFolded(PreludeRegion, true);
-        rebuildLines();
+        // Unfolded pages are already colored and mapped. Only a changed
+        // projection requires rebuilding earlier lines.
+        rebuildLines(!library_.anyFolded());
         emit foldingChanged();
         const auto mapping = payload.value("mapping_status").toString();
         status_ = session_.metadata().value("analyzed").toBool()
@@ -333,6 +351,7 @@ void CodeText::request(int offset, quint64 serial) {
         line.styled.text = message;
         line.styled.spans = {{0, int(message.size()), Comment, std::nullopt}};
         lines_.append(std::move(line));
+        widestLine_ = message.size();
         status_ = message;
         updateRange();
         viewport()->update();
@@ -360,14 +379,21 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
       pageLanguage_ = language;
       emit languageChanged();
     }
-  } else if (regionsValid_ &&
-             pageOffset != byteOffset_ + source_.toUtf8().size()) {
+  } else if (regionsValid_ && pageOffset != byteOffset_ + sourceBytes_) {
     // Pages that do not continue each other cannot share byte offsets.
     regionsValid_ = false;
   }
+  if (offset == 0) {
+    sourceBytes_ = renderedChars_ = renderedRows_ = widestLine_ = 0;
+    lines_.clear();
+    lineStarts_.clear();
+  }
   source_ += text;
-  if (!text.isEmpty() && !text.endsWith(QLatin1Char('\n')))
+  sourceBytes_ += text.toUtf8().size();
+  if (!text.isEmpty() && !text.endsWith(QLatin1Char('\n'))) {
     source_ += QLatin1Char('\n');
+    ++sourceBytes_;
+  }
   for (const auto &row : payload.value("rows").toArray())
     sourceRows_.append(row.toObject().toVariantMap());
   // A source name's bytes are in the page that holds its line.
@@ -468,28 +494,32 @@ QJsonArray CodeText::foldRegions() const {
   return regions;
 }
 
-void CodeText::rebuildLines() {
+void CodeText::rebuildLines(bool append) {
   const bool folding = !loading_ && library_.canFold();
   const QString display = folding ? library_.text() : source_;
   const QVariantList &rows = folding ? library_.mappings() : sourceRows_;
   const int previousLine = cursorLine_;
-  lines_.clear();
-  lineStarts_.clear();
-  inComment_ = false;
-  int start = 0;
+  if (!append) {
+    lines_.clear();
+    lineStarts_.clear();
+    inComment_ = false;
+    renderedChars_ = renderedRows_ = widestLine_ = 0;
+  }
+  int start = renderedChars_;
   while (start < display.size()) {
     int end = int(display.indexOf(QLatin1Char('\n'), start));
     if (end < 0)
       end = int(display.size());
     Line line;
     line.styled.text = display.mid(start, end - start);
+    widestLine_ = std::max(widestLine_, int(line.styled.text.size()));
     highlightLine(line, inComment_);
     lines_.append(std::move(line));
     lineStarts_.append(start);
     start = end + 1;
   }
-  for (const auto &value : rows) {
-    const auto row = value.toMap();
+  for (int i = renderedRows_; i < rows.size(); ++i) {
+    const auto row = rows[i].toMap();
     const int index = row.value(QStringLiteral("line"), -1).toInt();
     if (index < 0 || index >= lines_.size())
       continue;
@@ -497,6 +527,8 @@ void CodeText::rebuildLines() {
       if (const auto parsed = parseAddress(address.toString()))
         lines_[index].addresses.append(*parsed);
   }
+  renderedChars_ = display.size();
+  renderedRows_ = rows.size();
   if (folding)
     for (const auto &[begin, end] : library_.foldedRanges()) {
       auto it =
