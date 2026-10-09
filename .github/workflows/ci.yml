@@ -43,6 +43,11 @@ on:
         required: false
         type: string
         default: ''
+      windows_eh_cxx_frame_only:
+        description: 'Validate only an existing generated C++ frame object with the native MSVC CRT'
+        required: true
+        type: boolean
+        default: false
       native_cpu_backend:
         description: 'Native x64 transport for the native_cpu_only profile'
         required: true
@@ -61,7 +66,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ inputs.windows_eh_cxx_frame_only && '-cxx-frame' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -2284,7 +2289,7 @@ jobs:
           name: windows-eh-x86-runtime-arm32-contracts
           path: build-windows-eh
       - name: Diagnose an existing original-image baseline
-        if: ${{ inputs.windows_eh_replay_artifact_run != '' }}
+        if: ${{ inputs.windows_eh_replay_artifact_run != '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/check_windows_registration_native_diagnostics.py --root build-windows-eh
       - name: Select the native x86 MSVC compiler
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
@@ -2296,12 +2301,13 @@ jobs:
           $frame = "build-windows-eh/evidence/cxx-catch-frame.obj"
           if (Test-Path $frame) {
             python scripts/check_windows_registration_cxx.py --output build-windows-eh/cxx-original --frame-object $frame
-          } elseif ("${{ inputs.windows_eh_replay_artifact_run }}" -ne "") {
+          } elseif ("${{ inputs.windows_eh_replay_artifact_run }}" -ne "" -and "${{ inputs.windows_eh_cxx_frame_only }}" -ne "true") {
             python scripts/check_windows_registration_cxx.py --output build-windows-eh/cxx-original
           } else {
             throw "The exact compiler build did not produce the required C++ catch-frame object"
           }
       - name: Execute the exact original and reconstructed images with the Windows CRT
+        if: ${{ !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration.py --evidence-root build-windows-eh/evidence --source-profile ${{ inputs.windows_eh_replay_artifact_run != '' && 'seh3-eh4' || 'all' }} --output build-windows-eh/native-replay.json
       - name: Preserve native loader evidence
         if: ${{ always() }}
