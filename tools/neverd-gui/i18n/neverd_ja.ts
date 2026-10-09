@@ -1292,14 +1292,6 @@
         <source>C</source>
         <translation>C</translation>
     </message>
-    <message>
-        <source>Rust</source>
-        <translation>Rust</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Go</translation>
-    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -2384,6 +2376,30 @@ Signed: %4</source>
     <message>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
         <translation>コードのビルド対象プラットフォーム。その規約に従います：呼び出しの引数の渡し方、保持されるレジスタ、C の型のサイズ</translation>
+    </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>ファイルのどの部分も NeverD が知っている命令セットのコードに見えません。コードが動作するプロセッサを選択してください</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>コードは %1 または %2 に見えますが、命令からはどちらか判別できません。コードが動作するプロセッサを選択してください</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>バイトから判定: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>バイトから判定: %1、エントリ %2、ベース %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>コードは %1 に見えますが、NeverD はデコードできません。それでも読み込むにはプロセッサを選択してください</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>コードは %1 に最も近いものの明確ではありません。コードが動作するプロセッサを選択してください</translation>
     </message>
 </context>
 <context>

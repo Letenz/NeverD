@@ -197,6 +197,13 @@ build-release/bin/NeverDLowIRRefinementTests
 
 تغطي `NeverDX86DecodeDetailTests` مسارات فك الترميز الثلاثة وعرضي عناوين x64 وحدود الإزاحة ذات الإشارة والبادئات الإلزامية وdisp16 في i386 وmoffs والمدخلات المبتورة وإعادة الاستخدام دون تفاصيل. لا ترتبط إلا حقول إعادة التمركز المطابقة تمامًا؛ ويرفض العرض أو الموضع أو القيمة الخاطئة. تحافظ اختبارات الاستقلال والتنقيح الأصلية على جميع كتابات الإطار وترفض الأعلام العشوائية القابلة للملاحظة ومرشح الإزاحة المعدل.
 
+يفحص `NeverDLowUndefinedDigestTests` متجهات SHA-256 مستقلة، وكل حقل مخزن، وبتات رقم التسلسل الموقّع، والترتيب، واستبعاد الحشو، وعدم تغيير المدخلات. تشمل الحالات نمو المخزن المضمن وحدّ 199/200 عملية والنطاقات التزايدية الأكبر. يفحص `LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` الرفض الفعلي للأدلة القديمة وإعادة ربطها في المسارين. حافظ على تغطية `InputDigest.*` في `NeverDLiftTests` وأعد بناء المستدعين المتأثرين عند تعديل التنفيذ المنفصل. سجّل التغطية الفعلية لأدوات sanitizers والمسار المحمول والأجهزة المختبرة؛ لا تثبت هذه القياسات الدقيقة وحدها التكافؤ الأصلي.
+
+```bash
+cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
+build-release/bin/NeverDLowUndefinedDigestTests
+```
+
 يتحقق `NeverDX86UndefinedEffectsTests` من بيانات البتات غير المعرّفة والأعلام المعرّفة أو المحفوظة ورفض الشهادات القديمة. يقارن `NeverDX86CarryArithmeticFlagTests` الحمل المساعد في ADC/SBB لصيغ السجلات والذاكرة بمرجع حسابي. ويتحقق `NeverDX86LogicIdentityTests` من أن AND بمعاملين متطابقين ما زال يصفر البتات 63:32 من السجل المقابل ذي 64 بت عند الكتابة إلى وجهة من 32 بت في نمط 64 بت، مع حفظ البتات التي لا تشملها الكتابات الأضيق.
 
 يقارن `X86RotateUndefinedEffects.*` جميع قيم العدّ الخام وعروض المعاملات وتداخل CL وأسماء البايت العالي البديلة ووجهات الذاكرة بمرجع حسابي قياسي. ويغطي `X86BitTestUndefinedEffects.*` فهارس السجل/القيم الفورية وتداخل المصدر والوجهة والسجلات الموسّعة والأعلام المحدّدة وكتابة الأجزاء العليا. ترفض ضوابط البيانات الوصفية المعاملات والترميزات المعدّلة والصيغ غير المدعومة. تميّز البراهين الأصلية القراءات المترابطة من البتات الاعتباطية المستقلة، وتختبر ميزانيات المنتجين الدقيقة والناقصة، وترفض OF غير المعرّف القابل للملاحظة. يقبل تنقيح الحالة الكاملة الشاهد المختار ويرفض شاهد البتات الصفرية أو المرشّح المعدّل.
@@ -417,6 +424,7 @@ ctest --test-dir build-release -L '^NeverDDriverEmulation' --output-on-failure
 | `unittests/TestProcessTests.cpp` | `NeverDTestProcessTests` | استدعاء العمليات الفرعية عابر المنصات، وquoting، وإعادة التوجيه، ورموز الخروج |
 | `unittests/libc` | `NeverDLibCTests` | أسماء libc المعروفة وتصنيفها |
 | `unittests/safety` | `NeverDSafetyTests`، `NeverDSafetyIntegrationTests` | كتالوج المصارف، وأولوية الهوية، ومرشح الوسائط المسبق، وصيد فيضان النسخ، وتدقيق عمر الكومة، ومصفوفة إلزامية من ست خلايا PE/ELF/Mach-O × x86-64/AArch64 |
+| `unittests/loader` | `NeverDRawISATests` | الملفات الثنائية: تعرّف مجموعة التعليمات من البايتات (بيانات، وشيفرة الاختبار نفسه، وشيفرة مزاحة ببايتين، وترميزات 32 بت مقابل 64 بت لكل عائلة، وملفات تبدأ بأصفار) وجدول متجهات Cortex-M. يفحص `scripts/validate_isa_model.py --engine build/bin/libneverd.so` النموذج على 180 برنامجًا ومكتبة حقيقية لم يرها قط، تُنزَّل بالتجزئة؛ ويحتاج إلى الشبكة وليس جزءًا من CTest |
 | `unittests/lift` | `NeverDLiftTests` | أشكال LowIR لـ decoder/lifter، ومراحل IR، وloader، وrelocation، وfixtures الصيغ، وإعادة التجميع، ومسارات patch الممثلة |
 | معظم ملفات `unittests/semantic` | `NeverDSemanticTests` | دلالات تفاضلية للتعليمات وABI والتحكم وتعابير C وlift/recompile |
 | `unittests/evm` | `NeverDEVMOpcodeTests` و`NeverDEVMBytecodeTests` و`NeverDEVMLoaderTests` و`NeverDEVMABITests` و`NeverDEVMAnalyzerTests` و`NeverDEVMDecoderPropertyTests` و`NeverDEVMProxyTests` و`NeverDEVMCallTests` و`NeverDEVMSemanticTests` و`NeverDEVMEmitterTests` و`NeverDEVMIntegrationTests` | metadata للـhardfork وتطبيع الإدخال وغموض ABI/signature وCFG/SSA والاستعادة واستنفاد حدود decoder والمدخلات العدائية وحقائق proxy/call ودلالات interpreter وتنفيذ LLVM/C/Solidity التفاضلي وتوجيه API العامة |

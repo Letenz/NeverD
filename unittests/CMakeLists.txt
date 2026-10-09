@@ -63,6 +63,11 @@ add_neverd_unittest(NeverDSupportThreadTests
 target_include_directories(NeverDSupportThreadTests PRIVATE
   "${CMAKE_SOURCE_DIR}/include")
 
+add_neverd_unittest(NeverDLowUndefinedDigestTests
+  LowUndefinedDigestTests.cpp
+  LINK_COMPONENTS IRLowValidation
+)
+
 add_neverd_unittest(NeverDStringScanTests
   StringScanTests.cpp
   LINK_COMPONENTS Support
@@ -223,6 +228,7 @@ if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
 endif()
 add_subdirectory(unpack)
 add_subdirectory(evm)
+add_subdirectory(loader)
 add_subdirectory(sbf)
 add_subdirectory(plugin)
 

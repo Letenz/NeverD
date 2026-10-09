@@ -197,6 +197,13 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `NeverDX86DecodeDetailTests`는 세 디코딩 경로, 두 x64 주소 너비, 부호 있는 변위 경계, 필수 접두사, 실제 i386 disp16, moffs, 잘린 입력과 상세 정보 없는 재사용을 검사합니다. 정확한 재배치 필드만 연결되며 잘못된 너비, 위치, 값은 연결되지 않습니다. 네이티브 독립성 및 관계 증명 테스트는 전체 프레임 쓰기를 유지하고 관찰되는 임의 플래그와 변경된 시프트 후보를 거부합니다.
 
+`NeverDLowUndefinedDigestTests`는 독립 SHA-256 벡터, 모든 저장 필드, 부호 있는 순번 비트, 순서, 패딩 제외와 입력 불변성을 검사합니다. 인라인 버퍼 확장, 199/200개 연산 경계와 더 큰 증분 범위를 포함합니다. `LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries`는 두 경로에서 실제 오래된 증거의 거부와 재결합을 검사합니다. `NeverDLiftTests`의 `InputDigest.*`를 유지하고 독립 구현을 바꾸면 영향받는 호출자를 다시 빌드합니다. 실제 sanitizer, 이식 가능 경로 및 호스트 검증 범위를 기록합니다. 해시 마이크로벤치마크만으로 네이티브 등가성을 인증할 수 없습니다.
+
+```bash
+cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
+build-release/bin/NeverDLowUndefinedDigestTests
+```
+
 `NeverDX86UndefinedEffectsTests`는 미정의 비트 메타데이터, 정의되거나 보존되는 플래그, 오래된 인증서 거부를 검사합니다. `NeverDX86CarryArithmeticFlagTests`는 산술 오라클을 기준으로 레지스터 및 메모리 형태 ADC/SBB의 보조 캐리를 검사합니다. `NeverDX86LogicIdentityTests`는 동일 피연산자 AND가 64비트 모드에서 32비트 대상에 쓸 때 해당 64비트 레지스터의 비트 63:32를 0으로 만들면서 더 좁은 쓰기의 미기록 비트는 보존하는지 검사합니다.
 
 `X86RotateUndefinedEffects.*`는 모든 원시 횟수, 피연산자 폭, CL 중첩, 상위 바이트 별칭 및 메모리 대상을 스칼라 산술 기준과 비교합니다. `X86BitTestUndefinedEffects.*`는 레지스터/즉시값 인덱스, 원본/대상 중첩, 확장 레지스터, 정의된 플래그와 레지스터 상위 쓰기를 검사합니다. 메타데이터 반례는 변경된 피연산자, 인코딩 및 미지원 형식을 거부합니다. 네이티브 증명은 상관된 읽기와 독립적인 임의 플래그를 구별하고 생성자 예산의 정확한 경계 및 부족을 검사하며 관찰 가능한 미정의 OF를 거부합니다. 전체 상태 정제는 선택한 증인을 허용하고 0비트 증인이나 변경된 후보는 거부합니다.
@@ -412,6 +419,7 @@ target 이름과 같은 CTest label을 지정합니다.
 | `unittests/TestProcessTests.cpp` | `NeverDTestProcessTests` | 교차 플랫폼 하위 프로세스 호출, quoting, redirect, 종료 코드 |
 | `unittests/libc` | `NeverDLibCTests` | 알려진 libc 이름과 분류 |
 | `unittests/safety` | `NeverDSafetyTests`, `NeverDSafetyIntegrationTests` | 싱크 카탈로그, 신원 우선순위, 인수 사전 필터, 복사 오버플로 헌트, 힙 수명 감사, 필수 PE/ELF/Mach-O × x86-64/AArch64 6셀 매트릭스 |
+| `unittests/loader` | `NeverDRawISATests` | 바이너리 파일: 바이트로부터의 명령어 집합 식별(데이터, 테스트 자신의 코드, 2바이트 어긋난 코드, 패밀리별 32비트와 64비트 인코딩, 0으로 시작하는 파일)과 Cortex-M 벡터 테이블. `scripts/validate_isa_model.py --engine build/bin/libneverd.so`는 모델이 본 적 없는 실제 프로그램과 라이브러리 180개를 해시로 내려받아 검사합니다. 네트워크가 필요하며 CTest에 포함되지 않습니다 |
 | `unittests/lift` | `NeverDLiftTests` | Decoder/lifter LowIR 모양, IR 단계, loader, relocation, 포맷 fixture, 디컴파일, 대표 patch 흐름 |
 | `unittests/semantic`의 대부분 파일 | `NeverDSemanticTests` | 명령어, ABI, 제어 흐름, C 표현식, lift/recompile 차등 의미론 |
 | `unittests/evm` | `NeverDEVMOpcodeTests`, `NeverDEVMBytecodeTests`, `NeverDEVMLoaderTests`, `NeverDEVMABITests`, `NeverDEVMAnalyzerTests`, `NeverDEVMDecoderPropertyTests`, `NeverDEVMProxyTests`, `NeverDEVMCallTests`, `NeverDEVMSemanticTests`, `NeverDEVMEmitterTests`, `NeverDEVMIntegrationTests` | hardfork metadata, input normalization, ABI/signature ambiguity, CFG/SSA/recovery, decoder boundary 전수 검사와 hostile input, proxy/call fact, interpreter semantics, LLVM/C/Solidity differential execution, public API routing |

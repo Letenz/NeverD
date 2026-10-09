@@ -1292,14 +1292,6 @@
         <source>C</source>
         <translation>C</translation>
     </message>
-    <message>
-        <source>Rust</source>
-        <translation>Rust</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Go</translation>
-    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -2384,6 +2376,30 @@ Signed: %4</source>
     <message>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
         <translation>程式碼所針對的平台，決定其遵循的慣例：呼叫如何傳遞參數、哪些暫存器被保留，以及 C 型別的大小</translation>
+    </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>檔案中沒有任何部分像 NeverD 認得的指令集的程式碼；請選擇其程式碼執行的處理器</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>程式碼看起來像 %1 或 %2，但其指令無法區分是哪一個；請選擇其程式碼執行的處理器</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>從位元組識別：%1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>從位元組識別：%1，進入點 %2，基底位址 %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>程式碼看起來像 %1，NeverD 無法解碼；如仍要按某個處理器讀取，請選擇處理器</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>程式碼最像 %1，但不夠明確；請選擇其程式碼執行的處理器</translation>
     </message>
 </context>
 <context>

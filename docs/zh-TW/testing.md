@@ -195,6 +195,13 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `NeverDX86DecodeDetailTests` 涵蓋三種解碼入口、兩種 x64 位址寬度、有號位移邊界、必要前綴、真正的 i386 disp16、moffs、截斷輸入及無詳細資訊的重複使用。只有精確的重定位欄位可繫結，錯誤寬度、偏移或數值均不能繫結。原生獨立性及關係證明測試也保留完整框架寫入，拒絕可觀察的任意旗標及被修改的移位候選。
 
+`NeverDLowUndefinedDigestTests` 檢查獨立 SHA-256 向量、每個已儲存欄位、有號序號位元、順序、排除填補位元組及輸入不變性，涵蓋內嵌緩衝增長、199/200 操作邊界與更長增量範圍。`LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` 在兩條路徑檢查真實過期證據的拒絕與重新繫結。保留 `NeverDLiftTests` 的 `InputDigest.*` 覆蓋；修改獨立實作時重新編譯受影響呼叫端。記錄實際 sanitizer、可攜路徑及主機覆蓋；摘要微基準無法單獨證明原生等價。
+
+```bash
+cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
+build-release/bin/NeverDLowUndefinedDigestTests
+```
+
 `NeverDX86UndefinedEffectsTests` 檢查未定義位元中繼資料、已定義／保留旗標及過期憑證拒絕。`NeverDX86CarryArithmeticFlagTests` 以算術參考實作檢查暫存器和記憶體形式 ADC/SBB 的輔助進位。`NeverDX86LogicIdentityTests` 檢查相同運算元的 AND 在 64 位元模式下寫入 32 位元目的暫存器時，仍清零其所屬 64 位元暫存器的位元 63:32，同時保留窄位寬寫入未涵蓋的位元。
 
 `X86RotateUndefinedEffects.*` 以純量算術基準涵蓋全部原始計數、運算元寬度、CL 重疊、高位元組別名及記憶體目的運算元。`X86BitTestUndefinedEffects.*` 涵蓋暫存器/立即數索引、來源與目的重疊、擴充暫存器、已定義旗標及暫存器高位寫入。中繼資料反例拒絕遭修改的運算元、編碼及不支援的形式。原生證明區分同一任意位的關聯讀取與不同任意位，檢查恰好及不足的產生者預算，並拒絕可觀察的未定義溢位。完整狀態細化檢查接受選定見證，拒絕零位見證或遭竄改的候選。
@@ -410,6 +417,7 @@ V9 schema 測試往返驗證八種次要功能名稱，並與生命週期完成�
 | `unittests/TestProcessTests.cpp` | `NeverDTestProcessTests` | 跨平台子行程呼叫、引號、重新導向與結束碼 |
 | `unittests/libc` | `NeverDLibCTests` | 已知 libc 名稱與分類 |
 | `unittests/safety` | `NeverDSafetyTests`、`NeverDSafetyIntegrationTests` | 匯目錄、身分優先序、參數預過濾、拷貝越界獵取、堆積生命週期稽核，以及強制執行的 PE/ELF/Mach-O × x86-64/AArch64 六單元矩陣 |
+| `unittests/loader` | `NeverDRawISATests` | 二進位檔案：從位元組識別指令集（資料、測試程式自身程式碼、偏移兩位元組的程式碼、各家族 32 位元與 64 位元編碼、以零開頭的檔案）以及 Cortex-M 向量表。`scripts/validate_isa_model.py --engine build/bin/libneverd.so` 依雜湊下載模型從未見過的 180 個真實程式與函式庫進行檢查；它需要網路，不屬於 CTest |
 | `unittests/lift` | `NeverDLiftTests` | Decoder/lifter LowIR 形狀、IR 階段、loader、重定位、格式 fixture、反編譯與代表性 patch 流程 |
 | `unittests/semantic` 中的大多數檔案 | `NeverDSemanticTests` | 指令、ABI、控制流、C 運算式與 lift/recompile 差分語意 |
 | `unittests/evm` | `NeverDEVMOpcodeTests`、`NeverDEVMBytecodeTests`、`NeverDEVMLoaderTests`、`NeverDEVMABITests`、`NeverDEVMAnalyzerTests`、`NeverDEVMDecoderPropertyTests`、`NeverDEVMProxyTests`、`NeverDEVMCallTests`、`NeverDEVMSemanticTests`、`NeverDEVMEmitterTests`、`NeverDEVMIntegrationTests` | 硬分叉 metadata、輸入正規化、ABI/signature 歧義、CFG/SSA/復原、窮舉 decoder boundary 與惡意輸入、proxy/call 事實、interpreter 語意、LLVM/C/Solidity 差分執行及公共 API routing |
