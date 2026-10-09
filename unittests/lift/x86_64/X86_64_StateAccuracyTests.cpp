@@ -15,6 +15,7 @@
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/SmallString.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -23,6 +24,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #include <cstdlib>
 #include <optional>
@@ -388,6 +390,45 @@ TEST_F(X86StateAccuracy, StackWritingFlagsRequireACompilerFrame) {
     const auto *Function = Result.LlvmModule->getFunction("isa_probe");
     ASSERT_NE(Function, nullptr);
     EXPECT_TRUE(Function->hasFnAttribute(llvm::Attribute::NoRedZone));
+  }
+}
+
+TEST_F(X86StateAccuracy, InlinedStackWritingFlagsStillRequireACompilerFrame) {
+  for (const std::vector<uint8_t> Bytes :
+       {std::vector<uint8_t>{0x9c, 0x58, 0xc3},
+        std::vector<uint8_t>{0x68, 0x02, 0x02, 0, 0, 0x9d, 0xc3}}) {
+    auto Image = image(Bytes, BinaryFormat::ELF);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.LiftMode = true;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Entry};
+    auto Result = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_NE(Result.LlvmModule, nullptr);
+    auto *Callee = Result.LlvmModule->getFunction("isa_probe");
+    ASSERT_NE(Callee, nullptr);
+    auto *Caller = llvm::Function::Create(
+        Callee->getFunctionType(), llvm::GlobalValue::ExternalLinkage,
+        "inlined_flags", Result.LlvmModule.get());
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Caller));
+    std::vector<llvm::Value *> Arguments;
+    for (llvm::Argument &Argument : Caller->args())
+      Arguments.push_back(&Argument);
+    auto *Call = Builder.CreateCall(Callee, Arguments);
+    if (Callee->getReturnType()->isVoidTy())
+      Builder.CreateRetVoid();
+    else
+      Builder.CreateRet(Call);
+    llvm::InlineFunctionInfo Info;
+    ASSERT_TRUE(llvm::InlineFunction(*Call, Info).isSuccess());
+    ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+    Codegen Generator;
+    const auto Object =
+        Generator.compile(*Result.LlvmModule, Arch::X64, BinaryFormat::ELF);
+    ASSERT_TRUE(Object.Success);
+    EXPECT_TRUE(Caller->hasFnAttribute(llvm::Attribute::NoRedZone));
   }
 }
 

@@ -16,6 +16,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/LLVMValueProvenance.h"
+#include "neverd/backend/llvm/LLVMX86StackEffects.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 
@@ -975,6 +976,7 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
         FnTy, Wide ? "pushfq\n\tpopq $0" : "pushfl\n\tpopl $0", "=r,~{memory}",
         /*hasSideEffects=*/true);
     llvm::Value *Flags = Builder.CreateCall(IA, {}, "eflags");
+    markX86StackTemporary(*llvm::cast<llvm::CallInst>(Flags));
     return Builder.CreateZExtOrTrunc(Flags, sizeToType(Op.Output.Size));
   }
 
