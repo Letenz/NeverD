@@ -117,6 +117,21 @@ const OperandFormatFunctions &operandFormats() {
       engineSymbol<SessionLoadFunction>("neverd_operand_formats_load")};
   return functions;
 }
+// Additive C ABI capability: the loader the user chose for a file, which the
+// engine reads again from the input's load options sidecar.
+using LoadOptionsSetFunction = int (*)(neverd_session_t, const char *);
+struct LoadOptionsFunctions {
+  LoadOptionsSetFunction set;
+  SessionJsonFunction json;
+  explicit operator bool() const { return set && json; }
+};
+const LoadOptionsFunctions &loadOptions() {
+  static const LoadOptionsFunctions functions{
+      engineSymbol<LoadOptionsSetFunction>("neverd_session_set_load_options"),
+      engineSymbol<SessionJsonFunction>("neverd_session_load_options_json")};
+  return functions;
+}
+constexpr std::string_view LoadOptionsSuffix = ".neverd-load.json";
 using IdentifyFunction = const char *(*)(const char *);
 IdentifyFunction identifyFunction() {
   static const auto function =
@@ -451,6 +466,17 @@ void Engine::namesChanged() {
   textLines_.clear();
   functionOrderKey_.clear();
   functionOrder_.clear();
+}
+bool Engine::binaryFile() const {
+  // neverd_session_format_name of a file loaded as a binary file.
+  constexpr std::string_view BinaryFormatName = "Binary";
+  return ownedString(neverd_session_format_name(session_)) == BinaryFormatName;
+}
+Json Engine::functionGraph(std::uint64_t address) {
+  if (binaryFile())
+    return listing().decodedGraph(address);
+  prepareFunction(address);
+  return backendJson(neverd_cfg_json(session_, address), true);
 }
 void Engine::commentsChanged() {
   graphs_.clear();
@@ -925,6 +951,27 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       if (p.contains(flag) && !p[flag].is_boolean())
         throw Error("invalid_request", std::string(flag) + " must be boolean");
     const bool readOnly = p.value("read_only", false);
+    // The loader the load dialog chose when the file names none itself: EVM
+    // bytecode, or a binary file with its processor and placement, as the
+    // engine's load options spell them.
+    std::string chosenLoader;
+    if (p.contains("loader")) {
+      const std::string loader = stringField(p, "loader", {}, 16);
+      if (loader != "binary" && loader != "evm")
+        throw Error("invalid_request",
+                    "loader is \"binary\", \"evm\" or absent");
+      if (!loadOptions())
+        throw Error("unsupported", "This engine cannot choose a file's loader");
+      Json options{{"loader", loader}};
+      if (loader == "binary") {
+        options["processor"] = stringField(p, "processor", {}, 32);
+        for (const char *field : {"base", "offset", "size", "entry"})
+          if (p.contains(field))
+            options[field] =
+                hexAddress(parseAddress(stringField(p, field, {}, 32)));
+      }
+      chosenLoader = options.dump();
+    }
     auto currentPath =
         utf8Path(ownedString(neverd_session_file_path(session_)));
     const bool reuseLock = !readOnly && lock_ && currentPath == path;
@@ -953,6 +1000,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     // idle-time analysis.
     if (!p.value("debug_info", true))
       neverd_session_set_debug_info_enabled(next.get(), 0);
+    if (!chosenLoader.empty() &&
+        loadOptions().set(next.get(), chosenLoader.c_str()) != 0)
+      throw Error("invalid_request",
+                  ownedString(neverd_last_error(next.get())));
     if (!neverd_session_load(next.get(), loadPath.c_str()))
       throw Error("load_failed", ownedString(neverd_last_error(next.get())));
     if (fs::file_size(path) != fileSize ||
@@ -994,6 +1045,19 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       warnings.push_back("Data items sidecar could not be loaded");
     if (!reloadOperandFormats())
       warnings.push_back("Operand formats sidecar could not be loaded");
+    // The chosen loader outlives the session, as the project's other
+    // sidecars do, so reopening the file reads it the same way.  The writer
+    // lock this session holds covers the write.
+    if (!chosenLoader.empty() && !readOnly) {
+      try {
+        fs::path sidecar = path;
+        sidecar += std::string(LoadOptionsSuffix);
+        atomicWrite(sidecar, backendJson(loadOptions().json(session_)));
+      } catch (const Error &failure) {
+        warnings.push_back(std::string("Load options could not be saved: ") +
+                           failure.what());
+      }
+    }
     auto result = metadata();
     for (const auto &diagnostic : result.at("loader_diagnostics"))
       warnings.push_back(diagnostic.value("message", std::string()));
@@ -1926,12 +1990,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         graphs_.splice(graphs_.begin(), graphs_, it);
         return graphs_.front().snapshot->summary();
       }
-    prepareFunction(address);
     const auto layout =
         projectId_ + ":" + revision() + ":" + key + ":" + metricsKey;
     auto snapshot = std::make_unique<GraphSnapshot>(
-        backendJson(neverd_cfg_json(session_, address), true), key, layout,
-        metrics,
+        functionGraph(address), key, layout, metrics,
         metrics.valid()
             ? GraphRows([this](std::uint64_t start, std::uint64_t end) {
                 return listing().blockLines(start, end);
@@ -1953,8 +2015,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                 "No matching graph snapshot; request cfg_summary first");
   }
   if (operation == "cfg") {
-    prepareFunction(address);
-    auto result = backendJson(neverd_cfg_json(session_, address), true);
+    auto result = functionGraph(address);
     if (result.value("nodes", Json::array()).size() > 500 ||
         result.value("edges", Json::array()).size() > 2000)
       throw Error("budget_exceeded",

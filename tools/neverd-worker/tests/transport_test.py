@@ -131,9 +131,24 @@ def run(executable):
         # engine reads the file as, then the binary file any file is.
         assert "identify" in client.hello["capabilities"]
         rows = client.call("identify", {"path": str(binary)})["payload"]["rows"]
-        assert [(row["loader"], row["loadable"]) for row in rows] == [("fixture", True), ("binary", False)], rows
+        assert [(row["loader"], row["loadable"]) for row in rows] == [("fixture", True), ("binary", True)], rows
         missing = client.call("identify", {"path": str(binary) + ".missing"})
         assert missing["error"]["code"] == "invalid_request", missing
+        # A binary file opens as the load dialog places it, and the engine
+        # keeps that choice with the input for the next open.
+        firmware = Path(directory) / "firmware.bin"
+        firmware.write_bytes(b"\x90\xc3")
+        placed = clients.enter_context(Client(executable))
+        for wrong, code in (({"loader": "mips"}, "invalid_request"), ({"loader": "binary"}, "invalid_request"),
+                            ({"loader": "binary", "processor": "x86_64", "base": "start"}, "invalid_address")):
+            refused = placed.call("open", {"path": str(firmware), **wrong})
+            assert refused["error"]["code"] == code, (wrong, refused)
+        assert placed.call("open", {"path": str(firmware), "loader": "binary", "processor": "x86_64",
+                                    "base": "0x400000"})["status"] == "ok"
+        kept = json.loads(Path(str(firmware) + ".neverd-load.json").read_text())
+        assert kept == {"loader": "binary", "processor": "x86_64", "base": "0x400000"}, kept
+        assert placed.call("open", {"path": str(firmware), "loader": "evm"})["status"] == "ok"
+        assert json.loads(Path(str(firmware) + ".neverd-load.json").read_text()) == {"loader": "evm"}
         flag = client.call("open", {"path": str(binary), "analysis": "yes"})
         assert flag["error"]["code"] == "invalid_request", flag
         open_id = client.send("open", {"path": str(binary)}, fragmented=True)

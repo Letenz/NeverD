@@ -30,6 +30,5 @@ NEVERD_LOAD_REASON(Class, "This ELF class is not supported")
 NEVERD_LOAD_REASON(Malformed, "The header cannot be read: {0}")
 NEVERD_LOAD_REASON(SBFVersion, "Unsupported SBF version in the ELF flags")
 NEVERD_LOAD_REASON(Slice, "NeverD loads the {0} slice of this file")
-NEVERD_LOAD_REASON(Binary, "Loading a binary file is not supported yet")
 #undef NEVERD_LOAD_REASON
 #endif

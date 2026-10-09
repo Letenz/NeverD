@@ -2321,6 +2321,58 @@ Mit Vorzeichen: %4</translation>
         <source>Processor: %1</source>
         <translation>Prozessor: %1</translation>
     </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 ist keine Hexadezimalzahl</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>Basisadresse, an die die Datei geladen wird</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>Wählen Sie den Prozessor, auf dem der Code der Datei läuft</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>Ein&amp;sprungpunkt</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>Datei-&amp;Offset</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>Wie viele Bytes geladen werden</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>Image&amp;basis</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>&amp;Ladegröße</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>Prozessort&amp;yp (zum Festlegen doppelklicken)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>Die Imagebasis</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>Bis zum Dateiende</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>Wo die Ausführung beginnt</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>Wo in der Datei die geladenen Bytes beginnen</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2359,6 +2411,10 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>Solana BPF</source>
         <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>Thumb (AArch32)</source>
+        <translation>Thumb (AArch32)</translation>
     </message>
 </context>
 </TS>

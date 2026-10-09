@@ -167,12 +167,13 @@ void Session::receive(const QJsonObject &incoming) {
       const auto generation = background.value("generation").toString();
       const bool newGeneration = generation != generation_;
       generation_ = generation;
-      // The first count only states what the opened file already listed.
       const auto functions =
           background.value("functions").toInteger(functionCount_);
       const bool moreFunctions =
           functionCount_ >= 0 && functions != functionCount_;
       functionCount_ = functions;
+      if (newGeneration || moreFunctions)
+        queries_.listingChanged();
       emit backgroundChanged();
       if (newGeneration)
         emit generationChanged();
@@ -384,17 +385,30 @@ void Session::sendOpen(const QString &requested, const QString &path,
                        const QString &database,
                        const QHash<QString, QByteArray> &state,
                        LoadOptions options) {
+  QJsonObject payload{{"path", path},
+                      {"debug_info", options.debugInfo},
+                      {"analysis", options.analysis}};
+  if (!options.loader.isEmpty())
+    payload.insert(QStringLiteral("loader"), options.loader);
+  if (options.loader == QLatin1String("binary")) {
+    payload.insert(QStringLiteral("processor"), options.processor);
+    payload.insert(QStringLiteral("base"), hexAddress(options.base));
+    payload.insert(QStringLiteral("offset"), hexAddress(options.offset));
+    payload.insert(QStringLiteral("size"), hexAddress(options.size));
+    if (options.entry)
+      payload.insert(QStringLiteral("entry"), hexAddress(*options.entry));
+  }
   command(
-      QStringLiteral("open"),
-      {{"path", path},
-       {"debug_info", options.debugInfo},
-       {"analysis", options.analysis}},
+      QStringLiteral("open"), payload,
       [this, requested, path, database, state,
        options](const QJsonObject &payload) {
         opening_ = false;
         resetState();
         loadOptions_ = options;
         metadata_ = payload;
+        // The functions the opened file lists; idle-time discovery can add
+        // to them before the first heartbeat reports a count.
+        functionCount_ = payload.value("function_count").toInteger(-1);
         filePath_ = path;
         projectPath_ = requested;
         databasePath_ = database;

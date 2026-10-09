@@ -2321,6 +2321,58 @@ Signed: %4</translation>
         <source>Processor: %1</source>
         <translation>Processor: %1</translation>
     </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 is not a hexadecimal number</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>Base address for loading the file</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>Choose the processor the file&apos;s code runs on</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>E&amp;ntry point</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>File &amp;offset</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>How many bytes to load</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>Image &amp;base</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>Loading si&amp;ze</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>Processor t&amp;ype (double-click to set)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>The image base</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>To the end of the file</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>Where execution starts</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>Where in the file the loaded bytes start</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2359,6 +2411,10 @@ Signed: %4</translation>
     <message>
         <source>Solana BPF</source>
         <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>Thumb (AArch32)</source>
+        <translation>Thumb (AArch32)</translation>
     </message>
 </context>
 </TS>

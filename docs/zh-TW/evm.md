@@ -40,7 +40,7 @@ Solidity 與 C 輸出屬於語意重建：它們保留解碼後的操作碼順�
 
 | 輸入 | 辨識與正規化 |
 |------|--------------|
-| 原始位元組 | `.raw`、`.evmraw`，或具有明確 EVM 副檔名的二進位內容 |
+| 原始位元組 | `.evm` 或 `.evmraw` 中的二進位內容。`.bin`、`.hex`、`.bytecode`、`.json`、`.raw` 也是其他工具常用的副檔名，其中的二進位內容只有在選擇 EVM 載入器時（`--loader evm` 或載入對話方塊中的 EVM 列）才按 EVM 位元組碼讀取，否則拒絕載入 |
 | 十六進位文字 | 可選 `0x`、任意 ASCII 空白；支援 `.evm`、`.hex`、`.bin`、`.bytecode`，也會偵測通過驗證且無副檔名的十六進位文字 |
 | 編譯器產物 | `.json` 根節點或 `evm` 下的 `deployedBytecode`、`runtimeBytecode`、`bytecode`；也支援 `contracts → file → contract → evm` 形式的 solc 標準 JSON |
 

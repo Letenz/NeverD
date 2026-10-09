@@ -14,6 +14,7 @@
 #define NEVERD_SUPPORT_BINARYLOADING_H
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Raw/RawLoader.h"
 
 #include "llvm/Support/Error.h"
 
@@ -23,10 +24,20 @@
 
 namespace neverd {
 
+/// The loader the user chose for a file, as the load dialog's rows name them.
+struct LoaderChoice {
+  /// Unknown reads the file as its header or contents say, and refuses a
+  /// file only its name ties to a format; EVM reads it as EVM bytecode; Raw
+  /// as a binary file of a processor at an address, as Raw places it.
+  BinaryFormat Format = BinaryFormat::Unknown;
+  RawLoadOptions Raw;
+};
+
 /// Load-time work-set for a single-function CLI/C-API request.  Empty keeps
 /// the historical full-image decode.
 struct BinaryLoadOptions {
   std::set<va_t> OnlyFunctionEntries;
+  LoaderChoice Choice;
   /// Caller-asserted instruction state at exact AArch32 function entries.
   /// Use only when the binary lacks mode evidence; conflicting evidence fails.
   std::map<va_t, InstructionMode> ARMFunctionModes;

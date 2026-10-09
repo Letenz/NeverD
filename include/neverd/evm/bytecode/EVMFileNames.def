@@ -1,0 +1,27 @@
+//===- EVMFileNames.def - The names EVM bytecode files go by ----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// NEVERD_EVM_FILE_NAME(Extension, Raw, Shared): an extension EVM tools give
+// bytecode files.  A Raw file holds the bytes themselves rather than hex text
+// or an artifact.  A Shared extension is one other tools give their files
+// too, as a firmware image is a .bin: binary contents under it read as EVM
+// bytecode only when the user chooses so.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_EVM_FILE_NAME
+#define NEVERD_EVM_FILE_NAME(Extension, Raw, Shared)
+#endif
+
+NEVERD_EVM_FILE_NAME(".evm", false, false)
+NEVERD_EVM_FILE_NAME(".hex", false, true)
+NEVERD_EVM_FILE_NAME(".bin", false, true)
+NEVERD_EVM_FILE_NAME(".bytecode", false, true)
+NEVERD_EVM_FILE_NAME(".json", false, true)
+NEVERD_EVM_FILE_NAME(".raw", true, true)
+NEVERD_EVM_FILE_NAME(".evmraw", true, false)
+
+#undef NEVERD_EVM_FILE_NAME

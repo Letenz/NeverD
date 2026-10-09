@@ -347,12 +347,34 @@ the file, the way IDA writes it: `ELF64 for x86-64 (Shared object) [elf]`,
 bytecode [evm]`, and `Binary file` last. A row NeverD cannot load is shown greyed
 with the reason in its tooltip: a processor NeverD has no lifter for (`NeverD has
 no MIPS processor`), a big-endian ELF file, the other slices of a universal file
-(NeverD loads the host's slice, else the first), or a binary file, which NeverD
-cannot load yet. The first row loadable for the file's contents is chosen, so
-Enter opens the file as before. A row a loader took for the file's name alone
-(EVM bytecode for a `.bin` file whose bytes are not bytecode) is listed but
-never chosen by default. **Processor type** shows the processor the header states; it cannot be
-changed, since every loader takes it from the header. **Analysis → Enabled**
+(NeverD loads the host's slice, else the first). The first row loadable for
+the file's contents is chosen, so Enter opens the file as before. A row a loader
+took for the file's name alone (EVM bytecode for a `.bin` file whose bytes are
+not bytecode) is listed but never chosen by default: the engine reads such a
+file as EVM bytecode only when that row is chosen, and refuses to guess when
+nothing is. **Processor type** shows the processor the header states; it cannot
+be changed, since every loader takes it from the header.
+
+**Binary file** reads any file as one processor's code, as firmware and memory
+dumps need. Its processor list reads **Processor type (double-click to set)**
+and offers the processors NeverD can decode (x86, x86-64, ARM, Thumb and
+AArch64); none is assumed, so OK stays disabled until one is chosen, and the
+one chosen last time is chosen again. **Image base** is the address the bytes
+map at, **File offset** and **Loading size** pick the bytes (the rest of the
+file when the size is empty), and **Entry point** is where execution starts (the
+image base when empty); all are hexadecimal. The file opens as one read and
+execute segment, `seg000`, with `start` at the entry point; idle-time function
+discovery finds the functions its calls reach. A binary file is browsed --
+listing, hex view, graph (from its decoded instructions), names, strings and
+cross references -- but not decompiled: nothing in it states the calling
+convention, and NeverD does not guess one, so pseudocode says why it is
+unavailable. The engine keeps the choice in `<input>.neverd-load.json` (packed
+into the `.nddb`), so the file reopens the same way without the dialog. The
+command line takes the same choice with `--loader binary --processor aarch64
+--load-base 0x80000` (plus `--load-offset`, `--load-size` and `--load-entry`),
+or `--loader evm`, and keeps it too.
+
+**Analysis → Enabled**
 turns idle-time analysis (function discovery and the reference index) on or off
 for the file, **Indicator enabled** shows or hides the status line's analysis
 indicator, and **Options → Load debug information** reads the PDB, DWARF or
@@ -364,8 +386,8 @@ from the command line skip the dialog. The command line lists the same rows with
 
 **File → Save** (Ctrl+W) packs the project into a NeverD database next to the
 input: `ls` saves to `ls.nddb`. A database is one SQLite file holding the input
-itself, its comments, renames, function edits and edit history, and the
-workbench state (location, graph mode, bookmarks and desktop). Each save is a
+itself, its comments, renames, function edits, data items, operand formats, how
+a binary file is read and edit history, and the workbench state (location, graph mode, bookmarks and desktop). Each save is a
 single transaction, so a database is never left half written; the input is
 stored in independently compressed chunks that compress and expand in parallel,
 and an unchanged input is not rewritten.

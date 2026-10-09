@@ -749,4 +749,87 @@ TEST(FiniteValues, FailedProjectionNeverPoisonsThePristineDomain) {
   }
 }
 
+TEST(FiniteValues, EncodingFailureIsExactAndResetOnEveryOutcome) {
+  using namespace neverd::solver;
+  SymContext C;
+  auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  auto Domain = C.mkEq(C.mkMul(X, Y), C.mkConst(8, 3));
+  SolverOptions Tiny;
+  Tiny.Blast.MaxGates = 1;
+  FiniteDomainEncoding Gates(C, Tiny);
+  uint64_t Queries = 0;
+  auto Error = BlastError::Malformed;
+  auto R =
+      enumerateFiniteValues(Gates, Domain, {X}, 8, 100, 10000, Queries, Error);
+  EXPECT_EQ(R.Status, FiniteValueStatus::Unknown);
+  EXPECT_EQ(Error, BlastError::TooManyGates);
+  EXPECT_TRUE(R.Tuples.empty());
+  EXPECT_EQ(Queries, 0U);
+  // Early outcomes must not retain the previous encoder's diagnostic.
+  R = enumerateFiniteValues(Gates, {}, {X}, 8, 100, 10000, Queries, Error);
+  EXPECT_EQ(R.Status, FiniteValueStatus::Invalid);
+  EXPECT_EQ(Error, BlastError::None);
+  Error = BlastError::TooManyGates;
+  R = enumerateFiniteValues(Gates, C.mkFalse(), {X}, 8, 100, 10000, Queries,
+                            Error);
+  EXPECT_EQ(R.Status, FiniteValueStatus::Complete);
+  EXPECT_EQ(Error, BlastError::None);
+  Error = BlastError::TooManyGates;
+  R = enumerateFiniteValues(Gates, C.mkTrue(), {X}, 1, 100, 10000, Queries,
+                            Error);
+  EXPECT_EQ(R.Status, FiniteValueStatus::TooManyValues);
+  EXPECT_EQ(Error, BlastError::None);
+  SolverOptions Narrow;
+  Narrow.Blast.MaxWidth = 4;
+  FiniteDomainEncoding Width(C, Narrow);
+  Error = BlastError::None;
+  R = enumerateFiniteValues(Width, Domain, {X}, 8, 100, 10000, Queries, Error);
+  EXPECT_EQ(R.Status, FiniteValueStatus::Unknown);
+  EXPECT_EQ(Error, BlastError::WidthTooLarge);
+  auto Malformed = C.mkEq(X, Y);
+  auto &Node = const_cast<SymNode &>(C.node(Malformed));
+  auto Op = Node.Op;
+  Node.Op = SymOp::Ite;
+  FiniteDomainEncoding Invalid(C, {});
+  Error = BlastError::None;
+  R = enumerateFiniteValues(Invalid, Malformed, {X}, 8, 100, 10000, Queries,
+                            Error);
+  Node.Op = Op;
+  EXPECT_EQ(R.Status, FiniteValueStatus::Invalid);
+  EXPECT_EQ(Error, BlastError::Malformed);
+}
+TEST(FiniteValues, SearchAndGlobalRefusalsAreNotEncodingFailures) {
+  using namespace neverd::solver;
+  SymContext C;
+  auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  auto Domain = C.mkEq(C.mkAdd(X, C.mkConst(8, 1)), Y);
+  SolverOptions Search;
+  Search.Sat.MaxPropagations = 1;
+  FiniteDomainEncoding Limited(C, Search);
+  uint64_t Queries = 0;
+  auto Error = BlastError::TooManyGates;
+  auto R = enumerateFiniteValues(Limited, Domain, {X}, 256, 1000, 10000,
+                                 Queries, Error);
+  EXPECT_EQ(R.Status, FiniteValueStatus::Unknown);
+  EXPECT_EQ(Error, BlastError::None);
+  FiniteDomainEncoding Full(C, {});
+  Queries = 0;
+  Error = BlastError::TooManyGates;
+  auto Point = C.mkEq(X, C.mkConst(8, 7));
+  R = enumerateFiniteValues(Full, Point, {X}, 1, 0, 10000, Queries, Error);
+  EXPECT_EQ(R.Status, FiniteValueStatus::QueryBudgetExceeded);
+  EXPECT_EQ(Error, BlastError::None);
+  Error = BlastError::TooManyGates;
+  R = enumerateFiniteValues(Full, Point, {X}, 1, 2, 10000, Queries, Error);
+  EXPECT_EQ(R.Status, FiniteValueStatus::Complete);
+  EXPECT_EQ(Error, BlastError::None);
+  EXPECT_EQ(Queries, 2U);
+  EXPECT_EQ(R.Tuples, (std::vector<std::vector<uint64_t>>{{7}}));
+  Queries = 0;
+  Error = BlastError::TooManyGates;
+  R = enumerateFiniteValues(Full, Domain, {X}, 1, 1000, 10000, Queries, Error);
+  EXPECT_EQ(R.Status, FiniteValueStatus::TooManyValues);
+  EXPECT_EQ(Error, BlastError::None);
+  EXPECT_TRUE(R.Tuples.empty());
+}
 } // namespace

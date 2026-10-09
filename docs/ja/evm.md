@@ -41,7 +41,7 @@ EVM の binary rewrite は明示的に拒否され、`patch` は native binary �
 
 | 入力 | 認識と正規化 |
 |------|--------------|
-| raw bytes | `.raw`、`.evmraw`、または明示的 EVM 拡張子を持つ binary content |
+| raw bytes | `.evm` または `.evmraw` の binary content。`.bin`、`.hex`、`.bytecode`、`.json`、`.raw` は他のツールも使う拡張子なので、その binary content は EVM ローダーを選んだとき（`--loader evm` または読み込みダイアログの EVM 行）だけ EVM bytecode として読み込み、それ以外では読み込みを拒否します |
 | hex text | 任意の ASCII 空白と省略可能な `0x`。`.evm`、`.hex`、`.bin`、`.bytecode` および検証済み拡張子なし hex |
 | compiler artifact | root または `evm` 配下に `deployedBytecode`、`runtimeBytecode`、`bytecode` を持つ `.json`。`contracts → file → contract → evm` の solc standard JSON も対応 |
 

@@ -43,7 +43,7 @@ EVM. Binäres EVM-Rewriting wird ausdrücklich abgelehnt; `patch` bleibt nativ.
 
 | Eingabe | Erkennung und Normalisierung |
 |---------|------------------------------|
-| Rohbytes | `.raw`, `.evmraw` oder binärer Inhalt mit expliziter EVM-Erweiterung |
+| Rohbytes | Binärer Inhalt in `.evm` oder `.evmraw`. Binärer Inhalt in `.bin`, `.hex`, `.bytecode`, `.json` oder `.raw`, Erweiterungen, die auch andere Werkzeuge vergeben, wird nur als EVM-Bytecode gelesen, wenn der EVM-Loader gewählt ist (`--loader evm` oder die EVM-Zeile im Ladedialog); sonst lehnt das Laden ihn ab |
 | Hextext | Optionales `0x`, beliebiger ASCII-Whitespace, `.evm`, `.hex`, `.bin`, `.bytecode`; validiertes Hex ohne Erweiterung wird ebenfalls erkannt |
 | Compiler-Artefakt | `.json` mit `deployedBytecode`, `runtimeBytecode` oder `bytecode` an der Wurzel oder unter `evm`; solc-Standard-JSON `contracts → file → contract → evm` wird unterstützt |
 

@@ -59,6 +59,10 @@ public:
   /// (cf. llvm::object::ObjectFile::createObjectFile).
   static std::unique_ptr<Loader> create(const std::filesystem::path &Path);
 
+  /// Why create(Path) found no loader for \p Path: no format it reads, or
+  /// only the file's name ties it to one, which the user has to choose.
+  static std::string describeRefusal(const std::filesystem::path &Path);
+
   /// Create a loader for a known format.
   static std::unique_ptr<Loader> create(BinaryFormat Format);
 
@@ -100,6 +104,8 @@ private:
       return "macho";
     case BinaryFormat::EVM:
       return kEVMArchName.data();
+    case BinaryFormat::Raw:
+      return "binary";
     default:
       return "loader";
     }

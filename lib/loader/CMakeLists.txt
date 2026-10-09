@@ -46,6 +46,7 @@ add_neverd_component_library(NeverDLoader
   ELF/ELFProgramLinking.cpp
   ELF/SBFELFLoader.cpp
   EVM/EVMLoader.cpp
+  Raw/RawLoader.cpp
   ExecutableCodeOwnerIndex.cpp
   Go/GoDeferInfo.cpp
   Go/GoFuncTable.cpp
