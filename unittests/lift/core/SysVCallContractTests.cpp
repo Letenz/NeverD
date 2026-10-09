@@ -743,7 +743,9 @@ TEST(SysVCallContract, ACallThatEndsItsFunctionDoesNotReturn) {
 
 TEST(SysVCallContract, AVariadicPrologueSpillReadsNoParameter) {
   // A variadic panic(fmt, ...) spills RSI..R9 to its register save area
-  // around `test al, al`: GCC with a frame pointer off RBP (sed, patch),
+  // around `test al, al`, and the vector registers in the block that test
+  // branches around: GCC without a frame pointer, which first pushes and pops
+  // RAX, GCC with a frame pointer off RBP (sed, patch),
   // GCC and Clang without one off RSP, and Clang -O0 where the branch over
   // the vector spills rejoins, beside a home slot for RDI.  wrapper(s) calls
   // panic("%s", s) and caller(x) calls wrapper(x).  Decompiling caller alone
@@ -751,6 +753,20 @@ TEST(SysVCallContract, AVariadicPrologueSpillReadsNoParameter) {
   // of registers wrapper never sets are no parameters of wrapper, so caller
   // passes it exactly one argument.
   const std::vector<std::vector<uint8_t>> Prologues = {
+      {0xF3, 0x0F, 0x1E, 0xFA,                    // endbr64
+       0x50,                                      // push rax
+       0x58,                                      // pop rax
+       0x48, 0x89, 0xFB,                          // mov rbx, rdi
+       0x48, 0x81, 0xEC, 0xD8, 0x00, 0x00, 0x00,  // sub rsp, 0xd8
+       0x48, 0x89, 0x74, 0x24, 0x28,              // mov [rsp+0x28], rsi
+       0x48, 0x89, 0x54, 0x24, 0x30,              // mov [rsp+0x30], rdx
+       0x48, 0x89, 0x4C, 0x24, 0x38,              // mov [rsp+0x38], rcx
+       0x4C, 0x89, 0x44, 0x24, 0x40,              // mov [rsp+0x40], r8
+       0x4C, 0x89, 0x4C, 0x24, 0x48,              // mov [rsp+0x48], r9
+       0x84, 0xC0,                                // test al, al
+       0x74, 0x0A,                                // je spilled
+       0x0F, 0x29, 0x44, 0x24, 0x50,              // movaps [rsp+0x50], xmm0
+       0x0F, 0x29, 0x4C, 0x24, 0x60},             // movaps [rsp+0x60], xmm1
       {0xF3, 0x0F, 0x1E, 0xFA,                    // endbr64
        0x55,                                      // push rbp
        0x48, 0x89, 0xE5,                          // mov rbp, rsp
@@ -836,6 +852,9 @@ TEST(SysVCallContract, AVariadicPrologueSpillReadsNoParameter) {
         EXPECT_EQ(Reads->second[Spilled / 8], 0)
             << std::hex << Entry << " reads " << Spilled;
       EXPECT_EQ(Reads->second[x86reg::RDI / 8], 8) << std::hex << Entry;
+      for (unsigned Vector = 0; Vector < 2; ++Vector)
+        EXPECT_EQ(Reads->second[kX64VectorFamilyBase + Vector], 0)
+            << std::hex << Entry << " reads xmm" << Vector;
     }
     std::string Source;
     llvm::raw_string_ostream OS(Source);
