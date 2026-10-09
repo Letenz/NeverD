@@ -973,33 +973,91 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     return nullptr;
   };
   Scan.OwnStackParam = OwnStackParam;
+  // Index this function's definitions: each value's single defining op or
+  // PHI, or null where it has more than one.
+  auto IndexDefinitions = [&] {
+    if (!CurMed || EntryOffsetDefsFor == CurMed)
+      return;
+    EntryOffsetDefs.clear();
+    EntryOffsetPhis.clear();
+    EntryOffsetPhiCache.clear();
+    auto Key = [](const MedVar &V) {
+      return std::make_tuple(static_cast<int>(V.Kind), V.Id, V.SSAVer);
+    };
+    for (const auto &Blk : CurMed->Blocks) {
+      for (const auto &Phi : Blk.Phis)
+        if (auto [It, Inserted] =
+                EntryOffsetPhis.try_emplace(Key(Phi.Output), &Phi);
+            !Inserted)
+          It->second = nullptr;
+      for (const auto &Op : Blk.Ops)
+        if (auto [It, Inserted] =
+                EntryOffsetDefs.try_emplace(Key(Op.Output), &Op);
+            !Inserted)
+          It->second = nullptr;
+    }
+    EntryOffsetDefsFor = CurMed;
+  };
   // The single definition of \p V in this function, or null.
   auto UniqueDef = [&](const MedVar &V) -> const MedOp * {
-    if (!CurMed)
-      return nullptr;
-    if (EntryOffsetDefsFor != CurMed) {
-      EntryOffsetDefs.clear();
-      for (const auto &Blk : CurMed->Blocks)
-        for (const auto &Op : Blk.Ops) {
-          auto [It, Inserted] =
-              EntryOffsetDefs.try_emplace({static_cast<int>(Op.Output.Kind),
-                                           Op.Output.Id, Op.Output.SSAVer},
-                                          &Op);
-          if (!Inserted)
-            It->second = nullptr;
-        }
-      EntryOffsetDefsFor = CurMed;
-    }
+    IndexDefinitions();
     auto DefIt =
         EntryOffsetDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
     return DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
   };
+  // The single PHI defining \p V in this function, or null.
+  auto UniquePhi = [&](const MedVar &V) -> const PhiNode * {
+    IndexDefinitions();
+    auto PhiIt =
+        EntryOffsetPhis.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
+    return PhiIt == EntryOffsetPhis.end() ? nullptr : PhiIt->second;
+  };
+  // The offset each PHI being resolved is assumed to have: none while its
+  // incoming values are collected, then the one they agree on.
+  std::map<const PhiNode *, std::optional<int64_t>> AssumedPhiOffsets;
   std::function<std::optional<int64_t>(const MedVar &, int)> EntryOffset =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
     if (!CurMed || Depth > limits::kCallArgStoreAddressDepth)
       return std::nullopt;
     if (V.Kind == MedVar::Reg && V.RegOff == SpRegOff && V.SSAVer == 0)
       return 0;
+    // A loop head's stack pointer is a PHI of the one the loop is entered
+    // with and of those its back edges carry, which equal it where the body
+    // pops what it pushes.  Assume the offset the values that do not depend
+    // on the PHI agree on, then require every incoming value to have it.
+    if (const PhiNode *Phi = UniquePhi(V)) {
+      if (auto It = AssumedPhiOffsets.find(Phi); It != AssumedPhiOffsets.end())
+        return It->second;
+      if (auto It = EntryOffsetPhiCache.find(Phi);
+          It != EntryOffsetPhiCache.end())
+        return It->second;
+      if (Phi->ExceptionalEntry || Phi->Args.empty())
+        return std::nullopt;
+      AssumedPhiOffsets.emplace(Phi, std::nullopt);
+      std::optional<int64_t> Offset;
+      bool Agree = true;
+      for (const auto &[Pred, In] : Phi->Args)
+        if (const auto InOffset = EntryOffset(In, Depth + 1)) {
+          Agree = Agree && (!Offset || *Offset == *InOffset);
+          Offset = InOffset;
+        }
+      if (!Agree)
+        Offset.reset();
+      if (Offset) {
+        AssumedPhiOffsets[Phi] = Offset;
+        for (const auto &[Pred, In] : Phi->Args)
+          if (EntryOffset(In, Depth + 1) != Offset) {
+            Offset.reset();
+            break;
+          }
+      }
+      AssumedPhiOffsets.erase(Phi);
+      // An offset found while an enclosing PHI is assumed holds only under
+      // that assumption.
+      if (AssumedPhiOffsets.empty())
+        EntryOffsetPhiCache.emplace(Phi, Offset);
+      return Offset;
+    }
     const MedOp *Def = UniqueDef(V);
     if (!Def || Def->NumInputs < 1)
       return std::nullopt;

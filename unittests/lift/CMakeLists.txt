@@ -76,6 +76,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_ArithTests.cpp
   x86_64/X86_64_BitOpsTests.cpp
   x86_64/X86_64_BMITests.cpp
+  x86_64/X86_64_CallAbiTests.cpp
   x86_64/X86_64_CarryOpsTests.cpp
   x86_64/X86_64_CmpxchgTests.cpp
   x86_64/X86_64_CFGEntryTests.cpp

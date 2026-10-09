@@ -446,6 +446,11 @@ private:
   /// Unique SSA definition of each (kind, id, version) in EntryOffsetDefsFor;
   /// nullptr marks a value with more than one definition.
   std::map<std::tuple<int, int, int>, const MedOp *> EntryOffsetDefs;
+  /// The PHIs among those definitions, likewise.
+  std::map<std::tuple<int, int, int>, const PhiNode *> EntryOffsetPhis;
+  /// The entry stack offset each PHI of EntryOffsetDefsFor resolved to, or
+  /// nullopt where its incoming values disagree.
+  std::map<const PhiNode *, std::optional<int64_t>> EntryOffsetPhiCache;
   const MedFunc *EntryOffsetDefsFor = nullptr;
   const BinaryImage *Image = nullptr;
   std::function<void(const MedOp &, const ExprPtr &)> ExpressionObserver;
