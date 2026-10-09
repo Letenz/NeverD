@@ -40,6 +40,11 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+For PE32 C++ catches, that analysis also owns the runtime catch-context stack,
+its nested-search minimum and exact returned continuation and SavedESP facts.
+CFG construction closes those targets against function and instruction
+ownership and replays the analysis; it does not turn them into independent
+ordinary entries or insert a fabricated IP-to-state map into FuncInfo.
 `hasCallerCleanupRegistrationABI` owns the current PE32 stack-cleanup check,
 which the writer replays against immutable input. Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction

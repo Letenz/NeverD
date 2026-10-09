@@ -94,6 +94,13 @@ derived facts separately from the authenticated loader descriptor. HighIR
 requires every reaching state to agree about region membership before emitting
 a structured region. Unknown transitions retain annotations rather than
 inventing an IP-to-state map.
+C++ catches have a separate runtime context: nested exception search starts
+above the active try block, and a catch returns a continuation code pointer to
+the runtime. LowIR requires an exact decoded return and saved stack value,
+decodes the target within the same function, and replays the restored context.
+An unproven continuation or conflicting return retains annotations and
+withdraws native authority. These facts remain separate from the source
+FuncInfo and from the parent's scalar return value.
 Direct MSVC prologues must prove the actual FS:[0] write and the registration
 and state-field offsets; matching integer sequences in locals are insufficient.
 

@@ -707,6 +707,103 @@ void addFlowHandlers(ImageBuilder &B) {
   B.addStub();
 }
 
+BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
+                                     bool PopReturn = false) {
+  ImageBuilder B;
+  B.Text = {0x55, 0x8b, 0xec, 0x6a, 0xff, 0x68};
+  emit32(B.Text, kPersonality);
+  B.Text.insert(B.Text.end(), {0x64, 0xa1, 0, 0, 0, 0, 0x50});
+  const va_t Install = B.textVA();
+  B.Text.insert(B.Text.end(), {0x64, 0x89, 0x25, 0, 0, 0, 0});
+  B.Text.insert(B.Text.end(), {0x83, 0xec, 0x10, 0x89, 0x65, 0xf0});
+  const va_t Enter = B.textVA();
+  emitFrameStore(B.Text, -4, 0);
+  B.Text.push_back(0x90);
+  const va_t Leave = B.textVA();
+  emitFrameStore(B.Text, -4, -1);
+  auto JumpTo = [&](va_t Address) {
+    B.Text.push_back(0xe9);
+    emit32(B.Text, Address - (B.textVA() + 4));
+  };
+  JumpTo(kText + 0x80);
+  B.Text.resize(0x80, 0xcc);
+  B.Text.insert(B.Text.end(), {0x8b, 0x4d, 0xf4, 0x64, 0x89, 0x0d, 0, 0, 0, 0,
+                               0x8b, 0xe5, 0x5d, 0xc3});
+  B.Text.resize(0xa0, 0xcc);
+  B.Text.push_back(0xb8);
+  emit32(B.Text, Target);
+  if (PopReturn)
+    B.Text.insert(B.Text.end(), {0xc2, 4, 0});
+  else
+    B.Text.push_back(0xc3);
+  B.Text.resize(0xc0, 0xcc);
+  emitFrameStore(B.Text, -4, -1);
+  JumpTo(kText + 0x80);
+  auto Img = B.build({{"guarded_cxx", kText}});
+  Img.ExceptionMetadata.Functions.clear();
+  ExceptionFunction EH;
+  EH.CodeRange = {kText, kText + 0xf0};
+  EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
+  EH.Personality = ExceptionPersonality::CxxFrameHandler3;
+  auto &Chain = EH.Registration.emplace();
+  Chain.RegistrationOffset = -12;
+  Chain.TryLevelOffset = -4;
+  Chain.SeededTryLevel = -1;
+  Chain.ChainInstallVA = Install;
+  Chain.TryLevelStores = {{Enter, Enter + 7, 0},
+                          {Leave, Leave + 7, -1},
+                          {kText + 0xc0, kText + 0xc7, -1}};
+  auto &Cxx = EH.Cxx.emplace();
+  Cxx.MaxState = 2;
+  Cxx.UnwindMap = {{-1, 0, CxxUnwindAction::ActionKind::None},
+                   {-1, 0, CxxUnwindAction::ActionKind::None}};
+  CxxTryBlock Try;
+  Try.TryLow = Try.TryHigh = 0;
+  Try.CatchHigh = 1;
+  CxxCatchHandler Catch;
+  Catch.HandlerVA = kText + 0xa0;
+  Try.Handlers.push_back(Catch);
+  Cxx.TryBlocks.push_back(Try);
+  Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+  return Img;
+}
+
+TEST(RegistrationTryLevel, DecodesCxxRuntimeContinuationWithoutAnUnknownRoot) {
+  auto Img = makeCxxContinuationImage();
+  auto Func = liftEntry(Img, kText);
+  ASSERT_TRUE(Func.RegistrationStates);
+  const auto &State = *Func.RegistrationStates;
+  ASSERT_TRUE(State.Complete);
+  EXPECT_TRUE(State.CxxContinuationsComplete);
+  EXPECT_TRUE(State.RegistrationLifetimeComplete);
+  ASSERT_EQ(State.CxxContinuations.size(), 1u);
+  EXPECT_EQ(State.CxxContinuations[0].TargetVA, kText + 0xc0);
+  const auto *Resume = Func.blockFor(kText + 0xc0);
+  ASSERT_NE(Resume, nullptr);
+  EXPECT_EQ(Resume->StartAddr, kText + 0xc0);
+  EXPECT_FALSE(Func.OrdinaryModuleAnalysisRoots.count(Resume->StartAddr));
+  EXPECT_EQ(State.Blocks[Resume->Id].Levels, (std::vector<int32_t>{1}));
+  EXPECT_FALSE(State.Blocks[Resume->Id].CallbackOnly);
+}
+
+TEST(RegistrationTryLevel, RejectsUnownedOrMisdecodedCxxContinuation) {
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    auto Img = makeCxxContinuationImage(Mutation == 0   ? kText + 2
+                                        : Mutation == 1 ? kRData
+                                                        : kText + 0xc0,
+                                        Mutation == 2);
+    if (Mutation == 3)
+      Img.RuntimeFunctionAddrs.insert(kText + 0xc0);
+    const auto Func = liftEntry(Img, kText);
+    ASSERT_TRUE(Func.RegistrationStates);
+    EXPECT_FALSE(Func.RegistrationStates->Complete) << Mutation;
+    EXPECT_FALSE(Func.RegistrationStates->CxxContinuationsComplete) << Mutation;
+    EXPECT_FALSE(Func.RegistrationStates->RegistrationLifetimeComplete)
+        << Mutation;
+    EXPECT_FALSE(Func.RegistrationStates->ChainOperationsComplete) << Mutation;
+  }
+}
+
 TEST(RegistrationTryLevel, IgnoresAStoreInSkippedCode) {
   ImageBuilder B;
   B.addScope(-1, kText + 0xA0, kText + 0xB0);

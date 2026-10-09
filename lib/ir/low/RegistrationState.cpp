@@ -31,6 +31,9 @@ struct Domain {
   bool Unknown = false;
   bool Parent = false;
   bool Callback = false;
+  bool OtherCallback = false;
+  using CatchStack = std::vector<std::pair<uint32_t, uint32_t>>;
+  std::set<CatchStack> CxxCatchStacks;
   bool Uninstalled = false;
   bool Installed = false;
   bool CanDispatch = false;
@@ -39,7 +42,17 @@ struct Domain {
 struct BlockFacts {
   bool Invalid = false;
   bool InstalledAtExit = false;
+  bool CxxContinuationAtExit = false;
 };
+
+int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx) {
+  if (State.Parent || State.OtherCallback || State.CxxCatchStacks.empty())
+    return 0;
+  int32_t Minimum = INT32_MAX;
+  for (const auto &Stack : State.CxxCatchStacks)
+    Minimum = std::min(Minimum, Cxx.TryBlocks[Stack.back().first].TryHigh + 1);
+  return Minimum;
+}
 
 bool overlaps(int32_t Offset, uint16_t Width, int32_t Slot,
               uint16_t SlotWidth) {
@@ -66,6 +79,7 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
       EH.Encoding == ExceptionEncoding::X86CxxFuncInfo &&
       (EH.Personality == ExceptionPersonality::CxxFrameHandlerX86 ||
        EH.Personality == ExceptionPersonality::CxxFrameHandler3);
+  Result.CxxContinuationsComplete = !KnownCxx;
   if ((!KnownSEH && !KnownCxx) || (KnownCxx != EH.Cxx.has_value())) {
     Result.Diagnostics.push_back(
         "registration language-handler semantics are not proven");
@@ -107,6 +121,26 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
     Result.Diagnostics.push_back(
         "registration-state count exceeds the work budget");
     return Result;
+  }
+  if (EH.Cxx) {
+    size_t Remaining = limits::kMaxRegistrationEHRecords - StateCount;
+    if (EH.Cxx->TryBlocks.size() > Remaining) {
+      Result.Diagnostics.push_back("C++ registration graph exceeds the budget");
+      return Result;
+    }
+    Remaining -= EH.Cxx->TryBlocks.size();
+    for (const CxxTryBlock &Try : EH.Cxx->TryBlocks) {
+      if (Try.Handlers.size() > Remaining) {
+        Result.Diagnostics.push_back(
+            "C++ registration graph exceeds the budget");
+        return Result;
+      }
+      Remaining -= Try.Handlers.size();
+    }
+    if (!EH.Cxx->hasValidStateGraph()) {
+      Result.Diagnostics.push_back("C++ registration state graph is invalid");
+      return Result;
+    }
   }
   std::set<int32_t> AllLevels{*Chain.SeededTryLevel};
   for (size_t I = 0; I < StateCount; ++I)
@@ -172,6 +206,9 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
   std::map<va_t, std::pair<int, LowInstructionBoundary>> Boundaries;
   std::set<std::pair<va_t, int>> ChainOccurrences;
   std::map<std::pair<va_t, int>, FrameValue> FrameValues;
+  std::map<std::pair<va_t, int>, RegistrationCxxContinuation> CxxContinuations;
+  std::set<std::pair<va_t, int>> InvalidCxxContinuations;
+  bool CompleteCxxContinuations = true;
   std::map<std::pair<va_t, int>, std::optional<RegistrationIncomingFrameAccess>>
       IncomingAccesses;
   bool ConsistentIncomingAccesses = true;
@@ -272,11 +309,12 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
       CompleteChainOperations = false;
   };
   auto Merge = [&](size_t Target, const Domain &Source) {
-    if (Exhausted ||
-        !Charge(Source.Levels.size() + Source.Frame.Cells.size() +
-                Source.Frame.OtherRegisterBytes.size() +
-                Incoming[Target].Frame.Cells.size() +
-                Incoming[Target].Frame.OtherRegisterBytes.size() + 9))
+    if (Exhausted || !Charge(Source.Levels.size() + Source.Frame.Cells.size() +
+                             Source.Frame.OtherRegisterBytes.size() +
+                             Incoming[Target].Frame.Cells.size() +
+                             Incoming[Target].Frame.OtherRegisterBytes.size() +
+                             Source.CxxCatchStacks.size() +
+                             Incoming[Target].CxxCatchStacks.size() + 10))
       return;
     Domain &Dest = Incoming[Target];
     bool Changed = !Dest.Reached;
@@ -295,6 +333,12 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
       MergeFlag(Dest.Unknown, Source.Unknown);
       MergeFlag(Dest.Parent, Source.Parent);
       MergeFlag(Dest.Callback, Source.Callback);
+      MergeFlag(Dest.OtherCallback, Source.OtherCallback);
+      for (const auto &Stack : Source.CxxCatchStacks) {
+        if (!Charge(Stack.size() + 1))
+          return;
+        Changed |= Dest.CxxCatchStacks.insert(Stack).second;
+      }
       MergeFlag(Dest.Uninstalled, Source.Uninstalled);
       MergeFlag(Dest.Installed, Source.Installed);
       MergeFlag(Dest.CanDispatch, Source.CanDispatch);
@@ -306,10 +350,15 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
   };
   auto Dispatch = [&](va_t Address, int32_t Level, const Domain &Source,
                       bool Unknown = false, bool Callback = false,
-                      bool SearchFilter = false) {
+                      bool SearchFilter = false,
+                      std::optional<std::pair<uint32_t, uint32_t>> CxxCatch =
+                          std::nullopt) {
     auto It = Entries.find(Address);
-    if (It == Entries.end())
+    if (It == Entries.end()) {
+      if (CxxCatch)
+        CompleteCxxContinuations = false;
       return;
+    }
     Domain Root;
     Root.Levels = {Level};
     for (auto &Register : Root.Frame.Registers)
@@ -325,6 +374,31 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
     Root.Unknown = Unknown || Source.Unknown;
     Root.Parent = !Callback;
     Root.Callback = Callback;
+    Root.OtherCallback = Callback && !CxxCatch;
+    if (CxxCatch) {
+      if (Source.Parent && !Source.Callback)
+        Root.CxxCatchStacks.insert({*CxxCatch});
+      else if (!Source.Parent && Source.Callback && !Source.OtherCallback &&
+               !Source.CxxCatchStacks.empty()) {
+        for (auto Stack : Source.CxxCatchStacks) {
+          if (!Charge(Stack.size() + 1))
+            return;
+          Stack.push_back(*CxxCatch);
+          Root.CxxCatchStacks.insert(std::move(Stack));
+        }
+      } else {
+        Root.CxxCatchStacks.insert({*CxxCatch});
+        Root.Unknown = true;
+      }
+      // Unwinding and catch-object construction may change local objects.
+      // Keep only frame taint for their old values. Runtime administration is
+      // separate: the link word and SavedESP remain owned by the EH frame.
+      for (auto &[Offset, Value] : Root.Frame.Cells)
+        if (Offset != *Chain.RegistrationOffset &&
+            int64_t(Offset) != int64_t(*Chain.RegistrationOffset) - 4 &&
+            Offset != *Chain.TryLevelOffset)
+          Value = registration_state::join(Value, {});
+    }
     Root.Installed = true;
     Root.CanDispatch = !SearchFilter;
     Merge(It->second, Root);
@@ -364,10 +438,14 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
     Queued[I] = false;
     const LowBlock &Block = Function.Blocks[I];
     const Domain Before = Incoming[I];
+    if (!Charge(Before.CxxCatchStacks.size() + 1))
+      break;
+    const int32_t MinimumTry = EH.Cxx ? cxxMinimumTryLevel(Before, *EH.Cxx) : 0;
     Domain After = Before;
     FrameTransfer Transfer(After.Frame, *Chain.RegistrationOffset,
                            EH4 ? SecurityCookieVA : 0);
     std::set<va_t> ProvenStores;
+    std::optional<RegistrationCxxContinuation> CatchReturn;
     auto Invalidate = [&] {
       Facts[I].Invalid = true;
       After.Unknown = true;
@@ -386,6 +464,56 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
         break;
       Transfer.beginInstruction(Op.Addr);
       const FrameValue Value = Transfer.evaluate(Op, After.Installed);
+      if (KnownCxx && Op.Opcode == NdOp::RETURN &&
+          !After.CxxCatchStacks.empty()) {
+        const auto Identity = std::make_pair(Op.Addr, Op.Seq);
+        const auto Boundary = Boundaries.find(Op.Addr);
+        const FrameValue Target =
+            Op.NumInputs == 1 ? Transfer.read(Op.Inputs[0]) : FrameValue{};
+        const int64_t SavedSlot = int64_t(*Chain.RegistrationOffset) - 4;
+        const auto SavedSP = SavedSlot >= INT32_MIN
+                                 ? After.Frame.Cells.find(int32_t(SavedSlot))
+                                 : After.Frame.Cells.end();
+        const bool Valid =
+            After.CxxCatchStacks.size() == 1 && !After.Parent &&
+            !After.OtherCallback && !After.Unknown && !Facts[I].Invalid &&
+            After.Installed && !After.Uninstalled && !After.Levels.empty() &&
+            Op.Seq >= 0 && Op.NumInputs == 1 && Op.Inputs[0].Size == 4 &&
+            &Op == &Block.Ops.back() && Block.Succs.empty() &&
+            Target.Constant && !Target.MayBeFrame &&
+            EH.CodeRange.contains(*Target.Constant) &&
+            *Target.Constant != Function.Entry &&
+            SavedSP != After.Frame.Cells.end() && SavedSP->second.Offset &&
+            *SavedSP->second.Offset <= SavedSlot &&
+            Boundary != Boundaries.end() &&
+            Boundary->second.first == Block.Id &&
+            Boundary->second.second.Control == LowInstructionControl::Return &&
+            Boundary->second.second.Immediate.value_or(0) == 0 &&
+            Op.Addr + Boundary->second.second.Size == Block.EndAddr;
+        if (!Valid) {
+          InvalidCxxContinuations.insert(Identity);
+          CxxContinuations.erase(Identity);
+          CompleteCxxContinuations = false;
+        } else if (!InvalidCxxContinuations.count(Identity)) {
+          const auto [TryIndex, CatchIndex] =
+              After.CxxCatchStacks.begin()->back();
+          CatchReturn = RegistrationCxxContinuation{TryIndex,
+                                                    CatchIndex,
+                                                    Op.Addr,
+                                                    Block.EndAddr,
+                                                    Op.Seq,
+                                                    *Target.Constant,
+                                                    *SavedSP->second.Offset};
+          const auto [It, Inserted] =
+              CxxContinuations.emplace(Identity, *CatchReturn);
+          if (!Inserted && It->second != *CatchReturn) {
+            InvalidCxxContinuations.insert(Identity);
+            CxxContinuations.erase(Identity);
+            CatchReturn.reset();
+            CompleteCxxContinuations = false;
+          }
+        }
+      }
       if (Op.Seq >= 0 && Op.Output.Size != 0 && Value.MayBeFrame) {
         if (!Charge(1))
           break;
@@ -621,6 +749,7 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
     if (Facts[I].Invalid)
       After.Unknown = true;
     Facts[I].InstalledAtExit = After.Installed;
+    Facts[I].CxxContinuationAtExit = CatchReturn.has_value();
     for (int Successor : Block.Succs) {
       auto It = Index.find(Successor);
       if (It == Index.end()) {
@@ -629,6 +758,25 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
         return Result;
       }
       Merge(It->second, After);
+    }
+    if (CatchReturn) {
+      const auto Resume = Entries.find(CatchReturn->TargetVA);
+      if (Resume != Entries.end()) {
+        Domain Continued = After;
+        auto Stack = *Continued.CxxCatchStacks.begin();
+        Stack.pop_back();
+        Continued.Parent = Stack.empty();
+        Continued.Callback = !Stack.empty();
+        Continued.OtherCallback = false;
+        Continued.CxxCatchStacks.clear();
+        if (!Stack.empty())
+          Continued.CxxCatchStacks.insert(std::move(Stack));
+        Continued.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride] =
+            FrameValue::frame(0);
+        Continued.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
+            FrameValue::frame(CatchReturn->SavedStackOffset);
+        Merge(Resume->second, Continued);
+      }
     }
 
     // A filter is a searching callback, while a finally is an unwind callback
@@ -665,13 +813,17 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
         Dispatch(Action.ActionVA, Action.ToState, Before, true, true);
         Walk = Action.ToState;
       }
-      for (const CxxTryBlock &Try : Cxx.TryBlocks) {
+      for (uint32_t TryIndex = 0; TryIndex < Cxx.TryBlocks.size(); ++TryIndex) {
+        const CxxTryBlock &Try = Cxx.TryBlocks[TryIndex];
         if (!Charge(1))
           break;
-        if (Level >= Try.TryLow && Level <= Try.TryHigh)
-          for (const CxxCatchHandler &Catch : Try.Handlers)
-            Dispatch(Catch.HandlerVA, Try.TryHigh + 1, Before,
-                     Facts[I].Invalid);
+        if (Try.TryLow >= MinimumTry && Level >= Try.TryLow &&
+            Level <= Try.TryHigh)
+          for (uint32_t CatchIndex = 0; CatchIndex < Try.Handlers.size();
+               ++CatchIndex)
+            Dispatch(Try.Handlers[CatchIndex].HandlerVA, Try.TryHigh + 1,
+                     Before, Facts[I].Invalid, true, false,
+                     std::make_pair(TryIndex, CatchIndex));
       }
     }
   }
@@ -687,6 +839,11 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
   }
 
   Result.Complete = Result.RegistrationLifetimeComplete = true;
+  for (const auto &[Identity, Continuation] : CxxContinuations) {
+    Result.CxxContinuations.push_back(Continuation);
+    CompleteCxxContinuations &= Entries.count(Continuation.TargetVA) != 0;
+  }
+  Result.CxxContinuationsComplete = CompleteCxxContinuations;
   for (size_t I = 0; I < Function.Blocks.size(); ++I) {
     const LowBlock &Block = Function.Blocks[I];
     const Domain &State = Incoming[I];
@@ -696,7 +853,7 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
                           (State.Callback && State.Parent) ||
                           (State.Uninstalled && State.Installed));
     const std::set<int32_t> &Levels = Unknown ? AllLevels : State.Levels;
-    if (!Charge(Levels.size() + 1)) {
+    if (!Charge(Levels.size() + State.CxxCatchStacks.size() + 1)) {
       Result.Complete = false;
       Result.Blocks.clear();
       Result.Diagnostics.push_back(
@@ -708,7 +865,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
                              {Levels.begin(), Levels.end()},
                              Unknown,
                              CallbackOnly,
-                             State.CanDispatch && State.Installed});
+                             State.CanDispatch && State.Installed,
+                             EH.Cxx ? cxxMinimumTryLevel(State, *EH.Cxx) : 0});
     if (CallbackOnly && Unknown)
       Result.CallbackStatesComplete = false;
     if (!CallbackOnly && Unknown)
@@ -716,6 +874,15 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
     if (State.Parent && State.Reached &&
         (Unknown || (Block.Succs.empty() && Facts[I].InstalledAtExit)))
       Result.RegistrationLifetimeComplete = false;
+    if (!State.CxxCatchStacks.empty() && State.Reached && Block.Succs.empty() &&
+        !Facts[I].CxxContinuationAtExit)
+      Result.CxxContinuationsComplete = false;
+  }
+  Result.RegistrationLifetimeComplete &= Result.CxxContinuationsComplete;
+  if (!Result.CxxContinuationsComplete) {
+    Result.Complete = Result.CallbackStatesComplete = false;
+    Result.Diagnostics.push_back(
+        "C++ catch continuation or restored stack is not proven");
   }
   if (!Result.Complete)
     Result.Diagnostics.push_back(

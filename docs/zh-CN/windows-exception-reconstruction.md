@@ -76,6 +76,11 @@ scope table 或 C++ FuncInfo。SafeSEH 表必须已映射、严格排序，且�
 callback 不属于父函数的词法保护区；catch/except 入口使用对应的运行时状态迁移。
 MedIR 单独携带这些推导结果，不修改 patch 事务认证的 loader 描述符。只有所有到达状态
 对区域归属一致时，HighIR 才生成结构化区域；未知迁移保留注释，不虚构 IP-to-state map。
+C++ catch 使用独立的运行时上下文：嵌套异常从活动 try 之上的状态开始搜索，catch
+返回的是交给运行时的 continuation 代码地址。LowIR 要求精确解码的返回指令与已证明
+的保存栈值，在同一函数内解码目标并重放恢复后的上下文。无法证明或相互冲突的
+continuation 保留注释，同时撤销原生重建权限。这些推导结果与源 FuncInfo 及父函数的
+标量返回值分别保留。
 直接 MSVC prologue 必须证明实际 FS:[0] 写入与 registration/state 字段的位置；普通局部
 变量中恰好相同的整数序列不能替代这一证据。
 

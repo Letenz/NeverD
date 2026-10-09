@@ -1099,6 +1099,11 @@ private:
   /// successors and extract jump tables.  Shared by the initial build, the
   /// multi-stage re-resolution, and the indirect-tail-call conversion.
   void rebuildBlocks(LowFunc &Func);
+
+  /// Decode the exact parent continuations returned by PE32 C++ catches and
+  /// replay their runtime state/stack transfers on the expanded graph.
+  void closeRegistrationCxxContinuations(const BinaryImage &Img, Decoder &Dec,
+                                         LowFunc &Func);
   void prepareRelativeRelocationRootSourceCache();
   void extractJumpTables(LowFunc &Func);
   std::vector<va_t> resolveJumpTable(const BinaryImage &Img,

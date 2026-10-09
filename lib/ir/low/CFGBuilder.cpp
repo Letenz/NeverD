@@ -979,6 +979,7 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   JumpTableProofContextComplete = false;
 
   convertIndirectTailCalls(Func);
+  closeRegistrationCxxContinuations(Img, Dec, Func);
 
   std::set<va_t> ReachableInsnAddrs;
   for (const LowBlock &Block : Func.Blocks)

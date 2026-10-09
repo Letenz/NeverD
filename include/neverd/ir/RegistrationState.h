@@ -35,6 +35,24 @@ struct RegistrationBlockState {
   /// Finally callbacks can dispatch to outer scopes even though they are not
   /// lexical parent blocks. Searching filters have a separate runtime context.
   bool CanDispatch = false;
+  /// A catch executes inside a runtime catch context. Only try blocks at or
+  /// above this minimum participate in a nested exception search.
+  int32_t CxxMinimumTryLevel = 0;
+};
+
+/// A PE32 C++ catch returns a continuation code pointer to the runtime. This
+/// is distinct from a scalar return from the parent function and from an IP
+/// map in the input image. CFG construction must decode and replay TargetVA
+/// before the continuation closure can authorize native lowering.
+struct RegistrationCxxContinuation {
+  uint32_t TryIndex = 0;
+  uint32_t CatchIndex = 0;
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int OpSeq = -1;
+  va_t TargetVA = InvalidVA;
+  int32_t SavedStackOffset = 0;
+  bool operator==(const RegistrationCxxContinuation &) const = default;
 };
 
 /// An exact LowIR operation that accesses the runtime chain head. Native
@@ -88,6 +106,8 @@ struct RegistrationStateAnalysis {
   bool Complete = false;
   bool CallbackStatesComplete = true;
   bool RegistrationLifetimeComplete = false;
+  bool CxxContinuationsComplete = true;
+  std::vector<RegistrationCxxContinuation> CxxContinuations;
   /// Complete chain access ownership, including decoded boundaries and
   /// operation identities, available only with a complete registration
   /// lifetime and callback state proof. This is not a native output receipt.

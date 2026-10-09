@@ -1775,6 +1775,12 @@ satisfy those observations.
 State tests cover narrow C++ state writes, nonzero high bytes, path unions,
 sentinels, unknown prior states and scanner/lifter width disagreement. The
 canonical metadata and source semantic receipts retain the exact store width.
+Continuation tests require a decoded plain catch return, an exact code pointer
+and a reaching saved stack value. Nested catches must restore the enclosing
+catch context and its search minimum. CFG tests decode a previously missing
+continuation and reject instruction-interior, non-code, callee-cleanup return
+and independently owned function targets. A candidate with no decoded target
+retains diagnostic evidence but cannot grant native authority.
 State tests mutate the GS decode expression, target, width and instruction
 identity. Native input tests remove, duplicate and alter the indexed source
 check event and require the public patcher to reject it. Strict generated-only
