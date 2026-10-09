@@ -185,8 +185,8 @@ static void clocks(void **Modules) {
               GetLastError() == LastErrorSeed,
           42);
 }
-#include "WindowsSectionFixture.inc"
 #include "WindowsCriticalSectionFixture.inc"
+#include "WindowsSectionFixture.inc"
 U32 entry(void) {
   U32 Mode = LoadMode;
   for (const U16 *P = GetCommandLineW(); *P; ++P)
