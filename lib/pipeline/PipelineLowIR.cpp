@@ -2923,10 +2923,20 @@ importPrototypeArguments(const BinaryImage &Img,
   };
   for (const LowFunc &F : Funcs)
     for (const LowBlock &Block : F.Blocks)
-      for (const LowOp &Op : Block.Ops)
-        if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
-            Op.NumInputs > 0 && Op.Inputs[0].isConst())
+      for (size_t I = 0; I < Block.Ops.size(); ++I) {
+        const LowOp &Op = Block.Ops[I];
+        if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+            Op.NumInputs == 0)
+          continue;
+        if (Op.Inputs[0].isConst())
           Classify(Op.Inputs[0].Offset);
+        // A register loaded from the slot names the import as the slot does
+        // (LowToMed's RegisterCallSlot).
+        else if (Op.Opcode == NdOp::INDIR_CALL && Op.Inputs[0].isReg())
+          if (const std::optional<va_t> Slot =
+                  loadedCallSlot(F, Block, I, Op.Inputs[0]))
+            Classify(*Slot);
+      }
   for (const auto &[Entry, Effect] : Effects) {
     Classify(Entry);
     for (const RegisterBlock &Block : Effect.Blocks)

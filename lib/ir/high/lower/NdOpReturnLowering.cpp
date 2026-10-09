@@ -91,6 +91,25 @@ const MedBlock *onlyPredecessor(const MedFunc &Med, const MedBlock &Block) {
       [Id](const MedBlock &Candidate) { return Candidate.Id == Id; });
   return It == Med.Blocks.end() ? nullptr : &*It;
 }
+// Whether \p V is the value a register holds at entry to \p Med: named by
+// the identity copy that begins a function, or defined nowhere.
+bool isEntryIdentity(const MedFunc &Med, const MedVar &V) {
+  auto Same = [&](const MedVar &W) {
+    return W.Kind == V.Kind && W.RegOff == V.RegOff && W.Id == V.Id &&
+           W.SSAVer == V.SSAVer;
+  };
+  for (const auto &Blk : Med.Blocks) {
+    for (const auto &Phi : Blk.Phis)
+      if (Same(Phi.Output))
+        return false;
+    for (const auto &Op : Blk.Ops)
+      if (Same(Op.Output))
+        return Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
+               Same(Op.Inputs[0]);
+  }
+  return true;
+}
+
 } // namespace
 
 void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
@@ -279,6 +298,16 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
           break;
         }
       }
+    }
+    // A join whose predecessors all carry the same version of the high
+    // register needs no PHI: its value is the one reaching the block.  The
+    // incoming value at entry, named by an identity copy, is none the
+    // function computed.
+    if (!High) {
+      MedVar Reaching;
+      if (reachingRegAtBlockEntry(CurBlock, TRI.IntReturnReg2, Reaching) &&
+          Reaching.Size > 0 && !isEntryIdentity(Med, Reaching))
+        High = medvarToExpr(Reaching);
     }
     if (High) {
       auto Pair = HighExpr::makeBinop(

@@ -314,7 +314,8 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
       CI = K;
       break;
     }
-  auto Args = collectCallArgs(CurBlock, CI);
+  auto Args =
+      collectCallArgs(CurBlock, CI, Target.IsIndirect ? 0 : Target.Addr);
 
   auto Call = HighExpr::makeCall(
       Target.Name, Target.Addr ? Target.Addr : CurOp.Addr, std::move(Args));

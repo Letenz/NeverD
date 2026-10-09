@@ -9,6 +9,7 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/object/SectionNames.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -121,19 +122,19 @@ MedFunc makeIndirectCaller() {
   return Func;
 }
 
-MedFunc makeLocalFunction(llvm::StringRef Name) {
+MedFunc makeLocalFunction(llvm::StringRef Name, va_t Entry = LocalVA) {
   MedFunc Func;
-  Func.Entry = LocalVA;
+  Func.Entry = Entry;
   Func.Name = Name.str();
   Func.ReturnType = NdType::makeVoid();
 
   MedBlock Block;
   Block.Id = 0;
-  Block.StartAddr = LocalVA;
-  Block.EndAddr = LocalVA + 4;
+  Block.StartAddr = Entry;
+  Block.EndAddr = Entry + 4;
   MedOp Return;
   Return.Opcode = NdOp::RETURN;
-  Return.Addr = LocalVA;
+  Return.Addr = Entry;
   Block.Ops.push_back(std::move(Return));
   Func.Blocks.push_back(std::move(Block));
   return Func;
@@ -207,6 +208,30 @@ TEST(LLVMImportVeneerBoundary,
   EXPECT_EQ(Module, nullptr);
   EXPECT_NE(Diagnostic.find("collides with a lifted symbol"), std::string::npos)
       << Diagnostic;
+}
+
+TEST(LLVMImportVeneerBoundary, AStubLiftedUnderItsImportNameLeavesTheName) {
+  // MinGW's `calloc: jmp [__imp_calloc]` lifted as a function named calloc:
+  // the stub is not the import, so it takes its address as a suffix and the
+  // import keeps its name for the pointer that refers to the stub.
+  BinaryImage Image = makeCodePointerImage();
+  addImport(Image, "symbol_collision", IATVA);
+  ASSERT_TRUE(Image.recordImportStub(StubVA, 0));
+
+  llvm::LLVMContext Context;
+  auto Module = MedLLVMEmitter().emit(
+      {makeIndirectCaller(), makeLocalFunction("symbol_collision", StubVA)},
+      Context, "import-stub-name", Arch::X64, importNames(Image), &Image,
+      BinaryFormat::COFF);
+  ASSERT_NE(Module, nullptr);
+  expectValidModule(*Module);
+  const llvm::Function *Stub =
+      Module->getFunction("symbol_collision_" + llvm::utohexstr(StubVA));
+  ASSERT_NE(Stub, nullptr);
+  EXPECT_FALSE(Stub->isDeclaration());
+  const llvm::GlobalValue *Imported = Module->getNamedValue("symbol_collision");
+  ASSERT_NE(Imported, nullptr);
+  EXPECT_TRUE(Imported->isDeclaration());
 }
 
 } // namespace
