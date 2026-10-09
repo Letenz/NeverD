@@ -105,11 +105,10 @@ llvm::Value *MedLLVMEmitter::emitCpuidValue(const MedOp &Op,
       Subleaf = Builder.CreateTruncOrBitCast(Subleaf, I32Ty);
   }
   auto *StructTy = llvm::StructType::get(*Ctx, {I32Ty, I32Ty, I32Ty, I32Ty});
-  auto *AsmFnTy =
-      llvm::FunctionType::get(StructTy, {I32Ty, I32Ty}, false);
+  auto *AsmFnTy = llvm::FunctionType::get(StructTy, {I32Ty, I32Ty}, false);
   auto *IA = llvm::InlineAsm::get(
-      AsmFnTy, "cpuid",
-      "={eax},={ebx},={ecx},={edx},{eax},{ecx},~{memory}", true);
+      AsmFnTy, "cpuid", "={eax},={ebx},={ecx},={edx},{eax},{ecx},~{memory}",
+      true);
   auto *Res = Builder.CreateCall(IA, {Leaf, Subleaf}, "cpuid");
   auto *EAX = Builder.CreateExtractValue(Res, {0}, "cpuid_eax");
   auto *EBX = Builder.CreateExtractValue(Res, {1}, "cpuid_ebx");
@@ -726,9 +725,17 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
             Builder.CreateExtractValue(Pair, {1}, "x87_fprem_status");
         PendingX87FpremBlock = Builder.GetInsertBlock();
       } else {
+        bool PopsSecondInput = false;
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
+  if (IC == Intrinsic::ID)                                                     \
+    PopsSecondInput = PopsST1;
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
         auto *FnTy = llvm::FunctionType::get(F80Ty, {F80Ty, F80Ty}, false);
         auto *IA = llvm::InlineAsm::get(
-            FnTy, Mn, "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
+            FnTy, Mn,
+            PopsSecondInput
+                ? "=&{st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"
+                : "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
             /*hasSideEffects=*/true);
         Res = Builder.CreateCall(IA, {In0, In1}, "x87");
       }

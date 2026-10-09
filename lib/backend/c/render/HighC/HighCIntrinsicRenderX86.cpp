@@ -114,7 +114,7 @@ const char *x87CHelperName(X87CHelper Helper) {
 #define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
   case X87CHelper::ID:                                                         \
     return Name;
-#include "neverd/backend/c/render/HighC/X87ValueHelpers.def"
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
   }
   llvm_unreachable("unknown x87 C helper");
 }
@@ -130,7 +130,7 @@ static unsigned x87ValueHelperOperands(X87CHelper Helper) {
 #define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
   case X87CHelper::ID:                                                         \
     return Operands;
-#include "neverd/backend/c/render/HighC/X87ValueHelpers.def"
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
   default:
     return 0;
   }
@@ -141,7 +141,7 @@ std::optional<X87CHelper> x87ValueHelper(Intrinsic Id) {
 #define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
   case Intrinsic::ID:                                                          \
     return X87CHelper::ID;
-#include "neverd/backend/c/render/HighC/X87ValueHelpers.def"
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
   default:
     return std::nullopt;
   }
@@ -206,7 +206,7 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
   };
 #define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
   WriteValueHelper(X87CHelper::ID, Asm, Operands, PopsST1);
-#include "neverd/backend/c/render/HighC/X87ValueHelpers.def"
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
   // The program runs with the control word the unit holds.
   if (Used.count(X87CHelper::ControlWord))
     OS << "static inline uint16_t neverd_x87_control_word(void) {\n"
