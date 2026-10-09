@@ -6,6 +6,11 @@ add_subdirectory(high)
 add_neverd_component_library(NeverDIR
   NdTypes.cpp
   SourceABI.cpp
+  SourceParameterPlacement.cpp
+  SourceParameterPlacementAAPCS64.cpp
+  SourceParameterPlacementI386.cpp
+  SourceParameterPlacementSysV.cpp
+  SourceParameterPlacementWin64.cpp
   low/InternalNoReturn.cpp
   low/SourceFrameAnalysis.cpp
   TargetRegInfo.cpp

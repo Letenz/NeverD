@@ -467,7 +467,10 @@ TEST(SysVCallContract, PassThroughArgumentsReachAPrototypedImport) {
     SCOPED_TRACE(Name);
     const std::string Body = body(Source, Name);
     ASSERT_FALSE(Body.empty()) << Source;
-    EXPECT_NE(Body.find("fputs(arg0, arg1)"), std::string::npos) << Body;
+    EXPECT_NE(
+        Body.find("fputs((void *)(uintptr_t)arg0, (void *)(uintptr_t)arg1)"),
+        std::string::npos)
+        << Body;
     EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
   }
 }
@@ -972,7 +975,10 @@ TEST(SysVCallContract, ACallThroughALoaderBoundSlotPassesThePrototype) {
   const std::string Source = liftEntries(Img, {Wrap});
   const std::string Body = body(Source, "wrap");
   ASSERT_FALSE(Body.empty()) << Source;
-  EXPECT_NE(Body.find("fputs(arg0, arg1)"), std::string::npos) << Body;
+  EXPECT_NE(
+      Body.find("fputs((void *)(uintptr_t)arg0, (void *)(uintptr_t)arg1)"),
+      std::string::npos)
+      << Body;
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
 }
 
@@ -1376,7 +1382,10 @@ TEST(SysVCallContract, ErrorCheckingWrapperEndsAtItsExitHelper) {
   const std::string Source = liftEntries(Img, {Put});
   const std::string Body = body(Source, "put");
   ASSERT_FALSE(Body.empty()) << Source;
-  EXPECT_NE(Body.find("fputs(arg0, arg1)"), std::string::npos) << Body;
+  EXPECT_NE(
+      Body.find("fputs((void *)(uintptr_t)arg0, (void *)(uintptr_t)arg1)"),
+      std::string::npos)
+      << Body;
   EXPECT_NE(Body.find("die(3)"), std::string::npos) << Body;
   EXPECT_EQ(Body.find("next("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;

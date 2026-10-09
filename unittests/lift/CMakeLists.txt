@@ -114,6 +114,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_SwitchTests.cpp
   x86_64/X86_64_RoundTripTests.cpp
   x86_64/X86_64_DebugRecordTests.cpp
+  x86_64/X86_64_DebugParamTests.cpp
   aarch64/AArch64_SwitchTests.cpp
   aarch64/AArch64_RoundTripTests.cpp
   arm32/ARM32_SwitchTests.cpp
@@ -172,6 +173,7 @@ add_neverd_unittest(NeverDLiftTests
   ../loader/SwiftVirtualCallTests.cpp
   ../loader/SwiftRuntimeSourceTests.cpp
   core/HighCPointerAddressTests.cpp
+  core/SourceParameterPlacementTests.cpp
   core/HighCIntegerWidthTests.cpp
   core/CSourceDefinitionTests.cpp
   core/CStringCommentTests.cpp
@@ -2115,6 +2117,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_switch.c
   x86_64/test_roundtrip.c
   x86_64/test_debug_records.c
+  x86_64/test_debug_params.c
   x86_64/test_jumptable_enhanced.c
   x86_64/test_jumptable_inclusive_postload_clobber.s
   x86_64/test_jumptable_inclusive_postload_unrelated.s
@@ -2457,8 +2460,8 @@ foreach(src ${X86_64_TEST_SOURCES})
     set(extra_flags -msse4.2 -mavx)
   elseif(src MATCHES "test_flags_misc")
     set(extra_flags -mbmi -mlzcnt -mpopcnt)
-  elseif(src MATCHES "test_debug_records")
-    # The records under test come from the DWARF description.
+  elseif(src MATCHES "test_debug_records|test_debug_params")
+    # The records and signatures under test come from the DWARF description.
     set(extra_flags -g)
   elseif(src MATCHES "test_return_join")
     set(extra_flags -O2)

@@ -37,6 +37,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -46,6 +47,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <stdexcept>
 
 namespace neverd {
 
@@ -453,7 +455,10 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   X87Helpers.clear();
   X86FPStateHelpers.clear();
   UsesX87Extended = false;
-  DebugParamBindings.clear();
+  // A unit can hold two bodies of one entry, and a later unit a body at a
+  // freed one's address.
+  ParamCacheOf = nullptr;
+  EmittedParamIndices.clear();
   // Native AArch64 vector carriers are projected to SVE ACLE types.  x86
   // vector intrinsics use scalar integer carriers at the HighIR boundary.
   const bool ProjectsScalarWideIntegers =
@@ -784,10 +789,11 @@ std::string HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
                                         bool ExactImageBytes,
                                         MemoryLoadDestination *Destination) {
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
-  if (ExactImageBytes && (Ordering != NdMemoryOrdering::None ||
-                          AddressSpace != NdMemoryAddressSpace::Default))
-    llvm::report_fatal_error(
-        "HighC cannot project an ordered or segmented image alias");
+  // An image object's bytes are in this program's memory, which no segment
+  // register reaches; an atomic access to them keeps the image's alignment
+  // (collectImageObjects).
+  if (ExactImageBytes && AddressSpace != NdMemoryAddressSpace::Default)
+    throw std::invalid_argument("HighC cannot project a segmented image alias");
   std::string Type = memoryTypeName(Ty);
   // MSVC's FS/GS read intrinsics are a useful source-level spelling for
   // Windows targets. Other formats keep the target address-space-qualified
@@ -839,10 +845,11 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
                                          NdMemoryAddressSpace AddressSpace,
                                          bool ExactImageBytes) {
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
-  if (ExactImageBytes && (Ordering != NdMemoryOrdering::None ||
-                          AddressSpace != NdMemoryAddressSpace::Default))
-    llvm::report_fatal_error(
-        "HighC cannot project an ordered or segmented image alias");
+  // An image object's bytes are in this program's memory, which no segment
+  // register reaches; an atomic access to them keeps the image's alignment
+  // (collectImageObjects).
+  if (ExactImageBytes && AddressSpace != NdMemoryAddressSpace::Default)
+    throw std::invalid_argument("HighC cannot project a segmented image alias");
   std::string Type = memoryTypeName(Ty);
   const std::string Value = Ty && Ty->Kind == NdTypeKind::Ptr
                                 ? "(" + Type + ")(uintptr_t)(" + Val.str() + ")"
@@ -2178,6 +2185,14 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         Inner && Inner->Kind == ExprKind::Const)
       AccessAddresses.insert(Inner);
   };
+  // An atomic access needs its address as aligned in C as in the image.
+  auto NoteAtomic = [&](const HighExpr &Address, const TypeRef &Access) {
+    if (!Access)
+      return;
+    if (auto VA = constAddress(Address))
+      if (auto It = ImageObjects.find(*VA); It != ImageObjects.end())
+        It->second.AtomicBytes = std::max(It->second.AtomicBytes, Access->Size);
+  };
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
     if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
       noteFunctionAddress(E.ConstVal, Funcs);
@@ -2232,6 +2247,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         if (!foldReadonlyScalar(*VA, Size))
           noteImageObject(*VA, E.Type, false, true);
       }
+      if (E.MemoryOrdering != NdMemoryOrdering::None)
+        NoteAtomic(*E.Operands[0], E.Type);
     }
     // A table read or written at a variable offset is the whole table.
     if ((E.Kind == ExprKind::Load || E.Kind == ExprKind::Store) &&
@@ -2252,6 +2269,20 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (auto VA = constAddress(*E.Operands[0]))
         noteImageObject(*VA, E.Operands[1] ? E.Operands[1]->Type : nullptr,
                         true, true);
+      if (E.MemoryOrdering != NdMemoryOrdering::None)
+        NoteAtomic(*E.Operands[0],
+                   E.Operands[1] ? E.Operands[1]->Type : nullptr);
+    }
+    // A read-modify-write reads and writes the object it addresses.
+    if (E.Kind == ExprKind::BinOp &&
+        (E.Op == NdOp::ATOMIC_ADD || E.Op == NdOp::ATOMIC_XCHG ||
+         E.Op == NdOp::ATOMIC_CMPXCHG) &&
+        E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        !E.Operands.empty() && E.Operands[0]) {
+      NoteAccessAddress(E.Operands[0].get());
+      if (auto VA = constAddress(*E.Operands[0]))
+        noteImageObject(*VA, E.Type, true, true);
+      NoteAtomic(*E.Operands[0], E.Type);
     }
     if (E.Kind == ExprKind::Addr && !E.Operands.empty() && E.Operands[0] &&
         E.Operands[0]->Kind == ExprKind::Load &&
@@ -2294,6 +2325,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         if (auto VA = constAddress(*S.StoreAddr))
           noteImageObject(*VA, S.StoreVal ? S.StoreVal->Type : nullptr, true,
                           true);
+        if (S.MemoryOrdering != NdMemoryOrdering::None)
+          NoteAtomic(*S.StoreAddr, S.StoreVal ? S.StoreVal->Type : nullptr);
         // A table written at a variable offset is the whole table too.
         if (const HighExpr *Base = indexedImageBase(*S.StoreAddr))
           NoteWhole(Base->ConstVal, S.StoreVal ? S.StoreVal->Type : nullptr,
@@ -2446,6 +2479,25 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       Backing.Words = Backing.Name;
       Backing.Name += ".b";
     }
+    // An atomic access in the bytes needs its address as aligned in C as in
+    // the image: bytes before the group give every address its residue
+    // modulo the widest one.  Words start word-aligned, at the group.
+    for (auto It = ImageObjects.lower_bound(GroupBase);
+         It != ImageObjects.end() && It->first < GroupEnd; ++It) {
+      const uint64_t Bytes = It->second.AtomicBytes;
+      if (!Bytes)
+        continue;
+      const unsigned Align = static_cast<unsigned>(
+          std::min<uint64_t>(llvm::PowerOf2Ceil(Bytes), kMaxAtomicAccessBytes));
+      if (!Backing.Words.empty() && (It->first - GroupBase) % Align)
+        throw std::invalid_argument(
+            "an atomic access in relocated image words at 0x" +
+            llvm::utohexstr(It->first) +
+            " is less aligned in C than in the image");
+      Backing.Align = std::max(Backing.Align, Align);
+    }
+    if (Backing.Words.empty())
+      Backing.Pad = GroupBase % Backing.Align;
     ImageBackings.push_back(std::move(Backing));
   };
   for (const auto &[Addr, Obj] : ImageObjects) {
@@ -2504,8 +2556,10 @@ void HighCWriter::writeImageObjects() {
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"
          << llvm::utohexstr(Backing.End) << " */\n";
-    OS << "unsigned char " << Backing.Name << "[" << Backing.End - Backing.Base
-       << "]";
+    if (Backing.Align > 1)
+      OS << "_Alignas(" << Backing.Align << ") ";
+    OS << "unsigned char " << Backing.Name << "["
+       << Backing.Pad + (Backing.End - Backing.Base) << "]";
     bool Initialized = false;
     for (va_t Addr = Backing.Base; Addr < Backing.End; ++Addr) {
       const uint8_t *Byte = Opts.Image->readVA(Addr, 1);
@@ -2515,8 +2569,8 @@ void HighCWriter::writeImageObjects() {
         OS << " = {";
         Initialized = true;
       }
-      OS << " [" << Addr - Backing.Base << "] = 0x" << llvm::utohexstr(*Byte)
-         << ",";
+      OS << " [" << Backing.Pad + (Addr - Backing.Base) << "] = 0x"
+         << llvm::utohexstr(*Byte) << ",";
     }
     if (Initialized)
       OS << " }";
@@ -2588,8 +2642,10 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   for (const ImageBacking &Backing : ImageBackings) {
     if (Backing.Words.empty())
       continue;
-    OS << "union " << Backing.Words << "_words { uintptr_t w["
-       << WordCount(Backing) << "]; unsigned char b["
+    OS << "union " << Backing.Words << "_words { ";
+    if (Backing.Align > PointerBytes)
+      OS << "_Alignas(" << Backing.Align << ") ";
+    OS << "uintptr_t w[" << WordCount(Backing) << "]; unsigned char b["
        << WordCount(Backing) * PointerBytes << "]; };\n"
        << "extern union " << Backing.Words << "_words " << Backing.Words
        << ";\n";

@@ -161,7 +161,10 @@ TEST(Win64CallContract, ACallThroughTheImportSlotPassesTheCallersArguments) {
   const std::string Source = liftEntries(Img, {Wrap});
   const std::string Body = body(Source, "wrap");
   ASSERT_FALSE(Body.empty()) << Source;
-  EXPECT_NE(Body.find("fputs(arg0, arg1)"), std::string::npos) << Body;
+  EXPECT_NE(
+      Body.find("fputs((void *)(uintptr_t)arg0, (void *)(uintptr_t)arg1)"),
+      std::string::npos)
+      << Body;
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
 }
 
@@ -180,7 +183,9 @@ TEST(Win64CallContract, AThunkJumpingThroughTheSlotForwardsTheArguments) {
   const std::string Source = liftEntries(Img, {Wrap, Thunk});
   const std::string ThunkBody = body(Source, "fputs_thunk");
   ASSERT_FALSE(ThunkBody.empty()) << Source;
-  EXPECT_NE(ThunkBody.find("fputs(arg0, arg1)"), std::string::npos)
+  EXPECT_NE(
+      ThunkBody.find("fputs((void *)(uintptr_t)arg0, (void *)(uintptr_t)arg1)"),
+      std::string::npos)
       << ThunkBody;
   const std::string WrapBody = body(Source, "wrap");
   ASSERT_FALSE(WrapBody.empty()) << Source;
