@@ -2246,6 +2246,14 @@ Signed: %4</source>
         <source>Defined %1 at %2</source>
         <translation>%2 に %1 を定義しました</translation>
     </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>プラットフォーム: %1（指定どおり）</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>プラットフォーム: %1（コードから判定: %2）</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2369,6 +2377,14 @@ Signed: %4</source>
         <source>Where in the file the loaded bytes start</source>
         <translation>読み込むバイトのファイル内での開始位置</translation>
     </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>プラットフォーム(&amp;P)</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>コードのビルド対象プラットフォーム。その規約に従います：呼び出しの引数の渡し方、保持されるレジスタ、C の型のサイズ</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2411,6 +2427,25 @@ Signed: %4</source>
     <message>
         <source>Thumb (AArch32)</source>
         <translation>Thumb（AArch32）</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple（macOS、iOS）</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>コードから判定</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V（Linux、BSD、Android）</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>

@@ -57,19 +57,25 @@ NEVERD_API int neverd_session_load(neverd_session_t Sess, const char *Path);
 NEVERD_API const char *neverd_identify_json(const char *Path);
 /// Read the input of the next neverd_session_load() as \p OptionsJson says
 /// instead of by its header: {"loader":"binary","processor":"x86"|"x86_64"|
-/// "arm"|"thumb"|"aarch64","base","offset","size","entry"?} reads it as a
-/// binary file -- the bytes from offset on (size 0 for the rest of the file)
-/// as that processor's code at base, starting at entry (base when absent);
-/// numbers are integers or hexadecimal strings.  {"loader":"auto"} reads the
-/// header even when the input's `.neverd-load.json` says otherwise; NULL
-/// drops the request, so a load reads that file when there is one.  A binary
-/// file's functions are browsed, not decompiled: analysis refuses it, since
-/// nothing states its calling convention.  Returns 0, or -1 with
-/// neverd_last_error.
+/// "arm"|"thumb"|"aarch64","base","offset","size","entry"?,"platform"?}
+/// reads it as a binary file -- the bytes from offset on (size 0 for the
+/// rest of the file) as that processor's code at base, starting at entry
+/// (base when absent); numbers are integers or hexadecimal strings.  The
+/// platform whose conventions the code follows decides how it decompiles:
+/// "sysv" (System V and AAPCS), "windows" or "darwin"; "auto", the default,
+/// reads it from the code -- where calls put their first argument, what
+/// prologues preserve, the thread block and system calls the code reaches --
+/// and assumes System V when the code shows too little.  {"loader":"evm"}
+/// reads a file as EVM bytecode, and {"loader":"auto"} as its header or
+/// contents say, even when the input's `.neverd-load.json` says otherwise;
+/// NULL drops the request, so a load reads that file when there is one.
+/// Returns 0, or -1 with neverd_last_error.
 NEVERD_API int neverd_session_set_load_options(neverd_session_t Sess,
                                                const char *OptionsJson);
 /// How the loaded image was read, in neverd_session_set_load_options JSON;
-/// "{}" before a load.  Free with neverd_free_string.
+/// "{}" before a load.  A binary file's platform comes with
+/// "platform_source": "detected" or "user", and with "platform_evidence",
+/// what detection read it from.  Free with neverd_free_string.
 NEVERD_API const char *neverd_session_load_options_json(neverd_session_t Sess);
 /// Keep how the image was read in `<input>.neverd-load.json` for later loads,
 /// or remove that file when the header was read.  Returns 0, or -1 with

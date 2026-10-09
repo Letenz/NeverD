@@ -1,6 +1,7 @@
 #include "LoadFileDialog.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -134,6 +135,18 @@ LoadFileDialog::LoadFileDialog(const QString &path, const QJsonArray &rows,
   placement->addRow(tr("File &offset"), offset_);
   placement->addRow(tr("Loading si&ze"), size_);
   placement->addRow(tr("E&ntry point"), entry_);
+  // The conventions the code follows, read from the code unless chosen.
+  platform_ = new QComboBox(this);
+  platform_->setObjectName(QStringLiteral("platform"));
+  platform_->setToolTip(
+      tr("The platform the code was built for, whose conventions it "
+         "follows: how calls pass arguments, which registers they keep, and "
+         "the sizes of C types"));
+#define NEVERD_PLATFORM(ShortName, Name)                                       \
+  platform_->addItem(QCoreApplication::translate("Platforms", Name),           \
+                     QStringLiteral(ShortName));
+#include "Processors.def"
+  placement->addRow(tr("&Platform"), platform_);
   layout->addLayout(placement);
 
   // What loading does besides reading the image.
@@ -246,6 +259,7 @@ LoadOptions LoadFileDialog::options() const {
   }
   if (binary()) {
     options.processor = chosenProcessor();
+    options.platform = platform_->currentData().toString();
     options.base = number(base_, 0).value_or(0);
     options.offset = number(offset_, 0).value_or(0);
     options.size = number(size_, 0).value_or(0);
@@ -274,6 +288,7 @@ void LoadFileDialog::select(int row) {
                               : tr("The file's header states the processor"));
   for (auto *field : {base_, offset_, size_, entry_})
     field->setEnabled(raw);
+  platform_->setEnabled(raw);
   const QString wanted =
       raw ? binaryProcessor_
           : (row >= 0 && row < rows_.size()

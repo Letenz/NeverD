@@ -11,6 +11,7 @@
 
 #include <QAction>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDirIterator>
 #include <QFile>
 #include <QHash>
@@ -213,6 +214,11 @@ private slots:
     QVERIFY(write(binary + ".neverd-annotations.json",
                   R"([{"addr":"0x10","text":"one"}])"));
     QVERIFY(write(binary + ".neverd-renames.json", "[]"));
+    // Every table the worker keeps, and how a binary file is read.
+    QVERIFY(write(binary + ".neverd-items.json",
+                  R"([{"addr":"0x20","kind":"data","size":4}])"));
+    QVERIFY(write(binary + ".neverd-load.json",
+                  R"({"loader":"binary","processor":"x86_64"})"));
     const auto database = ProjectDatabase::pathFor(binary);
     QCOMPARE(database, binary + QStringLiteral(".nddb"));
     QVERIFY(ProjectDatabase::isDatabase(database));
@@ -231,7 +237,7 @@ private slots:
              QString::fromLatin1(
                  QCryptographicHash::hash(input, QCryptographicHash::Sha256)
                      .toHex()));
-    QCOMPARE(contents->sidecars.size(), 2);
+    QCOMPARE(contents->sidecars.size(), 4);
     QCOMPARE(contents->state.value(QStringLiteral("location")),
              QByteArray(R"({"address":"0x10"})"));
 
@@ -259,6 +265,12 @@ private slots:
     QFile annotations(unpacked + ".neverd-annotations.json");
     QVERIFY(annotations.open(QIODevice::ReadOnly));
     QVERIFY(annotations.readAll().contains("two"));
+    QFile items(unpacked + ".neverd-items.json");
+    QVERIFY(items.open(QIODevice::ReadOnly));
+    QVERIFY(items.readAll().contains("0x20"));
+    QFile load(unpacked + ".neverd-load.json");
+    QVERIFY(load.open(QIODevice::ReadOnly));
+    QVERIFY(load.readAll().contains("x86_64"));
     QVERIFY(!QFileInfo::exists(unpacked + ".neverd-history.json"));
 
     // Damage is reported, never unpacked as a different input.
@@ -498,6 +510,12 @@ private slots:
                 ->text()
                 .contains(QStringLiteral("start")));
     QCOMPARE(options.loader, QStringLiteral("binary"));
+    // The platform is read from the code unless the user names one.
+    auto *platform = dialog.findChild<QComboBox *>(QStringLiteral("platform"));
+    QVERIFY(platform && platform->isEnabled());
+    QVERIFY(options.platform.isEmpty());
+    platform->setCurrentIndex(platform->findData(QStringLiteral("windows")));
+    QCOMPARE(dialog.options().platform, QStringLiteral("windows"));
     // The processor picked last time is picked again.
     LoadFileDialog again(QStringLiteral("/tmp/firmware.bin"), rows);
     again.setBinaryProcessor(QStringLiteral("thumb"));
@@ -516,6 +534,8 @@ private slots:
     chosen.findChild<QListWidget *>(QStringLiteral("loaders"))
         ->setCurrentRow(0);
     QCOMPARE(chosen.options().loader, QStringLiteral("evm"));
+    QVERIFY(!chosen.findChild<QComboBox *>(QStringLiteral("platform"))
+                 ->isEnabled());
     QVERIFY(chosen.options().processor.isEmpty());
     QVERIFY(chosen.findChild<QPushButton *>(QStringLiteral("ok"))->isEnabled());
   }

@@ -42,6 +42,30 @@ llvm::StringRef getRawProcessorName(Arch TheArch, InstructionMode Mode) {
   return {};
 }
 
+std::optional<BinaryFormat> parseRawPlatform(llvm::StringRef Name) {
+#define NEVERD_RAW_PLATFORM(Spelling, Format, Text)                            \
+  if (Name == Spelling)                                                        \
+    return BinaryFormat::Format;
+#include "neverd/loader/Raw/RawLoader.def"
+  return std::nullopt;
+}
+
+llvm::StringRef getRawPlatformName(BinaryFormat Format) {
+#define NEVERD_RAW_PLATFORM(Spelling, F, Text)                                 \
+  if (Format == BinaryFormat::F)                                               \
+    return Spelling;
+#include "neverd/loader/Raw/RawLoader.def"
+  return {};
+}
+
+llvm::StringRef getRawPlatformText(BinaryFormat Format) {
+#define NEVERD_RAW_PLATFORM(Spelling, F, Text)                                 \
+  if (Format == BinaryFormat::F)                                               \
+    return Text;
+#include "neverd/loader/Raw/RawLoader.def"
+  return {};
+}
+
 llvm::Expected<BinaryImage> RawLoader::load(const std::filesystem::path &Path) {
   if (getRawProcessorName(Options.TheArch, Options.Mode).empty())
     return rawError("no processor to read the file as");
@@ -78,6 +102,8 @@ llvm::Expected<BinaryImage> RawLoader::load(const std::filesystem::path &Path) {
   Img.Bits = Wide ? Bitness::Bits64 : Bitness::Bits32;
   Img.Base = Options.Base;
   Img.Entry = Entry;
+  // Unknown until detection reads the platform from the code.
+  Img.ConventionFormat = Options.Platform.value_or(BinaryFormat::Unknown);
   Img.IsRelocatable = false;
 
   const auto Begin =
