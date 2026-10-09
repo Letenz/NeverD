@@ -22,6 +22,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstring>
 #include <set>
 #include <string>
 #include <utility>
@@ -318,6 +319,48 @@ TEST(Win64CallContract, ACallNamesTheFunctionNotItsObjectsSection) {
   const std::string Source = body(liftEntries(Img, {Caller}), "caller");
   EXPECT_NE(Source.find("_setargv("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("text("), std::string::npos) << Source;
+}
+
+TEST(Win64CallContract, ADataImportReadsAsItsSlot) {
+  // MinGW reads msvcrt's _commode through `.refptr.__imp__commode`, a
+  // pointer to the import's slot in read-only data; MSVC reads the slot
+  // itself.  Both read the address the loader binds to the slot.
+  constexpr va_t Refptr = 0x140004000;
+  constexpr va_t ViaRefptr = Text;
+  constexpr va_t Direct = Text + 0x20;
+  std::vector<uint8_t> Code(0x40, 0xCC);
+  std::vector<uint8_t> Indirect = {0x48, 0x8B, 0x05}; // mov rax, [rip + Refptr]
+  for (uint8_t B : rel32(ViaRefptr + 7, Refptr))
+    Indirect.push_back(B);
+  for (uint8_t B : {0x48, 0x8B, 0x00, 0xC3}) // mov rax, [rax]; ret
+    Indirect.push_back(B);
+  put(Code, ViaRefptr, Indirect);
+  std::vector<uint8_t> Slot = {0x48, 0x8B, 0x05}; // mov rax, [rip + slot]
+  for (uint8_t B : rel32(Direct + 7, slot(0)))
+    Slot.push_back(B);
+  Slot.push_back(0xC3); // ret
+  put(Code, Direct, Slot);
+  BinaryImage Img = makeImage(
+      Code, {{ViaRefptr, "p_commode"}, {Direct, "read_commode"}}, {"_commode"});
+  Segment Rdata;
+  Rdata.Name = ".rdata";
+  Rdata.VA = Refptr;
+  Rdata.Size = Rdata.FileSz = 8;
+  Rdata.Flags = SegmentFlags::Readable;
+  const va_t SlotVA = slot(0);
+  Rdata.Data.resize(8);
+  std::memcpy(Rdata.Data.data(), &SlotVA, sizeof(SlotVA));
+  Img.Segments.push_back(std::move(Rdata));
+  const std::string Source = liftEntries(Img, {ViaRefptr, Direct});
+  EXPECT_NE(Source.find("extern void *__imp__commode;"), std::string::npos)
+      << Source;
+  for (const char *Name : {"p_commode", "read_commode"}) {
+    SCOPED_TRACE(Name);
+    const std::string Body = body(Source, Name);
+    EXPECT_NE(Body.find("__imp__commode;"), std::string::npos) << Source;
+    EXPECT_EQ(Body.find("0x140003000"), std::string::npos) << Source;
+  }
+  EXPECT_EQ(Source.find("refptr"), std::string::npos) << Source;
 }
 
 TEST(Win64CallContract, AFloatArgumentTakesItsSlotsVectorRegister) {

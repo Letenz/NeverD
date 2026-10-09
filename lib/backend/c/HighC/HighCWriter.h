@@ -254,6 +254,15 @@ public:
   /// stub that jumps through it: a function pointer (`__imp_calloc`), or
   /// empty when it calls no import or the format names no slot.
   std::string importSlotIdentifier(const HighExpr &E) const;
+  /// The identifier of the import slot at \p Addr when \p Addr is an
+  /// import's own slot in the import address table, not a stub that jumps
+  /// through it; empty otherwise.
+  std::string importDataSlotIdentifier(va_t Addr) const;
+  /// The import slot a read of \p Size bytes at \p Address reads as data, a
+  /// data import's address: the slot at a constant address, or the slot a
+  /// read-only pointer holds (MinGW's `.refptr.__imp__fmode`).
+  std::optional<va_t> importDataSlotRead(const HighExpr &Address,
+                                         uint16_t Size) const;
   /// The function this file defines that call \p E runs, or null: one named
   /// like it at another address is a different function.
   const HighFunc *calledDefinition(const HighExpr &E) const;
@@ -634,6 +643,11 @@ public:
   /// Call identifiers that name an import's slot (importSlotIdentifier):
   /// declared as function pointers, linked by their own names.
   std::set<std::string> ImportSlotIdentifiers;
+  /// Import slots the code reads as data (importDataSlotRead), and the
+  /// identifiers that read them once declared: a pointer linked by the
+  /// slot's own name, or the function pointer a call through it declares.
+  std::set<va_t> ImportDataSlotReads;
+  std::map<va_t, std::string> ImportDataSlotNames;
   std::map<std::string, std::string> ExternalSourceIdentifiers;
   /// The identifiers functionIdentifier() spelled for functions no map
   /// names, and the symbols they stand for (recordSourceNames()).
