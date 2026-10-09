@@ -17,6 +17,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/LLVMX86StackEffects.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
@@ -804,9 +805,17 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
             Builder.CreateExtractValue(Pair, {1}, "x87_fprem_status");
         PendingX87FpremBlock = Builder.GetInsertBlock();
       } else {
+        bool PopsSecondInput = false;
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
+  if (IC == Intrinsic::ID)                                                     \
+    PopsSecondInput = PopsST1;
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
         auto *FnTy = llvm::FunctionType::get(F80Ty, {F80Ty, F80Ty}, false);
         auto *IA = llvm::InlineAsm::get(
-            FnTy, Mn, "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
+            FnTy, Mn,
+            PopsSecondInput
+                ? "=&{st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"
+                : "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
             /*hasSideEffects=*/true);
         Res = Builder.CreateCall(IA, {In0, In1}, "x87");
       }
@@ -1046,6 +1055,7 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
         FnTy, Wide ? "pushfq\n\tpopq $0" : "pushfl\n\tpopl $0", "=r,~{memory}",
         /*hasSideEffects=*/true);
     llvm::Value *Flags = Builder.CreateCall(IA, {}, "eflags");
+    markX86StackTemporary(*llvm::cast<llvm::CallInst>(Flags));
     return Builder.CreateZExtOrTrunc(Flags, sizeToType(Op.Output.Size));
   }
 

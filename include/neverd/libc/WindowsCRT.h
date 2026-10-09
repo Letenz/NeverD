@@ -78,6 +78,16 @@ inline constexpr auto kWindowsCRTPrototypes = std::to_array<LibCPrototype>({
     windowsCRTPrototype("__p___initenv", "char ***", {}),
     windowsCRTPrototype("__p__fmode", "int *", {}),
     windowsCRTPrototype("__p__commode", "int *", {}),
+    // msvcrt.dll 64-bit conversions, which MinGW's strtoll, strtoull, wcstoll
+    // and wcstoull forward to.
+    windowsCRTPrototype("_strtoi64", "int64_t",
+                        {"const char *", "char **", "int"}),
+    windowsCRTPrototype("_strtoui64", "uint64_t",
+                        {"const char *", "char **", "int"}),
+    windowsCRTPrototype("_wcstoi64", "int64_t",
+                        {"const wchar_t *", "wchar_t **", "int"}, "stddef.h"),
+    windowsCRTPrototype("_wcstoui64", "uint64_t",
+                        {"const wchar_t *", "wchar_t **", "int"}, "stddef.h"),
     // Universal CRT start-up and exit.
     windowsCRTPrototype("_set_app_type", "void", {"int"}),
     windowsCRTPrototype("_configure_narrow_argv", "int", {"int"}),

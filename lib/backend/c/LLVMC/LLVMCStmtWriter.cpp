@@ -3980,6 +3980,33 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
         CapturedX87StatusCalls.insert(Status);
       return true;
     }
+    bool KnownBinaryValue = false, PopsSecondInput = false;
+#define NEVERD_X87_VALUE_HELPER(ID, CName, Asm, Operands, PopsST1)             \
+  if (Operands == 2 && AsmStr == Asm) {                                        \
+    KnownBinaryValue = true;                                                   \
+    PopsSecondInput = PopsST1;                                                 \
+  }
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+    const std::string BinaryConstraints =
+        PopsSecondInput
+            ? "=&{st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"
+            : "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}";
+    if (KnownBinaryValue && Call.getType()->isX86_FP80Ty() &&
+        Call.arg_size() == 2 &&
+        Call.getArgOperand(0)->getType()->isX86_FP80Ty() &&
+        Call.getArgOperand(1)->getType()->isX86_FP80Ty() &&
+        Constraints == BinaryConstraints) {
+      const std::string Left = X87Operand(0), Right = X87Operand(1);
+      const std::string Result =
+          ResultLive ? Name : freshVar("x87_unused_value");
+      emitIndent(Indent);
+      if (!ResultLive)
+        OS << "long double " << Result << ";\n";
+      OS << "__asm__ volatile(\"" << AsmStr << "\" : \"=&t\"(" << Result
+         << ") : \"0\"(" << Left << "), \"u\"(" << Right
+         << ") : " << (PopsSecondInput ? "\"st(1)\", " : "") << "\"cc\");\n";
+      return true;
+    }
     if (AsmStr == "fnstsw $0" && Call.getType()->isIntegerTy(16) &&
         Call.arg_size() == 0 &&
         Constraints == "={ax},~{dirflag},~{fpsr},~{flags}") {
