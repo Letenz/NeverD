@@ -22,6 +22,7 @@
 #include "llvm/Support/AtomicOrdering.h"
 
 #include <cstring>
+#include <stdexcept>
 
 namespace neverd {
 
@@ -127,6 +128,35 @@ InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
     return {"__writemsr(" + Args[0] + ", ((unsigned __int64)(" + Args[2] +
                 ") << 32) | (uint32_t)(" + Args[1] + "));\n",
             true};
+
+  // MXCSR memory forms use a 32-bit load/store, not the address as the CSR
+  // value. memcpy keeps unaligned and aliased addresses valid and evaluates
+  // the address once. Block scope keeps the temporary private to each effect.
+  if (Mnemonic == "ldmxcsr" || Mnemonic == "stmxcsr") {
+    if (Args.size() == 1 && !IsStructReturn && !ResultLive) {
+      for (const char *Segment : {"fs", "gs"})
+        if (AsmStr == Mnemonic + " %" + Segment + ":($0)")
+          return {"__asm__ volatile(\"" + Mnemonic + " %%" + Segment +
+                      ":(%0)\" : : \"r\"((uintptr_t)(" + Args[0] +
+                      ")) : \"memory\");\n",
+                  false};
+      if (AsmStr == Mnemonic + " ($0)") {
+        std::string Temporary = "neverd_mxcsr";
+        while (Args[0].find(Temporary) != std::string::npos)
+          Temporary += '_';
+        if (Mnemonic == "ldmxcsr")
+          return {"{ uint32_t " + Temporary + "; __builtin_memcpy(&" +
+                      Temporary + ", (const void *)(uintptr_t)(" + Args[0] +
+                      "), 4); _mm_setcsr(" + Temporary + "); }\n",
+                  true};
+        return {"{ uint32_t " + Temporary +
+                    " = _mm_getcsr(); __builtin_memcpy((void *)(uintptr_t)(" +
+                    Args[0] + "), &" + Temporary + ", 4); }\n",
+                true};
+      }
+    }
+    throw std::runtime_error("unsupported MXCSR inline assembly contract");
+  }
 
   // PUSHF/POPF of the whole EFLAGS image, as MedLLVM emits them.
   if (llvm::StringRef(AsmStr).starts_with("pushf") && Args.empty()) {

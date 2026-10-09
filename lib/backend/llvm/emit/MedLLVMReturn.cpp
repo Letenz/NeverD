@@ -16,6 +16,7 @@
 
 #define DEBUG_TYPE "neverd-med-llvm-return"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedReturnValue.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -220,7 +221,11 @@ void MedLLVMEmitter::emitReturnOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   }
 
   llvm::Value *RetVal = nullptr;
-  if (CurMedFunc) {
+  if (RetTy->isIntegerTy() && !(CurMedFunc && CurMedFunc->FPReturnViaX87) &&
+      hasPropagatedIntegerReturnValue(Op, TargetArch,
+                                      (RetTy->getIntegerBitWidth() + 7) / 8))
+    RetVal = GetInput(0);
+  if (CurMedFunc && !RetVal) {
     const auto &TRI = getTargetRegInfo(TargetArch);
     // A vector return type (x86-64 models a scalar FP return as the 128-bit
     // XMM0 vector) is also carried in the FP return register, not RAX.
