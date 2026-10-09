@@ -13672,7 +13672,7 @@
           "runner": "gtest",
           "target": "NeverDUnpackExecutionTests",
           "source": "unittests/emulation/UnpackExecutionTests.cpp",
-          "filter": "UnpackBackends.ProduceIdenticalImages",
+          "filter": "*/UnpackBackends.ProduceIdenticalImages/*",
           "platforms": [
             "darwin",
             "linux",

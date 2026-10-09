@@ -42,6 +42,7 @@ enum class Injection {
 Injection Inject;
 std::atomic<bool> Stop;
 unsigned GuestEntries;
+unsigned MaintenanceEntries;
 int CaptureRegister;
 ExecutionBackend *PublicCPU;
 } // namespace
@@ -53,6 +54,8 @@ extern "C" uc_err __real_uc_emu_start(uc_engine *, uint64_t, uint64_t, uint64_t,
 extern "C" uc_err __wrap_uc_emu_start(uc_engine *Engine, uint64_t Begin,
                                       uint64_t End, uint64_t Timeout,
                                       size_t Count) {
+  if (Begin == aarch64::EntryGPA)
+    ++MaintenanceEntries;
   if (Begin == Code) {
     ++GuestEntries;
     if (Inject == Injection::BeforeGuest)
@@ -142,6 +145,7 @@ protected:
       X64State.reg(X64Register::FLAGS) = x64::InitialFlags;
     }
     GuestEntries = 0;
+    MaintenanceEntries = 0;
     CaptureRegister = arm() ? int(UC_ARM64_REG_Q31) : int(UC_X86_REG_FPTAG);
   }
   void TearDown() override {
@@ -349,5 +353,100 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Bool(),
         testing::Values(Injection::DuringCapture, Injection::ExpiredCapture,
                         Injection::FailedCapture)));
+
+class UnicornUserTranslation : public UnicornMachineControl {};
+
+TEST_P(UnicornUserTranslation, StableMappingsObserveChangedCodeAndData) {
+  ASSERT_EQ(llvm::toString(step({})), "");
+  ASSERT_EQ(MaintenanceEntries, 1u);
+  EXPECT_EQ(data(), StoredData);
+  // Host writes do not change the mapping generation. Reusing EL0 must not
+  // reuse translated guest bytes or stale data from the preceding store.
+  const auto Generation = Memory->mappingGeneration();
+  llvm::cantFail(Memory->write(Code, AArch64Load));
+  uint8_t Bytes[sizeof(InitialData)];
+  llvm::support::endian::write64le(Bytes, InitialData);
+  llvm::cantFail(Memory->write(Data, Bytes));
+  ARMState.reg(AArch64Register::PC) = Code;
+  ASSERT_EQ(llvm::toString(step({})), "");
+  EXPECT_EQ(Memory->mappingGeneration(), Generation);
+  EXPECT_EQ(MaintenanceEntries, 1u);
+  EXPECT_EQ(GuestEntries, 2u);
+  EXPECT_EQ(ARMState.reg(AArch64Register::X0), InitialData);
+  EXPECT_EQ(data(), InitialData);
+}
+
+TEST_P(UnicornUserTranslation, AliasesAndPermissionsRetireUserTranslations) {
+  ASSERT_EQ(llvm::toString(step({})), "");
+  auto Original = llvm::cantFail(
+      Memory->addressSpace()->pinBacking(Data, sizeof(InitialData)));
+  uint8_t Bytes[sizeof(InitialData)];
+  llvm::support::endian::write64le(Bytes, InitialData);
+  llvm::cantFail(Memory->write(Data, Bytes));
+  llvm::cantFail(Memory->addressSpace()->unmap(Data, memory::PageSize));
+  llvm::cantFail(Memory->aliases(
+      {}, {{Data, Stack, memory::PageSize, Read | Write | UserAccessible}}));
+  ARMState.reg(AArch64Register::PC) = Code;
+  ASSERT_EQ(llvm::toString(step({})), "");
+  EXPECT_EQ(MaintenanceEntries, 2u);
+  EXPECT_EQ(data(), StoredData);
+  llvm::cantFail(Original.read(0, Bytes));
+  EXPECT_EQ(llvm::support::endian::read64le(Bytes), InitialData);
+  llvm::cantFail(
+      Memory->protect(Data, memory::PageSize, Read | UserAccessible));
+  llvm::cantFail(Memory->write(Code, AArch64Load));
+  ARMState.reg(AArch64Register::PC) = Code;
+  ARMState.reg(AArch64Register::X0) = 0;
+  ASSERT_EQ(llvm::toString(step({})), "");
+  EXPECT_EQ(MaintenanceEntries, 3u);
+  EXPECT_EQ(ARMState.reg(AArch64Register::X0), StoredData);
+  EXPECT_EQ(data(), StoredData);
+}
+
+TEST_P(UnicornUserTranslation, AnotherSpaceWithTheSameGenerationReentersEL0) {
+  ASSERT_EQ(llvm::toString(step({})), "");
+  const auto First = Memory->addressSpace();
+  auto Other = llvm::cantFail(
+      AddressSpace::create(First->physicalMemory(), MemoryLimit));
+  llvm::cantFail(Other->map(Code, memory::PageSize,
+                            Read | Write | Execute | UserAccessible));
+  llvm::cantFail(
+      Other->map(Stack, memory::PageSize, Read | Write | UserAccessible));
+  llvm::cantFail(
+      Other->map(Data, memory::PageSize, Read | Write | UserAccessible));
+  llvm::cantFail(Other->write(Code, AArch64Store));
+  ASSERT_EQ(Other->mappingGeneration(), First->mappingGeneration());
+  llvm::cantFail(Memory->bind(Other, aarch64::canonicalRange, false));
+  ARMState.reg(AArch64Register::PC) = Code;
+  ARMState.reg(AArch64Register::X0) = InitialData;
+  ASSERT_EQ(llvm::toString(step({})), "");
+  EXPECT_EQ(MaintenanceEntries, 2u);
+  EXPECT_EQ(data(), InitialData);
+  uint8_t Bytes[sizeof(StoredData)];
+  llvm::cantFail(First->read(Data, Bytes));
+  EXPECT_EQ(llvm::support::endian::read64le(Bytes), StoredData);
+}
+
+TEST_P(UnicornUserTranslation, CancelledModeCaptureRetainsStateAndRearmsEntry) {
+  ASSERT_EQ(llvm::toString(step({})), "");
+  ARMState.reg(AArch64Register::PC) = Code;
+  const auto Before = ARMState;
+  CaptureRegister = UC_ARM64_REG_PSTATE;
+  Inject = Injection::DuringCapture;
+  EXPECT_EQ(llvm::toString(step({{}, &Stop})), diagnostic::UnicornRun);
+  ASSERT_EQ(Inject, Injection::None);
+  EXPECT_EQ(MaintenanceEntries, 1u);
+  EXPECT_EQ(ARMState.Registers, Before.Registers);
+  EXPECT_EQ(ARMState.Vectors, Before.Vectors);
+  Stop = false;
+  ASSERT_EQ(llvm::toString(step({})), "");
+  EXPECT_EQ(MaintenanceEntries, 2u);
+  EXPECT_EQ(GuestEntries, 3u);
+  EXPECT_EQ(data(), StoredData);
+}
+
+INSTANTIATE_TEST_SUITE_P(UserARM64, UnicornUserTranslation,
+                         testing::Values(Case{GuestArchitecture::AArch64, true,
+                                              Injection::None}));
 } // namespace
 } // namespace neverd::emulation
