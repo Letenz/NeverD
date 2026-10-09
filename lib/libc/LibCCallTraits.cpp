@@ -18,7 +18,9 @@
 #include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <string_view>
+#include <unordered_map>
 
 namespace neverd::libc {
 namespace {
@@ -253,6 +255,22 @@ std::optional<std::string_view> functionPointerParameter(std::string_view Name,
     if (Param.Index == Index && Param.Name == Bare)
       return Param.Type;
   return std::nullopt;
+}
+
+bool isObjectPointerParameter(std::string_view Name, unsigned Index) {
+  // Each function's object pointer parameters, as a mask of positions.
+  static const std::unordered_map<std::string_view, uint64_t> Masks = [] {
+    std::unordered_map<std::string_view, uint64_t> Map;
+#define LIBC_OBJECT_POINTER_PARAM(Name, Index)                                 \
+  Map[Name] |= uint64_t(1) << (Index);
+#include "neverd/libc/LibCObjectPointerParams.inc"
+#undef LIBC_OBJECT_POINTER_PARAM
+    return Map;
+  }();
+  if (Index >= 64)
+    return false;
+  const auto It = Masks.find(stripLeadingUnderscores(Name));
+  return It != Masks.end() && (It->second >> Index & 1);
 }
 
 std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,

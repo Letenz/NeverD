@@ -404,11 +404,22 @@ public:
   /// integer bits carry the value.
   std::optional<std::string> floatArgumentText(const HighExpr &Arg,
                                                const TypeRef &Expected);
-  /// \p E as the argument of a parameter of type \p Expected.  For a callee
-  /// this file defines, whose prototype it prints (\p DefinedCallee), a
-  /// variable declared as an integer converts to a pointer parameter.
-  std::string exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected,
-                                bool DefinedCallee = false);
+  /// \p E as the argument of a parameter of type \p Expected, which a
+  /// prototype declares: an integer converts to a pointer parameter, and a
+  /// string or an address to an integer one.
+  std::string exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected);
+  /// The text \p E passes to a parameter of type \p Expected, before a
+  /// pointer converts to an integer parameter.
+  std::string typedArgumentText(const HighExpr &E, const TypeRef &Expected);
+  /// Whether \p E, printed as \p Text, has an integer type in C that a
+  /// pointer parameter does not take as it is (not a null pointer constant).
+  bool printsAsInteger(const HighExpr &E, llvm::StringRef Text) const;
+  /// Whether \p Text prints a pointer: a string, an address, or a name the
+  /// function declares as a pointer.
+  bool printsAsPointer(llvm::StringRef Text) const;
+  /// The type this function declares for the identifier \p Text: a local,
+  /// a parameter or a named frame slot; null for anything else.
+  TypeRef declaredTypeNamed(llvm::StringRef Text) const;
   bool looksLikeHiddenSretOperand(const HighExpr *Op) const;
   bool debugExternUsesHiddenSret(const FunctionSym &FS,
                                  llvm::StringRef ExternName) const;

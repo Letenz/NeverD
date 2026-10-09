@@ -1086,7 +1086,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (const TypeRef Expected = Defined
                                        ? emittedParamType(*Defined, I)
                                        : expectedDebugCallArgType(*Callee, I)) {
-        S += exprStrAsTypedArg(*Op, Expected, Defined != nullptr);
+        S += exprStrAsTypedArg(*Op, Expected);
         continue;
       }
     }
@@ -1229,12 +1229,22 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           Arg = "(" + std::string(*Type) + ")" +
                 (WidensToPointer ? "(uintptr_t)" : "") + castOperand(Arg);
       }
+    // Its object pointer parameter takes a machine integer converted to a
+    // pointer, which C does not do itself; any object pointer converts on.
+    if (!HeaderCallee.empty() && !PointerArgument &&
+        libc::isObjectPointerParameter(HeaderCallee,
+                                       static_cast<unsigned>(I)) &&
+        printsAsInteger(Imm ? *Imm : *Op, Arg))
+      Arg = "(void *)(uintptr_t)" + castOperand(Arg);
     // A callee printed in this file has a prototype: convert between pointer
     // and integer arguments the way the machine passed them, in a register.
     if (Defined && I < Defined->Params.size() && DefinedParam && Op->Type) {
       const TypeRef &Param = DefinedParam;
       const bool ParamPtr = Param->Kind == NdTypeKind::Ptr;
-      const bool ArgPtr = Op->Type->Kind == NdTypeKind::Ptr;
+      // A string or another pointer the machine passes as an integer still
+      // converts to an integer parameter.
+      const bool ArgPtr = Op->Type->Kind == NdTypeKind::Ptr ||
+                          (!ParamPtr && printsAsPointer(Arg));
       if (ParamPtr != ArgPtr && (ParamPtr ? Op->Type->Kind == NdTypeKind::Int
                                           : Param->Kind == NdTypeKind::Int))
         Arg = "(" + typeToC(Param) + ")(uintptr_t)(" + Arg + ")";
@@ -2165,8 +2175,17 @@ HighCWriter::floatArgumentText(const HighExpr &Arg, const TypeRef &Expected) {
 }
 
 std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
-                                           const TypeRef &Expected,
-                                           bool DefinedCallee) {
+                                           const TypeRef &Expected) {
+  std::string Text = typedArgumentText(E, Expected);
+  // A pointer converts to an integer parameter, which C does not do itself.
+  if (Expected && Expected->Kind == NdTypeKind::Int && !Expected->IsEnum &&
+      printsAsPointer(Text))
+    return "(" + typeToC(Expected) + ")(uintptr_t)" + castOperand(Text);
+  return Text;
+}
+
+std::string HighCWriter::typedArgumentText(const HighExpr &E,
+                                           const TypeRef &Expected) {
   if (const auto Float = floatArgumentText(E, Expected))
     return *Float;
   // C converts an integer argument by the signedness of its own type, so an
@@ -2233,20 +2252,27 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
     if (const auto Disp = certifiedFrameStorageDisplacement(*Inner))
       return "(" + typeToC(Expected) + ")(uintptr_t)(" +
              frameStorageAddress(*Disp) + ")";
+    // An integer, such as a variable C declares as one or the integer
+    // expression it forwards, converts to the pointer the parameter takes;
+    // a pointer passes as it is.
+    auto AsPointer = [&](const HighExpr &Printed, std::string Text) {
+      if (!printsAsInteger(Printed, Text))
+        return Text;
+      return "(" + typeToC(Expected) + ")(uintptr_t)" + castOperand(Text);
+    };
     if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
       const std::string Name = copyForwardName(varName(Inner->Var));
-      // A variable C declares as an integer converts to the pointer the
-      // parameter takes; a pointer variable passes as it is.
-      if (const TypeRef Declared = declaredTypeOf(*Inner, Name);
-          DefinedCallee && Declared && Declared->Kind == NdTypeKind::Int &&
-          printedForwardedVar(Name, 16) == Name)
-        return "(" + typeToC(Expected) + ")(uintptr_t)" + Name;
-      return printedForwardedVar(Name, 16);
+      const HighExpr *From = nullptr;
+      std::string Text = printedForwardedVar(Name, 16, &From);
+      if (Text == Name)
+        return AsPointer(*Inner, std::move(Text));
+      return From ? AsPointer(*From, std::move(Text)) : Text;
     }
     if (Inner->Kind == ExprKind::Addr)
       return exprStr(*Inner);
     if (Inner != &E)
-      return exprStr(*Inner);
+      return AsPointer(*Inner, exprStr(*Inner));
+    return AsPointer(E, exprStr(E));
   }
   if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
     const std::string Name = copyForwardName(varName(Inner->Var));
@@ -2279,6 +2305,70 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
   if (Expected && Expected->Kind == NdTypeKind::Int && Inner != &E)
     return exprStr(*Inner);
   return exprStr(E);
+}
+
+bool HighCWriter::printsAsInteger(const HighExpr &E,
+                                  llvm::StringRef Text) const {
+  auto Integer = [](const TypeRef &Type) {
+    return Type && (Type->Kind == NdTypeKind::Int ||
+                    (Type->Kind == NdTypeKind::Struct && Type->IsEnum));
+  };
+  // A string literal and an address are pointers; a constant 0 is a null
+  // pointer constant.
+  if (Text.starts_with("\"") || Text.starts_with("L\"") ||
+      Text.starts_with("u\"") || Text.starts_with("U\"") ||
+      Text.starts_with("u8\"") || Text.starts_with("&"))
+    return false;
+  if (E.Kind == ExprKind::Const)
+    return E.ConstVal != 0;
+  // A name has the type C declares for it, and a member the type its record
+  // gives it, whatever the machine value they print for.
+  if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+    const std::string Name = copyForwardName(varName(E.Var));
+    if (Text == Name)
+      if (const TypeRef Declared = declaredTypeOf(E, Name))
+        return Integer(Declared);
+  }
+  if (const TypeRef Declared = declaredTypeNamed(Text))
+    return Integer(Declared);
+  if (E.Kind == ExprKind::Load && !E.Operands.empty() && E.Operands[0] &&
+      !Text.starts_with("*"))
+    if (const TypeRef Member =
+            typedMemberType(*E.Operands[0], E.Type ? E.Type->Size : 0))
+      return Integer(Member);
+  return Integer(E.Type);
+}
+
+bool HighCWriter::printsAsPointer(llvm::StringRef Text) const {
+  if (Text.starts_with("\"") || Text.starts_with("L\"") ||
+      Text.starts_with("u\"") || Text.starts_with("U\"") ||
+      Text.starts_with("u8\"") || Text.starts_with("&"))
+    return true;
+  const TypeRef Declared = declaredTypeNamed(Text);
+  return Declared && Declared->Kind == NdTypeKind::Ptr;
+}
+
+TypeRef HighCWriter::declaredTypeNamed(llvm::StringRef Text) const {
+  if (Text.empty() || !(llvm::isAlpha(Text[0]) || Text[0] == '_') ||
+      !llvm::all_of(Text,
+                    [](char Ch) { return llvm::isAlnum(Ch) || Ch == '_'; }))
+    return nullptr;
+  if (auto It = DeclaredCTypes.find(Text.str()); It != DeclaredCTypes.end())
+    return It->second;
+  if (CurrentFunc)
+    for (size_t PI = 0; PI < CurrentFunc->Params.size(); ++PI) {
+      MedVar Param;
+      Param.Kind = MedVar::Param;
+      Param.Id = static_cast<int>(PI);
+      if (varName(Param) == Text)
+        return emittedParamType(*CurrentFunc, PI);
+    }
+  for (const auto &[Disp, Slot] : FrameSlots) {
+    (void)Disp;
+    if (Slot.Name == Text && Slot.Type)
+      return Slot.Type;
+  }
+  return nullptr;
 }
 
 std::string HighCWriter::debugSignatureKey(const FunctionSym &FS) {
