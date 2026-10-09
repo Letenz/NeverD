@@ -81,6 +81,10 @@ struct InstallOperand {
 ///     C7 45 <disp8>  <imm32>     mov   dword ptr [ebp+disp8], imm32
 ///     C7 44 24 <disp8> <imm32>   mov   dword ptr [esp+disp8], imm32
 ///     C7 85 <disp32> <imm32>     mov   dword ptr [ebp+disp32], imm32
+///
+/// The same unindexed disp8/disp32 memory encodings may use another base GPR.
+/// This only observes constants; decoded instruction and frame proofs remain
+/// responsible for authenticating their storage and registration lifetime.
 std::vector<InstallOperand> collectInstallOperands(const Segment &Seg,
                                                    size_t Offset) {
   std::vector<InstallOperand> Operands;
@@ -93,14 +97,17 @@ std::vector<InstallOperand> collectInstallOperands(const Segment &Seg,
       ImmOffset = I + 1;
     } else if (Data[I] == 0xC7 && I + 1 < Offset) {
       const uint8_t Modrm = Data[I + 1];
-      if (Modrm == 0x45)
-        ImmOffset = I + 3;
-      else if (Modrm == 0x44 && I + 2 < Offset && Data[I + 2] == 0x24)
-        ImmOffset = I + 4;
-      else if (Modrm == 0x85)
-        ImmOffset = I + 6;
-      else
+      const unsigned Mod = Modrm >> 6;
+      const unsigned Base = Modrm & 7;
+      if ((Modrm & 0x38) || (Mod != 1 && Mod != 2))
         continue;
+      size_t AddressBytes = Mod == 1 ? 3 : 6;
+      if (Base == 4) {
+        if (I + 2 >= Offset || (Data[I + 2] & 0xf8) != 0x20)
+          continue;
+        ++AddressBytes;
+      }
+      ImmOffset = I + AddressBytes;
     } else {
       continue;
     }
@@ -262,12 +269,6 @@ std::vector<InstallSite> findInstallSites(const BinaryImage &Img,
       for (const InstallOperand &Candidate : Operands) {
         if (Candidate.Value == 0 || !isExecutableAddress(Img, Candidate.Value))
           continue;
-        // A handler inside the installing function is a Delphi `TExcDesc`,
-        // which the Delphi decoder has already claimed.  Every Windows
-        // dialect installs a routine the whole image shares, so none of them
-        // can produce a handler here.
-        if (Range->contains(Candidate.Value))
-          continue;
         if (SafeSEH.isPresent() && !SafeSEH.contains(Candidate.Value))
           continue;
         HandlerIdentity Probe = identifyHandler(Img, Candidate.Value);
@@ -280,6 +281,11 @@ std::vector<InstallSite> findInstallSites(const BinaryImage &Img,
                 ExceptionPersonality::ExceptHandler4);
           }
         }
+        // Compiler-created C++ handlers may be private to this tentative
+        // range. Their exact FuncInfo thunk proves the language identity;
+        // an in-range generic/Delphi target cannot inherit that exception.
+        if (Range->contains(Candidate.Value) && !Probe.CxxFuncInfoVA)
+          continue;
         const bool Classified =
             Probe.Personality != ExceptionPersonality::Unknown &&
             Probe.Personality != ExceptionPersonality::None;

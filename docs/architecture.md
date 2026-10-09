@@ -162,8 +162,12 @@ requirement for reconstruction.
 The compiler table consumer cross-checks this decoding with its exact indexed
 extents. Prepared C++ graphs and entry encodings then require fresh equality
 when the final PE is mapped and decoded, even if a changed section hash is
-supplied. This is language-graph reanalysis; discovery and state replay of a
-generated realigned ESI frame need their own coordinate proof.
+supplied. Ordinary loading also retains bounded direct PE32 entry-jump targets
+as tentative function boundaries, observes unindexed immediate stores through
+other base registers and authenticates private FuncInfo handler thunks before
+excluding in-range handlers. This preserves the installed language graph on
+reload. These observations do not make a frame callable; state replay of a
+generated realigned ESI frame still needs its own coordinate proof.
 The original loader owns load-config's declared structure extent even when
 MSVC's directory retains its 64-byte compatibility size. Installation requires
 a complete unique raw-backed extent. Final guard validation uses this same

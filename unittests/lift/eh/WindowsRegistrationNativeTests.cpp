@@ -1644,6 +1644,20 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
     auto ProductContract = validateCOFFRegistrationPatch(ProductBytes, *Update);
     ASSERT_FALSE(bool(ProductContract))
         << llvm::toString(std::move(ProductContract));
+    auto Reloaded = COFFLoader().load(Output);
+    ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+    const auto GeneratedGraph = llvm::find_if(
+        Reloaded->ExceptionMetadata.Functions, [&](const auto &EH) {
+          return EH.Cxx && EH.Cxx->NativeFuncInfoVA ==
+                               Update->GeneratedCxxGraphs[0].NativeFuncInfoVA;
+        });
+    ASSERT_NE(GeneratedGraph, Reloaded->ExceptionMetadata.Functions.end());
+    EXPECT_EQ(*GeneratedGraph->Cxx, Update->GeneratedCxxGraphs[0]);
+    EXPECT_EQ(GeneratedGraph->ParseStatus, ExceptionParseStatus::Complete);
+    // Recovered wire data does not establish the generated realigned frame.
+    EXPECT_FALSE(classifyWindowsEHNativeSource(*GeneratedGraph, Arch::X86,
+                                               BinaryFormat::COFF)
+                     .canPatchOutput());
     if (!Temporary.empty())
       EXPECT_FALSE(bool(llvm::sys::fs::remove(Temporary)));
   }

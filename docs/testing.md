@@ -1873,7 +1873,10 @@ shared COFF decoder and closes all four indexed table extents. Final validation
 reparses that graph from actual PE sections, rejecting missing graph/encoding
 receipts and changed normalized try/unwind edges. A changed FuncInfo with a
 freshly recomputed section hash still rejects. This verifies the installed
-language graph; it does not establish generated ESI-frame CFG/state recovery.
+language graph. The genuine input test also reloads each public output through
+the ordinary COFF loader and requires the same complete generated FuncInfo
+graph. The recovered realigned ESI frame must retain its unsupported native
+classification until its physical coordinates and states are proved.
 Real MSVC directory-size64/declared-size192 load-configs must remain supported
 with complete section bounds.
 Final generic PE validation also checks valid and invalid CF/EH continuation

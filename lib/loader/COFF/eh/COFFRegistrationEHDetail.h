@@ -74,6 +74,29 @@ public:
         continue;
       Starts.push_back(Sym.Addr);
     }
+    // An exact PE32 direct entry jump can name a regenerated frame whose
+    // prologue lives in another section. Retain its target as a boundary;
+    // only the later registration/layout proofs can make it callable.
+    const auto OriginalStarts = Starts;
+    size_t Work = 0;
+    for (va_t Start : OriginalStarts) {
+      std::vector<va_t> Seen{Start};
+      for (unsigned Depth = 0; Depth != 8; ++Depth) {
+        if (++Work > limits::kMaxRegistrationEHStateWork ||
+            Start > uint64_t(UINT32_MAX) - 4)
+          break;
+        const auto *Code = Img.readVA(Start, 5);
+        if (!Code || Code[0] != 0xe9)
+          break;
+        const va_t Target = uint32_t(Start + 5 + readLE<uint32_t>(Code + 1));
+        if (!isExecutableAddress(Img, Target) ||
+            std::find(Seen.begin(), Seen.end(), Target) != Seen.end())
+          break;
+        Starts.push_back(Target);
+        Seen.push_back(Target);
+        Start = Target;
+      }
+    }
     std::sort(Starts.begin(), Starts.end());
     Starts.erase(std::unique(Starts.begin(), Starts.end()), Starts.end());
   }
