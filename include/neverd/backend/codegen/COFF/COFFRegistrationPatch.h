@@ -53,6 +53,9 @@ struct COFFRegistrationPatchUpdate {
   uint16_t DllCharacteristics = 0;
   uint16_t FileCharacteristics = 0;
   std::vector<uint32_t> SafeSEHHandlers;
+  /// Sorted original/generated RVAs whose exact compiler owners were checked
+  /// during preparation. Final validation closes the committed E9 entries.
+  std::vector<std::pair<uint32_t, uint32_t>> PatchedEntryRVAs;
 };
 
 llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,

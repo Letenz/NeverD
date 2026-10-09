@@ -1413,6 +1413,54 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
   ASSERT_FALSE(bool(Installed)) << llvm::toString(std::move(Installed));
   auto Checked = validateCOFFRegistrationPatch(Binary, *Update);
   ASSERT_FALSE(bool(Checked)) << llvm::toString(std::move(Checked));
+  ASSERT_EQ(Update->PatchedEntryRVAs.size(), 1u);
+  EXPECT_EQ(Update->PatchedEntryRVAs[0],
+            (std::pair<uint32_t, uint32_t>{
+                uint32_t(Source->CodeRange.Begin - Loaded->Base),
+                uint32_t(Row.OwnerVA - Loaded->Base)}));
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    auto Changed = *Update;
+    if (Mutation == 0)
+      Changed.PatchedEntryRVAs.clear();
+    else if (Mutation == 1)
+      Changed.PatchedEntryRVAs.push_back(Changed.PatchedEntryRVAs[0]);
+    else if (Mutation == 2)
+      ++Changed.PatchedEntryRVAs[0].first;
+    else
+      ++Changed.PatchedEntryRVAs[0].second;
+    auto Failure = validateCOFFRegistrationPatch(Binary, Changed);
+    ASSERT_TRUE(bool(Failure));
+    llvm::consumeError(std::move(Failure));
+  }
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Binary;
+    if (Mutation == 0)
+      Changed[*Entry] = 0x90;
+    else if (Mutation == 1)
+      Changed[*Entry + 1] ^= 1;
+    else if (Mutation == 2) {
+      auto Header = locatePEHeaders(Changed.data(), Changed.size());
+      Header.FileHeader->Machine = llvm::COFF::IMAGE_FILE_MACHINE_ARMNT;
+    } else {
+      auto Header = locatePEHeaders(Changed.data(), Changed.size());
+      forEachPESection(Header, [&](const PESectionFields &Section, uint16_t I) {
+        if (Source->CodeRange.Begin - Loaded->Base >= Section.VirtualAddress &&
+            Source->CodeRange.Begin - Loaded->Base - Section.VirtualAddress <
+                Section.VirtualSize) {
+          auto *RawSection = reinterpret_cast<llvm::object::coff_section *>(
+                                 Header.SectionTable) +
+                             I;
+          RawSection->Characteristics =
+              uint32_t(RawSection->Characteristics) &
+              ~uint32_t(llvm::COFF::IMAGE_SCN_MEM_EXECUTE);
+        }
+      });
+    }
+    auto Failure = validateCOFFRegistrationPatch(Changed, *Update);
+    ASSERT_TRUE(bool(Failure));
+    llvm::consumeError(std::move(Failure));
+  }
   auto FinalImage = validatePatchedCOFFImage(Binary, Arch::X86, false);
   ASSERT_FALSE(bool(FinalImage)) << llvm::toString(std::move(FinalImage));
   {

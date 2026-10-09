@@ -150,6 +150,11 @@ C++ transaction composes fresh full IR, complete table and handler proofs,
 preserves the original SafeSEH handlers and adds the compiler-owned handler
 only when the input already enables SafeSEH. Every dispatch pointer belongs to
 the emitted HIGHLOW closure; failures leave the generated image unchanged.
+Preparation also binds every actual entry mapping to its unique compiled source
+definition. The committed receipt retains sorted original/generated RVAs; final
+validation requires PE32 x86, an executable original entry and the exact E9
+target, in addition to the generated section hash. A complete language table
+cannot authorize an omitted or redirected entry trampoline.
 The original loader owns load-config's declared structure extent even when
 MSVC's directory retains its 64-byte compatibility size. Installation requires
 a complete unique raw-backed extent. Final guard validation uses this same

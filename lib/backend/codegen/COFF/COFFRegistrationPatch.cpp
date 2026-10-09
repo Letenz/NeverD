@@ -1652,7 +1652,7 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
   std::map<va_t, va_t> Mappings;
   std::map<va_t, const ExceptionFunction *> Sources;
   for (const auto &[Original, Generated] : PatchedEntryMappings) {
-    if (Original < Image.Base || Original > UINT32_MAX ||
+    if (Original < Image.Base || Original > uint64_t(UINT32_MAX) - 4 ||
         !Image.isCodeAddress(Original) || Generated < NewSectionVA ||
         Generated > UINT32_MAX)
       return reject("patched entry mapping lies outside its executable image");
@@ -1860,6 +1860,33 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
       }
       Cursor += Size;
     }
+  }
+  std::map<va_t, const llvm::Function *> EntryOwners;
+  if (Compiled.SourceFunctionOriginalVAs.size() >
+      limits::kMaxRegistrationEHStateWork)
+    return reject("patched entry owner set exceeds its work budget");
+  for (const auto &[Name, Original] : Compiled.SourceFunctionOriginalVAs) {
+    if (!Mappings.count(Original))
+      continue;
+    const auto *Function = RewriteModule.getFunction(Name);
+    if (!Function || Function->isDeclaration() ||
+        !EntryOwners.emplace(Original, Function).second)
+      return reject("patched entry has no unique compiled source definition");
+  }
+  for (const auto &[Original, Generated] : Mappings) {
+    const auto Owner = EntryOwners.find(Original);
+    if (Owner == EntryOwners.end())
+      return reject("patched entry has no exact compiler source owner");
+    auto Address = ownerVA(*Owner->second, Compiled);
+    if (!Address)
+      return Address.takeError();
+    if (*Address != Generated)
+      return reject("patched entry target differs from its compiler owner");
+    auto Offset = rawOffset(PE, OriginalBinary, Original - Image.Base, 5);
+    if (!Offset)
+      return Offset.takeError();
+    Update.PatchedEntryRVAs.emplace_back(Original - Image.Base,
+                                         Generated - Image.Base);
   }
   std::set<va_t> AbsoluteFields;
   for (const auto &Section : Compiled.Sections) {
@@ -2108,7 +2135,9 @@ validateCOFFRegistrationPatch(llvm::ArrayRef<uint8_t> Binary,
 #else
   auto PE =
       locatePEHeaders(const_cast<uint8_t *>(Binary.data()), Binary.size());
-  if (!PE.valid() || PE.Is64 || getPEImageBase(PE) != Update.ImageBase ||
+  if (!PE.valid() || PE.Is64 ||
+      PE.FileHeader->Machine != llvm::COFF::IMAGE_FILE_MACHINE_I386 ||
+      getPEImageBase(PE) != Update.ImageBase ||
       getPE32OptionalHeader(PE)->DLLCharacteristics !=
           Update.DllCharacteristics ||
       PE.FileHeader->Characteristics != Update.FileCharacteristics)
@@ -2133,6 +2162,36 @@ validateCOFFRegistrationPatch(llvm::ArrayRef<uint8_t> Binary,
   if (!Executable)
     return reject(
         "installed registration section has incompatible memory permissions");
+  if (Update.PatchedEntryRVAs.empty() ||
+      Update.PatchedEntryRVAs.size() > limits::kMaxRegistrationEHStateWork)
+    return reject("installed registration has no bounded entry receipt");
+  uint64_t PreviousEnd = 0;
+  for (const auto &[Original, Generated] : Update.PatchedEntryRVAs) {
+    if (Original < PreviousEnd ||
+        uint64_t(Original) + Update.ImageBase + 5 > uint64_t(UINT32_MAX) + 1 ||
+        Generated < Update.SectionRVA ||
+        uint64_t(Generated) - Update.SectionRVA >= Update.SectionSize)
+      return reject("installed registration entry receipt has invalid extents");
+    PreviousEnd = uint64_t(Original) + 5;
+    auto Entry = rawOffset(PE, Binary, Original, 5);
+    if (!Entry)
+      return Entry.takeError();
+    size_t Owners = 0;
+    forEachPESection(PE, [&](const PESectionFields &Section, uint16_t) {
+      if (Original >= Section.VirtualAddress &&
+          rangeInBounds(uint64_t(Original) - Section.VirtualAddress, 5,
+                        getPESectionContentSize(Section.VirtualSize,
+                                                Section.SizeOfRawData)) &&
+          (Section.Characteristics & llvm::COFF::IMAGE_SCN_MEM_EXECUTE) &&
+          (Section.Characteristics & llvm::COFF::IMAGE_SCN_MEM_READ))
+        ++Owners;
+    });
+    const auto *Bytes = Binary.data() + *Entry;
+    if (Owners != 1 || Bytes[0] != 0xe9 ||
+        uint32_t(Original + 5 + readLE<uint32_t>(Bytes + 1)) != Generated)
+      return reject("installed registration entry differs from its exact "
+                    "compiler trampoline");
+  }
   const auto *Reloc = getPEDataDirectory(PE, llvm::COFF::BASE_RELOCATION_TABLE);
   if (!Reloc || Reloc->RelativeVirtualAddress != Update.RelocationRVA ||
       Reloc->Size != Update.RelocationSize)
