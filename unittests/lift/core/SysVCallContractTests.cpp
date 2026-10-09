@@ -491,7 +491,7 @@ TEST(SysVCallContract, AFloatArgumentReachesAPrototypedImport) {
   // A declared double import must receive the sum and its result must feed
   // the second operation. Execute a known independent implementation so
   // explicit FP state temporaries cannot hide a stale ABI value.
-  compileAndRun(Source + R"(
+  compileAndRun("#define sin neverd_test_sine\n" + Source + R"(
 double sin(double value) { return value * value; }
 int main(void) {
   return twice_sin(1.5) == 18.0 && twice_sin(-0.25) == 0.5 ? 0 : 1;

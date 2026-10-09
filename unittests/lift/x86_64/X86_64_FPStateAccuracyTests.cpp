@@ -581,7 +581,30 @@ for (unsigned rounding = 0; rounding < 4; ++rounding)
           ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Out, Emission));
         }
         const auto C = file("return-driver.c");
-        write(C, Source + Driver);
+        std::string TypedDriver = Driver;
+        if (LLVM) {
+          const auto *Function = Result.LlvmModule->getFunction("isa_probe");
+          ASSERT_NE(Function, nullptr);
+          ASSERT_EQ(Function->arg_size(), 1U);
+          // PreserveLLVMFunctionTypes exposes the complete XMM carrier. Feed
+          // and observe its low scalar bytes through that actual C signature.
+          if (Function->getArg(0)->getType()->isVectorTy()) {
+            ASSERT_TRUE(Function->getReturnType()->isVectorTy());
+            const std::string Call = Scalar + " actual = isa_probe(input);";
+            const auto Position = TypedDriver.find(Call);
+            ASSERT_NE(Position, std::string::npos);
+            TypedDriver.replace(
+                Position, Call.size(),
+                "uint64_t __attribute__((vector_size(16))) incoming = {0,0};\n"
+                "__builtin_memcpy(&incoming, &input, sizeof(input));\n"
+                "uint64_t __attribute__((vector_size(16))) returned = "
+                "isa_probe(incoming);\n" +
+                    Scalar +
+                    " actual; __builtin_memcpy(&actual, &returned, "
+                    "sizeof(actual));");
+          }
+        }
+        write(C, Source + TypedDriver);
         for (const char *Optimization : {"-O0", "-O2"}) {
           const auto Executable = file("return.exe");
           Built = command(Compiler,
