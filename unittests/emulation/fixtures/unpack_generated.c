@@ -296,8 +296,10 @@ PROGRAM_CODE static U32 status(U32 Written) {
 }
 
 PROGRAM_ENTRY U32 program(void) {
-  if (Pack.Mode == HeapStateMode && *HeapState != InitializeResult)
-    ExitProcess(FailureStatus);
+  // Keep one exit call so ordinary import-repair cases reach every import
+  // site that the independent test packer transforms.
+  const U32 HeapResult =
+      Pack.Mode == HeapStateMode ? *HeapState : InitializeResult;
 #if defined(__x86_64__)
   if (Pack.Mode == ReboundOpaqueCallMode || Pack.Mode == LateOpaqueCallMode) {
     resolveLateImport();
@@ -328,7 +330,7 @@ PROGRAM_ENTRY U32 program(void) {
   // impure helper's persistent increment must still change the exit status.
   Written &= 0u - ((Pack.Mode != ImpureCallMode) | (AddressEffects == 1));
 #endif
-  ExitProcess(status(Written));
+  ExitProcess(HeapResult == InitializeResult ? status(Written) : FailureStatus);
   return FailureStatus;
 }
 
