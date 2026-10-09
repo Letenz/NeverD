@@ -33,6 +33,8 @@
 #include <filesystem>
 #include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 using namespace neverd;
 
@@ -174,6 +176,63 @@ TEST(ObjectExterns, UndefinedAndCommonSymbolsResolveOnEveryArchitecture) {
         EXPECT_TRUE(mentionsAddress(PutBody, Stdout->Addr)) << PutBody;
       else
         EXPECT_NE(PutBody.find("stdout"), std::string::npos) << PutBody;
+    }
+  }
+}
+
+TEST(ObjectExterns, COFFObjectsOnEveryMachine) {
+  // A COFF object names its externs the same way, and reaches a dllimport
+  // function through the `__imp_` pointer an import library supplies.  The
+  // imports carry the names an import directory gives them: 32-bit Windows'
+  // `__imp__ImportedApi@4` imports `ImportedApi`.
+  for (const char *Object :
+       {"test_coff_externs_x86_64.obj", "test_coff_externs_i686.obj",
+        "test_coff_externs_aarch64.obj"}) {
+    SCOPED_TRACE(Object);
+    const BinaryImage Img = loadFixture(Object);
+    ASSERT_FALSE(Img.Segments.empty());
+    std::set<std::string> Imports;
+    for (const Import &Imp : Img.Imports)
+      Imports.insert(Imp.Name);
+    for (const char *Called : {"perror", "exit", "fputs", "ImportedApi"})
+      EXPECT_TRUE(Imports.count(Called)) << Called;
+
+    std::vector<va_t> Entries;
+    for (const char *Name :
+         {"die", "put", "bump", "call_api", "read_tentative"}) {
+      const Symbol *Sym = Img.findSymbol(Name);
+      if (!Sym)
+        Sym = Img.findSymbol((std::string("_") + Name).c_str());
+      ASSERT_NE(Sym, nullptr) << Name;
+      Entries.push_back(Sym->Addr);
+    }
+    llvm::LLVMContext Ctx;
+    PipelineOptions Opts;
+    Opts.EmitDumpOutput = false;
+    Opts.OnlyFunctionEntries.insert(Entries.begin(), Entries.end());
+    const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Img.Arch;
+    Options.Format = Img.Format;
+    Options.Image = &Img;
+    ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+
+    const std::string DieBody = definitionBody(Source, "die");
+    ASSERT_FALSE(DieBody.empty()) << Source;
+    EXPECT_NE(DieBody.find("perror("), std::string::npos) << DieBody;
+    EXPECT_NE(DieBody.find("exit("), std::string::npos) << DieBody;
+    EXPECT_EQ(DieBody.find("put("), std::string::npos) << DieBody;
+    for (const auto &[Function, Expected] :
+         {std::pair<const char *, const char *>{"put", "fputs("},
+          {"call_api", "ImportedApi("},
+          {"bump", "counter"},
+          {"read_tentative", "tentative"}}) {
+      const std::string Body = definitionBody(Source, Function);
+      ASSERT_FALSE(Body.empty()) << Function << Source;
+      EXPECT_NE(Body.find(Expected), std::string::npos) << Function << Body;
     }
   }
 }

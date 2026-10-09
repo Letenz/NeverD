@@ -2270,6 +2270,23 @@ add_custom_command(
   COMMENT "Compiling Thumb-2 incomplete-domain fixture (ARMNT COFF)")
 list(APPEND TEST_OBJECTS ${thumb_jt_incomplete_domain_obj})
 
+# One source of undefined functions and data, an import library's function
+# pointer and a common symbol, compiled as an x64, x86 and ARM64 COFF object.
+set(coff_externs_src "${CMAKE_CURRENT_SOURCE_DIR}/format/test_coff_externs.c")
+foreach(coff_target "x86_64-pc-windows-msvc" "i686-pc-windows-msvc"
+                    "aarch64-pc-windows-msvc")
+  string(REGEX MATCH "^[a-z0-9_]+" coff_machine "${coff_target}")
+  set(coff_externs_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_coff_externs_${coff_machine}.obj")
+  add_custom_command(
+    OUTPUT ${coff_externs_obj}
+    COMMAND ${CLANG_EXEC} -target ${coff_target} -O2 -fcommon
+            -c ${coff_externs_src} -o ${coff_externs_obj}
+    DEPENDS ${coff_externs_src}
+    COMMENT "Compiling COFF extern fixture for ${coff_target}")
+  list(APPEND TEST_OBJECTS ${coff_externs_obj})
+endforeach()
+
 set(macho_i386_src
     "${CMAKE_CURRENT_SOURCE_DIR}/format/test_macho_i386.c")
 set(macho_i386_obj
