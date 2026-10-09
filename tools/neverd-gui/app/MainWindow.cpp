@@ -2140,6 +2140,8 @@ void MainWindow::showQuickStart() {
   recent->setRootIsDecorated(false);
   recent->setUniformRowHeights(true);
   recent->setAllColumnsShowFocus(true);
+  // A long folder keeps both its root and its nearest directory.
+  recent->setTextElideMode(Qt::ElideMiddle);
   QColor folder = Theme::instance().chrome(QStringLiteral("Text"));
   folder.setAlphaF(QuickStartFolderOpacity);
   for (const auto &file : QSettings().value(RecentFilesKey).toStringList()) {

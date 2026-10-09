@@ -70,6 +70,7 @@ GraphView::GraphView(Session &session, QWidget *parent)
     nodes_.clear();
     edges_.clear();
     function_.reset();
+    waiting_ = false;
     update();
     emit viewChanged();
   });
@@ -118,10 +119,16 @@ void GraphView::request(int nodeOffset, int edgeOffset, const QString &layout,
         if (response.value("status").toString() != QLatin1String("ok")) {
           const auto error = response.value("error").toObject();
           const auto code = error.value("code").toString();
+          // No layout follows these, so the view stops waiting for one.
           if (code == QLatin1String("session_changed") ||
               code == QLatin1String("worker_stopped") ||
-              response.value("status").toString() == QLatin1String("cancelled"))
+              response.value("status").toString() ==
+                  QLatin1String("cancelled")) {
+            waiting_ = false;
+            update();
+            emit viewChanged();
             return;
+          }
           nodes_.clear();
           edges_.clear();
           waiting_ = false;
