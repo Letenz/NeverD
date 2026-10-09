@@ -261,6 +261,65 @@ TEST(Win64CallContract, TheRuntimesOwnPrototypeFixesWhatItsSlotReads) {
   EXPECT_FALSE(Reads.count(slot(4)));
 }
 
+TEST(Win64CallContract, TheStartupsKernel32CallsReadWhatTheyDeclare) {
+  // MSVC's startup code calls these through their slots.  IsDebuggerPresent
+  // takes no argument, GetModuleHandleW one, and RtlVirtualUnwind four in
+  // registers and four on the stack.
+  const std::vector<const char *> Imports = {
+      "IsDebuggerPresent", "GetModuleHandleW", "RtlVirtualUnwind"};
+  constexpr va_t Caller = Text;
+  std::vector<uint8_t> Code(0x30, 0xCC);
+  std::vector<std::vector<uint8_t>> Calls;
+  for (size_t I = 0; I < Imports.size(); ++I)
+    Calls.push_back(throughSlot(Caller + 4 + 6 * I, slot(I)));
+  put(Code, Caller, framed(Calls));
+  const BinaryImage Img = makeImage(Code, {{Caller, "caller"}}, Imports);
+  llvm::LLVMContext Ctx;
+  const PipelineResult Result = run(Img, Ctx, {Caller});
+  const auto &Reads = Result.CallEntryReadGPRs;
+  if (Reads.count(slot(0)))
+    for (unsigned Bytes : Reads.at(slot(0)))
+      EXPECT_EQ(Bytes, 0u);
+  ASSERT_TRUE(Reads.count(slot(1)));
+  EXPECT_EQ(Reads.at(slot(1))[family(x86reg::RCX)], 8u);
+  EXPECT_EQ(Reads.at(slot(1))[family(x86reg::RDX)], 0u);
+  ASSERT_TRUE(Reads.count(slot(2)));
+  EXPECT_EQ(Reads.at(slot(2))[family(x86reg::R9)], 8u);
+  ASSERT_TRUE(Result.CallEntryStackArgs.count(slot(2)));
+  EXPECT_EQ(Result.CallEntryStackArgs.at(slot(2)), 8);
+  const std::string Source = body(liftEntries(Img, {Caller}), "caller");
+  EXPECT_NE(Source.find("IsDebuggerPresent();"), std::string::npos) << Source;
+}
+
+TEST(Win64CallContract, ACallNamesTheFunctionNotItsObjectsSection) {
+  // MinGW links each object's code with the section's own symbol where the
+  // object's first function starts: `.text` comes first in the symbol table,
+  // then _setargv.  A call from a function decompiled alone names _setargv,
+  // as the function decompiled alone is named.
+  constexpr va_t Caller = Text;
+  constexpr va_t Callee = Text + 0x20;
+  std::vector<uint8_t> Code(0x30, 0xCC);
+  std::vector<uint8_t> Call = {0xE8}; // call rel32
+  for (uint8_t B : rel32(Caller + 9, Callee))
+    Call.push_back(B);
+  put(Code, Caller, framed({Call}));
+  put(Code, Callee, {0x31, 0xC0, 0xC3}); // xor eax, eax; ret
+  BinaryImage Img = makeImage(Code, {{Caller, "caller"}}, {"calloc"});
+  Symbol Section;
+  Section.Name = ".text";
+  Section.Addr = Callee;
+  Img.Symbols.push_back(std::move(Section));
+  Symbol Function;
+  Function.Name = "_setargv";
+  Function.Addr = Callee;
+  Function.IsFunc = true;
+  Img.Symbols.push_back(std::move(Function));
+  ASSERT_EQ(Img.getFunctionNameAt(Callee), "_setargv");
+  const std::string Source = body(liftEntries(Img, {Caller}), "caller");
+  EXPECT_NE(Source.find("_setargv("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("text("), std::string::npos) << Source;
+}
+
 TEST(Win64CallContract, AFloatArgumentTakesItsSlotsVectorRegister) {
   // scale(x, n) = x * n reads x in xmm0, the first slot's vector register,
   // and n in edx, the second slot's integer one. twice(x) = x + x;

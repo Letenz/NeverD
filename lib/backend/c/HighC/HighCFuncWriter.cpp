@@ -414,7 +414,10 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
   const TypeRef DeclaredReturn = declaredFunctionReturnType(Func);
   InferredVoid = DeclaredReturn
                      ? DeclaredReturn->Kind == NdTypeKind::Void
-                     : analyzeVoidReturn(Analysis, Func, VarFn, ExprFn);
+                     : analyzeVoidReturn(Analysis, Func, VarFn, ExprFn,
+                                         [this](const HighExpr &Call) {
+                                           return knownVoidCall(Call);
+                                         });
 
   HiLoPairs.clear();
   auto RegisterHiLo = [this](const HighStmt &S, const HighExpr &CE) {

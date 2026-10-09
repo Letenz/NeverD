@@ -14,6 +14,7 @@
 #include "HighCWriter.h"
 
 #include "neverd/Common.h"
+#include "neverd/Limits.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -177,6 +178,26 @@ bool stmtAlwaysExit(const HighCAnalysisState &State, TryExitTest LeftOut,
   default:
     return isNoReturnCallStmt(Stmt);
   }
+}
+
+/// The call \p E returns through casts and integer views, which a function
+/// printed `void` makes as a statement.
+const HighExpr *returnedCall(const HighExpr &E) {
+  const HighExpr *Cur = &E;
+  for (unsigned Depth = 0; Cur && Depth <= limits::kMaxIntegerViewUnwrapDepth;
+       ++Depth) {
+    if (Cur->Kind == ExprKind::Call)
+      return Cur;
+    const bool View =
+        Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast ||
+        (Cur->Kind == ExprKind::UnaryOp &&
+         (Cur->Op == NdOp::INT_ZEXT || Cur->Op == NdOp::INT_SEXT)) ||
+        (Cur->Kind == ExprKind::BinOp && Cur->Op == NdOp::SUBBYTES);
+    if (!View || Cur->Operands.empty())
+      return nullptr;
+    Cur = Cur->Operands[0].get();
+  }
+  return nullptr;
 }
 
 bool stmtsAlwaysExit(const HighCAnalysisState &State, TryExitTest LeftOut,
@@ -927,12 +948,20 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
           (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody))))
       OS << "return " << IndirectReturnName << ";\n";
-    else if (InferredVoid)
+    else if (InferredVoid) {
+      // A function inferred `void` can return what a callee left in the
+      // result register, as a thunk of a `void` routine does: the call runs
+      // all the same.
+      if (const HighExpr *Call =
+              Stmt.RetVal ? returnedCall(*Stmt.RetVal) : nullptr) {
+        OS << statementCallText(*Call) << ";\n";
+        emitIndent(Indent);
+      }
       OS << "return;\n";
-    else if (!Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
-             (Stmt.RetVal->Kind == ExprKind::Var &&
-              !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
-              (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody)))
+    } else if (!Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
+               (Stmt.RetVal->Kind == ExprKind::Var &&
+                !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
+                (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody)))
       OS << "__builtin_trap(); /* unknown return value */\n";
     else
       OS << "return " << formatReturnExpr(*Stmt.RetVal) << ";\n";

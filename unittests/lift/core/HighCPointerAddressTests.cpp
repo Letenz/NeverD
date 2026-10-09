@@ -33152,6 +33152,54 @@ int main(void) {
 )");
 }
 
+TEST(HighCPointerAddresses, BareSiblingReturnKeepsTheReturnedCall) {
+  // The same function, whose other path returns the call itself: printed
+  // void, it still makes the call exactly once.
+  HighFunc Func;
+  Func.Name = "cookie";
+  Func.Entry = 0x140001350;
+  Func.ReturnType = NdType::makeInt(8);
+  Func.Params = {{"arg0", NdType::makeInt(8)}};
+
+  HighStmt IfElse;
+  IfElse.Kind = StmtKind::IfElse;
+  IfElse.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0),
+                                    HighExpr::makeConst(1, 8));
+  HighStmt Ok;
+  Ok.Kind = StmtKind::Return;
+  MedVar Rax;
+  Rax.Kind = MedVar::Reg;
+  Rax.Id = 0;
+  Rax.SSAVer = 0;
+  Rax.Size = 8;
+  Ok.RetVal = HighExpr::makeVar(Rax);
+  IfElse.Body.push_back(std::move(Ok));
+  Func.Body.push_back(std::move(IfElse));
+
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Ret.RetVal = HighExpr::makeCall("sub_14000173C", 0x14000173C, {parameter(0)});
+  Func.Body.push_back(std::move(Ret));
+
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("void cookie"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    sub_14000173C(arg0);"), std::string::npos)
+      << Source;
+  compileAndRunCallOrdering(Source + R"(
+static int calls;
+int64_t sub_14000173C(int64_t input) {
+    ++calls;
+    return (int)input;
+}
+int main(void) {
+    cookie(7);
+    if (calls != 1) return 1;
+    cookie(1);
+    return calls == 1 ? 0 : 2;
+}
+)");
+}
+
 TEST(HighCPointerAddresses,
      DebugVoidReturnPreservesEvaluationAndMatchesForwardPrototype) {
   class ReturnDbg : public NullDebugContext {

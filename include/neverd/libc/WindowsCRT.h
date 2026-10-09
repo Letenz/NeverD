@@ -41,13 +41,17 @@ windowsAPIPrototype(std::string_view Name, std::string_view Return,
 /// failure paths call.  They are those of corecrt_startup.h, corecrt.h,
 /// stdio.h, vcruntime.h and the Windows SDK.
 ///
-/// A `_PVFV`, `_PIFV` or `_onexit_t` is the function pointer it is, a
-/// `_startupinfo *`, `_onexit_table_t *`, `struct _exception *` or
-/// `struct _EXCEPTION_POINTERS *` a `void *`, a `va_list` the `char *` it is
-/// on Windows, an `unsigned long` or `DWORD` a `uint32_t`, a `long` an
-/// `int32_t`, a `BOOL` an `int` and a `HANDLE` a `void *`.  They apply to a
-/// PE image alone, and no arity is derived from them: `_lock` or `terminate`
-/// is a different routine of another runtime.
+/// A `_PVFV`, `_PIFV` or `_onexit_t` is the function pointer it is; a
+/// `_startupinfo *`, `_onexit_table_t *`, `struct _exception *`,
+/// `struct _EXCEPTION_POINTERS *` or a pointer to another structure the
+/// routine fills or reads (`STARTUPINFOW`, `FILETIME`, `SLIST_HEADER`,
+/// `CONTEXT`, `RUNTIME_FUNCTION`) a `void *`; a `va_list` the `char *` it is
+/// on Windows; an `unsigned long` or `DWORD` a `uint32_t`, a `DWORD64` a
+/// `uint64_t`, a `long` an `int32_t`, a `LARGE_INTEGER` an `int64_t`, a `BOOL`
+/// an `int`, a `HANDLE` or `HMODULE` a `void *` and a `WCHAR` the
+/// `uint16_t` it is on Windows.  They apply to a PE image alone, and no arity
+/// is derived from them: `_lock` or `terminate` is a different routine of
+/// another runtime.
 inline constexpr auto kWindowsCRTPrototypes = std::to_array<LibCPrototype>({
     // msvcrt.dll start-up and exit.
     windowsCRTPrototype("__getmainargs", "int",
@@ -150,6 +154,20 @@ inline constexpr auto kWindowsCRTPrototypes = std::to_array<LibCPrototype>({
     // kernel32 and ntdll.
     windowsAPIPrototype("GetCurrentProcess", "void *", {}),
     windowsAPIPrototype("GetCurrentProcessId", "uint32_t", {}),
+    windowsAPIPrototype("GetCurrentThreadId", "uint32_t", {}),
+    windowsAPIPrototype("GetModuleHandleA", "void *", {"const char *"}),
+    windowsAPIPrototype("GetModuleHandleW", "void *", {"const uint16_t *"}),
+    windowsAPIPrototype("GetStartupInfoW", "void", {"void *"}),
+    windowsAPIPrototype("GetSystemTimeAsFileTime", "void", {"void *"}),
+    windowsAPIPrototype("InitializeSListHead", "void", {"void *"}),
+    windowsAPIPrototype("IsDebuggerPresent", "int", {}),
+    windowsAPIPrototype("QueryPerformanceCounter", "int", {"int64_t *"}),
+    windowsAPIPrototype("RtlCaptureContext", "void", {"void *"}),
+    windowsAPIPrototype("RtlLookupFunctionEntry", "void *",
+                        {"uint64_t", "uint64_t *", "void *"}),
+    windowsAPIPrototype("RtlVirtualUnwind", "void *",
+                        {"uint32_t", "uint64_t", "uint64_t", "void *", "void *",
+                         "void **", "uint64_t *", "void *"}),
     windowsAPIPrototype("TerminateProcess", "int", {"void *", "unsigned int"}),
     windowsAPIPrototype("IsProcessorFeaturePresent", "int", {"uint32_t"}),
     windowsAPIPrototype("SetUnhandledExceptionFilter", "void *",

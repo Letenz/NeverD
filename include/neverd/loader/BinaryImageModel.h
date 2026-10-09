@@ -1508,23 +1508,27 @@ struct BinaryImage {
     return Result;
   }
 
+  /// How well \p Sym names the function starting at its address: a function
+  /// symbol a producer stated, above another symbol there, above a
+  /// synthesized `sub_` start.  A section's own symbol (COFF's `.text` where
+  /// an object's first function or an import library object's thunk starts)
+  /// names no function a function symbol names, and a synthesized start names
+  /// none a label does.  Among equal ranks the first symbol names it.
+  static int functionNameRank(const Symbol &Sym) {
+    if (Sym.Origin == NameOrigin::Synthesized)
+      return 0;
+    return Sym.IsFunc ? 2 : 1;
+  }
+
   /// Resolve the best available display name for a function address: an
-  /// export, else a function symbol a producer stated, else another symbol
-  /// there.  A section's own symbol (COFF's `.text` where an import library
-  /// object's thunk starts) names no function a function symbol names, and a
-  /// synthesized `sub_` start names none a label does.
+  /// export, else the symbol there of the highest functionNameRank.
   std::string getFunctionNameAt(va_t Addr) const {
     if (const Export *Exp = findExportAt(Addr); Exp && !Exp->Name.empty())
       return Exp->Name;
     const Symbol *Best = nullptr;
-    auto Rank = [](const Symbol &Sym) {
-      if (Sym.Origin == NameOrigin::Synthesized)
-        return 0;
-      return Sym.IsFunc ? 2 : 1;
-    };
     for (const auto &Sym : Symbols)
       if (Sym.Addr == Addr && !Sym.Name.empty() &&
-          (!Best || Rank(Sym) > Rank(*Best)))
+          (!Best || functionNameRank(Sym) > functionNameRank(*Best)))
         Best = &Sym;
     if (Best)
       return Best->Name;
