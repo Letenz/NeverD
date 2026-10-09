@@ -16,6 +16,7 @@
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
+#include "neverd/ir/med/LowToMed.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -632,6 +633,50 @@ TEST(X86FPStateContract, TypedNumericalStateResultIsRejected) {
                    Arch::X64, Call, [](const HighExpr &) { return "unused"; },
                    HasCIntrinsics, true),
                "requires raw bits");
+}
+
+TEST(X86FPStateContract, AuxiliaryDefinitionsCannotInventStateResults) {
+  for (Intrinsic Id : {Intrinsic::X86ReadMXCSR, Intrinsic::X86WriteMXCSR,
+                       Intrinsic::X86FPAddState, Intrinsic::X86FPSubState,
+                       Intrinsic::X86FPMulState, Intrinsic::X86FPDivState}) {
+    SCOPED_TRACE(static_cast<unsigned>(Id));
+    MedOp Operation;
+    Operation.Opcode = NdOp::INTRINSIC;
+    Operation.addInput(MedVar::makeConst(static_cast<unsigned>(Id), 2));
+    if (Id != Intrinsic::X86WriteMXCSR)
+      Operation.Output = MedVar{
+          .Kind = MedVar::Temp,
+          .Id = 1,
+          .Size = static_cast<uint16_t>(Id == Intrinsic::X86ReadMXCSR ? 4 : 8)};
+    if (isX86ScalarFPStateIntrinsic(Id)) {
+      Operation.addInput(MedVar::makeConst(0x3f800000, 4));
+      Operation.addInput(MedVar::makeConst(0x33800000, 4));
+    }
+    if (Id != Intrinsic::X86ReadMXCSR)
+      Operation.addInput(MedVar::makeConst(0x1f80, 4));
+    MedFunc Function;
+    MedBlock Block;
+    Block.Id = 0;
+    Block.Ops.push_back(Operation);
+    Function.Blocks.push_back(Block);
+    ASSERT_TRUE(verifyMedFunc(Function, "valid scalar state"));
+    Function.Blocks[0].Ops[0].IntrinsicOutputs.push_back(
+        MedVar{.Kind = MedVar::Temp, .Id = 2, .Size = 4});
+    EXPECT_FALSE(x86FPStateShapeIsValid(
+        Id, x86FPStateMedShape(Function.Blocks[0].Ops[0])));
+    EXPECT_FALSE(verifyMedFunc(Function, "unproduced scalar state result"));
+  }
+  HighExpr Call;
+  Call.Kind = ExprKind::Call;
+  Call.IntrinsicId = Intrinsic::X86ReadMXCSR;
+  Call.Type = NdType::makeInt(4, false);
+  Call.IntrinsicOutputs.push_back(
+      MedVar{.Kind = MedVar::Temp, .Id = 2, .Size = 4});
+  bool HasCIntrinsics = false;
+  EXPECT_DEATH(renderX86TypedIntrinsicCall(
+                   Arch::X64, Call, [](const HighExpr &) { return "unused"; },
+                   HasCIntrinsics, true),
+               "invalid x86 FP state C contract");
 }
 
 TEST_F(X86FPStateAccuracy, ScalarResultsAndMxcsrMatchNativeInstruction) {

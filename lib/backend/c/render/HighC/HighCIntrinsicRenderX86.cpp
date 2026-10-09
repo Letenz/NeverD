@@ -1497,7 +1497,8 @@ std::string renderX86TypedIntrinsicCall(
         .OperandsAreScalar = true,
         .LeftSize = Size(0),
         .RightSize = Size(1),
-        .StateSize = Size(2)};
+        .StateSize = Size(2),
+        .HasAuxiliaryOutputs = !Call.IntrinsicOutputs.empty()};
     if (!x86FPStateShapeIsValid(Call.IntrinsicId, Shape))
       llvm::report_fatal_error("invalid x86 FP state C contract");
     const unsigned Bytes =

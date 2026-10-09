@@ -67,6 +67,7 @@ struct X86FPStateShape {
   unsigned LeftSize = 0;
   unsigned RightSize = 0;
   unsigned StateSize = 0;
+  bool HasAuxiliaryOutputs = false;
 };
 
 constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
@@ -76,7 +77,7 @@ constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
        Shape.TargetArch != Arch::X64) ||
       Shape.MemoryOrdering != NdMemoryOrdering::None ||
       Shape.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-      !Shape.IdIsConst || Shape.IdSize != 2)
+      !Shape.IdIsConst || Shape.IdSize != 2 || Shape.HasAuxiliaryOutputs)
     return false;
   if (Id == Intrinsic::X86ReadMXCSR)
     return Shape.NumInputs == 1 && Shape.OutputIsWritable &&

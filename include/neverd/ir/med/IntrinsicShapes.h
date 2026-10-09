@@ -66,7 +66,8 @@ inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
           .OperandsAreScalar = Scalar,
           .LeftSize = Op.NumInputs > 1 ? Op.Inputs[1].Size : 0U,
           .RightSize = Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U,
-          .StateSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U};
+          .StateSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U,
+          .HasAuxiliaryOutputs = !Op.IntrinsicOutputs.empty()};
 }
 
 inline ApxAtomicIntrinsicShape apxAtomicMedShape(const MedOp &Op) {
