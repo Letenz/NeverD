@@ -858,6 +858,9 @@ public:
     /// The code indexes the object (`table[i]`): its whole extent, as the
     /// image's symbol sizes it, is declared, as bytes.
     uint64_t IndexedBytes = 0;
+    /// The widest atomic access (an ordered load or store, or a
+    /// read-modify-write) at its address: C keeps it as aligned as the image.
+    uint16_t AtomicBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
   /// The C initializer of an object's scalar value, as the image holds it;
@@ -942,6 +945,11 @@ public:
     /// bytes: its C object, and the slots, each word-aligned in it.
     std::string Words;
     std::vector<va_t> PointerSlots;
+    /// The alignment of the bytes, and the bytes before Base that keep each
+    /// address as aligned modulo it as in the image: an atomic access in them
+    /// needs that.  1 and 0 for a backing without one.
+    unsigned Align = 1;
+    uint64_t Pad = 0;
   };
   std::vector<ImageBacking> ImageBackings;
   /// The C address a relocated pointer slot holds: the function or data it

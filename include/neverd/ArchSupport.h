@@ -38,6 +38,9 @@ inline bool archELFPatchSupported(Arch A) { return archLiftSupported(A); }
 constexpr uint64_t kPageSize4K = 0x1000;
 constexpr uint64_t kPageSize16K = 0x4000;
 constexpr uint64_t kSyntheticStackAlignment = 16;
+/// The widest atomic access a target performs, a 16-byte compare-and-swap:
+/// the most alignment an atomically accessed image object needs in C.
+constexpr uint64_t kMaxAtomicAccessBytes = 16;
 
 /// Residue of the ABI entry stack pointer modulo the synthetic stack alignment.
 /// x86-64 includes the pushed return address; Darwin i386 enters at 12 mod 16.

@@ -1113,6 +1113,42 @@ TEST(HighCPointerAddresses, FoldsReadonlyImageIntegerLoad) {
   EXPECT_EQ(Source.find("0x140003260"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, AtomicImageAccessKeepsItsAlignment) {
+  // A lock word read with acquire ordering inside an image object that a
+  // plain access overlaps: the bytes are one backing that starts two bytes
+  // past an aligned address.  The atomic load stays aligned in C, as an
+  // atomic, with the bytes before the group keeping each address's residue.
+  BinaryImage Img = makeImageObjectFixture(
+      0x140003002, {0x11, 0x22, 0x33, 0x44, 0x55, 0x66}, true);
+  HighFunc Func;
+  Func.Name = "atomic_read";
+  Func.ReturnType = NdType::makeInt(8, false);
+  const auto U32 = NdType::makeInt(4, false);
+  auto Plain = HighExpr::makeLoad(HighExpr::makeConst(0x140003002, 8), U32);
+  auto Acquire = HighExpr::makeLoad(HighExpr::makeConst(0x140003004, 8), U32,
+                                    NdMemoryOrdering::Acquire);
+  auto Wide = [](ExprPtr Value) {
+    auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Value));
+    Extended->Type = NdType::makeInt(8, false);
+    return Extended;
+  };
+  auto Sum =
+      HighExpr::makeBinop(NdOp::INT_ADD, Wide(Plain), Wide(std::move(Acquire)));
+  Sum->Type = NdType::makeInt(8, false);
+  returnValue(Func, std::move(Sum));
+  const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
+  EXPECT_NE(Source.find("_Alignas(4) unsigned char g_140003002_bytes[8]"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("load_acquire"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("&g_140003002_bytes[4]"), std::string::npos) << Source;
+  compileAndRunCallOrdering(Source + R"c(
+int main(void) {
+  return atomic_read() == 0x44332211u + 0x66554433u ? 0 : 1;
+}
+)c");
+}
+
 TEST(HighCPointerAddresses, StringLiteralInIntegerMaskUsesItsAddress) {
   // A branchless select masks two string addresses. The literal is an array
   // in C; the mask needs its address. A call argument keeps the literal.

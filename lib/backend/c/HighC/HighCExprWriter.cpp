@@ -4507,8 +4507,8 @@ std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {
     if (Addr < Backing.Base)
       break;
     if (Addr < Backing.End)
-      return "&" + Backing.Name + "[" + std::to_string(Addr - Backing.Base) +
-             "]";
+      return "&" + Backing.Name + "[" +
+             std::to_string(Backing.Pad + (Addr - Backing.Base)) + "]";
   }
   return std::nullopt;
 }
