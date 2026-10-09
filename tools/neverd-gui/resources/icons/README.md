@@ -6,3 +6,12 @@ cleanly to 24 and 32 px. The set is two-tone: a dark neutral outline (`#3B4250`)
 plus one accent color per category (file, navigation, search, views,
 lists/windows, edit, analysis, settings), with a light tint of that accent for
 body areas so every icon stays legible on both light and dark toolbars.
+
+`app/IconSet.def` is the record of the set: every icon by the group of
+commands it serves and what it shows, and every color the set draws with. The
+workbench unit tests fail when an icon file is not in the record or a recorded
+icon has no file, when an icon leaves the 16 px grid or paints a color the
+record does not list, and when one embeds a raster image, text, an external
+reference, a script or an editor's metadata. A new icon is drawn by hand in
+the same style and recorded there with its group. The window icon is the
+NeverD logo from `docs/assets`, which keeps its own colors.

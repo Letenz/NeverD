@@ -26,6 +26,8 @@
 #include <QMetaEnum>
 #include <QPushButton>
 #include <QRandomGenerator>
+#include <QRegularExpression>
+#include <QSet>
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QTemporaryDir>
@@ -329,6 +331,55 @@ private slots:
     }
     QVERIFY(count >= 60);
     QVERIFY(icon(QStringLiteral("no-such-icon")).isNull());
+  }
+
+  void iconsAreRecordedOriginalArtwork() {
+    QSet<QString> palette;
+    QHash<QString, QString> groups;
+#define NEVERD_ICON_COLOR(Hex, Use) palette.insert(QStringLiteral(Hex));
+#define NEVERD_ICON(Name, Group, Shows)                                        \
+  groups.insert(QStringLiteral(#Name), QStringLiteral(#Group));
+#include "IconSet.def"
+    // Drawn by hand on the grid: no raster image, text, external reference,
+    // script or editor metadata, and colors only from the record.
+    static const QRegularExpression Foreign(
+        QStringLiteral("<image|<text|<foreignObject|<metadata|<script|href=|"
+                       "url\\(|@import|style=|rgb\\(|inkscape:|sodipodi:"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression Color(QStringLiteral("#[0-9A-Fa-f]{3,8}"));
+    static const QRegularExpression Paint(
+        QStringLiteral("(?:fill|stroke|stop-color)=\"([^\"]*)\""));
+    QSet<QString> files;
+    QDirIterator icons(QStringLiteral(":/neverd/icons"),
+                       {QStringLiteral("*.svg")});
+    while (icons.hasNext()) {
+      const QFileInfo info(icons.next());
+      const auto name = info.completeBaseName();
+      files.insert(name);
+      QVERIFY2(groups.contains(name),
+               qPrintable(name + QStringLiteral(" is not in IconSet.def")));
+      if (groups.value(name) == QLatin1String("Brand"))
+        continue;
+      QFile file(info.filePath());
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      const auto svg = QString::fromUtf8(file.readAll());
+      QVERIFY2(svg.contains(QStringLiteral("viewBox=\"0 0 16 16\"")),
+               qPrintable(name));
+      const auto foreign = Foreign.match(svg);
+      QVERIFY2(!foreign.hasMatch(),
+               qPrintable(name + QStringLiteral(": ") + foreign.captured()));
+      for (auto paints = Paint.globalMatch(svg); paints.hasNext();) {
+        const auto paint = paints.next().captured(1);
+        QVERIFY2(paint == QLatin1String("none") ||
+                     (Color.match(paint).captured() == paint &&
+                      palette.contains(paint.toUpper())),
+                 qPrintable(name + QStringLiteral(" paints ") + paint));
+      }
+    }
+    for (auto it = groups.cbegin(); it != groups.cend(); ++it)
+      QVERIFY2(files.contains(it.key()),
+               qPrintable(it.key() + QStringLiteral(" is recorded but has no "
+                                                    "file")));
   }
 
   void projectDatabaseRoundTrip() {
