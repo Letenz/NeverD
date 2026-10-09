@@ -4272,7 +4272,8 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
 
 const HighCWriter::DebugParamBinding &
 HighCWriter::debugParamBinding(const HighFunc &Func) const {
-  auto [It, Inserted] = DebugParamBindings.try_emplace(Func.Entry);
+  auto [It, Inserted] =
+      DebugParamBindings.try_emplace(std::make_pair(&Func, Func.Entry));
   DebugParamBinding &Binding = It->second;
   if (!Inserted)
     return Binding;

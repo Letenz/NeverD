@@ -661,7 +661,9 @@ public:
     /// The parameters the body reads.
     std::set<int> ReadIds;
   };
-  mutable std::map<va_t, DebugParamBinding> DebugParamBindings;
+  /// By function and entry: a unit can hold two bodies of one entry.
+  mutable std::map<std::pair<const HighFunc *, va_t>, DebugParamBinding>
+      DebugParamBindings;
   const DebugParamBinding &debugParamBinding(const HighFunc &Func) const;
   /// The declared parameter that parameter \p ParamId of \p Func takes its
   /// name and type from; \p Adjusted is the position a hidden result pointer
