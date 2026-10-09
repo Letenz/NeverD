@@ -753,8 +753,8 @@ le helper CMake.
 
 | Répertoire | Responsabilité | Dépendances importantes |
 |------------|----------------|-------------------------|
-| `lib/loader` | Détection de format, chargement PE/COFF, ELF et Mach-O, `BinaryImage` normalisée, découverte de fonctions | API LLVM Object |
-| `lib/lift` | Sémantique manuscrite des instructions x86/i386, AArch64 et ARM32 | Types de données IR |
+| `lib/loader` | Détection de format, chargement PE/COFF, ELF et Mach-O, `BinaryImage` normalisée, découverte de fonctions | API LLVM Object, `NeverDDigest` |
+| `lib/lift` | Sémantique manuscrite des instructions x86/i386, AArch64 et ARM32 | Types de données IR, `NeverDIRLowValidation` |
 | `lib/decode` | Décodage Capstone/native et distribution vers les lifters d’architecture | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | Types communs et définitions/transformations LowIR, MedIR, HighIR et intrinsics | Ses quatre sous-composants IR |
 | `lib/pipeline` | Détection de fonctions et orchestration des parcours Low/Med/High/LLVM | IR, decode, lift, backend LLVM, debug, passes IR |
@@ -767,8 +767,10 @@ le helper CMake.
 | `lib/sigs` | Analyse, bases et correspondance des signatures | Loader |
 | `lib/libc` | Noms libc connus et prise en charge du modèle d’appel | Composant autonome |
 | `lib/safety` | Audit de durée de vie du tas et chasse de débordement de copie sur l’IR levé | Symbolic, Solver |
-| `lib/support` | Helpers partagés de chargement binaire | Loader |
+| `lib/support` | Aides partagées au chargement binaire et SHA-256 indépendant | Support : Loader ; Digest : LLVM Support/TargetParser |
 | `lib/translate` | Contrats versionnés d’état/policy/exit guest, ABI runtime fixe, mémoire guest vérifiée, audits de l’IR/des objets/LinkGraphs produits, linking natif scellé et dispatcher C++ expérimental de x86-64 vers AArch64 | Contrats IR, LLVM, LLVM Object et JITLink |
+
+`NeverDDigest` possède l’implémentation SHA-256 existante en un appel dans `lib/support`, avec les mêmes contrôles de capacités à l’exécution et le même repli portable, sans dépendance envers Loader ou IR. `loader/InputDigest.h` reste un en-tête de redirection. `NeverDIRLowValidation` possède `lowUndefinedOperationDigest` et Lift le lie explicitement. L’identité v1 conserve le domaine, les mots little-endian, les six emplacements d’entrée stockés, la provenance et les coordonnées source. La sérialisation emploie au plus 64 KiB jusqu’à 199 opérations ; au-delà, le chemin incrémental original reste utilisé. Les deux chemins énumèrent les mêmes champs et conservent les contrôles de preuve.
 
 ### Répartition des analyses et simplifications
 

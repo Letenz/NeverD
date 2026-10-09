@@ -649,8 +649,8 @@ CMake.
 
 | الدليل | المسؤولية | التبعيات المهمة |
 |--------|-----------|-----------------|
-| `lib/loader` | اكتشاف الصيغة، وتحميل PE/COFF وELF وMach-O، و`BinaryImage` موحدة، واكتشاف الدوال | LLVM Object API |
-| `lib/lift` | دلالات تعليمات x86/i386 وAArch64 وARM32 المكتوبة يدويًا | أنواع بيانات IR |
+| `lib/loader` | اكتشاف الصيغة، وتحميل PE/COFF وELF وMach-O، و`BinaryImage` موحدة، واكتشاف الدوال | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | دلالات تعليمات x86/i386 وAArch64 وARM32 المكتوبة يدويًا | أنواع بيانات IR, `NeverDIRLowValidation` |
 | `lib/decode` | فك Capstone/native والتوزيع إلى lifter العمارة | `NeverDIR` و`NeverDLift` |
 | `lib/ir` | الأنواع المشتركة وتعريفات/تحويلات LowIR وMedIR وHighIR وintrinsic | مكونات IR الفرعية الأربعة |
 | `lib/pipeline` | اكتشاف الدوال وتنسيق مسارات Low/Med/High/LLVM | IR وdecode وlift وLLVM backend ومعلومات التصحيح وIR pass |
@@ -663,8 +663,10 @@ CMake.
 | `lib/sigs` | تحليل التواقيع وقواعدها ومطابقتها | Loader |
 | `lib/libc` | أسماء libc المعروفة ودعم نموذج الاستدعاء | مكوّن مستقل |
 | `lib/safety` | تدقيق عمر الكومة وصيد فيضان النسخ على IR المرفوع | Symbolic، Solver |
-| `lib/support` | أدوات مشتركة لتحميل الثنائيات | Loader |
+| `lib/support` | مساعدات مشتركة لتحميل الثنائيات وSHA-256 مستقل | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | عقود ذات إصدار لحالة guest/policy/exit وruntime ABI ثابت وguest memory مفحوصة وتدقيق IR/ملفات الهدف/LinkGraph المولدة وربط أصلي sealed وdispatcher C++ تجريبي من x86-64 إلى AArch64 | عقود IR وLLVM وLLVM Object وJITLink |
+
+يمتلك `NeverDDigest` تنفيذ SHA-256 الحالي باستدعاء واحد داخل `lib/support`، مع إبقاء فحوص ميزات المعالج أثناء التشغيل والمسار الاحتياطي المحمول دون تغيير، ومن دون اعتماد على Loader أو IR. يبقى `loader/InputDigest.h` ترويسة إعادة توجيه. يمتلك `NeverDIRLowValidation` الدالة `lowUndefinedOperationDigest` ويرتبط Lift به صراحة. تحتفظ هوية v1 بالنطاق والكلمات ذات الترتيب little-endian وجميع خانات الإدخال الست المخزنة ومعلومات المنشأ وإحداثيات المصدر. تستخدم حتى 199 عملية مخزناً للتسلسل لا يتجاوز 64 KiB؛ وتستخدم النطاقات الأكبر المسار التزايدي الأصلي. يسرد المساران الحقول نفسها ويحافظان على فحوص الأدلة.
 
 ### حدود التحليل والتبسيط حسب المعمارية
 

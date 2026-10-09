@@ -200,6 +200,13 @@ Las pruebas cubren todas las combinaciones de indicadores escalares de entrada, 
 
 `NeverDX86DecodeDetailTests` cubre las tres rutas, ambos anchos de dirección x64, límites con signo, prefijos obligatorios, disp16 de i386, moffs, entradas truncadas y reutilización sin detalles. Solo se vinculan campos exactos de reubicación; un ancho, posición o valor incorrecto no se vincula. Las pruebas nativas de independencia y refinamiento mantienen todas las escrituras del marco y rechazan indicadores arbitrarios observables y candidatos de desplazamiento modificados.
 
+`NeverDLowUndefinedDigestTests` comprueba vectores SHA-256 independientes, todos los campos almacenados, bits de secuencia con signo, orden, exclusión del relleno y entradas sin modificar. Los casos cubren el crecimiento del búfer integrado, el límite de 199/200 operaciones e intervalos incrementales mayores. `LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` comprueba el rechazo real de evidencia obsoleta y su nueva vinculación en ambas rutas. Mantener `InputDigest.*` en `NeverDLiftTests` y recompilar los consumidores afectados tras cambiar la implementación separada. Registrar la cobertura real de sanitizers, ruta portable y equipos; estos microbenchmarks no certifican equivalencia nativa.
+
+```bash
+cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
+build-release/bin/NeverDLowUndefinedDigestTests
+```
+
 `NeverDX86UndefinedEffectsTests` comprueba metadatos de bits indefinidos, flags definidos o preservados y el rechazo de certificados obsoletos. `NeverDX86CarryArithmeticFlagTests` comprueba el acarreo auxiliar de ADC/SBB en las formas de registro y memoria frente a un oráculo aritmético. `NeverDX86LogicIdentityTests` verifica que AND con operandos idénticos siga poniendo a cero los bits 63:32 del registro de 64 bits correspondiente al escribir un destino de 32 bits en modo de 64 bits y preserve los bits no escritos de destinos más estrechos.
 
 `X86RotateUndefinedEffects.*` compara todos los contadores brutos, anchos, solapamientos de CL, alias de byte alto y destinos de memoria con un oráculo aritmético escalar. `X86BitTestUndefinedEffects.*` cubre índices de registro/inmediatos, solapamiento de origen/destino, registros extendidos, indicadores definidos y escrituras en las partes altas. Los controles de metadatos rechazan operandos, codificaciones y formas no admitidas alterados. Las pruebas nativas distinguen lecturas correlacionadas de bits nuevos independientes, verifican presupuestos exactos/insuficientes y rechazan desbordamiento indefinido observable. El refinamiento del estado completo acepta el testigo elegido y rechaza testigos de bits cero o candidatos modificados.

@@ -201,6 +201,13 @@ Tests gepackter Flags prüfen alle skalaren Eingangsflagkombinationen, Privilegm
 
 `NeverDX86DecodeDetailTests` prüft alle drei Dekodierwege, beide x64-Adressbreiten, vorzeichenbehaftete Grenzwerte, Pflichtpräfixe, echte i386-disp16, moffs, abgeschnittene Eingaben und Wiederverwendung ohne Details. Nur genaue Relokationsfelder werden gebunden; falsche Breiten, Positionen oder Werte nicht. Native Unabhängigkeits- und Verfeinerungstests erhalten sämtliche Frame-Schreibzugriffe und verweigern beobachtete beliebige Flags sowie einen veränderten Schiebekandidaten.
 
+`NeverDLowUndefinedDigestTests` prüft unabhängige SHA-256-Vektoren, jedes gespeicherte Feld, vorzeichenbehaftete Sequenzbits, Reihenfolge, ausgeschlossene Füllbytes und unveränderte Eingaben. Die Fälle decken das Wachstum des eingebetteten Puffers, die Grenze bei 199/200 Operationen und größere inkrementelle Bereiche ab. `LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` prüft tatsächliche Ablehnung veralteter Evidenz und erneute Bindung auf beiden Pfaden. `InputDigest.*` in `NeverDLiftTests` beibehalten und betroffene Aufrufer nach Änderungen der ausgelagerten Implementierung neu bauen. Tatsächliche Sanitizer-, portable Pfad- und Host-Abdeckung angeben; diese Mikrobenchmarks zertifizieren keine native Äquivalenz.
+
+```bash
+cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
+build-release/bin/NeverDLowUndefinedDigestTests
+```
+
 `NeverDX86UndefinedEffectsTests` prüft Metadaten undefinierter Bits, definierte oder erhaltene Flags und die Ablehnung veralteter Zertifikate. `NeverDX86CarryArithmeticFlagTests` prüft den Hilfsübertrag von ADC/SBB für Register- und Speicherformen anhand eines arithmetischen Orakels. `NeverDX86LogicIdentityTests` prüft, dass AND mit identischen Operanden im 64-Bit-Modus beim Schreiben eines 32-Bit-Ziels weiterhin die Bits 63:32 des zugehörigen 64-Bit-Registers löscht und bei schmaleren Schreibzugriffen die ungeschriebenen Bits erhält.
 
 `X86RotateUndefinedEffects.*` prüft alle Rohzähler, Operandenbreiten, CL-Überlappungen, obere Byte-Aliasse und Speicherziele gegen ein skalares Rechenorakel. `X86BitTestUndefinedEffects.*` deckt Register-/Immediate-Indizes, Quell-/Zielüberlappungen, erweiterte Register, definierte Flags und Schreibzugriffe auf obere Registerteile ab. Metadatenkontrollen weisen veränderte Operanden, Kodierungen und nicht unterstützte Formen zurück. Native Beweise unterscheiden korrelierte Lesezugriffe von unabhängigen beliebigen Flags, prüfen genaue/zu kleine Erzeugerbudgets und verweigern beobachtbaren undefinierten Überlauf. Die vollständige Zustandsverfeinerung akzeptiert den gewählten Zeugen und lehnt Nullbit-Zeugen oder veränderte Kandidaten ab.
