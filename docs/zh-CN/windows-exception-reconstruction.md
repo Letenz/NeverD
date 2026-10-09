@@ -88,6 +88,10 @@ continuation 保留注释，同时撤销原生重建权限。这些推导结果�
 保存栈值不能获得这些保证。
 结构化 catch 保留到已检查 continuation 的显式转移；回退注释保留 catch-object 偏移、
 parent-frame 偏移与 continuation 列表，同时让原生 handler 保持独立。
+当同一 try 的已检查地址区间包围独立 catch 时，只有移出仅由运行时进入的 callback 后
+能得到连续保护区，HighIR 才将其合并。普通前驱、夹在其间的未受保护语句或不明确的
+状态流都会阻止移动；保护区与 catch 作为一个事务提交。单独转换的 PE32 callback
+仍需证明父帧坐标投影后才能嵌入 clause；证明缺失时保留原生目标地址。
 直接 MSVC prologue 必须证明实际 FS:[0] 写入与 registration/state 字段的位置；普通局部
 变量中恰好相同的整数序列不能替代这一证据。
 

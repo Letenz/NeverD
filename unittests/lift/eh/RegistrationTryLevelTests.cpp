@@ -716,7 +716,9 @@ void addFlowHandlers(ImageBuilder &B) {
 
 BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
                                      bool PopReturn = false,
-                                     bool ReadResumedStack = false) {
+                                     bool ReadResumedStack = false,
+                                     bool SplitTry = false,
+                                     bool InterleavedReturn = false) {
   ImageBuilder B;
   B.Text = {0x55, 0x8b, 0xec, 0x6a, 0xff, 0x68};
   emit32(B.Text, kPersonality);
@@ -732,15 +734,21 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
   emitFrameStore(B.Text, -4, 0);
   B.Text.push_back(0x90);
   const va_t Leave = B.textVA();
-  emitFrameStore(B.Text, -4, -1);
+  emitFrameStore(B.Text, -4, SplitTry ? 0 : -1);
   auto JumpTo = [&](va_t Address) {
     B.Text.push_back(0xe9);
     emit32(B.Text, Address - (B.textVA() + 4));
   };
-  JumpTo(kText + 0x80);
+  const va_t Epilogue = kText + (SplitTry && !InterleavedReturn ? 0xe8 : 0x80);
+  const va_t Continuation = kText + (SplitTry ? 0xd0 : 0xc0);
+  JumpTo(kText + (SplitTry ? 0xb0 : 0x80));
   B.Text.resize(0x80, 0xcc);
-  B.Text.insert(B.Text.end(), {0x8b, 0x4d, 0xf4, 0x64, 0x89, 0x0d, 0, 0, 0, 0,
-                               0x8b, 0xe5, 0x5d, 0xc3});
+  auto EmitEpilogue = [&] {
+    B.Text.insert(B.Text.end(), {0x8b, 0x4d, 0xf4, 0x64, 0x89, 0x0d, 0, 0, 0, 0,
+                                 0x8b, 0xe5, 0x5d, 0xc3});
+  };
+  if (!SplitTry || InterleavedReturn)
+    EmitEpilogue();
   B.Text.resize(0xa0, 0xcc);
   if (ReadResumedStack)
     emitFrameStore(B.Text, -24, 9);
@@ -750,12 +758,24 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
     B.Text.insert(B.Text.end(), {0xc2, 4, 0});
   else
     B.Text.push_back(0xc3);
-  B.Text.resize(0xc0, 0xcc);
+  va_t SplitLeave = InvalidVA;
+  if (SplitTry) {
+    B.Text.resize(0xb0, 0xcc);
+    emitFrameStore(B.Text, -24, 11);
+    SplitLeave = B.textVA();
+    emitFrameStore(B.Text, -4, -1);
+    JumpTo(Epilogue);
+  }
+  B.Text.resize(Continuation - kText, 0xcc);
   emitFrameStore(B.Text, -4, -1);
   if (ReadResumedStack)
     B.Text.insert(B.Text.end(),
                   {0x8b, 0x4d, 0xe8, 0x8b, 0x04, 0x24, 0x01, 0xc8});
-  JumpTo(kText + 0x80);
+  JumpTo(Epilogue);
+  if (SplitTry && !InterleavedReturn) {
+    B.Text.resize(Epilogue - kText, 0xcc);
+    EmitEpilogue();
+  }
   B.RData.assign(0x100, 0);
   auto Field = [&](size_t Offset, uint32_t Value) {
     llvm::support::endian::write32le(B.RData.data() + Offset, Value);
@@ -774,7 +794,7 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
   auto Img = B.build({{"guarded_cxx", kText}});
   Img.ExceptionMetadata.Functions.clear();
   ExceptionFunction EH;
-  EH.CodeRange = {kText, kText + 0xf0};
+  EH.CodeRange = {kText, kText + (SplitTry ? 0xf8 : 0xf0)};
   EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
   EH.Personality = ExceptionPersonality::CxxFrameHandler3;
   EH.HandlerDataVA = kRData;
@@ -785,8 +805,10 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
   Chain.SeededTryLevel = -1;
   Chain.ChainInstallVA = Install;
   Chain.TryLevelStores = {{Enter, Enter + 7, 0},
-                          {Leave, Leave + 7, -1},
-                          {kText + 0xc0, kText + 0xc7, -1}};
+                          {Leave, Leave + 7, SplitTry ? 0 : -1}};
+  if (SplitTry)
+    Chain.TryLevelStores.push_back({SplitLeave, SplitLeave + 7, -1});
+  Chain.TryLevelStores.push_back({Continuation, Continuation + 7, -1});
   auto &Cxx = EH.Cxx.emplace();
   Cxx.NativeFuncInfoVA = kRData;
   Cxx.Magic = 0x19930522;
@@ -1146,6 +1168,111 @@ TEST(RegistrationTryLevel,
       EXPECT_TRUE(HasTransfer);
     }
   }
+}
+
+TEST(RegistrationTryLevel, CxxSplitTryKeepsItsCatchAndProtectedTail) {
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Img = makeCxxContinuationImage(kText + 0xd0, false, true, true,
+                                        Mutation == 3);
+    const auto Low = liftEntry(Img, kText);
+    ASSERT_TRUE(Low.RegistrationStates);
+    ASSERT_TRUE(Low.RegistrationStates->Complete);
+    const auto Ranges = registrationRangesWhere(
+        *Low.RegistrationStates, [](int32_t State) { return State == 0; });
+    ASSERT_TRUE(Ranges);
+    ASSERT_EQ(Ranges->size(), 2u);
+    auto Med = LowToMedConverter().convert(Low, Arch::X86, BinaryFormat::COFF);
+    if (Mutation == 1) {
+      // A callback shared with ordinary flow cannot be taken out of that
+      // flow and embedded into a catch clause.
+      for (auto &Block : Med.Blocks)
+        if (Block.StartAddr == kText + 0xa0)
+          Block.Preds.push_back(0);
+    }
+    if (Mutation == 2)
+      Med.RegistrationStates->Complete = false;
+    // Mutation 3 places an ordinary return between the protected ranges.
+    // Removing the callback must not also swallow that unprotected code.
+    const auto High = MedToHighConverter().convert(Med, Arch::X86);
+    if (Mutation) {
+      EXPECT_EQ(High.StructuredExceptionRegions, 0u);
+      EXPECT_GT(High.UnstructuredExceptionRegions, 0u);
+      continue;
+    }
+    EXPECT_EQ(High.StructuredExceptionRegions, 1u);
+    EXPECT_EQ(High.UnstructuredExceptionRegions, 0u);
+    bool HasTail = false, HasCatch = false, HasResume = false;
+    walkStmts(High.Body, [&](const HighStmt &Stmt) {
+      if (Stmt.Kind != StmtKind::CxxTry)
+        return;
+      EXPECT_TRUE(Stmt.EHIsReducible);
+      walkStmts(Stmt.Body, [&](const HighStmt &Body) {
+        HasTail |= Body.Addr == kText + 0xb0;
+        EXPECT_FALSE(Body.Addr >= kText + 0xa0 && Body.Addr < kText + 0xb0);
+      });
+      ASSERT_EQ(Stmt.EHClauseBodies.size(), 1u);
+      walkStmts(Stmt.EHClauseBodies.front(), [&](const HighStmt &Body) {
+        HasCatch |= Body.Addr == kText + 0xa0;
+        HasResume |=
+            Body.Kind == StmtKind::Goto && Body.GotoTarget == kText + 0xd0;
+      });
+    });
+    EXPECT_TRUE(HasTail);
+    EXPECT_TRUE(HasCatch);
+    EXPECT_TRUE(HasResume);
+  }
+}
+
+TEST(RegistrationTryLevel, CxxOutOfLineBodiesNeedAParentFrameProjection) {
+  for (bool Registration : {false, true})
+    for (bool Embedded : {false, true})
+      for (const auto Kind :
+           {HighEHClauseKind::CxxCatch, HighEHClauseKind::CxxCleanup}) {
+        SCOPED_TRACE(Registration);
+        SCOPED_TRACE(Embedded);
+        SCOPED_TRACE(static_cast<int>(Kind));
+        HighFunc Parent;
+        Parent.Entry = kText;
+        auto &EH = Parent.ExceptionMetadata.emplace();
+        if (Registration)
+          EH.Registration.emplace();
+        HighStmt Try;
+        Try.Kind = StmtKind::CxxTry;
+        HighEHClause Clause;
+        Clause.Kind = Kind;
+        Clause.HandlerVA = Clause.FilterOrActionVA = kText + 0x80;
+        Try.EHClauses.push_back(Clause);
+        Try.EHClauseBodies.emplace_back();
+        HighStmt Existing;
+        Existing.Kind = StmtKind::Call;
+        Existing.CallExpr =
+            HighExpr::makeCall("checked_parent_frame", 0x5000, {});
+        if (Embedded)
+          Try.EHClauseBodies.front().push_back(Existing);
+        Parent.Body.push_back(Try);
+        HighFunc Callback;
+        Callback.Entry = kText + 0x80;
+        HighStmt Private;
+        Private.Kind = StmtKind::Call;
+        Private.CallExpr =
+            HighExpr::makeCall("ordinary_private_frame", 0x6000, {});
+        Callback.Body.push_back(Private);
+        std::vector<HighFunc> Functions{Parent, Callback};
+        attachCxxFuncletBodies(Functions);
+        const auto &Body =
+            Functions.front().Body.front().EHClauseBodies.front();
+        if (Registration && !Embedded) {
+          EXPECT_TRUE(Body.empty());
+          EXPECT_EQ(Functions.front().Body.front().EHClauses.front().HandlerVA,
+                    Callback.Entry);
+        } else {
+          ASSERT_EQ(Body.size(), 1u);
+          ASSERT_TRUE(Body.front().CallExpr);
+          EXPECT_EQ(Body.front().CallExpr->CallAddr,
+                    Embedded ? 0x5000u : 0x6000u);
+        }
+      }
 }
 
 TEST(RegistrationTryLevel, IgnoresAStoreInSkippedCode) {

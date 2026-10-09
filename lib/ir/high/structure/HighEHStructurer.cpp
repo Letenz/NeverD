@@ -28,6 +28,7 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -142,7 +143,7 @@ struct AddressSet {
   ExceptionAddressRange Span;
   std::vector<ExceptionAddressRange> Parts;
   bool RequireCall = false;
-  /// The parts are ranges of one split SEH scope: a plain union, not the two
+  /// The parts are ranges of one split scope: a plain union, not the two
   /// arms of a C++ cleanup diamond.
   bool SplitScope = false;
 
@@ -628,11 +629,11 @@ void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
     const CxxTryBlock &Try = Cxx.TryBlocks[TryIndex];
     auto Ranges =
         codeRangesForStates(EH, Cxx, Try.TryLow, Try.TryHigh, Registration);
-    if (EH.Registration && Ranges.size() != 1) {
-      ++Rejected;
-      continue;
-    }
-    const ExceptionAddressRange Range = primaryCxxTryRange(Ranges);
+    const bool SplitRegistration = EH.Registration && Ranges.size() > 1;
+    const ExceptionAddressRange Range =
+        SplitRegistration
+            ? ExceptionAddressRange{Ranges.front().Begin, Ranges.back().End}
+            : primaryCxxTryRange(Ranges);
     if (!Range.isValid()) {
       ++Rejected;
       continue;
@@ -641,6 +642,8 @@ void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
     RegionCandidate Candidate;
     Candidate.Kind = StmtKind::CxxTry;
     Candidate.Range = Range;
+    if (SplitRegistration)
+      Candidate.Cover = std::move(Ranges);
     Candidate.NativeRegionCount = 1;
     Candidate.TryLow = Try.TryLow;
     Candidate.TryHigh = Try.TryHigh;
@@ -1337,8 +1340,15 @@ uniqueHandlerBlockRange(const MedFunc &Med, const ExceptionFunction &EH,
     const bool AroundTry = SameGuard && Candidate.Range.contains(*TryRange) &&
                            (Candidate.Range.Begin != TryRange->Begin ||
                             Candidate.Range.End != TryRange->End);
-    if (AroundTry ? !Candidate.Range.contains(Range)
-                  : Range.overlaps(Candidate.Range))
+    const bool HasRegistrationParts =
+        EH.Registration && Candidate.Kind == StmtKind::CxxTry &&
+        Candidate.HasTryStates && !Candidate.Cover.empty();
+    const bool Overlaps =
+        !HasRegistrationParts
+            ? Range.overlaps(Candidate.Range)
+            : llvm::any_of(Candidate.Cover,
+                           [&](const auto &P) { return Range.overlaps(P); });
+    if (AroundTry ? !Candidate.Range.contains(Range) : Overlaps)
       return std::nullopt;
   }
   return Range;
@@ -1586,6 +1596,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
   std::iota(Order.begin(), Order.end(), size_t{0});
   std::vector<bool> Processed(Candidates.size(), false);
   std::vector<bool> Absorbed(Candidates.size(), false);
+  size_t SplitCopyBudget = limits::kMaxRegistrationEHStateWork;
   for (size_t K = 0; K < Order.size(); ++K) {
     const size_t I = Order[K];
     if (Absorbed[I])
@@ -1599,6 +1610,59 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     if (hasCrossingRegions(Candidates, I)) {
       Rejected += Candidate.NativeRegionCount;
       continue;
+    }
+    // A PE32 try can surround its out-of-line catch in address order. Its
+    // checked state intervals form one lexical body only after that callback
+    // is moved into its clause. Work transactionally: an ambiguous handler,
+    // an ordinary predecessor or an intervening unprotected statement must
+    // leave the original listing intact.
+    const bool SplitRegistrationCxx =
+        EH.Registration && Candidate.Kind == StmtKind::CxxTry &&
+        Candidate.HasTryStates && !Candidate.Cover.empty();
+    std::optional<std::vector<HighStmt>> OriginalBody;
+    bool RegionInstalled = false;
+    auto RestoreBody = llvm::scope_exit([&] {
+      if (OriginalBody && !RegionInstalled)
+        Func.Body = std::move(*OriginalBody);
+    });
+    std::vector<std::vector<HighStmt>> SeparatedBodies(
+        Candidate.Clauses.size());
+    if (SplitRegistrationCxx) {
+      bool Exhausted = SplitCopyBudget == 0;
+      if (!Exhausted)
+        walkStmts(Func.Body, [&](const HighStmt &) {
+          if (SplitCopyBudget)
+            --SplitCopyBudget;
+          else
+            Exhausted = true;
+        });
+      if (Exhausted) {
+        Rejected += Candidate.NativeRegionCount;
+        continue;
+      }
+      OriginalBody = Func.Body;
+      bool Complete = true;
+      for (size_t C = 0; C < Candidate.Clauses.size(); ++C) {
+        const auto &Clause = Candidate.Clauses[C];
+        if (Clause.Kind != HighEHClauseKind::CxxCatch)
+          continue;
+        const auto Range =
+            uniqueHandlerBlockRange(Med, EH, Clause.HandlerVA, Candidates);
+        size_t At = 0;
+        if (WindowsTargetUses[Clause.HandlerVA] != 1 || !Range ||
+            !extractAddressSlice(Func.Body, *Range, EH.CodeRange,
+                                 SeparatedBodies[C], At,
+                                 /*IncludeFunctionEdgeUnknown=*/false) ||
+            SeparatedBodies[C].empty() ||
+            !highStmtEndsItsBlock(SeparatedBodies[C].back())) {
+          Complete = false;
+          break;
+        }
+      }
+      if (!Complete) {
+        Rejected += Candidate.NativeRegionCount;
+        continue;
+      }
     }
     std::vector<HighStmt> ProtectedBody;
     size_t InsertAt = 0;
@@ -1637,10 +1701,12 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
       if (!Host)
         NestedParts.clear();
     }
-    if ((!Host && !extractAddressSlice(
-                      Func.Body, AddressSet{Candidate.Range, Candidate.Cover},
-                      EH.CodeRange, ProtectedBody, InsertAt,
-                      /*IncludeFunctionEdgeUnknown=*/true, &Host)) ||
+    AddressSet ProtectedAddresses{Candidate.Range, Candidate.Cover};
+    ProtectedAddresses.SplitScope = SplitRegistrationCxx;
+    if ((!Host &&
+         !extractAddressSlice(Func.Body, ProtectedAddresses, EH.CodeRange,
+                              ProtectedBody, InsertAt,
+                              /*IncludeFunctionEdgeUnknown=*/true, &Host)) ||
         !Host) {
       Rejected += Candidate.NativeRegionCount;
       continue;
@@ -1660,10 +1726,16 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     // unprotected.
     bool LeftOut = Candidate.Kind == StmtKind::SEHTry &&
                    guardedStatementLeftOut(Func.Body, Candidate.Range);
+    if (SplitRegistrationCxx)
+      for (const auto &Part : Candidate.Cover)
+        LeftOut |= guardedStatementLeftOut(Func.Body, Part);
     for (size_t Part : NestedParts)
       LeftOut |= Candidate.Kind == StmtKind::SEHTry &&
                  guardedStatementLeftOut(Func.Body, Candidates[Part].Range);
-    if (jumpEntersSlice(Func.Body, ProtectedBody, Entry) || LeftOut) {
+    bool Entered = jumpEntersSlice(Func.Body, ProtectedBody, Entry);
+    for (const auto &Body : SeparatedBodies)
+      Entered |= jumpEntersSlice(Body, ProtectedBody, Entry);
+    if (Entered || LeftOut) {
       Host->insert(Host->begin() + static_cast<ptrdiff_t>(InsertAt),
                    std::make_move_iterator(ProtectedBody.begin()),
                    std::make_move_iterator(ProtectedBody.end()));
@@ -1768,12 +1840,14 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
       return Follow;
     };
 
-    std::vector<std::vector<HighStmt>> ClauseBodies(ClauseTargets.size());
+    auto ClauseBodies = std::move(SeparatedBodies);
     // Where a handler block that runs off its end continued: the statement
     // after it.  As a clause body it continues after the try statement.
     std::vector<std::optional<va_t>> ClauseFallTo(ClauseTargets.size());
     for (size_t ClauseIndex = 0; ClauseIndex < ClauseTargets.size();
          ++ClauseIndex) {
+      if (!ClauseBodies[ClauseIndex].empty())
+        continue;
       std::optional<va_t> Target = ClauseTargets[ClauseIndex];
       if (!Target || WindowsTargetUses[*Target] - JoinedParts != 1)
         continue;
@@ -1897,6 +1971,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     }
 
     Func.StructuredExceptionRegions += Candidate.NativeRegionCount;
+    RegionInstalled = true;
   }
   Func.UnstructuredExceptionRegions += Rejected;
 

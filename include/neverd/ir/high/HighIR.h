@@ -609,6 +609,12 @@ inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
     if (Func.Entry)
       ByEntry[Func.Entry] = &Func;
   for (HighFunc &Func : Funcs) {
+    // A PE32 callback uses the parent's EBP and a private runtime stack.
+    // A separately converted ordinary HighFunc carries no projection of
+    // those coordinates. Retain its native clause target until that contract
+    // is proved; bodies already recovered inside the parent remain intact.
+    if (Func.ExceptionMetadata && Func.ExceptionMetadata->Registration)
+      continue;
     std::set<va_t> Active;
     bool Attached = false;
     auto Attach = [&](auto &&Self, std::vector<HighStmt> &Stmts) -> void {

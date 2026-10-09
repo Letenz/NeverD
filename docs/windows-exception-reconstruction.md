@@ -111,6 +111,13 @@ conflicting saved-stack values cannot acquire those guarantees.
 Structured catches keep an explicit transfer to the checked continuation;
 unstructured annotations retain the catch-object offset, parent-frame offset
 and continuation list while leaving the native handler out of line.
+A try whose checked address intervals surround an out-of-line catch can form
+one HighIR region when removing that runtime-only callback leaves a contiguous
+protected body. Ordinary predecessors, intervening unprotected statements and
+ambiguous state flow prevent the move. The transformation commits the body and
+catch together. A separately converted PE32 callback still needs a parent-frame
+projection before its body can be copied into a clause; its native target is
+retained when that proof is absent.
 Direct MSVC prologues must prove the actual FS:[0] write and the registration
 and state-field offsets; matching integer sequences in locals are insufficient.
 

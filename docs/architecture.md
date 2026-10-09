@@ -56,6 +56,11 @@ entry-stack-coordinate helpers are consumed by stack proofs, HighIR and LLVM;
 a generic COPY or a conflicting ordinary entry cannot substitute for that
 runtime contract. Structured and fallback HighIR clauses retain object/frame
 offsets and the checked continuation list.
+HighIR can join split registration C++ intervals around a runtime-only catch
+only when the resulting protected slice is contiguous and has no independent
+entry. Callback separation and body extraction commit together under a shared
+copy budget. A separately converted ordinary PE32 callback cannot be embedded
+without a parent-frame projection; its clause retains the native target.
 `hasCallerCleanupRegistrationABI` owns the current PE32 stack-cleanup check,
 which the writer replays against immutable input. Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction
