@@ -139,7 +139,8 @@ def run(executable):
         firmware = Path(directory) / "firmware.bin"
         firmware.write_bytes(b"\x90\xc3")
         placed = clients.enter_context(Client(executable))
-        for wrong, code in (({"loader": "mips"}, "invalid_request"), ({"loader": "binary"}, "invalid_request"),
+        for wrong, code in (({"loader": "mips"}, "invalid_request"),
+                            ({"loader": "binary", "processor": "mips"}, "invalid_request"),
                             ({"loader": "binary", "processor": "x86_64", "base": "start"}, "invalid_address")):
             refused = placed.call("open", {"path": str(firmware), **wrong})
             assert refused["error"]["code"] == code, (wrong, refused)

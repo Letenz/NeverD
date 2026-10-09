@@ -28,8 +28,14 @@ namespace neverd {
 /// How to read a binary file: Size of its bytes from Offset on (0 for the
 /// rest of the file) as code of one processor, mapped at Base.
 struct RawLoadOptions {
+  /// The processor the bytes are read as; Unknown until the user names one
+  /// or identification reads it from the bytes.
   Arch TheArch = Arch::Unknown;
   InstructionMode Mode = InstructionMode::Default;
+  /// Whether identification chose the processor rather than the user, and
+  /// what it read it from.
+  bool ProcessorDetected = false;
+  std::string ProcessorEvidence;
   va_t Base = 0;
   uint64_t Offset = 0;
   uint64_t Size = 0;

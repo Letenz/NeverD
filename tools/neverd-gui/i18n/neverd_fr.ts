@@ -1292,14 +1292,6 @@
         <source>C</source>
         <translation>C</translation>
     </message>
-    <message>
-        <source>Rust</source>
-        <translation>Rust</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Go</translation>
-    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -2388,6 +2380,30 @@ Signé : %4</translation>
     <message>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
         <translation>La plate-forme pour laquelle le code a été compilé, dont il suit les conventions : comment les appels passent les arguments, quels registres ils préservent et la taille des types C</translation>
+    </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>Aucune partie du fichier ne ressemble à du code d&apos;un jeu d&apos;instructions connu de NeverD ; choisissez le processeur sur lequel son code s&apos;exécute</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>Le code ressemble à %1 ou %2, et ses instructions ne disent pas lequel ; choisissez le processeur sur lequel son code s&apos;exécute</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>Détecté d&apos;après les octets : %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>Détecté d&apos;après les octets : %1, entrée %2, base %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>Le code ressemble à %1, que NeverD ne sait pas décoder ; choisissez un processeur pour le lire ainsi malgré tout</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>Le code ressemble surtout à %1, mais pas nettement ; choisissez le processeur sur lequel son code s&apos;exécute</translation>
     </message>
 </context>
 <context>

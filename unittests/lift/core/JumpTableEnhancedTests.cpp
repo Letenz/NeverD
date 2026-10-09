@@ -4153,6 +4153,10 @@ static fs::path moduleAddressOwnerInductionObj() {
   return fs::path(TEST_OBJ_DIR) / "test_module_address_owner_induction.o";
 }
 
+static fs::path moduleReadOnlyTableWriterObj() {
+  return fs::path(TEST_OBJ_DIR) / "test_module_readonly_table_writer.o";
+}
+
 static fs::path selectorOccurrenceX64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_selector_occurrence.o";
 }
@@ -8126,6 +8130,23 @@ TEST_F(JTE_X86_64, GlobalDataPointerToReadonlyTablePreservesSwitch) {
       lowFunctionBody(High.out, "jt_identity_readonly_dataptr_dispatch");
   ASSERT_FALSE(HighBody.empty()) << High.out;
   EXPECT_NE(HighBody.find("switch"), std::string::npos) << HighBody;
+}
+
+TEST_F(JTE_X86_64, ReadOnlyTableKeepsItsSwitchBesideAStoreThatWouldFault) {
+  // The writer walks a pointer over the read-only table; a store that reaches
+  // it faults, so it cannot change a slot the switch later reads.  The same
+  // writer over a writable table makes that switch unsafe (below).
+  auto ImageOrErr = neverd::loadBinary(moduleReadOnlyTableWriterObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  DirectPipelineRun Run = runPipelineWithEvidenceBudget(*ImageOrErr, 256);
+  ASSERT_TRUE(Run.Result.Success) << Run.Result.Error;
+  const std::string Body =
+      llvmFunctionBody(Run.LLVMIR, "module_ro_owner_dispatch");
+  ASSERT_FALSE(Body.empty()) << Run.LLVMIR;
+  EXPECT_NE(Body.find("switch i"), std::string::npos) << Body;
+  for (int Case = 0; Case < 4; ++Case)
+    EXPECT_TRUE(llvmHasSwitchCase(Body, Case)) << Case << Body;
 }
 
 TEST_F(JTE_X86_64, UnrelatedAddressInductionDoesNotPoisonModuleOwners) {

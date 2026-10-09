@@ -46,6 +46,9 @@ private:
   /// \p empty when it is empty.
   static std::optional<quint64> number(const QLineEdit *field,
                                        std::optional<quint64> empty = {});
+  /// What the chosen binary file row's bytes show of the processor they
+  /// hold code for, as the note puts it; empty for a row that reads a header.
+  QString identification() const;
   /// Enable OK and explain what keeps it disabled.
   void update();
   QJsonArray rows_;
@@ -58,6 +61,9 @@ private:
   QCheckBox *analysis_, *indicator_, *debugInfo_;
   QPushButton *ok_;
   QString binaryProcessor_;
+  /// The processor the engine reads the bytes as unasked, which the user
+  /// keeps by not choosing another.
+  QString detectedProcessor_;
 };
 
 } // namespace neverd::gui

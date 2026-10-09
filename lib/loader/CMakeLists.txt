@@ -1,3 +1,16 @@
+# The binary-file ISA model (scripts/generate_isa_model.py), embedded so a
+# lookup reads no file at run time.
+set(NEVERD_ISA_MODEL "${CMAKE_CURRENT_SOURCE_DIR}/Raw/ISAModel.bin")
+set(NEVERD_ISA_MODEL_INC "${CMAKE_CURRENT_BINARY_DIR}/Raw/ISAModel.inc")
+add_custom_command(
+  OUTPUT "${NEVERD_ISA_MODEL_INC}"
+  COMMAND "${CMAKE_COMMAND}" "-DINPUT=${NEVERD_ISA_MODEL}"
+          "-DOUTPUT=${NEVERD_ISA_MODEL_INC}"
+          -P "${PROJECT_SOURCE_DIR}/cmake/NeverDEmbedBytes.cmake"
+  DEPENDS "${NEVERD_ISA_MODEL}" "${PROJECT_SOURCE_DIR}/cmake/NeverDEmbedBytes.cmake"
+  COMMENT "Embedding the binary-file ISA model"
+  VERBATIM)
+
 add_neverd_component_library(NeverDLoader
   COFF/COFFLoader.cpp
   COFF/COFFLoaderUtils.cpp
@@ -46,7 +59,10 @@ add_neverd_component_library(NeverDLoader
   ELF/ELFProgramLinking.cpp
   ELF/SBFELFLoader.cpp
   EVM/EVMLoader.cpp
+  Raw/ISAIdentify.cpp
+  Raw/RawFingerprints.cpp
   Raw/RawLoader.cpp
+  ${NEVERD_ISA_MODEL_INC}
   ExecutableCodeOwnerIndex.cpp
   Go/GoDeferInfo.cpp
   Go/GoFuncTable.cpp
@@ -134,3 +150,5 @@ add_neverd_component_library(NeverDLoader
   LINK_LIBS
   LLVMSwiftDemangle
 )
+
+target_include_directories(NeverDLoader PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Raw")

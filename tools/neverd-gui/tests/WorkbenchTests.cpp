@@ -18,6 +18,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
@@ -94,6 +95,15 @@ struct Workbench {
     return nullptr;
   }
 };
+
+/// The representations a code view's menu offers, in order.
+QStringList representationsOf(CodeView *view) {
+  QStringList names;
+  if (auto *selector = view->findChild<QComboBox *>())
+    for (int i = 0; i < selector->count(); ++i)
+      names << selector->itemData(i).toString();
+  return names;
+}
 
 QByteArray readAll(const QString &path) {
   QFile file(path);
@@ -281,7 +291,7 @@ private slots:
     QTest::addColumn<bool>("secondWindow");
     QTest::addColumn<bool>("locked");
     for (const auto &representation :
-         {QStringLiteral("c"), QStringLiteral("llvmc")})
+         {QStringLiteral("source"), QStringLiteral("llvmc")})
       for (const bool second : {false, true})
         for (const bool locked : {false, true}) {
           const auto name = representation + (second ? "-second" : "-primary") +
@@ -303,7 +313,7 @@ private slots:
     auto *disassembly = bench.window->disassembly();
     const Address caller = Base + 0x140;
     const Address callee =
-        Base + (representation == QLatin1String("c") ? 0x160 : 0x150);
+        Base + (representation == QLatin1String("source") ? 0x160 : 0x150);
     disassembly->navigate(caller);
     QTRY_COMPARE(disassembly->currentFunction(),
                  std::optional<Address>(caller));
@@ -335,7 +345,7 @@ private slots:
     QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
     code->setFocus();
     QTRY_VERIFY(code->hasFocus());
-    const QString link = representation == QLatin1String("c")
+    const QString link = representation == QLatin1String("source")
                              ? QStringLiteral("function_22")
                              : QStringLiteral("Bar_ctor");
     QVERIFY(code->findText(link, true));
@@ -343,7 +353,7 @@ private slots:
     QSignalSpy activation(code, &CodeText::nameActivated);
     // The call is row 1 in C, row 3 after LLVM C's folded prelude.
     const QFontMetricsF metrics(Theme::instance().codeFont());
-    const int row = representation == QLatin1String("c") ? 1 : 3;
+    const int row = representation == QLatin1String("source") ? 1 : 3;
     const QPoint point(
         qRound(6 + 17 * metrics.horizontalAdvance(QLatin1Char('M'))),
         qRound((row - code->verticalScrollBar()->value() + 0.5) *
@@ -444,7 +454,13 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
                                  code->language() == QLatin1String("rust"),
                              OpenTimeoutMs);
-    // C and Go stay one choice away; Go says what it shows as C.
+    // Pseudocode reads the Rust; C beside it reads every function as C.
+    const QStringList pseudocodeAndC = {
+        QStringLiteral("source"), QStringLiteral("c"),
+        QStringLiteral("llvmc"),  QStringLiteral("low"),
+        QStringLiteral("med"),    QStringLiteral("high"),
+        QStringLiteral("llvm")};
+    QCOMPARE(representationsOf(view), pseudocodeAndC);
     view->setRepresentation(QStringLiteral("c"));
     QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
                                  code->language() == QLatin1String("c"),
@@ -452,12 +468,67 @@ private slots:
     QCOMPARE(view->chosenLanguage(), QString());
     QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
                  QStringLiteral("C-A"));
+    // A language the menu does not offer leaves the view as it is.
     view->setRepresentation(QStringLiteral("go"));
+    QCOMPARE(view->representation(), QStringLiteral("c"));
+    view->setRepresentation(QStringLiteral("source"));
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->language() == QLatin1String("rust"),
+                             OpenTimeoutMs);
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("Pseudocode-A (Rust)"));
+  }
+
+  void pseudocodeOffersOnlyTheProgramsLanguages() {
+    QTemporaryDir directory;
+    const QStringList cOnly = {
+        QStringLiteral("source"), QStringLiteral("llvmc"),
+        QStringLiteral("low"),    QStringLiteral("med"),
+        QStringLiteral("high"),   QStringLiteral("llvm")};
+    {
+      // A C program's pseudocode is C: no other language is offered.
+      Workbench bench;
+      bench.window->openFile(
+          writeFixture(directory, QStringLiteral("pseudocode-import.bin")));
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      bench.window->disassembly()->navigate(Base + 0x140);
+      QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                   std::optional<Address>(Base + 0x140));
+      bench.action(ActionId::ViewPseudocode)->trigger();
+      auto *view = bench.codeView(QStringLiteral("source"));
+      QVERIFY(view);
+      QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                   view->text()->lineCount() > 1,
+                               OpenTimeoutMs);
+      QCOMPARE(representationsOf(view), cOnly);
+      QCOMPARE(view->text()->language(), QStringLiteral("c"));
+      QCOMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+               QStringLiteral("Pseudocode-A"));
+    }
+    // A Go program reads in Go, says so, and counts what it shows as C.
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-go.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
     QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
                                  code->language() == QLatin1String("go"),
                              OpenTimeoutMs);
+    QCOMPARE(representationsOf(view),
+             QStringList({QStringLiteral("source"), QStringLiteral("c"),
+                          QStringLiteral("llvmc"), QStringLiteral("low"),
+                          QStringLiteral("med"), QStringLiteral("high"),
+                          QStringLiteral("llvm")}));
     QVERIFY(code->allText().contains(QStringLiteral("func main.main()")));
     QVERIFY(code->status().contains(QStringLiteral("shown as C")));
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("Pseudocode-A (Go)"));
   }
 
   void unknownEntryBrowsesMappedCodeAndShowsDiagnostics() {

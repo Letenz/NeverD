@@ -16,7 +16,6 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
-#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -74,22 +73,6 @@ std::optional<FunctionSym> debugFunction(DebugContext *Dbg, va_t Entry) {
   if (!Dbg)
     return std::nullopt;
   return Dbg->resolveFunction(Entry);
-}
-
-// A debug record's byte size alone does not describe a C type. Keep the
-// recovered machine parameter when its pointer target has no printable name
-// or validated fields; receiver identity evidence is independent of this
-// presentation choice.
-bool hasUnsupportedAnonymousPointee(TypeRef Type) {
-  if (!Type || Type->Kind != NdTypeKind::Ptr)
-    return false;
-  for (unsigned Depth = 0; Type && Depth < 64; ++Depth) {
-    if (Type->Kind != NdTypeKind::Ptr)
-      return Type->Kind == NdTypeKind::Struct && Type->SourceName.empty() &&
-             sourceAggregateMembers(Type).empty();
-    Type = Type->Pointee;
-  }
-  return true;
 }
 
 bool isWindowsLanguagePersonality(ExceptionPersonality Personality) {
@@ -271,6 +254,10 @@ TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
         NdType::makeNamedRecord(cNamedTypeSpelling(Record->SourceName),
                                 Record->Size ? Record->Size : 8));
   }
+  // A return type C cannot spell keeps the recovered machine type, as a
+  // parameter's does.
+  if (!hasCSpelling(cDisplayType(DebugFn->ReturnType)))
+    return {};
   return DebugFn->ReturnType;
 }
 
@@ -736,8 +723,10 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     emitIndent(1);
     TypeRef Ty = Local.Type;
     if (Dbg && CurrentFunc) {
+      // A debug type C cannot spell leaves the local its recovered type, as
+      // debugTypeForDisplacement does.
       if (auto Var = Dbg->resolveVariable(CurrentFunc->Entry, Local.StackOff);
-          Var && Var->Type)
+          Var && Var->Type && hasCSpelling(cDisplayType(Var->Type)))
         Ty = cDisplayType(Var->Type);
     }
     auto ExplicitTy = ExplicitDeclarations.find(Name);
@@ -3000,6 +2989,32 @@ void HighCWriter::foldSignedJleConds(std::vector<HighStmt> &Stmts) {
   Walk(Stmts);
 }
 
+bool HighCWriter::readsThroughForwards(const HighExpr &E,
+                                       const std::string &Name) const {
+  std::set<std::string> Followed;
+  // Expressions share subexpressions: one explored without finding the name
+  // does not read it from anywhere else either.
+  std::set<const HighExpr *> Explored;
+  std::function<bool(const HighExpr &)> Reads = [&](const HighExpr &Cur) {
+    if (!Explored.insert(&Cur).second)
+      return false;
+    if (Cur.Kind == ExprKind::Var || Cur.Kind == ExprKind::Phi) {
+      const std::string Read = varName(Cur.Var);
+      const std::string Printed = copyForwardName(Read);
+      if (Read == Name || Printed == Name)
+        return true;
+      const auto Fwd = ValueForward.find(Printed);
+      return Fwd != ValueForward.end() && Fwd->second &&
+             Followed.insert(Printed).second && Reads(*Fwd->second);
+    }
+    bool Found = false;
+    Cur.forEachChildExpr(
+        [&](const ExprPtr &Child) { Found = Found || Reads(*Child); });
+    return Found;
+  };
+  return Reads(E);
+}
+
 void HighCWriter::collectValueForward(const HighFunc &Func) {
   ValueForward.clear();
   auto containsName = [&](const HighExpr &E, const std::string &Name,
@@ -3942,6 +3957,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     if (Fwd && (isParamCopy(*Fwd) || isIntegerViewOfScalar(*Fwd)))
       if (const HighExpr *Inner = sameWidthVariable(*Fwd))
         Fwd = Inner;
+    if (!Fwd || readsThroughForwards(*Fwd, C.Name))
+      continue;
     ValueForward[C.Name] = Fwd;
     // A field value is not a frame-address alias, but that alone must not
     // force its definition to print after this proof has folded every use.
@@ -4015,9 +4032,12 @@ void HighCWriter::collectUnusedCallStoreAlias(const HighFunc &Func) {
         const bool SizeOk = Cur->Var.Size == Size ||
                             (Size == 4 && Cur->Var.Size == 8) ||
                             (Size == 8 && Cur->Var.Size == 4);
+        // The entry stack pointer is never assigned either, but the frame
+        // storage defines it: it is no call's result.
         if (Name.empty() || Cur->Var.Kind == MedVar::Param ||
             isReservedParamDisplayName(Name) || Assigned.count(Name) ||
-            ValueForward.count(Name) || FieldForward.count(Name) || !SizeOk)
+            ValueForward.count(Name) || FieldForward.count(Name) || !SizeOk ||
+            isSyntheticEntryStackPointer(Cur->Var, Func, Opts.TheArch))
           return;
         if (Found.empty())
           Found = Name;
@@ -4080,7 +4100,7 @@ void HighCWriter::collectUnusedCallStoreAlias(const HighFunc &Func) {
           if (!Val)
             continue;
           auto Name = UniqueUndeclared(Val, S.Dst->Var.Size);
-          if (!Name)
+          if (!Name || readsThroughForwards(*S.Val, *Name))
             continue;
           ValueForward[*Name] = S.Val.get();
           Analysis.DeadStmts.insert(&S);
@@ -4169,6 +4189,9 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
     } else if (const MsvcCallee *Msvc =
                    msvcCallee(callIdentifier(*S.Val), Opts.Format))
       ReturnType = msvcSyntheticReturn(Msvc->ReturnKind);
+    // A result whose type C cannot spell keeps the destination's type.
+    if (ReturnType && !hasCSpelling(ReturnType))
+      ReturnType = nullptr;
     if (ReturnType)
       CallResultTypes[Name] = ReturnType;
     std::string Stem = callResultStem(callIdentifier(*S.Val));
@@ -4232,6 +4255,50 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
       CallResultTypes[Stem] = ReturnType;
     CallResultNames[Name] = std::move(Stem);
   });
+}
+
+TypeRef HighCWriter::emittedParamType(const HighFunc &Func,
+                                      size_t Index) const {
+  if (Index >= Func.Params.size())
+    return nullptr;
+  if (EmittedParamTypesOf != &Func || EmittedParamTypesEntry != Func.Entry ||
+      EmittedParamTypes.size() != Func.Params.size()) {
+    EmittedParamTypesOf = &Func;
+    EmittedParamTypesEntry = Func.Entry;
+    EmittedParamTypes.clear();
+    for (const HighParam &Param : Func.Params)
+      EmittedParamTypes.push_back(Param.Type);
+    // A bound source ABI spells its own parameters (sourceParameterType).
+    const auto DebugFn = debugFunction(Dbg, Func.Entry);
+    if (DebugFn && !Func.SourceTypeHint) {
+      const bool HighIRIncludesSret =
+          isMsvcIndirectReturn(DebugFn->ReturnType) &&
+          highIRIncludesIndirectReturn(Func, *DebugFn);
+      const int SretId = indirectReturnParamId(*DebugFn);
+      for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
+        // The hidden result pointer is the definition's `result`, a pointer
+        // to the record the function returns.
+        if (HighIRIncludesSret && static_cast<int>(PI) == SretId) {
+          if (const TypeRef Result = declaredFunctionReturnType(Func);
+              Result && Result->Kind == NdTypeKind::Ptr)
+            EmittedParamTypes[PI] = Result;
+          continue;
+        }
+        size_t DI = PI;
+        if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
+          DI = PI - 1;
+        if (DI >= DebugFn->Params.size())
+          continue;
+        // A debug record's byte size alone does not describe a C type: a type
+        // C cannot spell, such as a pointer to a record without a printable
+        // name or validated fields, keeps the recovered machine parameter.
+        if (const TypeRef DebugType = cDisplayType(DebugFn->Params[DI].second);
+            DebugType && hasCSpelling(DebugType))
+          EmittedParamTypes[PI] = DebugType;
+      }
+    }
+  }
+  return EmittedParamTypes[Index];
 }
 
 size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
@@ -5416,10 +5483,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   writeExceptionAnnotation(Func);
   if (Opts.EmitComments && DebugFn) {
     OS << "/* neverd.debug: return=";
-    if (DebugFn->ReturnType)
-      OS << typeToC(cDisplayType(DebugFn->ReturnType));
-    else
+    if (const TypeRef Return = cDisplayType(DebugFn->ReturnType); !Return)
       OS << "(none)";
+    else if (hasCSpelling(Return))
+      OS << typeToC(Return);
+    else
+      OS << "(no C type)";
     OS << " params=" << DebugFn->Params.size() << " */\n";
   }
 
@@ -5471,7 +5540,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         Indirect && DebugFn && isWin64MemberIndirectReturn(*DebugFn);
     const int SretId = DebugFn ? indirectReturnParamId(*DebugFn) : 0;
     auto emitHighIRParam = [&](size_t PI) {
-      TypeRef Ty = Func.Params[PI].Type;
+      TypeRef Ty = emittedParamType(Func, PI);
       std::string Name = Func.Params[PI].Name;
       if (auto It = ParamDisplayNames.find(static_cast<int>(PI));
           It != ParamDisplayNames.end())
@@ -5480,13 +5549,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         size_t DI = PI;
         if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
           DI = PI - 1;
-        if (DI < DebugFn->Params.size()) {
-          if (const TypeRef &DebugType = DebugFn->Params[DI].second;
-              DebugType && !hasUnsupportedAnonymousPointee(DebugType))
-            Ty = cDisplayType(DebugType);
-          if (!DebugFn->Params[DI].first.empty())
-            Name = DebugFn->Params[DI].first;
-        }
+        if (DI < DebugFn->Params.size() && !DebugFn->Params[DI].first.empty())
+          Name = DebugFn->Params[DI].first;
       }
       if (Func.SourceTypeHint && PI < Func.SourceTypeHint->Parameters.size()) {
         if (Emitted)

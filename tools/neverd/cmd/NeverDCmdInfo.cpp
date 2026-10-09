@@ -82,6 +82,24 @@ int runIdentify() {
     else if (Row.getBoolean("by_name").value_or(false))
       outs() << "  (for the file name alone)";
     outs() << "\n";
+    // What a headerless file's bytes show, and the processor --loader
+    // binary reads them as without --processor.
+    if (Row.get("guesses")) {
+      outs() << "      bytes: " << Row.getString("evidence").value_or("")
+             << "\n";
+      const llvm::StringRef Detected = Row.getString("detected").value_or("");
+      outs() << "      processor: "
+             << (Detected.empty() ? "none read; name one with --processor"
+                                  : Detected)
+             << "\n";
+      if (const json::Object *Print = Row.getObject("fingerprint"))
+        outs() << "      " << Print->getString("name").value_or("")
+               << ": entry " << Print->getString("entry").value_or("")
+               << ", base " << Print->getString("base").value_or("") << "\n";
+      else if (const int64_t Start = Row.getInteger("code_offset").value_or(0))
+        outs() << "      read it with --load-offset "
+               << llvm::format_hex(Start, 0) << "\n";
+    }
   }
   return 0;
 }

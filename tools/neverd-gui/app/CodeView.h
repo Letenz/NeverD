@@ -214,6 +214,10 @@ signals:
 
 private:
   void updateStatus();
+  /// The representations the loaded program offers: C beside Pseudocode
+  /// only for a program with Rust or Go code, whose Pseudocode reads those
+  /// functions in their own language.
+  void updateRepresentations();
   Session &session_;
   QComboBox *selector_;
   QToolButton *fold_, *lock_;
