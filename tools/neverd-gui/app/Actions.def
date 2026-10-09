@@ -6,8 +6,8 @@
 ///
 /// \file
 /// Every workbench command: identifier, menu text, default shortcut, icon and
-/// status tip.  Shortcuts follow the conventional interactive disassembler
-/// defaults so existing muscle memory carries over.  Menus.def and
+/// status tip.  Shortcuts are IDA's defaults, so existing muscle memory
+/// carries over: IdaActions.def pairs each command with IDA's.  Menus.def and
 /// Toolbars.def place the commands; MainWindow implements them.
 ///
 //===----------------------------------------------------------------------===//
@@ -26,8 +26,7 @@
 #endif
 
 // File.
-NEVERD_ACTION(FileOpen, QT_TRANSLATE_NOOP("Actions", "&Open..."), "Ctrl+O",
-              "open",
+NEVERD_ACTION(FileOpen, QT_TRANSLATE_NOOP("Actions", "&Open..."), "", "open",
               QT_TRANSLATE_NOOP("Actions", "Open a binary for analysis"))
 NEVERD_ACTION(FileReload,
               QT_TRANSLATE_NOOP("Actions", "&Reload the input file"), "",
@@ -52,8 +51,8 @@ NEVERD_ACTION(
     QT_TRANSLATE_NOOP("Actions",
                       "Write the current function's listing to a text file"))
 NEVERD_ACTION(
-    FileExportPseudocode, QT_TRANSLATE_NOOP("Actions", "Create &C file..."), "",
-    "pseudocode",
+    FileExportPseudocode, QT_TRANSLATE_NOOP("Actions", "Create &C file..."),
+    "Ctrl+F5", "pseudocode",
     QT_TRANSLATE_NOOP("Actions",
                       "Write the current function's pseudocode to a C file"))
 NEVERD_ACTION(FileSave, QT_TRANSLATE_NOOP("Actions", "&Save"), "Ctrl+W", "save",
@@ -361,7 +360,7 @@ NEVERD_ACTION(OptionsGeneral, QT_TRANSLATE_NOOP("Actions", "&General..."), "",
               QT_TRANSLATE_NOOP("Actions",
                                 "Listing, analysis and language options"))
 NEVERD_ACTION(OptionsStrings,
-              QT_TRANSLATE_NOOP("Actions", "S&tring literals..."), "",
+              QT_TRANSLATE_NOOP("Actions", "S&tring literals..."), "Alt+A",
               "strings",
               QT_TRANSLATE_NOOP("Actions",
                                 "Choose the encodings and minimum length of "

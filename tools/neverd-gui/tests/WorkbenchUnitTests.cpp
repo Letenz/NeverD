@@ -23,6 +23,7 @@
 #include <QListWidget>
 #include <QMainWindow>
 #include <QMenuBar>
+#include <QMetaEnum>
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <QSqlDatabase>
@@ -81,6 +82,43 @@ struct DockPair {
                                               contentRect(left).center().y());
   }
 };
+
+/// The keys IDA's configuration means by \p spelling: "Ctrl-Shift-Down",
+/// "Enter", or a platform key such as "sys(ZoomOut)".
+QList<QKeySequence> idaKeys(QLatin1StringView spelling) {
+  QString rest = spelling.toString();
+  if (rest.isEmpty())
+    return {};
+  if (rest.startsWith(u"sys(") && rest.endsWith(u')')) {
+    bool known = false;
+    const int standard =
+        QMetaEnum::fromType<QKeySequence::StandardKey>().keyToValue(
+            rest.mid(4, rest.size() - 5).toLatin1().constData(), &known);
+    return known ? QKeySequence::keyBindings(
+                       static_cast<QKeySequence::StandardKey>(standard))
+                 : QList<QKeySequence>{};
+  }
+  // IDA joins the modifiers with '-' and calls Return "Enter".
+  QStringList parts;
+  for (bool modifier = true; modifier;) {
+    modifier = false;
+    for (const auto name :
+         {QLatin1StringView("Ctrl-"), QLatin1StringView("Shift-"),
+          QLatin1StringView("Alt-"), QLatin1StringView("Meta-")})
+      if (rest.size() > name.size() &&
+          rest.startsWith(name, Qt::CaseInsensitive)) {
+        parts << name.chopped(1).toString();
+        rest.remove(0, name.size());
+        modifier = true;
+      }
+  }
+  parts << (rest == u"Enter" ? QStringLiteral("Return") : rest);
+  const auto key =
+      QKeySequence::fromString(parts.join(u'+'), QKeySequence::PortableText);
+  if (key.isEmpty() || key[0].key() == Qt::Key_unknown)
+    return {};
+  return {key};
+}
 } // namespace
 
 class WorkbenchUnitTests : public QObject {
@@ -235,6 +273,48 @@ private slots:
         walk(action->menu());
     for (auto *action : registry.allActions())
       QVERIFY2(reachable.contains(action), qPrintable(action->objectName()));
+  }
+
+  void commandsKeepIdasShortcuts() {
+    ActionRegistry registry;
+    QSet<QAction *> shared;
+    // Every key IDA gives a command, so that a command IDA does not have
+    // takes none of them.
+    QHash<QKeySequence, QString> idaCommands;
+#define NEVERD_IDA_ACTION(IdaAction, Shortcut, NeverDAction)                   \
+  {                                                                            \
+    auto *action = registry.action(ActionId::NeverDAction);                    \
+    const auto keys = idaKeys(QLatin1StringView(Shortcut));                    \
+    QVERIFY2(keys.isEmpty() ? action->shortcut().isEmpty()                     \
+                            : keys.contains(action->shortcut()),               \
+             qPrintable(QStringLiteral("%1 has \"%2\", IDA's %3 \"%4\"")       \
+                            .arg(action->objectName(),                         \
+                                 action->shortcut().toString(                  \
+                                     QKeySequence::PortableText),              \
+                                 QLatin1StringView(IdaAction),                 \
+                                 QLatin1StringView(Shortcut))));               \
+    shared.insert(action);                                                     \
+    for (const auto &key : keys)                                               \
+      idaCommands.insert(key, QStringLiteral(IdaAction));                      \
+  }
+#define NEVERD_IDA_PLANNED(IdaAction, Shortcut, Group)                         \
+  for (const auto &key : idaKeys(QLatin1StringView(Shortcut)))                 \
+    idaCommands.insert(key, QStringLiteral(IdaAction));
+#include "IdaActions.def"
+    QVERIFY(shared.size() > int(ActionId::Count) * 3 / 4);
+    for (auto *action : registry.allActions())
+      if (!shared.contains(action) && !action->shortcut().isEmpty())
+        QVERIFY2(!idaCommands.contains(action->shortcut()),
+                 qPrintable(action->objectName() +
+                            QStringLiteral(" takes the key of IDA's ") +
+                            idaCommands.value(action->shortcut())));
+    // The spellings the table uses mean the keys Qt reads.
+    QCOMPARE(idaKeys(QLatin1StringView("Ctrl-Shift-Down")),
+             QList{QKeySequence(QStringLiteral("Ctrl+Shift+Down"))});
+    QCOMPARE(idaKeys(QLatin1StringView("Enter")),
+             QList{QKeySequence(Qt::Key_Return)});
+    QCOMPARE(idaKeys(QLatin1StringView("sys(ZoomOut)")),
+             QKeySequence::keyBindings(QKeySequence::ZoomOut));
   }
 
   void everyIconRenders() {

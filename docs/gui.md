@@ -323,12 +323,30 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Shift+F3, Shift+F4, Shift+F7, Shift+F12 | Functions, Names, Segments, Strings |
 | Ctrl+Shift+F12 | String references |
 | F6 / Shift+F6 | Next / previous window |
+| Ctrl+F | Quick filter in a list; find text in a disassembly, pseudocode or IR window |
+| Ctrl+F5 | Write the function's pseudocode to a C file |
+| Alt+A | String literal options |
 | Ctrl+W | Save the database |
 | Ctrl+Shift+P | Command palette |
 
 Single-key shortcuts apply only while an analysis view has the keyboard focus,
 so typing in a field or dialog keeps normal text editing. **Options →
 Shortcuts** lists every command with its key.
+
+A command IDA also has takes IDA's default key: the legacy scheme of IDA's
+`cfg/idagui.cfg`, and the decompiler's F5, Tab and Ctrl+F5.
+`tools/neverd-gui/app/IdaActions.def` pairs each command with IDA's, and the
+workbench unit tests fail when a default drifts from IDA's or when a command of
+the workbench's own takes a key IDA gives another command. **File → Open**
+therefore has no key: IDA's Ctrl+O makes an operand an offset into the current
+segment. One difference is deliberate: in a disassembly, pseudocode or IR
+window Ctrl+F finds text, where IDA's disassembly goes to the next error.
+
+`scripts/compare_gui_with_ida.py --ida <installation>` checks the table against
+an IDA installation and reports, menu by menu, which of IDA's commands the
+workbench has, plans and lacks. Against IDA 9.4 on 2026-10-09, all 89 rows
+matched IDA's configuration, and the workbench had 83 of the 255 commands in
+IDA's main menus, with 59 more planned.
 
 **Edit → Copy** (Ctrl+C) copies from the window that has the keyboard focus:
 the selected lines of a disassembly, pseudocode or IR window (the current line
