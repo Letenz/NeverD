@@ -32,6 +32,7 @@ enum class WindowsEHNativeSourceModel : uint8_t {
   CxxFH3,
   CxxFH4,
   X86RegistrationSEH,
+  X86RegistrationCxx,
 };
 
 /// The operation for which a normalized Windows exception source is being

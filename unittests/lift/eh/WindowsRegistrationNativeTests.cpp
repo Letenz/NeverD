@@ -14,10 +14,13 @@
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/backend/llvm/WindowsEHNativeSource.h"
+#include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/object/PELayout.h"
@@ -29,6 +32,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IR/WinEHFrame.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TargetSelect.h"
@@ -76,6 +80,179 @@ public:
 
 namespace {
 using namespace neverd;
+
+#ifdef LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS
+TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
+  const char *Path = std::getenv("NEVERD_REGISTRATION_INPUT_CXX_PE32");
+  if (!Path)
+    GTEST_SKIP()
+        << "set NEVERD_REGISTRATION_INPUT_CXX_PE32 to a genuine fixture";
+  auto Loaded = COFFLoader().load(Path);
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  const ExceptionFunction *Source = nullptr;
+  for (const auto &EH : Loaded->ExceptionMetadata.Functions) {
+    const auto Classification =
+        classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF,
+                                      WindowsEHNativeCapability::IRLowering);
+    if (!Classification.canLowerNativeIR() ||
+        Classification.Model != WindowsEHNativeSourceModel::X86RegistrationCxx)
+      continue;
+    if (EH.Cxx->TryBlocks.size() == 1 &&
+        EH.Cxx->TryBlocks[0].Handlers.size() == 1) {
+      ASSERT_EQ(Source, nullptr);
+      Source = &EH;
+    }
+  }
+  ASSERT_NE(Source, nullptr);
+  EXPECT_EQ(
+      classifyWindowsEHNativeSource(*Source, Arch::X86, BinaryFormat::COFF)
+          .Reason,
+      WindowsEHNativeSourceReason::OutputReconstructionUnavailable);
+  Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(*Loaded));
+  auto Low = CFGBuilder().build(*Loaded, Decoder, Source->CodeRange.Begin,
+                                "registration_cxx_source");
+  ASSERT_TRUE(Low.RegistrationStates);
+  for (const auto &Diagnostic : Low.RegistrationStates->Diagnostics)
+    llvm::errs() << Diagnostic << '\n';
+  ASSERT_TRUE(Low.RegistrationStates->Complete);
+  ASSERT_TRUE(hasCallerCleanupRegistrationABI(Low, *Loaded));
+  LowToMedConverter Converter;
+  Converter.setBinaryImage(&*Loaded);
+  auto Med = Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
+  inferMedTypes(Med, Arch::X86);
+  llvm::LLVMContext Context;
+  MedLLVMEmitter Emitter;
+  auto Module = Emitter.emit({Med}, Context, "source-cxx-registration",
+                             Arch::X86, {}, &*Loaded, BinaryFormat::COFF);
+  ASSERT_TRUE(Module);
+  auto *Parent = Module->getFunction(Med.Name);
+  ASSERT_TRUE(Parent);
+  if (!Parent->getMetadata(windows_eh_md::NativeAttachment))
+    Module->print(llvm::errs(), nullptr);
+  ASSERT_TRUE(Parent->getMetadata(windows_eh_md::NativeAttachment));
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  EXPECT_TRUE(Parent->hasFnAttribute(llvm::RewriteWinX86CxxFrameAttribute));
+  unsigned Catches = 0, Returns = 0, Cleanups = 0, Throws = 0;
+  for (const auto &Block : *Parent)
+    for (const auto &I : Block) {
+      if (const auto *Pad = llvm::dyn_cast<llvm::CatchPadInst>(&I)) {
+        ++Catches;
+        EXPECT_TRUE(
+            Pad->getMetadata(llvm::RewriteWinX86CxxCatchObjectAttachment));
+        EXPECT_TRUE(
+            Pad->getMetadata(llvm::mc_rewrite::RewriteWinEHSemanticAttachment));
+      }
+      Returns += llvm::isa<llvm::CatchReturnInst>(I);
+      if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
+        if (const auto *Callee = Call->getCalledFunction()) {
+          if (Callee->getName().starts_with("__nd_registration_cleanup.ecx_")) {
+            ++Cleanups;
+            EXPECT_EQ(Call->getCallingConv(), llvm::CallingConv::X86_ThisCall);
+            EXPECT_EQ(Call->arg_size(), 1u);
+            EXPECT_TRUE(Call->getType()->isVoidTy());
+          }
+          if (Callee->getName().starts_with("__nd_registration_throw_")) {
+            ++Throws;
+            EXPECT_TRUE(llvm::isa<llvm::InvokeInst>(Call));
+            EXPECT_EQ(Call->arg_size(), 0u);
+            EXPECT_TRUE(Call->doesNotReturn());
+          }
+        }
+    }
+  EXPECT_EQ(Catches, 1u);
+  EXPECT_EQ(Returns, 1u);
+  EXPECT_EQ(Cleanups, 2u);
+  EXPECT_EQ(Throws, 1u);
+  if (const char *Output = std::getenv("NEVERD_REGISTRATION_OUTPUT_IR")) {
+    std::error_code EC;
+    llvm::raw_fd_ostream Stream(Output, EC);
+    ASSERT_FALSE(bool(EC)) << EC.message();
+    Module->print(Stream, nullptr);
+  }
+  llvm::InitializeAllTargetInfos();
+  llvm::InitializeAllTargets();
+  llvm::InitializeAllTargetMCs();
+  llvm::InitializeAllAsmParsers();
+  llvm::InitializeAllAsmPrinters();
+  auto Resolve = [&](llvm::StringRef Symbol,
+                     uint32_t) -> std::optional<uint64_t> {
+    if (auto Address = parseNdDataSymbol(Symbol))
+      return *Address;
+    if (auto Address = parseNdCodePtrSymbol(Symbol))
+      return *Address;
+    for (const auto &Function : *Module) {
+      llvm::SmallString<64> ObjectName;
+      llvm::Mangler Mangler;
+      Mangler.getNameWithPrefix(ObjectName, &Function, false);
+      if (ObjectName != Symbol)
+        continue;
+      auto Address = rewrite_source::getOriginalVA(Function);
+      if (!Address) {
+        llvm::consumeError(Address.takeError());
+        return std::nullopt;
+      }
+      return *Address;
+    }
+    return std::nullopt;
+  };
+  auto Compiled = compileImageForPatch(*Module, Arch::X86, BinaryFormat::COFF,
+                                       0x405000, Resolve, Loaded->Base);
+  ASSERT_TRUE(Compiled.Success);
+  ASSERT_TRUE(Compiled.Unresolved.empty());
+  ASSERT_EQ(Compiled.WinEHSemanticRecords.size(), 1u);
+  const auto &Row = Compiled.WinEHSemanticRecords.front();
+  EXPECT_EQ(Row.Encoding,
+            llvm::mc_rewrite::RewriteWinEHSemanticEncoding::X86CxxFH3);
+  EXPECT_EQ(Row.Token, *windows_eh_semantics::getCxxCatchSemanticToken(
+                           *Source, Arch::X86, 0, 0));
+  EXPECT_EQ(Row.RecordSize, 16u);
+  EXPECT_GE(Row.OwnerVA, 0x405000u);
+  EXPECT_GT(Row.HandlerVA, Row.OwnerVA);
+  EXPECT_GE(Row.ContainerVA, 0x405000u);
+  EXPECT_EQ(Row.ContainerEndVA, 0u);
+  EXPECT_TRUE(Row.ContainerEndSymbol.empty());
+  const auto HandlerRange =
+      llvm::find_if(Compiled.FunctionRanges, [&](const auto &Range) {
+        return Range.OwnerSymbol == Row.HandlerSymbol &&
+               Range.OwnerVA == Row.HandlerVA &&
+               Range.BeginVA == Row.HandlerVA &&
+               Range.ParentOwnerSymbol == Row.OwnerSymbol &&
+               Range.ParentOwnerVA == Row.OwnerVA;
+      });
+  ASSERT_NE(HandlerRange, Compiled.FunctionRanges.end());
+  EXPECT_GT(HandlerRange->EndVA, HandlerRange->BeginVA);
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Ranges = Compiled.FunctionRanges;
+    auto &Changed = Ranges[HandlerRange - Compiled.FunctionRanges.begin()];
+    switch (Mutation) {
+    case 0:
+      Changed.ParentOwnerSymbol.clear();
+      break;
+    case 1:
+      ++Changed.ParentOwnerVA;
+      break;
+    case 2:
+      ++Changed.BeginVA;
+      break;
+    case 3:
+      Changed.EndVA = Changed.BeginVA;
+      break;
+    case 4:
+      ++Changed.OwnerVA;
+      break;
+    case 5:
+      Ranges.erase(Ranges.begin() +
+                   (HandlerRange - Compiled.FunctionRanges.begin()));
+      break;
+    }
+    EXPECT_FALSE(llvm::mc_rewrite::validateRewriteWinEHSemanticRecords(
+        Compiled.WinEHSemanticRecords, Compiled.SourceFunctionOwners, Ranges,
+        Compiled.FunctionOwnerAddrs));
+  }
+}
+#endif
 
 TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   const char *Path = std::getenv("NEVERD_REGISTRATION_INPUT_PE32");

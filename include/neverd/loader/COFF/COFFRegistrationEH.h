@@ -90,6 +90,19 @@ getCheckedX86SimpleCxxThrowInfo(const BinaryImage &Img, va_t Address);
 /// Authenticate an argument-preserving veneer to the known CRT SEH3 import.
 bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA);
 
+/// Separate the per-function EAX/FuncInfo thunk from its argument- and
+/// EAX-preserving CRT dispatch entry. A generated handler must use RuntimeVA;
+/// jumping to the original HandlerVA would reinstall the original FuncInfo.
+/// Only immutable unwrapped code and the exact VCRUNTIME140 FH3 import qualify.
+struct X86CxxPersonalityABI {
+  va_t RuntimeVA = InvalidVA;
+  va_t IATVA = InvalidVA;
+  std::vector<ExceptionAddressRange> CodeRanges;
+};
+std::optional<X86CxxPersonalityABI>
+getCheckedX86CxxPersonalityABI(const BinaryImage &Img,
+                               const ExceptionFunction &Function);
+
 /// Authenticate the direct CRT EH4 forwarding wrapper and return its cookie
 /// checker. Names/byte-search observations alone do not authorize rewriting:
 /// all four dispatcher arguments, the exact image cookie and the common CRT

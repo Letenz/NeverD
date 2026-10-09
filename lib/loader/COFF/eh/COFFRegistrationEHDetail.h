@@ -160,6 +160,10 @@ struct HandlerIdentity {
   std::string Name;
   /// `FuncInfo` address recovered from a `__ehhandler$` thunk.
   va_t CxxFuncInfoVA = 0;
+  va_t CxxThunkBodyVA = 0;
+  va_t CxxThunkEndVA = 0;
+  va_t CxxDispatchVA = 0;
+  va_t CxxDispatchIATVA = 0;
 };
 
 bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,

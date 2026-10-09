@@ -664,6 +664,138 @@ TEST(RegistrationCallABI, CxxMetadataExtentsBindTheReparsedSourceGraph) {
       coff_loader::getCheckedX86CxxCallbackPointerSources(F.Code.Image, F.EH));
 }
 
+namespace {
+struct CxxPersonalityImage {
+  CxxMetadataImage Source;
+  static constexpr va_t HandlerVA = CleanupRelayImage::RelayVA + 0x50;
+  static constexpr va_t RuntimeVA = CleanupRelayImage::RelayVA + 0x70;
+  static constexpr va_t IATVA = CxxMetadataImage::TableVA + 0x90;
+  CxxPersonalityImage(bool Direct = false) {
+    auto &Image = Source.Code.Image;
+    auto &Bytes = Image.Segments[0].Data;
+    Bytes[0x50] = Bytes[0x51] = 0x90;
+    Bytes[0x52] = 0xb8;
+    writeLE<uint32_t>(Bytes.data() + 0x53, Source.TableVA);
+    if (Direct) {
+      Bytes[0x57] = 0xff;
+      Bytes[0x58] = 0x25;
+      writeLE<uint32_t>(Bytes.data() + 0x59, IATVA);
+    } else {
+      Bytes[0x57] = 0xe9;
+      writeLE<uint32_t>(Bytes.data() + 0x58, RuntimeVA - (HandlerVA + 12));
+    }
+    Bytes[0x70] = 0xff;
+    Bytes[0x71] = 0x25;
+    writeLE<uint32_t>(Bytes.data() + 0x72, IATVA);
+    Image.BaseRelocations = {
+        {HandlerVA + 3, llvm::COFF::IMAGE_REL_BASED_HIGHLOW},
+        {Direct ? HandlerVA + 9 : RuntimeVA + 2,
+         llvm::COFF::IMAGE_REL_BASED_HIGHLOW}};
+    Import Import;
+    Import.Name = "__CxxFrameHandler3";
+    Import.Module = "VCRUNTIME140.dll";
+    Import.IATAddr = IATVA;
+    Image.Imports.push_back(Import);
+    Source.EH.PersonalityVA = HandlerVA;
+    Source.EH.Registration->HandlerVA = HandlerVA;
+  }
+};
+} // namespace
+
+TEST(RegistrationCallABI, CxxPersonalitySkipsTheOriginalFuncInfoOperand) {
+  for (bool Direct : {false, true}) {
+    CxxPersonalityImage F(Direct);
+    const auto Runtime = coff_loader::getCheckedX86CxxPersonalityABI(
+        F.Source.Code.Image, F.Source.EH);
+    ASSERT_TRUE(Runtime);
+    EXPECT_EQ(Runtime->RuntimeVA, Direct ? F.HandlerVA + 7 : F.RuntimeVA);
+    EXPECT_EQ(Runtime->IATVA, F.IATVA);
+    EXPECT_NE(Runtime->RuntimeVA, F.HandlerVA);
+    EXPECT_FALSE(Runtime->CodeRanges.empty());
+  }
+}
+
+TEST(RegistrationCallABI, CxxPersonalityRejectsStorageAndRuntimeConflicts) {
+  for (unsigned Mutation = 0; Mutation != 21; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    CxxPersonalityImage F;
+    auto &Image = F.Source.Code.Image;
+    switch (Mutation) {
+    case 0:
+      Image.Imports[0].Name = "__CxxFrameHandler";
+      break;
+    case 1:
+      Image.Imports[0].Module = "application.dll";
+      break;
+    case 2:
+      Image.Imports.push_back(Image.Imports[0]);
+      break;
+    case 3:
+      Image.Segments[0].Data[0x50] = 0x55;
+      break;
+    case 4:
+      ++F.Source.EH.Registration->HandlerVA;
+      break;
+    case 5:
+      writeLE<uint32_t>(Image.Segments[0].Data.data() + 0x53,
+                        F.Source.TableVA + 4);
+      break;
+    case 6:
+      Image.Segments[0].Flags =
+          Image.Segments[0].Flags | SegmentFlags::Writable;
+      break;
+    case 7:
+      Image.Sections[0].Flags =
+          Image.Sections[0].Flags | SegmentFlags::Writable;
+      break;
+    case 8:
+      Image.Segments.push_back(Image.Segments[0]);
+      break;
+    case 9:
+      Image.Sections.push_back(Image.Sections[0]);
+      break;
+    case 10:
+      Image.Segments[0].FileSz = 0x55;
+      break;
+    case 11:
+      Image.Sections[0].FileSz = 0x55;
+      break;
+    case 12:
+      Image.BaseRelocations[0].Type = llvm::COFF::IMAGE_REL_BASED_DIR64;
+      break;
+    case 13:
+      --Image.BaseRelocations[0].Address;
+      break;
+    case 14:
+      Image.BaseRelocations.push_back(Image.BaseRelocations[0]);
+      break;
+    case 15:
+      Image.BaseRelocations[0].Address = F.HandlerVA;
+      break;
+    case 16:
+      Image.Segments[0].Data[0x70] = 0xe9;
+      writeLE<uint32_t>(Image.Segments[0].Data.data() + 0x71, uint32_t(-5));
+      break;
+    case 17:
+      Image.Imports.clear();
+      break;
+    case 18:
+      Image.DataAddressRelocOperands[F.HandlerVA + 3] = {F.Source.TableVA,
+                                                         F.Source.TableVA, 8};
+      break;
+    case 19:
+      Image.DataAddressRelocOperands[F.HandlerVA + 3] = {
+          F.Source.TableVA, F.Source.TableVA + 4, 4};
+      break;
+    case 20:
+      Image.CodePtrRelocSlots.insert(F.HandlerVA + 3);
+      break;
+    }
+    EXPECT_FALSE(
+        coff_loader::getCheckedX86CxxPersonalityABI(Image, F.Source.EH));
+  }
+}
+
 TEST(RegistrationCallABI, CxxMetadataExtentsIncludeLegacyAndSpecRecords) {
   for (uint32_t Magic : {0x19930520u, 0x19930521u, 0x19930522u}) {
     SCOPED_TRACE(Magic);

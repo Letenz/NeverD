@@ -10,6 +10,7 @@
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/IR/WinEHFrame.h"
 #include "llvm/MC/BinaryRewrite.h"
 
 #include <algorithm>
@@ -142,7 +143,8 @@ WindowsEHNativeSourceReason validateSEH(const ExceptionFunction &EH,
   return WindowsEHNativeSourceReason::Eligible;
 }
 
-WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH) {
+WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH,
+                                           bool Registration = false) {
   if (!EH.Cxx)
     return WindowsEHNativeSourceReason::MissingCxxTable;
   const CxxExceptionInfo &Cxx = *EH.Cxx;
@@ -155,8 +157,12 @@ WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH) {
     return WindowsEHNativeSourceReason::InvalidCxxStateGraph;
   if (Cxx.TryBlocks.empty())
     return WindowsEHNativeSourceReason::EmptyCxxTryMap;
-  if (Cxx.IPMap.empty())
+  if (!Registration && Cxx.IPMap.empty())
     return WindowsEHNativeSourceReason::EmptyCxxIPMap;
+  if (Registration &&
+      (!Cxx.IPMap.empty() || Cxx.MaxState > limits::kMaxRegistrationEHRecords ||
+       Cxx.TryBlocks.size() > limits::kMaxRegistrationEHRecords))
+    return WindowsEHNativeSourceReason::InvalidCxxStateGraph;
   if (Cxx.Flags != 1u)
     return WindowsEHNativeSourceReason::UnsupportedCxxFlags;
   if (Cxx.BBTFlags != 0)
@@ -177,9 +183,13 @@ WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH) {
     return WindowsEHNativeSourceReason::UnsupportedCxxHandlerFrameState;
 
   for (const CxxUnwindAction &Action : Cxx.UnwindMap)
-    if (Action.ActionVA != 0 ||
-        Action.Kind != CxxUnwindAction::ActionKind::None ||
-        Action.ObjectOffset != 0)
+    if (Action.ObjectOffset != 0 ||
+        (Action.ActionVA == 0
+             ? Action.Kind != CxxUnwindAction::ActionKind::None
+             : !Registration ||
+                   Action.Kind != CxxUnwindAction::ActionKind::Direct ||
+                   Action.ActionVA > UINT32_MAX ||
+                   EH.CodeRange.contains(Action.ActionVA)))
       return WindowsEHNativeSourceReason::UnsupportedCxxUnwindAction;
 
   for (const CxxIPState &IP : Cxx.IPMap)
@@ -202,13 +212,19 @@ WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH) {
         Try.Handlers.size() > std::numeric_limits<uint32_t>::max())
       return WindowsEHNativeSourceReason::InvalidCxxTryBlock;
     for (const CxxCatchHandler &Catch : Try.Handlers) {
-      if (Catch.CatchObjectOffset != 0 || Catch.ParentFrameOffset != 0)
+      if (Catch.ParentFrameOffset != 0 ||
+          (!Registration && Catch.CatchObjectOffset != 0) ||
+          (Registration &&
+           (Catch.CatchObjectOffset >= 0 || !Catch.TypeDescriptorVA ||
+            Catch.TypeDescriptorVA > UINT32_MAX ||
+            (Catch.Adjectives != 0 && Catch.Adjectives != 8))))
         return WindowsEHNativeSourceReason::UnsupportedCxxHandlerFrameState;
       if (Catch.HandlerVA == 0 || Catch.HandlerVA == EH.CodeRange.Begin ||
           !EH.CodeRange.contains(Catch.HandlerVA))
         return WindowsEHNativeSourceReason::InvalidCxxHandler;
       const int32_t HandlerState = StateAt(Catch.HandlerVA);
-      if (HandlerState <= Try.TryHigh || HandlerState > Try.CatchHigh)
+      if (!Registration &&
+          (HandlerState <= Try.TryHigh || HandlerState > Try.CatchHigh))
         return WindowsEHNativeSourceReason::InvalidCxxHandler;
       if (!Catch.ContinuationVAs.empty())
         return WindowsEHNativeSourceReason::UnsupportedCxxContinuation;
@@ -566,6 +582,56 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
 #endif
     if (Capability == WindowsEHNativeCapability::IRLowering || OutputAvailable)
       return {Model, WindowsEHNativeSourceReason::Eligible, Capability};
+    return reject(Model,
+                  WindowsEHNativeSourceReason::OutputReconstructionUnavailable,
+                  Capability);
+  }
+  if (TargetArch == Arch::X86 &&
+      (EH.Personality == ExceptionPersonality::CxxFrameHandler3 ||
+       EH.Personality == ExceptionPersonality::CxxFrameHandlerX86)) {
+    const auto Model = WindowsEHNativeSourceModel::X86RegistrationCxx;
+    if (EH.Kind != RuntimeFunctionKind::Primary)
+      return reject(Model,
+                    WindowsEHNativeSourceReason::NonPrimaryRuntimeFunction,
+                    Capability);
+    if (!EH.CodeRange.isValid() || EH.CodeRange.End > uint64_t(UINT32_MAX) + 1)
+      return reject(Model, WindowsEHNativeSourceReason::InvalidCodeRange,
+                    Capability);
+    if (EH.ParseStatus != ExceptionParseStatus::Complete)
+      return reject(Model, WindowsEHNativeSourceReason::IncompleteDecode,
+                    Capability);
+    if (EH.Encoding != ExceptionEncoding::X86CxxFuncInfo)
+      return reject(Model,
+                    WindowsEHNativeSourceReason::UnsupportedUnwindEncoding,
+                    Capability);
+    if (!EH.Registration || !EH.Cxx || EH.SEH || EH.GSCookie || EH.Rust ||
+        EH.ObjC || EH.Dwarf || EH.Itanium || EH.ARMEHABI || EH.Compact ||
+        EH.Delphi || EH.DelphiScopes || EH.Go)
+      return reject(Model,
+                    WindowsEHNativeSourceReason::ConflictingLanguageModel,
+                    Capability);
+    const auto &Chain = *EH.Registration;
+    if (!EH.PersonalityVA || Chain.HandlerVA != EH.PersonalityVA ||
+        !Chain.ScopeTableVA || Chain.ScopeTableVA != EH.HandlerDataVA ||
+        Chain.ScopeTableVA != EH.Cxx->NativeFuncInfoVA ||
+        Chain.RegistrationOffset != -12 || Chain.TryLevelOffset != -4 ||
+        Chain.SeededTryLevel != -1 || Chain.HasSecurityCookies ||
+        !Chain.Scopes.empty() ||
+        Chain.TryLevelStores.size() > limits::kMaxRegistrationEHRecords ||
+        !EH.CodeRange.contains(Chain.ChainInstallVA))
+      return reject(Model,
+                    WindowsEHNativeSourceReason::IncompleteRegistrationFrame,
+                    Capability);
+    const auto Reason = validateCxxFH3(EH, true);
+    if (Reason != WindowsEHNativeSourceReason::Eligible)
+      return reject(Model, Reason, Capability);
+    // Catch subfields require the compiler-owned physical frame protocol.
+    // Output remains closed until the PE transaction replays that protocol,
+    // its cleanup calls, runtime-object accesses and complete FuncInfo.
+#ifdef LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS
+    if (Capability == WindowsEHNativeCapability::IRLowering)
+      return {Model, WindowsEHNativeSourceReason::Eligible, Capability};
+#endif
     return reject(Model,
                   WindowsEHNativeSourceReason::OutputReconstructionUnavailable,
                   Capability);

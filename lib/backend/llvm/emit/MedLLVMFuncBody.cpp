@@ -1010,11 +1010,10 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     }
   }
 
-  // The models are mutually exclusive by target: native SEH needs a Windows
-  // table-based COFF frame, native MSVC C++ EH needs x64 or AArch64 COFF, and
-  // Itanium EH needs an LSDA. The first lowering that recognizes the function
-  // is the only one that can apply.
+  // Registration-chain and table-driven WinEH have separate source contracts.
+  // Install their runtime edges before promoting the callback SSA slots.
   if (!emitNativeX86RegistrationSEH(Func, *LLVMFunc, BBMap) &&
+      !emitNativeX86RegistrationCxx(Func, *LLVMFunc, BBMap) &&
       !emitNativeSEH(Func, *LLVMFunc, BBMap) &&
       !emitNativeCxxEH(Func, *LLVMFunc, BBMap))
     emitNativeItaniumEH(Func, *LLVMFunc, BBMap);

@@ -34,6 +34,7 @@ enum class NativeProvenanceModel : unsigned {
   CxxFH3 = 2,
   CxxFH4 = 3,
   X86RegistrationSEH = 4,
+  X86RegistrationCxx = 5,
 };
 
 enum class NativeProvenanceRole : unsigned {

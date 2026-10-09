@@ -4,6 +4,8 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <set>
+
 namespace neverd {
 namespace {
 bool supportedImage(const BinaryImage &Image) {
@@ -148,6 +150,67 @@ readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
   const auto *Bytes = mappedBytes(Image, Address, Size, true, true);
   if (!Bytes || hasConflictingFixups(Image, Address, Size, false))
     return std::nullopt;
+  return std::vector<uint8_t>(Bytes, Bytes + Size);
+}
+
+std::optional<std::vector<uint8_t>>
+readImmutablePE32CodeBytes(const BinaryImage &Image, va_t Address,
+                           uint32_t Size,
+                           const std::vector<va_t> &AbsoluteOperands) {
+  if (Image.Format != BinaryFormat::COFF || Image.IsRelocatable ||
+      Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 || !Size ||
+      Size > 1024 * 1024 || Address > UINT32_MAX ||
+      Size > uint64_t(UINT32_MAX) + 1 - Address)
+    return std::nullopt;
+  const auto *Bytes = mappedBytes(Image, Address, Size, true, true);
+  if (!Bytes)
+    return std::nullopt;
+  std::set<va_t> Operands;
+  for (va_t Operand : AbsoluteOperands)
+    if (Operand < Address || Operand - Address > Size ||
+        Size - (Operand - Address) < 4 || !Operands.insert(Operand).second)
+      return std::nullopt;
+  for (auto It = Operands.begin(); It != Operands.end(); ++It)
+    if (It != Operands.begin() && *It - *std::prev(It) < 4)
+      return std::nullopt;
+  std::set<va_t> Relocated;
+  for (const auto &Relocation : Image.BaseRelocations)
+    if (Relocation.Type &&
+        overlaps(Address, Size, Relocation.Address,
+                 Relocation.Type == llvm::COFF::IMAGE_REL_BASED_HIGHLOW ? 4
+                                                                        : 8)) {
+      if (Relocation.Type != llvm::COFF::IMAGE_REL_BASED_HIGHLOW ||
+          !Operands.count(Relocation.Address) ||
+          !Relocated.insert(Relocation.Address).second)
+        return std::nullopt;
+    }
+  for (const auto &Relocation : Image.Relocations)
+    if (overlaps(Address, Size, Relocation.Address, 8))
+      return std::nullopt;
+  auto CheckedFields = [&](const auto &Fields) {
+    for (const auto &[Slot, Field] : Fields)
+      if (overlaps(Address, Size, Slot, Field.Width)) {
+        if (!Operands.count(Slot) || !Relocated.count(Slot) ||
+            Field.Width != 4 || Field.PCRelativeFromInstructionEnd ||
+            Field.Kind != RelocatedAddressFieldKind::Generic ||
+            Field.TargetVA !=
+                llvm::support::endian::read32le(Bytes + (Slot - Address)))
+          return false;
+      }
+    return true;
+  };
+  if (!CheckedFields(Image.CodeAddressRelocOperands) ||
+      !CheckedFields(Image.DataAddressRelocOperands))
+    return std::nullopt;
+  for (const auto *Slots :
+       {&Image.CodePtrRelocSlots, &Image.DataPtrRelocSlots,
+        &Image.RelCodeRelocSlots, &Image.RelDataPtrRelocSlots})
+    for (va_t Slot : *Slots)
+      if (overlaps(Address, Size, Slot, 4))
+        return std::nullopt;
+  for (const auto &Slot : Image.RuntimeCallablePointerSlots)
+    if (overlaps(Address, Size, Slot.SlotVA, 4))
+      return std::nullopt;
   return std::vector<uint8_t>(Bytes, Bytes + Size);
 }
 

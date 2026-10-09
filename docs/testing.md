@@ -1788,6 +1788,15 @@ requires the exact checked CRT import and retains caller-PC write/read guards.
 The genuine MSVC fixture also rechecks all four record extents and its throwing
 helper and cleanup relays. These component facts do not imply source native
 C++ installation.
+PE32 C++ personality tests distinguish the original FuncInfo-loading thunk
+from the CRT entry, checking exact relocation operands, immutable storage,
+import identity and conflicting pointer records. Native-source classification
+tests reject changed registration, language and object contracts while keeping
+output installation closed. Genuine value/reference fixtures additionally
+verify typed catch and cleanup IR, compile it through the patch code generator,
+and authenticate each indexed catch row against its exact child funclet range.
+Changed range ownership must reject the machine-code receipt. These checks do
+not execute a reconstructed C++ source PE.
 Native installation needs a source build of the LLVM fork exposing
 `LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need
@@ -1803,13 +1812,22 @@ build/bin/NeverDRegistrationEHTests
 build/bin/NeverDNoReturnTests
 build/bin/NeverDWindowsRegistrationFrameTests
 build/bin/NeverDWindowsRegistrationNativeTests \
-  --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract
+  --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract:WindowsRegistrationCxxSource.*
 for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter; do
   python scripts/check_windows_registration_rewrite.py \
     --test-binary build/bin/NeverDWindowsRegistrationNativeTests \
     --patch-binary build/bin/neverd --case "$registration_case" \
     --output "build/evidence/registration-${registration_case}"
 done
+```
+
+With genuine MSVC value/reference fixtures, run the source IR and machine-code
+checks once per image. Missing input is a skip and cannot count as verification:
+
+```bash
+NEVERD_REGISTRATION_INPUT_CXX_PE32=/absolute/path/to/original.exe \
+  build/bin/NeverDWindowsRegistrationNativeTests \
+  --gtest_filter=WindowsRegistrationCxxSource.*
 ```
 
 The runtime runner builds actual SEH3, no-GS EH4 and initialized-GS EH4 source

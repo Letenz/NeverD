@@ -167,6 +167,9 @@ private:
   bool emitNativeX86RegistrationSEH(
       const MedFunc &Func, llvm::Function &LLVMFunc,
       const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
+  bool emitNativeX86RegistrationCxx(
+      const MedFunc &Func, llvm::Function &LLVMFunc,
+      const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
   bool
   emitNativeCxxEH(const MedFunc &Func, llvm::Function &LLVMFunc,
                   const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);

@@ -1073,6 +1073,27 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         EmittedFuncNames[Address] = Name;
     }
 
+  if (Img && TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
+    for (const auto &Func : Funcs) {
+      if (!Func.ExceptionMetadata ||
+          !coff_loader::getCheckedX86CxxPersonalityABI(*Img,
+                                                       *Func.ExceptionMetadata))
+        continue;
+      const auto Address = Func.ExceptionMetadata->PersonalityVA;
+      if (EmittedFuncNames.count(Address))
+        continue;
+      const auto Name = "__nd_registration_handler_" + llvm::utohexstr(Address);
+      auto *Type =
+          llvm::FunctionType::get(llvm::Type::getInt32Ty(*Ctx), {}, true);
+      if (Mod_->getNamedValue(Name))
+        continue;
+      auto *Declaration = llvm::cast<llvm::Function>(
+          Mod_->getOrInsertFunction(Name, Type).getCallee());
+      rewrite_source::setOriginalVA(*Declaration, Address);
+      EmittedFuncNames[Address] = Name;
+      FuncNames[Address] = Name;
+    }
+
   // Build every ordinary block skeleton before emitting the first operation.
   // A code-pointer mirror requested by an early consumer can then name an
   // interior label owned by a later function.  BodyMask-omitted functions stay

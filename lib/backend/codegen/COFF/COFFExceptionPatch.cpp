@@ -20,6 +20,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/object/PELayout.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
@@ -1999,6 +2000,13 @@ std::optional<va_t> findCOFFExceptionPersonalityVA(const BinaryImage &Image,
     if (AddressAlias ? *AddressAlias != EH.PersonalityVA
                      : SymbolName != Canonical && SymbolName != ObjectName)
       continue;
+    if (!AddressAlias && Image.Arch == Arch::X86 && EH.Cxx && EH.Registration) {
+      const auto Runtime =
+          coff_loader::getCheckedX86CxxPersonalityABI(Image, EH);
+      if (Runtime)
+        return Runtime->RuntimeVA;
+      continue;
+    }
     const Segment *Target = Image.getSegmentFor(EH.PersonalityVA);
     if (Target && Target->isExecutable() && Image.readVA(EH.PersonalityVA, 1))
       return EH.PersonalityVA;

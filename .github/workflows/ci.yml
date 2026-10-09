@@ -2234,7 +2234,7 @@ jobs:
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         run: |
           build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
-            --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract \
+            --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract:WindowsRegistrationCxxSource.* \
             --gtest_output=xml:build-windows-eh/evidence/native.xml
           for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter eh4-nested-finally eh4-continue-search eh4-continue-execution eh4-normal-finally eh4-cdecl-parameter eh4-cdecl-parameter-write eh4-gs-filter eh4-gs-nested-finally eh4-gs-continue-search eh4-gs-continue-execution eh4-gs-normal-finally eh4-gs-cdecl-parameter eh4-gs-cdecl-parameter-write; do
             python scripts/check_windows_registration_rewrite.py \

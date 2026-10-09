@@ -113,6 +113,16 @@ spills, pointer escape and use after catch return discard runtime authority.
 Adjacent table-owned catch labels extend the parent code range; cleanup relays
 retain their separate ABI and ordinary-entry conflicts remain explicit.
 These call facts remain separate from a compiler or installation receipt.
+For PE32 C++, the loader authenticates the original FuncInfo-loading handler
+thunk separately from the CRT dispatch entry. Its shared immutable-code reader
+admits absolute operands only at exact, unique HIGHLOW relocation slots; an
+opcode relocation, conflicting storage or changed runtime import rejects the
+identity. Native source lowering consumes the checked physical call ABI,
+typed catch home, cleanup borrows and catch-return target. LLVM records the
+exact parent and child funclet machine-code ranges when emitting indexed
+catch rows. This IR and machine-code capability does not grant installation:
+edited IR, the complete generated FuncInfo and the final PE still require
+independent validation.
 Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction
 authenticates emitted scope rows, SafeSEH and absolute relocations before

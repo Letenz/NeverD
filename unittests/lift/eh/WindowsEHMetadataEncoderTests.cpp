@@ -1205,6 +1205,108 @@ ExceptionFunction makeRegistrationCxxDigestSource() {
   return EH;
 }
 
+TEST(WindowsEHNativeSource, PE32CxxLoweringDoesNotAuthorizeOutputInstallation) {
+  auto EH = makeRegistrationCxxDigestSource();
+  EH.Registration->HandlerVA = EH.PersonalityVA;
+  EH.Cxx->IsSynchronous = true;
+  for (auto &Action : EH.Cxx->UnwindMap)
+    Action.Kind = CxxUnwindAction::ActionKind::None;
+  EH.Cxx->UnwindMap[1] = {0, 0x401300, CxxUnwindAction::ActionKind::Direct};
+  const auto IR = classifyWindowsEHNativeSource(
+      EH, Arch::X86, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
+  EXPECT_EQ(IR.Model, WindowsEHNativeSourceModel::X86RegistrationCxx);
+#ifdef LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS
+  EXPECT_TRUE(IR.canLowerNativeIR());
+#else
+  EXPECT_FALSE(IR.canLowerNativeIR());
+#endif
+  const auto Output =
+      classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF);
+  EXPECT_FALSE(Output.canPatchOutput());
+  EXPECT_EQ(Output.Reason,
+            WindowsEHNativeSourceReason::OutputReconstructionUnavailable);
+  for (unsigned Mutation = 0; Mutation != 23; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = EH;
+    switch (Mutation) {
+    case 0:
+      Changed.ParseStatus = ExceptionParseStatus::Partial;
+      break;
+    case 1:
+      Changed.Encoding = ExceptionEncoding::X64UnwindV1;
+      break;
+    case 2:
+      Changed.Registration.reset();
+      break;
+    case 3:
+      ++Changed.Registration->HandlerVA;
+      break;
+    case 4:
+      ++Changed.Registration->ScopeTableVA;
+      break;
+    case 5:
+      Changed.Registration->RegistrationOffset = -16;
+      break;
+    case 6:
+      Changed.Registration->TryLevelOffset = -8;
+      break;
+    case 7:
+      Changed.Registration->SeededTryLevel = 0;
+      break;
+    case 8:
+      Changed.Registration->ChainInstallVA = Changed.CodeRange.End;
+      break;
+    case 9:
+      Changed.Registration->HasSecurityCookies = true;
+      break;
+    case 10:
+      Changed.Registration->Scopes.push_back({});
+      break;
+    case 11:
+      Changed.Cxx->IPMap.push_back({Changed.CodeRange.Begin, 0});
+      break;
+    case 12:
+      Changed.Cxx->Flags = 0;
+      break;
+    case 13:
+      Changed.Cxx->Magic = 0x19930521;
+      break;
+    case 14:
+      Changed.Cxx->UnwindMap[1].ActionVA = Changed.CodeRange.Begin;
+      break;
+    case 15:
+      Changed.Cxx->UnwindMap[1].ObjectOffset = -4;
+      break;
+    case 16:
+      Changed.Cxx->TryBlocks[0].Handlers[0].CatchObjectOffset = 0;
+      break;
+    case 17:
+      Changed.Cxx->TryBlocks[0].Handlers[0].Adjectives = 0x40;
+      break;
+    case 18:
+      Changed.Cxx->TryBlocks[0].Handlers[0].TypeDescriptorVA = 0;
+      break;
+    case 19:
+      Changed.Cxx->TryBlocks[0].Handlers[0].HandlerVA = Changed.CodeRange.Begin;
+      break;
+    case 20:
+      Changed.Cxx->TryBlocks[0].Handlers[0].ParentFrameOffset = -4;
+      break;
+    case 21:
+      Changed.Cxx->TryBlocks[0].Handlers[0].ContinuationVAs.push_back(0x401080);
+      break;
+    case 22:
+      Changed.Cxx->NativeEncoding = CxxExceptionInfo::Encoding::FH4;
+      break;
+    }
+    const auto Rejected =
+        classifyWindowsEHNativeSource(Changed, Arch::X86, BinaryFormat::COFF,
+                                      WindowsEHNativeCapability::IRLowering);
+    EXPECT_FALSE(Rejected.canLowerNativeIR());
+    EXPECT_NE(Rejected.Reason, WindowsEHNativeSourceReason::Eligible);
+  }
+}
+
 TEST(WindowsEHSemanticDigest, BindsThePE32CxxGraphAndRegistrationContract) {
   const auto EH = makeRegistrationCxxDigestSource();
   const auto Token =
