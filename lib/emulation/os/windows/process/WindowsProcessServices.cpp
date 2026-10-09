@@ -214,6 +214,7 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
   case API::HeapSize:
   case API::RtlSizeHeap:
   case API::HeapCreate:
+  case API::HeapDestroy:
   case API::HeapSetInformation:
     return Wrap(heap(S, Event));
   case API::ZwOpenFile:

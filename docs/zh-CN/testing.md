@@ -1154,7 +1154,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5036 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5398`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5037 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5399`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1280,6 +1280,8 @@ Windows ring3 按独立原生观测，将 checked x64 的 `operand_alignment` �
 `LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage`、`ExplicitSnapshotsKeepExternalHeapDependenciesVisible` 和 `ReleasedHeapStateDoesNotBlockRecovery` 在可用的逐指令与直接执行后端上比较独立编译的启动及入口行为。`HeapReferencesInCapturedTLSCannotBeDiscarded` 覆盖仅存在于 TLS 中的依赖。公开接口测试要求拒绝时保留已有输出文件，并验证 C API 与 CLI 的显式快照一致。地址匹配是保守证据，不是原生运行证明。
 
 `DirectServiceBindingsRequireAnExplicitSnapshot` 覆盖首次在捕获入口前后使用直接服务编号的情况；C API 和 CLI 也验证拒绝时保留已有输出。
+
+`PrivateHeapDestructionReleasesOnlyOwnedBlocks` 验证移动后的分配所有权、跨堆拒绝、失效句柄及存活堆容量的复用。
 
 `UnpackLibraryTests.cpp` 在测试内给独立 x64/ARM64 DLL 加壳，检查依赖顺序、普通及生成 TLS 回调、附加失败清理、输入/宿主身份、自身文件访问、导出名称/序号/数据/转发器及无自身导入。原生 Windows 通过独立 EXE 加载原始和重建 DLL，并调用声明的导出；受检与直接 WHP 用例均为必测。`CompletedGeneratedTLSCallsRequireTheAttachABI` 拒绝变更入口或参数；`GeneratedCallsNeedTheirReturnedStackAtTheContinuation` 拒绝错误返回栈。这些验证覆盖脱壳行为，不涉及去虚拟化。
 

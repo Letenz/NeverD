@@ -18,6 +18,7 @@
 
 #include <bitset>
 #include <map>
+#include <set>
 
 namespace neverd::emulation::windows_process {
 namespace value {
@@ -256,12 +257,15 @@ private:
   struct Allocation {
     uint64_t Size, MappedSize;
     bool EnvironmentSnapshot = false;
+    uint64_t Heap = value::HeapHandle;
   };
-  llvm::Expected<uint64_t> allocateHeap(uint64_t Size, bool Snapshot = false);
+  llvm::Expected<uint64_t> allocateHeap(uint64_t Size, bool Snapshot = false,
+                                        uint64_t Heap = value::HeapHandle);
   llvm::Expected<bool> mapHeapPages(uint64_t Address, uint64_t Size);
   llvm::Expected<uint64_t> reallocateHeap(uint64_t Address, uint64_t Size,
                                           uint32_t Flags);
   std::map<uint64_t, Allocation> Allocations;
+  std::set<uint64_t> CreatedHeaps;
   uint64_t NextCreatedHeap = value::CreatedHeapBase;
   uint64_t CommandLineA = 0;
   std::map<uint64_t, bool> ThreadSnapshots;
@@ -274,8 +278,7 @@ private:
   bool knownHeap(uint64_t Handle) const {
     if (Handle == value::HeapHandle)
       return true;
-    return Handle >= value::CreatedHeapBase && Handle < NextCreatedHeap &&
-           (Handle - value::CreatedHeapBase) % value::CreatedHeapStride == 0;
+    return CreatedHeaps.contains(Handle);
   }
   struct OpenedFile {
     std::filesystem::path Path;

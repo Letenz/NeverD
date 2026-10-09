@@ -1103,7 +1103,7 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` 共用 PEB 程序參數中的即時客體環境區塊。名稱限 ASCII 且忽略大小寫，值為 UTF-16。修改前驗證輸入、容量及可寫記憶體。快照不受後續修改影響，釋放時回收客體記憶體。模型的環境區塊上限為 64 KiB；字串與展開操作有明確邊界並檢查工作負載期限。未知指標歸屬、格式錯誤的環境區塊、ANSI 字碼頁及展開緩衝區重疊仍不支援。`WindowsEnvironmentTests.cpp` 在可用後端比較原創 x64/ARM64 範例，CI 必須執行獨立的原生 Windows 對照。
 
-`WindowsProcessHeap` 統一管理程序堆積的配置、`HeapReAlloc`、釋放和大小查詢。調整大小保留原有有效資料；`HEAP_ZERO_MEMORY` 清零新增位元組，`HEAP_REALLOC_IN_PLACE_ONLY` 禁止搬移。重新配置失敗時保留舊區塊，傳回 NULL 並設定 `ERROR_NOT_ENOUGH_MEMORY`（8），與原生觀測一致。獨立頁記憶體使縮減和釋放能歸還容量，分階段擴充及有界複製檢查工作負載期限。自訂堆積、例外產生旗標、未知歸屬及無法存取的複製或清零範圍均明確停止。`WindowsHeapTests.cpp` 涵蓋兩種 ISA、強制搬移、預算重用及失敗原子性；CI 也在原生 Windows 上執行同一原創 EXE。
+`WindowsProcessHeap` 統一管理程序堆積與有界私有堆積的配置、調整大小、釋放及大小查詢。配置移動後仍保留所屬堆積。`HeapDestroy` 只釋放對應私有堆積的物件並使控制代碼失效，其他堆積與環境快照繼續有效。未知或已銷毀的控制代碼、銷毀程序堆積及跨堆積操作均在修改前拒絕。私有堆積僅接受初始大小不超過一頁的可成長請求；固定上限及更大的初始認可量仍不支援。四個堆積的限制依存活數量計算，銷毀後可繼續建立，但舊控制代碼不會重新有效。控制代碼是模型中的不透明識別，不產生原生配置器標頭。`HeapReAlloc`: 調整大小保留原有位元組，遵守 `HEAP_ZERO_MEMORY` 與 `HEAP_REALLOC_IN_PLACE_ONLY`，配置失敗傳回 NULL 並設定 `ERROR_NOT_ENOUGH_MEMORY`（8）。獨立頁後備在縮小、釋放與銷毀時歸還容量，操作受執行期限約束。`WindowsHeapTests.cpp` 涵蓋兩種 ISA、所有權、生命週期周轉、失敗原子性與獨立原生 Windows 對照。
 
 `WindowsSystemModules` 為兩種 ISA 建立有界的 `ntdll.dll`、`kernelbase.dll` 與 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 和 `GetProcAddress` 共用映射基址；PEB/LDR 與 `MEM_IMAGE` 描述相同映像。靜態匯入、名稱查詢與客體 DLL 轉送使用相同 API 跳板及匯出解析器。提供者固定駐留，不執行客體初始化回呼，普通客體 DLL 全部卸載後不會阻止進入點傳回。標頭或匯出中繼資料改變會停止查詢。未知系統匯出名稱與非零系統序號查詢明確停止；已建模名稱的大小寫不符及空名稱傳回錯誤 127，空指標查詢傳回 87。產生的位元組與位址屬於模型策略，不重建特定 Windows DLL 配置、原生序號或跨提供者別名。`WindowsSystemTests.cpp` 對照原始 x64/ARM64 EXE 與原生 Windows，並獨立觀察八次初始執行緒傳回。
 

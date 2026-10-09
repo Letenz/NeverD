@@ -73,7 +73,8 @@ llvm::Expected<bool> Services::mapHeapPages(uint64_t Address, uint64_t Size) {
   return true;
 }
 
-llvm::Expected<uint64_t> Services::allocateHeap(uint64_t Size, bool Snapshot) {
+llvm::Expected<uint64_t> Services::allocateHeap(uint64_t Size, bool Snapshot,
+                                                uint64_t Heap) {
   if (Size > Options.MemoryLimit || Size > UINT64_MAX - PageSize)
     return 0;
   const uint64_t Mapped = mappedSize(Size);
@@ -92,7 +93,7 @@ llvm::Expected<uint64_t> Services::allocateHeap(uint64_t Size, bool Snapshot) {
     return MappedPages.takeError();
   if (!*MappedPages)
     return 0;
-  Allocations.emplace(Address, Allocation{Size, Mapped, Snapshot});
+  Allocations.emplace(Address, Allocation{Size, Mapped, Snapshot, Heap});
   // Fresh guest backing is zero-filled. Without HEAP_ZERO_MEMORY the bytes
   // are unspecified; deterministic zeroes are permitted.
   return Address;
@@ -159,7 +160,7 @@ Services::reallocateHeap(uint64_t Address, uint64_t Size, uint32_t Flags) {
     return Readable.takeError();
   if (!*Readable)
     return failure(text::UserException);
-  auto Replacement = allocateHeap(Size);
+  auto Replacement = allocateHeap(Size, false, Old.Heap);
   if (!Replacement)
     return Replacement.takeError();
   if (!*Replacement)
@@ -192,14 +193,41 @@ llvm::Expected<std::optional<uint64_t>>
 Services::heap(const Service &S, const NativeCallEvent &Event) {
   const auto &A = Event.Arguments;
   if (S.Kind == API::HeapCreate) {
-    if (A[0] & ~uint64_t(HeapNoSerialize) || (A[2] && A[2] < A[1]))
+    // The bounded profile supports growing heaps with one initial page.
+    // A fixed maximum or a larger initial commitment needs separate policy.
+    if ((uint32_t(A[0]) & ~uint32_t(HeapNoSerialize)) || A[1] > PageSize ||
+        A[2])
       return unsupported(S);
-    if (NextCreatedHeap >=
-        CreatedHeapBase + MaxCreatedHeaps * CreatedHeapStride)
-      return std::optional<uint64_t>(0);
+    if (CreatedHeaps.size() >= MaxCreatedHeaps ||
+        NextCreatedHeap > UINT64_MAX - CreatedHeapStride) {
+      auto Value = error(ErrorNotEnoughMemory);
+      if (!Value)
+        return Value.takeError();
+      return std::optional<uint64_t>(*Value);
+    }
     const uint64_t Handle = NextCreatedHeap;
+    CreatedHeaps.insert(Handle);
     NextCreatedHeap += CreatedHeapStride;
     return std::optional<uint64_t>(Handle);
+  }
+  if (S.Kind == API::HeapDestroy) {
+    // The process heap, unknown handles and retired handles cannot authorize
+    // deletion. Unfreed blocks belong to exactly one live private heap.
+    if (!CreatedHeaps.contains(A[0]))
+      return unsupported(S);
+    for (auto I = Allocations.begin(); I != Allocations.end();) {
+      if (!Budget.remainingMicroseconds())
+        return failure(text::HeapTimeout);
+      if (I->second.Heap != A[0]) {
+        ++I;
+        continue;
+      }
+      if (auto E = Memory.unmap(I->first, I->second.MappedSize))
+        return std::move(E);
+      I = Allocations.erase(I);
+    }
+    CreatedHeaps.erase(A[0]);
+    return std::optional<uint64_t>(1);
   }
   if (S.Kind == API::HeapSetInformation) {
     if (!knownHeap(A[0]) || A[1] != HeapCompatibilityInformation ||
@@ -228,7 +256,8 @@ Services::heap(const Service &S, const NativeCallEvent &Event) {
   if (Flags & ~Allowed)
     return unsupported(S);
   auto Found = Allocations.find(A[2]);
-  if (!Alloc && Found != Allocations.end() && Found->second.EnvironmentSnapshot)
+  if (!Alloc && Found != Allocations.end() &&
+      (Found->second.EnvironmentSnapshot || Found->second.Heap != A[0]))
     return unsupported(S);
   if (Size)
     return std::optional<uint64_t>(
@@ -245,7 +274,8 @@ Services::heap(const Service &S, const NativeCallEvent &Event) {
   }
   if (Realloc && Found == Allocations.end())
     return unsupported(S);
-  auto Address = Alloc ? allocateHeap(A[2]) : reallocateHeap(A[2], A[3], Flags);
+  auto Address = Alloc ? allocateHeap(A[2], false, A[0])
+                       : reallocateHeap(A[2], A[3], Flags);
   if (!Address)
     return Address.takeError();
   if (Realloc && !*Address) {

@@ -2368,6 +2368,9 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsEnvironment.ValidatesUpdatesBeforePublishingGuestBytes/"
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsHeap.PrivateHeapDestructionReleasesOnlyOwnedBlocks/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsHeap.ExecutesOriginalHeapScenarios/{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsHeap.MoveAndInPlaceResizePreserveDataAndOwnership/"

@@ -262,6 +262,90 @@ TEST_P(WindowsHeap, AllocationFailurePreservesBlocksAndShrinkReturnsCapacity) {
   EXPECT_EQ(H.Space->physicalMemory()->allocatedBytes(), PageSize);
   H.lastError(OutOfMemoryError);
 }
+TEST_P(WindowsHeap, PrivateHeapDestructionReleasesOnlyOwnedBlocks) {
+  Heap H(Config);
+  const uint64_t Baseline = H.Space->mappedBytes();
+  for (const auto &Arguments :
+       {std::array<uint64_t, 3>{0, PageSize + 1, 0},
+        std::array<uint64_t, 3>{0, PageSize, PageSize}}) {
+    auto Refused = H.call(win::API::HeapCreate,
+                          {Arguments[0], Arguments[1], Arguments[2]});
+    ASSERT_TRUE(bool(Refused)) << llvm::toString(Refused.takeError());
+    EXPECT_FALSE(Refused->Value);
+    EXPECT_EQ(H.Space->mappedBytes(), Baseline);
+  }
+  // DWORD flags ignore unspecified high register bits.
+  const uint64_t A =
+      H.number(win::API::HeapCreate, {0xdeadbeef00000000ull, PageSize, 0});
+  const uint64_t B = H.number(win::API::HeapCreate, {0, 0, 0});
+  ASSERT_NE(A, 0u);
+  ASSERT_NE(A, B);
+  const uint64_t Process = H.alloc(SmallSize);
+  uint64_t Owned = H.number(win::API::HeapAlloc, {A, 0, SmallSize});
+  const uint64_t Other = H.number(win::API::HeapAlloc, {B, 0, SmallSize});
+  H.fill(Process, SmallSize);
+  H.fill(Owned, SmallSize);
+  H.fill(Other, SmallSize);
+  const uint64_t Original = Owned;
+  Owned = H.number(win::API::HeapReAlloc, {A, HeapZero, Owned, LargeSize});
+  ASSERT_NE(Owned, 0u);
+  EXPECT_NE(Owned, Original); // The other heap blocks in-place growth.
+  const auto Bytes = H.bytes(Owned, SmallSize);
+  const uint64_t Used = H.Space->mappedBytes();
+  for (win::API API :
+       {win::API::HeapFree, win::API::HeapSize, win::API::HeapReAlloc}) {
+    auto Refused = H.call(API, {B, 0, Owned, SmallSize});
+    ASSERT_TRUE(bool(Refused)) << llvm::toString(Refused.takeError());
+    EXPECT_FALSE(Refused->Value);
+    EXPECT_EQ(H.Result.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(H.Space->mappedBytes(), Used);
+    EXPECT_EQ(H.bytes(Owned, SmallSize), Bytes);
+    EXPECT_EQ(H.number(win::API::HeapSize, {A, 0, Owned}), LargeSize);
+  }
+  EXPECT_EQ(H.number(win::API::HeapDestroy, {A}), 1u);
+  EXPECT_FALSE(llvm::cantFail(H.Backend.CPU->canAccess(Owned, 1, Read)));
+  EXPECT_EQ(H.bytes(Process, SmallSize), Bytes);
+  EXPECT_EQ(H.bytes(Other, SmallSize), Bytes);
+  EXPECT_EQ(H.OS->heapAllocations().size(), 2u);
+  for (uint64_t Handle : {A, win::value::HeapHandle}) {
+    auto Refused = H.call(win::API::HeapDestroy, {Handle});
+    ASSERT_TRUE(bool(Refused)) << llvm::toString(Refused.takeError());
+    EXPECT_FALSE(Refused->Value);
+    EXPECT_EQ(H.OS->heapAllocations().size(), 2u);
+  }
+  auto Retired = H.call(win::API::HeapAlloc, {A, 0, SmallSize});
+  ASSERT_TRUE(bool(Retired)) << llvm::toString(Retired.takeError());
+  EXPECT_FALSE(Retired->Value);
+  EXPECT_EQ(H.number(win::API::HeapDestroy, {B}), 1u);
+  H.free(Process);
+  EXPECT_TRUE(H.OS->heapAllocations().empty());
+  EXPECT_EQ(H.Space->mappedBytes(), Baseline);
+  EXPECT_EQ(H.Space->physicalMemory()->allocatedBytes(), Baseline);
+  // The limit counts live heaps; destruction releases capacity without making
+  // the retired handle valid again.
+  for (unsigned I = 0; I < win::value::MaxCreatedHeaps * 2; ++I) {
+    const auto Handle = H.number(win::API::HeapCreate, {0, PageSize, 0});
+    ASSERT_NE(Handle, 0u);
+    EXPECT_NE(Handle, A);
+    EXPECT_NE(Handle, B);
+    ASSERT_NE(H.number(win::API::HeapAlloc, {Handle, 0, SmallSize}), 0u);
+    EXPECT_EQ(H.number(win::API::HeapDestroy, {Handle}), 1u);
+    EXPECT_EQ(H.Space->mappedBytes(), Baseline);
+  }
+  H.lastError();
+  std::vector<uint64_t> Full;
+  for (unsigned I = 0; I < win::value::MaxCreatedHeaps; ++I) {
+    const auto Handle = H.number(win::API::HeapCreate, {0, 0, 0});
+    ASSERT_NE(Handle, 0u);
+    Full.push_back(Handle);
+  }
+  EXPECT_EQ(H.number(win::API::HeapCreate, {0, 0, 0}), 0u);
+  H.lastError(OutOfMemoryError);
+  for (auto Handle : Full)
+    EXPECT_EQ(H.number(win::API::HeapDestroy, {Handle}), 1u);
+  EXPECT_EQ(H.Space->mappedBytes(), Baseline);
+}
+
 TEST_P(WindowsHeap, InvalidOwnershipFlagsAndPermissionsDoNotPublishChanges) {
   Heap H(Config);
   const uint64_t A = H.alloc(LargeSize);
