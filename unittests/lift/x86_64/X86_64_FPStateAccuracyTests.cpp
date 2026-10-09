@@ -758,7 +758,7 @@ TEST(X86FPStateContract, TypedNumericalStateResultIsRejected) {
 }
 
 TEST(X86FPStateContract, OnlyCompleteNumericalBitsEstablishAFloatReturn) {
-  for (unsigned Mode = 0; Mode < 6; ++Mode) {
+  for (unsigned Mode = 0; Mode < 8; ++Mode) {
     SCOPED_TRACE(Mode);
     MedFunc Function;
     MedBlock Block;
@@ -802,6 +802,15 @@ TEST(X86FPStateContract, OnlyCompleteNumericalBitsEstablishAFloatReturn) {
             MedVar::makeConst(Mode == 2 ? 4 : 8, 4)});
     } else if (Mode == 5)
       Value = Temp(1, 12);
+    else if (Mode == 6 || Mode == 7) {
+      const auto Narrow = Temp(3, 4);
+      Emit(Mode == 6 ? NdOp::COPY : NdOp::SUBBYTES, Narrow,
+           Mode == 6 ? std::initializer_list<MedVar>{Temp(2, 8)}
+                     : std::initializer_list<MedVar>{Temp(2, 8),
+                                                     MedVar::makeConst(0, 4)});
+      Value = Temp(4, 8);
+      Emit(NdOp::COPY, Value, {Narrow});
+    }
     Emit(NdOp::CONCAT, Reg(100, x86reg::XMM0, 16),
          {MedVar::makeConst(0, static_cast<uint16_t>(16 - Value.Size)), Value});
     Emit(NdOp::RETURN, {}, {Integer});

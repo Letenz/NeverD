@@ -73,17 +73,22 @@ fpReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
     const MedVar *Carrier = &V;
     uint64_t Offset = 0;
     const unsigned Bytes = V.Size;
+    bool CompleteSpan = true;
     for (unsigned Step = 0; Step < 16 && !Carrier->isConst(); ++Step) {
       const auto Producer = Defs.find({Carrier->Id, Carrier->SSAVer});
       if (Producer == Defs.end())
         break;
       const MedOp &Source = *Producer->second;
+      if (Offset > Source.Output.Size || Bytes > Source.Output.Size - Offset)
+        CompleteSpan = false;
       if (Source.Opcode == NdOp::INTRINSIC && Source.NumInputs &&
           Source.Inputs[0].isConst()) {
         const auto Id = static_cast<Intrinsic>(Source.Inputs[0].ConstVal);
         if (isX86FPStateIntrinsic(Id))
-          return static_cast<uint16_t>(x86FPStateNumericalSliceSize(
-              Id, x86FPStateMedShape(Source), Offset, Bytes));
+          return CompleteSpan
+                     ? static_cast<uint16_t>(x86FPStateNumericalSliceSize(
+                           Id, x86FPStateMedShape(Source), Offset, Bytes))
+                     : 0;
       }
       if (Source.Opcode == NdOp::SUBBYTES && Source.NumInputs == 2 &&
           Source.Inputs[1].isConst()) {
@@ -95,7 +100,14 @@ fpReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
             Bytes > Source.Inputs[0].Size - NextOffset - Offset)
           return 0;
         Offset += NextOffset;
-      } else if (Source.Opcode != NdOp::COPY || Source.NumInputs != 1)
+      } else if (Source.Opcode == NdOp::COPY && Source.NumInputs == 1) {
+        // A later widening copy cannot recover bytes an earlier copy lost.
+        // Track that loss to the state owner without changing the existing
+        // inference contract for ordinary FLOAT producers.
+        if (Offset > Source.Inputs[0].Size ||
+            Bytes > Source.Inputs[0].Size - Offset)
+          CompleteSpan = false;
+      } else
         break;
       Carrier = &Source.Inputs[0];
     }
