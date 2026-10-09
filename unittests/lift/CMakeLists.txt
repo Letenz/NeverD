@@ -202,6 +202,7 @@ add_neverd_unittest(NeverDLiftTests
   format/MachOFunctionListingTests.cpp
   format/FunctionDiscoveryAlignmentTests.cpp
   format/ELFFunctionListingTests.cpp
+  format/ELFWithoutSectionsTests.cpp
   format/ELFARM32ModeTests.cpp
   format/COFFFunctionListingTests.cpp
   format/InputDigestTests.cpp
@@ -3190,8 +3191,8 @@ if(LLD_EXEC)
     COMMENT "Compiling i386 PIC library fixture")
   add_custom_command(
     OUTPUT ${pic_library_i386_so}
-    COMMAND ${LLD_EXEC} -shared -m elf_i386 -o ${pic_library_i386_so}
-            ${pic_library_i386_obj}
+    COMMAND ${LLD_EXEC} -shared -m elf_i386 --eh-frame-hdr
+            -o ${pic_library_i386_so} ${pic_library_i386_obj}
     DEPENDS ${pic_library_i386_obj}
     COMMENT "Linking i386 PIC library fixture")
   list(APPEND ELF_EXECUTABLES ${pic_library_i386_obj} ${pic_library_i386_so})

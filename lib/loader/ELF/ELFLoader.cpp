@@ -170,7 +170,21 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
     elf_loader::detail::addObjectExterns<ELFT>(ELF, *SectionsOr, SecBase,
                                                Externs, Img);
 
-  elf_loader::detail::collectRelocations<ELFT>(ELF, *SectionsOr, ShStrTab, Data,
+  // An image whose section header table was stripped still has the tables
+  // its dynamic linker and unwinder read through the program headers; the
+  // parsers below read those.  The image publishes none of them as a
+  // section, since a segment holding sections takes its code from them.
+  elf_loader::detail::DynamicSections<ELFT> Reconstructed;
+  llvm::ArrayRef<Elf_Shdr> Tables = *SectionsOr;
+  llvm::StringRef TableNames = ShStrTab;
+  if (!IsRelocatable && SectionsOr->empty()) {
+    Reconstructed =
+        elf_loader::detail::reconstructDynamicSections<ELFT>(ELF, Img);
+    Tables = Reconstructed.Headers;
+    TableNames = Reconstructed.Names;
+  }
+
+  elf_loader::detail::collectRelocations<ELFT>(ELF, Tables, TableNames, Data,
                                                Size, IsRelocatable, Img);
 
   // --- Apply relocations for relocatable objects (.o files) ---
@@ -181,24 +195,24 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
             ELF, *SectionsOr, Data, Size, SecBase, IsRelocatable, Externs, Img))
       return E;
   } else
-    elf_loader::detail::applyDynamicRelativeRelocations<ELFT>(ELF, *SectionsOr,
-                                                              Data, Size, Img);
+    elf_loader::detail::applyDynamicRelativeRelocations<ELFT>(ELF, Tables, Data,
+                                                              Size, Img);
 
   if (llvm::Error E = elf_loader::detail::collectSymbols<ELFT>(
-          ELF, *SectionsOr, Size, SecBase, IsRelocatable, Externs.CommonSlots,
-          Img))
+          ELF, Tables, *SectionsOr, Size, SecBase, IsRelocatable,
+          Externs.CommonSlots, Img))
     return E;
 
   // --- .dynamic ---
-  for (const Elf_Shdr &SH : *SectionsOr) {
+  for (const Elf_Shdr &SH : Tables) {
     if (SH.sh_type == SHT_DYNAMIC) {
-      elf_loader::parseDynamic(ELF, SH, Data, Size, Img);
+      elf_loader::parseDynamic(ELF, Tables, SH, Data, Size, Img);
       break;
     }
   }
 
   // --- .rela.plt / .rel.plt imports ---
-  elf_loader::parsePLTImports(ELF, *SectionsOr, Data, Size, Img);
+  elf_loader::parsePLTImports(ELF, Tables, TableNames, Data, Size, Img);
 
   // --- Loader-invoked lifecycle arrays and legacy constructor sections ---
   elf_loader::parseRuntimeSections(Img);
@@ -224,8 +238,8 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
   elf_loader::parseNotes(ELF, Data, Size, Img);
 
   // --- .eh_frame_hdr ---
-  for (const Elf_Shdr &SH : *SectionsOr) {
-    if (elf_loader::detail::getSectionName<ELFT>(ShStrTab, SH) !=
+  for (const Elf_Shdr &SH : Tables) {
+    if (elf_loader::detail::getSectionName<ELFT>(TableNames, SH) !=
         section_names::elf::EhFrameHdr)
       continue;
     elf_loader::addFunctionsFromEhFrameHdr(Data, Size, SH, Img);
