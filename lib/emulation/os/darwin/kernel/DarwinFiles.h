@@ -133,6 +133,9 @@ private:
     std::shared_ptr<DirectoryNode> Parent;
     uint64_t PathCharge = 0;
     bool Protected = false;
+    /// Initial regular names and every runtime name consume an entry. Initial
+    /// symbolic names retain their independent fixed input reservation.
+    bool ChargedEntry = false;
   };
   struct Contents {
     llvm::ArrayRef<uint8_t> Initial;
@@ -227,6 +230,9 @@ private:
   std::map<std::string, std::shared_ptr<FileEntry>> Nodes;
   std::map<std::string, std::shared_ptr<LinkEntry>> Links;
   std::vector<std::shared_ptr<Contents>> Unlinked;
+  std::vector<std::shared_ptr<LinkNode>> UnlinkedLinks;
+  /// Names can outlive unlink independently of their object's other names.
+  std::vector<std::shared_ptr<NameIdentity>> DetachedNames;
   std::map<std::string, std::shared_ptr<DirectoryNode>> Directories;
   std::vector<std::shared_ptr<DirectoryNode>> UnlinkedDirectories;
   bool NamespaceReady = false;

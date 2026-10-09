@@ -567,6 +567,7 @@ void DarwinFiles::initializeNamespace() {
   for (const auto &[Path, Bytes] : Options->Files) {
     auto Node = std::make_shared<Contents>();
     Node->Initial = Bytes;
+    Node->Name->ChargedEntry = true;
     Node->Name->Path = Path;
     Node->Name->Parent = initialDirectoryNode(parentPath(Path));
     Node->Writable = Options->WritableFiles.contains(Path);
@@ -610,10 +611,31 @@ void DarwinFiles::initializeNamespace() {
 void DarwinFiles::reclaimUnlinked() {
   for (auto I = Unlinked.begin(); I != Unlinked.end();) {
     if (I->use_count() == 1 && (*I)->Lease.use_count() == 1) {
-      *StorageUsed -= (*I)->bytes().size() + (*I)->Name->PathCharge +
-                      (*I)->ExtendedAttributes.DynamicCharge;
+      *StorageUsed -=
+          (*I)->bytes().size() + (*I)->ExtendedAttributes.DynamicCharge;
       AttributeSlots -= (*I)->ExtendedAttributes.ExtraCount;
       I = Unlinked.erase(I);
+    } else {
+      ++I;
+    }
+  }
+  for (auto I = UnlinkedLinks.begin(); I != UnlinkedLinks.end();) {
+    if (I->use_count() == 1) {
+      const auto &Link = **I;
+      *StorageUsed -= (Link.CreatedTarget ? Link.CreatedTarget->size() : 0) +
+                      Link.ExtendedAttributes.DynamicCharge;
+      AttributeSlots -= Link.ExtendedAttributes.ExtraCount;
+      I = UnlinkedLinks.erase(I);
+    } else {
+      ++I;
+    }
+  }
+  // Objects release their final identity first. A description can also retain
+  // a detached identity while the shared object still has linked names.
+  for (auto I = DetachedNames.begin(); I != DetachedNames.end();) {
+    if (I->use_count() == 1) {
+      *StorageUsed -= (*I)->PathCharge;
+      I = DetachedNames.erase(I);
     } else {
       ++I;
     }
@@ -689,12 +711,15 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
 }
 
 uint32_t DarwinFiles::dynamicEntries() const {
-  // FixedEntries already includes every initial link and directory. Only
-  // created links consume additional entries; files retain their orphan charge.
-  return Nodes.size() + Unlinked.size() +
-         llvm::count_if(
-             Links,
-             [](const auto &Entry) { return Entry.second->Object->Created; }) +
+  // FixedEntries includes initial symbolic/directory entries. Detached names
+  // own their entry costs; zero-name objects add no second orphan entry slot.
+  return Nodes.size() +
+         llvm::count_if(Links,
+                        [](const auto &Entry) {
+                          return Entry.second->Name->ChargedEntry;
+                        }) +
+         llvm::count_if(DetachedNames,
+                        [](const auto &Name) { return Name->ChargedEntry; }) +
          llvm::count_if(
              Directories,
              [](const auto &Entry) { return Entry.second->Created; }) +
@@ -1339,6 +1364,7 @@ DarwinFiles::makeSymbolicLink(uint64_t Target, uint64_t Path,
     return unsupported(Result, diagnostic::FileCreationParent);
   auto Node = std::make_shared<LinkNode>();
   Node->Created = true;
+  Node->Name->ChargedEntry = true;
   Node->CreatedTarget.emplace(Bytes.begin(), Bytes.end());
   Node->Name->Path = File.Path;
   Node->Name->PathCharge = File.Path.size() + 1;
@@ -1489,20 +1515,23 @@ DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result,
   if (File.Type == Kind::Directory)
     return returned(OperationNotPermitted, true);
   if (File.Type == Kind::SymbolicLink) {
-    const auto &Link = File.Link;
     if (File.Name->Protected)
       return unsupported(Result, diagnostic::SymbolicLinkMutation);
     if (!File.Name->Parent->Mutable)
       return unsupported(Result, diagnostic::DirectoryNotMutable);
     if (auto E = prepareMutation())
       return std::move(E);
-    // No observer owns the link itself. Initial target/path inputs stay fixed;
-    // only costs owned dynamically by this object can be released.
-    const uint64_t Charge = Link->dynamicCharge();
+    UnlinkedLinks.reserve(UnlinkedLinks.size() + 1);
+    DetachedNames.reserve(DetachedNames.size() + 1);
+    UnlinkedLinks.push_back(File.Link);
+    DetachedNames.push_back(File.Name);
     Links.erase(File.Name->Path);
-    *StorageUsed -= Charge;
-    AttributeSlots -= Link->ExtendedAttributes.ExtraCount;
     updateDirectoryMetadata(*File.Name->Parent, true);
+    // Symbolic descriptors remain unsupported. Release this operation's
+    // temporary observers before reclaiming its separately owned costs.
+    File.Link.reset();
+    File.Name.reset();
+    reclaimUnlinked();
     return returned(0);
   }
   const auto Parent = parentPath(File.Path);
@@ -1511,8 +1540,10 @@ DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result,
   if (auto E = prepareMutation())
     return std::move(E);
   Unlinked.reserve(Unlinked.size() + 1);
+  DetachedNames.reserve(DetachedNames.size() + 1);
   updateNamespaceMetadata(*File.File, true);
   Unlinked.push_back(File.File);
+  DetachedNames.push_back(File.Name);
   Nodes.erase(File.Path);
   updateDirectoryMetadata(*directoryNode(Parent), true);
   return returned(0);
@@ -1789,13 +1820,20 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   std::string NewKey = Target.Path, NewIdentity = Target.Path;
   if (Target.File)
     Unlinked.reserve(Unlinked.size() + 1);
+  if (Target.Link)
+    UnlinkedLinks.reserve(UnlinkedLinks.size() + 1);
+  if (Target.Name)
+    DetachedNames.reserve(DetachedNames.size() + 1);
   auto Move = [&](auto &Table) {
     auto Moved = Table.extract(Source.Path);
     if (Target.File) {
       updateNamespaceMetadata(*Target.File, true);
       Unlinked.push_back(Target.File);
+      DetachedNames.push_back(Target.Name);
       Nodes.erase(Target.Path);
     } else if (Target.Link) {
+      UnlinkedLinks.push_back(Target.Link);
+      DetachedNames.push_back(Target.Name);
       Links.erase(Target.Path);
     }
     Moved.key().swap(NewKey);
@@ -1814,13 +1852,14 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     Source.Name->PathCharge = Charge;
     Source.Name->Parent = TargetParent;
   }
-  // Reclaim below deducts FileCredit once, after the lookup releases it.
-  *StorageUsed = *StorageUsed - OldCharge - LinkCredit + Charge;
-  if (Target.Link)
-    AttributeSlots -= Target.Link->ExtendedAttributes.ExtraCount;
+  // Object and detached-name owners deduct the credited costs exactly once,
+  // after this lookup releases its temporary object and identity references.
+  *StorageUsed = *StorageUsed - OldCharge + Charge;
   updateDirectoryMetadata(*Parent, true);
   updateDirectoryMetadata(*TargetParent, true);
   Target.File.reset();
+  Target.Link.reset();
+  Target.Name.reset();
   reclaimUnlinked();
   return returned(0);
 }
@@ -1956,8 +1995,8 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
   for (const auto &[Path, Node] : Nodes)
     if (auto Reason = File(Node->Name, true))
       return unsupported(Result, Reason);
-  for (const auto &Node : Unlinked)
-    if (auto Reason = File(Node->Name, false))
+  for (const auto &Name : DetachedNames)
+    if (auto Reason = File(Name, false))
       return unsupported(Result, Reason);
   for (const auto &[Path, Node] : Links) {
     const auto &Name = Node->Name;
@@ -2096,6 +2135,7 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     return unsupported(Result, diagnostic::FileCreationInode);
   auto Node = std::make_shared<Contents>();
   Node->Writable = true;
+  Node->Name->ChargedEntry = true;
   Node->Name->Path = File.Path;
   Node->Name->Parent = directoryNode(Parent);
   Node->Name->PathCharge = Charge;
