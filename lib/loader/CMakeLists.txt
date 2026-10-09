@@ -51,6 +51,7 @@ add_neverd_component_library(NeverDLoader
   ELF/ARMEHABITypeTable.cpp
   ELF/ARMEHABIUnwind.cpp
   ELF/ELFLoader.cpp
+  ELF/ELFLoaderExterns.cpp
   ELF/ELFLoaderRelocations.cpp
   ELF/ELFLoaderSections.cpp
   ELF/ELFLoaderSegments.cpp

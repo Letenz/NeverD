@@ -76,6 +76,9 @@ constexpr const char *TLS = ".tls";
 constexpr const char *TBss = ".tbss";
 constexpr const char *TData = ".tdata";
 constexpr const char *DebugInfo = ".debug_info";
+// The segment the loader synthesizes past a relocatable object's sections for
+// its undefined symbols and GOT entries; no ELF section has this name.
+constexpr const char *SynthesizedExtern = "extern";
 } // namespace elf
 
 namespace coff {

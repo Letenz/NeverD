@@ -35,6 +35,23 @@ namespace neverd {
 namespace elf_loader {
 namespace detail {
 
+namespace {
+
+/// The ELF ABIs for the Arm architectures mark where the instruction set
+/// changes or data begins with the local untyped symbols `$a`, `$d`, `$t` and
+/// `$x`, each optionally followed by `.` and a suffix.  They are the
+/// toolchain's markers, not names: one sits at the start of practically every
+/// function and data section, at the address of the symbol that names it.
+bool isMappingSymbolName(llvm::StringRef Name) {
+  if (Name.size() < 2 || Name[0] != '$')
+    return false;
+  if (Name[1] != 'a' && Name[1] != 'd' && Name[1] != 't' && Name[1] != 'x')
+    return false;
+  return Name.size() == 2 || Name[2] == '.';
+}
+
+} // namespace
+
 template <typename ELFT>
 llvm::Error buildSections(llvm::ArrayRef<typename ELFT::Shdr> Sections,
                           llvm::StringRef ShStrTab, const uint8_t *Data,
@@ -85,7 +102,9 @@ template <typename ELFT>
 llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
                            llvm::ArrayRef<typename ELFT::Shdr> Sections,
                            size_t Size, const std::vector<va_t> &SecBase,
-                           bool IsRelocatable, BinaryImage &Img) {
+                           bool IsRelocatable,
+                           const std::map<std::string, va_t> &CommonSlots,
+                           BinaryImage &Img) {
   using namespace llvm::ELF;
   using Elf_Shdr = typename ELFT::Shdr;
   using Elf_Sym = typename ELFT::Sym;
@@ -162,6 +181,14 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
           continue;
         Value += SecBase[Sym.st_shndx];
       }
+      // A common symbol's value is its alignment; it lives where the loader
+      // allocated its storage, as a linker allocates it in .bss.
+      if (Sym.st_shndx == SHN_COMMON) {
+        auto It = CommonSlots.find(NameOr->str());
+        if (It == CommonSlots.end())
+          continue;
+        Value = It->second;
+      }
       // Relocatable .o symbols at section start have st_value==0; SecBase may
       // also be 0 — do not treat that as "no address".
       if (Value == 0 && Sym.st_value == 0 && !IsRelocatable)
@@ -215,6 +242,12 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
           }
         }
       }
+
+      // A mapping marker names nothing; ARM read its mode above.
+      if ((Img.Arch == Arch::ARM || Img.Arch == Arch::AArch64) &&
+          Bind == STB_LOCAL && Type == STT_NOTYPE &&
+          isMappingSymbolName(*NameOr))
+        continue;
 
       Symbols.add(*NameOr, Value, Sym.st_size, Type, IsFunction);
 
@@ -318,11 +351,13 @@ template llvm::Error buildSections<llvm::object::ELF64LE>(
 template llvm::Error collectSymbols<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,
     llvm::ArrayRef<llvm::object::ELF32LE::Shdr>, size_t,
-    const std::vector<va_t> &, bool, BinaryImage &);
+    const std::vector<va_t> &, bool, const std::map<std::string, va_t> &,
+    BinaryImage &);
 template llvm::Error collectSymbols<llvm::object::ELF64LE>(
     const llvm::object::ELFFile<llvm::object::ELF64LE> &,
     llvm::ArrayRef<llvm::object::ELF64LE::Shdr>, size_t,
-    const std::vector<va_t> &, bool, BinaryImage &);
+    const std::vector<va_t> &, bool, const std::map<std::string, va_t> &,
+    BinaryImage &);
 
 } // namespace detail
 } // namespace elf_loader

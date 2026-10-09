@@ -431,7 +431,8 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
                              llvm::ArrayRef<typename ELFT::Shdr> Sections,
                              const uint8_t *Data, size_t Size,
                              const std::vector<va_t> &SecBase,
-                             bool IsRelocatable, BinaryImage &Img) {
+                             bool IsRelocatable, const ObjectExterns &Externs,
+                             BinaryImage &Img) {
   using namespace llvm::ELF;
   using Elf_Shdr = typename ELFT::Shdr;
   using Elf_Sym = typename ELFT::Sym;
@@ -626,6 +627,14 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
       continue;
 
     const Elf_Shdr *SymSH2 = getShdr<ELFT>(Sections, SH.sh_link);
+    llvm::StringRef SymStrTab;
+    if (SymSH2 &&
+        (!Externs.SymbolSlots.empty() || !Externs.CommonSlots.empty())) {
+      if (auto TabOr = ELF.getStringTableForSymtab(*SymSH2))
+        SymStrTab = *TabOr;
+      else
+        llvm::consumeError(TabOr.takeError());
+    }
     size_t Count = static_cast<size_t>(SH.sh_size / SH.sh_entsize);
     for (size_t I = 0; I < Count; ++I) {
       uint64_t ROff64 = SH.sh_offset + static_cast<uint64_t>(I) * SH.sh_entsize;
@@ -664,6 +673,23 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
           SymVal = Sym.st_value;
           SymIsFunction =
               Sym.getType() == STT_FUNC || Sym.getType() == STT_GNU_IFUNC;
+          // An undefined or common symbol resolves to its extern address.  A
+          // call reaches the import there; any other reference reaches
+          // storage the extern segment owns.
+          if ((Sym.st_shndx == SHN_UNDEF || Sym.st_shndx == SHN_COMMON) &&
+              !SymStrTab.empty()) {
+            const auto &Slots = Sym.st_shndx == SHN_UNDEF ? Externs.SymbolSlots
+                                                          : Externs.CommonSlots;
+            if (auto NameOr = Sym.getName(SymStrTab)) {
+              if (auto It = Slots.find(NameOr->str()); It != Slots.end()) {
+                SymVal = It->second;
+                if (!isBranchReference(Img.Arch, RType))
+                  SymOwnerVA = Externs.ExternBase;
+              }
+            } else {
+              llvm::consumeError(NameOr.takeError());
+            }
+          }
           if (Sym.st_shndx != SHN_UNDEF && Sym.st_shndx < SHN_LORESERVE) {
             if (const Elf_Shdr *TSH = getShdr<ELFT>(Sections, Sym.st_shndx)) {
               SymOwnerVA =
@@ -678,6 +704,16 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
 
       va_t P = ApplyVA + RAddr;
       va_t S = SymVal;
+      // A GOT reference applies its direct form against the GOT entry, which
+      // holds the symbol's address.
+      if (auto Direct = directTypeOfGOTReference(Img.Arch, RType))
+        if (auto It = Externs.GOTEntries.find({SH.sh_link, RSym});
+            It != Externs.GOTEntries.end()) {
+          S = It->second;
+          SymOwnerVA = Externs.GOTBase;
+          SymIsFunction = false;
+          RType = *Direct;
+        }
 
       if (RAddr >= ApplySeg->Data.size())
         continue;
@@ -1385,11 +1421,11 @@ template void collectRelocations<llvm::object::ELF64LE>(
 template llvm::Error applyRelocations<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,
     llvm::ArrayRef<llvm::object::ELF32LE::Shdr>, const uint8_t *, size_t,
-    const std::vector<va_t> &, bool, BinaryImage &);
+    const std::vector<va_t> &, bool, const ObjectExterns &, BinaryImage &);
 template llvm::Error applyRelocations<llvm::object::ELF64LE>(
     const llvm::object::ELFFile<llvm::object::ELF64LE> &,
     llvm::ArrayRef<llvm::object::ELF64LE::Shdr>, const uint8_t *, size_t,
-    const std::vector<va_t> &, bool, BinaryImage &);
+    const std::vector<va_t> &, bool, const ObjectExterns &, BinaryImage &);
 
 template void applyDynamicRelativeRelocations<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,
