@@ -31,6 +31,8 @@ constexpr int WheelLines = 3;
 constexpr int MaxArrowLevels = 10;
 constexpr int HintLines = 12;
 constexpr int TextMargin = 6;
+// A line's body runs to about this many characters after its prefix.
+constexpr int BodyChars = 120;
 constexpr const char *ContentKinds[] = {"insn", "data"};
 
 bool contentKind(const QString &kind) {
@@ -401,14 +403,20 @@ int ListingView::columnAt(const Line &line, int x) const {
 
 void ListingView::resizeEvent(QResizeEvent *event) {
   QAbstractScrollArea::resizeEvent(event);
-  horizontalScrollBar()->setRange(0, int(charWidth_ * 120));
-  horizontalScrollBar()->setPageStep(viewport()->width());
   ensureLoaded();
   updateScrollBar();
 }
 
 void ListingView::updateScrollBar() {
   updatingScrollBar_ = true;
+  // Lines scroll sideways only as far as their bodies outrun the view; with
+  // no file there is nothing to scroll.
+  auto *across = horizontalScrollBar();
+  const int content = space_.empty() ? 0
+                                     : textLeft() + across->value() +
+                                           int(charWidth_ * BodyChars);
+  across->setRange(0, std::max(0, content - viewport()->width()));
+  across->setPageStep(viewport()->width());
   auto *bar = verticalScrollBar();
   if (space_.empty() || lines_.empty()) {
     bar->setRange(0, 0);

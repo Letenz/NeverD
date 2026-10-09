@@ -1993,6 +1993,10 @@ Signed: %4</source>
         <translation>最近使ったファイル：</translation>
     </message>
     <message>
+        <source>No recent files. Choose New, or drop a file here.</source>
+        <translation>最近使ったファイルはありません。「新規」を選ぶか、ここにファイルをドロップしてください。</translation>
+    </message>
+    <message>
         <source>Open binary or database</source>
         <translation>バイナリまたはデータベースを開く</translation>
     </message>

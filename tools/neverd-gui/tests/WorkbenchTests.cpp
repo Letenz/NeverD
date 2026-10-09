@@ -929,7 +929,7 @@ private slots:
       if (!dialog || dialog->objectName() != QLatin1String("quickStartDialog"))
         return;
       drag.stop();
-      accepted = dropFile(dialog->findChild<QListWidget *>(), path);
+      accepted = dropFile(dialog, path);
       if (!accepted)
         dialog->reject();
     });
