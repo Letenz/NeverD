@@ -37,6 +37,7 @@ add_neverd_unittest(NeverDLiftTests
   aarch64/AArch64_NativeDecodeParityLoadStoreTests.cpp
   aarch64/AArch64_NativeDecodeParitySweepTests.cpp
   arm32/ARM32_ArithTests.cpp
+  arm32/ARM32_CallAbiTests.cpp
   arm32/ARM32_CarryTests.cpp
   arm32/ARM32_ControlTests.cpp
   arm32/ARM32_ExtendTests.cpp

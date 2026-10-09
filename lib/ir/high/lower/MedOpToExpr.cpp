@@ -33,7 +33,8 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
     return sourceBitSlice(medvarToExpr(Op.Inputs[0]), Op.Inputs[1].ConstVal,
                           Op.Output.Size);
   if (Op.Opcode == NdOp::FLOAT_FMA) {
-    if (Op.NumInputs != 3 || (Op.Output.Size != 4 && Op.Output.Size != 8))
+    if (Op.NumInputs != 3 ||
+        (Op.Output.Size != 2 && Op.Output.Size != 4 && Op.Output.Size != 8))
       return HighExpr::makeUndef(Op.Output.Size);
     auto Value = std::make_shared<HighExpr>();
     Value->Kind = ExprKind::BinOp;
@@ -57,10 +58,11 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
       return HighExpr::makeBitCast(Value,
                                    NdType::makeInt(Op.Output.Size, false));
     };
-    // C computes in float, double, and the x87 80-bit extended format its
-    // `long double` names on x86; a value of another width has no C float.
+    // C computes in _Float16 (C23, on Arm and x86), float, double, and the
+    // x87 80-bit extended format its `long double` names on x86; a value of
+    // another width has no C float.
     auto CFloatBytes = [](uint16_t Bytes) {
-      return Bytes == 4 || Bytes == 8 || Bytes == 10;
+      return Bytes == 2 || Bytes == 4 || Bytes == 8 || Bytes == 10;
     };
     switch (Op.Opcode) {
     case NdOp::FLOAT_ADD:
