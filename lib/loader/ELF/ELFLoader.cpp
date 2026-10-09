@@ -141,6 +141,24 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
     }
   }
 
+  // The undefined and common symbols of a relocatable object take addresses
+  // past every section, beside the GOT entries its GOT references reach.
+  elf_loader::detail::ObjectExterns Externs;
+  if (IsRelocatable) {
+    va_t ImageEnd = 0;
+    for (uint32_t I = 0; I < SectionsOr->size(); ++I) {
+      const Elf_Shdr &SH = (*SectionsOr)[I];
+      if ((SH.sh_flags & SHF_ALLOC) && SH.sh_size != 0)
+        ImageEnd = std::max<va_t>(ImageEnd,
+                                  SecBase[I] + static_cast<va_t>(SH.sh_size));
+    }
+    auto PlanOr = elf_loader::detail::planObjectExterns<ELFT>(
+        ELF, *SectionsOr, Data, Size, Img.Arch, ImageEnd);
+    if (!PlanOr)
+      return PlanOr.takeError();
+    Externs = std::move(*PlanOr);
+  }
+
   if (llvm::Error E = elf_loader::detail::buildSegments<ELFT>(
           ELF, *SectionsOr, ShStrTab, Data, Size, SecBase, IsRelocatable, Img))
     return E;
@@ -148,6 +166,9 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
   if (llvm::Error E = elf_loader::detail::buildSections<ELFT>(
           *SectionsOr, ShStrTab, Data, Size, SecBase, IsRelocatable, Img))
     return E;
+  if (IsRelocatable)
+    elf_loader::detail::addObjectExterns<ELFT>(ELF, *SectionsOr, SecBase,
+                                               Externs, Img);
 
   elf_loader::detail::collectRelocations<ELFT>(ELF, *SectionsOr, ShStrTab, Data,
                                                Size, IsRelocatable, Img);
@@ -157,14 +178,15 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
   // sees correct displacements for constant pool loads.
   if (IsRelocatable) {
     if (llvm::Error E = elf_loader::detail::applyRelocations<ELFT>(
-            ELF, *SectionsOr, Data, Size, SecBase, IsRelocatable, Img))
+            ELF, *SectionsOr, Data, Size, SecBase, IsRelocatable, Externs, Img))
       return E;
   } else
     elf_loader::detail::applyDynamicRelativeRelocations<ELFT>(ELF, *SectionsOr,
                                                               Data, Size, Img);
 
   if (llvm::Error E = elf_loader::detail::collectSymbols<ELFT>(
-          ELF, *SectionsOr, Size, SecBase, IsRelocatable, Img))
+          ELF, *SectionsOr, Size, SecBase, IsRelocatable, Externs.CommonSlots,
+          Img))
     return E;
 
   // --- .dynamic ---

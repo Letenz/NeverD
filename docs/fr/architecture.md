@@ -941,6 +941,17 @@ runtime sous `include/neverd/libc` (`LibCNoReturn.inc`,
 cible ajoute alors un fichier ou une entrée de table plutôt qu'une branche dans
 la passe partagée.
 
+Les symboles non définis d'un objet relogeable sont résolus dans une couche
+partagée, `include/neverd/loader/ObjectExterns.h`. Le chargeur de chaque format
+recueille les symboles que nomment ses relocations, si un appel ou un
+branchement atteint chacun d'eux (`<Format>ObjectRelocations.def`), ses symboles
+communs et les cellules par lesquelles certaines références atteignent un
+symbole (entrées GOT d'ELF et de Mach-O, pointeurs `__imp_` de COFF). La couche
+les place après les sections de l'objet, dans un segment `extern` inscriptible
+et un segment de cellules en lecture seule. Un externe appelé y est un import,
+une donnée un symbole ; une référence faible ne reçoit pas d'adresse, car le
+test de nullité que fait son code appartient au programme.
+
 <a id="support-and-test-depth"></a>
 
 ### Support et profondeur des tests

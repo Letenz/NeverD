@@ -286,8 +286,12 @@ void detectXMMParams(
   // The width of the scalar a used parameter register carries: its readers
   // take only the low 4 or 8 bytes, directly or through whole copies of the
   // register, and no incoming byte above them reaches a consumer.  A merge
-  // or any other read leaves it a vector.
+  // or any other read leaves it a vector.  A live-in that is itself a 4- or
+  // 8-byte view of its register (an AArch64 S or D register) has no other
+  // bytes: whatever reads it, floating-point arithmetic included, reads a
+  // scalar of that width, which only a narrower view at its start narrows.
   auto scalarLaneBytes = [&](const MedVar &LiveIn) -> uint16_t {
+    const bool ScalarView = LiveIn.Size == 4 || LiveIn.Size == 8;
     uint16_t Width = 0;
     llvm::SmallVector<MedVar, 4> Aliases{LiveIn};
     std::set<ValueKey> Seen{valueKey(LiveIn)};
@@ -297,8 +301,11 @@ void detectXMMParams(
       if (It == Uses.end())
         continue;
       for (const ValueUse &Use : It->second) {
-        if (!Use.Op)
-          return 0;
+        if (!Use.Op) {
+          if (!ScalarView)
+            return 0;
+          continue;
+        }
         const MedOp &Op = *Use.Op;
         if (isSelfCopyOf(Op))
           continue;
@@ -308,9 +315,10 @@ void detectXMMParams(
           for (uint8_t I = 0; I < Op.NumInputs; ++I)
             if (Op.Inputs[I] == Alias) {
               const uint16_t Read = Op.vectorArgumentWidth(I);
-              if (Read != 4 && Read != 8)
+              if (Read == 4 || Read == 8)
+                Width = std::max(Width, Read);
+              else if (!ScalarView)
                 return 0;
-              Width = std::max(Width, Read);
             }
           continue;
         }
@@ -324,8 +332,11 @@ void detectXMMParams(
           continue;
         }
         if (Op.Opcode != NdOp::SUBBYTES || Op.NumInputs != 2 ||
-            !Op.Inputs[1].isConst() || !(Op.Inputs[0] == Alias))
-          return 0;
+            !Op.Inputs[1].isConst() || !(Op.Inputs[0] == Alias)) {
+          if (!ScalarView)
+            return 0;
+          continue;
+        }
         if (Op.Inputs[1].ConstVal == 0) {
           if (Op.Output.Size != 4 && Op.Output.Size != 8)
             return 0;
@@ -335,7 +346,7 @@ void detectXMMParams(
     }
     // A live-in read only as a scalar view (the argument a call passes
     // on) is a scalar of that view's width.
-    if (LiveIn.Size == 4 || LiveIn.Size == 8)
+    if (ScalarView)
       return Width ? std::min<uint16_t>(Width, LiveIn.Size) : LiveIn.Size;
     if (!Width || Width >= LiveIn.Size ||
         liveInBytesUsed(LiveIn, byteMask(LiveIn.Size) & ~byteMask(Width)))

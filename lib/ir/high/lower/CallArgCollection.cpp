@@ -1214,14 +1214,21 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   if (Hinted.empty() && CurMed) {
     if (const MedCallInfo *CI =
             CurMed->findCall(CurBlock.Id, static_cast<int>(CallIdx))) {
-      if (!CI->Args.empty()) {
+      // Where call-setup recovery gives a call its arguments, it gives a
+      // direct call all of them, none included.  The scan below bounds an
+      // indirect call's by the setup its own block writes, since nothing
+      // bounds them by the callee's signature.
+      const bool SetupConvention =
+          Convention && Convention->ArgumentsFromCallSetup;
+      const bool CompleteSetup = SetupConvention && !CI->IsIndirect;
+      if (SetupConvention ? CompleteSetup : !CI->Args.empty()) {
         std::vector<ExprPtr> FromABI;
         FromABI.reserve(CI->Args.size());
         for (const MedVar &A : CI->Args)
           FromABI.push_back(medvarToExpr(A));
         size_t End = FromABI.size();
-        while (End < static_cast<size_t>(MaxArgs) && Found[End] &&
-               Found[End]->Kind != ExprKind::Undef)
+        while (!CompleteSetup && End < static_cast<size_t>(MaxArgs) &&
+               Found[End] && Found[End]->Kind != ExprKind::Undef)
           ++End;
         for (size_t I = FromABI.size(); I < End; ++I)
           FromABI.push_back(Found[I]);

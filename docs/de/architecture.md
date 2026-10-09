@@ -935,6 +935,17 @@ unter `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
 Datei oder einen Tabelleneintrag hinzu statt einer Verzweigung im gemeinsamen
 Pass.
 
+Die undefinierten Symbole eines relozierbaren Objekts werden in einer
+gemeinsamen Schicht aufgelöst, `include/neverd/loader/ObjectExterns.h`. Der
+Loader jedes Formats sammelt die Symbole, die seine Relokationen nennen, ob ein
+Aufruf oder Sprung sie erreicht (`<Format>ObjectRelocations.def`), seine
+Common-Symbole und die Zellen, über die manche Referenzen ein Symbol erreichen
+(GOT-Einträge von ELF und Mach-O, `__imp_`-Zeiger von COFF). Die Schicht legt
+sie hinter die Sektionen des Objekts, in ein beschreibbares `extern`-Segment und
+ein schreibgeschütztes Zellsegment. Ein aufgerufenes Extern ist dort ein Import,
+Daten sind ein Symbol; eine schwache Referenz erhält keine Adresse, denn die
+Null-Prüfung, die ihr Code vornimmt, gehört dem Programm.
+
 <a id="support-and-test-depth"></a>
 
 ### Support- und Testtiefe

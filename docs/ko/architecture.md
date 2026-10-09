@@ -796,6 +796,8 @@ pipeline을 계속 진행하려고 `UnliftedInstruction`을 잡지 마세요. �
 
 공유 패스에 추가하는 대상별 규칙은 아키텍처나 포맷을 인라인으로 검사하지 말고 대상별 테이블에 둡니다. ISA에 관한 사실은 해당 ISA의 `lib/ir/TargetRegInfo<ISA>.cpp`에서 설정하는 `TargetRegInfo` 특성입니다. 호출 규약 규칙은 별도의 `lib/ir/med/abi/MedCallConvention<Name>.cpp`에 정의하고 `MedCallConvention.cpp`에 등록하는 `CallArgumentConvention` 항목입니다. 반환하지 않는 함수는 런타임별로 `include/neverd/libc` 아래(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`)에 나열합니다. 따라서 새 대상을 지원할 때는 공유 패스에 분기를 넣는 대신 파일이나 테이블 항목을 추가합니다.
 
+재배치 가능 오브젝트의 정의되지 않은 심볼은 하나의 공유 계층 `include/neverd/loader/ObjectExterns.h`에서 해석됩니다. 각 포맷의 로더는 재배치가 가리키는 심볼, 각 심볼에 호출이나 분기가 도달하는지 여부(`<Format>ObjectRelocations.def`), common 심볼, 그리고 일부 참조가 심볼에 도달할 때 거치는 셀(ELF와 Mach-O의 GOT 항목, COFF의 `__imp_` 포인터)을 수집합니다. 이 계층은 이들을 오브젝트의 섹션 뒤, 쓰기 가능한 `extern` 세그먼트와 읽기 전용 셀 세그먼트에 배치합니다. 호출되는 외부 심볼은 그곳에서 임포트가 되고 데이터는 심볼이 됩니다. 약한 참조에는 주소를 주지 않습니다. 코드가 수행하는 null 검사는 프로그램 자신의 것이기 때문입니다.
+
 <a id="support-and-test-depth"></a>
 
 ### 지원 및 테스트 깊이

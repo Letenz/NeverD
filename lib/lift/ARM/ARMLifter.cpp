@@ -27,11 +27,12 @@
 #define DEBUG_TYPE "neverd-lift-arm"
 
 namespace neverd {
-namespace {
 
 bool isPredicated(const cs_arm &ARM) {
   return ARM.cc >= ARMCC_EQ && ARM.cc <= ARMCC_LE;
 }
+
+namespace {
 
 bool operandIsPC(const cs_arm_op &Operand) {
   return Operand.type == ARM_OP_REG && Operand.reg == ARM_REG_PC;
