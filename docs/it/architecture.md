@@ -1606,3 +1606,7 @@ L’esportatore dei sorgenti Objective-C disabilita `CEmitterOptions::EmitRecord
 ## Attributi di directory in gruppi limitati
 
 DarwinFiles possiede importazione comune, validità nome/stat e codifica. DarwinDirectory possiede gruppi, autorizzazione dell’oggetto e stato iterazione/cursore/EOF della descrizione, condividendo la proiezione dei figli attuali con getdirentries64. dup condivide una descrizione e seek zero ripristina il contratto. JSON fornisce politiche esplicite; il dispatch non inventa osservazioni del filesystem.
+
+## Proprietà delle identità dei nomi Darwin
+
+DarwinFiles indicizza FileEntry e LinkEntry separatamente da Contents e LinkNode. Ogni voce possiede la sua NameIdentity con percorso, padre e costo dinamico del nome; l’identità non possiede oggetti file o collegamento. Le descrizioni scelgono un’identità e mantengono l’oggetto per byte, metadati, attributi e lease delle mappature. La rinomina dei sottoalberi seleziona identità esatte e genitori. Il contratto esistente con un solo nome conserva l’identità dopo unlink e riuso del nome, mantenendo recupero e prenotazioni iniziali fisse. Le directory restano le proprie identità. Questa separazione non attiva i servizi di collegamenti fisici.

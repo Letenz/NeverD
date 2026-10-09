@@ -11,6 +11,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <utility>
 #include <variant>
 
 namespace neverd::emulation::darwin_model {
@@ -125,6 +126,14 @@ private:
       return Node;
     }
   };
+  /// A namespace identity owns no file/link object. Objects may retain it
+  /// after unlink without introducing an object -> entry -> object cycle.
+  struct NameIdentity {
+    std::string Path;
+    std::shared_ptr<DirectoryNode> Parent;
+    uint64_t PathCharge = 0;
+    bool Protected = false;
+  };
   struct Contents {
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> Modified;
@@ -134,12 +143,9 @@ private:
     const DarwinFileMutationPolicy *Policy = nullptr;
     std::optional<llvm::BitVector> Allocated;
     bool Writable = false;
-    /// Last linked name. All descriptions follow rename; unlink retains it.
-    std::string Path;
-    /// Retain the parent object, including after unlink/name reuse. Moving an
-    /// ancestor also changes paths of its held orphan files and mappings.
-    std::shared_ptr<DirectoryNode> Parent;
-    uint64_t PathCharge = 0;
+    /// Sole identity for the existing one-name contract. This retains the
+    /// parent after unlink/name reuse and follows ancestor moves.
+    std::shared_ptr<NameIdentity> Name = std::make_shared<NameIdentity>();
     bool MetadataInvalidated = false;
     std::shared_ptr<const unsigned> Lease = std::make_shared<const unsigned>(0);
     llvm::ArrayRef<uint8_t> bytes() const {
@@ -156,20 +162,25 @@ private:
     AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;
     const DarwinFileTime *MutationTime = nullptr;
-    std::string Path;
-    std::shared_ptr<DirectoryNode> Parent;
-    bool Protected = false;
+    std::shared_ptr<NameIdentity> Name = std::make_shared<NameIdentity>();
     bool Created = false;
     bool MetadataInvalidated = false;
-    uint64_t PathCharge = 0;
     llvm::ArrayRef<uint8_t> bytes() const {
       return CreatedTarget ? llvm::ArrayRef<uint8_t>(*CreatedTarget) : Initial;
     }
     uint64_t dynamicCharge() const {
-      return PathCharge + (CreatedTarget ? CreatedTarget->size() : 0) +
+      return Name->PathCharge + (CreatedTarget ? CreatedTarget->size() : 0) +
              ExtendedAttributes.DynamicCharge;
     }
   };
+  template <typename ObjectType> struct NamedEntry {
+    std::shared_ptr<ObjectType> Object;
+    std::shared_ptr<NameIdentity> Name;
+    explicit NamedEntry(std::shared_ptr<ObjectType> Node)
+        : Object(std::move(Node)), Name(Object->Name) {}
+  };
+  using FileEntry = NamedEntry<Contents>;
+  using LinkEntry = NamedEntry<LinkNode>;
   enum class DirectoryIteration { None, Entries, Bulk };
   struct Description {
     Kind Type;
@@ -183,6 +194,7 @@ private:
     std::shared_ptr<DirectoryNode> Directory;
     bool FinalParentUnlinked = false;
     std::shared_ptr<LinkNode> Link;
+    std::shared_ptr<NameIdentity> Name;
     std::optional<uint64_t> DirectoryVersion;
     DirectoryIteration Iteration = DirectoryIteration::None;
     uint64_t BulkCursor = 0;
@@ -191,10 +203,7 @@ private:
       return File ? File->bytes() : Link ? Link->bytes() : Input;
     }
     llvm::StringRef path() const {
-      return File        ? File->Path
-             : Directory ? Directory->Path
-             : Link      ? Link->Path
-                         : Path;
+      return Name ? Name->Path : Directory ? Directory->Path : Path;
     }
   };
   struct Descriptor {
@@ -215,8 +224,8 @@ private:
   const uint64_t OutputLimit;
   const uint32_t EffectiveUID;
   std::map<uint32_t, Descriptor> Descriptors;
-  std::map<std::string, std::shared_ptr<Contents>> Nodes;
-  std::map<std::string, std::shared_ptr<LinkNode>> Links;
+  std::map<std::string, std::shared_ptr<FileEntry>> Nodes;
+  std::map<std::string, std::shared_ptr<LinkEntry>> Links;
   std::vector<std::shared_ptr<Contents>> Unlinked;
   std::map<std::string, std::shared_ptr<DirectoryNode>> Directories;
   std::vector<std::shared_ptr<DirectoryNode>> UnlinkedDirectories;

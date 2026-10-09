@@ -3687,3 +3687,7 @@ DarwinFiles owns common attribute import, name/stat validity and record encoding
 ## Ordinary Darwin attribute mutations
 
 DarwinFiles owns retained attribute state, initial-object mutation grants, shared name import and complete-stat validity. DarwinExtendedAttributes stages value/list changes before one commit. Fixed initial reservations and runtime attribute excess use the same storage/count owner as content and namespace mutations; unlinked objects and mapping leases retain their dynamic charge until final release. JSON only imports explicit grants. Directory attribute mutation invalidates full metadata independently of membership, snapshots and enumeration versions.
+
+## Darwin namespace identity ownership
+
+DarwinFiles indexes FileEntry and LinkEntry records separately from Contents and LinkNode. Each entry owns its NameIdentity, including path, parent and dynamic name charge; that identity owns no file or link object. Descriptions select an identity and retain the object for bytes, metadata, attributes and mapping leases. Subtree rename selects exact identities and parents. The existing single-name contract retains its identity through unlink and name reuse, preserving reclamation and fixed input reservations. Directory objects remain their own identities. This ownership split does not enable hard-link services.

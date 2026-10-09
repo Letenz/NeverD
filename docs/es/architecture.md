@@ -1609,3 +1609,7 @@ El exportador de fuentes Objective-C desactiva `CEmitterOptions::EmitRecordGuard
 ## Atributos de directorio por lotes acotados
 
 DarwinFiles posee importación común, validez nombre/stat y codificación. DarwinDirectory posee grupos, autorización de objeto y estado de iteración/cursor/EOF de la descripción, compartiendo hijos actuales con getdirentries64. dup comparte una descripción; seek cero reinicia su contrato. JSON aporta política explícita y el despacho no inventa observaciones del sistema de archivos.
+
+## Propiedad de las identidades de nombres Darwin
+
+DarwinFiles indexa FileEntry y LinkEntry por separado de Contents y LinkNode. Cada entrada posee su NameIdentity, con ruta, padre y coste dinámico del nombre; la identidad no posee objetos de archivo ni enlace. Las descripciones eligen una identidad y retienen el objeto para bytes, metadatos, atributos y reservas de mapeo. El cambio de nombre de subárboles selecciona identidades exactas y padres. El contrato existente de un nombre conserva su identidad tras desvincular y reutilizar el nombre, manteniendo la recuperación y las reservas iniciales fijas. Los directorios siguen siendo su propia identidad. Esta separación no habilita servicios de enlaces físicos.

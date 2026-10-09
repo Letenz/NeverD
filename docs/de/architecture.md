@@ -1611,3 +1611,7 @@ Der Objective-C-Quellexport deaktiviert `CEmitterOptions::EmitRecordGuards` und 
 ## Begrenzte Verzeichnisattribute in Gruppen
 
 DarwinFiles besitzt gemeinsamen Attributimport, Namen/stat-Gültigkeit und Datensatzkodierung. DarwinDirectory besitzt Gruppen, Objektberechtigung und beschreibungsgebundene Iteration/Cursor/EOF; die aktuellen Kinder werden gemeinsam mit getdirentries64 projiziert. dup teilt eine Beschreibung, Null-seek setzt den Vertrag zurück. JSON liefert explizite Eingaben; der Dispatch erfindet keine Dateisystembeobachtung.
+
+## Eigentum an Darwin-Namensidentitäten
+
+DarwinFiles indiziert FileEntry und LinkEntry getrennt von Contents und LinkNode. Jeder Eintrag besitzt seine NameIdentity mit Pfad, Elternverzeichnis und dynamischen Namenskosten; die Identität besitzt kein Datei- oder Linkobjekt. Beschreibungen wählen eine Identität und halten das Objekt für Bytes, Metadaten, Attribute und Mapping-Leases. Teilbaumumbenennungen wählen genaue Identitäten und Eltern. Der bestehende Vertrag mit einem Namen hält die Identität nach unlink und Namenswiederverwendung und bewahrt Freigabe sowie feste Eingabereservierungen. Verzeichnisobjekte bleiben ihre eigenen Identitäten. Diese Trennung aktiviert keine Hardlink-Dienste.

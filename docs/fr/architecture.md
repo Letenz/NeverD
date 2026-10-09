@@ -1617,3 +1617,7 @@ L’exporteur de sources Objective-C désactive `CEmitterOptions::EmitRecordGuar
 ## Attributs de répertoire groupés bornés
 
 DarwinFiles possède import commun, validité nom/stat et encodage des enregistrements. DarwinDirectory possède groupes, autorisation d’objet et état itération/curseur/EOF de la description ; il partage la projection des enfants actuels avec getdirentries64. dup partage une description ; seek zéro réinitialise son contrat. JSON fournit les politiques explicites, sans observation de système de fichiers inventée par le dispatch.
+
+## Propriété des identités de noms Darwin
+
+DarwinFiles indexe FileEntry et LinkEntry séparément de Contents et LinkNode. Chaque entrée possède son NameIdentity : chemin, parent et coût dynamique du nom. Cette identité ne possède aucun objet fichier ou lien. Les descriptions sélectionnent une identité et retiennent l’objet pour les octets, métadonnées, attributs et baux de mappage. Le renommage des sous-arbres sélectionne les identités exactes et leurs parents. Le contrat existant à nom unique conserve l’identité après suppression et réutilisation du nom, avec les mêmes règles de récupération et réservations initiales fixes. Les répertoires gardent leur propre identité. Cette séparation n’active pas les services de liens physiques.
