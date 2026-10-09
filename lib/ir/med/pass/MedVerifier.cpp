@@ -58,6 +58,11 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
         else if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
                  Op.Inputs[0].isConst()) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (isX86FPStateIntrinsic(Id) &&
+              !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op)))
+            Err("x86 FP state intrinsic has an invalid numerical/state "
+                "contract",
+                Blk.Id, Op.Addr);
           const bool IsApxAtomic = isApxAtomicIntrinsic(Id);
           if (IsApxAtomic &&
               !intrinsicApxAtomicShapeIsValid(Id, apxAtomicMedShape(Op)))
@@ -70,16 +75,15 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
                 "contract",
                 Blk.Id, Op.Addr);
           const bool IsX86MsrAccess = Id == Intrinsic::X86MsrAccess;
-          if (IsX86MsrAccess && !intrinsicX86MsrAccessShapeIsValid(
-                                    Id, x86MsrAccessMedShape(Op)))
+          if (IsX86MsrAccess &&
+              !intrinsicX86MsrAccessShapeIsValid(Id, x86MsrAccessMedShape(Op)))
             Err("x86 MSR access intrinsic has an invalid operand/output "
                 "contract",
                 Blk.Id, Op.Addr);
           const bool IsX86DivPrecondition =
               Id == Intrinsic::X86RequireDivPrecondition;
-          if (IsX86DivPrecondition &&
-              !intrinsicX86DivPreconditionShapeIsValid(
-                  Id, x86DivPreconditionMedShape(Op)))
+          if (IsX86DivPrecondition && !intrinsicX86DivPreconditionShapeIsValid(
+                                          Id, x86DivPreconditionMedShape(Op)))
             Err("x86 divide precondition has an invalid operand/output "
                 "contract",
                 Blk.Id, Op.Addr);

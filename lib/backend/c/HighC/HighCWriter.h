@@ -400,6 +400,24 @@ public:
   std::string intrinsicOperandStr(const HighExpr &E);
   /// Cast / zext / `SUBBYTES` 0 of a Var/Phi. Not add/sub/mul, Call, or Load.
   bool isIntegerViewOfScalar(const HighExpr &E) const;
+  /// Where \p Bits come from, under views that keep at least the bytes of
+  /// \p Float, reinterpretations and forwarded copies: a value of type
+  /// \p Float, a call, or the first expression that is neither a view nor a
+  /// value; null where a view drops bytes.
+  const HighExpr *floatBitsSource(const HighExpr &Bits,
+                                  const TypeRef &Float) const;
+  /// The call whose result \p Bits are (floatBitsSource), when it returns
+  /// \p Float; else null.
+  const HighExpr *floatCallResult(const HighExpr &Bits,
+                                  const TypeRef &Float) const;
+  /// The value of type \p Float whose bits \p Bits are (floatBitsSource), or
+  /// null.
+  const HighExpr *floatBitsValue(const HighExpr &Bits,
+                                 const TypeRef &Float) const;
+  /// The \p Float literal whose bits \p Bits are (floatBitsSource): a
+  /// constant, or one read from constant data; else nullopt.
+  std::optional<std::string> floatConstantBitsText(const HighExpr &Bits,
+                                                   const TypeRef &Float) const;
   /// \p Arg passed to a parameter of floating type \p Expected, when its
   /// integer bits carry the value.
   std::optional<std::string> floatArgumentText(const HighExpr &Arg,
@@ -676,7 +694,13 @@ public:
   /// The x87 helpers the output calls, and whether it computes with the
   /// x87 extended `long double`.
   std::set<X87CHelper> X87Helpers;
+  std::map<std::pair<Intrinsic, unsigned>, std::string> X86FPStateHelpers;
   bool UsesX87Extended = false;
+  /// The bytes a plain access of the C memory type \p Type copies inline: 0
+  /// for its whole object, the value's bytes for a bit-precise integer
+  /// narrower than its storage on a little-endian target, none when only
+  /// the byte-order-aware helper reads it.
+  std::optional<unsigned> inlineMemoryBytes(llvm::StringRef Type) const;
   /// An x87 extended value: what `long double` holds.
   static bool isX87Value(const HighExpr &E);
   /// The x87 helper \p E prints through, if any.

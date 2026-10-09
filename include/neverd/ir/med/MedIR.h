@@ -224,11 +224,29 @@ struct MedOp {
   /// after the register arguments as Inputs[1 + CalleeRegisterArgs..]; -1
   /// when the convention publishes none.
   int8_t CalleeVectorArgs = -1;
+  /// Where a positional convention passes a floating argument in its slot's
+  /// vector register instead: bit K for register argument K, Inputs[1 + K].
+  uint8_t CalleeVectorSlots = 0;
+  /// The inputs after the target are every argument the call passes, in the
+  /// source's order (a FormattedCall).  Bit K of ExactFloatInputs marks
+  /// Inputs[1 + K] as the bits of a floating one, of ExactPointerInputs as an
+  /// address.
+  bool ExactArguments = false;
+  uint64_t ExactFloatInputs = 0;
+  uint64_t ExactPointerInputs = 0;
   /// The bytes of each of those whole vector registers the callee reads:
-  /// four bits per argument, in four-byte units (1 float, 2 double, 4 all).
+  /// four bits per argument, or per slot, in four-byte units (1 float, 2
+  /// double, 4 all).
   uint32_t CalleeVectorArgWidths = 0;
   /// The bytes the callee reads of input \p Input, a vector argument, or 0.
   uint16_t vectorArgumentWidth(unsigned Input) const {
+    if (CalleeVectorSlots) {
+      const unsigned Slot = Input - 1;
+      if (Input == 0 || Slot >= 8 || !((CalleeVectorSlots >> Slot) & 1))
+        return 0;
+      return static_cast<uint16_t>(
+          ((CalleeVectorArgWidths >> (4 * Slot)) & 0xF) * 4);
+    }
     if (CalleeVectorArgs <= 0 || CalleeRegisterArgs < 0 ||
         Input < 1u + CalleeRegisterArgs ||
         Input >= 1u + CalleeRegisterArgs + CalleeVectorArgs)

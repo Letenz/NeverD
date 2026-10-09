@@ -48,6 +48,13 @@ struct ProcessStackView {
   uint64_t Base, Size;
 };
 
+/// A live allocation owned by the process heap. The size is the requested
+/// extent, excluding allocator padding; a zero-size allocation has at least
+/// one byte. Addresses belong to this process.
+struct ProcessHeapAllocationView {
+  uint64_t Address, Size;
+};
+
 /// Integer ABI facts at a stopped entry boundary. They describe the current
 /// return location and first three arguments, not a function signature or
 /// evidence that a call instruction executed.
@@ -91,6 +98,12 @@ public:
   virtual std::vector<uint64_t> completedInitializers() const { return {}; }
   /// The current thread's stack allocation, if the profile owns it.
   virtual std::optional<ProcessStackView> stack() const { return std::nullopt; }
+  /// Live heap allocations at this boundary. An empty vector establishes
+  /// that none exist; std::nullopt means the profile supplies no contract.
+  virtual std::optional<std::vector<ProcessHeapAllocationView>>
+  heapAllocations() const {
+    return std::nullopt;
+  }
   /// Number of OS service invocations so far, including calls still active.
   /// Missing provenance cannot establish that a helper has no OS effects.
   virtual std::optional<uint64_t> nativeCallCount() const {

@@ -22,11 +22,20 @@ inline constexpr uint32_t DirectoryEntries = 4096;
 inline constexpr uint64_t Bytes = 16 * 1024 * 1024;
 inline constexpr uint32_t Path = 1024;
 inline constexpr uint32_t Name = 255;
+inline constexpr uint32_t ExtendedAttributeName = 127;
+inline constexpr uint32_t ExtendedAttributes = 4096;
 } // namespace darwin_file_limits
 
 struct DarwinFileTime {
   int64_t Seconds = 0;
   int64_t Nanoseconds = 0;
+};
+
+/// One ordinary opaque extended attribute. Names are UTF-8, including slash;
+/// bytes are independent of file contents and stat metadata.
+struct DarwinExtendedAttribute {
+  std::string Name;
+  std::vector<uint8_t> Bytes;
 };
 
 /// Fixed stat64 observations. Regular-file Size must match its bytes; directory
@@ -65,19 +74,58 @@ struct DarwinFileMutationPolicy {
   DarwinFileTime Time;
 };
 
-/// Opt-in metadata for new regular files in the explicit virtual filesystem.
+/// Explicit virtual mutation of an initial directory's observed stat record.
+/// A committed child-name change sets nlink to two plus all linked immediate
+/// names, size to nlink * DirectoryEntrySize, and mtime/ctime to Time. Direct
+/// moves/removal set only ctime; other observed fields stay object-owned.
+/// This does not infer APFS allocation or enforce permissions.
+struct DarwinDirectoryMutationPolicy {
+  /// Positive and at most 16 MiB; projected stat size is not stored file bytes.
+  uint32_t DirectoryEntrySize = 0;
+  DarwinFileTime Time;
+};
+
+/// Retain an initial symbolic link's complete observed stat across direct
+/// namespace moves, changing only ctime to this declared time. Raw target bytes
+/// and all other fields stay object-owned; ancestor moves do not change stat.
+struct DarwinSymbolicLinkMutationPolicy {
+  DarwinFileTime Time;
+};
+
+/// Explicit virtual metadata rules for new links and directories. Link blocks
+/// round raw-target bytes up to SymbolicLinkAllocationUnit (in 512-byte
+/// blocks). Directory nlink is two plus its immediate linked names of every
+/// kind; size is nlink * DirectoryEntrySize, even while an empty removed
+/// directory is held. Directory blocks stay fixed. These rules are not inferred
+/// APFS observations.
+struct DarwinNamespaceCreationPolicy {
+  /// Independent of st_blksize and page size. Power of two, 512..16 MiB.
+  uint32_t SymbolicLinkAllocationUnit = 0;
+  /// Positive, at most 16 MiB; does not charge virtual stat size as file bytes.
+  uint32_t DirectoryEntrySize = 0;
+  uint64_t DirectoryBlocks = 0;
+};
+
+/// Opt-in metadata for new objects in the explicit virtual filesystem.
 /// Every mutable parent must have metadata; its Device/GID remain unchanged
 /// by namespace mutations. UID is the profile's effective guest user ID.
 /// This supplies neither permission enforcement nor native APFS observations.
 struct DarwinFileCreationPolicy {
   /// Nonzero and greater than every supplied stat/directory inode. Successful
-  /// creations advance this global sequence; UINT64_MAX exhausts it forever.
+  /// regular creations, and link/directory creations when Namespace is present,
+  /// advance this global sequence; UINT64_MAX exhausts it forever.
   uint64_t FirstInode = 0;
   uint32_t BlockSize = 0;
   uint32_t Generation = 0;
   /// Fixed initial atime/mtime/ctime/birthtime, not a host-clock sample.
   DarwinFileTime Time;
   DarwinFileMutationPolicy Mutation;
+  /// Omission preserves unknown new-link/directory metadata and consumes no
+  /// inode for those kinds. When present, mkdir and symlink use ordinary mode
+  /// bits masked by umask; child namespace changes set parent mtime/ctime and
+  /// direct moves set object ctime to Mutation.Time. Other fields are
+  /// preserved.
+  std::optional<DarwinNamespaceCreationPolicy> Namespace;
 };
 
 /// One observed directory record. NextOffset is the enumeration cursor after
@@ -102,6 +150,18 @@ struct DarwinDirectoryContents {
   uint32_t MinimumBufferSize = 0;
 };
 
+/// Explicit virtual enumeration: . and .. precede unsigned-byte-sorted live
+/// names; cookies are local ordinals and d_seekoff is the declared constant.
+/// Namespace changes require a zero rewind before reusing a cursor. Held
+/// removed directories enumerate no records. No APFS order/cookie is inferred.
+struct DarwinDirectoryEnumerationPolicy {
+  /// Positive payload minimum, including at EOF; at most 128 MiB.
+  uint32_t MinimumBufferSize = 0;
+  /// Additional minimum when starting at the first record; at most 128 MiB.
+  uint32_t InitialMinimumBufferSize = 0;
+  uint64_t SeekOffset = 0;
+};
+
 /// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup
 /// shares an open description. Ancestor directories are implicit.
@@ -113,6 +173,14 @@ struct DarwinFileOptions {
   uint32_t DescriptorLimit = darwin_file_limits::DefaultDescriptors;
   /// Optional metadata for existing files, directories and symbolic links.
   std::map<std::string, DarwinFileMetadata> Metadata;
+  /// Complete ordered initial observations for existing objects. Omission is
+  /// unknown; an empty vector declares a known empty list. Namespace changes
+  /// retain these observations on the object, including held removed objects.
+  /// Content writes/truncate invalidate them; new objects start unknown.
+  /// Protected system attributes, ResourceFork, FinderInfo and decmpfs are
+  /// excluded. Neither permissions nor host attributes are inferred.
+  std::map<std::string, std::vector<DarwinExtendedAttribute>>
+      ExtendedAttributes;
   /// Explicit directories, including empty ones; root and ancestors are
   /// implicit.
   std::set<std::string> Directories;
@@ -130,9 +198,10 @@ struct DarwinFileOptions {
   /// Explicit authority to change immediate names in these directories.
   /// Newly created files have writable contents; new directories inherit
   /// namespace mutation authority. Existing objects retain their separate
-  /// grants. Namespace changes invalidate the parent's metadata and snapshot.
-  /// New directory and runtime-created symbolic-link metadata stay unknown.
-  /// Link creation leaves the regular-file inode policy unchanged.
+  /// grants. Namespace changes invalidate initial parent metadata and
+  /// snapshots; created parents use explicit Namespace metadata when supplied.
+  /// New link and directory metadata stay unknown without that policy, and
+  /// their creations then leave the regular-file inode sequence unchanged.
   /// Removed directories retain their object and original parent while held
   /// by directory FDs, CWD or children.
   /// Regular-file rename may cross these created descendants of one initial
@@ -150,9 +219,9 @@ struct DarwinFileOptions {
   /// Omission remains unknown; matching devices or mutable grants alone do not
   /// supply filesystem support. Each reference has a fixed path+NUL charge.
   std::set<std::string> SwapRenameDirectories;
-  /// Optional virtual regular-file creation metadata; requires InitialUmask.
-  /// New directories inherit only the parent's known device/group and do not
-  /// consume regular-file inode values. Never applies to existing objects or
+  /// Optional virtual creation metadata; requires InitialUmask. Without its
+  /// Namespace extension, directories inherit only known device/group and
+  /// links/directories consume no inode. Never applies to initial objects or
   /// reads any host environment. Input stays unchanged.
   std::optional<DarwinFileCreationPolicy> CreationPolicy;
   /// Initial process mask, including all 07777 bits returned by Darwin umask.
@@ -173,10 +242,38 @@ struct DarwinFileOptions {
   std::set<std::string> ExchangeableDirectories;
   /// Fixed initial symbolic-link names and exact nonempty, non-NUL target
   /// bytes. Targets need not exist and are never normalized at admission.
-  /// Mutable directories cannot contain fixed link names. Separate mutable
-  /// domains may contain their targets; lookup observes current target names.
+  /// Mutable directories can contain initial link names only with an explicit
+  /// MutableSymbolicLinks grant. Lookup observes current target names.
   /// Content mutations, descriptors and mappings retain the actual target.
   std::map<std::string, std::vector<uint8_t>> SymbolicLinks;
+  /// Optional per-object virtual enumeration for admitted initial directories
+  /// with nonzero observed inodes. mkdir inherits the actual parent's policy;
+  /// existing descendants retain their own declarations. Every listed child
+  /// and the actual parent must have a known nonzero inode. This is independent
+  /// of full stat validity, namespace grants and creation metadata. A directory
+  /// cannot also declare an immutable DirectoryContents snapshot.
+  std::map<std::string, DarwinDirectoryEnumerationPolicy>
+      DirectoryEnumerationPolicies;
+  /// Optional mutation authority for admitted initial directory metadata with
+  /// a nonzero inode. Retain the complete initial record until a genuine
+  /// committed change. This follows the object through moves/name reuse and
+  /// is independent of namespace grants, creation and enumeration policies.
+  /// mkdir descendants use their separately declared creation policy.
+  std::map<std::string, DarwinDirectoryMutationPolicy>
+      DirectoryMutationPolicies;
+  /// Namespace mutation authority for explicit initial symbolic links. Their
+  /// actual parents must be mutable; this declares ordinary unique objects and
+  /// rejects known flags, aliases and conflicting parent devices. It grants no
+  /// access to referents. Fixed input costs remain reserved after removal;
+  /// moved names acquire separate dynamic costs. Omission keeps links
+  /// protected.
+  std::set<std::string> MutableSymbolicLinks;
+  /// Optional complete-stat retention for granted initial links with nonzero
+  /// observed inodes. Without a policy, a direct move makes full stat unknown
+  /// but retains inode identity for enumeration. This follows the object and
+  /// never transfers to a reused name or new symlink object.
+  std::map<std::string, DarwinSymbolicLinkMutationPolicy>
+      SymbolicLinkMutationPolicies;
 };
 } // namespace neverd::emulation
 #endif

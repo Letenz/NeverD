@@ -27,9 +27,10 @@ public:
                  const Environment &Env,
                  const std::optional<Lifetime::Call> &Active,
                  const std::vector<uint64_t> &Initializers,
-                 const ProcessResult &Result, ProcessStackView Stack)
+                 const ProcessResult &Result, const Services &OS,
+                 ProcessStackView Stack)
       : CPU(CPU), Space(Space), ABI(ABI), Modules(Modules), Env(Env),
-        Active(Active), Initializers(Initializers), Result(Result),
+        Active(Active), Initializers(Initializers), Result(Result), OS(OS),
         Stack(Stack) {}
   GuestArchitecture architecture() const override { return CPU.architecture(); }
   llvm::Expected<RegisterValue> readRegister(CPURegister Register) override {
@@ -138,6 +139,10 @@ public:
     return Initializers;
   }
   std::optional<ProcessStackView> stack() const override { return Stack; }
+  std::optional<std::vector<ProcessHeapAllocationView>>
+  heapAllocations() const override {
+    return OS.heapAllocations();
+  }
   std::optional<uint64_t> nativeCallCount() const override {
     return Result.NativeCalls.size();
   }
@@ -170,6 +175,7 @@ private:
   const std::optional<Lifetime::Call> &Active;
   const std::vector<uint64_t> &Initializers;
   const ProcessResult &Result;
+  const Services &OS;
   ProcessStackView Stack;
   bool MemoryUnchanged = false;
 };
@@ -338,7 +344,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     return Pending.empty() ? Life : *Pending.back().Operation.Notifications;
   };
   StoppedProcess Stopped(CPU, **Space, *ABI, *Program, *Env, Active,
-                         Initializers, Result, {StackBase, Options.StackSize});
+                         Initializers, Result, OS,
+                         {StackBase, Options.StackSize});
   bool Observing = false;
   auto Invoking = [&]() -> llvm::Error {
     if (!Observing || !Observer)

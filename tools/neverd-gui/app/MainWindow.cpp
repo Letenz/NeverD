@@ -1342,8 +1342,9 @@ void MainWindow::chooseLoader(const QString &path) {
         if (dialog.exec() != QDialog::Accepted || dialog.row() < 0)
           return;
         QSettings().setValue(AnalysisIndicatorKey, dialog.indicator());
+        // The processor the user picked, not one the bytes named.
         if (const auto processor = dialog.options().processor;
-            !processor.isEmpty())
+            !processor.isEmpty() && processor != QLatin1String("auto"))
           QSettings().setValue(BinaryProcessorKey, processor);
         applyIndicator();
         session_.open(path, dialog.options());

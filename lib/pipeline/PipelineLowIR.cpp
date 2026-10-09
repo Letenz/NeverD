@@ -2761,7 +2761,7 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
         continue;
       if (!Budget.consume())
         return abandonAnalysis();
-      if (Use.UseKind == ModuleAddressUse::Kind::WriteThrough) {
+      if (Use.UseKind == ModuleAddressUse::Kind::WriteThrough && Writable) {
         Result.UnsafeBranches.insert(Owner.BranchAddr);
         protectWholeOwner(Owner);
         continue;
@@ -2888,11 +2888,18 @@ importPrototypeArguments(const BinaryImage &Img,
   const bool VectorArguments = RegisterArguments && Img.Arch == Arch::X64 &&
                                Convention &&
                                !Convention->PositionalArgumentSlots;
-  // The integer arguments of a routine, and the widths of its floating
-  // ones, which take vector registers.
+  // A positional convention passes argument K in slot K's integer or vector
+  // register by its class.
+  const bool SlotVectors = RegisterArguments && Img.Arch == Arch::X64 &&
+                           Convention && Convention->PositionalArgumentSlots &&
+                           Convention->VectorArgumentsFromCalleeSummary;
+  // The integer arguments of a routine, the widths of its floating ones,
+  // which take vector registers, and each argument's floating width in
+  // order (0 for an integer one).
   struct Arguments {
     int Integers = 0;
     std::vector<uint8_t> Floats;
+    std::vector<uint8_t> Order;
   };
   // A runtime's own prototype names its routine exactly, where stripping
   // leading underscores for the arity tables could reach another runtime's.
@@ -2907,12 +2914,14 @@ importPrototypeArguments(const BinaryImage &Img,
            llvm::ArrayRef(Prototype->Params.data(), Prototype->ParamCount)) {
         if (!libc::isFloatingType(Type)) {
           ++Result.Integers;
+          Result.Order.push_back(0);
           continue;
         }
         if (Type != "float" && Type != "double")
           return std::nullopt;
         Result.Floats.push_back(Type == "float" ? sizeof(float)
                                                 : sizeof(double));
+        Result.Order.push_back(Result.Floats.back());
       }
       return Result;
     }
@@ -2927,6 +2936,12 @@ importPrototypeArguments(const BinaryImage &Img,
     Result.Integers = Arity->IntArgs;
     Result.Floats.assign(Arity->FpArgs,
                          Arity->FpIsFloat ? sizeof(float) : sizeof(double));
+    // The tables list the integer arguments first unless FpFirst.
+    const std::vector<uint8_t> Integers(Arity->IntArgs, 0);
+    Result.Order = Arity->FpFirst ? Result.Floats : Integers;
+    const std::vector<uint8_t> &Rest =
+        Arity->FpFirst ? Integers : Result.Floats;
+    Result.Order.insert(Result.Order.end(), Rest.begin(), Rest.end());
     return Result;
   };
   // The floating type the routine returns, by the same declarations.
@@ -2950,23 +2965,33 @@ importPrototypeArguments(const BinaryImage &Img,
     if (const uint16_t Bytes = RoutineFloatReturn(Name))
       Result.FloatReturns[Addr] = Bytes;
     const std::optional<Arguments> Routine = RoutineArguments(Name);
-    if (Routine && !Routine->Floats.empty() &&
+    if (Routine && !Routine->Floats.empty() && !SlotVectors &&
         (!VectorArguments ||
          Routine->Floats.size() > kX64VectorArgumentFamilies ||
          Routine->Integers > static_cast<int>(Registers.size())))
       return;
+    // Positions take every argument in a positional convention, else the
+    // integer ones.
     const std::optional<int> Count =
-        Routine ? std::optional<int>(Routine->Integers) : std::nullopt;
+        !Routine      ? std::nullopt
+        : SlotVectors ? std::optional<int>(Routine->Order.size())
+                      : std::optional<int>(Routine->Integers);
     const int InRegisters =
         std::min(Count.value_or(0), static_cast<int>(Registers.size()));
     if (!Count || (*Count > InRegisters && !StackArguments))
       return;
     GPRReadWidths Widths{};
-    for (int K = 0; K < InRegisters; ++K)
+    for (int K = 0; K < InRegisters; ++K) {
+      if (SlotVectors && Routine->Order[K]) {
+        Widths[kX64VectorFamilyBase + K] = Routine->Order[K];
+        continue;
+      }
       if (const auto Family = gprFamilyOf(Img.Arch, Registers[K]))
         Widths[*Family] = static_cast<uint8_t>(TRI.PointerSize);
-    for (size_t K = 0; K < Routine->Floats.size(); ++K)
-      Widths[kX64VectorFamilyBase + K] = Routine->Floats[K];
+    }
+    if (!SlotVectors)
+      for (size_t K = 0; K < Routine->Floats.size(); ++K)
+        Widths[kX64VectorFamilyBase + K] = Routine->Floats[K];
     Result.Reads[Addr] = Widths;
     // Counted as positions, the registers' included, as the stack summary
     // counts them (LocalRegisterEffect::StackArgs); 0 for none on the stack.
@@ -3028,8 +3053,27 @@ void computeCallRegisterEffects(
   std::map<va_t, int> Depth;
   std::vector<va_t> Work;
   std::set<va_t> GuardForwarders;
+  // A call a constant format describes reads exactly what it names; the
+  // functions MedIR converts also pass those arguments (FormattedCall).
+  std::map<va_t, GPRReadWidths> FixedCallReads;
+  auto CollectFormattedCalls = [&](const LowFunc &F, bool Converted) {
+    std::map<va_t, FormattedCall> Calls;
+    pipeline_detail::collectFormattedCalls(Img, F, Calls);
+    for (auto &[Address, Call] : Calls) {
+      GPRReadWidths &Reads = FixedCallReads[Address];
+      for (const FormattedCallArgument &Argument : Call.Arguments)
+        if (const auto Family = registerFamilyOf(Img.Arch, Argument.Register))
+          Reads[Family->first] = std::max<uint8_t>(
+              Reads[Family->first],
+              static_cast<uint8_t>(Family->second + Argument.Bytes));
+      if (Converted)
+        Result.FormattedCalls.emplace(Address, std::move(Call));
+    }
+  };
   for (const LowFunc &LF : Result.LowFuncs) {
-    Effects[LF.Entry] = localRegisterEffect(Img, LF, &NoReturnTargets);
+    CollectFormattedCalls(LF, /*Converted=*/true);
+    Effects[LF.Entry] =
+        localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads);
     if (forwardsToGuardDispatch(Img, LF))
       GuardForwarders.insert(LF.Entry);
     Depth[LF.Entry] = 0;
@@ -3064,7 +3108,9 @@ void computeCallRegisterEffects(
       ++ExtraLifts;
       LowFunc Body =
           ExtraCFG.build(Img, ExtraDec, Callee, Img.getFunctionNameAt(Callee));
-      Effects[Callee] = localRegisterEffect(Img, Body, &NoReturnTargets);
+      CollectFormattedCalls(Body, /*Converted=*/false);
+      Effects[Callee] =
+          localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads);
       if (forwardsToGuardDispatch(Img, Body))
         GuardForwarders.insert(Callee);
       Depth[Callee] = CalleeDepth;

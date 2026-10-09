@@ -22,6 +22,7 @@
 
 #include <capstone/capstone.h>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -204,6 +205,10 @@ public:
   /// the active architecture lifter's terminator classification.
   bool isFunctionTerminator(const DecodedInsn &Insn) const;
 
+  /// Whether \p Insn returns to a caller, as the active architecture
+  /// lifter classifies it, or nullopt when no lifter classifies returns.
+  std::optional<bool> returnsToCaller(const DecodedInsn &Insn) const;
+
   /// Direct (immediate) call target of \p Insn, or InvalidVA if \p Insn is
   /// not a direct call.  Dispatches to the active architecture lifter.
   va_t directCallTarget(const DecodedInsn &Insn) const;
@@ -247,6 +252,11 @@ public:
   std::optional<I386GetPcOccurrence> getX86GetPcOccurrence() const;
 
 private:
+  /// UD1 has a ModR/M and its complete addressing extent in every x86 mode.
+  /// Keep the unconditional #UD identity while correcting Capstone's short
+  /// descriptor; both detailed and lightweight stepping use this owner.
+  bool normalizeX86UD1Extent(const uint8_t *Bytes, size_t Len);
+
   /// Decode an x86 fence carrying otherwise redundant operand-size prefixes.
   /// Capstone rejects these encodings even though LLVM and real x86-64
   /// binaries accept them.  Returns true after populating InsnBuf.

@@ -41,8 +41,9 @@ struct CallArgumentConvention {
   /// A call to a summarized direct callee passes the argument registers the
   /// callee reads at entry (LowToMed publishes them as the CALL's inputs).
   bool RegisterArgumentsFromCalleeSummary = false;
-  /// So does it the vector argument registers the callee reads, after the
-  /// integer ones: each floating argument takes the next vector register.
+  /// So does it the vector argument registers the callee reads: each
+  /// floating argument takes the next vector register after the integer
+  /// ones, or with PositionalArgumentSlots its own slot's vector register.
   bool VectorArgumentsFromCalleeSummary = false;
   /// An import whose libc prototype is fixed reads exactly its argument
   /// registers, and with StackArgumentSummary its stack arguments, so its
@@ -110,6 +111,11 @@ struct CallArgumentConvention {
   /// The argument count a platform prototype gives a named function (the
   /// WDK's, for Windows kernel routines), or nullopt.
   std::optional<size_t> (*PrototypeArgCount)(llvm::StringRef Name) = nullptr;
+  /// A printf-family call whose format is a constant string passes the
+  /// arguments its conversions name in registers, each class in its own
+  /// bank as for any other call: the call reads exactly those, in the
+  /// source's order (FormattedCall).
+  bool FormattedCallArguments = false;
 };
 
 /// The calling convention MedIR records for code of \p A in a \p F image, or

@@ -18,6 +18,7 @@
 #include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/SHA256.h"
@@ -37,6 +38,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -2722,6 +2724,79 @@ TEST_F(SessionCAPITest, IdentifyListsWhatLoadingReads) {
   EXPECT_EQ(text(Rows[0]), "Binary file");
 }
 
+TEST_F(SessionCAPITest, BinaryFilesReadTheirProcessorFromTheirBytes) {
+  // This program's own code, cut from its ELF file: bytes no header
+  // describes, which still name the processor they were built for.
+#if defined(__x86_64__) || defined(_M_X64)
+  const std::string Host = "x86_64";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+  const std::string Host = "aarch64";
+#else
+  const std::string Host;
+#endif
+  static int Anchor;
+  const std::string Self = llvm::sys::fs::getMainExecutable(nullptr, &Anchor);
+  std::ifstream Input(Self, std::ios::binary);
+  const std::string Image((std::istreambuf_iterator<char>(Input)),
+                          std::istreambuf_iterator<char>());
+  using Ehdr = llvm::object::ELF64LE::Ehdr;
+  using Shdr = llvm::object::ELF64LE::Shdr;
+  if (Host.empty() || Image.size() < sizeof(Ehdr) ||
+      Image.compare(0, 4, llvm::ELF::ElfMagic) != 0 ||
+      Image[llvm::ELF::EI_CLASS] != llvm::ELF::ELFCLASS64 ||
+      Image[llvm::ELF::EI_DATA] != llvm::ELF::ELFDATA2LSB)
+    GTEST_SKIP() << "the test reads code from a little-endian ELF64 host";
+  const auto *Header = reinterpret_cast<const Ehdr *>(Image.data());
+  const auto *Sections =
+      reinterpret_cast<const Shdr *>(Image.data() + Header->e_shoff);
+  const Shdr &Names = Sections[Header->e_shstrndx];
+  std::string Code;
+  for (unsigned I = 0; I < Header->e_shnum; ++I)
+    if (llvm::StringRef(Image.data() + Names.sh_offset + Sections[I].sh_name) ==
+        ".text")
+      Code = Image.substr(Sections[I].sh_offset,
+                          std::min<uint64_t>(Sections[I].sh_size, 1 << 18));
+  ASSERT_GE(Code.size(), 1u << 16);
+  const auto Path = write("dump.bin", Code);
+
+  auto Reply =
+      llvm::json::parse(takeString(neverd_identify_json(Path.c_str())));
+  ASSERT_TRUE(static_cast<bool>(Reply));
+  const auto *Rows = Reply->getAsObject()->getArray("rows");
+  ASSERT_TRUE(Rows && !Rows->empty());
+  const auto &Binary = *Rows->back().getAsObject();
+  EXPECT_EQ(Binary.getString("status"), "settled");
+  EXPECT_EQ(Binary.getString("detected"), Host);
+  EXPECT_EQ(Binary.getInteger("code_offset"), 0);
+
+  // Opened as a binary file with no processor named, it reads as that one,
+  // and the load says what decided it.
+  ASSERT_EQ(neverd_session_set_load_options(Session, R"({"loader":"binary"})"),
+            0);
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_arch_name(Session)), Host);
+  auto Load =
+      llvm::json::parse(takeString(neverd_session_load_options_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Load));
+  EXPECT_EQ(Load->getAsObject()->getString("processor"), Host);
+  EXPECT_EQ(Load->getAsObject()->getString("processor_source"), "detected");
+  EXPECT_NE(Load->getAsObject()
+                ->getString("processor_evidence")
+                .value_or("")
+                .find("of the code"),
+            llvm::StringRef::npos);
+
+  // Bytes that look like no code are refused, and say so.
+  const auto Zeros = write("zeros.bin", std::string(1 << 16, '\0'));
+  ASSERT_EQ(neverd_session_set_load_options(Session, R"({"loader":"binary"})"),
+            0);
+  EXPECT_EQ(neverd_session_load(Session, Zeros.c_str()), 0);
+  EXPECT_NE(takeString(neverd_last_error(Session))
+                .find("no part of the file looks like code"),
+            std::string::npos);
+}
+
 TEST_F(SessionCAPITest, BinaryFilesLoadAsAskedAndDecompile) {
   // nop; nop; mov eax, 7; ret: x86-64 code no header describes, named as EVM
   // bytecode often is.
@@ -3953,6 +4028,113 @@ TEST_F(SessionCAPITest, SourcePagesLocateTheFunctionAfterItsPrelude) {
     if (std::strcmp(Stage, "c") == 0)
       EXPECT_EQ(Text.compare(*End, 18, "/* neverd.entry: 0"), 0) << Text;
   }
+}
+
+TEST_F(SessionCAPITest, EveryFunctionOfALazilyBoundProgramShowsAsLLVMC) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // printf binds lazily: its PLT entry jumps through a GOT slot the dynamic
+  // linker writes, and the first PLT entry through the slot it fills with its
+  // resolver.  Every function, stubs and all, is C a compiler accepts: no
+  // call goes through a data pointer.
+  const std::string Binary =
+      buildProgram("lazy", "#include <stdio.h>\n"
+                           "int main(int argc, char **argv) {\n"
+                           "  printf(\"%d %s\\n\", argc, argv[0]);\n"
+                           "  return 0;\n"
+                           "}\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Count = neverd_func_count(Session);
+  ASSERT_GT(Count, 0);
+  const std::regex DataPointerCall(R"(\(\(void\s*\*\)[^()]*\)\s*\()");
+  for (int I = 0; I < Count; ++I) {
+    const neverd_va_t Entry = neverd_func_entry(Session, I);
+    const std::string LLVMC = takeString(neverd_decompile_llvm(Session, Entry));
+    EXPECT_FALSE(LLVMC.empty()) << "0x" << llvm::utohexstr(Entry) << ": "
+                                << takeString(neverd_last_error(Session));
+    EXPECT_FALSE(std::regex_search(LLVMC, DataPointerCall)) << LLVMC;
+  }
+#endif
+}
+
+TEST_F(SessionCAPITest, TLSDescriptorCallsShowAsCallsThroughTheDescriptor) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "builds an x86-64 ELF shared object";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // Under the GNU2 dialect, code reaches a thread-local variable by calling
+  // the resolver the dynamic linker writes into its TLS descriptor.
+  const auto Source = write("tls.c", "__thread int counter;\n"
+                                     "int bump(int by) {\n"
+                                     "  counter += by;\n"
+                                     "  return counter;\n"
+                                     "}\n");
+  const std::string Library = (Directory / "libtls.so").string();
+  std::string Message;
+  if (llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                {NEVERD_RUNTIME_FIXTURE_COMPILER, "-O1",
+                                 "-fPIC", "-shared", "-mtls-dialect=gnu2",
+                                 Source, "-o", Library},
+                                std::nullopt, {}, 60, 0, &Message) != 0)
+    GTEST_SKIP() << "the compiler has no GNU2 TLS dialect: " << Message;
+  ASSERT_EQ(neverd_session_load(Session, Library.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Bump = neverd_func_find_by_name(Session, "bump");
+  ASSERT_GE(Bump, 0);
+  const std::string LLVMC = takeString(
+      neverd_decompile_llvm(Session, neverd_func_entry(Session, Bump)));
+  ASSERT_FALSE(LLVMC.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(LLVMC.find("(*)("), std::string::npos) << LLVMC;
+#endif
+}
+
+TEST_F(SessionCAPITest, DebugParametersNameTheRegistersTheyArriveIn) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "builds an x86-64 System V program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // a and b arrive in xmm0 and xmm1 and c, an x87 long double, on the
+  // stack: the reads of xmm0 and xmm1 are a and b, as the debug
+  // declaration names them, whatever numbering the lift gave them.
+  const auto Source =
+      write("mix.c", "__attribute__((noinline))\n"
+                     "double mix(double a, float b, long double c) {\n"
+                     "  return a * 1.5 + b / 3.0 + (double)(c + c);\n"
+                     "}\n"
+                     "int main(int argc, char **argv) {\n"
+                     "  return (int)mix(argc, 2.0f, 3.0L);\n"
+                     "}\n");
+  const std::string Binary = (Directory / "mix").string();
+  std::string Message;
+  ASSERT_EQ(
+      llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                {NEVERD_RUNTIME_FIXTURE_COMPILER, "-O2", "-g",
+                                 "-fPIE", "-pie", Source, "-o", Binary},
+                                std::nullopt, {}, 60, 0, &Message),
+      0)
+      << Message;
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Mix = neverd_func_find_by_name(Session, "mix");
+  ASSERT_GE(Mix, 0);
+  const std::string HighC =
+      takeString(neverd_decompile(Session, neverd_func_entry(Session, Mix)));
+  ASSERT_FALSE(HighC.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(HighC.find("double mix(double a, float b"), std::string::npos)
+      << HighC;
+  EXPECT_EQ(HighC.find("arg6"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("arg7"), std::string::npos) << HighC;
+  // The x87 value converts where it is used: no helper function.
+  EXPECT_EQ(HighC.find("neverd_x87_value"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("neverd_mem_"), std::string::npos) << HighC;
+#endif
 }
 
 TEST_F(SessionCAPITest, StartAloneCallsTheBoundStartupImportWithMain) {

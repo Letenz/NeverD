@@ -202,6 +202,47 @@ void splitEntryLoopHeader(MedFunc &Func) {
 
 } // namespace
 
+bool LowToMedConverter::bindFormattedCall(MedBlock &MB, MedOp &MOp,
+                                          const LowOp &LOp) {
+  if (!FormattedCalls ||
+      (LOp.Opcode != NdOp::CALL && LOp.Opcode != NdOp::INDIR_CALL) ||
+      MOp.NumInputs < 1)
+    return false;
+  const auto Call = FormattedCalls->find(LOp.Addr);
+  if (Call == FormattedCalls->end() ||
+      Call->second.Arguments.size() >
+          static_cast<size_t>(limits::kMaxBoundSourceCallArgs))
+    return false;
+  // Every argument the format names, in the source's order.  A floating one
+  // is the low lane of its whole vector register, whose value every write
+  // reaches.
+  const uint16_t VectorBytes = getTargetRegInfo(TargetArch).FPABIRegWidth;
+  MOp.NumInputs = 1;
+  for (const FormattedCallArgument &Argument : Call->second.Arguments) {
+    if (Argument.Pointer)
+      MOp.ExactPointerInputs |= uint64_t(1) << (MOp.NumInputs - 1);
+    if (!Argument.Floating) {
+      MOp.addInput(
+          ndVarToMedVar(NdVar::reg(Argument.Register, Argument.Bytes)));
+      continue;
+    }
+    MedOp Lane;
+    Lane.Opcode = NdOp::SUBBYTES;
+    Lane.Addr = LOp.Addr;
+    Lane.Output.Kind = MedVar::Temp;
+    Lane.Output.Id = allocVarId();
+    Lane.Output.Size = Argument.Bytes;
+    Lane.Output.TheArch = TargetArch;
+    Lane.addInput(ndVarToMedVar(NdVar::reg(Argument.Register, VectorBytes)));
+    Lane.addInput(MedVar::makeConst(0, 4, ConstantAddressProvenance::Scalar));
+    MOp.ExactFloatInputs |= uint64_t(1) << (MOp.NumInputs - 1);
+    MOp.addInput(Lane.Output);
+    MB.Ops.push_back(std::move(Lane));
+  }
+  MOp.ExactArguments = true;
+  return true;
+}
+
 void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   if ((LOp.Opcode != NdOp::CALL && LOp.Opcode != NdOp::INDIR_CALL) ||
       LOp.NumInputs == 0)
@@ -262,9 +303,21 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
         R != CallEntryReadGPRs->end() &&
         !(Convention->SummaryListsNoParameters &&
           Convention->SummaryListsNoParameters(R->second))) {
+      // A positional convention passes a floating argument in its slot's
+      // vector register: the whole register, whose value every write
+      // reaches, and the bytes the callee reads of it.
+      const bool VectorSlots = Convention->VectorArgumentsFromCalleeSummary &&
+                               Convention->PositionalArgumentSlots;
+      auto SlotVectorWidth = [&](int8_t I) -> uint8_t {
+        return VectorSlots && static_cast<size_t>(I) < TRI.FPParamRegs.size() &&
+                       static_cast<unsigned>(I) < kX64VectorArgumentFamilies &&
+                       !R->second[ArgRegs[I] / 8]
+                   ? R->second[kX64VectorFamilyBase + I]
+                   : 0;
+      };
       int8_t Count = 0;
       for (int8_t I = 0; I < Slots; ++I)
-        if (R->second[ArgRegs[I] / 8])
+        if (R->second[ArgRegs[I] / 8] || SlotVectorWidth(I))
           Count = I + 1;
       // Pass exactly the bytes the callee reads (DL for a KIRQL), so the
       // bytes it ignores do not become an unknown incoming value.  An unread
@@ -272,6 +325,15 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
       // callee cannot observe it, so it carries zero rather than whatever
       // the caller left in the register.
       for (int8_t I = 0; I < Count; ++I) {
+        if (const uint8_t Vector = SlotVectorWidth(I)) {
+          MOp.addInput(ndVarToMedVar(NdVar::reg(TRI.FPParamRegs[I], 16)));
+          MOp.CalleeVectorSlots |= static_cast<uint8_t>(1u << I);
+          MOp.CalleeVectorArgWidths |= static_cast<uint32_t>(Vector <= 4   ? 1
+                                                             : Vector <= 8 ? 2
+                                                                           : 4)
+                                       << (4 * I);
+          continue;
+        }
         const uint8_t Width = R->second[ArgRegs[I] / 8];
         if (Width == 0) {
           MOp.addInput(MedVar::makeConst(0, TRI.PointerSize));
@@ -303,12 +365,11 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
       // The floating arguments follow, each in the next vector register the
       // callee reads: the whole register, whose value every write reaches,
       // and the bytes the callee reads of it.
-      if (Convention->VectorArgumentsFromCalleeSummary) {
+      if (Convention->VectorArgumentsFromCalleeSummary && !VectorSlots) {
         int8_t Vectors = 0;
         uint32_t Widths = 0;
-        for (size_t K = 0; K < TRI.FPParamRegs.size() &&
-                           K < kX64VectorArgumentFamilies;
-             ++K)
+        for (size_t K = 0;
+             K < TRI.FPParamRegs.size() && K < kX64VectorArgumentFamilies; ++K)
           if (const uint8_t Width = R->second[kX64VectorFamilyBase + K]) {
             const uint32_t Units = Width <= 4 ? 1 : Width <= 8 ? 2 : 4;
             MOp.addInput(ndVarToMedVar(NdVar::reg(TRI.FPParamRegs[K], 16)));
@@ -715,7 +776,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
                 loadedCallSlot(Low, LB, LowOpIndex, LOp.Inputs[0]);
             Slot && !importCalleeName(*Image, *Slot).empty())
           RegisterCallSlot = *Slot;
-      applyCallRegisterEffect(MOp, LOp);
+      if (!bindFormattedCall(MB, MOp, LOp))
+        applyCallRegisterEffect(MOp, LOp);
       if (TrackDispatchArgs)
         DispatchDefined = StepDefined(DispatchDefined, LOp);
 

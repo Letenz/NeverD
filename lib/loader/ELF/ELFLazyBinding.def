@@ -1,0 +1,25 @@
+//===- ELFLazyBinding.def - Slots the dynamic linker owns -------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The slots of the DT_PLTGOT table each psABI reserves for the dynamic
+/// linker.  It writes them before any lazily bound call runs, so their
+/// on-disk contents say nothing of what they hold.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_ELF_LAZY_RESOLVER_SLOT(Arch, Index): GOT[Index] holds the lazy
+// binding resolver the first PLT entry jumps through: `jmp *GOT+16` on
+// x86-64, `jmp *GOT+8` on i386, `ldr pc, [lr, #8]!` on ARM, and the
+// `ldr x17` of GOT+16 on AArch64.
+#ifndef NEVERD_ELF_LAZY_RESOLVER_SLOT
+#define NEVERD_ELF_LAZY_RESOLVER_SLOT(Arch, Index)
+#endif
+NEVERD_ELF_LAZY_RESOLVER_SLOT(X86, 2)
+NEVERD_ELF_LAZY_RESOLVER_SLOT(X64, 2)
+NEVERD_ELF_LAZY_RESOLVER_SLOT(ARM, 2)
+NEVERD_ELF_LAZY_RESOLVER_SLOT(AArch64, 2)
+#undef NEVERD_ELF_LAZY_RESOLVER_SLOT

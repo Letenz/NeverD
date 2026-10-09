@@ -28,6 +28,13 @@ std::string loadOptionsJson(const LoaderChoice &Choice);
 llvm::Expected<LoaderChoice>
 readLoadOptionsSidecar(const std::filesystem::path &Input);
 
+/// Settle the processor a binary file is read as when the user named none:
+/// read it from the bytes and keep in \p Choice what was read and why.
+/// Fails, naming what the bytes look like, when they name no processor
+/// NeverD decodes clearly enough.
+llvm::Error settleBinaryFileProcessor(const std::filesystem::path &Input,
+                                      LoaderChoice &Choice);
+
 /// Settle the platform whose conventions a binary file's code follows when
 /// the user named none: read it from the code, and keep in \p Choice what
 /// was read and why, so the file reopens under the same conventions.

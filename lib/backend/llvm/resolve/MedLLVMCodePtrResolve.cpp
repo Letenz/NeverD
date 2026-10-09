@@ -170,6 +170,37 @@ imageFunctionSymbolsAt(const BinaryImage &Img, va_t Address) {
   }
   return {Exact, Ending};
 }
+
+/// Whether the image's runtime calls the function at \p Address -- an
+/// initializer, the default a loader-owned pointer holds -- which makes it
+/// a function without a symbol naming it.
+bool isImageRuntimeFunction(const BinaryImage &Img, va_t Address) {
+  return Img.isRuntimeFunctionAt(Address) ||
+         (Img.Arch == Arch::ARM && Img.isRuntimeFunctionAt(Address | 1));
+}
+
+/// The entry of the function whose body holds \p Address past its first
+/// byte -- by a sized function symbol, else by an unwind record's range --
+/// or InvalidVA.
+va_t imageFunctionEntryContaining(const BinaryImage &Img, va_t Address) {
+  va_t Best = InvalidVA;
+  for (const Symbol &Sym : Img.Symbols) {
+    if (!Sym.IsFunc || Sym.Size == 0)
+      continue;
+    const va_t Entry = normalizeCodeAddress(Sym.Addr, Img.Arch, Img.Mode);
+    if (Entry < Address && Address - Entry < Sym.Size &&
+        (Best == InvalidVA || Entry > Best))
+      Best = Entry;
+  }
+  if (Best != InvalidVA)
+    return Best;
+  for (const auto &[Start, End] : Img.KnownCodeRanges)
+    if (Start < Address && Address < End &&
+        !Img.ContinuationCodeStarts.count(Start) &&
+        (Best == InvalidVA || Start > Best))
+      Best = Start;
+  return Best;
+}
 } // namespace
 
 llvm::Function *MedLLVMEmitter::resolveImageFunctionEntry(va_t Address) {
@@ -177,9 +208,11 @@ llvm::Function *MedLLVMEmitter::resolveImageFunctionEntry(va_t Address) {
     return Lifted;
   if (!Img || !Mod || !Ctx)
     return nullptr;
-  const Symbol *Exact = imageFunctionSymbolsAt(*Img, Address).first;
-  return Exact ? materializeImageFunctionDeclaration(Address, Exact->Name)
-               : nullptr;
+  if (const Symbol *Exact = imageFunctionSymbolsAt(*Img, Address).first)
+    return materializeImageFunctionDeclaration(Address, Exact->Name);
+  return isImageRuntimeFunction(*Img, Address)
+             ? materializeImageFunctionDeclaration(Address, {})
+             : nullptr;
 }
 
 llvm::Constant *MedLLVMEmitter::resolveImageFunctionAddress(va_t Address) {
@@ -189,8 +222,11 @@ llvm::Constant *MedLLVMEmitter::resolveImageFunctionAddress(va_t Address) {
     return nullptr;
   const auto [Exact, Ending] = imageFunctionSymbolsAt(*Img, Address);
   const Symbol *Use = Exact ? Exact : Ending;
-  if (!Use)
-    return nullptr;
+  if (!Use) {
+    if (isImageRuntimeFunction(*Img, Address))
+      return materializeImageFunctionDeclaration(Address, {});
+    return resolveDeclaredFunctionInterior(Address);
+  }
   const va_t Entry = normalizeCodeAddress(Use->Addr, Img->Arch, Img->Mode);
   llvm::Function *Function =
       materializeImageFunctionDeclaration(Entry, Use->Name);
@@ -202,6 +238,26 @@ llvm::Constant *MedLLVMEmitter::resolveImageFunctionAddress(va_t Address) {
   llvm::Constant *Offset =
       llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Use->Size);
   return llvm::ConstantExpr::getGetElementPtr(I8Ty, Function, Offset);
+}
+
+llvm::Constant *MedLLVMEmitter::resolveDeclaredFunctionInterior(va_t Address) {
+  // A label inside a function this module only declares -- one a table of
+  // computed-goto targets names -- is that function's address plus the
+  // offset: only the function jumps there, and lifted, it gives its blocks
+  // their own identities.  A function lifted here whose block did not
+  // resolve stays unresolved.
+  const va_t Owner = imageFunctionEntryContaining(*Img, Address);
+  if (Owner == InvalidVA || resolveLiftedFunctionEntry(Owner))
+    return nullptr;
+  const Symbol *Named = imageFunctionSymbolsAt(*Img, Owner).first;
+  llvm::Function *Function = materializeImageFunctionDeclaration(
+      Owner,
+      Named ? Named->Name : (kAutoFuncPrefix + llvm::utohexstr(Owner)).str());
+  if (!Function)
+    return nullptr;
+  return llvm::ConstantExpr::getGetElementPtr(
+      llvm::Type::getInt8Ty(*Ctx), Function,
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Address - Owner));
 }
 
 llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
@@ -2492,7 +2548,8 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
     const bool IsImportStorage = EffectiveImportStorageSlots.count(SlotVA) != 0;
     const bool IsStaticCodeStorage = Img->CodePtrRelocSlots.count(SlotVA) != 0;
     const bool IsRuntimeCallableStorage =
-        Img->hasRuntimeCallablePointerSlotAt(SlotVA);
+        Img->hasRuntimeCallablePointerSlotAt(SlotVA) ||
+        Img->IndirectFunctionSlots.count(SlotVA) != 0;
     const bool IsDataStorage = Img->DataPtrRelocSlots.count(SlotVA) != 0;
     if (IsImportStorage || IsStaticCodeStorage || IsRuntimeCallableStorage) {
       if (IsDataStorage) {

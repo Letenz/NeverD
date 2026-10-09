@@ -2385,6 +2385,30 @@ Signed: %4</source>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
         <translation>Платформа, для которой собран код и чьим соглашениям он следует: как вызовы передают аргументы, какие регистры сохраняются и каковы размеры типов C</translation>
     </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>Ни одна часть файла не похожа на код известного NeverD набора команд; выберите процессор, на котором выполняется его код</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>Код похож на %1 или %2, и по его командам не понять, на какой; выберите процессор, на котором выполняется его код</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>Определено по байтам: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>Определено по байтам: %1, точка входа %2, база %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>Код похож на %1, который NeverD не умеет декодировать; выберите процессор, чтобы всё равно прочитать его так</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>Код больше всего похож на %1, но неотчётливо; выберите процессор, на котором выполняется его код</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

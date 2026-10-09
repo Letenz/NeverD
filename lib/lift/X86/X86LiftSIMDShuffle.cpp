@@ -369,7 +369,8 @@ bool liftSIMDShuffle(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     std::vector<NdVar> Lanes;
     for (unsigned I = 0; I < NLanes; ++I) {
       NdVar Lane = S.makeTemp(LaneSz);
-      if (Imm & (1u << I))
+      const unsigned ControlBit = InsnId == X86_INS_VPBLENDW ? I % 8 : I;
+      if (Imm & (1u << ControlBit))
         S.emit(NdOp::SUBBYTES, Lane, {Src, NdVar::cst(I * LaneSz, 4)});
       else
         S.emit(NdOp::SUBBYTES, Lane, {DstR, NdVar::cst(I * LaneSz, 4)});

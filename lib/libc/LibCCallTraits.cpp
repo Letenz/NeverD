@@ -465,4 +465,21 @@ bool isMemSetName(std::string_view Name) {
       .Default(false);
 }
 
+const LibCPrintfFormat *libcPrintfFormat(std::string_view Name) {
+  static constexpr LibCPrintfFormat Formats[] = {
+#define LIBC_PRINTF_FORMAT(Routine, ReturnType, ...)                           \
+  {Routine,                                                                    \
+   ReturnType,                                                                 \
+   {__VA_ARGS__},                                                              \
+   static_cast<uint8_t>(                                                       \
+       std::initializer_list<std::string_view>{__VA_ARGS__}.size())},
+#include "neverd/libc/LibCPrintfFormats.inc"
+#undef LIBC_PRINTF_FORMAT
+  };
+  for (const LibCPrintfFormat &Format : Formats)
+    if (Format.Name == Name)
+      return &Format;
+  return nullptr;
+}
+
 } // namespace neverd::libc

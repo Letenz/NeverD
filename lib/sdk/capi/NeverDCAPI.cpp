@@ -174,6 +174,10 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
   } else {
     LoadOpts.Choice = *Kept;
   }
+  if (auto Unsettled = settleBinaryFileProcessor(Path, LoadOpts.Choice)) {
+    Err = llvm::toString(std::move(Unsettled));
+    return false;
+  }
   auto ImgOrErr = loadBinary(Path, LoadOpts);
   if (!ImgOrErr) {
     llvm::handleAllErrors(
@@ -298,6 +302,31 @@ const char *neverd_identify_json(const char *Path) {
                              {"by_name", Row.ByName}};
     if (!Row.Reason.empty())
       Entry["reason"] = jsonSafeText(Row.Reason);
+    // What a headerless file's bytes show of the processor they hold code
+    // for, and the processor a load reads them as unasked.
+    if (Row.ISA) {
+      llvm::json::Array Guesses;
+      for (const ISAGuess &Guess : Row.ISA->Guesses)
+        Guesses.push_back(llvm::json::Object{{"isa", Guess.ISA},
+                                             {"name", Guess.Name},
+                                             {"processor", Guess.Processor},
+                                             {"share", Guess.Share}});
+      Entry["guesses"] = std::move(Guesses);
+      Entry["code_share"] = Row.ISA->CodeShare;
+      Entry["status"] = Row.ISA->outcomeName();
+      Entry["code_unit"] = Row.ISA->CodeUnit;
+      Entry["code_offset"] = Row.ISA->CodeOffset;
+      if (Row.ISA->WideShare)
+        Entry["wide_share"] = *Row.ISA->WideShare;
+      Entry["detected"] = Row.ISA->detectedProcessor();
+      Entry["evidence"] = Row.ISA->describe();
+      if (const auto &Print = Row.ISA->Fingerprint)
+        Entry["fingerprint"] =
+            llvm::json::Object{{"name", Print->Name},
+                               {"processor", Print->Processor},
+                               {"entry", vaHex(Print->Entry)},
+                               {"base", vaHex(Print->Base)}};
+    }
     Rows.push_back(std::move(Entry));
   }
   Root["rows"] = std::move(Rows);
@@ -349,6 +378,11 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
     return 0;
   } else {
     LoadOpts.Choice = *Kept;
+  }
+  if (auto Unsettled = settleBinaryFileProcessor(P, LoadOpts.Choice)) {
+    S->setError(llvm::toString(std::move(Unsettled)));
+    Trace.finish(false);
+    return 0;
   }
   auto ImgOrErr = loadBinary(P, LoadOpts);
   if (!ImgOrErr) {

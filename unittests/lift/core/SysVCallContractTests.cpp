@@ -17,17 +17,22 @@
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/ir/med/LowToMed.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <set>
 #include <string>
 #include <utility>
@@ -177,16 +182,16 @@ void compileAndRun(const std::string &Source) {
   ASSERT_TRUE(bool(Program)) << "clang is required for emitted C execution";
   const std::string Compiler = *Program;
 #endif
-  llvm::SmallString<128> SourcePath, BinaryPath, ErrorPath;
+  llvm::SmallString<128> Directory;
   ASSERT_FALSE(
-      llvm::sys::fs::createTemporaryFile("neverd-sysv-call", "c", SourcePath));
-  llvm::FileRemover RemoveSource(SourcePath);
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-sysv-call", "exe",
-                                                  BinaryPath));
-  llvm::FileRemover RemoveBinary(BinaryPath);
-  ASSERT_FALSE(
-      llvm::sys::fs::createTemporaryFile("neverd-sysv-call", "err", ErrorPath));
-  llvm::FileRemover RemoveError(ErrorPath);
+      llvm::sys::fs::createUniqueDirectory("neverd-sysv-call", Directory));
+  const llvm::scope_exit Cleanup(
+      [&] { llvm::sys::fs::remove_directories(Directory); });
+  llvm::SmallString<128> SourcePath(Directory), BinaryPath(Directory),
+      ErrorPath(Directory);
+  llvm::sys::path::append(SourcePath, "program.c");
+  llvm::sys::path::append(BinaryPath, "program.exe");
+  llvm::sys::path::append(ErrorPath, "program.err");
   std::error_code EC;
   {
     llvm::raw_fd_ostream Out(SourcePath, EC);
@@ -195,8 +200,31 @@ void compileAndRun(const std::string &Source) {
   }
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
+#ifdef _WIN32
+  // Retain both sanitizers. The static ASan runtime cannot intercept some
+  // current UCRT math prologues; Clang's own dynamic runtime supports them.
+  // Keep that DLL beside this test's executable, without changing PATH or
+  // copying runtime files into another test's temporary directory.
+  llvm::SmallString<128> RuntimePath(Directory);
+  llvm::sys::path::append(RuntimePath, "runtime.txt");
+  const std::optional<llvm::StringRef> RuntimeRedirects[] = {
+      std::nullopt, RuntimePath.str(), ErrorPath.str()};
+  ASSERT_EQ(
+      llvm::sys::ExecuteAndWait(
+          Compiler,
+          {Compiler,
+           "-print-file-name=lib/windows/clang_rt.asan_dynamic-x86_64.dll"},
+          std::nullopt, RuntimeRedirects, 30),
+      0);
+  auto Runtime = llvm::MemoryBuffer::getFile(RuntimePath);
+  ASSERT_TRUE(bool(Runtime));
+  llvm::SmallString<128> RuntimeCopy(Directory);
+  llvm::sys::path::append(RuntimeCopy, "clang_rt.asan_dynamic-x86_64.dll");
+  ASSERT_FALSE(
+      llvm::sys::fs::copy_file((*Runtime)->getBuffer().trim(), RuntimeCopy));
+#endif
   for (const char *Optimization : {"-O0", "-O2"}) {
-    const llvm::SmallVector<llvm::StringRef, 12> Arguments{
+    llvm::SmallVector<llvm::StringRef, 12> Arguments{
         Compiler,
         "-std=c11",
         Optimization,
@@ -206,6 +234,9 @@ void compileAndRun(const std::string &Source) {
         SourcePath,
         "-o",
         BinaryPath};
+#ifdef _WIN32
+    Arguments.push_back("-shared-libasan");
+#endif
     std::string Error;
     int Result = llvm::sys::ExecuteAndWait(Compiler, Arguments, std::nullopt,
                                            Redirects, 60, 0, &Error);
@@ -385,6 +416,20 @@ std::string liftEntries(const BinaryImage &Img, std::set<va_t> Entries) {
   Opts.OnlyFunctionEntries = std::move(Entries);
   auto Result = Pipeline().run(Img, Ctx, Opts);
   EXPECT_TRUE(Result.Success) << Result.Error;
+  if (const auto *Root = std::getenv("NEVERD_ISA_REGRESSION_ARTIFACT_DIR")) {
+    llvm::SmallString<128> Directory(Root);
+    llvm::sys::path::append(
+        Directory,
+        testing::UnitTest::GetInstance()->current_test_info()->name());
+    EXPECT_FALSE(llvm::sys::fs::create_directories(Directory));
+    llvm::SmallString<128> Path(Directory);
+    llvm::sys::path::append(Path, "call-return-med.txt");
+    std::error_code Error;
+    llvm::raw_fd_ostream Dump(Path, Error);
+    EXPECT_FALSE(Error);
+    if (!Error)
+      Pipeline::dumpMedIR(Result.MedFuncs, Dump);
+  }
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
@@ -484,13 +529,118 @@ TEST(SysVCallContract, AFloatArgumentReachesAPrototypedImport) {
   put(Code, TwiceSin, TwiceSinCode);
   const BinaryImage Img = makeImportImage(
       Code, {{TwiceSin, "twice_sin"}, {Stub, "sin_stub"}}, {{Stub, "sin"}});
-  const std::string Body =
-      body(liftEntries(Img, {TwiceSin, Stub}), "twice_sin");
+  const std::string Source = liftEntries(Img, {TwiceSin, Stub});
+  const std::string Body = body(Source, "twice_sin");
   ASSERT_FALSE(Body.empty());
   EXPECT_NE(Body.find("double twice_sin(double arg0)"), std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("sin(arg0 + arg0)"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("sin("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+  // A declared double import must receive the sum and its result must feed
+  // the second operation. Execute a known independent implementation so
+  // explicit FP state temporaries cannot hide a stale ABI value.
+  compileAndRun("#include <math.h>\n#define sin neverd_test_sine\n"
+                "double sin(double);\n" +
+                Source + R"(
+double sin(double value) {
+  _mm_setcsr(0x3f81);
+  return value * value;
+}
+int main(void) {
+  uint32_t saved = _mm_getcsr();
+  _mm_setcsr(0x1f80);
+  double first = twice_sin(1.5);
+  uint32_t first_state = _mm_getcsr();
+  _mm_setcsr(0x1f80);
+  double second = twice_sin(-0.25);
+  uint32_t second_state = _mm_getcsr();
+  _mm_setcsr(saved);
+  return first == 18.0 && second == 0.5 &&
+         first_state == 0x3f81 && second_state == 0x3f81 ? 0 : 1;
+}
+)");
+}
+
+TEST(SysVCallContract, AScalarMathImportWithAnIntegerArgumentKeepsItsReturn) {
+  constexpr va_t Wrap = Text, Stub = Text + 0x20;
+  std::vector<uint8_t> Code(0x30, 0xCC);
+  std::vector<uint8_t> WrapCode = {0x48, 0x83, 0xEC, 0x08,       // sub rsp, 8
+                                   0xBF, 0x02, 0x00, 0x00, 0x00, // mov edi, 2
+                                   0xE8};                        // call ldexp
+  for (uint8_t B : rel32(Wrap + WrapCode.size() + 4, Stub))
+    WrapCode.push_back(B);
+  for (uint8_t B : {0xF2, 0x0F, 0x58, 0xC0, // addsd xmm0, xmm0
+                    0x48, 0x83, 0xC4, 0x08, 0xC3})
+    WrapCode.push_back(B);
+  put(Code, Wrap, WrapCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Wrap, "twice_ldexp"}}, {{Stub, "ldexp"}});
+  const std::string Source = liftEntries(Img, {Wrap});
+  compileAndRun("#include <math.h>\n#define ldexp neverd_test_ldexp\n"
+                "double ldexp(double, int);\n" +
+                Source + R"(
+double ldexp(double value, int exponent) {
+  return exponent == 2 ? value * 4.0 : -100.0;
+}
+int main(void) {
+  return twice_ldexp(1.5) == 12.0 && twice_ldexp(-0.25) == -2.0 ? 0 : 1;
+}
+)");
+}
+
+TEST(SysVCallContract, ALocalMathNameDoesNotOverrideMixedReturnEvidence) {
+  for (const auto &[Name, Imported] : {std::pair{"sin", false},
+                                       {"custom", true},
+                                       {"cpow", true},
+                                       {"sinl", true}}) {
+    SCOPED_TRACE(Name);
+    constexpr va_t Stub = Text + 0x20;
+    BinaryImage Img = makeImportImage(
+        std::vector<uint8_t>(0x30, 0xCC), {{Stub, Name}},
+        Imported ? std::vector<std::pair<va_t, const char *>>{{Stub, Name}}
+                 : std::vector<std::pair<va_t, const char *>>{});
+    LowFunc Low;
+    Low.Entry = Text;
+    Low.Name = "mixed_caller";
+    LowBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Text;
+    Block.EndAddr = Text + 16;
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Output = NdVar::reg(x86reg::RAX, 8);
+    Call.addInput(NdVar::cst(Stub, 8));
+    Call.Addr = Text;
+    Block.Ops.push_back(Call);
+    for (const auto &[Address, Register] :
+         {std::pair<uint64_t, uint64_t>{0x404000, x86reg::RAX},
+          {0x404008, x86reg::XMM0}}) {
+      LowOp Store;
+      Store.Opcode = NdOp::STORE;
+      Store.addInput(NdVar::cst(Address, 8));
+      Store.addInput(NdVar::reg(Register, 8));
+      Store.Addr = Text + 4;
+      Block.Ops.push_back(Store);
+    }
+    LowOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(NdVar::reg(x86reg::RAX, 8));
+    Return.Addr = Text + 12;
+    Block.Ops.push_back(Return);
+    Low.Blocks.push_back(Block);
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&Img);
+    const auto Med = Converter.convert(Low, Arch::X64);
+    unsigned Calls = 0;
+    for (const auto &B : Med.Blocks)
+      for (const auto &Op : B.Ops)
+        if (Op.Opcode == NdOp::CALL) {
+          ++Calls;
+          EXPECT_EQ(Op.Output.Kind, MedVar::Temp);
+          EXPECT_EQ(Op.Output.Size, 16);
+        }
+    EXPECT_EQ(Calls, 1U);
+  }
 }
 
 TEST(SysVCallContract, ACallerReturnsTheFloatItsImportReturns) {
@@ -510,13 +660,21 @@ TEST(SysVCallContract, ACallerReturnsTheFloatItsImportReturns) {
   put(Code, SinTwice, SinTwiceCode);
   const BinaryImage Img = makeImportImage(
       Code, {{SinTwice, "sin_twice"}, {Stub, "sin_stub"}}, {{Stub, "sin"}});
-  const std::string Body =
-      body(liftEntries(Img, {SinTwice, Stub}), "sin_twice");
+  const std::string Source = liftEntries(Img, {SinTwice, Stub});
+  const std::string Body = body(Source, "sin_twice");
   ASSERT_FALSE(Body.empty());
   EXPECT_NE(Body.find("double sin_twice(double arg0)"), std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("sin(arg0 + arg0)"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("return sin("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+  compileAndRun("#include <math.h>\n#define sin neverd_test_sine\n"
+                "double sin(double);\n" +
+                Source + R"(
+double sin(double value) { return value + 0.5; }
+int main(void) {
+  return sin_twice(1.5) == 3.5 && sin_twice(-0.25) == 0.0 ? 0 : 1;
+}
+)");
 }
 
 TEST(SysVCallContract, AForwarderReturnsTheFloatItsCalleeReturns) {
@@ -547,6 +705,121 @@ TEST(SysVCallContract, AForwarderReturnsTheFloatItsCalleeReturns) {
   compileAndRun(Source + R"(
 int main(void) {
   return forward(1.5) == 3.0 && forward(-0.25) == -0.5 ? 0 : 1;
+}
+)");
+}
+
+/// Map \p Bytes read-only at \p At in \p Img, where a constant format lives.
+void addReadOnlyData(BinaryImage &Img, va_t At, const std::string &Bytes) {
+  Segment Data;
+  Data.Name = ".rodata";
+  Data.VA = At;
+  Data.Size = Data.FileSz = Bytes.size() + 1;
+  Data.Data.assign(Bytes.begin(), Bytes.end());
+  Data.Data.push_back(0);
+  Data.Flags = SegmentFlags::Readable;
+  Img.Segments.push_back(std::move(Data));
+}
+
+TEST(SysVCallContract, AFormatNamesTheArgumentsAFormattedCallPasses) {
+  // show(a, s, x, b, f) = printf("%d %s %f %d %f\n", a, s, x, b, f): x stays
+  // in xmm0 and f widens into xmm1, and AL counts the two doubles.  pass(...)
+  // calls show with its own arguments: show reads xmm0 only by passing it on.
+  constexpr va_t Show = Text, Pass = Text + 0x30, Stub = Text + 0x40;
+  constexpr va_t Format = 0x402000;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> ShowCode = {0x89, 0xD1,             // mov ecx, edx
+                                   0x48, 0x89, 0xF2,       // mov rdx, rsi
+                                   0x89, 0xFE,             // mov esi, edi
+                                   0xF3, 0x0F, 0x5A, 0xC9, // cvtss2sd xmm1
+                                   0x48, 0x8D, 0x3D};      // lea rdi, [fmt]
+  for (uint8_t B : rel32(Show + 18, Format))
+    ShowCode.push_back(B);
+  for (uint8_t B : {0xB0, 0x02, // mov al, 2
+                    0xE9})      // jmp printf
+    ShowCode.push_back(B);
+  for (uint8_t B : rel32(Show + 25, Stub))
+    ShowCode.push_back(B);
+  put(Code, Show, ShowCode);
+  std::vector<uint8_t> PassCode = {0x50,  // push rax
+                                   0xE8}; // call show
+  for (uint8_t B : rel32(Pass + 6, Show))
+    PassCode.push_back(B);
+  for (uint8_t B : {0x59,  // pop rcx
+                    0xC3}) // ret
+    PassCode.push_back(B);
+  put(Code, Pass, PassCode);
+  BinaryImage Img = makeImportImage(
+      Code, {{Show, "show"}, {Pass, "pass"}, {Stub, "printf_stub"}},
+      {{Stub, "printf"}});
+  addReadOnlyData(Img, Format, "%d %s %f %d %f\n");
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Show, Pass, Stub};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  // show reads a, s and b, x by passing it on, and the low lane of f.
+  const auto Reads = Result.CallEntryReadGPRs.find(Show);
+  ASSERT_NE(Reads, Result.CallEntryReadGPRs.end());
+  EXPECT_EQ(Reads->second[x86reg::RDI / 8], 4);
+  EXPECT_EQ(Reads->second[x86reg::RSI / 8], 8);
+  EXPECT_EQ(Reads->second[x86reg::RDX / 8], 4);
+  EXPECT_EQ(Reads->second[kX64VectorFamilyBase], 8);
+  EXPECT_EQ(Reads->second[kX64VectorFamilyBase + 1], 4);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+  const std::string ShowBody = body(Source, "show");
+  ASSERT_FALSE(ShowBody.empty()) << Source;
+  EXPECT_NE(ShowBody.find("printf(\"%d %s %f %d %f\\n\", arg0, (void*)arg1, "
+                          "arg3, arg2, (double)arg4)"),
+            std::string::npos)
+      << ShowBody;
+  const std::string PassBody = body(Source, "pass");
+  ASSERT_FALSE(PassBody.empty()) << Source;
+  EXPECT_NE(PassBody.find("show(arg0, arg1, arg2, arg3, arg4)"),
+            std::string::npos)
+      << PassBody;
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+}
+
+TEST(SysVCallContract, AFormattedCallFormatsTheValuesItPasses) {
+  // fmt_show(buf, n, a, x) = snprintf(buf, n, "%d %.2f", a, x): the
+  // recompiled call writes what the original does.
+  constexpr va_t FmtShow = Text, Stub = Text + 0x20, Format = 0x402000;
+  std::vector<uint8_t> Code(0x30, 0xCC);
+  std::vector<uint8_t> FmtShowCode = {0x89, 0xD1,        // mov ecx, edx
+                                      0x48, 0x8D, 0x15}; // lea rdx, [fmt]
+  for (uint8_t B : rel32(FmtShow + 9, Format))
+    FmtShowCode.push_back(B);
+  for (uint8_t B : {0xB0, 0x01, // mov al, 1
+                    0xE9})      // jmp snprintf
+    FmtShowCode.push_back(B);
+  for (uint8_t B : rel32(FmtShow + 16, Stub))
+    FmtShowCode.push_back(B);
+  put(Code, FmtShow, FmtShowCode);
+  BinaryImage Img =
+      makeImportImage(Code, {{FmtShow, "fmt_show"}, {Stub, "snprintf_stub"}},
+                      {{Stub, "snprintf"}});
+  addReadOnlyData(Img, Format, "%d %.2f");
+  const std::string Source = liftEntries(Img, {FmtShow});
+  const std::string Body = body(Source, "fmt_show");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("\"%d %.2f\", arg2, arg3)"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+  compileAndRun(Source + R"(
+#include <string.h>
+int main(void) {
+  char Text[32];
+  int (*Call)(char *, unsigned long, int, double) =
+      (int (*)(char *, unsigned long, int, double))(void *)fmt_show;
+  Call(Text, sizeof Text, 42, 3.25);
+  return strcmp(Text, "42 3.25") == 0 ? 0 : 1;
 }
 )");
 }
@@ -854,6 +1127,96 @@ TEST(SysVCallContract, AVariadicPrologueSpillReadsNoParameter) {
     EXPECT_NE(Body.find("wrapper(arg0)"), std::string::npos) << Body;
     EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
   }
+}
+
+TEST(SysVCallContract, ACopyOfEaxAfterSeteIsNoVectorCount) {
+  // is_slash(c) is `c == '/'`: GCC sets AL with sete and copies the whole of
+  // EAX, so the summary reads RAX's upper bytes as well.  Only a read of
+  // exactly AL is a variadic prologue's vector count, so the call still
+  // passes is_slash's one parameter, not the RSI the caller left set.
+  constexpr va_t IsSlash = Text, Caller = Text + 0x20;
+  std::vector<uint8_t> Code(0x40, 0xCC);
+  put(Code, IsSlash,
+      {0x83, 0xFF, 0x2F, // cmp edi, '/'
+       0x0F, 0x94, 0xC0, // sete al
+       0x89, 0xC2,       // mov edx, eax
+       0x89, 0xD0,       // mov eax, edx
+       0xC3});           // ret
+  std::vector<uint8_t> CallerCode = {
+      0x48, 0x83, 0xEC, 0x08,       // sub rsp, 8
+      0xBE, 0x03, 0x00, 0x00, 0x00, // mov esi, 3
+      0xBF, 0x5C, 0x00, 0x00, 0x00, // mov edi, '\\'
+      0xE8};                        // call is_slash
+  for (uint8_t B : rel32(Caller + CallerCode.size() + 4, IsSlash))
+    CallerCode.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                    0xC3})                  // ret
+    CallerCode.push_back(B);
+  put(Code, Caller, CallerCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{IsSlash, "is_slash"}, {Caller, "caller"}}, {});
+  const std::string Source = liftEntries(Img, {Caller});
+  const std::string Body = body(Source, "caller");
+  ASSERT_FALSE(Body.empty()) << Source;
+  const size_t Call = Body.find("is_slash(");
+  ASSERT_NE(Call, std::string::npos) << Body;
+  const std::string Line = Body.substr(Call, Body.find('\n', Call) - Call);
+  EXPECT_EQ(Line.find(','), std::string::npos) << Line;
+}
+
+TEST(SysVCallContract, GccSplitVaStartMarksTheFunctionVariadic) {
+  // fatal(fmt, ...) as GCC builds it: va_start stores gp_offset and fp_offset
+  // as two 32-bit constants where Clang stores one 64-bit word.  Either marks
+  // the variadic prologue, so its vector register save area is no parameter.
+  constexpr va_t Fatal = Text, VprintfStub = Text + 0x100,
+                 ExitStub = Text + 0x110;
+  std::vector<uint8_t> Code(0x120, 0xCC);
+  std::vector<uint8_t> FatalCode = {
+      0x55,                                     // push rbp
+      0x48, 0x89, 0xE5,                         // mov rbp, rsp
+      0x48, 0x81, 0xEC, 0xD0, 0x00, 0x00, 0x00, // sub rsp, 0xd0
+      0x48, 0x89, 0xB5, 0x58, 0xFF, 0xFF, 0xFF, // mov [rbp-0xa8], rsi
+      0x48, 0x89, 0x95, 0x60, 0xFF, 0xFF, 0xFF, // mov [rbp-0xa0], rdx
+      0x48, 0x89, 0x8D, 0x68, 0xFF, 0xFF, 0xFF, // mov [rbp-0x98], rcx
+      0x4C, 0x89, 0x85, 0x70, 0xFF, 0xFF, 0xFF, // mov [rbp-0x90], r8
+      0x4C, 0x89, 0x8D, 0x78, 0xFF, 0xFF, 0xFF, // mov [rbp-0x88], r9
+      0x84, 0xC0,                               // test al, al
+      0x74, 0x04,                               // je spilled
+      0x0F, 0x29, 0x45, 0x80,                   // movaps [rbp-0x80], xmm0
+      0x48, 0x8D, 0x45, 0x10,                   // spilled: lea rax, [rbp+0x10]
+      0x48, 0x89, 0x85, 0x38, 0xFF, 0xFF, 0xFF, // mov [rbp-0xc8], rax
+      0x48, 0x8D, 0x85, 0x50, 0xFF, 0xFF, 0xFF, // lea rax, [rbp-0xb0]
+      0x48, 0x89, 0x85, 0x40, 0xFF, 0xFF, 0xFF, // mov [rbp-0xc0], rax
+      0xC7, 0x85, 0x30, 0xFF, 0xFF, 0xFF,       // mov dword [rbp-0xd0],
+      0x08, 0x00, 0x00, 0x00,                   //   8 (gp_offset)
+      0xC7, 0x85, 0x34, 0xFF, 0xFF, 0xFF,       // mov dword [rbp-0xcc],
+      0x30, 0x00, 0x00, 0x00,                   //   0x30 (fp_offset)
+      0x48, 0x8D, 0xB5, 0x30, 0xFF, 0xFF, 0xFF, // lea rsi, [rbp-0xd0]
+      0xE8};                                    // call vprintf
+  for (uint8_t B : rel32(Fatal + FatalCode.size() + 4, VprintfStub))
+    FatalCode.push_back(B);
+  for (uint8_t B : {0xBF, 0x02, 0x00, 0x00, 0x00, // mov edi, 2
+                    0xE8})                        // call exit
+    FatalCode.push_back(B);
+  for (uint8_t B : rel32(Fatal + FatalCode.size() + 4, ExitStub))
+    FatalCode.push_back(B);
+  ASSERT_LE(FatalCode.size(), VprintfStub - Fatal);
+  put(Code, Fatal, FatalCode);
+  const BinaryImage Img = makeImportImage(
+      Code, {{Fatal, "fatal"}}, {{VprintfStub, "vprintf"}, {ExitStub, "exit"}});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Fatal};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const auto F = std::find_if(
+      Result.MedFuncs.begin(), Result.MedFuncs.end(),
+      [&](const MedFunc &Function) { return Function.Entry == Fatal; });
+  ASSERT_NE(F, Result.MedFuncs.end());
+  EXPECT_TRUE(F->IsVariadic);
+  for (const MedVar &Param : F->Params)
+    EXPECT_LE(Param.Size, 8u) << "vector save-area slot as a parameter";
 }
 
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {

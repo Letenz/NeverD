@@ -929,11 +929,13 @@ class Session:
 
         The input runs as a bounded guest process and is rebuilt at the
         transfer into generated code that is accepted as its entry. ``output``
-        is written only when the report's ``outcome`` is ``unpacked``;
+        is written when the report's ``outcome`` is ``unpacked`` or the
+        explicitly requested ``snapshot``. ``unsupported_state`` preserves
+        the output path and reports possible unreconstructed heap dependencies;
         ``no_entry`` means the run ended first, and ``transfers`` and
         ``execution`` say why. ``options`` is the native JSON request: every
-        process option plus ``transfer``. The loaded image is neither required
-        nor changed. Setup failures raise NeverDError.
+        process option plus ``transfer`` and ``snapshot_only``. The loaded
+        image is neither required nor changed. Setup failures raise NeverDError.
         """
         value = self._owned_string(
             "neverd_unpack_json",

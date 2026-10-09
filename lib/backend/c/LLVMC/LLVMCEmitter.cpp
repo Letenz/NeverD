@@ -20,6 +20,7 @@
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
+#include "../render/X86FPStateHelpers.h"
 #include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
@@ -29,6 +30,8 @@
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/PEImportShadow.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -80,6 +83,8 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
   FunctionIdentifiers.clear();
   FunctionSymbolNames.clear();
+  const std::set<std::string> ImportCNames =
+      Img ? peImportCNames(*Img) : std::set<std::string>{};
   for (llvm::Function &Fn : Mod) {
     llvm::StringRef Name = Fn.getName();
     std::string IntrinsicHelper;
@@ -128,6 +133,10 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
               Img->getFunctionNameAt(static_cast<va_t>(Addr));
           if (!FromImage.empty() && !isSynthesizedFuncName(FromImage))
             DebugName = std::move(FromImage);
+          if (!DebugName.empty())
+            if (auto Shadow =
+                    peImportShadowName(ImportCNames, *Img, Addr, DebugName))
+              DebugName = std::move(*Shadow);
           if (DebugName.empty())
             if (const Import *Imp = Img->findImportStubAt(Addr);
                 Imp && !Imp->Name.empty())
@@ -208,6 +217,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   std::map<std::string, std::pair<unsigned, bool>> FunnelShifts;
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
   std::map<std::string, ScalarUnary> ScalarUnaries;
+  FPStateHelperNames.clear();
 
   for (auto &Fn : Mod) {
     if (OnlyFunction && &Fn != OnlyFunction)
@@ -242,8 +252,28 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
-          if (llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand()))
+          if (auto Shape = classifyX86FPStateAsm(*CI);
+              Shape && (isX86ScalarFPStateIntrinsic(Shape->first) ||
+                        isX86FPConversionStateIntrinsic(Shape->first))) {
+            if (Opts.TheArch == Arch::X86 &&
+                isX86FPConversionStateIntrinsic(Shape->first) &&
+                x86FPStateDestinationBytes(Shape->first, Shape->second) == 8)
+              llvm::report_fatal_error(
+                  "x86-32 FP conversion requires a 32-bit integer result");
+            auto [It, Inserted] = FPStateHelperNames.try_emplace(*Shape);
+            if (Inserted)
+              It->second = GlobalIdentifierAllocator.allocate(
+                  x86FPScalarValueCHelper(Shape->first, Shape->second),
+                  "nd_fp_value");
+          }
+          if (const auto *Asm =
+                  llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand())) {
+            if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+                (Asm->getAsmString() == "ldmxcsr ($0)" ||
+                 Asm->getAsmString() == "stmxcsr ($0)"))
+              HasCIntrinsics = true;
             continue;
+          }
           auto *Callee = CI->getCalledFunction();
           if (!Callee)
             continue;
@@ -326,6 +356,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                               Shape.Kind == llvm::Intrinsic::fptosi_sat,
                               FPToIntegerPolicy::Saturate});
   }
+  writeX86FPScalarValueCHelpers(OS, FPStateHelperNames);
   for (const auto &[Name, Shape] : IntegerMinMax) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
     const std::string Type = CarrierBits == 128

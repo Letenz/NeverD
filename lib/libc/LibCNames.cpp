@@ -332,6 +332,30 @@ const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format) {
              : nullptr;
 }
 
+std::optional<bool> libcReturnsValue(std::string_view Name,
+                                     BinaryFormat Format) {
+  if (const LibCPrototype *Prototype = libcPrototype(Name, Format))
+    return Prototype->Return != "void";
+  enum class ReturnKind { Void, Value };
+  static const std::unordered_map<std::string_view, ReturnKind> Kinds = {
+#define NEVERD_LIBC_RETURN_KIND(NAME, KIND) {NAME, ReturnKind::KIND},
+#include "neverd/libc/LibCReturnKinds.inc"
+#undef NEVERD_LIBC_RETURN_KIND
+  };
+  const auto It = Kinds.find(Name);
+  if (It == Kinds.end())
+    return std::nullopt;
+  return It->second == ReturnKind::Value;
+}
+
+bool returnsDoubleWord(std::string_view Name) {
+  static const std::unordered_set<std::string_view> Names = {
+#define NEVERD_DOUBLE_WORD_RESULT(NAME) NAME,
+#include "neverd/libc/CompilerRuntimeDoubleWord.def"
+  };
+  return Names.count(Name) != 0;
+}
+
 std::optional<LibCArity> libcArityForSymbol(std::string_view Name) {
   // Mach-O prepends one underscore to the C identifier `__error`, producing
   // `___error`.  Do not normalize it to `error`: GNU error(3) is a distinct

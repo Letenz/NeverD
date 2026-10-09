@@ -25,7 +25,15 @@ neverd unpack packed.exe -o unpacked.exe \
   --options='{"backend":"unicorn","instruction_limit":400000000,"transfer":2}'
 ```
 
-Der Befehl gibt einen JSON-Bericht aus. Exit-Code 0 bedeutet, dass das Abbild geschrieben wurde, 3, dass der begrenzte Lauf endete, bevor ein Einstieg akzeptiert wurde (`outcome` ist `no_entry`, und es wird nichts geschrieben), und 1 steht für eine ungültige Eingabe oder Option oder eine fehlgeschlagene Vorbereitung. Der Bericht nennt `format`, `architecture` und `profile`, die tatsächlich ausgeführt wurden. Der C-Einstiegspunkt ist `neverd_unpack_json`; Python stellt `Session.unpack` bereit. Die Optionen sind die [Prozessoptionen](process-emulation.md) zuzüglich `transfer`. Die Vorgaben weichen dort ab, wo ein Stub mehr Ressourcen braucht: 100000000 Befehle, 600 Sekunden und 512 MiB, und `windows.defer_unmodeled` ist eingeschaltet.
+Der Befehl gibt einen JSON-Bericht aus. Exit-Code 0 bedeutet, dass ein `unpacked`-Abbild oder ein ausdrücklich angeforderter `snapshot` geschrieben wurde; 3 steht für `no_entry` oder `unsupported_state`, ohne die Ausgabedatei anzulegen oder zu kürzen; 1 steht für eine ungültige Eingabe oder Option oder eine fehlgeschlagene Vorbereitung. Der Bericht nennt `format`, `architecture` und `profile`, die tatsächlich ausgeführt wurden. Der C-Einstiegspunkt ist `neverd_unpack_json`; Python stellt `Session.unpack` bereit. Die Optionen sind die [Prozessoptionen](process-emulation.md) zuzüglich `transfer` und `snapshot_only`. Die Vorgaben weichen dort ab, wo ein Stub mehr Ressourcen braucht: 100000000 Befehle, 600 Sekunden und 512 MiB, und `windows.defer_unmodeled` ist eingeschaltet.
+
+## Laufzeitzustand und Analyse-Snapshots
+
+Am akzeptierten Transfer liefert das Prozessprofil die noch lebenden Heap-Zuweisungen. Die Wiederherstellung prüft konservativ alle pointerbreiten Werte in erfassten Abbild- und aktuellen Thread-TLS-Bytes, auch unaligned Werte und Adressen innerhalb einer Zuweisung. Ein Treffer kann eine Zahl oder ungenutzte Daten sein; er beweist weder einen Zeigertyp noch eine Relokation. Ein unbekanntes Inventar oder ein möglicher Verweis führt standardmäßig zu `unsupported_state`, auch bei akzeptierter `entry`. CLI und C-API legen keine Ausgabe an und kürzen keine Datei.
+
+`runtime_state.heap_inventory_known` unterscheidet ein bekanntes leeres Inventar von fehlender Herkunft. `possible_heap_references` zählt alle Treffer; `heap_references` enthält höchstens die ersten 64, erst Abbild, dann TLS, jeweils nach `offset`. Jeder Datensatz nennt `storage` (`image` oder `thread_local`), Adresse und Zuweisungsumfang. `rva` ist für das Abbild ein Hexadezimalwert, für TLS null. Adressen und Offsets sind Hexadezimalstrings.
+
+`--options='{"snapshot_only":true}'` fordert ausdrücklich Analysebytes an. Nach akzeptiertem Einstieg und erfolgreichem Wiederaufbau lautet das Ergebnis stets `snapshot`; die Laufzeitdiagnose bleibt erhalten. Die Option stellt keinen Heap wieder her, schätzt keine Relokationen, bestätigt keine native Ausführung und devirtualisiert nicht. Null Treffer bestätigen auch keinen anderen OS-Zustand oder unerreichte Pfade.
 
 ## Wie der Einstieg bestimmt wird
 

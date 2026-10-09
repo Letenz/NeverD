@@ -76,6 +76,9 @@ NEVERD_UNPACK_TEST_NAME(packerEvidenceName(PackerEvidence::UPXEntryStub),
                         "upx_entry_stub")
 NEVERD_UNPACK_TEST_NAME(unpackOutcomeName(UnpackOutcome::Unpacked), "unpacked")
 NEVERD_UNPACK_TEST_NAME(unpackOutcomeName(UnpackOutcome::NoEntry), "no_entry")
+NEVERD_UNPACK_TEST_NAME(unpackOutcomeName(UnpackOutcome::UnsupportedState),
+                        "unsupported_state")
+NEVERD_UNPACK_TEST_NAME(unpackOutcomeName(UnpackOutcome::Snapshot), "snapshot")
 NEVERD_UNPACK_TEST_NAME(entrySourceName(EntrySource::Transfer), "transfer")
 NEVERD_UNPACK_TEST_NAME(entrySourceName(EntrySource::Stub), "stub")
 NEVERD_UNPACK_TEST_NAME(importOriginName(ImportOrigin::Static), "static")

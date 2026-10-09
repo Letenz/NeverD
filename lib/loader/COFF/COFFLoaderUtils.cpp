@@ -674,7 +674,14 @@ void extractLoadCfgFields(uintptr_t CfgPtr, size_t AvailableSize,
     if (!Has(Offset, Width) || SlotVA < ImageBase ||
         SlotVA > std::numeric_limits<va_t>::max())
       return;
-    Img.recordRuntimeCallablePointerSlot(static_cast<va_t>(SlotVA), Kind);
+    if (!Img.recordRuntimeCallablePointerSlot(static_cast<va_t>(SlotVA), Kind))
+      return;
+    // Until the loader writes the slot, it names a function of this image
+    // the runtime calls instead, such as _guard_check_icall_nop.
+    if (const uint8_t *P =
+            Img.readVA(static_cast<va_t>(SlotVA), Img.getPointerSize()))
+      if (const uint64_t Default = readPtr(P, Img.is64Bit()))
+        Img.recordRuntimeFunction(static_cast<va_t>(Default));
   };
 
   if (Has(offsetof(LoadCfgT, SecurityCookie), sizeof(Cfg.SecurityCookie)) &&

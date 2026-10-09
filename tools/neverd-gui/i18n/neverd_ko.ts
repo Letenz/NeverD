@@ -2377,6 +2377,30 @@ Signed: %4</source>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
         <translation>코드가 빌드된 플랫폼으로, 그 규약을 따릅니다: 호출이 인수를 전달하는 방식, 보존되는 레지스터, C 타입의 크기</translation>
     </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>파일의 어떤 부분도 NeverD가 아는 명령어 집합의 코드처럼 보이지 않습니다. 코드가 실행되는 프로세서를 선택하세요</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>코드가 %1 또는 %2처럼 보이지만 명령어로는 어느 쪽인지 알 수 없습니다. 코드가 실행되는 프로세서를 선택하세요</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>바이트에서 판별: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>바이트에서 판별: %1, 진입점 %2, 베이스 %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>코드가 %1처럼 보이지만 NeverD는 디코딩할 수 없습니다. 그래도 읽으려면 프로세서를 선택하세요</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>코드가 %1에 가장 가깝지만 명확하지 않습니다. 코드가 실행되는 프로세서를 선택하세요</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
