@@ -1993,6 +1993,10 @@ Signed: %4</source>
         <translation>最近的文件：</translation>
     </message>
     <message>
+        <source>No recent files. Choose New, or drop a file here.</source>
+        <translation>没有最近的文件。选择“新建”，或把文件拖到这里。</translation>
+    </message>
+    <message>
         <source>Open binary or database</source>
         <translation>打开二进制文件或数据库</translation>
     </message>

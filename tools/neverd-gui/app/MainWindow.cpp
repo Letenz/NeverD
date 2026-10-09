@@ -17,6 +17,7 @@
 #include "OutputWindow.h"
 #include "ProjectDatabase.h"
 #include "Resolve.h"
+#include "SecondaryTextDelegate.h"
 #include "Session.h"
 #include "Theme.h"
 #include "mcp/GuiSessionBroker.h"
@@ -60,9 +61,11 @@
 #include <QSet>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QStorageInfo>
+#include <QStyle>
 #include <QTextStream>
 #include <QToolBar>
 #include <QTreeView>
@@ -99,6 +102,9 @@ constexpr int StatusRefreshMs = 30000;
 constexpr int MaxOpcodeBytes = 12;
 // Input dialogs leave room for a full name, comment or expression.
 constexpr int InputDialogWidth = 420;
+// The quick start dims a recent file's folder after its name.
+constexpr qreal QuickStartFolderOpacity = 0.6;
+constexpr int QuickStartColumnGap = 24;
 
 // Dock identifiers; titles follow the classic window names.
 constexpr char FunctionsDock[] = "functions";
@@ -136,7 +142,12 @@ public:
     layout->addWidget(view_);
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    layout->addWidget(buttons);
+    // The list runs to the dialog's edges; the buttons keep the usual margin.
+    auto *footer = new QVBoxLayout;
+    const int margin = style()->pixelMetric(QStyle::PM_LayoutRightMargin);
+    footer->setContentsMargins(margin, 0, margin, margin);
+    footer->addWidget(buttons);
+    layout->addLayout(footer);
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
       chosen_ = view_->currentAddress();
       accept();
@@ -1851,12 +1862,15 @@ void MainWindow::showShortcuts() {
 
 void MainWindow::showCommandPalette() {
   QDialog dialog(this, Qt::Popup | Qt::FramelessWindowHint);
+  dialog.setObjectName(QStringLiteral("commandPalette"));
   dialog.setWindowTitle(tr("Command palette"));
   dialog.resize(560, 420);
   auto *layout = new QVBoxLayout(&dialog);
   auto *filter = new QLineEdit(&dialog);
   filter->setPlaceholderText(tr("Type a command"));
   auto *list = new QListWidget(&dialog);
+  // Shortcuts line up at the right of their commands.
+  list->setItemDelegate(new SecondaryTextDelegate(std::nullopt, list));
   layout->addWidget(filter);
   layout->addWidget(list, 1);
   const auto populate = [this, list](const QString &text) {
@@ -1867,14 +1881,9 @@ void MainWindow::showCommandPalette() {
       const QString label = action->text().remove(QLatin1Char('&'));
       if (!text.isEmpty() && !label.contains(text, Qt::CaseInsensitive))
         continue;
-      auto *item = new QListWidgetItem(
-          action->icon(),
-          action->shortcut().isEmpty()
-              ? label
-              : QStringLiteral("%1    %2")
-                    .arg(label,
-                         action->shortcut().toString(QKeySequence::NativeText)),
-          list);
+      auto *item = new QListWidgetItem(action->icon(), label, list);
+      item->setData(SecondaryTextDelegate::SecondaryTextRole,
+                    action->shortcut().toString(QKeySequence::NativeText));
       item->setData(Qt::UserRole, action->objectName());
     }
     if (list->count())
@@ -2123,13 +2132,48 @@ void MainWindow::showQuickStart() {
     row->addWidget(button);
   }
   layout->addLayout(row);
-  auto *recent = new QListWidget(&dialog);
-  for (const auto &file : QSettings().value(RecentFilesKey).toStringList())
-    recent->addItem(file);
-  if (recent->count())
-    recent->setCurrentRow(0);
+  // Each recent file reads as its name, then its folder.
+  auto *recent = new QTreeWidget(&dialog);
+  recent->setObjectName(QStringLiteral("recentFiles"));
+  recent->setColumnCount(2);
+  recent->setHeaderHidden(true);
+  recent->setRootIsDecorated(false);
+  recent->setUniformRowHeights(true);
+  recent->setAllColumnsShowFocus(true);
+  QColor folder = Theme::instance().chrome(QStringLiteral("Text"));
+  folder.setAlphaF(QuickStartFolderOpacity);
+  for (const auto &file : QSettings().value(RecentFilesKey).toStringList()) {
+    const QFileInfo info(file);
+    auto *item = new QTreeWidgetItem(
+        recent,
+        {info.fileName(), QDir::toNativeSeparators(info.absolutePath())});
+    item->setData(0, Qt::UserRole, file);
+    item->setForeground(1, folder);
+    item->setToolTip(0, file);
+    item->setToolTip(1, file);
+  }
+  recent->resizeColumnToContents(0);
+  recent->setColumnWidth(0, recent->columnWidth(0) + QuickStartColumnGap);
+  // Without recent files, the list says how to begin.
+  auto *none = new QLabel(
+      tr("No recent files. Choose New, or drop a file here."), &dialog);
+  none->setObjectName(QStringLiteral("recentFilesEmpty"));
+  none->setProperty("placeholder", true);
+  none->setAlignment(Qt::AlignCenter);
+  none->setWordWrap(true);
+  auto *files = new QStackedWidget(&dialog);
+  files->addWidget(recent);
+  files->addWidget(none);
+  const bool hasRecent = recent->topLevelItemCount() > 0;
+  files->setCurrentWidget(hasRecent ? static_cast<QWidget *>(recent) : none);
+  previousButton->setEnabled(hasRecent);
+  (hasRecent ? previousButton : newButton)->setDefault(true);
+  if (hasRecent) {
+    recent->setCurrentItem(recent->topLevelItem(0));
+    recent->setFocus();
+  }
   layout->addWidget(new QLabel(tr("Recent files:"), &dialog));
-  layout->addWidget(recent, 1);
+  layout->addWidget(files, 1);
   QString choice;
   connect(newButton, &QPushButton::clicked, &dialog, [&] {
     choice = QStringLiteral("new");
@@ -2139,11 +2183,11 @@ void MainWindow::showQuickStart() {
   const auto previous = [&] {
     if (!recent->currentItem())
       return;
-    choice = recent->currentItem()->text();
+    choice = recent->currentItem()->data(0, Qt::UserRole).toString();
     dialog.accept();
   };
   connect(previousButton, &QPushButton::clicked, &dialog, previous);
-  connect(recent, &QListWidget::itemActivated, &dialog, previous);
+  connect(recent, &QTreeWidget::itemActivated, &dialog, previous);
   if (dialog.exec() != QDialog::Accepted)
     return;
   if (choice == QLatin1String("new"))
