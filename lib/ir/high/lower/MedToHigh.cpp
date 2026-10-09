@@ -901,10 +901,29 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   // ABI recovery binds call operands after SSA, outside the MedOp input
   // array. They are real uses of their reaching definitions: omitting them
   // makes a computed outgoing register look dead before HighIR builds calls.
-  for (const MedCallInfo &Call : Med.CallInfos)
+  // An operand the call's block also stores before the call (an i386 push)
+  // is read once: that store is the argument itself, which dead-store
+  // elimination drops, so a single-use definition still prints inline.
+  std::map<int, const MedBlock *> BlockById;
+  for (const auto &Blk : Med.Blocks)
+    BlockById.emplace(Blk.Id, &Blk);
+  for (const MedCallInfo &Call : Med.CallInfos) {
+    VarKeySet Stored;
+    if (auto It = BlockById.find(Call.BlockId); It != BlockById.end())
+      for (int J = Call.OpIdx - 1;
+           J >= 0 && J < static_cast<int>(It->second->Ops.size()); --J) {
+        const MedOp &Op = It->second->Ops[static_cast<size_t>(J)];
+        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+            Op.Opcode == NdOp::INTRINSIC)
+          break;
+        if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
+            Op.Inputs[1].Id >= 0)
+          Stored.insert(varKey(Op.Inputs[1]));
+      }
     for (const MedVar &Arg : Call.Args)
-      if (Arg.Id >= 0)
+      if (Arg.Id >= 0 && !Stored.count(varKey(Arg)))
         UseCount[varKey(Arg)]++;
+  }
 
   // Build each definition before its uses: a use builds its single-use
   // definition inline, and a definition that is not yet built leaves a name
