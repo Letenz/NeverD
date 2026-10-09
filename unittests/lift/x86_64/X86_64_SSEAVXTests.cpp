@@ -60,7 +60,8 @@ TEST_F(X86_64_SSEAVX, SqrtsdLifts) {
 }
 
 TEST_F(X86_64_SSEAVX, CvtSs2SiLifts) {
-  verifyLowIRContains(testObj(), "test_cvtss2si", "FLOAT2INT");
+  verifyScalarFPState(testObj(), "test_cvtss2si",
+                      neverd::Intrinsic::X86FPCvtToIntState);
 }
 
 TEST_F(X86_64_SSEAVX, CvtSi2SsLifts) {
@@ -68,7 +69,8 @@ TEST_F(X86_64_SSEAVX, CvtSi2SsLifts) {
 }
 
 TEST_F(X86_64_SSEAVX, CvtSd2SiLifts) {
-  verifyLowIRContains(testObj(), "test_cvtsd2si", "FLOAT2INT");
+  verifyScalarFPState(testObj(), "test_cvtsd2si",
+                      neverd::Intrinsic::X86FPCvtToIntState);
 }
 
 TEST_F(X86_64_SSEAVX, CvtSi2SdLifts) {

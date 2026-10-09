@@ -246,7 +246,13 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
           if (auto Shape = classifyX86FPStateAsm(*CI);
-              Shape && isX86ScalarFPStateIntrinsic(Shape->first)) {
+              Shape && (isX86ScalarFPStateIntrinsic(Shape->first) ||
+                        isX86FPConversionStateIntrinsic(Shape->first))) {
+            if (Opts.TheArch == Arch::X86 &&
+                isX86FPConversionStateIntrinsic(Shape->first) &&
+                x86FPStateDestinationBytes(Shape->first, Shape->second) == 8)
+              llvm::report_fatal_error(
+                  "x86-32 FP conversion requires a 32-bit integer result");
             auto [It, Inserted] = FPStateHelperNames.try_emplace(*Shape);
             if (Inserted)
               It->second = GlobalIdentifierAllocator.allocate(

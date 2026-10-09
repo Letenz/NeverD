@@ -19,6 +19,7 @@
 #include "neverd/backend/c/render/X86SegmentAsm.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/ir/high/X86FPStateShape.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 #include "neverd/lift/X86Regs.h"
@@ -1477,45 +1478,22 @@ std::string renderX86TypedIntrinsicCall(
     std::function<std::string(Intrinsic, unsigned)> FPHelperName) {
   using I = Intrinsic;
   if (isX86FPStateIntrinsic(Call.IntrinsicId)) {
-    const auto Size = [&](unsigned Index) -> unsigned {
-      return Index < Call.Operands.size() && Call.Operands[Index] &&
-                     Call.Operands[Index]->Type
-                 ? Call.Operands[Index]->Type->Size
-                 : 0;
-    };
     const unsigned ResultBytes = Call.Type ? Call.Type->Size : 0;
     if (ResultBytes && Call.Type->Kind != NdTypeKind::Int)
       llvm::report_fatal_error(
           "x86 FP numerical/state result requires raw bits");
-    const X86FPStateShape Shape{
-        .TargetArch = TheArch,
-        .MemoryOrdering = Call.MemoryOrdering,
-        .MemoryAddressSpace = Call.MemoryAddressSpace,
-        .NumInputs = static_cast<unsigned>(Call.Operands.size() + 1),
-        .IdIsConst = true,
-        .IdSize = 2,
-        .OutputIsWritable = ResultBytes > 0,
-        .OutputSize = ResultBytes,
-        .OperandsAreScalar =
-            std::all_of(Call.Operands.begin(), Call.Operands.end(),
-                        [](const auto &Operand) {
-                          return Operand && Operand->Type &&
-                                 (Operand->Type->Kind == NdTypeKind::Int ||
-                                  Operand->Type->Kind == NdTypeKind::Float);
-                        }),
-        .LeftSize = Size(0),
-        .RightSize = Size(1),
-        .StateSize = Size(2),
-        .HasAuxiliaryOutputs = !Call.IntrinsicOutputs.empty()};
+    const auto Shape = x86FPStateHighShape(Call, TheArch);
     if (!x86FPStateShapeIsValid(Call.IntrinsicId, Shape))
       llvm::report_fatal_error("invalid x86 FP state C contract");
-    const unsigned Bytes =
-        isX86ScalarFPStateIntrinsic(Call.IntrinsicId) ? Size(0) : 0;
+    const unsigned Bytes = x86FPStateHelperLayout(Call.IntrinsicId, Shape);
     std::string Result =
         (FPHelperName ? FPHelperName(Call.IntrinsicId, Bytes)
                       : x86FPStateCHelper(Call.IntrinsicId, Bytes)) +
         "(";
-    for (unsigned Index = 0; Index < Call.Operands.size(); ++Index) {
+    const unsigned Operands = isX86FPConversionStateIntrinsic(Call.IntrinsicId)
+                                  ? 2
+                                  : Call.Operands.size();
+    for (unsigned Index = 0; Index < Operands; ++Index) {
       if (Index)
         Result += ", ";
       const auto &Operand = *Call.Operands[Index];

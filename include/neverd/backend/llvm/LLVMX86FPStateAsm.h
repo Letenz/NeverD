@@ -23,6 +23,13 @@ inline constexpr char X86FPStateReadAsm[] = "stmxcsr ($0)";
 inline constexpr char X86FPStateWriteAsm[] = "ldmxcsr ($0)";
 inline constexpr char X86FPStateTransferConstraints[] = "r,~{memory}";
 inline constexpr char X86FPStateBinaryConstraints[] = "=&x,0,x,r,~{memory}";
+inline constexpr char X86FPStateConversionConstraints[] = "=&r,x,r,~{memory}";
+
+inline std::string x86FPStateConversionAsm(Intrinsic Id, unsigned SourceBytes) {
+  return "ldmxcsr ($2)\n\t" +
+         std::string(x86FPStateConversionMnemonic(Id, SourceBytes)) +
+         " $1,$0\n\tstmxcsr ($2)";
+}
 
 inline std::string x86FPStateBinaryAsm(Intrinsic Id, unsigned ScalarSize) {
   return "ldmxcsr ($3)\n\t" + std::string(x86ScalarFPStateMnemonic(Id)) +
@@ -64,6 +71,22 @@ classifyX86FPStateAsm(const llvm::CallInst &Call) {
           Asm->getAsmString() == x86FPStateBinaryAsm(Id, Bytes))
         return std::pair{Id, Bytes};
     }
+  for (Intrinsic Id :
+       {Intrinsic::X86FPCvtToIntState, Intrinsic::X86FPTruncToIntState})
+    for (unsigned SourceBytes : {4U, 8U})
+      for (unsigned DestinationBytes : {4U, 8U}) {
+        if (!Call.getType()->isIntegerTy(DestinationBytes * 8) ||
+            Call.arg_size() != 2 ||
+            !(SourceBytes == 4
+                  ? Call.getArgOperand(0)->getType()->isFloatTy()
+                  : Call.getArgOperand(0)->getType()->isDoubleTy()) ||
+            !PointerIsDefault(Call.getArgOperand(1)))
+          continue;
+        if (Asm->getConstraintString() == X86FPStateConversionConstraints &&
+            Asm->getAsmString() == x86FPStateConversionAsm(Id, SourceBytes))
+          return std::pair{
+              Id, x86FPConversionLayout(SourceBytes, DestinationBytes)};
+      }
   llvm::report_fatal_error("invalid x86 FP state assembly contract");
 }
 

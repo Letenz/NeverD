@@ -32,7 +32,8 @@ TEST_F(X86_32_FP, DivssLifts) {
 }
 
 TEST_F(X86_32_FP, Cvtss2siLifts) {
-  verifyLowIRContains(testObj(), "test_cvtss2si32", "FLOAT_FLOAT2INT");
+  verifyScalarFPState(testObj(), "test_cvtss2si32",
+                      neverd::Intrinsic::X86FPCvtToIntState);
 }
 
 TEST_F(X86_32_FP, Cvtsi2ssLifts) {
@@ -45,7 +46,8 @@ TEST_F(X86_32_FP, AddsdLifts) {
 }
 
 TEST_F(X86_32_FP, Cvttss2siLifts) {
-  verifyLowIRContains(testObj(), "test_cvttss2si32", "FLOAT_TRUNC");
+  verifyScalarFPState(testObj(), "test_cvttss2si32",
+                      neverd::Intrinsic::X86FPTruncToIntState);
 }
 
 TEST_F(X86_32_FP, NoUnreachableInFunctions) {

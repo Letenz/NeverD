@@ -225,6 +225,9 @@ struct LowOp {
 };
 
 inline X86FPStateShape x86FPStateLowShape(const LowOp &Op, Arch TargetArch) {
+  const bool Conversion = Op.NumInputs && Op.Inputs[0].isConst() &&
+                          isX86FPConversionStateIntrinsic(
+                              static_cast<Intrinsic>(Op.Inputs[0].Offset));
   bool Scalar = true;
   for (unsigned Index = 1; Index < Op.NumInputs && Index < 6; ++Index)
     Scalar &= Op.Inputs[Index].isConst() || Op.Inputs[Index].isReg() ||
@@ -240,7 +243,11 @@ inline X86FPStateShape x86FPStateLowShape(const LowOp &Op, Arch TargetArch) {
           .OperandsAreScalar = Scalar,
           .LeftSize = Op.NumInputs > 1 ? Op.Inputs[1].Size : 0U,
           .RightSize = Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U,
-          .StateSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U};
+          .StateSize = Conversion ? (Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U)
+                                  : (Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U),
+          .DestinationIsConst = Op.NumInputs > 3 && Op.Inputs[3].isConst(),
+          .DestinationSelectorSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U,
+          .DestinationBytes = Op.NumInputs > 3 ? Op.Inputs[3].Offset : 0U};
 }
 
 inline ApxAtomicIntrinsicShape apxAtomicLowShape(const LowOp &Op,

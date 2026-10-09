@@ -21,6 +21,7 @@
 #include "HighCWriter.h"
 
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
+#include "neverd/ir/high/X86FPStateShape.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/Common.h"
@@ -482,10 +483,10 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     if (const auto Helper = x87HelperFor(E))
       X87Helpers.insert(*Helper);
     if (E.Kind == ExprKind::Call && isX86FPStateIntrinsic(E.IntrinsicId)) {
-      const unsigned Bytes =
-          isX86ScalarFPStateIntrinsic(E.IntrinsicId) && E.Type
-              ? E.Type->Size - 4
-              : 0;
+      const auto Shape = x86FPStateHighShape(E, Opts.TheArch);
+      if (!x86FPStateShapeIsValid(E.IntrinsicId, Shape))
+        llvm::report_fatal_error("invalid x86 FP state C contract");
+      const unsigned Bytes = x86FPStateHelperLayout(E.IntrinsicId, Shape);
       auto [It, Inserted] =
           X86FPStateHelpers.try_emplace(std::pair{E.IntrinsicId, Bytes});
       if (Inserted)

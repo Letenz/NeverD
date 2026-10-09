@@ -28,11 +28,13 @@ TEST_F(X86_64_FPConvert, Unsigned64ConversionPreservesMedIRWidths) {
 }
 
 TEST_F(X86_64_FPConvert, Cvtss2siLifts) {
-  verifyLowIRContains(testObj(), "test_cvtss2si", "FLOAT_FLOAT2INT");
+  verifyScalarFPState(testObj(), "test_cvtss2si",
+                      neverd::Intrinsic::X86FPCvtToIntState);
 }
 
 TEST_F(X86_64_FPConvert, Cvttss2siLifts) {
-  verifyLowIRContains(testObj(), "test_cvttss2si", "FLOAT_TRUNC");
+  verifyScalarFPState(testObj(), "test_cvttss2si",
+                      neverd::Intrinsic::X86FPTruncToIntState);
 }
 
 TEST_F(X86_64_FPConvert, Cvtsi2sdLifts) {

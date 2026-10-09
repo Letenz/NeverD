@@ -4,9 +4,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "X86FPStateAccuracyFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/ir/low/NdOpEmulator.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -170,5 +172,562 @@ TEST(X86FPConversionAccuracy, FloatDenormalsRetainOperandExceptionAndDaz) {
         std::memcpy(&Bits, Result->data(), 8);
         EXPECT_EQ(Bits, DAZ ? 0 : UINT64_C(0x36a0000000000000)); // exact 2^-149
       }
+    }
+}
+
+TEST(X86FPConversionContract, SourceAndDestinationWidthsRemainIndependent) {
+  using namespace neverd;
+  for (auto Id :
+       {Intrinsic::X86FPCvtToIntState, Intrinsic::X86FPTruncToIntState})
+    for (unsigned Source : {4U, 8U})
+      for (unsigned Destination : {4U, 8U}) {
+        LowOp Op;
+        Op.Opcode = NdOp::INTRINSIC;
+        Op.Output = NdVar::tmp(0, Destination + 4);
+        Op.addInput(NdVar::cst(static_cast<unsigned>(Id), 2));
+        Op.addInput(NdVar::cst(0, Source));
+        Op.addInput(NdVar::cst(0x1f80, 4));
+        Op.addInput(NdVar::cst(Destination, 4));
+        ASSERT_TRUE(
+            x86FPStateShapeIsValid(Id, x86FPStateLowShape(Op, Arch::X64)));
+        EXPECT_EQ(x86FPStateShapeIsValid(Id, x86FPStateLowShape(Op, Arch::X86)),
+                  Destination == 4);
+        auto Shape = x86FPStateLowShape(Op, Arch::X64);
+        EXPECT_EQ(x86FPStateNumericalSliceSize(Id, Shape, 0, Destination), 0U);
+        EXPECT_EQ(x86FPStateHelperLayout(Id, Shape),
+                  x86FPConversionLayout(Source, Destination));
+        Op.Inputs[3] = NdVar::tmp(1, 4);
+        EXPECT_FALSE(
+            x86FPStateShapeIsValid(Id, x86FPStateLowShape(Op, Arch::X64)));
+        Op.Inputs[3] = NdVar::cst(Destination, 2);
+        EXPECT_FALSE(
+            x86FPStateShapeIsValid(Id, x86FPStateLowShape(Op, Arch::X64)));
+        Op.Inputs[3] = NdVar::cst(16, 4);
+        EXPECT_FALSE(
+            x86FPStateShapeIsValid(Id, x86FPStateLowShape(Op, Arch::X64)));
+        Op.Inputs[3] = NdVar::cst(Destination, 4);
+        Op.Inputs[2] = NdVar::cst(0x1f80, 8);
+        EXPECT_FALSE(
+            x86FPStateShapeIsValid(Id, x86FPStateLowShape(Op, Arch::X64)));
+        MedOp Med;
+        Med.Opcode = NdOp::INTRINSIC;
+        Med.Output = MedVar{.Kind = MedVar::Temp,
+                            .TheArch = Arch::X86,
+                            .Id = 0,
+                            .Size = static_cast<uint16_t>(Destination + 4)};
+        Med.addInput(MedVar::makeConst(static_cast<unsigned>(Id), 2));
+        Med.addInput(MedVar::makeConst(0, Source));
+        Med.addInput(MedVar::makeConst(0x1f80, 4));
+        Med.addInput(MedVar::makeConst(Destination, 4));
+        EXPECT_EQ(x86FPStateShapeIsValid(Id, x86FPStateMedShape(Med)),
+                  Destination == 4);
+      }
+}
+
+TEST(X86FPConversionContract, AddressAndRegisterTailsMatchTheirRawEncoding) {
+  using namespace neverd;
+  for (bool Strict : {false, true})
+    for (bool Vex : {false, true})
+      for (bool Memory : {false, true})
+        for (unsigned Mutation : {0U, 1U, 2U}) {
+          Decoder Decode;
+          ASSERT_TRUE(Decode.init(Arch::X64));
+          Decode.setStrict(Strict);
+          const std::vector<uint8_t> Bytes = {
+              static_cast<uint8_t>(Vex ? 0xc5 : 0xf3),
+              static_cast<uint8_t>(Vex ? 0xfa : 0x0f), 0x2d,
+              static_cast<uint8_t>(Memory ? 0x00 : 0xc0)};
+          DecodedInsn Insn;
+          ASSERT_EQ(Decode.decodeOne(Bytes.data(), Bytes.size(), Entry, Insn),
+                    Bytes.size());
+          auto &Detail = Insn.Raw->detail->x86;
+          SCOPED_TRACE(testing::Message()
+                       << "strict=" << Strict << " vex=" << Vex
+                       << " memory=" << Memory << " mutation=" << Mutation);
+          if (Mutation == 0) {
+            if (Memory)
+              Detail.operands[1].mem.base = X86_REG_RBX;
+            else {
+              Insn.Raw->bytes[Insn.Raw->size++] = 0x90;
+              Insn.Size = Insn.Raw->size;
+            }
+          } else if (Mutation == 1)
+            Detail.addr_size = 4;
+          else
+            Detail.encoding.disp_size = 1;
+          std::vector<LowOp> Ops;
+          EXPECT_THROW(Decode.liftToLow(Insn, Ops), UnliftedInstruction);
+          EXPECT_TRUE(Ops.empty());
+        }
+}
+
+TEST(X86FPConversionContract, ReservedVexFieldsRefuseAndI386IgnoresW) {
+  using namespace neverd;
+  for (Arch Target : {Arch::X86, Arch::X64})
+    for (bool Strict : {false, true}) {
+      Decoder Decode;
+      ASSERT_TRUE(Decode.init(Target));
+      Decode.setStrict(Strict);
+      for (uint8_t P1 : {uint8_t(0xfe), uint8_t(0xf2)}) {
+        const uint8_t Bytes[] = {0xc5, P1, 0x2d, 0xc0};
+        DecodedInsn Insn;
+        if (!Decode.decodeOne(Bytes, sizeof(Bytes), Entry, Insn))
+          continue; // The decoder itself may reject reserved fields.
+        std::vector<LowOp> Ops;
+        EXPECT_THROW(Decode.liftToLow(Insn, Ops), UnliftedInstruction);
+        EXPECT_TRUE(Ops.empty());
+      }
+      const uint8_t Bytes[] = {0xc4, 0xe1, 0xfa, 0x2d, 0xc0};
+      DecodedInsn Insn;
+      ASSERT_EQ(Decode.decodeOne(Bytes, sizeof(Bytes), Entry, Insn),
+                sizeof(Bytes));
+      std::vector<LowOp> Ops;
+      ASSERT_NO_THROW(Decode.liftToLow(Insn, Ops));
+      unsigned Found = 0;
+      for (const auto &Op : Ops)
+        if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+            Op.Inputs[0].isConst() &&
+            Op.Inputs[0].Offset ==
+                static_cast<unsigned>(Intrinsic::X86FPCvtToIntState)) {
+          ++Found;
+          EXPECT_EQ(Op.Inputs[1].Size, 4U);
+          EXPECT_EQ(Op.Inputs[2].Size, 4U);
+          EXPECT_EQ(Op.Inputs[3].Offset, Target == Arch::X86 ? 4U : 8U);
+        }
+      EXPECT_EQ(Found, 1U);
+    }
+}
+
+TEST(X86FPConversionContract, LLVMCRejectsI386WithA64BitIntegerDestination) {
+  using namespace neverd;
+  llvm::LLVMContext Context;
+  llvm::Module Module("conversion", Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+      llvm::Function::ExternalLinkage, "probe", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *State = Builder.CreateAlloca(Builder.getInt32Ty());
+  Builder.CreateStore(Builder.getInt32(0x1f80), State);
+  auto *AsmType = llvm::FunctionType::get(
+      Builder.getInt64Ty(), {Builder.getFloatTy(), State->getType()}, false);
+  auto *Asm = llvm::InlineAsm::get(
+      AsmType, x86FPStateConversionAsm(Intrinsic::X86FPCvtToIntState, 4),
+      X86FPStateConversionConstraints, true);
+  auto *Call = Builder.CreateCall(
+      AsmType, Asm, {llvm::ConstantFP::get(Builder.getFloatTy(), 1.5), State});
+  Call->setMetadata(X86FPStateAsmMetadata, llvm::MDNode::get(Context, {}));
+  Builder.CreateRetVoid();
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X86;
+  Options.Format = BinaryFormat::ELF;
+  EXPECT_DEATH(
+      {
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        LLVMCEmitter().emit(Module, Out, Options);
+      },
+      "x86-32 FP conversion requires a 32-bit integer result");
+}
+
+TEST(X86FPConversionContract, UnmaskedAndUnknownStateCannotPublishIntegers) {
+  using namespace neverd;
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  for (unsigned Source : {4U, 8U})
+    for (unsigned Destination : {4U, 8U})
+      for (unsigned Mode : {0U, 1U, 2U, 3U}) {
+        SCOPED_TRACE(testing::Message()
+                     << Source << "->" << Destination << " mode=" << Mode);
+        NdOpEmulator Emulator(Image);
+        Emulator.setStrictMode(true);
+        const std::vector<uint8_t> Old(Destination + 4, 0x59);
+        Emulator.setRegisterBytes(0, Old);
+        LowOp Op;
+        Op.Opcode = NdOp::INTRINSIC;
+        Op.Output = NdVar::tmp(0, Destination + 4);
+        Op.addInput(NdVar::cst(
+            static_cast<unsigned>(Intrinsic::X86FPCvtToIntState), 2));
+        Op.addInput(NdVar::cst(Source == 4
+                                   ? (Mode == 1 ? 0x3fc00000 : 0x7f800000)
+                                   : (Mode == 1 ? UINT64_C(0x3ff8000000000000)
+                                                : UINT64_C(0x7ff0000000000000)),
+                               Source));
+        Op.addInput(Mode == 2 ? NdVar::tmp(1, 4)
+                              : NdVar::cst(Mode == 0   ? 0x1f00
+                                           : Mode == 1 ? 0x0f80
+                                                       : 0x11f80,
+                                           4));
+        Op.addInput(NdVar::cst(Destination, 4));
+        EXPECT_FALSE(Emulator.step(Op));
+        EXPECT_EQ(Emulator.getRegisterBytes(0), Old);
+        if (Mode < 2)
+          EXPECT_EQ(Emulator.getMXCSR(), Mode == 0 ? 0x1f01U : 0x0fa0U);
+      }
+}
+
+namespace {
+const std::vector<uint64_t> &conversionValues(bool IsDouble) {
+  static const std::vector<uint64_t> Single = {
+      0,          0x80000000, 1,          0x80000001, 0x007fffff, 0x807fffff,
+      0x00800000, 0x80800000, 0x3effffff, 0x3f000000, 0x3f000001, 0xbf000000,
+      0x3fc00000, 0xbfc00000, 0x40200000, 0xc0200000, 0x4effffff, 0x4f000000,
+      0xcf000000, 0xcf000001, 0x5effffff, 0x5f000000, 0xdf000000, 0xdf000001,
+      0x7f7fffff, 0xff7fffff, 0x7f800000, 0xff800000, 0x7fc00001, 0x7f800001,
+      0xffc00001, 0xff800001};
+  static const std::vector<uint64_t> Double = {0,
+                                               UINT64_C(0x8000000000000000),
+                                               1,
+                                               UINT64_C(0x8000000000000001),
+                                               UINT64_C(0x000fffffffffffff),
+                                               UINT64_C(0x800fffffffffffff),
+                                               UINT64_C(0x0010000000000000),
+                                               UINT64_C(0x8010000000000000),
+                                               UINT64_C(0x3fdfffffffffffff),
+                                               UINT64_C(0x3fe0000000000000),
+                                               UINT64_C(0x3fe0000000000001),
+                                               UINT64_C(0xbfe0000000000000),
+                                               UINT64_C(0x3ff8000000000000),
+                                               UINT64_C(0xbff8000000000000),
+                                               UINT64_C(0x4004000000000000),
+                                               UINT64_C(0xc004000000000000),
+                                               UINT64_C(0x41dfffffffc00000),
+                                               UINT64_C(0x41dfffffffe00000),
+                                               UINT64_C(0x41e0000000000000),
+                                               UINT64_C(0xc1e0000000000000),
+                                               UINT64_C(0x43dfffffffffffff),
+                                               UINT64_C(0x43e0000000000000),
+                                               UINT64_C(0xc3e0000000000000),
+                                               UINT64_C(0xc3e0000000000001),
+                                               UINT64_C(0x7fefffffffffffff),
+                                               UINT64_C(0xffefffffffffffff),
+                                               UINT64_C(0x7ff0000000000000),
+                                               UINT64_C(0xfff0000000000000),
+                                               UINT64_C(0x7ff8000000000001),
+                                               UINT64_C(0x7ff0000000000001),
+                                               UINT64_C(0xfff8000000000001),
+                                               UINT64_C(0xfff0000000000001)};
+  return IsDouble ? Double : Single;
+}
+} // namespace
+
+TEST(X86FPConversionAccuracy, ExplicitIntegerStateMatchesNativeBoundaries) {
+#if (defined(__x86_64__) || defined(_M_X64)) &&                                \
+    (defined(__clang__) || defined(__GNUC__))
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  for (auto Id :
+       {Intrinsic::X86FPCvtToIntState, Intrinsic::X86FPTruncToIntState})
+    for (unsigned Source : {4U, 8U})
+      for (unsigned Destination : {4U, 8U})
+        for (unsigned Rounding : {0U, 1U, 2U, 3U})
+          for (unsigned Control : {0U, 0x40U, 0x8000U, 0x8040U})
+            for (unsigned Sticky : {0U, 0x21U})
+              for (uint64_t Bits : conversionValues(Source == 8)) {
+                const uint32_t State =
+                    0x1f80 | (Rounding << 13) | Control | Sticky;
+                const bool Truncate = Id == Intrinsic::X86FPTruncToIntState;
+                const auto Expected =
+                    Source == 4
+                        ? (Destination == 4
+                               ? nativeIntegerConversion<float, uint32_t>(
+                                     Bits, State, Truncate)
+                               : nativeIntegerConversion<float, uint64_t>(
+                                     Bits, State, Truncate))
+                        : (Destination == 4
+                               ? nativeIntegerConversion<double, uint32_t>(
+                                     Bits, State, Truncate)
+                               : nativeIntegerConversion<double, uint64_t>(
+                                     Bits, State, Truncate));
+                SCOPED_TRACE(testing::Message()
+                             << Source << "->" << Destination
+                             << " id=" << static_cast<unsigned>(Id)
+                             << " state=" << State << " bits=" << Bits);
+                NdOpEmulator Emulator(Image);
+                Emulator.setStrictMode(true);
+                LowOp Op;
+                Op.Opcode = NdOp::INTRINSIC;
+                Op.Output = NdVar::tmp(0, Destination + 4);
+                Op.addInput(NdVar::cst(static_cast<unsigned>(Id), 2));
+                Op.addInput(NdVar::cst(Bits, Source));
+                Op.addInput(NdVar::cst(State, 4));
+                Op.addInput(NdVar::cst(Destination, 4));
+                ASSERT_TRUE(Emulator.step(Op));
+                const auto Result = Emulator.getRegisterBytes(0);
+                ASSERT_TRUE(Result);
+                ASSERT_EQ(Result->size(), Destination + 4);
+                uint64_t Actual = 0;
+                uint32_t Outgoing = 0;
+                std::memcpy(&Actual, Result->data(), Destination);
+                std::memcpy(&Outgoing, Result->data() + Destination, 4);
+                ASSERT_EQ(Actual, Expected.first);
+                ASSERT_EQ(Outgoing, Expected.second);
+              }
+#else
+  GTEST_SKIP() << "native scalar conversion oracle requires x64 GCC/Clang";
+#endif
+}
+
+namespace {
+class X86FPConversionExecution : public X86FPStateFixture {
+protected:
+  bool PrecisionFault = false;
+
+  std::string comparisonDriver(bool IsDouble, bool DeclareProbe, bool Fault,
+                               bool NativeCall = false) override {
+    if (Fault) {
+      auto Text = faultDriver(IsDouble, DeclareProbe, NativeCall);
+      const auto Replace = [&](const std::string &Old, const std::string &New) {
+        const auto Position = Text.find(Old);
+        if (Position != std::string::npos)
+          Text.replace(Position, Old.size(), New);
+      };
+      Replace("EXCEPTION_FLT_DIVIDE_BY_ZERO",
+              PrecisionFault ? "EXCEPTION_FLT_INEXACT_RESULT"
+                             : "EXCEPTION_FLT_INVALID_OPERATION");
+      // Only the byte oracle promises physical RAX. Generated code retains
+      // the architectural value in SSA and may allocate another host GPR.
+      if (NativeCall)
+        Replace("numerical_output_untouched() ? 0 : 1",
+                "numerical_output_untouched() && "
+                "info->ContextRecord->Rax == UINT64_C(0x8877665544332211) "
+                "? 0 : 1");
+      Replace("UINT64_C(0x3ff0000000000000)",
+              PrecisionFault ? "UINT64_C(0x3ff8000000000000)"
+                             : "UINT64_C(0x7ff0000000000000)");
+      Replace("0x3f800000", PrecisionFault ? "0x3fc00000" : "0x7f800000");
+      Replace("0x1d80", PrecisionFault ? "0x0f80" : "0x1f00");
+      return Text;
+    }
+    auto Text = floatingDriver(IsDouble, DeclareProbe);
+    const auto First = Text.find("static const");
+    const auto Last = Text.find("int main(void)");
+    std::string Values = "static const uint64_t values[] = {";
+    for (uint64_t Bits : conversionValues(IsDouble))
+      Values += "UINT64_C(" + std::to_string(Bits) + "),";
+    Values += "};\n";
+    if (First != std::string::npos && Last != std::string::npos)
+      Text.replace(First, Last - First, Values);
+    // Each instruction consumes one scalar. Preserve the full surrounding
+    // buffer and compare RAX's upper half after a 32-bit destination write.
+    if (!IsDouble) {
+      const std::string Copy =
+          "memcpy(expected, &values[a], sizeof(values[0]));";
+      const auto Position = Text.find(Copy);
+      if (Position != std::string::npos)
+        Text.replace(Position, Copy.size(), "memcpy(expected, &values[a], 4);");
+    }
+    const std::string Loop = "b < sizeof(values)/sizeof(values[0])";
+    const auto Position = Text.find(Loop);
+    if (Position != std::string::npos)
+      Text.replace(Position, Loop.size(), "b < 1");
+    return Text;
+  }
+
+  static std::vector<uint8_t> integerKernel(bool IsDouble, bool WideResult,
+                                            bool Truncate, bool Vex,
+                                            bool Memory,
+                                            bool KeepResult = true) {
+    const uint8_t Arg = memoryModRM();
+    // Keep a recognizable old RAX for zero-extension and fault controls.
+    std::vector<uint8_t> Bytes = {0x48, 0xb8, 0x11, 0x22, 0x33,
+                                  0x44, 0x55, 0x66, 0x77, 0x88};
+    if (!Memory)
+      Bytes.insert(Bytes.end(), {0xf3, 0x0f, 0x6f, Arg}); // MOVDQU XMM0,[arg]
+    if (Vex) {
+      if (WideResult)
+        Bytes.insert(
+            Bytes.end(),
+            {0xc4, 0xe1, static_cast<uint8_t>(IsDouble ? 0xfb : 0xfa)});
+      else
+        Bytes.insert(Bytes.end(),
+                     {0xc5, static_cast<uint8_t>(IsDouble ? 0xfb : 0xfa)});
+    } else {
+      Bytes.push_back(IsDouble ? 0xf2 : 0xf3);
+      if (WideResult)
+        Bytes.push_back(0x48);
+      Bytes.push_back(0x0f);
+    }
+    Bytes.insert(Bytes.end(), {static_cast<uint8_t>(Truncate ? 0x2c : 0x2d),
+                               static_cast<uint8_t>(Memory ? Arg : 0xc0)});
+    if (KeepResult)
+      Bytes.insert(Bytes.end(),
+                   {0x48, 0x89, static_cast<uint8_t>(0x40 | Arg), 48});
+    Bytes.insert(Bytes.end(), {0x31, 0xc0, 0xc3});
+    return Bytes;
+  }
+
+  void compareForms(bool IsDouble, bool WideResult, bool Vex) {
+    if (Vex && !llvm::sys::getHostCPUFeatures().lookup("avx"))
+      GTEST_SKIP() << "AVX is required for the VEX native oracle";
+    for (bool Truncate : {false, true})
+      for (bool Memory : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << "truncate=" << Truncate << " memory=" << Memory);
+        compareFloating(
+            integerKernel(IsDouble, WideResult, Truncate, Vex, Memory),
+            IsDouble);
+      }
+  }
+};
+} // namespace
+
+TEST_F(X86FPConversionExecution, SingleTo32MatchesNativeAllRoutes) {
+  compareForms(false, false, false);
+  compareForms(false, false, true);
+}
+
+TEST_F(X86FPConversionExecution, SingleTo64MatchesNativeAllRoutes) {
+  compareForms(false, true, false);
+  compareForms(false, true, true);
+}
+
+TEST_F(X86FPConversionExecution, DoubleTo32MatchesNativeAllRoutes) {
+  compareForms(true, false, false);
+  compareForms(true, false, true);
+}
+
+TEST_F(X86FPConversionExecution, DoubleTo64MatchesNativeAllRoutes) {
+  compareForms(true, true, false);
+  compareForms(true, true, true);
+}
+
+TEST_F(X86FPConversionExecution, DeadIntegerResultsRetainExceptionFlags) {
+  for (bool IsDouble : {false, true})
+    compareFloating(
+        integerKernel(IsDouble, !IsDouble, false, false, false, false),
+        IsDouble);
+}
+
+TEST_F(X86FPConversionExecution, UnmaskedInvalidAndPrecisionCommitNoResult) {
+  for (bool Precision : {false, true})
+    for (bool IsDouble : {false, true}) {
+      PrecisionFault = Precision;
+      compareFloating(integerKernel(IsDouble, !IsDouble, false, false, false),
+                      IsDouble, true);
+    }
+}
+
+TEST_F(X86FPConversionExecution, HighCTypedOperandsAndNamesPreserveRawBits) {
+  if (!nativeX64())
+    GTEST_SKIP() << "native x64 host required";
+  for (bool IsDouble : {false, true}) {
+    const unsigned SourceBytes = IsDouble ? 8 : 4;
+    const std::string Scalar = IsDouble ? "double" : "float";
+    std::vector<HighFunc> Functions;
+    std::string Driver =
+        "\n#include <immintrin.h>\nint main(void) {\n"
+        "uint32_t saved = _mm_getcsr(), state = 0x5f80;\n"
+        "float carrier; __builtin_memcpy(&carrier, &state, 4);\n";
+    for (bool Truncate : {false, true})
+      for (unsigned Destination : {4U, 8U}) {
+        const auto Id = Truncate ? Intrinsic::X86FPTruncToIntState
+                                 : Intrinsic::X86FPCvtToIntState;
+        const auto Value = HighExpr::makeVar(
+            MedVar{.Kind = MedVar::Param,
+                   .Id = 0,
+                   .Size = static_cast<uint16_t>(SourceBytes)},
+            NdType::makeFloat(SourceBytes));
+        const auto State =
+            HighExpr::makeVar(MedVar{.Kind = MedVar::Param, .Id = 1, .Size = 4},
+                              NdType::makeFloat(4));
+        auto Converted = HighExpr::makeCall(
+            "", 0, {Value, State, HighExpr::makeConst(Destination, 4)});
+        Converted->IntrinsicId = Id;
+        Converted->Type = NdType::makeInt(Destination + 4, false);
+        HighFunc Function;
+        Function.Name = std::string(Truncate ? "trunc" : "rounded") +
+                        std::to_string(Destination);
+        Function.ReturnType = Converted->Type;
+        Function.Params = {{"value", Value->Type}, {"state", State->Type}};
+        HighStmt Return;
+        Return.Kind = StmtKind::Return;
+        Return.RetVal = Converted;
+        Function.Body.push_back(Return);
+        Functions.push_back(Function);
+        HighFunc Collision;
+        Collision.Name = std::string(intrinsicCName(Id)) + "_f" +
+                         std::to_string(SourceBytes * 8) + "_i" +
+                         std::to_string(Destination * 8);
+        Collision.ReturnType = NdType::makeVoid();
+        Functions.push_back(Collision);
+        Driver +=
+            "{ unsigned _BitInt(96) result = " + Function.Name + "((" + Scalar +
+            ")1.5, carrier);\n"
+            "if ((uint" +
+            std::to_string(Destination * 8) +
+            "_t)result != " + (Truncate ? "1" : "2") +
+            " || (uint32_t)(result >> " + std::to_string(Destination * 8) +
+            ") != 0x5fa0) return 1; }\n";
+      }
+    Driver += "_mm_setcsr(saved); return 0; }\n";
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = hostFormat();
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(HighCEmitter().emit(Functions, Out, Options));
+    executeSource(Source, Driver);
+  }
+}
+
+TEST_F(X86FPConversionExecution, LLVMCUnalignedStateAndNamesPreserveRawBits) {
+  if (!nativeX64())
+    GTEST_SKIP() << "native x64 host required";
+  for (unsigned SourceBytes : {4U, 8U})
+    for (unsigned Destination : {4U, 8U}) {
+      llvm::LLVMContext Context;
+      llvm::Module Module("conversion", Context);
+      llvm::IRBuilder<> Builder(Context);
+      auto *Number = Builder.getIntNTy(Destination * 8);
+      auto *Scalar =
+          SourceBytes == 4 ? Builder.getFloatTy() : Builder.getDoubleTy();
+      auto *Pointer = Builder.getPtrTy();
+      auto *Function = llvm::Function::Create(
+          llvm::FunctionType::get(Number, {Pointer}, false),
+          llvm::Function::ExternalLinkage, "unaligned_convert", Module);
+      Builder.SetInsertPoint(
+          llvm::BasicBlock::Create(Context, "entry", Function));
+      const auto Id = Intrinsic::X86FPCvtToIntState;
+      auto *Asm = llvm::InlineAsm::get(
+          llvm::FunctionType::get(Number, {Scalar, Pointer}, false),
+          x86FPStateConversionAsm(Id, SourceBytes),
+          X86FPStateConversionConstraints, true);
+      auto *Call = Builder.CreateCall(
+          Asm, {llvm::ConstantFP::get(Scalar, 1.5), Function->getArg(0)});
+      Call->setMetadata(X86FPStateAsmMetadata, llvm::MDNode::get(Context, {}));
+      Builder.CreateRet(Call);
+      auto *Collision = llvm::Function::Create(
+          llvm::FunctionType::get(Builder.getVoidTy(), false),
+          llvm::Function::ExternalLinkage,
+          "neverd_x86_cvt" + std::string(SourceBytes == 4 ? "ss" : "sd") +
+              "2si_value_f" + std::to_string(SourceBytes * 8) + "_i" +
+              std::to_string(Destination * 8),
+          Module);
+      Builder.SetInsertPoint(
+          llvm::BasicBlock::Create(Context, "entry", Collision));
+      Builder.CreateRetVoid();
+      CEmitterOptions Options;
+      Options.TheArch = Arch::X64;
+      Options.Format = hostFormat();
+      Options.PreserveLLVMFunctionTypes = true;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      ASSERT_TRUE(LLVMCEmitter().emit(Module, Out, Options));
+      executeSource(Source, R"(
+#include <immintrin.h>
+int main(void) {
+  uint32_t saved = _mm_getcsr(), state = 0x5f80;
+  _Alignas(4) unsigned char memory[8] = {0x59,0,0,0,0,0x73,0x91,0x25};
+  __builtin_memcpy(memory + 1, &state, 4);
+  uint64_t result = unaligned_convert((void *)(memory + 1));
+  __builtin_memcpy(&state, memory + 1, 4);
+  _mm_setcsr(saved);
+  return result != 2 || state != 0x5fa0 ||
+      memory[0] != 0x59 || memory[5] != 0x73 || memory[6] != 0x91 || memory[7] != 0x25;
+}
+)");
     }
 }

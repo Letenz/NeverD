@@ -177,6 +177,8 @@ SIDEEFFECT(Intrinsic::X86FPAddState);
 SIDEEFFECT(Intrinsic::X86FPSubState);
 SIDEEFFECT(Intrinsic::X86FPMulState);
 SIDEEFFECT(Intrinsic::X86FPDivState);
+SIDEEFFECT(Intrinsic::X86FPCvtToIntState);
+SIDEEFFECT(Intrinsic::X86FPTruncToIntState);
 SIDEEFFECT(Intrinsic::X86FPConvert);
 SIDEEFFECT(Intrinsic::X86FPRoundTransform);
 SIDEEFFECT(Intrinsic::X86FPExtract);

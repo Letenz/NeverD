@@ -62,9 +62,29 @@ Native execution requires an x64 host and Clang; the in-process SSE oracle
 additionally requires GCC/Clang. Skips on other hosts are explicit.
 This suite does not establish packed FP, VEX or x87 state coverage.
 
+`NeverDX86FPConversionAccuracyTests` separately covers signed scalar
+CVTSS2SI/CVTSD2SI and CVTTSS2SI/CVTTSD2SI, including their VEX forms. Independent
+32/64-bit source and destination widths, register and memory sources, every
+MXCSR rounding mode, DAZ/FTZ, sticky status, integer boundaries, NaNs and
+subnormals are compared against native instructions. The byte fixtures execute
+through bundled LLVM Codegen with default/NoOpt pipelines and standalone
+HighC/LLVMC at O0/O2. Complete memory and MXCSR observers cover dead results and
+32-bit GPR zero-extension. Bounded native children verify unmasked invalid and
+precision exceptions before output stores; the concrete evaluator retains the
+old aggregate on failure. Source controls check typed bit transport, allocated
+helper names and unaligned state memory with UB traps. Decode/lift controls
+reject reserved VEX fields and inconsistent address tails, and verify that
+VEX.W is ignored for the supported 32-bit destination in x86-32 mode. A
+64-bit integer destination in that mode is rejected at each IR/C boundary.
+This conversion suite does not certify packed, unsigned, EVEX/SAE or x87
+conversion state. Its native byte oracles require x64 and Clang; VEX byte
+oracles additionally require AVX.
+
 ```bash
 cmake --build build-release --target NeverDX86FPStateAccuracyTests --parallel 4
 ctest --test-dir build-release -L '^NeverDX86FPStateAccuracyTests$' --output-on-failure
+cmake --build build-release --target NeverDX86FPConversionAccuracyTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX86FPConversionAccuracyTests$' --output-on-failure
 ```
 
 ## Inline C memory accesses

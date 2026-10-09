@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86LiftDetail.h"
+#include "X86ScalarFPConversion.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Lifter.h"
@@ -1235,6 +1236,11 @@ bool liftSIMDAVXConvert(X86Lifter &L, X86Lifter::LiftState &S,
     if (isScalarIntegerToFloat(InsnId))
       return liftEvexScalarIntegerToFloat(L, S, Insn, X86, InsnId);
   }
+  if (getScalarFloatToIntegerSpec(InsnId, ScalarIntegerSpec) &&
+      !ScalarIntegerSpec.Unsigned)
+    return liftScalarFPIntegerState(L, S, Insn, X86,
+                                    ScalarIntegerSpec.SourceElementSize,
+                                    ScalarIntegerSpec.Truncate, true);
   switch (InsnId) {
 
   // ========================================================================

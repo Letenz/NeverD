@@ -3726,12 +3726,23 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       return true;
     }
     const auto BitcastInput = [&](unsigned Index) {
-      return "__builtin_bit_cast(uint" + std::to_string(Bytes * 8) + "_t, " +
+      return "__builtin_bit_cast(uint" +
+             std::to_string(x86FPStateSourceBytes(Bytes) * 8) + "_t, " +
              valueStr(Call.getArgOperand(Index)) + ")";
     };
     const auto Helper = FPStateHelperNames.find(*Shape);
     if (Helper == FPStateHelperNames.end())
       llvm::report_fatal_error("uncollected x86 FP state C helper");
+    if (isX86FPConversionStateIntrinsic(Id)) {
+      const std::string Expression = Helper->second + "(" + BitcastInput(0) +
+                                     ", (void*)" +
+                                     valueStr(Call.getArgOperand(1)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = " << Expression << ";\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
     std::string Expression = Helper->second + "(" + BitcastInput(0) + ", " +
                              BitcastInput(1) + ", (void*)" +
                              valueStr(Call.getArgOperand(2)) + ")";

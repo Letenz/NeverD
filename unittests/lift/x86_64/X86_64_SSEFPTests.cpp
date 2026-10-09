@@ -89,12 +89,8 @@ TEST_F(X86_64_SSE_FP, MulssHasFloatMult) {
 }
 
 TEST_F(X86_64_SSE_FP, Cvtsd2siHasTrunc) {
-  auto r = liftToLowIR(testObj());
-  ASSERT_EQ(r.exitCode, 0);
-  EXPECT_TRUE(r.out.find("FLOAT_FLOAT2INT") != std::string::npos ||
-              r.out.find("FLOAT_TRUNC") != std::string::npos ||
-              r.out.find("TRUNC") != std::string::npos)
-      << "CVTSD2SI should convert float to int";
+  verifyScalarFPState(testObj(), "test_cvtsd2si",
+                      neverd::Intrinsic::X86FPCvtToIntState);
 }
 
 TEST_F(X86_64_SSE_FP, Cvtsi2sdHasInt2Float) {

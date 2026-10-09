@@ -567,6 +567,28 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
       Mark(Builder.CreateCall(Asm, {State}));
       return IC == I::X86ReadMXCSR ? Builder.CreateLoad(I32, State) : nullptr;
     }
+    if (isX86FPConversionStateIntrinsic(IC)) {
+      const unsigned SourceBytes = Op.Inputs[1].Size;
+      const unsigned DestinationBytes =
+          static_cast<unsigned>(Shape.DestinationBytes);
+      auto *Scalar = SourceBytes == 4 ? llvm::Type::getFloatTy(*Ctx)
+                                      : llvm::Type::getDoubleTy(*Ctx);
+      auto *Integer = llvm::Type::getIntNTy(*Ctx, DestinationBytes * 8);
+      auto *Value = Builder.CreateBitCast(Raw(1, SourceBytes), Scalar);
+      Builder.CreateStore(Raw(2, 4), State);
+      auto *Fn = llvm::FunctionType::get(Integer, {Scalar, Ptr}, false);
+      auto *Asm =
+          llvm::InlineAsm::get(Fn, x86FPStateConversionAsm(IC, SourceBytes),
+                               X86FPStateConversionConstraints, true);
+      auto *Result = Builder.CreateCall(Asm, {Value, State}, "fp_integer");
+      Mark(Result);
+      auto *OutTy = sizeToType(Op.Output.Size);
+      auto *Status = Builder.CreateLoad(I32, State, "fp_state");
+      return Builder.CreateOr(
+          Builder.CreateZExt(Result, OutTy),
+          Builder.CreateShl(Builder.CreateZExt(Status, OutTy),
+                            DestinationBytes * 8));
+    }
     const unsigned Bytes = Op.Inputs[1].Size;
     auto *Scalar = Bytes == 4 ? llvm::Type::getFloatTy(*Ctx)
                               : llvm::Type::getDoubleTy(*Ctx);

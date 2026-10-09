@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86LiftDetail.h"
+#include "X86ScalarFPConversion.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Lifter.h"
@@ -256,37 +257,13 @@ bool liftLegacySSEFloat(X86Lifter &L, X86Lifter::LiftState &S,
   // ========================================================================
   case X86_INS_CVTSS2SI:
   case X86_INS_CVTSD2SI: {
-    if (X86.op_count < 2)
-      break;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
-    unsigned FPSz = (Insn->id == X86_INS_CVTSS2SI) ? 4 : 8;
-    if (Src.Size > FPSz) {
-      NdVar Narrow = S.makeTemp(FPSz);
-      S.emit(NdOp::SUBBYTES, Narrow, {Src, NdVar::cst(0, 4)});
-      Src = Narrow;
-    }
-    // CVTSS2SI/CVTSD2SI round using MXCSR (default: nearest, ties to even),
-    // unlike the truncating CVTTSS2SI/CVTTSD2SI.  Round first, then convert.
-    NdVar Rounded = S.makeTemp(FPSz);
-    S.emit(NdOp::FLOAT_ROUNDEVEN, Rounded, {Src});
-    S.emit(NdOp::FLOAT_FLOAT2INT, Dst, {Rounded});
-    break;
+    return liftScalarFPIntegerState(
+        L, S, Insn, X86, Insn->id == X86_INS_CVTSS2SI ? 4 : 8, false, false);
   }
   case X86_INS_CVTTSS2SI:
   case X86_INS_CVTTSD2SI: {
-    if (X86.op_count < 2)
-      break;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
-    unsigned FPSz = (Insn->id == X86_INS_CVTTSS2SI) ? 4 : 8;
-    if (Src.Size > FPSz) {
-      NdVar Narrow = S.makeTemp(FPSz);
-      S.emit(NdOp::SUBBYTES, Narrow, {Src, NdVar::cst(0, 4)});
-      Src = Narrow;
-    }
-    S.emit(NdOp::FLOAT_TRUNC, Dst, {Src});
-    break;
+    return liftScalarFPIntegerState(
+        L, S, Insn, X86, Insn->id == X86_INS_CVTTSS2SI ? 4 : 8, true, false);
   }
 
   // ========================================================================

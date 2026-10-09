@@ -22,8 +22,24 @@ constexpr bool isX86ScalarFPStateIntrinsic(Intrinsic Id) {
 }
 
 constexpr bool isX86FPStateIntrinsic(Intrinsic Id) {
-  return isX86ScalarFPStateIntrinsic(Id) || Id == Intrinsic::X86ReadMXCSR ||
-         Id == Intrinsic::X86WriteMXCSR;
+  return isX86ScalarFPStateIntrinsic(Id) ||
+         Id == Intrinsic::X86FPCvtToIntState ||
+         Id == Intrinsic::X86FPTruncToIntState ||
+         Id == Intrinsic::X86ReadMXCSR || Id == Intrinsic::X86WriteMXCSR;
+}
+
+constexpr bool isX86FPConversionStateIntrinsic(Intrinsic Id) {
+  return Id == Intrinsic::X86FPCvtToIntState ||
+         Id == Intrinsic::X86FPTruncToIntState;
+}
+
+constexpr const char *x86FPStateConversionMnemonic(Intrinsic Id,
+                                                   unsigned SourceBytes) {
+  if (Id == Intrinsic::X86FPCvtToIntState)
+    return SourceBytes == 4 ? "cvtss2si" : "cvtsd2si";
+  if (Id == Intrinsic::X86FPTruncToIntState)
+    return SourceBytes == 4 ? "cvttss2si" : "cvttsd2si";
+  return nullptr;
 }
 
 constexpr const char *x86ScalarFPStateMnemonic(Intrinsic Id) {
@@ -68,11 +84,15 @@ struct X86FPStateShape {
   unsigned RightSize = 0;
   unsigned StateSize = 0;
   bool HasAuxiliaryOutputs = false;
+  bool DestinationIsConst = false;
+  unsigned DestinationSelectorSize = 0;
+  uint64_t DestinationBytes = 0;
+  bool ArchitectureMatchesOperands = true;
 };
 
 constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
                                       const X86FPStateShape &Shape) {
-  if (!isX86FPStateIntrinsic(Id) ||
+  if (!isX86FPStateIntrinsic(Id) || !Shape.ArchitectureMatchesOperands ||
       (Shape.TargetArch != Arch::Unknown && Shape.TargetArch != Arch::X86 &&
        Shape.TargetArch != Arch::X64) ||
       Shape.MemoryOrdering != NdMemoryOrdering::None ||
@@ -85,11 +105,43 @@ constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
   if (Id == Intrinsic::X86WriteMXCSR)
     return Shape.NumInputs == 2 && Shape.OutputSize == 0 &&
            Shape.OperandsAreScalar && Shape.LeftSize == 4;
+  if (isX86FPConversionStateIntrinsic(Id))
+    return Shape.NumInputs == 4 && Shape.OutputIsWritable &&
+           Shape.OperandsAreScalar &&
+           (Shape.LeftSize == 4 || Shape.LeftSize == 8) &&
+           Shape.StateSize == 4 && Shape.DestinationIsConst &&
+           Shape.DestinationSelectorSize == 4 &&
+           (Shape.DestinationBytes == 4 || Shape.DestinationBytes == 8) &&
+           !(Shape.TargetArch == Arch::X86 && Shape.DestinationBytes == 8) &&
+           Shape.OutputSize == Shape.DestinationBytes + 4;
   return Shape.NumInputs == 4 && Shape.OutputIsWritable &&
          Shape.OperandsAreScalar &&
          (Shape.LeftSize == 4 || Shape.LeftSize == 8) &&
          Shape.RightSize == Shape.LeftSize && Shape.StateSize == 4 &&
          Shape.OutputSize == Shape.LeftSize + 4;
+}
+
+/// Helper/classifier keys preserve independent source and integer widths.
+/// Arithmetic retains its existing source-size key. Conversion uses the low
+/// byte for the source width and the next byte for the destination width.
+constexpr unsigned x86FPConversionLayout(unsigned SourceBytes,
+                                         unsigned DestinationBytes) {
+  return SourceBytes | (DestinationBytes << 8);
+}
+constexpr unsigned x86FPStateSourceBytes(unsigned Layout) {
+  return Layout & 0xff;
+}
+constexpr unsigned x86FPStateDestinationBytes(Intrinsic Id, unsigned Layout) {
+  return isX86FPConversionStateIntrinsic(Id) ? Layout >> 8 : Layout;
+}
+constexpr unsigned x86FPStateHelperLayout(Intrinsic Id,
+                                          const X86FPStateShape &Shape) {
+  return isX86FPConversionStateIntrinsic(Id)
+             ? x86FPConversionLayout(
+                   Shape.LeftSize,
+                   static_cast<unsigned>(Shape.DestinationBytes))
+         : isX86ScalarFPStateIntrinsic(Id) ? Shape.LeftSize
+                                           : 0;
 }
 
 /// Only this exact slice of a completed aggregate denotes a scalar FP value.

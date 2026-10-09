@@ -3483,6 +3483,8 @@ set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
 add_neverd_unittest(NeverDX86FPConversionAccuracyTests
   x86_64/X86_64_FPConversionAccuracyTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPConversionAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
 
 add_neverd_unittest(NeverDX86SIMDAccuracyTests
   x86_64/X86_64_SIMDAccuracyTests.cpp

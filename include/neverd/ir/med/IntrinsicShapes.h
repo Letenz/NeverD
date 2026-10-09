@@ -43,11 +43,18 @@ inline bool isMedIntrinsicWritableScalar(const MedVar &Value) {
 
 inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
                                           Arch TargetArch = Arch::Unknown) {
+  const bool Conversion = Op.NumInputs && Op.Inputs[0].isConst() &&
+                          isX86FPConversionStateIntrinsic(
+                              static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
   bool Scalar = true;
+  bool ArchitectureMatchesOperands = true;
   const auto ObserveArch = [&](const MedVar &Value) {
-    if (Value.TheArch != Arch::Unknown && Value.TheArch != Arch::X86 &&
-        Value.TheArch != Arch::X64)
+    if (Value.TheArch == Arch::Unknown)
+      return;
+    if (TargetArch == Arch::Unknown)
       TargetArch = Value.TheArch;
+    else if (TargetArch != Value.TheArch)
+      ArchitectureMatchesOperands = false;
   };
   ObserveArch(Op.Output);
   for (unsigned Index = 1; Index < Op.NumInputs; ++Index) {
@@ -66,8 +73,13 @@ inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
           .OperandsAreScalar = Scalar,
           .LeftSize = Op.NumInputs > 1 ? Op.Inputs[1].Size : 0U,
           .RightSize = Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U,
-          .StateSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U,
-          .HasAuxiliaryOutputs = !Op.IntrinsicOutputs.empty()};
+          .StateSize = Conversion ? (Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U)
+                                  : (Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U),
+          .HasAuxiliaryOutputs = !Op.IntrinsicOutputs.empty(),
+          .DestinationIsConst = Op.NumInputs > 3 && Op.Inputs[3].isConst(),
+          .DestinationSelectorSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U,
+          .DestinationBytes = Op.NumInputs > 3 ? Op.Inputs[3].ConstVal : 0U,
+          .ArchitectureMatchesOperands = ArchitectureMatchesOperands};
 }
 
 inline ApxAtomicIntrinsicShape apxAtomicMedShape(const MedOp &Op) {
