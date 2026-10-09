@@ -495,22 +495,28 @@ INSTANTIATE_TEST_SUITE_P(Backends, Unpack, testing::ValuesIn(Backends),
                            return std::string(Info.param.Name);
                          });
 
-TEST(UnpackBackends, ProduceIdenticalImages) {
-  for (const auto &F : Fixtures) {
-    SCOPED_TRACE(F.Name);
-    std::map<std::string, std::vector<uint8_t>> Images;
-    for (const auto &B : Backends)
-      if (auto Result = unpackOn(B.Kind, F.Packed)) {
-        ASSERT_EQ(Result->Outcome, UnpackOutcome::Unpacked);
-        Images[B.Name] = std::move(Result->Image);
-      }
-    if (Images.size() < 2)
-      GTEST_SKIP() << SingleBackend;
-    for (const auto &[Name, Bytes] : Images)
-      EXPECT_EQ(Bytes, Images.begin()->second)
-          << Name << " differs from " << Images.begin()->first;
-  }
+// Keep one finite comparison allowance per fixture, as for recovery tests.
+class UnpackBackends : public testing::TestWithParam<Fixture> {};
+
+TEST_P(UnpackBackends, ProduceIdenticalImages) {
+  const auto &F = GetParam();
+  std::map<std::string, std::vector<uint8_t>> Images;
+  for (const auto &B : Backends)
+    if (auto Result = unpackOn(B.Kind, F.Packed)) {
+      ASSERT_EQ(Result->Outcome, UnpackOutcome::Unpacked);
+      Images[B.Name] = std::move(Result->Image);
+    }
+  if (HasFailure())
+    return;
+  if (Images.size() < 2)
+    GTEST_SKIP() << SingleBackend;
+  for (const auto &[Name, Bytes] : Images)
+    EXPECT_EQ(Bytes, Images.begin()->second)
+        << Name << " differs from " << Images.begin()->first;
 }
+
+INSTANTIATE_TEST_SUITE_P(Fixtures, UnpackBackends, testing::ValuesIn(Fixtures),
+                         [](const auto &Info) { return Info.param.Name; });
 
 TEST(UnpackOptions, DefaultsDeferUnmodeledLoaderFacts) {
   const UnpackOptions Options;
