@@ -92,6 +92,10 @@ This suite does not establish packed FP, VEX or x87 state coverage.
 definite local assignment, bounded 96-bit slices and module-wide helper names.
 Generated Swift executes at Onone/O with rounding, DAZ/FTZ, sticky status,
 subnormals, signed zeros, NaN payloads and exact numerical/MXCSR observations.
+Execution markers identify startup and each check boundary. Failed runs retain
+generated source, executables and captured output; setting
+`NEVERD_KEEP_SWIFT_EXECUTION_ARTIFACTS` also retains successful local controls.
+Compiler and native execution bounds remain 120 seconds and 5 seconds.
 A separate bounded divide-by-zero control requires native x86_64 macOS;
 Rosetta forces exception masks even for raw SSE, so its unmasked-trap coverage
 is unavailable. `SwiftSourceProperties` compiles actual class members with

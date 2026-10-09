@@ -11,6 +11,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -394,6 +395,10 @@ void executeGeneratedSSESource(bool TrapsOnly) {
   ASSERT_EQ(Preambles.size(), 1U);
   std::string Source = *Preambles.begin() + Body + R"swift(
 import Darwin
+func nativeMarker(_ text: Swift.StaticString) {
+    _ = Darwin.write(2, text.utf8Start, text.utf8CodeUnitCount)
+}
+nativeMarker("native-start\n")
 var trappedState: Swift.UInt32 = 0x76543210
 var trappedResult: Swift.UInt64 = 0x0123456789abcdef
 if Swift.CommandLine.arguments.count == 2 {
@@ -415,11 +420,13 @@ func check(_ fn: (Swift.UInt64, Swift.UInt64, Swift.UInt32,
                   Swift.UnsafeMutablePointer<Swift.UInt32>) -> Swift.UInt64,
            _ a: Swift.UInt64, _ b: Swift.UInt64, _ incoming: Swift.UInt32,
            _ expected: Swift.UInt64, _ expectedState: Swift.UInt32) {
+    nativeMarker("check-start\n")
     var state: Swift.UInt32 = 0
     let result = fn(a,b,incoming,&state)
     Swift.precondition(result == expected)
     Swift.precondition(state == expectedState)
     Swift.precondition(currentMXCSR() == Swift.UInt64(expectedState))
+    nativeMarker("check-end\n")
 }
 for rounding in 0..<4 {
     let incoming = Swift.UInt32(0x1f80 | (rounding << 13))
@@ -447,13 +454,22 @@ check(sse_add32,0x7f812345,0x3f800000,0x1f80,0x7fc12345,0x1f81)
 check(sse_add64,0x7ff0000000012345,0x3ff0000000000000,0x1f80,0x7ff8000000012345,0x1f81)
 check(sse_add32,0x7fc12345,0xffc54321,0x1f80,0x7fc12345,0x1f80)
 check(sse_mul64,0x7ff8000000012345,0xfff8000000054321,0x1f80,0x7ff8000000012345,0x1f80)
+nativeMarker("native-end\n")
 )swift";
   llvm::SmallString<128> Directory;
   ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-swift-sse-state",
                                                     Directory));
   struct Cleanup {
     std::string Path;
-    ~Cleanup() { (void)llvm::sys::fs::remove_directories(Path); }
+    ~Cleanup() {
+      if (::testing::Test::HasFailure() ||
+          std::getenv("NEVERD_KEEP_SWIFT_EXECUTION_ARTIFACTS")) {
+        llvm::errs() << "Retained Swift SSE execution artifacts: " << Path
+                     << "\n";
+        return;
+      }
+      (void)llvm::sys::fs::remove_directories(Path);
+    }
   } Cleanup{Directory.str().str()};
   const std::string Path = Directory.str().str() + "/main.swift";
   const char *ConfiguredCache = std::getenv("NEVERD_SWIFT_MODULE_CACHE");
@@ -481,18 +497,31 @@ check(sse_mul64,0x7ff8000000012345,0xfff8000000054321,0x1f80,0x7ff8000000012345,
     const std::string Diagnostics((std::istreambuf_iterator<char>(Log)),
                                   std::istreambuf_iterator<char>());
     ASSERT_EQ(Status, 0) << Error << "\n" << Diagnostics << "\n" << Source;
+    auto Run = [&](llvm::StringRef Mode) {
+      const std::string Prefix = Executable + "-" + Mode.str();
+      const std::string StandardOutput = Prefix + ".stdout";
+      const std::string StandardError = Prefix + ".stderr";
+      const std::optional<llvm::StringRef> NativeRedirects[] = {
+          std::nullopt, StandardOutput, StandardError};
+      llvm::SmallVector<llvm::StringRef, 2> Arguments{Executable};
+      if (!Mode.empty())
+        Arguments.push_back(Mode);
+      const int NativeStatus = llvm::sys::ExecuteAndWait(
+          Executable, Arguments, std::nullopt, NativeRedirects, 5, 0, &Error);
+      std::ifstream NativeLog(StandardError);
+      const std::string NativeDiagnostics(
+          (std::istreambuf_iterator<char>(NativeLog)),
+          std::istreambuf_iterator<char>());
+      EXPECT_EQ(NativeStatus, 0)
+          << Optimization.str() << " " << Mode.str() << ": " << Error << "\n"
+          << NativeDiagnostics;
+    };
     if (!TrapsOnly) {
-      EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable},
-                                          std::nullopt, {}, 5, 0, &Error),
-                0)
-          << Optimization.str() << ": " << Error;
+      Run({});
       continue;
     }
     for (llvm::StringRef Mode : {"trap32", "trap64"})
-      EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable, Mode},
-                                          std::nullopt, {}, 5, 0, &Error),
-                0)
-          << Optimization.str() << " " << Mode.str() << ": " << Error;
+      Run(Mode);
   }
 #endif
 }
