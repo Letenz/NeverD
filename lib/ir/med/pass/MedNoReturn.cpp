@@ -17,8 +17,8 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/SourceCallTypeHint.h"
+#include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/ir/intrinsics/X86Interrupts.h"
 
 #include <map>
 #include <optional>
@@ -28,22 +28,6 @@
 
 namespace neverd {
 
-namespace {
-/// Whether intrinsic \p Id with first operand \p Operand never returns.  Only
-/// the AArch64 lifter emits BRK and HLT, and only the x86 lifter INT n.
-bool intrinsicNeverReturns(Intrinsic Id, std::optional<uint64_t> Operand) {
-  switch (Id) {
-  case Intrinsic::Brk:
-  case Intrinsic::Hlt_A64:
-    return true;
-  case Intrinsic::IntN:
-    return Operand && isX86NoReturnInterrupt(*Operand);
-  default:
-    return false;
-  }
-}
-} // namespace
-
 bool isArchitecturalNoReturn(const MedOp &Op) {
   if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 1 ||
       !Op.Inputs[0].isConst())
@@ -52,17 +36,6 @@ bool isArchitecturalNoReturn(const MedOp &Op) {
       static_cast<Intrinsic>(Op.Inputs[0].ConstVal),
       Op.NumInputs >= 2 && Op.Inputs[1].isConst()
           ? std::optional<uint64_t>(Op.Inputs[1].ConstVal)
-          : std::nullopt);
-}
-
-bool isArchitecturalNoReturn(const LowOp &Op) {
-  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 1 ||
-      !Op.Inputs[0].isConst())
-    return false;
-  return intrinsicNeverReturns(
-      static_cast<Intrinsic>(Op.Inputs[0].Offset),
-      Op.NumInputs >= 2 && Op.Inputs[1].isConst()
-          ? std::optional<uint64_t>(Op.Inputs[1].Offset)
           : std::nullopt);
 }
 

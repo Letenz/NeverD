@@ -1746,6 +1746,12 @@ targets. Changes to runtime entry stacks also require
 `Win64Forwarder` regressions in `NeverDLiftTests`. These cover independent
 ordinary entries, restored versus private callback stacks, malformed root
 carriers, and existing x64 handler-frame behavior.
+`RegistrationCallABI` in the native target checks immutable scalar ThrowInfo,
+the exact CRT import, private object initialization and width, caller-PC
+observations and metadata mutation. The leaf-callee matrix also checks separate
+private-stack/object spills, pointer escape, bounds, unknown addresses and
+nonvolatile-register preservation. These proofs do not enable native source
+C++ reconstruction on their own.
 Native installation needs a source build of the LLVM fork exposing
 `LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need

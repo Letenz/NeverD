@@ -8,6 +8,7 @@
 #ifndef NEVERD_IR_LOW_REGISTRATIONABI_H
 #define NEVERD_IR_LOW_REGISTRATIONABI_H
 
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionCommon.h"
 
 #include <optional>
@@ -42,6 +43,27 @@ struct RegistrationLeafCalleeABI {
 /// and separation from its registration fields before using the projection.
 std::optional<RegistrationLeafCalleeABI>
 getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target);
+
+struct RegistrationThrowCalleeABI {
+  va_t Target = InvalidVA;
+  va_t ImportVA = InvalidVA;
+  va_t ImportIATVA = InvalidVA;
+  va_t ThrowCallVA = InvalidVA;
+  va_t ThrowCallEndVA = InvalidVA;
+  int ThrowOpSeq = -1;
+  int32_t ObjectOffset = 0;
+  coff_loader::X86SimpleCxxThrowInfo ThrowInfo;
+  std::vector<ExceptionAddressRange> ImageReads;
+  std::vector<ExceptionAddressRange> ImageWrites;
+  std::vector<ExceptionAddressRange> CallerPCWrites;
+};
+
+/// Prove a closed PE32 helper that initializes a private scalar object and
+/// terminates through the exact VCRUNTIME140 _CxxThrowException import. The
+/// original helper is preserved; no source frame pointer may escape except
+/// its checked object argument and an observable real caller PC.
+std::optional<RegistrationThrowCalleeABI>
+getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target);
 
 /// Native registration lowering currently emits caller-cleanup calls. Require
 /// the source and every preserved direct callee to have that same stack

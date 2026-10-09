@@ -10,6 +10,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
@@ -44,9 +45,32 @@ struct ImageFrameEffects {
   std::set<std::pair<int32_t, int32_t>> ECXReads;
   std::set<std::pair<int32_t, int32_t>> ECXWrites;
 };
+
+template <typename Set, typename Vector>
+void copyExtents(const Set &From, Vector &To) {
+  for (const auto &[Begin, End] : From) {
+    if (!To.empty() && Begin <= To.back().End)
+      To.back().End = std::max(To.back().End, End);
+    else
+      To.push_back({Begin, End});
+  }
+}
+
+bool callerPCIsNotReadBack(const ImageFrameEffects &Effects) {
+  auto Read = Effects.Reads.begin();
+  for (const auto &[Begin, End] : Effects.CallerPCWrites) {
+    while (Read != Effects.Reads.end() && Read->second <= Begin)
+      ++Read;
+    if (Read != Effects.Reads.end() && Read->first < End)
+      return false;
+  }
+  return true;
+}
+
 bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                            size_t &Work, ImageFrameEffects &Effects,
-                           bool BorrowECX = false) {
+                           bool BorrowECX = false,
+                           RegistrationThrowCalleeABI *ThrowProof = nullptr) {
   using namespace registration_state;
   auto Charge = [&](size_t Amount) {
     if (Amount > limits::kMaxRegistrationEHStateWork - Work)
@@ -104,6 +128,7 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
     PrivateFrameState State = Incoming.at(Id);
     FrameTransfer Transfer(State.Frame, 0);
     FrameTransfer BorrowTransfer(State.Borrow, 0);
+    bool Threw = false;
     for (const auto &Op : Blocks.at(Id)->Ops) {
       size_t RegisterBytes = Op.Output.Size;
       for (unsigned Index = 0; Index != Op.NumInputs; ++Index)
@@ -213,6 +238,46 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
         if (BorrowECX)
           return false;
+        if (ThrowProof) {
+          const auto SP =
+              State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
+                  .Offset;
+          if (!SP || *SP > INT32_MAX - 8 || Op.Opcode != NdOp::CALL ||
+              Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
+              Op.Inputs[0].Size != 4 ||
+              Op.Inputs[0].Offset != ThrowProof->ImportVA ||
+              Op.Addr != ThrowProof->ThrowCallVA ||
+              Op.Seq != ThrowProof->ThrowOpSeq)
+            return false;
+          const auto Object = State.Frame.load(*SP, 4);
+          const auto Table = State.Frame.load(*SP + 4, 4);
+          if (!Object.Offset || Object.ReturnPC || Object.FrameOnlyFromCall ||
+              !Table.Constant || Table.MayBeFrame)
+            return false;
+          auto Info = coff_loader::getCheckedX86SimpleCxxThrowInfo(
+              Image, *Table.Constant);
+          if (!Info ||
+              !Charge(4096 + Info->ObjectSize + State.Frame.Cells.size()))
+            return false;
+          const int64_t End = int64_t(*Object.Offset) + Info->ObjectSize;
+          if (*Object.Offset < *SP + 8 || End > 4)
+            return false;
+          for (int64_t Byte = *Object.Offset; Byte != End; ++Byte)
+            if (!State.Initialized.count(int32_t(Byte)))
+              return false;
+          for (const auto &[Cell, Value] : State.Frame.Cells)
+            if (Value.MayBeFrame && int64_t(Cell) < End &&
+                int64_t(*Object.Offset) < int64_t(Cell) + 4)
+              return false;
+          for (const auto &Range : Info->ReadOnlyRanges)
+            Effects.Reads.emplace(Range.Begin, Range.End);
+          Effects.Reads.emplace(Info->TypeDescriptorRange.Begin,
+                                Info->TypeDescriptorRange.End);
+          ThrowProof->ObjectOffset = *Object.Offset;
+          ThrowProof->ThrowInfo = std::move(*Info);
+          Threw = true;
+          break;
+        }
         if (!Charge(State.Frame.Cells.size() + State.Initialized.size()))
           return false;
         for (unsigned Register = 0; Register != State.Frame.Registers.size();
@@ -293,6 +358,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
         State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
             FrameValue::frame(*AfterCallSP);
     }
+    if (Threw)
+      continue;
     for (int Successor : Blocks.at(Id)->Succs) {
       const auto Existing = Incoming.find(Successor);
       const auto StateSize = [](const PrivateFrameState &S) {
@@ -316,7 +383,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
 std::optional<RegistrationLeafCalleeABI>
 getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target) {
   if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
-      Image.Format != BinaryFormat::COFF || !Image.isCodeAddress(Target) ||
+      Image.Format != BinaryFormat::COFF || Target > UINT32_MAX ||
+      !Image.isCodeAddress(Target) ||
       Image.ExceptionMetadata.findFunction(Target))
     return std::nullopt;
   Decoder Decoder;
@@ -339,28 +407,96 @@ getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target) {
   ImageFrameEffects Effects;
   if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, true))
     return std::nullopt;
-  auto Read = Effects.Reads.begin();
-  for (const auto &[Begin, End] : Effects.CallerPCWrites) {
-    while (Read != Effects.Reads.end() && Read->second <= Begin)
-      ++Read;
-    if (Read != Effects.Reads.end() && Read->first < End)
-      return std::nullopt;
-  }
+  if (!callerPCIsNotReadBack(Effects))
+    return std::nullopt;
   RegistrationLeafCalleeABI Result;
   Result.Target = Target;
-  auto CopyExtents = [](const auto &From, auto &To) {
-    for (const auto &[Begin, End] : From) {
-      if (!To.empty() && Begin <= To.back().End)
-        To.back().End = std::max(To.back().End, End);
-      else
-        To.push_back({Begin, End});
+  copyExtents(Effects.ECXReads, Result.ECXReads);
+  copyExtents(Effects.ECXWrites, Result.ECXWrites);
+  copyExtents(Effects.Reads, Result.ImageReads);
+  copyExtents(Effects.Writes, Result.ImageWrites);
+  copyExtents(Effects.CallerPCWrites, Result.CallerPCWrites);
+  return Result;
+}
+
+std::optional<RegistrationThrowCalleeABI>
+getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target) {
+  if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
+      Image.Format != BinaryFormat::COFF || Target > UINT32_MAX ||
+      !Image.isCodeAddress(Target) ||
+      Image.ExceptionMetadata.findFunction(Target))
+    return std::nullopt;
+  Decoder Decoder;
+  if (!Decoder.init(Image))
+    return std::nullopt;
+  CFGBuilder Builder;
+  const LowFunc Callee = Builder.build(Image, Decoder, Target, "abi-throw");
+  if (Callee.CalleePopBytes || !Callee.hasCompleteLiftCoverage() ||
+      Callee.Blocks.empty() || Callee.ExceptionMetadata ||
+      !lowFunctionNeverReturns(Callee, Arch::X86))
+    return std::nullopt;
+  RegistrationThrowCalleeABI Result;
+  Result.Target = Target;
+  unsigned Calls = 0;
+  for (const auto &Block : Callee.Blocks) {
+    bool ThrowAtExit = false;
+    for (const auto &Op : Block.Ops) {
+      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      if (++Calls != 1 || Op.Opcode != NdOp::CALL || Op.NumInputs != 1 ||
+          !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 || Op.Seq < 0)
+        return std::nullopt;
+      const auto *Import = Image.findImportStubAt(Op.Inputs[0].Offset);
+      if (!Import || Import->Name != "_CxxThrowException" ||
+          (!llvm::StringRef(Import->Module)
+                .equals_insensitive("vcruntime140.dll") &&
+           !llvm::StringRef(Import->Module)
+                .equals_insensitive("vcruntime140d.dll")) ||
+          !Import->IATAddr || !Image.readVA(Import->IATAddr, 4))
+        return std::nullopt;
+      const auto Boundary =
+          llvm::find_if(Block.InstructionBoundaries,
+                        [&](const auto &B) { return B.Address == Op.Addr; });
+      if (Boundary == Block.InstructionBoundaries.end() ||
+          Boundary->Control != LowInstructionControl::Call ||
+          !hasLowInstructionControlFlag(Boundary->ControlFlags,
+                                        LowInstructionControlFlag::NoReturn) ||
+          hasLowInstructionControlFlag(
+              Boundary->ControlFlags, LowInstructionControlFlag::Conditional) ||
+          Op.Addr + Boundary->Size != Block.EndAddr)
+        return std::nullopt;
+      Result.ImportVA = Op.Inputs[0].Offset;
+      Result.ImportIATVA = Import->IATAddr;
+      Result.ThrowCallVA = Op.Addr;
+      Result.ThrowCallEndVA = Op.Addr + Boundary->Size;
+      Result.ThrowOpSeq = Op.Seq;
+      ThrowAtExit = true;
     }
-  };
-  CopyExtents(Effects.ECXReads, Result.ECXReads);
-  CopyExtents(Effects.ECXWrites, Result.ECXWrites);
-  CopyExtents(Effects.Reads, Result.ImageReads);
-  CopyExtents(Effects.Writes, Result.ImageWrites);
-  CopyExtents(Effects.CallerPCWrites, Result.CallerPCWrites);
+    if (Block.Succs.empty() && !ThrowAtExit)
+      return std::nullopt;
+  }
+  if (Calls != 1)
+    return std::nullopt;
+  ImageFrameEffects Effects;
+  size_t Work = 0;
+  if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, false, &Result) ||
+      Result.ThrowInfo.Address == InvalidVA || !callerPCIsNotReadBack(Effects))
+    return std::nullopt;
+  const auto &Info = Result.ThrowInfo;
+  if (Effects.Writes.size() > (limits::kMaxRegistrationEHStateWork - Work) /
+                                  (Info.ReadOnlyRanges.size() + 1))
+    return std::nullopt;
+  for (const auto &[Begin, End] : Effects.Writes) {
+    const ExceptionAddressRange Write{Begin, End};
+    if (Write.overlaps(Info.TypeDescriptorRange))
+      return std::nullopt;
+    for (const auto &Range : Info.ReadOnlyRanges)
+      if (Write.overlaps(Range))
+        return std::nullopt;
+  }
+  copyExtents(Effects.Reads, Result.ImageReads);
+  copyExtents(Effects.Writes, Result.ImageWrites);
+  copyExtents(Effects.CallerPCWrites, Result.CallerPCWrites);
   return Result;
 }
 
@@ -511,13 +647,8 @@ bool hasCallerCleanupRegistrationABI(
           return false;
   // Sort both sets once, then walk their interval fronts. Avoid multiplying
   // the bounded source/callee footprints by one another.
-  auto Read = Effects.Reads.begin();
-  for (const auto &[Begin, End] : Effects.CallerPCWrites) {
-    while (Read != Effects.Reads.end() && Read->second <= Begin)
-      ++Read;
-    if (Read != Effects.Reads.end() && Read->first < End)
-      return false;
-  }
+  if (!callerPCIsNotReadBack(Effects))
+    return false;
   if (CallerPCWrites)
     for (const auto &[Begin, End] : Effects.CallerPCWrites) {
       if (!CallerPCWrites->empty() && Begin <= CallerPCWrites->back().End)

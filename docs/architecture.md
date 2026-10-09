@@ -50,6 +50,10 @@ fields used by module function discovery and indirect-entry discovery;
 independent pointer references, exports, stated symbols and direct calls still
 create ordinary entries. Focused loading retains this parser's language-table
 ownership rather than reparsing registration data as table-driven EH.
+The LowIR no-return path proof lives in the low validation component, so call
+ABI checks do not depend on aggregate IR or MedIR. LowIR and MedIR consume the
+same architectural intrinsic-termination definition; both follow exceptional
+destinations after an ordinary no-return call.
 MedIR distinguishes established parent EBP, private callback
 ESP and a continuation's checked saved ESP. Its shared root-shape and
 entry-stack-coordinate helpers are consumed by stack proofs, HighIR and LLVM;
@@ -68,6 +72,11 @@ callee-private stack and borrowed ECX object domains, with separate spill
 storage. Its exact object/image footprints describe a returning leaf; a caller
 still needs bounds, initialization and registration-separation proof. A leaf
 summary alone cannot establish a source call or native C++ capability.
+The COFF loader separately owns bounded scalar ThrowInfo decoding and its
+immutable CatchableType graph. The call ABI owner binds that graph to an exact
+CRT import and a fully initialized private exception object, retaining real
+caller-PC observations and rejecting metadata mutation. This still describes
+a preserved helper, rather than authorizing a rewritten parent.
 Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction
 authenticates emitted scope rows, SafeSEH and absolute relocations before

@@ -27,6 +27,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <vector>
 
 namespace neverd::coff_loader {
 
@@ -56,6 +57,21 @@ struct X86CxxCallbackPointerRoles {
 };
 std::optional<X86CxxCallbackPointerRoles>
 getCheckedX86CxxCallbackPointerRoles(const BinaryImage &Img);
+
+/// Checked PE32 scalar throw metadata with one simple catchable type, no
+/// copy/destructor/forwarding callback and no pointer adjustment. The three
+/// metadata records must be immutable mapped data. TypeDescriptor is retained
+/// by identity; it does not supply a guessed C++ type or object layout.
+struct X86SimpleCxxThrowInfo {
+  va_t Address = InvalidVA;
+  va_t TypeDescriptorVA = InvalidVA;
+  uint32_t Attributes = 0;
+  uint32_t ObjectSize = 0;
+  std::vector<ExceptionAddressRange> ReadOnlyRanges;
+  ExceptionAddressRange TypeDescriptorRange;
+};
+std::optional<X86SimpleCxxThrowInfo>
+getCheckedX86SimpleCxxThrowInfo(const BinaryImage &Img, va_t Address);
 
 /// Authenticate an argument-preserving veneer to the known CRT SEH3 import.
 bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA);
