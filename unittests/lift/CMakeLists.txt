@@ -50,6 +50,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_ShiftTests.cpp
   x86_32/X86_32_ArithTests.cpp
   x86_32/X86_32_BitOpsTests.cpp
+  x86_32/X86_32_CallAbiTests.cpp
   x86_32/X86_32_CarryTests.cpp
   x86_32/X86_32_CmovTests.cpp
   x86_32/X86_32_CmpxchgTests.cpp

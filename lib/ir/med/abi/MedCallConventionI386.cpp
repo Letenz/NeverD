@@ -25,6 +25,7 @@ const CallArgumentConvention I386CallArguments = {
     .StackArgumentsFollowUsedRegisters = true,
     .StackOnlyVariadicCallees = true,
     .RegisterArgumentsFillInOrder = true,
+    .ArgumentsFromCallSetup = true,
 };
 
 } // namespace neverd
