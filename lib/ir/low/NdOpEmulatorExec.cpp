@@ -556,6 +556,14 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
   if (Op.NumInputs < 1 || !Op.Inputs[0].isConst())
     return false;
   const Intrinsic Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (!MXCSRKnown &&
+      (Id == Intrinsic::Stmxcsr || Id == Intrinsic::F16CConvert ||
+       Id == Intrinsic::X86ApproxFloat || Id == Intrinsic::X86FPArith ||
+       Id == Intrinsic::X86FPConvert || Id == Intrinsic::X86FPRoundTransform ||
+       Id == Intrinsic::X86FPExtract || Id == Intrinsic::X86FPRange ||
+       Id == Intrinsic::X86FPFixup || Id == Intrinsic::X86FPScale ||
+       Id == Intrinsic::X86FPCompare))
+    return false;
   if (Id == Intrinsic::X86FPArith)
     return executeX86FPArith(Op);
   if (Id == Intrinsic::X86FPConvert)
@@ -2523,7 +2531,7 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
     // before the architectural control state changes.
     if ((*Value & UINT64_C(0xffff0000)) != 0)
       return false;
-    MXCSR = static_cast<uint32_t>(*Value);
+    setMXCSR(static_cast<uint32_t>(*Value));
     return true;
   }
   if (Id == Intrinsic::Stmxcsr)

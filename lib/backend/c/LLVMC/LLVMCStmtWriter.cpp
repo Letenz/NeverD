@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../UnalignedMemory.h"
+#include "../render/X86FPStateHelpers.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
@@ -20,6 +21,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
@@ -3711,6 +3713,47 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   auto *IA = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
   if (!IA)
     return false;
+
+  if (auto Shape = classifyX86FPStateAsm(Call)) {
+    if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
+      llvm::report_fatal_error("x86 FP state C projection requires x86");
+    const auto [Id, Bytes] = *Shape;
+    emitIndent(Indent);
+    if (!Bytes) {
+      const std::string Pointer = valueStr(Call.getArgOperand(0));
+      OS << "__asm__ volatile(\""
+         << (Id == Intrinsic::X86ReadMXCSR ? "stmxcsr" : "ldmxcsr")
+         << " (%0)\" :: \"r\"(" << Pointer << ") : \"memory\");\n";
+      return true;
+    }
+    const auto BitcastInput = [&](unsigned Index) {
+      return "__builtin_bit_cast(uint" +
+             std::to_string(x86FPStateSourceBytes(Bytes) * 8) + "_t, " +
+             valueStr(Call.getArgOperand(Index)) + ")";
+    };
+    const auto Helper = FPStateHelperNames.find(*Shape);
+    if (Helper == FPStateHelperNames.end())
+      llvm::report_fatal_error("uncollected x86 FP state C helper");
+    if (isX86FPConversionStateIntrinsic(Id)) {
+      const std::string Expression = Helper->second + "(" + BitcastInput(0) +
+                                     ", (void*)" +
+                                     valueStr(Call.getArgOperand(1)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = " << Expression << ";\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
+    std::string Expression = Helper->second + "(" + BitcastInput(0) + ", " +
+                             BitcastInput(1) + ", (void*)" +
+                             valueStr(Call.getArgOperand(2)) + ")";
+    if (!Call.use_empty())
+      OS << Name << " = __builtin_bit_cast("
+         << (Bytes == 4 ? "float" : "double") << ", " << Expression << ");\n";
+    else
+      OS << "(void)" << Expression << ";\n";
+    return true;
+  }
 
   std::string AsmStr = IA->getAsmString().str();
   if (AsmStr.empty())

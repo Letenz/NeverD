@@ -340,6 +340,7 @@ enum class Intrinsic : uint16_t {
 #include "neverd/ir/intrinsics/intrinsics_aarch64.inc"
 #include "neverd/ir/intrinsics/intrinsics_arm.inc"
 #include "neverd/ir/intrinsics/intrinsics_x86.inc"
+#include "neverd/ir/intrinsics/intrinsics_x86_fp_state.inc"
 
   _Count = 16000
 };

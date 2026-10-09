@@ -151,6 +151,20 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
     Result.Diagnostic = text::NoEntry + Result.ProcessStop;
     return Result;
   }
+  Result.ImageBase = Observed->Base;
+  Result.EntryRVA = Observed->EntryRVA;
+  Result.Source = Observed->Source;
+  Result.RuntimeState = std::move(Observed->RuntimeState);
+  if (!Result.RuntimeState.HeapInventoryKnown ||
+      Result.RuntimeState.PossibleHeapReferences) {
+    Result.Diagnostic = Result.RuntimeState.HeapInventoryKnown
+                            ? text::ExternalHeapState
+                            : text::UnknownHeapState;
+    if (!Options.SnapshotOnly) {
+      Result.Outcome = UnpackOutcome::UnsupportedState;
+      return Result;
+    }
+  }
   RebuildPlan Plan;
   auto Rebuilt = Container->rebuild(Image, *Observed, Plan);
   if (!Rebuilt)
@@ -174,10 +188,8 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
   Result.ImportRepair.RepairedLoads = Rebuilt->RepairedImportLoads;
   Result.ImportRepair.ConflictingCalls = Rebuilt->ConflictingTailCalls;
   Result.MaterializedTLSCallbacks = Rebuilt->MaterializedTLSCallbacks;
-  Result.Outcome = UnpackOutcome::Unpacked;
-  Result.ImageBase = Observed->Base;
-  Result.EntryRVA = Observed->EntryRVA;
-  Result.Source = Observed->Source;
+  Result.Outcome =
+      Options.SnapshotOnly ? UnpackOutcome::Snapshot : UnpackOutcome::Unpacked;
   Result.Sections = std::move(Rebuilt->Sections);
   Result.Imports = std::move(Rebuilt->Imports);
   Result.Image = std::move(Rebuilt->File);

@@ -12,6 +12,7 @@
 
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
+#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -58,6 +59,9 @@ bool analyzeVoidReturn(const LLVMCAnalysisState &State, llvm::Function &Fn) {
             CallProducer =
                 llvm::dyn_cast<llvm::CallInst>(Extract->getAggregateOperand());
         if (CallProducer) {
+          if (const auto Shape = classifyX86FPStateAsm(*CallProducer);
+              Shape && x86FPStateReturnsValue(Shape->first))
+            AllRetResidual = false;
           // These intrinsics have exact arithmetic results, not residual
           // native call registers eligible for void inference.
           if (const auto *Intrinsic =
