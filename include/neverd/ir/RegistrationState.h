@@ -130,6 +130,20 @@ struct RegistrationStateAnalysis {
   std::vector<ExceptionAddressRange> ImageReads;
   std::vector<std::string> Diagnostics;
 
+  const RegistrationCxxContinuation *cxxContinuation(va_t Address,
+                                                     int Seq) const {
+    const auto Key = std::make_pair(Address, Seq);
+    auto It = std::lower_bound(CxxContinuations.begin(), CxxContinuations.end(),
+                               Key, [](const auto &Resume, auto Identity) {
+                                 return std::make_pair(Resume.Address,
+                                                       Resume.OpSeq) < Identity;
+                               });
+    return It != CxxContinuations.end() &&
+                   std::make_pair(It->Address, It->OpSeq) == Key
+               ? &*It
+               : nullptr;
+  }
+
   const RegistrationCookieCheck *cookieCheck(va_t Address, int Seq) const {
     const auto Key = std::make_pair(Address, Seq);
     auto It = std::lower_bound(CookieChecks.begin(), CookieChecks.end(), Key,

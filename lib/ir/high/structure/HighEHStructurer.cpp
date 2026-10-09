@@ -106,6 +106,33 @@ void fillCxxCatchType(HighEHClause &Clause, const BinaryImage *Img) {
   Clause.TypeName = readMSVCTypeDescriptorName(Img, Clause.TypeDescriptorVA);
 }
 
+HighEHClause makeCxxCatchClause(const CxxCatchHandler &Catch,
+                                const BinaryImage *Img,
+                                const RegistrationStateAnalysis *Registration,
+                                uint32_t TryIndex, uint32_t CatchIndex) {
+  HighEHClause Clause;
+  Clause.Kind = HighEHClauseKind::CxxCatch;
+  Clause.HandlerVA = Catch.HandlerVA;
+  Clause.TypeDescriptorVA = Catch.TypeDescriptorVA;
+  Clause.Adjectives = Catch.Adjectives;
+  Clause.CatchObjectOffset = Catch.CatchObjectOffset;
+  Clause.ParentFrameOffset = Catch.ParentFrameOffset;
+  Clause.ContinuationVAs = Catch.ContinuationVAs;
+  if (Registration && Registration->CxxContinuationsComplete &&
+      Registration->CxxContinuations.size() <=
+          limits::kMaxRegistrationEHRecords) {
+    for (const auto &Resume : Registration->CxxContinuations)
+      if (Resume.TryIndex == TryIndex && Resume.CatchIndex == CatchIndex)
+        Clause.ContinuationVAs.push_back(Resume.TargetVA);
+    std::sort(Clause.ContinuationVAs.begin(), Clause.ContinuationVAs.end());
+    Clause.ContinuationVAs.erase(std::unique(Clause.ContinuationVAs.begin(),
+                                             Clause.ContinuationVAs.end()),
+                                 Clause.ContinuationVAs.end());
+  }
+  fillCxxCatchType(Clause, Img);
+  return Clause;
+}
+
 struct AddressFootprint {
   bool HasInside = false;
   bool HasOutside = false;
@@ -597,7 +624,8 @@ void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
   if (!EH.Cxx)
     return;
   const CxxExceptionInfo &Cxx = *EH.Cxx;
-  for (const CxxTryBlock &Try : Cxx.TryBlocks) {
+  for (uint32_t TryIndex = 0; TryIndex < Cxx.TryBlocks.size(); ++TryIndex) {
+    const CxxTryBlock &Try = Cxx.TryBlocks[TryIndex];
     auto Ranges =
         codeRangesForStates(EH, Cxx, Try.TryLow, Try.TryHigh, Registration);
     if (EH.Registration && Ranges.size() != 1) {
@@ -617,18 +645,10 @@ void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
     Candidate.TryLow = Try.TryLow;
     Candidate.TryHigh = Try.TryHigh;
     Candidate.HasTryStates = true;
-    for (const CxxCatchHandler &Catch : Try.Handlers) {
-      HighEHClause Clause;
-      Clause.Kind = HighEHClauseKind::CxxCatch;
-      Clause.HandlerVA = Catch.HandlerVA;
-      Clause.TypeDescriptorVA = Catch.TypeDescriptorVA;
-      Clause.Adjectives = Catch.Adjectives;
-      Clause.CatchObjectOffset = Catch.CatchObjectOffset;
-      Clause.ParentFrameOffset = Catch.ParentFrameOffset;
-      Clause.ContinuationVAs = Catch.ContinuationVAs;
-      fillCxxCatchType(Clause, Img);
-      Candidate.Clauses.push_back(std::move(Clause));
-    }
+    for (uint32_t CatchIndex = 0; CatchIndex < Try.Handlers.size();
+         ++CatchIndex)
+      Candidate.Clauses.push_back(makeCxxCatchClause(
+          Try.Handlers[CatchIndex], Img, Registration, TryIndex, CatchIndex));
     for (int32_t State = Try.TryLow; State <= Try.TryHigh; ++State) {
       if (State < 0 || State >= static_cast<int32_t>(Cxx.UnwindMap.size()))
         continue;
@@ -1891,15 +1911,16 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     Try.EHIsReducible = false;
     Try.Body = std::move(Func.Body);
     if (Try.Kind == StmtKind::CxxTry) {
-      for (const CxxTryBlock &Block : EH.Cxx->TryBlocks) {
-        for (const CxxCatchHandler &Catch : Block.Handlers) {
-          HighEHClause Clause;
-          Clause.Kind = HighEHClauseKind::CxxCatch;
-          Clause.HandlerVA = Catch.HandlerVA;
-          Clause.TypeDescriptorVA = Catch.TypeDescriptorVA;
-          Clause.Adjectives = Catch.Adjectives;
-          fillCxxCatchType(Clause, Image);
-          Try.EHClauses.push_back(std::move(Clause));
+      const auto *Registration =
+          Med.RegistrationStates ? &*Med.RegistrationStates : nullptr;
+      for (uint32_t TryIndex = 0; TryIndex < EH.Cxx->TryBlocks.size();
+           ++TryIndex) {
+        const auto &Block = EH.Cxx->TryBlocks[TryIndex];
+        for (uint32_t CatchIndex = 0; CatchIndex < Block.Handlers.size();
+             ++CatchIndex) {
+          Try.EHClauses.push_back(makeCxxCatchClause(Block.Handlers[CatchIndex],
+                                                     Image, Registration,
+                                                     TryIndex, CatchIndex));
           Try.EHClauseBodies.emplace_back();
         }
       }

@@ -18,6 +18,7 @@
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/med/MedIntrinsicOutputs.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/libc/LibCNames.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-op-emitter"
@@ -32,6 +33,7 @@
 #include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace neverd {
 
@@ -225,14 +227,17 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
 
   switch (Op.Opcode) {
   case NdOp::COPY: {
-    if (Op.RegistrationRoot != MedOp::RegistrationRootKind::None &&
-        TargetArch == Arch::X86 && FrameBaseInt && Op.Output.Size == 4) {
+    if (Op.RegistrationRoot != MedOp::RegistrationRootKind::None) {
+      if (TargetArch != Arch::X86 || !FrameBaseInt ||
+          !hasValidRegistrationRootShape(Op))
+        throw std::invalid_argument("invalid PE32 registration runtime root");
       auto *SP = Builder.CreateTrunc(FrameBaseInt, Builder.getInt32Ty());
-      Result = Op.RegistrationRoot ==
-                       MedOp::RegistrationRootKind::EstablishedFramePointer
-                   ? Builder.CreateSub(SP, Builder.getInt32(4),
-                                       "registration.source.ebp")
-                   : SP;
+      if (Op.RegistrationRoot ==
+          MedOp::RegistrationRootKind::CallbackStackPointer)
+        Result = SP;
+      else if (const auto Offset = registrationRootEntryStackOffset(Op))
+        Result = Builder.CreateAdd(SP, Builder.getInt32(uint32_t(*Offset)),
+                                   "registration.source.frame");
       break;
     }
     if (CurMedFunc && CurMedFunc->SkippedSSA) {

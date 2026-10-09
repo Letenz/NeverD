@@ -24,6 +24,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 
+#include <map>
 #include <optional>
 
 namespace neverd::coff_loader {
@@ -36,6 +37,13 @@ namespace neverd::coff_loader {
 /// because a recovered record is attributed to the function that contains its
 /// install site and handler names come from symbols and import veneers.
 void parseX86RegistrationExceptions(BinaryImage &Img);
+
+/// Reparse an absolute-pointer FuncInfo and require equality with its checked
+/// normalized graph. Only these exact native fields carry runtime callback
+/// roles; independent references to the same target keep their ordinary role.
+std::optional<std::map<va_t, va_t>>
+getCheckedX86CxxCallbackPointerSources(const BinaryImage &Img,
+                                       const ExceptionFunction &Function);
 
 /// Authenticate an argument-preserving veneer to the known CRT SEH3 import.
 bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA);

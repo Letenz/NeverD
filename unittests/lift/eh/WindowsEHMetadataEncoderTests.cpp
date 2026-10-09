@@ -1167,6 +1167,161 @@ TEST(WindowsEHSemanticDigest, BindsEveryCxxTokenToTheCompleteOrderedFH3Graph) {
   EXPECT_NE(*AArch64Token, *Baseline);
 }
 
+ExceptionFunction makeRegistrationCxxDigestSource() {
+  ExceptionFunction EH;
+  EH.CodeRange = {0x401000, 0x401100};
+  EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
+  EH.Personality = ExceptionPersonality::CxxFrameHandler3;
+  EH.PersonalityVA = 0x401200;
+  EH.HandlerDataVA = 0x403000;
+  auto &Chain = EH.Registration.emplace();
+  Chain.HandlerVA = 0x401180;
+  Chain.ScopeTableVA = EH.HandlerDataVA;
+  Chain.RegistrationOffset = -12;
+  Chain.TryLevelOffset = -4;
+  Chain.SeededTryLevel = -1;
+  Chain.ChainInstallVA = 0x401010;
+  Chain.ChainRemoveVA = 0x4010f0;
+  Chain.TryLevelStores = {{0x401020, 0x401024, 0, 1},
+                          {0x401080, 0x401087, -1, 4}};
+  auto &Cxx = EH.Cxx.emplace();
+  Cxx.NativeEncoding = CxxExceptionInfo::Encoding::FH3;
+  Cxx.NativeFuncInfoVA = EH.HandlerDataVA;
+  Cxx.Magic = 0x19930522;
+  Cxx.Version = CxxFuncInfoVersion::WithEHFlags;
+  Cxx.Flags = 1;
+  Cxx.MaxState = 2;
+  Cxx.UnwindMap.resize(2);
+  Cxx.UnwindMap[0].ToState = Cxx.UnwindMap[1].ToState = -1;
+  CxxTryBlock Try;
+  Try.TryLow = Try.TryHigh = 0;
+  Try.CatchHigh = 1;
+  CxxCatchHandler Catch;
+  Catch.TypeDescriptorVA = 0x404000;
+  Catch.CatchObjectOffset = -24;
+  Catch.HandlerVA = 0x401060;
+  Try.Handlers.push_back(Catch);
+  Cxx.TryBlocks.push_back(Try);
+  return EH;
+}
+
+TEST(WindowsEHSemanticDigest, BindsThePE32CxxGraphAndRegistrationContract) {
+  const auto EH = makeRegistrationCxxDigestSource();
+  const auto Token =
+      windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86, 0, 0);
+  ASSERT_TRUE(Token);
+  EXPECT_EQ(Token, windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86,
+                                                                  0, 0));
+  for (unsigned Mutation = 0; Mutation != 20; ++Mutation) {
+    auto Changed = EH;
+    auto &Chain = *Changed.Registration;
+    auto &Cxx = *Changed.Cxx;
+    switch (Mutation) {
+    case 0:
+      ++Changed.PersonalityVA;
+      break;
+    case 1:
+      ++Changed.HandlerDataVA;
+      break;
+    case 2:
+      ++Chain.HandlerVA;
+      break;
+    case 3:
+      ++Chain.ScopeTableVA;
+      break;
+    case 4:
+      --*Chain.RegistrationOffset;
+      break;
+    case 5:
+      --*Chain.TryLevelOffset;
+      break;
+    case 6:
+      Chain.SeededTryLevel.reset();
+      break;
+    case 7:
+      ++Chain.ChainInstallVA;
+      break;
+    case 8:
+      ++Chain.ChainRemoveVA;
+      break;
+    case 9:
+      ++Chain.TryLevelStores[0].StoreVA;
+      break;
+    case 10:
+      ++Chain.TryLevelStores[0].EndVA;
+      break;
+    case 11:
+      ++Chain.TryLevelStores[0].Level;
+      break;
+    case 12:
+      Chain.TryLevelStores[0].Width = 4;
+      break;
+    case 13:
+      ++Cxx.NativeFuncInfoVA;
+      break;
+    case 14:
+      Cxx.UnwindMap[1].ToState = 0;
+      break;
+    case 15:
+      --Cxx.TryBlocks[0].Handlers[0].CatchObjectOffset;
+      break;
+    case 16:
+      ++Cxx.TryBlocks[0].Handlers[0].TypeDescriptorVA;
+      break;
+    case 17:
+      ++Cxx.TryBlocks[0].Handlers[0].HandlerVA;
+      break;
+    case 18:
+      Cxx.TryBlocks[0].Handlers[0].Adjectives = 8;
+      break;
+    case 19:
+      Changed.Personality = ExceptionPersonality::CxxFrameHandlerX86;
+      break;
+    }
+    const auto Other = windows_eh_semantics::getCxxCatchSemanticToken(
+        Changed, Arch::X86, 0, 0);
+    ASSERT_TRUE(Other) << Mutation;
+    EXPECT_NE(*Other, *Token) << Mutation;
+  }
+  EXPECT_FALSE(classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF)
+                   .canPatchOutput());
+}
+
+TEST(WindowsEHSemanticDigest, RejectsConflictingPE32CxxTokenContracts) {
+  const auto Source = makeRegistrationCxxDigestSource();
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCatchSemanticToken(Source, Arch::X64, 0, 0));
+  for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+    auto EH = Source;
+    switch (Mutation) {
+    case 0:
+      EH.ParseStatus = ExceptionParseStatus::Partial;
+      break;
+    case 1:
+      EH.Encoding = ExceptionEncoding::X64UnwindV1;
+      break;
+    case 2:
+      EH.Registration->Scopes.push_back({});
+      break;
+    case 3:
+      EH.Cxx->NativeEncoding = CxxExceptionInfo::Encoding::FH4;
+      break;
+    case 4:
+      EH.Registration->TryLevelStores[0].Width = 3;
+      break;
+    case 5:
+      EH.Registration->TryLevelStores[0].Level = 256;
+      break;
+    case 6:
+      EH.Cxx->UnwindMap[0].ToState = 0;
+      break;
+    }
+    EXPECT_FALSE(
+        windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86, 0, 0))
+        << Mutation;
+  }
+}
+
 TEST(WindowsEHSemanticDigest,
      DistinguishesFH4WireIdentityAndBindsItsCompleteGraph) {
   ExceptionFunction FH4 = makeNativeFH4Source();

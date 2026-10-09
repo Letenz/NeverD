@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -195,7 +196,8 @@ bool decodeEH4Header(const BinaryImage &Img, va_t TableVA,
                      RegistrationChainInfo &Chain);
 
 bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
-                       va_t FuncInfoVA);
+                       va_t FuncInfoVA,
+                       std::map<va_t, va_t> *CallbackSources = nullptr);
 
 } // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE registration_detail
 } // namespace neverd::coff_loader

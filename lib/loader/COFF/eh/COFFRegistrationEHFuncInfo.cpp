@@ -7,6 +7,7 @@
 #include "COFFRegistrationEHDetail.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -32,7 +33,25 @@ namespace neverd::coff_loader::registration_detail {
 /// registration record the prologue pushed, so the compiler updates it with a
 /// store instead of describing it in a table.
 bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
-                       va_t FuncInfoVA) {
+                       va_t FuncInfoVA, std::map<va_t, va_t> *CallbackSources) {
+  if (CallbackSources)
+    CallbackSources->clear();
+  auto RecordCallbackSource = [&](va_t Slot, va_t Target) {
+    if (!CallbackSources || !Target)
+      return true;
+    if (Slot > UINT32_MAX - 3) {
+      diagnose(F, ExceptionParseStatus::Malformed,
+               "x86 C++ callback pointer field exceeds PE32 address space");
+      return false;
+    }
+    const auto [It, New] = CallbackSources->emplace(Slot, Target);
+    if (!New && It->second != Target) {
+      diagnose(F, ExceptionParseStatus::Malformed,
+               "overlapping x86 C++ callback pointer fields disagree");
+      return false;
+    }
+    return true;
+  };
   // `magicNumber` occupies 29 bits and shares its word with `bbtFlags`, and
   // the magic fixes the length of the record: the original form ends after the
   // IP map pointer, the second adds the exception-specification list, and the
@@ -139,6 +158,9 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
                  "x86 C++ unwind action is not executable");
         return false;
       }
+      if (!RecordCallbackSource(uint64_t(UnwindMapVA) + uint64_t(I) * 8 + 4,
+                                Action.ActionVA))
+        return false;
       Info.UnwindMap.push_back(Action);
     }
   }
@@ -196,6 +218,10 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
                    "x86 C++ catch handler is not executable code");
           return false;
         }
+        if (!RecordCallbackSource(uint64_t(HandlerArrayVA) + uint64_t(J) * 16 +
+                                      12,
+                                  Catch.HandlerVA))
+          return false;
         Try.Handlers.push_back(std::move(Catch));
       }
       Info.TryBlocks.push_back(std::move(Try));
@@ -255,3 +281,29 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
 }
 
 } // namespace neverd::coff_loader::registration_detail
+
+namespace neverd::coff_loader {
+
+std::optional<std::map<va_t, va_t>>
+getCheckedX86CxxCallbackPointerSources(const BinaryImage &Img,
+                                       const ExceptionFunction &Function) {
+  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
+      Function.Encoding != ExceptionEncoding::X86CxxFuncInfo ||
+      Function.ParseStatus != ExceptionParseStatus::Complete ||
+      !Function.Registration || !Function.Cxx ||
+      (Function.Personality != ExceptionPersonality::CxxFrameHandler3 &&
+       Function.Personality != ExceptionPersonality::CxxFrameHandlerX86) ||
+      !Function.Cxx->NativeFuncInfoVA ||
+      Function.Cxx->NativeFuncInfoVA != Function.HandlerDataVA ||
+      Function.Cxx->NativeFuncInfoVA != Function.Registration->ScopeTableVA)
+    return std::nullopt;
+  ExceptionFunction Replay;
+  std::map<va_t, va_t> Sources;
+  if (!registration_detail::decodeX86FuncInfo(
+          Replay, Img, Function.Cxx->NativeFuncInfoVA, &Sources) ||
+      !Replay.Cxx || *Replay.Cxx != *Function.Cxx)
+    return std::nullopt;
+  return Sources;
+}
+
+} // namespace neverd::coff_loader

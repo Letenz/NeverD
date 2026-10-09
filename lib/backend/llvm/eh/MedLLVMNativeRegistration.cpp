@@ -398,7 +398,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
           return false;
         const bool FP = Op.RegistrationRoot ==
                         MedOp::RegistrationRootKind::EstablishedFramePointer;
-        if (Op.Output.RegOff != (FP ? TRI.FramePointer : TRI.StackPointer))
+        if ((!FP && Op.RegistrationRoot !=
+                        MedOp::RegistrationRootKind::CallbackStackPointer) ||
+            Op.RegistrationStackOffset != 0 ||
+            Op.Output.RegOff != (FP ? TRI.FramePointer : TRI.StackPointer))
           return false;
         auto Slot = VarAllocs.find({Op.Output.Id, Op.Output.SSAVer});
         if (Slot == VarAllocs.end())

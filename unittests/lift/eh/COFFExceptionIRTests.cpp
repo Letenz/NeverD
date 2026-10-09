@@ -804,9 +804,11 @@ TEST(COFFExceptionIR, LLVMCCorruptWindowsEHMetadataIsExplicitAndBounded) {
   const std::string BadVersion =
       EmitCorrupt(EH, [](llvm::LLVMContext &Context, auto &Fields) {
         Fields[windows_eh_md::Version] = llvm::ConstantAsMetadata::get(
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(Context), 9));
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(Context),
+                                   windows_eh_md::SchemaVersion + 1));
       });
-  EXPECT_NE(BadVersion.find("unsupported metadata schema version 9"),
+  EXPECT_NE(BadVersion.find("unsupported metadata schema version " +
+                            std::to_string(windows_eh_md::SchemaVersion + 1)),
             std::string::npos)
       << BadVersion;
   EXPECT_EQ(BadVersion.find("status=complete"), std::string::npos)

@@ -193,6 +193,7 @@ struct MedOp {
     None,
     EstablishedFramePointer,
     CallbackStackPointer,
+    RestoredStackPointer,
   };
   NdOp Opcode = NdOp::NOP;
   NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None;
@@ -216,6 +217,9 @@ struct MedOp {
   /// frame owner. Keep it as a definition: substituting its ordinary incoming
   /// register would lose the callback's distinct ABI context.
   RegistrationRootKind RegistrationRoot = RegistrationRootKind::None;
+  /// For a proven C++ continuation, ESP is this signed offset from the
+  /// established source EBP. Other registration root kinds keep zero.
+  int32_t RegistrationStackOffset = 0;
   uint32_t CallSiteId = 0;
   std::shared_ptr<const SourceCallTypeHint> SourceCallHint;
   /// RETURN's final input is the separately published Swift error value.

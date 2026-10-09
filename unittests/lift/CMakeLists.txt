@@ -1246,6 +1246,8 @@ add_neverd_unittest(NeverDRegistrationEHTests
 
   LINK_COMPONENTS
   IRLow
+  IRMed
+  IRHigh
 )
 
 add_neverd_unittest(NeverDWindowsRegistrationFrameTests

@@ -18,7 +18,10 @@
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -708,7 +711,8 @@ void addFlowHandlers(ImageBuilder &B) {
 }
 
 BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
-                                     bool PopReturn = false) {
+                                     bool PopReturn = false,
+                                     bool ReadResumedStack = false) {
   ImageBuilder B;
   B.Text = {0x55, 0x8b, 0xec, 0x6a, 0xff, 0x68};
   emit32(B.Text, kPersonality);
@@ -716,6 +720,10 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
   const va_t Install = B.textVA();
   B.Text.insert(B.Text.end(), {0x64, 0x89, 0x25, 0, 0, 0, 0});
   B.Text.insert(B.Text.end(), {0x83, 0xec, 0x10, 0x89, 0x65, 0xf0});
+  if (ReadResumedStack) {
+    B.Text.insert(B.Text.end(), {0xc7, 0x04, 0x24, 7, 0, 0, 0});
+    emitFrameStore(B.Text, -24, 0);
+  }
   const va_t Enter = B.textVA();
   emitFrameStore(B.Text, -4, 0);
   B.Text.push_back(0x90);
@@ -730,6 +738,8 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
   B.Text.insert(B.Text.end(), {0x8b, 0x4d, 0xf4, 0x64, 0x89, 0x0d, 0, 0, 0, 0,
                                0x8b, 0xe5, 0x5d, 0xc3});
   B.Text.resize(0xa0, 0xcc);
+  if (ReadResumedStack)
+    emitFrameStore(B.Text, -24, 9);
   B.Text.push_back(0xb8);
   emit32(B.Text, Target);
   if (PopReturn)
@@ -738,14 +748,34 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
     B.Text.push_back(0xc3);
   B.Text.resize(0xc0, 0xcc);
   emitFrameStore(B.Text, -4, -1);
+  if (ReadResumedStack)
+    B.Text.insert(B.Text.end(),
+                  {0x8b, 0x4d, 0xe8, 0x8b, 0x04, 0x24, 0x01, 0xc8});
   JumpTo(kText + 0x80);
+  B.RData.assign(0x100, 0);
+  auto Field = [&](size_t Offset, uint32_t Value) {
+    llvm::support::endian::write32le(B.RData.data() + Offset, Value);
+  };
+  Field(0, 0x19930522);
+  Field(4, 2);
+  Field(8, kRData + 0x30);
+  Field(12, 1);
+  Field(16, kRData + 0x40);
+  Field(0x30, uint32_t(-1));
+  Field(0x38, uint32_t(-1));
+  Field(0x48, 1);
+  Field(0x4c, 1);
+  Field(0x50, kRData + 0x60);
+  Field(0x6c, kText + 0xa0);
   auto Img = B.build({{"guarded_cxx", kText}});
   Img.ExceptionMetadata.Functions.clear();
   ExceptionFunction EH;
   EH.CodeRange = {kText, kText + 0xf0};
   EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
   EH.Personality = ExceptionPersonality::CxxFrameHandler3;
+  EH.HandlerDataVA = kRData;
   auto &Chain = EH.Registration.emplace();
+  Chain.ScopeTableVA = kRData;
   Chain.RegistrationOffset = -12;
   Chain.TryLevelOffset = -4;
   Chain.SeededTryLevel = -1;
@@ -754,6 +784,8 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
                           {Leave, Leave + 7, -1},
                           {kText + 0xc0, kText + 0xc7, -1}};
   auto &Cxx = EH.Cxx.emplace();
+  Cxx.NativeFuncInfoVA = kRData;
+  Cxx.Magic = 0x19930522;
   Cxx.MaxState = 2;
   Cxx.UnwindMap = {{-1, 0, CxxUnwindAction::ActionKind::None},
                    {-1, 0, CxxUnwindAction::ActionKind::None}};
@@ -765,7 +797,69 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
   Try.Handlers.push_back(Catch);
   Cxx.TryBlocks.push_back(Try);
   Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+  Img.CodePtrRelocSlots.insert(kRData + 0x6c);
   return Img;
+}
+
+TEST(RegistrationTryLevel, CxxFuncInfoPointersKeepTheirRuntimeEntryRole) {
+  auto Img = makeCxxContinuationImage();
+  const auto &EH = Img.ExceptionMetadata.Functions.front();
+  const auto Sources =
+      coff_loader::getCheckedX86CxxCallbackPointerSources(Img, EH);
+  ASSERT_TRUE(Sources);
+  EXPECT_EQ(*Sources, (std::map<va_t, va_t>{{kRData + 0x6c, kText + 0xa0}}));
+  const auto Low = liftEntry(Img, kText);
+  ASSERT_TRUE(Low.RegistrationStates);
+  EXPECT_TRUE(Low.RegistrationStates->Complete);
+  EXPECT_FALSE(Low.OrdinaryModuleAnalysisRoots.count(kText + 0xa0));
+
+  llvm::support::endian::write32le(Img.Segments[1].Data.data() + 0x80,
+                                   kText + 0xa0);
+  Img.CodePtrRelocSlots.insert(kRData + 0x80);
+  const auto Independent = liftEntry(Img, kText);
+  ASSERT_TRUE(Independent.RegistrationStates);
+  EXPECT_TRUE(Independent.OrdinaryModuleAnalysisRoots.count(kText + 0xa0));
+  EXPECT_FALSE(Independent.RegistrationStates->Complete);
+  EXPECT_FALSE(Independent.RegistrationStates->CxxContinuationsComplete);
+  const auto Med =
+      LowToMedConverter().convert(Independent, Arch::X86, BinaryFormat::COFF);
+  for (const auto &Block : Med.Blocks)
+    if (Block.StartAddr == kText + 0xa0)
+      for (const auto &Op : Block.Ops)
+        EXPECT_EQ(Op.RegistrationRoot, MedOp::RegistrationRootKind::None);
+}
+
+TEST(RegistrationTryLevel, CxxPointerRolesRequireTheExactReparsedGraph) {
+  for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+    auto Img = makeCxxContinuationImage();
+    auto &EH = Img.ExceptionMetadata.Functions.front();
+    auto &Cxx = *EH.Cxx;
+    auto &Data = Img.Segments[1].Data;
+    if (Mutation == 0)
+      EH.ParseStatus = ExceptionParseStatus::Partial;
+    if (Mutation == 1)
+      Cxx.UnwindMap.front().ToState = 0;
+    if (Mutation == 2)
+      Cxx.TryBlocks.front().Handlers.front().Adjectives = 1;
+    if (Mutation == 3)
+      Cxx.TryBlocks.front().Handlers.front().CatchObjectOffset = -4;
+    if (Mutation == 4)
+      llvm::support::endian::write32le(Data.data() + 0x6c, kText + 0xa1);
+    if (Mutation == 5)
+      llvm::support::endian::write32le(Data.data() + 12, 2);
+    if (Mutation == 6)
+      EH.HandlerDataVA += 4;
+    if (Mutation == 7)
+      Cxx.NativeEncoding = CxxExceptionInfo::Encoding::FH4;
+    if (Mutation == 8)
+      Data.resize(0x68);
+    if (Mutation == 9)
+      llvm::support::endian::write32le(Data.data() + 0x34, kText + 0x80);
+    if (Mutation == 10)
+      Cxx.IPMap.push_back({kText, -1});
+    EXPECT_FALSE(coff_loader::getCheckedX86CxxCallbackPointerSources(Img, EH))
+        << Mutation;
+  }
 }
 
 TEST(RegistrationTryLevel, DecodesCxxRuntimeContinuationWithoutAnUnknownRoot) {
@@ -801,6 +895,121 @@ TEST(RegistrationTryLevel, RejectsUnownedOrMisdecodedCxxContinuation) {
     EXPECT_FALSE(Func.RegistrationStates->RegistrationLifetimeComplete)
         << Mutation;
     EXPECT_FALSE(Func.RegistrationStates->ChainOperationsComplete) << Mutation;
+  }
+}
+
+TEST(RegistrationTryLevel, CxxRuntimeRootsKeepTheirFrameAndRestoredStack) {
+  auto Img = makeCxxContinuationImage(kText + 0xc0, false, true);
+  const auto Low = liftEntry(Img, kText);
+  ASSERT_TRUE(Low.RegistrationStates);
+  ASSERT_TRUE(Low.RegistrationStates->CxxContinuationsComplete);
+  const auto Med =
+      LowToMedConverter().convert(Low, Arch::X86, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "cxx-runtime-roots"));
+  bool CatchFrame = false, ResumeFrame = false, ResumeStack = false;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (Op.RegistrationRoot ==
+          MedOp::RegistrationRootKind::EstablishedFramePointer) {
+        CatchFrame |= Block.StartAddr == kText + 0xa0;
+        ResumeFrame |= Block.StartAddr == kText + 0xc0;
+        EXPECT_EQ(
+            entryStackOffset(Med, Op.Output, Arch::X86, BinaryFormat::COFF),
+            -4);
+      }
+      if (Op.RegistrationRoot ==
+          MedOp::RegistrationRootKind::RestoredStackPointer) {
+        EXPECT_EQ(Block.StartAddr, kText + 0xc0);
+        EXPECT_EQ(Op.RegistrationStackOffset, -28);
+        EXPECT_EQ(
+            entryStackOffset(Med, Op.Output, Arch::X86, BinaryFormat::COFF),
+            -32);
+        ResumeStack = true;
+      }
+      if (Op.RegistrationRoot ==
+          MedOp::RegistrationRootKind::CallbackStackPointer)
+        EXPECT_FALSE(
+            entryStackOffset(Med, Op.Output, Arch::X86, BinaryFormat::COFF));
+    }
+  EXPECT_TRUE(CatchFrame);
+  EXPECT_TRUE(ResumeFrame);
+  EXPECT_TRUE(ResumeStack);
+}
+
+TEST(RegistrationTryLevel, IncompleteCxxContinuationCannotSeedRestoredESP) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    auto Img = makeCxxContinuationImage(kText + 0xc0, false, true);
+    auto Low = liftEntry(Img, kText);
+    ASSERT_TRUE(Low.RegistrationStates);
+    auto &State = *Low.RegistrationStates;
+    ASSERT_EQ(State.CxxContinuations.size(), 1u);
+    if (Mutation == 0)
+      State.CxxContinuationsComplete = false;
+    if (Mutation == 1) {
+      auto Conflict = State.CxxContinuations.front();
+      Conflict.SavedStackOffset -= 4;
+      State.CxxContinuations.push_back(Conflict);
+    }
+    if (Mutation == 2)
+      Low.OrdinaryModuleAnalysisRoots.insert(kText + 0xc0);
+    if (Mutation == 3)
+      State.CxxContinuations.front().SavedStackOffset = -4;
+    const auto Med = LowToMedConverter().convert(
+        Low, Arch::X86, Mutation == 4 ? BinaryFormat::ELF : BinaryFormat::COFF);
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        EXPECT_NE(Op.RegistrationRoot,
+                  MedOp::RegistrationRootKind::RestoredStackPointer)
+            << Mutation;
+  }
+}
+
+TEST(RegistrationTryLevel,
+     CxxHighIRKeepsStructuredAndAnnotatedRuntimeContinuations) {
+  for (const bool ForceFallback : {false, true}) {
+    SCOPED_TRACE(ForceFallback);
+    auto Img = makeCxxContinuationImage(kText + 0xc0, false, true);
+    const auto Low = liftEntry(Img, kText);
+    auto Med = LowToMedConverter().convert(Low, Arch::X86, BinaryFormat::COFF);
+    ASSERT_TRUE(Med.RegistrationStates);
+    ASSERT_TRUE(Med.RegistrationStates->CxxContinuationsComplete);
+    const auto &Resume = Med.RegistrationStates->CxxContinuations.front();
+    if (ForceFallback)
+      Med.RegistrationStates->Complete = false;
+    auto &Catch =
+        Med.ExceptionMetadata->Cxx->TryBlocks.front().Handlers.front();
+    Catch.CatchObjectOffset = -24;
+    Catch.ParentFrameOffset = 12;
+    const auto High = MedToHighConverter().convert(Med, Arch::X86);
+    bool HasClause = false, HasTransfer = false;
+    walkStmts(High.Body, [&](const HighStmt &Stmt) {
+      if (Stmt.Kind == StmtKind::Goto && Stmt.GotoTarget == Resume.TargetVA)
+        HasTransfer = true;
+      if (Stmt.Kind == StmtKind::Return && Stmt.RetVal &&
+          Stmt.RetVal->Kind == ExprKind::Const)
+        EXPECT_NE(Stmt.RetVal->ConstVal, Resume.TargetVA);
+      for (const auto &Clause : Stmt.EHClauses)
+        if (Clause.Kind == HighEHClauseKind::CxxCatch) {
+          HasClause = true;
+          EXPECT_EQ(Clause.CatchObjectOffset, -24);
+          EXPECT_EQ(Clause.ParentFrameOffset, 12);
+          EXPECT_EQ(Clause.ContinuationVAs,
+                    (std::vector<va_t>{Resume.TargetVA}));
+        }
+    });
+    EXPECT_TRUE(HasClause);
+    if (ForceFallback) {
+      // An unstructured annotation retains the out-of-line handler and its
+      // continuation descriptor without claiming an embedded catch body.
+      EXPECT_GT(High.UnstructuredExceptionRegions, 0u);
+      ASSERT_EQ(High.Body.size(), 1u);
+      EXPECT_EQ(High.Body.front().Kind, StmtKind::CxxTry);
+      EXPECT_FALSE(High.Body.front().EHIsReducible);
+      ASSERT_EQ(High.Body.front().EHClauseBodies.size(), 1u);
+      EXPECT_TRUE(High.Body.front().EHClauseBodies.front().empty());
+    } else {
+      EXPECT_TRUE(HasTransfer);
+    }
   }
 }
 

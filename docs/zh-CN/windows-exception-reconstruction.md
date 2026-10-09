@@ -81,6 +81,13 @@ C++ catch 使用独立的运行时上下文：嵌套异常从活动 try 之上�
 的保存栈值，在同一函数内解码目标并重放恢复后的上下文。无法证明或相互冲突的
 continuation 保留注释，同时撤销原生重建权限。这些推导结果与源 FuncInfo 及父函数的
 标量返回值分别保留。
+只有 FuncInfo 解析器认证过的 callback 指针字段才会被排除出普通间接入口发现。
+同一目标的其他引用仍保留独立普通入口身份。MedIR 为仅由运行时进入的 catch 和 cleanup
+恢复父帧 EBP，将其私有 callback ESP 保留为未知值；经过检查的 continuation 则使用
+保存的父帧 ESP。栈偏移证明、HighIR 与 LLVM 共享同一坐标。非法根操作或相互冲突的
+保存栈值不能获得这些保证。
+结构化 catch 保留到已检查 continuation 的显式转移；回退注释保留 catch-object 偏移、
+parent-frame 偏移与 continuation 列表，同时让原生 handler 保持独立。
 直接 MSVC prologue 必须证明实际 FS:[0] 写入与 registration/state 字段的位置；普通局部
 变量中恰好相同的整数序列不能替代这一证据。
 

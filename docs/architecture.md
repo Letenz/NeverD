@@ -45,6 +45,14 @@ its nested-search minimum and exact returned continuation and SavedESP facts.
 CFG construction closes those targets against function and instruction
 ownership and replays the analysis; it does not turn them into independent
 ordinary entries or insert a fabricated IP-to-state map into FuncInfo.
+The FuncInfo parser also authenticates the exact stored callback-pointer
+fields used by indirect-entry discovery; independent references still create
+ordinary roots. MedIR distinguishes established parent EBP, private callback
+ESP and a continuation's checked saved ESP. Its shared root-shape and
+entry-stack-coordinate helpers are consumed by stack proofs, HighIR and LLVM;
+a generic COPY or a conflicting ordinary entry cannot substitute for that
+runtime contract. Structured and fallback HighIR clauses retain object/frame
+offsets and the checked continuation list.
 `hasCallerCleanupRegistrationABI` owns the current PE32 stack-cleanup check,
 which the writer replays against immutable input. Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction

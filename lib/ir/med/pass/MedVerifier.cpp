@@ -19,6 +19,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
@@ -131,6 +132,13 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
       if (Op.DoesNotReturn && Op.Opcode != NdOp::CALL &&
           Op.Opcode != NdOp::INDIR_CALL)
         Err("no-return marker is attached to a non-call operation", Blk.Id,
+            Op.Addr);
+      if (Op.RegistrationRoot != MedOp::RegistrationRootKind::None) {
+        if (!hasValidRegistrationRootShape(Op))
+          Err("registration runtime root has an invalid carrier", Blk.Id,
+              Op.Addr);
+      } else if (Op.RegistrationStackOffset != 0)
+        Err("restored stack offset has no registration runtime root", Blk.Id,
             Op.Addr);
       // SUBBYTES: input must be wider than output
       if (Op.Opcode == NdOp::SUBBYTES) {

@@ -1740,7 +1740,13 @@ See [Windows Exception Reconstruction](windows-exception-reconstruction.md)
 for the analysis/native support matrix and the fail-closed patch contract.
 
 PE32 registration changes also require the focused state, frame and native
-targets. Native installation needs a source build of the LLVM fork exposing
+targets. Changes to runtime entry stacks also require
+`NeverDMedStackAlignmentTests` and the `MedSSAMultiRoot`,
+`MedSEHEstablisherFrame`, `MedSEHHandlerEntry`, `MedTempIdentity` and
+`Win64Forwarder` regressions in `NeverDLiftTests`. These cover independent
+ordinary entries, restored versus private callback stacks, malformed root
+carriers, and existing x64 handler-frame behavior.
+Native installation needs a source build of the LLVM fork exposing
 `LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need
 `LLVM_NEVERD_X86_REGISTRATION_GS`. The published r3 compiler has no such receipt.

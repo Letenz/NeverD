@@ -101,6 +101,16 @@ decodes the target within the same function, and replays the restored context.
 An unproven continuation or conflicting return retains annotations and
 withdraws native authority. These facts remain separate from the source
 FuncInfo and from the parent's scalar return value.
+Only callback-pointer fields authenticated by the FuncInfo parser are excluded
+from ordinary indirect-entry discovery. Another reference to the same target
+retains its independent ordinary-entry role. MedIR gives runtime-only catch and
+cleanup roots the established parent EBP, keeps their private callback ESP
+unknown, and gives a checked continuation its saved parent ESP. Stack-offset
+proofs, HighIR and LLVM use the same coordinates. Malformed root carriers and
+conflicting saved-stack values cannot acquire those guarantees.
+Structured catches keep an explicit transfer to the checked continuation;
+unstructured annotations retain the catch-object offset, parent-frame offset
+and continuation list while leaving the native handler out of line.
 Direct MSVC prologues must prove the actual FS:[0] write and the registration
 and state-field offsets; matching integer sequences in locals are insufficient.
 
