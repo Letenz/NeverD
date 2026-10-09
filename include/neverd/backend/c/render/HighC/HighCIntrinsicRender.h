@@ -59,8 +59,6 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
 //--- Arch-specific (HighCIntrinsicRenderX86.cpp) ---
 /// The C helpers an x87 value prints through.
 enum class X87CHelper : uint8_t {
-  Value,       ///< the `long double` an x87 register's 80 bits hold
-  Bits,        ///< the 80 bits of a `long double`
   Frndint,     ///< frndint, rounding to an integer by the x87 control word
   Fsqrt,       ///< fsqrt, the correctly rounded square root
   ControlWord, ///< fnstcw, the unit's control word
@@ -75,8 +73,9 @@ std::optional<X87CHelper> x87ValueHelper(Intrinsic Id);
 /// Whether \p V is the x87 control word of an \p TheArch function.
 bool isX87ControlWord(Arch TheArch, const MedVar &V);
 /// Write what the x87 values of a unit need: when \p UsesExtended, the
-/// assertion that the compiler's `long double` is the x87 extended format,
-/// then each helper in \p Used.
+/// assertions that the compiler's `long double` is the x87 extended format
+/// with the size of the `unsigned _BitInt(80)` its bits travel in, then each
+/// helper in \p Used.
 void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
                       const std::set<X87CHelper> &Used);
 

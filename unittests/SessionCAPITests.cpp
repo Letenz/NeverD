@@ -4094,6 +4094,49 @@ TEST_F(SessionCAPITest, TLSDescriptorCallsShowAsCallsThroughTheDescriptor) {
 #endif
 }
 
+TEST_F(SessionCAPITest, DebugParametersNameTheRegistersTheyArriveIn) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "builds an x86-64 System V program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // a and b arrive in xmm0 and xmm1 and c, an x87 long double, on the
+  // stack: the reads of xmm0 and xmm1 are a and b, as the debug
+  // declaration names them, whatever numbering the lift gave them.
+  const auto Source =
+      write("mix.c", "__attribute__((noinline))\n"
+                     "double mix(double a, float b, long double c) {\n"
+                     "  return a * 1.5 + b / 3.0 + (double)(c + c);\n"
+                     "}\n"
+                     "int main(int argc, char **argv) {\n"
+                     "  return (int)mix(argc, 2.0f, 3.0L);\n"
+                     "}\n");
+  const std::string Binary = (Directory / "mix").string();
+  std::string Message;
+  ASSERT_EQ(
+      llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                {NEVERD_RUNTIME_FIXTURE_COMPILER, "-O2", "-g",
+                                 "-fPIE", "-pie", Source, "-o", Binary},
+                                std::nullopt, {}, 60, 0, &Message),
+      0)
+      << Message;
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Mix = neverd_func_find_by_name(Session, "mix");
+  ASSERT_GE(Mix, 0);
+  const std::string HighC =
+      takeString(neverd_decompile(Session, neverd_func_entry(Session, Mix)));
+  ASSERT_FALSE(HighC.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(HighC.find("double mix(double a, float b"), std::string::npos)
+      << HighC;
+  EXPECT_EQ(HighC.find("arg6"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("arg7"), std::string::npos) << HighC;
+  // The x87 value converts where it is used: no helper function.
+  EXPECT_EQ(HighC.find("neverd_x87_value"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("neverd_mem_"), std::string::npos) << HighC;
+#endif
+}
+
 TEST_F(SessionCAPITest, StartAloneCallsTheBoundStartupImportWithMain) {
 #if !defined(__linux__)
   GTEST_SKIP() << "builds a glibc program";
