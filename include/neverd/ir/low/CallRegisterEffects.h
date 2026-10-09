@@ -44,21 +44,38 @@ struct BinaryImage;
 
 /// Bit I names the x86-64 GPR whose 8-byte slot starts at register offset
 /// 8 * I (RAX = bit 0 ... R15 = bit 15).  A write to any byte of a slot
-/// (AL, AH, EAX, ...) sets the whole family.
+/// (AL, AH, EAX, ...) sets the whole family.  Bits 16 through 23 name the
+/// vector argument registers XMM0 through XMM7, families as well.
 using GPRFamilyMask = uint32_t;
 
-/// In a may-write mask, a write to the x86-64 floating-point return register
-/// (any view of XMM0).  A callee that leaves RAX alone may still return a
-/// value there.
-constexpr GPRFamilyMask kFPReturnWriteBit = GPRFamilyMask(1) << 16;
+/// The family of XMM0, the first of the eight vector argument registers.
+constexpr unsigned kX64VectorFamilyBase = 16;
+constexpr unsigned kX64VectorArgumentFamilies = 8;
 
-/// Per GPR family, how many low bytes of the slot are read (0 = none, 1 for
-/// CL, 2 for CX or CH, 4 for ECX, 8 for RCX).
-using GPRReadWidths = std::array<uint8_t, 16>;
+/// In a may-write mask, a write to the x86-64 floating-point return register
+/// (any view of XMM0, which is its family).  A callee that leaves RAX alone
+/// may still return a value there.
+constexpr GPRFamilyMask kFPReturnWriteBit = GPRFamilyMask(1)
+                                            << kX64VectorFamilyBase;
+
+/// The mask of the first \p Count vector argument families.
+constexpr GPRFamilyMask vectorArgumentFamilies(unsigned Count) {
+  return ((GPRFamilyMask(1) << Count) - 1) << kX64VectorFamilyBase;
+}
+
+/// Per family, how many low bytes of the register are read (0 = none, 1 for
+/// CL, 2 for CX or CH, 4 for ECX, 8 for RCX; up to 16 for an XMM register).
+using GPRReadWidths =
+    std::array<uint8_t, kX64VectorFamilyBase + kX64VectorArgumentFamilies>;
 
 /// The GPR family of a register slice, or nullopt when \p RegOff is not one
 /// of the sixteen x86-64 GPRs this summary tracks.
 std::optional<unsigned> gprFamilyOf(Arch A, uint64_t RegOff);
+
+/// The family of a register slice, a GPR or a vector argument register, and
+/// the slice's byte offset in its register.
+std::optional<std::pair<unsigned, unsigned>> registerFamilyOf(Arch A,
+                                                              uint64_t RegOff);
 
 /// One straight-line step of a function, for register liveness.
 struct RegisterStep {
@@ -76,6 +93,9 @@ struct RegisterStep {
   /// Control leaves for code that no summary describes: an import tail
   /// call or an indirect tail jump.
   bool UnknownTailCall = false;
+  /// A copy of a whole vector register into another (destination, source
+  /// family): the source is read as wide as the destination is live.
+  std::optional<std::pair<uint8_t, uint8_t>> VectorCopy;
   /// An indirect or import call that returns.
   bool UnknownCall = false;
   /// The address an import call or tail call names: an executable stub, or

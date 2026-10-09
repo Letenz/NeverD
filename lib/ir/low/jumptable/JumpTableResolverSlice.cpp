@@ -4486,9 +4486,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   };
   const TargetRegInfo &TRI = getTargetRegInfo(CurrentImg->Arch);
   const llvm::ArrayRef<uint64_t> IntParamRegs =
-      TRI.integerParamRegs(CurrentImg->Format);
+      TRI.integerParamRegs(CurrentImg->abiFormat());
   const std::vector<TargetRegisterRange> CallPreservedRanges =
-      TRI.callPreservedRanges(CurrentImg->Format);
+      TRI.callPreservedRanges(CurrentImg->abiFormat());
   struct LaneView {
     VnodeSpace Space = VnodeSpace::CONST;
     uint64_t Container = InvalidVA;
@@ -10550,7 +10550,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
 
       const TargetRegInfo &TRI = getTargetRegInfo(CurrentImg->Arch);
       const llvm::ArrayRef<uint64_t> IntParamRegs =
-          TRI.integerParamRegs(CurrentImg->Format);
+          TRI.integerParamRegs(CurrentImg->abiFormat());
       const uint16_t PointerSize = CurrentImg->getPointerSize();
       std::vector<JumpTableValueOccurrence> StoreWriters;
       std::vector<JumpTableValueOccurrence> MemcpyWriters;

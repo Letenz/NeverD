@@ -22,9 +22,10 @@ namespace neverd {
 
 namespace {
 /// Reading AL at entry is the variadic prologue's `test al, al`: no System V
-/// parameter is passed in RAX.
+/// parameter is passed in RAX.  The alignment `push rax` before a call reads
+/// the whole register, which carries nothing, and is no such test.
 bool readsVectorCount(const GPRReadWidths &Reads) {
-  return Reads[x86reg::RAX / 8] != 0;
+  return Reads[x86reg::RAX / 8] == 1;
 }
 } // namespace
 
@@ -33,6 +34,7 @@ const CallArgumentConvention SysVX64CallArguments = {
     .TheArch = Arch::X64,
     .Format = BinaryFormat::ELF,
     .RegisterArgumentsFromCalleeSummary = true,
+    .VectorArgumentsFromCalleeSummary = true,
     .ImportArgumentsFromPrototype = true,
     .SummaryListsNoParameters = readsVectorCount,
     .UndefinedIncomingScratchRegisters = true,

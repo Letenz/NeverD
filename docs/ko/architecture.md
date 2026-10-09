@@ -623,8 +623,8 @@ personality 인식이나 native lowering에서 추론하면 안 됩니다.
 
 | 디렉터리 | 책임 | 주요 의존성 |
 |----------|------|-------------|
-| `lib/loader` | 포맷 감지, PE/COFF·ELF·Mach-O 로드, 정규화된 `BinaryImage`, 함수 탐지 | LLVM Object API |
-| `lib/lift` | 수작업 x86/i386·AArch64·ARM32 명령어 의미론 | IR 데이터 타입 |
+| `lib/loader` | 포맷 감지, PE/COFF·ELF·Mach-O 로드, 정규화된 `BinaryImage`, 함수 탐지 | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | 수작업 x86/i386·AArch64·ARM32 명령어 의미론 | IR 데이터 타입, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native 디코드 및 아키텍처 lifter로 디스패치 | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | 공통 타입과 LowIR·MedIR·HighIR·intrinsic 정의/변환 | 네 IR 하위 구성 요소 |
 | `lib/pipeline` | 함수 감지와 Low/Med/High/LLVM 경로 조정 | IR, decode, lift, LLVM backend, 디버그 정보, IR pass |
@@ -637,8 +637,10 @@ personality 인식이나 native lowering에서 추론하면 안 됩니다.
 | `lib/sigs` | 시그니처 파싱, 데이터베이스, 매칭 | Loader |
 | `lib/libc` | 알려진 libc 이름과 호출 모델 지원 | 독립 구성 요소 |
 | `lib/safety` | 리프트된 IR 위의 힙 수명 감사와 복사 오버플로 헌트 | Symbolic, Solver |
-| `lib/support` | 공유 바이너리 로드 helper | Loader |
+| `lib/support` | 공유 바이너리 로딩 도우미와 독립 SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | version이 있는 guest state/policy/exit, 고정 runtime ABI, 검사된 guest memory, 생성 IR/object/LinkGraph audit, sealed native linking, experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object 및 JITLink 계약 |
+
+`NeverDDigest`는 `lib/support`의 기존 일괄 SHA-256 구현을 소유합니다. 런타임 기능 검사와 이식 가능한 대체 경로를 유지하며 Loader나 IR에 의존하지 않습니다. `loader/InputDigest.h`는 전달 헤더로 유지됩니다. `NeverDIRLowValidation`이 `lowUndefinedOperationDigest`를 소유하고 Lift가 명시적으로 연결합니다. v1 식별은 기존 도메인, 리틀 엔디언 워드, 저장된 입력 슬롯 6개 모두, 출처 정보와 소스 좌표를 유지합니다. 199개 연산까지 최대 64 KiB 직렬화 버퍼를 사용하고 더 큰 범위는 기존 증분 경로를 사용합니다. 두 경로는 같은 필드를 열거하며 증거 검사를 유지합니다.
 
 ### 분석 및 단순화의 아키텍처 경계
 
@@ -1177,6 +1179,8 @@ Windows 프로세스 시간 정책은 `os/windows/process/`의 `WindowsProcessTi
 `lib/unpack`는 네 계층으로 압축 이미지를 복구합니다. `core`는 조정과 형식 레지스트리를 관리합니다. `format/pe`는 컨테이너를 검증하고 관찰한 메모리, 가져오기와 메타데이터를 재구성합니다. `PETLS.cpp`는 로더 할당과 관찰한 콜백을 기준으로 대체 TLS 레코드를 검증합니다. 보호기 레지스트리나 정적 스텁 서명으로 진입점을 선택하지 않습니다. `dynamic`은 `observeProcess`를 통해 게스트 프로세스를 관찰합니다. `Observation.def`는 각 컨테이너와 명령어 집합을 프로세스 프로필에 대응시키고, 각 명령어 집합의 스택 포인터와 명령 창을 제공합니다. 새 대상은 표의 한 행과 모듈 디렉터리 하나이며, 행이 없는 입력은 이름과 함께 거부됩니다. `ExecutionSession`이 실행 감시를 소유합니다. `ProcessObserver`는 멈춘 프로세스를 읽고 다음 정지 지점을 고르지만 게스트 상태를 바꿀 수는 없습니다. 에뮬레이션 계층이 아는 것은 `defer_unmodeled`뿐입니다. 이는 모델링되지 않은 임포트를, 실행되는 순간 멈추는 불투명 진입점에 바인딩합니다. [언패킹](unpack.md)을 참고하십시오. 지연 로딩은 앞선 초기화 함수가 코드를 생성할 0으로 채운 메모리를 실행 가능한 콜백이나 진입 대상으로 허용합니다. 콜백 배열과 TLS 할당 메타데이터는 검증된 파일 내용이 필요하며 일반 엄격 로딩은 파일 뒷받침 검사를 유지합니다. OS 모델은 호출 소속을 제공하고 호출 준비 또는 일시 중단된 호출자 복원 시 관찰자에게 알립니다. 이 경계에서 전이 감시를 다시 설정하여 콜백과 생성된 진입점이 같은 페이지인 경우도 처리합니다.
 
 `WindowsLibraryHost.cpp`는 DLL 호스트 구성, Windows 로더는 일반 로드·언로드 수명주기를 소유합니다. `ProcessView::inputModule()`은 관측 입력과 호스트 EXE를 구분하여 초기 스냅샷을 늦출 수 있습니다. `ProcessView::callFrame()`은 `IntegerABI`로 정수 인수와 반환 사실을 읽습니다. `dynamic/ProcessTransfer`는 연속 실행 주소 및 스택 일치 증거를 소유하며 `PETLS.cpp`만 프로세스 연결 콜백 완료 여부를 결정합니다.
+
+`PEDelayImports.cpp`는 새 프로세스의 지연 로드 복구와 메타데이터 저장소 제외를 담당합니다. COFF 로더는 설명자 출처에 따라 `Import::IsDelayImport`를 기록하며 Windows 실행 허용은 일반 가져오기만 비교합니다. 검증된 지연 설명자가 해결된 셀의 재바인딩 범위를 정하고 미해결 내부 썽크는 필요 시 해석을 유지합니다. 독립 조회 테이블이 바인딩 수를 제한하여 다음 미해결 셀을 보존합니다. 잘못된 상태는 명시적으로 실패합니다.
 
 `ExportObserver`는 상주 게스트 의존성의 실행 가능한 내보내기도 관측합니다. 모델링된 제공자는 서비스 디스패치로 관측하며 입력 자체 내보내기는 제외합니다. 모듈 변경 시 관측점을 갱신하고 현재 내보내기 식별로만 수정합니다. 기록 수는 선언된 가져오기 한도 이내입니다. DLL 테스트는 시스템 API와 게스트 의존성 헬퍼 모두를 수정하고 네이티브 로드로 에뮬레이션 주소가 남지 않음을 검증합니다.
 

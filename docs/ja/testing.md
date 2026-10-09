@@ -198,6 +198,13 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `NeverDX86DecodeDetailTests` は三つのデコード経路、両方の x64 アドレス幅、符号付き変位の境界、必須接頭辞、実際の i386 disp16、moffs、切り詰め入力、詳細情報なしの再利用を検証します。再配置は正確なフィールドだけに結び付き、幅・位置・値が違う場合は結び付きません。ネイティブ独立性と関係証明のテストはフレーム全体の書き込みを保持し、観測される任意フラグと変更されたシフト候補を拒否します。
 
+`NeverDLowUndefinedDigestTests` は独立した SHA-256 ベクトル、全保存フィールド、符号付き連番のビット、順序、パディング除外、入力の不変性を検査します。インラインバッファの拡張、199/200 操作境界、さらに長い逐次入力を扱います。`LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` は両経路で実際の古い証拠の拒否と再結合を検査します。`NeverDLiftTests` の `InputDigest.*` を維持し、独立実装を変更したら影響する呼び出し側を再ビルドしてください。sanitizer、移植可能経路、ホストの実際の検証範囲を記録します。ダイジェストのマイクロベンチマークだけではネイティブ等価性を証明できません。
+
+```bash
+cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
+build-release/bin/NeverDLowUndefinedDigestTests
+```
+
 `NeverDX86UndefinedEffectsTests` は未定義ビットのメタデータ、定義済み／保持されるフラグ、古い証明書の拒否を検査します。`NeverDX86CarryArithmeticFlagTests` は算術オラクルにより、レジスター形式とメモリ形式の ADC/SBB の補助キャリーを検査します。`NeverDX86LogicIdentityTests` は、同一オペランドの AND が 64 ビットモードで 32 ビットの宛先に書き込む際、対応する 64 ビットレジスターのビット 63:32 をゼロにし、狭い書き込みでは未書き込みのビットを保持することを検査します。
 
 `X86RotateUndefinedEffects.*` は全生カウント、オペランド幅、CL の重なり、上位バイトの別名、メモリ宛先をスカラー算術の参照実装と比較します。`X86BitTestUndefinedEffects.*` はレジスタ/即値インデックス、ソースと宛先の重なり、拡張レジスタ、定義済みフラグ、上位レジスタへの書き込みを検査します。メタデータの反例は変更されたオペランド、符号化、未対応形式を拒否します。ネイティブ証明は相関する読み取りと独立した任意フラグを区別し、生成数予算の境界と不足を検査し、観測可能な未定義 OF を拒否します。全状態の精緻化は選択した証人を受け入れ、ゼロビット証人や変更した候補を拒否します。
@@ -1238,7 +1245,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5003 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5365`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5018 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5380`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 

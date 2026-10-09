@@ -32,6 +32,9 @@ struct LoadOptions {
   QString processor;
   quint64 base = 0, offset = 0, size = 0;
   std::optional<quint64> entry;
+  /// The platform whose conventions a binary file's code follows: "sysv",
+  /// "windows" or "darwin"; empty reads it from the code.
+  QString platform;
 };
 
 /// One analysis worker and the binary it has open.  The session starts the
@@ -71,6 +74,9 @@ public:
     return metadata_.value("architecture").toString();
   }
   QString format() const { return metadata_.value("format").toString(); }
+  /// The platform whose conventions a binary file's code follows, as the
+  /// user reads it; empty for a file that names its own format.
+  QString platformName() const;
   int bitness() const { return metadata_.value("bitness").toInt(64); }
   Address entryAddress() const;
   QString revision() const { return queries_.revision(); }

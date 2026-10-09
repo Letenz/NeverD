@@ -2250,6 +2250,14 @@ Con segno: %4</translation>
         <source>Defined %1 at %2</source>
         <translation>%1 definito in %2</translation>
     </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>Piattaforma: %1, scelta</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>Piattaforma: %1, rilevata dal codice: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2373,6 +2381,14 @@ Con segno: %4</translation>
         <source>Where in the file the loaded bytes start</source>
         <translation>Dove iniziano nel file i byte caricati</translation>
     </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>Piatta&amp;forma</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>La piattaforma per cui il codice è stato compilato, di cui segue le convenzioni: come le chiamate passano gli argomenti, quali registri preservano e le dimensioni dei tipi C</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2415,6 +2431,25 @@ Con segno: %4</translation>
     <message>
         <source>Thumb (AArch32)</source>
         <translation>Thumb (AArch32)</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple (macOS, iOS)</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>Rileva dal codice</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V (Linux, BSD, Android)</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>

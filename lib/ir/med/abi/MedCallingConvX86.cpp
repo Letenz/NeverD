@@ -230,6 +230,17 @@ void detectXMMParams(
       case NdOp::INT_SUB:
         // `x ^ x` / `x - x`: the value is discarded, not consumed.
         return Op.NumInputs != 2 || !(Op.Inputs[0] == Op.Inputs[1]);
+      case NdOp::CALL:
+      case NdOp::INDIR_CALL:
+        // A floating argument passes only the bytes the callee reads.
+        for (uint8_t I = 0; I < Op.NumInputs; ++I) {
+          if (!In[I])
+            continue;
+          const uint16_t Width = Op.vectorArgumentWidth(I);
+          if (!Width || (In[I] & byteMask(Width)))
+            return true;
+        }
+        return false;
       default:
         return true; // a genuine consumer of an incoming byte
       }
@@ -291,6 +302,18 @@ void detectXMMParams(
         const MedOp &Op = *Use.Op;
         if (isSelfCopyOf(Op))
           continue;
+        // A call passes the register on as a floating argument of the
+        // width its callee reads.
+        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+          for (uint8_t I = 0; I < Op.NumInputs; ++I)
+            if (Op.Inputs[I] == Alias) {
+              const uint16_t Read = Op.vectorArgumentWidth(I);
+              if (Read != 4 && Read != 8)
+                return 0;
+              Width = std::max(Width, Read);
+            }
+          continue;
+        }
         if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
             Op.Output.Size == LiveIn.Size &&
             (Op.Output.Kind == MedVar::Temp ||
@@ -310,6 +333,10 @@ void detectXMMParams(
         }
       }
     }
+    // A live-in read only as a scalar view (the argument a call passes
+    // on) is a scalar of that view's width.
+    if (LiveIn.Size == 4 || LiveIn.Size == 8)
+      return Width ? std::min<uint16_t>(Width, LiveIn.Size) : LiveIn.Size;
     if (!Width || Width >= LiveIn.Size ||
         liveInBytesUsed(LiveIn, byteMask(LiveIn.Size) & ~byteMask(Width)))
       return 0;

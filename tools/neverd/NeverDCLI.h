@@ -397,6 +397,7 @@ extern llvm::cl::opt<std::string> ItemEncoding;
 extern llvm::cl::opt<std::string> OperandAddr;
 extern llvm::cl::opt<std::string> LoadLoader;
 extern llvm::cl::opt<std::string> LoadProcessor;
+extern llvm::cl::opt<std::string> LoadPlatform;
 extern llvm::cl::opt<std::string> LoadBase;
 extern llvm::cl::opt<std::string> LoadOffset;
 extern llvm::cl::opt<std::string> LoadSize;

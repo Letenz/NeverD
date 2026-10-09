@@ -72,6 +72,24 @@ private:
 llvm::Expected<RebuiltImage>
 rebuild(const Image &Input, const Capture &Observed, const RebuildPlan &Plan);
 
+struct DelayImportRange {
+  uint64_t Begin, End;
+};
+struct DelayImportState {
+  std::vector<DelayImportRange> Metadata;
+  struct Binding {
+    uint64_t RVA;
+    const ExportBinding *Target;
+  };
+  std::vector<Binding> Resolved;
+};
+/// Clear process-local delay handles and bound caches. Validated descriptors
+/// own exact cells: resolved exports need fresh bindings, while internal
+/// thunks retain their lazy behavior. Other delay metadata cannot become IAT.
+llvm::Expected<DelayImportState>
+restoreDelayImports(const Image &Input, const Capture &Observed,
+                    llvm::MutableArrayRef<uint8_t> Memory);
+
 /// Recover a replaced TLS directory from allocation identity and observed
 /// callback entries. Ambiguous records are errors, not arbitrary choices.
 llvm::Expected<std::optional<uint64_t>>

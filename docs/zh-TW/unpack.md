@@ -77,6 +77,8 @@ neverd unpack packed.exe -o unpacked.exe \
 
 受檢執行逐條放行指令。x64 Unicorn/KVM/WHP 支援以時間和事件限額執行的 `direct-user-x64-v1`，不計算指令數。混合程式碼世代和重複寫入可能需要額外的處理器單步。復原範圍是輸入映像中實際到達的路徑；不會把映像外產生的程式碼提升為該映像的入口。入口前的初始化可能產生無法移植的外部狀態，重新執行 TLS 回呼也可能產生副作用。未建模 API 明確停止。導入修復涵蓋通過驗證的六至八位元組 x64 呼叫視窗及七或八位元組位址載入；其他形式和未執行路徑仍未解決。虛擬化程式碼保持原樣。
 
+基於 RVA 的延遲匯入保留尚未解析的映像內跳板，並依據已觀測的匯出身分重新繫結已解析單元，避免程式輔助函式重複已完成的工作。獨立且完整終止的查找表限定每段繫結的數量，不會占用下一個待解析 IAT 單元。重建清除處理程序私有 DLL 控制代碼和繫結快取參照，並將延遲匯入中繼資料排除在一般 IAT 搜尋之外。描述符和指標陣列必須完整終止，名稱、範圍及儲存歸屬必須有效。未知目標、無效跳板、舊式 VA 描述符及儲存衝突均明確報錯。
+
 ## 驗證
 
 `NeverDUnpackTests` 驗證容器、安全 IAT 分配、衝突證據及 TLS 拒絕。`NeverDUnpackExecutionTests` 在 Unicorn、KVM、WHP 上以同一通用路徑測試 UPX NRV2B/NRV2D/NRV2E/LZMA 與 CRT 樣本，對照獨立連結程式完成自身初始化後的節內容，並要求可用後端輸出一致。`UnpackGeneratedTests.cpp` 生成獨立 x86-64/ARM64 程式，測試轉移、分階段載入與導入修復，包括 x64 Unicorn/KVM/WHP 直接執行；原生 CI 不接受必要案例跳過。`NeverDUnpackPublicTests` 涵蓋 C ABI 與 CLI。`unittests/unpack/fixtures/Makefile` 可重建 UPX 樣本。原生 KVM/WHP CI 清單（`NativeCPUTests.def`）也要求關鍵 PE、TLS、匯入和轉移單元測試通過。純格式單元測試在 CPU 與驅動程式模擬皆關閉的建置中仍可用。

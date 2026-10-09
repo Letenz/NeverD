@@ -2254,6 +2254,14 @@ Signed: %4</source>
         <source>Defined %1 at %2</source>
         <translation>%1 определено по адресу %2</translation>
     </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>Платформа: %1, выбрана вручную</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>Платформа: %1, определена по коду: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2377,6 +2385,14 @@ Signed: %4</source>
         <source>Where in the file the loaded bytes start</source>
         <translation>С какого места файла начинаются загружаемые байты</translation>
     </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>П&amp;латформа</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>Платформа, для которой собран код и чьим соглашениям он следует: как вызовы передают аргументы, какие регистры сохраняются и каковы размеры типов C</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2419,6 +2435,25 @@ Signed: %4</source>
     <message>
         <source>Thumb (AArch32)</source>
         <translation>Thumb (AArch32)</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple (macOS, iOS)</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>Определить по коду</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V (Linux, BSD, Android)</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>

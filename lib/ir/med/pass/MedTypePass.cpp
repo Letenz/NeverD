@@ -504,9 +504,10 @@ static uint16_t definedLowBytesRec(
   return Result;
 }
 
-static TypeRef inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI,
-                               Arch TheArch, bool &ReturnViaX87,
-                               uint16_t &DefinedReturnBytes) {
+static TypeRef
+inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
+                bool &ReturnViaX87, uint16_t &DefinedReturnBytes,
+                const std::map<va_t, uint16_t> *CalleeFloatReturns) {
   ReturnViaX87 = false;
   DefinedReturnBytes = 0;
   uint16_t DefaultSize = TRI.PointerSize > 0 ? TRI.PointerSize : 4;
@@ -716,6 +717,15 @@ static TypeRef inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI,
                                      : fpReturnElemSize(Defs, Rit2->Output, 0);
             if (!E && IsFPRegReturn)
               E = scalarFPLoadElemSize(Defs, Rit2->Output, 0);
+            // A call whose callee returns its float in this register.
+            if (!E && IsFPRegReturn && CalleeFloatReturns &&
+                (Rit2->Opcode == NdOp::CALL ||
+                 Rit2->Opcode == NdOp::INDIR_CALL) &&
+                Rit2->NumInputs > 0 && Rit2->Inputs[0].isConst())
+              if (const auto Callee =
+                      CalleeFloatReturns->find(Rit2->Inputs[0].ConstVal);
+                  Callee != CalleeFloatReturns->end())
+                E = Callee->second;
             if (E) {
               FirstFloat = &*Rit2;
               FloatElem = E;
@@ -1023,11 +1033,13 @@ static void inferLocalTypes(MedFunc &Func) {
 // Entry point
 //===----------------------------------------------------------------------===//
 
-void inferMedTypes(MedFunc &Func, Arch TheArch) {
+void inferMedTypes(MedFunc &Func, Arch TheArch,
+                   const std::map<va_t, uint16_t> *CalleeFloatReturns) {
   const auto &TRI = getTargetRegInfo(TheArch);
   bool ReturnViaX87 = false;
-  Func.ReturnType = inferReturnType(Func, TRI, TheArch, ReturnViaX87,
-                                    Func.DefinedReturnBytes);
+  Func.ReturnType =
+      inferReturnType(Func, TRI, TheArch, ReturnViaX87, Func.DefinedReturnBytes,
+                      CalleeFloatReturns);
   Func.FPReturnViaX87 = ReturnViaX87;
   inferParamTypes(Func, TRI);
   inferLocalTypes(Func);

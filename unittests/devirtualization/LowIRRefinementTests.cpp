@@ -430,6 +430,32 @@ TEST(LowIRRefinement, MissingStaleAndMalformedEvidenceRefuses) {
   expect(B, B, Status::Invalid, static_cast<Witness>(255));
 }
 
+TEST(LowIRRefinement, StaleUnusedInputRefusesAcrossDigestStorageBoundaries) {
+  for (unsigned Count : {3U, 4U, 199U, 200U, 201U}) {
+    SCOPED_TRACE(Count);
+    Program Original, Candidate;
+    std::vector<LowOp> Ops(Count, op(NdOp::NOP));
+    Original.instruction(Ops);
+    Original.finish();
+    Candidate.finish();
+    expect(Original, Candidate, Status::Proved);
+
+    // Unused input storage remains part of the instruction evidence, even
+    // though this change cannot affect the execution of these NOPs.
+    auto &Stored = Original.Function.Blocks[0].Ops;
+    Stored[Count - 1].Inputs[5].AddressOwnerVA = UINT64_C(0x8123456789abcdef);
+    const auto Stale = Original.check(Candidate);
+    EXPECT_EQ(Stale.Status, Status::Invalid) << Stale.Diagnostic;
+    EXPECT_FALSE(Stale.Certificate.has_value());
+    EXPECT_EQ(Stale.Diagnostic,
+              "undefined-effect operation digest is stale or missing");
+
+    Original.Records[0].Effects.OperationDigest = lowUndefinedOperationDigest(
+        llvm::ArrayRef<LowOp>(Stored).take_front(Count));
+    expect(Original, Candidate, Status::Proved);
+  }
+}
+
 TEST(LowIRRefinement, LiftedWitnessCannotReadAnUnboundTemporary) {
   Program A, B;
   auto &E =
