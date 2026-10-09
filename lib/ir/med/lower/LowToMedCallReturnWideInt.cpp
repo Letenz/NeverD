@@ -40,7 +40,8 @@ void LowToMedConverter::modelKnownWideCallReturns(MedFunc &Func) {
                                        : (RegVarMap[HiKey] = allocVarId());
 
   // A call site returns i64 in the pair when it is a direct CALL to a known
-  // i64 callee, or an indirect INDIR_CALL flagged as a threaded i64 accumulator.
+  // i64 callee, or an indirect INDIR_CALL flagged as a threaded i64
+  // accumulator.
   auto returnsPair = [&](const MedOp &Op) -> bool {
     if (Op.Opcode == NdOp::CALL)
       return HaveDirect && Op.NumInputs >= 1 && Op.Inputs[0].isConst() &&
@@ -166,6 +167,29 @@ void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
   if (HiId < 0)
     HiId = NextId++;
 
+  // Whether block \p From reaches block \p To along successor edges.
+  auto reaches = [&](int From, int To) {
+    std::set<int> Seen;
+    std::vector<int> Work{From};
+    while (!Work.empty()) {
+      const int Id = Work.back();
+      Work.pop_back();
+      if (Id == To)
+        return true;
+      if (!Seen.insert(Id).second)
+        continue;
+      for (const auto &B : Func.Blocks)
+        if (B.Id == Id) {
+          Work.insert(Work.end(), B.Succs.begin(), B.Succs.end());
+          break;
+        }
+    }
+    return false;
+  };
+  // Whether a successor of block \p BlockId merges \p RegOff from it in a
+  // PHI and leads back to it: a loop carries the register around.  A join
+  // that does not, such as the exit paths after a call to `main`, merely
+  // collects whatever each path left in the register.
   auto succHasRegPhi = [&](int BlockId, uint64_t RegOff) -> bool {
     for (const auto &B : Func.Blocks) {
       bool IsSucc = false;
@@ -174,7 +198,7 @@ void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
           for (int S : Cur.Succs)
             if (S == B.Id)
               IsSucc = true;
-      if (!IsSucc)
+      if (!IsSucc || !reaches(B.Id, BlockId))
         continue;
       for (const auto &Phi : B.Phis)
         if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == RegOff)
