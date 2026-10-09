@@ -58,6 +58,9 @@ NEVERD_X86_ENCODING(uint8_t, kIntImm8, 0xCD)
 NEVERD_X86_ENCODING(uint8_t, kNop, 0x90)
 NEVERD_X86_ENCODING(uint8_t, kJmpIndirectOp, 0xFF)
 NEVERD_X86_ENCODING(uint8_t, kJmpIndirectModRM, 0x25)
+// `jmp [ebx+disp32]`: a 32-bit position-independent PLT entry jumps through
+// its GOT entry by the GOT address its caller holds in EBX.
+NEVERD_X86_ENCODING(uint8_t, kJmpIndirectGOTModRM, 0xA3)
 NEVERD_X86_ENCODING(uint8_t, kFSSegmentPrefix, 0x64)
 NEVERD_X86_ENCODING(uint8_t, kBndPrefix, 0xF2)
 // endbr64 and endbr32 (F3 0F 1E FA/FB) read as little-endian words.

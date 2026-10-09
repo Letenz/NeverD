@@ -102,10 +102,11 @@ MedOp callTo(va_t Target, int Version) {
       {MedVar::makeConst(Target, 8, ConstantAddressProvenance::CodeAddress)});
 }
 
-std::vector<bool> settle(std::vector<MedFunc> Funcs) {
+std::vector<bool> settle(std::vector<MedFunc> Funcs,
+                         BinaryFormat Format = BinaryFormat::ELF) {
   BinaryImage Image;
   Image.Arch = Arch::X64;
-  Image.Format = BinaryFormat::ELF;
+  Image.Format = Format;
   PipelineResult Result;
   Result.MedFuncs = std::move(Funcs);
   settleReturnContracts(Image, Result);
@@ -173,6 +174,59 @@ TEST(ReturnContracts, AFunctionThatNeverReturnsReturnsNoValue) {
   Abort.DoesNotReturn = true;
   EXPECT_EQ(settle({function(CalleeEntry, {block({seed(), Abort})})}),
             std::vector<bool>{true});
+}
+
+TEST(ReturnContracts, AWrapperOfADestructorReturnsNoValue) {
+  // MSVC's destructor decoration declares no return type.  A function that
+  // only hands back what the destructor left in RAX returns nothing; one
+  // that computes with it returns a value.
+  MedFunc Destructor =
+      function(CalleeEntry, {block({seed(), returning(rax(0))})});
+  Destructor.Name = "??1SC_DEVICE@@QEAA@XZ";
+  const MedFunc Wrapper = function(
+      CallerEntry, {block({callTo(CalleeEntry, 1), returning(rax(1))})});
+  const MedFunc Computing =
+      function(0x3000, {block({callTo(CalleeEntry, 1),
+                               operation(NdOp::INT_ADD, rax(2),
+                                         {rax(1), MedVar::makeConst(1, 8)}),
+                               returning(rax(2))})});
+  EXPECT_EQ(settle({std::move(Destructor), Wrapper, Computing}),
+            (std::vector<bool>{true, true, false}));
+}
+
+TEST(ReturnContracts, ACallToARoutineDeclaredVoidHandsBackNoValue) {
+  // A thunk that jumps to _set_app_type hands back what that routine, void
+  // by its prototype, left in RAX, whatever its body seems to return.
+  MedFunc Routine = function(
+      CalleeEntry,
+      {block({seed(), operation(NdOp::COPY, rax(1), {MedVar::makeConst(7, 8)}),
+              returning(rax(1))})});
+  Routine.Name = "_set_app_type";
+  const MedFunc Thunk = function(
+      CallerEntry, {block({callTo(CalleeEntry, 1), returning(rax(1))})});
+  EXPECT_EQ(settle({std::move(Routine), Thunk}, BinaryFormat::COFF),
+            (std::vector<bool>{false, true}));
+}
+
+TEST(ReturnContracts, AStubOfAVoidImportReturnsNoValue) {
+  // A PLT stub hands back what __cxa_finalize, void by its prototype, left
+  // in RAX: `jmp *slot`, the slot bound to the import.
+  constexpr va_t Slot = 0x4018;
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::ELF;
+  Import Finalize;
+  Finalize.Name = "__cxa_finalize";
+  Finalize.IATAddr = Slot;
+  Image.Imports.push_back(Finalize);
+  PipelineResult Result;
+  Result.MedFuncs = {function(
+      CallerEntry,
+      {block({operation(NdOp::LOAD, temporary(4), {MedVar::makeConst(Slot, 8)}),
+              operation(NdOp::INDIR_CALL, rax(1), {temporary(4)}),
+              returning(rax(1))})})};
+  settleReturnContracts(Image, Result);
+  EXPECT_TRUE(Result.MedFuncs.front().ReturnsNoValue);
 }
 
 TEST(ReturnContracts, ADeclaredReturnTypeStays) {

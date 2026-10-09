@@ -111,7 +111,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
       inferMedTypes(MF, Img.Arch);
   modelWideIntReturns(Img, Result);
   bindFloatCallResults(Img, Result);
-  settleReturnContracts(Img, Result);
+  settleReturnContracts(Img, Result, Dbg);
 
   auto AllFuncNames = buildFuncNameMap(Img, Result);
   // Without callee summaries, a convention's call arguments, and the

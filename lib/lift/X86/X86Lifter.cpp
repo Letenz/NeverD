@@ -14,7 +14,6 @@
 
 #include "X86BitTestUndefined.h"
 #include "X86DoubleShiftUndefined.h"
-#include "X86InvalidEncoding.h"
 #include "X86LiftDetail.h"
 #include "X86ShiftUndefined.h"
 #include "X86XaddAudit.h"
@@ -814,8 +813,6 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
     return;
 
   auto &X86 = Detail->x86;
-  if (hasInvalidX86SemanticEncoding(*Insn, TargetArch))
-    throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
   LiftState S(Insn->address, static_cast<uint16_t>(Insn->size), Ops);
   LowInstructionUndefinedEffects EffectsDraft;
   S.UndefinedEffects = UndefinedEffects ? &EffectsDraft : nullptr;

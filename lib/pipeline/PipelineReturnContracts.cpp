@@ -22,13 +22,18 @@
 ///  - some other value.
 /// A function returns no value when every path hands back nothing defined,
 /// or when one does and none hands back a deliberate value, unless a caller
-/// reads what a call to it returns.  Code generation keeps the register.
+/// reads what a call to it returns.  What a declaration says decides first:
+/// a bound source signature, debug information, or the MSVC rule that a
+/// destructor returns nothing; a routine known by name returns what its
+/// prototype declares.  Code generation keeps the register.
 ///
 //===----------------------------------------------------------------------===//
 
 #include "PipelineReturnModelingDetail.h"
 
 #include "neverd/Common.h"
+#include "neverd/backend/c/MsvcCallee.h"
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -187,10 +192,16 @@ bool isComparison(NdOp Opcode) {
 
 class ReturnContracts {
 public:
-  ReturnContracts(const BinaryImage &Img, PipelineResult &Result)
-      : Img(Img), Result(Result), TRI(getTargetRegInfo(Img.Arch)) {
-    for (const MedFunc &Func : Result.MedFuncs)
+  ReturnContracts(const BinaryImage &Img, PipelineResult &Result,
+                  const DebugContext *Dbg)
+      : Img(Img), Result(Result), Dbg(Dbg), TRI(getTargetRegInfo(Img.Arch)) {
+    for (const MedFunc &Func : Result.MedFuncs) {
       Facts.emplace(Func.Entry, collectFacts(Func, TRI, Img.Arch));
+      if (const std::optional<bool> None = declaredNoValue(Func))
+        Declared.emplace(Func.Entry, *None);
+      if (!Func.Name.empty())
+        Names.emplace(Func.Entry, Func.Name);
+    }
   }
 
   void settle() {
@@ -200,7 +211,9 @@ public:
     for (unsigned Round = 0; Round < MaxRounds; ++Round) {
       bool Changed = false;
       for (const MedFunc &Func : Result.MedFuncs) {
-        const bool None = returnsNoValue(Func);
+        const auto Declaration = Declared.find(Func.Entry);
+        const bool None = Declaration != Declared.end() ? Declaration->second
+                                                        : returnsNoValue(Func);
         bool &Known = NoValue[Func.Entry];
         Changed |= Known != None;
         Known = None;
@@ -215,9 +228,46 @@ public:
 private:
   const BinaryImage &Img;
   PipelineResult &Result;
+  const DebugContext *Dbg;
   const TargetRegInfo &TRI;
   std::map<va_t, FunctionFacts> Facts;
   std::map<va_t, bool> NoValue;
+  /// What each declared function's declaration says: true for none.
+  std::map<va_t, bool> Declared;
+  std::map<va_t, std::string> Names;
+
+  /// Whether \p Func's declaration says it returns nothing, as the C
+  /// writers read it: a bound source signature, else debug information, else
+  /// the MSVC rule that a destructor returns nothing.  None when nothing
+  /// declares it.
+  std::optional<bool> declaredNoValue(const MedFunc &Func) const {
+    if (Func.SourceTypeHint && Func.SourceTypeHint->ReturnType)
+      return Func.SourceTypeHint->ReturnType->Kind == NdTypeKind::Void;
+    if (Dbg)
+      if (const auto Debug = Dbg->resolveFunction(Func.Entry);
+          Debug && Debug->ReturnType)
+        return Debug->ReturnType->Kind == NdTypeKind::Void;
+    if (isMsvcDestructorName(Func.Name))
+      return true;
+    return std::nullopt;
+  }
+
+  /// Whether a routine called \p Name returns nothing by its prototype, or
+  /// as an MSVC destructor.  None when neither knows it.
+  std::optional<bool> namedNoValue(llvm::StringRef Name) const {
+    if (Name.empty())
+      return std::nullopt;
+    if (isMsvcDestructorName(Name))
+      return true;
+    const std::string CName =
+        importNamesAreCNames(Img.Format)
+            ? Name.str()
+            : cNameOfSymbol(Name, Img.Format, Img.Arch).str();
+    if (const std::optional<bool> Returns =
+            libc::libcReturnsValue(CName, Img.abiFormat()))
+      return !*Returns;
+    return std::nullopt;
+  }
 
   /// Whether this settles the function's return type: an integer one the lift
   /// inferred, not a declaration's, a floating-point or an aggregate one.
@@ -253,19 +303,20 @@ private:
                                               Load.NumInputs >= 1 &&
                                               Load.Inputs[0].isConst())
           Slot = static_cast<va_t>(Load.Inputs[0].ConstVal);
-    if (Target)
+    // A callee's declaration decides, then a prototype of its name, then
+    // what this pass settled for it.
+    if (Target) {
+      if (const auto Declaration = Declared.find(*Target);
+          Declaration != Declared.end())
+        return Declaration->second;
+      if (const auto Name = Names.find(*Target); Name != Names.end())
+        if (const std::optional<bool> None = namedNoValue(Name->second))
+          return *None;
       if (const auto Known = NoValue.find(*Target); Known != NoValue.end())
         return Known->second;
+    }
     const Import *Imp = importAt(Target ? *Target : Slot.value_or(InvalidVA));
-    if (!Imp || Imp->Name.empty())
-      return false;
-    const std::string Name =
-        importNamesAreCNames(Img.Format)
-            ? Imp->Name
-            : cNameOfSymbol(Imp->Name, Img.Format, Img.Arch).str();
-    const std::optional<bool> Returns =
-        libc::libcReturnsValue(Name, Img.abiFormat());
-    return Returns && !*Returns;
+    return Imp && namedNoValue(Imp->Name).value_or(false);
   }
 
   /// What \p Value hands back, each path a PHI joins counted on its own.
@@ -439,8 +490,9 @@ private:
 
 } // namespace
 
-void settleReturnContracts(const BinaryImage &Img, PipelineResult &Result) {
-  ReturnContracts(Img, Result).settle();
+void settleReturnContracts(const BinaryImage &Img, PipelineResult &Result,
+                           const DebugContext *Dbg) {
+  ReturnContracts(Img, Result, Dbg).settle();
 }
 
 } // namespace neverd

@@ -623,6 +623,15 @@ TEST(IsNoReturnFunction, MsvcGsHelpers) {
   EXPECT_TRUE(isNoReturnFunction("TerminateProcess"));
 }
 
+TEST(IsNoReturnFunction, MicrosoftRuntimeTerminators) {
+  EXPECT_TRUE(isNoReturnFunction("_amsg_exit"));
+  EXPECT_TRUE(isNoReturnFunction("_invoke_watson"));
+  EXPECT_TRUE(isNoReturnFunction("_invalid_parameter_noinfo_noreturn"));
+  EXPECT_TRUE(isNoReturnFunction("__std_terminate"));
+  // A program's own function may take the name terminate.
+  EXPECT_FALSE(isNoReturnFunction("terminate"));
+}
+
 TEST(IsNoReturnFunction, SometimesReturningExcluded) {
   EXPECT_FALSE(isNoReturnFunction("warn"));
   EXPECT_FALSE(isNoReturnFunction("warnx"));

@@ -247,6 +247,28 @@ TEST(I386CallContract, StoresThroughACopyOfESPAreArgumentsByOffset) {
   EXPECT_NE(Call.find("(arg0, arg1)"), std::string::npos) << Call;
 }
 
+TEST(I386CallContract, AStoreWiderThanASlotFillsEachSlotItCovers) {
+  // clang -O0 copies an eight-byte structure argument into the outgoing area
+  // with one `movsd [esp], xmm0`: its two halves are the first two arguments.
+  std::vector<uint8_t> Code = {
+      0x55,                         // push ebp
+      0x89, 0xE5,                   // mov ebp, esp
+      0x83, 0xEC, 0x18,             // sub esp, 0x18
+      0xF2, 0x0F, 0x10, 0x45, 0x08, // movsd xmm0, [ebp+8]
+      0x89, 0xE0,                   // mov eax, esp
+      0xF2, 0x0F, 0x11, 0x00,       // movsd [eax], xmm0
+  };
+  for (uint8_t B : callThroughSlot(slot(0)))
+    Code.push_back(B);
+  for (uint8_t B : {0x83, 0xC4, 0x18, // add esp, 0x18
+                    0x5D,             // pop ebp
+                    0xC3})            // ret
+    Code.push_back(B);
+  const std::string Call = callIn(makeImage(Code, {"calloc"}), "calloc");
+  EXPECT_EQ(Call.find("unknown"), std::string::npos) << Call;
+  EXPECT_NE(Call.find(">> 32"), std::string::npos) << Call;
+}
+
 /// The HighC signature of the function at Text of \p Img, decompiled alone.
 std::string signatureOf(const BinaryImage &Img, const std::string &Name) {
   llvm::LLVMContext Ctx;

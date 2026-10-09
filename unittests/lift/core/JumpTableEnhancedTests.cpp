@@ -4161,6 +4161,10 @@ static fs::path selectorOccurrenceX64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_selector_occurrence.o";
 }
 
+static fs::path fieldReloadObj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_field_reload.o";
+}
+
 static std::string lowFunctionBody(const std::string &Low,
                                    const std::string &Name);
 
@@ -4603,6 +4607,37 @@ TEST_F(JTE_X86_64, InclusiveBoundRejectsPreLoadRegisterReuse) {
   auto R = liftToLLVMIRUnopt(inclusivePreLoadReuseObj());
   expectCasesZeroAndOne(R);
   EXPECT_FALSE(llvmHasSwitchCase(R.out, 2)) << R.out;
+}
+
+// GCC bounds a switch on a structure field as `cmp dword [rdi], 2; ja` and
+// loads the index again with `mov eax, [rdi]`, as MinGW's _matherr does.
+// Nothing between the two loads writes memory, so they read one value: the
+// guard bounds the index, and slot 3 is no case.
+TEST_F(JTE_X86_64, GuardOnAFieldBoundsTheReloadedIndex) {
+  auto R = liftToLowIR(fieldReloadObj());
+  ASSERT_EQ(R.exitCode, 0) << R.err;
+  const std::string Body = lowFunctionBody(R.out, "jt_field_reload");
+  ASSERT_FALSE(Body.empty()) << R.out;
+  EXPECT_NE(Body.find("cst:0x258:4"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("cst:0x259:4"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("cst:0x25A:4"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("cst:0x2BB:4"), std::string::npos) << Body;
+}
+
+// A store between the two loads may write the field, and a load through
+// another pointer reads another value: the guard bounds neither, and slot 3
+// is never a case.
+TEST_F(JTE_X86_64, GuardOnAFieldBoundsNoOtherLoad) {
+  auto R = liftToLowIR(fieldReloadObj());
+  ASSERT_EQ(R.exitCode, 0) << R.err;
+  for (const auto &[Name, Poison] :
+       {std::pair{"jt_field_reload_store", "cst:0x26B:4"},
+        std::pair{"jt_field_reload_other", "cst:0x275:4"}}) {
+    SCOPED_TRACE(Name);
+    const std::string Body = lowFunctionBody(R.out, Name);
+    ASSERT_FALSE(Body.empty()) << R.out;
+    EXPECT_EQ(Body.find(Poison), std::string::npos) << Body;
+  }
 }
 
 TEST_F(JTE_X86_64, IndexIdentityMergesEqualDiamondDefinitions) {

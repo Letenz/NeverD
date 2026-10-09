@@ -62,6 +62,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_32/X86_32_MulDivTests.cpp
   x86_32/X86_32_NativeHostModeTests.cpp
   x86_32/X86_32_PipelineE2ETests.cpp
+  x86_32/X86_32_PICLibraryTests.cpp
   x86_32/X86_32_RotateTests.cpp
   x86_32/X86_32_SetccTests.cpp
   x86_32/X86_32_SignExtTests.cpp
@@ -2130,6 +2131,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_target_ownership.s
   x86_64/test_jumptable_selector_occurrence.s
   x86_64/test_jumptable_mask_equal_bound.s
+  x86_64/test_jumptable_field_reload.s
   x86_64/test_module_address_owner_induction.s
   x86_64/test_module_readonly_table_writer.s
   x86_64/test_extern_calls.c
@@ -3168,6 +3170,28 @@ if(LLD_EXEC)
     COMMENT "Linking AArch64 ELF call-argument PHI fixture")
   list(APPEND ELF_EXECUTABLES ${call_arg_phi_a64_elf_obj}
                               ${call_arg_phi_a64_elf_so})
+
+  # An i386 shared library as GCC builds one: its PLT entry jumps through the
+  # GOT by the address in EBX.
+  set(pic_library_i386_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_pic_library_i386.s")
+  set(pic_library_i386_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_pic_library_i386.o")
+  set(pic_library_i386_so
+      "${CMAKE_CURRENT_BINARY_DIR}/test_pic_library_i386.so")
+  add_custom_command(
+    OUTPUT ${pic_library_i386_obj}
+    COMMAND ${CLANG_EXEC} -target i386-linux-gnu -c ${pic_library_i386_src}
+            -o ${pic_library_i386_obj}
+    DEPENDS ${pic_library_i386_src}
+    COMMENT "Compiling i386 PIC library fixture")
+  add_custom_command(
+    OUTPUT ${pic_library_i386_so}
+    COMMAND ${LLD_EXEC} -shared -m elf_i386 -o ${pic_library_i386_so}
+            ${pic_library_i386_obj}
+    DEPENDS ${pic_library_i386_obj}
+    COMMENT "Linking i386 PIC library fixture")
+  list(APPEND ELF_EXECUTABLES ${pic_library_i386_obj} ${pic_library_i386_so})
 
   set(native_pointer_elf_src
       "${CMAKE_CURRENT_SOURCE_DIR}/format/test_elf_pointer_reloc_x64.s")

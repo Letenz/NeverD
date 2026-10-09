@@ -13,8 +13,10 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialogButtonBox>
 #include <QDirIterator>
 #include <QFile>
+#include <QFontInfo>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -24,16 +26,20 @@
 #include <QMainWindow>
 #include <QMenuBar>
 #include <QMetaEnum>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSet>
 #include <QSqlDatabase>
 #include <QSqlQuery>
+#include <QStyleOptionButton>
+#include <QStyleOptionComboBox>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolBar>
 #include <QTreeWidget>
+#include <QVBoxLayout>
 #include <kddockwidgets/KDDockWidgets.h>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
@@ -338,7 +344,7 @@ private slots:
     QHash<QString, QString> groups;
 #define NEVERD_ICON_COLOR(Hex, Use) palette.insert(QStringLiteral(Hex));
 #define NEVERD_ICON(Name, Group, Shows)                                        \
-  groups.insert(QStringLiteral(#Name), QStringLiteral(#Group));
+  groups.insert(QStringLiteral(Name), QStringLiteral(#Group));
 #include "IconSet.def"
     // Drawn by hand on the grid: no raster image, text, external reference,
     // script or editor metadata, and colors only from the record.
@@ -363,8 +369,10 @@ private slots:
       QFile file(info.filePath());
       QVERIFY(file.open(QIODevice::ReadOnly));
       const auto svg = QString::fromUtf8(file.readAll());
-      QVERIFY2(svg.contains(QStringLiteral("viewBox=\"0 0 16 16\"")),
-               qPrintable(name));
+      // Control chrome takes the size of the part it draws.
+      if (groups.value(name) != QLatin1String("Chrome"))
+        QVERIFY2(svg.contains(QStringLiteral("viewBox=\"0 0 16 16\"")),
+                 qPrintable(name));
       const auto foreign = Foreign.match(svg);
       QVERIFY2(!foreign.hasMatch(),
                qPrintable(name + QStringLiteral(": ") + foreign.captured()));
@@ -929,6 +937,70 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(window));
     QCOMPARE(window->grab().toImage().pixelColor(0, window->height() / 2),
              theme.chrome(QStringLiteral("FloatingWindowBorder")));
+  }
+
+  void themeDrawsFlatControls() {
+    auto &theme = Theme::instance();
+    for (const auto mode : {Theme::Mode::Dark, Theme::Mode::Light}) {
+      theme.setMode(mode);
+      theme.apply();
+      QDialog dialog;
+      auto *layout = new QVBoxLayout(&dialog);
+      auto *box = new QCheckBox(QStringLiteral("Unchecked"), &dialog);
+      auto *combo = new QComboBox(&dialog);
+      combo->addItem(QStringLiteral("Item"));
+      auto *edit = new QLineEdit(&dialog);
+      auto *log = new QPlainTextEdit(&dialog);
+      log->setReadOnly(true);
+      auto *buttons = new QDialogButtonBox(
+          QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+      for (QWidget *widget :
+           {static_cast<QWidget *>(box), static_cast<QWidget *>(combo),
+            static_cast<QWidget *>(edit), static_cast<QWidget *>(log),
+            static_cast<QWidget *>(buttons)})
+        layout->addWidget(widget);
+      dialog.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+      const QImage image = dialog.grab().toImage();
+      const auto pixel = [&](QWidget *widget, QPoint point) {
+        return image.pixelColor(widget->mapTo(&dialog, point));
+      };
+
+      // An unchecked box stands out from the dialog behind it.
+      QStyleOptionButton option;
+      option.initFrom(box);
+      const QRect indicator = box->style()->subElementRect(
+          QStyle::SE_CheckBoxIndicator, &option, box);
+      const QPoint middle(indicator.left(), indicator.center().y());
+      QCOMPARE(pixel(box, middle),
+               theme.chrome(QStringLiteral("CheckboxBorder")));
+      QCOMPARE(pixel(box, indicator.center()),
+               theme.chrome(QStringLiteral("CheckboxBackground")));
+      QVERIFY(theme.chrome(QStringLiteral("CheckboxBorder")) !=
+              theme.chrome(QStringLiteral("Window")));
+
+      // The combo box draws its chevron on the field.
+      QStyleOptionComboBox comboOption;
+      comboOption.initFrom(combo);
+      const QRect arrow = combo->style()->subControlRect(
+          QStyle::CC_ComboBox, &comboOption, QStyle::SC_ComboBoxArrow, combo);
+      int glyph = 0;
+      for (int y = arrow.top(); y <= arrow.bottom(); ++y)
+        for (int x = arrow.left(); x <= arrow.right(); ++x)
+          glyph +=
+              pixel(combo, {x, y}) != theme.chrome(QStringLiteral("Input"));
+      QVERIFY(glyph > 4);
+
+      // Text fields type in the code font; read-only text reads as content.
+      QVERIFY(QFontInfo(edit->font()).fixedPitch());
+      QVERIFY(!QFontInfo(box->font()).fixedPitch());
+      QCOMPARE(pixel(log, log->rect().center()),
+               theme.chrome(QStringLiteral("Base")));
+      // Dialog buttons carry no icons.
+      for (auto *button : buttons->buttons())
+        QVERIFY(button->icon().isNull());
+    }
+    theme.setMode(Theme::Mode::Dark);
   }
 
   void themesDefineEveryColor() {

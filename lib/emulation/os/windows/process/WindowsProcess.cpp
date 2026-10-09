@@ -9,10 +9,12 @@
 
 #include "neverd/emulation/ExecutionSession.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 
 #include <array>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace neverd::emulation::windows_process {
@@ -604,6 +606,23 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     if (!Import) {
       Result.Stop = ProcessStopReason::UnsupportedService;
       Result.Diagnostic = text::Service;
+      // Report the stopped register values without assigning them a syscall
+      // ABI or using their contents to select a Windows service.
+      if (X64) {
+        const std::pair<const char *, CPURegister> Registers[] = {
+            {"rax", CPURegister::X64AX}, {"r10", CPURegister::X64R10},
+            {"rdx", CPURegister::X64DX}, {"r8", CPURegister::X64R8},
+            {"r9", CPURegister::X64R9},  {"rsp", CPURegister::X64SP}};
+        for (const auto &[Name, Register] : Registers) {
+          auto Value = CPU.readRegister(Register);
+          if (!Value) {
+            llvm::consumeError(Value.takeError());
+            continue;
+          }
+          Result.Diagnostic +=
+              std::string("; ") + Name + "=0x" + llvm::utohexstr((*Value)[0]);
+        }
+      }
       break;
     }
     if (Observing && Observer) {
