@@ -121,7 +121,7 @@ static bool isTrapFreeIntegerUnaryOp(NdOp Op) {
 // bytes have no reads; this never supplies a replacement bit value.
 bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
   std::vector<const HighExpr *> Pending{Root.get()};
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   while (!Pending.empty()) {
     const auto *E = Pending.back();
     Pending.pop_back();
@@ -198,7 +198,7 @@ bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
 
 bool harmlessIntegerValue(const ExprPtr &Root, size_t &Budget) {
   std::vector<const HighExpr *> Pending{Root.get()};
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   while (!Pending.empty()) {
     const auto *E = Pending.back();
     Pending.pop_back();
@@ -1110,7 +1110,7 @@ void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
       ReadBytes.insert(At + I);
     return true;
   };
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   bool Escaped = false;
   walkStmts(Func.Body, [&](HighStmt &S) {
     if (Escaped || !Budget || AliasStatements.count(&S))
@@ -1140,7 +1140,7 @@ void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
         --Budget;
         if (E->IntrinsicId != Intrinsic::None)
           Escaped = true;
-        std::unordered_set<const HighExpr *> BoundedFrameInputs;
+        HighExprSet BoundedFrameInputs;
         if (E->Kind == ExprKind::Load && E->Type && E->Operands.size() == 1 &&
             E->MemoryOrdering == NdMemoryOrdering::None &&
             E->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
@@ -1263,7 +1263,7 @@ void elimConsecutiveDeadStores(std::vector<HighStmt> &Stmts) {
       continue;
 
     bool NextUsesCurr = false;
-    std::unordered_set<const HighExpr *> Seen;
+    HighExprSet Seen;
     std::function<void(const ExprPtr &)> CheckRef = [&](const ExprPtr &E) {
       if (!E || NextUsesCurr || !Seen.insert(E.get()).second)
         return;
@@ -1280,7 +1280,7 @@ void elimConsecutiveDeadStores(std::vector<HighStmt> &Stmts) {
 
     bool HasEffect = false;
     std::vector<const HighExpr *> Pending{CurrStmt.Val.get()};
-    std::unordered_set<const HighExpr *> EffectSeen;
+    HighExprSet EffectSeen;
     while (!Pending.empty()) {
       const auto *Expression = Pending.back();
       Pending.pop_back();

@@ -236,6 +236,54 @@ QString ProjectDatabase::workingDirectory(const QString &database) {
                 QString::fromLatin1(key.toHex().left(16)));
 }
 
+bool ProjectDatabase::canKeepBeside(const QString &binary) {
+  return QFileInfo(QFileInfo(binary).absolutePath()).isWritable();
+}
+
+QString ProjectDatabase::workingCopy(const QString &binary, QString *error) {
+  const auto failed = [&](const QString &message) {
+    if (error)
+      *error = message;
+    return QString();
+  };
+  const QFileInfo original(binary);
+  const QString directory = workingDirectory(binary);
+  if (!QDir().mkpath(directory))
+    return failed(
+        QCoreApplication::translate("ProjectDatabase", "Cannot create %1")
+            .arg(directory));
+  const QString copy = QDir(directory).filePath(original.fileName());
+  const QFileInfo current(copy);
+  const QDateTime modified =
+      original.fileTime(QFileDevice::FileModificationTime);
+  if (current.exists() && current.size() == original.size() &&
+      current.fileTime(QFileDevice::FileModificationTime) == modified)
+    return copy;
+  // Copy beside the old one and replace it in one step, so a copy that
+  // stops halfway is never taken for the input.
+  const QString partial = copy + QStringLiteral(".copying");
+  QFile::remove(partial);
+  QFile written(partial);
+  if (!QFile::copy(binary, partial) ||
+      !written.open(QIODevice::ReadWrite | QIODevice::ExistingOnly) ||
+      !written.setFileTime(modified, QFileDevice::FileModificationTime)) {
+    QFile::remove(partial);
+    return failed(
+        QCoreApplication::translate("ProjectDatabase", "Cannot copy %1 to %2")
+            .arg(QDir::toNativeSeparators(binary),
+                 QDir::toNativeSeparators(directory)));
+  }
+  written.close();
+  QFile::remove(copy);
+  if (!QFile::rename(partial, copy)) {
+    QFile::remove(partial);
+    return failed(
+        QCoreApplication::translate("ProjectDatabase", "Cannot create %1")
+            .arg(copy));
+  }
+  return copy;
+}
+
 QString ProjectDatabase::save(const QString &database, const QString &binary,
                               const QHash<QString, QByteArray> &state) {
   QString error;

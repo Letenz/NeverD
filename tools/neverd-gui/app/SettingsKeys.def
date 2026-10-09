@@ -1,0 +1,24 @@
+//===- SettingsKeys.def - Settings more than one part reads -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The keys of the user settings that more than one part of the workbench
+/// reads or writes, in one place.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_SETTINGS_KEY(Name, Key)
+#ifndef NEVERD_SETTINGS_KEY
+#error "Define NEVERD_SETTINGS_KEY before including SettingsKeys.def"
+#endif
+
+// The files opened, newest first, and when each was last opened.
+NEVERD_SETTINGS_KEY(RecentFiles, "files/recent")
+NEVERD_SETTINGS_KEY(RecentOpened, "files/recentOpened")
+// Whether the quick start dialog greets a workbench started without a file.
+NEVERD_SETTINGS_KEY(QuickStart, "ui/quickStart")
+
+#undef NEVERD_SETTINGS_KEY

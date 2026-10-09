@@ -26,8 +26,6 @@ using VarNameFn = std::function<std::string(const MedVar &)>;
 using ExprStrFn = std::function<std::string(const HighExpr &)>;
 /// Printed C call arity. `numeric_limits<size_t>::max()` keeps every operand.
 using CallArgLimitFn = std::function<size_t(const HighExpr &)>;
-/// True for a call to a routine declared to return nothing.
-using KnownVoidCallFn = std::function<bool(const HighExpr &)>;
 
 inline bool isNamedValueExpr(const HighExpr &E) {
   return E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi;
@@ -58,9 +56,9 @@ void analyzeDeadStores(HighCAnalysisState &State, const HighFunc &Func,
 void analyzeStoreForwarding(HighCAnalysisState &State, const HighFunc &Func,
                             VarNameFn VarFn, ExprStrFn ExprFn);
 
-bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
-                       VarNameFn VarFn, ExprStrFn ExprFn,
-                       KnownVoidCallFn KnownVoidCall);
+/// Whether C shows \p Func as returning nothing: its declaration says so, or
+/// MedIR settled that it returns no value (settleReturnContracts).
+bool analyzeVoidReturn(const HighFunc &Func);
 
 /// True for a known libc noreturn call or architectural x86 fast-fail.
 /// Caller return shapes cannot prove that an unknown callee never returns.

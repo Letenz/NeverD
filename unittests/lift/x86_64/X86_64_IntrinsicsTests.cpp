@@ -670,7 +670,10 @@ TEST_F(X86_64_Intrinsics, LlvmC_CpuidNoIntermediateVar) {
       << fn_body;
 }
 
-TEST_F(X86_64_Intrinsics, LlvmC_VoidInference_SideEffectOnly) {
+TEST_F(X86_64_Intrinsics, LlvmC_ReturnsWhatTheInstructionLeaves) {
+  // rdtsc, cpuid and xgetbv leave their result in EAX, which the function
+  // returns: both C backends show the value, as IDA does, where a fence's
+  // function returns none.
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
@@ -679,8 +682,8 @@ TEST_F(X86_64_Intrinsics, LlvmC_VoidInference_SideEffectOnly) {
     auto pos = content.find(fn);
     ASSERT_NE(pos, std::string::npos) << fn << " not found";
     auto prefix = content.substr(pos > 10 ? pos - 10 : 0, 10);
-    EXPECT_TRUE(prefix.find("void") != std::string::npos)
-        << fn << " should be void in LLVM C decompile:\n"
+    EXPECT_TRUE(prefix.find("void") == std::string::npos)
+        << fn << " returns what the instruction leaves in EAX:\n"
         << content.substr(pos > 20 ? pos - 20 : 0, 80);
   }
 }

@@ -422,9 +422,8 @@ static ExprPtr mergeOrderAndEquality(const ExprPtr &E) {
   return nullptr;
 }
 
-static void simplifyExprRecursive(
-    ExprPtr &E, std::unordered_set<const HighExpr *> &Seen,
-    const std::unordered_set<const HighExpr *> &OrderedMemory) {
+static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
+                                  const HighExprSet &OrderedMemory) {
   if (!E || !Seen.insert(E.get()).second)
     return;
   for (auto &Op : E->Operands)
@@ -797,7 +796,7 @@ void simplifyAllExprs(std::vector<HighStmt> &Stmts) {
   // ancestors can be removed, and new nodes contain only pure operands, so
   // one graph-wide effect analysis remains valid throughout this pass.
   const auto OrderedMemory = findOrderedMemoryAncestors(Roots);
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   walkStmts(Stmts, [&](HighStmt &S) {
     forEachRhsExpr(S, [&](ExprPtr &EP) {
       simplifyExprRecursive(EP, Seen, OrderedMemory);

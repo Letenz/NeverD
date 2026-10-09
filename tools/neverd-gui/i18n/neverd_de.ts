@@ -16,8 +16,8 @@
         <translation>Eingabedatei &amp;neu laden</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>Binärdatei und ihre gespeicherten Anmerkungen neu laden</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>Die Eingabedatei erneut lesen, mit ihren gespeicherten Anmerkungen</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>%1 kann nicht nach %2 kopiert werden</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>%1 kann nicht gelesen werden: %2</translation>
     </message>
@@ -1707,6 +1711,10 @@ Doppelklicken springt zur Deklaration.</translation>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>Eingabedatei neu laden</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>Navigationsleiste</translation>
     </message>
@@ -1965,42 +1973,6 @@ Mit Vorzeichen: %4</translation>
         <translation>Kein gespeicherter Desktop</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: Schnellstart</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>Neu</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>Neue Datei disassemblieren</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Los</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>Ohne Datei arbeiten</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>Vorherige</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>Ausgewählte zuletzt verwendete Datei laden</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>Zuletzt verwendete Dateien:</translation>
-    </message>
-    <message>
-        <source>No recent files. Choose New, or drop a file here.</source>
-        <translation>Keine zuletzt verwendeten Dateien. Wählen Sie „Neu“ oder ziehen Sie eine Datei hierher.</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>Binärdatei oder Datenbank öffnen</translation>
     </message>
@@ -2137,7 +2109,98 @@ Mit Vorzeichen: %4</translation>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>Schnellstart</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>Interaktiver Disassembler und Decompiler</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>Version %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>Starten</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>Zuletzt verwendete Dateien</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;Neu</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>Neue Datei disassemblieren</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>&amp;Los</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>Ohne Datei arbeiten</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>&amp;Vorherige</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>Ausgewählte zuletzt verwendete Datei laden</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>Beim Start &amp;anzeigen</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>Datei hierher ziehen, um sie zu öffnen</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>Fehlt</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>&amp;Laden</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>Pfad &amp;kopieren</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>Aus Liste &amp;entfernen</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>Heute, %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>Gestern, %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>Keine zuletzt verwendeten Dateien</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>Hier erscheinen die Dateien, die Sie öffnen. Wählen Sie „Neu“ oder ziehen Sie eine Datei auf dieses Fenster.</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 liegt in einem Ordner, in den Sie nicht schreiben können; seine Datenbank wird in %2 aufbewahrt</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>Analyseprozess wird gestartet…</translation>
@@ -2163,8 +2226,8 @@ Mit Vorzeichen: %4</translation>
         <translation>%1: %2 %3, %4 Funktionen</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>Anmerkungen neu geladen</translation>
+        <source>Reloaded the input file</source>
+        <translation>Eingabedatei neu geladen</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2433,8 +2496,8 @@ Mit Vorzeichen: %4</translation>
         <translation>AMD64 und Intel 64 (64 Bit)</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM und Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM Little-Endian, Start im ARM-Zustand</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2449,8 +2512,8 @@ Mit Vorzeichen: %4</translation>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM Little-Endian, Start im Thumb-Zustand</translation>
     </message>
 </context>
 <context>

@@ -726,6 +726,9 @@ TEST(CSymbolNames, AVoidRoutineLeavesNoResult) {
   Stub.Entry = 0x1000;
   Stub.ReturnType = U64;
   Stub.Body = {Assign, Return};
+  // MedIR settles that the stub returns no value (settleReturnContracts);
+  // this HighIR stands for its outcome.
+  Stub.ReturnsNoValue = true;
   const std::string Source = emitFor({Stub}, BinaryFormat::ELF, Arch::X64);
   EXPECT_NE(Source.find("extern void __cxa_finalize(void *);"), NotFound)
       << Source;
@@ -954,8 +957,12 @@ TEST(CSymbolNames, AThunkNamedLikeItsImportCallsThroughTheSlot) {
     Imp.Name = ImportName;
     Imp.IATAddr = 0x2000;
     Img.Imports.push_back(std::move(Imp));
-    const std::string Source = emitFor({slotThunk(Thunk, ImportName, Target)},
-                                       BinaryFormat::COFF, Target, &Img);
+    // MedIR settles whether the thunk returns a value
+    // (settleReturnContracts); this HighIR stands for its outcome.
+    HighFunc ThunkFunc = slotThunk(Thunk, ImportName, Target);
+    ThunkFunc.ReturnsNoValue = !ReturnsValue;
+    const std::string Source =
+        emitFor({ThunkFunc}, BinaryFormat::COFF, Target, &Img);
     // The thunk calls through the slot, declared as a function pointer, and
     // never calls itself.
     EXPECT_NE(Source.find("(*" + std::string(Slot) + ")("), NotFound) << Source;

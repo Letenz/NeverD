@@ -128,6 +128,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCSourceTypeHintTests.cpp
   core/ObjCProtocolTests.cpp
   core/ObjCPropertyTests.cpp
+  core/ReturnContractTests.cpp
   core/SourceABITests.cpp
   core/AdjacentCallTests.cpp
   core/MedConstantPropagationTests.cpp

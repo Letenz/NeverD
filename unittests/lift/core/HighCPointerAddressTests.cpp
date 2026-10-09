@@ -33202,12 +33202,15 @@ TEST(HighCPointerAddresses, ConstantReturnIsNotInferredVoid) {
 
 TEST(HighCPointerAddresses, BareSiblingReturnMakesATailCallingFunctionVoid) {
   // One path returns RAX as the caller left it, so no caller can rely on a
-  // result: the function is void, the bare path returns normally, and the
-  // other path still makes its call exactly once.
+  // result: MedIR settles that the function returns no value
+  // (ReturnContracts.AnUndefinedPathWithoutADeliberateValueIsNoValue).  It is
+  // void, the bare path returns normally, and the other path still makes its
+  // call exactly once.
   HighFunc Func;
   Func.Name = "cookie";
   Func.Entry = 0x140001350;
   Func.ReturnType = NdType::makeInt(8);
+  Func.ReturnsNoValue = true;
   Func.Params = {{"arg0", NdType::makeInt(8)}};
 
   HighStmt IfElse;
@@ -33287,6 +33290,9 @@ TEST(HighCPointerAddresses, BareSiblingReturnKeepsTheReturnedCall) {
   Ret.Kind = StmtKind::Return;
   Ret.RetVal = HighExpr::makeCall("sub_14000173C", 0x14000173C, {parameter(0)});
   Func.Body.push_back(std::move(Ret));
+  // MedIR settles that the bare path leaves the function no value
+  // (settleReturnContracts); this HighIR stands for its outcome.
+  Func.ReturnsNoValue = true;
 
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("void cookie"), std::string::npos) << Source;
@@ -33483,10 +33489,13 @@ int main(void) {
 }
 
 TEST(HighCPointerAddresses, FastFailBranchOmitsSuccessReturn) {
+  // MedIR settles that a function whose other path fails fast returns no
+  // value.
   HighFunc Func;
   Func.Name = "cookie";
   Func.Entry = 0x140001350;
   Func.ReturnType = NdType::makeInt(8);
+  Func.ReturnsNoValue = true;
   Func.Params = {{"arg0", NdType::makeInt(8)}};
 
   HighStmt IfElse;
@@ -40888,6 +40897,10 @@ TEST(HighCPointerAddresses, ReadOfADestructorResultIsUnknown) {
         assignTo(Result, HighExpr::makeCall("??1SC_DEVICE@@QEAA@XZ",
                                             0x140002000, {parameter(0)}))};
     ExprPtr Read = HighExpr::makeVar(Result);
+    // MedIR settles that a function only handing back what a destructor left
+    // returns nothing (settleReturnContracts); this HighIR stands for its
+    // outcome.
+    Func.ReturnsNoValue = OnlyReturned;
     returnValue(Func, OnlyReturned
                           ? Read
                           : HighExpr::makeBinop(NdOp::INT_ADD, Read,

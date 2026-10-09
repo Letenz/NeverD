@@ -17,6 +17,7 @@
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
 #include "../UnalignedMemory.h"
+#include "../VariadicImportStub.h"
 #include "../render/X86FPStateHelpers.h"
 #include "HighCWriter.h"
 
@@ -1544,6 +1545,15 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   // A function whose address the code takes is declared as a callee is.
   CallTargets.insert(AddressTakenFunctions.begin(),
                      AddressTakenFunctions.end());
+
+  // A stub of a variadic import passes its arguments on through stdarg.h.
+  if (Opts.Image)
+    for (const auto &F : Funcs)
+      if (const std::string Import =
+              c_stub::variadicImportOfStub(*Opts.Image, F.Entry);
+          !Import.empty())
+        if (const auto *Forward = libc::libcVariadicForward(Import))
+          c_stub::addVariadicStubHeaders(Headers, *Forward);
 
   for (auto &Name : CallTargets) {
     if (isOwnFunctionName(Name, Funcs))
