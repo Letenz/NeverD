@@ -815,6 +815,8 @@ pipeline を続行するためだけに `UnliftedInstruction` を捕捉しない
 
 共有パスに追加するターゲット固有の規則は、アーキテクチャやフォーマットのインライン判定ではなく、ターゲットごとの表に置きます。ISA に関する事実は、その ISA の `lib/ir/TargetRegInfo<ISA>.cpp` で設定する `TargetRegInfo` の特性です。呼び出し規約の規則は、専用の `lib/ir/med/abi/MedCallConvention<Name>.cpp` に定義し `MedCallConvention.cpp` に登録する `CallArgumentConvention` エントリです。戻らない関数はランタイムごとに `include/neverd/libc` 以下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）に列挙します。これにより、新しいターゲットの対応は共有パスへの分岐ではなく、ファイルまたは表エントリの追加で済みます。
 
+再配置可能オブジェクトの未定義シンボルは、共有レイヤー `include/neverd/loader/ObjectExterns.h` で解決されます。各フォーマットのローダーは、再配置が参照するシンボル、各シンボルに呼び出しや分岐が到達するかどうか（`<Format>ObjectRelocations.def`）、コモンシンボル、そして一部の参照がシンボルに到達する際に経由するセル（ELF と Mach-O の GOT エントリ、COFF の `__imp_` ポインタ）を収集します。このレイヤーはそれらをオブジェクトのセクションの後ろ、書き込み可能な `extern` セグメントと読み取り専用のセルセグメントに配置します。呼び出される外部シンボルはそこでインポートとなり、データはシンボルとなります。弱参照にはアドレスを与えません。コードが行う null 判定はプログラム自身のものだからです。
+
 <a id="support-and-test-depth"></a>
 
 ### サポートとテストの深さ
