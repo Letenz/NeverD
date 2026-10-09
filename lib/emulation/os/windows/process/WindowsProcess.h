@@ -193,6 +193,9 @@ public:
   llvm::Expected<ServiceOutcome> invoke(const Service &Service,
                                         const NativeCallEvent &Event);
   std::vector<ProcessHeapAllocationView> heapAllocations() const;
+  std::vector<uint64_t> encodedPointers() const {
+    return {EncodedPointers.begin(), EncodedPointers.end()};
+  }
 
 private:
   std::optional<uint64_t> unsupported(const Service &Service);
@@ -267,6 +270,9 @@ private:
                                           uint32_t Flags);
   std::map<uint64_t, Allocation> Allocations;
   std::set<uint64_t> CreatedHeaps;
+  // At most one distinct value per completed service, bounded by the process
+  // event budget. Clearing guest storage does not erase the observed value.
+  std::set<uint64_t> EncodedPointers;
   uint64_t NextCreatedHeap = value::CreatedHeapBase;
   uint64_t CommandLineA = 0;
   std::map<uint64_t, bool> ThreadSnapshots;

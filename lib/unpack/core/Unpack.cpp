@@ -180,6 +180,14 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
         Result.Diagnostic += "; ";
       Result.Diagnostic += text::DirectServiceState;
     }
+    if (!Result.RuntimeState.EncodedPointerInventoryKnown ||
+        Result.RuntimeState.PossibleEncodedPointers) {
+      if (!Result.Diagnostic.empty())
+        Result.Diagnostic += "; ";
+      Result.Diagnostic += Result.RuntimeState.EncodedPointerInventoryKnown
+                               ? text::EncodedPointerState
+                               : text::UnknownEncodedPointerState;
+    }
     if (!Result.Diagnostic.empty() && !Options.SnapshotOnly) {
       Result.Outcome = UnpackOutcome::UnsupportedState;
       return true;

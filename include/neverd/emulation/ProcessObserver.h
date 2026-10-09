@@ -104,6 +104,12 @@ public:
   heapAllocations() const {
     return std::nullopt;
   }
+  /// Process-local pointer encodings witnessed by completed OS operations.
+  /// These are values, not storage locations or proof of pointer types.
+  /// Empty establishes no observed values; absent means no inventory contract.
+  virtual std::optional<std::vector<uint64_t>> encodedPointers() const {
+    return std::nullopt;
+  }
   /// Number of OS service invocations so far, including calls still active.
   /// Missing provenance cannot establish that a helper has no OS effects.
   virtual std::optional<uint64_t> nativeCallCount() const {

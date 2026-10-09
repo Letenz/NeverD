@@ -453,6 +453,32 @@ TransferObserver::watched(ProcessView &Process, uint64_t PC) {
     if (Observed.ThreadLocal)
       Scan(*Observed.ThreadLocal, UnpackHeapReference::Storage::ThreadLocal);
   }
+  if (auto Encoded = Process.encodedPointers()) {
+    auto &State = Observed.RuntimeState;
+    State.EncodedPointerInventoryKnown = true;
+    llvm::sort(*Encoded);
+    Encoded->erase(std::unique(Encoded->begin(), Encoded->end()),
+                   Encoded->end());
+    auto Scan = [&](llvm::ArrayRef<uint8_t> Bytes,
+                    UnpackHeapReference::Storage Location) {
+      if (Encoded->empty())
+        return;
+      for (uint64_t Offset = 0; Offset + value::PointerBytes <= Bytes.size();
+           ++Offset) {
+        const uint64_t Value =
+            llvm::support::endian::read64le(Bytes.data() + Offset);
+        if (!std::binary_search(Encoded->begin(), Encoded->end(), Value))
+          continue;
+        ++State.PossibleEncodedPointers;
+        if (State.EncodedPointerReferences.size() <
+            value::EncodedPointerRecords)
+          State.EncodedPointerReferences.push_back({Offset, Value, Location});
+      }
+    };
+    Scan(Observed.Memory, UnpackHeapReference::Storage::Image);
+    if (Observed.ThreadLocal)
+      Scan(*Observed.ThreadLocal, UnpackHeapReference::Storage::ThreadLocal);
+  }
   // Several identities may share one address. Keep a named one, in a stable
   // order, so the rebuilt directory does not depend on enumeration order.
   for (auto &Export : Process.exports()) {
