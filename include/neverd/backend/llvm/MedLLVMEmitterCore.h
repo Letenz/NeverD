@@ -1437,6 +1437,9 @@ private:
   /// one (`pdata` EndAddress).  Returns a function constant or a GEP past
   /// the last byte; null if the image has no such function identity.
   llvm::Constant *resolveImageFunctionAddress(va_t Address);
+  /// \p Address inside a function this module only declares, as that
+  /// function's address plus the offset; null otherwise.
+  llvm::Constant *resolveDeclaredFunctionInterior(va_t Address);
   /// The function entry at \p Address: a lifted function, or a declaration
   /// of the image function symbol that starts there.
   llvm::Function *resolveImageFunctionEntry(va_t Address);

@@ -968,13 +968,19 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     else if (hasObjectFunctionNameAt(Img, Fmt, F.Entry, F.Name))
       EmittedName = llvm_name::fromObjectSymbol(F.Name, Fmt).str();
     // An import's stub lifted as a function and named like the import
-    // (MinGW's `calloc: jmp [__imp_calloc]`) is not that import, which
-    // keeps its name for the external declaration its slot refers to.
-    if (Img)
+    // (MinGW's `calloc: jmp [__imp_calloc]`, a Mach-O `__stubs` entry) is
+    // not that import, which keeps its name for the external declaration
+    // its slots refer to.  A body named like an import keeps its name.
+    if (Img) {
+      const auto NamedLike = [&](const Import *Imp) {
+        return Imp &&
+               llvm_name::fromObjectSymbol(Imp->Name, Fmt) == EmittedName;
+      };
       if (const Import *Imp = Img->findImportAt(F.Entry);
-          Imp && Imp->IATAddr != F.Entry &&
-          llvm_name::fromObjectSymbol(Imp->Name, Fmt) == EmittedName)
+          (NamedLike(Imp) && Imp->IATAddr != F.Entry) ||
+          NamedLike(Img->findImportStubAt(F.Entry)))
         EmittedName += "_" + llvm::utohexstr(F.Entry);
+    }
     EmittedFuncNames[F.Entry] = EmittedName;
     FuncNames[F.Entry] = std::move(EmittedName);
   }
