@@ -17,8 +17,10 @@
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/backend/llvm/SafetyCallsiteMetadata.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/loader/SymbolDecoration.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/safety/CountedWriteSemantics.h"
 
@@ -240,7 +242,8 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   llvm::Type *AggregateRetTy = inferAggregateReturnType();
   llvm::Type *DefaultRetTy = AggregateRetTy ? AggregateRetTy : RetTy;
 
-  auto resolveCalleeName = [&]() -> std::string {
+  // The symbol of the routine a direct call reaches.
+  auto calleeSymbol = [&]() -> std::string {
     if (CI && !CI->TargetName.empty() &&
         !CI->TargetName.starts_with(kAutoFuncPrefix))
       return canonicalizeObjectCallee(CI->TargetName);
@@ -250,6 +253,14 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         return canonicalizeObjectCallee(FnIt->second);
     }
     return {};
+  };
+  auto resolveCalleeName = [&]() -> std::string {
+    std::string Name = calleeSymbol();
+    if (Img && CallAddr > 1 && !Name.empty())
+      if (auto Shadow =
+              peImportShadowName(PEImportCNames, *Img, CallAddr, Name))
+        return std::move(*Shadow);
+    return Name;
   };
 
   const std::optional<counted_write::Semantics> SafetyShape =
@@ -814,25 +825,28 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     CallSiteAddrs[Emitted] = Op.Addr;
     // A routine whose C declaration returns a value returns one: its result
     // is not what a void routine leaves in the return register.  The routine
-    // is the external one called, or the import whose slot is called through.
-    std::string ImportName;
-    if (const llvm::Function *Called = Emitted->getCalledFunction();
-        Called && Called->isDeclaration())
-      ImportName = Called->getName().str();
-    else if (Op.Opcode == NdOp::INDIR_CALL && Op.Inputs[0].isConst()) {
+    // is the one a direct call's symbol names, or the import whose slot is
+    // called through.
+    std::string Routine;
+    if (Op.Opcode == NdOp::CALL) {
+      Routine = calleeSymbol();
+      if (Routine.empty() && Img && CallAddr > 1)
+        Routine = Img->getFunctionNameAt(CallAddr);
+    } else if (Op.Inputs[0].isConst()) {
       const va_t Slot = Op.Inputs[0].ConstVal;
       if (auto It = EffectiveImportStorageSlots.find(Slot);
           It != EffectiveImportStorageSlots.end() && It->second.Addend == 0)
-        ImportName = It->second.Name;
+        Routine = It->second.Name;
       else if (const Import *Imp = Img ? Img->findImportAt(Slot) : nullptr;
                Imp && Imp->IATAddr == Slot)
-        ImportName = Imp->Name;
-      if (!ImportName.empty())
-        ImportName =
-            llvm_name::fromObjectSymbol(ImportName, TargetFormat).str();
+        Routine = Imp->Name;
     }
-    if (!ImportName.empty() &&
-        libc::libcReturnsValue(ImportName, TargetFormat).value_or(false))
+    const auto ReturnsValue = [&](llvm::StringRef Name) {
+      return libc::libcReturnsValue(Name, TargetFormat).value_or(false);
+    };
+    if (!Routine.empty() &&
+        (ReturnsValue(Routine) ||
+         ReturnsValue(cNameOfSymbol(Routine, TargetFormat, TargetArch))))
       llvm_value_provenance::markSemanticProducer(*Emitted);
   }
 

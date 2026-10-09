@@ -143,6 +143,38 @@ MedFunc makeLocalFunction(llvm::StringRef Name, va_t Entry = LocalVA) {
   return Func;
 }
 
+/// A function at CallerVA calling \p Target directly by the symbol \p Name.
+MedFunc makeDirectCaller(va_t Target, llvm::StringRef Name) {
+  MedFunc Func;
+  Func.Entry = CallerVA;
+  Func.Name = "direct_caller";
+  Func.ReturnType = NdType::makeVoid();
+
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = CallerVA;
+  Block.EndAddr = CallerVA + 8;
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = CallerVA;
+  Call.addInput(
+      MedVar::makeConst(Target, 8, ConstantAddressProvenance::Address));
+  Block.Ops.push_back(std::move(Call));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = CallerVA + 5;
+  Block.Ops.push_back(std::move(Return));
+  Func.Blocks.push_back(std::move(Block));
+
+  MedCallInfo Info;
+  Info.BlockId = 0;
+  Info.OpIdx = 0;
+  Info.TargetAddr = Target;
+  Info.TargetName = Name.str();
+  Func.CallInfos.push_back(std::move(Info));
+  return Func;
+}
+
 /// `jmp [Slot]` lifted at \p Entry: `RAX = call [Slot]; return RAX`.
 MedFunc makeSlotThunk(va_t Entry, va_t Slot) {
   MedFunc Func;
@@ -231,20 +263,63 @@ TEST(LLVMImportVeneerBoundary, RangeOnlyEvidenceCannotNameACodeRelocation) {
 
 TEST(LLVMImportVeneerBoundary,
      ImportedPointerCannotBindToASameNamedLiftedFunction) {
+  // PE binds an import to the DLL that exports it, so a local function with
+  // its name is another function: it takes its address as a suffix, and the
+  // pointer to the import's stub is the import's.
   BinaryImage Image = makeCodePointerImage();
   addImport(Image, "symbol_collision", IATVA);
   ASSERT_TRUE(Image.recordImportStub(StubVA, 0));
 
   llvm::LLVMContext Context;
-  testing::internal::CaptureStderr();
   auto Module = MedLLVMEmitter().emit(
       {makeIndirectCaller(), makeLocalFunction("symbol_collision")}, Context,
       "import-local-name-collision", Arch::X64, importNames(Image), &Image,
       BinaryFormat::COFF);
-  const std::string Diagnostic = testing::internal::GetCapturedStderr();
-  EXPECT_EQ(Module, nullptr);
-  EXPECT_NE(Diagnostic.find("collides with a lifted symbol"), std::string::npos)
-      << Diagnostic;
+  ASSERT_NE(Module, nullptr);
+  expectValidModule(*Module);
+  const llvm::Function *Local =
+      Module->getFunction("symbol_collision_" + llvm::utohexstr(LocalVA));
+  ASSERT_NE(Local, nullptr);
+  EXPECT_FALSE(Local->isDeclaration());
+  EXPECT_TRUE(Local->use_empty());
+  const llvm::GlobalValue *Imported = Module->getNamedValue("symbol_collision");
+  ASSERT_NE(Imported, nullptr);
+  EXPECT_TRUE(Imported->isDeclaration());
+}
+
+TEST(LLVMImportVeneerBoundary, ACallNamingAnImportReachesTheLocalFunction) {
+  // MinGW's own atexit calls _crt_atexit; msvcrt.dll's atexit is another
+  // function.  A call to the local one names it by its symbol, which spells
+  // the import's name.
+  BinaryImage Image = makeCodePointerImage();
+  Image.CodePtrRelocSlots.clear();
+  addImport(Image, "symbol_collision", IATVA);
+  ASSERT_TRUE(Image.recordImportStorageSlot(
+      IATVA, "symbol_collision", 0, ImportStorageEvidence::ImportDirectory));
+
+  // A lifted function returns what it leaves in RAX.
+  MedFunc Local = makeLocalFunction("symbol_collision");
+  Local.ReturnType = NdType::makeInt(8);
+
+  llvm::LLVMContext Context;
+  auto Module = MedLLVMEmitter().emit(
+      {makeDirectCaller(LocalVA, "symbol_collision"), std::move(Local)},
+      Context, "import-local-call", Arch::X64, importNames(Image), &Image,
+      BinaryFormat::COFF);
+  ASSERT_NE(Module, nullptr);
+  expectValidModule(*Module);
+  const llvm::Function *Renamed =
+      Module->getFunction("symbol_collision_" + llvm::utohexstr(LocalVA));
+  ASSERT_NE(Renamed, nullptr);
+  const llvm::Function *Caller = Module->getFunction("direct_caller");
+  ASSERT_NE(Caller, nullptr);
+  std::vector<const llvm::CallInst *> Calls;
+  for (const llvm::BasicBlock &Block : *Caller)
+    for (const llvm::Instruction &Instruction : Block)
+      if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction))
+        Calls.push_back(Call);
+  ASSERT_EQ(Calls.size(), 1u);
+  EXPECT_EQ(Calls.front()->getCalledFunction(), Renamed);
 }
 
 TEST(LLVMImportVeneerBoundary, ACallThroughASlotReturnsWhatTheImportDeclares) {
