@@ -2120,6 +2120,45 @@ TypeRef HighCWriter::expectedDebugCallArgType(const FunctionSym &FS,
   return nullptr;
 }
 
+const HighExpr *HighCWriter::floatCallResult(const HighExpr &Bits,
+                                             const TypeRef &Float) const {
+  if (!Float || Float->Kind != NdTypeKind::Float)
+    return nullptr;
+  // Each step keeps at least the float's bytes: a view of the low bytes, a
+  // conversion or a forwarded copy.  A forwarded call carries no type of its
+  // own; its declaration says what it returns.
+  const HighExpr *Inner = &Bits;
+  for (unsigned Step = 0; Inner && Step < limits::kMaxIntegerViewUnwrapDepth &&
+                          Inner->Kind != ExprKind::Call;
+       ++Step) {
+    if (!Inner->Type || Inner->Type->Size < Float->Size)
+      return nullptr;
+    if (Inner->Kind == ExprKind::BinOp && Inner->Op == NdOp::SUBBYTES &&
+        Inner->Operands.size() == 2 && Inner->Operands[0] &&
+        Inner->Operands[1] && Inner->Operands[1]->Kind == ExprKind::Const &&
+        Inner->Operands[1]->ConstVal == 0) {
+      Inner = Inner->Operands[0].get();
+      continue;
+    }
+    if (const HighExpr *View = unwrapIntegerView(Inner); View != Inner) {
+      Inner = View;
+      continue;
+    }
+    if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi)
+      if (const auto Fwd =
+              ValueForward.find(copyForwardName(varName(Inner->Var)));
+          Fwd != ValueForward.end() && Fwd->second && Fwd->second != Inner) {
+        Inner = Fwd->second;
+        continue;
+      }
+    break;
+  }
+  if (!Inner || Inner->Kind != ExprKind::Call)
+    return nullptr;
+  const TypeRef Return = knownCallReturnType(*Inner);
+  return Return && equalSourceTypes(Return, Float) ? Inner : nullptr;
+}
+
 std::optional<std::string>
 HighCWriter::floatArgumentText(const HighExpr &Arg, const TypeRef &Expected) {
   if (!Expected || Expected->Kind != NdTypeKind::Float ||
@@ -2149,6 +2188,9 @@ HighCWriter::floatArgumentText(const HighExpr &Arg, const TypeRef &Expected) {
       Bits->Operands[0] && Bits->Operands[0]->Type &&
       equalSourceTypes(Bits->Operands[0]->Type, Expected))
     return exprStr(*Bits->Operands[0]);
+  // The result of a call that returns the parameter's type passes as it is.
+  if (const HighExpr *Call = floatCallResult(Arg, Expected))
+    return renderCallExpr(*Call);
   // A register's integer bits are the argument's bits: C would convert
   // their value instead.
   return "__builtin_bit_cast(" + typeToC(Expected) + ", " +
@@ -4004,6 +4046,9 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                          E.Type->IsSigned);
       return "(" + typeToC(E.Type) + ")" + exprStr(Src, 99);
     }
+    // The bits of a call that returns this float are its result.
+    if (const HighExpr *Call = floatCallResult(Src, E.Type))
+      return renderCallExpr(*Call);
     // A float whose bits are a constant, or read from constant data, is that
     // constant.
     const HighExpr *Bits = unwrapIntegerView(&Src);
@@ -4168,6 +4213,9 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
     return HiLo;
 
   if (FuncReturnType && FuncReturnType->Kind == NdTypeKind::Float) {
+    // A call that returns this float is the value returned.
+    if (const HighExpr *Call = floatCallResult(Expr, FuncReturnType))
+      return renderCallExpr(*Call);
     const HighExpr *Raw = &Expr;
     if (Raw->Kind == ExprKind::UnaryOp && Raw->Op == NdOp::INT_ZEXT &&
         !Raw->Operands.empty() && Raw->Operands[0] && Raw->Operands[0]->Type &&

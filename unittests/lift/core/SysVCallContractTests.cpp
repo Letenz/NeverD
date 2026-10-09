@@ -512,7 +512,7 @@ TEST(SysVCallContract, ACallerReturnsTheFloatItsImportReturns) {
   ASSERT_FALSE(Body.empty());
   EXPECT_NE(Body.find("double sin_twice(double arg0)"), std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("sin(arg0 + arg0)"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("return sin(arg0 + arg0);"), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
 }
 
