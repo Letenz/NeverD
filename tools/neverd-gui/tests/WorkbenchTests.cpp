@@ -41,12 +41,14 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QSizeGrip>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTest>
@@ -950,6 +952,7 @@ private slots:
       QSettings().remove(settings::RecentFiles);
       QSettings().remove(settings::RecentOpened);
       QSettings().remove(settings::QuickStart);
+      QSettings().remove(settings::QuickStartSize);
     });
 
     QuickStartDialog dialog;
@@ -991,6 +994,57 @@ private slots:
     QCOMPARE(dialog.result(), int(QDialog::Accepted));
     QCOMPARE(dialog.start(), QuickStartDialog::Start::Previous);
     QCOMPARE(dialog.file(), elf);
+  }
+
+  void quickStartResizesAndRemembersItsSize() {
+    QSettings().remove(settings::QuickStartSize);
+    const auto restore =
+        qScopeGuard([] { QSettings().remove(settings::QuickStartSize); });
+    QuickStartDialog dialog;
+    dialog.resize(dialog.minimumSize());
+    dialog.move(20, 20);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    auto *recent =
+        dialog.findChild<QListWidget *>(QStringLiteral("quickStartRecent"));
+    auto *grip = dialog.findChild<QSizeGrip *>();
+    auto *action =
+        dialog.findChild<QPushButton *>(QStringLiteral("quickStartAction"));
+    QVERIFY(recent && grip && grip->isVisible() && action);
+    const QSize initialSize = dialog.size();
+    const QSize initialListSize = recent->size();
+    const QSize actionSize = action->size();
+
+    // Drag the actual resize control, then check the content gained the space.
+    const QPoint start = grip->rect().center();
+    const QPoint destination = grip->mapToGlobal(start) + QPoint(24, 24);
+    QTest::mousePress(grip, Qt::LeftButton, Qt::NoModifier, start);
+    QMouseEvent move(QEvent::MouseMove, grip->mapFromGlobal(destination),
+                     destination, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(grip, &move);
+    QTest::mouseRelease(grip, Qt::LeftButton, Qt::NoModifier,
+                        grip->mapFromGlobal(destination));
+    QTRY_VERIFY(dialog.width() > initialSize.width());
+    QTRY_VERIFY(dialog.height() > initialSize.height());
+    const QSize chosenSize = dialog.size();
+    QCOMPARE(recent->size() - initialListSize, chosenSize - initialSize);
+    QCOMPARE(action->size(), actionSize);
+
+    dialog.showDropTarget(true);
+    auto *drop =
+        dialog.findChild<QWidget *>(QStringLiteral("quickStartDropTarget"));
+    QVERIFY(drop && drop->isVisible());
+    QCOMPARE(drop->geometry(), dialog.rect());
+    dialog.resize(initialSize);
+    QCOMPARE(drop->geometry(), dialog.rect());
+    dialog.showDropTarget(false);
+    dialog.resize(chosenSize);
+    QTest::keyClick(&dialog, Qt::Key_Escape);
+
+    QuickStartDialog reopened;
+    QCOMPARE(reopened.size(), chosenSize);
+    reopened.resize(1, 1);
+    QCOMPARE(reopened.size(), reopened.minimumSize());
   }
 
   void fileDropOpensFromQuickStart() {

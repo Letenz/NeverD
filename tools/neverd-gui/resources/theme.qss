@@ -89,9 +89,10 @@ QSplitter::handle:hover, QSplitter::handle:pressed { background: ${DockSeparator
 QAbstractScrollArea { border: none; }
 QDialog#quickStartDialog { background: ${Base}; }
 QLabel#quickStartTitle { color: ${QuickStartTitle}; }
-QLabel#quickStartSubtitle, QLabel#quickStartVersion, QCheckBox#quickStartAtStartup { color: ${PlaceholderText}; }
+QLabel#quickStartSubtitle, QCheckBox#quickStartAtStartup { color: ${QuickStartSecondaryText}; }
+QLabel#quickStartVersion { color: ${QuickStartMetadataText}; }
 QLabel#quickStartSection { color: ${QuickStartTitle}; }
 QPushButton#quickStartAction, QPushButton#quickStartAction:default { background: transparent; border: none; padding: 0; }
 QListWidget#quickStartRecent { background: transparent; border: none; outline: none; }
-QListWidget#quickStartRecent QScrollBar:vertical { width: 10px; }
-QListWidget#quickStartRecent QScrollBar::handle:vertical { border-radius: 3px; margin: 2px; min-height: 32px; }
+QScrollBar#quickStartScrollBar:vertical { width: 10px; }
+QScrollBar#quickStartScrollBar::handle:vertical { border-radius: 3px; margin: 2px; min-height: 32px; }

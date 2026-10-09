@@ -80,11 +80,16 @@ worker never links the test engine.
 ## Layout
 
 A start without a file shows the quick start over the default desktop, as IDA
-does. Its side pane holds the ways to start: **New** (N) disassembles a new
-file, **Go** (G) works on your own and **Previous** (P) loads the selected
-recent file; the one Enter takes has its tile outlined. Each recent file shows
-its format (ELF, PE, Mach-O, a NeverD database or a plain binary file), its name
-and folder, and when it was last opened; Delete or its context menu forgets it.
+does. Drag its window edges or lower-right grip to resize it; the next opening
+remembers that size. The action pane stays the same width while the recent
+files use the available space. Its side pane holds the ways to start: **New**
+(N) disassembles a new file, **Go** (G) works on your own and **Previous** (P)
+loads the selected recent file; the one Enter takes has a subtle row background,
+and keyboard focus has a thin neutral outline. The actions use matching line
+icons without individual tiles. Each recent file shows its format in an outlined
+file icon (ELF, PE, Mach-O, a NeverD database or a plain binary file),
+its name above the folder and last-opened time. Long names retain both ends;
+hovering shows the full path and time. Delete or its context menu forgets it.
 A file dragged over the dialog shows that a drop opens it. **Display at
 startup** decides whether the next start shows it again; **File → Quick start**
 shows it any time. Behind it is the default desktop:
