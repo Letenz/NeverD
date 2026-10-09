@@ -100,6 +100,74 @@ bool hasUnmaskedException(uint32_t MXCSR, uint32_t Raised) {
   return (Raised & ~(MXCSR >> 7) & 0x3fU) != 0;
 }
 
+llvm::APFloat::opStatus
+evaluateArithmetic(X86FPArithKind Kind, llvm::APFloat &Value,
+                   const llvm::APFloat &Right, const llvm::APFloat &Addend,
+                   llvm::APFloat::roundingMode Rounding) {
+  switch (Kind) {
+  case X86FPArithKind::Add:
+    return Value.add(Right, Rounding);
+  case X86FPArithKind::Subtract:
+    return Value.subtract(Right, Rounding);
+  case X86FPArithKind::Multiply:
+    return Value.multiply(Right, Rounding);
+  case X86FPArithKind::Divide:
+    return Value.divide(Right, Rounding);
+  case X86FPArithKind::FusedMultiplyAdd:
+    return Value.fusedMultiplyAdd(Right, Addend, Rounding);
+  default:
+    llvm_unreachable("not a binary or fused FP operation");
+  }
+}
+
+/// APFloat reports only inexact when a directed overflow saturates at the
+/// largest finite value. x86 raises overflow as well. Detect it by rounding
+/// at the same precision with an extended exponent range: merely testing for
+/// an inexact largest result would misclassify additions below the threshold.
+bool directedOverflow(X86FPArithKind Kind, const llvm::APFloat &Left,
+                      const llvm::APFloat &Right, const llvm::APFloat &Addend,
+                      llvm::APFloat::roundingMode Rounding) {
+  llvm::fltSemantics Extended = Left.getSemantics();
+  const auto MaximumExponent = Extended.maxExponent;
+  Extended.maxExponent += 4096;
+  Extended.minExponent -= 4096;
+  auto Widen = [&](llvm::APFloat Value) {
+    bool LosesInfo = false;
+    Value.convert(Extended, llvm::APFloat::rmNearestTiesToEven, &LosesInfo);
+    assert(!LosesInfo && "widening the exponent range must be exact");
+    return Value;
+  };
+  auto Value = Widen(Left);
+  const auto Rhs = Widen(Right);
+  const auto Third = Widen(Addend);
+  evaluateArithmetic(Kind, Value, Rhs, Third, Rounding);
+  return Value.isFiniteNonZero() && llvm::ilogb(Value) > MaximumExponent;
+}
+
+/// x86 detects tininess after rounding at full significand precision, before
+/// denormalization reduces the precision. A second rounding can produce the
+/// smallest normal value while the instruction still raises underflow.
+bool tinyBeforeDenormalization(X86FPArithKind Kind, const llvm::APFloat &Left,
+                               const llvm::APFloat &Right,
+                               const llvm::APFloat &Addend,
+                               llvm::APFloat::roundingMode Rounding) {
+  llvm::fltSemantics Extended = Left.getSemantics();
+  const auto MinimumExponent = Extended.minExponent;
+  Extended.maxExponent += 4096;
+  Extended.minExponent -= 4096;
+  auto Widen = [&](llvm::APFloat Value) {
+    bool LosesInfo = false;
+    Value.convert(Extended, llvm::APFloat::rmNearestTiesToEven, &LosesInfo);
+    assert(!LosesInfo && "widening the exponent range must be exact");
+    return Value;
+  };
+  auto Value = Widen(Left);
+  const auto Rhs = Widen(Right);
+  const auto Third = Widen(Addend);
+  evaluateArithmetic(Kind, Value, Rhs, Third, Rounding);
+  return Value.isFiniteNonZero() && llvm::ilogb(Value) < MinimumExponent;
+}
+
 struct ExactSqrtResult {
   uint64_t Bits = 0;
   bool Inexact = false;
@@ -199,6 +267,8 @@ bool exactPositiveSquareRoot(uint64_t Bits, uint16_t ElementSize,
 } // namespace
 
 bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
+  if (!MXCSRKnown)
+    return false;
   if (Op.NumInputs != 6 ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
       !Op.Inputs[1].isConst() || Op.Inputs[1].Size != 2 ||
@@ -298,7 +368,12 @@ bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
         B &= Format.Sign;
       if (CDenormal)
         C &= Format.Sign;
-    } else if (ADenormal || BDenormal || CDenormal) {
+    } else if ((ADenormal || BDenormal || CDenormal) &&
+               !(Kind == X86FPArithKind::Divide && !isInfinity(A, Format) &&
+                 !isZero(A, Format) && isZero(B, Format))) {
+      // A finite nonzero dividend divided by zero raises #Z, including a
+      // denormal dividend. Do not add #D for that lane; other active lanes
+      // still contribute their independent denormal-input exception.
       PreRaised |= 1U << 1;
     }
 
@@ -408,37 +483,28 @@ bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
                           llvm::APInt(ElementSize * 8, AValues[Lane]));
       const llvm::APFloat Right(Semantics,
                                 llvm::APInt(ElementSize * 8, BValues[Lane]));
-      llvm::APFloat::opStatus Status = llvm::APFloat::opOK;
-      switch (Kind) {
-      case X86FPArithKind::Add:
-        Status = Value.add(Right, APFRounding);
-        break;
-      case X86FPArithKind::Subtract:
-        Status = Value.subtract(Right, APFRounding);
-        break;
-      case X86FPArithKind::Multiply:
-        Status = Value.multiply(Right, APFRounding);
-        break;
-      case X86FPArithKind::Divide:
-        Status = Value.divide(Right, APFRounding);
-        break;
-      case X86FPArithKind::FusedMultiplyAdd: {
-        const llvm::APFloat Addend(Semantics,
-                                   llvm::APInt(ElementSize * 8, CValues[Lane]));
-        Status = Value.fusedMultiplyAdd(Right, Addend, APFRounding);
-        break;
-      }
-      case X86FPArithKind::SquareRoot:
-      case X86FPArithKind::Minimum:
-      case X86FPArithKind::Maximum:
-        return false;
-      }
+      const llvm::APFloat Addend(Semantics,
+                                 llvm::APInt(ElementSize * 8, CValues[Lane]));
+      const auto Left = Value;
+      const auto Status =
+          evaluateArithmetic(Kind, Value, Right, Addend, APFRounding);
       Raised = statusFlags(Status);
+      if ((Raised & (1U << 5)) && !(Raised & (1U << 3)) && Value.isLargest() &&
+          directedOverflow(Kind, Left, Right, Addend, APFRounding))
+        Raised |= 1U << 3;
       Bits = Value.bitcastToAPInt().getZExtValue();
+      const uint64_t MinimumNormal = ElementSize == 4
+                                         ? UINT64_C(0x00800000)
+                                         : UINT64_C(0x0010000000000000);
+      if ((Raised & (1U << 5)) && !(Raised & (1U << 4)) &&
+          (Bits & ~Format.Sign) == MinimumNormal &&
+          tinyBeforeDenormalization(Kind, Left, Right, Addend, APFRounding))
+        Raised |= 1U << 4;
     }
     if (isDenormal(Bits, Format) && !UnderflowMasked) {
       Raised |= 1U << 4;
-    } else if (isDenormal(Bits, Format) && FTZ) {
+    } else if (FTZ && UnderflowMasked &&
+               (isDenormal(Bits, Format) || (Raised & (1U << 4)))) {
       Bits &= Format.Sign;
       Raised |= (1U << 4) | (1U << 5);
     }
@@ -452,6 +518,69 @@ bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
     if (hasUnmaskedException(MXCSR, PostRaised))
       return false;
   }
+  writeOutputBytes(Op.Output, Result);
+  return true;
+}
+
+bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
+  if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
+    return false;
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (!x86FPStateShapeIsValid(Id, x86FPStateLowShape(Op, Img.Arch)))
+    return false;
+  for (unsigned Index = 1; Index < Op.NumInputs; ++Index)
+    if (!Op.Inputs[Index].isConst() && !getRegister(Op.Inputs[Index].Offset))
+      return false;
+  if (Id == Intrinsic::X86ReadMXCSR) {
+    if (!MXCSRKnown)
+      return false;
+    writeOutput(Op.Output, MXCSR);
+    return true;
+  }
+  if (Id == Intrinsic::X86WriteMXCSR) {
+    const auto State = readOperand(Op.Inputs[1]);
+    if ((State & ~UINT64_C(0xffff)) != 0)
+      return false;
+    setMXCSR(static_cast<uint32_t>(State));
+    return true;
+  }
+  const unsigned Bytes = Op.Inputs[1].Size;
+  const auto State = readOperand(Op.Inputs[3]);
+  if ((State & ~UINT64_C(0xffff)) != 0)
+    return false;
+  // Reuse the authoritative packed evaluator with a single active lane.
+  // Scratch values live in a separate evaluator, never in the caller's
+  // temporary/register namespace. Preserve its exception evidence on refusal.
+  NdOpEmulator Evaluation(Img);
+  Evaluation.setStrictMode(true);
+  Evaluation.setMXCSR(static_cast<uint32_t>(State));
+  std::vector<uint8_t> Left = readOperandBytes(Op.Inputs[1]);
+  std::vector<uint8_t> Right = readOperandBytes(Op.Inputs[2]);
+  Left.resize(16, 0);
+  Right.resize(16, 0);
+  Evaluation.writeOutputBytes(NdVar::tmp(1, 16), Left);
+  Evaluation.writeOutputBytes(NdVar::tmp(2, 16), Right);
+  Evaluation.writeOutputBytes(NdVar::tmp(3, 16), std::vector<uint8_t>(16, 0));
+  LowOp Scalar;
+  Scalar.Opcode = NdOp::INTRINSIC;
+  Scalar.Output = NdVar::tmp(0, 16);
+  Scalar.addInput(NdVar::cst(static_cast<unsigned>(Intrinsic::X86FPArith), 2));
+  Scalar.addInput(
+      NdVar::cst(makeX86FPArithControl(x86ScalarFPStateKind(Id), Bytes == 8,
+                                       true, false, X86FPRounding::MXCSR),
+                 2));
+  Scalar.addInput(NdVar::tmp(1, 16));
+  Scalar.addInput(NdVar::tmp(2, 16));
+  Scalar.addInput(NdVar::tmp(3, 16));
+  Scalar.addInput(NdVar::cst(1, 1));
+  const bool Complete = Evaluation.executeX86FPArith(Scalar);
+  setMXCSR(Evaluation.getMXCSR());
+  if (!Complete)
+    return false;
+  auto Result = Evaluation.readOperandBytes(Scalar.Output);
+  Result.resize(Bytes + 4);
+  for (unsigned Index = 0; Index < 4; ++Index)
+    Result[Bytes + Index] = static_cast<uint8_t>(MXCSR >> (8 * Index));
   writeOutputBytes(Op.Output, Result);
   return true;
 }

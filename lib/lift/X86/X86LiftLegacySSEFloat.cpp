@@ -226,7 +226,20 @@ bool liftLegacySSEFloat(X86Lifter &L, X86Lifter::LiftState &S,
         NdVar B = S.makeTemp(ScalarSz);
         S.emit(NdOp::SUBBYTES, B, {Src, NdVar::cst(0, 4)});
         NdVar Res = S.makeTemp(ScalarSz);
-        S.emit(Opc, Res, {A, B});
+        Intrinsic Stateful = Opc == NdOp::FLOAT_ADD   ? Intrinsic::X86FPAddState
+                             : Opc == NdOp::FLOAT_SUB ? Intrinsic::X86FPSubState
+                             : Opc == NdOp::FLOAT_MULT
+                                 ? Intrinsic::X86FPMulState
+                                 : Intrinsic::X86FPDivState;
+        NdVar Incoming = S.makeTemp(4);
+        S.emitIntrinsic(Intrinsic::X86ReadMXCSR, Incoming);
+        NdVar ValueAndState = S.makeTemp(ScalarSz + 4);
+        S.emitIntrinsic(Stateful, ValueAndState, {A, B, Incoming});
+        S.emit(NdOp::SUBBYTES, Res, {ValueAndState, NdVar::cst(0, 4)});
+        NdVar Outgoing = S.makeTemp(4);
+        S.emit(NdOp::SUBBYTES, Outgoing,
+               {ValueAndState, NdVar::cst(ScalarSz, 4)});
+        S.emitVoidIntrinsic(Intrinsic::X86WriteMXCSR, {Outgoing});
         unsigned HiSz = Dst.Size - ScalarSz;
         NdVar Hi = S.makeTemp(HiSz);
         S.emit(NdOp::SUBBYTES, Hi, {Dst, NdVar::cst(ScalarSz, 4)});
@@ -282,9 +295,8 @@ bool liftLegacySSEFloat(X86Lifter &L, X86Lifter::LiftState &S,
   case X86_INS_LDMXCSR:
   case X86_INS_STMXCSR: {
     if (X86.op_count < 1 ||
-        !S.emitMemoryIntrinsic(InsnId == X86_INS_LDMXCSR
-                                   ? Intrinsic::Ldmxcsr
-                                   : Intrinsic::Stmxcsr,
+        !S.emitMemoryIntrinsic(InsnId == X86_INS_LDMXCSR ? Intrinsic::Ldmxcsr
+                                                         : Intrinsic::Stmxcsr,
                                X86.operands[0]))
       return false;
     break;

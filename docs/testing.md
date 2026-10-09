@@ -36,6 +36,28 @@ backend evidence, not as semantic success.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
+## Scalar x86 floating-point state
+
+`NeverDX86FPStateAccuracyTests` compares original scalar SSE byte fixtures
+against actual NeverD Codegen objects and standalone HighC/LLVMC source.
+Default/NoOpt IR and C O0/O2 cover all four rounding modes, DAZ/FTZ, seeded
+sticky status, signed zeros, subnormals, infinities and different NaN payloads
+in both operand orders. Complete memory and MXCSR observations also cover dead
+numerical results, repeated operations, branches and loop joins. Bounded
+native children verify unmasked divide-by-zero before numerical output is
+committed. The concrete evaluator runs the same scalar state matrix against
+an independent native SSE oracle; malformed contracts and unknown callee state
+must refuse. Standalone source also checks typed state bits, helper-name
+collisions and unaligned state memory at C O0/O2 with UB traps.
+Native execution requires an x64 host and Clang; the in-process SSE oracle
+additionally requires GCC/Clang. Skips on other hosts are explicit.
+This suite does not establish packed FP, VEX or x87 state coverage.
+
+```bash
+cmake --build build-release --target NeverDX86FPStateAccuracyTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX86FPStateAccuracyTests$' --output-on-failure
+```
+
 ## Inline C memory accesses
 
 `NeverDCMemoryCopyTests` executes HighC and LLVMC output at `-O0` and `-O2`
