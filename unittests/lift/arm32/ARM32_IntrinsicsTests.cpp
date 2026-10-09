@@ -213,11 +213,14 @@ TEST_F(ARM32_Intrinsics, LlvmC_SelUsesParams) {
       << fn_body;
 }
 
-TEST_F(ARM32_Intrinsics, Decompile_ClrexUsesACLE) {
+// Neither Clang's nor GCC's arm_acle.h declares __clrex; Clang compiles
+// CLREX as __builtin_arm_clrex on every ARM target that has it.
+TEST_F(ARM32_Intrinsics, Decompile_ClrexUsesCompilerBuiltin) {
   auto r = decompileToHighC(obj("test_intrinsics_arm.o"));
   ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled_high.c");
-  EXPECT_TRUE(content.find("__clrex()") != std::string::npos)
-      << "Expected __clrex() in ARM32 HighC:\n"
+  EXPECT_TRUE(content.find("__builtin_arm_clrex()") != std::string::npos)
+      << "Expected __builtin_arm_clrex() in ARM32 HighC:\n"
       << content.substr(0, 3000);
+  EXPECT_EQ(content.find("__clrex()"), std::string::npos) << content;
 }
