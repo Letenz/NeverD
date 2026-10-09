@@ -27,6 +27,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <cctype>
 #include <limits>
 #include <string>
@@ -1488,13 +1489,20 @@ std::string renderX86TypedIntrinsicCall(
           "x86 FP numerical/state result requires raw bits");
     const X86FPStateShape Shape{
         .TargetArch = TheArch,
+        .MemoryOrdering = Call.MemoryOrdering,
         .MemoryAddressSpace = Call.MemoryAddressSpace,
         .NumInputs = static_cast<unsigned>(Call.Operands.size() + 1),
         .IdIsConst = true,
         .IdSize = 2,
         .OutputIsWritable = ResultBytes > 0,
         .OutputSize = ResultBytes,
-        .OperandsAreScalar = true,
+        .OperandsAreScalar =
+            std::all_of(Call.Operands.begin(), Call.Operands.end(),
+                        [](const auto &Operand) {
+                          return Operand && Operand->Type &&
+                                 (Operand->Type->Kind == NdTypeKind::Int ||
+                                  Operand->Type->Kind == NdTypeKind::Float);
+                        }),
         .LeftSize = Size(0),
         .RightSize = Size(1),
         .StateSize = Size(2),

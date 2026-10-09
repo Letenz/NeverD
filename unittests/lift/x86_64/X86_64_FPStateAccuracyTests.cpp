@@ -677,6 +677,23 @@ TEST(X86FPStateContract, AuxiliaryDefinitionsCannotInventStateResults) {
                    Arch::X64, Call, [](const HighExpr &) { return "unused"; },
                    HasCIntrinsics, true),
                "invalid x86 FP state C contract");
+  Call.IntrinsicOutputs.clear();
+  Call.MemoryOrdering = NdMemoryOrdering::Acquire;
+  EXPECT_DEATH(renderX86TypedIntrinsicCall(
+                   Arch::X64, Call, [](const HighExpr &) { return "unused"; },
+                   HasCIntrinsics, true),
+               "invalid x86 FP state C contract");
+  Call.MemoryOrdering = NdMemoryOrdering::None;
+  Call.IntrinsicId = Intrinsic::X86FPAddState;
+  Call.Type = NdType::makeInt(12, false);
+  auto NonScalar = HighExpr::makeConst(0, 8);
+  NonScalar->Type = NdType::makeArray(NdType::makeInt(1, false), 8, 8);
+  Call.Operands = {NonScalar, HighExpr::makeConst(0, 8),
+                   HighExpr::makeConst(0x1f80, 4)};
+  EXPECT_DEATH(renderX86TypedIntrinsicCall(
+                   Arch::X64, Call, [](const HighExpr &) { return "unused"; },
+                   HasCIntrinsics, true),
+               "invalid x86 FP state C contract");
 }
 
 TEST_F(X86FPStateAccuracy, ScalarResultsAndMxcsrMatchNativeInstruction) {

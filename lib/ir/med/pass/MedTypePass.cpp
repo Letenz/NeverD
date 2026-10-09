@@ -16,6 +16,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
 
 #include <algorithm>
@@ -66,6 +67,33 @@ fpReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
   if (It == Defs.end())
     return 0;
   const MedOp *Def = It->second;
+  if (Def->Opcode == NdOp::SUBBYTES && Def->NumInputs == 2 &&
+      Def->Inputs[1].isConst()) {
+    const MedVar *Carrier = &Def->Inputs[0];
+    for (unsigned Step = 0; Step < 16 && !Carrier->isConst(); ++Step) {
+      const auto Producer = Defs.find({Carrier->Id, Carrier->SSAVer});
+      if (Producer == Defs.end())
+        break;
+      const MedOp &Source = *Producer->second;
+      if (Source.Opcode == NdOp::INTRINSIC && Source.NumInputs &&
+          Source.Inputs[0].isConst()) {
+        const auto Id = static_cast<Intrinsic>(Source.Inputs[0].ConstVal);
+        if (isX86FPStateIntrinsic(Id))
+          return static_cast<uint16_t>(x86FPStateNumericalSliceSize(
+              Id, x86FPStateMedShape(Source), Def->Inputs[1].ConstVal,
+              Def->Output.Size));
+      }
+      if (Source.Opcode != NdOp::COPY || Source.NumInputs != 1)
+        break;
+      Carrier = &Source.Inputs[0];
+    }
+  }
+  // The state primitive's aggregate and MXCSR words are raw carriers. Only
+  // its exact numerical slice above establishes a scalar FP return.
+  if (Def->Opcode == NdOp::INTRINSIC && Def->NumInputs &&
+      Def->Inputs[0].isConst() &&
+      isX86FPStateIntrinsic(static_cast<Intrinsic>(Def->Inputs[0].ConstVal)))
+    return 0;
   if (Def->Opcode == NdOp::INTRINSIC && Def->NumInputs >= 3 &&
       Def->Inputs[0].isConst() &&
       static_cast<Intrinsic>(Def->Inputs[0].ConstVal) ==

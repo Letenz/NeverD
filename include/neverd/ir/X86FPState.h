@@ -92,6 +92,18 @@ constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
          Shape.OutputSize == Shape.LeftSize + 4;
 }
 
+/// Only this exact slice of a completed aggregate denotes a scalar FP value.
+/// The whole aggregate and its status slice remain integer bit carriers.
+constexpr unsigned x86FPStateNumericalSliceSize(Intrinsic Id,
+                                                const X86FPStateShape &Shape,
+                                                uint64_t Offset,
+                                                unsigned Bytes) {
+  return isX86ScalarFPStateIntrinsic(Id) && x86FPStateShapeIsValid(Id, Shape) &&
+                 Offset == 0 && Bytes == Shape.LeftSize
+             ? Bytes
+             : 0;
+}
+
 } // namespace neverd
 
 #endif // NEVERD_IR_X86FPSTATE_H

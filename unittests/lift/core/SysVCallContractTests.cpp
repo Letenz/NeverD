@@ -481,13 +481,22 @@ TEST(SysVCallContract, AFloatArgumentReachesAPrototypedImport) {
   put(Code, TwiceSin, TwiceSinCode);
   const BinaryImage Img = makeImportImage(
       Code, {{TwiceSin, "twice_sin"}, {Stub, "sin_stub"}}, {{Stub, "sin"}});
-  const std::string Body =
-      body(liftEntries(Img, {TwiceSin, Stub}), "twice_sin");
+  const std::string Source = liftEntries(Img, {TwiceSin, Stub});
+  const std::string Body = body(Source, "twice_sin");
   ASSERT_FALSE(Body.empty());
   EXPECT_NE(Body.find("double twice_sin(double arg0)"), std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("sin(arg0 + arg0)"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("sin("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+  // A declared double import must receive the sum and its result must feed
+  // the second operation. Execute a known independent implementation so
+  // explicit FP state temporaries cannot hide a stale ABI value.
+  compileAndRun(Source + R"(
+double sin(double value) { return value * value; }
+int main(void) {
+  return twice_sin(1.5) == 18.0 && twice_sin(-0.25) == 0.5 ? 0 : 1;
+}
+)");
 }
 
 TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
