@@ -38,7 +38,8 @@ HighIR.
 Windows registration-chain EH has separate source and generated contracts.
 The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
-lifetime; HighIR and native LLVM lowering consume that same result.
+lifetime, including the untouched bytes of narrow state stores; HighIR and
+native LLVM lowering consume that same result.
 `hasCallerCleanupRegistrationABI` owns the current PE32 stack-cleanup check,
 which the writer replays against immutable input. Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction

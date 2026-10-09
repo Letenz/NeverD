@@ -84,6 +84,9 @@ C++ map counts share one aggregate decode budget.
 `analyzeRegistrationStates` is the shared LowIR owner of reaching try levels.
 It follows CFG predecessors and backedges, unions levels at joins and applies a
 recovered state store only after its exact decoded instruction completes.
+The loader retains byte, word and dword store widths. A narrow immediate
+replaces only those low bits in every reaching whole state; unknown high bytes,
+invalid resulting levels and disagreement with the lifted width fail closed.
 Unreachable stores cannot change a reachable block's state. Runtime-entered
 filters and cleanup callbacks are kept outside the parent's lexical interval;
 catch and except entries use their runtime state transfer. MedIR carries these
@@ -201,7 +204,7 @@ lowering:
 - function attachment: `neverd.windows.eh`;
 - native-lowering marker: `neverd.windows.eh.native`;
 - module table: `neverd.windows.eh.functions`;
-- current schema version: `8`.
+- current schema version: `9`.
 
 The fixed function record carries parse status, encoding, code range, native
 runtime/unwind RVAs, runtime-record kind and chain provenance, packed-unwind

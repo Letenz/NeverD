@@ -36,7 +36,9 @@ struct RegistrationScopeRecord {
   bool IsFinally = false;
 };
 
-/// One store of a literal try level into the frame's try-level slot.
+/// One immediate store into the frame's try-level slot. Narrow stores retain
+/// their unsigned literal bits; only the shared state analysis can prove the
+/// complete level after preserving the untouched bytes.
 ///
 /// The scope table says which scope a level names but nothing about where that
 /// level is current: the runtime reads the level out of the frame, so only the
@@ -48,7 +50,9 @@ struct RegistrationTryLevelStore {
   va_t StoreVA = 0;
   /// Address just past the store.
   va_t EndVA = 0;
+  /// Signed full-word level, or the zero-extended immediate of a narrow store.
   int32_t Level = 0;
+  uint8_t Width = 4;
 };
 
 /// The prologue-established registration record for one x86-32 function.

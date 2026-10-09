@@ -163,9 +163,9 @@ llvm::MDNode *getCanonicalFunctionMetadata(llvm::LLVMContext &Context,
     std::vector<llvm::Metadata *> TryLevelStores;
     TryLevelStores.reserve(Chain.TryLevelStores.size());
     for (const RegistrationTryLevelStore &Store : Chain.TryLevelStores)
-      TryLevelStores.push_back(
-          Node({mdUInt(Context, Store.StoreVA), mdUInt(Context, Store.EndVA),
-                mdSInt(Context, Store.Level, 32)}));
+      TryLevelStores.push_back(Node(
+          {mdUInt(Context, Store.StoreVA), mdUInt(Context, Store.EndVA),
+           mdSInt(Context, Store.Level, 32), mdUInt(Context, Store.Width, 8)}));
 
     std::vector<llvm::Metadata *> Scopes;
     Scopes.reserve(Chain.Scopes.size());

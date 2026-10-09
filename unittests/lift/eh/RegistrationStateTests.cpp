@@ -10,6 +10,8 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/lift/X86Regs.h"
 
+#include <tuple>
+
 namespace {
 
 using namespace neverd;
@@ -389,6 +391,83 @@ TEST(RegistrationState, APartialWriteCannotKeepThePreviousState) {
   addSlotStore(F.Blocks[3], 1, 1);
   auto Result = analyzeRegistrationStates(F);
   EXPECT_FALSE(Result.Complete);
+}
+
+LowFunc makeNarrowCxxStateFrame(uint8_t Width, int32_t First, int32_t Other,
+                                int32_t Immediate) {
+  auto F = makeBranchingFrame();
+  auto &EH = *F.ExceptionMetadata;
+  EH.Personality = ExceptionPersonality::CxxFrameHandler3;
+  EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
+  auto &Chain = *EH.Registration;
+  Chain.RegistrationOffset = -12;
+  Chain.Scopes.clear();
+  auto &Cxx = EH.Cxx.emplace();
+  Cxx.MaxState = 258;
+  Cxx.UnwindMap.resize(Cxx.MaxState);
+  for (auto &Action : Cxx.UnwindMap)
+    Action.Kind = CxxUnwindAction::ActionKind::None;
+  F.Blocks[0].Ops[2].Inputs[1] = NdVar::cst(12, 4);
+  F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(uint32_t(First), 4);
+  F.Blocks[2].Ops.back().Inputs[1] = NdVar::cst(uint32_t(Other), 4);
+  Chain.TryLevelStores[0].Level = First;
+  Chain.TryLevelStores[1].Level = Other;
+  auto &Write = F.Blocks[3];
+  Write.EndAddr = Write.StartAddr + 4;
+  Write.InstructionBoundaries = {{Write.StartAddr, 4}};
+  addSlotStore(Write, Immediate, Width);
+  Chain.TryLevelStores.push_back(
+      {Write.StartAddr, Write.EndAddr, Immediate, Width});
+  Write.Succs = {4};
+  LowBlock After;
+  After.Id = 4;
+  After.StartAddr = 0x1040;
+  After.EndAddr = 0x1041;
+  F.Blocks.push_back(std::move(After));
+  return F;
+}
+
+TEST(RegistrationState, NarrowCxxStoresPreserveEveryReachingHighByte) {
+  for (const auto &[Width, First, Other, Immediate, Expected] :
+       {std::tuple{uint8_t(1), 256, 256, 1, std::vector<int32_t>{257}},
+        std::tuple{uint8_t(1), 0, 256, 1, std::vector<int32_t>{1, 257}},
+        std::tuple{uint8_t(1), -1, -1, 255, std::vector<int32_t>{-1}},
+        std::tuple{uint8_t(2), 0, 256, 257, std::vector<int32_t>{257}}}) {
+    auto F = makeNarrowCxxStateFrame(Width, First, Other, Immediate);
+    auto Result = analyzeRegistrationStates(F);
+    ASSERT_TRUE(Result.Complete) << unsigned(Width) << ' ' << First;
+    ASSERT_EQ(Result.Blocks.size(), 5u);
+    EXPECT_EQ(Result.Blocks.back().Levels, Expected);
+    EXPECT_FALSE(Result.Blocks.back().Unknown);
+  }
+}
+
+TEST(RegistrationState, NarrowCxxStoresNeedThePriorWholeStateAndExactWidth) {
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    auto F = makeNarrowCxxStateFrame(1, 0, 0, 1);
+    auto &Store = F.ExceptionMetadata->Registration->TryLevelStores.back();
+    if (Mutation == 0) {
+      F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(uint32_t(-1), 4);
+      F.ExceptionMetadata->Registration->TryLevelStores[0].Level = -1;
+    }
+    if (Mutation == 1)
+      Store.Width = 4;
+    if (Mutation == 2)
+      F.Blocks[3].Ops.back().Inputs[1] = NdVar::cst(2, 1);
+    if (Mutation == 3) {
+      Store.Level = 256;
+      F.Blocks[3].Ops.back().Inputs[1] = NdVar::cst(256, 1);
+    }
+    if (Mutation == 4)
+      F.Blocks[3].Ops.front().Inputs[1] = NdVar::cst(uint32_t(-3), 4);
+    if (Mutation == 5) {
+      F.Blocks[1].Ops.back().Inputs[1] = NdVar::reg(x86reg::RAX, 4);
+    }
+    const auto Result = analyzeRegistrationStates(F);
+    EXPECT_FALSE(Result.Complete) << Mutation;
+    ASSERT_EQ(Result.Blocks.size(), 5u);
+    EXPECT_TRUE(Result.Blocks.back().Unknown) << Mutation;
+  }
 }
 
 TEST(RegistrationState, ADynamicWriteCannotKeepThePreviousState) {

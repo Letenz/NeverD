@@ -323,6 +323,51 @@ TEST(RegistrationTryLevel, ReadsTheSlotTheStoresAgreeOn) {
   EXPECT_EQ(levels(*Chain), (std::vector<int32_t>{0, -1}));
 }
 
+TEST(RegistrationTryLevel, RetainsNarrowStateBitsAndInstructionWidths) {
+  for (const bool LongDisplacement : {false, true}) {
+    ImageBuilder B;
+    B.addScope(-1, kText + 0x80, kText + 0x90);
+    B.addScope(0, kText + 0xa0, kText + 0xb0);
+    B.endScopes();
+    emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+    emitFrameStore(B.Text, -4, 0);
+    const va_t ByteVA = B.textVA();
+    B.Text.insert(B.Text.end(),
+                  {0xc6, uint8_t(LongDisplacement ? 0x85 : 0x45)});
+    if (LongDisplacement)
+      emit32(B.Text, uint32_t(-4));
+    else
+      B.Text.push_back(0xfc);
+    B.Text.push_back(0xff);
+    const va_t ByteEnd = B.textVA();
+    const va_t WordVA = B.textVA();
+    B.Text.insert(B.Text.end(),
+                  {0x66, 0xc7, uint8_t(LongDisplacement ? 0x85 : 0x45)});
+    if (LongDisplacement)
+      emit32(B.Text, uint32_t(-4));
+    else
+      B.Text.push_back(0xfc);
+    B.Text.insert(B.Text.end(), {0xff, 0xff});
+    const va_t WordEnd = B.textVA();
+    emitFrameStore(B.Text, -4, -1);
+    B.Text.push_back(0xc3);
+    auto Image = B.build({{"narrow-state", kText}});
+    const auto *Chain = chainAt(Image, kText);
+    ASSERT_NE(Chain, nullptr);
+    ASSERT_EQ(Chain->TryLevelStores.size(), 4u);
+    EXPECT_EQ(Chain->TryLevelStores[0].Width, 4u);
+    EXPECT_EQ(Chain->TryLevelStores[1].StoreVA, ByteVA);
+    EXPECT_EQ(Chain->TryLevelStores[1].EndVA, ByteEnd);
+    EXPECT_EQ(Chain->TryLevelStores[1].Width, 1u);
+    EXPECT_EQ(Chain->TryLevelStores[1].Level, 255);
+    EXPECT_EQ(Chain->TryLevelStores[2].StoreVA, WordVA);
+    EXPECT_EQ(Chain->TryLevelStores[2].EndVA, WordEnd);
+    EXPECT_EQ(Chain->TryLevelStores[2].Width, 2u);
+    EXPECT_EQ(Chain->TryLevelStores[2].Level, 65535);
+    EXPECT_EQ(Chain->TryLevelStores[3].Width, 4u);
+  }
+}
+
 TEST(RegistrationTryLevel, ExportAndImageEntriesOwnSymbolFreePrologues) {
   ImageBuilder B;
   B.addScope(-1, kText + 0x40, kText + 0x50);

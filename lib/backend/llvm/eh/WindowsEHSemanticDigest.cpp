@@ -28,7 +28,9 @@ constexpr llvm::StringLiteral GSFH4Domain("windows-eh.gs-fh4");
 constexpr uint8_t SEHGraphKind = 1;
 constexpr uint8_t FH3GraphKind = 2;
 constexpr uint8_t FH4GraphKind = 3;
-constexpr uint8_t RegistrationSEHGraphKind = 4;
+// Kind 4 omitted store widths. A new domain rejects those old receipts without
+// changing the existing table-driven SEH and C++ semantic identities.
+constexpr uint8_t RegistrationSEHGraphKind = 5;
 static_assert(GraphDomain.size() <= std::numeric_limits<uint32_t>::max());
 static_assert(TokenDomain.size() <= std::numeric_limits<uint32_t>::max());
 
@@ -255,9 +257,14 @@ getRegistrationSEHGraphDigest(const ExceptionFunction &EH) {
   if (!appendCount(Bytes, Chain.TryLevelStores.size()))
     return std::nullopt;
   for (const RegistrationTryLevelStore &Store : Chain.TryLevelStores) {
+    if ((Store.Width != 1 && Store.Width != 2 && Store.Width != 4) ||
+        (Store.Width == 1 && uint32_t(Store.Level) > UINT8_MAX) ||
+        (Store.Width == 2 && uint32_t(Store.Level) > UINT16_MAX))
+      return std::nullopt;
     Bytes.appendU64(Store.StoreVA);
     Bytes.appendU64(Store.EndVA);
     Bytes.appendI32(Store.Level);
+    Bytes.appendU8(Store.Width);
   }
   return llvm::SHA256::hash(Bytes.bytes());
 }

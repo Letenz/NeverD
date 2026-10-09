@@ -27,13 +27,14 @@ bool isValidEnclosingLevel(int32_t Level, uint32_t Index, bool IsEH4) {
   return Level >= 0 && static_cast<uint32_t>(Level) < Index;
 }
 
-/// One `mov dword ptr [ebp+disp], imm32`, the only shape the compiler uses to
-/// set the current try level.
+/// One immediate byte, word or dword store relative to EBP. A narrow immediate
+/// is an observation of written bits, not a complete runtime state.
 struct FrameSlotStore {
   va_t StoreVA = 0;
   va_t EndVA = 0;
   int32_t Displacement = 0;
   int32_t Value = 0;
+  uint8_t Width = 4;
 };
 
 /// Every such store inside a code range.
@@ -56,22 +57,35 @@ findFrameSlotStores(const BinaryImage &Img,
     return Stores;
 
   const uint8_t *Data = Seg->Data.data();
-  for (uint64_t I = Begin; I + 7 <= End; ++I) {
-    if (Data[I] != 0xC7)
-      continue;
-    // ModRM /0 with a base of EBP: mod=01 is the byte displacement and mod=10
-    // the dword one.  Both take a trailing imm32.
-    if (Data[I + 1] == 0x45) {
-      Stores.push_back({static_cast<va_t>(Seg->VA + I),
-                        static_cast<va_t>(Seg->VA + I + 7),
-                        static_cast<int8_t>(Data[I + 2]),
-                        static_cast<int32_t>(readLE<uint32_t>(Data + I + 3))});
-    } else if (Data[I + 1] == 0x85 && I + 10 <= End) {
-      Stores.push_back({static_cast<va_t>(Seg->VA + I),
-                        static_cast<va_t>(Seg->VA + I + 10),
-                        static_cast<int32_t>(readLE<uint32_t>(Data + I + 2)),
-                        static_cast<int32_t>(readLE<uint32_t>(Data + I + 6))});
+  for (uint64_t I = Begin; I + 4 <= End; ++I) {
+    uint64_t Opcode = I;
+    uint8_t Width = 4;
+    if (Data[Opcode] == 0x66) {
+      ++Opcode;
+      Width = 2;
     }
+    if (Data[Opcode] == 0xC6 && Width == 4)
+      Width = 1;
+    else if (Data[Opcode] != 0xC7)
+      continue;
+    // ModRM /0 with EBP and either an eight- or thirty-two-bit displacement.
+    const uint8_t ModRM = Data[Opcode + 1];
+    const uint64_t DispBytes = ModRM == 0x45 ? 1 : ModRM == 0x85 ? 4 : 0;
+    if (!DispBytes || Opcode + 2 + DispBytes + Width > End)
+      continue;
+    const uint64_t Immediate = Opcode + 2 + DispBytes;
+    const int32_t Displacement = DispBytes == 1
+                                     ? int8_t(Data[Opcode + 2])
+                                     : readLE<int32_t>(Data + Opcode + 2);
+    const int32_t Value = Width == 1   ? Data[Immediate]
+                          : Width == 2 ? readLE<uint16_t>(Data + Immediate)
+                                       : readLE<int32_t>(Data + Immediate);
+    Stores.push_back({static_cast<va_t>(Seg->VA + I),
+                      static_cast<va_t>(Seg->VA + Immediate + Width),
+                      Displacement, Value, Width});
+    // Do not publish a second dword candidate inside the operand-size prefix.
+    if (Opcode != I)
+      I = Opcode;
   }
   return Stores;
 }
@@ -169,6 +183,10 @@ void recoverTryLevelStores(const BinaryImage &Img,
     bool SawScope = false;
     bool AllInRange = true;
     for (const FrameSlotStore &Store : Stores) {
+      if (Store.Width != 4) {
+        AllInRange = false;
+        continue;
+      }
       if (Store.Value == Seed)
         SawSeed = true;
       else if (Store.Value >= 0 && Store.Value <= Highest)
@@ -189,7 +207,8 @@ void recoverTryLevelStores(const BinaryImage &Img,
   Chain.TryLevelOffset = WinningSlot;
   Chain.TryLevelStores.reserve(Winner->size());
   for (const FrameSlotStore &Store : *Winner)
-    Chain.TryLevelStores.push_back({Store.StoreVA, Store.EndVA, Store.Value});
+    Chain.TryLevelStores.push_back(
+        {Store.StoreVA, Store.EndVA, Store.Value, Store.Width});
   std::sort(
       Chain.TryLevelStores.begin(), Chain.TryLevelStores.end(),
       [](const RegistrationTryLevelStore &A,

@@ -1495,8 +1495,13 @@ const char *ehAnnotationUnrenderedShape(const llvm::MDNode &UnwindOperations,
         !ehAnnotationUIntFields(*Row,
                                 {{windows_eh_md::RegistrationStoreVA, 64},
                                  {windows_eh_md::RegistrationStoreEndVA, 64},
-                                 {windows_eh_md::RegistrationStoreLevel, 32}}))
+                                 {windows_eh_md::RegistrationStoreLevel, 32},
+                                 {windows_eh_md::RegistrationStoreWidth, 8}}))
       return "registration store";
+    const auto Width =
+        ehAnnotationUInt(*Row, windows_eh_md::RegistrationStoreWidth, 8);
+    if (*Width != 1 && *Width != 2 && *Width != 4)
+      return "registration store width";
   }
   for (const llvm::MDOperand &Operand : Scopes->operands()) {
     const auto *Row = llvm::dyn_cast_if_present<llvm::MDNode>(Operand.get());

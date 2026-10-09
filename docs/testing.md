@@ -1772,6 +1772,9 @@ restored FS:[0], SafeSEH and a newly installed Guard CF table-pointer relocation
 The cdecl cases additionally read and write the actual caller-owned parameter
 slot through exceptional callbacks; synthetic frame initialization alone cannot
 satisfy those observations.
+State tests cover narrow C++ state writes, nonzero high bytes, path unions,
+sentinels, unknown prior states and scanner/lifter width disagreement. The
+canonical metadata and source semantic receipts retain the exact store width.
 State tests mutate the GS decode expression, target, width and instruction
 identity. Native input tests remove, duplicate and alter the indexed source
 check event and require the public patcher to reject it. Strict generated-only

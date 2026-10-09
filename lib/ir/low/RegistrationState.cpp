@@ -129,7 +129,12 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
                  Store.EndVA > Store.StoreVA &&
                  Instruction.Size == Store.EndVA - Store.StoreVA;
         });
-    if (!ValidLevel(Store.Level) || Store.EndVA != Block.EndAddr ||
+    const bool ValidImmediate =
+        Store.Width == 4   ? ValidLevel(Store.Level)
+        : Store.Width == 1 ? uint32_t(Store.Level) <= UINT8_MAX
+        : Store.Width == 2 ? uint32_t(Store.Level) <= UINT16_MAX
+                           : false;
+    if (!ValidImmediate || Store.EndVA != Block.EndAddr ||
         Boundary == Block.InstructionBoundaries.end() ||
         !Stores.emplace(Store.StoreVA, Store).second)
       Facts[I].Invalid = true;
@@ -552,12 +557,37 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
               (!Address.Offset ||
                overlaps(*Address.Offset, Width, *Chain.TryLevelOffset, 4))) {
             auto Observation = Stores.find(Op.Addr);
-            if (Address.Offset == Chain.TryLevelOffset && Width == 4 &&
-                Stored.Constant && ValidLevel(int32_t(*Stored.Constant)) &&
+            std::set<int32_t> WrittenLevels;
+            bool Valid =
+                Address.Offset == Chain.TryLevelOffset &&
+                (Width == 1 || Width == 2 || Width == 4) && Stored.Constant &&
                 Observation != Stores.end() &&
-                Observation->second.Level == int32_t(*Stored.Constant) &&
-                !After.Uninstalled && ProvenStores.insert(Op.Addr).second) {
-              After.Levels = {int32_t(*Stored.Constant)};
+                Observation->second.Width == Width &&
+                uint32_t(Observation->second.Level) == *Stored.Constant &&
+                !After.Uninstalled;
+            if (Valid && Width == 4) {
+              Valid = ValidLevel(int32_t(*Stored.Constant));
+              WrittenLevels.insert(int32_t(*Stored.Constant));
+            } else if (Valid) {
+              // A byte/word state write preserves the other bytes. Never
+              // sign-extend its immediate or infer zero high bytes. Replay
+              // every reaching whole level and retain distinct results.
+              const uint32_t Mask = Width == 1 ? UINT8_MAX : UINT16_MAX;
+              Valid = !After.Unknown && !After.Levels.empty() &&
+                      *Stored.Constant <= Mask;
+              for (int32_t Level : After.Levels) {
+                if (!Charge(1)) {
+                  Valid = false;
+                  break;
+                }
+                const int32_t Written = int32_t((uint32_t(Level) & ~Mask) |
+                                                (*Stored.Constant & Mask));
+                Valid &= ValidLevel(Written);
+                WrittenLevels.insert(Written);
+              }
+            }
+            if (Valid && ProvenStores.insert(Op.Addr).second) {
+              After.Levels = std::move(WrittenLevels);
               After.Unknown = false;
             } else
               Invalidate();
@@ -571,6 +601,10 @@ RegistrationStateAnalysis analyzeRegistrationStates(const LowFunc &Function,
             if (!Charge(After.Frame.Cells.size() + 1))
               break;
             After.Frame.store(*Address.Offset, Width, Stored);
+            if (Address.Offset == Chain.TryLevelOffset &&
+                ProvenStores.count(Op.Addr) && After.Levels.size() == 1)
+              After.Frame.Cells[*Chain.TryLevelOffset] =
+                  FrameValue::constant(uint32_t(*After.Levels.begin()));
           } else if (Stored.MayBeFrame) {
             // A frame pointer escaped to storage whose future aliases cannot
             // be bounded by this frame-value domain.

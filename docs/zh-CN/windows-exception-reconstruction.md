@@ -70,7 +70,9 @@ scope table 或 C++ FuncInfo。SafeSEH 表必须已映射、严格排序，且�
 
 `analyzeRegistrationStates` 是 LowIR 中 try-level 数据流的唯一所有者。它沿 CFG
 前驱与回边传播状态，在汇合点保留所有到达的 level，并仅在已解码的状态写入指令完成后
-应用新状态。不可达代码中的写入不能改变可达块的状态。运行时调用的 filter 与 cleanup
+应用新状态。loader 保留字节、字和双字写入的宽度；窄写入仅替换每个到达状态的对应
+低位。未知高位、非法结果或与提升后宽度不符都会使证明失败。不可达代码中的写入不能
+改变可达块的状态。运行时调用的 filter 与 cleanup
 callback 不属于父函数的词法保护区；catch/except 入口使用对应的运行时状态迁移。
 MedIR 单独携带这些推导结果，不修改 patch 事务认证的 loader 描述符。只有所有到达状态
 对区域归属一致时，HighIR 才生成结构化区域；未知迁移保留注释，不虚构 IP-to-state map。
@@ -147,7 +149,7 @@ WinEH lowering：
 - 函数 attachment：`neverd.windows.eh`；
 - 原生 lowering 标记：`neverd.windows.eh.native`；
 - module table：`neverd.windows.eh.functions`；
-- 当前 schema version：`8`。
+- 当前 schema version：`9`。
 
 固定函数记录携带 parse status、encoding、code range、原生 runtime/unwind RVA、
 runtime-record kind 与 chain 来源、packed-unwind word、frame description、规范化和

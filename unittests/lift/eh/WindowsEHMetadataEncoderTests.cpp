@@ -39,8 +39,8 @@ namespace {
 
 using namespace neverd;
 
-constexpr llvm::StringLiteral RichSchemaV8Fingerprint(
-    "34566d14a69607ce502bbd334730a7bca42fd96846ea4c71b6c3efbd8ccc11fa");
+constexpr llvm::StringLiteral RichSchemaV9Fingerprint(
+    "e4e7f14677608cfe60a738e8156c01dee1832b42b4d4db9f683366fcba602a35");
 
 ExceptionFunction makeRichExceptionFunction() {
   ExceptionFunction EH;
@@ -163,7 +163,7 @@ ExceptionFunction makeRichExceptionFunction() {
   Registration.HandlerVA = 0x401020;
   Registration.ScopeTableVA = 0x403040;
   Registration.TryLevelOffset = -0x24;
-  Registration.TryLevelStores = {{0x401080, 0x401086, 0},
+  Registration.TryLevelStores = {{0x401080, 0x401086, 0, 1},
                                  {0x4010a0, 0x4010a6, -2}};
   Registration.SeededTryLevel = -2;
   Registration.RegistrationOffset = -0x18;
@@ -186,7 +186,7 @@ ExceptionFunction makeRichExceptionFunction() {
 
   ExceptionFunctionDecodeProvenance Provenance;
   Provenance.Structural.ParseStatus = ExceptionParseStatus::Malformed;
-  Provenance.Structural.Diagnostics = {"not part of schema v8"};
+  Provenance.Structural.Diagnostics = {"not part of schema v9"};
   EH.DecodeProvenance = std::move(Provenance);
   return EH;
 }
@@ -332,7 +332,7 @@ std::string fingerprintDigest(const llvm::Metadata &Metadata) {
   return llvm::toHex(llvm::ArrayRef<uint8_t>(Digest), /*LowerCase=*/true);
 }
 
-TEST(WindowsEHMetadataEncoder, PreservesSchemaV8Projection) {
+TEST(WindowsEHMetadataEncoder, PreservesSchemaV9Projection) {
   const ExceptionFunction EH = makeRichExceptionFunction();
   llvm::LLVMContext Context;
   llvm::MDNode *Payload =
@@ -359,7 +359,7 @@ TEST(WindowsEHMetadataEncoder, PreservesSchemaV8Projection) {
   EXPECT_EQ(metadataInteger(*Scope,
                             windows_eh_md::SEHScopeNormalizedFilterVA, 64),
             EH.SEH->Scopes.front().NormalizedFilterVA);
-  EXPECT_EQ(fingerprintDigest(*Payload), RichSchemaV8Fingerprint);
+  EXPECT_EQ(fingerprintDigest(*Payload), RichSchemaV9Fingerprint);
 }
 
 TEST(WindowsEHMetadataEncoder, PreservesCompleteX86RegistrationChain) {
@@ -444,6 +444,9 @@ TEST(WindowsEHMetadataEncoder, PreservesCompleteX86RegistrationChain) {
   EXPECT_EQ(
       metadataInteger(*FirstStore, windows_eh_md::RegistrationStoreLevel, 32),
       0u);
+  EXPECT_EQ(
+      metadataInteger(*FirstStore, windows_eh_md::RegistrationStoreWidth, 8),
+      1u);
   const auto *SecondStore =
       llvm::dyn_cast<llvm::MDNode>(Stores->getOperand(1).get());
   ASSERT_NE(SecondStore, nullptr);
@@ -458,6 +461,9 @@ TEST(WindowsEHMetadataEncoder, PreservesCompleteX86RegistrationChain) {
   EXPECT_EQ(
       metadataInteger(*SecondStore, windows_eh_md::RegistrationStoreLevel, 32),
       static_cast<uint32_t>(-2));
+  EXPECT_EQ(
+      metadataInteger(*SecondStore, windows_eh_md::RegistrationStoreWidth, 8),
+      4u);
 
   const auto *Scopes = llvm::dyn_cast<llvm::MDNode>(
       Registration->getOperand(windows_eh_md::RegistrationScopes).get());
@@ -641,7 +647,7 @@ TEST(WindowsEHMetadataEncoder, BitcodeRoundTripRemainsCanonical) {
 
   EXPECT_EQ(RoundTripPayload,
             windows_eh_md::getCanonicalFunctionMetadata(RoundTripContext, EH));
-  EXPECT_EQ(fingerprintDigest(*RoundTripPayload), RichSchemaV8Fingerprint);
+  EXPECT_EQ(fingerprintDigest(*RoundTripPayload), RichSchemaV9Fingerprint);
 }
 
 TEST(WindowsEHNativeSource, AcceptsOnlyTheExactSupportedCOFFSourceModels) {
@@ -1016,6 +1022,31 @@ TEST(WindowsEHSemanticDigest, UsesVersionedLittleEndianSHA256Words) {
       0x973ed61af6d399a1ULL};
   EXPECT_EQ(Token->Digest, Expected);
   EXPECT_EQ(windows_eh_semantics::SemanticDigestSchemaVersion, 1u);
+}
+
+TEST(WindowsEHSemanticDigest, RegistrationStateStoreWidthsBindTheSourceToken) {
+  ExceptionFunction EH;
+  EH.CodeRange = {0x401000, 0x401100};
+  EH.Encoding = ExceptionEncoding::X86ScopeTableEH3;
+  EH.Personality = ExceptionPersonality::ExceptHandler3;
+  auto &Chain = EH.Registration.emplace();
+  Chain.Scopes = {{-1, 0x401080, 0x401090, false}};
+  Chain.TryLevelStores = {{0x401020, 0x401024, 0, 1}};
+  const auto Byte =
+      windows_eh_semantics::getSEHScopeSemanticToken(EH, Arch::X86, 0);
+  ASSERT_TRUE(Byte);
+  Chain.TryLevelStores.front().Width = 4;
+  const auto Word =
+      windows_eh_semantics::getSEHScopeSemanticToken(EH, Arch::X86, 0);
+  ASSERT_TRUE(Word);
+  EXPECT_NE(*Byte, *Word);
+  Chain.TryLevelStores.front().Width = 3;
+  EXPECT_FALSE(
+      windows_eh_semantics::getSEHScopeSemanticToken(EH, Arch::X86, 0));
+  Chain.TryLevelStores.front().Width = 1;
+  Chain.TryLevelStores.front().Level = 256;
+  EXPECT_FALSE(
+      windows_eh_semantics::getSEHScopeSemanticToken(EH, Arch::X86, 0));
 }
 
 TEST(WindowsEHSemanticDigest,
