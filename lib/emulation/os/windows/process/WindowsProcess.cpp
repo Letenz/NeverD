@@ -357,7 +357,15 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   auto SetWatches = [&](std::vector<ExecutionWatch> Watches) {
     ObserverWatches = std::move(Watches);
     auto Combined = ObserverWatches;
-    Combined.insert(Combined.end(), NativeWatches.begin(), NativeWatches.end());
+    // Keep an already ordered observer set ordered. Appending the lower
+    // system-image range would force a full sort at every watched instruction.
+    // The session still validates and normalizes arbitrary caller ordering.
+    if (!NativeWatches.empty()) {
+      auto Position = llvm::find_if(Combined, [&](const ExecutionWatch &W) {
+        return W.Address >= NativeWatches.front().Address;
+      });
+      Combined.insert(Position, NativeWatches.begin(), NativeWatches.end());
+    }
     return (*Session)->watchExecution(std::move(Combined));
   };
   bool Observing = false;
