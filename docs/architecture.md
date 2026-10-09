@@ -2846,6 +2846,13 @@ files.
 
 ## Strict lifting contract
 
+The pinned Capstone x86 decoder owns LOCK/MOV-to-CS encoding validity and UD1
+instruction extent and operand details. NeverD's detailed, lightweight and
+lifting decode routes consume that result, including REX2 forms. Illegal
+encodings fail decoding even when strict lifting is disabled. UD1 remains an
+explicit invalid-opcode intrinsic; its encoded operands do not imply an
+ordinary memory access.
+
 `Decoder` and every architecture lifter start in strict mode. If Capstone can
 decode an instruction but the selected lifter has no implementation, the
 lifter throws `UnliftedInstruction`. The exception records the instruction
