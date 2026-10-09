@@ -1,5 +1,111 @@
 # NeverD Daily Progress
 
+Last verified: **2026-10-09 09:10 Asia/Shanghai (UTC+08:00)** / **2026-10-09 01:10 UTC**
+
+This is a bounded static source review and a point-in-time snapshot of existing GitHub evidence. Priorities are suggestions, not delivery commitments. All previous tracker content is preserved below. This topic-branch report is a proposal against dev; publication does not mean it has been merged.
+
+## Current snapshot
+
+- Pinned source: [f242ee88](https://github.com/NeverSight/NeverD/commit/f242ee8897fd7172fb79046653bb6b555b54cab2), still dev at the final pre-publication read. Previous reviewed source: [4320d15e](https://github.com/NeverSight/NeverD/commit/4320d15ed24b52c4e631836e440f340b2d5c45a5).
+- Activity window: October 8 02:11 UTC through October 9 01:10 UTC. Collections were sampled 01:06–01:09 UTC; later changes are outside this snapshot.
+- **20 ordinary open issues**, up two: [#655 collaboration](https://github.com/NeverSight/NeverD/issues/655) and [#656 hzqst/reagent integration](https://github.com/NeverSight/NeverD/issues/656). No ordinary issue closed in the window.
+- **2 pre-existing open PRs**: draft [#689](https://github.com/NeverSight/NeverD/pull/689) and non-draft [#702](https://github.com/NeverSight/NeverD/pull/702). This report's new draft is excluded from that count.
+- **54 PRs merged**, **0 closed without merge**, and **53 PRs opened** during the window. Yesterday's #643, #645 and [#648](https://github.com/NeverSight/NeverD/pull/648) have merged.
+- Source comparison inventory: **354 commits, 574 changed paths** (120 added, 454 modified, zero removed), not an exhaustive review count. [The comparison](https://github.com/NeverSight/NeverD/compare/4320d15ed24b52c4e631836e440f340b2d5c45a5...f242ee8897fd7172fb79046653bb6b555b54cab2) includes broad GUI, ABI, loader, emulation, symbolic and backend changes.
+- Exclude pure report commit [6bdec2e2](https://github.com/NeverSight/NeverD/commit/6bdec2e28e47031824a0ed2388e7ef8a42d76f2a) and PROGRESS.md from substantive advancement: **353 non-report-only commits / 573 other paths**. These remain mixed source/docs/tests/merge inventory, not a business-progress metric. #648 includes a real fixture repair, so its entire merge is not excluded.
+- **No new statically confirmed defect in the bounded sample; no speculative code changes.** Yesterday's optional-fixture repair is present in dev.
+
+## Changes since the previous snapshot
+
+- #648 merged October 8 03:29:05 UTC. The independent empty defaults for NEVERD_WDM_MULTIPLE_WAIT_FIXTURE and NEVERD_WDM_MULTIPLE_WAIT_CFG_FIXTURE are present in [DriverBackendParityCases.def:7–12](https://github.com/NeverSight/NeverD/blob/f242ee8897fd7172fb79046653bb6b555b54cab2/unittests/emulation/DriverBackendParityCases.def#L7-L12). This closes the unmerged-source status of that repair; no new build acceptance is inferred.
+- [#701](https://github.com/NeverSight/NeverD/pull/701) adds complete conditional-domain retries, witness validation, retained singleton target facts and terminal partition obligations. This is today's focused correctness review.
+- Merged source also includes [#684](https://github.com/NeverSight/NeverD/pull/684) CNF lookup changes, [#697](https://github.com/NeverSight/NeverD/pull/697) deferred scalar extraction, [#677](https://github.com/NeverSight/NeverD/pull/677) Darwin namespace transactions, [#698](https://github.com/NeverSight/NeverD/pull/698) Windows/i386 import contracts, [#699](https://github.com/NeverSight/NeverD/pull/699) placement-aware loading, and [#700](https://github.com/NeverSight/NeverD/pull/700) idle-analysis GUI visibility. Their complete implementations are outside this sample.
+- #655 (enhancement, epic) and #656 (enhancement, plugins) are separate open, unassigned proposals without milestones or comments. #655 owns multi-session task isolation and reviewed shared publication, alongside #102/#108/#95. #656 targets the **hzqst/reagent** fork and can start with a read-only, capability-aware adapter before shared writes. Their acceptance checklists are future work, not delivered capability. No feature implementation or issue mutation was performed here.
+
+## Bounded static review
+
+Read root AGENTS.md and CONTRIBUTING.md; the full recursive tree contains no nested AGENTS.md. Read the relevant architecture/testing sections and roadmap. Contribution guidance requires focused topic branches against dev, so this report uses a draft PR even though the branch endpoint reports dev unprotected. The explicit static-only instruction takes precedence over repository requests to build, format and execute tests.
+
+### Exact source coverage
+
+At f242ee88, reviewed:
+
+- Full lib/analysis/core/CompleteModel.{h,cpp}, CompletedTargetFacts.{h,cpp}, ConditionalImplication.{h,cpp}, DomainCoverage.{h,cpp}, and ProofNode.h.
+- LowIRUndefinedIndependence.cpp:632–896 and 1556–1589, tracing cumulative node/query charging, mode-specific retries and indirect-target publication.
+- FiniteValues.cpp:286–448, tracing pristine-domain cloning, model-required joint enumeration, encoding-error separation and final blocking UNSAT.
+- CompleteModelTests.cpp, CompletedTargetFactsTests.cpp, ConditionalImplicationTests.cpp and DomainCoverageTests.cpp under unittests/devirtualization. Test source was inspected, not executed.
+- BitVectorSolver.h assertion/clone/model contracts and BitVectorSolver.cpp:141–270, including failed-encoding propagation into check().
+- The repaired optional-fixture defaults in DriverBackendParityCases.def.
+
+### Findings and static evidence
+
+1. **Concrete witnesses remain complete-assignment evidence.** CompleteModel validates reachable topological operands and operator widths before evaluation, requires every referenced variable at exactly its declared width, and refuses absent model values. Its production caller only upgrades an unresolved feasibility/path-pair query to SAT after the original whole predicate is Satisfied. Refuted or incomplete witnesses do not produce UNSAT. Source tests separately cover missing variables, width mismatches, malformed operands, resource boundaries and incompatible partial models.
+
+2. **Completed target facts require complete enumeration.** Storage is bound to the actual context and admits only Complete single-tuple/single-value results. Premise reuse requires the exact stored condition or every conjunct under the current domain; unrelated or weaker domains do not qualify. Additive reduction removes matching occurrences one at a time, preserves modular constants and remaining multiplicity, and still enumerates the reduced expression under the entire original predicate with unchanged query/node limits. Final blocking UNSAT is required before the nonconstant enumeration result becomes a fact. The inspected caller schedules only completed target sets.
+
+3. **Conditional normalization keeps proof obligations.** Preparation validates operand topology and widths, derives equivalences under the domain, and retains reconstruction definitions. Cache identity includes the context, exact domain, all currently declared solver-policy fields and preparation limits. Reuse stores pristine encoding, not a previous goal's answer; every new goal is rewritten and proved with an independent encoding clone. Unknown compound goals split into bounded batches, and every term must be proved before success. The caller supplies the shared cumulative query allowance. Failed assertTrue calls poison subsequent check results, so ignoring their Boolean return at these call sites does not turn partial encoding into a successful proof.
+
+4. **Terminal coverage never assumes observed arms are exhaustive.** Domain factors are removed only when syntactically present or separately proved implied; unresolved factors stay in the complete final question. Partition selection first proves selector values exhaustive under the current domain, then requires every child group, including the last, to prove its whole residual coverage. Unknown/Invalid refuses completion. Operand lists are copied before expression construction, and post-callback node checks preserve the caller's ceiling.
+
+**Result:** No independently confirmed new defect in these paths. No runtime, performance, formal end-to-end soundness or full-repository claim is made. Deeper SAT/CNF internals, all symbolic rebuild/evaluator semantics, every proof-request constructor and all native callers remain unaudited here.
+
+### Questions not established as defects
+
+- PR #702's author reports pre-existing standalone i386 wide-return inference, indirect/LLVM return typing and mov-style outgoing-stack-slot limitations. Those claims identify useful follow-up source areas, but this review did not reproduce or independently establish their triggers; no guessed repair was made.
+- Test bodies specify malformed-input and resource-boundary rejection. They do not establish that these tests pass on the combined dev head, nor that all malformed graphs are covered.
+
+## Existing CI and review evidence
+
+Read-only sampling at October 9 **01:08–01:09 UTC**. No workflow was dispatched or rerun.
+
+### Pinned dev f242ee88
+
+- [CI](https://github.com/NeverSight/NeverD/actions/runs/37865019546) was in progress.
+- [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/37865019555) succeeded.
+- [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/37865019547) had a queued workflow-level state while its job records included Ubuntu success, macOS running and Windows queued. These are distinct sampled API states, not a claim that all jobs were queued.
+- 12 exact-head check records: **6 success, 4 in progress, 1 queued, 1 skipped, 0 failure** at that sample. Main Linux/macOS/Windows were still running. The ARM64 KVM/WHP build checks and both Windows caller-context checks succeeded; native CPU execution was skipped.
+- Incomplete evidence is not acceptance. Yesterday's failed or unfinished statuses are not transplanted onto this head; neither are passing PR checks.
+
+### Open PRs
+
+- **#689**, head 5df09503086d12626dc0fe6c4d612ac07bd349a5: draft, metadata mergeable/unstable. 19 checks: **13 success, 4 in progress, 2 skipped**. Main Linux/macOS/Windows and mobile Windows were running; mobile Linux/macOS succeeded. Its extensive clean-head Darwin/HVF/local acceptance numbers are **author-reported**, not independently executed or validated by this review. Native Intel/physical iOS gaps are explicitly acknowledged by the author.
+- **#702**, head 66b80c0bed26bd44e4752df7bac37da7b71eb186: non-draft, metadata mergeable/unstable. 12 checks: **1 success, 4 in progress, 6 queued, 1 skipped**. Its local corpus timings, pass/fail comparisons, changed skip behavior and stopped long whole-image emission are **author reports**, not review measurements or complete acceptance.
+- Both PRs had **zero submitted reviews, inline comments and conversation comments**, and no requested reviewers in the returned complete collections. Pending review and unfinished exact-head CI remain blockers; neither PR was merged or edited by this review.
+
+## Suggested next priorities
+
+1. **Review the current integration candidate with complete evidence.** Dependencies: #689/#702 owners, independent source review and existing CI. Acceptance: a named head has terminal platform results; author-local runs, skipped cases, inherited failures and actual supported/native coverage are itemized separately. For #702, inspect skip changes and the remaining i386/LLVM contract gaps rather than treating an unchanged failure count as proof of correctness.
+
+2. **Keep #701's proof retry boundary fail-closed.** Dependencies: the complete-domain helper contracts and unchanged cumulative limits. Acceptance: source review plus separately authorized normal CI cover stale context/domain/policy identities, missing final branches/terms, wrong-width or missing model variables, incomplete enumeration and exact/short budgets on the candidate head. This task performs static review only.
+
+3. **Plan the adapter and collaboration milestones separately.** Dependencies: #656 targets hzqst/reagent and reuses #108; #655 shares publication/persistence/type contracts with #102/#95; #580 owns measured concurrency/latency qualification. Acceptance: first define a pinned read-only adapter contract with honest capabilities, paging/chunks and owned/attached lifecycle; separately define two-session isolated work and conflict-safe publication. No shared-writer safety or parallel-speedup claim follows merely from MCP connectivity.
+
+## Daily log
+
+### 2026-10-09 — Complete-domain proof and cache boundaries
+
+- Enumerated 354 comparison commits and 574 changed paths; separated the prior report-only content commit/path from substantive work.
+- Reviewed the exact source/configuration/test-source scope above; found no new statically proven bug and made no speculative code repair.
+- Verified #648 merged and the fixture defaults are present; recorded #655/#656 as independent planning work.
+- Captured 20 open ordinary issues, two pre-existing open PRs, 54 merges, zero unmerged closures, and their exact-head CI/review limitations.
+- Prepared only this English tracker update through the documented topic-branch/draft-PR workflow, retaining prior text verbatim. No issue state, label, assignee, dependency, security permission or workflow configuration was changed.
+- No build, test, benchmark, formatter, project execution, repository script, dynamic analysis, workflow dispatch or CI rerun was performed.
+
+## Coverage and counting limits
+
+The commit comparison was paginated **100 + 100 + 100 + 54 + 0**. Its first-page 300-file cap was not treated as a complete inventory: complete recursive trees (**6,517 and 6,641 entries**, neither truncated) were compared by non-directory path/blob identity. Renames would count as removed/added paths. The changed-path count is not the number of audited files.
+
+Open and updated issue/PR collections each had an explicitly empty second page. Closed PR metadata returned the latest 100 updated entries, extending to October 6 19:27 UTC, before the activity window; merged_at and closed_at were used to distinguish merges from other closures. Counts are repository activity, not implementation completion. #648's report content commit is excluded from substantive commits, but its real fixture fix remains. Today's report-only proposal is excluded from pre-publication counts.
+
+Both open PRs' review/comment collections were empty. The exact dev workflows/checks and both PR check collections had empty second pages. CI is a changing point-in-time observation; no exhaustive historical/external-check claim is made. Most of the 573 non-tracker changed paths, the full backend/GUI/ABI/Darwin/unpack changes and all runtime/benchmark behavior remain outside this bounded review.
+
+## Previous snapshot (preserved)
+
+<details>
+<summary>2026-10-08 snapshot and all earlier history</summary>
+
+# NeverD Daily Progress
+
 Last verified: **2026-10-08 10:11 Asia/Shanghai (UTC+08:00)** / **2026-10-08 02:11 UTC**
 
 This is a bounded static source review and a snapshot of existing GitHub evidence. Priorities are suggestions, not delivery commitments. The complete previous tracker is preserved below.
@@ -1460,6 +1566,8 @@ them are author reports unless separately confirmed by linked workflow results.
 - GitHub search and Actions may change after this timestamp. This document is a
   point-in-time record, not a claim of continuous monitoring or a committed
   delivery schedule
+
+</details>
 
 </details>
 
