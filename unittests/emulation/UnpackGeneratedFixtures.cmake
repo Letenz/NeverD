@@ -96,6 +96,10 @@ foreach(_arch X64 AArch64)
   list(APPEND _generated_outputs "${_dir}/delay.exe" "${_dir}/unpack_delay.dll")
 endforeach()
 add_custom_target(NeverDUnpackGeneratedFixtures DEPENDS ${_generated_outputs})
-add_dependencies(NeverDUnpackExecutionTests NeverDUnpackGeneratedFixtures)
-target_compile_definitions(NeverDUnpackExecutionTests PRIVATE
-  NEVERD_UNPACK_GENERATED_FIXTURE_DIR="${_generated_dir}")
+foreach(_test NeverDUnpackExecutionTests NeverDUnpackPublicTests)
+  if(TARGET ${_test})
+    add_dependencies(${_test} NeverDUnpackGeneratedFixtures)
+    target_compile_definitions(${_test} PRIVATE
+      NEVERD_UNPACK_GENERATED_FIXTURE_DIR="${_generated_dir}")
+  endif()
+endforeach()

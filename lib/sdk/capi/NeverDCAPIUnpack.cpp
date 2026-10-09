@@ -64,7 +64,7 @@ extern "C" const char *neverd_unpack_json(neverd_session_t Sess,
       S->setError(llvm::toString(Result.takeError()));
       return nullptr;
     }
-    if (Result->Outcome == unpack::UnpackOutcome::Unpacked) {
+    if (!Result->Image.empty()) {
       std::ofstream Stream(Output, std::ios::binary | std::ios::trunc);
       Stream.write(reinterpret_cast<const char *>(Result->Image.data()),
                    std::streamsize(Result->Image.size()));
@@ -75,9 +75,8 @@ extern "C" const char *neverd_unpack_json(neverd_session_t Sess,
       }
     }
     char *Report = dupStr(unpack::unpackResultJSON(
-        *Result, Result->Outcome == unpack::UnpackOutcome::Unpacked
-                     ? llvm::StringRef(OutputPath)
-                     : llvm::StringRef()));
+        *Result, !Result->Image.empty() ? llvm::StringRef(OutputPath)
+                                        : llvm::StringRef()));
     if (!Report)
       S->setError(text::AllocationFailed);
     return Report;
