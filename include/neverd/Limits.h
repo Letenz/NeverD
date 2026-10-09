@@ -432,6 +432,14 @@ constexpr unsigned kStackOffsetWideningJoins = 8;
 /// How many stores before a call to scan for stack-passed arguments.
 constexpr int kCallArgStoreScanWindow = 12;
 
+/// How many copies, extensions and constant adjustments a store address
+/// before a call is followed back to the pointer it is made from.
+constexpr int kCallArgStoreAddressDepth = 32;
+
+/// How many definitions a register an indirect call goes through is
+/// followed back to the slot it was loaded from.
+constexpr int kCallTargetSlotDepth = 16;
+
 /// AArch64 calls with the complete x0-x7 prefix can have an integer argument
 /// at [sp]. Materializing eight constants may expand into several MedIR ops per
 /// register, so keep a larger but finite window once the full bank itself

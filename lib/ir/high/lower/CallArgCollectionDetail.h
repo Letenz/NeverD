@@ -98,6 +98,10 @@ struct CallArgScan {
   /// which a tail jump passes on unless it stores another value there
   /// (nullptr when it has none).
   llvm::function_ref<ExprPtr(int)> OwnStackParam;
+  /// Whether a store to \p Address can be no outgoing argument: it is
+  /// below the stack pointer it is made from, through another pointer, or
+  /// at a fixed address.
+  llvm::function_ref<bool(const MedVar &)> IsNoArgumentStore;
   /// Offset of an address from the stack pointer at function entry, when it
   /// resolves through copies and constant adjustments (an `r11 = rsp`
   /// frame); nullopt otherwise.

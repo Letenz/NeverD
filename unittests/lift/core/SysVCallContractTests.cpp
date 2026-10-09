@@ -522,6 +522,45 @@ TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
 }
 
+TEST(SysVCallContract, AJumpThroughALoadedSlotPassesTheArgumentsSetBefore) {
+  // GCC's register_tm_clones: RDI and RSI are set and tested, RAX is
+  // loaded from the GOT slot of _ITM_registerTMCloneTable and tested, and
+  // `jmp rax` alone in its block passes the arguments set two blocks up.
+  constexpr va_t Wrap = Text, Slot = 0x403000;
+  std::vector<uint8_t> Code(0x60, 0xCC);
+  std::vector<uint8_t> WrapCode = {0x48, 0x8D, 0x3D}; // lea rdi, [rip+data]
+  for (uint8_t B : rel32(Wrap + 7, Text + 0x50))
+    WrapCode.push_back(B);
+  for (uint8_t B : {0xBE, 0x08, 0x00, 0x00, 0x00, // mov esi, 8
+                    0x85, 0xF6,                   // test esi, esi
+                    0x74, 0x10,                   // je done
+                    0x48, 0x8B, 0x05})            // mov rax, [rip+slot]
+    WrapCode.push_back(B);
+  for (uint8_t B : rel32(Wrap + 23, Slot))
+    WrapCode.push_back(B);
+  for (uint8_t B : {0x48, 0x85, 0xC0, // test rax, rax
+                    0x74, 0x02,       // je done
+                    0xFF, 0xE0,       // jmp rax
+                    0xC3})            // done: ret
+    WrapCode.push_back(B);
+  put(Code, Wrap, WrapCode);
+  BinaryImage Img = makeImportImage(Code, {{Wrap, "wrap"}}, {});
+  Segment Got;
+  Got.Name = ".got";
+  Got.VA = Slot;
+  Got.Size = Got.FileSz = 8;
+  Got.Data.resize(8);
+  Got.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Img.Segments.push_back(std::move(Got));
+  ASSERT_TRUE(Img.recordImportStorageSlot(Slot, "_ITM_registerTMCloneTable", 0,
+                                          ImportStorageEvidence::LoaderBind));
+  const std::string Source = liftEntries(Img, {Wrap});
+  const std::string Body = body(Source, "wrap");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("_ITM_registerTMCloneTable("), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+}
+
 TEST(SysVCallContract, ACallThroughALoaderBoundSlotPassesThePrototype) {
   // Built with -fno-plt, wrap(s, f) calls fputs through the GOT slot that a
   // GLOB_DAT relocation binds, which no import directory entry lists.
