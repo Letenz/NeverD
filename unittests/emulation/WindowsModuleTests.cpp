@@ -20,6 +20,7 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <map>
 #include <set>
 
 namespace neverd::emulation {
@@ -175,7 +176,8 @@ TEST_F(WindowsModuleImage,
   ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
   ASSERT_EQ(P->Modules.size(), 3u + win::value::SystemModuleCount);
   EXPECT_EQ(Space->mappedBytes(), 0u);
-  std::set<uint64_t> Bases, Gates;
+  std::set<uint64_t> Bases;
+  std::map<uint64_t, const win::Import *> Gates;
   size_t Moved = 0;
   for (size_t I = 0; I < P->Modules.size(); ++I) {
     const auto &M = P->Modules[I].Loaded;
@@ -189,8 +191,24 @@ TEST_F(WindowsModuleImage,
       ++Moved;
   }
   EXPECT_EQ(Moved, 1u);
-  for (const auto &G : P->Gates)
-    EXPECT_TRUE(Gates.insert(G.Gate).second);
+  size_t Aliases = 0;
+  for (const auto &G : P->Gates) {
+    const auto [Previous, Inserted] = Gates.emplace(G.Gate, &G);
+    if (Inserted)
+      continue;
+    // Only the catalogued Nt/Zw pair shares a service gate. Module identity
+    // and target ownership must agree; no unrelated export may collide.
+    const auto &Other = *Previous->second;
+    EXPECT_EQ(G.Module, win::text::NTDLL);
+    EXPECT_EQ(G.Module, Other.Module);
+    EXPECT_NE(G.Name, Other.Name);
+    ASSERT_TRUE(win::nativeServiceNumber(G.Name));
+    EXPECT_EQ(win::nativeServiceNumber(G.Name),
+              win::nativeServiceNumber(Other.Name));
+    EXPECT_EQ(G.Target, Other.Target);
+    ++Aliases;
+  }
+  EXPECT_EQ(Aliases, win::nativeServices().size());
   ASSERT_EQ(P->AttachOrder.size(), 2u);
   EXPECT_EQ(P->Identities[P->AttachOrder.front()].Name, LeafFile);
   EXPECT_EQ(P->Identities[P->AttachOrder.back()].Name, MiddleFile);

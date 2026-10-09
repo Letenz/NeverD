@@ -295,7 +295,40 @@ PROGRAM_CODE static U32 status(U32 Written) {
   return Sum ? ExitStatus : FailureStatus;
 }
 
+#if defined(__x86_64__)
+static volatile U32 NativeDelayNumber;
+static volatile U64 NativeDelayInterior;
+__attribute__((naked, noinline)) static U32
+directDelay(U64 Alert, const long long *Interval, U32 Number) {
+  __asm__("movq %rcx, %r10\n\t"
+          "movl %r8d, %eax\n\t"
+          "syscall\n\t"
+          "retq\n\t");
+}
+__attribute__((naked, noinline)) static U32
+interiorDelay(U64 Alert, const long long *Interval, U32 Number, U64 Interior) {
+  __asm__("movq %rcx, %r10\n\t"
+          "movl %r8d, %eax\n\t"
+          "jmpq *%r9\n\t");
+}
+// Keep the failure exit outside .prog so the ordinary tail-call oracle still
+// executes every import call that its independent packer transforms.
+__attribute__((noinline)) static void useDirectService(void) {
+  const long long Interval = -1;
+  const U32 Result =
+      Pack.Mode == LateDirectServiceMode
+          ? interiorDelay(0, &Interval, NativeDelayNumber, NativeDelayInterior)
+          : directDelay(0, &Interval, NativeDelayNumber);
+  if (Result != 0)
+    ExitProcess(FailureStatus);
+}
+#endif
+
 PROGRAM_ENTRY U32 program(void) {
+#if defined(__x86_64__)
+  if (Pack.Mode == DirectServiceMode || Pack.Mode == LateDirectServiceMode)
+    useDirectService();
+#endif
   // Keep one exit call so ordinary import-repair cases reach every import
   // site that the independent test packer transforms.
   const U32 HeapResult =
@@ -349,6 +382,19 @@ RELAY_ENTRY U32 relay(void) {
 // Every path leaves by a jump on the stack the process started with, as a
 // loader does when it hands control to the program it carried.
 __declspec(dllexport) U32 loader(void) {
+#if defined(__x86_64__)
+  if (Pack.Mode == DirectServiceMode || Pack.Mode == LateDirectServiceMode) {
+    const U8 *Gate =
+        GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtDelayExecution");
+    if (!Gate || Gate[0] != 0x4c || Gate[1] != 0x8b || Gate[2] != 0xd1 ||
+        Gate[3] != 0xb8)
+      ExitProcess(FailureStatus);
+    NativeDelayNumber = *(const U32 *)(Gate + 4);
+    NativeDelayInterior = (U64)(Gate + 8);
+    if (Pack.Mode == DirectServiceMode)
+      useDirectService();
+  }
+#endif
   if (Pack.Mode == HeapStateMode || Pack.Mode == ReleasedHeapStateMode) {
     HeapState = (U32 *)HeapAlloc(GetProcessHeap(), 0, sizeof(*HeapState));
     if (!HeapState)

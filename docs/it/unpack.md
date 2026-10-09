@@ -33,6 +33,8 @@ Al trasferimento accettato, il profilo fornisce l’inventario delle allocazioni
 
 `runtime_state.heap_inventory_known` distingue un inventario vuoto noto dall’assenza di provenienza. `possible_heap_references` conta tutte le corrispondenze; `heap_references` conserva al massimo le prime 64, prima immagine e poi TLS, per `offset`. Ogni record indica `storage` (`image` o `thread_local`), indirizzo ed estensione dell’allocazione. `rva` è esadecimale per l’immagine e null per TLS. Indirizzi e offset sono stringhe esadecimali.
 
+`runtime_state.direct_service_calls` conta le chiamate dirette del modello osservate durante la ricerca dell’ingresso e degli import. Il loro collegamento numerico a Windows nativo non viene ricostruito: il risultato è `unsupported_state`, anche se la prima chiamata avviene dopo l’ingresso acquisito. L’opzione esplicita `snapshot_only` conserva conteggio e diagnostica. Una syscall copiata non costituisce una chiamata importata riparabile.
+
 `--options='{"snapshot_only":true}'` richiede esplicitamente byte di analisi. Se l’ingresso è accettato e la ricostruzione riesce, l’esito è sempre `snapshot` e la diagnostica resta visibile. Questa opzione non ripristina l’heap, deduce rilocazioni, certifica l’esecuzione nativa né devirtualizza. Un conteggio zero non certifica altri stati OS o percorsi non raggiunti.
 
 ## Come viene stabilito l'ingresso
