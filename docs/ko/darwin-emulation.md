@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
+<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
 
 [← 문서 목록](README.md)
 
@@ -866,11 +866,11 @@ kernel-pathconf, kernel-pathconf-values, kernel-pathconf-unsupported는 공통 �
 
 ## 고정 공통 속성 목록
 
-getattrlist(220), fgetattrlist(228), getattrlistat(476)는 명시적 카탈로그의 고정 공통 속성11개를 조회합니다: 장치, 객체 유형, 네 시간, 소유자/그룹, 전체 모드, 플래그, 파일ID. stat64와 완전한 메타데이터 유효성 판단을 공유하며 누락/무효화 관찰은 미지 상태로 남습니다. 유형과 빈 선택은 stat이 필요 없습니다. NAME, 볼륨, 디렉터리/파일/fork 전용 마스크, ACL 및 미지 옵션은 반환 마스크를 요청해도 명시적으로 미지원이며 호스트 정보나 마운트 이름을 추론하지 않습니다.
+getattrlist(220), fgetattrlist(228), getattrlistat(476)는 명시적 카탈로그의 고정 공통 속성11개를 조회합니다: 장치, 객체 유형, 네 시간, 소유자/그룹, 전체 모드, 플래그, 파일ID. stat64와 완전한 메타데이터 유효성 판단을 공유하며 누락/무효화 관찰은 미지 상태로 남습니다. 유형과 빈 선택은 stat이 필요 없습니다. 루트/마운트 NAME, 볼륨, 디렉터리/파일/fork 전용 마스크, ACL 및 미지 옵션은 반환 마스크를 요청해도 명시적으로 미지원이며 호스트 정보나 마운트 이름을 추론하지 않습니다.
 
 경로/at는24바이트 요청을 먼저 읽고 FD는 low32 FD와 원래 유형을 먼저 검사합니다. reserved는 무시합니다. 공통 CWD/상대FD/링크 해석은 크기/비트맵 검사 전에 원래 오류를 유지합니다. 리틀엔디언/4바이트 정렬, 전체 st_mode, 부호 있는 초를 사용하며 반환 마스크 포함120바이트/일반100바이트입니다. 짧은 버퍼에는 요청한 앞부분만 복사하지만 전체 필요 길이를 보고합니다. 부분 접근은 해당 복사 전에 중단하고 signed-uio 초과 크기는 유효한 지원 요청 후 EINVAL입니다. 커서, 메타데이터, 열거 및 항목/FD/inode 예산은 변하지 않으며 dup/삭제/이름 재사용 수명은 유지됩니다.
 
-세 모드는 guest/C/CLI/Python에서 공통 동작, 독립 설정 바이트, 기존 출력을 유지하는 미지원 NAME을 검사합니다. ARM64 전용 준비는187 raw 조회/176 SDK 경로-FD 비교를 통과했고 native5초 제한은 그대로입니다. SDK15.5는 getattrlistat를 선언하지 않아 raw476은 별도 기록합니다. 새 guest/Python은5,000,000us/quantum1024, 기존 공개 테스트는10s입니다. 원시 Intel/실제 iOS/FS 특성/하드 링크/권한·ACL/전체 런타임·프레임워크는 미검증 또는 미완성입니다.
+세 모드는 guest/C/CLI/Python에서 공통 동작, 독립 설정 바이트, 기존 출력을 유지하는 미지원 ATTR_CMN_EXTENDED_SECURITY을 검사합니다. ARM64 전용 준비는187 raw 조회/176 SDK 경로-FD 비교를 통과했고 native5초 제한은 그대로입니다. SDK15.5는 getattrlistat를 선언하지 않아 raw476은 별도 기록합니다. 새 guest/Python은5,000,000us/quantum1024, 기존 공개 테스트는10s입니다. 원시 Intel/실제 iOS/FS 특성/하드 링크/권한·ACL/전체 런타임·프레임워크는 미검증 또는 미완성입니다.
 
 ```text
 ATTR_CMN_RETURNED_ATTRS=0x80000000
@@ -896,3 +896,9 @@ ABI는 낮은32비트 FD/options/position, 전체64비트 size와 BSD user_ssize
 extended-attributes / extended-attributes-values / extended-attributes-unsupported는 공유 네이티브 동작, 명시적 가상 바이트, 기존 출력을 보존하는 미지원 중단을 검증한다. guest/Python5,000,000us/quantum1024, 공개API10s, 네이티브5s는 그대로다. ARM64 전용 준비의320 raw/SDK 비교에서 전체288 보호 바이트와 carry/secondary가 일치했다. 자동 com.apple.provenance는 관찰 값이며 기본 빈 목록을 뜻하지 않는다. 네이티브 Intel과 실제 iOS 장치는 미검증이며 전체 dyld, Mach IPC, Objective-C/Swift, 프레임워크는 미완성이다.
 
 Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.
+
+## 제한된 객체 이름
+
+ATTR_CMN_NAME=1은 getattrlist220/fgetattrlist228/getattrlistat476에서 명시적 카탈로그의 이름이 유일한 비루트 객체를 지원합니다. 리프 이름은 유효한 UTF-8 1..255바이트입니다. F_GETPATH와 공유하는 실제 객체 경로는 dup, CWD, 이동, SWAP, 삭제와 이름 재사용 뒤에도 마지막 연결 이름을 유지하며 호출자 별칭을 사용하지 않습니다. 이름과 유형은 stat 없이 조회하지만 선택한 stat 필드는 완전한 유효 관찰이 필요합니다. 루트/마운트 이름, 잘못된 이름, 하드 링크·대소문자 별칭, 정규화와 전체 경로 속성은 미지 상태입니다.
+
+8바이트 attrreference_t는 다른 공통 필드보다 앞에 있고 attr_dataoffset은 참조 자체 기준이며 attr_length는 NUL을 포함합니다. 이름 영역은4바이트 정렬됩니다. 짧은 출력은 전체 필요 길이와 UTF-8 중간을 포함한 정확한 접두 바이트를 유지합니다. attribute-names / attribute-names-values / attribute-names-unsupported는 guest/C/CLI/Python에서 원시 동작, 독립 바이트와 기존 출력을 유지하는 루트 이름 중단을 확인합니다. ARM64 준비는601 raw 조회,453 전체 보호 버퍼 SDK 비교,384 접두 검사를 통과했습니다. SDK15.5에는 raw476 형식 선언이 없습니다. native5s, guest/Python5,000,000us/quantum1024, 기존 공개10s는 그대로입니다. 원시 Intel, 실제 iOS, 전체 런타임/프레임워크는 미검증 또는 미완성입니다.

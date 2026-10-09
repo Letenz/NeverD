@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
+<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
 
 [← 文档索引](README.md)
 
@@ -970,11 +970,11 @@ kernel-pathconf、kernel-pathconf-values 和 kernel-pathconf-unsupported 分别�
 
 ## 固定公共属性列表
 
-getattrlist(220)、fgetattrlist(228)、getattrlistat(476) 查询显式目录中的十一项固定公共属性：设备、对象类型、四种时间、所有者/组、完整模式、标志和文件 ID。它们与 stat64 共享完整元数据的有效性判断；缺失或失效的观察保持未知。对象类型和空选择无需 stat。NAME、卷、目录/文件/fork 专用属性、ACL 和未知选项明确不支持，即使请求返回属性掩码也不省略未知信息；不会推断宿主元数据或挂载名称。
+getattrlist(220)、fgetattrlist(228)、getattrlistat(476) 查询显式目录中的十一项固定公共属性：设备、对象类型、四种时间、所有者/组、完整模式、标志和文件 ID。它们与 stat64 共享完整元数据的有效性判断；缺失或失效的观察保持未知。对象类型和空选择无需 stat。根/挂载 NAME、卷、目录/文件/fork 专用属性、ACL 和未知选项明确不支持，即使请求返回属性掩码也不省略未知信息；不会推断宿主元数据或挂载名称。
 
 路径/at 入口先导入 24 字节请求，FD 入口先检查 low32 FD 和原生类型，忽略 reserved 字。共享 CWD、相对 FD 和链接解析，在长度/位图检查前保留原生错误。记录采用小端、四字节对齐、完整 st_mode 和有符号秒值；含返回掩码为 120 字节，对应普通记录为 100 字节。短缓冲区只接收声明的前缀，长度仍报告完整所需大小。部分可访问的复制在该次复制前停止；超过有符号 uio 范围的大小只在有效且受支持的请求后返回 EINVAL。查询不改变游标、元数据、枚举或条目/FD/inode 预算，持有对象沿用 dup、删除和名称重用的生命周期。
 
-三个模式通过原生公共行为、独立配置字节和保留既有输出的未知 NAME 查询，覆盖 guest、C、CLI、Python。ARM64 私有准备通过 187 次原始查询和 176 次路径/FD SDK 对照，原生 5 秒限制保持不变；SDK15.5 没有 getattrlistat 声明，raw476 对照单独记录。新增 guest/Python 保持 5,000,000us/quantum1024，已有公开测试保持 10s。原生 Intel、真实 iOS、文件系统专用事实、硬链接、权限/ACL 执行和完整运行时/框架仍未验证或未完成。
+三个模式通过原生公共行为、独立配置字节和保留既有输出的未知 ATTR_CMN_EXTENDED_SECURITY 查询，覆盖 guest、C、CLI、Python。ARM64 私有准备通过 187 次原始查询和 176 次路径/FD SDK 对照，原生 5 秒限制保持不变；SDK15.5 没有 getattrlistat 声明，raw476 对照单独记录。新增 guest/Python 保持 5,000,000us/quantum1024，已有公开测试保持 10s。原生 Intel、真实 iOS、文件系统专用事实、硬链接、权限/ACL 执行和完整运行时/框架仍未验证或未完成。
 
 ```text
 ATTR_CMN_RETURNED_ATTRS=0x80000000
@@ -1000,3 +1000,9 @@ ABI 使用低32位 FD/options/position、完整64位 size 和 BSD user_ssize_t/c
 extended-attributes / extended-attributes-values / extended-attributes-unsupported 分别验证原生共用行为、虚拟字面值和保留先前输出的未知观察停止。guest/Python5,000,000us/quantum1024、公开接口10s、原生5s 不变。ARM64 私有准备完成320组 raw/SDK 对照，全部288字节保护区、carry、secondary 一致。自动出现的 com.apple.provenance 是观察值，不能据此推断默认空列表。Intel 原生和 iOS 真机仍未验证；完整 dyld、Mach IPC、Objective-C/Swift 与框架仍未完成。
 
 Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.
+
+## 有界对象名称
+
+ATTR_CMN_NAME=1 已通过 getattrlist220/fgetattrlist228/getattrlistat476 支持显式目录中具有唯一名称的非根对象。叶名称必须是 1..255 字节的合法 UTF-8。名称来自与 F_GETPATH 共用的实际对象路径，跨 dup、CWD、移动、SWAP、删除和名称重用保留最后链接的拼写；调用者别名不会覆盖它。名称和类型不依赖 stat；所选 stat 字段仍需完整有效观察。根/挂载标签、非法名称、硬链接或大小写别名、规范化和完整路径属性保持未知。
+
+8 字节 attrreference_t 位于其他公共字段之前；attr_dataoffset 相对于引用本身，attr_length 包含 NUL，末尾名称区域按四字节填充。短输出保留完整所需长度及精确前缀，包括被截断的 UTF-8。attribute-names / attribute-names-values / attribute-names-unsupported 经 guest/C/CLI/Python 检查原生行为、独立字节与保留既有输出的根名称停止。ARM64 私有对照通过 601 次原始查询、453 次完整保护缓冲区 SDK 比较和 384 次前缀检查。SDK15.5 没有 raw476 的类型声明。native5s、guest/Python5,000,000us/quantum1024、既有公开测试10s 不变。原生 Intel、物理 iOS 和完整运行时/框架仍未验证或未完成。

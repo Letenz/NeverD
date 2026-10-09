@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
+<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
 
 [← Indice della documentazione](README.md)
 
@@ -864,11 +864,11 @@ kernel-pathconf, kernel-pathconf-values e kernel-pathconf-unsupported verificano
 
 ## Liste di attributi comuni fissi
 
-getattrlist(220), fgetattrlist(228) e getattrlistat(476) interrogano undici campi comuni del catalogo esplicito: dispositivo, tipo, quattro tempi, proprietario/gruppo, modo completo, flag e ID. Condividono con stat64 la validità del record completo; osservazioni mancanti o invalidate restano ignote. Tipo e selezione vuota non richiedono stat. NAME, volume, maschere directory/file/fork, ACL e opzioni ignote restano esplicitamente non supportati anche con maschera restituita; nessun dato host o nome di mount viene dedotto.
+getattrlist(220), fgetattrlist(228) e getattrlistat(476) interrogano undici campi comuni del catalogo esplicito: dispositivo, tipo, quattro tempi, proprietario/gruppo, modo completo, flag e ID. Condividono con stat64 la validità del record completo; osservazioni mancanti o invalidate restano ignote. Tipo e selezione vuota non richiedono stat. NAME di radice/mount, volume, maschere directory/file/fork, ACL e opzioni ignote restano esplicitamente non supportati anche con maschera restituita; nessun dato host o nome di mount viene dedotto.
 
 Percorso/at importano24 byte prima della ricerca; FD verifica prima low32 FD e tipo nativo. reserved è ignorato. CWD/FD relativo/link condividono gli errori nativi prima di dimensione/bitmap. Little-endian, allineamento4, st_mode completo e secondi con segno; con maschera120 byte, senza100. Un buffer corto riceve solo il prefisso richiesto ma riporta la dimensione completa. Accesso parziale si ferma prima della copia; dimensione fuori signed-uio dà EINVAL dopo richiesta valida supportata. Cursori, metadati, enumerazione e budget voce/FD/inode restano invariati; durata dup/rimozione/riuso nome preservata.
 
-Tre modalità verificano comportamento comune, byte configurati indipendenti e NAME non supportato con output conservato via guest/C/CLI/Python. Preparazione ARM64 privata:187 query raw/176 confronti SDK percorso-FD, native5s invariato. SDK15.5 non dichiara getattrlistat; raw476 separato. Nuovi guest/Python:5,000,000us/quantum1024; test pubblici esistenti:10s. Intel nativo, iOS fisico, dati FS, hard link, permessi/ACL e runtime/framework completi restano incompleti o non verificati.
+Tre modalità verificano comportamento comune, byte configurati indipendenti e ATTR_CMN_EXTENDED_SECURITY non supportato con output conservato via guest/C/CLI/Python. Preparazione ARM64 privata:187 query raw/176 confronti SDK percorso-FD, native5s invariato. SDK15.5 non dichiara getattrlistat; raw476 separato. Nuovi guest/Python:5,000,000us/quantum1024; test pubblici esistenti:10s. Intel nativo, iOS fisico, dati FS, hard link, permessi/ACL e runtime/framework completi restano incompleti o non verificati.
 
 ```text
 ATTR_CMN_RETURNED_ATTRS=0x80000000
@@ -894,3 +894,9 @@ ABI: FD/options/position low32, size full64 e BSD user_ssize_t/carry/secondary. 
 extended-attributes / extended-attributes-values / extended-attributes-unsupported verificano programma nativo condiviso, byte virtuali e arresto ignoto conservando l’output. Invariati: guest/Python5,000,000us/quantum1024, API pubblica10s, nativo5s. Preparazione privata ARM64:320 confronti raw/SDK con tutti288 byte di guardia e carry/secondary uguali. com.apple.provenance automatico è un’osservazione, non un vuoto predefinito. Intel nativo/iOS fisico restano non verificati; dyld, Mach IPC, Objective-C/Swift e framework completi restano incompleti.
 
 Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.
+
+## Nomi di oggetti limitati
+
+ATTR_CMN_NAME=1 è ammesso tramite getattrlist220/fgetattrlist228/getattrlistat476 per oggetti non radice con nome univoco nel catalogo esplicito. Il nome finale è UTF-8 valido di1..255 byte. Il percorso reale condiviso con F_GETPATH conserva l’ultima grafia collegata dopo dup, CWD, spostamenti, SWAP, rimozione e riuso; gli alias del chiamante non la sostituiscono. Nome e tipo non richiedono stat; i campi stat scelti richiedono osservazioni complete valide. Etichette radice/mount, nomi invalidi, alias hard link o maiuscole, normalizzazione e attributi di percorso completo restano ignoti.
+
+attrreference_t occupa8 byte prima degli altri campi; attr_dataoffset è relativo al riferimento, attr_length include NUL e l’area finale è completata a4 byte. Output brevi mantengono lunghezza totale e prefissi esatti, compreso UTF-8 parziale. attribute-names / attribute-names-values / attribute-names-unsupported verificano comportamento nativo, byte indipendenti e arresto sul nome radice conservando output via guest/C/CLI/Python. ARM64:601 query raw,453 confronti SDK dell’intero buffer protetto,384 prefissi. SDK15.5 non dichiara raw476. Native5s, guest/Python5,000,000us/quantum1024 e public10s invariati. Intel nativo, iOS fisico e runtime/framework completi restano incompleti o non verificati.

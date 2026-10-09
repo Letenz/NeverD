@@ -381,6 +381,131 @@ static int extended_attributes(const char *path, unsigned mode) {
   return 37;
 }
 
+static int attribute_name_record(const unsigned char *bytes, const char *name,
+                                 unsigned type) {
+  unsigned length = 0;
+  while (name[length])
+    ++length;
+  const unsigned total = 36 + ((length + 4) & ~3u);
+  if (little_integer(bytes, 4) != total ||
+      little_integer(bytes + 4, 4) != 0x80000009 ||
+      little_integer(bytes + 8, 8) || little_integer(bytes + 16, 8) ||
+      little_integer(bytes + 24, 4) != 12 ||
+      little_integer(bytes + 28, 4) != length + 1 ||
+      little_integer(bytes + 32, 4) != type)
+    return 1;
+  for (unsigned i = 36; i != total; ++i)
+    if (bytes[i] != (i < 36 + length ? (unsigned char)name[i - 36] : 0))
+      return 1;
+  return 0;
+}
+
+static int attribute_names(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 225;
+  parent[last ? last : 1] = 0;
+  u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 226;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary || attribute_result(13, root, 0, 0, 0, 0, 0, 0, 0))
+    return 227;
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || attribute_result(199, file, 37, 0, 0, 0, 0, 37, 0))
+    return 228;
+  unsigned request[6] = {0xffff0005, 0x80000009, 0, 0, 0, 0};
+  // Independent literal, rather than using one route to predict the others.
+  const unsigned char expected[44] = {
+      44, 0, 0, 0, 9, 0, 0,   128, 0,   0,   0, 0, 0, 0, 0,
+      0,  0, 0, 0, 0, 0, 0,   0,   0,   12,  0, 0, 0, 5, 0,
+      0,  0, 1, 0, 0, 0, 'd', 'a', 't', 'a', 0, 0, 0, 0};
+  u64 words[10];
+  unsigned char *bytes = (unsigned char *)words, observed[44];
+  if (attribute_result(228, copy, (u64)request, (u64)observed, 44, 0, 0, 0, 0))
+    return 229;
+  for (unsigned i = 0; i != 44; ++i)
+    if (observed[i] != expected[i])
+      return 230;
+  const u64 sizes[] = {4, 7, 24, 27, 31, 35, 36, 40, 41, 43, 44, 512};
+  for (unsigned i = 0; i != 12; ++i)
+    for (unsigned route = 0; route != 3; ++route) {
+      for (unsigned j = 0; j != 10; ++j)
+        words[j] = 0xa5a5a5a5a5a5a5a5UL;
+      const u64 flags = i % 3 == 0 ? 0 : i % 3 == 1 ? 4 : 8;
+      const int failed =
+          route == 0
+              ? attribute_result(220, (u64) "alias", (u64)request,
+                                 (u64)(bytes + 8), sizes[i], flags, -1UL, 0, 0)
+          : route == 1
+              ? attribute_result(228, copy | 0x1234567800000000UL, (u64)request,
+                                 (u64)(bytes + 8), sizes[i], flags, -1UL, 0, 0)
+              : attribute_result(476, root, (u64) "data", (u64)request,
+                                 (u64)(bytes + 8), sizes[i], flags, 0, 0);
+      if (failed)
+        return 231;
+      const unsigned count = sizes[i] < 44 ? (unsigned)sizes[i] : 44;
+      for (unsigned j = 0; j != 80; ++j)
+        if (bytes[j] != (j >= 8 && j < 8 + count ? expected[j - 8] : 0xa5))
+          return 232;
+    }
+  if (attribute_result(220, (u64) "alias", (u64)request, (u64)bytes, 80, 1, 0,
+                       0, 0) ||
+      attribute_name_record(bytes, "alias", 5) ||
+      attribute_result(220, (u64) "alias", (u64)request, (u64)bytes, 80, 0x800,
+                       0, 0, 0) ||
+      attribute_name_record(bytes, "alias", 5) ||
+      attribute_result(220, (u64) "dangling", (u64)request, -1UL, 0, 0, 0, 2,
+                       1) ||
+      attribute_result(220, (u64) "cycle", (u64)request, -1UL, 0, 0, 0, 62,
+                       1) ||
+      attribute_result(128, (u64) "data", (u64) "moved", 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, copy, (u64)request, (u64)bytes, 80, 0, 0, 0, 0) ||
+      attribute_name_record(bytes, "moved", 1) ||
+      attribute_result(10, (u64) "moved", 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, file, (u64)request, (u64)bytes, 80, 0, 0, 0, 0) ||
+      attribute_name_record(bytes, "moved", 1))
+    return 233;
+  u64 directory = call(5, (u64) "empty", 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      attribute_result(13, directory, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, directory, (u64)request, (u64)bytes, 80, 0, 0, 0,
+                       0) ||
+      attribute_name_record(bytes, "empty", 2) ||
+      attribute_result(128, (u64) "../empty", (u64) "../moved-dir", 0, 0, 0, 0,
+                       0, 0) ||
+      attribute_result(220, (u64) ".", (u64)request, (u64)bytes, 80, 0, 0, 0,
+                       0) ||
+      attribute_name_record(bytes, "moved-dir", 2) ||
+      attribute_result(137, (u64) "../moved-dir", 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, directory, (u64)request, (u64)bytes, 80, 0, 0, 0,
+                       0) ||
+      attribute_name_record(bytes, "moved-dir", 2) ||
+      attribute_result(13, root, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(199, copy, 0, 1, 0, 0, 0, 37, 0) ||
+      attribute_result(6, directory, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(6, file, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(6, copy, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(6, root, 0, 0, 0, 0, 0, 0, 0))
+    return 234;
+  if (attribute_result(4, 1, mode == 1 ? (u64)observed : (u64) "N",
+                       mode == 1 ? 44 : 1, 0, 0, 0, mode == 1 ? 44 : 1, 0))
+    return 235;
+  if (mode == 2) {
+    call(220, (u64) "/", (u64)request, (u64)bytes, 80, 0, 0, &error);
+    return 236;
+  }
+  return 37;
+}
+
 static int common_attributes(const char *path, unsigned mode) {
   unsigned error;
   char parent[1024];
@@ -504,7 +629,7 @@ static int common_attributes(const char *path, unsigned mode) {
       error || secondary)
     return 204;
   if (mode == 2) {
-    request[1] = 1; // NAME needs additional naming/mount observations.
+    request[1] = 0x400000; // Extended security remains outside this contract.
     call(220, (u64) "data", (u64)request, (u64)guarded, 120, 0, 0, &error);
     return 205;
   }
@@ -6186,6 +6311,16 @@ int main(int argc, char **argv, char **envp, char **apple) {
                ? 79
                : mutable_initial_links(
                      argv[2], equal(argv[1], "virtual-mutable-initial-links"));
+  if (equal(argv[1], "attribute-names") ||
+      equal(argv[1], "attribute-names-values") ||
+      equal(argv[1], "attribute-names-unsupported"))
+    return argc < 3
+               ? 79
+               : attribute_names(argv[2],
+                                 equal(argv[1], "attribute-names-values") ? 1
+                                 : equal(argv[1], "attribute-names-unsupported")
+                                     ? 2
+                                     : 0);
   if (equal(argv[1], "extended-attributes") ||
       equal(argv[1], "extended-attributes-values") ||
       equal(argv[1], "extended-attributes-unsupported"))

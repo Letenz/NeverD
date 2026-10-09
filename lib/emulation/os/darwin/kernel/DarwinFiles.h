@@ -163,6 +163,12 @@ private:
     llvm::ArrayRef<uint8_t> bytes() const {
       return File ? File->bytes() : Link ? Link->bytes() : Input;
     }
+    llvm::StringRef path() const {
+      return File        ? File->Path
+             : Directory ? Directory->Path
+             : Link      ? Link->Path
+                         : Path;
+    }
   };
   struct Descriptor {
     std::shared_ptr<Description> Open;

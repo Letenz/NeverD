@@ -27,6 +27,21 @@ inline DarwinFileOptions kernelPathConfOptions() {
   O.SymbolicLinks["/cycle"] = {'c', 'y', 'c', 'l', 'e'};
   return O;
 }
+inline constexpr char AttributeNamesHex[] =
+    "2c0000000900008000000000000000000000000000000000"
+    "0c00000005000000010000006461746100000000";
+inline DarwinFileOptions attributeNamesOptions() {
+  auto O = kernelPathConfOptions();
+  O.WorkingDirectory = "/";
+  O.MutableDirectories = {"/"};
+  O.MovableDirectories = {"/empty"};
+  O.RemovableDirectories = {"/empty"};
+  for (const auto &[Path, Target] : O.SymbolicLinks)
+    O.MutableSymbolicLinks.insert(Path);
+  return O;
+}
+inline constexpr char AttributeNamesJSON[] =
+    R"({"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"directories":[{"path":"/","mutable":true},{"path":"/empty","movable":true,"removable":true}],"working_directory":"/","symbolic_links":[{"path":"/alias","target_hex":"64617461","mutable":true},{"path":"/dangling","target_hex":"6d697373696e67","mutable":true},{"path":"/cycle","target_hex":"6379636c65","mutable":true}]})";
 inline DarwinFileMetadata metadata(uint64_t Size = 10) {
   return {-123,
           0xfedcba9876543210ULL,
@@ -140,6 +155,17 @@ inline constexpr char PlainCommonAttributesHex[] =
     "ffffff7fffc99a3b00000000fdffffffffffffff040000000000000001000000"
     "000000800100000000000000efcdab8998badcfea48100003412000010325476"
     "98badcfe";
+inline constexpr char CommonNameAttributesHex[] =
+    "880000000b9e0782000000000000000000000000000000006800000005000000"
+    "85ffffff01000000fbffffffffffffff0600000000000000ffffffffffffff7f"
+    "ffc99a3b00000000fdffffffffffffff04000000000000000100000000000080"
+    "0100000000000000efcdab8998badcfea4810000341200001032547698badcfe"
+    "6461746100000000";
+inline constexpr char PlainCommonNameAttributesHex[] =
+    "74000000680000000500000085ffffff01000000fbffffffffffffff06000000"
+    "00000000ffffffffffffff7fffc99a3b00000000fdffffffffffffff04000000"
+    "0000000001000000000000800100000000000000efcdab8998badcfea4810000"
+    "341200001032547698badcfe6461746100000000";
 inline DarwinFileOptions commonAttributesOptions() {
   auto O = kernelPathConfOptions();
   O.Metadata["/data"] = metadata();

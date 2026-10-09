@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
+<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
 
 [← 文件索引](README.md)
 
@@ -866,11 +866,11 @@ kernel-pathconf、kernel-pathconf-values、kernel-pathconf-unsupported 檢查共
 
 ## 固定共通屬性列表
 
-getattrlist(220)、fgetattrlist(228)、getattrlistat(476) 查詢明確目錄中的十一項固定共通屬性：裝置、物件類型、四種時間、擁有者/群組、完整模式、旗標及檔案 ID。與 stat64 共用完整中繼資料的有效性判斷；缺失或失效的觀察維持未知。類型與空選擇不需 stat。NAME、卷宗、目錄/檔案/fork 專用屬性、ACL 及未知選項明確不支援，即使要求回傳遮罩也不省略未知資訊；不推斷主機資料或掛載名稱。
+getattrlist(220)、fgetattrlist(228)、getattrlistat(476) 查詢明確目錄中的十一項固定共通屬性：裝置、物件類型、四種時間、擁有者/群組、完整模式、旗標及檔案 ID。與 stat64 共用完整中繼資料的有效性判斷；缺失或失效的觀察維持未知。類型與空選擇不需 stat。根/掛載 NAME、卷宗、目錄/檔案/fork 專用屬性、ACL 及未知選項明確不支援，即使要求回傳遮罩也不省略未知資訊；不推斷主機資料或掛載名稱。
 
 路徑/at 入口先匯入 24 位元組請求，FD 入口先檢查 low32 FD 與原生類型，忽略 reserved 字。共用 CWD、相對 FD、連結解析，在大小/位圖檢查前保留原生錯誤。記錄採小端、四位元組對齊、完整 st_mode 與有號秒數；含回傳遮罩為 120 位元組，普通記錄為 100。短緩衝區僅接收指定前綴，長度仍報告完整需求。部分可存取的複製在該次複製前停止；超出有號 uio 大小只於有效且受支援的請求後回傳 EINVAL。查詢不改變游標、資料、列舉或項目/FD/inode 預算，持有物件沿用 dup、刪除、名稱重用生命週期。
 
-三個模式經 guest、C、CLI、Python 檢查原生共通行為、獨立設定位元組與保留既有輸出的未知 NAME。ARM64 私有準備通過 187 次原始查詢及 176 次路徑/FD SDK 對照，原生 5 秒限制不變；SDK15.5 未宣告 getattrlistat，raw476 另記。新增 guest/Python 保持 5,000,000us/quantum1024，既有公開測試保持 10s。原生 Intel、實體 iOS、檔案系統專用資訊、硬連結、權限/ACL 與完整執行階段/框架仍未驗證或未完成。
+三個模式經 guest、C、CLI、Python 檢查原生共通行為、獨立設定位元組與保留既有輸出的未知 ATTR_CMN_EXTENDED_SECURITY。ARM64 私有準備通過 187 次原始查詢及 176 次路徑/FD SDK 對照，原生 5 秒限制不變；SDK15.5 未宣告 getattrlistat，raw476 另記。新增 guest/Python 保持 5,000,000us/quantum1024，既有公開測試保持 10s。原生 Intel、實體 iOS、檔案系統專用資訊、硬連結、權限/ACL 與完整執行階段/框架仍未驗證或未完成。
 
 ```text
 ATTR_CMN_RETURNED_ATTRS=0x80000000
@@ -896,3 +896,9 @@ ABI 使用低32位 FD/options/position、完整64位 size 與 BSD user_ssize_t/c
 extended-attributes / extended-attributes-values / extended-attributes-unsupported 分別驗證原生共用行為、虛擬字面值及保留先前輸出的未知觀察停止。guest/Python5,000,000us/quantum1024、公開介面10s、原生5s 不變。ARM64 私有準備完成320組 raw/SDK 對照，全部288位元組保護區、carry、secondary 一致。自動 com.apple.provenance 是觀察值，不能推測預設空清單。Intel 原生與 iOS 真機未驗證；完整 dyld、Mach IPC、Objective-C/Swift 與框架仍未完成。
 
 Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.
+
+## 有界物件名稱
+
+ATTR_CMN_NAME=1 經 getattrlist220/fgetattrlist228/getattrlistat476 支援明確目錄中名稱唯一的非根物件。葉名稱須為 1..255 位元組合法 UTF-8。與 F_GETPATH 共用的實際物件路徑在 dup、CWD、移動、SWAP、刪除與名稱重用後保留最後連結的拼寫；呼叫者別名不覆蓋它。名稱與類型不依賴 stat；所選 stat 欄位仍需完整有效觀察。根/掛載標籤、非法名稱、硬連結或大小寫別名、正規化與完整路徑屬性保持未知。
+
+8 位元組 attrreference_t 位於其他共通欄位之前；attr_dataoffset 相對於引用本身，attr_length 包含 NUL，末尾名稱區域按四位元組填補。短輸出保留完整所需長度及精確前綴，包括截斷的 UTF-8。attribute-names / attribute-names-values / attribute-names-unsupported 經 guest/C/CLI/Python 檢查原生行為、獨立位元組及保留既有輸出的根名稱停止。ARM64 私有對照通過 601 次原始查詢、453 次完整保護緩衝區 SDK 比較與 384 次前綴檢查。SDK15.5 無 raw476 類型宣告。native5s、guest/Python5,000,000us/quantum1024、既有公開測試10s 不變。原生 Intel、實體 iOS 與完整執行階段/框架仍未驗證或未完成。

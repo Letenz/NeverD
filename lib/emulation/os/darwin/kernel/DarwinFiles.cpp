@@ -1116,7 +1116,8 @@ llvm::Expected<std::optional<ServiceResult>> DarwinFiles::attributeList(
       AttributeDevice | AttributeBirthTime | AttributeModificationTime |
       AttributeChangeTime | AttributeAccessTime | AttributeUID | AttributeGID |
       AttributeMode | AttributeFlags | AttributeInode;
-  if (Mask & ~(StatMask | AttributeObjectType | AttributeReturned))
+  if (Mask &
+      ~(StatMask | AttributeName | AttributeObjectType | AttributeReturned))
     return unsupported(Result, diagnostic::FileAttributeSelection);
   const uint32_t Type = File.Type == Kind::File           ? 1
                         : File.Type == Kind::Directory    ? 2
@@ -1124,6 +1125,19 @@ llvm::Expected<std::optional<ServiceResult>> DarwinFiles::attributeList(
                                                           : 0;
   if (!Type)
     return unsupported(Result, diagnostic::FileAttributeKind);
+  std::optional<llvm::StringRef> Name;
+  if (Mask & AttributeName) {
+    const auto Path = File.path();
+    // The root's label is a mount observation, not its synthetic guest path.
+    // Select the declared object's spelling, never the caller's path alias.
+    if (Path.empty() || Path == "/")
+      return unsupported(Result, diagnostic::FileAttributeName);
+    Name = Path.substr(Path.rfind('/') + 1);
+    const auto *Start = reinterpret_cast<const llvm::UTF8 *>(Name->data());
+    if (Name->empty() || Name->size() > limits::Name ||
+        !llvm::isLegalUTF8String(&Start, Start + Name->size()))
+      return unsupported(Result, diagnostic::FileAttributeName);
+  }
   const DarwinFileMetadata *Metadata = nullptr;
   if (Mask & StatMask) {
     auto Selected = statusMetadata(File);
@@ -1148,6 +1162,11 @@ llvm::Expected<std::optional<ServiceResult>> DarwinFiles::attributeList(
     Put(Mask, 4);
     for (unsigned I = 0; I != 4; ++I)
       Put(0, 4);
+  }
+  const size_t NameReference = Bytes.size();
+  if (Name) {
+    Put(0, 4);
+    Put(Name->size() + 1, 4);
   }
   if (Mask & AttributeDevice)
     Put(uint32_t(Metadata->Device), 4);
@@ -1174,7 +1193,14 @@ llvm::Expected<std::optional<ServiceResult>> DarwinFiles::attributeList(
     Put(Metadata->Flags, 4);
   if (Mask & AttributeInode)
     Put(Metadata->Inode, 8);
-  // Pinned XNU/native fixed-width queries report their complete required size,
+  if (Name) {
+    const size_t Start = Bytes.size();
+    llvm::support::endian::write32le(Bytes.data() + NameReference,
+                                     Start - NameReference);
+    Bytes.insert(Bytes.end(), Name->begin(), Name->end());
+    Bytes.resize((Bytes.size() + 1 + 3) & ~size_t(3), 0);
+  }
+  // Admitted native queries report their complete required size,
   // including short buffers, independently of FULLSIZE/RETURNED_ATTRS.
   llvm::support::endian::write32le(Bytes.data(), Bytes.size());
   return copyout(
@@ -2530,15 +2556,13 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       FD.CloseOnExec = A[2] & 1;
       return returned(0);
     case GetPath: {
-      const auto &Path = File.File        ? File.File->Path
-                         : File.Directory ? File.Directory->Path
-                                          : File.Path;
+      const auto Path = File.path();
       if (Path.empty())
         return unsupported(Result, diagnostic::FilePathIdentity);
       return copyout(
           A[2],
           llvm::ArrayRef<uint8_t>(
-              reinterpret_cast<const uint8_t *>(Path.c_str()), Path.size() + 1),
+              reinterpret_cast<const uint8_t *>(Path.data()), Path.size() + 1),
           diagnostic::FilePartialPath, Result);
     }
     case GetFileFlags:

@@ -1105,7 +1105,8 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
     SCOPED_TRACE(Test.Mode);
     auto CaseInput = Input;
     if (llvm::StringRef(Test.Mode) == "common-attributes" ||
-        llvm::StringRef(Test.Mode) == "extended-attributes") {
+        llvm::StringRef(Test.Mode) == "extended-attributes" ||
+        llvm::StringRef(Test.Mode) == "attribute-names") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
       for (const auto &[Name, Target] :

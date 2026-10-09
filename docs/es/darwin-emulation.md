@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
+<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
 
 [← Índice de documentación](README.md)
 
@@ -864,11 +864,11 @@ kernel-pathconf, kernel-pathconf-values y kernel-pathconf-unsupported verifican 
 
 ## Listas de atributos comunes fijos
 
-getattrlist(220), fgetattrlist(228) y getattrlistat(476) consultan once campos comunes del catálogo explícito: dispositivo, tipo, cuatro tiempos, propietario/grupo, modo completo, indicadores e ID. Comparten con stat64 la validez del registro completo; observaciones ausentes o invalidadas siguen desconocidas. Tipo y selección vacía no requieren stat. NAME, volumen, máscaras de directorio/archivo/fork, ACL y opciones desconocidas siguen sin soporte explícito incluso con máscara devuelta; no se infieren datos del host ni nombres de montaje.
+getattrlist(220), fgetattrlist(228) y getattrlistat(476) consultan once campos comunes del catálogo explícito: dispositivo, tipo, cuatro tiempos, propietario/grupo, modo completo, indicadores e ID. Comparten con stat64 la validez del registro completo; observaciones ausentes o invalidadas siguen desconocidas. Tipo y selección vacía no requieren stat. NAME de raíz/montaje, volumen, máscaras de directorio/archivo/fork, ACL y opciones desconocidas siguen sin soporte explícito incluso con máscara devuelta; no se infieren datos del host ni nombres de montaje.
 
 Ruta/at importan24 bytes antes de buscar; FD valida primero low32 FD y tipo nativo. reserved se ignora. CWD, FD relativo y enlaces mantienen errores nativos antes de tamaño/bitmap. Formato little-endian, alineación4, st_mode completo y segundos con signo; con máscara120 bytes, sin ella100. Un búfer corto recibe sólo el prefijo solicitado, pero informa la longitud completa. Acceso parcial se detiene antes de esa copia; tamaño fuera de signed-uio produce EINVAL tras solicitud válida y soportada. No cambian cursores, metadatos, enumeración ni presupuestos entrada/FD/inode; se conserva la vida dup/eliminación/reuso de nombre.
 
-Tres modos verifican comportamiento común, bytes configurados independientes y NAME sin soporte conservando salida por guest/C/CLI/Python. Preparación ARM64 privada:187 consultas raw/176 comparaciones SDK ruta-FD dentro de native5s sin cambios. SDK15.5 no declara getattrlistat; raw476 separado. Nuevos guest/Python:5,000,000us/quantum1024; públicos existentes:10s. Intel nativo, iOS físico, datos FS, enlaces duros, permisos/ACL y runtimes/frameworks completos siguen incompletos o sin validar.
+Tres modos verifican comportamiento común, bytes configurados independientes y ATTR_CMN_EXTENDED_SECURITY sin soporte conservando salida por guest/C/CLI/Python. Preparación ARM64 privada:187 consultas raw/176 comparaciones SDK ruta-FD dentro de native5s sin cambios. SDK15.5 no declara getattrlistat; raw476 separado. Nuevos guest/Python:5,000,000us/quantum1024; públicos existentes:10s. Intel nativo, iOS físico, datos FS, enlaces duros, permisos/ACL y runtimes/frameworks completos siguen incompletos o sin validar.
 
 ```text
 ATTR_CMN_RETURNED_ATTRS=0x80000000
@@ -894,3 +894,9 @@ ABI: FD/options/position low32, size full64 y BSD user_ssize_t/carry/secondary. 
 extended-attributes / extended-attributes-values / extended-attributes-unsupported comprueban el programa nativo compartido, bytes virtuales y parada desconocida conservando la salida. Sin cambios: guest/Python5,000,000us/quantum1024, API pública10s, nativo5s. Preparación privada ARM64:320 comparaciones raw/SDK con todos288 bytes de guarda y carry/secondary idénticos. com.apple.provenance automático es una observación, no un vacío predeterminado. Intel nativo/iOS físico siguen sin verificar; dyld, Mach IPC, Objective-C/Swift y frameworks completos siguen incompletos.
 
 Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.
+
+## Nombres de objetos acotados
+
+ATTR_CMN_NAME=1 se admite mediante getattrlist220/fgetattrlist228/getattrlistat476 para objetos no raíz con nombre único en el catálogo explícito. El nombre final es UTF-8 válido de1..255 bytes. La ruta real compartida con F_GETPATH conserva la última grafía enlazada tras dup, CWD, movimientos, SWAP, eliminación y reutilización; los alias del llamador no la reemplazan. Nombre y tipo no requieren stat; los campos stat seleccionados necesitan observaciones completas válidas. Etiquetas raíz/montaje, nombres inválidos, alias de enlaces duros o mayúsculas, normalización y atributos de ruta completa siguen desconocidos.
+
+attrreference_t ocupa8 bytes antes de los otros campos; attr_dataoffset es relativo a la referencia, attr_length incluye NUL y el área final se rellena a4 bytes. Las salidas cortas conservan longitud total y prefijos exactos, incluso UTF-8 parcial. attribute-names / attribute-names-values / attribute-names-unsupported comprueban comportamiento nativo, bytes independientes y parada en nombre raíz conservando salida por guest/C/CLI/Python. ARM64:601 consultas raw,453 comparaciones SDK del búfer protegido completo,384 prefijos. SDK15.5 no declara raw476. Native5s, guest/Python5,000,000us/quantum1024 y public10s sin cambios. Intel nativo, iOS físico y runtimes/frameworks completos siguen incompletos o sin validar.

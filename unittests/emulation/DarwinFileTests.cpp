@@ -12076,6 +12076,405 @@ TEST_P(DarwinFileTest, PathConfMissingCatalogueNeverInventsRoot) {
   EXPECT_EQ(Result.Diagnostic, diagnostic::FilePathConfKind);
 }
 
+TEST_P(DarwinFileTest, AttributeNameGoldenRecordsMatchAllEntrypoints) {
+  Options->Metadata["/data"] = darwin_test::metadata(6);
+  Options->WorkingDirectory = "/";
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto FD = ok(ServiceKind::Open, {Base});
+  path("/");
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  for (const auto &[Mask, Hex] :
+       {std::pair{1u, "1400000008000000050000006461746100000000"},
+        {9u, "180000000c00000005000000010000006461746100000000"},
+        {0x80000001u, "280000000100008000000000000000000000000000000000"
+                      "08000000050000006461746100000000"},
+        {0x80000009u, "2c0000000900008000000000000000000000000000000000"
+                      "0c00000005000000010000006461746100000000"},
+        {0x82079e0bu, darwin_test::CommonNameAttributesHex},
+        {0x02079e0bu, darwin_test::PlainCommonNameAttributesHex}}) {
+    attributeRequest(Mask);
+    path("/data");
+    attributeRecord(ServiceKind::GetAttrList,
+                    {Base, Base + 128, Base + Page, 512}, Hex);
+    attributeRecord(ServiceKind::FgetAttrList,
+                    {0x1234567800000000ULL | FD, Base + 128, Base + Page, 512},
+                    Hex);
+    attributeRecord(ServiceKind::GetAttrListAt,
+                    {UINT64_MAX, Base, Base + 128, Base + Page, 512}, Hex);
+    path("data");
+    attributeRecord(ServiceKind::GetAttrListAt,
+                    {Directory, Base, Base + 128, Base + Page, 512}, Hex);
+  }
+}
+
+TEST_P(DarwinFileTest, AttributeNamePrefixesPreserveReferencesAndSplitUTF8) {
+  Options->Files["/nfc-Caf\xc3\xa9"] = {};
+  Options->WorkingDirectory = "/";
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/nfc-Caf\xc3\xa9");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  path("/");
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  attributeRequest(0x80000009);
+  const auto Expected = llvm::fromHex(
+      "3000000009000080000000000000000000000000000000000c0000000a000000"
+      "010000006e66632d436166c3a9000000");
+  ASSERT_EQ(Expected.size(), 48u);
+  for (uint64_t Flags : {0u, 4u, 8u})
+    for (uint64_t Size = 4; Size <= 50; ++Size)
+      for (unsigned Entry = 0; Entry != 3; ++Entry) {
+        SCOPED_TRACE(::testing::Message() << "flags=" << Flags << " size="
+                                          << Size << " entry=" << Entry);
+        path(Entry == 2 ? "nfc-Caf\xc3\xa9" : "/nfc-Caf\xc3\xa9");
+        std::array<uint8_t, 80> Bytes;
+        Bytes.fill(0xa5);
+        llvm::cantFail(Space->write(Base + Page, Bytes));
+        const auto Service = Entry == 0   ? ServiceKind::GetAttrList
+                             : Entry == 1 ? ServiceKind::FgetAttrList
+                                          : ServiceKind::GetAttrListAt;
+        const std::array<uint64_t, 6> Args =
+            Entry == 2
+                ? std::array<uint64_t, 6>{Directory,       Base, Base + 128,
+                                          Base + Page + 8, Size, Flags}
+                : std::array<uint64_t, 6>{Entry == 0 ? Base : FD, Base + 128,
+                                          Base + Page + 8, Size, Flags};
+        EXPECT_EQ(ok(Service, Args), 0u);
+        llvm::cantFail(Space->read(Base + Page, Bytes));
+        auto Wanted = std::array<uint8_t, 80>{};
+        Wanted.fill(0xa5);
+        const auto Count = std::min<size_t>(Size, Expected.size());
+        std::copy_n(Expected.begin(), Count, Wanted.begin() + 8);
+        EXPECT_EQ(Bytes, Wanted);
+      }
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 0u);
+}
+
+TEST_P(DarwinFileTest, AttributeNameMaximumAndOpaqueSpellingKeepExactBytes) {
+  const std::string Long(255, 'z');
+  const std::string Punctuation = "quote\"-slash\\-colon:-tab\t-newline\n";
+  for (const auto &[Name, Prefix, Suffix] :
+       {std::tuple{Long,
+                   "240100000900008000000000000000000000000000000000"
+                   "0c0000000001000001000000",
+                   "00"},
+        {Punctuation,
+         "480000000900008000000000000000000000000000000000"
+         "0c0000002300000001000000",
+         "0000"},
+        {std::string("nfd-Cafe\xcc\x81"),
+         "300000000900008000000000000000000000000000000000"
+         "0c0000000b00000001000000",
+         "0000"}}) {
+    Options->Files['/' + Name] = {};
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    path('/' + Name, Base + 512);
+    attributeRequest(0x80000009);
+    const auto Hex = std::string(Prefix) + llvm::toHex(Name) + Suffix;
+    attributeRecord(ServiceKind::GetAttrList,
+                    {Base + 512, Base + 128, Base + Page, 512}, Hex);
+  }
+}
+
+TEST_P(DarwinFileTest, AttributeNameRemainsKnownWhenStatIsInvalidated) {
+  mutationPolicy();
+  Options->MutationPolicies.clear();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto FD = ok(ServiceKind::Open, {Base, 2});
+  EXPECT_EQ(ok(ServiceKind::Write, {FD, Base + Page, 1}), 1u);
+  attributeRequest(0x80000009);
+  attributeRecord(ServiceKind::FgetAttrList, {FD, Base + 128, Base + Page, 512},
+                  "2c0000000900008000000000000000000000000000000000"
+                  "0c00000005000000010000006461746100000000");
+  attributeRequest(0x02000001);
+  EXPECT_FALSE(
+      invoke(ServiceKind::FgetAttrList, {FD, Base + 128, Base + Page, 512}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {FD, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  Options.emplace();
+  Options->Directories = {"/work"};
+  Options->MutableDirectories = {"/work"};
+  Options->Metadata["/work"] = darwin_test::creationParentMetadata();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/work/new");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base, 0700}), 0u);
+  path("/work");
+  attributeRequest(1);
+  attributeRecord(ServiceKind::GetAttrList,
+                  {Base, Base + 128, Base + Page, 512},
+                  "140000000800000005000000776f726b00000000");
+  attributeRequest(0x02000001);
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetAttrList, {Base, Base + 128, Base + Page, 512}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+}
+
+TEST_P(DarwinFileTest,
+       AttributeNameUsesHeldObjectsOverDescriptionAndNameReuse) {
+  namespacePolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const auto Dup = ok(ServiceKind::Dup, {FD});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dup, 37, 0}), 37u);
+  renameFile("/data", "/renamed");
+  path("/renamed");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  const auto New = makeFile("/renamed", "new");
+  renameFile("/renamed", "/other");
+  attributeRequest(1);
+  for (auto Held : {FD, Dup}) {
+    attributeRecord(ServiceKind::FgetAttrList,
+                    {Held, Base + 128, Base + Page, 512},
+                    "14000000080000000800000072656e616d656400");
+    identity(Held, "/renamed");
+  }
+  attributeRecord(ServiceKind::FgetAttrList,
+                  {New, Base + 128, Base + Page, 512},
+                  "1400000008000000060000006f74686572000000");
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 37u);
+  contents(FD, {'a', 'b', 0, 0xff, 'e', 'f'});
+}
+
+TEST_P(DarwinFileTest, AttributeNameUsesActualCWDAfterDirectoryMoveAndRemoval) {
+  namespacePolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto Dir = makeDirectory("/dir");
+  const auto Dup = ok(ServiceKind::Dup, {Dir});
+  const auto Child = makeFile("/dir/data");
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Dir}), 0u);
+  renameFile("/dir", "/moved");
+  attributeRequest(1);
+  path(".");
+  attributeRecord(ServiceKind::GetAttrList,
+                  {Base, Base + 128, Base + Page, 512},
+                  "1400000008000000060000006d6f766564000000");
+  path("/moved/data");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/moved");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  makeDirectory("/dir");
+  attributeRequest(1);
+  for (auto Held : {Dir, Dup})
+    attributeRecord(ServiceKind::FgetAttrList,
+                    {Held, Base + 128, Base + Page, 512},
+                    "1400000008000000060000006d6f766564000000");
+  attributeRecord(ServiceKind::FgetAttrList,
+                  {Child, Base + 128, Base + Page, 512},
+                  "1400000008000000050000006461746100000000");
+}
+
+TEST_P(DarwinFileTest, AttributeNameAncestorsAndSwapsKeepSeparateIdentities) {
+  namespacePolicy();
+  Options->Directories.insert("/");
+  Options->SwapRenameDirectories.insert("/");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto A = makeDirectory("/a"), B = makeDirectory("/b");
+  const auto Child = makeDirectory("/a/child");
+  const auto File = makeFile("/a/leaf");
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Child}), 0u);
+  renameFile("/a", "/moved");
+  swapFiles("/moved", "/b");
+  attributeRequest(1);
+  attributeRecord(ServiceKind::FgetAttrList, {A, Base + 128, Base + Page, 512},
+                  "10000000080000000200000062000000");
+  attributeRecord(ServiceKind::FgetAttrList, {B, Base + 128, Base + Page, 512},
+                  "1400000008000000060000006d6f766564000000");
+  attributeRecord(ServiceKind::FgetAttrList,
+                  {Child, Base + 128, Base + Page, 512},
+                  "1400000008000000060000006368696c64000000");
+  attributeRecord(ServiceKind::FgetAttrList,
+                  {File, Base + 128, Base + Page, 512},
+                  "1400000008000000050000006c65616600000000");
+  path("..");
+  attributeRecord(ServiceKind::GetAttrList,
+                  {Base, Base + 128, Base + Page, 512},
+                  "10000000080000000200000062000000");
+  identity(File, "/b/leaf");
+}
+
+TEST_P(DarwinFileTest, AttributeNameLinkPoliciesSelectActualObjectSpelling) {
+  Options->Directories = {"/dir"};
+  Options->SymbolicLinks = {{"/alias", {'d', 'a', 't', 'a'}},
+                            {"/chain", {'a', 'l', 'i', 'a', 's'}},
+                            {"/dirlink", {'d', 'i', 'r'}},
+                            {"/cycle", {'c', 'y', 'c', 'l', 'e'}}};
+  Options->WorkingDirectory = "/";
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  attributeRequest(0x80000009);
+  for (const auto &[Name, Hex] :
+       {std::pair{"/alias", "2c0000000900008000000000000000000000000000000000"
+                            "0c0000000600000005000000616c696173000000"},
+        {"/chain", "2c0000000900008000000000000000000000000000000000"
+                   "0c0000000600000005000000636861696e000000"}}) {
+    path(Name);
+    attributeRecord(ServiceKind::GetAttrList,
+                    {Base, Base + 128, Base + Page, 512},
+                    "2c0000000900008000000000000000000000000000000000"
+                    "0c00000005000000010000006461746100000000");
+    for (uint64_t Flags : {1u, 0x800u, 0x801u})
+      attributeRecord(ServiceKind::GetAttrList,
+                      {Base, Base + 128, Base + Page, 512, Flags}, Hex);
+  }
+  path("/alias");
+  attributeRecord(ServiceKind::GetAttrList,
+                  {Base, Base + 128, Base + Page, 512, 1},
+                  "2c0000000900008000000000000000000000000000000000"
+                  "0c0000000600000005000000616c696173000000");
+  path("dirlink/.");
+  attributeRecord(ServiceKind::GetAttrList,
+                  {Base, Base + 128, Base + Page, 512, 1},
+                  "280000000900008000000000000000000000000000000000"
+                  "0c000000040000000200000064697200");
+  path("/cycle");
+  error(ServiceKind::GetAttrList, {Base, Base + 128, Base + Page, 512}, 62);
+}
+
+TEST_P(DarwinFileTest,
+       AttributeNameRootAndMalformedSpellingNeverPublishGuesses) {
+  Options->Files[std::string("/opaque-") + char(0xff)] = {};
+  Options->Metadata["/"] = darwin_test::creationParentMetadata();
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  std::array<uint8_t, 128> Canary;
+  Canary.fill(0xa5);
+  llvm::cantFail(Space->write(Base + Page, Canary));
+  for (uint32_t Mask : {1u, 0x80000009u, 0x82079e0bu}) {
+    attributeRequest(Mask);
+    path("/");
+    EXPECT_FALSE(
+        invoke(ServiceKind::GetAttrList, {Base, Base + 128, Base + Page, 512}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileAttributeName);
+    std::array<uint8_t, 128> After;
+    llvm::cantFail(Space->read(Base + Page, After));
+    EXPECT_EQ(After, Canary);
+  }
+  path(std::string("/opaque-") + char(0xff));
+  attributeRequest(1);
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetAttrList, {Base, Base + 128, Base + Page, 512}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileAttributeName);
+  error(ServiceKind::GetAttrList, {Base, Base + 128, 0, 3}, 34);
+  attributeRequest(1, 4);
+  error(ServiceKind::GetAttrList, {Base, Base + 128, 0, 512}, 22);
+}
+
+TEST_P(DarwinFileTest,
+       AttributeNameOutputAliasesAndAccessibilityKeepBoundaries) {
+  attributeRequest(0x80000009);
+  EXPECT_EQ(ok(ServiceKind::GetAttrList, {Base, Base + 128, Base + 128, 512}),
+            0u);
+  std::array<uint8_t, 44> Aliased;
+  llvm::cantFail(Space->read(Base + 128, Aliased));
+  EXPECT_EQ(llvm::toHex(Aliased),
+            "2C0000000900008000000000000000000000000000000000"
+            "0C00000005000000010000006461746100000000");
+  error(ServiceKind::GetAttrList, {Base, Base + 128, 0, 512}, 22);
+  attributeRequest(0x80000009);
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::GetAttrList, {Base, Base + 128, Base, 512}), 0u);
+  llvm::cantFail(Space->read(Base, Aliased));
+  EXPECT_EQ(llvm::toHex(Aliased),
+            "2C0000000900008000000000000000000000000000000000"
+            "0C00000005000000010000006461746100000000");
+  path("/data");
+  error(ServiceKind::GetAttrList, {Base, Base + 128, 0, UINT64_MAX}, 22);
+  error(ServiceKind::GetAttrList, {Base, Base + 128, 0, 512}, 14);
+  const auto End = Base + Page * 2;
+  std::array<uint8_t, 40> Canary;
+  Canary.fill(0xa5);
+  llvm::cantFail(Space->write(End - 40, Canary));
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetAttrList, {Base, Base + 128, End - 40, 512}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileAttributePartialOutput);
+  std::array<uint8_t, 40> After;
+  llvm::cantFail(Space->read(End - 40, After));
+  EXPECT_EQ(After, Canary);
+  attributeRecord(ServiceKind::GetAttrList,
+                  {Base, Base + 128, Base + Page, uint64_t(INT64_MAX)},
+                  "2c0000000900008000000000000000000000000000000000"
+                  "0c00000005000000010000006461746100000000");
+}
+
+TEST_P(DarwinFileTest, AttributeNameTransportFailuresKeepCallerStatePrivate) {
+  attributeRequest(0x80000009);
+  std::array<uint8_t, 44> Canary;
+  Canary.fill(0xa5);
+  llvm::cantFail(Space->write(Base + Page, Canary));
+  FailingFileInput Input(*Space);
+  Files = std::make_unique<DarwinFiles>(Input, Options);
+  for (unsigned Phase = 0; Phase != 4; ++Phase)
+    for (bool Budget : {false, true}) {
+      Input.FailureAddress = Phase < 2 ? Base + 128 : Base + Page;
+      Input.FailAccess = Phase == 0 || Phase == 2;
+      Input.FailRead = Phase == 1;
+      Input.FailWrite = Phase == 3;
+      Input.FailBudget = Budget;
+      auto Failed = Files->handle(
+          ServiceKind::GetAttrList,
+          {0, 0, {Base, Base + 128, Base + Page, 44}, std::nullopt}, Result);
+      ASSERT_FALSE(bool(Failed));
+      if (Budget)
+        llvm::consumeError(Failed.takeError());
+      else
+        EXPECT_EQ(llvm::toString(Failed.takeError()),
+                  Phase == 0 || Phase == 2 ? "file input preflight failed"
+                  : Phase == 1             ? "file input transport failed"
+                                           : "file output transport failed");
+      Input.FailAccess = Input.FailRead = Input.FailWrite = Input.FailBudget =
+          false;
+      std::array<uint8_t, 44> After;
+      llvm::cantFail(Space->read(Base + Page, After));
+      EXPECT_EQ(After, Canary);
+    }
+}
+
+TEST_P(DarwinFileTest, AttributeNameNeedsNoFreeDescriptorsOrCatalogueEntries) {
+  Options->DescriptorLimit = 4;
+  for (unsigned I = 0; I != 255; ++I)
+    Options->Files["/f" + std::to_string(I)] = {};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto FD = ok(ServiceKind::Open, {Base});
+  error(ServiceKind::Open, {Base}, 24);
+  attributeRequest(1);
+  for (unsigned I = 0; I != 32; ++I) {
+    attributeRecord(ServiceKind::GetAttrList,
+                    {Base, Base + 128, Base + Page, 512},
+                    "1400000008000000050000006461746100000000");
+    attributeRecord(ServiceKind::FgetAttrList,
+                    {FD, Base + 128, Base + Page, 512},
+                    "1400000008000000050000006461746100000000");
+  }
+  EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Open, {Base}), FD);
+}
+
+TEST_P(DarwinFileTest,
+       AttributeNameDoesNotAdvanceInodesOrDirectoryEnumeration) {
+  enumerationPolicy();
+  Options->WorkingDirectory = "/";
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto Dir = ok(ServiceKind::Open, {Base});
+  const auto Before = directoryBytes(Dir);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dir, 0, 0}), 0u);
+  path("/data");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const auto Metadata = status(FD);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 37, 0}), 37u);
+  attributeRequest(1);
+  for (unsigned I = 0; I != 32; ++I)
+    attributeRecord(ServiceKind::FgetAttrList,
+                    {FD, Base + 128, Base + Page, 512},
+                    "1400000008000000050000006461746100000000");
+  EXPECT_EQ(directoryBytes(Dir), Before);
+  EXPECT_EQ(status(FD), Metadata);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 37u);
+  const auto Fresh = makeFile("/fresh");
+  EXPECT_EQ(llvm::support::endian::read64le(status(Fresh).data() + 8),
+            darwin_test::CreationPolicy.FirstInode);
+}
+
 TEST_P(DarwinFileTest, AttributeListCompleteRecordsMatchAllEntrypoints) {
   Options->Metadata["/data"] = darwin_test::metadata(6);
   Options->WorkingDirectory = "/";
@@ -12178,7 +12577,7 @@ TEST_P(DarwinFileTest, AttributeListReservedWordAndOutputAliasesAreOrdered) {
 
 TEST_P(DarwinFileTest,
        AttributeListUnknownSelectionFlagsAndKindNeverInventValues) {
-  for (uint32_t Mask : {1u, 0x200000u, 0x400000u, 0xffffffffu}) {
+  for (uint32_t Mask : {0x20u, 0x200000u, 0x400000u, 0xffffffffu}) {
     attributeRequest(Mask);
     EXPECT_FALSE(invoke(ServiceKind::GetAttrList, {Base, Base + 128, 0, 512}));
     EXPECT_EQ(Result.Diagnostic, diagnostic::FileAttributeSelection);

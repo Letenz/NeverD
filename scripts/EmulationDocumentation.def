@@ -1757,3 +1757,14 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes-values")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes-unsupported")
 #endif
+
+// Bounded variable-length object-name vocabulary.
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ATTR_CMN_NAME=1")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attrreference_t")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attr_dataoffset")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attr_length")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names-unsupported")
+#endif

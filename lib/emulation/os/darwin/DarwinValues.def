@@ -85,6 +85,7 @@ NEVERD_DARWIN_VALUE(DuplicateCloseOnExec, 67)
 NEVERD_DARWIN_VALUE(FileStatusSize, 144)
 NEVERD_DARWIN_VALUE(AttributeRequestSize, 24)
 NEVERD_DARWIN_VALUE(AttributeBitmapCount, 5)
+NEVERD_DARWIN_VALUE(AttributeName, 0x00000001)
 NEVERD_DARWIN_VALUE(AttributeDevice, 0x00000002)
 NEVERD_DARWIN_VALUE(AttributeObjectType, 0x00000008)
 NEVERD_DARWIN_VALUE(AttributeBirthTime, 0x00000200)
@@ -390,6 +391,9 @@ NEVERD_DARWIN_DIAGNOSTIC(FileMetadataOption,
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadataPath,
                          "Darwin metadata requires an existing catalogue path")
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadata, "Darwin file metadata is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAttributeName,
+    "Darwin object name is outside the bounded UTF-8 catalogue contract")
 NEVERD_DARWIN_DIAGNOSTIC(
     FilePartialStatus,
     "Darwin stat64 into a partially writable buffer is unsupported")

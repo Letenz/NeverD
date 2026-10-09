@@ -414,6 +414,10 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"extended-attributes-values",
                     emulation::darwin_test::ExtendedAttributesHex},
           std::pair{"extended-attributes-unsupported", "58"},
+          std::pair{"attribute-names", "4e"},
+          std::pair{"attribute-names-values",
+                    emulation::darwin_test::AttributeNamesHex},
+          std::pair{"attribute-names-unsupported", "4e"},
           std::pair{"kernel-pathconf", "43"},
           std::pair{"kernel-pathconf-values",
                     emulation::darwin_test::KernelPathConfHex},
@@ -522,8 +526,9 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   const bool UnknownPathConf = ModeName == "kernel-pathconf-unsupported";
   const bool UnknownAttributes = ModeName == "common-attributes-unsupported";
   const bool UnknownXattrs = ModeName == "extended-attributes-unsupported";
-  const bool Incomplete =
-      ProtectedLink || UnknownPathConf || UnknownAttributes || UnknownXattrs;
+  const bool UnknownNames = ModeName == "attribute-names-unsupported";
+  const bool Incomplete = ProtectedLink || UnknownPathConf ||
+                          UnknownAttributes || UnknownXattrs || UnknownNames;
   const bool X64 = llvm::StringRef(File).ends_with("x86_64");
   SCOPED_TRACE(File);
   Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
@@ -940,6 +945,13 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::json::parse(emulation::darwin_test::CommonAttributesJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (ModeName.starts_with("attribute-names")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::AttributeNamesJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
   if (ModeName.starts_with("extended-attributes")) {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     (*Input.getAsObject())[field::Quantum] = 1024;
@@ -969,9 +981,11 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
   }
   EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
-  if (UnknownAttributes) {
+  if (UnknownAttributes || UnknownNames) {
     EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
-              "Darwin selected file attributes are not modeled");
+              UnknownNames ? "Darwin object name is outside the bounded UTF-8 "
+                             "catalogue contract"
+                           : "Darwin selected file attributes are not modeled");
     const auto *Services = Report->getAsObject()->getArray(field::Services);
     ASSERT_NE(Services, nullptr);
     ASSERT_FALSE(Services->empty());

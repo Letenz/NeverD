@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
+<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -864,11 +864,11 @@ getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem و
 
 ## قوائم السمات المشتركة الثابتة
 
-تستعلم getattrlist(220) وfgetattrlist(228) وgetattrlistat(476) عن11 حقلاً في الكتالوج الصريح: الجهاز والنوع وأربعة أوقات والمالك/المجموعة والوضع الكامل والأعلام ومعرف الملف. تشترك مع stat64 في صلاحية السجل الكامل؛ الملاحظات الغائبة أو المبطلة تبقى مجهولة. النوع والاختيار الفارغ لا يحتاجان stat. NAME والمجلد الحجمي وأقنعة الدليل/الملف/fork وACL والخيارات المجهولة غير مدعومة صراحة حتى مع قناع الإرجاع؛ لا تستنتج بيانات المضيف أو اسم التركيب.
+تستعلم getattrlist(220) وfgetattrlist(228) وgetattrlistat(476) عن11 حقلاً في الكتالوج الصريح: الجهاز والنوع وأربعة أوقات والمالك/المجموعة والوضع الكامل والأعلام ومعرف الملف. تشترك مع stat64 في صلاحية السجل الكامل؛ الملاحظات الغائبة أو المبطلة تبقى مجهولة. النوع والاختيار الفارغ لا يحتاجان stat. NAME للجذر/التركيب والمجلد الحجمي وأقنعة الدليل/الملف/fork وACL والخيارات المجهولة غير مدعومة صراحة حتى مع قناع الإرجاع؛ لا تستنتج بيانات المضيف أو اسم التركيب.
 
 يستورد مسار/at الطلب24 بايت قبل البحث؛ يفحص FD أولاً low32 FD والنوع الأصلي. يتجاهل reserved. يحافظ حل CWD وFD النسبي والروابط المشترك على الأخطاء الأصلية قبل الحجم/bitmap. التنسيق little-endian ومحاذاة4 مع st_mode كامل وثوان موقعة؛ مع القناع120 بايت وبدونه100. يتلقى المخزن القصير المقدمة المطلوبة فقط لكنه يبلغ الحجم الكامل. يتوقف الوصول الجزئي قبل النسخ؛ الحجم خارج signed-uio يعطي EINVAL بعد طلب صالح مدعوم. لا تتغير المؤشرات أو البيانات أو التعداد أو ميزانية عنصر/FD/inode؛ تبقى دورة حياة dup/الإزالة/إعادة الاسم.
 
-تختبر ثلاثة أوضاع السلوك المشترك والبايتات المستقلة وNAME غير المدعوم مع حفظ المخرجات عبر guest/C/CLI/Python. تحضير ARM64 خاص:187 استعلام raw و176 مقارنة SDK مسار-FD، وحد native5s لم يتغير. SDK15.5 لا يعلن getattrlistat؛ raw476 مستقل. guest/Python الجديد5,000,000us/quantum1024 والاختبارات العامة الحالية10s. Native Intel وiOS الفعلي وحقائق FS والروابط الصلبة والصلاحيات/ACL وruntime/framework الكاملة ما زالت غير مكتملة أو غير متحققة.
+تختبر ثلاثة أوضاع السلوك المشترك والبايتات المستقلة وATTR_CMN_EXTENDED_SECURITY غير المدعوم مع حفظ المخرجات عبر guest/C/CLI/Python. تحضير ARM64 خاص:187 استعلام raw و176 مقارنة SDK مسار-FD، وحد native5s لم يتغير. SDK15.5 لا يعلن getattrlistat؛ raw476 مستقل. guest/Python الجديد5,000,000us/quantum1024 والاختبارات العامة الحالية10s. Native Intel وiOS الفعلي وحقائق FS والروابط الصلبة والصلاحيات/ACL وruntime/framework الكاملة ما زالت غير مكتملة أو غير متحققة.
 
 ```text
 ATTR_CMN_RETURNED_ATTRS=0x80000000
@@ -894,3 +894,9 @@ ABI: FD/options/position low32 و size full64 و BSD user_ssize_t/carry/secondar
 تتحقق extended-attributes / extended-attributes-values / extended-attributes-unsupported من البرنامج الأصلي المشترك والبايتات الافتراضية والتوقف المجهول مع حفظ الخرج. الميزانيات ثابتة: guest/Python5,000,000us/quantum1024 والواجهة العامة10s والتنفيذ الأصلي5s. تحضير ARM64 الخاص:320 مقارنة raw/SDK تطابقت فيها جميع288 بايت حراسة و carry/secondary. com.apple.provenance التلقائي مشاهدة وليس قائمة فارغة افتراضية. Intel الأصلي و iOS الفعلي غير متحققين؛ ما زال dyld و Mach IPC و Objective-C/Swift والأطر الكاملة غير مكتملة.
 
 Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.
+
+## أسماء كائنات محدودة
+
+يدعم ATTR_CMN_NAME=1 عبر getattrlist220/fgetattrlist228/getattrlistat476 كائنًا غير جذري له اسم فريد في الكتالوج الصريح. اسم الورقة UTF-8 صالح بطول1..255 بايت. المسار الفعلي المشترك مع F_GETPATH يحتفظ بآخر تهجئة مرتبطة عبر dup وCWD والنقل وSWAP والحذف وإعادة استخدام الاسم؛ لا تحل أسماء المستدعي البديلة محلها. الاسم والنوع لا يحتاجان stat، أما حقول stat المختارة فتحتاج ملاحظات كاملة صالحة. تبقى تسميات الجذر/التركيب والأسماء غير الصالحة وأسماء الروابط الصلبة أو حالة الأحرف والتطبيع والمسار الكامل مجهولة.
+
+يسبق attrreference_t بطول8 بايت بقية الحقول؛ attr_dataoffset نسبي إلى المرجع، وattr_length يتضمن NUL، وتُحشى منطقة الاسم إلى4 بايت. يحتفظ الإخراج القصير بالطول الكامل والبادئات الدقيقة حتى مع UTF-8 جزئي. تتحقق attribute-names / attribute-names-values / attribute-names-unsupported عبر guest/C/CLI/Python من السلوك الأصلي والبايتات المستقلة والتوقف عند اسم الجذر مع حفظ الإخراج السابق. ARM64:601 استعلام raw و453 مقارنة SDK لكامل المخزن المحمي و384 فحص بادئة. SDK15.5 لا يعلن raw476. native5s وguest/Python5,000,000us/quantum1024 وpublic10s دون تغيير. Native Intel وiOS الفعلي وruntime/framework الكامل تبقى غير مكتملة أو غير متحققة.

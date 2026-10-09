@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
+<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
 
 [← Оглавление документации](README.md)
 
@@ -864,11 +864,11 @@ kernel-pathconf, kernel-pathconf-values и kernel-pathconf-unsupported пров�
 
 ## Списки фиксированных общих атрибутов
 
-getattrlist(220), fgetattrlist(228), getattrlistat(476) запрашивают11 общих полей явного каталога: устройство, тип, четыре времени, владелец/группа, полный режим, флаги и ID. Проверка полного stat общая со stat64; отсутствующие/инвалидированные сведения остаются неизвестными. Тип и пустой выбор не требуют stat. NAME, том, маски каталогов/файлов/fork, ACL и неизвестные опции явно не поддержаны даже с возвращаемой маской; сведения хоста и имя монтирования не выводятся.
+getattrlist(220), fgetattrlist(228), getattrlistat(476) запрашивают11 общих полей явного каталога: устройство, тип, четыре времени, владелец/группа, полный режим, флаги и ID. Проверка полного stat общая со stat64; отсутствующие/инвалидированные сведения остаются неизвестными. Тип и пустой выбор не требуют stat. NAME корня/монтирования, том, маски каталогов/файлов/fork, ACL и неизвестные опции явно не поддержаны даже с возвращаемой маской; сведения хоста и имя монтирования не выводятся.
 
 Путь/at читают24 байта перед поиском; FD сначала проверяет low32 FD и нативный тип. reserved игнорируется. Общие CWD/относительныйFD/ссылки сохраняют нативные ошибки до размера/bitmap. Little-endian, выравнивание4, полный st_mode и знаковые секунды; с маской120 байт, без100. Короткий буфер получает заданный префикс, но сообщает полный размер. Частичный доступ останавливается до копии; превышение signed-uio даёт EINVAL после корректного поддержанного запроса. Курсоры, метаданные, перечисление и бюджеты запись/FD/inode не меняются; срок жизни dup/удаление/повтор имени сохраняется.
 
-Три режима проверяют общую семантику, независимые заданные байты и неподдержанный NAME с сохранённым выводом через guest/C/CLI/Python. Частная ARM64-подготовка:187 raw-запросов/176 SDK-проверок путь-FD при неизменных native5s. SDK15.5 не объявляет getattrlistat; raw476 отдельно. Новые guest/Python:5,000,000us/quantum1024; прежние публичные тесты:10s. Native Intel, физический iOS, факты FS, жёсткие ссылки, права/ACL и полные runtime/frameworks ещё не проверены или не завершены.
+Три режима проверяют общую семантику, независимые заданные байты и неподдержанный ATTR_CMN_EXTENDED_SECURITY с сохранённым выводом через guest/C/CLI/Python. Частная ARM64-подготовка:187 raw-запросов/176 SDK-проверок путь-FD при неизменных native5s. SDK15.5 не объявляет getattrlistat; raw476 отдельно. Новые guest/Python:5,000,000us/quantum1024; прежние публичные тесты:10s. Native Intel, физический iOS, факты FS, жёсткие ссылки, права/ACL и полные runtime/frameworks ещё не проверены или не завершены.
 
 ```text
 ATTR_CMN_RETURNED_ATTRS=0x80000000
@@ -894,3 +894,9 @@ ABI: FD/options/position low32, size full64, BSD user_ssize_t/carry/secondary. N
 extended-attributes / extended-attributes-values / extended-attributes-unsupported проверяют общий нативный код, виртуальные байты и остановку при неизвестном наблюдении с сохранением вывода. Без изменений: guest/Python5,000,000us/quantum1024, публичный API10s, нативный5s. Частная подготовка ARM64:320 raw/SDK сравнений, все288 защитных байт и carry/secondary совпали. Автоматический com.apple.provenance — наблюдение, а не пустое состояние по умолчанию. Нативный Intel/физический iOS не проверены; полный dyld, Mach IPC, Objective-C/Swift и фреймворки не завершены.
 
 Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.
+
+## Ограниченные имена объектов
+
+ATTR_CMN_NAME=1 поддерживается через getattrlist220/fgetattrlist228/getattrlistat476 для однозначно именованных объектов вне корня явного каталога. Имя листа — корректный UTF-8 длиной1..255 байт. Общий с F_GETPATH фактический путь сохраняет последнее связанное написание после dup, CWD, перемещения, SWAP, удаления и повторного использования имени; псевдонимы вызывающего его не заменяют. Имя и тип не требуют stat; выбранные поля stat требуют полных действительных наблюдений. Метки корня/монтирования, некорректные имена, псевдонимы жёстких ссылок/регистра, нормализация и атрибуты полного пути остаются неизвестными.
+
+8-байтовый attrreference_t предшествует другим полям; attr_dataoffset отсчитывается от ссылки, attr_length включает NUL, область имени дополнена до4 байт. Короткий вывод сохраняет полную длину и точные префиксы, включая частичный UTF-8. attribute-names / attribute-names-values / attribute-names-unsupported проверяют нативное поведение, независимые байты и остановку на имени корня с сохранением вывода через guest/C/CLI/Python. ARM64:601 raw-запрос,453 SDK-сравнения всего защищённого буфера,384 проверки префиксов. SDK15.5 не объявляет raw476. Native5s, guest/Python5,000,000us/quantum1024 и public10s неизменны. Native Intel, физический iOS и полные runtime/frameworks остаются непроверенными или незавершёнными.

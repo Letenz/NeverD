@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 28adacc484215e6491efee195e7f60fa0572bea244b7f877808ad94d2e0d493b -->
+<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -866,11 +866,11 @@ kernel-pathconf、kernel-pathconf-values、kernel-pathconf-unsupported は共通
 
 ## 固定共通属性リスト
 
-getattrlist(220)、fgetattrlist(228)、getattrlistat(476) は明示カタログの固定共通属性11項目を照会します：デバイス、型、4種類の時刻、所有者/グループ、完全なモード、フラグ、ファイルID。stat64 と完全メタデータの有効性判定を共有し、欠落・無効化された観測は未知のままです。型と空選択は stat 不要です。NAME、ボリューム、ディレクトリ/ファイル/fork 固有マスク、ACL、未知オプションは返却マスク要求時も明示的に未対応です。ホスト情報やマウント名を推測しません。
+getattrlist(220)、fgetattrlist(228)、getattrlistat(476) は明示カタログの固定共通属性11項目を照会します：デバイス、型、4種類の時刻、所有者/グループ、完全なモード、フラグ、ファイルID。stat64 と完全メタデータの有効性判定を共有し、欠落・無効化された観測は未知のままです。型と空選択は stat 不要です。ルート/マウントの NAME、ボリューム、ディレクトリ/ファイル/fork 固有マスク、ACL、未知オプションは返却マスク要求時も明示的に未対応です。ホスト情報やマウント名を推測しません。
 
 パス/at は24バイト要求を先に読み、FD は low32 FD とネイティブ型を先に検証します。reserved は無視します。共有 CWD/相対FD/リンク解決はサイズ・ビットマップ検証より前のエラーを保持します。リトルエンディアン・4バイト整列で完全な st_mode と符号付き秒を格納します。返却マスク付きは120バイト、通常は100バイト。短いバッファには指定した接頭部のみ書き、必要長は全体のままです。部分アクセスはそのコピー前に停止し、符号付き uio 範囲外の長さは有効な対応要求後に EINVAL。カーソル、メタデータ、列挙、項目/FD/inode予算は変わらず、dup/削除/名前再利用の既存寿命を保ちます。
 
-3モードが guest/C/CLI/Python で共通動作、独立した設定バイト、既存出力を保つ未対応 NAME を検証します。ARM64 私有準備は187 raw照会、176 SDKパス/FD比較に成功し、native5秒は不変です。SDK15.5 に getattrlistat 宣言がなく raw476 は別記。新guest/Python は5,000,000us/quantum1024、既存公開テストは10s。ネイティブIntel・実機iOS・FS固有情報・ハードリンク・権限/ACL・完全なランタイム/フレームワークは未検証または未完成です。
+3モードが guest/C/CLI/Python で共通動作、独立した設定バイト、既存出力を保つ未対応 ATTR_CMN_EXTENDED_SECURITY を検証します。ARM64 私有準備は187 raw照会、176 SDKパス/FD比較に成功し、native5秒は不変です。SDK15.5 に getattrlistat 宣言がなく raw476 は別記。新guest/Python は5,000,000us/quantum1024、既存公開テストは10s。ネイティブIntel・実機iOS・FS固有情報・ハードリンク・権限/ACL・完全なランタイム/フレームワークは未検証または未完成です。
 
 ```text
 ATTR_CMN_RETURNED_ATTRS=0x80000000
@@ -896,3 +896,9 @@ ABI は低32ビット FD/options/position、全64ビット size、BSD user_ssize
 extended-attributes / extended-attributes-values / extended-attributes-unsupported は共通の原生挙動、仮想の明示バイト、不明時に既存出力を保持する停止を検証する。guest/Python5,000,000us/quantum1024、公開API10s、原生5s は不変。ARM64 私有準備では320組の raw/SDK、全288ガードバイト、carry/secondary が一致。自動 com.apple.provenance は観測であり空リストの既定値ではない。原生 Intel と iOS 実機は未検証。完全な dyld、Mach IPC、Objective-C/Swift とフレームワークは未完成。
 
 Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.
+
+## 有界のオブジェクト名
+
+ATTR_CMN_NAME=1 は getattrlist220/fgetattrlist228/getattrlistat476 で明示カタログ内の名前が一意な非ルートオブジェクトに対応します。葉名は合法 UTF-8 の1..255バイト。F_GETPATH と共通の実際のオブジェクトパスが dup、CWD、移動、SWAP、削除、名前再利用を越えて最後のリンク名を保持し、呼出し側の別名は使いません。名前と型は stat 不要ですが、選択された stat 項目には完全な有効観測が必要です。ルート/マウント名、不正名、ハードリンクや大小文字の別名、正規化、完全パス属性は未知です。
+
+8バイトの attrreference_t は他の共通項目より前にあり、attr_dataoffset は参照自身からの相対値、attr_length は NUL を含み、名前領域は4バイトに整列します。短い出力も完全な必要長と UTF-8 途中を含む正確な前置バイトを保ちます。attribute-names / attribute-names-values / attribute-names-unsupported は guest/C/CLI/Python で原生動作、独立バイト、既存出力を保つルート名停止を検証します。ARM64 準備は601 raw照会、453保護バッファ全体の SDK 比較、384前置チェックに成功。SDK15.5 は raw476 の型付き宣言を持ちません。native5s、guest/Python5,000,000us/quantum1024、既存公開10sは不変。原生 Intel、実機 iOS、完全なランタイム/フレームワークは未検証または未完成です。
