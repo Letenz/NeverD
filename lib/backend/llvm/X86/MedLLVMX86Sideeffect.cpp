@@ -14,6 +14,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/llvm/LLVMX86StackEffects.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 
@@ -752,7 +753,7 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
     auto *IA = llvm::InlineAsm::get(
         FnTy, Wide ? "pushq $0\n\tpopfq" : "pushl $0\n\tpopfl",
         "r,~{memory},~{cc},~{dirflag},~{flags}", /*hasSideEffects=*/true);
-    Builder.CreateCall(IA, {Flags});
+    markX86StackTemporary(*Builder.CreateCall(IA, {Flags}));
     return true;
   }
 
