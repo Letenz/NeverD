@@ -693,15 +693,58 @@ bool hasCallerCleanupRegistrationABI(
   if (Image.Arch != Arch::X86 || Image.Format != BinaryFormat::COFF ||
       Function.CalleePopBytes || !Function.hasCompleteLiftCoverage())
     return false;
+  size_t Work = 0;
+  const auto *States =
+      Function.RegistrationStates ? &*Function.RegistrationStates : nullptr;
+  const bool UseReachability =
+      Function.ExceptionMetadata && Function.ExceptionMetadata->Cxx &&
+      Function.ExceptionMetadata->Registration && States && States->Complete &&
+      States->CallbackStatesComplete && States->RegistrationLifetimeComplete &&
+      States->CallFrameEffectsComplete;
+  std::map<int, const RegistrationBlockState *> Reachability;
+  if (UseReachability) {
+    if (States->Blocks.size() != Function.Blocks.size() ||
+        !chargeCalleeWork(Work, States->Blocks.size()))
+      return false;
+    for (const auto &State : States->Blocks)
+      if (!Reachability.emplace(State.BlockId, &State).second)
+        return false;
+  }
   std::set<va_t> Targets;
-  for (const auto &Block : Function.Blocks)
+  for (const auto &Block : Function.Blocks) {
+    const RegistrationBlockState *State = nullptr;
+    if (UseReachability) {
+      const auto It = Reachability.find(Block.Id);
+      if (It == Reachability.end() ||
+          It->second->Range.Begin != Block.StartAddr ||
+          It->second->Range.End != Block.EndAddr)
+        return false;
+      State = It->second;
+    }
     for (const auto &Op : Block.Ops) {
+      if (!chargeCalleeWork(Work, 1))
+        return false;
+      if (State && !State->Reached)
+        continue;
       if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
         continue;
       if (Op.Opcode != NdOp::CALL || Op.NumInputs != 1 ||
           !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
           !Image.isCodeAddress(Op.Inputs[0].Offset))
         return false;
+      if (UseReachability) {
+        const auto *Call = States->callFrameEffect(Op.Addr, Op.Seq);
+        if (!Call || Call->Target != Op.Inputs[0].Offset ||
+            !chargeCalleeWork(Work, Block.InstructionBoundaries.size()))
+          return false;
+        const auto Boundary =
+            llvm::find_if(Block.InstructionBoundaries,
+                          [&](const auto &B) { return B.Address == Op.Addr; });
+        if (Boundary == Block.InstructionBoundaries.end() ||
+            Boundary->Control != LowInstructionControl::Call ||
+            Op.Addr + Boundary->Size != Call->EndAddress)
+          return false;
+      }
       if (Function.RegistrationStates &&
           Function.RegistrationStates->SecurityCookiesComplete &&
           Function.RegistrationStates->cookieCheck(Op.Addr, Op.Seq)) {
@@ -724,13 +767,13 @@ bool hasCallerCleanupRegistrationABI(
       if (Targets.size() > 256)
         return false;
     }
+  }
   Decoder Decoder;
   if (!Decoder.init(Image))
     return false;
   CFGBuilder Builder;
   std::deque<va_t> Pending(Targets.begin(), Targets.end());
   std::set<va_t> Examined;
-  size_t Work = 0;
   ImageFrameEffects Effects;
   while (!Pending.empty()) {
     const va_t Target = Pending.front();
@@ -769,6 +812,21 @@ bool hasCallerCleanupRegistrationABI(
         for (const auto &Write : Throw->ImageWrites)
           Effects.Writes.emplace(Write.Begin, Write.End);
         for (const auto &Write : Throw->CallerPCWrites)
+          Effects.CallerPCWrites.emplace(Write.Begin, Write.End);
+        continue;
+      }
+    if (UseReachability)
+      if (const auto Leaf =
+              getCheckedX86RegistrationLeafCalleeABI(Image, Target, &Work)) {
+        if (!chargeCalleeWork(Work, Leaf->ImageReads.size() +
+                                        Leaf->ImageWrites.size() +
+                                        Leaf->CallerPCWrites.size()))
+          return false;
+        for (const auto &Read : Leaf->ImageReads)
+          Effects.Reads.emplace(Read.Begin, Read.End);
+        for (const auto &Write : Leaf->ImageWrites)
+          Effects.Writes.emplace(Write.Begin, Write.End);
+        for (const auto &Write : Leaf->CallerPCWrites)
           Effects.CallerPCWrites.emplace(Write.Begin, Write.End);
         continue;
       }

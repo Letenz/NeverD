@@ -1368,7 +1368,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(
                              Unknown,
                              CallbackOnly,
                              State.CanDispatch && State.Installed,
-                             EH.Cxx ? cxxMinimumTryLevel(State, *EH.Cxx) : 0});
+                             EH.Cxx ? cxxMinimumTryLevel(State, *EH.Cxx) : 0,
+                             State.Reached});
     if (CallbackOnly && Unknown)
       Result.CallbackStatesComplete = false;
     if (!CallbackOnly && Unknown)

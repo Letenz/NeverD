@@ -1021,6 +1021,11 @@ TEST(RegistrationState, PrivateThrowStopsOrdinaryFlowAndKeepsCatchResumption) {
     EXPECT_TRUE(A.CallFrameEffects[0].DoesNotReturn);
     EXPECT_EQ(A.CallFrameEffects[0].EndAddress, 0x1105u);
     EXPECT_TRUE(A.Blocks[2].Levels.empty());
+    EXPECT_TRUE(A.Blocks[0].Reached);
+    EXPECT_FALSE(A.Blocks[2].Reached);
+    EXPECT_TRUE(A.Blocks[5].Reached);
+    EXPECT_TRUE(A.Blocks[5].CallbackOnly);
+    EXPECT_TRUE(A.Blocks[6].Reached);
     ASSERT_EQ(A.CxxContinuations.size(), 1u);
     EXPECT_EQ(A.CxxContinuations[0].TargetVA, 0x1900u);
   }
@@ -1561,3 +1566,22 @@ TEST(RegistrationState, OpaqueEntryRegistersKeepTheirPossibleFrameIdentity) {
 }
 
 } // namespace
+
+TEST(RegistrationState, EmptyLevelsDoNotConflateUninstalledAndUnreachedFrames) {
+  auto F = makeBranchingFrame();
+  LowBlock Dead;
+  Dead.Id = 9;
+  Dead.StartAddr = 0x2000;
+  Dead.EndAddr = 0x2001;
+  Dead.InstructionBoundaries = {{Dead.StartAddr, 1}};
+  emitOp(Dead, Dead.StartAddr, NdOp::RETURN, {}, {NdVar::cst(0, 4)});
+  F.Blocks.push_back(Dead);
+  const auto A = analyzeRegistrationStates(F);
+  ASSERT_TRUE(A.Complete);
+  ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
+  EXPECT_TRUE(A.Blocks[0].Reached);
+  EXPECT_TRUE(A.Blocks[0].Levels.empty());
+  EXPECT_FALSE(A.Blocks.back().Reached);
+  EXPECT_TRUE(A.Blocks.back().Levels.empty());
+  EXPECT_FALSE(A.Blocks.back().Unknown);
+}

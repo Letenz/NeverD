@@ -862,3 +862,80 @@ TEST(RegistrationCallABI, PhysicalReturnRejectsCallerPCAndMixedPredecessors) {
   ASSERT_TRUE(Branch);
   EXPECT_FALSE(Branch->HasIndependentScalarReturn);
 }
+
+TEST(RegistrationCallABI, ReachabilityRequiresCurrentBlocksAndCallReceipts) {
+  for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    CxxMetadataImage F;
+    LowFunc Parent;
+    Parent.Entry = 0x402000;
+    Parent.ExceptionMetadata = F.EH;
+    Parent.Blocks.resize(2);
+    for (int I = 0; I != 2; ++I) {
+      auto &Block = Parent.Blocks[I];
+      Block.Id = I;
+      Block.StartAddr = Parent.Entry + I * 16;
+      Block.EndAddr = Block.StartAddr + 5;
+      Block.InstructionBoundaries = {{Block.StartAddr, 5, 0, 1,
+                                      InstructionMode::Default,
+                                      LowInstructionControl::Call}};
+      LowOp Call;
+      Call.Addr = Block.StartAddr;
+      Call.Seq = 0;
+      Call.Opcode = NdOp::CALL;
+      Call.addInput(
+          NdVar::cst(I == 0 ? CleanupRelayImage::LeafVA : 0xdeadc0de, 4));
+      Block.Ops.push_back(Call);
+    }
+    auto &A = Parent.RegistrationStates.emplace();
+    A.Complete = A.CallbackStatesComplete = A.RegistrationLifetimeComplete =
+        A.CallFrameEffectsComplete = A.ImageReadsComplete = true;
+    for (const auto &Block : Parent.Blocks) {
+      RegistrationBlockState State;
+      State.BlockId = Block.Id;
+      State.Range = {Block.StartAddr, Block.EndAddr};
+      State.Reached = Block.Id == 0;
+      A.Blocks.push_back(State);
+    }
+    RegistrationCallFrameEffect Call;
+    Call.Address = Parent.Entry;
+    Call.EndAddress = Parent.Entry + 5;
+    Call.OpSeq = 0;
+    Call.Target = CleanupRelayImage::LeafVA;
+    A.CallFrameEffects.push_back(Call);
+    switch (Mutation) {
+    case 1:
+      A.Complete = false;
+      break;
+    case 2:
+      A.CallbackStatesComplete = false;
+      break;
+    case 3:
+      A.RegistrationLifetimeComplete = false;
+      break;
+    case 4:
+      A.CallFrameEffectsComplete = false;
+      break;
+    case 5:
+      A.Blocks.pop_back();
+      break;
+    case 6:
+      ++A.Blocks[0].Range.End;
+      break;
+    case 7:
+      ++A.CallFrameEffects[0].Target;
+      break;
+    case 8:
+      ++A.CallFrameEffects[0].EndAddress;
+      break;
+    case 9:
+      A.Blocks[1].Reached = true;
+      break;
+    case 10:
+      A.CallFrameEffects.clear();
+      break;
+    }
+    EXPECT_EQ(hasCallerCleanupRegistrationABI(Parent, F.Code.Image),
+              Mutation == 0);
+  }
+}

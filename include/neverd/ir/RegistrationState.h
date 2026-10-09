@@ -39,6 +39,10 @@ struct RegistrationBlockState {
   /// A catch executes inside a runtime catch context. Only try blocks at or
   /// above this minimum participate in a nested exception search.
   int32_t CxxMinimumTryLevel = 0;
+  /// Reached by ordinary flow, runtime dispatch or a checked catch resume.
+  /// Empty levels can also describe a reached pre-install/post-remove block.
+  /// Consumers require the complete state/lifetime proof before pruning.
+  bool Reached = false;
 };
 
 /// A PE32 C++ catch returns a continuation code pointer to the runtime. This

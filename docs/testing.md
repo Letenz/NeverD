@@ -1767,6 +1767,9 @@ before state activation, missing or mismatched contracts, registration and
 SavedESP overlap, released storage, pointer taint and predecessor conflicts.
 Physical-return tests separately cover entry-EAX pass-through, computed
 scalars, object loads, caller-PC results and distinct return predecessors.
+Reachability tests distinguish empty pre-install/post-remove states from dead
+blocks, retain runtime catch/resumption roots after a private throw, and reject
+incomplete proofs, changed block ranges and missing/mismatched call receipts.
 The native call index memoizes relay contracts under the same shared budget;
 a descriptor alone grants no initialized object borrow.
 C++ runtime-object tests cover value/reference homes, exact type/width, private

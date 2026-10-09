@@ -40,6 +40,10 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+It also publishes ordinary, runtime-dispatch and catch-resumption reachability.
+Empty levels alone do not identify dead code: a reached block can precede
+installation or follow removal. The call ABI consumer prunes only with complete
+state/lifetime/call proofs, current block identities and exact call receipts.
 For PE32 C++ catches, that analysis also owns the runtime catch-context stack,
 its nested-search minimum and exact returned continuation and SavedESP facts.
 CFG construction closes those targets against function and instruction
