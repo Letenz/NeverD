@@ -77,7 +77,9 @@ enum ProvenanceOperand : unsigned {
   ProvenanceOperandCount,
 };
 
-/// Bumped whenever an operand's position or meaning changes. Version 9 records
+/// Bumped whenever an operand's position or meaning changes. Version 10 retains
+/// the checked realigned-frame anchor separately from entry EBP coordinates.
+/// Version 9 records
 /// each x86 state store's width; narrow immediates do not assert a whole level.
 /// Version 8 adds
 /// the original filter-thunk address to each SEH scope so ARM64 constant-true
@@ -92,7 +94,7 @@ enum ProvenanceOperand : unsigned {
 /// ones do not.  LLVM may preserve older opaque attachments for analysis, but
 /// rewrite authentication always requires a canonical node at this version and
 /// therefore fails old schemas closed.
-inline constexpr unsigned SchemaVersion = 9;
+inline constexpr unsigned SchemaVersion = 10;
 inline constexpr unsigned SchemaV5OperandCount = 33;
 
 enum FunctionOperand : unsigned {
@@ -261,7 +263,18 @@ enum RegistrationOperand : unsigned {
   RegistrationScopes,
   RegistrationChainInstallVA,
   RegistrationChainRemoveVA,
+  RegistrationRealignedFrame,
   RegistrationOperandCount,
+};
+
+enum RegistrationRealignedFrameOperand : unsigned {
+  RegistrationFrameBaseRegister = 0,
+  RegistrationFrameDefinitionVA,
+  RegistrationFrameAlignment,
+  RegistrationFrameAllocationBytes,
+  RegistrationFrameBaseOffset,
+  RegistrationFrameSavedParentOffset,
+  RegistrationRealignedFrameOperandCount,
 };
 
 enum RegistrationTryLevelStoreOperand : unsigned {

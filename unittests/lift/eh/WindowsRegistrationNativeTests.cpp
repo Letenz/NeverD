@@ -17,6 +17,7 @@
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
+#include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -1654,10 +1655,64 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
     ASSERT_NE(GeneratedGraph, Reloaded->ExceptionMetadata.Functions.end());
     EXPECT_EQ(*GeneratedGraph->Cxx, Update->GeneratedCxxGraphs[0]);
     EXPECT_EQ(GeneratedGraph->ParseStatus, ExceptionParseStatus::Complete);
-    // Recovered wire data does not establish the generated realigned frame.
+    ASSERT_TRUE(GeneratedGraph->Registration);
+    const auto &GeneratedChain = *GeneratedGraph->Registration;
+    ASSERT_TRUE(GeneratedChain.RealignedFrame);
+    const auto &GeneratedFrame = *GeneratedChain.RealignedFrame;
+    EXPECT_EQ(GeneratedFrame.BaseRegister, 6u);
+    EXPECT_EQ(GeneratedFrame.DefinitionVA,
+              GeneratedGraph->CodeRange.Begin + 15);
+    EXPECT_EQ(GeneratedFrame.Alignment, 16u);
+    EXPECT_LE(-int64_t(GeneratedFrame.BaseOffset),
+              GeneratedFrame.AllocationBytes);
+    EXPECT_EQ(GeneratedFrame.SavedParentFrameOffset, -20);
+    EXPECT_EQ(GeneratedChain.RegistrationOffset, -12);
+    EXPECT_EQ(GeneratedChain.TryLevelOffset, -4);
+    EXPECT_EQ(GeneratedChain.chainInstallInstructionSize(), 6u);
+    ASSERT_FALSE(GeneratedChain.TryLevelStores.empty());
+    EXPECT_EQ(GeneratedChain.TryLevelStores.front().Level, -1);
+    EXPECT_TRUE(
+        llvm::any_of(GeneratedChain.TryLevelStores,
+                     [](const auto &Store) { return Store.Level >= 0; }));
+    LowFunc CoordinateOnly;
+    CoordinateOnly.ExceptionMetadata = *GeneratedGraph;
+    const auto UnprovedStates = analyzeRegistrationStates(CoordinateOnly);
+    EXPECT_FALSE(UnprovedStates.Complete);
+    EXPECT_FALSE(UnprovedStates.ChainOperationsComplete);
+    EXPECT_TRUE(
+        llvm::any_of(UnprovedStates.Diagnostics, [](const auto &Message) {
+          return Message.find("coordinate transfer proof") != std::string::npos;
+        }));
+    // Checked coordinates do not establish their CFG transfer or native ABI.
     EXPECT_FALSE(classifyWindowsEHNativeSource(*GeneratedGraph, Arch::X86,
                                                BinaryFormat::COFF)
                      .canPatchOutput());
+    for (unsigned Byte : {3u, 8u, 16u, 17u, 23u, 39u, 62u}) {
+      SCOPED_TRACE(Byte);
+      BinaryImage Disproved = *Reloaded;
+      const va_t Address = GeneratedGraph->CodeRange.Begin + Byte;
+      bool Changed = false;
+      for (auto &Segment : Disproved.Segments)
+        if (Segment.VA <= Address &&
+            Address - Segment.VA < Segment.Data.size()) {
+          Segment.Data[Address - Segment.VA] ^= 1;
+          Changed = true;
+          break;
+        }
+      ASSERT_TRUE(Changed);
+      Disproved.ExceptionMetadata = {};
+      Disproved.VerifiedFunctionEntries.clear();
+      coff_loader::parseX86RegistrationExceptions(Disproved);
+      for (const auto &Candidate : Disproved.ExceptionMetadata.Functions)
+        if (Candidate.Cxx && Candidate.Cxx->NativeFuncInfoVA ==
+                                 GeneratedGraph->Cxx->NativeFuncInfoVA) {
+          ASSERT_TRUE(Candidate.Registration);
+          EXPECT_FALSE(Candidate.Registration->RealignedFrame);
+          EXPECT_FALSE(classifyWindowsEHNativeSource(Candidate, Arch::X86,
+                                                     BinaryFormat::COFF)
+                           .canPatchOutput());
+        }
+    }
     if (!Temporary.empty())
       EXPECT_FALSE(bool(llvm::sys::fs::remove(Temporary)));
   }

@@ -861,9 +861,10 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
         AddExceptionalRoot(Pad.PadVA);
     if (Exception->Registration) {
       const RegistrationChainInfo &Chain = *Exception->Registration;
+      const unsigned InstallSize = Chain.chainInstallInstructionSize();
       if (Chain.RegistrationOffset && Chain.ChainInstallVA != 0 &&
-          Chain.ChainInstallVA <= InvalidVA - 7)
-        AddBoundary(Chain.ChainInstallVA + 7);
+          Chain.ChainInstallVA <= InvalidVA - InstallSize)
+        AddBoundary(Chain.ChainInstallVA + InstallSize);
       for (const RegistrationScopeRecord &Scope :
            Exception->Registration->Scopes) {
         AddExceptionalRoot(Scope.FilterVA);

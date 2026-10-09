@@ -55,6 +55,21 @@ struct RegistrationTryLevelStore {
   uint8_t Width = 4;
 };
 
+/// A checked realigned local frame, distinct from the entry's EBP frame.
+/// The Windows C++ runtime establishes EBP just beyond the registration node.
+/// BaseOffset expresses ESI in that runtime coordinate, not in entry EBP.
+struct RegistrationRealignedFrame {
+  /// Architectural x86 register encoding; the checked layout currently uses
+  /// ESI.
+  uint8_t BaseRegister = 6;
+  va_t DefinitionVA = 0;
+  uint32_t Alignment = 0;
+  uint32_t AllocationBytes = 0;
+  int32_t BaseOffset = 0;
+  int32_t SavedParentFrameOffset = 0;
+  bool operator==(const RegistrationRealignedFrame &) const = default;
+};
+
 /// The prologue-established registration record for one x86-32 function.
 struct RegistrationChainInfo {
   /// Address of the handler the prologue installed (`_except_handler3`,
@@ -90,6 +105,12 @@ struct RegistrationChainInfo {
   /// bound the region in which the registration record is live.
   va_t ChainInstallVA = 0;
   va_t ChainRemoveVA = 0;
+  /// Present when the local frame and runtime establisher have different
+  /// coordinates from entry EBP. Existing EBP consumers must not use its
+  /// offsets without an independent transfer proof for this anchor.
+  std::optional<RegistrationRealignedFrame> RealignedFrame;
+
+  uint8_t chainInstallInstructionSize() const { return RealignedFrame ? 6 : 7; }
 
   /// An absolute code-pointer field owned by this decoded SEH table. These
   /// references are runtime dispatch entries, not ordinary address-taken CFG

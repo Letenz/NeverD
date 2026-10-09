@@ -754,6 +754,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   const bool HasDirectX86RegistrationFrame =
       TargetFormat == BinaryFormat::COFF && HasX86RegistrationFrame &&
       Low.ExceptionMetadata->Registration &&
+      !Low.ExceptionMetadata->Registration->RealignedFrame &&
       Low.ExceptionMetadata->Registration->RegistrationOffset ==
           (HasX86CxxFrame ? -12 : -16) &&
       Low.ExceptionMetadata->Registration->TryLevelOffset == -4;

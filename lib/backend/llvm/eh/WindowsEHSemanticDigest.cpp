@@ -241,6 +241,16 @@ bool appendRegistrationContract(CanonicalBytes &Bytes,
   Bytes.appendU32(Chain.ScopeTableMagic);
   Bytes.appendU64(Chain.ChainInstallVA);
   Bytes.appendU64(Chain.ChainRemoveVA);
+  Bytes.appendU8(Chain.RealignedFrame.has_value());
+  if (Chain.RealignedFrame) {
+    const auto &Frame = *Chain.RealignedFrame;
+    Bytes.appendU8(Frame.BaseRegister);
+    Bytes.appendU64(Frame.DefinitionVA);
+    Bytes.appendU32(Frame.Alignment);
+    Bytes.appendU32(Frame.AllocationBytes);
+    Bytes.appendI32(Frame.BaseOffset);
+    Bytes.appendI32(Frame.SavedParentFrameOffset);
+  }
   for (const RegistrationScopeRecord &Scope : Chain.Scopes) {
     Bytes.appendI32(Scope.EnclosingLevel);
     Bytes.appendU64(Scope.FilterVA);

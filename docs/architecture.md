@@ -167,7 +167,14 @@ as tentative function boundaries, observes unindexed immediate stores through
 other base registers and authenticates private FuncInfo handler thunks before
 excluding in-range handlers. This preserves the installed language graph on
 reload. These observations do not make a frame callable; state replay of a
-generated realigned ESI frame still needs its own coordinate proof.
+generated realigned ESI frame still needs its own transfer proof.
+The loader authenticates the complete straight-line ESI prologue, including
+alignment/allocation, saved parent frame and SP, seeded state, handler/link
+slots and FS publication. A separate realigned anchor records its register,
+definition and bias from the runtime establisher. State-store observations use
+that bias; they do not imply entry EBP coordinates. Canonical LLVM schema 10
+and semantic digests retain the anchor. The EBP state solver and native source
+classifier explicitly reject it until a matching coordinate transfer exists.
 The original loader owns load-config's declared structure extent even when
 MSVC's directory retains its 64-byte compatibility size. Installation requires
 a complete unique raw-backed extent. Final guard validation uses this same

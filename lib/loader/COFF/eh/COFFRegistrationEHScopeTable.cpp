@@ -29,8 +29,8 @@ bool isValidEnclosingLevel(int32_t Level, uint32_t Index, bool IsEH4) {
   return Level >= 0 && static_cast<uint32_t>(Level) < Index;
 }
 
-/// One immediate byte, word or dword store relative to EBP. A narrow immediate
-/// is an observation of written bits, not a complete runtime state.
+/// One immediate byte, word or dword store relative to a checked base. A narrow
+/// immediate is an observation of written bits, not a complete runtime state.
 struct FrameSlotStore {
   va_t StoreVA = 0;
   va_t EndVA = 0;
@@ -45,8 +45,8 @@ struct FrameSlotStore {
 /// are the tail of some other instruction. The CFG owner must authenticate
 /// each hit against its decoded instruction boundary before using it.
 std::vector<FrameSlotStore>
-findFrameSlotStores(const BinaryImage &Img,
-                    const ExceptionAddressRange &Range) {
+findFrameSlotStores(const BinaryImage &Img, const ExceptionAddressRange &Range,
+                    uint8_t BaseRegister, int32_t BaseOffset) {
   std::vector<FrameSlotStore> Stores;
   const Segment *Seg = Img.getSegmentFor(Range.Begin);
   if (!Seg || !Seg->isExecutable() || Range.Begin < Seg->VA ||
@@ -70,21 +70,26 @@ findFrameSlotStores(const BinaryImage &Img,
       Width = 1;
     else if (Data[Opcode] != 0xC7)
       continue;
-    // ModRM /0 with EBP and either an eight- or thirty-two-bit displacement.
+    // ModRM /0 with the selected unindexed frame base and a displacement.
     const uint8_t ModRM = Data[Opcode + 1];
-    const uint64_t DispBytes = ModRM == 0x45 ? 1 : ModRM == 0x85 ? 4 : 0;
-    if (!DispBytes || Opcode + 2 + DispBytes + Width > End)
+    const unsigned Mod = ModRM >> 6;
+    const uint64_t DispBytes = Mod == 1 ? 1 : Mod == 2 ? 4 : 0;
+    if ((ModRM & 0x38) || (ModRM & 7) != BaseRegister || !DispBytes ||
+        Opcode + 2 + DispBytes + Width > End)
       continue;
     const uint64_t Immediate = Opcode + 2 + DispBytes;
-    const int32_t Displacement = DispBytes == 1
-                                     ? int8_t(Data[Opcode + 2])
-                                     : readLE<int32_t>(Data + Opcode + 2);
+    const int64_t Displacement =
+        int64_t(BaseOffset) + (DispBytes == 1
+                                   ? int8_t(Data[Opcode + 2])
+                                   : readLE<int32_t>(Data + Opcode + 2));
+    if (Displacement < INT32_MIN || Displacement > INT32_MAX)
+      continue;
     const int32_t Value = Width == 1   ? Data[Immediate]
                           : Width == 2 ? readLE<uint16_t>(Data + Immediate)
                                        : readLE<int32_t>(Data + Immediate);
     Stores.push_back({static_cast<va_t>(Seg->VA + I),
                       static_cast<va_t>(Seg->VA + Immediate + Width),
-                      Displacement, Value, Width});
+                      int32_t(Displacement), Value, Width});
     // Do not publish a second dword candidate inside the operand-size prefix.
     if (Opcode != I)
       I = Opcode;
@@ -159,7 +164,12 @@ void recoverTryLevelStores(const BinaryImage &Img,
   const int32_t Highest = static_cast<int32_t>(ScopeCount) - 1;
 
   std::map<int32_t, std::vector<FrameSlotStore>> BySlot;
-  for (const FrameSlotStore &Store : findFrameSlotStores(Img, Range)) {
+  const uint8_t BaseRegister =
+      Chain.RealignedFrame ? Chain.RealignedFrame->BaseRegister : 5;
+  const int32_t BaseOffset =
+      Chain.RealignedFrame ? Chain.RealignedFrame->BaseOffset : 0;
+  for (const FrameSlotStore &Store :
+       findFrameSlotStores(Img, Range, BaseRegister, BaseOffset)) {
     // The try level lives in the frame the prologue established, which is
     // below the frame pointer.  A positive displacement addresses an incoming
     // argument and cannot be it.

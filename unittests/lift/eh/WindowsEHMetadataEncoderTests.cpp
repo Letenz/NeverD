@@ -39,8 +39,8 @@ namespace {
 
 using namespace neverd;
 
-constexpr llvm::StringLiteral RichSchemaV9Fingerprint(
-    "e4e7f14677608cfe60a738e8156c01dee1832b42b4d4db9f683366fcba602a35");
+constexpr llvm::StringLiteral RichSchemaV10Fingerprint(
+    "0b12a8fe4539dc42ae5f89f8623d251ec83d70ba2db4494f19d7805349655078");
 
 ExceptionFunction makeRichExceptionFunction() {
   ExceptionFunction EH;
@@ -332,7 +332,7 @@ std::string fingerprintDigest(const llvm::Metadata &Metadata) {
   return llvm::toHex(llvm::ArrayRef<uint8_t>(Digest), /*LowerCase=*/true);
 }
 
-TEST(WindowsEHMetadataEncoder, PreservesSchemaV9Projection) {
+TEST(WindowsEHMetadataEncoder, PreservesSchemaV10Projection) {
   const ExceptionFunction EH = makeRichExceptionFunction();
   llvm::LLVMContext Context;
   llvm::MDNode *Payload =
@@ -359,7 +359,7 @@ TEST(WindowsEHMetadataEncoder, PreservesSchemaV9Projection) {
   EXPECT_EQ(metadataInteger(*Scope,
                             windows_eh_md::SEHScopeNormalizedFilterVA, 64),
             EH.SEH->Scopes.front().NormalizedFilterVA);
-  EXPECT_EQ(fingerprintDigest(*Payload), RichSchemaV9Fingerprint);
+  EXPECT_EQ(fingerprintDigest(*Payload), RichSchemaV10Fingerprint);
 }
 
 TEST(WindowsEHMetadataEncoder, PreservesCompleteX86RegistrationChain) {
@@ -502,6 +502,44 @@ TEST(WindowsEHMetadataEncoder, PreservesCompleteX86RegistrationChain) {
             1u);
 }
 
+TEST(WindowsEHMetadataEncoder, PreservesDistinctRealignedFrameCoordinates) {
+  auto EH = makeRichExceptionFunction();
+  EH.Registration->RealignedFrame =
+      RegistrationRealignedFrame{6, 0x40100f, 16, 0x270, -0x26c, -20};
+  llvm::LLVMContext Context;
+  auto *Payload = windows_eh_md::getCanonicalFunctionMetadata(Context, EH);
+  const auto *Registration = llvm::cast<llvm::MDNode>(
+      Payload->getOperand(windows_eh_md::Registration).get());
+  const auto *Frame = llvm::cast<llvm::MDNode>(
+      Registration->getOperand(windows_eh_md::RegistrationRealignedFrame)
+          .get());
+  ASSERT_EQ(Frame->getNumOperands(),
+            windows_eh_md::RegistrationRealignedFrameOperandCount);
+  EXPECT_EQ(
+      metadataInteger(*Frame, windows_eh_md::RegistrationFrameBaseRegister, 8),
+      6u);
+  EXPECT_EQ(
+      metadataInteger(*Frame, windows_eh_md::RegistrationFrameDefinitionVA, 64),
+      0x40100fu);
+  EXPECT_EQ(
+      metadataInteger(*Frame, windows_eh_md::RegistrationFrameAlignment, 32),
+      16u);
+  EXPECT_EQ(metadataInteger(
+                *Frame, windows_eh_md::RegistrationFrameAllocationBytes, 32),
+            0x270u);
+  EXPECT_EQ(
+      metadataInteger(*Frame, windows_eh_md::RegistrationFrameBaseOffset, 32),
+      uint32_t(-0x26c));
+  EXPECT_EQ(metadataInteger(
+                *Frame, windows_eh_md::RegistrationFrameSavedParentOffset, 32),
+            uint32_t(-20));
+  auto WithoutFrame = EH;
+  WithoutFrame.Registration->RealignedFrame.reset();
+  EXPECT_NE(fingerprintDigest(*Payload),
+            fingerprintDigest(*windows_eh_md::getCanonicalFunctionMetadata(
+                Context, WithoutFrame)));
+}
+
 TEST(WindowsEHMetadataEncoder,
      DistinguishesAbsentRegistrationOptionalsFromExplicitZero) {
   llvm::LLVMContext Context;
@@ -526,6 +564,7 @@ TEST(WindowsEHMetadataEncoder,
            windows_eh_md::RegistrationTryLevelOffset,
            windows_eh_md::RegistrationSeededTryLevel,
            windows_eh_md::RegistrationRecordOffset,
+           windows_eh_md::RegistrationRealignedFrame,
        }) {
     const auto *Optional =
         llvm::dyn_cast<llvm::MDNode>(Absent->getOperand(Operand).get());
@@ -647,7 +686,7 @@ TEST(WindowsEHMetadataEncoder, BitcodeRoundTripRemainsCanonical) {
 
   EXPECT_EQ(RoundTripPayload,
             windows_eh_md::getCanonicalFunctionMetadata(RoundTripContext, EH));
-  EXPECT_EQ(fingerprintDigest(*RoundTripPayload), RichSchemaV9Fingerprint);
+  EXPECT_EQ(fingerprintDigest(*RoundTripPayload), RichSchemaV10Fingerprint);
 }
 
 TEST(WindowsEHNativeSource, AcceptsOnlyTheExactSupportedCOFFSourceModels) {
@@ -1419,6 +1458,47 @@ TEST(WindowsEHSemanticDigest, BindsThePE32CxxGraphAndRegistrationContract) {
   }
   EXPECT_FALSE(classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF)
                    .canPatchOutput());
+}
+
+TEST(WindowsEHSemanticDigest, BindsAllRealignedFrameCoordinates) {
+  auto EH = makeRegistrationCxxDigestSource();
+  const auto Direct =
+      windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86, 0, 0);
+  EH.Registration->RealignedFrame = RegistrationRealignedFrame{
+      6, EH.CodeRange.Begin + 15, 16, 0x270, -0x26c, -20};
+  const auto Token =
+      windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86, 0, 0);
+  ASSERT_TRUE(Token);
+  EXPECT_NE(Token, Direct);
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    auto Changed = EH;
+    auto &Frame = *Changed.Registration->RealignedFrame;
+    switch (Mutation) {
+    case 0:
+      ++Frame.BaseRegister;
+      break;
+    case 1:
+      ++Frame.DefinitionVA;
+      break;
+    case 2:
+      Frame.Alignment = 32;
+      break;
+    case 3:
+      ++Frame.AllocationBytes;
+      break;
+    case 4:
+      ++Frame.BaseOffset;
+      break;
+    case 5:
+      ++Frame.SavedParentFrameOffset;
+      break;
+    }
+    EXPECT_NE(Token, windows_eh_semantics::getCxxCatchSemanticToken(
+                         Changed, Arch::X86, 0, 0));
+    EXPECT_FALSE(
+        classifyWindowsEHNativeSource(Changed, Arch::X86, BinaryFormat::COFF)
+            .canPatchOutput());
+  }
 }
 
 #ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS

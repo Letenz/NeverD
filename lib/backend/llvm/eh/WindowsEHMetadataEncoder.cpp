@@ -175,6 +175,18 @@ llvm::MDNode *getCanonicalFunctionMetadata(llvm::LLVMContext &Context,
                              mdUInt(Context, Scope.HandlerVA),
                              mdUInt(Context, Scope.IsFinally, 1)}));
 
+    llvm::Metadata *RealignedFrame = Node({});
+    if (Chain.RealignedFrame) {
+      const auto &Frame = *Chain.RealignedFrame;
+      RealignedFrame =
+          Node({mdUInt(Context, Frame.BaseRegister, 8),
+                mdUInt(Context, Frame.DefinitionVA),
+                mdUInt(Context, Frame.Alignment, 32),
+                mdUInt(Context, Frame.AllocationBytes, 32),
+                mdSInt(Context, Frame.BaseOffset, 32),
+                mdSInt(Context, Frame.SavedParentFrameOffset, 32)});
+    }
+
     Registration = Node(
         {mdUInt(Context, Chain.HandlerVA), mdUInt(Context, Chain.ScopeTableVA),
          OptionalSInt(Chain.TryLevelOffset), Node(TryLevelStores),
@@ -187,7 +199,7 @@ llvm::MDNode *getCanonicalFunctionMetadata(llvm::LLVMContext &Context,
          mdSInt(Context, Chain.EHCookieXOROffset, 32),
          mdUInt(Context, Chain.ScopeTableMagic, 32), Node(Scopes),
          mdUInt(Context, Chain.ChainInstallVA),
-         mdUInt(Context, Chain.ChainRemoveVA)});
+         mdUInt(Context, Chain.ChainRemoveVA), RealignedFrame});
   }
 
   std::vector<llvm::Metadata *> Diagnostics;

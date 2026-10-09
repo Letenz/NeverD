@@ -1875,8 +1875,11 @@ receipts and changed normalized try/unwind edges. A changed FuncInfo with a
 freshly recomputed section hash still rejects. This verifies the installed
 language graph. The genuine input test also reloads each public output through
 the ordinary COFF loader and requires the same complete generated FuncInfo
-graph. The recovered realigned ESI frame must retain its unsupported native
-classification until its physical coordinates and states are proved.
+graph. It also checks the separate ESI anchor, allocation/alignment and biased
+state observations. Changed prologue bytes cannot retain the checked anchor.
+Canonical metadata and source digests retain every coordinate; the EBP state
+solver and native classifier reject the realigned model until its state
+transfers are proved.
 Real MSVC directory-size64/declared-size192 load-configs must remain supported
 with complete section bounds.
 Final generic PE validation also checks valid and invalid CF/EH continuation

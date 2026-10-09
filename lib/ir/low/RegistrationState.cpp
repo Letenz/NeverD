@@ -95,6 +95,11 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     Result.Diagnostics.push_back("registration metadata is incomplete");
     return Result;
   }
+  if (Chain.RealignedFrame) {
+    Result.Diagnostics.push_back("realigned registration frame requires a "
+                                 "separate coordinate transfer proof");
+    return Result;
+  }
   if (!Chain.RegistrationOffset || !Chain.TryLevelOffset ||
       !Chain.SeededTryLevel || !Chain.ChainInstallVA ||
       Chain.TryLevelStores.empty()) {

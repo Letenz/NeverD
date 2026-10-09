@@ -636,6 +636,34 @@ TEST(COFFExceptionIR, LLVMCExceptionAnnotationReadsCanonicalStringsOnly) {
       << Source;
 }
 
+TEST(COFFExceptionIR, LLVMCRealignedFrameKeepsItsEstablisherCoordinates) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("realigned-cxx-frame", Context);
+  Module.setTargetTriple(llvm::Triple("i686-pc-windows-msvc"));
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+      llvm::GlobalValue::ExternalLinkage, "realigned", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateRetVoid();
+  ExceptionFunction EH;
+  EH.CodeRange = {0x401000, 0x401100};
+  EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
+  EH.Registration.emplace().RealignedFrame =
+      RegistrationRealignedFrame{6, 0x40100f, 16, 0x270, -0x26c, -20};
+  Function->setMetadata(windows_eh_md::FunctionAttachment,
+                        windows_eh_md::getCanonicalFunctionMetadata(
+                            Context, EH, Arch::X86, BinaryFormat::COFF));
+  const auto Source = emitLLVMC(Module);
+  EXPECT_NE(
+      Source.find("registration.frame: base=esi, definition=0x40100F, "
+                  "alignment=16, allocation=624, establisher_offset=-620, "
+                  "saved_parent_offset=-20"),
+      std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("metadata-invalid"), std::string::npos) << Source;
+}
+
 TEST(COFFExceptionIR, LLVMCProjectsCanonicalWindowsEHAsCommentsOnly) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-windows-eh-details", Context);
