@@ -661,8 +661,8 @@ NeverD 依赖，不穷举 CMake helper 统一提供的 LLVM 和 Capstone 库。
 
 | 目录 | 职责 | 重要依赖 |
 |------|------|----------|
-| `lib/loader` | 格式检测、PE/COFF、ELF、Mach-O 加载；规范化 `BinaryImage`；函数发现 | LLVM Object API |
-| `lib/lift` | 手写 x86/i386、AArch64、ARM32 指令语义 | IR 数据类型 |
+| `lib/loader` | 格式检测、PE/COFF、ELF、Mach-O 加载；规范化 `BinaryImage`；函数发现 | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | 手写 x86/i386、AArch64、ARM32 指令语义 | IR 数据类型, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native 解码并分派到架构 lifter | `NeverDIR`、`NeverDLift` |
 | `lib/ir` | 公共类型以及 LowIR、MedIR、HighIR、intrinsic 定义/转换 | 四个 IR 子组件 |
 | `lib/pipeline` | 函数检测与 Low/Med/High/LLVM 路径编排 | IR、decode、lift、LLVM backend、调试信息、IR pass |
@@ -675,8 +675,10 @@ NeverD 依赖，不穷举 CMake helper 统一提供的 LLVM 和 Capstone 库。
 | `lib/sigs` | 签名解析、数据库与匹配 | Loader |
 | `lib/libc` | 已知 libc 名称与调用模型支持 | 独立组件 |
 | `lib/safety` | 提升 IR 上的堆生命周期审计与拷贝越界猎取 | Symbolic、Solver |
-| `lib/support` | 共享二进制加载 helper | Loader |
+| `lib/support` | 共享二进制加载辅助函数及独立 SHA-256 | Support：Loader；Digest：LLVM Support/TargetParser |
 | `lib/translate` | 带版本的 guest state/策略/退出、固定 runtime ABI、受检 guest memory、生成 IR/目标文件/LinkGraph 审计、sealed 原生链接，以及实验性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 与 JITLink 契约 |
+
+`NeverDDigest` 在 `lib/support` 中负责现有的一次性 SHA-256 实现，保留运行时特性检查与可移植回退，不依赖 Loader 或 IR。`loader/InputDigest.h` 保留为转发头文件。`NeverDIRLowValidation` 负责 `lowUndefinedOperationDigest`，Lift 显式链接该组件。v1 身份保持原有域、小端字、全部六个已存储输入槽、来源信息和源码坐标。最多 199 个操作使用不超过 64 KiB 的序列化缓冲，更长跨度使用原增量路径；两条路径枚举相同字段并保留证据检查。
 
 ### 分析与化简的架构归属
 

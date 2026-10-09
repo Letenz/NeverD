@@ -745,8 +745,8 @@ CMake.
 
 | Directory | Responsabilità | Dipendenze importanti |
 |-----------|----------------|-----------------------|
-| `lib/loader` | Rilevamento formato, caricamento PE/COFF, ELF e Mach-O, `BinaryImage` normalizzata, scoperta funzioni | API LLVM Object |
-| `lib/lift` | Semantica scritta a mano per istruzioni x86/i386, AArch64 e ARM32 | Tipi di dati IR |
+| `lib/loader` | Rilevamento formato, caricamento PE/COFF, ELF e Mach-O, `BinaryImage` normalizzata, scoperta funzioni | API LLVM Object, `NeverDDigest` |
+| `lib/lift` | Semantica scritta a mano per istruzioni x86/i386, AArch64 e ARM32 | Tipi di dati IR, `NeverDIRLowValidation` |
 | `lib/decode` | Decodifica Capstone/native e dispatch ai lifter di architettura | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | Tipi comuni e definizioni/trasformazioni LowIR, MedIR, HighIR e intrinsic | Quattro sottocomponenti IR |
 | `lib/pipeline` | Rilevamento funzioni e orchestrazione dei percorsi Low/Med/High/LLVM | IR, decode, lift, backend LLVM, debug info, pass IR |
@@ -759,8 +759,10 @@ CMake.
 | `lib/sigs` | Parsing, database e matching delle firme | Loader |
 | `lib/libc` | Nomi libc noti e supporto del modello di chiamata | Componente autonomo |
 | `lib/safety` | Audit di vita dell’heap e hunt di overflow di copia sull’IR sollevato | Symbolic, Solver |
-| `lib/support` | Helper condivisi per il caricamento binario | Loader |
+| `lib/support` | Helper condivisi di caricamento binario e SHA-256 indipendente | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | Contratti versionati per guest state/policy/exit, runtime ABI fissa, guest memory controllata, audit di IR/oggetti/LinkGraph generati, linking nativo sealed e dispatcher C++ sperimentale da x86-64 ad AArch64 | Contratti IR, LLVM, LLVM Object e JITLink |
+
+`NeverDDigest` possiede l’implementazione SHA-256 esistente in una chiamata in `lib/support`, mantenendo i controlli delle funzionalità a runtime e il ripiego portabile, senza dipendere da Loader o IR. `loader/InputDigest.h` resta un header di inoltro. `NeverDIRLowValidation` possiede `lowUndefinedOperationDigest`; Lift lo collega esplicitamente. L’identità v1 conserva dominio, parole little-endian, tutti i sei slot di input memorizzati, provenienza e coordinate sorgente. Fino a 199 operazioni usano al massimo 64 KiB per la serializzazione; intervalli maggiori usano il percorso incrementale originale. Entrambi enumerano gli stessi campi e conservano i controlli delle evidenze.
 
 ### Ripartizione di analisi e semplificazione
 

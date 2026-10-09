@@ -623,8 +623,8 @@ personality 인식이나 native lowering에서 추론하면 안 됩니다.
 
 | 디렉터리 | 책임 | 주요 의존성 |
 |----------|------|-------------|
-| `lib/loader` | 포맷 감지, PE/COFF·ELF·Mach-O 로드, 정규화된 `BinaryImage`, 함수 탐지 | LLVM Object API |
-| `lib/lift` | 수작업 x86/i386·AArch64·ARM32 명령어 의미론 | IR 데이터 타입 |
+| `lib/loader` | 포맷 감지, PE/COFF·ELF·Mach-O 로드, 정규화된 `BinaryImage`, 함수 탐지 | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | 수작업 x86/i386·AArch64·ARM32 명령어 의미론 | IR 데이터 타입, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native 디코드 및 아키텍처 lifter로 디스패치 | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | 공통 타입과 LowIR·MedIR·HighIR·intrinsic 정의/변환 | 네 IR 하위 구성 요소 |
 | `lib/pipeline` | 함수 감지와 Low/Med/High/LLVM 경로 조정 | IR, decode, lift, LLVM backend, 디버그 정보, IR pass |
@@ -637,8 +637,10 @@ personality 인식이나 native lowering에서 추론하면 안 됩니다.
 | `lib/sigs` | 시그니처 파싱, 데이터베이스, 매칭 | Loader |
 | `lib/libc` | 알려진 libc 이름과 호출 모델 지원 | 독립 구성 요소 |
 | `lib/safety` | 리프트된 IR 위의 힙 수명 감사와 복사 오버플로 헌트 | Symbolic, Solver |
-| `lib/support` | 공유 바이너리 로드 helper | Loader |
+| `lib/support` | 공유 바이너리 로딩 도우미와 독립 SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | version이 있는 guest state/policy/exit, 고정 runtime ABI, 검사된 guest memory, 생성 IR/object/LinkGraph audit, sealed native linking, experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object 및 JITLink 계약 |
+
+`NeverDDigest`는 `lib/support`의 기존 일괄 SHA-256 구현을 소유합니다. 런타임 기능 검사와 이식 가능한 대체 경로를 유지하며 Loader나 IR에 의존하지 않습니다. `loader/InputDigest.h`는 전달 헤더로 유지됩니다. `NeverDIRLowValidation`이 `lowUndefinedOperationDigest`를 소유하고 Lift가 명시적으로 연결합니다. v1 식별은 기존 도메인, 리틀 엔디언 워드, 저장된 입력 슬롯 6개 모두, 출처 정보와 소스 좌표를 유지합니다. 199개 연산까지 최대 64 KiB 직렬화 버퍼를 사용하고 더 큰 범위는 기존 증분 경로를 사용합니다. 두 경로는 같은 필드를 열거하며 증거 검사를 유지합니다.
 
 ### 분석 및 단순화의 아키텍처 경계
 

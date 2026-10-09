@@ -642,8 +642,8 @@ Capstone ライブラリは網羅しません。
 
 | ディレクトリ | 責務 | 主な依存関係 |
 |--------------|------|--------------|
-| `lib/loader` | 形式検出、PE/COFF・ELF・Mach-O 読込み、正規化 `BinaryImage`、関数検出 | LLVM Object API |
-| `lib/lift` | 手書きの x86/i386・AArch64・ARM32 命令セマンティクス | IR データ型 |
+| `lib/loader` | 形式検出、PE/COFF・ELF・Mach-O 読込み、正規化 `BinaryImage`、関数検出 | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | 手書きの x86/i386・AArch64・ARM32 命令セマンティクス | IR データ型, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native デコードと各アーキテクチャ lifter へのディスパッチ | `NeverDIR`、`NeverDLift` |
 | `lib/ir` | 共通型、LowIR・MedIR・HighIR・intrinsic の定義/変換 | 4 つの IR サブコンポーネント |
 | `lib/pipeline` | 関数検出と Low/Med/High/LLVM 経路の調整 | IR、decode、lift、LLVM backend、デバッグ情報、IR pass |
@@ -656,8 +656,10 @@ Capstone ライブラリは網羅しません。
 | `lib/sigs` | シグネチャ解析、データベース、マッチング | Loader |
 | `lib/libc` | 既知の libc 名と呼出モデルのサポート | 独立コンポーネント |
 | `lib/safety` | リフト済み IR 上のヒープ寿命監査とコピー越境ハント | Symbolic、Solver |
-| `lib/support` | 共通のバイナリ読込み helper | Loader |
+| `lib/support` | 共有バイナリ読み込み補助と独立した SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | version 付き guest state/policy/exit、固定 runtime ABI、検査付き guest memory、生成 IR/object/LinkGraph audit、sealed native linking、experimental x86-64-to-AArch64 C++ dispatcher | IR、LLVM、LLVM Object、JITLink の契約 |
+
+`NeverDDigest` は `lib/support` 内の既存の一括 SHA-256 実装を所有します。実行時機能検査と移植可能なフォールバックを維持し、Loader や IR には依存しません。`loader/InputDigest.h` は転送ヘッダーとして残ります。`NeverDIRLowValidation` が `lowUndefinedOperationDigest` を所有し、Lift は明示的にリンクします。v1 の識別は従来のドメイン、リトルエンディアンのワード、保存された全 6 入力スロット、由来情報とソース座標を維持します。199 操作までは最大 64 KiB の直列化バッファを使い、それ以上は従来の逐次経路を使います。両経路は同じフィールドを列挙し、証拠検査を維持します。
 
 ### 解析と簡約のアーキテクチャ境界
 

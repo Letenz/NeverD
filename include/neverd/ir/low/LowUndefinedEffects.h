@@ -11,8 +11,6 @@
 #include "neverd/ir/low/LowIR.h"
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/StringExtras.h"
-#include "llvm/Support/SHA256.h"
 
 #include <cstdint>
 #include <optional>
@@ -23,36 +21,7 @@ namespace neverd {
 
 /// Bind a sidecar to the exact operation span, including provenance and source
 /// coordinates. This detects stale reuse; it does not authenticate ISA facts.
-inline std::string lowUndefinedOperationDigest(llvm::ArrayRef<LowOp> Ops) {
-  llvm::SHA256 Hash;
-  Hash.update("neverd-low-undefined-ops-v1");
-  const auto Number = [&](uint64_t Value) {
-    uint8_t Bytes[8];
-    for (unsigned I = 0; I != 8; ++I)
-      Bytes[I] = static_cast<uint8_t>(Value >> (I * 8));
-    Hash.update(llvm::ArrayRef<uint8_t>(Bytes));
-  };
-  const auto Variable = [&](const NdVar &V) {
-    Number(static_cast<unsigned>(V.Space));
-    Number(V.Offset);
-    Number(V.Size);
-    Number(static_cast<unsigned>(V.Provenance));
-    Number(V.AddressOwnerVA);
-  };
-  Number(Ops.size());
-  for (const auto &Op : Ops) {
-    Number(static_cast<unsigned>(Op.Opcode));
-    Number(static_cast<unsigned>(Op.MemoryOrdering));
-    Number(static_cast<unsigned>(Op.MemoryAddressSpace));
-    Variable(Op.Output);
-    Number(Op.NumInputs);
-    for (const auto &Input : Op.Inputs)
-      Variable(Input);
-    Number(Op.Addr);
-    Number(static_cast<uint64_t>(Op.Seq));
-  }
-  return llvm::toHex(Hash.final(), true);
-}
+std::string lowUndefinedOperationDigest(llvm::ArrayRef<LowOp> Ops);
 
 /// Completeness of the architecture's description of newly arbitrary result
 /// bits. An empty Missing record supplies no evidence. Complete covers every

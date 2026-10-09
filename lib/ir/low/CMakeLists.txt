@@ -1,6 +1,10 @@
 add_neverd_component_library(NeverDIRLowValidation
   LowIR.cpp
+  LowUndefinedEffects.cpp
   X87PartialRemainder.cpp
+
+  LINK_COMPONENTS
+  Digest
 )
 
 add_neverd_component_library(NeverDIRLow
