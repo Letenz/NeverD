@@ -9,7 +9,9 @@
 #include "../core/Capture.h"
 #include "Platform.h"
 
+#include <array>
 #include <map>
+#include <memory>
 
 namespace neverd::unpack {
 /// Follows the generations of code inside one image. Generation zero is the
@@ -72,6 +74,14 @@ private:
   /// execution classification even when it arrives through another alias or
   /// through a stopped OS service.
   std::vector<uint8_t> Current;
+  // Cached byte-level unions exclude instruction and call-return evidence.
+  // Those proofs are still revalidated independently for every refresh.
+  struct PageWatchCache {
+    uint64_t Running, HistorySize;
+    std::array<uint8_t, value::PageSize> Bytes;
+    std::vector<emulation::ExecutionWatch> Ranges;
+  };
+  std::vector<std::unique_ptr<PageWatchCache>> CachedPages;
   // Only an observed start is exempted, never alternative entries inside its
   // bytes. A resume revalidates the complete decoded extent after writes.
   std::map<uint64_t, std::vector<uint8_t>> Instructions;

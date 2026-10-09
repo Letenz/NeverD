@@ -254,6 +254,8 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
   case API::RtlEnterCriticalSection:
   case API::RtlLeaveCriticalSection:
   case API::RtlTryEnterCriticalSection:
+  case API::DeleteCriticalSection:
+  case API::RtlDeleteCriticalSection:
     return Wrap(criticalSection(S, Event));
   case API::GetCommandLineA:
   case API::GetStartupInfoA:

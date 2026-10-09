@@ -66,6 +66,7 @@ NEVERD_WINDOWS_PROCESS_API(InitializeCriticalSectionAndSpinCount, Kernel, 2,
 NEVERD_WINDOWS_PROCESS_API(EnterCriticalSection, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(LeaveCriticalSection, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(TryEnterCriticalSection, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(DeleteCriticalSection, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(FlsAlloc, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(FlsFree, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(FlsGetValue, Kernel, 1, true)
@@ -140,6 +141,8 @@ NEVERD_WINDOWS_PROCESS_NAMED_API(RtlLeaveCriticalSection,
                                  "RtlLeaveCriticalSection", Native, 1, true)
 NEVERD_WINDOWS_PROCESS_NAMED_API(RtlTryEnterCriticalSection,
                                  "RtlTryEnterCriticalSection", Native, 1, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlDeleteCriticalSection,
+                                 "RtlDeleteCriticalSection", Native, 1, true)
 #endif
 // A restriction declares both the provider and the known absence from the
 // other modules in its family. It does not turn unrelated unknown exports into
