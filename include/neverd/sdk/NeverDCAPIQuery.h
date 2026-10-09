@@ -159,9 +159,11 @@ NEVERD_API const char *neverd_symbols_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_data_symbols_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_relocs_json(neverd_session_t Sess);
 /// The image's headers.  "language" is the runtime that built the image as
-/// {"runtime","version"?,"secondary":[],"evidence":[]}: "c", "c++-itanium",
-/// "c++-msvc", "rust", "go", "objective-c", "swift", "delphi", "ada", "d" or
-/// "unknown", with the Go release when the image names one.
+/// {"runtime","version"?,"secondary":[],"evidence":[],"pseudocode":[]}: "c",
+/// "c++-itanium", "c++-msvc", "rust", "go", "objective-c", "swift", "delphi",
+/// "ada", "d" or "unknown", with the Go release when the image names one;
+/// "pseudocode" lists the languages its pseudocode reads in, "c" and "rust"
+/// or "go" for an image with that language's code.
 NEVERD_API const char *neverd_headers_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_entrypoints_json(neverd_session_t Sess);
 /// An overview of the loaded image: "file" (path, name, format, arch, bits,

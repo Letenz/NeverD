@@ -15,11 +15,13 @@
 #define NEVERD_LOADER_LOADCANDIDATE_H
 
 #include "neverd/Common.h"
+#include "neverd/loader/Raw/ISAIdentify.h"
 
 #include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -65,6 +67,9 @@ struct LoadCandidate {
   /// The loader took the file for its name alone, not its contents, so a
   /// load dialog does not choose the row by default.
   bool ByName = false;
+  /// The binary file row of a file no header describes: the instruction set
+  /// its bytes show.
+  std::optional<ISAIdentification> ISA;
 };
 
 /// Every loader's rows for the file at \p Path in list order: the rows that

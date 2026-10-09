@@ -176,11 +176,37 @@ SatLit CnfEncoder::mkOr(llvm::ArrayRef<SatLit> Ins, GatePolarity P) {
 //===----------------------------------------------------------------------===//
 
 SatLit CnfEncoder::mkXor(SatLit A, SatLit B) {
-  const SatLit Ins[] = {A, B};
-  return mkXor(Ins);
+  if (A == B)
+    return falseLit();
+  if (A == ~B)
+    return trueLit();
+
+  const auto RootValue = [&](SatLit L) {
+    return L.var() == True.var()
+               ? (L == True ? SatValue::True : SatValue::False)
+               : Solver.rootValue(L);
+  };
+  const auto AV = RootValue(A), BV = RootValue(B);
+  if (AV != SatValue::Unknown) {
+    if (BV != SatValue::Unknown)
+      return constant(AV != BV);
+    return B.withPolarity(AV == SatValue::False);
+  }
+  if (BV != SatValue::Unknown)
+    return A.withPolarity(BV == SatValue::False);
+
+  // The canonical pair needs only ordered positive literals and its parity.
+  const bool Complement = A.isNegated() != B.isNegated();
+  SatLit Terms[] = {SatLit::positive(A.var()), SatLit::positive(B.var())};
+  if (Terms[1] < Terms[0])
+    std::swap(Terms[0], Terms[1]);
+  return gate(GateKind::Xor, Terms, GatePolarity::Both)
+      .withPolarity(!Complement);
 }
 
 SatLit CnfEncoder::mkXor(llvm::ArrayRef<SatLit> Ins) {
+  if (Ins.size() == 2)
+    return mkXor(Ins[0], Ins[1]);
   // Complements and true constants only change the parity of the result, so
   // they are counted and stripped.  What is left is a set of positive
   // literals, which is the normal form the gate table keys on.

@@ -449,6 +449,15 @@ void detectRegisterParams(MedFunc &Func, const TargetRegInfo &TRI,
     for (size_t I = 0; I < ParamRegs.size() && I < IntegerRegs.size(); ++I)
       if ((*EntryReadSummary)[ParamRegs[I] / 8])
         UsedParamRegs.insert(ParamRegs[I]);
+    // A positional convention's slot may carry a floating argument in its
+    // vector register instead.
+    if (Convention->VectorArgumentsFromCalleeSummary &&
+        Convention->PositionalArgumentSlots)
+      for (size_t I = 0; I < IntegerRegs.size() && I < TRI.FPParamRegs.size() &&
+                         I < kX64VectorArgumentFamilies;
+           ++I)
+        if ((*EntryReadSummary)[kX64VectorFamilyBase + I])
+          UsedParamRegs.insert(TRI.FPParamRegs[I]);
   } else if (FromIncomingReads) {
     // Calls to summarized callees publish their register arguments as
     // inputs here, so a register only passed on is still a read; a live-in
@@ -463,6 +472,20 @@ void detectRegisterParams(MedFunc &Func, const TargetRegInfo &TRI,
   // past a spurious placeholder for the first parameter register.
   if (UsedParamRegs.empty())
     return;
+
+  // A positional convention passes each argument in its slot's integer or
+  // vector register: the slot's parameter is the register the body reads,
+  // the integer one where it reads both (a variadic prologue spills both).
+  std::vector<uint64_t> SlotRegs;
+  if (Convention && Convention->PositionalArgumentSlots) {
+    for (size_t I = 0; I < IntegerRegs.size(); ++I)
+      SlotRegs.push_back(I < TRI.FPParamRegs.size() &&
+                                 UsedParamRegs.count(TRI.FPParamRegs[I]) &&
+                                 !UsedParamRegs.count(IntegerRegs[I])
+                             ? TRI.FPParamRegs[I]
+                             : IntegerRegs[I]);
+    ParamRegs = SlotRegs;
+  }
 
   // Find the highest-index used parameter register so we can insert
   // placeholder params for gaps (e.g., if RDI and RDX are used but RSI

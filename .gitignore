@@ -35,6 +35,9 @@
 !unittests/safety/fixtures/binaries/*.exe
 # Unpacking fixtures come from a packer the build cannot assume.
 !unittests/unpack/fixtures/binaries/*.exe
+# The ISA model is generated data the build embeds
+# (scripts/generate_isa_model.py).
+!lib/loader/Raw/ISAModel.bin
 unittests/unpack/fixtures/binaries/.work/
 unittests/safety/fixtures/.fixture-build/
 unittests/safety/fixtures/safety_cases_native

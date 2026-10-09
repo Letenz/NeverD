@@ -940,6 +940,13 @@ void COFFLoader::identify(llvm::MemoryBufferRef Buffer,
     return;
   }
   const uint16_t Machine = (*Obj)->getMachine();
+  // Any file that starts with two zero bytes reads as an object for no
+  // machine; one without sections is not an object, but data such as a
+  // firmware image.
+  if (Row.Row == LoadRow::COFF &&
+      Machine == llvm::COFF::IMAGE_FILE_MACHINE_UNKNOWN &&
+      (*Obj)->getNumberOfSections() == 0)
+    return;
   Row.Description =
       llvm::formatv(getLoadRowText(Row.Row).data(), machineName(Machine)).str();
   // The processor load() reads the image as.

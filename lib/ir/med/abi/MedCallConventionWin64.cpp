@@ -36,6 +36,7 @@ const CallArgumentConvention Win64CallArguments = {
     .TheArch = Arch::X64,
     .Format = BinaryFormat::COFF,
     .RegisterArgumentsFromCalleeSummary = true,
+    .VectorArgumentsFromCalleeSummary = true,
     .ImportArgumentsFromPrototype = true,
     .DispatcherTargetRegister = x86reg::RAX,
     .VariadicFromSummary = true,

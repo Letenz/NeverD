@@ -212,6 +212,22 @@ LoadFileDialog::LoadFileDialog(const QString &path, const QJsonArray &rows,
       loaders_->setCurrentRow(index);
       break;
     }
+  // The processor the bytes name, where a structure at their start says the
+  // code runs, and where the code's instructions start when not on a word.
+  for (const auto &value : rows_) {
+    const auto binaryRow = value.toObject();
+    if (binaryRow.value("loader").toString() != QLatin1String("binary"))
+      continue;
+    detectedProcessor_ = binaryRow.value("detected").toString();
+    const auto print = binaryRow.value("fingerprint").toObject();
+    if (!print.isEmpty()) {
+      base_->setText(print.value("base").toString());
+      entry_->setText(print.value("entry").toString());
+    } else if (const int start = binaryRow.value("code_offset").toInt();
+               start > 0) {
+      offset_->setText(QStringLiteral("0x%1").arg(start, 0, 16));
+    }
+  }
   select(loaders_->currentRow());
 }
 
@@ -258,7 +274,12 @@ LoadOptions LoadFileDialog::options() const {
       options.loader = picked.value("loader").toString();
   }
   if (binary()) {
-    options.processor = chosenProcessor();
+    // The detected processor, kept, is the engine's to read again and
+    // record as detected.
+    options.processor =
+        !detectedProcessor_.isEmpty() && chosenProcessor() == detectedProcessor_
+            ? QStringLiteral("auto")
+            : chosenProcessor();
     options.platform = platform_->currentData().toString();
     options.base = number(base_, 0).value_or(0);
     options.offset = number(offset_, 0).value_or(0);
@@ -289,8 +310,10 @@ void LoadFileDialog::select(int row) {
   for (auto *field : {base_, offset_, size_, entry_})
     field->setEnabled(raw);
   platform_->setEnabled(raw);
+  // What the bytes name beats what the user picked for another file.
   const QString wanted =
-      raw ? binaryProcessor_
+      raw ? (detectedProcessor_.isEmpty() ? binaryProcessor_
+                                          : detectedProcessor_)
           : (row >= 0 && row < rows_.size()
                  ? rows_[row].toObject().value("processor").toString()
                  : QString());
@@ -316,6 +339,42 @@ void LoadFileDialog::select(int row) {
   update();
 }
 
+QString LoadFileDialog::identification() const {
+  const int chosen = row();
+  if (chosen < 0)
+    return {};
+  const auto binaryRow = rows_[chosen].toObject();
+  if (!binaryRow.contains("guesses"))
+    return {};
+  const auto evidence = binaryRow.value("evidence").toString();
+  const auto print = binaryRow.value("fingerprint").toObject();
+  if (!print.isEmpty())
+    return tr("Read from the bytes: %1, entry %2, base %3")
+        .arg(evidence, print.value("entry").toString(),
+             print.value("base").toString());
+  if (!binaryRow.value("detected").toString().isEmpty())
+    return tr("Read from the bytes: %1").arg(evidence);
+  const auto status = binaryRow.value("status").toString();
+  const auto guesses = binaryRow.value("guesses").toArray();
+  const auto name = [&](int index) {
+    return guesses.at(index).toObject().value("name").toString();
+  };
+  if (guesses.isEmpty())
+    return tr("No part of the file looks like code of an instruction set "
+              "NeverD knows; choose the processor its code runs on");
+  if (status == QLatin1String("width_unclear") && guesses.size() > 1)
+    return tr("The code looks like %1 or %2, and its instructions do not "
+              "tell which; choose the processor its code runs on")
+        .arg(name(0), name(1));
+  if (status == QLatin1String("settled"))
+    return tr("The code looks like %1, which NeverD cannot decode; choose a "
+              "processor to read it as one anyway")
+        .arg(name(0));
+  return tr("The code looks most like %1, but not clearly; choose the "
+            "processor its code runs on")
+      .arg(name(0));
+}
+
 void LoadFileDialog::update() {
   QString note;
   bool acceptable = false;
@@ -330,8 +389,11 @@ void LoadFileDialog::update() {
                     : tr("NeverD cannot load this file: %1")
                           .arg(first.value("reason").toString());
   } else if (binary()) {
+    const QString identified = identification();
     if (chosenProcessor().isEmpty())
-      note = tr("Choose the processor the file's code runs on");
+      note = identified.isEmpty()
+                 ? tr("Choose the processor the file's code runs on")
+                 : identified;
     else if (!number(base_, 0))
       note = tr("%1 is not a hexadecimal number").arg(base_->text());
     else if (!number(offset_, 0))
@@ -340,8 +402,10 @@ void LoadFileDialog::update() {
       note = tr("%1 is not a hexadecimal number").arg(size_->text());
     else if (!entry_->text().trimmed().isEmpty() && !number(entry_))
       note = tr("%1 is not a hexadecimal number").arg(entry_->text());
-    else
+    else {
       acceptable = true;
+      note = identified;
+    }
   } else {
     acceptable = rows_[chosen].toObject().value("loadable").toBool();
     // A processor the list does not name still shows.

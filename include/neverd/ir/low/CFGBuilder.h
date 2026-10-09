@@ -47,6 +47,13 @@ public:
   /// True when the function at \p Target is proved never to return, asked
   /// by a CFG build that itself runs \p Depth proofs deep.
   virtual bool neverReturns(va_t Target, unsigned Depth) const = 0;
+  /// True when a check that does not lift the function at \p Target finds
+  /// nothing in it that returns, so a call to it that no padding follows is
+  /// still worth a proof.
+  virtual bool mayNeverReturn(va_t Target) const {
+    (void)Target;
+    return false;
+  }
 };
 
 namespace detail {
@@ -678,9 +685,10 @@ public:
     NoReturnTargets = Index;
   }
   /// Ask \p Prover about a direct call to an internal function that the name
-  /// list does not know, when padding follows the call.  \p Depth is how
-  /// many proofs deep this build runs.  The prover must outlive the builds;
-  /// null leaves the name list alone.
+  /// list does not know, when padding follows the call or the prover's cheap
+  /// check finds nothing in the callee that returns.  \p Depth is how many
+  /// proofs deep this build runs.  The prover must outlive the builds; null
+  /// leaves the name list alone.
   void setNoReturnCalleeProver(const NoReturnCalleeProver *Prover,
                                unsigned Depth = 0) {
     NoReturnCallees = Prover;

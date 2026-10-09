@@ -42,6 +42,10 @@ public:
   /// PC writes require capstone detail to be enabled.
   static bool isFunctionTerminator(const cs_insn *I);
 
+  /// Whether \p I returns to a caller (`bx lr`, a `pop` or `ldm` into PC, an
+  /// exception return), conditionally or not.  Requires capstone detail.
+  static bool isReturn(const cs_insn *I);
+
   /// Direct (immediate) call target of \p I, or InvalidVA if \p I is not a
   /// direct call.
   static va_t directCallTarget(const cs_insn *I);
