@@ -1357,7 +1357,8 @@ void MainWindow::updateStatusBar() {
 void MainWindow::openFile(const QString &path) { session_.open(path); }
 
 void MainWindow::openDialog() {
-  const QString start = QFileInfo(session_.filePath()).absolutePath();
+  // The folder of the file the user opened, not of a working copy of it.
+  const QString start = QFileInfo(session_.projectPath()).absolutePath();
   const auto path = QFileDialog::getOpenFileName(
       this, tr("Open binary or database"),
       start.isEmpty() ? QDir::homePath() : start,

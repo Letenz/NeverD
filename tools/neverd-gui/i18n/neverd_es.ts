@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>No se puede copiar %1 en %2</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>No se puede leer %1: %2</translation>
     </message>
@@ -2138,6 +2142,10 @@ Con signo: %4</translation>
 </context>
 <context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 está en una carpeta en la que no puede escribir; su base de datos se guarda en %2</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>Iniciando proceso de análisis…</translation>

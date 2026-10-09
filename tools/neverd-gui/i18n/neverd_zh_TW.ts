@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>無法將 %1 複製到 %2</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>無法讀取 %1：%2</translation>
     </message>
@@ -2134,6 +2138,10 @@ Signed: %4</source>
 </context>
 <context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 所在的資料夾無法寫入；其資料庫儲存在 %2</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>正在啟動分析程序…</translation>

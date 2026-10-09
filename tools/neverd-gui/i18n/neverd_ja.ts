@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>%1 を %2 にコピーできません</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>%1 を読み込めません: %2</translation>
     </message>
@@ -2134,6 +2138,10 @@ Signed: %4</source>
 </context>
 <context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 は書き込みできないフォルダーにあるため、そのデータベースは %2 に保存されます</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>解析プロセスを起動中…</translation>

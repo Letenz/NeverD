@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>%1을(를) %2(으)로 복사할 수 없습니다</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>%1을(를) 읽을 수 없습니다: %2</translation>
     </message>
@@ -2134,6 +2138,10 @@ Signed: %4</source>
 </context>
 <context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1은(는) 쓸 수 없는 폴더에 있으므로 데이터베이스를 %2에 보관합니다</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>분석 프로세스 시작 중…</translation>

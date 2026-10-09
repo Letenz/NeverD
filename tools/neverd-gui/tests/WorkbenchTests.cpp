@@ -35,6 +35,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QScopeGuard>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
@@ -986,6 +987,62 @@ private slots:
     QVERIFY(log);
     QTRY_VERIFY(
         log->toPlainText().contains(QStringLiteral("Reloaded the input file")));
+  }
+
+  void fileInAReadOnlyFolderKeepsItsProjectInTheDataDirectory() {
+    // IDA asks for another place for its database when the input's folder
+    // is read-only.  The workbench opens the file anyway: its database,
+    // sidecars and lock sit in the user's data directory, beside a copy.
+    QTemporaryDir data;
+    const QByteArray dataHome = qgetenv("XDG_DATA_HOME");
+    qputenv("XDG_DATA_HOME", data.path().toUtf8());
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QFile::setPermissions(directory.path(),
+                          QFileDevice::ReadOwner | QFileDevice::ExeOwner);
+    const auto restore = qScopeGuard([&] {
+      QFile::setPermissions(directory.path(), QFileDevice::ReadOwner |
+                                                  QFileDevice::WriteOwner |
+                                                  QFileDevice::ExeOwner);
+      if (dataHome.isNull())
+        qunsetenv("XDG_DATA_HOME");
+      else
+        qputenv("XDG_DATA_HOME", dataHome);
+    });
+    if (QFileInfo(directory.path()).isWritable())
+      QSKIP("This user can write to a read-only folder");
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(bench.session.projectPath(), path);
+    const QString copy = bench.session.filePath();
+    QVERIFY2(copy.startsWith(data.path()), qPrintable(copy));
+    QCOMPARE(readAll(copy), readAll(path));
+    auto *log = bench.window->findChild<OutputWindow *>()
+                    ->findChild<QPlainTextEdit *>();
+    QVERIFY(log);
+    QTRY_VERIFY(log->toPlainText().contains(
+        QStringLiteral("is in a folder you cannot write to")));
+
+    bench.session.setComment(Base, QStringLiteral("kept elsewhere"));
+    QTRY_VERIFY(bench.session.dirty());
+    bench.session.save();
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(copy + ".neverd-annotations.json"),
+                             OpenTimeoutMs);
+    QVERIFY(!QFile::exists(path + ".neverd-annotations.json"));
+    QTRY_VERIFY(!bench.session.dirty());
+
+    // Reloading reads the file the user opened, with what was saved.
+    const quint64 epoch = bench.session.epoch();
+    LoadDialogAcceptor loadDialogs;
+    bench.action(ActionId::FileReload)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded() &&
+                                 bench.session.epoch() != epoch,
+                             OpenTimeoutMs);
+    QCOMPARE(bench.session.projectPath(), path);
+    QCOMPARE(bench.session.filePath(), copy);
+    QVERIFY(
+        readAll(copy + ".neverd-annotations.json").contains("kept elsewhere"));
   }
 
   void fileDropKeepsUnsavedChangesWhenCancelled() {

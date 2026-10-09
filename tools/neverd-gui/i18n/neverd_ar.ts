@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>تعذّر نسخ %1 إلى %2</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>تعذّرت قراءة %1: %2</translation>
     </message>
@@ -2154,6 +2158,10 @@ Signed: %4</source>
 </context>
 <context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>يقع %1 في مجلد لا يمكنك الكتابة فيه؛ تُحفظ قاعدة بياناته في %2</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>جارٍ بدء عملية التحليل…</translation>
