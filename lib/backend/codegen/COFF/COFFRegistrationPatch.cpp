@@ -8,6 +8,7 @@
 
 #include "COFFNativeEHProvenance.h"
 #include "COFFRegistrationFrameProof.h"
+#include "COFFRegistrationTableProof.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
@@ -431,59 +432,10 @@ llvm::Expected<size_t> rawOffset(const PEHeaderPtrs &PE,
   return static_cast<size_t>(*Offset);
 }
 
-llvm::Expected<uint64_t> ownerVA(const llvm::Function &Function,
-                                 const CompiledImage &Compiled) {
-  const llvm::mc_rewrite::RewriteSourceFunctionOwner *Found = nullptr;
-  for (const auto &Owner : Compiled.SourceFunctionOwners)
-    if (Owner.SourceFunction == Function.getName()) {
-      if (Found ||
-          Owner.Kind !=
-              llvm::mc_rewrite::RewriteSourceFunctionOwnerKind::FunctionEntry ||
-          Owner.IsPrivate != Function.hasLocalLinkage())
-        return reject("generated source function owner is ambiguous");
-      Found = &Owner;
-    }
-  if (!Found || !Compiled.FunctionOwnerAddrs.count(Found->OwnerSymbol) ||
-      Compiled.FunctionOwnerAddrs.at(Found->OwnerSymbol) != Found->OwnerVA)
-    return reject("generated function has no exact compiler owner");
-  return Found->OwnerVA;
-}
-
-const CompiledSection *sectionAt(const CompiledImage &Compiled, uint64_t VA,
-                                 uint64_t Size,
-                                 llvm::mc_rewrite::RewriteSectionKind Kind) {
-  const CompiledSection *Found = nullptr;
-  for (const auto &Section : Compiled.Sections) {
-    if (!Section.IsAllocated || !Section.IsInImage || VA < Section.VA ||
-        !rangeInBounds(VA - Section.VA, Size, Section.Size))
-      continue;
-    if (Found || Section.Kind != Kind || Section.VA < Compiled.BaseVA ||
-        Section.Offset != Section.VA - Compiled.BaseVA ||
-        !rangeInBounds(Section.Offset, Section.Size, Compiled.Bytes.size()))
-      return nullptr;
-    Found = &Section;
-  }
-  return Found;
-}
-
-bool absolutePointer(const CompiledFixupReference &Fixup) {
-  return !Fixup.IsPCRel && Fixup.Kind == llvm::FK_Data_4 &&
-         Fixup.BitWidth == 32 && Fixup.Specifier == 0 && Fixup.IsResolved &&
-         !Fixup.Symbol.empty() && Fixup.SubtractSymbol.empty();
-}
-
-bool exactPointerFixup(const CompiledSection &Section, uint64_t VA,
-                       llvm::StringRef Symbol, uint64_t Target) {
-  const CompiledFixupReference *Found = nullptr;
-  for (const auto &Fixup : Section.FixupReferences)
-    if (Section.VA + Fixup.Offset == VA) {
-      if (Found || !absolutePointer(Fixup) || Fixup.Symbol != Symbol ||
-          Fixup.Addend || Fixup.ResolvedValue != Target)
-        return false;
-      Found = &Fixup;
-    }
-  return Found != nullptr;
-}
+using coff_registration::absolutePointer;
+using coff_registration::exactPointerFixup;
+using coff_registration::ownerVA;
+using coff_registration::sectionAt;
 
 llvm::Error validateSymbolicImagePointers(const llvm::Module &Module,
                                           uint64_t ImageBase,

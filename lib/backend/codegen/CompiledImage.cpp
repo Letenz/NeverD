@@ -87,6 +87,12 @@ struct WinEHSemanticEmissionShape {
   int32_t EnclosingState = -1;
   std::array<int32_t, 4> RegistrationCookieOffsets{};
 #endif
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+  bool HasX86CxxLayout = false;
+  std::array<std::pair<std::string, std::string>, 4> CxxTableSymbols;
+  std::array<uint64_t, 4> CxxTableSizes{};
+  std::array<int64_t, 4> CxxFrame{};
+#endif
 
   friend bool operator==(const WinEHSemanticEmissionShape &,
                          const WinEHSemanticEmissionShape &) = default;
@@ -110,6 +116,18 @@ std::vector<WinEHSemanticEmissionShape> collectWinEHSemanticEmissionShape(
     Shape.back().EnclosingState = Record.EnclosingState;
     Shape.back().RegistrationCookieOffsets = Record.RegistrationCookieOffsets;
 #endif
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+    if (Record.X86CxxLayout) {
+      auto &Item = Shape.back();
+      Item.HasX86CxxLayout = true;
+      Item.CxxFrame = Record.X86CxxLayout->Frame;
+      for (unsigned I = 0; I != 4; ++I) {
+        const auto &Table = Record.X86CxxLayout->Tables[I];
+        Item.CxxTableSymbols[I] = {Table.BeginSymbol, Table.EndSymbol};
+        Item.CxxTableSizes[I] = Table.EndVA - Table.BeginVA;
+      }
+    }
+#endif
   }
   llvm::sort(Shape, [](const WinEHSemanticEmissionShape &Left,
                        const WinEHSemanticEmissionShape &Right) {
@@ -124,6 +142,11 @@ std::vector<WinEHSemanticEmissionShape> collectWinEHSemanticEmissionShape(
                     Left.GeneratedState, Left.EnclosingState,
                     Left.RegistrationCookieOffsets
 #endif
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+                    ,
+                    Left.HasX86CxxLayout, Left.CxxTableSymbols,
+                    Left.CxxTableSizes, Left.CxxFrame
+#endif
                     ) <
            std::tie(Right.SourceFunction, Right.OwnerSymbol,
                     Right.ContainerSymbol, Right.BeginSymbol, Right.EndSymbol,
@@ -135,6 +158,11 @@ std::vector<WinEHSemanticEmissionShape> collectWinEHSemanticEmissionShape(
                     Right.ContainerEndSymbol, Right.FilterSymbol,
                     Right.GeneratedState, Right.EnclosingState,
                     Right.RegistrationCookieOffsets
+#endif
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+                    ,
+                    Right.HasX86CxxLayout, Right.CxxTableSymbols,
+                    Right.CxxTableSizes, Right.CxxFrame
 #endif
            );
   });

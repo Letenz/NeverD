@@ -32,7 +32,9 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/IR/Verifier.h"
+#ifdef LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS
 #include "llvm/IR/WinEHFrame.h"
+#endif
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TargetSelect.h"
@@ -200,8 +202,18 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
                                        0x405000, Resolve, Loaded->Base);
   ASSERT_TRUE(Compiled.Success);
   ASSERT_TRUE(Compiled.Unresolved.empty());
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+  ASSERT_EQ(Compiled.WinEHSemanticRecords.size(), 3u);
+#else
   ASSERT_EQ(Compiled.WinEHSemanticRecords.size(), 1u);
-  const auto &Row = Compiled.WinEHSemanticRecords.front();
+#endif
+  const auto CatchRow =
+      llvm::find_if(Compiled.WinEHSemanticRecords, [](const auto &Record) {
+        return Record.Token.Kind ==
+               llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCatch;
+      });
+  ASSERT_NE(CatchRow, Compiled.WinEHSemanticRecords.end());
+  const auto &Row = *CatchRow;
   EXPECT_EQ(Row.Encoding,
             llvm::mc_rewrite::RewriteWinEHSemanticEncoding::X86CxxFH3);
   EXPECT_EQ(Row.Token, *windows_eh_semantics::getCxxCatchSemanticToken(
@@ -210,8 +222,263 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
   EXPECT_GE(Row.OwnerVA, 0x405000u);
   EXPECT_GT(Row.HandlerVA, Row.OwnerVA);
   EXPECT_GE(Row.ContainerVA, 0x405000u);
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+  ASSERT_TRUE(Row.X86CxxLayout);
+  const auto &Layout = *Row.X86CxxLayout;
+  for (const auto &Table : Layout.Tables) {
+    EXPECT_FALSE(Table.BeginSymbol.empty());
+    EXPECT_FALSE(Table.EndSymbol.empty());
+    ASSERT_GE(Table.BeginVA, Compiled.BaseVA);
+    ASSERT_GT(Table.EndVA, Table.BeginVA);
+    ASSERT_LE(Table.EndVA - Compiled.BaseVA, Compiled.Bytes.size());
+  }
+  auto Word = [&](va_t Address) {
+    return llvm::support::endian::read32le(Compiled.Bytes.data() + Address -
+                                           Compiled.BaseVA);
+  };
+  const auto &Info = Layout.Tables[0];
+  const auto &Unwinds = Layout.Tables[1];
+  const auto &Tries = Layout.Tables[2];
+  const auto &Handlers = Layout.Tables[3];
+  ASSERT_EQ(Info.EndVA - Info.BeginVA, 36u);
+  EXPECT_EQ(Word(Info.BeginVA), 0x19930522u);
+  EXPECT_EQ(Word(Info.BeginVA + 4), (Unwinds.EndVA - Unwinds.BeginVA) / 8);
+  EXPECT_EQ(Word(Info.BeginVA + 8), Unwinds.BeginVA);
+  EXPECT_EQ(Word(Info.BeginVA + 12), (Tries.EndVA - Tries.BeginVA) / 20);
+  EXPECT_EQ(Word(Info.BeginVA + 16), Tries.BeginVA);
+  EXPECT_EQ(Word(Info.BeginVA + 20), 0u);
+  EXPECT_EQ(Word(Info.BeginVA + 24), 0u);
+  EXPECT_EQ(Word(Info.BeginVA + 28), 0u);
+  EXPECT_EQ(Word(Info.BeginVA + 32), 1u);
+  ASSERT_EQ(Row.ContainerEndVA, Row.ContainerVA + 20);
+  EXPECT_EQ(Word(Row.ContainerVA + 12),
+            (Handlers.EndVA - Handlers.BeginVA) / 16);
+  EXPECT_EQ(Word(Row.ContainerVA + 16), Handlers.BeginVA);
+  EXPECT_LE(Word(Row.ContainerVA), Word(Row.ContainerVA + 4));
+  EXPECT_LT(Word(Row.ContainerVA + 4), Word(Row.ContainerVA + 8));
+  EXPECT_LT(Word(Row.ContainerVA + 8), Word(Info.BeginVA + 4));
+  EXPECT_EQ(Word(Row.RecordVA),
+            Source->Cxx->TryBlocks[0].Handlers[0].Adjectives);
+  EXPECT_EQ(Word(Row.RecordVA + 4),
+            Source->Cxx->TryBlocks[0].Handlers[0].TypeDescriptorVA);
+  EXPECT_EQ(int32_t(Word(Row.RecordVA + 8)), Layout.Frame[0] + Layout.Frame[2]);
+  EXPECT_EQ(Word(Row.RecordVA + 12), Row.HandlerVA);
+  EXPECT_GT(Layout.Frame[1], 0);
+  EXPECT_EQ(Layout.Frame[3],
+            Low.RegistrationStates->CxxCatchObjects[0].Reference
+                ? 4u
+                : Low.RegistrationStates->CxxCatchObjects[0].ObjectSize);
+  size_t CleanupRows = 0;
+  for (const auto &Cleanup : Compiled.WinEHSemanticRecords) {
+    if (Cleanup.Token.Kind !=
+        llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCleanup)
+      continue;
+    ++CleanupRows;
+    ASSERT_TRUE(Cleanup.X86CxxLayout);
+    EXPECT_EQ(Cleanup.RecordSize, 8u);
+    EXPECT_EQ(Cleanup.Token, *windows_eh_semantics::getCxxCleanupSemanticToken(
+                                 *Source, Arch::X86, Cleanup.Token.Region));
+    EXPECT_EQ(Cleanup.ContainerVA, Unwinds.BeginVA);
+    EXPECT_EQ(Cleanup.ContainerEndVA, Unwinds.EndVA);
+    EXPECT_EQ(Cleanup.RecordVA,
+              Unwinds.BeginVA + uint64_t(Cleanup.GeneratedState) * 8);
+    EXPECT_EQ(int32_t(Word(Cleanup.RecordVA)), Cleanup.EnclosingState);
+    EXPECT_EQ(Word(Cleanup.RecordVA + 4), Cleanup.HandlerVA);
+  }
+  EXPECT_EQ(CleanupRows, 2u);
+  auto TableReceipt = getCheckedCOFFRegistrationCxxTableReceipt(
+      *Parent, *Source, *Loaded, Compiled);
+  ASSERT_TRUE(bool(TableReceipt)) << llvm::toString(TableReceipt.takeError());
+  EXPECT_EQ(TableReceipt->FuncInfoVA, Info.BeginVA);
+  EXPECT_EQ(TableReceipt->AbsolutePointerFields.size(), 7u);
+  EXPECT_EQ(TableReceipt->SourceToGeneratedStates.size(),
+            Source->Cxx->UnwindMap.size() + 1);
+  const auto TableSection =
+      llvm::find_if(Compiled.Sections, [&](const auto &S) {
+        return S.VA <= Info.BeginVA && Info.EndVA <= S.VA + S.Size;
+      });
+  ASSERT_NE(TableSection, Compiled.Sections.end());
+  const auto PointerIndex =
+      llvm::find_if(TableSection->FixupReferences, [&](const auto &F) {
+        return TableSection->VA + F.Offset == Info.BeginVA + 8;
+      });
+  ASSERT_NE(PointerIndex, TableSection->FixupReferences.end());
+  const auto SectionIndex = TableSection - Compiled.Sections.begin();
+  const auto FixupIndex = PointerIndex - TableSection->FixupReferences.begin();
+  const auto CleanupRow =
+      llvm::find_if(Compiled.WinEHSemanticRecords, [](const auto &R) {
+        return R.Token.Kind ==
+               llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCleanup;
+      });
+  ASSERT_NE(CleanupRow, Compiled.WinEHSemanticRecords.end());
+  for (unsigned Mutation = 0; Mutation != 30; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Compiled;
+    auto Write = [&](va_t Address, uint32_t Value) {
+      llvm::support::endian::write32le(
+          Changed.Bytes.data() + Address - Changed.BaseVA, Value);
+    };
+    auto &Section = Changed.Sections[SectionIndex];
+    auto &Fixups = Section.FixupReferences;
+    switch (Mutation) {
+    case 0:
+      Write(Info.BeginVA, 0x19930521);
+      break;
+    case 1:
+      Write(Info.BeginVA + 4, Word(Info.BeginVA + 4) + 1);
+      break;
+    case 2:
+      Write(Info.BeginVA + 8, uint32_t(Unwinds.BeginVA) + 4);
+      break;
+    case 3:
+      Write(Info.BeginVA + 12, 2);
+      break;
+    case 4:
+      Write(Info.BeginVA + 16, uint32_t(Tries.BeginVA) + 4);
+      break;
+    case 5:
+      Write(Info.BeginVA + 20, 1);
+      break;
+    case 6:
+      Write(Info.BeginVA + 24, uint32_t(Unwinds.BeginVA));
+      break;
+    case 7:
+      Write(Info.BeginVA + 28, uint32_t(Unwinds.BeginVA));
+      break;
+    case 8:
+      Write(Info.BeginVA + 32, 4);
+      break;
+    case 9:
+      Write(Row.ContainerVA, Word(Row.ContainerVA) + 1);
+      break;
+    case 10:
+      Write(Row.ContainerVA + 4, Word(Row.ContainerVA + 4) - 1);
+      break;
+    case 11:
+      Write(Row.ContainerVA + 8, Word(Info.BeginVA + 4));
+      break;
+    case 12:
+      Write(Row.ContainerVA + 12, 0);
+      break;
+    case 13:
+      Write(Row.ContainerVA + 16, uint32_t(Handlers.BeginVA) + 4);
+      break;
+    case 14:
+      Write(Row.RecordVA, Word(Row.RecordVA) ^ 8);
+      break;
+    case 15:
+      Write(Row.RecordVA + 4, Word(Row.RecordVA + 4) + 4);
+      break;
+    case 16:
+      Write(Row.RecordVA + 8, Word(Row.RecordVA + 8) + 4);
+      break;
+    case 17:
+      Write(Row.RecordVA + 12, Word(Row.RecordVA + 12) + 1);
+      break;
+    case 18:
+      Write(CleanupRow->RecordVA, uint32_t(CleanupRow->GeneratedState));
+      break;
+    case 19:
+      Write(CleanupRow->RecordVA + 4, 0);
+      break;
+    case 20:
+      Changed.WinEHSemanticRecords.erase(
+          Changed.WinEHSemanticRecords.begin() +
+          (CleanupRow - Compiled.WinEHSemanticRecords.begin()));
+      break;
+    case 21:
+      Changed.Sections.push_back(Section);
+      break;
+    case 22: {
+      auto Overlap = Section;
+      Overlap.VA = Info.BeginVA + 4;
+      Overlap.Offset = Overlap.VA - Compiled.BaseVA;
+      Overlap.Size = 4;
+      Changed.Sections.push_back(Overlap);
+      break;
+    }
+    case 23:
+      Fixups.erase(Fixups.begin() + FixupIndex);
+      break;
+    case 24:
+      Fixups[FixupIndex].IsPCRel = true;
+      break;
+    case 25:
+      Fixups[FixupIndex].BitWidth = 16;
+      break;
+    case 26:
+      Fixups[FixupIndex].Addend = 4;
+      break;
+    case 27:
+      ++Fixups[FixupIndex].ResolvedValue;
+      break;
+    case 28: {
+      auto Overlap = Fixups[FixupIndex];
+      ++Overlap.Offset;
+      Fixups.push_back(Overlap);
+      break;
+    }
+    case 29:
+      Fixups.push_back(Fixups[FixupIndex]);
+      break;
+    }
+    auto Rejected = getCheckedCOFFRegistrationCxxTableReceipt(*Parent, *Source,
+                                                              *Loaded, Changed);
+    EXPECT_FALSE(bool(Rejected));
+    if (!Rejected)
+      llvm::consumeError(Rejected.takeError());
+  }
+  for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Rows = Compiled.WinEHSemanticRecords;
+    auto &Changed = Rows[CatchRow - Compiled.WinEHSemanticRecords.begin()];
+    switch (Mutation) {
+    case 0:
+      Changed.X86CxxLayout.reset();
+      break;
+    case 1:
+      Changed.X86CxxLayout->Tables[0].EndVA += 4;
+      break;
+    case 2:
+      Changed.X86CxxLayout->Tables[1].EndVA += 4;
+      break;
+    case 3:
+      Changed.X86CxxLayout->Tables[2].EndVA += 4;
+      break;
+    case 4:
+      Changed.X86CxxLayout->Tables[3].EndVA += 16;
+      break;
+    case 5:
+      Changed.X86CxxLayout->Tables[3].BeginSymbol.clear();
+      break;
+    case 6:
+      Changed.ContainerEndVA += 4;
+      break;
+    case 7:
+      ++Changed.GeneratedState;
+      break;
+    case 8:
+      Changed.X86CxxLayout->Frame[1] = 0;
+      break;
+    case 9:
+      Changed.X86CxxLayout->Frame[2] = Changed.X86CxxLayout->Frame[1];
+      break;
+    case 10:
+      Changed.X86CxxLayout->Frame[3] = 0;
+      break;
+    case 11:
+      Rows.erase(Rows.begin() +
+                 (CatchRow - Compiled.WinEHSemanticRecords.begin()));
+      break;
+    }
+    EXPECT_FALSE(llvm::mc_rewrite::validateRewriteWinEHSemanticRecords(
+        Rows, Compiled.SourceFunctionOwners, Compiled.FunctionRanges,
+        Compiled.FunctionOwnerAddrs));
+  }
+#else
   EXPECT_EQ(Row.ContainerEndVA, 0u);
   EXPECT_TRUE(Row.ContainerEndSymbol.empty());
+#endif
   const auto HandlerRange =
       llvm::find_if(Compiled.FunctionRanges, [&](const auto &Range) {
         return Range.OwnerSymbol == Row.HandlerSymbol &&

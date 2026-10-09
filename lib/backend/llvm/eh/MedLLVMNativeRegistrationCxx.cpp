@@ -18,7 +18,9 @@
 
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/IntrinsicInst.h"
+#ifdef LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS
 #include "llvm/IR/WinEHFrame.h"
+#endif
 #include "llvm/Transforms/Utils/Local.h"
 
 #include <functional>
@@ -153,6 +155,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   struct CleanupPlan {
     const RegistrationCleanupFrameContract *Contract;
     std::string Name;
+    std::optional<llvm::mc_rewrite::RewriteWinEHSemanticToken> Token;
   };
   std::vector<Operation> Operations;
   std::vector<CallPlan> Calls;
@@ -315,7 +318,13 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     if (!med_llvm_eh::canMaterializeExternalFunctionDeclaration(*Mod, Name,
                                                                 CleanupType))
       return false;
-    Cleanups.emplace(State, CleanupPlan{Contract, Name});
+    const auto Token =
+        windows_eh_semantics::getCxxCleanupSemanticToken(EH, Arch::X86, State);
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+    if (!Token)
+      return false;
+#endif
+    Cleanups.emplace(State, CleanupPlan{Contract, Name, Token});
   }
   for (const auto &Plan : Calls) {
     if (Plan.State->Levels.empty() ||
@@ -451,6 +460,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         *Ctx, "registration.cxx.cleanup." + std::to_string(State), &Parent);
     llvm::IRBuilder<> B(Block);
     auto *Cleanup = B.CreateCleanupPad(None);
+    if (Plan.Token &&
+        !med_llvm_eh::attachRewriteWinEHSemanticToken(*Cleanup, *Plan.Token))
+      llvm_unreachable("prevalidated C++ cleanup semantic token rejected");
     med_llvm_eh::emitWindowsEHProvenanceAnchor(
         B, Model, Role::RegistrationCallback, EH.CodeRange.Begin,
         Action.ActionVA, State, 0, Cleanup, Plan.Contract->Leaf.Target, 1);

@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -60,6 +61,22 @@ llvm::Error
 validateCOFFRegistrationSemanticRows(const llvm::Function &Function,
                                      const ExceptionFunction &Source,
                                      const CompiledImage &Compiled);
+
+/// Checked PE32 C++ compiler table closure. This receipt authenticates raw
+/// language-table bytes and absolute pointer fields, not edited IR effects or
+/// permission to install the generated function.
+struct COFFRegistrationCxxTableReceipt {
+  va_t OwnerVA = 0;
+  va_t FuncInfoVA = 0;
+  std::array<std::pair<va_t, va_t>, 3> Tables{};
+  std::map<int32_t, int32_t> SourceToGeneratedStates;
+  std::vector<va_t> AbsolutePointerFields;
+};
+llvm::Expected<COFFRegistrationCxxTableReceipt>
+getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
+                                          const ExceptionFunction &Source,
+                                          const BinaryImage &Image,
+                                          const CompiledImage &Compiled);
 llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
     llvm::ArrayRef<uint8_t> OriginalBinary, const BinaryImage &Image,
     CompiledImage &Compiled,

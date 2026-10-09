@@ -10,7 +10,6 @@
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/support/BinaryEncoding.h"
 
-#include "llvm/IR/WinEHFrame.h"
 #include "llvm/MC/BinaryRewrite.h"
 
 #include <algorithm>

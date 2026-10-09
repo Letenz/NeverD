@@ -120,7 +120,12 @@ opcode relocation, conflicting storage or changed runtime import rejects the
 identity. Native source lowering consumes the checked physical call ABI,
 typed catch home, cleanup borrows and catch-return target. LLVM records the
 exact parent and child funclet machine-code ranges when emitting indexed
-catch rows. This IR and machine-code capability does not grant installation:
+catch rows. Complete PE32 C++ receipts additionally close FuncInfo, unwind,
+try and handler tables and bind each cleanup to its generated state and range.
+The COFF table validator reparses source metadata, checks all raw table edges,
+matches the physical catch subfield and authenticates every absolute pointer
+fixup. SEH and C++ share generated-section and pointer-field ownership checks.
+This IR and machine-code capability does not grant installation:
 edited IR, the complete generated FuncInfo and the final PE still require
 independent validation.
 Native LLVM lowering owns

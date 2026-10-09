@@ -1797,6 +1797,15 @@ verify typed catch and cleanup IR, compile it through the patch code generator,
 and authenticate each indexed catch row against its exact child funclet range.
 Changed range ownership must reject the machine-code receipt. These checks do
 not execute a reconstructed C++ source PE.
+With `LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS`, the same source fixture also checks
+the complete FuncInfo/unwind/try/handler bytes through the public COFF table
+validator. It requires all nonempty cleanup rows, original RTTI identity,
+physical catch subfields and exact absolute pointer fixups. Thirty mutations
+cover raw headers and graph edges, missing cleanup receipts, overlapping
+sections, missing/overlapping fixups, width, addend and target changes. The LLVM
+MC regression separately closes table extents, generated indices and object
+bounds. These receipts still do not authenticate edited IR effects or final PE
+installation.
 Native installation needs a source build of the LLVM fork exposing
 `LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need
@@ -1812,7 +1821,7 @@ build/bin/NeverDRegistrationEHTests
 build/bin/NeverDNoReturnTests
 build/bin/NeverDWindowsRegistrationFrameTests
 build/bin/NeverDWindowsRegistrationNativeTests \
-  --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract:WindowsRegistrationCxxSource.*
+  --gtest_filter='-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract:WindowsRegistrationCxxSource.*'
 for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter; do
   python scripts/check_windows_registration_rewrite.py \
     --test-binary build/bin/NeverDWindowsRegistrationNativeTests \
@@ -1827,7 +1836,7 @@ checks once per image. Missing input is a skip and cannot count as verification:
 ```bash
 NEVERD_REGISTRATION_INPUT_CXX_PE32=/absolute/path/to/original.exe \
   build/bin/NeverDWindowsRegistrationNativeTests \
-  --gtest_filter=WindowsRegistrationCxxSource.*
+  --gtest_filter='WindowsRegistrationCxxSource.*'
 ```
 
 The runtime runner builds actual SEH3, no-GS EH4 and initialized-GS EH4 source

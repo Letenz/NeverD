@@ -44,6 +44,13 @@ std::optional<llvm::mc_rewrite::RewriteWinEHSemanticToken>
 getCxxCatchSemanticToken(const ExceptionFunction &EH, Arch TargetArch,
                          uint32_t TryBlockIndex, uint32_t CatchIndex);
 
+/// Bind one PE32 registration unwind action to the complete checked FuncInfo
+/// graph. Region identifies its source state and Clause is zero. A null action
+/// has no cleanup funclet and cannot issue this token.
+std::optional<llvm::mc_rewrite::RewriteWinEHSemanticToken>
+getCxxCleanupSemanticToken(const ExceptionFunction &EH, Arch TargetArch,
+                           uint32_t ActionIndex);
+
 } // namespace windows_eh_semantics
 } // namespace neverd
 

@@ -459,4 +459,25 @@ getCxxCatchSemanticToken(const ExceptionFunction &EH, Arch TargetArch,
                    TryBlockIndex, CatchIndex);
 }
 
+std::optional<llvm::mc_rewrite::RewriteWinEHSemanticToken>
+getCxxCleanupSemanticToken(const ExceptionFunction &EH, Arch TargetArch,
+                           uint32_t ActionIndex) {
+#ifndef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+  return std::nullopt;
+#else
+  if (TargetArch != Arch::X86 || !EH.Registration || !EH.Cxx ||
+      ActionIndex >= EH.Cxx->UnwindMap.size())
+    return std::nullopt;
+  const auto &Action = EH.Cxx->UnwindMap[ActionIndex];
+  if (!Action.ActionVA || Action.Kind != CxxUnwindAction::ActionKind::Direct)
+    return std::nullopt;
+  const auto GraphDigest = getCxxGraphDigest(EH, TargetArch);
+  if (!GraphDigest)
+    return std::nullopt;
+  return makeToken(*GraphDigest,
+                   llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCleanup,
+                   ActionIndex, 0);
+#endif
+}
+
 } // namespace neverd::windows_eh_semantics

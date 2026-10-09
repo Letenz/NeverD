@@ -1389,6 +1389,80 @@ TEST(WindowsEHSemanticDigest, BindsThePE32CxxGraphAndRegistrationContract) {
                    .canPatchOutput());
 }
 
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+TEST(WindowsEHSemanticDigest, BindsCleanupToTheWholePE32CxxSourceGraph) {
+  auto EH = makeRegistrationCxxDigestSource();
+  EH.Cxx->UnwindMap[0].Kind = CxxUnwindAction::ActionKind::None;
+  EH.Cxx->UnwindMap[1] = {0, 0x401300, CxxUnwindAction::ActionKind::Direct};
+  const auto Token =
+      windows_eh_semantics::getCxxCleanupSemanticToken(EH, Arch::X86, 1);
+  ASSERT_TRUE(Token);
+  EXPECT_EQ(Token->Kind,
+            llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCleanup);
+  EXPECT_EQ(Token->Region, 1u);
+  EXPECT_EQ(Token->Clause, 0u);
+  EXPECT_EQ(Token,
+            windows_eh_semantics::getCxxCleanupSemanticToken(EH, Arch::X86, 1));
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCleanupSemanticToken(EH, Arch::X86, 0));
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCleanupSemanticToken(EH, Arch::X86, 2));
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCleanupSemanticToken(EH, Arch::X64, 1));
+  EXPECT_NE(Token, windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86,
+                                                                  0, 0));
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = EH;
+    switch (Mutation) {
+    case 0:
+      ++Changed.Cxx->UnwindMap[1].ActionVA;
+      break;
+    case 1:
+      Changed.Cxx->UnwindMap[1].ToState = -1;
+      break;
+    case 2:
+      --Changed.Cxx->TryBlocks[0].Handlers[0].CatchObjectOffset;
+      break;
+    case 3:
+      ++Changed.Cxx->TryBlocks[0].Handlers[0].TypeDescriptorVA;
+      break;
+    case 4:
+      ++Changed.Cxx->TryBlocks[0].Handlers[0].HandlerVA;
+      break;
+    case 5:
+      ++Changed.Registration->ChainInstallVA;
+      break;
+    case 6:
+      ++Changed.Registration->ChainRemoveVA;
+      break;
+    case 7:
+      ++Changed.Registration->TryLevelStores[0].StoreVA;
+      break;
+    case 8:
+      --*Changed.Registration->RegistrationOffset;
+      break;
+    case 9:
+      ++Changed.Cxx->NativeFuncInfoVA;
+      break;
+    }
+    const auto Other =
+        windows_eh_semantics::getCxxCleanupSemanticToken(Changed, Arch::X86, 1);
+    ASSERT_TRUE(Other);
+    EXPECT_NE(Token, Other);
+  }
+  auto Missing = EH;
+  Missing.Registration.reset();
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCleanupSemanticToken(Missing, Arch::X86, 1));
+  Missing = EH;
+  Missing.Cxx->UnwindMap[1].Kind =
+      CxxUnwindAction::ActionKind::DestructorWithObject;
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCleanupSemanticToken(Missing, Arch::X86, 1));
+}
+#endif
+
 TEST(WindowsEHSemanticDigest, RejectsConflictingPE32CxxTokenContracts) {
   const auto Source = makeRegistrationCxxDigestSource();
   EXPECT_FALSE(
