@@ -577,6 +577,37 @@ constexpr size_t kMinFuncScanPiece = 16 * 1024;
 /// finish, so with several each a slow core holds up only its last piece.
 constexpr size_t kFuncScanPiecesPerWorker = 8;
 
+/// Instructions of a binary file's x86 code read for evidence of its
+/// platform, and bytes of other code: enough for thousands of call sites,
+/// and a bounded share of opening a large file.
+constexpr uint64_t kPlatformEvidenceInstructions = 1024 * 1024;
+constexpr uint64_t kPlatformEvidenceBytes = 64 * 1024 * 1024;
+
+/// The evidence that decides a binary file's platform: at least this score
+/// for the leader, and this many times the runner-up's.  Reading stops early
+/// once the leader has the decisive score and ratio.
+constexpr uint64_t kPlatformMinimumScore = 4;
+/// x86 instructions a linear sweep may read per point of a binary file's
+/// platform evidence.  Compiled code sets a call's arguments every few
+/// dozen instructions; data the sweep decodes as code scores a hundred
+/// times more sparsely, so sparse evidence decides nothing.
+constexpr uint64_t kPlatformInstructionsPerScore = 500;
+constexpr uint64_t kPlatformMarginRatio = 3;
+constexpr uint64_t kPlatformDecisiveScore = 256;
+constexpr uint64_t kPlatformDecisiveRatio = 16;
+
+/// Instructions from where a function may start that its prologue spans,
+/// for prologue evidence of a binary file's platform, and the alignment
+/// compilers start functions at.
+constexpr unsigned kPlatformPrologueInstructions = 6;
+constexpr uint64_t kPlatformFunctionAlignment = 16;
+
+/// How far beside a binary file's code a call may land and still count as
+/// one the code makes, as its text calls the stubs next to it, and the
+/// instructions before a call read for the arguments it sets.
+constexpr int64_t kPlatformCallReach = 16 * 1024 * 1024;
+constexpr size_t kPlatformCallWindow = 8;
+
 /// Minimum number of detected candidates before the entry-verification trial
 /// decode is spread across worker threads.  Below this the per-thread decoder
 /// setup outweighs the work, so the check stays single-threaded.

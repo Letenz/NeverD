@@ -174,10 +174,6 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
   } else {
     LoadOpts.Choice = *Kept;
   }
-  if (LoadOpts.Choice.Format == BinaryFormat::Raw) {
-    Err = BinaryFileNotAnalyzed.str();
-    return false;
-  }
   auto ImgOrErr = loadBinary(Path, LoadOpts);
   if (!ImgOrErr) {
     llvm::handleAllErrors(
@@ -186,6 +182,7 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
     return false;
   }
   Img = std::move(*ImgOrErr);
+  settleBinaryFilePlatform(Img, LoadOpts.Choice);
 
   auto Found = loadDebugInfo(Path, Img, DbgRequest);
   if (!Found.Error.empty()) {
@@ -362,6 +359,7 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
     Trace.finish(false);
     return 0;
   }
+  settleBinaryFilePlatform(*ImgOrErr, LoadOpts.Choice);
   const int Result =
       finishSessionLoad(Sess, *S, std::move(*ImgOrErr), std::move(P),
                         std::move(SanitizeSourcePath));

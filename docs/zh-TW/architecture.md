@@ -577,8 +577,8 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 
 | 目錄 | 職責 | 重要相依 |
 |------|------|----------|
-| `lib/loader` | 格式偵測、PE/COFF、ELF、Mach-O 載入；正規化 `BinaryImage`；函式發現 | LLVM Object API |
-| `lib/lift` | 手寫 x86/i386、AArch64、ARM32 指令語意 | IR 資料型別 |
+| `lib/loader` | 格式偵測、PE/COFF、ELF、Mach-O 載入；正規化 `BinaryImage`；函式發現 | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | 手寫 x86/i386、AArch64、ARM32 指令語意 | IR 資料型別, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native 解碼並分派到架構 lifter | `NeverDIR`、`NeverDLift` |
 | `lib/ir` | 共用型別以及 LowIR、MedIR、HighIR、intrinsic 定義/轉換 | 四個 IR 子元件 |
 | `lib/pipeline` | 函式偵測與 Low/Med/High/LLVM 路徑編排 | IR、decode、lift、LLVM backend、除錯資訊、IR pass |
@@ -591,8 +591,10 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 | `lib/sigs` | 簽章解析、資料庫與比對 | Loader |
 | `lib/libc` | 已知 libc 名稱與呼叫模型支援 | 獨立元件 |
 | `lib/safety` | 提升 IR 上的堆積生命週期稽核與拷貝越界獵取 | Symbolic、Solver |
-| `lib/support` | 共用二進位載入 helper | Loader |
+| `lib/support` | 共用二進位載入輔助函式及獨立 SHA-256 | Support：Loader；Digest：LLVM Support/TargetParser |
 | `lib/translate` | 帶版本的 guest state/策略/退出、固定 runtime ABI、受檢 guest memory、產生 IR/目標檔/LinkGraph 稽核、sealed 原生連結，以及實驗性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 與 JITLink 契約 |
+
+`NeverDDigest` 在 `lib/support` 中負責既有的一次性 SHA-256 實作，保留執行時特性檢查與可攜回退，不依賴 Loader 或 IR。`loader/InputDigest.h` 保留為轉送標頭。`NeverDIRLowValidation` 負責 `lowUndefinedOperationDigest`，Lift 明確連結此元件。v1 身分保留原有域、小端序字、全部六個已儲存輸入槽、來源資訊及原始碼座標。最多 199 個操作使用不超過 64 KiB 的序列化緩衝；更長範圍使用原增量路徑。兩條路徑列舉相同欄位並保留證據檢查。
 
 ### 分析與化簡的架構歸屬
 
@@ -1128,6 +1130,8 @@ Windows 行程時間策略由 `os/windows/process/` 的 `WindowsProcessTime.cpp`
 `lib/unpack` 分四層恢復加殼鏡像。`core` 負責編排和格式註冊表。`format/pe` 驗證容器並重建觀察到的記憶體、導入和中繼資料；`PETLS.cpp` 根據載入器分配資訊及觀察到的回呼驗證替換的 TLS 記錄。不使用保護器註冊表或靜態外殼簽章選擇入口。`dynamic` 透過 `observeProcess` 觀察來賓行程：`Observation.def` 把每種容器與指令集對應到一個行程設定檔，並給出每種指令集的堆疊指標和指令視窗。新增一個目標只需一列表項和一個模組目錄，表中沒有對應列的輸入會被依名稱拒絕。`ExecutionSession` 負責執行監視；`ProcessObserver` 讀取已停止的行程並選擇下一個停止點，但不能改變來賓狀態。模擬層只知道 `defer_unmodeled`，它把未建模的匯入繫結到一旦執行就停止的不透明入口。參見[脫殼](unpack.md)。 延遲載入允許可執行回呼或入口目標位於零填充記憶體，由先前的初始化器產生程式碼。回呼陣列與 TLS 配置中繼資料仍須有經驗證的檔案內容；一般嚴格載入保留檔案覆蓋檢查。作業系統模型提供呼叫歸屬，並在準備呼叫或恢復暫停的呼叫者時通知觀察器。轉移監視在這些邊界重新設定，涵蓋回呼與產生的入口位於同一頁的情況。
 
 `WindowsLibraryHost.cpp` 負責 DLL 宿主建構，Windows 載入器負責一般載入與卸載生命週期。`ProcessView::inputModule()` 區分觀察輸入與宿主 EXE，允許延後建立初始快照。`ProcessView::callFrame()` 透過 `IntegerABI` 讀取整數參數與返回事實；`dynamic/ProcessTransfer` 負責匹配返回位址與堆疊的完成證據。僅 `PETLS.cpp` 決定該證據是否完成程序附加回呼。
+
+`PEDelayImports.cpp` 負責新處理程序中的延遲載入修復及中繼資料儲存排除。COFF 載入器根據描述符來源記錄 `Import::IsDelayImport`，Windows 執行准入僅比較一般匯入。經過驗證的延遲描述符為已解析單元的重新繫結提供準確範圍，待解析的內部跳板保留按需行為。獨立查找表限定繫結數量，保留後續待解析單元。無效狀態明確報錯。
 
 `ExportObserver` 也觀察駐留來賓相依的可執行匯出；建模提供者仍透過服務分派觀察。輸入映像自身匯出被排除。模組變更會更新觀察點，每次修復仍須由即時匯出身分授權。發現紀錄不超過宣告的匯入上限。DLL 夾具同時要求修復系統 API 與來賓相依的跳板，並透過原生載入驗證不殘留模擬位址。
 

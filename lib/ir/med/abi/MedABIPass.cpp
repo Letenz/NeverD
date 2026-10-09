@@ -426,7 +426,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
 
   const auto &TRI = getTargetRegInfo(TheArch);
   const AbiSpillContext SpillContext{Func, TRI, FrameLocalLeafCallees};
-  const BinaryFormat Fmt = Img ? Img->Format : BinaryFormat::Unknown;
+  const BinaryFormat Fmt = Img ? Img->abiFormat() : BinaryFormat::Unknown;
   const CallArgumentConvention *Convention =
       callArgumentConvention(TheArch, Fmt);
   const AbiCallPolicy *Policy = abiCallPolicy(TheArch, Fmt);

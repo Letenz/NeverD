@@ -438,7 +438,7 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
   const size_t N = Func.Blocks.size();
   if (N == 0)
     return Verdict;
-  const StackFrameModel M(getTargetRegInfo(Img.Arch), Img.Format);
+  const StackFrameModel M(getTargetRegInfo(Img.Arch), Img.abiFormat());
   const StackOffsetKey &StackPointerKey = M.StackPointer;
   // Offsets from the entry stack pointer.  Any other root, including a block
   // an exceptional edge enters, starts with nothing known.

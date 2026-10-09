@@ -1043,13 +1043,13 @@ MedLibraryRecognitionResult neverd::recognizeMedLibraryOperations(
     }
   }
   const auto Registers =
-      getTargetRegInfo(Image.Arch).integerParamRegs(Image.Format);
+      getTargetRegInfo(Image.Arch).integerParamRegs(Image.abiFormat());
   std::set<std::tuple<std::string, std::string, VarKey>> Seen;
   for (const auto &[ID, Pack] : Packs) {
     if (Result.BudgetExhausted)
       break;
     (void)ID;
-    if (!Pack.accepts(Image.Arch, Image.Format, Image.Bits))
+    if (!Pack.accepts(Image.Arch, Image.abiFormat(), Image.Bits))
       continue;
     for (const LibraryFeatureRule &Rule : Pack.Rules) {
       if (!Matcher.spend())

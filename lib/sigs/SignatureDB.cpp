@@ -291,7 +291,7 @@ SignatureDB::selectForImage(const BinaryImage &Img,
 std::optional<std::filesystem::path>
 SignatureDB::treeDirectory(const BinaryImage &Img) {
   std::optional<llvm::StringRef> Format, Family;
-  switch (Img.Format) {
+  switch (Img.abiFormat()) {
 #define NEVERD_SIGS_TREE_FORMAT(Name, Directory)                               \
   case BinaryFormat::Name:                                                     \
     Format = Directory;                                                        \

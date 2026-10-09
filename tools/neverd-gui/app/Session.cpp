@@ -187,6 +187,16 @@ void Session::receive(const QJsonObject &incoming) {
   }
 }
 
+QString Session::platformName() const {
+  const auto platform =
+      metadata_.value("load_options").toObject().value("platform").toString();
+#define NEVERD_PLATFORM(ShortName, Name)                                       \
+  if (!platform.isEmpty() && platform == QLatin1String(ShortName))             \
+    return QCoreApplication::translate("Platforms", Name);
+#include "Processors.def"
+  return {};
+}
+
 QueryService::SubscriptionId Session::read(const QString &operation,
                                            const QJsonObject &payload,
                                            QObject *owner, Reply done,
@@ -397,6 +407,8 @@ void Session::sendOpen(const QString &requested, const QString &path,
     payload.insert(QStringLiteral("size"), hexAddress(options.size));
     if (options.entry)
       payload.insert(QStringLiteral("entry"), hexAddress(*options.entry));
+    if (!options.platform.isEmpty())
+      payload.insert(QStringLiteral("platform"), options.platform);
   }
   command(
       QStringLiteral("open"), payload,
@@ -428,6 +440,18 @@ void Session::sendOpen(const QString &requested, const QString &path,
                 .arg(QFileInfo(requested).fileName(), format(), architecture())
                 .arg(payload.value("function_count").toInt()),
             0);
+        // A binary file's platform, and what detection read it from.
+        if (const auto platform = platformName(); !platform.isEmpty()) {
+          const auto load = payload.value("load_options").toObject();
+          emit message(
+              load.value("platform_source").toString() ==
+                      QLatin1String("detected")
+                  ? tr("Platform: %1, read from the code: %2")
+                        .arg(platform,
+                             load.value("platform_evidence").toString())
+                  : tr("Platform: %1, as chosen").arg(platform),
+              0);
+        }
         emit opened();
         emit stateChanged();
         refreshHistory();

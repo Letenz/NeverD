@@ -259,7 +259,8 @@ CallEffects neverd::safety::resolveCallEffects(const AnalysisInput &In,
   if (!isExternalOccurrence(In, Call) ||
       Call.Args.size() > CallEffectDescriptor::VariadicArity)
     return {};
-  const BinaryFormat Format = In.Img ? In.Img->Format : BinaryFormat::Unknown;
+  const BinaryFormat Format =
+      In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown;
   const Arch Architecture = In.Img ? In.Img->Arch : Arch::Unknown;
   return resolveCallEffects(resolveCallName(In, Call), Format, Architecture,
                             static_cast<unsigned>(Call.Args.size()));
@@ -271,7 +272,8 @@ CallEffects neverd::safety::resolveCallEffects(const AnalysisInput &In,
   if (!isExternalOccurrence(In, Call) ||
       Call.Args.size() > CallEffectDescriptor::VariadicArity)
     return {};
-  const BinaryFormat Format = In.Img ? In.Img->Format : BinaryFormat::Unknown;
+  const BinaryFormat Format =
+      In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown;
   const Arch Architecture = In.Img ? In.Img->Arch : Arch::Unknown;
   return resolveCallEffects(Catalog, resolveCallName(In, Call), Format,
                             Architecture,
