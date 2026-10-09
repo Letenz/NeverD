@@ -36,6 +36,32 @@ backend evidence, not as semantic success.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
+## GUI function lists and navigation
+
+With the optional Qt desktop targets enabled, `NeverDGuiController` exercises
+the production views against the deterministic worker. Its chooser regressions
+replace queued filters and scroll a 20,000-function fixture across more pages
+than the dispatcher admits. Functions activation covers Pseudocode, explicit C,
+LLVM C and IR windows, multiple windows, pinned views and back/forward history.
+The file-drop cases wait for the worker's loader-identification capability and
+check UTF-8 filenames through the Windows fixture boundary.
+
+```sh
+cmake --build build-gui --target neverd-gui-tests neverd-gui-query-tests
+ctest --test-dir build-gui -R '^NeverDGui' --output-on-failure
+```
+
+Two optional profiles use a real worker and user-owned input copies. Set
+`NEVERD_LARGE_PE_WORKER` and `NEVERD_LARGE_PE_FILE` for the `native-pe` row of
+`rapidlyScrollingLargeListsKeepsTheLastPageAvailable`; discovery and table
+replies retain a finite 30-second deadline. Set `NEVERD_CODE_NAV_WORKER` and
+`NEVERD_CODE_NAV_FILE` for the `native-c` and `native-llvmc` rows of
+`functionsActivationKeepsCodeWindow`, using a supported PE with at least three
+functions. The Pseudocode profile needs a worker that supports the `source`
+representation. Each worker must keep its matching engine and runtime libraries.
+Run `neverd-gui-tests` directly with the native Qt platform to exercise native
+widgets; CTest sets the controller's platform to `offscreen`.
+
 ## Scalar x86 floating-point state
 
 `NeverDX86FPStateAccuracyTests` compares original scalar SSE byte fixtures
