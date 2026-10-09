@@ -2108,6 +2108,8 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       restoreAdjacentNoReturnCall(Rec, Dec.directCallTarget(DI));
       classifyInsn(Rec);
       if (Rec.IsCall && !Rec.IsIndirect && Rec.Immediate)
+        rewriteGetPcThunkCall(Img, Rec, Next);
+      if (Rec.IsCall && !Rec.IsIndirect && Rec.Immediate)
         rewriteOwnInteriorCall(Img, Rec, Next);
 
       // Keep recursive CFG exploration consistent with the decoder's

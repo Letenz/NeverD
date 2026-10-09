@@ -1079,6 +1079,11 @@ private:
   /// the instruction does: push the return address and jump.
   void rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
                               va_t Next);
+  /// A direct i386 call to a get-PC thunk, a function whose body is `mov r32,
+  /// [esp]; ret`, is lifted as what it does: copy the return address into
+  /// that register (CFGBuilderX86GetPc.cpp).
+  void rewriteGetPcThunkCall(const BinaryImage &Img, InsnRecord &Rec,
+                             va_t Next);
   struct OwnInteriorCallVerdict {
     /// Targets a return pops the call's own return address for.
     std::set<va_t> Subroutines;
