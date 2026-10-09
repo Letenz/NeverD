@@ -23,6 +23,12 @@ public:
   Start start() const { return start_; }
   /// The recent file Previous loads.
   QString file() const { return file_; }
+  /// Shows or hides what a file dropped now would do.  The workbench, which
+  /// takes drops for the whole session, says when a file is over the dialog.
+  void showDropTarget(bool shown);
+
+protected:
+  void resizeEvent(QResizeEvent *event) override;
 
 private:
   void choose(Start start);
@@ -33,6 +39,7 @@ private:
 
   QListWidget *recent_ = nullptr;
   QPushButton *previous_ = nullptr;
+  QWidget *dropTarget_ = nullptr;
   Start start_ = Start::None;
   QString file_;
 };

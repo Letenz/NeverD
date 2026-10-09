@@ -2123,10 +2123,6 @@ Signé : %4</translation>
         <translation>Version %1</translation>
     </message>
     <message>
-        <source>Start</source>
-        <translation>Commencer</translation>
-    </message>
-    <message>
         <source>Recent files</source>
         <translation>Fichiers récents</translation>
     </message>

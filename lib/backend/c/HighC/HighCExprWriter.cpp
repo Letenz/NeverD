@@ -4107,6 +4107,14 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return Text;
       return typedText(E, std::move(Text), E.Type->Size, E.Type->IsSigned);
     };
+    if (E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        E.MemoryOrdering == NdMemoryOrdering::None && E.Type && Opts.Image &&
+        E.Type->Size == Opts.Image->getPointerSize())
+      if (auto Slot = constAddress(*E.Operands[0]))
+        if (const auto It = DataSymbolBindings.find(*Slot);
+            It != DataSymbolBindings.end() && It->second.Immutable)
+          if (const auto Address = dataSymbolAddress(*Slot))
+            return "(" + typeToC(E.Type) + ")" + *Address;
     if (E.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       if (auto VA = constAddress(*E.Operands[0])) {
         if (imageBackingAddress(*VA))
@@ -4613,6 +4621,20 @@ std::optional<va_t> HighCWriter::constAddress(const HighExpr &E) const {
   const HighExpr *Cur = unwrapIntegerView(&E);
   if (Cur && Cur->Kind == ExprKind::Const)
     return Cur->ConstVal;
+  if (Cur && Cur->Kind == ExprKind::BinOp && Cur->Type &&
+      Cur->Type->Kind == NdTypeKind::Int && Cur->Type->Size <= 8 &&
+      Cur->Type->Size != 0 && Cur->Operands.size() == 2 &&
+      (Cur->Op == NdOp::INT_ADD || Cur->Op == NdOp::INT_SUB)) {
+    const auto Left = constAddress(*Cur->Operands[0]);
+    const auto Right = constAddress(*Cur->Operands[1]);
+    if (Left && Right) {
+      uint64_t Value =
+          Cur->Op == NdOp::INT_ADD ? *Left + *Right : *Left - *Right;
+      if (Cur->Type->Size < 8)
+        Value &= (uint64_t(1) << (Cur->Type->Size * 8)) - 1;
+      return Value;
+    }
+  }
   return std::nullopt;
 }
 
@@ -4633,7 +4655,8 @@ bool HighCWriter::isImageDataAddress(va_t Addr) const {
 
 std::optional<uint64_t> HighCWriter::foldReadonlyScalar(va_t Addr,
                                                         uint16_t Size) const {
-  if (!isImageDataAddress(Addr) || !Opts.Image)
+  if (!isImageDataAddress(Addr) || !Opts.Image ||
+      DataSymbolBindings.count(Addr))
     return std::nullopt;
   const Segment *Seg = Opts.Image->getSegmentFor(Addr);
   if (!Seg || Seg->isWritable())

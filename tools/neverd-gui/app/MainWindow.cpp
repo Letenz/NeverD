@@ -189,6 +189,13 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+  // The quick start shows what a drop would do while a file is over it.
+  if (event->type() == QEvent::DragLeave || event->type() == QEvent::Drop)
+    if (auto *start = qobject_cast<QuickStartDialog *>(quickStart_.data())) {
+      auto *widget = qobject_cast<QWidget *>(object);
+      if (widget && (widget == start || start->isAncestorOf(widget)))
+        start->showDropTarget(false);
+    }
   if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove ||
       event->type() == QEvent::Drop) {
     auto *widget = qobject_cast<QWidget *>(object);
@@ -222,6 +229,9 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
                               ? Qt::CopyAction
                               : Qt::LinkAction);
       drop->accept();
+      if (event->type() != QEvent::Drop && quickStart)
+        if (auto *start = qobject_cast<QuickStartDialog *>(quickStart_.data()))
+          start->showDropTarget(true);
       if (event->type() == QEvent::Drop) {
         // Leave the native drop callback before opening or asking about
         // unsaved changes. The window owns the queued callback's lifetime.

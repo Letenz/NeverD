@@ -159,7 +159,9 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
       {generated::ProgramFile, generated::HeapStateMode},
       {generated::TLSHeapProgramFile, generated::HeapStateMode},
       {generated::ProgramFile, generated::DirectServiceMode},
-      {generated::ProgramFile, generated::LateDirectServiceMode}};
+      {generated::ProgramFile, generated::LateDirectServiceMode},
+      {generated::ProgramFile, generated::EncodedPointerMode},
+      {generated::TLSHeapProgramFile, generated::EncodedPointerMode}};
   for (const auto &[File, Mode] : Cases) {
     SCOPED_TRACE(File);
     SCOPED_TRACE(Mode);
@@ -192,7 +194,20 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
     ASSERT_TRUE(State->getInteger(text::HeapReferenceCountField));
     if (Mode == generated::HeapStateMode)
       EXPECT_GT(*State->getInteger(text::HeapReferenceCountField), 0);
-    else {
+    else if (Mode == generated::EncodedPointerMode) {
+      EXPECT_EQ(State->getInteger("possible_encoded_pointers"), 1);
+      EXPECT_EQ(State->getBoolean("encoded_pointer_inventory_known"), true);
+      const auto *References = State->getArray("encoded_pointer_references");
+      ASSERT_NE(References, nullptr);
+      ASSERT_EQ(References->size(), 1u);
+      const auto *Reference = References->front().getAsObject();
+      ASSERT_NE(Reference, nullptr);
+      EXPECT_EQ(Reference->getString("storage"),
+                File == generated::TLSHeapProgramFile ? "thread_local"
+                                                      : "image");
+      EXPECT_TRUE(Reference->getString("value"));
+      EXPECT_TRUE(Reference->getString("offset"));
+    } else {
       EXPECT_EQ(*State->getInteger(text::HeapReferenceCountField), 0);
       ASSERT_TRUE(State->getInteger("direct_service_calls"));
       EXPECT_GT(*State->getInteger("direct_service_calls"), 0);
@@ -212,6 +227,25 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
     const auto [Status, Text] = cli(Input, Output, text::EmptyOptions);
     EXPECT_EQ(Status, unpack_cli::Incomplete) << Text;
     EXPECT_EQ(readFile(Output), Existing);
+    if (Mode == generated::EncodedPointerMode) {
+      const char *Snapshot = "{\"snapshot_only\":true}";
+      Report = api(Input, Output, Snapshot);
+      ASSERT_TRUE(Report) << neverd_last_error(Session);
+      EXPECT_EQ(Report->getString(text::OutcomeField), text::SnapshotOutcome);
+      const auto *State = Report->getObject(text::RuntimeStateField);
+      ASSERT_NE(State, nullptr);
+      EXPECT_EQ(State->getInteger("possible_encoded_pointers"), 1);
+      const auto Bytes = readFile(Output);
+      EXPECT_FALSE(Bytes.empty());
+      const auto [SnapshotStatus, SnapshotText] = cli(Input, Output, Snapshot);
+      EXPECT_EQ(SnapshotStatus, unpack_cli::Success) << SnapshotText;
+      EXPECT_EQ(readFile(Output), Bytes);
+      auto Parsed = llvm::json::parse(SnapshotText);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      ASSERT_TRUE(Parsed->getAsObject());
+      EXPECT_EQ(*Parsed->getAsObject()->get(text::RuntimeStateField),
+                *Report->get(text::RuntimeStateField));
+    }
   }
 #endif
 }

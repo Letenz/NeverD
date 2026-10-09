@@ -25,6 +25,7 @@
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/Support/raw_ostream.h"
 
@@ -955,6 +956,11 @@ public:
     uint16_t AtomicBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
+  std::map<va_t, DataSymbolBinding> DataSymbolBindings;
+  std::set<va_t> UsedDataBindings;
+  std::map<std::string, std::string> ExternalDataNames;
+  std::optional<std::string> dataSymbolAddress(va_t Slot) const;
+
   /// The C initializer of an object's scalar value, as the image holds it;
   /// none for zero, for bytes the image does not hold, and for values C
   /// cannot spell exactly.

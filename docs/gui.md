@@ -80,13 +80,14 @@ worker never links the test engine.
 ## Layout
 
 A start without a file shows the quick start over the default desktop, as IDA
-does: **New** (N) disassembles a new file, **Go** (G) works on your own and
-**Previous** (P) loads the selected recent file. Each recent file shows its
-format (ELF, PE, Mach-O, a NeverD database or a plain binary file), its name and
-folder, and when it was last opened; Delete or its context menu forgets it, and
-a file dropped on the dialog opens. **Display at startup** decides whether the
-next start shows it again; **File → Quick start** shows it any time. Behind it
-is the default desktop:
+does. Its side pane holds the ways to start: **New** (N) disassembles a new
+file, **Go** (G) works on your own and **Previous** (P) loads the selected
+recent file; the one Enter takes has its tile outlined. Each recent file shows
+its format (ELF, PE, Mach-O, a NeverD database or a plain binary file), its name
+and folder, and when it was last opened; Delete or its context menu forgets it.
+A file dragged over the dialog shows that a drop opens it. **Display at
+startup** decides whether the next start shows it again; **File → Quick start**
+shows it any time. Behind it is the default desktop:
 
 - the navigation band across the top: the whole address space colored by
   library functions, regular functions, instructions, data, unexplored bytes
@@ -103,7 +104,9 @@ is the default desktop:
 
 Every window is a dock: drag tabs to split, stack or float them. Docked windows
 are one hairline apart; drag the line to resize its neighbors, or double-click
-it to share their space evenly. **Windows → Save desktop** remembers an
+it to share their space evenly. A window narrows to about the width of its tab:
+a status line or a row of buttons that no longer fits is cut at the window's
+edge. **Windows → Save desktop** remembers an
 arrangement and **Reset desktop** returns to the default. **Graph overview**
 appears under the function list in graph view, and the pseudocode and IR windows
 open beside the disassembly.

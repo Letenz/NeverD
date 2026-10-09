@@ -1018,18 +1018,22 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
             return Error;
           writeLE<uint16_t>(ApplySeg->Data.data() + SegOff, Hi);
           writeLE<uint16_t>(ApplySeg->Data.data() + SegOff + 2, Lo);
-        } else if (RType == ARM_RELOC_HALF) {
-          if (Info.IsScattered || Info.IsPCRel || I + 1 >= Relocations.size())
+        } else if (RType == ARM_RELOC_HALF ||
+                   RType == ARM_RELOC_HALF_SECTDIFF) {
+          const bool SectionDifference = RType == ARM_RELOC_HALF_SECTDIFF;
+          if (Info.IsScattered != SectionDifference || Info.IsPCRel ||
+              I + 1 >= Relocations.size())
             return relocationError("malformed ARM HALF pair", SecAddr, RAddr);
           const RelocationMetadata PairInfo =
               relocationMetadata(Obj, Relocations[I + 1]);
-          if (PairInfo.IsScattered || PairInfo.IsPCRel || PairInfo.IsExternal ||
-              PairInfo.Type != ARM_RELOC_PAIR || PairInfo.Length != Info.Length)
+          if (PairInfo.IsScattered != SectionDifference || PairInfo.IsPCRel ||
+              PairInfo.IsExternal || PairInfo.Type != ARM_RELOC_PAIR ||
+              PairInfo.Length != Info.Length)
             return relocationError("malformed ARM HALF pair", SecAddr, RAddr);
           if (!rangeInBounds(SegOff, 4, ApplySeg->Data.size()))
             return relocationError("ARM HALF field is out of bounds", SecAddr,
                                    RAddr);
-          if (!Resolved) {
+          if (!Resolved && !SectionDifference) {
             diagnoseRelocation("unresolved ARM HALF target", SecAddr, RAddr);
             ++I;
             continue;
@@ -1064,7 +1068,25 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
                   ? (static_cast<uint32_t>(InstructionHalf) << 16) | OtherHalf
                   : (static_cast<uint32_t>(OtherHalf) << 16) | InstructionHalf;
           std::optional<uint64_t> Target;
-          if (Info.IsExternal) {
+          if (SectionDifference) {
+            const auto Raw = Obj.getRelocation(Reloc.getRawDataRefImpl());
+            const auto Pair =
+                Obj.getRelocation(Relocations[I + 1].getRawDataRefImpl());
+            const uint32_t OriginalTo = Obj.getScatteredRelocationValue(Raw);
+            const uint32_t OriginalFrom = Obj.getScatteredRelocationValue(Pair);
+            const auto To = mapObjectAddress(Obj, Img, OriginalTo);
+            const auto From = mapObjectAddress(Obj, Img, OriginalFrom);
+            if (!To || !From || To->Address > UINT32_MAX ||
+                From->Address > UINT32_MAX)
+              return relocationError("ARM HALF_SECTDIFF owner is unresolved",
+                                     SecAddr, RAddr);
+            // Both halves encode A-B+addend, not A. The pair's address is
+            // the other half; its scattered value is B in the input image.
+            const uint32_t Addend =
+                EncodedAddress - (OriginalTo - OriginalFrom);
+            Target =
+                static_cast<uint32_t>(To->Address - From->Address + Addend);
+          } else if (Info.IsExternal) {
             Target = addSigned(S, static_cast<int32_t>(EncodedAddress));
           } else if (Info.SymbolNumber > 0) {
             uint32_t SectionOrdinal = 0;
@@ -1109,7 +1131,10 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
                   SecAddr, RAddr))
             return Error;
           std::memcpy(ApplySeg->Data.data() + SegOff, &Instruction, 4);
-          recordARMAddressMaterialization(Img, P, *Target, SymOwnerVA);
+          // A difference is not an address. Its later PC/base addition owns
+          // reconstruction; never label this immediate as the target pointer.
+          if (!SectionDifference)
+            recordARMAddressMaterialization(Img, P, *Target, SymOwnerVA);
           ++I;
         } else {
           return relocationError("unsupported ARM relocation", SecAddr, RAddr);

@@ -2119,10 +2119,6 @@ Signed: %4</source>
         <translation>バージョン %1</translation>
     </message>
     <message>
-        <source>Start</source>
-        <translation>開始</translation>
-    </message>
-    <message>
         <source>Recent files</source>
         <translation>最近使ったファイル</translation>
     </message>

@@ -2126,6 +2126,10 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
 void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   ImageObjects.clear();
   ImageBackings.clear();
+  DataSymbolBindings = Opts.Image ? collectDataSymbolBindings(*Opts.Image)
+                                  : std::map<va_t, DataSymbolBinding>{};
+  UsedDataBindings.clear();
+  ExternalDataNames.clear();
   ImportDataSlotReads.clear();
   FunctionAddressNames.clear();
   AddressTakenFunctions.clear();
@@ -2250,6 +2254,21 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       }
     if (E.Kind == ExprKind::Load &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        E.MemoryOrdering == NdMemoryOrdering::None && E.Type &&
+        E.Type->Size == Opts.Image->getPointerSize() && !E.Operands.empty() &&
+        E.Operands[0])
+      if (const auto Slot = constAddress(*E.Operands[0]))
+        if (const auto It = DataSymbolBindings.find(*Slot);
+            It != DataSymbolBindings.end() && It->second.Immutable) {
+          UsedDataBindings.insert(*Slot);
+          if (It->second.Definition) {
+            NoteWhole(*It->second.Definition, nullptr, false);
+            noteImageAddress(*It->second.Definition);
+          }
+          return;
+        }
+    if (E.Kind == ExprKind::Load &&
+        E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         !E.Operands.empty() && E.Operands[0]) {
       NoteAccessAddress(E.Operands[0].get());
       if (auto VA = constAddress(*E.Operands[0])) {
@@ -2357,6 +2376,10 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                               Opts.Image->CodePtrRelocSlots.end());
   PointerSlots.insert(Opts.Image->DataPtrRelocSlots.begin(),
                       Opts.Image->DataPtrRelocSlots.end());
+  for (const auto &[Slot, Binding] : DataSymbolBindings) {
+    (void)Binding;
+    PointerSlots.insert(Slot);
+  }
   auto Extent = [](const ImageObject &Obj) -> uint64_t {
     return std::max<uint64_t>(Obj.IndexedBytes,
                               Obj.String ? Obj.ArrayBytes
@@ -2374,6 +2397,16 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         if (!NotedSlots.insert(*Slot).second)
           continue;
         Changed = true;
+        if (const auto Binding = DataSymbolBindings.find(*Slot);
+            Binding != DataSymbolBindings.end()) {
+          UsedDataBindings.insert(*Slot);
+          Obj.HoldsPointers = true;
+          if (Binding->second.Definition) {
+            NoteWhole(*Binding->second.Definition, nullptr, false);
+            noteImageAddress(*Binding->second.Definition);
+          }
+          continue;
+        }
         const uint8_t *Bytes = Opts.Image->readVA(*Slot, PointerBytes);
         if (!Bytes)
           continue;
@@ -2558,6 +2591,22 @@ void HighCWriter::noteFunctionAddress(va_t Addr,
 }
 
 void HighCWriter::writeImageObjects() {
+  for (va_t Slot : UsedDataBindings) {
+    const auto &Binding = DataSymbolBindings.at(Slot);
+    if (Binding.Definition || ExternalDataNames.count(Binding.Name))
+      continue;
+    const auto Identifier = GlobalIdentifierAllocator.allocate(
+        "neverd_data_" + Binding.Name, "neverd_data");
+    ExternalDataNames.emplace(Binding.Name, Identifier);
+    // An untyped byte alias binds the linker's identity without inventing a
+    // source type or colliding with declarations such as stdio's stdout.
+    OS << "extern unsigned char " << Identifier << "[] __asm__(\"";
+    OS.write_escaped(Binding.Name);
+    OS << "\")";
+    if (Binding.Weak)
+      OS << " __attribute__((weak))";
+    OS << ";\n";
+  }
   if (ImageObjects.empty())
     return;
   for (const ImageBacking &Backing : ImageBackings) {
@@ -2596,8 +2645,12 @@ void HighCWriter::writeImageObjects() {
     std::optional<uint64_t> AccessBytes;
     if (Obj.MemoryWidths.size() == 1)
       AccessBytes = *Obj.MemoryWidths.begin();
+    const auto Binding = DataSymbolBindings.find(Addr);
     Obj.Name = GlobalIdentifierAllocator.allocate(
-        makeDataName(Addr, PointerSlot, AccessBytes), "g");
+        Binding != DataSymbolBindings.end()
+            ? "got_" + Binding->second.Name
+            : makeDataName(Addr, PointerSlot, AccessBytes),
+        "g");
   }
   // A pointer slot that names another object comes after the declarations
   // of everything it can name.
@@ -2701,7 +2754,36 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   }
 }
 
+std::optional<std::string> HighCWriter::dataSymbolAddress(va_t Slot) const {
+  const auto It = DataSymbolBindings.find(Slot);
+  if (It == DataSymbolBindings.end())
+    return std::nullopt;
+  const auto &Binding = It->second;
+  std::string Address;
+  if (Binding.Definition) {
+    if (auto Backing = imageBackingAddress(*Binding.Definition))
+      Address = *Backing;
+    else if (auto Name = imageObjectName(*Binding.Definition)) {
+      const auto &Obj = ImageObjects.at(*Binding.Definition);
+      Address = (Obj.String ? "" : "&") + *Name;
+    } else
+      return std::nullopt;
+  } else {
+    const auto Name = ExternalDataNames.find(Binding.Name);
+    if (Name == ExternalDataNames.end())
+      return std::nullopt;
+    Address = Name->second;
+  }
+  std::string Value = "(uintptr_t)" + Address;
+  if (Binding.Addend)
+    Value =
+        "(" + Value + " + (uintptr_t)(" + std::to_string(Binding.Addend) + "))";
+  return Value;
+}
+
 std::optional<std::string> HighCWriter::relocatedSlotTarget(va_t Slot) const {
+  if (auto Address = dataSymbolAddress(Slot))
+    return Address;
   const unsigned PointerBytes = pointerBytes(Opts.TheArch);
   const uint8_t *Bytes = Opts.Image->readVA(Slot, PointerBytes);
   if (!Bytes)
@@ -2736,7 +2818,8 @@ HighCWriter::relocatedSlotInitializer(va_t Addr, const ImageObject &Obj) const {
   if (!Type || Type->Size != pointerBytes(Opts.TheArch) ||
       (Type->Kind != NdTypeKind::Int && Type->Kind != NdTypeKind::Ptr) ||
       (!Opts.Image->CodePtrRelocSlots.count(Addr) &&
-       !Opts.Image->DataPtrRelocSlots.count(Addr)))
+       !Opts.Image->DataPtrRelocSlots.count(Addr) &&
+       !DataSymbolBindings.count(Addr)))
     return std::nullopt;
   auto Target = relocatedSlotTarget(Addr);
   if (!Target || Type->Kind == NdTypeKind::Int)

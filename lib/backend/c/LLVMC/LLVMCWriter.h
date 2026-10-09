@@ -101,6 +101,8 @@ public:
   std::string aggregateMemberPath(llvm::Type *Ty,
                                   llvm::ArrayRef<unsigned> Indices);
   void writeGlobals(llvm::Module &Mod);
+  void writeImageByteArray(const llvm::GlobalVariable &Global,
+                           llvm::StringRef Name);
   void writeReferencedImageObjects(const llvm::Function &Fn);
   void writeForwardDecls(llvm::Module &Mod);
 
@@ -672,6 +674,7 @@ public:
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
   std::map<std::pair<Intrinsic, unsigned>, std::string> FPStateHelperNames;
   std::map<const llvm::Function *, std::string> FunctionIdentifiers;
+  std::map<const llvm::GlobalVariable *, std::string> ExternalDataIdentifiers;
   /// The C name each function's symbol spells, for its definition's comment.
   std::map<const llvm::Function *, std::string> FunctionSymbolNames;
   /// Import entry names that are C names (SymbolDecorations.def).

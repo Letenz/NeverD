@@ -97,7 +97,8 @@ void propagateForwardedCallArities(
     std::map<va_t, std::vector<uint64_t>> &CalleeFPRegs,
     const std::map<va_t, bool> &CalleeHasSret,
     std::map<va_t, bool> &CalleeIsVariadic,
-    const std::map<va_t, bool> &CalleeConsumesVaList) {
+    const std::map<va_t, bool> &CalleeConsumesVaList,
+    std::map<va_t, std::vector<uint64_t>> &CalleeIntRegs) {
   if (Funcs.empty())
     return;
 
@@ -131,20 +132,21 @@ void propagateForwardedCallArities(
     recoverCallAbi(Probe, TheArch, FuncNames, &Img, &CalleeRegArity,
                    &CalleeTotalArity, &CalleeFPArity, &CalleeFPReturnSize,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
-                   &CalleeConsumesVaList);
+                   &CalleeConsumesVaList, /*FrameLocalLeafCallees=*/nullptr,
+                   &CalleeIntRegs);
     int MaxRegIdx = -1;
     int MaxIdx = -1;
     std::vector<uint64_t> FPRegs;
     const uint64_t IRR = TRI.indirectResultReg();
+    const IntegerArgumentLayout ProbeLayout =
+        integerArgumentLayoutOf(Probe, TRI);
     for (const auto &P : Probe.Params) {
       if (IRR != 0 && P.RegOff == IRR)
         continue;
       if (P.RegOff != kNoParamReg && TRI.isFPArgReg(P.RegOff)) {
         FPRegs.push_back(P.RegOff);
       } else if (P.RegOff != kNoParamReg) {
-        const int ArgIdx =
-            TRI.integerArgumentLayout(Probe.CC == CallingConv::Win64)
-                .registerIndex(P.RegOff);
+        const int ArgIdx = ProbeLayout.registerIndex(P.RegOff);
         MaxRegIdx = std::max(MaxRegIdx, ArgIdx);
         MaxIdx = std::max(MaxIdx, ArgIdx);
       } else if (P.Kind == MedVar::Param) {
@@ -166,6 +168,13 @@ void propagateForwardedCallArities(
                 CalleeTotalArity[Probe.Entry] > PreviousTotalArity ||
                 (CalleeIsVariadic.count(Probe.Entry) != 0 &&
                  CalleeIsVariadic.at(Probe.Entry) != PreviousVariadic);
+    // A forwarder takes its parameters in the order of the function it passes
+    // them to, and its callers pass them so.
+    if (!Probe.IntegerArgumentRegisters.empty() &&
+        CalleeIntRegs[Probe.Entry] != Probe.IntegerArgumentRegisters) {
+      CalleeIntRegs[Probe.Entry] = Probe.IntegerArgumentRegisters;
+      Grew = true;
+    }
     if (RegArity > CalleeRegArity[Probe.Entry]) {
       CalleeRegArity[Probe.Entry] = RegArity;
       Grew = true;
@@ -209,6 +218,9 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   std::map<va_t, bool> CalleeHasSret;
   std::map<va_t, bool> CalleeIsVariadic;
   std::map<va_t, bool> CalleeConsumesVaList;
+  // The integer argument registers of each function that takes them in its
+  // own order (MedFunc::IntegerArgumentRegisters).
+  std::map<va_t, std::vector<uint64_t>> CalleeIntRegs;
   {
     const auto &TRI = getTargetRegInfo(Img.Arch);
     // Internal x86/x86-64 scalar float/double, AArch64, and ARM hard-float
@@ -221,8 +233,10 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
     };
     for (const auto &MF : Result.MedFuncs) {
       int MaxRegIdx = -1, MaxIdx = -1;
-      const auto IntegerLayout =
-          TRI.integerArgumentLayout(MF.CC == CallingConv::Win64);
+      const IntegerArgumentLayout IntegerLayout =
+          integerArgumentLayoutOf(MF, TRI);
+      if (!MF.IntegerArgumentRegisters.empty())
+        CalleeIntRegs[MF.Entry] = MF.IntegerArgumentRegisters;
       // The exact FP-argument register offsets, in ABI order.  ARM `float` args
       // land in the single-width S registers (s0,s1,..) and `double` args in
       // the D registers (d0,d1,..); recording the layout lets the caller
@@ -424,10 +438,10 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       }
   }
 
-  propagateForwardedCallArities(Result.MedFuncs, Img.Arch, AllFuncNames, Img,
-                                CalleeRegArity, CalleeTotalArity, CalleeFPArity,
-                                CalleeFPReturnSize, CalleeFPRegs, CalleeHasSret,
-                                CalleeIsVariadic, CalleeConsumesVaList);
+  propagateForwardedCallArities(
+      Result.MedFuncs, Img.Arch, AllFuncNames, Img, CalleeRegArity,
+      CalleeTotalArity, CalleeFPArity, CalleeFPReturnSize, CalleeFPRegs,
+      CalleeHasSret, CalleeIsVariadic, CalleeConsumesVaList, CalleeIntRegs);
 
   const auto FrameLocalLeafCallees =
       Convention && Convention->TargetSpillsSurviveLeafCalls
@@ -437,7 +451,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
     recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &CalleeRegArity,
                    &CalleeTotalArity, &CalleeFPArity, &CalleeFPReturnSize,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
-                   &CalleeConsumesVaList, &FrameLocalLeafCallees);
+                   &CalleeConsumesVaList, &FrameLocalLeafCallees,
+                   &CalleeIntRegs);
 
   // Regparm two-pass call recovery (i386): the first pass promotes forwarder
   // register params (PromoteParams).  Recompute CalleeRegArity from the
@@ -448,22 +463,29 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   if (Convention && Convention->RegparmOnlyForInternalCalls) {
     const auto &TRI2 = getTargetRegInfo(Img.Arch);
     std::map<va_t, int> CRA2, CTA2;
+    std::map<va_t, std::vector<uint64_t>> CalleeIntRegs2;
     for (const auto &MF : Result.MedFuncs) {
       int MaxRI = -1, MaxI = -1;
+      const IntegerArgumentLayout Layout = integerArgumentLayoutOf(MF, TRI2);
       for (const auto &P : MF.Params) {
-        if (P.RegOff != kNoParamReg && TRI2.regToArgIdx(P.RegOff) >= 0) {
-          MaxRI = std::max(MaxRI, TRI2.regToArgIdx(P.RegOff));
-          MaxI = std::max(MaxI, TRI2.regToArgIdx(P.RegOff));
+        const int Index =
+            P.RegOff != kNoParamReg ? Layout.registerIndex(P.RegOff) : -1;
+        if (Index >= 0) {
+          MaxRI = std::max(MaxRI, Index);
+          MaxI = std::max(MaxI, Index);
         } else if (P.Kind == MedVar::Param)
           MaxI = std::max(MaxI, P.Id);
       }
       CRA2[MF.Entry] = MaxRI + 1;
       CTA2[MF.Entry] = callRecoveryTotalArity(MF, MaxI);
+      if (!MF.IntegerArgumentRegisters.empty())
+        CalleeIntRegs2[MF.Entry] = MF.IntegerArgumentRegisters;
     }
     for (auto &MF : Result.MedFuncs)
       recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &CRA2, &CTA2,
                      &CalleeFPArity, &CalleeFPReturnSize, &CalleeFPRegs,
-                     &CalleeHasSret, &CalleeIsVariadic, &CalleeConsumesVaList);
+                     &CalleeHasSret, &CalleeIsVariadic, &CalleeConsumesVaList,
+                     /*FrameLocalLeafCallees=*/nullptr, &CalleeIntRegs2);
   }
 }
 

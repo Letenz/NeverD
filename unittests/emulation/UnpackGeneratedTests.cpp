@@ -723,6 +723,65 @@ TEST_P(UnpackGenerated, ReleasedHeapStateDoesNotBlockRecovery) {
   }
 }
 
+TEST_P(UnpackGenerated, CapturedEncodedPointersRequireAnExplicitSnapshot) {
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    for (unsigned Mode : {EncodedPointerMode, NativeEncodedPointerMode,
+                          DecodedPointerMode, NativeDecodedPointerMode}) {
+      SCOPED_TRACE(Mode);
+      const auto Packed = pack(Mode);
+      ASSERT_FALSE(HasFailure());
+      const auto Expected = run(Packed);
+      ASSERT_EQ(Expected.Stop, ProcessStopReason::Exited)
+          << Expected.Diagnostic;
+      ASSERT_EQ(Expected.ExitStatus, ExitStatus);
+      EXPECT_EQ(Expected.StandardOutput, Message);
+      for (bool Snapshot : {false, true}) {
+        SCOPED_TRACE(Snapshot);
+        Options.SnapshotOnly = Snapshot;
+        const auto Result = unpack(Mode);
+        ASSERT_FALSE(HasFailure());
+        EXPECT_EQ(Result.Outcome, Snapshot ? UnpackOutcome::Snapshot
+                                           : UnpackOutcome::UnsupportedState);
+        EXPECT_EQ(Result.Image.empty(), !Snapshot);
+        EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+        EXPECT_EQ(Result.RuntimeState.DirectServiceCalls, 0u);
+        EXPECT_TRUE(Result.RuntimeState.EncodedPointerInventoryKnown);
+        EXPECT_EQ(Result.RuntimeState.PossibleEncodedPointers, 1u);
+        ASSERT_EQ(Result.RuntimeState.EncodedPointerReferences.size(), 1u);
+        EXPECT_EQ(Result.RuntimeState.EncodedPointerReferences[0].Location,
+                  TLSOnly ? UnpackHeapReference::Storage::ThreadLocal
+                          : UnpackHeapReference::Storage::Image);
+        EXPECT_NE(Result.Diagnostic.find("encoded pointer"), std::string::npos);
+      }
+    }
+  }
+}
+
+TEST_P(UnpackGenerated, ClearedAndPostEntryEncodingsDoNotBlockRecovery) {
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    for (unsigned Mode : {ClearedEncodedPointerMode, LateEncodedPointerMode}) {
+      SCOPED_TRACE(Mode);
+      const auto Result = unpack(Mode);
+      ASSERT_FALSE(HasFailure());
+      ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
+      EXPECT_TRUE(Result.RuntimeState.EncodedPointerInventoryKnown);
+      EXPECT_EQ(Result.RuntimeState.PossibleEncodedPointers, 0u);
+      const auto Path = Scratch / RebuiltFile;
+      test::writeFile(Path, Result.Image);
+      const auto Actual = run(Path);
+      EXPECT_EQ(Actual.Stop, ProcessStopReason::Exited) << Actual.Diagnostic;
+      EXPECT_EQ(Actual.ExitStatus, ExitStatus);
+      EXPECT_EQ(Actual.StandardOutput, Message);
+    }
+  }
+}
+
 TEST_P(UnpackGenerated, LoaderGeneratesItsEntryInThePageItIsExecuting) {
   expectSamePage(SamePageCode::GeneratedJump);
 }

@@ -22,6 +22,7 @@
 #include "neverd/Common.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -36,6 +37,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/WithColor.h"
@@ -58,6 +60,45 @@ namespace neverd {
 //===----------------------------------------------------------------------===//
 // Global data resolution
 //===----------------------------------------------------------------------===//
+
+llvm::Constant *
+MedLLVMEmitter::resolveDataSymbolAddress(const DataSymbolBinding &Binding) {
+  llvm::Constant *Target = nullptr;
+  if (Binding.Definition) {
+    Target = tryResolveGlobalData(*Binding.Definition);
+  } else {
+    auto *Existing = Mod->getNamedValue(Binding.Name);
+    if (Existing) {
+      const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Existing);
+      const auto *Function = llvm::dyn_cast<llvm::Function>(Existing);
+      if ((!Global || !Global->isDeclaration()) &&
+          (!Function || !Function->isDeclaration() || Function->isIntrinsic()))
+        throw std::invalid_argument(
+            "data symbol collides with another LLVM identity: " + Binding.Name);
+      Target = Existing;
+    } else {
+      auto *Global = new llvm::GlobalVariable(
+          *Mod, llvm::ArrayType::get(llvm::Type::getInt8Ty(*Ctx), 0), false,
+          Binding.Weak ? llvm::GlobalValue::ExternalWeakLinkage
+                       : llvm::GlobalValue::ExternalLinkage,
+          nullptr, Binding.Name);
+      Target = Global;
+      ImportedSymbolPlaceholders[Binding.Name] = Global;
+    }
+  }
+  if (!Target)
+    throw std::invalid_argument("cannot materialize relocated data symbol: " +
+                                Binding.Name);
+  if (!Binding.Definition)
+    if (auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Target))
+      Global->setMetadata("neverd.data-symbol", llvm::MDNode::get(*Ctx, {}));
+  auto *Integer = llvm::IntegerType::get(*Ctx, Img->getPointerSize() * 8);
+  auto *Address = llvm::ConstantExpr::getPtrToInt(Target, Integer);
+  return Binding.Addend
+             ? llvm::ConstantExpr::getAdd(Address, llvm::ConstantInt::getSigned(
+                                                       Integer, Binding.Addend))
+             : Address;
+}
 
 bool MedLLVMEmitter::canResolveGlobalDataConstant(uint64_t Addr) const {
   if (!Img)
@@ -153,77 +194,14 @@ MedLLVMEmitter::tryResolveDirectGlobalDataAddress(const MedVar &Address,
   // must stay scalar, and exactly one authenticated get-PC root must reach the
   // result; this is not a general numeric constant tracer.
   auto traceAuthenticatedI386PicAddress = [&]() -> std::optional<uint64_t> {
-    if (!CurMedFunc || TargetArch != Arch::X86 || Img->isELF() ||
-        Img->getPointerSize() != 4 || Address.isConst())
+    if (!CurMedFunc || TargetArch != Arch::X86 ||
+        (Img->isELF() && Img->IsRelocatable) || Img->getPointerSize() != 4 ||
+        Address.isConst())
       return std::nullopt;
 
-    struct Folded {
-      uint64_t Value = 0;
-      unsigned GetPcRoots = 0;
-    };
-    std::set<AddressProvenanceVarKey> Active;
-    auto atSize = [](uint64_t Value, uint16_t Size) {
-      if (Size == 0 || Size >= 8)
-        return Value;
-      return Value & ((uint64_t(1) << (Size * 8)) - 1);
-    };
-    std::function<std::optional<Folded>(const MedVar &, unsigned)> Visit =
-        [&](const MedVar &Value, unsigned Depth) -> std::optional<Folded> {
-      if (Depth > 16 || Value.Size == 0)
-        return std::nullopt;
-      if (Value.isConst()) {
-        if (isAddressProvenance(Value.Provenance))
-          return std::nullopt;
-        return Folded{atSize(Value.ConstVal, Value.Size), 0};
-      }
-
-      const AddressProvenanceVarKey Key = addressProvenanceVarKey(Value);
-      if (!Active.insert(Key).second)
-        return std::nullopt;
-      auto Leave = [&](std::optional<Folded> Result) {
-        Active.erase(Key);
-        return Result;
-      };
-
-      std::optional<uint32_t> AuthenticatedPC;
-      for (const MedI386GetPcModel &Model : CurMedFunc->I386GetPcModels) {
-        if (addressProvenanceVarKey(Model.Value) != Key)
-          continue;
-        if (AuthenticatedPC && *AuthenticatedPC != Model.PCValue)
-          return Leave(std::nullopt);
-        AuthenticatedPC = Model.PCValue;
-      }
-      if (AuthenticatedPC)
-        return Leave(Folded{atSize(*AuthenticatedPC, Value.Size), 1});
-
-      const MedOp *Def = lookupDef(Value);
-      if (!Def || Def->Output.Size != Value.Size)
-        return Leave(std::nullopt);
-      if (Def->Opcode == NdOp::COPY && Def->NumInputs == 1 &&
-          Def->Inputs[0].Size == Def->Output.Size)
-        return Leave(Visit(Def->Inputs[0], Depth + 1));
-      if (Def->Opcode == NdOp::INT_ZEXT && Def->NumInputs == 1 &&
-          Def->Inputs[0].Size == Img->getPointerSize() &&
-          Def->Output.Size >= Def->Inputs[0].Size) {
-        auto Input = Visit(Def->Inputs[0], Depth + 1);
-        if (Input)
-          Input->Value = atSize(Input->Value, Def->Output.Size);
-        return Leave(std::move(Input));
-      }
-      if (Def->Opcode != NdOp::INT_ADD || Def->NumInputs != 2)
-        return Leave(std::nullopt);
-      auto Left = Visit(Def->Inputs[0], Depth + 1);
-      auto Right = Visit(Def->Inputs[1], Depth + 1);
-      if (!Left || !Right || Left->GetPcRoots + Right->GetPcRoots > 1)
-        return Leave(std::nullopt);
-      return Leave(Folded{atSize(Left->Value + Right->Value, Def->Output.Size),
-                          Left->GetPcRoots + Right->GetPcRoots});
-    };
-
-    auto Result = Visit(Address, 0);
-    if (!Result || Result->GetPcRoots != 1)
-      return std::nullopt;
-    return Result->Value;
+    return foldI386PicAddress(*CurMedFunc, Address, [&](const MedVar &Value) {
+      return lookupDef(Value);
+    });
   };
 
   std::optional<uint64_t> NumericAddress =
@@ -534,11 +512,12 @@ llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
   // early NUL (for example a Mach-O VTT entry).  Its address identity matters:
   // turning it into an unnamed compact string lets LLVM merge/rename it and
   // leaves patched code pointing at copied, unrebased pointer bytes.
-  bool IsRelocatedPointerSlot = Img->CodePtrRelocSlots.count(Addr) != 0 ||
-                                Img->DataPtrRelocSlots.count(Addr) != 0 ||
-                                EffectiveImportStorageSlots.count(Addr) != 0 ||
-                                ConflictingImportStorageSlots.count(Addr) != 0 ||
-                                Img->hasRuntimeCallablePointerSlotAt(Addr);
+  bool IsRelocatedPointerSlot =
+      Img->CodePtrRelocSlots.count(Addr) != 0 ||
+      Img->DataPtrRelocSlots.count(Addr) != 0 ||
+      EffectiveImportStorageSlots.count(Addr) != 0 ||
+      ConflictingImportStorageSlots.count(Addr) != 0 ||
+      Img->hasRuntimeCallablePointerSlotAt(Addr);
   bool IsInductionStringBase = isInductionRodataStringBase(Addr);
   if (IsString && StrLen > 0 && AtStringStart && !SizedObjectBeyondString &&
       !IsRelocatedPointerSlot && !IsInductionStringBase &&

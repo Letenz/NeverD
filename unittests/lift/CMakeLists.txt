@@ -50,6 +50,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_ShiftTests.cpp
   x86_32/X86_32_ArithTests.cpp
   x86_32/X86_32_BitOpsTests.cpp
+  x86_32/X86_32_CallAbiTests.cpp
   x86_32/X86_32_CarryTests.cpp
   x86_32/X86_32_CmovTests.cpp
   x86_32/X86_32_CmpxchgTests.cpp
@@ -64,6 +65,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_32/X86_32_NativeHostModeTests.cpp
   x86_32/X86_32_PipelineE2ETests.cpp
   x86_32/X86_32_PICLibraryTests.cpp
+  x86_32/X86_32_GetPcThunkSourceTests.cpp
   x86_32/X86_32_RotateTests.cpp
   x86_32/X86_32_SetccTests.cpp
   x86_32/X86_32_SignExtTests.cpp
@@ -76,6 +78,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_ArithTests.cpp
   x86_64/X86_64_BitOpsTests.cpp
   x86_64/X86_64_BMITests.cpp
+  x86_64/X86_64_CallAbiTests.cpp
   x86_64/X86_64_CarryOpsTests.cpp
   x86_64/X86_64_CmpxchgTests.cpp
   x86_64/X86_64_CFGEntryTests.cpp
@@ -194,6 +197,9 @@ add_neverd_unittest(NeverDLiftTests
   sdk/SwiftABIProjectionPlanTests.cpp
   sdk/SwiftSourcePropertyTests.cpp
   sdk/SwiftRuntimeProjectionTests.cpp
+  format/MachOARMHalfRelocationTests.cpp
+  format/ARMObjectBranchTests.cpp
+  format/DataSymbolBindingTests.cpp
   format/MachOARM64RelocationTests.cpp
   format/MachOI386RelocationTests.cpp
   format/MachOI386RelocationExternalTests.cpp

@@ -43,6 +43,12 @@ bool isRenamedEntryLiveInCopy(const MedOp &Op, uint64_t RegOff);
 /// (MedCallingConvX86.cpp).
 bool liveInOnlyFeedsScratch(const MedFunc &Func, uint64_t ParamRegOff);
 
+/// Whether \p RegOff's incoming value reaches a use other than being pushed
+/// or returned (MedCallingConvX86.cpp): a push that only reserves a stack
+/// slot stores the register without reading it as a value, and a return
+/// reads the return register whatever the function returns.
+bool liveInReachesNonPushUse(const MedFunc &Func, uint64_t RegOff);
+
 } // namespace neverd::med_calling_conv_detail
 
 #endif // NEVERD_IR_MED_MEDCALLINGCONVDETAIL_H

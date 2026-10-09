@@ -27,10 +27,12 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedMutableSource.h"
+#include "neverd/loader/X86GetPcThunk.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -293,6 +295,29 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     return nullptr;
 
   auto *LLVMFunc = declareFunc(Func);
+  if (Img)
+    if (auto Reg = x86GetPcThunkRegister(*Img, Func.Entry)) {
+      // These helpers return in a selected machine register, including
+      // callee-saved registers that no ordinary C signature describes.
+      LLVMFunc->addFnAttr(llvm::Attribute::Naked);
+      LLVMFunc->addFnAttr(llvm::Attribute::NoInline);
+      LLVMFunc->addFnAttr("neverd.x86_get_pc_thunk", std::to_string(*Reg));
+      // Module emission has already prepared the original entry block for
+      // block-address users. Fill that block instead of appending an
+      // unreachable second entry after the empty skeleton.
+      auto *Entry = LLVMFunc->empty()
+                        ? llvm::BasicBlock::Create(*Ctx, "entry", LLVMFunc)
+                        : &LLVMFunc->getEntryBlock();
+      llvm::IRBuilder<> Builder(Entry);
+      auto *Type = llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx), false);
+      Builder.CreateCall(llvm::InlineAsm::get(Type, x86GetPcThunkAssembly(*Reg),
+                                              "~{memory}", true));
+      Builder.CreateUnreachable();
+      if (SourceMap)
+        SourceMap->Functions[Func.Entry] = LLVMFunc;
+      return LLVMFunc;
+    }
+
   if (Func.ReturnsNoValue)
     llvm_value_provenance::markReturnsNoValue(*LLVMFunc);
   // PUSHF/POPF assembly writes below the compiler's stack pointer. A memory

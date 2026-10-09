@@ -35,6 +35,8 @@ neverd unpack packed.exe -o unpacked.exe \
 
 `runtime_state.direct_service_calls`는 진입점 관찰과 가져오기 탐색 중 실행한 직접 모델 서비스 호출 수입니다. 네이티브 Windows용 번호 바인딩을 복원하지 않았으므로 캡처한 진입점 이후에 처음 실행한 경우에도 `unsupported_state`를 반환합니다. 명시적인 `snapshot_only`는 수와 진단을 유지합니다. 복사된 시스템 호출은 복구할 수 있는 가져온 함수 호출로 취급하지 않습니다. `no_entry` 보고서에서도 이 수를 유지합니다. 진입점을 캡처하지 못하면 힙 할당 목록은 알 수 없는 상태로 남습니다.
 
+`runtime_state.encoded_pointer_inventory_known`은 프로세스 프로필이 관찰된 포인터 인코딩 값을 제공하는지 나타냅니다. `possible_encoded_pointers`는 캡처한 이미지와 주 스레드 TLS에서 정렬되지 않은 저장 위치를 포함해 포인터 너비로 정확히 일치하는 값을 셉니다. `encoded_pointer_references`는 처음 64개 위치의 `storage`, `offset`, `rva`, `value`를 보존합니다. Windows는 완료된 `EncodePointer`/`RtlEncodePointer` 반환값과 `DecodePointer`/`RtlDecodePointer` 입력을 제공합니다. 목록이 없거나 일치 항목이 있으면 `unsupported_state`이며 명시적 스냅샷에도 진단을 보존합니다. 정수나 사용하지 않는 데이터도 일치할 수 있으므로 재인코딩의 근거가 되지 않습니다. 캡처 전에 지운 값과 캡처 후에 처음 생성한 인코딩은 이 거부를 유발하지 않습니다. 사용자 정의 인코딩, 부분 값이나 변환된 값, 레지스터, 스택 상태 및 도달하지 않은 경로는 포함하지 않습니다.
+
 `--options='{"snapshot_only":true}'`는 분석 바이트를 명시적으로 요청합니다. 진입점을 채택하고 재구성에 성공하면 결과는 항상 `snapshot`이며 런타임 상태 진단은 유지됩니다. 이 옵션은 힙 데이터를 복원하거나 재배치를 추론하거나 네이티브 실행을 보증하거나 가상화를 해제하지 않습니다. 힙 참조 수가 0이어도 다른 OS 상태나 실행하지 않은 경로를 보증하지 않습니다.
 
 ## 진입점을 정하는 방법
