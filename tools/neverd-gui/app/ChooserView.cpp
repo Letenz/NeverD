@@ -20,6 +20,7 @@ namespace neverd::gui {
 namespace {
 constexpr int PageSize = 256;
 constexpr int MaxCachedPages = 64;
+constexpr int MaxPendingPages = 4;
 constexpr int FilterDebounceMs = 150;
 
 struct ChooserSpec {
@@ -150,11 +151,14 @@ void ChooserModel::addressSpaceChanged() {
 void ChooserModel::reload() {
   if (localRows_)
     return;
-  beginResetModel();
   ++serial_;
+  // Old filters, sorts and revisions no longer need their queued pages.
+  session_.queries().unsubscribeOwner(this);
+  beginResetModel();
   pages_.clear();
   pageOrder_.clear();
-  inFlight_.clear();
+  pageRequests_.clear();
+  requestOrder_.clear();
   total_ = 0;
   endResetModel();
   emit totalChanged(total_);
@@ -165,9 +169,16 @@ void ChooserModel::reload() {
 }
 
 void ChooserModel::requestPage(int page) const {
-  if (inFlight_.contains(page) || !session_.loaded() || operation_.isEmpty())
+  if (pageRequests_.contains(page) || !session_.loaded() ||
+      operation_.isEmpty())
     return;
-  inFlight_.insert(page);
+  // Fast scrolling replaces older viewport requests instead of filling the
+  // shared dispatcher. The latest pages leave room for other views and edits.
+  while (int(requestOrder_.size()) >= MaxPendingPages) {
+    const int oldPage = requestOrder_.back();
+    requestOrder_.pop_back();
+    session_.queries().unsubscribe(pageRequests_.take(oldPage));
+  }
   QJsonObject payload = request_;
   payload["offset"] = page * PageSize;
   payload["limit"] = PageSize;
@@ -179,7 +190,7 @@ void ChooserModel::requestPage(int page) const {
   }
   const quint64 serial = serial_;
   auto *self = const_cast<ChooserModel *>(this);
-  session_.read(
+  const auto subscription = session_.read(
       operation_, payload, self,
       [self, page, serial](const QJsonObject &result) {
         self->accept(page, serial, result);
@@ -187,18 +198,22 @@ void ChooserModel::requestPage(int page) const {
       [self, page, serial](const QString &code, const QString &message) {
         if (serial != self->serial_)
           return;
-        self->inFlight_.remove(page);
+        self->pageRequests_.remove(page);
+        self->requestOrder_.remove(page);
         emit self->failed(code == QLatin1String("analysis_pending")
                               ? tr("References are still being indexed…")
                               : message);
       });
+  pageRequests_.insert(page, subscription);
+  requestOrder_.push_front(page);
 }
 
 void ChooserModel::accept(int page, quint64 serial,
                           const QJsonObject &payload) {
   if (serial != serial_)
     return;
-  inFlight_.remove(page);
+  pageRequests_.remove(page);
+  requestOrder_.remove(page);
   const auto items = payload.value("items").toArray();
   const int total = payload.contains("total")
                         ? payload.value("total").toInt()

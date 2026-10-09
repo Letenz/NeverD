@@ -209,6 +209,101 @@ MedFunc makeSlotThunk(va_t Entry, va_t Slot) {
   return Func;
 }
 
+constexpr va_t RefptrVA = 0x140003000;
+constexpr va_t DataImportSlotVA = 0x140004000;
+
+/// MinGW's view of a data import: `.refptr.__imp__commode` in read-only data
+/// holds the address of the import's slot in `.idata`, which the loader
+/// binds to msvcrt's `_commode`.
+BinaryImage makeRefptrImage() {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Bits = Bitness::Bits64;
+  Image.Base = 0x140000000;
+
+  Segment Text;
+  Text.Name = section_names::coff::Text;
+  Text.VA = TextVA;
+  Text.Size = 0x200;
+  Text.FileSz = Text.Size;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(Text.Size);
+  Image.Segments.push_back(std::move(Text));
+
+  Segment Rdata;
+  Rdata.Name = section_names::coff::Rdata;
+  Rdata.VA = RefptrVA;
+  Rdata.Size = 0x10;
+  Rdata.FileSz = Rdata.Size;
+  Rdata.Flags = SegmentFlags::Readable;
+  Rdata.Data.resize(Rdata.Size);
+  std::memcpy(Rdata.Data.data(), &DataImportSlotVA, sizeof(DataImportSlotVA));
+  Image.Segments.push_back(std::move(Rdata));
+
+  Segment Idata;
+  Idata.Name = ".idata";
+  Idata.VA = DataImportSlotVA;
+  Idata.Size = 0x10;
+  Idata.FileSz = Idata.Size;
+  Idata.Flags = SegmentFlags::Readable;
+  Idata.Data.resize(Idata.Size);
+  Image.Segments.push_back(std::move(Idata));
+
+  addImport(Image, "_commode", DataImportSlotVA);
+  EXPECT_TRUE(Image.recordImportStorageSlot(
+      DataImportSlotVA, "_commode", 0, ImportStorageEvidence::ImportDirectory));
+  return Image;
+}
+
+/// `__p__commode: mov rax, [rip + .refptr.__imp__commode]; mov rax, [rax];
+/// ret`.
+MedFunc makeRefptrReader() {
+  MedFunc Func;
+  Func.Entry = CallerVA;
+  Func.Name = "__p__commode";
+  Func.ReturnType = NdType::makeInt(8);
+  auto temporary = [](int Id) {
+    MedVar Var;
+    Var.Kind = MedVar::Temp;
+    Var.TheArch = Arch::X64;
+    Var.Id = Id;
+    Var.SSAVer = 1;
+    Var.Size = 8;
+    return Var;
+  };
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = CallerVA;
+  Block.EndAddr = CallerVA + 0xB;
+  MedOp Slot;
+  Slot.Opcode = NdOp::COPY;
+  Slot.Addr = CallerVA;
+  Slot.Output = temporary(1);
+  Slot.addInput(
+      MedVar::makeConst(RefptrVA, 8, ConstantAddressProvenance::Address));
+  Block.Ops.push_back(std::move(Slot));
+  MedOp Refptr;
+  Refptr.Opcode = NdOp::LOAD;
+  Refptr.Addr = CallerVA;
+  Refptr.Output = temporary(2);
+  Refptr.addInput(temporary(1));
+  Block.Ops.push_back(std::move(Refptr));
+  MedOp Import;
+  Import.Opcode = NdOp::LOAD;
+  Import.Addr = CallerVA + 7;
+  Import.Output = temporary(3);
+  Import.addInput(temporary(2));
+  Block.Ops.push_back(std::move(Import));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = CallerVA + 0xA;
+  Return.addInput(temporary(3));
+  Block.Ops.push_back(std::move(Return));
+  Func.Blocks.push_back(std::move(Block));
+  return Func;
+}
+
 void expectValidModule(const llvm::Module &Module) {
   std::string Verification;
   llvm::raw_string_ostream OS(Verification);
@@ -377,6 +472,50 @@ TEST(LLVMImportVeneerBoundary, AStubLiftedUnderItsImportNameLeavesTheName) {
   const llvm::GlobalValue *Imported = Module->getNamedValue("symbol_collision");
   ASSERT_NE(Imported, nullptr);
   EXPECT_TRUE(Imported->isDeclaration());
+}
+
+TEST(LLVMImportVeneerBoundary,
+     ADataImportReachedThroughARefptrSlotIsTheImport) {
+  // The function returns what the loader bound to the import's slot, whether
+  // or not the image's base relocations name the `.refptr` slot a pointer.
+  for (const bool Relocated : {false, true}) {
+    SCOPED_TRACE(Relocated);
+    BinaryImage Image = makeRefptrImage();
+    if (Relocated)
+      Image.DataPtrRelocSlots.insert(RefptrVA);
+    llvm::LLVMContext Context;
+    auto Module = MedLLVMEmitter().emit({makeRefptrReader()}, Context, "refptr",
+                                        Arch::X64, importNames(Image), &Image,
+                                        BinaryFormat::COFF);
+    ASSERT_NE(Module, nullptr);
+    expectValidModule(*Module);
+    std::string IR;
+    llvm::raw_string_ostream OS(IR);
+    Module->print(OS, nullptr);
+    // The import's slot holds what the loader binds there.
+    EXPECT_NE(IR.find("@__nd_codeptr_140004000 = internal constant <{ i64, "
+                      "[8 x i8] }> <{ i64 ptrtoint (ptr @_commode to i64)"),
+              std::string::npos)
+        << IR;
+    if (Relocated) {
+      // The relocated `.refptr` slot is a pointer to the import's slot, and
+      // the function reads through it as it stands.
+      EXPECT_NE(IR.find("@__nd_codeptr_140003000 = internal constant <{ i64, "
+                        "[8 x i8] }> <{ i64 ptrtoint (ptr "
+                        "@__nd_codeptr_140004000 to i64)"),
+                std::string::npos)
+          << IR;
+      EXPECT_NE(IR.find("load volatile i64, ptr @__nd_codeptr_140003000"),
+                std::string::npos)
+          << IR;
+    } else {
+      // The slot's bytes are the slot's address, which the function rebases
+      // into the import table.
+      EXPECT_NE(IR.find("getelementptr i8, ptr @__nd_codeptr_140004000"),
+                std::string::npos)
+          << IR;
+    }
+  }
 }
 
 } // namespace

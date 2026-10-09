@@ -9,6 +9,10 @@ __declspec(dllimport) long ZwQueryInformationThread(HANDLE Thread, DWORD Class,
 __declspec(dllimport) long ZwSetInformationThread(HANDLE Thread, DWORD Class,
                                                   const void *Buffer,
                                                   DWORD Length);
+__declspec(dllimport) long ZwQueryInformationProcess(HANDLE Process,
+                                                     DWORD Class, void *Buffer,
+                                                     DWORD Length,
+                                                     DWORD *Returned);
 
 // The information class and length are ULONGs, even in a 64-bit register.
 __attribute__((naked)) static long
@@ -49,7 +53,7 @@ static void threadScenario(char Mode) {
   }
   if (Mode != ThreadInformation[0])
     return;
-  unsigned char Bytes[] = {0x55, 0xa5, 0x66};
+  _Alignas(4) unsigned char Bytes[16] = {0x55, 0xa5, 0x66};
   DWORD Returned = 0xabcdef01;
   const HANDLE Thread = GetCurrentThread();
   SetLastError(LastErrorSeed);
@@ -66,10 +70,45 @@ static void threadScenario(char Mode) {
           Basic[4] == OneProcessor);
   require(ZwSetInformationThread(Thread, 4, &OriginalMask,
                                  sizeof(OriginalMask)) == 0);
+  ULONG_PTR ProcessBasic[6] = {0};
+  require(ZwQueryInformationProcess(GetCurrentProcess(), 0, ProcessBasic,
+                                    sizeof(ProcessBasic), &Returned) == 0);
+  const ULONG_PTR ProcessMask = ProcessBasic[2];
+  require((OriginalMask & ProcessMask) == OriginalMask);
+  // Native affinity intersects the request with the process's processors.
+  // Unavailable bits must not turn an otherwise valid request into a stop.
+  const ULONG_PTR WithUnavailable = OneProcessor | ~ProcessMask;
+  require(setThreadLowWords(Thread, 4, &WithUnavailable,
+                            sizeof(WithUnavailable)) == 0);
+  require(ZwQueryInformationThread(Thread, 0, Basic, sizeof(Basic),
+                                   &Returned) == 0 &&
+          Basic[4] == OneProcessor);
+  const ULONG_PTR Empty = 0;
+  require((DWORD)setThreadLowWords(Thread, 4, &Empty, sizeof(Empty)) ==
+          0xc000000du);
+  const ULONG_PTR Unavailable = ~ProcessMask;
+  require((DWORD)setThreadLowWords(Thread, 4, &Unavailable,
+                                   sizeof(Unavailable)) == 0xc000000du);
+  require(ZwQueryInformationThread(Thread, 0, Basic, sizeof(Basic),
+                                   &Returned) == 0 &&
+          Basic[4] == OneProcessor);
+  require(ZwSetInformationThread(Thread, 4, &OriginalMask,
+                                 sizeof(OriginalMask)) == 0);
   require(queryThreadLowWords(Thread, 0x11, Bytes + 1, 1, &Returned) == 0);
   require(Bytes[0] == 0x55 && Bytes[1] == 0 && Bytes[2] == 0x66 &&
           Returned == 1);
-  require((DWORD)setThreadLowWords(Thread, 0x11, Bytes + 1, 1) == 0xc0000004u);
+  for (DWORD Length = 1; Length <= 8; ++Length)
+    for (DWORD Offset = 0; Offset != 4; ++Offset)
+      require((DWORD)setThreadLowWords(Thread, 0x11, Bytes + Offset, Length) ==
+              (Offset ? 0x80000002u : 0xc0000004u));
+  for (DWORD Length = 2; Length <= 8; ++Length)
+    for (DWORD Offset = 0; Offset != 4; ++Offset) {
+      Returned = 0xabcdef01;
+      require((DWORD)queryThreadLowWords(Thread, 0x11, Bytes + Offset, Length,
+                                         &Returned) ==
+              (Length >= 4 && Offset ? 0x80000002u : 0xc0000004u));
+      require(Returned == 0xabcdef01);
+    }
   require(ZwQueryInformationThread(Thread, 0x11, Bytes + 1, 1, 0) == 0 &&
           Bytes[1] == 0);
   // A zero-length set does not dereference the unused information pointer.

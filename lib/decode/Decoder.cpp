@@ -206,8 +206,6 @@ int Decoder::decodeOne(const uint8_t *Bytes, size_t Len, va_t Addr,
       !decodeUnprefixedX86MpxRegisterNop(Bytes, Len, Addr))
     return 0;
 
-  if (!normalizeX86UD1Extent(Bytes, Len))
-    return 0;
   fixupDecodedInsn(InsnBuf);
 
   Out.Addr = InsnBuf->address;
@@ -261,10 +259,6 @@ int Decoder::decodeOneLight(const uint8_t *Bytes, size_t Len, va_t Addr,
       !decodeUnprefixedX86MpxRegisterNop(Bytes, Len, Addr))
     return 0;
 
-  // Detail-independent profile normalization must agree with the full decode
-  // path.  Operand-aware id fixups remain exclusive to decodeOne.
-  if (!normalizeX86UD1Extent(Bytes, Len))
-    return 0;
   fixupDecodedInsnId(InsnBuf);
   fixupX86DisplacementDetail(InsnBuf);
   Out.Addr = InsnBuf->address;
@@ -272,75 +266,6 @@ int Decoder::decodeOneLight(const uint8_t *Bytes, size_t Len, va_t Addr,
   Out.Id = InsnBuf->id;
   Out.Raw = InsnBuf;
   return Out.Size;
-}
-
-bool Decoder::normalizeX86UD1Extent(const uint8_t *Bytes, size_t Len) {
-  if (!X86 || InsnBuf->id != X86_INS_UD1)
-    return true;
-  unsigned Opcode = 0;
-  bool AddressOverride = false;
-  while (Opcode < Len && Opcode < 15) {
-    const uint8_t Byte = Bytes[Opcode];
-    if (Byte == 0x67)
-      AddressOverride = true;
-    if (Byte == 0x66 || Byte == 0x67 || Byte == 0xf0 || Byte == 0xf2 ||
-        Byte == 0xf3 || Byte == 0x26 || Byte == 0x2e || Byte == 0x36 ||
-        Byte == 0x3e || Byte == 0x64 || Byte == 0x65 ||
-        (TargetArch == Arch::X64 && (Byte & 0xf0) == 0x40)) {
-      ++Opcode;
-      continue;
-    }
-    break;
-  }
-  if (Opcode + 3 > Len || Opcode + 3 > 15 || Bytes[Opcode] != 0x0f ||
-      Bytes[Opcode + 1] != 0xb9)
-    return false;
-  const unsigned AddressBytes = TargetArch == Arch::X64
-                                    ? (AddressOverride ? 4 : 8)
-                                    : (AddressOverride ? 2 : 4);
-  const unsigned ModRMOffset = Opcode + 2;
-  const uint8_t ModRM = Bytes[ModRMOffset];
-  const unsigned Mod = ModRM >> 6;
-  const unsigned RM = ModRM & 7;
-  unsigned End = ModRMOffset + 1;
-  unsigned DispBytes = 0;
-  uint8_t SIB = 0;
-  if (Mod != 3) {
-    if (AddressBytes == 2)
-      DispBytes = Mod == 1 ? 1 : Mod == 2 || RM == 6 ? 2 : 0;
-    else {
-      DispBytes = Mod == 1 ? 1 : Mod == 2 || RM == 5 ? 4 : 0;
-      if (RM == 4) {
-        if (End >= Len || End >= 15)
-          return false;
-        SIB = Bytes[End++];
-        if (Mod == 0 && (SIB & 7) == 5)
-          DispBytes = 4;
-      }
-    }
-  }
-  const unsigned DispOffset = DispBytes ? End : 0;
-  End += DispBytes;
-  if (End > Len || End > 15)
-    return false;
-  InsnBuf->size = static_cast<uint16_t>(End);
-  std::memcpy(InsnBuf->bytes, Bytes, End);
-  if (Detail && InsnBuf->detail) {
-    auto &X86 = InsnBuf->detail->x86;
-    X86.addr_size = static_cast<uint8_t>(AddressBytes);
-    X86.modrm = ModRM;
-    X86.sib = SIB;
-    X86.encoding.modrm_offset = static_cast<uint8_t>(ModRMOffset);
-    X86.encoding.disp_offset = static_cast<uint8_t>(DispOffset);
-    X86.encoding.disp_size = static_cast<uint8_t>(DispBytes);
-    uint32_t Displacement = 0;
-    if (DispBytes)
-      std::memcpy(&Displacement, Bytes + DispOffset, DispBytes);
-    X86.disp = DispBytes == 1   ? static_cast<int8_t>(Displacement)
-               : DispBytes == 2 ? static_cast<int16_t>(Displacement)
-                                : static_cast<int32_t>(Displacement);
-  }
-  return true;
 }
 
 bool Decoder::decodePrefixedX86Fence(const uint8_t *Bytes, size_t Len,

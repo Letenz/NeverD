@@ -106,6 +106,7 @@ NEVERD_GENERATED_BUILD(CacheMerge, ".cache=.text")
 
 #ifdef NEVERD_GENERATED_TEXT
 NEVERD_GENERATED_TEXT(ProgramFile, "generated.exe")
+NEVERD_GENERATED_TEXT(TLSHeapProgramFile, "tls-heap.exe")
 NEVERD_GENERATED_TEXT(PackedFile, "packed.exe")
 NEVERD_GENERATED_TEXT(RebuiltFile, "rebuilt.exe")
 NEVERD_GENERATED_TEXT(X64Dir, "X64")

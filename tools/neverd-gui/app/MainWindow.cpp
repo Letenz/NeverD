@@ -471,7 +471,7 @@ void MainWindow::buildDocks() {
     chooserDock(kind);
 
   connect(functions_, &ChooserView::activated, this,
-          [this](Address address) { navigate(address); });
+          &MainWindow::activateFunction);
   connect(disassembly_, &DisassemblyView::locationChanged, this,
           [this](Address address) { synchronize(address, disassembly_); });
   connect(disassembly_, &DisassemblyView::navigateRequested, this,
@@ -503,6 +503,12 @@ void MainWindow::buildDocks() {
           [this](QWidget *, QWidget *now) {
             for (auto it = docks_.cbegin(); it != docks_.cend(); ++it)
               if (*it && (*it)->isAncestorOf(now)) {
+                // Choosers and auxiliary windows keep the analysis context.
+                if (auto *view = qobject_cast<CodeView *>((*it)->widget()))
+                  lastCodeView_ = view;
+                else if (it.key() == QLatin1String(DisassemblyDock) ||
+                         it.key() == QLatin1String(HexDock))
+                  lastCodeView_.clear();
                 if (it.key() != QLatin1String(OutputDock))
                   hexActive_ = it.key() == QLatin1String(HexDock);
                 return;
@@ -765,6 +771,38 @@ std::optional<Address> MainWindow::currentFunction() const {
   return disassembly_ ? disassembly_->currentFunction() : std::nullopt;
 }
 
+void MainWindow::activateFunction(Address address) {
+  ++codeNavigationSerial_;
+  if (!session_.loaded())
+    return;
+  auto *view = lastCodeView_.data();
+  if (!view || !view->isVisible()) {
+    navigate(address);
+    return;
+  }
+  const auto position = view->text()->currentAddress();
+  navigateCodeFunction(view, address, address,
+                       position ? position : view->text()->function());
+}
+
+void MainWindow::navigateCodeFunction(CodeView *view, Address address,
+                                      Address function,
+                                      std::optional<Address> from) {
+  // The shared history and background listing follow without changing the
+  // originating code window or its representation, including a pinned view.
+  disassembly_->navigate(address, true, from);
+  if (view->text()->function() != function)
+    view->showFunction(function);
+  for (auto *dock : std::as_const(docks_))
+    if (dock && dock->widget() == view) {
+      dock->raise();
+      break;
+    }
+  view->window()->activateWindow();
+  view->text()->setFocus();
+  updateActions();
+}
+
 void MainWindow::navigate(Address address) {
   ++codeNavigationSerial_;
   if (!session_.loaded())
@@ -808,13 +846,8 @@ void MainWindow::activateCodeName(CodeView *view, const QString &name) {
         const auto address = addressValue(payload.value("address"));
         const auto function = addressValue(payload.value("function_address"));
         if (function && !payload.value("import").toBool()) {
-          // Keep the originating tab and representation. The assembly still
-          // follows in the background and owns the shared address history.
-          disassembly_->navigate(address.value_or(*function), true, from);
-          if (view->text()->function() != function)
-            view->showFunction(*function);
-          view->text()->setFocus();
-          updateActions();
+          navigateCodeFunction(view, address.value_or(*function), *function,
+                               from);
         } else if (address) {
           // Data and import slots retain ordinary address navigation.
           jump(*address);

@@ -67,6 +67,26 @@ foreach(_arch X64 AArch64)
       "${_generated_dir}/KERNEL.def" "${_generated_dir}/USER.def"
     VERBATIM)
   list(APPEND _generated_outputs "${_dir}/${_generated_ProgramFile}")
+  add_custom_command(OUTPUT "${_dir}/${_generated_TLSHeapProgramFile}"
+      "${_dir}/tls-heap.obj"
+    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+      "--target=${_generated_${_arch}Target}"
+      -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
+      -fno-vectorize -fno-slp-vectorize -O1 -c
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/unpack_tls_heap.c"
+      -o "${_dir}/tls-heap.obj"
+    COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib /noimplib
+      "/entry:${_generated_ProgramEntry}" /subsystem:console /include:_tls_used
+      "/machine:${_generated_${_arch}Machine}"
+      "/base:${_generated_ProgramBase}" /timestamp:0
+      "/section:${_generated_ProgramAccess}"
+      "${_dir}/tls-heap.obj" "${_dir}/kernel.lib"
+      "/out:${_dir}/${_generated_TLSHeapProgramFile}"
+    DEPENDS fixtures/unpack_tls_heap.c "${_generated_cases}"
+      "${_dir}/${_generated_ProgramFile}"
+    VERBATIM)
+  list(APPEND _generated_outputs "${_dir}/${_generated_TLSHeapProgramFile}")
+
   add_custom_command(OUTPUT "${_dir}/delay.exe" "${_dir}/unpack_delay.dll"
       "${_dir}/delay-provider.obj" "${_dir}/delay-program.obj"
       "${_dir}/delay.lib"
