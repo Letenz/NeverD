@@ -310,6 +310,7 @@ private:
   /// Recover a target-width memory address from the wider LowIR VA carrier
   /// only when an explicit zero extension proves that no high bits are lost.
   ExprPtr memoryAddressExpr(const MedVar &V, bool InlineDefinition = true);
+  const MedOp *uniqueMedDefinition(const MedVar &V);
   ExprPtr sourceBitSlice(const ExprPtr &Value, uint64_t ByteOffset,
                          uint16_t Bytes, unsigned Depth = 0);
   ExprPtr sourceFloatValue(const MedVar &Value, uint16_t Bytes);

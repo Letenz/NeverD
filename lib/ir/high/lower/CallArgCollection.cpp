@@ -974,26 +974,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   };
   Scan.OwnStackParam = OwnStackParam;
   // The single definition of \p V in this function, or null.
-  auto UniqueDef = [&](const MedVar &V) -> const MedOp * {
-    if (!CurMed)
-      return nullptr;
-    if (EntryOffsetDefsFor != CurMed) {
-      EntryOffsetDefs.clear();
-      for (const auto &Blk : CurMed->Blocks)
-        for (const auto &Op : Blk.Ops) {
-          auto [It, Inserted] =
-              EntryOffsetDefs.try_emplace({static_cast<int>(Op.Output.Kind),
-                                           Op.Output.Id, Op.Output.SSAVer},
-                                          &Op);
-          if (!Inserted)
-            It->second = nullptr;
-        }
-      EntryOffsetDefsFor = CurMed;
-    }
-    auto DefIt =
-        EntryOffsetDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
-    return DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
-  };
+  auto UniqueDef = [&](const MedVar &V) { return uniqueMedDefinition(V); };
   std::function<std::optional<int64_t>(const MedVar &, int)> EntryOffset =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
     if (!CurMed || Depth > limits::kCallArgStoreAddressDepth)

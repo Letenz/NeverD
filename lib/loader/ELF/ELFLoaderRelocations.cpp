@@ -167,7 +167,18 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
     }
 
     llvm::StringRef SecName = getSectionName<ELFT>(ShStrTab, SH);
-    auto Record = [&](RelocationEntry RE, uint32_t SymIdx) {
+    uint64_t Ordinal = 0;
+    auto Record = [&](RelocationEntry RE, uint32_t SymIdx, uint64_t RawInfo) {
+      RE.ELF =
+          ELFRelocationProvenance{!IsRelocatable && Img.Sections.empty()
+                                      ? ELFRelocationSource::ProgramDynamicTable
+                                      : ELFRelocationSource::SectionTable,
+                                  SH.sh_addr,
+                                  SH.sh_offset,
+                                  Ordinal++,
+                                  RE.Address,
+                                  RawInfo,
+                                  std::nullopt};
       RE.SymbolIndex = SymIdx;
       if (!SecName.empty())
         RE.SectionName = SecName.str();
@@ -178,12 +189,26 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
         if (!SymsOr) {
           llvm::consumeError(SymsOr.takeError());
         } else if (SymIdx < SymsOr->size()) {
-          auto SymNameOr = (*SymsOr)[SymIdx].getName(StrTab);
+          const auto &Sym = (*SymsOr)[SymIdx];
+          RE.ELF->Symbol = ELFRelocationSymbol{
+              !IsRelocatable && Img.Sections.empty() ? 0u
+                                                     : uint32_t(SH.sh_link),
+              Sym.st_name,
+              Sym.st_shndx,
+              Sym.st_info,
+              Sym.getBinding(),
+              Sym.getType(),
+              Sym.st_other,
+              Sym.st_value,
+              Sym.st_size,
+              std::nullopt};
+          auto SymNameOr = Sym.getName(StrTab);
           if (SymNameOr)
             RE.SymbolName = SymNameOr->str();
           else
             llvm::consumeError(SymNameOr.takeError());
-          Undefined = (*SymsOr)[SymIdx].st_shndx == SHN_UNDEF;
+          RE.ELF->Symbol->Name = RE.SymbolName;
+          Undefined = Sym.st_shndx == SHN_UNDEF;
         }
       }
 
@@ -215,7 +240,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
         RE.Addend = R.r_addend;
         RE.HasExplicitAddend = IsAndroidRela;
         RE.Type = R.getType(false);
-        Record(std::move(RE), R.getSymbol(false));
+        Record(std::move(RE), R.getSymbol(false), R.r_info);
       }
       continue;
     }
@@ -225,6 +250,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
       uint64_t ROff64 = SH.sh_offset + static_cast<uint64_t>(I) * SH.sh_entsize;
       RelocationEntry RE;
       uint32_t SymIdx = 0;
+      uint64_t RawInfo = 0;
       if (IsRela) {
         if (!rangeInBounds(ROff64, sizeof(Elf_Rela), Size))
           break;
@@ -235,6 +261,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
         RE.HasExplicitAddend = true;
         RE.Type = R.getType(false);
         SymIdx = R.getSymbol(false);
+        RawInfo = R.r_info;
       } else {
         if (!rangeInBounds(ROff64, sizeof(Elf_Rel), Size))
           break;
@@ -243,8 +270,9 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
         RE.Address = R.r_offset;
         RE.Type = R.getType(false);
         SymIdx = R.getSymbol(false);
+        RawInfo = R.r_info;
       }
-      Record(std::move(RE), SymIdx);
+      Record(std::move(RE), SymIdx, RawInfo);
     }
   }
 }

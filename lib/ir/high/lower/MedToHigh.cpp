@@ -25,6 +25,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighFlowOracle.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -588,8 +589,34 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   return HighExpr::makeVar(V);
 }
 
+const MedOp *MedToHighConverter::uniqueMedDefinition(const MedVar &V) {
+  if (!CurMed)
+    return nullptr;
+  if (EntryOffsetDefsFor != CurMed) {
+    EntryOffsetDefs.clear();
+    for (const auto &Blk : CurMed->Blocks)
+      for (const auto &Op : Blk.Ops) {
+        auto [It, Inserted] = EntryOffsetDefs.try_emplace(
+            {static_cast<int>(Op.Output.Kind), Op.Output.Id, Op.Output.SSAVer},
+            &Op);
+        if (!Inserted)
+          It->second = nullptr;
+      }
+    EntryOffsetDefsFor = CurMed;
+  }
+  auto DefIt = EntryOffsetDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
+  return DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
+}
+
 ExprPtr MedToHighConverter::memoryAddressExpr(const MedVar &V,
                                               bool InlineDefinition) {
+  if (CurMed && TargetArch == Arch::X86 && Image &&
+      (!Image->isELF() || !Image->IsRelocatable))
+    if (auto Address = foldI386PicAddress(*CurMed, V, [&](const MedVar &Value) {
+          return uniqueMedDefinition(Value);
+        }))
+      return HighExpr::makeConst(*Address, V.Size,
+                                 ConstantAddressProvenance::DataAddress);
   ExprPtr Address;
   if (InlineDefinition && V.Id >= 0)
     Address = inlineableDefinition(varKey(V));

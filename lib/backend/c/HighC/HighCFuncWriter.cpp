@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../VariadicImportStub.h"
+#include "../X86GetPcThunk.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -962,6 +963,13 @@ void HighCWriter::writeExceptionAnnotation(const HighFunc &Func) {
 }
 
 void HighCWriter::writeFunction(const HighFunc &Func) {
+  if (Opts.Image && EmitFunctionWrapper)
+    if (auto Reg = x86GetPcThunkRegister(*Opts.Image, Func.Entry)) {
+      c_stub::writeGetPcThunk(OS, functionIdentifier(Func),
+                              typeToC(Func.ReturnType), *Reg);
+      return;
+    }
+
   if (Opts.Image)
     if (const std::string Import =
             c_stub::variadicImportOfStub(*Opts.Image, Func.Entry);

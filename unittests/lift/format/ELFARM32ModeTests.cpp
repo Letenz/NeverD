@@ -11,10 +11,12 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/ELF/ELFLoader.h"
+#include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Support/Error.h"
 
@@ -109,8 +111,8 @@ protected:
   /// as an Android JNI library ships: only the dynamic symbols, the PLT, and
   /// the imports remain.
   llvm::Expected<BinaryImage>
-  loadStrippedSharedAssembly(const std::string &Name,
-                             const std::string &Source) {
+  loadStrippedSharedAssembly(const std::string &Name, const std::string &Source,
+                             bool StripSections = false) {
     const auto Assembly = tmpFile(Name + ".s");
     std::ofstream(Assembly) << Source;
     const auto Object = tmpFile(Name + ".o");
@@ -127,9 +129,73 @@ protected:
     if (!LinkedOk.ok())
       return llvm::make_error<llvm::StringError>(
           LinkedOk.err, llvm::inconvertibleErrorCode());
+    if (StripSections) {
+      std::ifstream Input(Library, std::ios::binary);
+      std::vector<uint8_t> Bytes(std::istreambuf_iterator<char>(Input), {});
+      Input.close();
+      llvm::object::ELF32LE::Ehdr Header;
+      std::memcpy(&Header, Bytes.data(), sizeof(Header));
+      Header.e_shoff = 0;
+      Header.e_shnum = 0;
+      Header.e_shstrndx = 0;
+      std::memcpy(Bytes.data(), &Header, sizeof(Header));
+      std::ofstream Output(Library, std::ios::binary | std::ios::trunc);
+      Output.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
+    }
     return ELFLoader().load(Library);
   }
 };
+
+TEST_F(ELFARM32ModeTest, SectionlessDynamicSymbolsRetainEachInstructionMode) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM mode fixture requires cross-target clang";
+  const std::string Source = R"(
+.syntax unified
+.text
+.arm
+.p2align 2
+.globl arm_add
+.type arm_add,%function
+arm_add:
+  add r0,r0,#7
+  bx lr
+.size arm_add, .-arm_add
+.thumb
+.p2align 1
+.globl thumb_add
+.type thumb_add,%function
+.thumb_func
+thumb_add:
+  adds r0,#9
+  bx lr
+.size thumb_add, .-thumb_add
+)";
+  auto Full = loadStrippedSharedAssembly("dynamic-full", Source);
+  ASSERT_TRUE(bool(Full)) << llvm::toString(Full.takeError());
+  auto Stripped =
+      loadStrippedSharedAssembly("dynamic-sectionless", Source, true);
+  ASSERT_TRUE(bool(Stripped)) << llvm::toString(Stripped.takeError());
+  EXPECT_TRUE(Stripped->Sections.empty());
+  EXPECT_EQ(Stripped->Mode, InstructionMode::MixedARMThumb);
+  for (const auto &[Name, Mode] :
+       {std::pair{"arm_add", InstructionMode::ARM},
+        std::pair{"thumb_add", InstructionMode::Thumb}}) {
+    SCOPED_TRACE(Name);
+    const auto *Symbol = Stripped->findSymbol(Name);
+    const auto *Original = Full->findSymbol(Name);
+    ASSERT_NE(Symbol, nullptr);
+    ASSERT_NE(Original, nullptr);
+    EXPECT_EQ(Symbol->Addr, Original->Addr);
+    EXPECT_EQ(Stripped->instructionModeAt(Symbol->Addr), Mode);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Symbol->Addr};
+    const auto Result = Pipeline().run(*Stripped, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_EQ(Result.HighFuncs.size(), 1u);
+  }
+}
 
 TEST_F(ELFARM32ModeTest, PreservesThumbModeBeforeNormalizingFunctionAddresses) {
   if (!hasCrossTargetClang())

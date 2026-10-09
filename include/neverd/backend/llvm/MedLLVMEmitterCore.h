@@ -43,6 +43,7 @@
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/MedMutableSource.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -1933,6 +1934,8 @@ private:
   /// consumer deterministic in serial and sharded emission.
   mutable const BinaryImage *ImportStorageSnapshotImage = nullptr;
   mutable std::map<va_t, ImportStorageSlot> EffectiveImportStorageSlots;
+  mutable std::map<va_t, DataSymbolBinding> DataSymbolBindings;
+  llvm::Constant *resolveDataSymbolAddress(const DataSymbolBinding &Binding);
   mutable std::set<va_t> ConflictingImportStorageSlots;
   std::vector<JumpTableStorageRange> ModuleJumpTableStorageRanges;
   std::set<va_t> ModuleSuppressibleJumpTableRelocationSlots;
