@@ -2851,6 +2851,8 @@ bool forwardsToGuardDispatch(const BinaryImage &Img, const LowFunc &F) {
 struct ImportPrototypeArguments {
   std::map<va_t, GPRReadWidths> Reads;
   std::map<va_t, int> StackArgs;
+  /// The bytes of the scalar float each routine returns, where it does.
+  std::map<va_t, uint16_t> FloatReturns;
 };
 
 /// The arguments of the libc imports that \p Funcs and the callees
@@ -2925,6 +2927,16 @@ importPrototypeArguments(const BinaryImage &Img,
                          Arity->FpIsFloat ? sizeof(float) : sizeof(double));
     return Result;
   };
+  // The floating type the routine returns, by the same declarations.
+  auto RoutineFloatReturn = [&](const std::string &Name) -> uint16_t {
+    if (const libc::LibCPrototype *Prototype =
+            libc::libcPrototype(Name, Img.Format))
+      return libc::floatReturnBytes(*Prototype);
+    const auto Arity = importNamesAreCNames(Img.Format)
+                           ? libc::libcArity(Name)
+                           : libc::libcArityForSymbol(Name);
+    return Arity ? libc::floatReturnBytes(*Arity) : 0;
+  };
   ImportPrototypeArguments Result;
   std::set<va_t> Seen;
   auto Classify = [&](va_t Addr) {
@@ -2933,6 +2945,8 @@ importPrototypeArguments(const BinaryImage &Img,
     const std::string Name = importCalleeName(Img, Addr);
     if (Name.empty())
       return;
+    if (const uint16_t Bytes = RoutineFloatReturn(Name))
+      Result.FloatReturns[Addr] = Bytes;
     const std::optional<Arguments> Routine = RoutineArguments(Name);
     if (Routine && !Routine->Floats.empty() &&
         (!VectorArguments ||
@@ -3119,6 +3133,7 @@ void computeCallRegisterEffects(
     for (auto &[Addr, Count] : Prototyped.StackArgs)
       if (!DispatchThunks.count(Addr))
         FixedEntryStackArgs.try_emplace(Addr, Count);
+    Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
   }
   CallRegisterSummaries Summaries =
       solveCallRegisterEffects(Effects, Volatile, Arguments, DispatchThunks,
