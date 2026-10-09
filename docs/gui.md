@@ -103,7 +103,9 @@ is the default desktop:
 
 Every window is a dock: drag tabs to split, stack or float them. Docked windows
 are one hairline apart; drag the line to resize its neighbors, or double-click
-it to share their space evenly. **Windows → Save desktop** remembers an
+it to share their space evenly. A window narrows to about the width of its tab:
+a status line or a row of buttons that no longer fits is cut at the window's
+edge. **Windows → Save desktop** remembers an
 arrangement and **Reset desktop** returns to the default. **Graph overview**
 appears under the function list in graph view, and the pseudocode and IR windows
 open beside the disassembly.

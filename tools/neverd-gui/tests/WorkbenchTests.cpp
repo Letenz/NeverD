@@ -4,6 +4,7 @@
 #include "CodeView.h"
 #include "DisassemblyView.h"
 #include "Docking.h"
+#include "ExtensionsView.h"
 #include "GraphView.h"
 #include "HexView.h"
 #include "ListingView.h"
@@ -34,6 +35,7 @@
 #include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
@@ -61,6 +63,9 @@ namespace {
 constexpr Address Base = 0xffff800012340000ULL;
 constexpr int OpenTimeoutMs = 7000;
 constexpr int NativeOpenTimeoutMs = 30000;
+// The widest a view may insist on being: a dock's tab bar keeps the dock some
+// 130 pixels wide whatever it shows.
+constexpr int NarrowViewWidth = 160;
 
 QString writeFixture(const QTemporaryDir &directory, const QString &name) {
   const auto path = directory.filePath(name);
@@ -1160,6 +1165,37 @@ private slots:
     input.show();
     QVERIFY(QTest::qWaitForWindowExposed(&input));
     QVERIFY2(input.width() >= 420, qPrintable(QString::number(input.width())));
+  }
+
+  void viewsNarrowPastTheirRows() {
+    // A status line or a row of buttons is cut at its view's edge.  Kept
+    // whole, the disassembly's status line held its dock over 500 pixels
+    // wide, and the separators beside that dock would not move.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-import.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    bench.action(ActionId::ViewExtensions)->trigger();
+    auto *code = bench.codeView(QStringLiteral("source"));
+    auto *extensions = bench.window->findChild<ExtensionsView *>();
+    QVERIFY(code && extensions && bench.functions());
+    // Every button shows, as the fold button does for library code.
+    for (auto *button : code->findChildren<QToolButton *>())
+      button->show();
+    const QString wide(400, QLatin1Char('x'));
+    const QList<QWidget *> views{bench.window->disassembly(), code,
+                                 bench.functions(), extensions};
+    for (auto *view : views) {
+      for (auto *label : view->findChildren<QLabel *>())
+        label->setText(wide);
+      QVERIFY2(view->minimumSizeHint().width() <= NarrowViewWidth,
+               view->metaObject()->className());
+    }
   }
 
   void graphStopsWaitingWhenTheFileCloses() {

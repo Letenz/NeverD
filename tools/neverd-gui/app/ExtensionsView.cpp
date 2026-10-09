@@ -1,6 +1,7 @@
 #include "ExtensionsView.h"
 
 #include "Session.h"
+#include "ShrinkableRow.h"
 #include "Theme.h"
 
 #include <QFileDialog>
@@ -28,15 +29,18 @@ ExtensionsView::ExtensionsView(Session &session, QWidget *parent)
   auto *left = new QWidget(splitter);
   auto *leftLayout = new QVBoxLayout(left);
   leftLayout->setContentsMargins(4, 4, 4, 4);
-  auto *buttons = new QHBoxLayout;
-  import_ = new QPushButton(tr("Import Manifest…"), left);
-  run_ = new QPushButton(tr("Run"), left);
-  unload_ = new QPushButton(tr("Unload"), left);
+  auto *buttonRow = new QWidget(left);
+  auto *buttons = new QHBoxLayout(buttonRow);
+  buttons->setContentsMargins(0, 0, 0, 0);
+  import_ = new QPushButton(tr("Import Manifest…"), buttonRow);
+  run_ = new QPushButton(tr("Run"), buttonRow);
+  unload_ = new QPushButton(tr("Unload"), buttonRow);
   buttons->addWidget(import_);
   buttons->addWidget(run_);
   buttons->addWidget(unload_);
   buttons->addStretch(1);
-  leftLayout->addLayout(buttons);
+  makeRowShrinkable(*buttonRow);
+  leftLayout->addWidget(buttonRow);
   list_ = new QListWidget(left);
   list_->setToolTip(
       tr("Import a declarative manifest to add analysis commands and views."));
