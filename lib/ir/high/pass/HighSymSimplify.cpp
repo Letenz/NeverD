@@ -328,7 +328,7 @@ std::optional<size_t> expressionCost(const ExprPtr &Root) {
   };
   llvm::SmallVector<Item, 64> Work{{Root, false}};
   std::unordered_map<const HighExpr *, size_t> Costs;
-  std::unordered_set<const HighExpr *> Active;
+  HighExprSet Active;
   constexpr size_t Limit = std::numeric_limits<size_t>::max() / 2;
   while (!Work.empty()) {
     Item Current = Work.pop_back_val();
@@ -465,7 +465,7 @@ private:
       return;
     ParametersPrepared = true;
     std::vector<ExprPtr> Work{Root};
-    std::unordered_set<const HighExpr *> Seen;
+    HighExprSet Seen;
     std::set<LocalIdentity> Conflicts;
     while (!Work.empty()) {
       auto E = Work.back();
@@ -566,7 +566,7 @@ sym::SymRef Translator::in(const ExprPtr &E) {
     bool ChildrenReady = false;
   };
   llvm::SmallVector<WorkItem, 64> Work{{E, false}};
-  std::unordered_set<const HighExpr *> Active;
+  HighExprSet Active;
 
   while (!Work.empty()) {
     WorkItem Item = std::move(Work.back());
@@ -1055,7 +1055,7 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/,
 bool hasOnlyScalarLiteralInputs(const ExprPtr &Root,
                                 const AvailableDefinitions &Definitions) {
   std::vector<ExprPtr> Work{Root};
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   size_t Budget = 4096;
   while (!Work.empty()) {
     ExprPtr Current = Work.back();
@@ -1170,7 +1170,7 @@ void simplifyRegions(ExprPtr &Root, const AvailableDefinitions &Definitions) {
     bool ChildrenReady = false;
   };
   llvm::SmallVector<Item, 64> Work{{Root, false}};
-  std::unordered_set<const HighExpr *> Active;
+  HighExprSet Active;
   std::unordered_map<const HighExpr *, bool> Safe;
   std::unordered_map<const HighExpr *, uint32_t> Widths;
   std::vector<ExprPtr> Order;
@@ -1208,7 +1208,7 @@ void simplifyRegions(ExprPtr &Root, const AvailableDefinitions &Definitions) {
   auto WidthOf = [&](const ExprPtr &E) {
     return E ? Widths.at(E.get()) : uint32_t(0);
   };
-  std::unordered_set<const HighExpr *> Regions{Root.get()}, Numeric;
+  HighExprSet Regions{Root.get()}, Numeric;
   for (const auto &E : Order) {
     const bool Translatable = canTranslateOperands(E, WidthOf);
     if (Translatable)
@@ -1251,7 +1251,7 @@ definitionInputs(const ExprPtr &Value, const AvailableDefinitions &Definitions,
     return std::nullopt;
   std::set<LocalIdentity> Inputs;
   std::vector<ExprPtr> Work{Value};
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   while (!Work.empty()) {
     auto E = Work.back();
     Work.pop_back();
@@ -1279,7 +1279,7 @@ definitionInputs(const ExprPtr &Value, const AvailableDefinitions &Definitions,
 void simplifyStatementRegions(std::vector<HighStmt> &Stmts) {
   std::set<LocalIdentity> Escaped;
   std::unordered_set<va_t> Entries;
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   walkStmts(Stmts, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Goto)
       Entries.insert(S.GotoTarget);
@@ -1298,7 +1298,7 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts) {
           continue;
         if (E->Kind == ExprKind::Addr) {
           std::vector<ExprPtr> AddressWork{E};
-          std::unordered_set<const HighExpr *> AddressSeen;
+          HighExprSet AddressSeen;
           while (!AddressWork.empty()) {
             auto A = AddressWork.back();
             AddressWork.pop_back();

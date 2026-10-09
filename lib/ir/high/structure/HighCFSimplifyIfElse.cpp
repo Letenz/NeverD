@@ -1057,7 +1057,7 @@ static bool sameMedVar(const MedVar &A, const MedVar &B) {
 // condition (composeWorkAssigns) shares them heavily.  Both walks below visit
 // each shared node once; a tree walk of that DAG is exponential.
 static bool exprUsesVarShared(const HighExpr *E, const MedVar &V) {
-  std::set<const HighExpr *> Seen;
+  HighExprSet Seen;
   std::vector<const HighExpr *> Work;
   if (E)
     Work.push_back(E);
@@ -3951,7 +3951,7 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
     // would leave that jump without a target.
     bool Entered = false;
     for (size_t K = static_cast<size_t>(I) + 1; K <= J && !Entered; ++K)
-      walkStmts(std::vector<HighStmt>{Body[K]}, [&](const HighStmt &N) {
+      walkStatementTree(Body[K], [&](const HighStmt &N) {
         Entered |= N.Addr && N.Addr != InvalidVA && IsTarget(N.Addr);
       });
     if (Entered)
