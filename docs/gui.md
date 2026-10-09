@@ -80,13 +80,14 @@ worker never links the test engine.
 ## Layout
 
 A start without a file shows the quick start over the default desktop, as IDA
-does: **New** (N) disassembles a new file, **Go** (G) works on your own and
-**Previous** (P) loads the selected recent file. Each recent file shows its
-format (ELF, PE, Mach-O, a NeverD database or a plain binary file), its name and
-folder, and when it was last opened; Delete or its context menu forgets it, and
-a file dropped on the dialog opens. **Display at startup** decides whether the
-next start shows it again; **File → Quick start** shows it any time. Behind it
-is the default desktop:
+does. Its side pane holds the ways to start: **New** (N) disassembles a new
+file, **Go** (G) works on your own and **Previous** (P) loads the selected
+recent file; the one Enter takes has its tile outlined. Each recent file shows
+its format (ELF, PE, Mach-O, a NeverD database or a plain binary file), its name
+and folder, and when it was last opened; Delete or its context menu forgets it.
+A file dragged over the dialog shows that a drop opens it. **Display at
+startup** decides whether the next start shows it again; **File → Quick start**
+shows it any time. Behind it is the default desktop:
 
 - the navigation band across the top: the whole address space colored by
   library functions, regular functions, instructions, data, unexplored bytes

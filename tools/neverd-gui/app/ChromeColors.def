@@ -80,13 +80,25 @@ NEVERD_CHROME_COLOR(ButtonPrimary, "#007ACC", "#0E639C")
 NEVERD_CHROME_COLOR(ButtonPrimaryHover, "#0062A3", "#1177BB")
 NEVERD_CHROME_COLOR(ButtonPrimaryText, "#FFFFFF", "#FFFFFF")
 // Quick start: the badge of a recent file by its format (RecentFormats.def),
-// in the accents of the icon set, and the text on it.
-NEVERD_CHROME_COLOR(RecentBadgeElf, "#D9902F", "#B8781F")
-NEVERD_CHROME_COLOR(RecentBadgePe, "#2F7FD9", "#2B6CB8")
-NEVERD_CHROME_COLOR(RecentBadgeMachO, "#7A55C8", "#6A48B0")
-NEVERD_CHROME_COLOR(RecentBadgeDatabase, "#2E9E8F", "#26857A")
-NEVERD_CHROME_COLOR(RecentBadgeOther, "#5A6B85", "#4D5B72")
-NEVERD_CHROME_COLOR(RecentBadgeMissing, "#B4B4B4", "#4A4A4A")
-NEVERD_CHROME_COLOR(RecentBadgeText, "#FFFFFF", "#FFFFFF")
+// in the accents of the icon set.  The badge is lettered in this color over a
+// tint of it.
+NEVERD_CHROME_COLOR(RecentBadgeElf, "#A8620F", "#E3A452")
+NEVERD_CHROME_COLOR(RecentBadgePe, "#1F66C1", "#6AA7EE")
+NEVERD_CHROME_COLOR(RecentBadgeMachO, "#6A44B8", "#B095EC")
+NEVERD_CHROME_COLOR(RecentBadgeDatabase, "#1E7F72", "#55C4B3")
+NEVERD_CHROME_COLOR(RecentBadgeOther, "#4D5B72", "#97A3B8")
+NEVERD_CHROME_COLOR(RecentBadgeMissing, "#8E8E8E", "#7A7A7A")
+// Quick start: the side pane with the ways to start, their titles, the tiles
+// and glyphs beside them, their keys, and the recent file the list selected.
+NEVERD_CHROME_COLOR(QuickStartSide, "#F3F3F3", "#252526")
+NEVERD_CHROME_COLOR(QuickStartTitle, "#1F1F1F", "#E8E8E8")
+NEVERD_CHROME_COLOR(QuickStartTile, "#E4E4E4", "#303033")
+NEVERD_CHROME_COLOR(QuickStartGlyph, "#0066B8", "#4DAAFC")
+NEVERD_CHROME_COLOR(QuickStartPressed, "#DCDCDC", "#37373A")
+NEVERD_CHROME_COLOR(QuickStartKey, "#EAEAEA", "#343435")
+NEVERD_CHROME_COLOR(QuickStartKeyBorder, "#D8D8D8", "#404042")
+NEVERD_CHROME_COLOR(QuickStartKeyText, "#555555", "#CCCCCC")
+NEVERD_CHROME_COLOR(QuickStartSelection, "#DCE8F7", "#04395E")
+NEVERD_CHROME_COLOR(QuickStartSelectionText, "#1F1F1F", "#FFFFFF")
 
 #undef NEVERD_CHROME_COLOR
