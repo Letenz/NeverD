@@ -254,6 +254,155 @@ static int xattr_bytes(const u64 *words, const unsigned char *expected,
   }
   return 0;
 }
+static int hard_link_status(u64 number, u64 object, unsigned links, u64 device,
+                            u64 inode) {
+  u64 words[20];
+  words[0] = words[19] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned char *out = (unsigned char *)(words + 1);
+  if (xattr_result(number, object, (u64)out, 0, 0, 0, 0, 0, 0) ||
+      words[0] != 0xa5a5a5a5a5a5a5a5UL || words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      little_integer(out, 4) != device || little_integer(out + 8, 8) != inode ||
+      little_integer(out + 6, 2) != links)
+    return 214;
+  return 0;
+}
+/* Stable namespace/object observations only. APFS vnode-name caching is
+ * deliberately queried only by the virtual unsupported modes below. */
+static int hard_links(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 200;
+  parent[last ? last : 1] = 0;
+  u64 file = call(5, (u64)path, 2, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 201;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary || xattr_result(13, root, 0, 0, 0, 0, 0, 0, 0))
+    return 202;
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || xattr_result(199, copy, 37, 0, 0, 0, 0, 37, 0))
+    return 203;
+  u64 stat[18], symstat[18];
+  if (xattr_result(339, file, (u64)stat, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(340, (u64) "alias", (u64)symstat, 0, 0, 0, 0, 0, 0))
+    return 204;
+  const unsigned char *s = (const unsigned char *)stat;
+  const unsigned char *t = (const unsigned char *)symstat;
+  const u64 device = little_integer(s, 4), inode = little_integer(s + 8, 8);
+  const u64 symdevice = little_integer(t, 4),
+            syminode = little_integer(t + 8, 8);
+  if (hard_link_status(339, file, 1, device, inode) ||
+      xattr_result(471, 99, -1UL, 99, -1UL, 0x20, 0, 22, 1) ||
+      xattr_result(9, (u64) "missing", -1UL, 0, 0, 0, 0, 2, 1) ||
+      xattr_result(471, 99, (u64) "data", 99, -1UL, 0, 0, 9, 1) ||
+      xattr_result(471, 99, -1UL, 99, -1UL, 0, 0, 14, 1) ||
+      xattr_result(9, (u64) ".", -1UL, 0, 0, 0, 0, 1, 1) ||
+      xattr_result(9, (u64) "data", -1UL, 0, 0, 0, 0, 14, 1) ||
+      xattr_result(9, (u64) "data", (u64) "data", 0, 0, 0, 0, 17, 1))
+    return 205;
+  if (xattr_result(9, (u64) "alias", (u64) "followed", 0, 0, 0, 0, 0, 0) ||
+      xattr_result(471, root | 0x1234567800000000UL, (u64) "alias", root,
+                   (u64) "followed2", 0x1234567800000040UL, 0, 0, 0) ||
+      xattr_result(471, root, (u64) "alias", root, (u64) "symbol-name", 0, 0, 0,
+                   0) ||
+      hard_link_status(339, file, 3, device, inode) ||
+      hard_link_status(340, (u64) "symbol-name", 2, symdevice, syminode) ||
+      xattr_result(9, (u64) "dangling", (u64) "dangling-name", 0, 0, 0, 0, 2,
+                   1) ||
+      xattr_result(471, root, (u64) "dangling", root, (u64) "dangling-name", 0,
+                   0, 0, 0))
+    return 206;
+  unsigned char target[16], out[16];
+  if (xattr_result(58, (u64) "symbol-name", (u64)target, 16, 0, 0, 0, 4, 0) ||
+      target[0] != 'd' || target[1] != 'a' || target[2] != 't' ||
+      target[3] != 'a')
+    return 207;
+  const char *attribute = "user.neverd.shared";
+  const unsigned char value = 'V', symvalue = 42, changed = 'Q';
+  if (xattr_result(236, (u64) "symbol-name", (u64)attribute, (u64)&symvalue, 1,
+                   0, 1, 0, 0) ||
+      xattr_result(234, (u64) "alias", (u64)attribute, (u64)out, 1, 0, 1, 1,
+                   0) ||
+      out[0] != symvalue)
+    return 208;
+  /* Byte mutations invalidate complete ordinary-attribute observations in
+   * the virtual contract. Exercise independent attribute sharing on another
+   * declared object, without assuming provider behavior after a byte write. */
+  u64 attributes = call(5, (u64) "attributes", 0, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      xattr_result(9, (u64) "attributes", (u64) "attribute-name", 0, 0, 0, 0, 0,
+                   0))
+    return 208;
+  u64 attribute_alias = call(5, (u64) "attribute-name", 0, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      xattr_result(237, attributes, (u64)attribute, (u64)&value, 1, 0, 0, 0,
+                   0) ||
+      xattr_result(235, attribute_alias, (u64)attribute, (u64)out, 1, 0, 0, 1,
+                   0) ||
+      out[0] != value ||
+      xattr_result(10, (u64) "attributes", 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(10, (u64) "attribute-name", 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(235, attribute_alias, (u64)attribute, (u64)out, 1, 0, 0, 1,
+                   0) ||
+      out[0] != value)
+    return 208;
+  u64 alias = call(5, (u64) "followed", 2, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      xattr_result(154, alias, (u64)&changed, 1, 0, 0, 0, 1, 0) ||
+      xattr_result(153, file, (u64)out, 10, 0, 0, 0, 10, 0) || out[0] != 'Q' ||
+      out[1] != '1' || out[9] != '9' ||
+      xattr_result(199, copy, 0, 1, 0, 0, 0, 37, 0))
+    return 209;
+  if (xattr_result(128, (u64) "followed", (u64) "moved", 0, 0, 0, 0, 0, 0) ||
+      xattr_result(128, (u64) "data", (u64) "moved", 0, 0, 0, 0, 0, 0) ||
+      hard_link_status(339, alias, 3, device, inode) ||
+      xattr_result(10, (u64) "data", 0, 0, 0, 0, 0, 0, 0) ||
+      hard_link_status(339, copy, 2, device, inode) ||
+      xattr_result(10, (u64) "moved", 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(10, (u64) "followed2", 0, 0, 0, 0, 0, 0, 0) ||
+      hard_link_status(339, alias, 0, device, inode))
+    return 210;
+  u64 fresh = call(5, (u64) "data", 0x202, 0600, 0, 0, 0, &error);
+  if (error || secondary ||
+      xattr_result(339, fresh, (u64)stat, 0, 0, 0, 0, 0, 0) ||
+      little_integer((const unsigned char *)stat + 8, 8) == inode ||
+      xattr_result(153, alias, (u64)out, 10, 0, 0, 0, 10, 0) ||
+      out[0] != changed || out[9] != '9')
+    return 211;
+  if (mode == 1) {
+    if (xattr_result(4, 1, (u64)out, 10, 0, 0, 0, 10, 0))
+      return 212;
+  } else if (xattr_result(4, 1, (u64) "H", 1, 0, 0, 0, 1, 0)) {
+    return 212;
+  }
+  if (mode == 2) {
+    call(92, file, 50, (u64)out, 0, 0, 0, &error);
+    return 213;
+  }
+  if (mode == 3) {
+    u64 request[3] = {5UL | (1UL << 32), 0, 0}, names[32];
+    call(228, file, (u64)request, (u64)names, sizeof(names), 0, 0, &error);
+    return 213;
+  }
+  if (xattr_result(6, fresh, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, attribute_alias, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, attributes, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, alias, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, copy, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, file, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, root, 0, 0, 0, 0, 0, 0, 0))
+    return 215;
+  return 37;
+}
+
 static int xattr_mutations(const char *path, unsigned mode) {
   unsigned error;
   char parent[1024];
@@ -6592,6 +6741,17 @@ int main(int argc, char **argv, char **envp, char **apple) {
                                  : equal(argv[1], "attribute-names-unsupported")
                                      ? 2
                                      : 0);
+  if (equal(argv[1], "hard-links") || equal(argv[1], "hard-links-values") ||
+      equal(argv[1], "hard-links-name-unsupported") ||
+      equal(argv[1], "hard-links-attributes-unsupported"))
+    return argc < 3
+               ? 79
+               : hard_links(
+                     argv[2],
+                     equal(argv[1], "hard-links-values")                   ? 1
+                     : equal(argv[1], "hard-links-name-unsupported")       ? 2
+                     : equal(argv[1], "hard-links-attributes-unsupported") ? 3
+                                                                           : 0);
   if (equal(argv[1], "xattr-mutations") ||
       equal(argv[1], "xattr-mutations-values") ||
       equal(argv[1], "xattr-mutations-unsupported"))

@@ -1614,4 +1614,29 @@ DarwinFiles besitzt gemeinsamen Attributimport, Namen/stat-Gültigkeit und Daten
 
 ## Eigentum an Darwin-Namensidentitäten
 
-DarwinFiles indiziert FileEntry und LinkEntry getrennt von Contents und LinkNode. Jeder Eintrag besitzt seine NameIdentity mit Pfad, Elternverzeichnis und dynamischen Namenskosten; die Identität besitzt kein Datei- oder Linkobjekt. Beschreibungen wählen eine Identität und halten das Objekt für Bytes, Metadaten, Attribute und Mapping-Leases. Teilbaumumbenennungen wählen genaue Identitäten und Eltern. Der bestehende Vertrag mit einem Namen hält die Identität nach unlink und Namenswiederverwendung und bewahrt Freigabe sowie feste Eingabereservierungen. Verzeichnisobjekte bleiben ihre eigenen Identitäten. Diese Trennung aktiviert keine Hardlink-Dienste.
+DarwinFiles indiziert FileEntry und LinkEntry getrennt von Contents und LinkNode. Jeder Eintrag besitzt seine NameIdentity mit Pfad, Elternverzeichnis und dynamischen Namenskosten; die Identität besitzt kein Datei- oder Linkobjekt. Beschreibungen wählen eine Identität und halten das Objekt für Bytes, Metadaten, Attribute und Mapping-Leases. Teilbaumumbenennungen wählen genaue Identitäten und Eltern. Der bestehende Vertrag mit einem Namen hält die Identität nach unlink und Namenswiederverwendung und bewahrt Freigabe sowie feste Eingabereservierungen. Verzeichnisobjekte bleiben ihre eigenen Identitäten. Diese Trennung trägt den folgenden begrenzten Hardlink-Vertrag.
+
+## Begrenzte Darwin-Hardlinks
+
+link folgt dem letzten symbolischen Ziel; linkat mit flags=0 wählt das Linkobjekt, AT_SYMLINK_FOLLOW das Ziel. Nur low32 0/0x40 sind zulässig, andere niedrige Bits liefern EINVAL vor dem Import. Quellensuche und Verzeichnis-EPERM gehen dem Zielimport voraus; vorhandene Ziele liefern EEXIST. Das Ziel benötigt Änderungsrecht und dieselbe ausdrücklich festgelegte Mount-Domäne. Anfängliche Identitätsaliasse sowie bekannte Geräte-, Modus- und Flag-Konflikte bleiben unzulässig.
+
+Ein Alias kostet nur Eintrag und Pfad/NUL, keinen neuen inode. Bytes, Attributrechte, Metadatengültigkeit und Mapping-Leases gehören dem gemeinsamen Objekt. Explizite Richtlinien aktualisieren Linkzahl und ctime; ohne sie bleibt vollständiges stat unbekannt. Attributänderungen invalidieren stat, Inhaltsänderungen Attributbeobachtungen. Gehaltene Beschreibungen und letzte Mappings behalten Namenskosten; Ersetzung verrechnet nur sofort freigebbare Kosten. Teilbäume wählen genaue Identitäten und Eltern; externe Aliasnamen bleiben stehen, relative symbolische Ziele verwenden den gewählten Eintragselternteil.
+
+F_GETPATH/ATTR_CMN_NAME bleiben nach mehreren Namen auch bei einem oder keinem Namen unzulässig; kein allgemeines APFS-Cachemodell wird behauptet. bulk NAME stammt vom tatsächlichen Eintrag; gewöhnliches rename/SWAP desselben Objekts behält beide Namen. EXCL-Großschreibung, O_SYMLINK, Intel HVF, physisches iOS, ACL, kohärente Mappings/EOF-Signale, dyld, Mach IPC, Threads und vollständige Frameworks bleiben Lücken. Frühere Ausschlüsse werden nur innerhalb dieses Vertrags erweitert.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

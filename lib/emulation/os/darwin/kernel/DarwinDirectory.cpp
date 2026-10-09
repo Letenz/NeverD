@@ -294,7 +294,8 @@ DarwinFiles::bulkAttributes(uint32_t FD, uint64_t Input, uint64_t Address,
       Child.Directory = Directories.at(Path);
       Child.Metadata = Child.Directory->Metadata;
     }
-    auto Built = attributeRecord(Child, Mask);
+    auto Built =
+        attributeRecord(Child, Mask, llvm::StringRef(Path).rsplit('/').second);
     if (auto *Reason = std::get_if<const char *>(&Built))
       return Unsupported(*Reason);
     auto Record = std::move(std::get<std::vector<uint8_t>>(Built));

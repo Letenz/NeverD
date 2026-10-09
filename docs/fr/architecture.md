@@ -1620,4 +1620,29 @@ DarwinFiles possède import commun, validité nom/stat et encodage des enregistr
 
 ## Propriété des identités de noms Darwin
 
-DarwinFiles indexe FileEntry et LinkEntry séparément de Contents et LinkNode. Chaque entrée possède son NameIdentity : chemin, parent et coût dynamique du nom. Cette identité ne possède aucun objet fichier ou lien. Les descriptions sélectionnent une identité et retiennent l’objet pour les octets, métadonnées, attributs et baux de mappage. Le renommage des sous-arbres sélectionne les identités exactes et leurs parents. Le contrat existant à nom unique conserve l’identité après suppression et réutilisation du nom, avec les mêmes règles de récupération et réservations initiales fixes. Les répertoires gardent leur propre identité. Cette séparation n’active pas les services de liens physiques.
+DarwinFiles indexe FileEntry et LinkEntry séparément de Contents et LinkNode. Chaque entrée possède son NameIdentity : chemin, parent et coût dynamique du nom. Cette identité ne possède aucun objet fichier ou lien. Les descriptions sélectionnent une identité et retiennent l’objet pour les octets, métadonnées, attributs et baux de mappage. Le renommage des sous-arbres sélectionne les identités exactes et leurs parents. Le contrat existant à nom unique conserve l’identité après suppression et réutilisation du nom, avec les mêmes règles de récupération et réservations initiales fixes. Les répertoires gardent leur propre identité. Cette séparation porte le contrat borné de liens physiques ci-dessous.
+
+## Liens physiques Darwin bornés
+
+link suit la cible symbolique finale ; linkat flags=0 choisit le lien lui-même, AT_SYMLINK_FOLLOW sa cible. Seuls low32 0/0x40 sont admis ; les autres bits bas donnent EINVAL avant import. Recherche source et EPERM des répertoires précèdent la destination ; une destination existante donne EEXIST. La destination exige le droit de mutation et le même domaine de montage explicitement établi. Alias initiaux et conflits connus de périphérique, mode ou flags restent exclus.
+
+Un alias ne consomme que l’entrée et le chemin/NUL, sans nouvel inode. Octets, droits d’attributs, validité des métadonnées et baux de mapping appartiennent à l’objet partagé. Les politiques explicites actualisent compte de liens et ctime ; sans elles, stat complet reste inconnu. Les attributs invalident stat, le contenu invalide les observations d’attributs. Descriptions et derniers mappings conservent les coûts retirés ; seul un coût immédiatement libérable est crédité. Les sous-arbres utilisent identité et parent exacts ; les alias externes restent en place et les cibles relatives utilisent le parent sélectionné.
+
+Après plusieurs noms, F_GETPATH/ATTR_CMN_NAME restent non pris en charge même avec un ou zéro nom ; aucun modèle général de cache APFS. bulk NAME utilise l’entrée réelle, rename/SWAP du même objet conserve les deux noms. Casse EXCL, O_SYMLINK, Intel HVF, iOS physique, ACL, mappings cohérents/signaux EOF, dyld, Mach IPC, threads et frameworks complets restent des lacunes. Seul ce contrat étend les exclusions précédentes.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

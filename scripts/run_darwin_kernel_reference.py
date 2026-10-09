@@ -85,7 +85,7 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
     results = []
     for mode, status, output in cases:
         case_input = input_file
-        if mode in ("common-attributes", "extended-attributes", "attribute-names", "bulk-attributes", "xattr-mutations"):
+        if mode in ("common-attributes", "extended-attributes", "attribute-names", "bulk-attributes", "xattr-mutations", "hard-links"):
             catalogue = initial_root / mode
             (catalogue / "empty").mkdir(parents=True)
             for name, target in (("alias", "data"), ("dangling", "missing"),
@@ -140,6 +140,8 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
                                  ("missing-link", "../work/new")):
                 (catalogue / "static" / name).symlink_to(target)
             case_input = catalogue / "work" / "data"
+        if mode == "hard-links":
+            (case_input.parent / "attributes").write_bytes(b"x")
         case_input.write_bytes(b"0123456789")
         if mode == "extended-attributes":
             try:

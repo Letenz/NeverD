@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: aa19cf02d09c66c62cfde94ee71c93b210f3d92165151c58778e1e91ec0df607 -->
+<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
 
 [← ドキュメント一覧](README.md)
 
@@ -924,3 +924,28 @@ setxattr(236)、fsetxattr(237)、removexattr(238)、fremovexattr(239) は初期�
 xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported は独自のネイティブ/ゲスト対照、独立した仮想バイト定数、既存出力を保つ許可不足の停止を検査します。ARM64 の非公開準備では726回の raw/SDK 呼び出し、完全な544バイトのガード付き観測、読み取り可能なページ全体を確認しました。native5s/compile120s/drain1s/reap1s、guest/Python5,000,000us/quantum1024、public10s は不変です。ネイティブ Intel、実機 iOS、dyld、Mach IPC、スレッド/シグナル、Objective-C/Swift ランタイム、完全なフレームワークは未検証または未完成です。
 
 主要 ABI 資料：[XNU システムコール宣言](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master)、[xattr 定義](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h)。コードとプローブは独自作成で、Apple の実装はコピーしていません。
+
+## 範囲を限定した Darwin ハードリンク
+
+link は末尾のシンボリックリンクを追跡する。linkat の flags=0 はリンク自体、AT_SYMLINK_FOLLOW は対象を選ぶ。low32 の 0/0x40 のみを受け入れ、他の下位ビットは入力前に EINVAL。ソース検索とディレクトリ EPERM は宛先入力に先行し、既存の宛先は EEXIST。宛先の変更権限と明示された同一マウント領域が必要。初期識別の別名や既知のデバイス・モード・フラグの矛盾は未対応。
+
+別名はエントリとパス/NUL の使用量のみを増やし、新しい inode を使わない。バイト、属性権限、メタデータ有効性、マッピングのリースは共有オブジェクトが保持する。明示ポリシーがリンク数と ctime を更新し、欠落時の完全な stat は未知。属性変更は stat を、内容変更は属性観測を無効化する。削除名と最終マッピングの使用量は保持され、置換は直ちに解放できる分だけを差し引く。部分木は正確な識別と親で移動し、外部の別名は動かず、相対ターゲットは選択エントリの親から解決する。
+
+複数名を持った履歴のあるオブジェクトの F_GETPATH/ATTR_CMN_NAME は、残りが一つやゼロでも未対応。APFS キャッシュを一般化しない。bulk NAME は実エントリを使い、同一オブジェクトの通常 rename/SWAP は両名を保持する。EXCL の大小文字、O_SYMLINK、Intel HVF、実機 iOS、ACL、マッピング整合性/EOF シグナル、dyld、Mach IPC、スレッド、完全なフレームワークは別の課題。この契約の範囲内だけで以前の除外を拡張する。
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

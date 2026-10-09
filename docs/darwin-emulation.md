@@ -1685,3 +1685,28 @@ The mutation ABI uses low32 FD/options/position and full64 size. Early privilege
 xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported share original native/guest controls, independent literal virtual bytes and a missing-grant stop preserving prior output. Private ARM64 preparation checked726 raw/SDK calls, full544-byte guarded observations and complete readable pages. Native5s/compile120s/drain1s/reap1s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged. Native Intel, physical iOS, dyld, Mach IPC, threads/signals, Objective-C/Swift runtimes and full frameworks remain unverified or incomplete.
 
 Primary ABI references: [XNU syscall declarations](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code and probes; Apple implementation is not copied.
+
+## Bounded Darwin hard links
+
+Raw link follows the terminal symbolic target; linkat with flags 0 links the symbolic object and AT_SYMLINK_FOLLOW follows its target. Only low32 flags 0/0x40 are admitted; other low32 bits give EINVAL before import. Source import/lookup and directory EPERM precede destination import. An existing destination gives EEXIST. Destination mutation authority and the same explicitly established mount domain are required; source-parent mutability is not required. Known conflicting devices, flags, special modes and initial identity aliases remain unsupported. Input metadata never coalesces separate initial objects.
+
+A successful alias consumes one namespace entry and its path/NUL charge, with no new inode or duplicate object bytes/attributes. Bytes, independent attribute/content grants, metadata validity and mapping leases remain object-owned. Link counts and ctime use the existing explicit metadata policies; omitted policy leaves complete post-mutation stat unknown. Attribute mutation invalidates complete stat; content mutation invalidates ordinary attribute observations. Removed names retain their cost while held descriptions own them, and the final name/object cost survives mapping-only retention. Rename replacement credits only immediately releasable ownership. Subtree moves/SWAP select exact identities and actual parents; tree-external aliases remain in place and relative symbolic targets use each selected entry parent.
+
+After an object has acquired multiple names, F_GETPATH and vnode ATTR_CMN_NAME remain unsupported even after one or zero names remain. Private native ARM64 controls show lookup-sensitive APFS name observations, with different path/name cache behavior; no general cache model is claimed. Bulk directory NAME uses the selected live entry, independently of vnode-name inference. Same-object ordinary rename/SWAP preserve both entries, while case-insensitive EXCL remains outside the bounded contract. O_SYMLINK descriptors, native Intel HVF, physical iOS, permissions/ACLs, coherent file mappings/EOF signals, dyld, Mach IPC, threads and complete frameworks remain separate gaps. This section extends earlier hard-link exclusions only within this contract.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

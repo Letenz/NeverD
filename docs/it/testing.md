@@ -1713,4 +1713,29 @@ La fixture MainActor verifica il flusso completo di metadati fissi e tabella sta
 
 ## Attributi di directory in gruppi limitati
 
-bulk-attributes verifica gruppi interi, insieme nomi/tipi, guardie dei byte inutilizzati, low32 FD, parole bitmap, errori nativi, dup, open indipendenti, EOF e rewind zero. Modalità letterale/sconosciuta solo virtuali. I modelli coprono stat completo, invalidazione, nomi NFD/255 byte, alias input/output, errori di trasporto/budget, spostamenti/SWAP/rimozione/riuso e diritti espliciti. Inventario richiesto:63 casi per piattaforma,189 ARM64 e126 Intel. Solo ARM64 HVF corrispondente è verificato localmente. native5s, guest/Python5,000,000us/quantum1024 e public10s invariati.
+bulk-attributes verifica gruppi interi, insieme nomi/tipi, guardie dei byte inutilizzati, low32 FD, parole bitmap, errori nativi, dup, open indipendenti, EOF e rewind zero. Modalità letterale/sconosciuta solo virtuali. I modelli coprono stat completo, invalidazione, nomi NFD/255 byte, alias input/output, errori di trasporto/budget, spostamenti/SWAP/rimozione/riuso e diritti espliciti. Inventario richiesto:65 casi per piattaforma,195 ARM64 e130 Intel. Solo ARM64 HVF corrispondente è verificato localmente. native5s, guest/Python5,000,000us/quantum1024 e public10s invariati.
+
+## Collegamenti fisici Darwin limitati
+
+link segue il target simbolico finale; linkat flags=0 seleziona il collegamento stesso, AT_SYMLINK_FOLLOW il target. Sono ammessi solo low32 0/0x40; gli altri bit bassi danno EINVAL prima dell’importazione. Ricerca sorgente ed EPERM per directory precedono la destinazione; una destinazione esistente dà EEXIST. Occorrono autorizzazione della destinazione e lo stesso dominio di mount esplicito. Alias iniziali e conflitti noti di dispositivo, modalità o flag restano esclusi.
+
+Un alias consuma voce e percorso/NUL, senza nuovo inode. Byte, autorizzazioni degli attributi, validità dei metadati e lease dei mapping appartengono all’oggetto condiviso. Le politiche esplicite aggiornano link e ctime; senza di esse stat completo è ignoto. Modificare attributi invalida stat; modificare contenuto invalida le osservazioni degli attributi. Descrizioni e ultimi mapping mantengono i costi dei nomi rimossi; la sostituzione accredita solo costi immediatamente liberabili. I sottoalberi selezionano identità e genitori esatti; alias esterni restano fermi e target relativi usano il genitore selezionato.
+
+Dopo più nomi F_GETPATH/ATTR_CMN_NAME restano non supportati anche con uno o zero nomi; nessun modello generale della cache APFS. bulk NAME usa la voce reale; rename/SWAP dello stesso oggetto conserva entrambi i nomi. Casing EXCL, O_SYMLINK, Intel HVF, iOS fisico, ACL, mapping coerenti/segnali EOF, dyld, Mach IPC, thread e framework completi restano lacune. Le precedenti esclusioni sono estese solo entro questo contratto.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

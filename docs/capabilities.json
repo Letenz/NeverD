@@ -13135,7 +13135,8 @@
         "Raw getxattr234/fgetxattr235/listxattr240/flistxattr241 read explicit complete ordered ordinary extended_attributes observations, with absent versus known-empty distinction, strict UTF8/name/count/16MiB admission, independent object lifetime/stat validity and content-mutation invalidation. BSD Wide returns, low32 carriers, NULL/path/FD/legacy-size distinctions and complete-name ERANGE prefixes are bounded by original native observations. Unknown/special/compression/permission semantics, ungranted mutations and negative full64 nonNULL declared-empty lists remain unsupported; automatic host provenance never supplies virtual defaults.",
         "ATTR_CMN_NAME adds an 8-byte relative reference and a NUL-terminated four-byte-aligned legal UTF8 leaf1..255 from the actual uniquely named non-root catalogue object. NAME/type are independent of stat validity, retain FD/dup/CWD through moves/SWAP/removal/reuse, and preserve exact partial UTF8 prefixes/full required lengths without cursor or budget effects. Root/mount labels, malformed names, hard-link/case-fold aliases, normalization and full-path attributes remain unknown. ARM64 private controls:601 raw queries/453 complete guarded SDK comparisons/384 prefixes; native Intel and physical iOS remain unverified.",
         "getattrlistbulk461 requires explicit enumeration_policy.bulk_attributes=true on an initial directory object. NAME/type/RETURNED and options0/8 use the common attribute codec and selected stat validity. Live virtual unsigned-byte child order excludes dot entries and uses local ordinals. Dup shares progress; nonzero completed EOF stays cached after request validation, offset0 empty refreshes, zero seek resets iteration. Authorization survives held moves/SWAP/removal/reuse but never inherits to newly created directories. Complete4/8-byte groups, strict boolean JSON, no unused-tail access and pre-copy stop for partial required output are bounded; missing policy, NAME-only/ERROR/snapshot/ACL/host-order/unknown masks/options/mixed iteration/arbitrary nonzero seeks fail explicitly. Native ARM64 preparation728 guarded raw/SDK comparisons; original native5s, guest/Python5,000,000us/quantum1024, public10s unchanged. Intel native and physical iOS remain unverified; no full OS/framework claim.",
-        "Explicit ordinary setxattr236/fsetxattr237/removexattr238/fremovexattr239 require independent initial-object mutable_extended_attributes grants and complete initial observations. Virtual ordered values, initial reservations and shared runtime growth follow retained objects across dup/move/removal/mapping leases. Scratch, capacity and transport failures do not publish; partially readable input stops explicitly. Complete stat invalidates independently of directory enumeration. Unknown permissions, special attributes and provider-wide behavior remain unsupported; original thin native/guest/public/Python controls do not establish Intel HVF, physical iOS or full frameworks."
+        "Explicit ordinary setxattr236/fsetxattr237/removexattr238/fremovexattr239 require independent initial-object mutable_extended_attributes grants and complete initial observations. Virtual ordered values, initial reservations and shared runtime growth follow retained objects across dup/move/removal/mapping leases. Scratch, capacity and transport failures do not publish; partially readable input stops explicitly. Complete stat invalidates independently of directory enumeration. Unknown permissions, special attributes and provider-wide behavior remain unsupported; original thin native/guest/public/Python controls do not establish Intel HVF, physical iOS or full frameworks.",
+        "Raw link9/linkat471 admit bounded runtime aliases in mutable destination parents within an explicitly established mount domain. Source-first import, directory EPERM, existing-target EEXIST, low32 FDs/flags0 or AT_SYMLINK_FOLLOW0x40 and final-symbol selection use the shared resolver. Names own entry/path/NUL cost while object bytes, content/attribute grants, metadata validity and leases remain shared. Initial aliases are not coalesced; conflicting identities/devices/flags/modes fail explicitly. Successful links consume no inode. Existing explicit policies project link counts and ctime; attribute/content invalidation remains independent. Removal and replacement retain description/mapping-owned costs; subtree movement selects exact identities/parents and keeps outside aliases fixed. Multiple-name history permanently refuses vnode F_GETPATH/ATTR_CMN_NAME, including one/zero survivors, while bulk NAME uses the actual entry. O_SYMLINK, APFS cache semantics, permissions/ACLs, coherent file mappings/EOF signals, native Intel HVF, physical iOS and complete OS/framework compatibility remain unsupported or unverified. Original ARM64 native controls and thin guest/C/CLI/Python workloads retain all deadlines."
       ],
       "tests": [
         {
@@ -15165,6 +15166,204 @@
           "target": "NeverDLinuxProcessTests",
           "source": "unittests/emulation/ProcessReportTests.cpp",
           "filter": "ProcessReport.DarwinXattrMutationGrantsAreStrictAndObjectSpecific",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkSharesBytesInodeAndLastNameLifetime/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkSharesAttributeGrantWithoutContentGrant/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkAttributeMutationInvalidatesEveryAliasStat/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkErrorOrderUsesSourceBeforeDestination/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkFailedOperationsPreserveSingleNameObservations/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkNameAmbiguitySurvivesOneAndZeroNames/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkDetachedAliasBudgetWaitsForItsDescription/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkFinalAliasBudgetWaitsForItsMappingLease/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkDoesNotConsumeOrRestoreCreationInodes/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkSymbolSelectionAndAttributesRemainObjectOwned/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkRelativeSymbolsUseEachSelectedEntryParent/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkNeedsDestinationAuthorityOnlyInDeclaredDomain/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkSameObjectRenameAndSwapKeepBothNames/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkDirectorySwapMovesEachEntryOnce/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkBulkNamesComeFromEntriesWithoutVnodeGuessing/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkReplacementCannotCreditLastMappedAlias/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.HardLinkEntrySlotWaitsForDetachedDescription/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.HardLinksShareObjectsAndRetainExplicitNameBoundary/*",
           "platforms": [
             "darwin",
             "linux",

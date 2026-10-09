@@ -414,6 +414,10 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"extended-attributes-values",
                     emulation::darwin_test::ExtendedAttributesHex},
           std::pair{"extended-attributes-unsupported", "58"},
+          std::pair{"hard-links", "48"},
+          std::pair{"hard-links-values", emulation::darwin_test::HardLinksHex},
+          std::pair{"hard-links-name-unsupported", "48"},
+          std::pair{"hard-links-attributes-unsupported", "48"},
           std::pair{"xattr-mutations", "56"},
           std::pair{"xattr-mutations-values",
                     emulation::darwin_test::XattrMutationsHex},
@@ -537,9 +541,13 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   const bool UnknownXattrs = ModeName == "extended-attributes-unsupported";
   const bool UnknownNames = ModeName == "attribute-names-unsupported";
   const bool UnknownBulk = ModeName == "bulk-attributes-unsupported";
+  const bool UnknownHardLinkName =
+      ModeName == "hard-links-name-unsupported" ||
+      ModeName == "hard-links-attributes-unsupported";
   const bool Incomplete = ProtectedLink || UnknownPathConf ||
                           UnknownAttributes || UnknownXattrs || UnknownNames ||
-                          UnknownBulk || UnknownXattrMutation;
+                          UnknownBulk || UnknownXattrMutation ||
+                          UnknownHardLinkName;
   const bool X64 = llvm::StringRef(File).ends_with("x86_64");
   SCOPED_TRACE(File);
   Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
@@ -956,6 +964,13 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::json::parse(emulation::darwin_test::CommonAttributesJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (ModeName.starts_with("hard-links")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::HardLinksJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
   if (ModeName.starts_with("xattr-mutations")) {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     (*Input.getAsObject())[field::Quantum] = 1024;
@@ -1006,6 +1021,23 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
   }
   EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
+  if (UnknownHardLinkName) {
+    EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
+              "Darwin multiple-name vnode observations are unsupported");
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    ASSERT_FALSE(Services->empty());
+    const auto *Last = Services->back().getAsObject();
+    ASSERT_NE(Last, nullptr);
+    EXPECT_EQ(Last->getString(field::Number),
+              ModeName == "hard-links-name-unsupported"
+                  ? (X64 ? "200005c" : "5c")
+                  : (X64 ? "20000e4" : "e4"));
+    EXPECT_EQ(Last->get(field::Error), nullptr);
+    ASSERT_NE(Last->get(field::Result), nullptr);
+    EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+    EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+  }
   if (UnknownAttributes || UnknownNames) {
     EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
               UnknownNames ? "Darwin object name is outside the bounded UTF-8 "

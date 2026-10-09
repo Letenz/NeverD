@@ -3690,4 +3690,29 @@ DarwinFiles owns retained attribute state, initial-object mutation grants, share
 
 ## Darwin namespace identity ownership
 
-DarwinFiles indexes FileEntry and LinkEntry records separately from Contents and LinkNode. Each entry owns its NameIdentity, including path, parent and dynamic name charge; that identity owns no file or link object. Descriptions select an identity and retain the object for bytes, metadata, attributes and mapping leases. Subtree rename selects exact identities and parents. The existing single-name contract retains its identity through unlink and name reuse, preserving reclamation and fixed input reservations. Directory objects remain their own identities. This ownership split does not enable hard-link services.
+DarwinFiles indexes FileEntry and LinkEntry records separately from Contents and LinkNode. Each entry owns its NameIdentity, including path, parent and dynamic name charge; that identity owns no file or link object. Descriptions select an identity and retain the object for bytes, metadata, attributes and mapping leases. Subtree rename selects exact identities and parents. The existing single-name contract retains its identity through unlink and name reuse, preserving reclamation and fixed input reservations. Directory objects remain their own identities. The ownership split supports the bounded hard-link contract below.
+
+## Bounded Darwin hard links
+
+Raw link follows the terminal symbolic target; linkat with flags 0 links the symbolic object and AT_SYMLINK_FOLLOW follows its target. Only low32 flags 0/0x40 are admitted; other low32 bits give EINVAL before import. Source import/lookup and directory EPERM precede destination import. An existing destination gives EEXIST. Destination mutation authority and the same explicitly established mount domain are required; source-parent mutability is not required. Known conflicting devices, flags, special modes and initial identity aliases remain unsupported. Input metadata never coalesces separate initial objects.
+
+A successful alias consumes one namespace entry and its path/NUL charge, with no new inode or duplicate object bytes/attributes. Bytes, independent attribute/content grants, metadata validity and mapping leases remain object-owned. Link counts and ctime use the existing explicit metadata policies; omitted policy leaves complete post-mutation stat unknown. Attribute mutation invalidates complete stat; content mutation invalidates ordinary attribute observations. Removed names retain their cost while held descriptions own them, and the final name/object cost survives mapping-only retention. Rename replacement credits only immediately releasable ownership. Subtree moves/SWAP select exact identities and actual parents; tree-external aliases remain in place and relative symbolic targets use each selected entry parent.
+
+After an object has acquired multiple names, F_GETPATH and vnode ATTR_CMN_NAME remain unsupported even after one or zero names remain. Private native ARM64 controls show lookup-sensitive APFS name observations, with different path/name cache behavior; no general cache model is claimed. Bulk directory NAME uses the selected live entry, independently of vnode-name inference. Same-object ordinary rename/SWAP preserve both entries, while case-insensitive EXCL remains outside the bounded contract. O_SYMLINK descriptors, native Intel HVF, physical iOS, permissions/ACLs, coherent file mappings/EOF signals, dyld, Mach IPC, threads and complete frameworks remain separate gaps. This section extends earlier hard-link exclusions only within this contract.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

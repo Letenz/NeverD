@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: aa19cf02d09c66c62cfde94ee71c93b210f3d92165151c58778e1e91ec0df607 -->
+<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
 
 [← 문서 목록](README.md)
 
@@ -924,3 +924,28 @@ setxattr(236), fsetxattr(237), removexattr(238), fremovexattr(239)는 초기 객
 xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported는 직접 작성한 네이티브/게스트 대조, 독립적인 가상 바이트 리터럴, 기존 출력을 유지하는 허가 부족 중단을 검사합니다. ARM64 비공개 준비는726회 raw/SDK 호출, 전체544바이트 보호 영역 관측 및 읽을 수 있는 전체 페이지를 확인했습니다. native5s/compile120s/drain1s/reap1s, guest/Python5,000,000us/quantum1024, public10s는 그대로입니다. 네이티브 Intel, 실제 iOS 기기, dyld, Mach IPC, 스레드/신호, Objective-C/Swift 런타임 및 전체 프레임워크는 아직 검증되지 않았거나 미완성입니다.
 
 주요 ABI 자료: [XNU 시스템 호출 선언](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [xattr 정의](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). 코드와 프로브는 직접 작성했으며 Apple 구현을 복사하지 않았습니다.
+
+## 범위가 제한된 Darwin 하드 링크
+
+link는 마지막 심볼릭 링크 대상을 따라가며 linkat flags=0은 링크 객체, AT_SYMLINK_FOLLOW는 대상을 선택한다. low32 0/0x40만 허용하고 나머지 하위 비트는 입력 전에 EINVAL이다. 소스 조회와 디렉터리 EPERM이 대상 입력보다 먼저이며 기존 대상은 EEXIST다. 대상 수정 권한과 명시된 같은 마운트 영역이 필요하다. 초기 식별 별칭과 알려진 장치/모드/플래그 충돌은 미지원이다.
+
+별칭은 항목 및 경로/NUL 비용만 추가하고 새 inode를 소비하지 않는다. 바이트, 속성 권한, 메타데이터 유효성과 매핑 임대는 공유 객체가 소유한다. 명시 정책이 링크 수와 ctime을 갱신하며 정책이 없으면 전체 stat는 미지다. 속성 변경은 stat를, 내용 변경은 속성 관찰을 무효화한다. 설명 및 마지막 매핑이 삭제 이름의 비용을 유지하며 교체는 즉시 해제 가능한 비용만 공제한다. 하위 트리는 정확한 식별과 부모로 이동하고 외부 별칭은 유지한다. 상대 심볼릭 대상은 선택 항목의 부모를 사용한다.
+
+여러 이름을 가졌던 객체의 F_GETPATH/ATTR_CMN_NAME은 한 개 또는 0개가 남아도 미지원이다. APFS 캐시 모델을 일반화하지 않는다. bulk NAME은 실제 항목을 사용하며 같은 객체의 일반 rename/SWAP는 두 이름을 유지한다. EXCL 대소문자, O_SYMLINK, Intel HVF, 실제 iOS, ACL, 매핑 일관성/EOF 신호, dyld, Mach IPC, 스레드 및 전체 프레임워크는 별도 과제다. 이 계약 범위에서만 이전 제외를 확장한다.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

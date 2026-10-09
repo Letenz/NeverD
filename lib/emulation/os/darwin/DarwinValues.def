@@ -65,6 +65,7 @@ NEVERD_DARWIN_VALUE(FileRestrictedFlags, 0x60006)
 NEVERD_DARWIN_VALUE(AtCurrentDirectory, 0xfffffffe)
 NEVERD_DARWIN_VALUE(AtEffectiveAccess, 0x10)
 NEVERD_DARWIN_VALUE(AtNoFollow, 0x20)
+NEVERD_DARWIN_VALUE(AtFollow, 0x40)
 NEVERD_DARWIN_VALUE(AccessPermissionMask, 0x003ffe07)
 NEVERD_DARWIN_VALUE(AtRealDevice, 0x200)
 NEVERD_DARWIN_VALUE(AtFDOnly, 0x400)
@@ -146,6 +147,8 @@ NEVERD_DARWIN_TEXT(DyldPath, "/usr/lib/dyld")
 NEVERD_DARWIN_TEXT(ExecutablePathPrefix, "executable_path=")
 #endif
 #ifdef NEVERD_DARWIN_SERVICE
+NEVERD_DARWIN_SERVICE(Link, 9, Int)
+NEVERD_DARWIN_SERVICE(LinkAt, 471, Int)
 NEVERD_DARWIN_SERVICE(Exit, 1, None)
 NEVERD_DARWIN_SERVICE(Read, 3, Wide)
 NEVERD_DARWIN_SERVICE(Write, 4, Wide)
@@ -436,6 +439,12 @@ NEVERD_DARWIN_DIAGNOSTIC(
     "Darwin namespace metadata flags or special permissions are unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(
     NamespaceAlias, "Darwin mutable namespace identity aliases are unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(
+    HardLinkSource, "Darwin hard-link source identity is not uniquely declared")
+NEVERD_DARWIN_DIAGNOSTIC(HardLinkLimit,
+                         "Darwin hard-link namespace limit exceeded")
+NEVERD_DARWIN_DIAGNOSTIC(
+    HardLinkName, "Darwin multiple-name vnode observations are unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(UnlinkFlags, "unsupported Darwin unlinkat flags")
 NEVERD_DARWIN_DIAGNOSTIC(RenameFlags, "unsupported Darwin rename flags")
 NEVERD_DARWIN_DIAGNOSTIC(

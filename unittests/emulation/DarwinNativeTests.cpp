@@ -1108,7 +1108,8 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
         llvm::StringRef(Test.Mode) == "extended-attributes" ||
         llvm::StringRef(Test.Mode) == "attribute-names" ||
         llvm::StringRef(Test.Mode) == "bulk-attributes" ||
-        llvm::StringRef(Test.Mode) == "xattr-mutations") {
+        llvm::StringRef(Test.Mode) == "xattr-mutations" ||
+        llvm::StringRef(Test.Mode) == "hard-links") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
       for (const auto &[Name, Target] :
@@ -1179,6 +1180,13 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
     {
       std::ofstream File(CaseInput, std::ios::binary | std::ios::trunc);
       File << "0123456789";
+      ASSERT_TRUE(File.good());
+    }
+    if (llvm::StringRef(Test.Mode) == "hard-links") {
+      std::ofstream File(std::filesystem::path(CaseInput).parent_path() /
+                             "attributes",
+                         std::ios::binary);
+      File.put('x');
       ASSERT_TRUE(File.good());
     }
     if (llvm::StringRef(Test.Mode) == "extended-attributes") {

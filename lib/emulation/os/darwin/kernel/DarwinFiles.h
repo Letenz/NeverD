@@ -11,6 +11,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <set>
 #include <utility>
 #include <variant>
 
@@ -137,7 +138,15 @@ private:
     /// symbolic names retain their independent fixed input reservation.
     bool ChargedEntry = false;
   };
-  struct Contents {
+  struct NamedObject {
+    /// Lifetime bookkeeping only. Multiple-name vnode observations require a
+    /// separately proved contract; this internal selection is not that proof.
+    std::shared_ptr<NameIdentity> Name = std::make_shared<NameIdentity>();
+    const std::string *InitialPath = nullptr;
+    uint32_t LinkedNames = 1;
+    bool HadMultipleNames = false;
+  };
+  struct Contents : NamedObject {
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> Modified;
     const DarwinFileMetadata *InitialMetadata = nullptr;
@@ -146,9 +155,6 @@ private:
     const DarwinFileMutationPolicy *Policy = nullptr;
     std::optional<llvm::BitVector> Allocated;
     bool Writable = false;
-    /// Sole identity for the existing one-name contract. This retains the
-    /// parent after unlink/name reuse and follows ancestor moves.
-    std::shared_ptr<NameIdentity> Name = std::make_shared<NameIdentity>();
     bool MetadataInvalidated = false;
     std::shared_ptr<const unsigned> Lease = std::make_shared<const unsigned>(0);
     llvm::ArrayRef<uint8_t> bytes() const {
@@ -158,21 +164,20 @@ private:
       return CurrentMetadata ? &*CurrentMetadata : InitialMetadata;
     }
   };
-  struct LinkNode {
+  struct LinkNode : NamedObject {
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> CreatedTarget;
     const DarwinFileMetadata *Metadata = nullptr;
     AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;
     const DarwinFileTime *MutationTime = nullptr;
-    std::shared_ptr<NameIdentity> Name = std::make_shared<NameIdentity>();
     bool Created = false;
     bool MetadataInvalidated = false;
     llvm::ArrayRef<uint8_t> bytes() const {
       return CreatedTarget ? llvm::ArrayRef<uint8_t>(*CreatedTarget) : Initial;
     }
-    uint64_t dynamicCharge() const {
-      return Name->PathCharge + (CreatedTarget ? CreatedTarget->size() : 0) +
+    uint64_t dynamicObjectCharge() const {
+      return (CreatedTarget ? CreatedTarget->size() : 0) +
              ExtendedAttributes.DynamicCharge;
     }
   };
@@ -181,6 +186,9 @@ private:
     std::shared_ptr<NameIdentity> Name;
     explicit NamedEntry(std::shared_ptr<ObjectType> Node)
         : Object(std::move(Node)), Name(Object->Name) {}
+    NamedEntry(std::shared_ptr<ObjectType> Node,
+               std::shared_ptr<NameIdentity> Identity)
+        : Object(std::move(Node)), Name(std::move(Identity)) {}
   };
   using FileEntry = NamedEntry<Contents>;
   using LinkEntry = NamedEntry<LinkNode>;
@@ -207,6 +215,9 @@ private:
     }
     llvm::StringRef path() const {
       return Name ? Name->Path : Directory ? Directory->Path : Path;
+    }
+    bool ambiguousName() const {
+      return File ? File->HadMultipleNames : Link && Link->HadMultipleNames;
     }
   };
   struct Descriptor {
@@ -236,6 +247,7 @@ private:
   std::map<std::string, std::shared_ptr<DirectoryNode>> Directories;
   std::vector<std::shared_ptr<DirectoryNode>> UnlinkedDirectories;
   bool NamespaceReady = false;
+  std::set<std::string> InitialAliases;
   uint64_t NextCreatedInode = 0;
   uint16_t CurrentUmask = 0;
   std::optional<uint64_t> StorageUsed;
@@ -283,7 +295,9 @@ private:
   using AttributeInput = std::variant<AttributeRequest, uint32_t, const char *>;
   using AttributeRecord = std::variant<std::vector<uint8_t>, const char *>;
   static bool supportedAttributeMask(uint32_t Mask);
-  AttributeRecord attributeRecord(const Description &File, uint32_t Mask) const;
+  AttributeRecord attributeRecord(
+      const Description &File, uint32_t Mask,
+      std::optional<llvm::StringRef> EntryName = std::nullopt) const;
   llvm::Expected<std::optional<ServiceResult>>
   bulkAttributes(uint32_t FD, uint64_t Input, uint64_t Address, uint64_t Size,
                  uint64_t Options, ProcessResult &Result);
@@ -337,6 +351,11 @@ private:
                                                       ProcessResult &Result,
                                                       bool NoExpansion = false);
   llvm::Expected<std::optional<ServiceResult>>
+  hardLink(uint64_t SourcePath, uint32_t SourceDirectory, uint64_t TargetPath,
+           uint32_t TargetDirectory, bool FollowFinal, ProcessResult &Result);
+  void reserveDetachedName(const Description &File);
+  void detachName(Description &File);
+  llvm::Expected<std::optional<ServiceResult>>
   makeDirectory(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
                 ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
@@ -351,7 +370,7 @@ private:
                  const std::shared_ptr<DirectoryNode> &Parent,
                  const std::shared_ptr<DirectoryNode> &TargetParent, bool Swap,
                  ProcessResult &Result);
-  void updateNamespaceMetadata(Contents &Node, bool Removed);
+  void updateNamespaceMetadata(Contents &Node);
   void updateNamespaceMetadata(LinkNode &Node);
   void updateDirectoryMetadata(DirectoryNode &Node, bool ContentsChanged);
   DarwinFileMetadata createdMetadata(const DirectoryIdentity &Parent,

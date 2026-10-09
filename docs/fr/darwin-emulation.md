@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: aa19cf02d09c66c62cfde94ee71c93b210f3d92165151c58778e1e91ec0df607 -->
+<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
 
 [← Index de la documentation](README.md)
 
@@ -922,3 +922,28 @@ L’ABI utilise low32 FD/options/position et full64 size. Les vérifications pr�
 xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported vérifient des contrôles natifs/invités originaux, des octets virtuels littéraux indépendants et un arrêt faute d’autorisation conservant la sortie précédente. La préparation privée ARM64 a vérifié726 appels raw/SDK, des observations protégées complètes de544 octets et les pages lisibles complètes. native5s/compile120s/drain1s/reap1s, guest/Python5,000,000us/quantum1024 et public10s sont inchangés. Intel natif, iOS physique, dyld, Mach IPC, threads/signaux, environnements Objective-C/Swift et frameworks complets restent non vérifiés ou incomplets.
 
 Références ABI primaires : [déclarations des appels système XNU](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [définitions xattr](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Code et sondes originaux ; aucune copie de l’implémentation Apple.
+
+## Liens physiques Darwin bornés
+
+link suit la cible symbolique finale ; linkat flags=0 choisit le lien lui-même, AT_SYMLINK_FOLLOW sa cible. Seuls low32 0/0x40 sont admis ; les autres bits bas donnent EINVAL avant import. Recherche source et EPERM des répertoires précèdent la destination ; une destination existante donne EEXIST. La destination exige le droit de mutation et le même domaine de montage explicitement établi. Alias initiaux et conflits connus de périphérique, mode ou flags restent exclus.
+
+Un alias ne consomme que l’entrée et le chemin/NUL, sans nouvel inode. Octets, droits d’attributs, validité des métadonnées et baux de mapping appartiennent à l’objet partagé. Les politiques explicites actualisent compte de liens et ctime ; sans elles, stat complet reste inconnu. Les attributs invalident stat, le contenu invalide les observations d’attributs. Descriptions et derniers mappings conservent les coûts retirés ; seul un coût immédiatement libérable est crédité. Les sous-arbres utilisent identité et parent exacts ; les alias externes restent en place et les cibles relatives utilisent le parent sélectionné.
+
+Après plusieurs noms, F_GETPATH/ATTR_CMN_NAME restent non pris en charge même avec un ou zéro nom ; aucun modèle général de cache APFS. bulk NAME utilise l’entrée réelle, rename/SWAP du même objet conserve les deux noms. Casse EXCL, O_SYMLINK, Intel HVF, iOS physique, ACL, mappings cohérents/signaux EOF, dyld, Mach IPC, threads et frameworks complets restent des lacunes. Seul ce contrat étend les exclusions précédentes.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

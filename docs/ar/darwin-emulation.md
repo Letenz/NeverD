@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: aa19cf02d09c66c62cfde94ee71c93b210f3d92165151c58778e1e91ec0df607 -->
+<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
 
 [← فهرس الوثائق](README.md)
 
@@ -922,3 +922,28 @@ Sources: [XNU bulk ABI](https://raw.githubusercontent.com/apple-oss-distribution
 تختبر xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported ضوابط أصلية للتنفيذ الأصلي/الضيف، وبايتات افتراضية حرفية مستقلة، وتوقفًا بسبب غياب الإذن يحافظ على الناتج السابق. تحققت تهيئة ARM64 الخاصة من726 استدعاء raw/SDK، وملاحظات محمية كاملة بحجم544 بايت، وصفحات كاملة قابلة للقراءة. تبقى native5s/compile120s/drain1s/reap1s وguest/Python5,000,000us/quantum1024 وpublic10s دون تغيير. لا يزال Intel الأصلي وiOS الفعلي وdyld وMach IPC والخيوط/الإشارات وبيئات Objective-C/Swift وأطر العمل الكاملة غير متحقق منها أو غير مكتملة.
 
 مراجع ABI الأولية: [تصريحات استدعاءات XNU](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master)، [تعريفات xattr](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). الشيفرة والمجسّات أصلية؛ لم تُنسخ تطبيقات Apple.
+
+## روابط Darwin الصلبة المحدودة
+
+يتبع link الهدف الرمزي الأخير؛ يختار linkat مع flags=0 كائن الرابط نفسه، ومع AT_SYMLINK_FOLLOW الهدف. يقبل low32 0/0x40 فقط، وتعيد البتات الدنيا الأخرى EINVAL قبل الاستيراد. يسبق بحث المصدر وEPERM للدليل استيراد الوجهة، وتعيد الوجهة الموجودة EEXIST. تلزم صلاحية تعديل الوجهة ونطاق تركيب واحد مثبت صراحة. تبقى الأسماء البديلة الأولية وتعارضات الجهاز أو النمط أو الأعلام غير مدعومة.
+
+يستهلك الاسم البديل مدخلاً ومساراً/NUL فقط دون inode جديد. يمتلك الكائن المشترك البيانات وصلاحيات السمات وصلاحية البيانات الوصفية وعقود الخرائط. تحدّث السياسات الصريحة عدد الروابط وctime؛ دونها يبقى stat الكامل مجهولاً. تعديل السمات يبطل stat وتعديل المحتوى يبطل مشاهدات السمات. تحتفظ الأوصاف وآخر الخرائط بتكلفة الأسماء المحذوفة، ولا تخصم الاستبدالات إلا تكلفة قابلة للتحرير فوراً. تختار الأشجار الفرعية الهوية والأب الدقيقين؛ تبقى الأسماء الخارجية ثابتة وتستخدم الأهداف النسبية الأب المختار.
+
+تبقى F_GETPATH/ATTR_CMN_NAME غير مدعومة بعد تعدد الأسماء حتى عند بقاء اسم واحد أو صفر؛ لا ندّعي نموذجاً عاماً لذاكرة APFS. يستخدم bulk NAME المدخل الحقيقي ويحفظ rename/SWAP للكائن نفسه الاسمين. تبقى EXCL وحالة الأحرف وO_SYMLINK وIntel HVF وiOS الفعلي وACL واتساق الخرائط/إشارات EOF وdyld وMach IPC والخيوط والأطر الكاملة فجوات مستقلة. يوسّع هذا العقد الاستثناءات السابقة داخل حدوده فقط.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

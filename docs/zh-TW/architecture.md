@@ -1409,4 +1409,29 @@ DarwinFiles 負責共通屬性匯入、名稱/stat 有效性與紀錄編碼；Da
 
 ## Darwin 名稱身分所有權
 
-DarwinFiles 將 FileEntry、LinkEntry 與 Contents、LinkNode 分開索引。項目擁有 NameIdentity，保存路徑、父目錄和動態名稱費用；身分不擁有檔案或連結物件。描述物件選擇身分，並保留物件以存取位元組、中繼資料、屬性和映射租約。子樹重新命名依確切身分和父目錄選擇項目。現有單名稱契約在刪除和名稱重用後保留身分，維持回收與固定輸入預留規則。目錄物件仍是自身身分。這層所有權分離尚未啟用硬連結服務。
+DarwinFiles 將 FileEntry、LinkEntry 與 Contents、LinkNode 分開索引。項目擁有 NameIdentity，保存路徑、父目錄和動態名稱費用；身分不擁有檔案或連結物件。描述物件選擇身分，並保留物件以存取位元組、中繼資料、屬性和映射租約。子樹重新命名依確切身分和父目錄選擇項目。現有單名稱契約在刪除和名稱重用後保留身分，維持回收與固定輸入預留規則。目錄物件仍是自身身分。上述所有權分離支援下文的有界硬連結契約。
+
+## 有界 Darwin 硬連結
+
+原始 link 跟隨最終符號連結目標；linkat 的 flags=0 連結符號連結物件本身，AT_SYMLINK_FOLLOW 跟隨目標。僅接受 low32 的 0/0x40，其餘低位在匯入前回傳 EINVAL。來源查找與目錄 EPERM 先於目標匯入；已存在目標回傳 EEXIST。目標父目錄需修改授權且雙方須屬明確建立的同一掛載域。初始身分別名及已知裝置/模式/旗標衝突仍不支援。
+
+別名只消耗名稱項目及路徑/NUL 費用，不消耗新 inode；位元組、屬性授權及映射租約由共享物件持有。既有明確策略更新連結數與 ctime；缺少策略時完整 stat 未知。屬性修改使完整 stat 失效，內容修改使屬性觀察失效。描述物件及最後映射保留刪除名稱的費用；替換只抵扣可立即釋放的費用。子樹依確切身分及父目錄移動，樹外別名留在原位；相對符號目標使用所選項目的父目錄。
+
+曾有多個名稱的物件，即使剩一個或零個名稱，F_GETPATH/ATTR_CMN_NAME 仍不支援；APFS 快取尚無通用模型。批量 NAME 來自實際項目，相同物件的普通重新命名/SWAP 保留雙方。EXCL 大小寫、O_SYMLINK、原生 Intel HVF、實體 iOS、ACL、映射一致性/EOF 訊號、dyld、Mach IPC、執行緒與完整框架仍是缺口。本節僅在上述契約內擴展前文限制。
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

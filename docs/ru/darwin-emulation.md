@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: aa19cf02d09c66c62cfde94ee71c93b210f3d92165151c58778e1e91ec0df607 -->
+<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
 
 [← Оглавление документации](README.md)
 
@@ -922,3 +922,28 @@ ABI использует low32 FD/options/position и full64 size. Ранние 
 xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported проверяют оригинальные native/guest-контроли, независимые литералы виртуальных байтов и остановку без разрешения с сохранением предыдущего вывода. Приватная подготовка ARM64 проверила726 вызовов raw/SDK, полные защищённые наблюдения544 байт и целые читаемые страницы. native5s/compile120s/drain1s/reap1s, guest/Python5,000,000us/quantum1024 и public10s не изменены. Нативный Intel, физический iOS, dyld, Mach IPC, потоки/сигналы, среды Objective-C/Swift и полные фреймворки остаются непроверенными или незавершёнными.
 
 Первичные ссылки ABI: [объявления системных вызовов XNU](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [определения xattr](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Код и пробы оригинальные; реализация Apple не скопирована.
+
+## Ограниченные жёсткие ссылки Darwin
+
+link следует конечной символьной ссылке; linkat flags=0 выбирает сам объект ссылки, AT_SYMLINK_FOLLOW — цель. Допустимы только low32 0/0x40; другие младшие биты дают EINVAL до импорта. Поиск источника и EPERM каталога предшествуют импорту назначения; существующее имя даёт EEXIST. Нужны право изменения назначения и один явно установленный домен монтирования. Начальные алиасы идентичности и известные конфликты устройства, режима или флагов не поддерживаются.
+
+Алиас расходует запись и путь/NUL, без нового inode. Байты, права атрибутов, действительность метаданных и аренды отображений принадлежат общему объекту. Явные политики обновляют число ссылок и ctime; без них полный stat неизвестен. Изменение атрибутов аннулирует stat, содержимого — наблюдения атрибутов. Дескрипторы и последние отображения удерживают стоимость удалённых имён; замена учитывает только немедленно освобождаемые затраты. Поддеревья выбирают точную идентичность и родителя; внешние алиасы не движутся, относительная цель использует выбранного родителя.
+
+После нескольких имён F_GETPATH/ATTR_CMN_NAME не поддерживаются даже при одном или нуле имён; общая модель кеша APFS не заявлена. bulk NAME использует реальную запись, rename/SWAP одного объекта сохраняет оба имени. EXCL и регистр, O_SYMLINK, Intel HVF, физическое iOS, ACL, согласованные отображения/сигналы EOF, dyld, Mach IPC, потоки и полные фреймворки остаются пробелами. Прежние исключения расширены только в рамках этого контракта.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

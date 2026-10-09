@@ -540,6 +540,10 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("extended-attributes", b"X"),
                                            ("extended-attributes-values", bytes.fromhex("00ff410080420a757365722e6e65766572642e6265746100757365722e6e65766572642e616c70686100757365722e6e65766572642e656d70747900")),
                                            ("extended-attributes-unsupported", b"X"),
+                                           ("hard-links", b"H"),
+                                           ("hard-links-values", bytes.fromhex("51313233343536373839")),
+                                           ("hard-links-name-unsupported", b"H"),
+                                           ("hard-links-attributes-unsupported", b"H"),
                                            ("xattr-mutations", b"V"),
                                            ("xattr-mutations-values", bytes.fromhex("00ff410080420a757365722e6e65766572642e6265746100")),
                                            ("xattr-mutations-unsupported", b"V"),
@@ -1270,6 +1274,182 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                    {"path": "/cycle", "target_hex": "6379636c65", "mutable": True}],
                                 "working_directory": "/"}
                             file_options = json.dumps(query_options)
+                        unknown_hard_link_name = mode in ("hard-links-name-unsupported", "hard-links-attributes-unsupported")
+                        if mode.startswith("hard-links"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = json.loads(r'''
+{
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "30313233343536373839",
+      "writable": true,
+      "metadata": {
+        "device": -123,
+        "inode": "18364758544493064720",
+        "mode": 33188,
+        "link_count": 1,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 10,
+        "block_size": 4096,
+        "blocks": 8,
+        "flags": 0,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      },
+      "mutation_policy": {
+        "allocation_unit": 4096,
+        "mutation_time": {
+          "seconds": -7,
+          "nanoseconds": 123456789
+        }
+      },
+      "extended_attributes": [],
+      "mutable_extended_attributes": true
+    },
+    {
+      "path": "/attributes",
+      "bytes_hex": "78",
+      "extended_attributes": [],
+      "mutable_extended_attributes": true
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "mutable": true,
+      "metadata": {
+        "device": -123,
+        "inode": 41,
+        "mode": 16877,
+        "link_count": 1,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      }
+    },
+    {
+      "path": "/empty"
+    }
+  ],
+  "symbolic_links": [
+    {
+      "path": "/alias",
+      "target_hex": "64617461",
+      "mutable": true,
+      "metadata": {
+        "device": -123,
+        "inode": 57,
+        "mode": 41471,
+        "link_count": 1,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 4,
+        "block_size": 4096,
+        "blocks": 8,
+        "flags": 0,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      },
+      "mutation_policy": {
+        "mutation_time": {
+          "seconds": -13,
+          "nanoseconds": 456
+        }
+      },
+      "extended_attributes": [],
+      "mutable_extended_attributes": true
+    },
+    {
+      "path": "/dangling",
+      "target_hex": "6d697373696e67",
+      "mutable": true
+    },
+    {
+      "path": "/cycle",
+      "target_hex": "6379636c65",
+      "mutable": true
+    }
+  ],
+  "creation_policy": {
+    "first_inode": "18364758544493064721",
+    "block_size": 8192,
+    "generation": 2309737967,
+    "creation_time": {
+      "seconds": -19,
+      "nanoseconds": 987654321
+    },
+    "mutation_policy": {
+      "allocation_unit": 4096,
+      "mutation_time": {
+        "seconds": -7,
+        "nanoseconds": 123456789
+      }
+    },
+    "namespace_policy": {
+      "symbolic_link_allocation_unit": 512,
+      "directory_entry_size": 32,
+      "directory_blocks": 7
+    }
+  },
+  "umask": 23,
+  "working_directory": "/"
+}
+''')
+                            file_options = json.dumps(query_options)
                         unknown_xattr_mutation = mode == "xattr-mutations-unsupported"
                         if mode.startswith("xattr-mutations"):
                             query_options = json.loads(file_options)
@@ -1358,7 +1538,7 @@ class ProcessIntegrationTests(unittest.TestCase):
 }
 ''')
                             file_options = json.dumps(query_options)
-                        incomplete = protected_link or unknown_pathconf or unknown_attributes or unknown_xattrs or unknown_names or unknown_bulk or unknown_xattr_mutation
+                        incomplete = protected_link or unknown_pathconf or unknown_attributes or unknown_xattrs or unknown_names or unknown_bulk or unknown_xattr_mutation or unknown_hard_link_name
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"],
                                          "unsupported_service" if incomplete else "exited",
@@ -1366,6 +1546,13 @@ class ProcessIntegrationTests(unittest.TestCase):
                         self.assertEqual(result["exit_status"], None if incomplete else 37, mode)
                         self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
                         self.assertEqual(result["stderr_hex"], "")
+                        if unknown_hard_link_name:
+                            self.assertEqual(result["diagnostic"], "Darwin multiple-name vnode observations are unsupported")
+                            last = result["services"][-1]
+                            number = "5c" if mode == "hard-links-name-unsupported" else "e4"
+                            self.assertEqual(last["number"], "20000" + number if architecture == "x86_64" else number)
+                            self.assertIsNone(last["result"])
+                            self.assertNotIn("error", last)
                         if unknown_bulk:
                             self.assertEqual(result["diagnostic"],
                                              "Darwin selected file attributes are not modeled")

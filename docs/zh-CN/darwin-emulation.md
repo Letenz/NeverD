@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: aa19cf02d09c66c62cfde94ee71c93b210f3d92165151c58778e1e91ec0df607 -->
+<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
 
 [← 文档索引](README.md)
 
@@ -1028,3 +1028,28 @@ setxattr(236)、fsetxattr(237)、removexattr(238) 和 fremovexattr(239) 使用�
 xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported 使用原创原生/客体对照、独立虚拟字节字面值，以及保留已有输出的缺少授权停止用例。ARM64 私有准备验证了726次 raw/SDK 调用、完整544字节保护区观察及完整可读页。native5s/compile120s/drain1s/reap1s、guest/Python5,000,000us/quantum1024、public10s 均不变。原生 Intel、iOS 真机、dyld、Mach IPC、线程/信号、Objective-C/Swift 运行时及完整框架仍未验证或未完成。
 
 主要 ABI 参考：[XNU 系统调用声明](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master)、[xattr 定义](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h)。实现与探针均为原创，未复制 Apple 实现。
+
+## 有界 Darwin 硬链接
+
+原始 link 跟随最终符号链接目标；linkat 的 flags=0 链接符号链接对象本身，AT_SYMLINK_FOLLOW 跟随目标。仅接受 low32 的 0/0x40，其余低位在导入前返回 EINVAL。源路径导入、查找和目录 EPERM 先于目标导入；已存在目标返回 EEXIST。目标实际父目录需要修改授权，且双方必须属于明确建立的同一挂载域；源父目录不要求可修改。已知设备冲突、标志、特殊模式和初始身份别名仍不支持，输入元数据不会合并独立的初始对象。
+
+新增别名只消耗一个名称条目及路径/NUL 费用，不消耗新 inode，也不重复计费对象字节或属性。内容与属性授权、元数据有效性和映射租约属于共享对象。链接数与 ctime 使用现有显式元数据策略；缺少策略时，修改后的完整 stat 保持未知。修改扩展属性使完整 stat 失效，修改内容使普通属性观察失效。删除名称后，描述对象保留名称费用，最后一个名称及对象费用也由仅存的映射租约保留；替换只能抵扣可立即释放的费用。子树移动/SWAP 按确切身份及实际父目录选择条目，树外别名不移动，相对符号链接目标从所选条目的父目录解析。
+
+对象一旦拥有过多个名称，即使只剩一个或零个名称，F_GETPATH 与 vnode ATTR_CMN_NAME 仍明确不支持。ARM64 原生控制显示 APFS 名称观察依赖查找历史，路径与名称缓存行为也不同，尚不能声明通用缓存模型。目录批量 NAME 直接来自实际条目。相同对象的普通重命名/SWAP 保留双方条目，大小写不敏感 EXCL 仍超出当前契约。O_SYMLINK 描述符、原生 Intel HVF、实体 iOS、权限/ACL、映射一致性及 EOF 信号、dyld、Mach IPC、线程和完整框架仍是独立缺口。本节仅在上述范围内扩展前文的硬链接限制。
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```

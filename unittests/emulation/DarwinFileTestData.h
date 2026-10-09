@@ -663,6 +663,197 @@ inline constexpr char MetadataJSON[] = R"({
   "modification_time":{"seconds":"9223372036854775807","nanoseconds":999999999},
   "change_time":{"seconds":-3,"nanoseconds":4},
   "birth_time":{"seconds":-5,"nanoseconds":6}})";
+inline DarwinFileOptions hardLinksOptions() {
+  auto O = kernelPathConfOptions();
+  O.WorkingDirectory = "/";
+  O.Directories.insert("/");
+  O.MutableDirectories.insert("/");
+  O.WritableFiles.insert("/data");
+  O.Metadata["/data"] = mutationMetadata();
+  O.MutationPolicies["/data"] = MutationPolicy;
+  O.Metadata["/"] = creationParentMetadata();
+  O.Files["/attributes"] = {'x'};
+  O.Metadata["/alias"] = initialSymbolicLinkMetadata(4);
+  O.SymbolicLinkMutationPolicies["/alias"] = InitialSymbolicLinkPolicy;
+  O.CreationPolicy = NamespaceCreationPolicy;
+  O.InitialUmask = 0027;
+  for (const auto &[Path, Target] : O.SymbolicLinks)
+    O.MutableSymbolicLinks.insert(Path);
+  for (const char *Path : {"/data", "/alias", "/attributes"}) {
+    O.ExtendedAttributes[Path] = {};
+    O.MutableExtendedAttributes.insert(Path);
+  }
+  return O;
+}
+inline constexpr char HardLinksHex[] = "51313233343536373839";
+inline constexpr char HardLinksJSON[] = R"({
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "30313233343536373839",
+      "writable": true,
+      "metadata": {
+        "device": -123,
+        "inode": "18364758544493064720",
+        "mode": 33188,
+        "link_count": 1,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 10,
+        "block_size": 4096,
+        "blocks": 8,
+        "flags": 0,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      },
+      "mutation_policy": {
+        "allocation_unit": 4096,
+        "mutation_time": {
+          "seconds": -7,
+          "nanoseconds": 123456789
+        }
+      },
+      "extended_attributes": [],
+      "mutable_extended_attributes": true
+    },
+    {
+      "path": "/attributes",
+      "bytes_hex": "78",
+      "extended_attributes": [],
+      "mutable_extended_attributes": true
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "mutable": true,
+      "metadata": {
+        "device": -123,
+        "inode": 41,
+        "mode": 16877,
+        "link_count": 1,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      }
+    },
+    {
+      "path": "/empty"
+    }
+  ],
+  "symbolic_links": [
+    {
+      "path": "/alias",
+      "target_hex": "64617461",
+      "mutable": true,
+      "metadata": {
+        "device": -123,
+        "inode": 57,
+        "mode": 41471,
+        "link_count": 1,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 4,
+        "block_size": 4096,
+        "blocks": 8,
+        "flags": 0,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      },
+      "mutation_policy": {
+        "mutation_time": {
+          "seconds": -13,
+          "nanoseconds": 456
+        }
+      },
+      "extended_attributes": [],
+      "mutable_extended_attributes": true
+    },
+    {
+      "path": "/dangling",
+      "target_hex": "6d697373696e67",
+      "mutable": true
+    },
+    {
+      "path": "/cycle",
+      "target_hex": "6379636c65",
+      "mutable": true
+    }
+  ],
+  "creation_policy": {
+    "first_inode": "18364758544493064721",
+    "block_size": 8192,
+    "generation": 2309737967,
+    "creation_time": {
+      "seconds": -19,
+      "nanoseconds": 987654321
+    },
+    "mutation_policy": {
+      "allocation_unit": 4096,
+      "mutation_time": {
+        "seconds": -7,
+        "nanoseconds": 123456789
+      }
+    },
+    "namespace_policy": {
+      "symbolic_link_allocation_unit": 512,
+      "directory_entry_size": 32,
+      "directory_blocks": 7
+    }
+  },
+  "umask": 23,
+  "working_directory": "/"
+})";
 inline DarwinFileOptions symbolicLinkOptions() {
   DarwinFileOptions O;
   O.Files["/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};

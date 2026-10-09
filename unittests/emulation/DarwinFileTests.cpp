@@ -14166,6 +14166,453 @@ TEST_P(DarwinFileTest, XattrMutationNameImportStopsAtNativeBoundaries) {
   }
 }
 
+TEST_P(DarwinFileTest, HardLinkSharesBytesInodeAndLastNameLifetime) {
+  mutationPolicy();
+  Options->MutableDirectories.insert("/");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto A = ok(ServiceKind::Open, {Base, 2});
+  path("/alias", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  const auto B = ok(ServiceKind::Open, {Base + 128, 2});
+  auto SA = status(A), SB = status(B);
+  EXPECT_EQ(SA, SB);
+  EXPECT_EQ(llvm::support::endian::read16le(SA.data() + 6), 2u);
+  path("Q", Base + 512);
+  EXPECT_EQ(ok(ServiceKind::Pwrite, {B, Base + 512, 1, 0}), 1u);
+  contents(A, {'Q', 'b', 0, 0xff, 'e', 'f'});
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  SA = status(A);
+  EXPECT_EQ(llvm::support::endian::read16le(SA.data() + 6), 1u);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base + 128}), 0u);
+  SA = status(A);
+  EXPECT_EQ(llvm::support::endian::read16le(SA.data() + 6), 0u);
+  auto Mapping = Files->mappingSource(A);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Mapping));
+  path("/data");
+  const auto New = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  path("X", Base + 512);
+  EXPECT_EQ(ok(ServiceKind::Write, {New, Base + 512, 1}), 1u);
+  contents(B, {'Q', 'b', 0, 0xff, 'e', 'f'});
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {B}), 0u);
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Mapping).Bytes,
+            llvm::ArrayRef<uint8_t>({'Q', 'b', 0, 0xff, 'e', 'f'}));
+  EXPECT_EQ(Options->Files.at("/data"),
+            std::vector<uint8_t>({'a', 'b', 0, 0xff, 'e', 'f'}));
+}
+
+TEST_P(DarwinFileTest, HardLinkSharesAttributeGrantWithoutContentGrant) {
+  Options->MutableDirectories.insert("/");
+  Options->ExtendedAttributes["/data"] = {};
+  Options->MutableExtendedAttributes.insert("/data");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/alias", Base + 256);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 256}), 0u);
+  path("user.neverd.shared", Base + 128);
+  path("V", Base + 512);
+  EXPECT_EQ(
+      ok(ServiceKind::SetXattr, {Base + 256, Base + 128, Base + 512, 1, 0, 0}),
+      0u);
+  EXPECT_EQ(ok(ServiceKind::GetXattr, {Base, Base + 128, Base + Page, 1, 0, 0}),
+            1u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 'V');
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base + 256, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileNotWritable);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(
+      ok(ServiceKind::GetXattr, {Base + 256, Base + 128, Base + Page, 1, 0, 0}),
+      1u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 'V');
+  EXPECT_TRUE(Options->ExtendedAttributes.at("/data").empty());
+}
+
+TEST_P(DarwinFileTest, HardLinkAttributeMutationInvalidatesEveryAliasStat) {
+  mutationPolicy();
+  Options->MutableDirectories.insert("/");
+  Options->ExtendedAttributes["/data"] = {};
+  Options->MutableExtendedAttributes.insert("/data");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/alias", Base + 512);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 512}), 0u);
+  const auto A = ok(ServiceKind::Open, {Base});
+  const auto B = ok(ServiceKind::Open, {Base + 512});
+  EXPECT_EQ(status(A), status(B));
+  path("user.neverd.shared", Base + 128);
+  path("V", Base + 1024);
+  EXPECT_EQ(
+      ok(ServiceKind::SetXattr, {Base + 512, Base + 128, Base + 1024, 1, 0, 0}),
+      0u);
+  for (auto FD : {A, B}) {
+    EXPECT_FALSE(invoke(ServiceKind::Fstat64, {FD, Base + Page}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+    EXPECT_EQ(
+        ok(ServiceKind::FgetXattr, {FD, Base + 128, Base + Page, 1, 0, 0}), 1u);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 'V');
+  }
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {B, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  attributeRequest(value::AttributeObjectType);
+  EXPECT_EQ(ok(ServiceKind::FgetAttrList, {B, Base + 128, Base + Page, 128, 0}),
+            0u);
+}
+
+TEST_P(DarwinFileTest, HardLinkErrorOrderUsesSourceBeforeDestination) {
+  Options->MutableDirectories.insert("/");
+  path("/missing");
+  error(ServiceKind::Link, {Base, 1}, value::NoEntry);
+  path("missing");
+  error(ServiceKind::LinkAt, {99, Base, 99, 1, 0}, value::BadDescriptor);
+  error(ServiceKind::LinkAt, {99, 1, 99, 1, 0}, value::BadAddress);
+  error(ServiceKind::LinkAt, {99, 1, 99, 1, value::AtNoFollow},
+        value::InvalidArgument);
+  path("/");
+  error(ServiceKind::Link, {Base, 1}, value::OperationNotPermitted);
+  path("/data");
+  error(ServiceKind::Link, {Base, 1}, value::BadAddress);
+  error(ServiceKind::Link, {Base, Base}, value::FileExists);
+  path("/alias", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::LinkAt,
+               {0x1234567800000063ULL, Base, 0xabcdef0000000063ULL, Base + 128,
+                0x1234567800000000ULL}),
+            0u);
+  error(ServiceKind::LinkAt,
+        {value::AtCurrentDirectory, Base, value::AtCurrentDirectory, Base + 128,
+         value::AtFollow},
+        value::FileExists);
+}
+
+TEST_P(DarwinFileTest, HardLinkFailedOperationsPreserveSingleNameObservations) {
+  Options->MutableDirectories.insert("/");
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/alias", Base + 128);
+  error(ServiceKind::LinkAt,
+        {value::AtCurrentDirectory, Base, value::AtCurrentDirectory, Base + 128,
+         value::AtNoFollowAny},
+        value::InvalidArgument);
+  error(ServiceKind::Link, {Base, Base}, value::FileExists);
+  identity(A, "/data");
+  path("/missing");
+  error(ServiceKind::Link, {Base, Base + 128}, value::NoEntry);
+  identity(A, "/data");
+  error(ServiceKind::Open, {Base + 128}, value::NoEntry);
+}
+
+TEST_P(DarwinFileTest, HardLinkNameAmbiguitySurvivesOneAndZeroNames) {
+  Options->MutableDirectories.insert("/");
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/alias", Base + 512);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 512}), 0u);
+  attributeRequest(value::AttributeName);
+  for (unsigned Names : {2u, 1u, 0u}) {
+    SCOPED_TRACE(Names);
+    EXPECT_FALSE(invoke(ServiceKind::Fcntl, {A, value::GetPath, Base + Page}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::HardLinkName);
+    EXPECT_FALSE(invoke(ServiceKind::FgetAttrList,
+                        {A, Base + 128, Base + Page, 128, 0}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::HardLinkName);
+    if (Names) {
+      const auto Path = Names == 2 ? Base : Base + 512;
+      EXPECT_FALSE(invoke(ServiceKind::GetAttrList,
+                          {Path, Base + 128, Base + Page, 128, 0}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::HardLinkName);
+      EXPECT_FALSE(invoke(
+          ServiceKind::GetAttrListAt,
+          {value::AtCurrentDirectory, Path, Base + 128, Base + Page, 128, 0}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::HardLinkName);
+      EXPECT_EQ(ok(ServiceKind::Unlink, {Path}), 0u);
+    }
+  }
+  attributeRequest(value::AttributeObjectType);
+  EXPECT_EQ(ok(ServiceKind::FgetAttrList, {A, Base + 128, Base + Page, 128, 0}),
+            0u);
+  const auto Fresh = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  identity(Fresh, "/data");
+}
+
+TEST_P(DarwinFileTest, HardLinkDetachedAliasBudgetWaitsForItsDescription) {
+  Options->Files["/data"].clear();
+  Options->MutableDirectories.insert("/");
+  // Fixed /data+NUL and mutable /+NUL cost eight bytes. One alias costs seven.
+  Options->StandardInput.emplace(darwin_file_limits::Bytes - 8 - 7, 0);
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/alias", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  const auto A = ok(ServiceKind::Open, {Base + 128});
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base + 128}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Link, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::HardLinkLimit);
+  error(ServiceKind::Open, {Base + 128}, value::NoEntry);
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+}
+
+TEST_P(DarwinFileTest, HardLinkFinalAliasBudgetWaitsForItsMappingLease) {
+  Options->Files["/data"].clear();
+  Options->MutableDirectories.insert("/");
+  Options->StandardInput.emplace(darwin_file_limits::Bytes - 8 - 7, 0);
+  path("/alias", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  const auto A = ok(ServiceKind::Open, {Base + 128});
+  auto Mapping = Files->mappingSource(A);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Mapping));
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base + 128}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  path("/new");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+  Mapping = uint32_t(0);
+  EXPECT_NE(ok(ServiceKind::Open, {Base, 0x202, 0600}), UINT64_MAX);
+}
+
+TEST_P(DarwinFileTest, HardLinkDoesNotConsumeOrRestoreCreationInodes) {
+  mutationPolicy();
+  creationPolicy(UINT64_MAX);
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/alias", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  path("/last");
+  const auto A = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  const auto S = status(A);
+  EXPECT_EQ(llvm::support::endian::read64le(S.data() + 8), UINT64_MAX);
+  path("/another", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  path("/fresh");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationInode);
+  EXPECT_EQ(Options->CreationPolicy->FirstInode, UINT64_MAX);
+}
+
+TEST_P(DarwinFileTest, HardLinkSymbolSelectionAndAttributesRemainObjectOwned) {
+  mutationPolicy();
+  Options->MutableDirectories.insert("/");
+  Options->SymbolicLinks["/sym"] = {'d', 'a', 't', 'a'};
+  Options->SymbolicLinks["/broken"] = {'m', 'i', 's', 's', 'i', 'n', 'g'};
+  Options->MutableSymbolicLinks = {"/sym", "/broken"};
+  Options->ExtendedAttributes["/sym"] = {};
+  Options->MutableExtendedAttributes.insert("/sym");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/sym");
+  path("/follow", Base + 256);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 256}), 0u);
+  const auto A = ok(ServiceKind::Open, {Base + 256});
+  const auto S = status(A);
+  EXPECT_EQ(llvm::support::endian::read16le(S.data() + 6), 2u);
+  path("/shared", Base + 256);
+  EXPECT_EQ(ok(ServiceKind::LinkAt, {value::AtCurrentDirectory, Base,
+                                     value::AtCurrentDirectory, Base + 256, 0}),
+            0u);
+  EXPECT_EQ(ok(ServiceKind::ReadLink, {Base + 256, Base + Page, 16}), 4u);
+  std::array<uint8_t, 4> Target;
+  llvm::cantFail(Space->read(Base + Page, Target));
+  EXPECT_EQ(Target, (std::array<uint8_t, 4>{'d', 'a', 't', 'a'}));
+  path("user.neverd.shared", Base + 128);
+  path("V", Base + 512);
+  EXPECT_EQ(ok(ServiceKind::SetXattr, {Base + 256, Base + 128, Base + 512, 1, 0,
+                                       value::XattrNoFollow}),
+            0u);
+  EXPECT_EQ(ok(ServiceKind::GetXattr,
+               {Base, Base + 128, Base + Page, 1, 0, value::XattrNoFollow}),
+            1u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 'V');
+  path("/broken");
+  path("/dangling-alias", Base + 256);
+  error(ServiceKind::Link, {Base, Base + 256}, value::NoEntry);
+  EXPECT_EQ(ok(ServiceKind::LinkAt, {value::AtCurrentDirectory, Base,
+                                     value::AtCurrentDirectory, Base + 256, 0}),
+            0u);
+  EXPECT_EQ(ok(ServiceKind::ReadLink, {Base + 256, Base + Page, 16}), 7u);
+  error(ServiceKind::Open, {Base + 256}, value::NoEntry);
+}
+
+TEST_P(DarwinFileTest, HardLinkRelativeSymbolsUseEachSelectedEntryParent) {
+  namespacePolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  for (const char *Directory : {"/left", "/right"}) {
+    path(Directory);
+    EXPECT_EQ(ok(ServiceKind::Mkdir, {Base, 0700}), 0u);
+    path(std::string(Directory) + "/data");
+    const auto A = ok(ServiceKind::Open, {Base, 0x202, 0600});
+    path(Directory[1] == 'l' ? "L" : "R", Base + 512);
+    EXPECT_EQ(ok(ServiceKind::Write, {A, Base + 512, 1}), 1u);
+    EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  }
+  path("data");
+  path("/left/sym", Base + 256);
+  EXPECT_EQ(ok(ServiceKind::Symlink, {Base, Base + 256}), 0u);
+  path("/right/sym", Base + 512);
+  EXPECT_EQ(ok(ServiceKind::LinkAt, {value::AtCurrentDirectory, Base + 256,
+                                     value::AtCurrentDirectory, Base + 512, 0}),
+            0u);
+  for (const char *Directory : {"/left", "/right"}) {
+    path(std::string(Directory) + "/sym");
+    const auto A = ok(ServiceKind::Open, {Base});
+    contents(A, {uint8_t(Directory[1] == 'l' ? 'L' : 'R')});
+    const auto S = namespaceStatus(std::string(Directory) + "/sym");
+    EXPECT_EQ(llvm::support::endian::read16le(S.data() + 6), 2u);
+  }
+  renameFile("/left", "/moved");
+  path("/moved/sym");
+  const auto A = ok(ServiceKind::Open, {Base});
+  contents(A, {'L'});
+  path("/right/sym");
+  const auto B = ok(ServiceKind::Open, {Base});
+  contents(B, {'R'});
+  EXPECT_EQ(ok(ServiceKind::ReadLink, {Base, Base + Page, 16}), 4u);
+}
+
+TEST_P(DarwinFileTest, HardLinkNeedsDestinationAuthorityOnlyInDeclaredDomain) {
+  Options->Files.clear();
+  Options->Files["/tree/read/data"] = {'r'};
+  Options->Directories = {"/tree", "/tree/read", "/tree/write"};
+  Options->MutableDirectories = {"/", "/tree/write"};
+  Options->MovableDirectories.insert("/tree");
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/tree/read/data");
+  path("/tree/write/alias", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  const auto A = ok(ServiceKind::Open, {Base + 128});
+  contents(A, {'r'});
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base + 128, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileNotWritable);
+}
+
+TEST_P(DarwinFileTest, HardLinkSameObjectRenameAndSwapKeepBothNames) {
+  mutationPolicy();
+  Options->Directories.insert("/");
+  Options->MutableDirectories.insert("/");
+  Options->SwapRenameDirectories.insert("/");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/alias", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  const auto A = ok(ServiceKind::Open, {Base});
+  const auto Before = status(A);
+  EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 128}), 0u);
+  EXPECT_EQ(
+      ok(ServiceKind::RenameAtX, {value::AtCurrentDirectory, Base,
+                                  value::AtCurrentDirectory, Base + 128, 2}),
+      0u);
+  EXPECT_EQ(status(A), Before);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX,
+                      {value::AtCurrentDirectory, Base,
+                       value::AtCurrentDirectory, Base + 128, 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameCaseSensitivity);
+  const auto B = ok(ServiceKind::Open, {Base + 128});
+  EXPECT_EQ(status(B), Before);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base + 128}), 0u);
+  EXPECT_EQ(llvm::support::endian::read16le(status(A).data() + 6), 1u);
+  contents(B, {'a', 'b', 0, 0xff, 'e', 'f'});
+}
+
+TEST_P(DarwinFileTest, HardLinkDirectorySwapMovesEachEntryOnce) {
+  namespacePolicy();
+  Options->Directories.insert("/");
+  Options->SwapRenameDirectories.insert("/");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto Left = makeDirectory("/left");
+  const auto Right = makeDirectory("/right");
+  const auto A = makeFile("/left/data", "L");
+  path("/left/data");
+  path("/right/alias", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  path("/outside", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  const auto Other = makeFile("/right/other", "R");
+  path("/left/data");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  const auto Replacement = makeFile("/left/data", "N");
+  const auto Before = status(A);
+  swapFiles("/left", "/right");
+  identity(Left, "/right");
+  identity(Right, "/left");
+  identity(Replacement, "/right/data");
+  identity(Other, "/left/other");
+  EXPECT_EQ(status(A), Before);
+  for (const char *Name : {"/left/alias", "/outside"}) {
+    path(Name);
+    const auto B = ok(ServiceKind::Open, {Base});
+    EXPECT_EQ(status(B), Before);
+    contents(B, {'L'});
+    EXPECT_EQ(ok(ServiceKind::Close, {B}), 0u);
+  }
+  path("data");
+  contents(ok(ServiceKind::OpenAt, {Left, Base}), {'N'});
+  path("alias");
+  contents(ok(ServiceKind::OpenAt, {Right, Base}), {'L'});
+  path("/right/alias");
+  error(ServiceKind::Open, {Base}, value::NoEntry);
+  path("/outside");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(llvm::support::endian::read16le(status(A).data() + 6), 1u);
+}
+
+TEST_P(DarwinFileTest, HardLinkBulkNamesComeFromEntriesWithoutVnodeGuessing) {
+  const auto Root = bulkRoot();
+  path("/data");
+  path("/alias", Base + 512);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 512}), 0u);
+  const auto A = ok(ServiceKind::Open, {Base});
+  EXPECT_FALSE(invoke(ServiceKind::Fcntl, {A, value::GetPath, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::HardLinkName);
+  bulkBuffer(Root, 512,
+             "3000000009000080000000000000000000000000000000000c000000"
+             "0600000001000000616c69617300000000000000"
+             "3000000009000080000000000000000000000000000000000c000000"
+             "0500000001000000646174610000000000000000",
+             2);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 2u);
+}
+
+TEST_P(DarwinFileTest, HardLinkReplacementCannotCreditLastMappedAlias) {
+  Options->MutableDirectories.insert("/");
+  Options->WritableFiles.insert("/data");
+  makeDirectory("/n");
+  const auto T = makeFile("/n/x", "old");
+  path("/n/x");
+  path("/target", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  auto Lease = Files->mappingSource(T);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+  EXPECT_EQ(ok(ServiceKind::Close, {T}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/data");
+  const auto A = ok(ServiceKind::Open, {Base, 2});
+  // Seventeen fixed bytes, an eight-byte final alias and three object bytes.
+  const auto Capacity = darwin_file_limits::Bytes - 28;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Capacity}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+  identity(A, "/data");
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+            llvm::ArrayRef<uint8_t>({'o', 'l', 'd'}));
+  Lease = uint32_t(0);
+  EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 128}), 0u);
+  identity(A, "/target");
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Capacity + 3}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {A, Capacity + 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+}
+
+TEST_P(DarwinFileTest, HardLinkEntrySlotWaitsForDetachedDescription) {
+  Options->Files["/data"].clear();
+  Options->MutableDirectories.insert("/");
+  for (unsigned I = 0; I != 253; ++I)
+    Options->Files["/f" + std::to_string(I)] = {};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/alias", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  const auto A = ok(ServiceKind::Open, {Base + 128});
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base + 128}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Link, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::HardLinkLimit);
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
+  error(ServiceKind::Link, {Base, Base + 128}, value::FileExists);
+}
+
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));
 } // namespace
 } // namespace neverd::emulation::darwin_model

@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: aa19cf02d09c66c62cfde94ee71c93b210f3d92165151c58778e1e91ec0df607 -->
+<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -922,3 +922,28 @@ Die Änderungs-ABI nutzt low32 FD/options/position und full64 size. Frühe Prüf
 xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported prüfen eigene native/Gast-Kontrollen, unabhängige virtuelle Byte-Literale und den Stopp bei fehlender Freigabe mit erhaltener bisheriger Ausgabe. Die private ARM64-Vorbereitung prüfte726 raw/SDK-Aufrufe, vollständige geschützte544-Byte-Beobachtungen und vollständige lesbare Seiten. native5s/compile120s/drain1s/reap1s, guest/Python5,000,000us/quantum1024 und public10s bleiben unverändert. Natives Intel, physisches iOS, dyld, Mach IPC, Threads/Signale, Objective-C/Swift-Laufzeiten und vollständige Frameworks bleiben ungeprüft oder unvollständig.
 
 Primäre ABI-Quellen: [XNU-Systemaufrufdeklarationen](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [xattr-Definitionen](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Eigener Code und eigene Probes; keine Apple-Implementierung kopiert.
+
+## Begrenzte Darwin-Hardlinks
+
+link folgt dem letzten symbolischen Ziel; linkat mit flags=0 wählt das Linkobjekt, AT_SYMLINK_FOLLOW das Ziel. Nur low32 0/0x40 sind zulässig, andere niedrige Bits liefern EINVAL vor dem Import. Quellensuche und Verzeichnis-EPERM gehen dem Zielimport voraus; vorhandene Ziele liefern EEXIST. Das Ziel benötigt Änderungsrecht und dieselbe ausdrücklich festgelegte Mount-Domäne. Anfängliche Identitätsaliasse sowie bekannte Geräte-, Modus- und Flag-Konflikte bleiben unzulässig.
+
+Ein Alias kostet nur Eintrag und Pfad/NUL, keinen neuen inode. Bytes, Attributrechte, Metadatengültigkeit und Mapping-Leases gehören dem gemeinsamen Objekt. Explizite Richtlinien aktualisieren Linkzahl und ctime; ohne sie bleibt vollständiges stat unbekannt. Attributänderungen invalidieren stat, Inhaltsänderungen Attributbeobachtungen. Gehaltene Beschreibungen und letzte Mappings behalten Namenskosten; Ersetzung verrechnet nur sofort freigebbare Kosten. Teilbäume wählen genaue Identitäten und Eltern; externe Aliasnamen bleiben stehen, relative symbolische Ziele verwenden den gewählten Eintragselternteil.
+
+F_GETPATH/ATTR_CMN_NAME bleiben nach mehreren Namen auch bei einem oder keinem Namen unzulässig; kein allgemeines APFS-Cachemodell wird behauptet. bulk NAME stammt vom tatsächlichen Eintrag; gewöhnliches rename/SWAP desselben Objekts behält beide Namen. EXCL-Großschreibung, O_SYMLINK, Intel HVF, physisches iOS, ACL, kohärente Mappings/EOF-Signale, dyld, Mach IPC, Threads und vollständige Frameworks bleiben Lücken. Frühere Ausschlüsse werden nur innerhalb dieses Vertrags erweitert.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```
