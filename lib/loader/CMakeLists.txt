@@ -72,6 +72,7 @@ add_neverd_component_library(NeverDLoader
   Go/GoRuntimeEH.cpp
   Go/GoStackMaps.cpp
   Loader.cpp
+  ObjectExterns.cpp
   PointerRelocation.cpp
   MachO/DarwinRuntimeCalls.cpp
   MachO/DarwinSourceDeclarations.cpp

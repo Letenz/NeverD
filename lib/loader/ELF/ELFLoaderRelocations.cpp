@@ -710,7 +710,7 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
         if (auto It = Externs.GOTEntries.find({SH.sh_link, RSym});
             It != Externs.GOTEntries.end()) {
           S = It->second;
-          SymOwnerVA = Externs.GOTBase;
+          SymOwnerVA = Externs.CellBase;
           SymIsFunction = false;
           RType = *Direct;
         }

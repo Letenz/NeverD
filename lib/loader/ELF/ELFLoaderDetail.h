@@ -17,6 +17,7 @@
 #define NEVERD_LIB_LOADER_ELF_ELFLOADERDETAIL_H
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ObjectExterns.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -96,25 +97,12 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
                         size_t Size, bool IsRelocatable, BinaryImage &Img);
 
 /// The addresses a relocatable object's relocations resolve against that no
-/// section of the object holds (ELFLoaderExterns.cpp).
-struct ObjectExterns {
-  /// Each undefined symbol a relocation names, by name: its address in the
-  /// writable `extern` segment past every section, recorded as a symbol and,
-  /// for a called one, as an import.
-  std::map<std::string, va_t> SymbolSlots;
-  /// The undefined symbols a call or branch relocation reaches: functions.
-  std::set<std::string> CalledSymbols;
-  /// Each common symbol a relocation names, by name: storage in the extern
-  /// segment of its size and alignment, as a linker allocates it in .bss.
-  std::map<std::string, va_t> CommonSlots;
-  /// The GOT entry the linker would create for each symbol a GOT reference
-  /// names, by (symbol table section, symbol index); it holds the symbol's
-  /// address.
+/// section of the object holds (ELFLoaderExterns.cpp): its externs, laid out
+/// by the shared object-extern layer, and the GOT entry the linker would
+/// create for each symbol a GOT reference names, by (symbol table section,
+/// symbol index), which holds the symbol's address.  The cells are the GOT.
+struct ObjectExterns : object_externs::ExternLayout {
   std::map<std::pair<uint32_t, uint32_t>, va_t> GOTEntries;
-  va_t ExternBase = 0;
-  uint64_t ExternSize = 0;
-  va_t GOTBase = 0;
-  uint64_t GOTSize = 0;
 };
 
 /// The relocation a GOT reference \p Type of \p A applies against the GOT
