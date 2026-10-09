@@ -4,10 +4,11 @@
 Writes x86-64 code under a firmware image's usual name, which EVM tools give
 their bytecode too, and checks the engine does not guess either: the file
 opens only with a chosen loader.  Opened as a binary file at the address the
-user chose, it is browsed -- listing, functions, references and a control
-flow graph from its decoded instructions -- while analysis refuses it, since
-nothing states its calling convention.  The engine keeps the choice with the
-input, so the next open reads the file the same way unasked.
+user chose, it is browsed -- listing, functions, references, a control flow
+graph -- and decompiled under the platform its code shows; three
+instructions show none, so System V is assumed and the metadata says so.
+The engine keeps the choice with the input, so the next open reads the file
+the same way unasked.
 
 Runs against the real engine; the bytes are analyzed, never executed.
 """
@@ -65,9 +66,12 @@ def run(executable):
             assert graph["nodes"] and all(node["disasm"] for node in graph["nodes"]), graph
             assert ok(client, "cfg_summary", {"address": hex(BASE)})["node_count"] >= 1
 
-            refused = client.call("decompile", {"address": hex(BASE)})
-            assert refused["status"] == "error", refused
-            assert "calling convention" in refused["error"]["message"], refused
+            load = opened["load_options"]
+            assert (load["platform"], load["platform_source"]) == ("sysv", "detected"), load
+            assert "assumed" in load["platform_evidence"], load
+            # lea eax, [rdi + 7] takes its one argument in rdi.
+            text = ok(client, "decompile", {"address": hex(CALLEE)})["text"]
+            assert "7" in text, text
         finally:
             client.close()
 
@@ -79,7 +83,7 @@ def run(executable):
             assert int(reopened["base_address"], 16) == BASE, reopened
         finally:
             again.close()
-    print("binary file: opens only as chosen, browses, refuses analysis, and reopens the same way")
+    print("binary file: opens only as chosen, browses, decompiles, and reopens the same way")
     return 0
 
 

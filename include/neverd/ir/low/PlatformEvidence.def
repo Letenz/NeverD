@@ -1,0 +1,127 @@
+//===- PlatformEvidence.def - What code shows of its platform ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// The evidence a binary file's code gives of the platform it was built for,
+// whose conventions decompiling it follows.  A platform is named by the
+// format whose images follow its conventions: ELF for System V and AAPCS,
+// COFF for Windows, MachO for Apple.
+//
+// NEVERD_PLATFORM_CLUE(Id, Platform, Weight, Text): one kind of evidence,
+// how much one sighting counts, and what was seen, read as "<Text> (<count>)".
+//
+// NEVERD_PLATFORM_SEGMENT(Clue, Arch, Segment, Offset): reading the thread
+// block at Offset through segment register Segment (FS or GS) of Arch.
+//
+// NEVERD_PLATFORM_INTERRUPT(Clue, Arch, Vector): an x86 int instruction.
+//
+// NEVERD_PLATFORM_ABSOLUTE(Clue, Low, High): an x86 read of a fixed address
+// in [Low, High), with no base or index register.
+//
+// NEVERD_PLATFORM_WORD(Clue, Arch, Mode, Mask, Value): an instruction word
+// whose masked bits equal Value: four bytes for AArch64 and A32, two for
+// Thumb.
+//
+// NEVERD_PLATFORM_STRING(Clue, Text): bytes whose presence anywhere in the
+// file is the clue; each counts once.
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_PLATFORM_CLUE
+// x86-64: where a call's first argument goes, and what a function preserves.
+NEVERD_PLATFORM_CLUE(SysVFirstArgument, ELF, 1,
+                     "calls set their first argument in rdi")
+NEVERD_PLATFORM_CLUE(Win64FirstArgument, COFF, 1,
+                     "calls set their first argument in rcx")
+NEVERD_PLATFORM_CLUE(Win64HomeSpill, COFF, 3,
+                     "functions spill an argument to its home slot")
+NEVERD_PLATFORM_CLUE(Win64SavesRsiRdi, COFF, 2,
+                     "functions preserve rsi or rdi, which System V does not")
+// The thread block and system calls each platform's code reaches.
+NEVERD_PLATFORM_CLUE(LinuxStackGuard, ELF, 4,
+                     "reads of the stack guard in the thread block")
+NEVERD_PLATFORM_CLUE(WindowsThreadBlock, COFF, 4,
+                     "reads of the Windows thread environment block")
+NEVERD_PLATFORM_CLUE(WindowsExceptionFrame, COFF, 4,
+                     "installs of a Windows exception frame at fs:0")
+NEVERD_PLATFORM_CLUE(WindowsSharedData, COFF, 4,
+                     "reads of KUSER_SHARED_DATA at 0x7ffe0000")
+NEVERD_PLATFORM_CLUE(LinuxSystemCall, ELF, 3, "Linux system calls")
+NEVERD_PLATFORM_CLUE(DarwinSystemCall, MachO, 4, "Darwin system calls")
+NEVERD_PLATFORM_CLUE(ElfThreadPointer, ELF, 3,
+                     "reads of the thread pointer from tpidr_el0")
+NEVERD_PLATFORM_CLUE(DarwinThreadPointer, MachO, 4,
+                     "reads of the thread pointer from tpidrro_el0")
+// The system libraries a file's own text names.
+NEVERD_PLATFORM_CLUE(WindowsLibraryName, COFF, 3,
+                     "names of Windows system libraries")
+NEVERD_PLATFORM_CLUE(LinuxLibraryName, ELF, 3,
+                     "names of Linux system libraries")
+NEVERD_PLATFORM_CLUE(DarwinLibraryName, MachO, 3,
+                     "names of Apple system libraries")
+#undef NEVERD_PLATFORM_CLUE
+#endif
+
+#ifdef NEVERD_PLATFORM_SEGMENT
+// glibc and musl keep the x86-64 stack guard at fs:0x28; the Linux kernel
+// kept it at gs:0x28 until per-CPU guards; i386 glibc keeps it at gs:0x14.
+NEVERD_PLATFORM_SEGMENT(LinuxStackGuard, X64, FS, 0x28)
+NEVERD_PLATFORM_SEGMENT(LinuxStackGuard, X64, GS, 0x28)
+NEVERD_PLATFORM_SEGMENT(LinuxStackGuard, X86, GS, 0x14)
+// Windows x64 reaches its TEB through gs: the TEB itself, the thread-local
+// storage array and the PEB.
+NEVERD_PLATFORM_SEGMENT(WindowsThreadBlock, X64, GS, 0x30)
+NEVERD_PLATFORM_SEGMENT(WindowsThreadBlock, X64, GS, 0x58)
+NEVERD_PLATFORM_SEGMENT(WindowsThreadBlock, X64, GS, 0x60)
+// 32-bit Windows chains exception frames at fs:0 and reaches its TEB
+// through fs.
+NEVERD_PLATFORM_SEGMENT(WindowsExceptionFrame, X86, FS, 0x0)
+NEVERD_PLATFORM_SEGMENT(WindowsThreadBlock, X86, FS, 0x18)
+NEVERD_PLATFORM_SEGMENT(WindowsThreadBlock, X86, FS, 0x2c)
+NEVERD_PLATFORM_SEGMENT(WindowsThreadBlock, X86, FS, 0x30)
+#undef NEVERD_PLATFORM_SEGMENT
+#endif
+
+#ifdef NEVERD_PLATFORM_INTERRUPT
+// int 0x80 enters 32-bit Linux.
+NEVERD_PLATFORM_INTERRUPT(LinuxSystemCall, X86, 0x80)
+#undef NEVERD_PLATFORM_INTERRUPT
+#endif
+
+#ifdef NEVERD_PLATFORM_ABSOLUTE
+// KUSER_SHARED_DATA, the page Windows maps into every process.
+NEVERD_PLATFORM_ABSOLUTE(WindowsSharedData, 0x7ffe0000, 0x7ffe1000)
+#undef NEVERD_PLATFORM_ABSOLUTE
+#endif
+
+#ifdef NEVERD_PLATFORM_WORD
+// mrs xN, tpidr_el0 / tpidrro_el0: Linux and Android keep the thread
+// pointer in tpidr_el0, Apple in tpidrro_el0.
+NEVERD_PLATFORM_WORD(ElfThreadPointer, AArch64, Default, 0xffffffe0, 0xd53bd040)
+NEVERD_PLATFORM_WORD(DarwinThreadPointer, AArch64, Default, 0xffffffe0,
+                     0xd53bd060)
+// svc #0 enters Linux; svc #0x80 enters Darwin.
+NEVERD_PLATFORM_WORD(LinuxSystemCall, AArch64, Default, 0xffffffff, 0xd4000001)
+NEVERD_PLATFORM_WORD(DarwinSystemCall, AArch64, Default, 0xffffffff, 0xd4001001)
+NEVERD_PLATFORM_WORD(LinuxSystemCall, ARM, ARM, 0x0fffffff, 0x0f000000)
+NEVERD_PLATFORM_WORD(DarwinSystemCall, ARM, ARM, 0x0fffffff, 0x0f000080)
+NEVERD_PLATFORM_WORD(LinuxSystemCall, ARM, Thumb, 0xffff, 0xdf00)
+NEVERD_PLATFORM_WORD(DarwinSystemCall, ARM, Thumb, 0xffff, 0xdf80)
+#undef NEVERD_PLATFORM_WORD
+#endif
+
+#ifdef NEVERD_PLATFORM_STRING
+NEVERD_PLATFORM_STRING(WindowsLibraryName, "KERNEL32.dll")
+NEVERD_PLATFORM_STRING(WindowsLibraryName, "kernel32.dll")
+NEVERD_PLATFORM_STRING(WindowsLibraryName, "ntdll.dll")
+NEVERD_PLATFORM_STRING(WindowsLibraryName, "msvcrt.dll")
+NEVERD_PLATFORM_STRING(LinuxLibraryName, "GLIBC_2.")
+NEVERD_PLATFORM_STRING(LinuxLibraryName, "/lib64/ld-linux-x86-64.so")
+NEVERD_PLATFORM_STRING(LinuxLibraryName, "/lib/ld-linux")
+NEVERD_PLATFORM_STRING(LinuxLibraryName, "/system/bin/linker")
+NEVERD_PLATFORM_STRING(DarwinLibraryName, "/usr/lib/libSystem.B.dylib")
+NEVERD_PLATFORM_STRING(DarwinLibraryName, "/usr/lib/dyld")
+#undef NEVERD_PLATFORM_STRING
+#endif

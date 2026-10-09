@@ -156,7 +156,7 @@ void validateMemoryAddressSpaceForC(NdMemoryAddressSpace AddressSpace,
 
 bool useMsvcSegmentedRead(const CEmitterOptions &Opts, const HighFunc *Func) {
   return (Func && Func->ExceptionMetadata) ||
-         (Opts.Image && Opts.Image->Format == BinaryFormat::COFF);
+         (Opts.Image && Opts.Image->abiFormat() == BinaryFormat::COFF);
 }
 
 std::string memoryHelperName(llvm::StringRef Operation, llvm::StringRef Type,

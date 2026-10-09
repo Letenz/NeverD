@@ -62,12 +62,12 @@ std::set<std::pair<size_t, size_t>>
 findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
                            const std::map<int, size_t> &IndexOfId) {
   std::set<std::pair<size_t, size_t>> Spills;
-  if (Img.Arch != Arch::X64 || Img.Format == BinaryFormat::COFF ||
+  if (Img.Arch != Arch::X64 || Img.abiFormat() == BinaryFormat::COFF ||
       F.Blocks.empty())
     return Spills;
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const llvm::ArrayRef<uint64_t> Registers =
-      TRI.integerArgumentLayout(Img.Format).Registers;
+      TRI.integerArgumentLayout(Img.abiFormat()).Registers;
   auto IndexOf = [&](int Id) -> std::optional<size_t> {
     if (auto It = IndexOfId.find(Id); It != IndexOfId.end())
       return It->second;
@@ -323,7 +323,7 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
                                  const std::map<int, size_t> &IndexOfId,
                                  const std::set<va_t> &BlockStarts,
                                  LocalRegisterEffect &Effect) {
-  if (Img.Arch != Arch::X64 || Img.Format != BinaryFormat::COFF) {
+  if (Img.Arch != Arch::X64 || Img.abiFormat() != BinaryFormat::COFF) {
     Effect.UnknownStackReads = true;
     return;
   }

@@ -503,7 +503,7 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
         if (HasIndI64)
           Reconv.setI64IndirectSites(&IndIt->second);
         MedFunc NewMF =
-            Reconv.convert(Result.LowFuncs[I], Img.Arch, Img.Format);
+            Reconv.convert(Result.LowFuncs[I], Img.Arch, Img.abiFormat());
         NewMF.OriginalSize = Result.LowFuncs[I].OriginalSize;
         NewMF.DebugName = Result.LowFuncs[I].DebugName;
         NewMF.SourceFile = Result.LowFuncs[I].SourceFile;

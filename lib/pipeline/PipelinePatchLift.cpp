@@ -576,7 +576,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // now recovered call sites, append the trailing stack parameters, and pad
   // every call to that arity.  The emitter spills these into the frame headroom
   // so the unchanged va_arg walk reads the caller's overflow arguments.
-  finalizeVariadicCallees(Result.MedFuncs, Img.Arch, Img.Format);
+  finalizeVariadicCallees(Result.MedFuncs, Img.Arch, Img.abiFormat());
   if (Img.Arch == Arch::ARM)
     propagateARMForwardedPointerParams(Result.MedFuncs);
   // Late ABI remodelling may reconvert a function from LowIR.  Refresh the
@@ -612,7 +612,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   if (UseShards) {
     LLVMEmissionResult Emission = emitLLVMSharded(
-        Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img, Img.Format, Opts.NoOpt,
+        Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img, Img.abiFormat(), Opts.NoOpt,
         Workers, !Result.LibraryRecognitions.empty(),
         Result.LibraryRecognitions);
     Result.BackendUnhandledValueIntrinsics = Emission.UnhandledValueIntrinsics;
@@ -637,7 +637,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
         Result.InterpreterMachineSourceABI ? nullptr : &Img;
     Result.LlvmModule =
         MedEmitter.emit(Result.MedFuncs, Ctx, "neverd_output", Img.Arch,
-                        ImportMap, EmissionImage, Img.Format);
+                        ImportMap, EmissionImage, Img.abiFormat());
     Result.BackendUnhandledValueIntrinsics =
         MedEmitter.unhandledValueIntrinsicCount();
     if (Result.LLVMSources)

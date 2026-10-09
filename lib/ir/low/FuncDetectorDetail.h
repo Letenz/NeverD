@@ -52,6 +52,13 @@ std::optional<CallScanStep> stepCallsX86(const BinaryImage &Img, Decoder &Dec,
                                          const Segment *Seg, va_t Cur, va_t End,
                                          CodeInterval &Known);
 
+/// Functions x86-64 code takes the address of with RIP-relative `lea`, such
+/// as main handed to __libc_start_main: each target that starts with a
+/// prologue, for the bounded decoder to verify.  For images with no other
+/// function metadata, binary files.
+void scanCodePointersX64(const BinaryImage &Img, Decoder &Dec,
+                         std::set<va_t> &Out);
+
 void scanSegmentCallsX86(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,
                          std::set<va_t> &Out);

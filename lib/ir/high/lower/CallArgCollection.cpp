@@ -93,7 +93,7 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
   const TargetRegInfo &TRI = *Scan.TRI;
   const int64_t SlotBytes = static_cast<int64_t>(TRI.PointerSize);
   const BinaryFormat Format =
-      Scan.Image ? Scan.Image->Format : BinaryFormat::Unknown;
+      Scan.Image ? Scan.Image->abiFormat() : BinaryFormat::Unknown;
   const bool Reserved =
       Scan.Convention && Scan.Convention->ReservedOutgoingArea;
   const auto Layout = TRI.integerArgumentLayout(Format);
@@ -356,7 +356,7 @@ unsigned MedToHighConverter::importVarArgFixedCount(
           ? Import
           : cNameOfSymbol(Import, Image->Format, Image->Arch).str();
   if (const libc::LibCPrototype *Prototype =
-          libc::libcPrototype(Name, Image->Format))
+          libc::libcPrototype(Name, Image->abiFormat()))
     return Prototype->Variadic ? Prototype->ParamCount : 0;
   // The name rules fit the C library's own routines, not another library's
   // `g_printf(fmt, ...)`.
@@ -405,7 +405,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   std::vector<ExprPtr> Found(MaxArgs);
 
   const auto &TRI = getTargetRegInfo(TargetArch);
-  const BinaryFormat Format = Image ? Image->Format : BinaryFormat::Unknown;
+  const BinaryFormat Format = Image ? Image->abiFormat() : BinaryFormat::Unknown;
   const auto ParamRegs = TRI.integerParamRegs(Format);
   const CallArgumentConvention *Convention =
       callArgumentConvention(TargetArch, Format);
@@ -461,7 +461,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   // Walk the trailing window for the last write of that register.
   auto exprFromWindowValue = [&](MedVar V, const std::vector<MedOp> &Ops,
                                  int Before) -> ExprPtr {
-    const BinaryFormat Format = Image ? Image->Format : BinaryFormat::Unknown;
+    const BinaryFormat Format = Image ? Image->abiFormat() : BinaryFormat::Unknown;
     auto preserved = [&](const MedVar &Reg) {
       return Reg.Kind == MedVar::Reg && call_args_detail::isCallPreservedReg(
                                             TRI, Format, Reg.RegOff, Reg.Size);
@@ -1268,7 +1268,7 @@ bool MedToHighConverter::isCallArgSetupDef(const MedBlock &CallBlk,
 
 int MedToHighConverter::regToArgIdx(uint64_t RegOff) const {
   return getTargetRegInfo(TargetArch)
-      .regToArgIdx(RegOff, Image ? Image->Format : BinaryFormat::Unknown);
+      .regToArgIdx(RegOff, Image ? Image->abiFormat() : BinaryFormat::Unknown);
 }
 
 std::string MedToHighConverter::calleeDisplayName(va_t Target) const {

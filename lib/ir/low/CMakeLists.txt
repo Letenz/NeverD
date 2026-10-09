@@ -28,6 +28,7 @@ add_neverd_component_library(NeverDIRLow
   NdOpEmulatorX86FPScale.cpp
   NdOpEmulatorX86FPCompare.cpp
   NdOpEmulatorX87.cpp
+  PlatformEvidence.cpp
   X86ApproxReference.c
   X86ApproxReference28.c
   jumptable/JumpTableResolver.cpp

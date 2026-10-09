@@ -387,11 +387,11 @@ recoverFormattedSourceOutputs(const BinaryImage *Img,
   if (PointerBytes == 0 || Args.front().Size != PointerBytes)
     return std::nullopt;
   const uint16_t LongBytes =
-      Img && Img->Format == BinaryFormat::COFF ? uint16_t(4) : PointerBytes;
+      Img && Img->abiFormat() == BinaryFormat::COFF ? uint16_t(4) : PointerBytes;
   const uint16_t WideCharBytes =
       !Img                                ? uint16_t(0)
-      : Img->Format == BinaryFormat::COFF ? uint16_t(2)
-      : Img->Format == BinaryFormat::ELF || Img->Format == BinaryFormat::MachO
+      : Img->abiFormat() == BinaryFormat::COFF ? uint16_t(2)
+      : Img->abiFormat() == BinaryFormat::ELF || Img->abiFormat() == BinaryFormat::MachO
           ? uint16_t(4)
           : uint16_t(0);
   std::optional<ParsedScanfOutputs> Outputs = parseScanfOutputs(

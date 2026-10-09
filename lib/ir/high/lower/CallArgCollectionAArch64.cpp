@@ -44,7 +44,7 @@ void collectCallArgsAArch64(const CallArgScan &Scan, std::vector<ExprPtr> &Found
   }
   Spilled.FirstStackSlot = FirstStackSlot;
   const BinaryFormat Format =
-      Scan.Image ? Scan.Image->Format : BinaryFormat::Unknown;
+      Scan.Image ? Scan.Image->abiFormat() : BinaryFormat::Unknown;
   const auto ParamRegs = Scan.TRI->integerParamRegs(Format);
   if (FirstStackSlot == static_cast<int>(ParamRegs.size()))
     Spilled.StoreScanWindow = limits::kAArch64FullBankCallArgStoreScanWindow;

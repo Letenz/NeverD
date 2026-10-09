@@ -130,13 +130,13 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     for (size_t I; (I = Claim()) < N;) {
       try {
         Result.MedFuncs[I] =
-            Local.convert(Result.LowFuncs[I], Img.Arch, Img.Format);
+            Local.convert(Result.LowFuncs[I], Img.Arch, Img.abiFormat());
         auto &MF = Result.MedFuncs[I];
         auto &LF = Result.LowFuncs[I];
         trimFuncStorage(MF);
         MF.EntryKind = functionEntryKind(MF, Img.stackEntryKindAt(MF.Entry));
         if (!Opts.PatchMode && (!Opts.LiftMode || Opts.SourceProjection))
-          simplifyProvenStackAlignment(MF, Img.Arch, Img.Format, MF.EntryKind);
+          simplifyProvenStackAlignment(MF, Img.Arch, Img.abiFormat(), MF.EntryKind);
         MF.OriginalSize = LF.OriginalSize;
         MF.DebugName = LF.DebugName;
         MF.SourceFile = LF.SourceFile;
