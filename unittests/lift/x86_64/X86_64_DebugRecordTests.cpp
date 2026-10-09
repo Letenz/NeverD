@@ -33,8 +33,11 @@ TEST_F(X86_64_DebugRecords, RecordsCCannotSpellKeepMachineTypes) {
   ASSERT_TRUE(Ifs.good()) << CFile;
   const std::string Source((std::istreambuf_iterator<char>(Ifs)),
                            std::istreambuf_iterator<char>());
+  // The record flags_mode takes arrives in two registers, so its definition
+  // reads the second as a parameter too.
   for (const char *Definition :
-       {"flags_sum(int64_t f)", "flags_mode(int64_t f)", "flags_walk("})
+       {"flags_sum(int64_t f)", "flags_mode(int64_t f, int64_t arg1)",
+        "flags_walk("})
     EXPECT_NE(Source.find(Definition), std::string::npos) << Source;
   // The returned record keeps the recovered result type, and says why.
   EXPECT_NE(Source.find("return=(no C type)"), std::string::npos) << Source;

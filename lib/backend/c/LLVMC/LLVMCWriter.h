@@ -650,6 +650,9 @@ public:
   std::string renderInline(const llvm::Instruction &Inst);
   std::string renderInlineImpl(const llvm::Instruction &Inst);
   std::string callExpr(const llvm::CallBase &Call);
+  /// The C function-pointer type of \p Call's callee, from the call's own
+  /// type and convention.  \p Strict refuses what shown C may approximate.
+  std::string indirectCalleeType(const llvm::CallBase &Call, bool Strict);
   std::string preservedIndirectCalleeStr(const llvm::CallBase &Call);
   std::string atomicRMWText(const llvm::AtomicRMWInst &AI);
   std::string ctorThisAddress(const llvm::CallBase &Call);

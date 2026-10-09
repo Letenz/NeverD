@@ -139,9 +139,11 @@ std::string HighCWriter::varName(const MedVar &V) const {
           if (V.Id >= 0 && DebugIdx < FS->Params.size() &&
               !FS->Params[DebugIdx].first.empty())
             return FS->Params[DebugIdx].first;
-        } else if (V.Id >= 0 && static_cast<size_t>(V.Id) < FS->Params.size() &&
-                   !FS->Params[static_cast<size_t>(V.Id)].first.empty()) {
-          return FS->Params[static_cast<size_t>(V.Id)].first;
+        } else if (const auto DI = debugParamIndex(*CurrentFunc, V.Id,
+                                                   static_cast<size_t>(V.Id));
+                   V.Id >= 0 && DI && *DI < FS->Params.size() &&
+                   !FS->Params[*DI].first.empty()) {
+          return FS->Params[*DI].first;
         }
       }
     }
@@ -729,12 +731,6 @@ std::optional<X87CHelper> HighCWriter::x87HelperFor(const HighExpr &E) const {
   if (E.Kind == ExprKind::Var && E.Var.SSAVer == 0 &&
       isX87ControlWord(Opts.TheArch, E.Var))
     return X87CHelper::ControlWord;
-  if (E.Kind == ExprKind::BitCast && E.Operands.size() == 1 && E.Operands[0]) {
-    if (isX87Value(E))
-      return X87CHelper::Value;
-    if (isX87Value(*E.Operands[0]))
-      return X87CHelper::Bits;
-  }
   if (E.Kind == ExprKind::UnaryOp &&
       (E.Op == NdOp::FLOAT_ROUNDEVEN || E.Op == NdOp::FLOAT_SQRT) &&
       !E.Operands.empty() && E.Operands[0] && isX87Value(*E.Operands[0]))
@@ -4115,12 +4111,15 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     // constant.
     if (const auto Literal = floatConstantBitsText(Src, E.Type))
       return *Literal;
-    // An x87 value's 80 bits fill ten bytes of a wider C object, which
-    // __builtin_bit_cast cannot reinterpret: they are copied.
+    // An x87 value's 80 bits are the low ten bytes of a `long double`, whose
+    // size the unit asserts is that of the `unsigned _BitInt(80)` carrying
+    // them; the bytes past them are padding to both.
     if (isX87Value(E))
-      return useX87Helper(X87CHelper::Value) + "(" + exprStr(Src) + ")";
+      return "__builtin_bit_cast(long double, (unsigned _BitInt(80))(" +
+             exprStr(Src) + "))";
     if (isX87Value(Src))
-      return useX87Helper(X87CHelper::Bits) + "(" + exprStr(Src) + ")";
+      return "__builtin_bit_cast(unsigned _BitInt(80), (long double)(" +
+             exprStr(Src) + "))";
     // The explicit source cast prevents integer promotions (or an unsuffixed
     // constant) from changing the operand's byte width inside the builtin.
     return "__builtin_bit_cast(" + typeToC(E.Type) + ", (" + typeToC(Src.Type) +

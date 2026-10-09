@@ -99,10 +99,6 @@ std::string renderX86InterruptAsm(
 
 const char *x87CHelperName(X87CHelper Helper) {
   switch (Helper) {
-  case X87CHelper::Value:
-    return "neverd_x87_value";
-  case X87CHelper::Bits:
-    return "neverd_x87_bits";
   case X87CHelper::Frndint:
     return "neverd_x87_frndint";
   case X87CHelper::Fsqrt:
@@ -151,25 +147,16 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
                       const std::set<X87CHelper> &Used) {
   // An x87 register holds 80 bits; C computes with them as `long double`
   // only where that is the x87 extended format, which the unit requires.
+  // The bits travel in an `unsigned _BitInt(80)` of the same size, so one
+  // __builtin_bit_cast turns either into the other.
   if (UsesExtended)
     OS << "_Static_assert(__LDBL_MANT_DIG__ == 64,\n"
           "               \"x87 values need the 80-bit extended long "
-          "double\");\n\n";
-  // The 80 bits fill ten bytes of either wider C object.
-  if (Used.count(X87CHelper::Value))
-    OS << "static inline long double neverd_x87_value(unsigned _BitInt(80) "
-          "bits) {\n"
-          "    long double value = 0;\n"
-          "    __builtin_memcpy(&value, &bits, 10);\n"
-          "    return value;\n"
-          "}\n\n";
-  if (Used.count(X87CHelper::Bits))
-    OS << "static inline unsigned _BitInt(80) neverd_x87_bits(long double "
-          "value) {\n"
-          "    unsigned _BitInt(80) bits = 0;\n"
-          "    __builtin_memcpy(&bits, &value, 10);\n"
-          "    return bits;\n"
-          "}\n\n";
+          "double\");\n"
+          "_Static_assert(sizeof(long double) == sizeof(unsigned "
+          "_BitInt(80)),\n"
+          "               \"x87 bits travel in a long double's "
+          "storage\");\n\n";
   // C's rint, nearbyint and sqrtl live in the C library; each instruction
   // computes in place as the machine did.
   for (const auto &[Helper, Mnemonic] :
