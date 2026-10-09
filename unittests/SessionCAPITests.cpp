@@ -4137,6 +4137,64 @@ TEST_F(SessionCAPITest, DebugParametersNameTheRegistersTheyArriveIn) {
 #endif
 }
 
+TEST_F(SessionCAPITest, StubsOfVariadicImportsPassTheirArgumentsOn) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // Each call reaches its import through a PLT stub, which passes every
+  // argument on.  C passes no `...` on, so the stub shows as a function that
+  // hands printf's variadic arguments to vprintf, reads open's mode, and
+  // collects execl's pointers for execv, in both C backends.
+  const std::string Binary =
+      buildProgram("variadic", "#include <fcntl.h>\n"
+                               "#include <stdio.h>\n"
+                               "#include <unistd.h>\n"
+                               "int main(int argc, char **argv) {\n"
+                               "  printf(\"%d %s\\n\", argc, argv[0]);\n"
+                               "  int fd = open(argv[0], O_RDONLY);\n"
+                               "  if (argc > 100)\n"
+                               "    execl(argv[0], argv[0], (char *)0);\n"
+                               "  return fd < 0;\n"
+                               "}\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const std::map<std::string, std::string> Forms = {
+      {"printf", "vprintf(format, arguments)"},
+      {"open", "va_arg(arguments, int)"},
+      {"execl", "execv(arg0, (char *const *)vector)"}};
+  std::set<std::string> Shown;
+  for (int I = 0; I < neverd_func_count(Session); ++I) {
+    const neverd_va_t Entry = neverd_func_entry(Session, I);
+    for (const bool LLVM : {false, true}) {
+      const std::string Page =
+          takeString(LLVM ? neverd_decompile_llvm(Session, Entry)
+                          : neverd_decompile(Session, Entry));
+      for (const auto &[Import, Form] : Forms) {
+        if (Page.find("jumps to the import " + Import + ",") ==
+            std::string::npos)
+          continue;
+        Shown.insert(Import + (LLVM ? " in LLVM-C" : " in HighC"));
+        EXPECT_NE(Page.find(Form), std::string::npos) << Page;
+        const auto Source = write("stub.c", Page);
+        std::string Message;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(
+                      NEVERD_RUNTIME_FIXTURE_COMPILER,
+                      {NEVERD_RUNTIME_FIXTURE_COMPILER, "-std=gnu11", "-w",
+                       "-fno-strict-aliasing", "-c", Source, "-o",
+                       (Directory / "stub.o").string()},
+                      std::nullopt, {}, 60, 0, &Message),
+                  0)
+            << Message << Page;
+      }
+    }
+  }
+  EXPECT_EQ(Shown.size(), 2 * Forms.size()) << llvm::join(Shown, ", ");
+#endif
+}
+
 TEST_F(SessionCAPITest, StartAloneCallsTheBoundStartupImportWithMain) {
 #if !defined(__linux__)
   GTEST_SKIP() << "builds a glibc program";

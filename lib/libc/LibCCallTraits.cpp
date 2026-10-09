@@ -464,4 +464,46 @@ const LibCPrintfFormat *libcPrintfFormat(std::string_view Name) {
   return nullptr;
 }
 
+const LibCVariadicForward *libcVariadicForward(std::string_view Name) {
+  using Kind = LibCVariadicForward::Kind;
+#define NEVERD_FIXED_PARAMETERS(...)                                           \
+  {__VA_ARGS__},                                                               \
+      static_cast<uint8_t>(                                                    \
+          std::initializer_list<std::string_view>{__VA_ARGS__}.size())
+  static constexpr LibCVariadicForward Forwards[] = {
+#define LIBC_VA_LIST_FORM(Routine, ReturnType, TypeHeader, Form, ...)          \
+  {Kind::VaList,                                                               \
+   Routine,                                                                    \
+   ReturnType,                                                                 \
+   TypeHeader,                                                                 \
+   Form,                                                                       \
+   NEVERD_FIXED_PARAMETERS(__VA_ARGS__),                                       \
+   0,                                                                          \
+   {},                                                                         \
+   false},
+#define LIBC_BOUNDED_VARARGS(Routine, ReturnType, TypeHeader, Read, ReadType,  \
+                             ...)                                              \
+  {Kind::Bounded, Routine,  ReturnType,                                        \
+   TypeHeader,    Routine,  NEVERD_FIXED_PARAMETERS(__VA_ARGS__),              \
+   Read,          ReadType, false},
+#define LIBC_SENTINEL_VARARGS(Routine, ReturnType, TypeHeader, Vector,         \
+                              WithEnvironment, ...)                            \
+  {Kind::Sentinel,                                                             \
+   Routine,                                                                    \
+   ReturnType,                                                                 \
+   TypeHeader,                                                                 \
+   Vector,                                                                     \
+   NEVERD_FIXED_PARAMETERS(__VA_ARGS__),                                       \
+   0,                                                                          \
+   {},                                                                         \
+   WithEnvironment},
+#include "neverd/libc/LibCVariadicForwards.inc"
+  };
+#undef NEVERD_FIXED_PARAMETERS
+  for (const LibCVariadicForward &Forward : Forwards)
+    if (Forward.Name == Name)
+      return &Forward;
+  return nullptr;
+}
+
 } // namespace neverd::libc

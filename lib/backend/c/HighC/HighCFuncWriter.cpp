@@ -968,8 +968,12 @@ void HighCWriter::writeFunction(const HighFunc &Func) {
         OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
       HighExpr Slot;
       Slot.CallAddr = Func.Entry;
-      c_stub::writeVariadicImportStub(OS, functionIdentifier(Func), Import,
-                                      importSlotIdentifier(Slot));
+      c_stub::writeVariadicImportStub(
+          OS,
+          c_stub::variadicStubName(functionIdentifier(Func), Import,
+                                   Func.Entry),
+          Import, importSlotIdentifier(Slot),
+          libc::libcVariadicForward(Import));
       return;
     }
   if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Func)) {
