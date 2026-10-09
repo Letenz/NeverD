@@ -134,7 +134,7 @@ static char mode(void) {
       ClockAbsolute,
       ClockTooLong,
       ThreadInformation,
-      ThreadAffinityUnsupported,
+      ThreadUnknownInformation,
 #define NEVERD_WINDOWS_FIXTURE_TEXT(Name, Text) Name,
 #include "WindowsMemoryCases.def"
 #undef NEVERD_WINDOWS_FIXTURE_TEXT

@@ -2190,7 +2190,7 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ThreadInformationRetainsStateAndChecksExactLengths/{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/WindowsProcess."
-    "ThreadAffinityIsNotAcknowledgedAsDebuggerState/{backend_title}X64")
+    "UnknownThreadInformationIsNotAcknowledged/{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/WindowsProcess."
     "UnmodeledDelaysStopWithoutClaimingCompletion/{backend_title}X64")

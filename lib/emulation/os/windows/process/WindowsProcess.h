@@ -189,6 +189,8 @@ private:
                                                     const NativeCallEvent &);
   llvm::Expected<std::optional<uint64_t>>
   createSection(const Service &, const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> openSection(const Service &,
+                                                      const NativeCallEvent &);
   llvm::Expected<std::optional<uint64_t>> mapSection(const Service &,
                                                      const NativeCallEvent &);
   llvm::Expected<std::optional<uint64_t>> unmapSection(const Service &,
@@ -266,9 +268,11 @@ private:
   struct SectionObject {
     std::filesystem::path Path;
     uint64_t Size = 0;
+    std::optional<size_t> SystemModule;
   };
   struct MappedView {
     uint64_t Size = 0;
+    bool Image = false;
   };
   std::map<uint64_t, OpenedFile> Files;
   std::map<uint64_t, SectionObject> Sections;

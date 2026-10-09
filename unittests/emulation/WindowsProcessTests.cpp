@@ -169,10 +169,11 @@ TEST_P(WindowsProcess, ThreadInformationRetainsStateAndChecksExactLengths) {
   EXPECT_EQ(R.StandardOutput, std::string(Message) + Detached);
   EXPECT_EQ(R.StandardError, std::string(Binary, sizeof(Binary) - 1));
 }
-TEST_P(WindowsProcess, ThreadAffinityIsNotAcknowledgedAsDebuggerState) {
-  const auto R = run(ThreadAffinityUnsupported);
+TEST_P(WindowsProcess, UnknownThreadInformationIsNotAcknowledged) {
+  const auto R = run(ThreadUnknownInformation);
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
-  EXPECT_NE(R.Diagnostic.find("class 4"), std::string::npos) << R.Diagnostic;
+  EXPECT_NE(R.Diagnostic.find("class 7FFFFFFF"), std::string::npos)
+      << R.Diagnostic;
   EXPECT_FALSE(R.ExitStatus);
   EXPECT_TRUE(R.StandardOutput.empty());
   EXPECT_TRUE(R.StandardError.empty());

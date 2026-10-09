@@ -41,9 +41,9 @@ __attribute__((naked)) static long setThreadLowWords(HANDLE Thread, DWORD Class,
 }
 
 static void threadScenario(char Mode) {
-  if (Mode == ThreadAffinityUnsupported[0]) {
+  if (Mode == ThreadUnknownInformation[0]) {
     const ULONG_PTR Mask = 1;
-    ZwSetInformationThread(GetCurrentThread(), 4, &Mask, sizeof(Mask));
+    ZwSetInformationThread(GetCurrentThread(), 0x7fffffff, &Mask, sizeof(Mask));
     require(0);
     return;
   }
@@ -53,6 +53,19 @@ static void threadScenario(char Mode) {
   DWORD Returned = 0xabcdef01;
   const HANDLE Thread = GetCurrentThread();
   SetLastError(LastErrorSeed);
+  ULONG_PTR Basic[6] = {0};
+  require(ZwQueryInformationThread(Thread, 0, Basic, sizeof(Basic),
+                                   &Returned) == 0);
+  const ULONG_PTR OriginalMask = Basic[4];
+  require(OriginalMask != 0);
+  const ULONG_PTR OneProcessor = OriginalMask & (~OriginalMask + 1);
+  require(setThreadLowWords(Thread, 4, &OneProcessor, sizeof(OneProcessor)) ==
+          0);
+  require(ZwQueryInformationThread(Thread, 0, Basic, sizeof(Basic),
+                                   &Returned) == 0 &&
+          Basic[4] == OneProcessor);
+  require(ZwSetInformationThread(Thread, 4, &OriginalMask,
+                                 sizeof(OriginalMask)) == 0);
   require(queryThreadLowWords(Thread, 0x11, Bytes + 1, 1, &Returned) == 0);
   require(Bytes[0] == 0x55 && Bytes[1] == 0 && Bytes[2] == 0x66 &&
           Returned == 1);
