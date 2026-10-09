@@ -152,12 +152,14 @@ llvm::Error readImports(const Reader &R, const data_directory &D, Image &Out,
       if (!IAT)
         return IAT.takeError();
       const uint64_t NameRVA = llvm::support::endian::read64le(Symbol->data());
-      if (NameRVA != llvm::support::endian::read64le(IAT->data()))
-        return failure(text::Imports);
+      // An independent lookup table owns the count, even when the next IAT
+      // cell is a pending delay-load thunk rather than a null terminator.
       if (!NameRVA) {
         End = true;
         break;
       }
+      if (NameRVA != llvm::support::endian::read64le(IAT->data()))
+        return failure(text::Imports);
       if (Out.Imports.size() == MaxImports || !Slots.insert(Slot).second)
         return failure(text::Imports);
       if (!R.record())

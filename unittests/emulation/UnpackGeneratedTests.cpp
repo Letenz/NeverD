@@ -1046,13 +1046,22 @@ TEST_P(UnpackGenerated, DelayImportsRetainLazyLoadingAfterCapture) {
     const auto *D = Rebuilt.Mapped.data() + Delay.RelativeVirtualAddress;
     const uint64_t Handle = read32le(D + 8), IAT = read32le(D + 12);
     EXPECT_EQ(read64le(Rebuilt.Mapped.data() + Handle), 0u);
-    EXPECT_EQ(read64le(Rebuilt.Mapped.data() + IAT),
-              read64le(Linked.Mapped.data() + IAT));
-    EXPECT_EQ(read64le(Rebuilt.Mapped.data() + IAT + 8),
-              read64le(Linked.Mapped.data() + IAT + 8));
-    EXPECT_FALSE(llvm::any_of(Result->Imports, [](const auto &I) {
-      return I.Module == "unpack_delay.dll";
+    EXPECT_EQ(llvm::count_if(
+                  Result->Imports,
+                  [](const auto &I) { return I.Module == "unpack_delay.dll"; }),
+              ResolveAll ? 2 : 1);
+    EXPECT_TRUE(llvm::any_of(Result->Imports, [IAT](const auto &I) {
+      return I.SlotRVA == IAT && I.Module == "unpack_delay.dll" &&
+             I.Name == "first";
     }));
+    if (!ResolveAll)
+      EXPECT_EQ(read64le(Rebuilt.Mapped.data() + IAT + 8),
+                read64le(Linked.Mapped.data() + IAT + 8));
+    else
+      EXPECT_TRUE(llvm::any_of(Result->Imports, [IAT](const auto &I) {
+        return I.SlotRVA == IAT + 8 && I.Module == "unpack_delay.dll" &&
+               I.Name == "second";
+      }));
     test::writeFile(Output, Result->Image);
     auto Run =
         emulateProcess(Output, ProcessProfile::WindowsPE64, Options.Process);

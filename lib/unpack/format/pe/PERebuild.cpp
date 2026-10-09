@@ -439,9 +439,15 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   auto Delay = restoreDelayImports(In, C, Memory);
   if (!Delay)
     return Delay.takeError();
-  auto Slots = findSlots(In, C, Memory, *Delay);
+  auto Slots = findSlots(In, C, Memory, Delay->Metadata);
   if (!Slots)
     return Slots.takeError();
+  if (Delay->Resolved.size() > defaults::Imports - Slots->size())
+    return failure(unpack::text::ImportLimit);
+  for (const auto &Binding : Delay->Resolved)
+    Slots->push_back({Binding.RVA, Binding.Target, ImportOrigin::Runtime});
+  llvm::sort(*Slots,
+             [](const auto &A, const auto &B) { return A.RVA < B.RVA; });
   auto Repairs = planTailImports(In, C, Plan.TailImports, Memory, *Slots);
   if (!Repairs)
     return Repairs.takeError();
@@ -491,7 +497,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
 
   auto Directories = H.Directories;
   std::vector<uint64_t> Required(Regions.size());
-  for (const auto &Range : *Delay)
+  for (const auto &Range : Delay->Metadata)
     for (size_t I = 0; I < Regions.size(); ++I) {
       const auto &R = Regions[I];
       const uint64_t End = std::min(Range.End, R.RVA + R.MemorySize);

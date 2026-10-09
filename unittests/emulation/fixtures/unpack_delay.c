@@ -25,7 +25,9 @@ extern U8 __ImageBase;
 struct DelayDescriptor {
   U32 Attributes, Name, Handle, IAT, INT, Bound, Unload, TimeStamp;
 };
+volatile U32 DelayCalls;
 void *__delayLoadHelper2(const struct DelayDescriptor *D, void **Slot) {
+  ++DelayCalls;
   U8 *Base = &__ImageBase;
   void **Handle = (void **)(Base + D->Handle);
   if (!*Handle)
@@ -50,7 +52,10 @@ __declspec(allocate(".pay")) struct PackRecord Pack = {0};
 
 __declspec(dllexport) __attribute__((section(".prog"), noinline)) void
 program(void) {
-  ExitProcess(first() == 7 ? second() : 91);
+  if (first() != 7 || DelayCalls != (Pack.ResolveAll ? 2 : 1))
+    ExitProcess(91);
+  U32 Result = second();
+  ExitProcess(DelayCalls == 2 ? Result : 91);
 }
 
 __declspec(dllexport) __attribute__((noinline)) void loader(void) {

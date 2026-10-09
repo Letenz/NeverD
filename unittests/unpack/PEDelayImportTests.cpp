@@ -127,7 +127,7 @@ protected:
   }
 };
 
-TEST_F(PEDelayImports, ResolvedCellsReturnToTheirLoaderThunks) {
+TEST_F(PEDelayImports, ResolvedCellsRebindWithoutRepeatingHelpers) {
   for (unsigned Resolved : {1u, 2u}) {
     SCOPED_TRACE(Resolved);
     C.Memory = C.Baseline;
@@ -139,10 +139,19 @@ TEST_F(PEDelayImports, ResolvedCellsReturnToTheirLoaderThunks) {
     auto Image = test::readImage(Result->File);
     ASSERT_FALSE(HasFailure());
     EXPECT_EQ(read64le(Image.Mapped.data() + Handle), 0u);
-    EXPECT_EQ(read64le(Image.Mapped.data() + IAT), Base + Thunk);
-    EXPECT_EQ(read64le(Image.Mapped.data() + IAT + 8), Base + Thunk + 8);
+    ASSERT_EQ(Result->Imports.size(), Resolved);
+    EXPECT_EQ(Result->Imports[0].SlotRVA, IAT);
+    EXPECT_EQ(Result->Imports[0].Module, "example.dll");
+    EXPECT_EQ(Result->Imports[0].Name, "first");
+    if (Resolved == 1)
+      EXPECT_EQ(read64le(Image.Mapped.data() + IAT + 8), Base + Thunk + 8);
+    else {
+      EXPECT_EQ(Result->Imports[1].SlotRVA, IAT + 8);
+      EXPECT_EQ(Result->Imports[1].Ordinal, 7);
+    }
+    EXPECT_NE(read64le(Image.Mapped.data() + IAT), Gate);
+    EXPECT_NE(read64le(Image.Mapped.data() + IAT), Base + Thunk);
     EXPECT_EQ(Image.Mapped[0x2f00], 0x5a);
-    EXPECT_TRUE(Result->Imports.empty());
     EXPECT_EQ(Image.directory(llvm::COFF::DELAY_IMPORT_DESCRIPTOR).Size,
               2 * sizeof(delay_import_directory_table_entry));
   }
@@ -158,7 +167,7 @@ TEST_F(PEDelayImports, PendingCellsAndMetadataRemainByteExact) {
   EXPECT_TRUE(Result->Imports.empty());
 }
 
-TEST_F(PEDelayImports, CompleteUnloadTablesAuthorizeMaterializedThunks) {
+TEST_F(PEDelayImports, UnloadTablesRemainSeparateFromResolvedBindings) {
   write32le(C.Memory.data() + Directory + 24, Unload);
   write64le(C.Memory.data() + Unload, Base + Thunk);
   write64le(C.Memory.data() + Unload + 8, Base + Thunk + 8);
@@ -171,7 +180,8 @@ TEST_F(PEDelayImports, CompleteUnloadTablesAuthorizeMaterializedThunks) {
   auto Image = test::readImage(Result->File);
   ASSERT_FALSE(HasFailure());
   EXPECT_EQ(read64le(Image.Mapped.data() + Handle), 0u);
-  EXPECT_EQ(read64le(Image.Mapped.data() + IAT), Base + Thunk);
+  ASSERT_EQ(Result->Imports.size(), 1u);
+  EXPECT_EQ(Result->Imports[0].SlotRVA, IAT);
   EXPECT_EQ(read64le(Image.Mapped.data() + IAT + 8), Base + Thunk + 8);
   EXPECT_EQ(read64le(Image.Mapped.data() + Unload), Base + Thunk);
 }
@@ -187,24 +197,25 @@ TEST_F(PEDelayImports, BoundCachesCannotBecomeOrdinaryImports) {
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
   auto Image = test::readImage(Result->File);
   ASSERT_FALSE(HasFailure());
-  EXPECT_TRUE(Result->Imports.empty());
+  ASSERT_EQ(Result->Imports.size(), 1u);
+  EXPECT_EQ(Result->Imports[0].SlotRVA, IAT);
   EXPECT_EQ(read32le(Image.Mapped.data() + Directory + 20), 0u);
   EXPECT_EQ(read32le(Image.Mapped.data() + Directory + 28), 0u);
   EXPECT_EQ(read64le(Image.Mapped.data() + Unload), Gate);
 }
 
-TEST_F(PEDelayImports, InitialThunksUseTheObservedImageBase) {
+TEST_F(PEDelayImports, PendingThunksUseTheObservedImageBase) {
   C.Base += 0x100000000;
-  for (unsigned I = 0; I < 2; ++I) {
-    write64le(C.Baseline.data() + IAT + 8 * I, C.Base + Thunk + 8 * I);
-    write64le(C.Memory.data() + IAT + 8 * I, Gate + 8 * I);
-  }
+  write64le(C.Memory.data() + IAT, Gate);
+  write64le(C.Memory.data() + IAT + 8, C.Base + Thunk + 8);
   auto Result = rebuild();
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
   auto Image = test::readImage(Result->File);
   ASSERT_FALSE(HasFailure());
   EXPECT_EQ(Image.Base, C.Base);
-  EXPECT_EQ(read64le(Image.Mapped.data() + IAT), C.Base + Thunk);
+  ASSERT_EQ(Result->Imports.size(), 1u);
+  EXPECT_EQ(Result->Imports[0].SlotRVA, IAT);
+  EXPECT_EQ(read64le(Image.Mapped.data() + IAT + 8), C.Base + Thunk + 8);
 }
 
 TEST_F(PEDelayImports, ZeroTerminatorsKeepTheirCompleteFileBacking) {
@@ -222,11 +233,11 @@ TEST_F(PEDelayImports, ZeroTerminatorsKeepTheirCompleteFileBacking) {
   EXPECT_GE(Image.Sections[1].FileSize, NewIAT - 0x2000 + 16);
 }
 
-TEST_F(PEDelayImports, MissingThunkEvidenceFailsInsteadOfKeepingGuestPointers) {
-  for (uint64_t Initial : {uint64_t(0), Gate, Base + Handle, Base + 0x4000}) {
-    SCOPED_TRACE(Initial);
-    write64le(C.Baseline.data() + IAT, Initial);
-    write64le(C.Memory.data() + IAT, Gate);
+TEST_F(PEDelayImports, InvalidCellsFailInsteadOfKeepingGuestPointers) {
+  for (uint64_t Current :
+       {uint64_t(0), Gate + 0x1000, Base + Handle, Base + 0x4000}) {
+    SCOPED_TRACE(Current);
+    write64le(C.Memory.data() + IAT, Current);
     expectFailure();
   }
 }
@@ -236,9 +247,16 @@ TEST_F(PEDelayImports, UnknownResolvedTargetsCannotAuthorizeRestoration) {
   expectFailure();
 }
 
-TEST_F(PEDelayImports, ChangedDescriptorsNeedACompleteUnloadTable) {
+TEST_F(PEDelayImports, GeneratedDescriptorsKeepTheirObservedPendingThunks) {
   write32le(C.Memory.data() + Directory + 28, 99);
-  expectFailure();
+  auto Result = rebuild();
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  const auto Image = test::readImage(Result->File);
+  ASSERT_FALSE(HasFailure());
+  EXPECT_TRUE(Result->Imports.empty());
+  EXPECT_EQ(read32le(Image.Mapped.data() + Directory + 28), 0u);
+  EXPECT_EQ(read64le(Image.Mapped.data() + IAT), Base + Thunk);
+  EXPECT_EQ(read64le(Image.Mapped.data() + IAT + 8), Base + Thunk + 8);
 }
 
 TEST_F(PEDelayImports, IncompleteTablesAndNamesFailExplicitly) {
@@ -285,7 +303,6 @@ TEST_F(PEDelayImports, OverlappingOwnersCannotResetEachOthersStorage) {
     const auto Good = C.Memory;
     write32le(C.Memory.data() + Directory + 8, Address);
     C.Baseline = C.Memory;
-    // A handle from a prior invocation cannot establish initial state.
     expectFailure();
     C.Memory = Good;
   }

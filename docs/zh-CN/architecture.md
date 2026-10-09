@@ -1189,7 +1189,7 @@ Windows 进程时间策略归 `os/windows/process/` 中的 `WindowsProcessTime.c
 
 `WindowsLibraryHost.cpp` 负责 DLL 宿主构造，Windows 加载器负责普通加载与卸载生命周期。`ProcessView::inputModule()` 区分观察输入与宿主 EXE，允许延后建立初始快照。`ProcessView::callFrame()` 通过 `IntegerABI` 读取整数参数和返回事实；`dynamic/ProcessTransfer` 负责匹配返回地址与栈的完成证据。仅 `PETLS.cpp` 决定该证据是否完成进程附加回调。
 
-`PEDelayImports.cpp` 负责新进程中的延迟加载状态恢复及元数据存储排除。COFF 加载器根据描述符来源记录 `Import::IsDelayImport`，Windows 执行准入仅比较普通导入。完整卸载表或未变化的初始映射为映像内跳板提供依据。无效状态明确报错，程序自身的辅助函数保留按需解析行为。
+`PEDelayImports.cpp` 负责新进程中的延迟加载修复及元数据存储排除。COFF 加载器根据描述符来源记录 `Import::IsDelayImport`，Windows 执行准入仅比较普通导入。经过验证的延迟描述符为已解析单元的重新绑定提供准确范围，待解析的内部跳板保留按需行为。独立查找表限定绑定数量，保留后续待解析单元。无效状态明确报错。
 
 `ExportObserver` 也观察驻留来宾依赖的可执行导出；建模提供者仍通过服务分派观察。输入镜像自身导出被排除。模块变化会刷新观察点，每次修复仍须由实时导出身份授权。发现记录不超过声明的导入上限。DLL 夹具同时要求修复系统 API 与来宾依赖的跳板，并通过原生加载验证不残留模拟地址。
 

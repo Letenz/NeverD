@@ -75,10 +75,18 @@ rebuild(const Image &Input, const Capture &Observed, const RebuildPlan &Plan);
 struct DelayImportRange {
   uint64_t Begin, End;
 };
-/// Restore delay-load thunks and clear process-local handles. Complete unload
-/// tables, or unchanged descriptors with initial mapped thunks, establish the
-/// fresh-process state. Returned metadata ranges cannot become ordinary IAT.
-llvm::Expected<std::vector<DelayImportRange>>
+struct DelayImportState {
+  std::vector<DelayImportRange> Metadata;
+  struct Binding {
+    uint64_t RVA;
+    const ExportBinding *Target;
+  };
+  std::vector<Binding> Resolved;
+};
+/// Clear process-local delay handles and bound caches. Validated descriptors
+/// own exact cells: resolved exports need fresh bindings, while internal
+/// thunks retain their lazy behavior. Other delay metadata cannot become IAT.
+llvm::Expected<DelayImportState>
 restoreDelayImports(const Image &Input, const Capture &Observed,
                     llvm::MutableArrayRef<uint8_t> Memory);
 

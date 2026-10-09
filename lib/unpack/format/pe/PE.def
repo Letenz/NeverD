@@ -75,5 +75,5 @@ NEVERD_UNPACK_PE_TEXT(
 NEVERD_UNPACK_PE_TEXT(DelayAttributes,
                       "delay-import restoration requires RVA-based descriptors")
 NEVERD_UNPACK_PE_TEXT(
-    DelayState, "delay-import restoration requires initial in-image thunks")
+    DelayState, "delay-import cells require in-image thunks or observed exports")
 #endif
