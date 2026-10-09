@@ -268,6 +268,9 @@ public:
   std::string debugNameForDisplacement(va_t Entry, int64_t Disp) const;
   TypeRef debugTypeForDisplacement(va_t Entry, int64_t Disp) const;
   TypeRef declaredParamType(const MedVar &V) const;
+  /// The type \p Func's definition declares its HighIR parameter \p Index
+  /// with, which its prototype and every use of the parameter share.
+  TypeRef emittedParamType(const HighFunc &Func, size_t Index) const;
   TypeRef debugParamType(const MedVar &V) const;
   TypeRef declaredRecordPointee(const HighExpr &Base) const;
   std::optional<std::pair<const HighExpr *, uint64_t>>
@@ -373,7 +376,11 @@ public:
   std::string intrinsicOperandStr(const HighExpr &E);
   /// Cast / zext / `SUBBYTES` 0 of a Var/Phi. Not add/sub/mul, Call, or Load.
   bool isIntegerViewOfScalar(const HighExpr &E) const;
-  std::string exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected);
+  /// \p E as the argument of a parameter of type \p Expected.  For a callee
+  /// this file defines, whose prototype it prints (\p DefinedCallee), a
+  /// variable declared as an integer converts to a pointer parameter.
+  std::string exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected,
+                                bool DefinedCallee = false);
   bool looksLikeHiddenSretOperand(const HighExpr *Op) const;
   bool debugExternUsesHiddenSret(const FunctionSym &FS,
                                  llvm::StringRef ExternName) const;
@@ -703,6 +710,13 @@ public:
   bool InferredVoid = false;
   TypeRef FuncReturnType;
   const HighFunc *CurrentFunc = nullptr;
+  /// The external functions declared without a prototype (`extern int f();`),
+  /// whose calls pass their arguments by C's default argument promotions.
+  std::set<std::string> UnprototypedExterns;
+  /// emittedParamType's answers for the function it last answered for.
+  mutable const HighFunc *EmittedParamTypesOf = nullptr;
+  mutable va_t EmittedParamTypesEntry = 0;
+  mutable std::vector<TypeRef> EmittedParamTypes;
   CSourceRecorder *SourceRecorder = nullptr;
   /// Win64 hidden sret parameter name (`result`) when TPI returns a class.
   std::string IndirectReturnName;

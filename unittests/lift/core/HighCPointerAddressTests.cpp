@@ -461,6 +461,78 @@ void expectPortableStore(std::string_view Source, std::string_view Type,
   EXPECT_TRUE(hasPortableStore(Source, Type, Address, Value)) << Source;
 }
 
+TEST(HighCPointerAddresses, DebugTypedParametersOffsetInBytes) {
+  // The machine passes `out` in a register; the debug information declares
+  // `int32_t *out`.  Its uses, its definition and its prototype all take the
+  // declared type: four bytes past `out` is `out[1]`, which `out + 4` would
+  // read as `out[4]`.
+  class ClassifyDbg : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x401000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "classify";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeInt(4);
+      FS.Params = {{"k", NdType::makeInt(4)},
+                   {"out", NdType::makePtr(NdType::makeInt(4))}};
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+
+  HighFunc Classify;
+  Classify.Name = "classify";
+  Classify.Entry = 0x401000;
+  Classify.ReturnType = NdType::makeInt(4);
+  Classify.Params = {{"arg0", NdType::makeInt(4)},
+                     {"arg1", NdType::makeInt(8, false)}};
+  const auto Word = NdType::makeInt(8, false);
+  returnValue(Classify,
+              HighExpr::makeBinop(
+                  NdOp::INT_ADD,
+                  HighExpr::makeLoad(
+                      HighExpr::makeBinop(NdOp::INT_ADD, parameter(1, Word),
+                                          HighExpr::makeConst(4, 8)),
+                      NdType::makeInt(4)),
+                  HighExpr::makeLoad(parameter(1, Word), NdType::makeInt(4))));
+
+  // A caller placed first needs the prototype.
+  HighFunc Caller;
+  Caller.Name = "first_two";
+  Caller.Entry = 0x400F00;
+  Caller.ReturnType = NdType::makeInt(4);
+  Caller.Params = {{"arg0", Word}};
+  auto Call = HighExpr::makeCall(
+      "classify", 0x401000, {HighExpr::makeConst(0, 4), parameter(0, Word)});
+  Call->Type = NdType::makeInt(4);
+  returnValue(Caller, Call);
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({Caller, Classify}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("int32_t classify(int32_t k, int32_t* out)"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("int32_t classify(int32_t, int32_t*);"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("(uintptr_t)out + 4"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(out + 4)"), std::string::npos) << Source;
+  compileAndRunCallOrdering(Source + R"c(
+int main(void) {
+  int32_t values[4] = {1, 2, 3, 1000};
+  if (classify(0, values) != 3)
+    return 1;
+  return first_two((uint64_t)(uintptr_t)values) == 3 ? 0 : 2;
+}
+)c");
+}
+
 TEST(HighCPointerAddresses, TypedAndMachineWidthParametersUseByteOffsets) {
   for (Arch TheArch : {Arch::X64, Arch::AArch64}) {
     for (bool TypedExpr : {false, true}) {
@@ -23135,8 +23207,8 @@ TEST(HighCPointerAddresses, IncomingParamIsNotReassignedFromOtherParam) {
   returnValue(Func, parameter(0, Func.Params[0].Type));
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("record ="), std::string::npos) << Source;
-  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"),
-            std::string::npos)
+  // CRecord_GetRank has no prototype: the pointer passes as it is.
+  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos)
       << Source;
 }
 
@@ -23173,8 +23245,8 @@ TEST(HighCPointerAddresses, IncomingParamIsNotReassignedFromTemp) {
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("record ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"),
-            std::string::npos)
+  // CRecord_GetRank has no prototype: the pointer passes as it is.
+  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos)
       << Source;
 }
 

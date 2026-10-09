@@ -4252,6 +4252,50 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
   });
 }
 
+TypeRef HighCWriter::emittedParamType(const HighFunc &Func,
+                                      size_t Index) const {
+  if (Index >= Func.Params.size())
+    return nullptr;
+  if (EmittedParamTypesOf != &Func || EmittedParamTypesEntry != Func.Entry ||
+      EmittedParamTypes.size() != Func.Params.size()) {
+    EmittedParamTypesOf = &Func;
+    EmittedParamTypesEntry = Func.Entry;
+    EmittedParamTypes.clear();
+    for (const HighParam &Param : Func.Params)
+      EmittedParamTypes.push_back(Param.Type);
+    // A bound source ABI spells its own parameters (sourceParameterType).
+    const auto DebugFn = debugFunction(Dbg, Func.Entry);
+    if (DebugFn && !Func.SourceTypeHint) {
+      const bool HighIRIncludesSret =
+          isMsvcIndirectReturn(DebugFn->ReturnType) &&
+          highIRIncludesIndirectReturn(Func, *DebugFn);
+      const int SretId = indirectReturnParamId(*DebugFn);
+      for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
+        // The hidden result pointer is the definition's `result`, a pointer
+        // to the record the function returns.
+        if (HighIRIncludesSret && static_cast<int>(PI) == SretId) {
+          if (const TypeRef Result = declaredFunctionReturnType(Func);
+              Result && Result->Kind == NdTypeKind::Ptr)
+            EmittedParamTypes[PI] = Result;
+          continue;
+        }
+        size_t DI = PI;
+        if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
+          DI = PI - 1;
+        if (DI >= DebugFn->Params.size())
+          continue;
+        // A debug record's byte size alone does not describe a C type: a type
+        // C cannot spell, such as a pointer to a record without a printable
+        // name or validated fields, keeps the recovered machine parameter.
+        if (const TypeRef DebugType = cDisplayType(DebugFn->Params[DI].second);
+            DebugType && hasCSpelling(DebugType))
+          EmittedParamTypes[PI] = DebugType;
+      }
+    }
+  }
+  return EmittedParamTypes[Index];
+}
+
 size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
   return emittedParamIndices(Func).size();
 }
@@ -5491,7 +5535,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         Indirect && DebugFn && isWin64MemberIndirectReturn(*DebugFn);
     const int SretId = DebugFn ? indirectReturnParamId(*DebugFn) : 0;
     auto emitHighIRParam = [&](size_t PI) {
-      TypeRef Ty = Func.Params[PI].Type;
+      TypeRef Ty = emittedParamType(Func, PI);
       std::string Name = Func.Params[PI].Name;
       if (auto It = ParamDisplayNames.find(static_cast<int>(PI));
           It != ParamDisplayNames.end())
@@ -5500,18 +5544,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         size_t DI = PI;
         if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
           DI = PI - 1;
-        if (DI < DebugFn->Params.size()) {
-          // A debug record's byte size alone does not describe a C type:
-          // a type C cannot spell, such as a pointer to a record without a
-          // printable name or validated fields, keeps the recovered machine
-          // parameter.
-          if (const TypeRef DebugType =
-                  cDisplayType(DebugFn->Params[DI].second);
-              DebugType && hasCSpelling(DebugType))
-            Ty = DebugType;
-          if (!DebugFn->Params[DI].first.empty())
-            Name = DebugFn->Params[DI].first;
-        }
+        if (DI < DebugFn->Params.size() && !DebugFn->Params[DI].first.empty())
+          Name = DebugFn->Params[DI].first;
       }
       if (Func.SourceTypeHint && PI < Func.SourceTypeHint->Parameters.size()) {
         if (Emitted)

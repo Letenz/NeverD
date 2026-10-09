@@ -1081,7 +1081,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     }
     if (Callee) {
       if (const TypeRef Expected = expectedDebugCallArgType(*Callee, I)) {
-        S += exprStrAsTypedArg(*Op, Expected);
+        S += exprStrAsTypedArg(*Op, Expected, Defined != nullptr);
         continue;
       }
     }
@@ -1150,10 +1150,17 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     std::string Arg = exprStr(Imm ? *Imm : *Op);
     if (PointerArgument)
       PointerArgumentOperands.erase(PointerArgument);
+    // A function declared without a prototype takes a pointer variable as the
+    // pointer it is: the default argument promotions pass the same register
+    // bits as its integer view.
+    if (UnprototypedExterns.count(Name))
+      if (const HighExpr *Value = unwrapIntegerView(Op))
+        if (auto Pointer = declaredPointerName(*Value, Arg))
+          Arg = *Pointer;
     // A signed result of at least an int's width passes the same register
     // bits as its unsigned carrier, unless a prototype widens it.
     const TypeRef DefinedParam = Defined && I < Defined->Params.size()
-                                     ? Defined->Params[I].Type
+                                     ? emittedParamType(*Defined, I)
                                      : nullptr;
     if (!Imm && !PointerArgument && Op->Type && Op->Type->Size >= 4 &&
         (!DefinedParam || (DefinedParam->Kind == NdTypeKind::Int &&
@@ -1204,9 +1211,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       }
     // A callee printed in this file has a prototype: convert between pointer
     // and integer arguments the way the machine passed them, in a register.
-    if (Defined && I < Defined->Params.size() && Defined->Params[I].Type &&
-        Op->Type) {
-      const TypeRef &Param = Defined->Params[I].Type;
+    if (Defined && I < Defined->Params.size() && DefinedParam && Op->Type) {
+      const TypeRef &Param = DefinedParam;
       const bool ParamPtr = Param->Kind == NdTypeKind::Ptr;
       const bool ArgPtr = Op->Type->Kind == NdTypeKind::Ptr;
       if (ParamPtr != ArgPtr && (ParamPtr ? Op->Type->Kind == NdTypeKind::Int
@@ -2080,7 +2086,8 @@ TypeRef HighCWriter::expectedDebugCallArgType(const FunctionSym &FS,
 }
 
 std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
-                                           const TypeRef &Expected) {
+                                           const TypeRef &Expected,
+                                           bool DefinedCallee) {
   // C converts an integer argument by the signedness of its own type, so an
   // extension to a wider parameter cannot pass its narrower source unless
   // that source extends the same way.
@@ -2145,8 +2152,16 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
     if (const auto Disp = certifiedFrameStorageDisplacement(*Inner))
       return "(" + typeToC(Expected) + ")(uintptr_t)(" +
              frameStorageAddress(*Disp) + ")";
-    if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi)
-      return printedForwardedVar(copyForwardName(varName(Inner->Var)), 16);
+    if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
+      const std::string Name = copyForwardName(varName(Inner->Var));
+      // A variable C declares as an integer converts to the pointer the
+      // parameter takes; a pointer variable passes as it is.
+      if (const TypeRef Declared = declaredTypeOf(*Inner, Name);
+          DefinedCallee && Declared && Declared->Kind == NdTypeKind::Int &&
+          printedForwardedVar(Name, 16) == Name)
+        return "(" + typeToC(Expected) + ")(uintptr_t)" + Name;
+      return printedForwardedVar(Name, 16);
+    }
     if (Inner->Kind == ExprKind::Addr)
       return exprStr(*Inner);
     if (Inner != &E)
@@ -2332,7 +2347,10 @@ TypeRef HighCWriter::declaredParamType(const MedVar &V) const {
   if (!CurrentFunc || V.Kind != MedVar::Param || V.RenameTag >= 0 || V.Id < 0 ||
       static_cast<size_t>(V.Id) >= CurrentFunc->Params.size())
     return nullptr;
-  return CurrentFunc->Params[V.Id].Type;
+  // The definition may declare the debug information's type, such as
+  // `int32_t *out` for a machine word: an offset from `out` is in bytes only
+  // through its integer view.
+  return emittedParamType(*CurrentFunc, static_cast<size_t>(V.Id));
 }
 
 TypeRef HighCWriter::debugParamType(const MedVar &V) const {
