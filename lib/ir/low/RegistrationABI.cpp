@@ -90,7 +90,10 @@ bool chargeDecodedCallee(size_t &Work, const LowFunc &Function) {
 bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                            size_t &Work, ImageFrameEffects &Effects,
                            bool BorrowECX = false,
-                           RegistrationThrowCalleeABI *ThrowProof = nullptr) {
+                           RegistrationThrowCalleeABI *ThrowProof = nullptr,
+                           bool *IndependentScalarReturn = nullptr) {
+  if (IndependentScalarReturn)
+    *IndependentScalarReturn = true;
   using namespace registration_state;
   auto Charge = [&](size_t Amount) {
     if (Amount > limits::kMaxRegistrationEHStateWork - Work)
@@ -359,6 +362,11 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
             return false;
         }
       if (Op.Opcode == NdOp::RETURN) {
+        if (IndependentScalarReturn)
+          *IndependentScalarReturn &=
+              Op.NumInputs == 1 && Op.Inputs[0].Size == 4 &&
+              !Transfer.read(Op.Inputs[0]).MayBeFrame &&
+              !BorrowTransfer.read(Op.Inputs[0]).MayBeFrame;
         if (State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
                 .Offset != 4)
           return false;
@@ -430,12 +438,15 @@ getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
         return std::nullopt;
   }
   ImageFrameEffects Effects;
-  if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, true))
+  bool IndependentScalarReturn = false;
+  if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, true, nullptr,
+                             &IndependentScalarReturn))
     return std::nullopt;
   if (!callerPCIsNotReadBack(Effects))
     return std::nullopt;
   RegistrationLeafCalleeABI Result;
   Result.Target = Target;
+  Result.HasIndependentScalarReturn = IndependentScalarReturn;
   copyExtents(Effects.ECXReads, Result.ECXReads);
   copyExtents(Effects.ECXWrites, Result.ECXWrites);
   copyExtents(Effects.Reads, Result.ImageReads);

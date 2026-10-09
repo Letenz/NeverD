@@ -1765,6 +1765,8 @@ callee indices.
 Cleanup projection tests check every reachable unwind state, initialization
 before state activation, missing or mismatched contracts, registration and
 SavedESP overlap, released storage, pointer taint and predecessor conflicts.
+Physical-return tests separately cover entry-EAX pass-through, computed
+scalars, object loads, caller-PC results and distinct return predecessors.
 The native call index memoizes relay contracts under the same shared budget;
 a descriptor alone grants no initialized object borrow.
 C++ runtime-object tests cover value/reference homes, exact type/width, private

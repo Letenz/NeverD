@@ -72,6 +72,10 @@ callee-private stack and borrowed ECX object domains, with separate spill
 storage. Its exact object/image footprints describe a returning leaf; a caller
 still needs bounds, initialization and registration-separation proof. A leaf
 summary alone cannot establish a source call or native C++ capability.
+The same frame transfer separately reports whether every ordinary leaf return
+computes a 32-bit scalar independently of incoming registers, borrowed pointers
+and the caller PC. Frame privacy can admit an unobserved entry-EAX return;
+that weaker fact cannot choose a physical scalar call declaration.
 The same ABI owner authenticates immutable MSVC cleanup relays that derive
 ECX from the establisher EBP and tail-jump to a checked leaf. PE32 relative
 branches wrap at the architectural width; instruction storage does not wrap.

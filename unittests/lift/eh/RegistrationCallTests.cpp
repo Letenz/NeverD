@@ -812,3 +812,53 @@ TEST(RegistrationCallABI, CxxClosureConsumesTheCheckedPrivateThrowHelper) {
   EXPECT_FALSE(hasCallerCleanupRegistrationABI(Parent, Throw.Image, &PCs));
   EXPECT_TRUE(PCs.empty());
 }
+
+TEST(RegistrationCallABI, PhysicalScalarReturnNeedsMoreThanFramePrivacy) {
+  for (const bool Computes : {false, true}) {
+    CleanupRelayImage F;
+    auto &Text = F.Image.Segments.front();
+    if (Computes) {
+      const uint8_t Leaf[] = {0x31, 0xc0, 0xc3};
+      std::copy(std::begin(Leaf), std::end(Leaf), Text.Data.begin() + 0x40);
+    } else
+      Text.Data[0x40] = 0xc3;
+    const auto P = getCheckedX86RegistrationLeafCalleeABI(
+        F.Image, CleanupRelayImage::LeafVA);
+    ASSERT_TRUE(P);
+    EXPECT_EQ(P->HasIndependentScalarReturn, Computes);
+  }
+  CleanupRelayImage F;
+  const auto Borrow = getCheckedX86RegistrationLeafCalleeABI(
+      F.Image, CleanupRelayImage::LeafVA);
+  ASSERT_TRUE(Borrow);
+  EXPECT_TRUE(Borrow->HasIndependentScalarReturn);
+  const auto Relay = getCheckedX86RegistrationCleanupRelayABI(
+      F.Image, CleanupRelayImage::RelayVA);
+  ASSERT_TRUE(Relay);
+  EXPECT_TRUE(Relay->Leaf.HasIndependentScalarReturn);
+}
+
+TEST(RegistrationCallABI, PhysicalReturnRejectsCallerPCAndMixedPredecessors) {
+  CleanupRelayImage F;
+  auto &Text = F.Image.Segments.front();
+  const uint8_t CallerPC[] = {0x8b, 0x04, 0x24, 0xc3};
+  std::copy(std::begin(CallerPC), std::end(CallerPC), Text.Data.begin() + 0x40);
+  const auto PC = getCheckedX86RegistrationLeafCalleeABI(
+      F.Image, CleanupRelayImage::LeafVA);
+  ASSERT_TRUE(PC);
+  EXPECT_FALSE(PC->HasIndependentScalarReturn);
+  // A branch can bypass the EAX definition. Both ordinary return paths matter.
+  const uint8_t Mixed[] = {0x83, 0x3d, 0x00, 0x30, 0x40, 0x00, 0,
+                           0x74, 3,    0x31, 0xc0, 0xc3, 0xc3};
+  std::copy(std::begin(Mixed), std::end(Mixed), Text.Data.begin() + 0x40);
+  Segment Data;
+  Data.VA = 0x403000;
+  Data.Size = Data.FileSz = 4;
+  Data.Data.resize(4);
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  F.Image.Segments.push_back(Data);
+  const auto Branch = getCheckedX86RegistrationLeafCalleeABI(
+      F.Image, CleanupRelayImage::LeafVA);
+  ASSERT_TRUE(Branch);
+  EXPECT_FALSE(Branch->HasIndependentScalarReturn);
+}

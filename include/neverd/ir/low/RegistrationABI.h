@@ -26,6 +26,10 @@ struct LowFunc;
 struct RegistrationLeafCalleeABI {
   va_t Target = InvalidVA;
   uint32_t StackPopBytes = 0;
+  /// Every returning path computes its 32-bit scalar result independently of
+  /// incoming registers, borrowed pointers and the physical caller PC. A frame
+  /// privacy proof alone may still permit an unobserved entry-EAX return.
+  bool HasIndependentScalarReturn = false;
   std::vector<RegistrationObjectExtent> ECXReads;
   std::vector<RegistrationObjectExtent> ECXWrites;
   std::vector<ExceptionAddressRange> ImageReads;
