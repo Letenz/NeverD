@@ -454,12 +454,13 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
                                  code->language() == QLatin1String("rust"),
                              OpenTimeoutMs);
-    // A Rust program offers its C and its Rust, not Go.
-    QCOMPARE(representationsOf(view),
-             QStringList({QStringLiteral("source"), QStringLiteral("c"),
-                          QStringLiteral("rust"), QStringLiteral("llvmc"),
-                          QStringLiteral("low"), QStringLiteral("med"),
-                          QStringLiteral("high"), QStringLiteral("llvm")}));
+    // Pseudocode reads the Rust; C beside it reads every function as C.
+    const QStringList pseudocodeAndC = {
+        QStringLiteral("source"), QStringLiteral("c"),
+        QStringLiteral("llvmc"),  QStringLiteral("low"),
+        QStringLiteral("med"),    QStringLiteral("high"),
+        QStringLiteral("llvm")};
+    QCOMPARE(representationsOf(view), pseudocodeAndC);
     view->setRepresentation(QStringLiteral("c"));
     QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
                                  code->language() == QLatin1String("c"),
@@ -467,8 +468,15 @@ private slots:
     QCOMPARE(view->chosenLanguage(), QString());
     QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
                  QStringLiteral("C-A"));
+    // A language the menu does not offer leaves the view as it is.
     view->setRepresentation(QStringLiteral("go"));
     QCOMPARE(view->representation(), QStringLiteral("c"));
+    view->setRepresentation(QStringLiteral("source"));
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->language() == QLatin1String("rust"),
+                             OpenTimeoutMs);
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("Pseudocode-A (Rust)"));
   }
 
   void pseudocodeOffersOnlyTheProgramsLanguages() {
@@ -514,9 +522,9 @@ private slots:
                              OpenTimeoutMs);
     QCOMPARE(representationsOf(view),
              QStringList({QStringLiteral("source"), QStringLiteral("c"),
-                          QStringLiteral("go"), QStringLiteral("llvmc"),
-                          QStringLiteral("low"), QStringLiteral("med"),
-                          QStringLiteral("high"), QStringLiteral("llvm")}));
+                          QStringLiteral("llvmc"), QStringLiteral("low"),
+                          QStringLiteral("med"), QStringLiteral("high"),
+                          QStringLiteral("llvm")}));
     QVERIFY(code->allText().contains(QStringLiteral("func main.main()")));
     QVERIFY(code->status().contains(QStringLiteral("shown as C")));
     QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),

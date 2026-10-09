@@ -1254,28 +1254,16 @@ CodeView::CodeView(Session &session, const QString &representation,
 }
 
 void CodeView::updateRepresentations() {
-  // The languages the loaded program's pseudocode reads in; until a program
-  // says, nothing is hidden.
+  // Pseudocode reads each function in its program's languages: C, and the
+  // Rust or Go a function was written in.  C beside it is the one other
+  // choice, for a program with another language; until a program says, it
+  // stays.
   const auto pseudocode =
       session_.metadata().value("language").toObject().value("pseudocode");
-  QSet<QString> languages;
-  for (const auto &language : pseudocode.toArray())
-    languages.insert(language.toString());
+  const bool otherLanguage =
+      !pseudocode.isArray() || pseudocode.toArray().size() > 1;
   const auto offered = [&](const Representation &entry) {
-    if (!pseudocode.isArray())
-      return true;
-    switch (entry.dialect) {
-    case Dialect::Rust:
-      return languages.contains(QStringLiteral("rust"));
-    case Dialect::Go:
-      return languages.contains(QStringLiteral("go"));
-    case Dialect::C:
-      // A program written in C or C++ reads in C alone, which Pseudocode is.
-      return languages.size() > 1 ||
-             QLatin1String(entry.name) != QLatin1String("c");
-    default:
-      return true;
-    }
+    return otherLanguage || QLatin1String(entry.name) != QLatin1String("c");
   };
   const QString current = selector_->currentData().toString();
   {

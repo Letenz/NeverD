@@ -214,8 +214,9 @@ signals:
 
 private:
   void updateStatus();
-  /// The representations the loaded program offers: Rust and Go only for a
-  /// program written in them, and C apart from Pseudocode only then.
+  /// The representations the loaded program offers: C beside Pseudocode
+  /// only for a program with Rust or Go code, whose Pseudocode reads those
+  /// functions in their own language.
   void updateRepresentations();
   Session &session_;
   QComboBox *selector_;

@@ -225,10 +225,10 @@ copied into a comment.
 function as Rust, a Go function as Go and any other as C. The choice is made
 for each function, from its symbol, and for a function without one from the
 language the image was built in; the window says when it is not C
-(`Pseudocode-A (Rust)`). A program that contains Rust or Go code also offers
-**C** and **Rust** or **Go** in the window's menu, to show every function in
-one of them; a C or C++ program reads in C alone and offers neither. The Rust
-and Go views spell exactly what the C says. Each conversion C makes on its own is written out (`a as u32 + b as u32`,
+(`Pseudocode-A (Rust)`). A program with Rust or Go code also offers **C** in
+the window's menu, to read every function as C; a C or C++ program's
+Pseudocode is C, so its menu offers no other language. The Rust and Go views
+spell exactly what the C says. Each conversion C makes on its own is written out (`a as u32 + b as u32`,
 `uint32(a) + uint32(b)`), conditions compare with zero (`v != 0`,
 `!p.is_null()`, `p != nil`), memory is read and written through a pointer made
 from the address (`*((v0 + 8) as *mut i64)`, `*(*int64)(v0 + 8)`), and names
