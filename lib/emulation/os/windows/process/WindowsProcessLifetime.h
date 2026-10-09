@@ -11,7 +11,7 @@
 namespace neverd::emulation::windows_process {
 class Lifetime final {
 public:
-  enum class CallKind { TLS, DLL, Entry };
+  enum class CallKind { TLS, DLL, Entry, FLS };
   struct Call {
     CallKind Kind;
     uint64_t PC, ReturnGate;

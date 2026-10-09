@@ -15,6 +15,7 @@
 #include "UnpackGeneratedTestSupport.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
+#include "neverd/emulation/ProcessObserver.h"
 #include "neverd/emulation/ProcessSession.h"
 #include "neverd/unpack/Unpack.h"
 
@@ -866,26 +867,82 @@ TEST_P(UnpackGenerated, ReleasedAndPostEntryDynamicSlotsDoNotBlockRecovery) {
 }
 
 TEST_P(UnpackGenerated, FLSCleanupCallbacksCannotBeSilentlyDiscarded) {
-  const auto Packed = pack(FreedFLSCallbackMode);
-  ASSERT_FALSE(HasFailure());
-  expectNativeWindows(Packed, ExitStatus);
-  const auto Executed = run(Packed);
-  ASSERT_EQ(Executed.Stop, ProcessStopReason::UnsupportedService)
-      << Executed.Diagnostic;
-  EXPECT_FALSE(Executed.ExitStatus);
-  ASSERT_FALSE(Executed.NativeCalls.empty());
-  EXPECT_EQ(Executed.NativeCalls.back().Name, "FlsFree");
-  EXPECT_FALSE(Executed.NativeCalls.back().Result);
-  for (bool Snapshot : {false, true}) {
-    SCOPED_TRACE(Snapshot);
-    Options.SnapshotOnly = Snapshot;
-    const auto Result = unpack(FreedFLSCallbackMode);
+  for (unsigned Mode : {FreedFLSCallbackMode, NestedFLSCallbackMode}) {
+    SCOPED_TRACE(Mode);
+    const auto Packed = pack(Mode);
     ASSERT_FALSE(HasFailure());
-    EXPECT_EQ(Result.Outcome, UnpackOutcome::NoEntry);
-    EXPECT_TRUE(Result.Image.empty());
-    EXPECT_EQ(Result.ProcessStop, "unsupported_service");
-    EXPECT_NE(Result.ProcessDiagnostic.find("FlsFree"), std::string::npos);
+    expectNativeWindows(Packed, ExitStatus);
+    const auto Executed = run(Packed);
+    ASSERT_EQ(Executed.Stop, ProcessStopReason::Exited) << Executed.Diagnostic;
+    EXPECT_EQ(Executed.ExitStatus, ExitStatus);
+    EXPECT_EQ(Executed.StandardOutput, Message);
+    for (const auto &Call : Executed.NativeCalls)
+      if (Call.Name == "FlsFree")
+        EXPECT_EQ(Call.Result, 1u);
+    if (Mode == NestedFLSCallbackMode) {
+      struct Invocations final : ProcessObserver {
+        std::vector<bool> Program;
+        llvm::Expected<std::vector<ExecutionWatch>>
+        started(ProcessView &P) override {
+          Program.push_back(P.programInvocation());
+          return std::vector<ExecutionWatch>{};
+        }
+        llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+        invoking(ProcessView &P) override {
+          Program.push_back(P.programInvocation());
+          EXPECT_TRUE(P.completedInitializers().empty());
+          return std::nullopt;
+        }
+        llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+        watched(ProcessView &, uint64_t) override {
+          ADD_FAILURE() << "unexpected observer watch";
+          return std::nullopt;
+        }
+      } Observer;
+      auto Observed = observeProcess(Packed, ProcessProfile::WindowsPE64,
+                                     Options.Process, Observer);
+      ASSERT_TRUE(bool(Observed)) << llvm::toString(Observed.takeError());
+      EXPECT_EQ(Observed->ExitStatus, ExitStatus);
+      EXPECT_EQ(Observer.Program,
+                (std::vector<bool>{true, false, false, false, true}));
+    }
+    for (bool Snapshot : {false, true}) {
+      SCOPED_TRACE(Snapshot);
+      Options.SnapshotOnly = Snapshot;
+      const auto Result = unpack(Mode);
+      ASSERT_FALSE(HasFailure());
+      ASSERT_EQ(Result.Outcome,
+                Snapshot ? UnpackOutcome::Snapshot : UnpackOutcome::Unpacked)
+          << Result.Diagnostic;
+      EXPECT_TRUE(Result.RuntimeState.DynamicThreadLocalInventoryKnown);
+      EXPECT_EQ(Result.RuntimeState.LiveDynamicFLSSlots, 0u);
+      EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+      const auto Path = Scratch / RebuiltFile;
+      test::writeFile(Path, Result.Image);
+      const auto Actual = run(Path);
+      EXPECT_EQ(Actual.Stop, ProcessStopReason::Exited) << Actual.Diagnostic;
+      EXPECT_EQ(Actual.ExitStatus, ExitStatus);
+      EXPECT_EQ(Actual.StandardOutput, Message);
+      expectNativeWindows(Path, ExitStatus);
+    }
   }
+}
+
+TEST_P(UnpackGenerated, FLSCleanupRejectsRecursiveFreeOfTheActiveSlot) {
+  const auto Packed = pack(RecursiveFLSCallbackMode);
+  ASSERT_FALSE(HasFailure());
+  const auto Executed = run(Packed);
+  EXPECT_EQ(Executed.Stop, ProcessStopReason::UnsupportedService)
+      << Executed.Diagnostic;
+  EXPECT_EQ(
+      llvm::count_if(Executed.NativeCalls,
+                     [](const auto &Call) { return Call.Name == "FlsFree"; }),
+      2);
+  const auto Result = unpack(RecursiveFLSCallbackMode);
+  ASSERT_FALSE(HasFailure());
+  EXPECT_EQ(Result.Outcome, UnpackOutcome::NoEntry);
+  EXPECT_TRUE(Result.Image.empty());
+  EXPECT_EQ(Result.ProcessStop, "unsupported_service");
 }
 
 TEST_P(UnpackGenerated, EmptyAndReusedFLSSlotsDoNotInvokeStaleCallbacks) {

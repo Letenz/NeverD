@@ -166,6 +166,10 @@ struct LoaderRequest {
   std::string Name;
   std::optional<uint16_t> Ordinal;
 };
+struct FLSCleanup {
+  uint32_t Index;
+  uint64_t Function, Argument;
+};
 struct ServiceOutcome {
   struct Exception {
     uint32_t Code, Flags;
@@ -175,10 +179,12 @@ struct ServiceOutcome {
   std::optional<uint64_t> Value;
   std::optional<LoaderRequest> Request;
   std::optional<Exception> Raised;
+  std::optional<FLSCleanup> Cleanup;
   explicit ServiceOutcome(std::optional<uint64_t> Value) : Value(Value) {}
   explicit ServiceOutcome(LoaderRequest Request)
       : Request(std::move(Request)) {}
   explicit ServiceOutcome(Exception Raised) : Raised(std::move(Raised)) {}
+  explicit ServiceOutcome(FLSCleanup Cleanup) : Cleanup(Cleanup) {}
 };
 class ExceptionDispatcher;
 class Services final {
@@ -192,6 +198,7 @@ public:
         Budget(Budget), Exceptions(Exceptions) {}
   llvm::Expected<ServiceOutcome> invoke(const Service &Service,
                                         const NativeCallEvent &Event);
+  llvm::Error complete(const FLSCleanup &Cleanup);
   std::vector<ProcessHeapAllocationView> heapAllocations() const;
   std::vector<uint64_t> encodedPointers() const {
     return {EncodedPointers.begin(), EncodedPointers.end()};
@@ -261,6 +268,7 @@ private:
   std::bitset<value::DynamicTLSCount> FLSSlots;
   struct FiberData {
     uint64_t Callback, Value;
+    bool Cleaning = false;
   };
   std::map<uint32_t, FiberData> FLSData;
   struct Allocation {

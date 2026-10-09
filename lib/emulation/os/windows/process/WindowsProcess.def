@@ -215,6 +215,7 @@ NEVERD_WINDOWS_PROCESS_TEXT(ImageFile, "cannot read the loaded program file")
 NEVERD_WINDOWS_PROCESS_TEXT(
     Access, "Windows API argument is not accessible user memory")
 NEVERD_WINDOWS_PROCESS_TEXT(Return, "invalid Windows call return frame")
+NEVERD_WINDOWS_PROCESS_TEXT(FLSCallback, "invalid FLS cleanup continuation")
 NEVERD_WINDOWS_PROCESS_TEXT(CPUExit, "unexpected user CPU exit")
 NEVERD_WINDOWS_PROCESS_TEXT(
     Contract, "the Windows process profile cannot honor this execution "
