@@ -869,6 +869,36 @@ std::string HighCWriter::importSlotIdentifier(const HighExpr &E) const {
   return Identifier;
 }
 
+std::string HighCWriter::importDataSlotIdentifier(va_t Addr) const {
+  if (!Opts.Image)
+    return {};
+  const Import *Imp = Opts.Image->findImportAt(Addr);
+  if (!Imp || Imp->IATAddr != Addr)
+    return {};
+  HighExpr Slot;
+  Slot.CallAddr = Addr;
+  return importSlotIdentifier(Slot);
+}
+
+std::optional<va_t> HighCWriter::importDataSlotRead(const HighExpr &Address,
+                                                    uint16_t Size) const {
+  if (!Opts.Image || Size == 0 || Size != Opts.Image->getPointerSize())
+    return std::nullopt;
+  std::optional<va_t> Slot = constAddress(Address);
+  if (!Slot) {
+    const HighExpr *Pointer = unwrapIntegerView(&Address);
+    if (Pointer && Pointer->Kind == ExprKind::Load &&
+        Pointer->MemoryOrdering == NdMemoryOrdering::None &&
+        Pointer->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        Pointer->Operands.size() == 1 && Pointer->Operands[0])
+      if (const auto Holder = constAddress(*Pointer->Operands[0]))
+        Slot = foldReadonlyScalar(*Holder, Size);
+  }
+  if (!Slot || importDataSlotIdentifier(*Slot).empty())
+    return std::nullopt;
+  return Slot;
+}
+
 std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
   std::string Name = E.CallTarget;
   if (Name.empty() && E.CallAddr)
@@ -4027,6 +4057,13 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")(" + *Fwd + ")";
       if (auto Slot = namedSlotLoadDisplay(E))
         return *Slot;
+      // A data import's slot holds the import's address, which the read
+      // takes: `(int64_t)__imp__commode`.
+      if (const auto Slot =
+              importDataSlotRead(*E.Operands[0], E.Type ? E.Type->Size : 0))
+        if (const auto Name = ImportDataSlotNames.find(*Slot);
+            Name != ImportDataSlotNames.end())
+          return "(" + typeToC(E.Type) + ")" + Name->second;
       if (auto VA = constAddress(*E.Operands[0])) {
         const uint16_t Size = E.Type ? E.Type->Size : 0;
         if (auto Imm = foldReadonlyScalar(*VA, Size)) {
