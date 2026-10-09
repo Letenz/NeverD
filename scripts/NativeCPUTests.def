@@ -133,6 +133,19 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ReleasedAndPostEntryDynamicSlotsDoNotBlockRecovery/"
     "{backend_title}DirectX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.FLSCleanupCallbacksCannotBeSilentlyDiscarded/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.FLSCleanupCallbacksCannotBeSilentlyDiscarded/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "EmptyAndReusedFLSSlotsDoNotInvokeStaleCallbacks/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "EmptyAndReusedFLSSlotsDoNotInvokeStaleCallbacks/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
     "LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage/"
     "{backend_title}X64")

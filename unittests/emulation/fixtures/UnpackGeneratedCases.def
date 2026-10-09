@@ -103,6 +103,10 @@ NEVERD_GENERATED_MODE(ZeroDynamicFLS, 36)
 // The modeled API permits storing in an unallocated in-range TLS cell.
 NEVERD_GENERATED_MODE(UnallocatedTLSValue, 37)
 NEVERD_GENERATED_MODE(ClearedUnallocatedTLSValue, 38)
+// Releasing a nonempty FLS slot must not discard its cleanup callback.
+NEVERD_GENERATED_MODE(FreedFLSCallback, 39)
+NEVERD_GENERATED_MODE(EmptyFLSCallback, 40)
+NEVERD_GENERATED_MODE(ReusedFLSCallback, 41)
 #endif
 
 #ifdef NEVERD_GENERATED_ADDRESS_REGISTER
