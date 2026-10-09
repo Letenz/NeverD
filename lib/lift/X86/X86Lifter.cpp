@@ -1258,9 +1258,7 @@ void fixupVexCompareId(cs_insn *I) {
 
 } // anonymous namespace
 
-void X86Lifter::fixupDecodedInsn(cs_insn *I) {
-  fixupVexCompareId(I);
-}
+void X86Lifter::fixupDecodedInsn(cs_insn *I) { fixupVexCompareId(I); }
 
 bool X86Lifter::isFunctionTerminator(const cs_insn *I) {
   switch (I->id) {
@@ -1281,6 +1279,20 @@ bool X86Lifter::isFunctionTerminator(const cs_insn *I) {
     return I->size >= x86::kIntImm8Len &&
            I->bytes[I->size - x86::kIntImm8Len] == x86::kIntImm8 &&
            isX86NoReturnInterrupt(I->bytes[I->size - 1]);
+  default:
+    return false;
+  }
+}
+
+bool X86Lifter::isReturn(const cs_insn *I) {
+  switch (I->id) {
+  case X86_INS_RET:
+  case X86_INS_RETF:
+  case X86_INS_RETFQ:
+  case X86_INS_IRET:
+  case X86_INS_IRETD:
+  case X86_INS_IRETQ:
+    return true;
   default:
     return false;
   }

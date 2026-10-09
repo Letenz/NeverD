@@ -2127,6 +2127,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_selector_occurrence.s
   x86_64/test_jumptable_mask_equal_bound.s
   x86_64/test_module_address_owner_induction.s
+  x86_64/test_module_readonly_table_writer.s
   x86_64/test_twolevel_switch.c
   x86_64/test_jumptable_masked_abs.c
   x86_64/test_jumptable_worldclass.c

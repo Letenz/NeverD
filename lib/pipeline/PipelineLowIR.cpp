@@ -2761,7 +2761,7 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
         continue;
       if (!Budget.consume())
         return abandonAnalysis();
-      if (Use.UseKind == ModuleAddressUse::Kind::WriteThrough) {
+      if (Use.UseKind == ModuleAddressUse::Kind::WriteThrough && Writable) {
         Result.UnsafeBranches.insert(Owner.BranchAddr);
         protectWholeOwner(Owner);
         continue;
