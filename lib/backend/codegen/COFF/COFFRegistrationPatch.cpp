@@ -770,6 +770,8 @@ std::optional<va_t> findCOFFRegistrationRuntimeVA(const BinaryImage &Image,
 llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
                                        const ExceptionFunction &Source,
                                        const BinaryImage &Image) {
+  if (Source.Cxx)
+    return validateCOFFRegistrationCxxIR(Function, Source, Image);
 #ifndef LLVM_NEVERD_X86_REGISTRATION_EH
   return reject("LLVM does not provide indexed x86 SEH output receipts");
 #else

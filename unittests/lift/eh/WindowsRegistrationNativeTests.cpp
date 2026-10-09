@@ -38,6 +38,7 @@
 #include "llvm/IR/WinEHFrame.h"
 #endif
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -112,10 +113,17 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
     }
   }
   ASSERT_NE(Source, nullptr);
+#if defined(LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS) &&                          \
+    defined(LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS)
+  EXPECT_TRUE(
+      classifyWindowsEHNativeSource(*Source, Arch::X86, BinaryFormat::COFF)
+          .canPatchOutput());
+#else
   EXPECT_EQ(
       classifyWindowsEHNativeSource(*Source, Arch::X86, BinaryFormat::COFF)
           .Reason,
       WindowsEHNativeSourceReason::OutputReconstructionUnavailable);
+#endif
   Decoder Decoder;
   ASSERT_TRUE(Decoder.init(*Loaded));
   auto Low = CFGBuilder().build(*Loaded, Decoder, Source->CodeRange.Begin,
@@ -146,6 +154,9 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
   ASSERT_FALSE(bool(Control)) << llvm::toString(std::move(Control));
   auto FrameContract = validateCOFFRegistrationCxxIR(*Parent, *Source, *Loaded);
   ASSERT_FALSE(bool(FrameContract)) << llvm::toString(std::move(FrameContract));
+  auto SharedContract = validateCOFFRegistrationIR(*Parent, *Source, *Loaded);
+  ASSERT_FALSE(bool(SharedContract))
+      << llvm::toString(std::move(SharedContract));
   // Reparse the unchanged input for every post-emission edit. A completeness
   // marker alone cannot bind a moved source operation or runtime control edge.
   for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {
@@ -1439,6 +1450,65 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
     auto Failure = validateCOFFRegistrationPatch(Changed, *Update);
     EXPECT_TRUE(bool(Failure));
     llvm::consumeError(std::move(Failure));
+  }
+  Patcher.setImageContext(&*Loaded);
+  for (bool Collision : {false, true}) {
+    auto ProductModule = llvm::CloneModule(*Module);
+    if (Collision) {
+      llvm::Function *Callee = nullptr;
+      for (auto &Function : *ProductModule) {
+        if (Function.isDeclaration())
+          continue;
+        for (auto &Block : Function)
+          for (auto &I : Block) {
+            const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
+            auto *Target = Call ? Call->getCalledFunction() : nullptr;
+            if (Callee || !Target || !Target->isDeclaration() ||
+                Target->isIntrinsic())
+              continue;
+            auto Address = rewrite_source::getOriginalVA(*Target);
+            ASSERT_TRUE(bool(Address)) << llvm::toString(Address.takeError());
+            if (*Address)
+              Callee = Target;
+          }
+      }
+      ASSERT_TRUE(Callee);
+      std::string ImportName;
+      for (const auto &Import : Loaded->Imports)
+        if (!Import.Name.empty() && !ProductModule->getFunction(Import.Name)) {
+          ImportName = Import.Name;
+          break;
+        }
+      ASSERT_FALSE(ImportName.empty());
+      Callee->setName(ImportName);
+    }
+    const char *Output =
+        std::getenv(Collision ? "NEVERD_REGISTRATION_OUTPUT_CXX_COLLISION_PE32"
+                              : "NEVERD_REGISTRATION_OUTPUT_CXX_PRODUCT_PE32");
+    llvm::SmallString<128> Temporary;
+    if (!Output) {
+      auto Error = llvm::sys::fs::createTemporaryFile("neverd-registration-cxx",
+                                                      "exe", Temporary);
+      ASSERT_FALSE(bool(Error)) << Error.message();
+      Output = Temporary.c_str();
+    }
+    const auto Result = Patcher.patch(Path, Output, *ProductModule, Arch::X86);
+    ASSERT_TRUE(Result.Success);
+    EXPECT_EQ(Result.TrampolineCount, 1u);
+    EXPECT_EQ(Result.PatchedOriginalEntries,
+              (std::vector<va_t>{Source->CodeRange.Begin}));
+    auto ProductBuffer = llvm::MemoryBuffer::getFile(Output);
+    ASSERT_TRUE(bool(ProductBuffer));
+    const auto ProductBytes = llvm::ArrayRef<uint8_t>(
+        reinterpret_cast<const uint8_t *>((*ProductBuffer)->getBufferStart()),
+        (*ProductBuffer)->getBufferSize());
+    // Both public routes compile this same authenticated IR. Require the exact
+    // generated section, SafeSEH and relocation closure already checked above.
+    auto ProductContract = validateCOFFRegistrationPatch(ProductBytes, *Update);
+    ASSERT_FALSE(bool(ProductContract))
+        << llvm::toString(std::move(ProductContract));
+    if (!Temporary.empty())
+      EXPECT_FALSE(bool(llvm::sys::fs::remove(Temporary)));
   }
   if (const char *Output = std::getenv("NEVERD_REGISTRATION_OUTPUT_CXX_PE32")) {
     std::error_code EC;

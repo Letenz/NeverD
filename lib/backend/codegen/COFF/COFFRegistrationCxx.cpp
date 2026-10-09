@@ -68,11 +68,6 @@ getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
           Compiled.FunctionRanges, Compiled.FunctionOwnerAddrs))
     return rejectCxx("source or compiler contract is incomplete");
   const auto &Cxx = *Source.Cxx;
-  // The current source emitter has one typed try and one runtime context.
-  // Do not infer mappings for an unlowered nested/catch cleanup graph.
-  if (Cxx.TryBlocks.size() != 1 || Cxx.TryBlocks[0].Handlers.size() != 1 ||
-      Cxx.TryBlocks[0].TryLow != 0 || Cxx.UnwindMap.size() > 128)
-    return rejectCxx("source dispatch graph has no complete native projection");
   const auto &Try = Cxx.TryBlocks[0];
   const auto &Catch = Try.Handlers[0];
   auto Root = coff_registration::ownerVA(Function, Compiled);

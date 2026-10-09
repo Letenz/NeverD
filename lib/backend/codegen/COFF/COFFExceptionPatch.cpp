@@ -1297,7 +1297,8 @@ llvm::Error validateExceptionRecord(const ExceptionFunction &EH,
       return patchError("unsupported ARM32 unwind encoding in " + Context);
   } else if (TargetArch == Arch::X86) {
     if (EH.Encoding != ExceptionEncoding::X86ScopeTableEH3 &&
-        EH.Encoding != ExceptionEncoding::X86ScopeTableEH4)
+        EH.Encoding != ExceptionEncoding::X86ScopeTableEH4 &&
+        EH.Encoding != ExceptionEncoding::X86CxxFuncInfo)
       return patchError("unsupported x86 registration encoding in " + Context);
   } else {
     return patchError("table-based exception regeneration is unsupported for " +
@@ -1319,6 +1320,10 @@ llvm::Error validateExceptionRecord(const ExceptionFunction &EH,
         ((EH.Personality == ExceptionPersonality::ExceptHandler3 ||
           EH.Personality == ExceptionPersonality::ExceptHandler4) &&
          Source.Model == WindowsEHNativeSourceModel::X86RegistrationSEH) ||
+        (TargetArch == Arch::X86 &&
+         (EH.Personality == ExceptionPersonality::CxxFrameHandlerX86 ||
+          EH.Personality == ExceptionPersonality::CxxFrameHandler3) &&
+         Source.Model == WindowsEHNativeSourceModel::X86RegistrationCxx) ||
         (EH.Personality == ExceptionPersonality::CSpecificHandler &&
          Source.Model == WindowsEHNativeSourceModel::SEH) ||
         (EH.Personality == ExceptionPersonality::CxxFrameHandler3 &&

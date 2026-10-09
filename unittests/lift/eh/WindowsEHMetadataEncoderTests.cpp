@@ -1205,7 +1205,7 @@ ExceptionFunction makeRegistrationCxxDigestSource() {
   return EH;
 }
 
-TEST(WindowsEHNativeSource, PE32CxxLoweringDoesNotAuthorizeOutputInstallation) {
+TEST(WindowsEHNativeSource, PE32CxxOutputNeedsCompleteCompilerReceipts) {
   auto EH = makeRegistrationCxxDigestSource();
   EH.Registration->HandlerVA = EH.PersonalityVA;
   EH.Cxx->IsSynchronous = true;
@@ -1222,10 +1222,17 @@ TEST(WindowsEHNativeSource, PE32CxxLoweringDoesNotAuthorizeOutputInstallation) {
 #endif
   const auto Output =
       classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF);
+#if defined(LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS) &&                            \
+    defined(LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS) &&                          \
+    defined(LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS)
+  EXPECT_TRUE(Output.canPatchOutput());
+  EXPECT_EQ(Output.Reason, WindowsEHNativeSourceReason::Eligible);
+#else
   EXPECT_FALSE(Output.canPatchOutput());
   EXPECT_EQ(Output.Reason,
             WindowsEHNativeSourceReason::OutputReconstructionUnavailable);
-  for (unsigned Mutation = 0; Mutation != 23; ++Mutation) {
+#endif
+  for (unsigned Mutation = 0; Mutation != 27; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Changed = EH;
     switch (Mutation) {
@@ -1298,12 +1305,37 @@ TEST(WindowsEHNativeSource, PE32CxxLoweringDoesNotAuthorizeOutputInstallation) {
     case 22:
       Changed.Cxx->NativeEncoding = CxxExceptionInfo::Encoding::FH4;
       break;
+    case 23:
+      Changed.Cxx->TryBlocks[0].Handlers.push_back(
+          Changed.Cxx->TryBlocks[0].Handlers[0]);
+      break;
+    case 24:
+      Changed.Cxx->MaxState = 3;
+      Changed.Cxx->UnwindMap.push_back(
+          {-1, 0, CxxUnwindAction::ActionKind::None});
+      Changed.Cxx->TryBlocks[0].TryLow = 1;
+      Changed.Cxx->TryBlocks[0].TryHigh = 1;
+      Changed.Cxx->TryBlocks[0].CatchHigh = 2;
+      break;
+    case 25:
+      Changed.Cxx->MaxState = 3;
+      Changed.Cxx->UnwindMap.push_back(
+          {-1, 0, CxxUnwindAction::ActionKind::None});
+      Changed.Cxx->TryBlocks[0].CatchHigh = 2;
+      break;
+    case 26:
+      Changed.Cxx->MaxState = 129;
+      Changed.Cxx->UnwindMap.resize(129);
+      break;
     }
     const auto Rejected =
         classifyWindowsEHNativeSource(Changed, Arch::X86, BinaryFormat::COFF,
                                       WindowsEHNativeCapability::IRLowering);
     EXPECT_FALSE(Rejected.canLowerNativeIR());
     EXPECT_NE(Rejected.Reason, WindowsEHNativeSourceReason::Eligible);
+    EXPECT_FALSE(
+        classifyWindowsEHNativeSource(Changed, Arch::X86, BinaryFormat::COFF)
+            .canPatchOutput());
   }
 }
 

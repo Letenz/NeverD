@@ -45,13 +45,7 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
   if (Image.Arch != Arch::X86 || Image.Format != BinaryFormat::COFF ||
       Classification.Model != WindowsEHNativeSourceModel::X86RegistrationCxx ||
       !Classification.canLowerNativeIR() || !Runtime ||
-      !coff_loader::getCheckedX86CxxMetadataRanges(Image, Source) ||
-      Source.Cxx->TryBlocks.size() != 1 ||
-      Source.Cxx->TryBlocks[0].Handlers.size() != 1 ||
-      Source.Cxx->TryBlocks[0].TryLow != 0 ||
-      Source.Cxx->UnwindMap.size() > 128 ||
-      Source.Cxx->TryBlocks[0].CatchHigh !=
-          Source.Cxx->TryBlocks[0].TryHigh + 1)
+      !coff_loader::getCheckedX86CxxMetadataRanges(Image, Source))
     return rejectIR(
         "source C++ graph has no complete native control projection");
   const auto &Cxx = *Source.Cxx;

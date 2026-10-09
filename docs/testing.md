@@ -1791,8 +1791,8 @@ C++ installation.
 PE32 C++ personality tests distinguish the original FuncInfo-loading thunk
 from the CRT entry, checking exact relocation operands, immutable storage,
 import identity and conflicting pointer records. Native-source classification
-tests reject changed registration, language and object contracts while keeping
-output installation closed. Genuine value/reference fixtures additionally
+tests reject changed registration, language and object contracts, unsupported
+dispatch shapes and missing compiler receipt capabilities. Genuine value/reference fixtures additionally
 verify typed catch and cleanup IR, compile it through the patch code generator,
 and authenticate each indexed catch row against its exact child funclet range.
 Changed range ownership must reject the machine-code receipt. These checks do
@@ -1869,9 +1869,13 @@ Real MSVC directory-size64/declared-size192 load-configs must remain supported
 with complete section bounds. Checked callee extents exclude unreachable
 padding and include the exact throw import thunk. Interior callee/thunk patches
 reject, while a separately compiled unrelated replacement may coexist with the
-C++ parent. Set `NEVERD_REGISTRATION_OUTPUT_CXX_PE32` to save
-the manual transaction's EXE for runtime replay; structural success is not
-runtime evidence, and the public C++ output capability remains closed.
+C++ parent. The same fixture exercises the public COFF patcher and a preserved
+callee renamed to an actual import, requiring the exact checked generated
+section, SafeSEH and relocation closure and the committed original-entry receipt.
+Set `NEVERD_REGISTRATION_OUTPUT_CXX_PE32` to save the manual transaction's EXE;
+`NEVERD_REGISTRATION_OUTPUT_CXX_PRODUCT_PE32` and
+`NEVERD_REGISTRATION_OUTPUT_CXX_COLLISION_PE32` save the public variants.
+Structural success is not runtime evidence.
 
 The focused Windows EH workflow first builds and executes genuine MSVC x86
 value/reference source fixtures on Windows, then transfers those exact inputs
@@ -1895,8 +1899,9 @@ On Windows, replay with `scripts/replay_windows_registration_cxx.py
 Both profiles require `value=7`, cleanup `trace=213`, four iterations, restored
 FS chain, and `caught=7` by value or `caught=18` by reference. The observed caller PC
 must lie in the indexed generated parent rather than an original helper or
-another part of the generated section. This workflow tests the manual installer;
-public C++/CLI installation is a separate capability and remains closed.
+another part of the generated section. This runtime workflow currently executes
+the manual installer. Public-patcher units separately revalidate its exact
+generated closure; public/CLI runtime coverage must be reported separately.
 
 The runtime runner builds actual SEH3, no-GS EH4 and initialized-GS EH4 source
 images, including explicit source exit checks, lifts their protected

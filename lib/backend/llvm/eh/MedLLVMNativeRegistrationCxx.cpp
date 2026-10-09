@@ -61,12 +61,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       !States.RuntimeObjectAccessesComplete || !States.ImageReadsComplete)
     return false;
   const auto &Cxx = *EH.Cxx;
-  // This first physical frame contract has one typed try. Nested runtime
-  // contexts retain analysis until their distinct dispatch trees are lowered.
-  if (Cxx.TryBlocks.size() != 1 || Cxx.UnwindMap.size() > 128 ||
-      Cxx.TryBlocks[0].TryLow != 0 || Cxx.TryBlocks[0].Handlers.size() != 1 ||
-      Cxx.TryBlocks[0].CatchHigh != Cxx.TryBlocks[0].TryHigh + 1 ||
-      States.CxxCatchObjects.size() != 1)
+  if (States.CxxCatchObjects.size() != 1)
     return false;
   const auto &Try = Cxx.TryBlocks[0];
   const auto &Catch = Try.Handlers[0];

@@ -31,7 +31,7 @@ NeverD 在加载、提升、反编译和二进制重写的全过程中携带 Win
 | `__GSHandlerCheck_SEH/EH/EH4` | 包装后的 personality 与经检查的 GS cookie 来源 | 基础语言图加 wrapper 注释 | 仅分析；拒绝修改涉及的函数，不做降级 |
 | x86 registration-chain SEH3 | 经检查的 scope 图、实际 FS:[0] 操作、callback root 与基于 CFG 的 try-level 状态集合 | 可规约且无歧义的区域生成显式 EH 节点；其他状态保留原生注释 | 对下文固定栈帧、caller-cleanup 的已证明子集支持原生 PE32 重建 |
 | x86 registration-chain SEH4 | 经检查的 cookie 表达式、编码 scope 指针与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 对下文已认证的直接栈帧子集支持原生 PE32 重建，包含 EH/GS cookie 初始化 |
-| x86 registration-chain C++ EH | 绝对指针 FuncInfo 与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 支持分析与反编译；仍拒绝原生安装 |
+| x86 registration-chain C++ EH | 绝对指针 FuncInfo、cleanup/对象契约与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 对下文经过证明的单 try、标量 catch 子集执行原生 PE32 重建 |
 
 畸形记录绝不会按普通完整记录处理。部分解码记录仍可用于检查，但不能授权生成原生
 元数据。如果 ARM xdata header 仍能证明一个有界可执行 fragment 范围，而后续 unwind
@@ -133,8 +133,23 @@ record 推导生成 cookie 偏移，包括运行时的虚拟帧基址；安装�
 
 该路径要求 LLVM fork 提供 `LLVM_NEVERD_X86_REGISTRATION_EH` 契约；旧的已发布 r3
 预编译包会拒绝原生安装。EH4 还要求 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`，
-GS 初始化还要求 `LLVM_NEVERD_X86_REGISTRATION_GS`。x86 C++ FuncInfo 的原生安装
-仍是独立的后续要求，不能用已有的分析元数据替代。
+GS 初始化还要求 `LLVM_NEVERD_X86_REGISTRATION_GS`。
+
+x86 C++ 原生重建目前支持一个同步 typed try 和一个按值或引用捕获的标量 catch，
+源 unwind state 最多 128 个。输入必须具有经过证明的 MSVC 直接 registration frame，
+采用 magic `0x19930522` 的 FuncInfo，且不带 GS wrapper。保留的每个调用、throw type
+和 cleanup relay 都需要独立 ABI 证明。源对象借用必须有界、已经初始化且不与注册
+存储重叠；引用访问必须在 catch 返回前保留 CRT 提供的对象身份。所有读写保持原始
+映像存储身份。
+
+LLVM 重新发射物理 registration、typed catch home、有序 cleanup dispatch、完整
+FuncInfo 和私有 handler。公开安装要求编译器同时提供
+`LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS`、`LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS`
+与 `LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS`，随后独立重放编辑后的 IR，并检查实际
+机器码、语言表、SafeSEH 和全部绝对重定位。入口 patch 不得覆盖保留的 helper 或 CRT
+指令。当前运行样本在 Wine 和 Windows CRT 下证明整数按值/引用捕获、嵌套析构和强制
+重定位。其他 try/catch 图、未经证明的对象类型、传入栈参数、动态帧以及 GS 或异步
+C++ 仍保留分析信息，并拒绝原生安装。
 
 ## IR 契约
 

@@ -156,8 +156,12 @@ a complete unique raw-backed extent. The checked LowIR callee ABI also owns
 precise executed-instruction extents, including a private throw's exact import
 thunk. The transaction rejects every five-byte entry patch that intersects this
 preserved code or CRT dispatch, including interior sites; unrelated replacements
-may coexist. The public C++ output capability remains closed pending installed
-source runtime verification.
+may coexist. Native C++ source classification owns the currently supported
+single-try, single-catch projection and its state bound. Output additionally
+requires the compiler's catch, complete-table and handler receipt capabilities.
+The public plan dispatches to the same full C++ IR proof used by preparation;
+classification alone cannot authorize installation. Genuine source images are
+executed under Wine and the identical files are replayed with the Windows CRT.
 Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction
 authenticates emitted scope rows, SafeSEH and absolute relocations before
