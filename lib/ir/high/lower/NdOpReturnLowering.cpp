@@ -15,6 +15,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 
 #include <algorithm>
+#include <optional>
 #include <set>
 #include <stdexcept>
 
@@ -246,6 +247,50 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
         if (!RetVal && Phi.Output.Kind == MedVar::Reg &&
             Phi.Output.RegOff == ReturnReg)
           RetVal = HighExpr::makeVar(Phi.Output);
+    }
+  }
+
+  if (!RetVal && CurBlock.Preds.size() > 1) {
+    // A join whose predecessors all leave the same version of the register
+    // needs no PHI: the value was established before they parted, as when an
+    // ARM predicated store or a branch around a store sits between the result
+    // and the RETURN.  Predecessors that leave different versions need the
+    // PHI, and the value a register holds at entry is none computed.
+    auto LeftBy = [&](int PredId, MedVar &Out) {
+      const auto Pred = std::find_if(Med.Blocks.begin(), Med.Blocks.end(),
+                                     [PredId](const MedBlock &Candidate) {
+                                       return Candidate.Id == PredId;
+                                     });
+      if (Pred == Med.Blocks.end())
+        return false;
+      for (auto RIt = Pred->Ops.rbegin(); RIt != Pred->Ops.rend(); ++RIt)
+        if (RIt->Output.Kind == MedVar::Reg && RIt->Output.Size > 0 &&
+            RIt->Output.RegOff == ReturnReg && !isRegisterLowView(*RIt)) {
+          Out = RIt->Output;
+          return true;
+        }
+      return reachingRegAtBlockEntry(*Pred, ReturnReg, Out);
+    };
+    std::optional<MedVar> Common;
+    bool Agree = true;
+    for (const int PredId : CurBlock.Preds) {
+      MedVar Left;
+      if (!LeftBy(PredId, Left) ||
+          (Common &&
+           (Common->Id != Left.Id || Common->SSAVer != Left.SSAVer))) {
+        Agree = false;
+        break;
+      }
+      Common = Left;
+    }
+    if (Agree && Common && !isEntryIdentity(Med, *Common)) {
+      for (const auto &Blk : Med.Blocks)
+        for (const auto &Op : Blk.Ops)
+          if (!RetVal && Op.Output.Kind == MedVar::Reg &&
+              Op.Output.Id == Common->Id && Op.Output.SSAVer == Common->SSAVer)
+            RetVal = ValueFromDefinition(Op);
+      if (!RetVal)
+        RetVal = HighExpr::makeVar(*Common);
     }
   }
 

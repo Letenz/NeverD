@@ -236,6 +236,7 @@ add_neverd_unittest(NeverDLiftTests
   core/MedNoReturnTests.cpp
   core/InternalNoReturnTests.cpp
   core/ObjectExternTests.cpp
+  core/HighCReturnJoinTests.cpp
   eh/RegistrationTryLevelTests.cpp
   format/COFFARMFormatTests.cpp
   format/COFFARMFormatFragmentTests.cpp
@@ -2131,6 +2132,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_module_readonly_table_writer.s
   x86_64/test_extern_calls.c
   x86_64/test_extern_calls_nopic.c
+  x86_64/test_return_join.c
   x86_64/test_twolevel_switch.c
   x86_64/test_jumptable_masked_abs.c
   x86_64/test_jumptable_worldclass.c
@@ -2142,6 +2144,7 @@ set(X86_64_TEST_SOURCES
 set(X86_32_TEST_SOURCES
   x86_32/test_extern_calls_i386.c
   x86_32/test_extern_calls_nopic_i386.c
+  x86_32/test_return_join_i386.c
   x86_32/test_i386_direct_gotoff_group.s
   x86_32/test_i386_gotpc_model.s
   x86_32/test_i386_gotoff_forcepeel.s
@@ -2172,6 +2175,7 @@ set(X86_32_TEST_SOURCES
 set(AARCH64_TEST_SOURCES
   aarch64/test_extern_calls_a64.c
   aarch64/test_extern_calls_nopic_a64.c
+  aarch64/test_return_join_a64.c
   aarch64/test_param_phi_a64.s
   aarch64/test_jumptable_index_identity_a64.s
   aarch64/test_pageoff_wrong_base_a64.s
@@ -2211,6 +2215,7 @@ set(AARCH64_TEST_SOURCES
 set(ARM32_TEST_SOURCES
   arm32/test_extern_calls_arm.c
   arm32/test_extern_calls_nopic_arm.c
+  arm32/test_return_join_arm.c
   arm32/test_inline_state_domain_arm.s
   arm32/test_frame_pointer_void_arm.s
   arm32/test_arm_rel32_reaching.s
@@ -2387,7 +2392,7 @@ endif()
 # same name; it is rebuilt when that source changes.
 function(neverd_shared_fixture_source src out)
   set(shared)
-  foreach(name test_extern_calls)
+  foreach(name test_extern_calls test_return_join)
     if(src MATCHES "/${name}_")
       set(shared ${CMAKE_CURRENT_SOURCE_DIR}/x86_64/${name}.c)
     endif()
@@ -2417,6 +2422,8 @@ foreach(src ${X86_64_TEST_SOURCES})
   elseif(src MATCHES "test_debug_records")
     # The records under test come from the DWARF description.
     set(extra_flags -g)
+  elseif(src MATCHES "test_return_join")
+    set(extra_flags -O2)
   elseif(src MATCHES "test_extern_calls_nopic")
     set(extra_flags -O2 -fno-pic -fcommon)
   elseif(src MATCHES "test_extern_calls")
@@ -2441,6 +2448,8 @@ foreach(src ${X86_32_TEST_SOURCES})
   set(x86_32_extra_flags)
   if(src MATCHES "test_fp32")
     set(x86_32_extra_flags -msse2)
+  elseif(src MATCHES "test_return_join")
+    set(x86_32_extra_flags -O2)
   elseif(src MATCHES "test_extern_calls_nopic")
     set(x86_32_extra_flags -O2 -fno-pic -fcommon)
   elseif(src MATCHES "test_extern_calls")
@@ -2558,6 +2567,8 @@ foreach(src ${AARCH64_TEST_SOURCES})
     set(a64_extra_flags -march=armv8.3-a+pauth)
   elseif(src MATCHES "test_sve_(length|state|store)_a64")
     set(a64_extra_flags -march=armv8.2-a+sve -msve-vector-bits=256)
+  elseif(src MATCHES "test_return_join")
+    set(a64_extra_flags -O2)
   elseif(src MATCHES "test_extern_calls_nopic")
     set(a64_extra_flags -O2 -fno-pic -fcommon)
   elseif(src MATCHES "test_extern_calls")
@@ -2581,6 +2592,8 @@ foreach(src ${ARM32_TEST_SOURCES})
   set(arm_extra_flags)
   if(src MATCHES "test_switch|test_jumptable")
     set(arm_extra_flags -O1)
+  elseif(src MATCHES "test_return_join")
+    set(arm_extra_flags -O2)
   elseif(src MATCHES "test_extern_calls_nopic")
     set(arm_extra_flags -O2 -fno-pic -fcommon)
   elseif(src MATCHES "test_extern_calls")
