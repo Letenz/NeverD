@@ -114,6 +114,25 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProcessTransfer.InvalidHeapInventoryCannotAuthorizeCapture")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.DynamicSlotInventoryComesFromTheStoppedProcess")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.MissingDynamicSlotInventoryRemainsUnknown")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.DynamicSlotReadFailureCannotBecomeAnEmptyInventory")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.LiveDynamicSlotsRequireAnExplicitSnapshot/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.LiveDynamicSlotsRequireAnExplicitSnapshot/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ReleasedAndPostEntryDynamicSlotsDoNotBlockRecovery/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ReleasedAndPostEntryDynamicSlotsDoNotBlockRecovery/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
     "LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage/"
     "{backend_title}X64")

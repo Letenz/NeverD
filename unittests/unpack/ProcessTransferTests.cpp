@@ -36,6 +36,9 @@ public:
   std::optional<std::vector<ProcessHeapAllocationView>> Heap =
       std::vector<ProcessHeapAllocationView>{};
   std::optional<std::vector<uint64_t>> Encoded = std::vector<uint64_t>{};
+  std::optional<ProcessDynamicThreadLocalState> DynamicState =
+      ProcessDynamicThreadLocalState{};
+  bool FailDynamicState = false;
   GuestArchitecture architecture() const override {
     return GuestArchitecture::X64;
   }
@@ -68,6 +71,12 @@ public:
   }
   std::optional<std::vector<uint64_t>> encodedPointers() const override {
     return Encoded;
+  }
+  llvm::Expected<std::optional<ProcessDynamicThreadLocalState>>
+  dynamicThreadLocalState() override {
+    if (FailDynamicState)
+      return llvm::createStringError("test dynamic slot read failed");
+    return DynamicState;
   }
   std::vector<uint64_t> completedInitializers() const override {
     return Initializers;
@@ -153,6 +162,45 @@ TEST_F(ProcessTransfer, MissingHeapInventoryRemainsUnknown) {
   const auto Captured = Observer.take();
   ASSERT_TRUE(Captured);
   EXPECT_FALSE(Captured->RuntimeState.HeapInventoryKnown);
+}
+
+TEST_F(ProcessTransfer, DynamicSlotInventoryComesFromTheStoppedProcess) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  start();
+  Process.DynamicState = ProcessDynamicThreadLocalState{2, 3};
+  Process.Bytes[65] = 42;
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  const auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  const auto &State = Captured->RuntimeState;
+  EXPECT_TRUE(State.DynamicThreadLocalInventoryKnown);
+  EXPECT_EQ(State.LiveDynamicTLSSlots, 2u);
+  EXPECT_EQ(State.LiveDynamicFLSSlots, 3u);
+}
+
+TEST_F(ProcessTransfer, MissingDynamicSlotInventoryRemainsUnknown) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  start();
+  Process.DynamicState.reset();
+  Process.Bytes[65] = 42;
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  const auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  EXPECT_FALSE(Captured->RuntimeState.DynamicThreadLocalInventoryKnown);
+  EXPECT_EQ(Captured->RuntimeState.LiveDynamicTLSSlots, 0u);
+  EXPECT_EQ(Captured->RuntimeState.LiveDynamicFLSSlots, 0u);
+}
+
+TEST_F(ProcessTransfer, DynamicSlotReadFailureCannotBecomeAnEmptyInventory) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  start();
+  Process.FailDynamicState = true;
+  Process.Bytes[65] = 42;
+  auto Result = Observer.watched(Process, 64);
+  ASSERT_FALSE(bool(Result));
+  EXPECT_NE(llvm::toString(Result.takeError()).find("dynamic slot read failed"),
+            std::string::npos);
+  EXPECT_FALSE(Observer.take());
 }
 
 TEST_F(ProcessTransfer, EncodedPointerInventoryRequiresExactCompleteValues) {

@@ -150,6 +150,13 @@ public:
   std::optional<std::vector<uint64_t>> encodedPointers() const override {
     return OS.encodedPointers();
   }
+  llvm::Expected<std::optional<ProcessDynamicThreadLocalState>>
+  dynamicThreadLocalState() override {
+    auto State = OS.dynamicThreadLocalState();
+    if (!State)
+      return State.takeError();
+    return std::optional(*State);
+  }
   std::optional<uint64_t> nativeCallCount() const override {
     return Result.NativeCalls.size();
   }

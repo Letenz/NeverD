@@ -10,6 +10,7 @@
 #include "neverd/emulation/CPU.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Endian.h"
 
 #include <algorithm>
 
@@ -60,6 +61,19 @@ bool permitsModule(const Service &S, llvm::StringRef Module) {
   }
 }
 } // namespace
+llvm::Expected<ProcessDynamicThreadLocalState>
+Services::dynamicThreadLocalState() const {
+  uint8_t Bytes[DynamicTLSCount * PointerSize];
+  if (auto E = Memory.snapshotBacking(TEB + TebTLSSlots, Bytes))
+    return std::move(E);
+  ProcessDynamicThreadLocalState State;
+  State.FiberSlots = FLSSlots.count();
+  for (uint64_t I = 0; I < DynamicTLSCount; ++I)
+    if (TLSSlots[I] || llvm::support::endian::read64le(Bytes + I * PointerSize))
+      ++State.ThreadSlots;
+  return State;
+}
+
 llvm::ArrayRef<Service> services() { return Registry; }
 std::optional<APIProvider> findProvider(llvm::StringRef Module) {
   const auto Lower = Module.lower();

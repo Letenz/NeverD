@@ -25,6 +25,7 @@ __declspec(dllimport) int GetSystemMetrics(int);
 __declspec(dllimport) void *GetProcessHeap(void);
 __declspec(dllimport) void *HeapAlloc(void *, U32, U64);
 __declspec(dllimport) int HeapFree(void *, U32, void *);
+#include "unpack_dynamic_tls_state.h"
 volatile U32 *HeapState;
 static volatile U64 EncodedState;
 
@@ -371,8 +372,10 @@ PROGRAM_ENTRY U32 program(void) {
   // impure helper's persistent increment must still change the exit status.
   Written &= 0u - ((Pack.Mode != ImpureCallMode) | (AddressEffects == 1));
 #endif
-  ExitProcess(HeapResult == InitializeResult && PointerOK ? status(Written)
-                                                          : FailureStatus);
+  ExitProcess(HeapResult == InitializeResult && PointerOK &&
+                      validDynamicState(Pack.Mode)
+                  ? status(Written)
+                  : FailureStatus);
   return FailureStatus;
 }
 
@@ -391,6 +394,7 @@ RELAY_ENTRY U32 relay(void) {
 // Every path leaves by a jump on the stack the process started with, as a
 // loader does when it hands control to the program it carried.
 __declspec(dllexport) U32 loader(void) {
+  prepareDynamicState(Pack.Mode);
   if (Pack.Mode == DecodedPointerMode ||
       Pack.Mode == NativeDecodedPointerMode) {
     EncodedState = 0x12345678;
