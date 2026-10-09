@@ -104,9 +104,35 @@ llvm::Error Services::complete(const FLSCleanup &Cleanup) {
     return failure(text::FLSCallback);
   // Keep the index allocated throughout the callback. Its value can be read
   // or changed by guest code, and another allocation must not reuse it yet.
-  FLSSlots.reset(Cleanup.Index);
-  FLSData.erase(I);
+  if (Cleanup.ReleaseIndex) {
+    FLSSlots.reset(Cleanup.Index);
+    FLSData.erase(I);
+  } else {
+    // Thread exit clears this fiber's value, including changes made by its
+    // callback. The process-wide index remains valid during DLL teardown.
+    I->second.Value = 0;
+    I->second.Cleaning = false;
+  }
   return llvm::Error::success();
+}
+llvm::Expected<std::optional<FLSCleanup>>
+Services::exitCleanup(uint32_t &Next) {
+  while (Next < DynamicTLSCount) {
+    const uint32_t Index = Next++;
+    auto I = FLSData.find(Index);
+    if (I == FLSData.end())
+      continue;
+    auto &Data = I->second;
+    if (Data.Cleaning)
+      return failure(text::FLSCallback);
+    if (Data.Callback && Data.Value) {
+      Data.Cleaning = true;
+      return std::optional<FLSCleanup>(
+          {Index, Data.Callback, Data.Value, false});
+    }
+    Data.Value = 0;
+  }
+  return std::nullopt;
 }
 llvm::Expected<bool> Services::access(uint64_t Address, uint64_t Size,
                                       unsigned Rights) {

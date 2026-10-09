@@ -24,7 +24,9 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <iterator>
 #include <set>
+#include <vector>
 
 namespace neverd::emulation {
 namespace {
@@ -95,8 +97,9 @@ protected:
     Options.Backend = P.Backend;
     Options.Windows = WindowsProcessOptions{
         { {LeafFile, Directory / LeafFile},
-          { MiddleFile,
-            Directory / MiddleFile } }};
+          {MiddleFile, Directory / MiddleFile},
+          { CleanupFile,
+            Directory / CleanupFile } }};
 #endif
   }
   llvm::Expected<ProcessResult> run(const char *Argument) {
@@ -109,8 +112,10 @@ TEST_P(WindowsLifetimes, ExecutesStartupAndTerminationNotifications) {
   for (const auto &C : Cases) {
     SCOPED_TRACE(C.Name);
     const auto Inputs = C.Variant ? Directory / C.Variant : Directory;
-    Options.Windows = WindowsProcessOptions{
-        {{LeafFile, Inputs / LeafFile}, {MiddleFile, Inputs / MiddleFile}}};
+    Options.Windows =
+        WindowsProcessOptions{{{LeafFile, Inputs / LeafFile},
+                               {MiddleFile, Inputs / MiddleFile},
+                               {CleanupFile, Directory / CleanupFile}}};
     auto R = run(C.Argument);
     ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
     if (C.Returns) {
@@ -143,6 +148,31 @@ TEST_P(WindowsLifetimes, SharesInstructionAndEventBudgetsAcrossInitialization) {
   EXPECT_EQ(Events->Events, Options.Limits.Events);
   EXPECT_FALSE(Events->ExitStatus);
   EXPECT_TRUE(Events->StandardOutput.empty());
+}
+TEST_P(WindowsLifetimes, FLSCleanupRunsBeforeDetachNotifications) {
+  for (const auto &C : Cases) {
+    if (!llvm::StringRef(C.Name).starts_with("FLS"))
+      continue;
+    SCOPED_TRACE(C.Name);
+    auto R = run(C.Argument);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, ExitStatus) << llvm::toHex(R->StandardError);
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->StandardOutput, C.Output);
+  }
+}
+TEST_P(WindowsLifetimes, ExitCleanupRejectsUnmodeledLoaderOperations) {
+  auto R = run(FLSUnloadArgument);
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService) << R->Diagnostic;
+  EXPECT_FALSE(R->ExitStatus);
+  EXPECT_EQ(R->Diagnostic, win::text::FLSExitLoader);
+  EXPECT_EQ(R->StandardOutput, FLSUnloadPrefix);
+  EXPECT_TRUE(R->StandardError.empty());
+  ASSERT_FALSE(R->NativeCalls.empty());
+  EXPECT_EQ(R->NativeCalls.back().Name, "FreeLibrary");
+  EXPECT_FALSE(R->NativeCalls.back().Result);
 }
 TEST_P(WindowsLifetimes, CallbackFaultDoesNotInventDetachNotifications) {
   auto R = run(FaultArgument);
@@ -307,7 +337,12 @@ TEST(WindowsModuleLifetime, NativeWindowsObservesStartupAndTermination) {
   const auto Directory =
       std::filesystem::path(NEVERD_WINDOWS_LIFETIME_FIXTURE_DIR) / X64Dir;
   llvm::sys::Process::PreventCoreFiles();
-  for (const auto &C : Cases) {
+  std::vector<Case> NativeCases(std::begin(Cases), std::end(Cases));
+  // Retain the original termination-time loader trace without treating an
+  // observation of undocumented behavior as a modeled success contract.
+  NativeCases.push_back(
+      {"FLSUnloadObservation", FLSUnloadArgument, ExitStatus});
+  for (const auto &C : NativeCases) {
     SCOPED_TRACE(C.Name);
     const auto CaseRoot = Root / C.Name;
     ASSERT_TRUE(std::filesystem::create_directory(CaseRoot));
@@ -317,6 +352,8 @@ TEST(WindowsModuleLifetime, NativeWindowsObservesStartupAndTermination) {
                                             (CaseRoot / File).string()));
     ASSERT_FALSE(llvm::sys::fs::copy_file((Directory / ProgramFile).string(),
                                           (CaseRoot / ProgramFile).string()));
+    ASSERT_FALSE(llvm::sys::fs::copy_file((Directory / CleanupFile).string(),
+                                          (CaseRoot / CleanupFile).string()));
     const auto Program = (CaseRoot / ProgramFile).string();
     const auto Output = (CaseRoot / StdoutFile).string();
     const auto Error = (CaseRoot / StderrFile).string();
@@ -353,7 +390,7 @@ TEST(WindowsModuleLifetime, NativeWindowsObservesStartupAndTermination) {
                     (*Out)->getBuffer() == ReturnedProcessTrace ||
                     (*Out)->getBuffer() == NormalTrace)
             << llvm::toHex((*Out)->getBuffer());
-      } else {
+      } else if (C.Output) {
         EXPECT_EQ((*Out)->getBuffer(), llvm::StringRef(C.Output));
       }
       EXPECT_TRUE((*Err)->getBuffer().empty());

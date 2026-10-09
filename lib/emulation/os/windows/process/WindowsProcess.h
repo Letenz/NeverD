@@ -169,6 +169,7 @@ struct LoaderRequest {
 struct FLSCleanup {
   uint32_t Index;
   uint64_t Function, Argument;
+  bool ReleaseIndex = true;
 };
 struct ServiceOutcome {
   struct Exception {
@@ -199,6 +200,7 @@ public:
   llvm::Expected<ServiceOutcome> invoke(const Service &Service,
                                         const NativeCallEvent &Event);
   llvm::Error complete(const FLSCleanup &Cleanup);
+  llvm::Expected<std::optional<FLSCleanup>> exitCleanup(uint32_t &Next);
   std::vector<ProcessHeapAllocationView> heapAllocations() const;
   std::vector<uint64_t> encodedPointers() const {
     return {EncodedPointers.begin(), EncodedPointers.end()};
