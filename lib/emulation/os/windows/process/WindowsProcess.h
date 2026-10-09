@@ -252,6 +252,7 @@ private:
   std::map<uint64_t, bool> ThreadSnapshots;
   uint64_t NextThreadSnapshot = value::ThreadSnapshotBase;
   uint32_t ThreadErrorMode = 0;
+  bool ThreadHiddenFromDebugger = false;
   bool knownHeap(uint64_t Handle) const {
     if (Handle == value::HeapHandle)
       return true;

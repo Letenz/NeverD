@@ -2187,6 +2187,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ClockServicesUseConsistentUnitsAndPreserveLastError/{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/WindowsProcess."
+    "ThreadInformationRetainsStateAndChecksExactLengths/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess."
+    "ThreadAffinityIsNotAcknowledgedAsDebuggerState/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess."
     "UnmodeledDelaysStopWithoutClaimingCompletion/{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/"

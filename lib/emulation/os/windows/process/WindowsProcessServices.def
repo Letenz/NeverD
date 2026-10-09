@@ -42,9 +42,9 @@ NEVERD_WINDOWS_PROCESS_API(ZwProtectVirtualMemory, Native, 5, true)
 NEVERD_WINDOWS_PROCESS_API(ZwQuerySystemInformation, Native, 4, true)
 // ProcessBasicInformation for the current process only.
 NEVERD_WINDOWS_PROCESS_API(ZwQueryInformationProcess, Native, 5, true)
-// ThreadBasicInformation for the current thread only.
+// ThreadBasicInformation and ThreadHideFromDebugger for the current thread.
 NEVERD_WINDOWS_PROCESS_API(ZwQueryInformationThread, Native, 5, true)
-// ThreadHideFromDebugger for the current thread. The call is acknowledged.
+// ThreadHideFromDebugger for the current thread, retained for later queries.
 NEVERD_WINDOWS_PROCESS_API(ZwSetInformationThread, Native, 4, true)
 // Nonalertable relative intervals within DelayCapNanoseconds use the host
 // clock. Absolute, alertable and longer delays stop without claiming

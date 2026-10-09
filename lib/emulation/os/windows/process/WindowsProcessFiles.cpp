@@ -579,10 +579,15 @@ Services::queryThread(const Service &S, const NativeCallEvent &Event) {
         std::string(text::ServiceArguments) + S.Name + ": " + Why.str();
     return std::nullopt;
   };
-  if (A[1] != ThreadBasicInformation)
+  const uint32_t Class = uint32_t(A[1]);
+  const uint32_t Length = uint32_t(A[3]);
+  if (Class != ThreadBasicInformation && Class != ThreadHideFromDebugger)
     return Refuse(std::string("class ") + llvm::utohexstr(A[1]));
   if (A[0] != CurrentThread)
     return Refuse("thread");
+  if (Class == ThreadHideFromDebugger && Length != 1)
+    return std::optional<uint64_t>(
+        uint64_t(int64_t(int32_t(StatusInfoLengthMismatch))));
   if (A[4]) {
     auto Writable = access(A[4], DWordSize, Write);
     if (!Writable)
@@ -590,7 +595,20 @@ Services::queryThread(const Service &S, const NativeCallEvent &Event) {
     if (!*Writable)
       return failure(text::Access);
   }
-  if (A[3] < ThreadBasicInformationSize) {
+  if (Class == ThreadHideFromDebugger) {
+    auto Writable = access(A[2], 1, Write);
+    if (!Writable)
+      return Writable.takeError();
+    if (!*Writable)
+      return failure(text::Access);
+    if (auto E = CPU.writeInteger(A[2], ThreadHiddenFromDebugger, 1))
+      return std::move(E);
+    if (A[4])
+      if (auto E = CPU.writeInteger(A[4], 1, DWordSize))
+        return std::move(E);
+    return std::optional<uint64_t>(0);
+  }
+  if (Length < ThreadBasicInformationSize) {
     if (A[4])
       if (auto E =
               CPU.writeInteger(A[4], ThreadBasicInformationSize, DWordSize))
@@ -632,22 +650,14 @@ Services::setThread(const Service &S, const NativeCallEvent &Event) {
         std::string(text::ServiceArguments) + S.Name + ": " + Why.str();
     return std::nullopt;
   };
-  if (A[1] != ThreadHideFromDebugger)
+  if (uint32_t(A[1]) != ThreadHideFromDebugger)
     return Refuse(std::string("class ") + llvm::utohexstr(A[1]));
   if (A[0] != CurrentThread)
     return Refuse("thread");
-  if (A[3] > PointerSize)
+  if (uint32_t(A[3]) != 0)
     return std::optional<uint64_t>(
         uint64_t(int64_t(int32_t(StatusInfoLengthMismatch))));
-  if (A[3]) {
-    if (!A[2])
-      return Refuse("buffer");
-    auto Readable = access(A[2], A[3], Read);
-    if (!Readable)
-      return Readable.takeError();
-    if (!*Readable)
-      return failure(text::Access);
-  }
+  ThreadHiddenFromDebugger = true;
   return std::optional<uint64_t>(0);
 }
 

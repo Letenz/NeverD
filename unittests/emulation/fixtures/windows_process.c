@@ -91,6 +91,7 @@ static void require(int OK) {
     ExitProcess(Failure);
 }
 #include "WindowsMemoryFixture.inc"
+#include "WindowsThreadFixture.inc"
 #include "WindowsTimeFixture.inc"
 static char mode(void) {
   WCHAR *Line = GetCommandLineW();
@@ -111,11 +112,29 @@ static char mode(void) {
   }
   require(Start && (Line[Start - 1] == ' ' || Line[Start - 1] == '\t'));
   static const char *const Modes[] = {
-      Normal,        Returned,    Loop,          InitLoop,       Fault,
-      Privileged,    Unknown,     Errors,        Unsupported,    BadOutput,
-      AliasedOutput, TLSMutation, TailExit,      ForgedGate,     ReentrantExit,
-      ReturnSlot,    NativeExit,  ClockServices, ClockAlertable, ClockAbsolute,
+      Normal,
+      Returned,
+      Loop,
+      InitLoop,
+      Fault,
+      Privileged,
+      Unknown,
+      Errors,
+      Unsupported,
+      BadOutput,
+      AliasedOutput,
+      TLSMutation,
+      TailExit,
+      ForgedGate,
+      ReentrantExit,
+      ReturnSlot,
+      NativeExit,
+      ClockServices,
+      ClockAlertable,
+      ClockAbsolute,
       ClockTooLong,
+      ThreadInformation,
+      ThreadAffinityUnsupported,
 #define NEVERD_WINDOWS_FIXTURE_TEXT(Name, Text) Name,
 #include "WindowsMemoryCases.def"
 #undef NEVERD_WINDOWS_FIXTURE_TEXT
@@ -235,6 +254,7 @@ DWORD entry(void) {
   require(HeapFree(Heap, 0, Bytes));
   memoryScenario(Mode);
   clockScenario(Mode);
+  threadScenario(Mode);
   if (Mode == 't')
     tailExit();
   if (Mode == 'g')
