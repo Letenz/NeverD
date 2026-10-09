@@ -1,0 +1,40 @@
+//===- RawFingerprints.def - Structures that name a binary file's code --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// NEVERD_RAW_FINGERPRINT(Id, Name, Processor): a structure at the start of a
+// binary file that names the processor its code runs on, and where it runs,
+// as byte statistics cannot.  RawFingerprints.cpp reads each; a structure
+// found outranks the statistics.
+//
+// NEVERD_CORTEX_M_STACK(Low, High): where a Cortex-M part's RAM, and so the
+// initial stack pointer at the head of its vector table, sits.
+// NEVERD_CORTEX_M_LIMIT(Id, Value): the shape of the vector table.
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_RAW_FINGERPRINT
+NEVERD_RAW_FINGERPRINT(CortexMVectorTable, "Cortex-M vector table", "thumb")
+#undef NEVERD_RAW_FINGERPRINT
+#endif
+
+#ifdef NEVERD_CORTEX_M_STACK
+// SRAM, and the tightly coupled or CCM RAM some parts boot their stack in.
+NEVERD_CORTEX_M_STACK(0x20000000, 0x20400000)
+NEVERD_CORTEX_M_STACK(0x10000000, 0x10400000)
+#undef NEVERD_CORTEX_M_STACK
+#endif
+
+#ifdef NEVERD_CORTEX_M_LIMIT
+// Words read: the stack pointer, then Reset, NMI, HardFault, MemManage,
+// BusFault, UsageFault, four reserved words, and SVCall.
+NEVERD_CORTEX_M_LIMIT(Words, 12)
+// The first reserved word, and how many there are.
+NEVERD_CORTEX_M_LIMIT(FirstReserved, 7)
+NEVERD_CORTEX_M_LIMIT(Reserved, 4)
+// Handlers must point within this many bytes of one another.
+NEVERD_CORTEX_M_LIMIT(HandlerSpread, 0x1000000)
+#undef NEVERD_CORTEX_M_LIMIT
+#endif

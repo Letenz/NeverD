@@ -358,8 +358,37 @@ be changed, since every loader takes it from the header.
 **Binary file** reads any file as one processor's code, as firmware and memory
 dumps need. Its processor list reads **Processor type (double-click to set)**
 and offers the processors NeverD can decode (x86, x86-64, ARM, Thumb and
-AArch64); none is assumed, so OK stays disabled until one is chosen, and the
-one chosen last time is chosen again. **Image base** is the address the bytes
+AArch64). The engine reads the processor from the bytes and the list opens on
+it. Each instruction set leaves its own statistics of which byte follows which;
+4 KiB windows of the file vote for the set that explains them best, padding,
+text and compressed data are passed over, and a set settles the file only when
+its family takes nearly all of the vote, from enough of the file and with
+enough weight per window: code of a set the model lacks scatters a little
+weight and settles nothing. Sets that differ in word size -- 32- and 64-bit
+MIPS, PowerPC, SPARC, RISC-V and x86 -- are then told apart by their
+instructions: the 64-bit set's code is full of encodings the 32-bit set has
+none of (MIPS `ld` and `daddiu`, PowerPC `std`, x86-64 REX.W), read at the
+alignment the set's byte-position statistics find. That alignment also tells a
+file whose code starts mid-word where to start reading, and **File offset**
+fills in. The model knows 28 instruction sets -- MIPS, PowerPC, RISC-V, SPARC,
+z/Architecture, 68000, Hexagon, LoongArch, MSP430, AVR, Xtensa, eBPF, Alpha,
+PA-RISC and SuperH besides the five NeverD decodes. `scripts/generate_isa_model.py`
+trains it from code clang compiles for it and from Debian packages GCC built
+(`scripts/isa_model_corpus.json` pins them by hash), and
+`lib/loader/Raw/ISAModel.json` records how. `scripts/validate_isa_model.py`
+runs the engine on real programs and libraries the model never saw -- Debian
+packages for 19 architectures, OpenWrt builds for 10 targets, and builds for
+ARC, IA-64 and the MIPS16e code OpenWrt builds busybox as, which the model
+does not know -- each read whole and two bytes in: all 180 read right, those
+of unknown sets settling nothing. The note under the list says what the bytes
+showed ("Read from the bytes: MIPS big-endian (32-bit) 100% of the code, no
+64-bit-only instructions"), or that they look like a set NeverD cannot decode
+yet, like a family whose instructions do not tell its width, or like no code of
+a set NeverD knows; then, as when nothing names one, the processor is the
+user's to choose, and the one chosen last time is chosen again. A file that
+opens with a Cortex-M vector table names Thumb, its entry point and where the
+image sits, and the fields fill in. IDA, by comparison, reads every binary file
+as its default processor until told otherwise. **Image base** is the address the bytes
 map at, **File offset** and **Loading size** pick the bytes (the rest of the
 file when the size is empty), and **Entry point** is where execution starts (the
 image base when empty); all are hexadecimal. **Platform** is the platform the

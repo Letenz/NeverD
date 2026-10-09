@@ -15,12 +15,15 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/PlatformEvidence.h"
 #include "neverd/loader/LoadCandidate.h"
+#include "neverd/loader/Raw/ISAIdentify.h"
 #include "neverd/support/AtomicOutput.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectWriteLock.h"
 #include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
@@ -1083,12 +1086,20 @@ neverd::sdk::parseLoadOptions(llvm::StringRef Text) {
                             "; the loaders are auto, evm and binary");
   Choice.Format = BinaryFormat::Raw;
   RawLoadOptions &Options = Choice.Raw;
-  const auto Processor =
-      parseRawProcessor(Object->getString("processor").value_or(""));
-  if (!Processor)
-    return loadOptionsError(
-        "a binary file is read as x86, x86_64, arm, thumb or aarch64");
-  std::tie(Options.TheArch, Options.Mode) = *Processor;
+  // No processor, or auto, has the load read it from the bytes.
+  const llvm::StringRef Named =
+      Object->getString("processor").value_or(AutomaticLoaderName);
+  if (!Named.empty() && Named != AutomaticLoaderName) {
+    const auto Processor = parseRawProcessor(Named);
+    if (!Processor)
+      return loadOptionsError("a binary file is read as auto, x86, x86_64, "
+                              "arm, thumb or aarch64");
+    std::tie(Options.TheArch, Options.Mode) = *Processor;
+    Options.ProcessorDetected =
+        Object->getString("processor_source") == DetectedPlatformSource;
+    Options.ProcessorEvidence =
+        Object->getString("processor_evidence").value_or("").str();
+  }
   const auto Base = optionNumber(*Object, "base", 0);
   const auto Offset = optionNumber(*Object, "offset", 0);
   const auto Size = optionNumber(*Object, "size", 0);
@@ -1127,7 +1138,15 @@ std::string neverd::sdk::loadOptionsJson(const LoaderChoice &Choice) {
   case BinaryFormat::Raw: {
     const RawLoadOptions &Raw = Choice.Raw;
     Object["loader"] = getLoadRowLoader(LoadRow::Binary);
-    Object["processor"] = getRawProcessorName(Raw.TheArch, Raw.Mode);
+    if (Raw.TheArch == Arch::Unknown) {
+      Object["processor"] = AutomaticLoaderName;
+    } else {
+      Object["processor"] = getRawProcessorName(Raw.TheArch, Raw.Mode);
+      Object["processor_source"] =
+          Raw.ProcessorDetected ? DetectedPlatformSource : ChosenPlatformSource;
+      if (!Raw.ProcessorEvidence.empty())
+        Object["processor_evidence"] = Raw.ProcessorEvidence;
+    }
     Object["base"] = vaHex(Raw.Base);
     Object["offset"] = vaHex(Raw.Offset);
     Object["size"] = vaHex(Raw.Size);
@@ -1165,6 +1184,62 @@ neverd::sdk::readLoadOptionsSidecar(const std::filesystem::path &Input) {
     return loadOptionsError("load options sidecar: " +
                             llvm::toString(Options.takeError()));
   return Options;
+}
+
+llvm::Error
+neverd::sdk::settleBinaryFileProcessor(const std::filesystem::path &Input,
+                                       LoaderChoice &Choice) {
+  RawLoadOptions &Raw = Choice.Raw;
+  if (Choice.Format != BinaryFormat::Raw || Raw.TheArch != Arch::Unknown)
+    return llvm::Error::success();
+  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Input),
+                                            /*IsText=*/false,
+                                            /*RequiresNullTerminator=*/false);
+  if (!Buffer)
+    return loadOptionsError("cannot read the binary file");
+  // The bytes the load reads.
+  llvm::ArrayRef<uint8_t> Bytes =
+      llvm::arrayRefFromStringRef((*Buffer)->getBuffer());
+  Bytes = Bytes.drop_front(std::min<uint64_t>(Raw.Offset, Bytes.size()));
+  if (Raw.Size)
+    Bytes = Bytes.take_front(std::min<uint64_t>(Raw.Size, Bytes.size()));
+  const ISAIdentification Found = identifyISA(Bytes);
+  const llvm::StringRef Processor = Found.detectedProcessor();
+  using Verdict = ISAIdentification::Verdict;
+  if (Processor.empty()) {
+    switch (Found.Outcome) {
+    case Verdict::NoCode:
+      return loadOptionsError("no part of the file looks like code of an "
+                              "instruction set NeverD knows; name the "
+                              "processor to read it as");
+    case Verdict::Settled:
+      return loadOptionsError(llvm::formatv(
+          "the code looks like {0}, which NeverD cannot decode; name a "
+          "processor to read it as one anyway",
+          Found.Guesses.front().Name));
+    case Verdict::WidthUnclear:
+      return loadOptionsError(llvm::formatv(
+          "the code looks like {0} or {1}, and its instructions do not tell "
+          "which; name the processor to read it as",
+          Found.Guesses[0].Name, Found.Guesses[1].Name));
+    case Verdict::Unclear:
+      return loadOptionsError(
+          llvm::formatv("the bytes do not show one processor clearly ({0}); "
+                        "name the processor to read it as",
+                        Found.describe()));
+    }
+  }
+  // Instructions off their alignment would decode as other instructions.
+  if (!Found.Fingerprint && Found.CodeOffset)
+    return loadOptionsError(llvm::formatv(
+        "the code looks like {0}, whose instructions align to {1} bytes from "
+        "offset {2} of the bytes read; set the file offset to {3}",
+        Found.Guesses.front().Name, Found.CodeUnit, Found.CodeOffset,
+        Raw.Offset + Found.CodeOffset));
+  std::tie(Raw.TheArch, Raw.Mode) = *parseRawProcessor(Processor);
+  Raw.ProcessorDetected = true;
+  Raw.ProcessorEvidence = Found.describe();
+  return llvm::Error::success();
 }
 
 void neverd::sdk::settleBinaryFilePlatform(BinaryImage &Img,

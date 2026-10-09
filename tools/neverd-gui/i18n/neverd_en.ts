@@ -2389,6 +2389,30 @@ Signed: %4</translation>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
         <translation>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</translation>
     </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>Read from the bytes: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>Read from the bytes: %1, entry %2, base %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>The code looks most like %1, but not clearly; choose the processor its code runs on</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

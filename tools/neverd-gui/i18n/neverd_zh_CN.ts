@@ -2385,6 +2385,30 @@ Signed: %4</source>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
         <translation>代码所针对的平台，决定其遵循的约定：调用如何传递参数、哪些寄存器被保留，以及 C 类型的大小</translation>
     </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>文件中没有任何部分像 NeverD 认识的指令集的代码；请选择其代码运行的处理器</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>代码看起来像 %1 或 %2，但其指令无法区分是哪一个；请选择其代码运行的处理器</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>从字节识别：%1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>从字节识别：%1，入口 %2，基址 %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>代码看起来像 %1，NeverD 无法解码；如仍要按某个处理器读取，请选择处理器</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>代码最像 %1，但不够明确；请选择其代码运行的处理器</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

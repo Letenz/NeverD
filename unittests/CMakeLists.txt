@@ -223,6 +223,7 @@ if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
 endif()
 add_subdirectory(unpack)
 add_subdirectory(evm)
+add_subdirectory(loader)
 add_subdirectory(sbf)
 add_subdirectory(plugin)
 

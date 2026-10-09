@@ -413,6 +413,7 @@ V9 の schema テストは 8 種の名前の往復と共有最終状態検証を
 | `unittests/TestProcessTests.cpp` | `NeverDTestProcessTests` | クロスプラットフォーム子プロセス、引用、リダイレクト、終了コード |
 | `unittests/libc` | `NeverDLibCTests` | 既知の libc 名と分類 |
 | `unittests/safety` | `NeverDSafetyTests`、`NeverDSafetyIntegrationTests` | シンクカタログ、識別優先順位、引数事前フィルタ、コピー越境ハント、ヒープ寿命監査、必須の PE/ELF/Mach-O × x86-64/AArch64 6 セル行列 |
+| `unittests/loader` | `NeverDRawISATests` | バイナリファイル：バイト列からの命令セット識別（データ、テスト自身のコード、2 バイトずれたコード、ファミリーごとの 32 ビットと 64 ビットのエンコーディング、ゼロで始まるファイル）と Cortex-M ベクタテーブル。`scripts/validate_isa_model.py --engine build/bin/libneverd.so` はモデルが見たことのない実プログラムとライブラリ 180 件をハッシュ指定でダウンロードして検査します。ネットワークが必要で、CTest には含まれません |
 | `unittests/lift` | `NeverDLiftTests` | Decoder/lifter の LowIR 形状、IR 段階、loader、relocation、形式 fixture、デコンパイル、代表的 patch 経路 |
 | `unittests/semantic` の大半 | `NeverDSemanticTests` | 命令、ABI、制御フロー、C 式、lift/recompile の差分セマンティクス |
 | `unittests/evm` | `NeverDEVMOpcodeTests`、`NeverDEVMBytecodeTests`、`NeverDEVMLoaderTests`、`NeverDEVMABITests`、`NeverDEVMAnalyzerTests`、`NeverDEVMDecoderPropertyTests`、`NeverDEVMProxyTests`、`NeverDEVMCallTests`、`NeverDEVMSemanticTests`、`NeverDEVMEmitterTests`、`NeverDEVMIntegrationTests` | hardfork metadata、input normalization、ABI/signature ambiguity、CFG/SSA/recovery、decoder boundary 全網羅と hostile input、proxy/call fact、interpreter semantics、LLVM/C/Solidity differential execution、public API routing |

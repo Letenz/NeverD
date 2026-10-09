@@ -2405,6 +2405,30 @@ Signed: %4</source>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
         <translation>المنصة التي بُنيت لها الشيفرة والتي تتبع اصطلاحاتها: كيف تمرر الاستدعاءات الوسائط، وأي المسجلات تحفظها، وأحجام أنواع C</translation>
     </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>لا يبدو أي جزء من الملف شيفرةً لمجموعة تعليمات يعرفها NeverD؛ اختر المعالج الذي تعمل عليه شيفرته</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>تبدو الشيفرة مثل %1 أو %2، ولا تكشف تعليماتها أيهما؛ اختر المعالج الذي تعمل عليه شيفرته</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>مكتشف من البايتات: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>مكتشف من البايتات: %1، الدخول %2، الأساس %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>تبدو الشيفرة مثل %1، الذي لا يستطيع NeverD فكّه؛ اختر معالجًا لقراءتها كذلك على أي حال</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>أقرب ما تشبهه الشيفرة هو %1، لكن ليس بوضوح؛ اختر المعالج الذي تعمل عليه شيفرته</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

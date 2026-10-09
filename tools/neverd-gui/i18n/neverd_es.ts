@@ -2389,6 +2389,30 @@ Con signo: %4</translation>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
         <translation>La plataforma para la que se compiló el código, cuyas convenciones sigue: cómo las llamadas pasan los argumentos, qué registros conservan y el tamaño de los tipos de C</translation>
     </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>Ninguna parte del archivo parece código de un conjunto de instrucciones que NeverD conozca; elija el procesador en el que se ejecuta su código</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>El código parece %1 o %2, y sus instrucciones no indican cuál; elija el procesador en el que se ejecuta su código</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>Detectado en los bytes: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>Detectado en los bytes: %1, entrada %2, base %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>El código parece %1, que NeverD no puede decodificar; elija un procesador para leerlo así de todos modos</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>El código se parece más a %1, pero no con claridad; elija el procesador en el que se ejecuta su código</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
