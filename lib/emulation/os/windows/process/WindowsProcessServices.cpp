@@ -97,6 +97,17 @@ std::optional<uint64_t> Services::unsupported(const Service &S) {
   Result.Diagnostic = std::string(text::ServiceArguments) + S.Name;
   return std::nullopt;
 }
+llvm::Error Services::complete(const FLSCleanup &Cleanup) {
+  auto I = FLSData.find(Cleanup.Index);
+  if (I == FLSData.end() || !I->second.Cleaning ||
+      I->second.Callback != Cleanup.Function)
+    return failure(text::FLSCallback);
+  // Keep the index allocated throughout the callback. Its value can be read
+  // or changed by guest code, and another allocation must not reuse it yet.
+  FLSSlots.reset(Cleanup.Index);
+  FLSData.erase(I);
+  return llvm::Error::success();
+}
 llvm::Expected<bool> Services::access(uint64_t Address, uint64_t Size,
                                       unsigned Rights) {
   if (!Size)
@@ -317,12 +328,14 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
     if (S.Kind == API::FlsGetValue)
       return WinError(ErrorSuccess, Data.Value);
     if (S.Kind == API::FlsFree) {
-      // Freeing a nonempty slot must invoke its registered guest callback.
-      // Until that continuation is modeled, stop before discarding either
-      // the callback or its value; an empty inventory cannot certify the
-      // missing callback's effects for a later snapshot.
-      if (Data.Callback && Data.Value)
+      // Recursive release of the same in-flight index has no modeled
+      // lifecycle. Other indices may create nested cleanup continuations.
+      if (Data.Cleaning)
         return ServiceOutcome(unsupported(S));
+      if (Data.Callback && Data.Value) {
+        Data.Cleaning = true;
+        return ServiceOutcome(FLSCleanup{Index, Data.Callback, Data.Value});
+      }
       FLSSlots.reset(Index);
       FLSData.erase(Index);
     } else
