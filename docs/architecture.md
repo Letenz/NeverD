@@ -96,6 +96,14 @@ action must bind a checked relay and initialized, pointer-free read extent;
 conflicting predecessors or unproved actions discard cleanup and image-read
 authority. Cleanup receipts retain the source block, active state, action
 and projected extents.
+C++ catch homes are seeded only from a matching checked thrown type and
+object width. Reference catches carry a separate runtime-object address domain;
+private frame spills preserve that identity without treating it as an image or
+parent-frame pointer. Exact typed access receipts require the active catch
+context, bounded scalar reads/writes and complete source occurrences. Partial
+spills, pointer escape and use after catch return discard runtime authority.
+Adjacent table-owned catch labels extend the parent code range; cleanup relays
+retain their separate ABI and ordinary-entry conflicts remain explicit.
 These call facts remain separate from a compiler or installation receipt.
 Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction

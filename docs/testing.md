@@ -1767,6 +1767,12 @@ before state activation, missing or mismatched contracts, registration and
 SavedESP overlap, released storage, pointer taint and predecessor conflicts.
 The native call index memoizes relay contracts under the same shared budget;
 a descriptor alone grants no initialized object borrow.
+C++ runtime-object tests cover value/reference homes, exact type/width, private
+spills, bounds, scalar writes, partial pointers, ordered/FS accesses, escapes
+and stale catch identities. Loader tests also cover adjacent catch labels and
+independent function boundaries. Genuine MSVC value and reference images must
+agree in whole-module and selected-function state replay; the reference fixture
+checks all four runtime object occurrences.
 Scope mutation tests cover both SEH3 and EH4, exact exclusive table ends,
 partial overlap, PE32 overflow and cookie separation. The real source fixture
 also rejects an edited LLVM write to either format's scope table.

@@ -211,11 +211,10 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
                "recoverable table");
     }
 
-    // MSVC plants the filter thunk and except body immediately after the
-    // protected region and often labels them as functions.  Those labels clip
-    // CodeRange at the filter, so the handler is never a CFG root.  Grow the
-    // range through contiguous thunks so it covers the rest of the C function,
-    // stopping at the next function that is not one of this record's thunks.
+    // MSVC labels adjacent SEH callbacks and C++ catches as functions. Grow
+    // the inferred body through those table-owned entries so their runtime
+    // roots are decoded, stopping at the next unrelated function. Out-of-line
+    // cleanup relays retain their independently checked establisher ABI.
     {
       std::set<va_t> Thunks;
       for (const RegistrationScopeRecord &Scope : Chain.Scopes) {
@@ -224,6 +223,11 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
         if (Scope.HandlerVA)
           Thunks.insert(Scope.HandlerVA);
       }
+      if (F.Cxx)
+        for (const CxxTryBlock &Try : F.Cxx->TryBlocks)
+          for (const CxxCatchHandler &Catch : Try.Handlers)
+            if (Catch.HandlerVA)
+              Thunks.insert(Catch.HandlerVA);
       bool Grew = true;
       for (unsigned Guard = 0;
            Grew && Guard < limits::kMaxRegistrationEHFixedPoint; ++Guard) {

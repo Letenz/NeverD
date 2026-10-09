@@ -894,6 +894,43 @@ TEST(RegistrationTryLevel, CxxCallbackRolesSurviveModuleFunctionDiscovery) {
   }
 }
 
+TEST(RegistrationTryLevel, AdjacentCxxCatchLabelsDoNotClipTheParentContract) {
+  auto Img = makeCxxContinuationImage();
+  auto &Text = Img.Segments[0];
+  Text.Data.resize(0x110, 0xcc);
+  Text.Size = Text.Data.size();
+  Text.Data[0x100] = 0xb8;
+  writeLE<uint32_t>(Text.Data.data() + 0x101, kRData);
+  Text.Data[0x105] = 0xff;
+  Text.Data[0x106] = 0x25;
+  writeLE<uint32_t>(Text.Data.data() + 0x107, kRData + 0x90);
+  for (auto &Symbol : Img.Symbols)
+    if (Symbol.Addr == kPersonality)
+      Symbol.Name = "cxx_personality_thunk";
+  Img.Imports.push_back(
+      {"vcruntime140.dll", "__CxxFrameHandler3", 0, kRData + 0x90});
+  Img.Symbols.push_back(Symbol::makeFunc(kText + 0xa0));
+  auto Next = Symbol::makeFunc(kText + 0xf0);
+  Next.Origin = NameOrigin::Stated;
+  Img.Symbols.push_back(Next);
+  Img.ExceptionMetadata.Functions.clear();
+  Img.ExceptionMetadata.rebuildIndex();
+  coff_loader::parseX86RegistrationExceptions(Img);
+  const auto *EH = Img.ExceptionMetadata.findFunction(kText);
+  ASSERT_NE(EH, nullptr);
+  ASSERT_TRUE(EH->Cxx);
+  EXPECT_EQ(EH->ParseStatus, ExceptionParseStatus::Complete);
+  EXPECT_EQ(EH->CodeRange.End, kText + 0xf0);
+  EXPECT_TRUE(EH->ownsCode(kText + 0xa0));
+  Decoder D;
+  ASSERT_TRUE(D.init(Img));
+  auto Low = CFGBuilder().build(Img, D, kText);
+  ASSERT_TRUE(Low.RegistrationStates);
+  EXPECT_TRUE(Low.RegistrationStates->Complete);
+  EXPECT_TRUE(Low.RegistrationStates->CxxContinuationsComplete);
+  EXPECT_EQ(Low.RegistrationStates->CxxContinuations.size(), 1u);
+}
+
 TEST(RegistrationTryLevel, RegistrationParserKeepsItsFocusedLanguageOwnership) {
   for (unsigned OrdinarySource = 0; OrdinarySource != 3; ++OrdinarySource) {
     SCOPED_TRACE(OrdinarySource);

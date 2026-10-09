@@ -776,6 +776,125 @@ TEST(RegistrationState, CleanupInitializationMustPrecedeStateActivation) {
   }
 }
 
+namespace {
+LowFunc makeCxxTypedObject(bool Reference) {
+  auto F = makeCxxObjectCall();
+  auto &Catch = F.ExceptionMetadata->Cxx->TryBlocks[0].Handlers[0];
+  Catch.TypeDescriptorVA = 0x3000;
+  Catch.CatchObjectOffset = -24;
+  Catch.Adjectives = Reference ? 8 : 0;
+  auto &Handler = F.Blocks[5];
+  const auto Original = Handler.Ops;
+  Handler.Ops.clear();
+  emitOp(Handler, 0x1800, NdOp::INT_ADD, NdVar::tmp(60, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-24), 4)});
+  if (Reference) {
+    emitOp(Handler, 0x1800, NdOp::LOAD, NdVar::tmp(61, 4), {NdVar::tmp(60, 4)});
+    emitOp(Handler, 0x1800, NdOp::LOAD, NdVar::tmp(62, 4), {NdVar::tmp(61, 4)});
+    emitOp(Handler, 0x1800, NdOp::STORE, {},
+           {NdVar::tmp(61, 4), NdVar::tmp(62, 4)});
+  } else
+    emitOp(Handler, 0x1800, NdOp::LOAD, NdVar::tmp(62, 4), {NdVar::tmp(60, 4)});
+  for (auto Op : Original) {
+    Op.Seq = Handler.Ops.size();
+    Handler.Ops.push_back(Op);
+  }
+  return F;
+}
+
+RegistrationCalleeFrameContract scalarThrowContract() {
+  RegistrationCalleeFrameContract C;
+  C.CalleeKind = RegistrationCalleeFrameContract::Kind::PrivateThrow;
+  C.Target = 0x2100;
+  C.DoesNotReturn = true;
+  C.ThrownTypeVA = 0x3000;
+  C.ThrownObjectSize = 4;
+  return C;
+}
+} // namespace
+
+TEST(RegistrationState, KeepsRuntimeExceptionObjectsSeparateFromParentFrames) {
+  for (bool Reference : {false, true}) {
+    SCOPED_TRACE(Reference);
+    auto F = makeCxxTypedObject(Reference);
+    const std::vector Calls{scalarThrowContract()};
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Calls);
+    EXPECT_TRUE(A.Complete);
+    EXPECT_TRUE(A.CallFrameEffectsComplete);
+    EXPECT_TRUE(A.ImageReadsComplete);
+    EXPECT_TRUE(A.CxxCatchObjectsComplete);
+    EXPECT_TRUE(A.RuntimeObjectAccessesComplete);
+    ASSERT_EQ(A.CxxCatchObjects.size(), 1u);
+    EXPECT_EQ(A.CxxCatchObjects[0],
+              (RegistrationCxxCatchObject{0, 0, 0x3000, 4, -24, Reference}));
+    ASSERT_EQ(A.RuntimeObjectAccesses.size(), Reference ? 2u : 0u);
+    for (const auto &Access : A.RuntimeObjectAccesses) {
+      EXPECT_EQ(Access.Address, 0x1800u);
+      EXPECT_EQ(Access.Offset, 0);
+      EXPECT_EQ(Access.Width, 4);
+      EXPECT_EQ(Access.TryIndex, 0u);
+      EXPECT_EQ(Access.CatchIndex, 0u);
+    }
+  }
+}
+
+TEST(RegistrationState, RejectsUnprovedRuntimeObjectBoundsAndPointerUses) {
+  for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = makeCxxTypedObject(true);
+    std::vector Calls{scalarThrowContract()};
+    auto &Handler = F.Blocks[5];
+    auto &Catch = F.ExceptionMetadata->Cxx->TryBlocks[0].Handlers[0];
+    switch (Mutation) {
+    case 0:
+      Calls[0].ThrownTypeVA = 0x3004;
+      break;
+    case 1:
+      Calls[0].ThrownObjectSize = 2;
+      break;
+    case 2:
+      Catch.CatchObjectOffset = -16;
+      break;
+    case 3:
+      Catch.CatchObjectOffset = -32;
+      break;
+    case 4:
+      Catch.Adjectives = 1;
+      break;
+    case 5:
+      Handler.Ops[1].Output.Size = 2;
+      break;
+    case 6:
+      Handler.Ops[2].Inputs[0] = NdVar::cst(0x4000, 4);
+      Handler.Ops[3].Inputs[0] = NdVar::cst(0x4000, 4);
+      // The original runtime pointer cannot be published to the image.
+      Handler.Ops[3].Inputs[1] = NdVar::tmp(61, 4);
+      break;
+    case 7:
+      Handler.Ops[3].Inputs[1] = NdVar::reg(x86reg::RBP, 4);
+      break;
+    case 8:
+      Handler.Ops[3].Opcode = NdOp::ATOMIC_XCHG;
+      break;
+    case 9:
+      Handler.Ops[2].MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 10:
+      // A stale pointer cannot be dereferenced after catchret closes its life.
+      emitOp(F.Blocks[6], 0x1900, NdOp::INT_ADD, NdVar::tmp(70, 4),
+             {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-24), 4)});
+      emitOp(F.Blocks[6], 0x1900, NdOp::LOAD, NdVar::tmp(71, 4),
+             {NdVar::tmp(70, 4)});
+      emitOp(F.Blocks[6], 0x1900, NdOp::LOAD, NdVar::tmp(72, 4),
+             {NdVar::tmp(71, 4)});
+      break;
+    }
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Calls);
+    EXPECT_FALSE(A.RuntimeObjectAccessesComplete);
+    EXPECT_TRUE(A.RuntimeObjectAccesses.empty());
+  }
+}
+
 TEST(RegistrationState, RejectsUnprovenObjectAndCallProjections) {
   for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
     auto F = makeCxxObjectCall();

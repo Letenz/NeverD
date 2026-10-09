@@ -102,6 +102,30 @@ struct RegistrationCookieCheck {
   int OpSeq = -1;
 };
 
+/// A typed scalar catch whose runtime object width follows the checked
+/// ThrowInfo contract. A reference home stores a CRT object pointer; the
+/// exception allocation is distinct from the private establisher frame.
+struct RegistrationCxxCatchObject {
+  uint32_t TryIndex = 0;
+  uint32_t CatchIndex = 0;
+  va_t TypeDescriptorVA = 0;
+  uint32_t ObjectSize = 0;
+  int32_t FrameOffset = 0;
+  bool Reference = false;
+  bool operator==(const RegistrationCxxCatchObject &) const = default;
+};
+
+struct RegistrationRuntimeObjectAccess {
+  va_t Address = InvalidVA;
+  int OpSeq = -1;
+  uint32_t TryIndex = 0;
+  uint32_t CatchIndex = 0;
+  int32_t Offset = 0;
+  uint16_t Width = 0;
+  bool Write = false;
+  bool operator==(const RegistrationRuntimeObjectAccess &) const = default;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
@@ -125,6 +149,10 @@ struct RegistrationStateAnalysis {
   bool CleanupFrameEffectsComplete = false;
   std::vector<RegistrationCleanupFrameContract> CleanupContracts;
   std::vector<RegistrationCleanupFrameEffect> CleanupFrameEffects;
+  bool CxxCatchObjectsComplete = false;
+  std::vector<RegistrationCxxCatchObject> CxxCatchObjects;
+  bool RuntimeObjectAccessesComplete = false;
+  std::vector<RegistrationRuntimeObjectAccess> RuntimeObjectAccesses;
   /// EH4 source initialization, encoding and immutable cookie lifetime have
   /// been checked across every ordinary and runtime path. This does not prove
   /// the compiler's physical cookie; native codegen validates that separately.

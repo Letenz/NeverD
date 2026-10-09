@@ -28,6 +28,8 @@ using registration_state::FrameValue;
 struct Domain {
   std::set<int32_t> Levels;
   FrameState Frame;
+  FrameState RuntimeObject;
+  std::optional<RegistrationCxxCatchObject> RuntimeIdentity;
   std::set<int32_t> InitializedFrameBytes;
   bool Reached = false;
   bool Unknown = false;
@@ -259,6 +261,43 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     }
     Result.CalleeContracts = *Callees;
   }
+  const bool CheckRuntimeObjects = KnownCxx && CheckCalls;
+  bool CompleteCatchObjects = CheckRuntimeObjects;
+  bool CompleteRuntimeObjects = CheckRuntimeObjects;
+  std::map<std::pair<uint32_t, uint32_t>, RegistrationCxxCatchObject>
+      CatchObjects;
+  if (CheckRuntimeObjects) {
+    std::map<va_t, uint32_t> Widths;
+    for (const auto &Callee : Result.CalleeContracts)
+      if (Callee.CalleeKind ==
+          RegistrationCalleeFrameContract::Kind::PrivateThrow) {
+        auto [It, New] =
+            Widths.emplace(Callee.ThrownTypeVA, Callee.ThrownObjectSize);
+        if (!New && It->second != Callee.ThrownObjectSize)
+          It->second = 0;
+      }
+    for (uint32_t I = 0; I < EH.Cxx->TryBlocks.size(); ++I)
+      for (uint32_t J = 0; J < EH.Cxx->TryBlocks[I].Handlers.size(); ++J) {
+        if (!Charge(1))
+          break;
+        const auto &Catch = EH.Cxx->TryBlocks[I].Handlers[J];
+        if (!Catch.CatchObjectOffset)
+          continue;
+        auto Width = Widths.find(Catch.TypeDescriptorVA);
+        if (!Catch.TypeDescriptorVA || Width == Widths.end() ||
+            Width->second == 0 || Width->second > UINT16_MAX ||
+            (Catch.Adjectives != 0 && Catch.Adjectives != 8) ||
+            Catch.ParentFrameOffset) {
+          CompleteCatchObjects = false;
+          continue;
+        }
+        CatchObjects.emplace(
+            std::make_pair(I, J),
+            RegistrationCxxCatchObject{I, J, Catch.TypeDescriptorVA,
+                                       Width->second, Catch.CatchObjectOffset,
+                                       Catch.Adjectives == 8});
+      }
+  }
   const bool CheckCleanups = KnownCxx && Cleanups != nullptr;
   std::map<uint32_t, uint32_t> CleanupIndices;
   if (CheckCleanups) {
@@ -334,6 +373,9 @@ RegistrationStateAnalysis analyzeRegistrationStates(
   bool CompleteCalls = CheckCalls;
   std::map<std::pair<va_t, int>, RegistrationCallFrameEffect> CallEffects;
   std::set<std::pair<va_t, int>> InvalidCalls;
+  std::map<std::pair<va_t, int>, RegistrationRuntimeObjectAccess>
+      RuntimeAccesses;
+  std::set<std::pair<va_t, int>> InvalidRuntimeAccesses;
   bool CompleteCleanups = CheckCleanups;
   using CleanupKey = std::tuple<int, int32_t, uint32_t>;
   std::map<CleanupKey, RegistrationCleanupFrameEffect> CleanupEffects;
@@ -441,6 +483,10 @@ RegistrationStateAnalysis analyzeRegistrationStates(
                 Incoming[Target].Frame.OtherRegisterBytes.size() +
                 Source.CxxCatchStacks.size() +
                 Incoming[Target].CxxCatchStacks.size() +
+                Source.RuntimeObject.Cells.size() +
+                Source.RuntimeObject.OtherRegisterBytes.size() +
+                Incoming[Target].RuntimeObject.Cells.size() +
+                Incoming[Target].RuntimeObject.OtherRegisterBytes.size() +
                 Source.InitializedFrameBytes.size() +
                 Incoming[Target].InitializedFrameBytes.size() + 10))
       return;
@@ -454,6 +500,12 @@ RegistrationStateAnalysis analyzeRegistrationStates(
       Dest.Levels.insert(Source.Levels.begin(), Source.Levels.end());
       Changed |= Before != Dest.Levels.size();
       Changed |= Dest.Frame.merge(Source.Frame);
+      Changed |= Dest.RuntimeObject.merge(Source.RuntimeObject);
+      if (Dest.RuntimeIdentity != Source.RuntimeIdentity &&
+          Dest.RuntimeIdentity) {
+        Dest.RuntimeIdentity.reset();
+        Changed = true;
+      }
       for (auto It = Dest.InitializedFrameBytes.begin();
            It != Dest.InitializedFrameBytes.end();)
         if (!Source.InitializedFrameBytes.count(*It)) {
@@ -501,6 +553,9 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     Root.Frame.OtherRegistersMayBeFrame = true;
     Root.Frame.Cells = Source.Frame.Cells;
     Root.InitializedFrameBytes = Source.InitializedFrameBytes;
+    Root.RuntimeObject.Cells = Source.RuntimeObject.Cells;
+    for (auto &[Offset, Value] : Root.RuntimeObject.Cells)
+      Value = registration_state::join(Value, {});
     Root.Frame.Cells[*Chain.TryLevelOffset] =
         FrameValue::constant(uint32_t(Level));
     Root.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride] =
@@ -525,6 +580,38 @@ RegistrationStateAnalysis analyzeRegistrationStates(
       } else {
         Root.CxxCatchStacks.insert({*CxxCatch});
         Root.Unknown = true;
+      }
+      if (CheckRuntimeObjects) {
+        const auto Object = CatchObjects.find(*CxxCatch);
+        const auto &Catch =
+            EH.Cxx->TryBlocks[CxxCatch->first].Handlers[CxxCatch->second];
+        if (Catch.CatchObjectOffset && Object == CatchObjects.end())
+          CompleteCatchObjects = false;
+        if (Object != CatchObjects.end()) {
+          const auto &C = Object->second;
+          const uint16_t SlotBytes = C.Reference ? 4 : uint16_t(C.ObjectSize);
+          const auto SP =
+              Source.Frame.load(*Chain.RegistrationOffset - 4, 4).Offset;
+          const int64_t End = int64_t(C.FrameOffset) + SlotBytes;
+          if (!SP || Source.Unknown || Unknown || C.FrameOffset < *SP ||
+              C.FrameOffset < -int64_t(limits::kMaxRegistrationEHStateWork) ||
+              End > 0 ||
+              (C.FrameOffset < int64_t(*Chain.TryLevelOffset) + 4 &&
+               int64_t(*Chain.RegistrationOffset) - 4 < End) ||
+              !Charge(SlotBytes + Root.Frame.Cells.size() +
+                      Root.RuntimeObject.Cells.size())) {
+            CompleteCatchObjects = false;
+          } else {
+            Root.Frame.store(C.FrameOffset, SlotBytes, {});
+            for (int64_t Byte = C.FrameOffset; Byte < End; ++Byte)
+              Root.InitializedFrameBytes.insert(int32_t(Byte));
+            Root.RuntimeObject.store(C.FrameOffset, SlotBytes,
+                                     C.Reference ? FrameValue::frame(0)
+                                                 : FrameValue{});
+            if (C.Reference)
+              Root.RuntimeIdentity = C;
+          }
+        }
       }
       // Unwinding and catch-object construction may change local objects.
       // Keep only frame taint for their old values. Runtime administration is
@@ -580,6 +667,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     Domain After = Before;
     FrameTransfer Transfer(After.Frame, *Chain.RegistrationOffset,
                            EH4 ? SecurityCookieVA : 0);
+    FrameTransfer RuntimeTransfer(After.RuntimeObject,
+                                  *Chain.RegistrationOffset);
     std::set<va_t> ProvenStores;
     std::optional<RegistrationCxxContinuation> CatchReturn;
     bool NoReturnAtExit = false;
@@ -597,11 +686,26 @@ RegistrationStateAnalysis analyzeRegistrationStates(
         RegisterBytes += Op.Inputs[Input].Size;
       if (!Charge(1 + RegisterBytes +
                   ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE)
-                       ? After.Frame.Cells.size()
+                       ? After.Frame.Cells.size() +
+                             2 * After.RuntimeObject.Cells.size()
                        : 0)))
         break;
       Transfer.beginInstruction(Op.Addr);
+      RuntimeTransfer.beginInstruction(Op.Addr);
       const FrameValue Value = Transfer.evaluate(Op, After.Installed);
+      FrameValue RuntimeValue = RuntimeTransfer.evaluate(Op, After.Installed);
+      if (CheckRuntimeObjects &&
+          (Op.Opcode == NdOp::RETURN || Op.Opcode == NdOp::COND_BR ||
+           Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::INDIR_CALL))
+        for (unsigned Input = 0; Input != Op.NumInputs; ++Input)
+          if (RuntimeTransfer.read(Op.Inputs[Input]).MayBeFrame)
+            CompleteRuntimeObjects = false;
+      if (CheckRuntimeObjects && Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
+        const auto Address = Transfer.read(Op.Inputs[0]);
+        RuntimeValue = After.RuntimeObject.load(Address.Offset, Op.Output.Size);
+        if (!Address.Offset)
+          RuntimeValue = {};
+      }
       if (KnownCxx && Op.Opcode == NdOp::RETURN &&
           !After.CxxCatchStacks.empty()) {
         const auto Identity = std::make_pair(Op.Addr, Op.Seq);
@@ -661,6 +765,61 @@ RegistrationStateAnalysis analyzeRegistrationStates(
           It->second = registration_state::join(It->second, Value);
       }
       const auto Memory = lowMemoryOperands(Op);
+      bool RuntimeMemory = false;
+      if (CheckRuntimeObjects && Memory.Address) {
+        const auto RuntimeAddress = RuntimeTransfer.read(*Memory.Address);
+        if (RuntimeAddress.MayBeFrame) {
+          const auto Identity = std::make_pair(Op.Addr, Op.Seq);
+          const auto Boundary = Boundaries.find(Op.Addr);
+          bool Valid = Memory.Complete &&
+                       Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+                       (Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE) &&
+                       !After.Unknown && !Facts[I].Invalid &&
+                       After.RuntimeIdentity && RuntimeAddress.Offset &&
+                       *RuntimeAddress.Offset >= 0 && Op.Seq >= 0 &&
+                       Boundary != Boundaries.end() &&
+                       Boundary->second.first == Block.Id &&
+                       uint64_t(*RuntimeAddress.Offset) + Memory.AccessSize <=
+                           After.RuntimeIdentity->ObjectSize;
+          if (Valid && Op.Opcode == NdOp::STORE)
+            Valid = !Transfer.read(*Memory.StoredValue).MayBeFrame &&
+                    !RuntimeTransfer.read(*Memory.StoredValue).MayBeFrame;
+          RegistrationRuntimeObjectAccess Access;
+          if (Valid) {
+            const auto &Object = *After.RuntimeIdentity;
+            Access = {Op.Addr,
+                      Op.Seq,
+                      Object.TryIndex,
+                      Object.CatchIndex,
+                      *RuntimeAddress.Offset,
+                      Memory.AccessSize,
+                      Op.Opcode == NdOp::STORE};
+            auto [It, New] = RuntimeAccesses.emplace(Identity, Access);
+            Valid = (New || It->second == Access) &&
+                    !InvalidRuntimeAccesses.count(Identity);
+          }
+          if (!Valid) {
+            InvalidRuntimeAccesses.insert(Identity);
+            RuntimeAccesses.erase(Identity);
+            CompleteRuntimeObjects = CompleteImageReads = false;
+          }
+          RuntimeMemory = Valid;
+        }
+        if (Op.Opcode == NdOp::STORE && Memory.StoredValue) {
+          const auto Stored = RuntimeTransfer.read(*Memory.StoredValue);
+          const auto PrivateAddress = Transfer.read(*Memory.Address);
+          if (PrivateAddress.Offset && !RuntimeAddress.MayBeFrame) {
+            if (!Charge(After.RuntimeObject.Cells.size() +
+                        (Memory.AccessSize + 3) / 4 + 1))
+              break;
+            After.RuntimeObject.store(*PrivateAddress.Offset, Memory.AccessSize,
+                                      Stored);
+          } else if (Stored.MayBeFrame) {
+            CompleteRuntimeObjects = false;
+          }
+        }
+      }
+
       if (EH4 && Op.Opcode == NdOp::INTRINSIC)
         CompleteCookies = false;
       if (EH4 && Memory.Address &&
@@ -730,7 +889,7 @@ RegistrationStateAnalysis analyzeRegistrationStates(
         const auto Address = Transfer.read(*Memory.Address);
         if (!Memory.Complete)
           CompleteImageReads = false;
-        else if (Address.Offset) {
+        else if (Address.Offset || RuntimeMemory) {
           // The established private frame cannot alias an image allocation.
         } else if (Address.Constant && !Address.MayBeFrame)
           ImageReads.emplace(*Address.Constant,
@@ -895,7 +1054,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(
             // be bounded by this frame-value domain.
             Invalidate();
           }
-          if (CheckCalls && !Address.Offset && !Address.Constant) {
+          if (CheckCalls && !RuntimeMemory && !Address.Offset &&
+              !Address.Constant) {
             After.InitializedFrameBytes.clear();
             for (auto &[Offset, Cell] : After.Frame.Cells)
               Cell = registration_state::join(Cell, {});
@@ -998,6 +1158,21 @@ RegistrationStateAnalysis analyzeRegistrationStates(
         }
       }
       Transfer.write(Op, Value, CookieCheckVA);
+      if (CheckRuntimeObjects) {
+        RuntimeTransfer.write(Op, RuntimeValue);
+        if (CallSP) {
+          After.RuntimeObject
+              .Registers[x86reg::RAX / x86reg::GeneralRegStride] = {};
+          After.RuntimeObject
+              .Registers[x86reg::RCX / x86reg::GeneralRegStride] = {};
+          After.RuntimeObject
+              .Registers[x86reg::RDX / x86reg::GeneralRegStride] = {};
+          After.RuntimeObject
+              .Registers[x86reg::RSP / x86reg::GeneralRegStride] = {};
+          After.RuntimeObject.OtherRegisterBytes.clear();
+          After.RuntimeObject.OtherRegistersMayBeFrame = false;
+        }
+      }
       if (CallSP)
         After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
             FrameValue::frame(*CallSP);
@@ -1053,6 +1228,7 @@ RegistrationStateAnalysis analyzeRegistrationStates(
         Continued.CxxCatchStacks.clear();
         if (!Stack.empty())
           Continued.CxxCatchStacks.insert(std::move(Stack));
+        Continued.RuntimeIdentity.reset();
         Continued.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride] =
             FrameValue::frame(0);
         Continued.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
@@ -1229,6 +1405,24 @@ RegistrationStateAnalysis analyzeRegistrationStates(
   if (CheckCalls && !Result.CallFrameEffectsComplete)
     Result.Diagnostics.push_back(
         "registration call stack or initialized object borrow is not proven");
+  Result.CxxCatchObjectsComplete = CompleteCatchObjects && Result.Complete &&
+                                   Result.CallbackStatesComplete &&
+                                   Result.RegistrationLifetimeComplete &&
+                                   !Exhausted;
+  if (Result.CxxCatchObjectsComplete)
+    for (const auto &[Identity, Object] : CatchObjects)
+      Result.CxxCatchObjects.push_back(Object);
+  Result.RuntimeObjectAccessesComplete = Result.CxxCatchObjectsComplete &&
+                                         CompleteRuntimeObjects &&
+                                         Result.CallFrameEffectsComplete;
+  if (Result.RuntimeObjectAccessesComplete)
+    for (const auto &[Identity, Access] : RuntimeAccesses)
+      Result.RuntimeObjectAccesses.push_back(Access);
+  if (CheckRuntimeObjects && !Result.CxxCatchObjectsComplete)
+    Result.Diagnostics.push_back("C++ runtime catch object is not proven");
+  if (CheckRuntimeObjects && !Result.RuntimeObjectAccessesComplete)
+    Result.Diagnostics.push_back(
+        "C++ runtime exception object access is not proven");
   Result.CleanupFrameEffectsComplete =
       CompleteCleanups && Result.Complete && Result.CallbackStatesComplete &&
       Result.RegistrationLifetimeComplete && !Exhausted;
@@ -1268,9 +1462,13 @@ RegistrationStateAnalysis analyzeRegistrationStates(
       Result.Complete = Result.ChainOperationsComplete =
           Result.ImageReadsComplete = Result.SecurityCookiesComplete =
               Result.CallFrameEffectsComplete =
-                  Result.CleanupFrameEffectsComplete = false;
+                  Result.CleanupFrameEffectsComplete =
+                      Result.CxxCatchObjectsComplete =
+                          Result.RuntimeObjectAccessesComplete = false;
       Result.CallFrameEffects.clear();
       Result.CleanupFrameEffects.clear();
+      Result.CxxCatchObjects.clear();
+      Result.RuntimeObjectAccesses.clear();
       Result.SecurityCookieVA = 0;
       Result.CookieCheckVA = 0;
       Result.CookieChecks.clear();
