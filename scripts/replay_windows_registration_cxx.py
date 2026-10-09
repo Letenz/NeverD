@@ -14,12 +14,14 @@ import subprocess
 if __package__:
     from .check_windows_registration_cxx import SOURCE, parent_code_end
     from .check_windows_registration_cxx_rewrite import (
-        BASES, image_name, observe, safe_handlers)
+        BASES, image_name, observe, require_image_matrix,
+        require_installation_identity, safe_handlers)
     from .check_windows_registration_rewrite import PE32
 else:
     from check_windows_registration_cxx import SOURCE, parent_code_end
     from check_windows_registration_cxx_rewrite import (
-        BASES, image_name, observe, safe_handlers)
+        BASES, image_name, observe, require_image_matrix,
+        require_installation_identity, safe_handlers)
     from check_windows_registration_rewrite import PE32
 
 
@@ -41,13 +43,18 @@ def main(argv: list[str] | None = None) -> int:
               "passed": False, "cases": []}
     try:
         source = json.loads((root / "registration-cxx-rewrite.json").read_text())
-        if source.get("schema") != 1 or \
+        schema = source.get("schema")
+        installation = {1: "manual-checked-transaction",
+                        2: "manual-public-cli-checked-transactions"}.get(schema)
+        if not installation or \
                 source.get("evidence") != "source-msvc-cxx-reconstruction" or \
-                source.get("installation") != "manual-checked-transaction" or \
+                source.get("installation") != installation or \
                 source.get("source_sha256") != hashlib.sha256(SOURCE.read_bytes()).hexdigest() or \
                 not source.get("passed") or len(source["cases"]) != 2 or \
                 {case["case"] for case in source["cases"]} != {"value", "reference"}:
             raise ValueError("source C++ reconstruction evidence is incomplete")
+        report["source_schema"] = schema
+        report["installation"] = installation
         environment = os.environ.copy()
         if args.wine_prefix:
             environment.update(WINEARCH="win32", WINEDEBUG="-all",
@@ -73,25 +80,21 @@ def main(argv: list[str] | None = None) -> int:
             if new_handlers != sorted(set(old_handlers + [contract["registration_handler_rva"]])):
                 raise ValueError("source C++ SafeSEH closure changed")
             records = case["observations"]
-            expected = {(label + suffix + ".exe", label != "original", base)
-                        for label in ("original", "patched")
-                        for suffix, base in (("", BASES[0]), ("-rebased", BASES[1]))}
-            if len(records) != 4 or \
-                    {(image_name(r["image"]), r["generated"], r["runtime_base"])
-                     for r in records} != expected:
-                raise ValueError("source C++ preferred/rebased files are incomplete")
+            require_image_matrix(records, schema)
             replay = {"case": name, "observations": []}
             report["cases"].append(replay)
             for record in records:
                 path = parent / image_name(record["image"])
                 if hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]:
                     raise ValueError("source C++ replay file is missing or changed")
+                if record["generated"]:
+                    require_installation_identity(PE32(path.read_bytes()), patched)
                 observation = observe(path, record["generated"], reference, end,
                                       contract, launcher, environment, args.timeout)
                 if observation["runtime_base"] != record["runtime_base"]:
                     raise ValueError("source C++ loader changed its forced base")
                 replay["observations"].append(observation)
-            print(f"PASS native source C++ {name}: four identical-file executions", flush=True)
+            print(f"PASS native source C++ {name}: {len(records)} identical-file executions", flush=True)
         report["passed"] = True
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         report["error"] = str(error)

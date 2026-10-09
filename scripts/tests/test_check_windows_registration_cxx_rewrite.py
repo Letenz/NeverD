@@ -3,7 +3,8 @@ import struct
 import unittest
 
 from scripts.check_windows_registration_cxx_rewrite import (
-    require_cxx_outcome, validate_compiled_image)
+    BASES, IMAGE_LABELS, require_cxx_outcome, require_image_matrix,
+    require_installation_identity, validate_compiled_image)
 from scripts.check_windows_registration_rewrite import PE32
 
 
@@ -41,6 +42,23 @@ class WindowsRegistrationCxxRuntimeAdmissionTests(unittest.TestCase):
             with self.subTest(output=output), self.assertRaises(ValueError):
                 require_cxx_outcome({"exit_code": 0, "stdout": output},
                                     0x400000, 0x1000, 0x2000, 0x2080, False)
+
+    def test_matrix_requires_every_public_and_cli_route_at_both_bases(self):
+        records = [{"image": f"C:\\evidence\\{label}{suffix}.exe",
+                    "generated": label != "original", "runtime_base": base}
+                   for label in IMAGE_LABELS
+                   for suffix, base in (("", BASES[0]), ("-rebased", BASES[1]))]
+        require_image_matrix(records, 2)
+        require_image_matrix(records[:4], 1)
+        for index in range(len(records)):
+            with self.subTest(index=index), self.assertRaises(ValueError):
+                require_image_matrix(records[:index] + records[index + 1:], 2)
+        for altered in (records[:4], records + records[:1],
+                        records[:-1] + records[:1]):
+            with self.assertRaises(ValueError):
+                require_image_matrix(altered, 2)
+        with self.assertRaises(ValueError):
+            require_image_matrix(records, 3)
 
     @staticmethod
     def compiled_pe():
@@ -106,6 +124,18 @@ class WindowsRegistrationCxxRuntimeAdmissionTests(unittest.TestCase):
         self.assertEqual(image.u32(image.raw(0x3200)), 192)
         validate_compiled_image(image, contract)
         validate_compiled_image(PE32(image.rebase(0x18000000)), contract)
+
+    def test_public_identity_closes_all_bytes_at_the_actual_base(self):
+        data, contract = self.compiled_pe()
+        manual = PE32(data)
+        for base in BASES:
+            installed = PE32(bytes(data) if base == BASES[0] else manual.rebase(base))
+            require_installation_identity(installed, manual)
+            changed = bytearray(installed.data)
+            changed[0x415] ^= 1  # Preserved original helper outside indexed dispatch.
+            validate_compiled_image(PE32(changed), contract)
+            with self.assertRaises(ValueError):
+                require_installation_identity(PE32(changed), manual)
 
     def test_incomplete_native_contracts_and_raw_installed_mutations_reject(self):
         for mutation in range(10):

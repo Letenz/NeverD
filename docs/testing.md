@@ -1880,7 +1880,7 @@ Structural success is not runtime evidence.
 The focused Windows EH workflow first builds and executes genuine MSVC x86
 value/reference source fixtures on Windows, then transfers those exact inputs
 to Linux. With the pinned compiler's handler receipts, Linux runs the complete
-manual transaction and executes original/reconstructed images at preferred
+manual and public transactions and executes original/reconstructed images at preferred
 and forced bases under Wine. The serialized compiler contract binds the parent
 code range, private handler, nine pointer fields and source/final image hashes.
 The final Windows job executes the same hashed images and reparses their code
@@ -1891,6 +1891,7 @@ flags cannot substitute for the actual runtime observations.
 python scripts/check_windows_registration_cxx_rewrite.py \
   --input-root /absolute/path/to/native-msvc-inputs \
   --test-binary build/bin/NeverDWindowsRegistrationNativeTests \
+  --patch-binary build/bin/neverd \
   --output build/evidence/source-cxx --wine-prefix /absolute/path/to/wine32
 ```
 
@@ -1899,9 +1900,13 @@ On Windows, replay with `scripts/replay_windows_registration_cxx.py
 Both profiles require `value=7`, cleanup `trace=213`, four iterations, restored
 FS chain, and `caught=7` by value or `caught=18` by reference. The observed caller PC
 must lie in the indexed generated parent rather than an original helper or
-another part of the generated section. This runtime workflow currently executes
-the manual installer. Public-patcher units separately revalidate its exact
-generated closure; public/CLI runtime coverage must be reported separately.
+another part of the generated section. Schema2 requires all six routes at both
+bases: original, manual, public COFF patcher, called-helper/import-name collision,
+CLI section and CLI inplace. All five generated routes must reproduce the entire
+checked manual transaction byte for byte, including preserved helpers, before
+runtime observation can count. Native replay validates every hash and the same
+complete route matrix. Schema1 replay remains explicitly manual-only for older
+evidence and cannot count as public/CLI runtime verification.
 
 The runtime runner builds actual SEH3, no-GS EH4 and initialized-GS EH4 source
 images, including explicit source exit checks, lifts their protected

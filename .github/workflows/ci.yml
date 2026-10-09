@@ -2283,6 +2283,7 @@ jobs:
           python scripts/check_windows_registration_cxx_rewrite.py \
             --input-root build-windows-eh/cxx-source-inputs \
             --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
+            --patch-binary build-windows-eh/bin/neverd \
             --output build-windows-eh/evidence/source-cxx \
             --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Require executed checks without missing-fixture skips

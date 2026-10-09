@@ -28,10 +28,33 @@ else:
     from check_windows_registration_rewrite import PE32
 
 BASES = (0x400000, 0x18000000)
+IMAGE_LABELS = ("original", "patched", "product-patched", "collision-patched",
+                "cli-section", "cli-inplace")
 
 
 def image_name(path: str) -> str:
     return Path(path.replace("\\", "/")).name
+
+
+def require_image_matrix(records: list[dict], schema: int) -> None:
+    if schema not in (1, 2):
+        raise ValueError("source C++ execution matrix has an unsupported schema")
+    labels = IMAGE_LABELS if schema == 2 else IMAGE_LABELS[:2]
+    expected = {(label + suffix + ".exe", label != "original", base)
+                for label in labels
+                for suffix, base in (("", BASES[0]), ("-rebased", BASES[1]))}
+    if len(records) != len(expected) or \
+            {(image_name(r["image"]), r["generated"], r["runtime_base"])
+             for r in records} != expected:
+        raise ValueError("source C++ preferred/rebased route files are incomplete")
+
+
+def require_installation_identity(image: PE32, manual: PE32) -> None:
+    if manual.base != BASES[0] or image.base not in BASES:
+        raise ValueError("source C++ installation has an unexpected base")
+    expected = manual.data if image.base == manual.base else manual.rebase(image.base)
+    if image.data != expected:
+        raise ValueError("public C++ installation differs from its complete checked transaction")
 
 
 def code_owner(image: PE32, begin: int, end: int, name: str) -> None:
@@ -159,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-root", required=True, type=Path)
     parser.add_argument("--test-binary", required=True, type=Path)
+    parser.add_argument("--patch-binary", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--wine", default="wine" if os.name != "nt" else None)
     parser.add_argument("--wine-prefix", type=Path)
@@ -168,8 +192,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--timeout must be positive and finite")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    report = {"schema": 1, "evidence": "source-msvc-cxx-reconstruction",
-              "installation": "manual-checked-transaction", "passed": False,
+    report = {"schema": 2, "evidence": "source-msvc-cxx-reconstruction",
+              "installation": "manual-public-cli-checked-transactions", "passed": False,
               "source_sha256": hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
               "cases": [], "steps": []}
     try:
@@ -214,9 +238,13 @@ def main(argv: list[str] | None = None) -> int:
             case = {"case": name, "reference": reference,
                     "original_code_end_rva": original_end, "observations": []}
             report["cases"].append(case)
+            for label in IMAGE_LABELS[1:]:
+                (parent / (label + ".exe")).unlink(missing_ok=True)
             test_environment = dict(environment,
                 NEVERD_REGISTRATION_INPUT_CXX_PE32=str(parent / "original.exe"),
                 NEVERD_REGISTRATION_OUTPUT_CXX_PE32=str(parent / "patched.exe"),
+                NEVERD_REGISTRATION_OUTPUT_CXX_PRODUCT_PE32=str(parent / "product-patched.exe"),
+                NEVERD_REGISTRATION_OUTPUT_CXX_COLLISION_PE32=str(parent / "collision-patched.exe"),
                 NEVERD_REGISTRATION_OUTPUT_CXX_RECEIPT=str(parent / "compiled-contract.json"),
                 NEVERD_REGISTRATION_OUTPUT_IR=str(parent / "source.ll"))
             command = [str(args.test_binary.resolve()), "--gtest_filter=WindowsRegistrationCxxSource.*",
@@ -241,15 +269,30 @@ def main(argv: list[str] | None = None) -> int:
             if generated_handlers != sorted(set(original_handlers +
                     [contract["registration_handler_rva"]])):
                 raise ValueError("source C++ installation changed its original SafeSEH closure")
-            for label in ("original", "patched"):
+            for mode in ("section", "inplace"):
+                destination = parent / f"cli-{mode}.exe"
+                command = [str(args.patch_binary.resolve()), "patch", str(parent / "original.exe"),
+                           f"--from-ir={parent / 'source.ll'}", f"--mode={mode}",
+                           "--no-opt", "-o", str(destination)]
+                result = subprocess.run(command, env=test_environment, capture_output=True,
+                                        text=True, errors="replace", timeout=args.timeout)
+                report["steps"].append({"command": command, "exit_code": result.returncode,
+                                        "stdout": result.stdout, "stderr": result.stderr})
+                if result.returncode or not destination.is_file():
+                    raise ValueError(f"CLI {mode} C++ reconstruction failed")
+            manual = PE32(patched.read_bytes())
+            for label in IMAGE_LABELS:
                 source = parent / (label + ".exe")
                 rebased = parent / (label + "-rebased.exe")
                 rebased.write_bytes(PE32(source.read_bytes()).rebase(BASES[1]))
                 for path in (source, rebased):
+                    if label != "original":
+                        require_installation_identity(PE32(path.read_bytes()), manual)
                     case["observations"].append(observe(
                         path, label != "original", reference, original_end,
                         contract, launcher, environment, args.timeout))
-            print(f"PASS source C++ {name}: four preferred/rebased executions", flush=True)
+            require_image_matrix(case["observations"], report["schema"])
+            print(f"PASS source C++ {name}: twelve preferred/rebased route executions", flush=True)
         report["passed"] = True
     except (OSError, ValueError, KeyError, ET.ParseError, subprocess.TimeoutExpired) as error:
         report["error"] = str(error)
