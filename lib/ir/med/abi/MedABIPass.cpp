@@ -755,11 +755,33 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // parameter register live at the call — e.g. the ECX index of `call
       // *tab[ecx*4]` — is not an argument; recover such calls purely from their
       // stack stores.
+      //
+      // A call to a function that takes no register argument is plain cdecl
+      // too: an external routine (a libc `memcpy` named by a branch
+      // relocation), a cdecl function of the image (no register argument but
+      // some on the stack; a forwarder's promoted registers count after the
+      // two-pass recovery), or a linked import (a PLT entry or an IAT slot),
+      // whether or not its signature is known, wherever imports cannot be
+      // __fastcall.  Its live integer argument registers are scratch, which
+      // would shift every stack argument up a slot (`__fprintf_chk(stream, 2,
+      // fmt, ...)` passed the ECX and EDX an earlier block left before its
+      // stream), and a forwarder passes none of its own on to it.
       const bool RegparmOnly =
           Convention && Convention->RegparmOnlyForInternalCalls;
+      const bool StackOnlyImport =
+          IsDirectImport && Img && Convention &&
+          !(Convention->ImportsMayTakeRegisterArguments &&
+            Convention->ImportsMayTakeRegisterArguments(*Img));
+      const bool StackOnlyCall = RegparmOnly && !CI.IsIndirect &&
+                                 ((CalleeRegArgs == 0 && CalleeArgs > 0) ||
+                                  IsRelocExtern || StackOnlyImport);
       const bool RegArgsApply = !(RegparmOnly && CI.IsIndirect);
+      // A stack-only call takes no integer register argument; its floating
+      // arguments are another question (an internal function taking only
+      // XMM arguments has no integer register argument).
+      const bool IntRegArgsApply = RegArgsApply && !StackOnlyCall;
 
-      if (RegArgsApply)
+      if (IntRegArgsApply)
         for (int J = static_cast<int>(OI) - 1; J >= 0; --J) {
           auto &Prev = Blk.Ops[J];
           bool IsCall = Prev.Opcode == NdOp::CALL ||
@@ -917,7 +939,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // becomes a single ESI clobber.
       const bool PositionalSlots =
           Convention && Convention->PositionalArgumentSlots;
-      if (PositionalSlots && HasStackArg && RegArgsApply) {
+      if (PositionalSlots && HasStackArg && IntRegArgsApply) {
         for (int K = 0; K < NumIntParamRegs && K < MaxArgs; ++K) {
           if (FoundMask[K])
             continue;
@@ -960,7 +982,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                                          IntegerLayout))
           ++RegPhiLimit;
       }
-      for (int K = 0; RegArgsApply && K < MaxArgs; ++K) {
+      for (int K = 0; IntRegArgsApply && K < MaxArgs; ++K) {
         if (FoundMask[K])
           continue;
         if (!CI.IsIndirect && K > RegPhiLimit)
@@ -985,7 +1007,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // consecutive register slots from the value reaching the call across the
       // CFG.
       bool Arg0FromInBlock = FoundMask[0];
-      if (!CI.IsIndirect && RegArgsApply)
+      if (!CI.IsIndirect && IntRegArgsApply)
         for (int K = 0; K < NumIntParamRegs && K < MaxArgs; ++K) {
           if (FoundMask[K])
             continue;
@@ -1118,23 +1140,11 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           Policy->TakeVirtualCallResultBuffer(Ctx);
       }
 
-      // i386 cdecl: a callee with 0 detected register arguments but >0 stack
-      // arguments uses the cdecl convention (ALL arguments on the stack).  The
-      // register scan may have placed scratch ECX/EDX values at slots 0-1;
-      // clear them so FirstStackSlot is not shifted and the stack scan maps
-      // outgoing stores to the correct argument indices.  Safe after the
-      // two-pass Pipeline promotion: on the second pass, a forwarder whose
-      // register params were promoted has CalleeRegArgs > 0 and is unaffected.
-      //
-      // An EXTERNAL i386 call (a libc `memcpy`/`memmove`/`memset`, named by a
-      // branch relocation with a placeholder-0 target) likewise uses standard
-      // cdecl — the ECX/EDX regparm convention is reserved for directly-called
-      // intra-module static functions, never an imported symbol — so its
-      // register-scan slots are scratch and must be cleared too.  Without this
-      // the surviving scratch shifts every stack argument up one slot
-      // (`memcpy(scratch, dst, src)` drops the size, copying a wild count).
-      if (RegparmOnly && !CI.IsIndirect &&
-          ((CalleeRegArgs == 0 && CalleeArgs > 0) || IsRelocExtern)) {
+      // A stack-only call (StackOnlyCall above) takes no register argument:
+      // drop any register value recovered for it, so FirstStackSlot is not
+      // shifted and the stack scan maps outgoing stores to the correct
+      // argument indices.
+      if (StackOnlyCall) {
         for (int K = 0; K < MaxArgs; ++K)
           if (FoundMask[K] && !FromStackScan[K]) {
             FoundMask[K] = false;

@@ -87,6 +87,11 @@ struct CallArgumentConvention {
   /// imported or indirectly called function takes every argument on the
   /// stack, so a parameter register live at such a call is scratch.
   bool RegparmOnlyForInternalCalls = false;
+  /// Whether an import of \p Img may still take register arguments where
+  /// RegparmOnlyForInternalCalls holds (a Windows __fastcall routine takes
+  /// ECX and EDX).  Null where none may: a parameter register live at a call
+  /// to an import is then scratch, whatever the import's signature.
+  bool (*ImportsMayTakeRegisterArguments)(const BinaryImage &Img) = nullptr;
   /// The first stack argument directly follows the last register argument
   /// the call uses, rather than every register position.
   bool StackArgumentsFollowUsedRegisters = false;

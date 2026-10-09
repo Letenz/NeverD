@@ -7,7 +7,9 @@
 // i386 passes every argument on the stack.  MSVC pushes them; GCC stores
 // each at [esp+N] below one adjustment.  Stores to the function's own locals
 // in between are no arguments.  An import thunk `jmp dword ptr [slot]`
-// reaches its import and passes on the arguments its caller left.
+// reaches its import and passes on the arguments its caller left.  Only a
+// Windows import may take ECX and EDX (__fastcall); an ELF import never
+// takes a register argument.
 //
 //===----------------------------------------------------------------------===//
 
@@ -15,6 +17,8 @@
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/ir/med/MedABIPass.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/LLVMContext.h"
@@ -337,3 +341,95 @@ TEST(I386CallContract, AStubOfAVariadicImportIsTheImport) {
 }
 
 } // namespace
+
+namespace {
+
+MedVar register32(uint64_t Offset, int Version) {
+  MedVar V;
+  V.Kind = MedVar::Reg;
+  V.Id = static_cast<int>(Offset);
+  V.SSAVer = Version;
+  V.Size = 4;
+  V.RegOff = Offset;
+  V.TheArch = Arch::X86;
+  return V;
+}
+
+MedVar temporary32(int Id) {
+  MedVar V;
+  V.Kind = MedVar::Temp;
+  V.Id = Id;
+  V.Size = 4;
+  V.TheArch = Arch::X86;
+  return V;
+}
+
+void copyInto(MedBlock &Block, MedVar Output, MedVar Input) {
+  MedOp Op;
+  Op.Opcode = NdOp::COPY;
+  Op.Output = Output;
+  Op.addInput(Input);
+  Block.Ops.push_back(Op);
+}
+
+/// The call-site arguments of a caller that leaves EDX set in the block of a
+/// call to the import `routine` at \p Slot, an import whose signature no
+/// table knows, and ECX set in the block before it, with \p Format; and
+/// whether the caller gained a parameter.
+std::pair<std::vector<MedVar>, bool> importCallArguments(BinaryFormat Format,
+                                                         bool SetECX) {
+  constexpr va_t Slot = 0x5000;
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "caller";
+  Func.Blocks.resize(2);
+  Func.Blocks[0].Id = 0;
+  Func.Blocks[0].Succs = {1};
+  Func.Blocks[1].Id = 1;
+  Func.Blocks[1].Preds = {0};
+  if (SetECX)
+    copyInto(Func.Blocks[0], register32(x86reg::RCX, 1), temporary32(1));
+  copyInto(Func.Blocks[1], register32(x86reg::RDX, 1), temporary32(2));
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Output = register32(x86reg::RAX, 1);
+  Call.addInput(MedVar::makeConst(Slot, 4));
+  Func.Blocks[1].Ops.push_back(Call);
+
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = Format;
+  Img.Imports.push_back({"libroutine", "routine", 0, Slot});
+  const std::map<va_t, std::string> Names{{Slot, "routine"}};
+  recoverCallAbi(Func, Arch::X86, Names, &Img);
+  EXPECT_EQ(Func.CallInfos.size(), 1u);
+  return {Func.CallInfos.empty() ? std::vector<MedVar>{}
+                                 : Func.CallInfos[0].Args,
+          !Func.Params.empty()};
+}
+
+} // namespace
+
+// An ELF import takes every argument on the stack, whether or not its
+// signature is known: the ECX and EDX its caller left are no arguments, and
+// a live-in ECX below them is no parameter the caller passes on.
+TEST(I386CallContract, AnELFImportTakesNoRegisterArgument) {
+  const auto [Arguments, GainedParameter] =
+      importCallArguments(BinaryFormat::ELF, /*SetECX=*/true);
+  EXPECT_TRUE(Arguments.empty());
+  const auto [Forwarded, Promoted] =
+      importCallArguments(BinaryFormat::ELF, /*SetECX=*/false);
+  EXPECT_TRUE(Forwarded.empty());
+  EXPECT_FALSE(Promoted);
+}
+
+// A Windows import of unknown signature may be __fastcall, so the ECX and
+// EDX set before it remain its arguments.
+TEST(I386CallContract, AWindowsImportMayTakeECXAndEDX) {
+  const auto [Arguments, GainedParameter] =
+      importCallArguments(BinaryFormat::COFF, /*SetECX=*/true);
+  ASSERT_EQ(Arguments.size(), 2u);
+  EXPECT_EQ(Arguments[0], temporary32(1));
+  EXPECT_EQ(Arguments[1], temporary32(2));
+}
