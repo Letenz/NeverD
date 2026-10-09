@@ -536,10 +536,24 @@ TEST(SysVCallContract, AFloatArgumentReachesAPrototypedImport) {
   // A declared double import must receive the sum and its result must feed
   // the second operation. Execute a known independent implementation so
   // explicit FP state temporaries cannot hide a stale ABI value.
-  compileAndRun("#define sin neverd_test_sine\n" + Source + R"(
-double sin(double value) { return value * value; }
+  compileAndRun("#include <math.h>\n#define sin neverd_test_sine\n"
+                "double sin(double);\n" +
+                Source + R"(
+double sin(double value) {
+  _mm_setcsr(0x3f81);
+  return value * value;
+}
 int main(void) {
-  return twice_sin(1.5) == 18.0 && twice_sin(-0.25) == 0.5 ? 0 : 1;
+  uint32_t saved = _mm_getcsr();
+  _mm_setcsr(0x1f80);
+  double first = twice_sin(1.5);
+  uint32_t first_state = _mm_getcsr();
+  _mm_setcsr(0x1f80);
+  double second = twice_sin(-0.25);
+  uint32_t second_state = _mm_getcsr();
+  _mm_setcsr(saved);
+  return first == 18.0 && second == 0.5 &&
+         first_state == 0x3f81 && second_state == 0x3f81 ? 0 : 1;
 }
 )");
 }
@@ -559,7 +573,9 @@ TEST(SysVCallContract, AScalarMathImportWithAnIntegerArgumentKeepsItsReturn) {
   const BinaryImage Img =
       makeImportImage(Code, {{Wrap, "twice_ldexp"}}, {{Stub, "ldexp"}});
   const std::string Source = liftEntries(Img, {Wrap});
-  compileAndRun("#define ldexp neverd_test_ldexp\n" + Source + R"(
+  compileAndRun("#include <math.h>\n#define ldexp neverd_test_ldexp\n"
+                "double ldexp(double, int);\n" +
+                Source + R"(
 double ldexp(double value, int exponent) {
   return exponent == 2 ? value * 4.0 : -100.0;
 }
