@@ -22,6 +22,7 @@
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
+#include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
@@ -449,6 +450,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   Int128AsBitInt = false;
   X87Helpers.clear();
   UsesX87Extended = false;
+  DebugParamBindings.clear();
   // Native AArch64 vector carriers are projected to SVE ACLE types.  x86
   // vector intrinsics use scalar integer carriers at the HighIR boundary.
   const bool ProjectsScalarWideIntegers =
@@ -654,8 +656,11 @@ void HighCWriter::writeMemoryHelpers() {
 
   auto WriteHelpers = [&](const std::string &Type,
                           NdMemoryAddressSpace AddressSpace) {
+    // Plain accesses of other types, and of a bit-precise integer a
+    // little-endian target copies inline, need no helper.
     if (AddressSpace == NdMemoryAddressSpace::Default &&
-        !PartialIntegerBytes.count(Type))
+        (!PartialIntegerBytes.count(Type) ||
+         inlineMemoryBytes(Type).value_or(0)))
       return;
     const auto ReadPtr =
         AddressSpace == NdMemoryAddressSpace::Default
@@ -783,18 +788,25 @@ std::string HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
       AddressSpace == NdMemoryAddressSpace::Default)
     if (auto Alias = c_memory::alias(Type, Opts.ScalarPointers); !Alias.empty())
       return "(" + c_memory::access(Alias, Addr) + ")";
+  // A bit-precise integer narrower than its storage (an x87 value's ten
+  // bytes) fills the low bytes of a little-endian object, so a copy of its
+  // bytes is its value; a big-endian target keeps the helper.
+  const std::optional<unsigned> Bytes = inlineMemoryBytes(Type);
   if (Ordering == NdMemoryOrdering::None &&
-      AddressSpace == NdMemoryAddressSpace::Default &&
-      !PartialIntegerBytes.count(Type)) {
+      AddressSpace == NdMemoryAddressSpace::Default && Bytes) {
+    const std::string Size = *Bytes ? std::to_string(*Bytes) : std::string();
     if (Destination && !Destination->Name.empty()) {
       Destination->Written = true;
       return c_memory::loadCopy(Destination->Name, Addr,
-                                "sizeof(" + Destination->Name + ")");
+                                *Bytes ? Size
+                                       : "sizeof(" + Destination->Name + ")");
     }
     const auto Value = memoryTemporary(Type, "memory_value");
     // Keep the copy at the expression's original evaluation point. Hoisting
     // it above a conditional or loop would execute guarded loads eagerly.
-    return "(" + c_memory::loadCopy(Value, Addr, "sizeof(" + Value + ")") +
+    return "(" +
+           c_memory::loadCopy(Value, Addr,
+                              *Bytes ? Size : "sizeof(" + Value + ")") +
            ", " + Value + ")";
   }
   auto It = MemoryTypes.find(Type);
@@ -826,14 +838,16 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
       AddressSpace == NdMemoryAddressSpace::Default)
     if (auto Alias = c_memory::alias(Type, Opts.ScalarPointers); !Alias.empty())
       return "(" + c_memory::access(Alias, Addr) + " = " + Value + ")";
+  const std::optional<unsigned> Bytes = inlineMemoryBytes(Type);
   if (Ordering == NdMemoryOrdering::None &&
-      AddressSpace == NdMemoryAddressSpace::Default &&
-      !PartialIntegerBytes.count(Type)) {
+      AddressSpace == NdMemoryAddressSpace::Default && Bytes) {
     const auto Address = memoryTemporary("uintptr_t", "memory_address");
     const auto Stored = memoryTemporary(Type, "memory_value");
     return "(" + Address + " = (uintptr_t)(" + Addr.str() + "), " + Stored +
            " = " + Value + ", " +
-           c_memory::storeCopy(Address, Stored, "sizeof(" + Stored + ")") +
+           c_memory::storeCopy(Address, Stored,
+                               *Bytes ? std::to_string(*Bytes)
+                                      : "sizeof(" + Stored + ")") +
            ", " + Stored + ")";
   }
   auto It = MemoryTypes.find(Type);
@@ -843,6 +857,17 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
     validateAtomicStoreOrdering(Ordering);
   return memoryHelperName("store", Type, Ordering, AddressSpace) +
          "((uintptr_t)(" + Addr.str() + "), " + Value + ")";
+}
+
+std::optional<unsigned>
+HighCWriter::inlineMemoryBytes(llvm::StringRef Type) const {
+  const auto Partial = PartialIntegerBytes.find(Type.str());
+  if (Partial == PartialIntegerBytes.end())
+    return 0;
+  // A little-endian target stores the value's bytes first in the object.
+  if (archLittleEndian(Opts.TheArch))
+    return Partial->second;
+  return std::nullopt;
 }
 
 std::string HighCWriter::statementText(std::string Text) {

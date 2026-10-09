@@ -136,6 +136,14 @@ bool assignDarwinVariadicSourceABI(SourceFunctionTypeHint &Hint,
                                    unsigned FixedCount, Arch Architecture,
                                    std::string &Diagnostic);
 
+/// The System V x86-64 assignment of a call's promoted scalar arguments, a
+/// named prefix of \p FixedCount and an ellipsis: the integer and floating
+/// banks continue independently into the unnamed values, as Darwin x86_64's
+/// do (assignDarwinVariadicSourceABI).
+bool assignSysVX64VariadicSourceABI(SourceFunctionTypeHint &Hint,
+                                    unsigned FixedCount,
+                                    std::string &Diagnostic);
+
 /// Assign Darwin's fixed Objective-C ABI. Integer and FP registers are
 /// allocated independently; overflowing values use the entry-SP stack area.
 /// ARM64 additionally supports naturally laid-out homogeneous floating records.

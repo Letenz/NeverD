@@ -19974,6 +19974,39 @@ TEST(LLVMCPointerAddresses, KeepsElseGotoWhenFalseTargetLeavesNextBlock) {
       << Source;
 }
 
+TEST(LLVMCPointerAddresses, TypesACallThroughASlotNoImportNames) {
+  // The first PLT entry jumps through the slot the dynamic linker fills with
+  // its resolver: no import names it, so the call names the function by the
+  // call's own type.  C calls no data pointer.
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-slot", Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  auto *Slot = new llvm::GlobalVariable(
+      Module, I64, /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
+      llvm::ConstantInt::get(I64, 0), "off_3FC8");
+  llvm::FunctionType *ResolverTy = llvm::FunctionType::get(I64, {I64}, false);
+  llvm::Function *Function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+      llvm::GlobalValue::ExternalLinkage, "sub_1020", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Value *Loaded = Builder.CreateLoad(I64, Slot, "icall.import.target");
+  llvm::Value *Callee =
+      Builder.CreateIntToPtr(Loaded, llvm::PointerType::getUnqual(Context));
+  Builder.CreateCall(ResolverTy, Callee, {llvm::ConstantInt::get(I64, 7)});
+  Builder.CreateRetVoid();
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("((uint64_t (*)(uint64_t))"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("((void*)"), std::string::npos) << Source;
+}
+
 TEST(LLVMCPointerAddresses, NamesIATIndirectCall) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-iat", Context);

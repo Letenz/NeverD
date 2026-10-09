@@ -376,10 +376,24 @@ public:
   std::string intrinsicOperandStr(const HighExpr &E);
   /// Cast / zext / `SUBBYTES` 0 of a Var/Phi. Not add/sub/mul, Call, or Load.
   bool isIntegerViewOfScalar(const HighExpr &E) const;
-  /// The call whose result \p Bits are, under integer views that keep their
-  /// low bytes or a forwarded copy, when it returns \p Float; else null.
+  /// Where \p Bits come from, under views that keep at least the bytes of
+  /// \p Float, reinterpretations and forwarded copies: a value of type
+  /// \p Float, a call, or the first expression that is neither a view nor a
+  /// value; null where a view drops bytes.
+  const HighExpr *floatBitsSource(const HighExpr &Bits,
+                                  const TypeRef &Float) const;
+  /// The call whose result \p Bits are (floatBitsSource), when it returns
+  /// \p Float; else null.
   const HighExpr *floatCallResult(const HighExpr &Bits,
                                   const TypeRef &Float) const;
+  /// The value of type \p Float whose bits \p Bits are (floatBitsSource), or
+  /// null.
+  const HighExpr *floatBitsValue(const HighExpr &Bits,
+                                 const TypeRef &Float) const;
+  /// The \p Float literal whose bits \p Bits are (floatBitsSource): a
+  /// constant, or one read from constant data; else nullopt.
+  std::optional<std::string> floatConstantBitsText(const HighExpr &Bits,
+                                                   const TypeRef &Float) const;
   /// \p Arg passed to a parameter of floating type \p Expected, when its
   /// integer bits carry the value.
   std::optional<std::string> floatArgumentText(const HighExpr &Arg,
@@ -646,6 +660,35 @@ public:
   /// x87 extended `long double`.
   std::set<X87CHelper> X87Helpers;
   bool UsesX87Extended = false;
+  /// How a function's debug declaration names and types its parameters.
+  struct DebugParamBinding {
+    enum class Kind : uint8_t {
+      /// By position: the declaration's index is the parameter's.
+      Positional,
+      /// By the register the ABI passes each declared parameter in.
+      Located,
+    };
+    Kind TheKind = Kind::Positional;
+    /// Under a located binding, the declared parameter of each parameter
+    /// the body reads from a register that passes one.
+    std::map<int, size_t> DebugOfId;
+    /// The parameters the body reads.
+    std::set<int> ReadIds;
+  };
+  /// By function and entry: a unit can hold two bodies of one entry.
+  mutable std::map<std::pair<const HighFunc *, va_t>, DebugParamBinding>
+      DebugParamBindings;
+  const DebugParamBinding &debugParamBinding(const HighFunc &Func) const;
+  /// The declared parameter that parameter \p ParamId of \p Func takes its
+  /// name and type from; \p Adjusted is the position a hidden result pointer
+  /// shifts it to under a positional binding.
+  std::optional<size_t> debugParamIndex(const HighFunc &Func, int ParamId,
+                                        size_t Adjusted) const;
+  /// The bytes a plain access of the C memory type \p Type copies inline: 0
+  /// for its whole object, the value's bytes for a bit-precise integer
+  /// narrower than its storage on a little-endian target, none when only
+  /// the byte-order-aware helper reads it.
+  std::optional<unsigned> inlineMemoryBytes(llvm::StringRef Type) const;
   /// An x87 extended value: what `long double` holds.
   static bool isX87Value(const HighExpr &E);
   /// The x87 helper \p E prints through, if any.

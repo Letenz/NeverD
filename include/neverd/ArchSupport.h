@@ -29,6 +29,14 @@ inline bool archLiftSupported(Arch A) {
 
 inline bool archCodegenSupported(Arch A) { return archLiftSupported(A); }
 
+/// Whether \p A stores a multi-byte value least significant byte first.  The
+/// loaders take no big-endian image of the native ISAs; EVM memory is
+/// big-endian.
+constexpr bool archLittleEndian(Arch A) {
+  return A == Arch::X64 || A == Arch::AArch64 || A == Arch::X86 ||
+         A == Arch::ARM || A == Arch::SBF;
+}
+
 inline bool archMachOPatchSupported(Arch A) { return archLiftSupported(A); }
 
 inline bool archCOFFPatchSupported(Arch A) { return archLiftSupported(A); }

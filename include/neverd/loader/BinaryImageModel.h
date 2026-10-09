@@ -111,6 +111,12 @@ enum class RuntimeCallablePointerSlotKind : uint8_t {
   GuardXFGTableDispatch,
   CastGuardOsDeterminedFailureMode,
   GuardMemcpy,
+  /// The ELF DT_PLTGOT slot the dynamic linker fills with its lazy binding
+  /// resolver, which the first PLT entry jumps through.
+  ELFLazyResolver,
+  /// The first word of an ELF TLS descriptor: the resolver the dynamic
+  /// linker writes there for code to call through it.
+  ELFTLSDescriptor,
 };
 
 struct RuntimeCallablePointerSlot {
@@ -520,6 +526,13 @@ struct BinaryImage {
   /// from ImportPtrSlots and CodePtrRelocSlots so a null on-disk value never
   /// masquerades as either an imported symbol or a resolved code identity.
   std::vector<RuntimeCallablePointerSlot> RuntimeCallablePointerSlots;
+  /// Slots the dynamic linker fills with what a GNU indirect function's
+  /// resolver returns: IRELATIVE slots, and slots bound to an IFUNC symbol.
+  /// A call through one calls that implementation, whatever the file holds.
+  /// Kept apart from RuntimeCallablePointerSlots: a static executable's
+  /// writable segment holds them among plain data, which they do not make
+  /// pointer storage.
+  std::set<va_t> IndirectFunctionSlots;
   /// Concrete Mach-O pointer bindings decoded from LC_DYLD_INFO bind bytecode
   /// or LC_DYLD_CHAINED_FIXUPS chains.  Kept separate from ImportPtrSlots so
   /// patch provenance remains an exact view of the indirect symbol table.

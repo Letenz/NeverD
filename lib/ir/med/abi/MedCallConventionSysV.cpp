@@ -40,6 +40,7 @@ const CallArgumentConvention SysVX64CallArguments = {
     .SummaryListsNoParameters = readsVectorCount,
     .UndefinedIncomingScratchRegisters = true,
     .IndirectCallsTakePrecedingSetup = true,
+    .FormattedCallArguments = true,
 };
 
 } // namespace neverd

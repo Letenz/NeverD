@@ -4273,6 +4273,118 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
   });
 }
 
+const HighCWriter::DebugParamBinding &
+HighCWriter::debugParamBinding(const HighFunc &Func) const {
+  auto [It, Inserted] =
+      DebugParamBindings.try_emplace(std::make_pair(&Func, Func.Entry));
+  DebugParamBinding &Binding = It->second;
+  if (!Inserted)
+    return Binding;
+  // The registers the body reads its parameters from, whatever numbering the
+  // lift gave them, and whether it reads one from the stack.
+  std::map<int, uint64_t> RegisterOfId;
+  bool StackParameter = false;
+  std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
+    if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+        E.Var.Kind == MedVar::Param) {
+      Binding.ReadIds.insert(E.Var.Id);
+      if (E.Var.RegOff == kNoParamReg)
+        StackParameter = true;
+      else
+        RegisterOfId.emplace(E.Var.Id, E.Var.RegOff);
+    }
+    E.forEachChildExpr([&](const ExprPtr &Child) { Walk(*Child); });
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (E)
+        Walk(*E);
+    });
+  });
+  // A source signature and a hidden result pointer keep their positions, as
+  // do the targets, stack parameters and declarations placed by no rule
+  // below.
+  const auto DebugFn = debugFunction(Dbg, Func.Entry);
+  if (!DebugFn || DebugFn->Params.empty() || Func.SourceTypeHint ||
+      isMsvcIndirectReturn(DebugFn->ReturnType) || StackParameter ||
+      RegisterOfId.empty() ||
+      (Opts.TheArch != Arch::X64 && Opts.TheArch != Arch::AArch64))
+    return Binding;
+  // Where each declared parameter arrives: a register, or none for the
+  // stack.  Every parameter's place depends on those before it, so one of a
+  // type the placement does not model, such as a record, leaves all of them
+  // by position.
+  const auto &TRI = getTargetRegInfo(Opts.TheArch);
+  const bool Positional =
+      Opts.TheArch == Arch::X64 && Opts.Format == BinaryFormat::COFF;
+  const auto IntRegs = TRI.integerParamRegs(Opts.Format);
+  const auto &FPRegs = TRI.FPParamRegs;
+  // Parameters the lift did not place in distinct parameter registers, as
+  // in IR built by hand, keep their positions.
+  std::set<uint64_t> Placed;
+  for (const auto &[Id, Register] : RegisterOfId)
+    if ((!llvm::is_contained(IntRegs, Register) &&
+         !llvm::is_contained(FPRegs, Register)) ||
+        !Placed.insert(Register).second)
+      return Binding;
+  std::vector<std::optional<uint64_t>> Arrives;
+  size_t NextInt = 0, NextFP = 0;
+  for (size_t DI = 0; DI < DebugFn->Params.size(); ++DI) {
+    const TypeRef Ty = cDisplayType(DebugFn->Params[DI].second);
+    if (!Ty)
+      return Binding;
+    const bool Integer = (Ty->Kind == NdTypeKind::Int && Ty->Size <= 8) ||
+                         Ty->Kind == NdTypeKind::Ptr;
+    const bool Scalar =
+        Ty->Kind == NdTypeKind::Float && (Ty->Size == 4 || Ty->Size == 8);
+    // System V passes the x87 long double in memory; AArch64 passes its
+    // binary128 in a vector register.
+    const bool Extended = Ty->Kind == NdTypeKind::Float && Ty->Size > 8;
+    if (!Integer && !Scalar && !Extended)
+      return Binding;
+    if (Positional) {
+      if (Extended)
+        return Binding;
+      // Microsoft x64 passes the first four parameters, of either class,
+      // in the register of their position.
+      const auto &Regs = Integer ? IntRegs : FPRegs;
+      Arrives.push_back(DI < IntRegs.size() && DI < Regs.size()
+                            ? std::optional<uint64_t>(Regs[DI])
+                            : std::nullopt);
+    } else if (Integer) {
+      Arrives.push_back(NextInt < IntRegs.size()
+                            ? std::optional<uint64_t>(IntRegs[NextInt++])
+                            : std::nullopt);
+    } else if (Scalar || Opts.TheArch == Arch::AArch64) {
+      Arrives.push_back(NextFP < FPRegs.size()
+                            ? std::optional<uint64_t>(FPRegs[NextFP++])
+                            : std::nullopt);
+    } else {
+      Arrives.push_back(std::nullopt);
+    }
+  }
+  // A register no declared parameter arrives in, such as one the body reads
+  // before writing, keeps its own name.
+  for (const auto &[Id, Register] : RegisterOfId)
+    if (const auto At = llvm::find(Arrives, std::optional<uint64_t>(Register));
+        At != Arrives.end())
+      Binding.DebugOfId.emplace(Id, static_cast<size_t>(At - Arrives.begin()));
+  Binding.TheKind = DebugParamBinding::Kind::Located;
+  return Binding;
+}
+
+std::optional<size_t> HighCWriter::debugParamIndex(const HighFunc &Func,
+                                                   int ParamId,
+                                                   size_t Adjusted) const {
+  const DebugParamBinding &Binding = debugParamBinding(Func);
+  if (Binding.TheKind == DebugParamBinding::Kind::Positional)
+    return Adjusted;
+  if (const auto It = Binding.DebugOfId.find(ParamId);
+      It != Binding.DebugOfId.end())
+    return It->second;
+  return std::nullopt;
+}
+
 TypeRef HighCWriter::emittedParamType(const HighFunc &Func,
                                       size_t Index) const {
   if (Index >= Func.Params.size())
@@ -4303,6 +4415,8 @@ TypeRef HighCWriter::emittedParamType(const HighFunc &Func,
         size_t DI = PI;
         if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
           DI = PI - 1;
+        DI = debugParamIndex(Func, static_cast<int>(PI), DI)
+                 .value_or(DebugFn->Params.size());
         if (DI >= DebugFn->Params.size())
           continue;
         // A debug record's byte size alone does not describe a C type: a type
@@ -4332,8 +4446,16 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
       All[I] = I;
     return All;
   }
-  if (DebugFn && !DebugFn->Params.empty()) {
-    const size_t Count = std::min(N, DebugFn->Params.size());
+  if (const DebugParamBinding &Binding = debugParamBinding(Func);
+      DebugFn && !DebugFn->Params.empty() &&
+      Binding.TheKind == DebugParamBinding::Kind::Positional) {
+    // The declaration's parameters, and any later one the body reads: the
+    // lift can split a parameter, such as a record, across registers.
+    size_t Count = std::min(N, DebugFn->Params.size());
+    if (!Binding.ReadIds.empty() && *Binding.ReadIds.rbegin() >= 0)
+      Count = std::max(
+          Count,
+          std::min(N, static_cast<size_t>(*Binding.ReadIds.rbegin()) + 1));
     All.resize(Count);
     for (size_t I = 0; I < Count; ++I)
       All[I] = I;
@@ -5565,6 +5687,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         size_t DI = PI;
         if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
           DI = PI - 1;
+        DI = debugParamIndex(Func, static_cast<int>(PI), DI)
+                 .value_or(DebugFn->Params.size());
         if (DI < DebugFn->Params.size() && !DebugFn->Params[DI].first.empty())
           Name = DebugFn->Params[DI].first;
       }

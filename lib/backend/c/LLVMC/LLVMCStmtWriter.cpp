@@ -32,6 +32,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <cctype>
@@ -4140,8 +4141,8 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
   AfterCxxThrow = NoReturn;
 }
 
-std::string
-LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
+std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
+                                            bool Strict) {
   const auto *Type = Call.getFunctionType();
   std::string Convention;
   switch (Call.getCallingConv()) {
@@ -4160,7 +4161,10 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
     Convention = "__attribute__((fastcall)) ";
     break;
   default:
-    throw std::runtime_error("unsupported preserved indirect-call convention");
+    if (Strict)
+      throw std::runtime_error(
+          "unsupported preserved indirect-call convention");
+    break;
   }
   std::string Parameters;
   for (auto *Parameter : Type->params()) {
@@ -4169,17 +4173,26 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
     Parameters += typeToCLLVM(Parameter);
   }
   if (Type->isVarArg()) {
-    if (Parameters.empty())
+    // C before C23 names no variadic type without a fixed parameter; shown
+    // C leaves such a callee unprototyped.
+    if (!Parameters.empty())
+      Parameters += ", ...";
+    else if (Strict)
       throw std::runtime_error(
           "C variadic indirect call lacks a fixed parameter");
-    Parameters += ", ...";
   } else if (Parameters.empty()) {
     Parameters = "void";
   }
+  return typeToCLLVM(Type->getReturnType()) + " (" + Convention + "*)(" +
+         Parameters + ")";
+}
+
+std::string
+LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
   // Opaque LLVM pointers do not carry a C function-pointer type. The call
   // instruction owns the exact result, parameter widths and convention.
-  return "((" + typeToCLLVM(Type->getReturnType()) + " (" + Convention + "*)(" +
-         Parameters + "))(" + valueStr(Call.getCalledOperand()) + "))";
+  return "((" + indirectCalleeType(Call, /*Strict=*/true) + ")(" +
+         valueStr(Call.getCalledOperand()) + "))";
 }
 
 std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
@@ -4252,11 +4265,18 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
   } else {
     CalleeName = resolveImportCalleeName(Call.getCalledOperand());
     if (CalleeName.empty()) {
-      if (std::string Slot = indirectCalleeStr(Call.getCalledOperand());
-          !Slot.empty())
-        CalleeName = Slot;
-      else
-        CalleeName = "(" + valueStr(Call.getCalledOperand()) + ")";
+      // C calls no data pointer: the call's own type names the function a
+      // pointer or an address held as an integer reaches.
+      std::string Target = indirectCalleeStr(Call.getCalledOperand());
+      if (Target.empty()) {
+        const llvm::Value *Callee = Call.getCalledOperand();
+        if (const auto *Cast = llvm::dyn_cast<llvm::Operator>(Callee);
+            Cast && Cast->getOpcode() == llvm::Instruction::IntToPtr)
+          Callee = Cast->getOperand(0);
+        Target = "(" + valueStr(Callee) + ")";
+      }
+      CalleeName = "((" + indirectCalleeType(Call, /*Strict=*/false) + ")" +
+                   Target + ")";
     }
   }
   if (Call.getCalledFunction() &&

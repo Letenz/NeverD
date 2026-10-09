@@ -1162,4 +1162,10 @@ bool assignDarwinVariadicSourceABI(SourceFunctionTypeHint &Hint,
   return validateSourceABI(Hint, Diagnostic);
 }
 
+bool assignSysVX64VariadicSourceABI(SourceFunctionTypeHint &Hint,
+                                    unsigned FixedCount,
+                                    std::string &Diagnostic) {
+  return assignDarwinVariadicSourceABI(Hint, FixedCount, Arch::X64, Diagnostic);
+}
+
 } // namespace neverd
