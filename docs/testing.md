@@ -1836,11 +1836,15 @@ CRT source regressions use synthetic tables and the pinned Windows corpus:
 
 ```bash
 cmake --build build-release --target \
-  NeverDMedEntryFrameTests NeverDMachOPointerRelocationBoundaryTests \
+  NeverDImageAnalysisBoundaryTests NeverDMedEntryFrameTests \
+  NeverDMachOPointerRelocationBoundaryTests \
+  NeverDNativePointerRelocationBoundaryTests \
   NeverDLLVMCValueTests NeverDLLVMCVectorTests NeverDLLVMCVoidAnalysisTests \
   NeverDWindowsEHCorpusTests NeverDLiftTests --parallel 4
+build-release/bin/NeverDImageAnalysisBoundaryTests
 build-release/bin/NeverDMedEntryFrameTests
 build-release/bin/NeverDMachOPointerRelocationBoundaryTests
+build-release/bin/NeverDNativePointerRelocationBoundaryTests
 build-release/bin/NeverDLLVMCValueTests
 build-release/bin/NeverDLLVMCVectorTests
 build-release/bin/NeverDLLVMCVoidAnalysisTests
@@ -1856,6 +1860,29 @@ relocatable comparisons and distinguish adjacent objects' one-past addresses.
 C value tests compile and execute
 relocated address arithmetic and freeze projections at O0/O2; vector and FP
 helper tests cover indirect calls and emitted Windows analysis bodies.
+
+`NativeImages/MedImmutableTableScanMatrix` runs the same scan, address-width,
+PHI-completeness and refusal contracts across x86, x64, ARM and AArch64 in each
+of PE/COFF, ELF and Mach-O. It rejects narrow address tags, unmarked address
+bits, duplicate/missing predecessor arms, volatile reads and independent
+entries. `DefinitionInventorySharesTheEvaluationBudget` prevents uncharged
+definition indexing from bypassing the bounded evaluator. These are shared
+MedIR/storage checks, not execution of each platform's runtime.
+The matrix also retains graphs owned by source-call certificates; scalar
+equivalence alone does not authorize erasing their original LOAD occurrences.
+`ImmutablePEPointer.ScalarReadsRespectTheTargetPointerWidth` verifies that a
+32-bit relocation cannot claim its adjacent null sentinel. Function discovery
+checks debug storage and FDE extents on all twelve native target/format cells,
+including Thumb-tagged pointers and explicitly named interior entries.
+`ImmutablePEPointer.CodeTargetsNeedImmutableAlignedInstructionStorage` retains
+x86 unaligned entries but rejects unaligned AArch64 targets, writable code,
+truncated instructions and targets lacking function evidence.
+`ImmutableImageBytes.ARMLiteralReadsStayInsideTheirDataIsland` rejects reads
+that cross from an ARM literal island into instructions in all three formats.
+`PreservesPureRematerializedTableBaseRecurrence` exercises both untagged and
+role-neutral address leaves in PE, ELF and Mach-O. Native ELF/PE fixtures also
+require AArch64 ADRP/ADD and x64 LEA recurrences to resolve through the same
+table-address model.
 
 `MedCxxContinuationFrame` verifies that catch and normal paths address the same
 local, rejects inconsistent unwind/stack effects and ordinary roots, and checks
@@ -2334,6 +2361,9 @@ The required execution policy follows existing CI ownership:
   cover worker exception transport, SDK session state, exact native LLVM
   function identity and verified caching, the semantic fixture, and pipeline
   outcome publication.
+  `NeverDImageAnalysisBoundaryTests` is also mandatory on all three hosts:
+  removing, excluding, skipping or failing a discovered native-image proof
+  case fails the CI evidence audit.
 - Linux must also execute the SBF external oracle, upstream conformance, and
   Agave conformance suites because that leg installs their pinned dependencies.
 - The only platform exceptions within these required suites are

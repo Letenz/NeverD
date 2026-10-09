@@ -12460,41 +12460,51 @@ TEST(LLVMDataPointerInvariantBoundary,
   for (BinaryFormat Format :
        {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
     for (bool PointerTable : {false, true})
-      for (Arch TargetArch : {Arch::AArch64, Arch::X64}) {
-        SCOPED_TRACE(formatTraceName(Format));
-        SCOPED_TRACE(PointerTable ? "pointer table" : "plain table");
-        SCOPED_TRACE(TargetArch == Arch::AArch64 ? "arm64" : "x86_64");
-        const uint16_t ElementSize =
-            PointerTable ? getTargetRegInfo(TargetArch).PointerSize : 2;
-        BinaryImage Image =
-            makeSpilledConstTableImage(TargetArch, Format, PointerTable);
-        MedFunc Lookup =
-            makeRematerializedRecurrentTableLookup(TargetArch, ElementSize);
-        llvm::LLVMContext Context;
-        testing::internal::CaptureStderr();
-        auto Module = MedLLVMEmitter().emit({Lookup}, Context,
-                                            "rematerialized-recurrent-table",
-                                            TargetArch, {}, &Image, Format);
-        std::string Diagnostic = testing::internal::GetCapturedStderr();
-        ASSERT_NE(Module, nullptr) << Diagnostic;
-        expectValidModule(*Module);
+      for (Arch TargetArch : {Arch::AArch64, Arch::X64})
+        for (auto Provenance : {ConstantAddressProvenance::Unknown,
+                                ConstantAddressProvenance::Address}) {
+          SCOPED_TRACE(static_cast<unsigned>(Provenance));
+          SCOPED_TRACE(formatTraceName(Format));
+          SCOPED_TRACE(PointerTable ? "pointer table" : "plain table");
+          SCOPED_TRACE(TargetArch == Arch::AArch64 ? "arm64" : "x86_64");
+          const uint16_t ElementSize =
+              PointerTable ? getTargetRegInfo(TargetArch).PointerSize : 2;
+          BinaryImage Image =
+              makeSpilledConstTableImage(TargetArch, Format, PointerTable);
+          MedFunc Lookup =
+              makeRematerializedRecurrentTableLookup(TargetArch, ElementSize);
+          for (auto &B : Lookup.Blocks)
+            for (auto &Op : B.Ops)
+              for (unsigned I = 0; I < Op.NumInputs; ++I)
+                if (Op.Inputs[I].isConst() &&
+                    Op.Inputs[I].ConstVal == SpilledConstTableVA)
+                  Op.Inputs[I].Provenance = Provenance;
+          llvm::LLVMContext Context;
+          testing::internal::CaptureStderr();
+          auto Module = MedLLVMEmitter().emit({Lookup}, Context,
+                                              "rematerialized-recurrent-table",
+                                              TargetArch, {}, &Image, Format);
+          std::string Diagnostic = testing::internal::GetCapturedStderr();
+          ASSERT_NE(Module, nullptr) << Diagnostic;
+          expectValidModule(*Module);
 
-        llvm::Function *Function = Module->getFunction(Lookup.Name);
-        ASSERT_NE(Function, nullptr);
-        unsigned TableLoads = 0;
-        for (const llvm::BasicBlock &Block : *Function)
-          for (const llvm::Instruction &Instruction : Block) {
-            if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Instruction);
-                Load && Load->getType()->isIntegerTy(ElementSize * 8) &&
-                Load->isVolatile()) {
-              ++TableLoads;
-              std::set<const llvm::Value *> Seen;
-              EXPECT_TRUE(valueReferencesMaterializedGlobal(
-                  Load->getPointerOperand(), Seen));
+          llvm::Function *Function = Module->getFunction(Lookup.Name);
+          ASSERT_NE(Function, nullptr);
+          unsigned TableLoads = 0;
+          for (const llvm::BasicBlock &Block : *Function)
+            for (const llvm::Instruction &Instruction : Block) {
+              if (const auto *Load =
+                      llvm::dyn_cast<llvm::LoadInst>(&Instruction);
+                  Load && Load->getType()->isIntegerTy(ElementSize * 8) &&
+                  Load->isVolatile()) {
+                ++TableLoads;
+                std::set<const llvm::Value *> Seen;
+                EXPECT_TRUE(valueReferencesMaterializedGlobal(
+                    Load->getPointerOperand(), Seen));
+              }
             }
-          }
-        EXPECT_EQ(TableLoads, 2U);
-      }
+          EXPECT_EQ(TableLoads, 2U);
+        }
 }
 
 TEST(LLVMDataPointerInvariantBoundary,

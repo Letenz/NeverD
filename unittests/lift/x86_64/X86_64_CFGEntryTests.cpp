@@ -206,6 +206,7 @@ BinaryImage continuationPipelineImage(bool ReturnAddress = true) {
   Catch.CodeRange = {EntryVA, EntryVA + CatchBody.size()};
   Catch.Kind = RuntimeFunctionKind::Primary;
   Catch.Encoding = ExceptionEncoding::X64UnwindV1;
+  Catch.UnwindVersion = 1;
   Catch.ParseStatus = ExceptionParseStatus::Complete;
   Catch.Personality = ExceptionPersonality::CxxFrameHandler3;
   Catch.Cxx.emplace();
@@ -219,6 +220,7 @@ BinaryImage continuationPipelineImage(bool ReturnAddress = true) {
   Owner.CodeRange = {OwnerVA, OwnerVA + 0x40};
   Owner.Kind = RuntimeFunctionKind::Primary;
   Owner.Encoding = ExceptionEncoding::X64UnwindV1;
+  Owner.UnwindVersion = 1;
   Owner.ParseStatus = ExceptionParseStatus::Complete;
   Owner.Personality = ExceptionPersonality::CxxFrameHandler3;
   Owner.Cxx.emplace();
@@ -226,6 +228,9 @@ BinaryImage continuationPipelineImage(bool ReturnAddress = true) {
   Owner.Cxx->NativeFuncInfoVA = NativeFuncInfoVA;
   Owner.Cxx->IsSeparated = true;
   Owner.Cxx->MaxState = 2;
+  // This zero-frame owner still needs a complete protected-state interval for
+  // the continuation's frame certificate, just like loader-produced metadata.
+  Owner.Cxx->IPMap = {{OwnerVA, 0}, {OwnerVA + 3, -1}};
   CxxUnwindAction StateZero;
   StateZero.ToState = -1;
   Owner.Cxx->UnwindMap.push_back(StateZero);

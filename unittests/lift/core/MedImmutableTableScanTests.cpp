@@ -10,6 +10,10 @@
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include <algorithm>
+#include <string>
+#include <tuple>
+
 using namespace neverd;
 namespace {
 MedVar var(int Id, uint16_t Width) {
@@ -141,6 +145,7 @@ TEST(MedImmutableTableScans, ScalarFoldingKeepsTheOperationWidth) {
   auto Image = table(8, 1);
   MedFunc F;
   F.Blocks.resize(1);
+  F.Blocks[0].Id = 0;
   auto C = [](uint64_t V, unsigned Width) {
     return MedVar::makeConst(V, Width, ConstantAddressProvenance::Scalar);
   };
@@ -164,6 +169,7 @@ TEST(MedImmutableTableScans, RetainsRelocatableArithmeticAndComparisons) {
   auto Image = table(8, 1);
   MedFunc F;
   F.Blocks.resize(1);
+  F.Blocks[0].Id = 0;
   auto Unknown = MedVar::makeConst(0x5000, 8);
   auto Scalar = MedVar::makeConst(0x5000, 8, ConstantAddressProvenance::Scalar);
   auto Address =
@@ -192,6 +198,7 @@ TEST(MedImmutableTableScans, OnePastAddressKeepsItsOriginalOwner) {
                                ConstantAddressProvenance::DataAddress, 0x5000);
   MedFunc F;
   F.Blocks.resize(1);
+  F.Blocks[0].Id = 0;
   F.Blocks[0].Ops = {
       op(NdOp::INT_SUB, var(1, 8), {End, MedVar::makeConst(8, 8)}),
       op(NdOp::INT_ADD, var(2, 8), {End, MedVar::makeConst(8, 8)}),
@@ -204,4 +211,230 @@ TEST(MedImmutableTableScans, OnePastAddressKeepsItsOriginalOwner) {
   EXPECT_EQ(F.Blocks[0].Ops[1].Opcode, NdOp::INT_ADD);
   EXPECT_EQ(F.Blocks[0].Ops[2].Opcode, NdOp::LOAD);
 }
+
+class MedImmutableTableScanMatrix
+    : public testing::TestWithParam<std::tuple<Arch, BinaryFormat>> {
+protected:
+  unsigned width() const {
+    const auto A = std::get<0>(GetParam());
+    return A == Arch::X86 || A == Arch::ARM ? 4 : 8;
+  }
+  BinaryImage image(unsigned Count = 4) const {
+    auto I = table(width(), Count);
+    I.Arch = std::get<0>(GetParam());
+    I.Format = std::get<1>(GetParam());
+    return I;
+  }
+};
+
+TEST_P(MedImmutableTableScanMatrix, SentinelCountsShareOneStorageContract) {
+  for (unsigned Count : {0u, 1u, 4u, 128u}) {
+    SCOPED_TRACE(Count);
+    auto Image = image(Count);
+    auto F = scan(width());
+    ASSERT_TRUE(foldImmutableTableScans(F, Image));
+    EXPECT_TRUE(F.Blocks[1].Phis.empty());
+    ASSERT_EQ(F.Blocks[1].Succs, std::vector<int>{2});
+    EXPECT_EQ(F.Blocks[1].Ops.front().Inputs[0].ConstVal, Count);
+    EXPECT_FALSE(foldImmutableTableScans(F, Image));
+  }
+}
+
+TEST_P(MedImmutableTableScanMatrix, RetainsUnprovedStorageAndEntryStates) {
+  for (unsigned Mutation = 0; Mutation < 15; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = image();
+    auto F = scan(width());
+    switch (Mutation) {
+    case 0:
+      Image.Segments[0].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    case 1:
+      Image.Sections[0].FileSz = width();
+      break;
+    case 2:
+      Image.Sections.push_back(Image.Sections[0]);
+      break;
+    case 3:
+      F.ModuleAnalysisRoots.insert(0x1014);
+      break;
+    case 4:
+      Image.CodeRefTargets.insert(0x1014);
+      break;
+    case 5:
+      F.Blocks[1].Ops[4].MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 6:
+      Image.IsRelocatable = true;
+      break;
+    case 7:
+      F.SkippedSSA = true;
+      break;
+    case 8:
+      F.Blocks[1].Phis[0].ExceptionalEntry = var(20, 4);
+      break;
+    case 9:
+      F.Blocks[0].Succs.clear();
+      break;
+    case 10:
+      F.Blocks[1].Phis[0].Args[1].first = 0;
+      break;
+    case 11:
+      F.Blocks[1].Phis[0].Args[1].second.Size = 1;
+      break;
+    case 12:
+      Image.Arch = Arch::Unknown;
+      break;
+    case 13:
+      Image.Bits = width() == 4 ? Bitness::Bits64 : Bitness::Bits32;
+      break;
+    case 14: {
+      // A retained source-call proof owns the original value graph, even
+      // when the call is outside the otherwise evaluable loop.
+      auto Call = op(NdOp::CALL, {}, {MedVar::makeConst(0x2000, width())});
+      Call.SourceCallHint = std::make_shared<SourceCallTypeHint>();
+      F.Blocks[2].Ops.insert(F.Blocks[2].Ops.begin(), std::move(Call));
+      break;
+    }
+    }
+    foldImmutableTableScans(F, Image);
+    EXPECT_EQ(F.Blocks[1].Phis.size(), 1u);
+    EXPECT_EQ(F.Blocks[1].Succs, (std::vector<int>{2, 1}));
+  }
+}
+
+TEST_P(MedImmutableTableScanMatrix, AddressArithmeticUsesTheTargetWidth) {
+  auto Image = image();
+  MedFunc F;
+  F.Blocks.resize(1);
+  F.Blocks[0].Id = 0;
+  auto Base = MedVar::makeConst(0x5000 + width(), width(),
+                                ConstantAddressProvenance::DataAddress, 0x5000);
+  auto Negative =
+      MedVar::makeConst(width() == 4 ? uint32_t(-width()) : -uint64_t(width()),
+                        width(), ConstantAddressProvenance::Scalar);
+  F.Blocks[0].Ops = {op(NdOp::INT_ADD, var(1, width()), {Base, Negative})};
+  ASSERT_TRUE(foldImmutableTableScans(F, Image));
+  const auto &Result = F.Blocks[0].Ops[0];
+  ASSERT_EQ(Result.Opcode, NdOp::COPY);
+  EXPECT_EQ(Result.Inputs[0].ConstVal, 0x5000u);
+  EXPECT_EQ(Result.Inputs[0].AddressOwnerVA, 0x5000u);
+}
+
+TEST_P(MedImmutableTableScanMatrix, NarrowTagsCannotProvePointerIdentity) {
+  auto Image = image();
+  MedFunc F;
+  F.Blocks.resize(1);
+  F.Blocks[0].Id = 0;
+  auto Narrow = MedVar::makeConst(
+      0x5000, 1, ConstantAddressProvenance::DataAddress, 0x5000);
+  F.Blocks[0].Ops = {
+      op(NdOp::INT_EQUAL, var(1, 1), {Narrow, MedVar::makeConst(0, 1)}),
+      op(NdOp::LOAD, var(2, width()), {Narrow})};
+  EXPECT_FALSE(foldImmutableTableScans(F, Image));
+  EXPECT_EQ(F.Blocks[0].Ops[0].Opcode, NdOp::INT_EQUAL);
+  EXPECT_EQ(F.Blocks[0].Ops[1].Opcode, NdOp::LOAD);
+}
+
+TEST_P(MedImmutableTableScanMatrix, UnmarkedPointerBitsKeepTheirLoad) {
+  auto Image = image();
+  for (unsigned I = 0; I < width(); ++I)
+    Image.Segments[0].Data[I] = (uint64_t{0x5000} >> (I * 8)) & 0xff;
+  MedFunc F;
+  F.Blocks.resize(1);
+  F.Blocks[0].Id = 0;
+  F.Blocks[0].Ops = {
+      op(NdOp::LOAD, var(1, width()),
+         {MedVar::makeConst(0x5000, width(),
+                            ConstantAddressProvenance::DataAddress, 0x5000)})};
+  EXPECT_FALSE(foldImmutableTableScans(F, Image));
+  EXPECT_EQ(F.Blocks[0].Ops[0].Opcode, NdOp::LOAD);
+}
+
+TEST_P(MedImmutableTableScanMatrix,
+       EveryPhiNeedsTheCompleteCurrentPredecessors) {
+  for (bool Reverse : {false, true}) {
+    SCOPED_TRACE(Reverse);
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Image = image();
+      MedFunc F;
+      F.Entry = 0x1000;
+      F.Blocks.resize(4);
+      for (unsigned I = 0; I < 4; ++I) {
+        F.Blocks[I].Id = I;
+        F.Blocks[I].StartAddr = 0x1000 + I * 16;
+        F.Blocks[I].EndAddr = 0x1010 + I * 16;
+      }
+      F.Blocks[0].Succs = {1, 2};
+      F.Blocks[1].Preds = F.Blocks[2].Preds = {0};
+      F.Blocks[1].Succs = F.Blocks[2].Succs = {3};
+      auto &Join = F.Blocks[3];
+      Join.Preds = {1, 2};
+      const auto Three =
+          MedVar::makeConst(3, width(), ConstantAddressProvenance::Scalar);
+      Join.Phis = {{var(1, width()), {{1, Three}, {2, Three}}}};
+      Join.Ops = {op(NdOp::INT_ADD, var(2, width()),
+                     {var(1, width()), MedVar::makeConst(1, width())})};
+      switch (Mutation) {
+      case 1:
+        Join.Phis[0].Args[1].first = 1;
+        break;
+      case 2:
+        Join.Preds = {1, 1};
+        break;
+      case 3:
+        F.Blocks[2].Succs.clear();
+        break;
+      case 4:
+        Join.Phis[0].Args[1].second.Size = 1;
+        break;
+      case 5:
+        F.Blocks[1].Id = F.Blocks[2].Id;
+        break;
+      }
+      if (Reverse) {
+        std::reverse(Join.Preds.begin(), Join.Preds.end());
+        std::reverse(Join.Phis[0].Args.begin(), Join.Phis[0].Args.end());
+        std::swap(F.Blocks[1], F.Blocks[2]);
+      }
+      EXPECT_EQ(foldImmutableTableScans(F, Image), Mutation == 0);
+      EXPECT_EQ(Join.Ops[0].Opcode, Mutation == 0 ? NdOp::COPY : NdOp::INT_ADD);
+    }
+  }
+}
+
+TEST(MedImmutableTableScans, DefinitionInventorySharesTheEvaluationBudget) {
+  auto Image = table(8, 1);
+  MedFunc F;
+  F.Blocks.resize(1);
+  F.Blocks[0].Id = 0;
+  for (int I = 0; I < 70000; ++I)
+    F.Blocks[0].Ops.push_back(
+        op(NdOp::COPY, var(I, 8), {MedVar::makeConst(3, 8)}));
+  F.Blocks[0].Ops.push_back(op(NdOp::INT_ADD, var(70000, 8),
+                               {var(69999, 8), MedVar::makeConst(1, 8)}));
+  EXPECT_FALSE(foldImmutableTableScans(F, Image));
+  EXPECT_EQ(F.Blocks[0].Ops.back().Opcode, NdOp::INT_ADD);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    NativeImages, MedImmutableTableScanMatrix,
+    testing::Combine(testing::Values(Arch::X86, Arch::X64, Arch::ARM,
+                                     Arch::AArch64),
+                     testing::Values(BinaryFormat::COFF, BinaryFormat::ELF,
+                                     BinaryFormat::MachO)),
+    [](const testing::TestParamInfo<MedImmutableTableScanMatrix::ParamType>
+           &Info) {
+      const auto Architecture = std::get<0>(Info.param);
+      const auto Format = std::get<1>(Info.param);
+      const char *A = Architecture == Arch::X86   ? "X86"
+                      : Architecture == Arch::X64 ? "X64"
+                      : Architecture == Arch::ARM ? "ARM"
+                                                  : "AArch64";
+      const char *F = Format == BinaryFormat::COFF  ? "PE"
+                      : Format == BinaryFormat::ELF ? "ELF"
+                                                    : "MachO";
+      return std::string(A) + F;
+    });
 } // namespace

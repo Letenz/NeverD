@@ -1,9 +1,18 @@
 #ifndef NEVERD_IR_MED_MEDCONSTANTPROPAGATION_H
 #define NEVERD_IR_MED_MEDCONSTANTPROPAGATION_H
 
+#include <set>
+
 namespace neverd {
 struct MedFunc;
+struct MedBlock;
+struct PhiNode;
 struct BinaryImage;
+
+/// A PHI supplies one same-width value for every actual ordinary incoming
+/// edge, with no extra, duplicate, or implicit exceptional entry value.
+bool hasCompleteOrdinaryPhiInputs(const MedBlock &Block, const PhiNode &Phi,
+                                  const std::set<int> &Incoming);
 
 /// Propagate equal, fully seeded constants through pure same-width SSA copies
 /// and complete PHIs. Preserve occurrence-sensitive address provenance and

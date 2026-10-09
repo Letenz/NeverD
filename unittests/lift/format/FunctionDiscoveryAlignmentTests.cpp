@@ -241,46 +241,58 @@ TEST(FunctionDiscoveryAlignment, DataPointersRejectMisalignedAArch64Entries) {
 }
 
 TEST(FunctionDiscoveryAlignment, DebugCodeReferencesAreNotFunctionEntries) {
-  for (Arch Target : {Arch::X86, Arch::X64, Arch::AArch64}) {
-    for (const char *Name : {".debug_info", ".debug$S", ".zdebug_info",
-                             "__debug_info", ".stab", ".rdata"}) {
-      for (bool Sections : {false, true}) {
-        SCOPED_TRACE(Name);
-        SCOPED_TRACE(static_cast<unsigned>(Target));
-        SCOPED_TRACE(Sections);
-        BinaryImage Img;
-        Img.Arch = Target;
-        Img.Bits = Target == Arch::X86 ? Bitness::Bits32 : Bitness::Bits64;
-        Img.Format = BinaryFormat::COFF;
-        // MOV at a call-return PC passes the x86 prologue heuristic. AArch64
-        // uses a plausible SP adjustment for the same false candidate.
-        std::vector<uint8_t> Code(16, 0x90);
-        if (Target == Arch::AArch64)
-          writeLE<uint32_t>(Code.data(), 0xd10083ffu);
-        else {
-          Code[0] = 0x8b;
-          Code[1] = 0xc1;
-          Code[2] = 0xc3;
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+      for (const char *Name : {".debug_info", ".debug$S", ".zdebug_info",
+                               "__debug_info", ".stab", ".rdata"}) {
+        for (bool Sections : {false, true}) {
+          SCOPED_TRACE(Name);
+          SCOPED_TRACE(static_cast<unsigned>(Target));
+          SCOPED_TRACE(Sections);
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          BinaryImage Img;
+          Img.Arch = Target;
+          Img.Bits = Target == Arch::X86 || Target == Arch::ARM
+                         ? Bitness::Bits32
+                         : Bitness::Bits64;
+          Img.Format = Format;
+          if (Target == Arch::ARM)
+            Img.Mode = InstructionMode::Thumb;
+          // MOV at a call-return PC passes the x86 prologue heuristic. AArch64
+          // uses a plausible SP adjustment for the same false candidate.
+          std::vector<uint8_t> Code(16, 0x90);
+          if (Target == Arch::AArch64)
+            writeLE<uint32_t>(Code.data(), 0xd10083ffu);
+          else if (Target == Arch::ARM)
+            Code = {0x10, 0xb5, 0x70, 0x47};
+          else {
+            Code[0] = 0x8b;
+            Code[1] = 0xc1;
+            Code[2] = 0xc3;
+          }
+          Img.Segments.push_back(executableSegment(0x1000, Code));
+          Segment Data;
+          Data.Name = Name;
+          Data.VA = 0x2000;
+          Data.Size = 8;
+          Data.Flags = SegmentFlags::Readable;
+          Data.Data.resize(8);
+          writeLE<uint64_t>(Data.Data.data(),
+                            Target == Arch::ARM ? 0x1001 : 0x1000);
+          Img.Segments.push_back(Data);
+          if (Sections) {
+            Section Sec;
+            Sec.Name = Name;
+            Sec.VA = Data.VA;
+            Sec.Size = Data.Size;
+            Sec.Flags = Data.Flags;
+            Img.Sections.push_back(Sec);
+          }
+          scanDataFuncPointers(Img);
+          EXPECT_EQ(Img.Symbols.size(),
+                    std::string(Name) == ".rdata" ? 1u : 0u);
         }
-        Img.Segments.push_back(executableSegment(0x1000, Code));
-        Segment Data;
-        Data.Name = Name;
-        Data.VA = 0x2000;
-        Data.Size = 8;
-        Data.Flags = SegmentFlags::Readable;
-        Data.Data.resize(8);
-        writeLE<uint64_t>(Data.Data.data(), 0x1000);
-        Img.Segments.push_back(Data);
-        if (Sections) {
-          Section Sec;
-          Sec.Name = Name;
-          Sec.VA = Data.VA;
-          Sec.Size = Data.Size;
-          Sec.Flags = Data.Flags;
-          Img.Sections.push_back(Sec);
-        }
-        scanDataFuncPointers(Img);
-        EXPECT_EQ(Img.Symbols.size(), std::string(Name) == ".rdata" ? 1u : 0u);
       }
     }
   }
@@ -531,54 +543,92 @@ TEST(FunctionDiscoveryAlignment, FuncLoadNamesImportThunkWithoutScan) {
 } // namespace
 
 TEST(FunctionDiscoveryAlignment, FDEExtentOwnsInteriorRelocationLabels) {
-  for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
-    SCOPED_TRACE(Mutation);
-    constexpr va_t Entry = 0x401000, Interior = Entry + 0x20;
-    BinaryImage Img;
-    Img.Arch = Arch::X86;
-    Img.Bits = Bitness::Bits32;
-    Img.Format = BinaryFormat::COFF;
-    Img.Base = 0x400000;
-    Img.Entry = Entry;
-    std::vector<uint8_t> Bytes(0x50, 0x90);
-    Bytes[0] = 0x55;
-    Bytes[1] = 0x89;
-    Bytes[2] = 0xe5;
-    Bytes[0x20] = 0xc3;
-    Bytes[0x40] = 0xc3;
-    Img.Segments.push_back(executableSegment(Entry, Bytes));
-    Segment Table;
-    Table.Name = ".rdata";
-    Table.VA = 0x402000;
-    Table.Size = 8;
-    Table.Flags = SegmentFlags::Readable;
-    Table.Data.resize(8);
-    writeLE<uint32_t>(Table.Data.data(), Interior);
-    writeLE<uint32_t>(Table.Data.data() + 4, Entry + 0x40);
-    Img.CodePtrRelocSlots = {Table.VA, Table.VA + 4};
-    Img.Segments.push_back(Table);
-    Img.Symbols.push_back(Symbol::makeFunc(Entry)); // COFF has no size.
-    ExceptionFunction EH;
-    EH.Encoding = ExceptionEncoding::DwarfFDE;
-    EH.CodeRange = {Entry, Entry + 0x30};
-    EH.Dwarf.emplace();
-    if (Mutation == 1)
-      EH.ParseStatus = ExceptionParseStatus::Malformed;
-    if (Mutation == 2)
-      EH.Dwarf.reset();
-    if (Mutation == 3)
-      Img.Symbols.push_back(Symbol::makeFunc(Interior));
-    Img.ExceptionMetadata.Functions.push_back(EH);
-    Img.KnownCodeRanges = {{Entry, Entry + 0x30}};
-    Decoder Dec;
-    ASSERT_TRUE(Dec.init(Img));
-    auto Found = FuncDetector().detect(Img, Dec);
-    auto Has = [&](va_t A) {
-      return std::any_of(Found.begin(), Found.end(),
-                         [&](const auto &F) { return F.first == A; });
-    };
-    EXPECT_EQ(Has(Interior), Mutation != 0);
-    EXPECT_TRUE(Has(Entry));
-    EXPECT_TRUE(Has(Entry + 0x40));
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+      for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(Mutation);
+        constexpr va_t Entry = 0x401000, Interior = Entry + 0x20;
+        BinaryImage Img;
+        Img.Arch = Architecture;
+        const unsigned Width =
+            Architecture == Arch::X86 || Architecture == Arch::ARM ? 4 : 8;
+        Img.Bits = Width == 4 ? Bitness::Bits32 : Bitness::Bits64;
+        Img.Format = Format;
+        if (Architecture == Arch::ARM)
+          Img.Mode = InstructionMode::Thumb;
+        Img.Base = 0x400000;
+        Img.Entry = Entry;
+        std::vector<uint8_t> Bytes(0x50, 0x90);
+        Bytes[0] = 0x55;
+        Bytes[1] = 0x89;
+        Bytes[2] = 0xe5;
+        Bytes[0x20] = 0xc3;
+        Bytes[0x40] = 0xc3;
+        if (Architecture == Arch::AArch64) {
+          for (unsigned I = 0; I < Bytes.size(); I += 4)
+            writeLE<uint32_t>(Bytes.data() + I, 0xd503201fu); // nop
+          writeLE<uint32_t>(Bytes.data(), 0xd10083ffu);       // sub sp, sp, #32
+          for (unsigned I : {0x20u, 0x40u})
+            writeLE<uint32_t>(Bytes.data() + I, 0xd65f03c0u); // ret
+        } else if (Architecture == Arch::ARM) {
+          for (unsigned I = 0; I < Bytes.size(); I += 2)
+            writeLE<uint16_t>(Bytes.data() + I, 0xbf00u); // nop
+          writeLE<uint16_t>(Bytes.data(), 0xb510u);       // push {r4, lr}
+          for (unsigned I : {0x20u, 0x40u})
+            writeLE<uint16_t>(Bytes.data() + I, 0x4770u); // bx lr
+        } else if (Architecture == Arch::X64) {
+          Bytes[1] = 0x48;
+          Bytes[2] = 0x89;
+          Bytes[3] = 0xe5;
+        }
+        Img.Segments.push_back(executableSegment(Entry, Bytes));
+        Segment Table;
+        Table.Name = ".rdata";
+        Table.VA = 0x402000;
+        Table.Size = Width * 2;
+        Table.Flags = SegmentFlags::Readable;
+        Table.Data.resize(Table.Size);
+        const unsigned Tag = Architecture == Arch::ARM ? 1 : 0;
+        if (Width == 4) {
+          writeLE<uint32_t>(Table.Data.data(), Interior | Tag);
+          writeLE<uint32_t>(Table.Data.data() + Width, (Entry + 0x40) | Tag);
+        } else {
+          writeLE<uint64_t>(Table.Data.data(), Interior);
+          writeLE<uint64_t>(Table.Data.data() + Width, Entry + 0x40);
+        }
+        Img.CodePtrRelocSlots = {Table.VA, Table.VA + Width};
+        Img.Segments.push_back(Table);
+        Img.Symbols.push_back(Symbol::makeFunc(Entry)); // COFF has no size.
+        ExceptionFunction EH;
+        EH.Encoding = ExceptionEncoding::DwarfFDE;
+        EH.CodeRange = {Entry, Entry + 0x30};
+        EH.Dwarf.emplace();
+        if (Mutation == 1)
+          EH.ParseStatus = ExceptionParseStatus::Malformed;
+        if (Mutation == 2)
+          EH.Dwarf.reset();
+        if (Mutation == 3)
+          Img.Symbols.push_back(Symbol::makeFunc(Interior));
+        Img.ExceptionMetadata.Functions.push_back(EH);
+        // Linked i386 PE deliberately probes pointers inside coarse CRT
+        // ranges. Other targets already reject those weaker candidates, so
+        // leave coarse coverage absent there to test the FDE's own authority.
+        if (Format == BinaryFormat::COFF && Architecture == Arch::X86)
+          Img.KnownCodeRanges = {{Entry, Entry + 0x30}};
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Img));
+        auto Found = FuncDetector().detect(Img, Dec);
+        auto Has = [&](va_t A) {
+          return std::any_of(Found.begin(), Found.end(),
+                             [&](const auto &F) { return F.first == A; });
+        };
+        EXPECT_EQ(Has(Interior), Mutation != 0);
+        EXPECT_TRUE(Has(Entry));
+        EXPECT_TRUE(Has(Entry + 0x40));
+      }
+    }
   }
 }

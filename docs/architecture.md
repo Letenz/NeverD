@@ -912,14 +912,30 @@ do not supply pointer-table or relocation-scan roots, including debug ranges
 inside an otherwise loadable segment. This keeps CRT internal labels owned by
 their containing function without discarding independently proven entries.
 
-Shared MedIR constant propagation evaluates immutable PE table scans before
-the source routes diverge. `ReadOnlyBytes` owns mapped storage and relocation
+Shared MedIR constant propagation evaluates immutable linked-image table scans
+before the source routes diverge. PE/COFF, ELF and Mach-O share the native
+x86, x64, ARM and AArch64 byte-read contract. `ReadOnlyBytes` owns target and
+format admission, mapped storage and relocation
 checks; the evaluator cannot interpret a relocated pointer as raw scalar
-bytes. A single-block scan must terminate within its work/iteration limits,
+bytes. Pointer slots use the target's width, and unmarked pointer-sized bytes
+that could represent an image address retain their LOAD. Exact pointer
+projection still requires the corresponding format-specific relocation proof.
+PE and Mach-O code-pointer readers share the same authenticated local target,
+instruction alignment and complete immutable instruction-storage checks.
+A single-block scan must terminate within its work/iteration limits,
 have no side effects or independent entry, and produce every exit value before
-replacement. Unproved scans retain their original CFG. LLVM pointer recurrence
+replacement. The whole invocation shares one work budget across definition
+indexing, rounds and loops; incomplete indexes are never published. Both
+constant propagation and scan evaluation use `hasCompleteOrdinaryPhiInputs`
+to require every actual predecessor exactly once at the PHI's width.
+Unproved scans retain their original CFG. LLVM pointer recurrence
 proofs separately memoize only path-independent results under a work budget;
 independent roots remain reachable when constant edges are pruned.
+Retained source-call certificates keep their original MedIR value graphs until
+a transformation can rebind their occurrence and frame evidence. A role-neutral
+address in a pointer mirror remains a valid raw recurrence initializer, matching
+the emitter's deferred address materialization rather than requiring an eager
+data-pointer projection.
 Both proofs retain exact object ownership, including one-past addresses at an
 adjacent section boundary. The shared evaluator uses the image's conservative
 relocation predicate for untagged constants; equal original VAs alone cannot

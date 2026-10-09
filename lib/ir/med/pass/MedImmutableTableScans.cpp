@@ -1,4 +1,4 @@
-//===- MedImmutableTableScans.cpp - Bounded immutable PE table evaluation ===//
+//===- MedImmutableTableScans.cpp - Immutable table scans -----------------===//
 //
 // NeverD Decompiler
 //
@@ -38,11 +38,12 @@ bool independentEntry(const MedFunc &Func, const MedBlock &Block,
     return VA == Block.StartAddr ||
            (VA > Block.StartAddr && VA < Block.EndAddr);
   };
-  return Within(Func.Entry) ||
-         std::any_of(Func.ModuleAnalysisRoots.begin(),
-                     Func.ModuleAnalysisRoots.end(), Within) ||
-         std::any_of(Image.CodeRefTargets.begin(), Image.CodeRefTargets.end(),
-                     Within);
+  auto ContainsEntry = [&](const auto &Entries) {
+    const auto It = Entries.lower_bound(Block.StartAddr);
+    return It != Entries.end() && Within(*It);
+  };
+  return Within(Func.Entry) || ContainsEntry(Func.ModuleAnalysisRoots) ||
+         ContainsEntry(Image.CodeRefTargets);
 }
 
 class Evaluator {
@@ -51,9 +52,20 @@ class Evaluator {
   std::map<Key, const MedOp *> Defs;
   std::map<Key, std::pair<const MedBlock *, const PhiNode *>> Phis;
   std::map<int, const MedBlock *> Blocks;
+  std::set<Key> CompletePhis;
   std::set<Key> Active;
   Values Memo;
-  size_t Budget = MaxEvaluationWork;
+  size_t &Budget;
+  bool Complete = false;
+
+  bool spend(size_t Work = 1) {
+    if (Work > Budget) {
+      Budget = 0;
+      return false;
+    }
+    Budget -= Work;
+    return true;
+  }
 
   bool scalar(const MedVar &V) const {
     if (!V.isConst() || isAddressProvenance(V.Provenance))
@@ -77,27 +89,67 @@ class Evaluator {
   }
 
 public:
-  Evaluator(const MedFunc &F, const BinaryImage &I) : Func(F), Image(I) {
+  Evaluator(const MedFunc &F, const BinaryImage &I, size_t &Remaining)
+      : Func(F), Image(I), Budget(Remaining) {
+    std::map<int, std::set<int>> Incoming;
+    std::set<Key> Outputs;
     for (const auto &B : F.Blocks) {
-      Blocks.emplace(B.Id, &B);
-      for (const auto &P : B.Phis)
+      if (!spend(1 + B.Phis.size() + B.Ops.size()) || B.Id < 0 ||
+          !Blocks.emplace(B.Id, &B).second)
+        return;
+      for (int S : B.Succs) {
+        if (!spend() || !Incoming[S].insert(B.Id).second)
+          return;
+      }
+      for (const auto &P : B.Phis) {
+        if (!spend(P.Args.size()) || !Outputs.insert(key(P.Output)).second)
+          return;
         Phis.emplace(key(P.Output), std::pair{&B, &P});
-      for (const auto &Op : B.Ops)
-        if (Op.Output.Size && !Op.Output.isConst())
+      }
+      for (const auto &Op : B.Ops) {
+        // Source-call certificates authenticate this value graph and frame,
+        // including original pointer LOAD occurrences. Retain the graph until
+        // this transformation can also rebind its occurrence-sensitive proofs.
+        if (Op.NumInputs > Op.Inputs.size() || Op.SourceCallHint)
+          return;
+        if (Op.Output.Size && !Op.Output.isConst()) {
+          if (!Outputs.insert(key(Op.Output)).second)
+            return;
           Defs.emplace(key(Op.Output), &Op);
+        }
+      }
     }
+    for (const auto &[Id, Preds] : Incoming)
+      if (!Blocks.count(Id))
+        return;
+    for (const auto &B : F.Blocks)
+      for (const auto &P : B.Phis) {
+        if (!spend(B.Preds.size() + P.Args.size()))
+          return;
+        if (hasCompleteOrdinaryPhiInputs(B, P, Incoming[B.Id]))
+          CompletePhis.insert(key(P.Output));
+      }
+    Complete = true;
   }
 
   bool exhausted() const { return !Budget; }
+  bool complete() const { return Complete; }
+  bool hasCompletePhi(const PhiNode &P) const {
+    return CompletePhis.count(key(P.Output));
+  }
   void clearMemo() { Memo.clear(); }
 
   std::optional<MedVar> value(const MedVar &V, const Values *Bindings = nullptr,
                               unsigned Depth = 0) {
-    if (!Budget || Depth > MaxEvaluationDepth || !V.Size || V.Size > 8)
+    if (!Complete || !Budget || Depth > MaxEvaluationDepth || !V.Size ||
+        V.Size > 8)
       return std::nullopt;
     --Budget;
     if (V.isConst()) {
       if (V.Provenance == ConstantAddressProvenance::AddressFragment)
+        return std::nullopt;
+      if (pointer(V) && (V.Size != Image.getPointerSize() ||
+                         V.ConstVal != (V.ConstVal & mask(V.Size))))
         return std::nullopt;
       return V;
     }
@@ -114,15 +166,16 @@ public:
       const auto &[Block, Phi] = It->second;
       // An independently enterable root has an implicit incoming value that
       // no ordinary PHI arm describes.
-      if (!Phi->ExceptionalEntry && !independentEntry(Func, *Block, Image)) {
-        bool Complete = Phi->Args.size() == Block->Preds.size();
+      if (CompletePhis.count(key(V)) &&
+          !independentEntry(Func, *Block, Image)) {
+        bool AllValues = true;
         for (const auto &[Pred, Arg] : Phi->Args) {
           const auto Found = Blocks.find(Pred);
           if (Found == Blocks.end() ||
               std::find(Found->second->Succs.begin(),
                         Found->second->Succs.end(),
                         Block->Id) == Found->second->Succs.end()) {
-            Complete = false;
+            AllValues = false;
             break;
           }
           if (auto Chosen = successor(*Found->second, Bindings, Depth + 1);
@@ -130,12 +183,12 @@ public:
             continue;
           auto A = value(Arg, Bindings, Depth + 1);
           if (!A || (Result && *A != *Result)) {
-            Complete = false;
+            AllValues = false;
             break;
           }
           Result = A;
         }
-        if (!Complete)
+        if (!AllValues)
           Result.reset();
       }
     } else if (auto It = Defs.find(key(V)); It != Defs.end()) {
@@ -182,7 +235,7 @@ public:
   std::optional<MedVar> operation(const MedOp &Op,
                                   const Values *Bindings = nullptr,
                                   unsigned Depth = 0) {
-    if (!Budget || Depth > MaxEvaluationDepth || !Op.Output.Size ||
+    if (!Complete || !Budget || Depth > MaxEvaluationDepth || !Op.Output.Size ||
         Op.Output.Size > 8 || Op.MemoryOrdering != NdMemoryOrdering::None ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
         Op.SourceCallHint || !Op.IntrinsicOutputs.empty())
@@ -213,6 +266,12 @@ public:
       uint64_t Bits = 0;
       for (unsigned I = 0; I < Size; ++I)
         Bits |= uint64_t{(*Bytes)[I]} << (I * 8);
+      // Exact bytes alone cannot distinguish an address from an integer with
+      // the same bits. Only the pointer readers above may publish an address;
+      // retaining this LOAD preserves the backend's relocation proof.
+      if (Size == Image.getPointerSize() &&
+          Image.isPotentiallyRelocatableAddress(Bits))
+        return std::nullopt;
       return literal(Bits, Size);
     }
     auto B = Op.NumInputs >= 2 ? value(Op.Inputs[1], Bindings, Depth + 1)
@@ -234,8 +293,9 @@ public:
         A->Provenance == ConstantAddressProvenance::DataAddress && scalar(*B) &&
         Size == A->Size) {
       const uint64_t Offset = B->ConstVal & mask(B->Size);
-      const va_t VA = Op.Opcode == NdOp::INT_ADD ? A->ConstVal + Offset
-                                                 : A->ConstVal - Offset;
+      const va_t VA = (Op.Opcode == NdOp::INT_ADD ? A->ConstVal + Offset
+                                                  : A->ConstVal - Offset) &
+                      mask(Size);
       const auto *Owner = Image.getSectionFor(
           A->AddressOwnerVA == InvalidVA ? A->ConstVal : A->AddressOwnerVA);
       if (Owner && A->ConstVal >= Owner->VA &&
@@ -313,7 +373,8 @@ public:
   }
 };
 
-bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image) {
+bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
+              size_t &Budget) {
   if (Block.Id == 0 || Block.Preds.size() != 2 || Block.Succs.size() != 2 ||
       Block.Phis.empty() || Block.Ops.empty() ||
       !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty() ||
@@ -325,6 +386,10 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image) {
   const int Entry =
       Block.Preds[0] == Block.Id ? Block.Preds[1] : Block.Preds[0];
   const int Exit = Block.Succs[0] == Block.Id ? Block.Succs[1] : Block.Succs[0];
+  if (Block.Phis.size() > Budget ||
+      Block.Ops.size() > Budget - Block.Phis.size())
+    return false;
+  Budget -= Block.Phis.size() + Block.Ops.size();
   std::set<Key> Local;
   for (const auto &P : Block.Phis)
     Local.insert(key(P.Output));
@@ -336,10 +401,12 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image) {
       return false;
     Local.insert(key(Op.Output));
   }
-  Evaluator Eval(Func, Image);
+  Evaluator Eval(Func, Image, Budget);
+  if (!Eval.complete())
+    return false;
   Values State;
   for (const auto &P : Block.Phis) {
-    if (P.ExceptionalEntry || P.Args.size() != 2)
+    if (!Eval.hasCompletePhi(P))
       return false;
     bool Found = false;
     for (const auto &[Pred, Arg] : P.Args)
@@ -429,16 +496,17 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image) {
 } // namespace
 
 bool foldImmutableTableScans(MedFunc &Func, const BinaryImage &Image) {
-  // PE currently supplies exact relocation/storage contracts for these scans.
-  // Keep other formats on their existing paths until equivalent coverage
-  // exists.
-  if (Image.Format != BinaryFormat::COFF || Image.IsRelocatable ||
-      Func.SkippedSSA)
+  // The loader owns format and target admission; every LOAD separately proves
+  // exact immutable bytes or a resolved pointer, never just a numeric address.
+  if (!supportsImmutableImageReads(Image) || Func.SkippedSSA)
     return false;
   bool Changed = false;
+  size_t Budget = MaxEvaluationWork;
   for (unsigned Round = 0; Round != MaxFoldRounds; ++Round) {
     bool Progress = false;
-    Evaluator Eval(Func, Image);
+    Evaluator Eval(Func, Image, Budget);
+    if (!Eval.complete())
+      break;
     for (auto &Block : Func.Blocks)
       for (auto &Op : Block.Ops) {
         if (Op.Dead || (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
@@ -452,8 +520,11 @@ bool foldImmutableTableScans(MedFunc &Func, const BinaryImage &Image) {
         Op.Inputs[0] = *Value;
         Progress = true;
       }
-    for (auto &Block : Func.Blocks)
-      Progress |= foldScan(Func, Block, Image);
+    for (auto &Block : Func.Blocks) {
+      if (!Budget)
+        break;
+      Progress |= foldScan(Func, Block, Image, Budget);
+    }
     Changed |= Progress;
     if (!Progress)
       break;

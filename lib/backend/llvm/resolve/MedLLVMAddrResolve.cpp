@@ -3276,7 +3276,21 @@ MedLLVMEmitter::pureReadOnlyBaseIdentity(
       return std::nullopt;
     if (Cur.isConst()) {
       uint64_t Address = Cur.ConstVal, OwnerVA = InvalidVA;
-      if (Cur.Provenance != ConstantAddressProvenance::Unknown &&
+      // A role-neutral address in a relocation mirror deliberately stays raw
+      // in getVar until its memory use selects that mirror. It is still an
+      // exact recurrence initializer; requiring eager data materialization
+      // here would reject the same ADRP/LEA value only on a loop backedge.
+      const bool RawTableBase =
+          Cur.Provenance == ConstantAddressProvenance::Address &&
+          addrInCodePtrMirrorRun(Address) && !Img->isCodeAddress(Address);
+      if (RawTableBase && Cur.AddressOwnerVA != InvalidVA &&
+          (Img->getSectionFor(Cur.AddressOwnerVA) !=
+               Img->getSectionFor(Address) ||
+           Img->getSegmentFor(Cur.AddressOwnerVA) !=
+               Img->getSegmentFor(Address)))
+        return std::nullopt;
+      if (!RawTableBase &&
+          Cur.Provenance != ConstantAddressProvenance::Unknown &&
           !resolveMaterializableDataAddress(Cur, Address, &OwnerVA))
         return std::nullopt;
       if (!isMaterializableReadOnlyDataAddress(Address, OwnerVA))
