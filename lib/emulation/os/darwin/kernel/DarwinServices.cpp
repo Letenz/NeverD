@@ -180,6 +180,15 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::Dup:
   case ServiceKind::Dup2:
   case ServiceKind::Fcntl:
+  case ServiceKind::GetAttrList:
+  case ServiceKind::FgetAttrList:
+  case ServiceKind::GetAttrListAt:
+  case ServiceKind::GetXattr:
+  case ServiceKind::FgetXattr:
+  case ServiceKind::ListXattr:
+  case ServiceKind::FlistXattr:
+  case ServiceKind::PathConf:
+  case ServiceKind::FpathConf:
   case ServiceKind::Stat64:
   case ServiceKind::Fstat64:
   case ServiceKind::Lstat64:

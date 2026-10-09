@@ -659,6 +659,7 @@ public:
   /// The x87 helpers the output calls, and whether it computes with the
   /// x87 extended `long double`.
   std::set<X87CHelper> X87Helpers;
+  std::map<std::pair<Intrinsic, unsigned>, std::string> X86FPStateHelpers;
   bool UsesX87Extended = false;
   /// How a function's debug declaration names and types its parameters.
   struct DebugParamBinding {

@@ -106,6 +106,7 @@ void NdOpEmulator::reset() {
   MemStore.clear();
   MemStoreBytes.clear();
   MXCSR = 0x1f80;
+  MXCSRKnown = true;
   LoadLog.clear();
   ReachedIndirectBranchTarget.reset();
   ReachedSourceMode.reset();
@@ -390,6 +391,9 @@ void NdOpEmulator::setCallPreservedRegisters(std::vector<uint64_t> Regs) {
 }
 
 void NdOpEmulator::clobberVolatileRegisters() {
+  // An unknown callee may change MXCSR status. Do not publish the stale word
+  // as an authenticated input to an explicit FP state operation.
+  MXCSRKnown = false;
   for (auto It = Registers.begin(); It != Registers.end();) {
     // The stack pointer, frame pointer, and callee-saved registers (declared by
     // the caller) survive a call by ABI; every other register (caller-saved
@@ -521,6 +525,8 @@ bool NdOpEmulator::step(const LowOp &Op) {
   case NdOp::INTRINSIC:
     if (Op.NumInputs >= 1 && Op.Inputs[0].isConst()) {
       const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+      if (isX86FPStateIntrinsic(Id))
+        return executeX86ScalarFPState(Op);
       if (Id == Intrinsic::X87Fprem || Id == Intrinsic::X87Fprem1 ||
           Id == Intrinsic::X87ReadStatus || Id == Intrinsic::X87Fninit ||
           Id == Intrinsic::X87Fnclex || Id == Intrinsic::X87Wait ||
@@ -549,12 +555,9 @@ bool NdOpEmulator::step(const LowOp &Op) {
           Id == Intrinsic::X86ApproxFloat || Id == Intrinsic::X86FPClass ||
           Id == Intrinsic::X86FPArith || Id == Intrinsic::X86FPConvert ||
           Id == Intrinsic::X86FPRoundTransform ||
-          Id == Intrinsic::X86FPExtract ||
-          Id == Intrinsic::X86FPRange ||
-          Id == Intrinsic::X86FPFixup ||
-          Id == Intrinsic::X86FPScale ||
-          Id == Intrinsic::X86FPCompare ||
-          Id == Intrinsic::EVEXCompressStore ||
+          Id == Intrinsic::X86FPExtract || Id == Intrinsic::X86FPRange ||
+          Id == Intrinsic::X86FPFixup || Id == Intrinsic::X86FPScale ||
+          Id == Intrinsic::X86FPCompare || Id == Intrinsic::EVEXCompressStore ||
           Id == Intrinsic::EVEXExpandLoad || Id == Intrinsic::AesEnc ||
           Id == Intrinsic::AesEncLast || Id == Intrinsic::AesDec ||
           Id == Intrinsic::AesDecLast || Id == Intrinsic::Pclmulqdq ||

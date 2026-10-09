@@ -670,6 +670,7 @@ public:
   /// functions can nest the listing inside `#if 0` of the trap stub.
   bool EmitFunctionWrapper = true;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
+  std::map<std::pair<Intrinsic, unsigned>, std::string> FPStateHelperNames;
   std::map<const llvm::Function *, std::string> FunctionIdentifiers;
   /// The C name each function's symbol spells, for its definition's comment.
   std::map<const llvm::Function *, std::string> FunctionSymbolNames;

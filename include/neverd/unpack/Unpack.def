@@ -26,9 +26,13 @@ NEVERD_UNPACK_EVIDENCE(UPXEntryStub, "upx_entry_stub")
 // Unpacked: a transfer into generated code was accepted as the entry and the
 // image at that boundary was rebuilt. NoEntry: the bounded run ended first;
 // the transfers it did observe and the process stop reason say why.
+// UnsupportedState: the accepted image cannot discard its possible live heap
+// dependencies. Snapshot: the caller explicitly requested image bytes only.
 #ifdef NEVERD_UNPACK_OUTCOME
 NEVERD_UNPACK_OUTCOME(Unpacked, "unpacked")
 NEVERD_UNPACK_OUTCOME(NoEntry, "no_entry")
+NEVERD_UNPACK_OUTCOME(UnsupportedState, "unsupported_state")
+NEVERD_UNPACK_OUTCOME(Snapshot, "snapshot")
 #endif
 
 // Transfer is the observed transfer that was accepted. Stub is retained for
@@ -89,6 +93,7 @@ NEVERD_UNPACK_REPORT_FIELD(Format, "format")
 NEVERD_UNPACK_REPORT_FIELD(Profile, "profile")
 NEVERD_UNPACK_REPORT_FIELD(Backend, "backend")
 NEVERD_UNPACK_REPORT_FIELD(Transfer, "transfer")
+NEVERD_UNPACK_REPORT_FIELD(SnapshotOnly, "snapshot_only")
 NEVERD_UNPACK_REPORT_FIELD(Transfers, "transfers")
 NEVERD_UNPACK_REPORT_FIELD(Generation, "generation")
 NEVERD_UNPACK_REPORT_FIELD(Packer, "packer")
@@ -105,6 +110,15 @@ NEVERD_UNPACK_REPORT_FIELD(StackBalanced, "stack_balanced")
 NEVERD_UNPACK_REPORT_FIELD(ProgramInvocation, "program_invocation")
 NEVERD_UNPACK_REPORT_FIELD(MaterializedTLSCallbacks,
                            "materialized_tls_callbacks")
+NEVERD_UNPACK_REPORT_FIELD(RuntimeState, "runtime_state")
+NEVERD_UNPACK_REPORT_FIELD(HeapKnown, "heap_inventory_known")
+NEVERD_UNPACK_REPORT_FIELD(HeapReferenceCount, "possible_heap_references")
+NEVERD_UNPACK_REPORT_FIELD(HeapReferences, "heap_references")
+NEVERD_UNPACK_REPORT_FIELD(Storage, "storage")
+NEVERD_UNPACK_REPORT_FIELD(Offset, "offset")
+NEVERD_UNPACK_REPORT_FIELD(Address, "address")
+NEVERD_UNPACK_REPORT_FIELD(AllocationAddress, "allocation_address")
+NEVERD_UNPACK_REPORT_FIELD(AllocationSize, "allocation_size")
 NEVERD_UNPACK_REPORT_FIELD(GeneratedBytes, "generated_bytes")
 NEVERD_UNPACK_REPORT_FIELD(Sections, "sections")
 NEVERD_UNPACK_REPORT_FIELD(Name, "name")
@@ -136,6 +150,8 @@ NEVERD_UNPACK_REPORT_FIELD(SHA256, "sha256")
 #endif
 
 #ifdef NEVERD_UNPACK_TEXT
+NEVERD_UNPACK_TEXT(HeapImageStorage, "image")
+NEVERD_UNPACK_TEXT(HeapTLSStorage, "thread_local")
 NEVERD_UNPACK_TEXT(Prefix, "unpack: ")
 NEVERD_UNPACK_TEXT(EmptyOptions, "{}")
 NEVERD_UNPACK_TEXT(TooLarge, "unpack options JSON exceeds 64 KiB")
@@ -168,6 +184,7 @@ NEVERD_UNPACK_CLI_STRING(OutputValue, "path")
 NEVERD_UNPACK_CLI_STRING(OptionsOption, "options")
 NEVERD_UNPACK_CLI_STRING(OptionsHelp,
                          "Options JSON: backend, resource limits, transfer, "
+                         "snapshot_only, "
                          "arguments/environment and Windows module inputs")
 NEVERD_UNPACK_CLI_STRING(OptionsValue, "json")
 #endif

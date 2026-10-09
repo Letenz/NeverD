@@ -214,6 +214,8 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
     return Wrap(openImage(S, Event));
   case API::ZwCreateSection:
     return Wrap(createSection(S, Event));
+  case API::ZwOpenSection:
+    return Wrap(openSection(S, Event));
   case API::ZwMapViewOfSection:
     return Wrap(mapSection(S, Event));
   case API::ZwUnmapViewOfSection:

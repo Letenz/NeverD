@@ -113,6 +113,61 @@ TEST(ProcessReport, DarwinFileInputsAreLosslessAndRequireDarwinProfiles) {
   ASSERT_TRUE(EOFInput->DarwinFiles->StandardInput);
   EXPECT_TRUE(EOFInput->DarwinFiles->StandardInput->empty());
 }
+TEST(ProcessReport, DarwinXattrInputKeepsOpaqueBytesOrderAndKnownEmpty) {
+  auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[
+    {"path":"/data","bytes_hex":"00ff","extended_attributes":[
+      {"name":"z/slash","bytes_hex":"00FF80"},
+      {"name":"α","bytes_hex":""},
+      {"name":"a","bytes_hex":"78"}]},
+    {"path":"/unknown","bytes_hex":""}],
+    "directories":[{"path":"/dir","extended_attributes":[]}],
+    "symbolic_links":[{"path":"/link","target_hex":"2f64617461",
+      "extended_attributes":[{"name":"user.link","bytes_hex":"42"}]}]}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  const auto &A = O->DarwinFiles->ExtendedAttributes.at("/data");
+  ASSERT_EQ(A.size(), 3u);
+  EXPECT_EQ(A[0].Name, "z/slash");
+  EXPECT_EQ(A[0].Bytes, (std::vector<uint8_t>{0, 255, 128}));
+  EXPECT_EQ(A[1].Name, "α");
+  EXPECT_TRUE(A[1].Bytes.empty());
+  EXPECT_EQ(A[2].Name, "a");
+  EXPECT_FALSE(O->DarwinFiles->ExtendedAttributes.contains("/unknown"));
+  EXPECT_TRUE(O->DarwinFiles->ExtendedAttributes.at("/dir").empty());
+  EXPECT_EQ(O->DarwinFiles->ExtendedAttributes.at("/link")[0].Bytes,
+            (std::vector<uint8_t>{66}));
+}
+TEST(ProcessReport, DarwinXattrInputRejectsMalformedAndUnknownFields) {
+  for (const char *Attributes :
+       {"null", "{}", "[null]", "[{\"name\":\"a\"}]",
+        "[{\"name\":\"a\",\"bytes_hex\":\"\",\"extra\":0}]",
+        "[{\"name\":\"\",\"bytes_hex\":\"\"}]",
+        "[{\"name\":\"a\\u0000b\",\"bytes_hex\":\"\"}]",
+        "[{\"name\":\"a\",\"bytes_hex\":\"0\"}]",
+        "[{\"name\":\"a\",\"bytes_hex\":\"gg\"}]",
+        "[{\"name\":\"a\",\"bytes_hex\":1}]",
+        "[{\"name\":1,\"bytes_hex\":\"\"}]",
+        "[{\"name\":\"a\",\"bytes_hex\":\"\"},{\"name\":\"a\",\"bytes_hex\":"
+        "\"\"}]",
+        "[{\"name\":\"com.apple.ResourceFork\",\"bytes_hex\":\"\"}]"})
+    for (unsigned Kind = 0; Kind != 3; ++Kind) {
+      std::string Entry = "{\"path\":\"/data\",\"extended_attributes\":";
+      Entry += Attributes;
+      if (Kind == 0)
+        Entry += ",\"bytes_hex\":\"\"";
+      if (Kind == 2)
+        Entry += ",\"target_hex\":\"78\"";
+      Entry += '}';
+      const auto Text =
+          Kind == 0
+              ? "{\"darwin_files\":{\"files\":[" + Entry + "]}}"
+              : "{\"darwin_files\":{\"files\":[],\"" +
+                    std::string(Kind == 1 ? "directories" : "symbolic_links") +
+                    "\":[" + Entry + "]}}";
+      auto O = processOptionsFromJSON(Text);
+      ASSERT_FALSE(bool(O)) << Text;
+      llvm::consumeError(O.takeError());
+    }
+}
 TEST(ProcessReport,
      DarwinSymbolicLinkTargetsAreLosslessAndRequireDarwinProfiles) {
   auto Good =
@@ -322,6 +377,239 @@ TEST(ProcessReport, DarwinCreationPolicyIsStrictAndPreservesUnsignedInodes) {
   auto Extra = Parse(llvm::formatv("{0}", Value).str());
   EXPECT_FALSE(bool(Extra));
   llvm::consumeError(Extra.takeError());
+}
+
+TEST(ProcessReport, DarwinNamespaceCreationPolicyIsStrictAndLossless) {
+  auto Parent = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  auto *M = Parent.getAsObject();
+  (*M)["inode"] = 41;
+  (*M)["mode"] = 0040755;
+  (*M)["flags"] = 0;
+  (*M)["size"] = 0;
+  (*M)["blocks"] = 0;
+  auto Parse = [&](const llvm::json::Value &Policy) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[],"umask":23,"directories":[{"path":"/","mutable":true,"metadata":)" +
+        llvm::formatv("{0}", Parent).str() + R"(}],"creation_policy":)" +
+        llvm::formatv("{0}", Policy).str() + "}}");
+  };
+  const auto Good = llvm::cantFail(
+      llvm::json::parse(darwin_test::NamespaceCreationPolicyJSON));
+  auto Parsed = Parse(Good);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  const auto &P = *Parsed->DarwinFiles->CreationPolicy->Namespace;
+  EXPECT_EQ(P.SymbolicLinkAllocationUnit, 512u);
+  EXPECT_EQ(P.DirectoryEntrySize, 32u);
+  EXPECT_EQ(P.DirectoryBlocks, 7u);
+  auto Refused = [&](const llvm::json::Value &V) {
+    auto Out = Parse(V);
+    EXPECT_FALSE(bool(Out)) << llvm::formatv("{0}", V).str();
+    llvm::consumeError(Out.takeError());
+  };
+  for (const char *Key : {"symbolic_link_allocation_unit",
+                          "directory_entry_size", "directory_blocks"}) {
+    auto V = Good;
+    auto *N = V.getAsObject()->getObject("namespace_policy");
+    N->erase(Key);
+    Refused(V);
+    for (const char *Bad :
+         {"null", "true", "-1", "1.5", "\"18446744073709551616\""}) {
+      (*N)[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      Refused(V);
+    }
+  }
+  for (const char *Bad : {"null", "[]", "{}", "false", "1"}) {
+    auto V = Good;
+    (*V.getAsObject())["namespace_policy"] =
+        llvm::cantFail(llvm::json::parse(Bad));
+    Refused(V);
+  }
+  auto V = Good;
+  (*V.getAsObject()->getObject("namespace_policy"))["extra"] = 1;
+  Refused(V);
+  V = Good;
+  (*V.getAsObject())["extra"] = 1;
+  Refused(V);
+  V = Good;
+  auto *N = V.getAsObject()->getObject("namespace_policy");
+  (*N)["symbolic_link_allocation_unit"] = "16777216";
+  (*N)["directory_entry_size"] = "16777216";
+  (*N)["directory_blocks"] = "9223372036854775807";
+  auto Max = Parse(V);
+  ASSERT_TRUE(bool(Max)) << llvm::toString(Max.takeError());
+  EXPECT_EQ(Max->DarwinFiles->CreationPolicy->Namespace->DirectoryBlocks,
+            uint64_t(INT64_MAX));
+  (*N)["directory_blocks"] = "9223372036854775808";
+  Refused(V);
+}
+
+TEST(ProcessReport, DarwinInitialLinkMutationIsExplicitStrictAndLossless) {
+  auto M = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  (*M.getAsObject())["inode"] = 57;
+  (*M.getAsObject())["mode"] = 0120777;
+  (*M.getAsObject())["size"] = 1;
+  (*M.getAsObject())["flags"] = 0;
+  (*M.getAsObject())["link_count"] = 1;
+  const auto Policy = llvm::cantFail(llvm::json::parse(
+      R"({"mutation_time":{"seconds":"-9223372036854775808","nanoseconds":999999999}})"));
+  llvm::json::Object Link{{"path", "/l"},
+                          {"target_hex", "78"},
+                          {"mutable", true},
+                          {"metadata", M},
+                          {"mutation_policy", Policy}};
+  auto Parse = [](const llvm::json::Object &Input) {
+    llvm::json::Object O{
+        {"darwin_files",
+         llvm::json::Object{
+             {"files", llvm::json::Array{}},
+             {"directories", llvm::json::Array{llvm::json::Object{
+                                 {"path", "/"}, {"mutable", true}}}},
+             {"symbolic_links", llvm::json::Array{llvm::json::Value(
+                                    llvm::json::Object(Input))}}}}};
+    return processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(std::move(O))).str());
+  };
+  auto Good = Parse(Link);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_TRUE(Good->DarwinFiles->MutableSymbolicLinks.contains("/l"));
+  const auto &P = Good->DarwinFiles->SymbolicLinkMutationPolicies.at("/l");
+  EXPECT_EQ(P.Time.Seconds, INT64_MIN);
+  EXPECT_EQ(P.Time.Nanoseconds, 999999999);
+  auto Refused = [&](const llvm::json::Object &O) {
+    auto Out = Parse(O);
+    EXPECT_FALSE(bool(Out));
+    llvm::consumeError(Out.takeError());
+  };
+  for (const char *Bad : {"false", "null", "0", "[]", "\"true\""}) {
+    auto O = Link;
+    O["mutable"] = llvm::cantFail(llvm::json::parse(Bad));
+    Refused(O);
+  }
+  auto O = Link;
+  O.erase("mutable");
+  Refused(O);
+  O = Link;
+  O.erase("metadata");
+  Refused(O);
+  O = Link;
+  O["extra"] = 1;
+  Refused(O);
+  for (
+      const char *Bad :
+      {"null", "true", "[]", "{}", R"({"mutation_time":null})",
+       R"({"mutation_time":{"seconds":0,"nanoseconds":0},"extra":1})",
+       R"({"mutation_time":{"seconds":"9223372036854775808","nanoseconds":0}})",
+       R"({"mutation_time":{"seconds":0,"nanoseconds":-1}})",
+       R"({"mutation_time":{"seconds":0,"nanoseconds":1000000000}})",
+       R"({"mutation_time":{"seconds":1.5,"nanoseconds":0}})"}) {
+    O = Link;
+    O["mutation_policy"] = llvm::cantFail(llvm::json::parse(Bad));
+    Refused(O);
+  }
+  O = Link;
+  O.erase("mutation_policy");
+  O.erase("metadata");
+  auto WithoutStat = Parse(O);
+  ASSERT_TRUE(bool(WithoutStat)) << llvm::toString(WithoutStat.takeError());
+  EXPECT_TRUE(WithoutStat->DarwinFiles->SymbolicLinkMutationPolicies.empty());
+}
+
+TEST(ProcessReport, DarwinInitialDirectoryMutationPolicyIsStrictAndLossless) {
+  auto Parent = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  (*Parent.getAsObject())["inode"] = 41;
+  (*Parent.getAsObject())["mode"] = 0040755;
+  (*Parent.getAsObject())["size"] = 0;
+  auto Parse = [&](const llvm::json::Value &Policy) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[],"directories":[{"path":"/","metadata":)" +
+        llvm::formatv("{0}", Parent).str() + R"(,"mutation_policy":)" +
+        llvm::formatv("{0}", Policy).str() + "}]}}");
+  };
+  const auto Good = llvm::cantFail(llvm::json::parse(
+      R"({"directory_entry_size":"17","mutation_time":{"seconds":"-9223372036854775808","nanoseconds":999999999}})"));
+  auto Out = Parse(Good);
+  ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+  const auto &P = Out->DarwinFiles->DirectoryMutationPolicies.at("/");
+  EXPECT_EQ(P.DirectoryEntrySize, 17u);
+  EXPECT_EQ(P.Time.Seconds, INT64_MIN);
+  EXPECT_EQ(P.Time.Nanoseconds, 999999999);
+  auto Refused = [&](const llvm::json::Value &V) {
+    auto Bad = Parse(V);
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  };
+  for (const char *Key : {"directory_entry_size", "mutation_time"}) {
+    auto V = Good;
+    V.getAsObject()->erase(Key);
+    Refused(V);
+    for (const char *Bad : {"null", "true", "[]", "-1", "1.5"}) {
+      (*V.getAsObject())[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      Refused(V);
+    }
+  }
+  auto V = Good;
+  (*V.getAsObject())["extra"] = 1;
+  Refused(V);
+  V = Good;
+  (*V.getAsObject())["directory_entry_size"] = 16777217;
+  Refused(V);
+  V = Good;
+  (*V.getAsObject()->getObject("mutation_time"))["nanoseconds"] = 1000000000;
+  Refused(V);
+  V = Good;
+  (*V.getAsObject()->getObject("mutation_time"))["seconds"] =
+      "-9223372036854775809";
+  Refused(V);
+}
+
+TEST(ProcessReport, DarwinVirtualEnumerationPolicyIsStrictAndLossless) {
+  auto Parent = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  auto *M = Parent.getAsObject();
+  (*M)["inode"] = 41;
+  (*M)["mode"] = 0040755;
+  (*M)["size"] = 0;
+  auto Parse = [&](const llvm::json::Value &Policy) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[],"directories":[{"path":"/","metadata":)" +
+        llvm::formatv("{0}", Parent).str() + R"(,"enumeration_policy":)" +
+        llvm::formatv("{0}", Policy).str() + "}]}}");
+  };
+  const auto Good = llvm::cantFail(llvm::json::parse(
+      R"({"minimum_buffer_size":1,"initial_minimum_buffer_size":64,"seek_offset":"18446744073709551615"})"));
+  auto Parsed = Parse(Good);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  const auto &P = Parsed->DarwinFiles->DirectoryEnumerationPolicies.at("/");
+  EXPECT_EQ(P.MinimumBufferSize, 1u);
+  EXPECT_EQ(P.InitialMinimumBufferSize, 64u);
+  EXPECT_EQ(P.SeekOffset, UINT64_MAX);
+  auto Refused = [&](const llvm::json::Value &V) {
+    auto Out = Parse(V);
+    EXPECT_FALSE(bool(Out)) << llvm::formatv("{0}", V).str();
+    llvm::consumeError(Out.takeError());
+  };
+  for (const char *Key :
+       {"minimum_buffer_size", "initial_minimum_buffer_size", "seek_offset"}) {
+    auto V = Good;
+    V.getAsObject()->erase(Key);
+    Refused(V);
+    for (const char *Bad :
+         {"null", "true", "-1", "1.5", "\"18446744073709551616\""}) {
+      (*V.getAsObject())[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      Refused(V);
+    }
+  }
+  for (const char *Bad : {"null", "[]", "{}", "false", "1"})
+    Refused(llvm::cantFail(llvm::json::parse(Bad)));
+  auto V = Good;
+  (*V.getAsObject())["extra"] = 1;
+  Refused(V);
+  V = Good;
+  (*V.getAsObject())["minimum_buffer_size"] = "134217728";
+  (*V.getAsObject())["initial_minimum_buffer_size"] = "134217728";
+  auto Max = Parse(V);
+  ASSERT_TRUE(bool(Max)) << llvm::toString(Max.takeError());
+  (*V.getAsObject())["minimum_buffer_size"] = "134217729";
+  Refused(V);
 }
 
 TEST(ProcessReport, DarwinDirectoriesAndWorkingDirectoryAreExplicitAndStrict) {
