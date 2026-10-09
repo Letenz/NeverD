@@ -3465,3 +3465,9 @@ target_sources(NeverDLibraryRecognitionTests PRIVATE core/LibcLibraryRecognition
 add_dependencies(NeverDLibraryRecognitionTests neverd-library-libc-fixtures)
 target_compile_definitions(NeverDLibraryRecognitionTests PRIVATE
   NEVERD_LIBRARY_LIBC_FIXTURE_DIR="${_library_libc_dir}")
+
+add_neverd_unittest(NeverDX86SIMDAccuracyTests
+  x86_64/X86_64_SIMDAccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86SIMDAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)

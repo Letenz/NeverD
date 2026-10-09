@@ -150,8 +150,8 @@ NdVar extractOpmaskBit(X86Lifter::LiftState &S, NdVar Mask, unsigned BitIndex) {
 
 NdVar emitPackedUnpackMemoryMaskImpl(X86Lifter::LiftState &S,
                                      const cs_x86_op *MaskOperand,
-                                     uint16_t VectorSize,
-                                     uint16_t ElementSize, bool HighHalf) {
+                                     uint16_t VectorSize, uint16_t ElementSize,
+                                     bool HighHalf) {
   if ((VectorSize != 16 && VectorSize != 32 && VectorSize != 64) ||
       ElementSize == 0 || VectorSize % ElementSize != 0 ||
       16 % (ElementSize * 2) != 0)
@@ -211,8 +211,7 @@ bool validateEvexPackedUnpack(const cs_insn *Insn, const cs_x86 &X86,
                               CanonicalEvexEncodingInfo &Encoding,
                               bool &Broadcast) {
   if (!parseCanonicalEvexEncodingInfo(Insn, X86, TargetArch, Encoding) ||
-      (Encoding.P0 & 0x07) != 0x01 ||
-      ((Encoding.P1 | 0x04) & 0x07) != 0x05 ||
+      (Encoding.P0 & 0x07) != 0x01 || ((Encoding.P1 | 0x04) & 0x07) != 0x05 ||
       Encoding.Opcode != ExpectedOpcode || X86.encoding.imm_offset != 0 ||
       X86.encoding.imm_size != 0 || X86.avx_sae ||
       X86.avx_rm != X86_AVX_RM_INVALID)
@@ -286,8 +285,8 @@ NdVar emitPackedUnpackMemoryMask(X86Lifter::LiftState &S,
                                  const cs_x86_op *MaskOperand,
                                  uint16_t VectorSize, uint16_t ElementSize,
                                  bool HighHalf) {
-  return emitPackedUnpackMemoryMaskImpl(S, MaskOperand, VectorSize,
-                                        ElementSize, HighHalf);
+  return emitPackedUnpackMemoryMaskImpl(S, MaskOperand, VectorSize, ElementSize,
+                                        HighHalf);
 }
 
 bool emitPackedUnpack(X86Lifter::LiftState &S, NdVar Destination, NdVar Left,
@@ -380,7 +379,11 @@ bool liftSIMDConvert(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
         S.emit(NdOp::COPY, Dst, {Pair});
       } else {
         NdVar ZHi = S.makeTemp(Dst.Size - PairSz);
-        S.emit(NdOp::COPY, ZHi, {NdVar::cst(0, (uint16_t)(Dst.Size - PairSz))});
+        if (InsnId == X86_INS_CVTPI2PS)
+          S.emit(NdOp::SUBBYTES, ZHi, {Dst, NdVar::cst(PairSz, 4)});
+        else
+          S.emit(NdOp::COPY, ZHi,
+                 {NdVar::cst(0, static_cast<uint16_t>(Dst.Size - PairSz))});
         S.emit(NdOp::CONCAT, Dst, {ZHi, Pair});
       }
     } else {

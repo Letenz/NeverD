@@ -24,6 +24,25 @@
 
 namespace neverd {
 
+// A shuffle's -1 mask is poison, while these architectural lanes are zero.
+static llvm::Value *zeroingShuffle(llvm::IRBuilder<> &Builder, llvm::Value *A,
+                                   llvm::Value *B, std::vector<int> Mask,
+                                   llvm::StringRef Name) {
+  std::vector<unsigned> ZeroLanes;
+  for (unsigned I = 0; I < Mask.size(); ++I)
+    if (Mask[I] < 0) {
+      Mask[I] = 0;
+      ZeroLanes.push_back(I);
+    }
+  llvm::Value *Result = Builder.CreateShuffleVector(A, B, Mask, Name);
+  auto *ElementType =
+      llvm::cast<llvm::VectorType>(Result->getType())->getElementType();
+  for (unsigned I : ZeroLanes)
+    Result = Builder.CreateInsertElement(
+        Result, llvm::Constant::getNullValue(ElementType), Builder.getInt32(I));
+  return Result;
+}
+
 //===----------------------------------------------------------------------===//
 // PSHUFB (SSSE3)
 //===----------------------------------------------------------------------===//
@@ -32,6 +51,26 @@ llvm::Value *MedLLVMEmitter::emitPshufb(const MedOp &Op,
                                         llvm::IRBuilder<> &Builder) {
   if (Op.NumInputs < 3)
     return nullptr;
+  if (Op.Output.Size == 8) {
+    auto *I64 = Builder.getInt64Ty();
+    auto *V8I8 = llvm::FixedVectorType::get(Builder.getInt8Ty(), 8);
+    auto *Source = Builder.CreateBitCast(
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder), I64), V8I8);
+    auto *Control = Builder.CreateBitCast(
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[2], Builder), I64), V8I8);
+    llvm::Value *Result = llvm::Constant::getNullValue(V8I8);
+    for (unsigned I = 0; I < 8; ++I) {
+      auto *Byte = Builder.CreateExtractElement(Control, Builder.getInt32(I));
+      auto *Index = Builder.CreateZExt(
+          Builder.CreateAnd(Byte, Builder.getInt8(7)), Builder.getInt32Ty());
+      auto *Selected = Builder.CreateExtractElement(Source, Index);
+      auto *Value =
+          Builder.CreateSelect(Builder.CreateICmpSLT(Byte, Builder.getInt8(0)),
+                               Builder.getInt8(0), Selected);
+      Result = Builder.CreateInsertElement(Result, Value, Builder.getInt32(I));
+    }
+    return Builder.CreateBitCast(Result, I64, "pshufb64");
+  }
   auto *A = widenToI128(getVar(Op.Inputs[1], Builder), Builder);
   auto *B = widenToI128(getVar(Op.Inputs[2], Builder), Builder);
 
@@ -43,10 +82,9 @@ llvm::Value *MedLLVMEmitter::emitPshufb(const MedOp &Op,
     auto *V32I8 = llvm::FixedVectorType::get(llvm::Type::getInt8Ty(*Ctx), 32);
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
         Mod, llvm::Intrinsic::x86_avx2_pshuf_b);
-    return fromVec(Builder.CreateCall(Fn,
-                                      {toVec(A, V32I8, Builder),
-                                       toVec(B, V32I8, Builder)},
-                                      "pshufb256"),
+    return fromVec(Builder.CreateCall(
+                       Fn, {toVec(A, V32I8, Builder), toVec(B, V32I8, Builder)},
+                       "pshufb256"),
                    Builder);
   }
 
@@ -86,25 +124,49 @@ llvm::Value *MedLLVMEmitter::emitUnpackShuffle(const MedOp &Op, Intrinsic IC,
   unsigned ElemBytes = 0;
   bool IsHigh = false;
   switch (IC) {
-  case I::Punpcklbw: ElemBytes = 1; IsHigh = false; break;
-  case I::Punpckhbw: ElemBytes = 1; IsHigh = true;  break;
-  case I::Punpcklwd: ElemBytes = 2; IsHigh = false; break;
-  case I::Punpckhwd: ElemBytes = 2; IsHigh = true;  break;
+  case I::Punpcklbw:
+    ElemBytes = 1;
+    IsHigh = false;
+    break;
+  case I::Punpckhbw:
+    ElemBytes = 1;
+    IsHigh = true;
+    break;
+  case I::Punpcklwd:
+    ElemBytes = 2;
+    IsHigh = false;
+    break;
+  case I::Punpckhwd:
+    ElemBytes = 2;
+    IsHigh = true;
+    break;
   case I::Punpckldq:
-  case I::Unpcklps:  ElemBytes = 4; IsHigh = false; break;
+  case I::Unpcklps:
+    ElemBytes = 4;
+    IsHigh = false;
+    break;
   case I::Punpckhdq:
-  case I::Unpckhps:  ElemBytes = 4; IsHigh = true;  break;
+  case I::Unpckhps:
+    ElemBytes = 4;
+    IsHigh = true;
+    break;
   case I::Punpcklqdq:
-  case I::Unpcklpd:  ElemBytes = 8; IsHigh = false; break;
+  case I::Unpcklpd:
+    ElemBytes = 8;
+    IsHigh = false;
+    break;
   case I::Punpckhqdq:
-  case I::Unpckhpd:  ElemBytes = 8; IsHigh = true;  break;
+  case I::Unpckhpd:
+    ElemBytes = 8;
+    IsHigh = true;
+    break;
   default:
     return nullptr;
   }
 
-  unsigned E = 16 / ElemBytes;             // elements per 128-bit lane
+  unsigned E = 16 / ElemBytes; // elements per 128-bit lane
   unsigned Lanes = Is256 ? 2 : 1;
-  unsigned Total = E * Lanes;              // total elements across both operands
+  unsigned Total = E * Lanes; // total elements across both operands
   auto *ElemTy = llvm::IntegerType::get(*Ctx, ElemBytes * 8);
   auto *VTy = llvm::FixedVectorType::get(ElemTy, Total);
 
@@ -118,7 +180,7 @@ llvm::Value *MedLLVMEmitter::emitUnpackShuffle(const MedOp &Op, Intrinsic IC,
     unsigned BaseA = L * E;
     unsigned BaseB = Total + L * E;
     for (unsigned K = 0; K < Half; ++K) {
-      Mask[L * E + 2 * K]     = BaseA + HalfBase + K;
+      Mask[L * E + 2 * K] = BaseA + HalfBase + K;
       Mask[L * E + 2 * K + 1] = BaseB + HalfBase + K;
     }
   }
@@ -235,8 +297,8 @@ llvm::Value *MedLLVMEmitter::emitImmShuffle(const MedOp &Op, Intrinsic IC,
         // <8 x i32>||<8 x i32> concat, A is 0..7 and B is 8..15.
         std::vector<int> Mask(8);
         for (int Lane = 0; Lane < 2; ++Lane) {
-          int AB = Lane * 4;      // A base for this lane
-          int BB = 8 + Lane * 4;  // B base for this lane
+          int AB = Lane * 4;     // A base for this lane
+          int BB = 8 + Lane * 4; // B base for this lane
           Mask[Lane * 4 + 0] = AB + ((Imm >> 0) & 3);
           Mask[Lane * 4 + 1] = AB + ((Imm >> 2) & 3);
           Mask[Lane * 4 + 2] = BB + ((Imm >> 4) & 3);
@@ -262,14 +324,14 @@ llvm::Value *MedLLVMEmitter::emitImmShuffle(const MedOp &Op, Intrinsic IC,
                        Builder);
       }
       if (IC == I::Palignr) {
-        // Per 128-bit lane: result = (A.lane : B.lane) >> (imm*8), low 16 bytes.
-        // shufflevector(B32, A32): B is 0..31 (low), A is 32..63 (high); within
-        // a lane the byte window is [laneBase, laneBase+16).
+        // Per 128-bit lane: result = (A.lane : B.lane) >> (imm*8), low 16
+        // bytes. shufflevector(B32, A32): B is 0..31 (low), A is 32..63 (high);
+        // within a lane the byte window is [laneBase, laneBase+16).
         int Shift = (Imm > 32) ? 32 : static_cast<int>(Imm);
         std::vector<int> Mask(32);
         for (int Lane = 0; Lane < 2; ++Lane) {
-          int BB = Lane * 16;       // B lane bytes in B32
-          int AB = 32 + Lane * 16;  // A lane bytes in A32
+          int BB = Lane * 16;      // B lane bytes in B32
+          int AB = 32 + Lane * 16; // A lane bytes in A32
           for (int J = 0; J < 16; ++J) {
             int Idx = J + Shift;
             if (Idx < 16)
@@ -280,9 +342,9 @@ llvm::Value *MedLLVMEmitter::emitImmShuffle(const MedOp &Op, Intrinsic IC,
               Mask[Lane * 16 + J] = -1;
           }
         }
-        return fromVec(Builder.CreateShuffleVector(toVec(B2, V32I8, Builder),
-                                                   toVec(A2, V32I8, Builder),
-                                                   Mask, "palignr256"),
+        return fromVec(zeroingShuffle(Builder, toVec(B2, V32I8, Builder),
+                                      toVec(A2, V32I8, Builder), Mask,
+                                      "palignr256"),
                        Builder);
       }
     }
@@ -313,9 +375,9 @@ llvm::Value *MedLLVMEmitter::emitImmShuffle(const MedOp &Op, Intrinsic IC,
           int Idx = J + Shift;
           Mask[J] = (Idx >= 32) ? -1 : Idx;
         }
-        return fromVec(Builder.CreateShuffleVector(toVec(B2, V16I8, Builder),
-                                                   toVec(A2, V16I8, Builder),
-                                                   Mask, "palignr"),
+        return fromVec(zeroingShuffle(Builder, toVec(B2, V16I8, Builder),
+                                      toVec(A2, V16I8, Builder), Mask,
+                                      "palignr"),
                        Builder);
       }
       if (IC == I::Blendd) {
@@ -346,8 +408,9 @@ llvm::Value *MedLLVMEmitter::emitImmShuffle(const MedOp &Op, Intrinsic IC,
     };
     auto [L0, L1] = Lane(Imm & 0xF);
     auto [H0, H1] = Lane((Imm >> 4) & 0xF);
-    return fromVec(Builder.CreateShuffleVector(
-                       A, B, std::vector<int>{L0, L1, H0, H1}, "perm2f128"),
+    return fromVec(zeroingShuffle(Builder, A, B,
+                                  std::vector<int>{L0, L1, H0, H1},
+                                  "perm2f128"),
                    Builder);
   }
 
@@ -374,8 +437,8 @@ llvm::Value *MedLLVMEmitter::emitMovDup(const MedOp &Op, Intrinsic IC,
   auto *V8I32 = llvm::FixedVectorType::get(llvm::Type::getInt32Ty(*Ctx), 8);
   auto *V4I64 = llvm::FixedVectorType::get(llvm::Type::getInt64Ty(*Ctx), 4);
 
-  // MOVDDUP duplicates even qwords; MOVSHDUP/MOVSLDUP duplicate odd/even dwords.
-  // On 256-bit the pattern repeats independently in each 128-bit lane.
+  // MOVDDUP duplicates even qwords; MOVSHDUP/MOVSLDUP duplicate odd/even
+  // dwords. On 256-bit the pattern repeats independently in each 128-bit lane.
   llvm::Type *VTy = nullptr;
   std::vector<int> Mask;
   const char *Name = nullptr;
