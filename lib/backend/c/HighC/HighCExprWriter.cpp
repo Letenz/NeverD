@@ -925,7 +925,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   if (E.IntrinsicId != Intrinsic::None) {
     auto Typed = renderX86TypedIntrinsicCall(
         Opts.TheArch, E, [this](const HighExpr &Expr) { return exprStr(Expr); },
-        HasCIntrinsics, Opts.Format != BinaryFormat::COFF);
+        HasCIntrinsics, Opts.Format != BinaryFormat::COFF,
+        [this](Intrinsic Id, unsigned Bytes) {
+          const auto It = X86FPStateHelpers.find({Id, Bytes});
+          if (It == X86FPStateHelpers.end())
+            llvm::report_fatal_error("uncollected x86 FP state helper");
+          return It->second;
+        });
     if (!Typed.empty())
       return Typed;
 

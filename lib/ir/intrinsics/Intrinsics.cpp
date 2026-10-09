@@ -49,6 +49,7 @@ struct CNameTable {
 #include "neverd/ir/intrinsics/intrinsics_aarch64_cnames.inc"
 #include "neverd/ir/intrinsics/intrinsics_arm_cnames.inc"
 #include "neverd/ir/intrinsics/intrinsics_x86_cnames.inc"
+#include "neverd/ir/intrinsics/intrinsics_x86_fp_state_cnames.inc"
   }
 };
 

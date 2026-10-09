@@ -11,12 +11,15 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../X86FPStateHelpers.h"
+
 #include "neverd/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/c/render/X86SegmentAsm.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/ir/high/X86FPStateShape.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 #include "neverd/lift/X86Regs.h"
@@ -25,6 +28,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <cctype>
 #include <limits>
 #include <string>
@@ -1454,11 +1458,41 @@ renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
 }
 } // namespace
 
-std::string
-renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
-                            std::function<std::string(const HighExpr &)> ExprFn,
-                            bool &HasCIntrinsics, bool GnuToolchain) {
+std::string renderX86TypedIntrinsicCall(
+    Arch TheArch, const HighExpr &Call,
+    std::function<std::string(const HighExpr &)> ExprFn, bool &HasCIntrinsics,
+    bool GnuToolchain,
+    std::function<std::string(Intrinsic, unsigned)> FPHelperName) {
   using I = Intrinsic;
+  if (isX86FPStateIntrinsic(Call.IntrinsicId)) {
+    const unsigned ResultBytes = Call.Type ? Call.Type->Size : 0;
+    if (ResultBytes && Call.Type->Kind != NdTypeKind::Int)
+      llvm::report_fatal_error(
+          "x86 FP numerical/state result requires raw bits");
+    const auto Shape = x86FPStateHighShape(Call, TheArch);
+    if (!x86FPStateShapeIsValid(Call.IntrinsicId, Shape))
+      llvm::report_fatal_error("invalid x86 FP state C contract");
+    const unsigned Bytes = x86FPStateHelperLayout(Call.IntrinsicId, Shape);
+    std::string Result =
+        (FPHelperName ? FPHelperName(Call.IntrinsicId, Bytes)
+                      : x86FPStateCHelper(Call.IntrinsicId, Bytes)) +
+        "(";
+    const unsigned Operands = isX86FPConversionStateIntrinsic(Call.IntrinsicId)
+                                  ? 2
+                                  : Call.Operands.size();
+    for (unsigned Index = 0; Index < Operands; ++Index) {
+      if (Index)
+        Result += ", ";
+      const auto &Operand = *Call.Operands[Index];
+      const auto Text = ExprFn(Operand);
+      if (Operand.Type && Operand.Type->Kind == NdTypeKind::Float)
+        Result += "__builtin_bit_cast(uint" +
+                  std::to_string(Operand.Type->Size * 8) + "_t, " + Text + ")";
+      else
+        Result += Text;
+    }
+    return Result + ")";
+  }
   if (Call.IntrinsicId == I::X87Ffree) {
     if ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
         Call.Operands.size() != 2 || !Call.Operands[1] ||

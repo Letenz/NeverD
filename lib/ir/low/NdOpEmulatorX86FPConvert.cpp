@@ -157,7 +157,9 @@ bool NdOpEmulator::executeX86FPConvert(const LowOp &Op) {
       if (isDenormal(Bits, SourceElementSize)) {
         if (DAZ)
           Bits &= signMask(SourceElementSize);
-        else
+        // Integer conversion raises invalid/precision, not a denormal
+        // operand exception. Float-to-float conversion retains that exception.
+        else if (FloatToFloat)
           Raised |= 1U << 1;
       }
       llvm::APFloat Value(floatSemantics(SourceElementSize),
