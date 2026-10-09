@@ -50,6 +50,7 @@
 #include "llvm/MC/BinaryRewrite.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -755,6 +756,65 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
                                           JT.StorageRanges.begin(),
                                           JT.StorageRanges.end());
     }
+  // Decide shared image identity before any function can cache a private run.
+  // Native C++ calls preserve immutable input helpers, whose image footprints
+  // are supplied by the same state/ABI owner as their exact call occurrences.
+  // Inspect masked bodies too, so every shard agrees on storage identity.
+  PreservedRegistrationImageStorageRanges.clear();
+  if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF && Img) {
+    for (size_t I = 0; I != Funcs.size(); ++I) {
+      const auto &Func = Funcs[I];
+      if (!Func.ExceptionMetadata || !Func.RegistrationStates ||
+          Func.SkippedSSA || !Func.RegistrationCallerCleanupABIComplete)
+        continue;
+      const auto Classification =
+          classifyWindowsEHNativeSource(*Func.ExceptionMetadata, TheArch, Fmt,
+                                        WindowsEHNativeCapability::IRLowering);
+      const auto &States = *Func.RegistrationStates;
+      if (!Classification.canLowerNativeIR() ||
+          Classification.Model !=
+              WindowsEHNativeSourceModel::X86RegistrationCxx ||
+          !States.Complete || !States.RegistrationLifetimeComplete ||
+          !States.CallFrameEffectsComplete ||
+          !States.CleanupFrameEffectsComplete)
+        continue;
+      auto Preserve = [&](const RegistrationCalleeFrameContract &Contract) {
+        for (const auto *Ranges : {&Contract.ImageReads, &Contract.ImageWrites,
+                                   &Contract.CallerPCWrites})
+          for (const auto &Range : *Ranges) {
+            if (!Range.isValid() || Range.End > UINT32_MAX)
+              return false;
+            PreservedRegistrationImageStorageRanges.push_back(Range);
+          }
+        return true;
+      };
+      bool Complete = true;
+      for (const auto &Contract : States.CalleeContracts)
+        Complete &= Preserve(Contract);
+      for (const auto &Contract : States.CleanupContracts)
+        Complete &= Preserve(Contract.Leaf);
+      if (!Complete) {
+        llvm::WithColor::error() << "med_llvm_emitter: malformed preserved "
+                                    "registration image footprint\n";
+        return nullptr;
+      }
+    }
+    llvm::sort(PreservedRegistrationImageStorageRanges, [](const auto &Left,
+                                                           const auto &Right) {
+      return std::tie(Left.Begin, Left.End) < std::tie(Right.Begin, Right.End);
+    });
+    size_t Count = 0;
+    for (const auto &Range : PreservedRegistrationImageStorageRanges) {
+      if (Count && Range.Begin <=
+                       PreservedRegistrationImageStorageRanges[Count - 1].End) {
+        auto &Previous = PreservedRegistrationImageStorageRanges[Count - 1];
+        Previous.End = std::max(Previous.End, Range.End);
+      } else {
+        PreservedRegistrationImageStorageRanges[Count++] = Range;
+      }
+    }
+    PreservedRegistrationImageStorageRanges.resize(Count);
+  }
   IdentityPreservingDataAddrs.clear();
   for (const MedFunc &Func : Funcs)
     for (const MedBlock &Block : Func.Blocks) {

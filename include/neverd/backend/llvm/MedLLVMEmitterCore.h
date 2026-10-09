@@ -636,6 +636,11 @@ private:
   /// a stale VA.
   bool segHasPtrRelocSlots(const Segment *S) const;
 
+  /// Preserved registration callees observe the original image. Any
+  /// intersecting data run must keep that storage identity across all module
+  /// functions.
+  bool preservesRegistrationImageStorage(uint64_t Begin, uint64_t End) const;
+
   /// True when segment \p S is read-only after relocation — a true read-only
   /// segment (.rodata) or a `.data.rel.ro` (writable in section flags but a
   /// relocated, read-only-after-reloc pointer table).  A genuinely mutable
@@ -2049,6 +2054,7 @@ private:
   // string and a later address-algebra use could create a second identity for
   // the same original VA.
   std::set<uint64_t> IdentityPreservingDataAddrs;
+  std::vector<ExceptionAddressRange> PreservedRegistrationImageStorageRanges;
   // One synthesized code-pointer mirror global per data segment base VA (see
   // buildCodePtrSegmentGlobal); reused across every access into that segment.
   std::map<uint64_t, llvm::Constant *> CodePtrTableGlobals;

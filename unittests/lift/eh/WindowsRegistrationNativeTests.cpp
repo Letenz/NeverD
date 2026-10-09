@@ -134,6 +134,66 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
     Module->print(llvm::errs(), nullptr);
   ASSERT_TRUE(Parent->getMetadata(windows_eh_md::NativeAttachment));
   ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  auto CheckSharedImageRoots = [&](const llvm::Module &M, size_t Minimum = 2) {
+    size_t SharedRoots = 0;
+    for (const auto &Global : M.globals()) {
+      auto Address = parseNdCodePtrSymbol(Global.getName());
+      if (!Address)
+        Address = parseNdDataSymbol(Global.getName());
+      if (!Address)
+        continue;
+      const auto *Segment = Loaded->getSegmentFor(*Address);
+      if (!Segment)
+        continue;
+      auto Observed = [&](const RegistrationCalleeFrameContract &Contract) {
+        for (const auto *Ranges : {&Contract.ImageReads, &Contract.ImageWrites,
+                                   &Contract.CallerPCWrites})
+          for (const auto &Range : *Ranges)
+            if (Range.Begin < Segment->VA + Segment->Size &&
+                Segment->VA < Range.End)
+              return true;
+        return false;
+      };
+      bool Shared = false;
+      for (const auto &Contract : Low.RegistrationStates->CalleeContracts)
+        Shared |= Observed(Contract);
+      for (const auto &Contract : Low.RegistrationStates->CleanupContracts)
+        Shared |= Observed(Contract.Leaf);
+      if (!Shared)
+        continue;
+      ++SharedRoots;
+      EXPECT_TRUE(Global.isDeclaration()) << Global.getName().str();
+      EXPECT_TRUE(Global.hasExternalLinkage()) << Global.getName().str();
+    }
+    EXPECT_GE(SharedRoots, Minimum);
+  };
+  CheckSharedImageRoots(*Module);
+  ASSERT_FALSE(Low.RegistrationStates->CleanupContracts.empty());
+  auto HelperLow = CFGBuilder().build(
+      *Loaded, Decoder, Low.RegistrationStates->CleanupContracts[0].Leaf.Target,
+      "registration_image_identity_first");
+  auto Helper = Converter.convert(HelperLow, Arch::X86, BinaryFormat::COFF);
+  inferMedTypes(Helper, Arch::X86);
+  llvm::LLVMContext ReorderedContext;
+  auto Reordered = Emitter.emit({Helper, Med}, ReorderedContext,
+                                "source-cxx-registration-reordered", Arch::X86,
+                                {}, &*Loaded, BinaryFormat::COFF);
+  ASSERT_TRUE(Reordered);
+  ASSERT_FALSE(llvm::verifyModule(*Reordered, &llvm::errs()));
+  ASSERT_TRUE(Reordered->getFunction(Med.Name));
+  EXPECT_TRUE(Reordered->getFunction(Med.Name)->getMetadata(
+      windows_eh_md::NativeAttachment));
+  CheckSharedImageRoots(*Reordered);
+  llvm::LLVMContext ShardContext;
+  const std::vector<char> Mask = {1, 0};
+  auto Shard = Emitter.emit({Helper, Med}, ShardContext,
+                            "source-cxx-registration-helper-shard", Arch::X86,
+                            {}, &*Loaded, BinaryFormat::COFF,
+                            /*MergeableGlobals=*/true, &Mask);
+  ASSERT_TRUE(Shard);
+  ASSERT_FALSE(llvm::verifyModule(*Shard, &llvm::errs()));
+  EXPECT_TRUE(Shard->getFunction(Med.Name)->isDeclaration());
+  CheckSharedImageRoots(*Shard, 1);
   EXPECT_TRUE(Parent->hasFnAttribute(llvm::RewriteWinX86CxxFrameAttribute));
   unsigned Catches = 0, Returns = 0, Cleanups = 0, Throws = 0;
   for (const auto &Block : *Parent)
