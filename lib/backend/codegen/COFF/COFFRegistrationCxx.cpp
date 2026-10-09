@@ -252,6 +252,39 @@ getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
                          Receipt.AbsolutePointerFields.end()) !=
       Receipt.AbsolutePointerFields.end())
     return rejectCxx("language pointer fields overlap");
+  BinaryImage GeneratedImage;
+  GeneratedImage.Arch = Arch::X86;
+  GeneratedImage.Bits = Bitness::Bits32;
+  GeneratedImage.Format = BinaryFormat::COFF;
+  GeneratedImage.Base = Image.Base;
+  GeneratedImage.Segments = Image.Segments;
+  Segment Generated;
+  Generated.VA = Compiled.BaseVA;
+  Generated.Size = Compiled.Bytes.size();
+  Generated.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Generated.Data = Compiled.Bytes;
+  if (Generated.VA > UINT32_MAX ||
+      Generated.Size > uint64_t(UINT32_MAX) + 1 - Generated.VA)
+    return rejectCxx("generated language image exceeds PE32 storage");
+  for (const auto &Original : Image.Segments) {
+    if (Original.Size > InvalidVA - Original.VA ||
+        ExceptionAddressRange{Original.VA, Original.VA + Original.Size}
+            .overlaps({Generated.VA, Generated.VA + Generated.Size}))
+      return rejectCxx("generated language image overlaps original storage");
+  }
+  GeneratedImage.Segments.push_back(std::move(Generated));
+  auto Decoded =
+      coff_loader::getCheckedX86CxxFuncInfoRecords(GeneratedImage, Info);
+  if (!Decoded || !Decoded->HasDistinctRanges ||
+      Decoded->Ranges.size() != Layout.Tables.size())
+    return rejectCxx(
+        "generated FuncInfo has no complete normalized wire graph");
+  for (const auto &Table : Layout.Tables)
+    if (!llvm::any_of(Decoded->Ranges, [&](const auto &Range) {
+          return Range.Begin == Table.BeginVA && Range.End == Table.EndVA;
+        }))
+      return rejectCxx("normalized generated graph changed an indexed extent");
+  Receipt.GeneratedCxxGraph = std::move(Decoded->Cxx);
   return Receipt;
 #endif
 }

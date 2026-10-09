@@ -155,6 +155,15 @@ definition. The committed receipt retains sorted original/generated RVAs; final
 validation requires PE32 x86, an executable original entry and the exact E9
 target, in addition to the generated section hash. A complete language table
 cannot authorize an omitted or redirected entry trampoline.
+The same bounded COFF FuncInfo decoder exposes complete normalized wire graphs,
+record extents and callback-pointer fields without inventing a physical frame.
+Valid record aliases remain inspectable; distinct ownership is a separate
+requirement for reconstruction.
+The compiler table consumer cross-checks this decoding with its exact indexed
+extents. Prepared C++ graphs and entry encodings then require fresh equality
+when the final PE is mapped and decoded, even if a changed section hash is
+supplied. This is language-graph reanalysis; discovery and state replay of a
+generated realigned ESI frame need their own coordinate proof.
 The original loader owns load-config's declared structure extent even when
 MSVC's directory retains its 64-byte compatibility size. Installation requires
 a complete unique raw-backed extent. Final guard validation uses this same

@@ -40,6 +40,20 @@ namespace neverd::coff_loader {
 /// install site and handler names come from symbols and import veneers.
 void parseX86RegistrationExceptions(BinaryImage &Img);
 
+/// Complete bounded wire decoding without inferring a registration frame or
+/// a callable function from data pointers. Indexed compiler owners can use
+/// this same format decoder to reanalyze an installed generated language graph.
+struct X86CxxFuncInfoRecords {
+  CxxExceptionInfo Cxx;
+  std::vector<ExceptionAddressRange> Ranges;
+  std::map<va_t, va_t> CallbackPointerSources;
+  /// Analysis may retain an otherwise valid graph with aliased native records;
+  /// replacement requires distinct record owners independently of decoding.
+  bool HasDistinctRanges = true;
+};
+std::optional<X86CxxFuncInfoRecords>
+getCheckedX86CxxFuncInfoRecords(const BinaryImage &Img, va_t FuncInfoVA);
+
 /// The PE32 byte extent of the normalized SEH3/EH4 scope graph, including
 /// EH4's four cookie fields. This describes format-owned storage only; it
 /// grants neither immutable runtime contents nor permission to copy a table.

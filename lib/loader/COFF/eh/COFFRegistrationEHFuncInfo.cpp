@@ -295,6 +295,34 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
 
 namespace neverd::coff_loader {
 
+std::optional<X86CxxFuncInfoRecords>
+getCheckedX86CxxFuncInfoRecords(const BinaryImage &Img, va_t FuncInfoVA) {
+  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF)
+    return std::nullopt;
+  ExceptionFunction Decoded;
+  X86CxxFuncInfoRecords Records;
+  if (!registration_detail::decodeX86FuncInfo(Decoded, Img, FuncInfoVA,
+                                              &Records.CallbackPointerSources,
+                                              &Records.Ranges) ||
+      Decoded.ParseStatus != ExceptionParseStatus::Complete || !Decoded.Cxx)
+    return std::nullopt;
+  std::sort(Records.Ranges.begin(), Records.Ranges.end(),
+            [](const auto &A, const auto &B) {
+              return std::tie(A.Begin, A.End) < std::tie(B.Begin, B.End);
+            });
+  Records.Ranges.erase(std::unique(Records.Ranges.begin(), Records.Ranges.end(),
+                                   [](const auto &A, const auto &B) {
+                                     return A.Begin == B.Begin &&
+                                            A.End == B.End;
+                                   }),
+                       Records.Ranges.end());
+  for (size_t I = 1; I < Records.Ranges.size(); ++I)
+    if (Records.Ranges[I - 1].overlaps(Records.Ranges[I]))
+      Records.HasDistinctRanges = false;
+  Records.Cxx = std::move(*Decoded.Cxx);
+  return Records;
+}
+
 namespace {
 bool replayCheckedCxxGraph(const BinaryImage &Img,
                            const ExceptionFunction &Function,
@@ -310,10 +338,16 @@ bool replayCheckedCxxGraph(const BinaryImage &Img,
       Function.Cxx->NativeFuncInfoVA != Function.HandlerDataVA ||
       Function.Cxx->NativeFuncInfoVA != Function.Registration->ScopeTableVA)
     return false;
-  ExceptionFunction Replay;
-  return registration_detail::decodeX86FuncInfo(
-             Replay, Img, Function.Cxx->NativeFuncInfoVA, Sources, Ranges) &&
-         Replay.Cxx && *Replay.Cxx == *Function.Cxx;
+  auto Replay =
+      getCheckedX86CxxFuncInfoRecords(Img, Function.Cxx->NativeFuncInfoVA);
+  if (!Replay || Replay->Cxx != *Function.Cxx ||
+      (Ranges && !Replay->HasDistinctRanges))
+    return false;
+  if (Sources)
+    *Sources = std::move(Replay->CallbackPointerSources);
+  if (Ranges)
+    *Ranges = std::move(Replay->Ranges);
+  return true;
 }
 } // namespace
 
@@ -332,17 +366,6 @@ getCheckedX86CxxMetadataRanges(const BinaryImage &Img,
   std::vector<ExceptionAddressRange> Ranges;
   if (!replayCheckedCxxGraph(Img, Function, nullptr, &Ranges))
     return std::nullopt;
-  std::sort(Ranges.begin(), Ranges.end(), [](const auto &A, const auto &B) {
-    return std::tie(A.Begin, A.End) < std::tie(B.Begin, B.End);
-  });
-  Ranges.erase(std::unique(Ranges.begin(), Ranges.end(),
-                           [](const auto &A, const auto &B) {
-                             return A.Begin == B.Begin && A.End == B.End;
-                           }),
-               Ranges.end());
-  for (size_t I = 1; I < Ranges.size(); ++I)
-    if (Ranges[I - 1].overlaps(Ranges[I]))
-      return std::nullopt;
   return Ranges;
 }
 

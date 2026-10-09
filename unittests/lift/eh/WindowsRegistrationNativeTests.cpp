@@ -1413,6 +1413,40 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
   ASSERT_FALSE(bool(Installed)) << llvm::toString(std::move(Installed));
   auto Checked = validateCOFFRegistrationPatch(Binary, *Update);
   ASSERT_FALSE(bool(Checked)) << llvm::toString(std::move(Checked));
+  ASSERT_EQ(Update->GeneratedCxxGraphs.size(), 1u);
+  EXPECT_EQ(Update->GeneratedCxxGraphs[0].NativeFuncInfoVA,
+            HandlerReceipt->Tables.FuncInfoVA);
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    auto Changed = *Update;
+    if (Mutation == 0)
+      Changed.GeneratedCxxGraphs.clear();
+    else if (Mutation == 1)
+      Changed.EntryEncodings.clear();
+    else if (Mutation == 2)
+      ++Changed.GeneratedCxxGraphs[0].TryBlocks[0].TryHigh;
+    else
+      ++Changed.GeneratedCxxGraphs[0].UnwindMap[1].ToState;
+    auto Failure = validateCOFFRegistrationPatch(Binary, Changed);
+    ASSERT_TRUE(bool(Failure));
+    llvm::consumeError(std::move(Failure));
+  }
+  {
+    auto Changed = Binary;
+    const auto Field =
+        RawOffset(Changed, HandlerReceipt->Tables.FuncInfoVA - Loaded->Base, 4);
+    ASSERT_TRUE(Field);
+    Changed[*Field] ^= 1;
+    auto Rehashed = *Update;
+    const auto Section =
+        RawOffset(Changed, Rehashed.SectionRVA, Rehashed.SectionSize);
+    ASSERT_TRUE(Section);
+    Rehashed.SectionSHA256 = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
+        Changed.data() + *Section, Rehashed.SectionSize));
+    auto Failure = validateCOFFRegistrationPatch(Changed, Rehashed);
+    ASSERT_TRUE(bool(Failure));
+    EXPECT_NE(llvm::toString(std::move(Failure)).find("normalized graph"),
+              std::string::npos);
+  }
   ASSERT_EQ(Update->PatchedEntryRVAs.size(), 1u);
   EXPECT_EQ(Update->PatchedEntryRVAs[0],
             (std::pair<uint32_t, uint32_t>{

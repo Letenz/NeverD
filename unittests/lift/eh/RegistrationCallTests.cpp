@@ -686,6 +686,11 @@ struct CxxMetadataImage {
 
 TEST(RegistrationCallABI, CxxMetadataExtentsBindTheReparsedSourceGraph) {
   CxxMetadataImage F;
+  const auto Records = coff_loader::getCheckedX86CxxFuncInfoRecords(
+      F.Code.Image, F.EH.Cxx->NativeFuncInfoVA);
+  ASSERT_TRUE(Records);
+  EXPECT_EQ(Records->Cxx, *F.EH.Cxx);
+  EXPECT_EQ(Records->CallbackPointerSources.size(), 2u);
   const auto Ranges =
       coff_loader::getCheckedX86CxxMetadataRanges(F.Code.Image, F.EH);
   ASSERT_TRUE(Ranges);
@@ -697,6 +702,9 @@ TEST(RegistrationCallABI, CxxMetadataExtentsBindTheReparsedSourceGraph) {
     EXPECT_EQ((*Ranges)[I].End, F.TableVA + Expected[I].second);
   }
   F.tableWord(0x58, 0);
+  const auto Changed = coff_loader::getCheckedX86CxxFuncInfoRecords(
+      F.Code.Image, F.EH.Cxx->NativeFuncInfoVA);
+  EXPECT_FALSE(Changed);
   EXPECT_FALSE(coff_loader::getCheckedX86CxxMetadataRanges(F.Code.Image, F.EH));
   EXPECT_FALSE(
       coff_loader::getCheckedX86CxxCallbackPointerSources(F.Code.Image, F.EH));
@@ -887,6 +895,11 @@ TEST(RegistrationCallABI, CxxMetadataExtentsRejectDistinctOverlappingRecords) {
   ASSERT_TRUE(
       coff_loader::getCheckedX86CxxCallbackPointerSources(F.Code.Image, F.EH));
   EXPECT_FALSE(coff_loader::getCheckedX86CxxMetadataRanges(F.Code.Image, F.EH));
+  const auto Records = coff_loader::getCheckedX86CxxFuncInfoRecords(
+      F.Code.Image, F.EH.Cxx->NativeFuncInfoVA);
+  ASSERT_TRUE(Records);
+  EXPECT_FALSE(Records->HasDistinctRanges);
+  EXPECT_EQ(Records->Cxx, Cxx);
 }
 
 TEST(RegistrationCallABI, CxxMetadataBoundsDoNotWrapAtThePE32Limit) {

@@ -1749,6 +1749,7 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
           *Function, *EH, Image, Compiled);
       if (!Receipt)
         return Receipt.takeError();
+      Update.GeneratedCxxGraphs.push_back(Receipt->Tables.GeneratedCxxGraph);
       if (Receipt->CodeRange.Begin < NewSectionVA ||
           Receipt->CodeRange.Begin < Image.Base ||
           Receipt->CodeRange.Begin > UINT32_MAX)
@@ -1887,6 +1888,11 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
       return Offset.takeError();
     Update.PatchedEntryRVAs.emplace_back(Original - Image.Base,
                                          Generated - Image.Base);
+    const auto Source = Sources.find(Original);
+    Update.EntryEncodings.push_back(
+        Source == Sources.end()
+            ? std::nullopt
+            : std::optional<ExceptionEncoding>(Source->second->Encoding));
   }
   std::set<va_t> AbsoluteFields;
   for (const auto &Section : Compiled.Sections) {
@@ -2163,6 +2169,7 @@ validateCOFFRegistrationPatch(llvm::ArrayRef<uint8_t> Binary,
     return reject(
         "installed registration section has incompatible memory permissions");
   if (Update.PatchedEntryRVAs.empty() ||
+      Update.EntryEncodings.size() != Update.PatchedEntryRVAs.size() ||
       Update.PatchedEntryRVAs.size() > limits::kMaxRegistrationEHStateWork)
     return reject("installed registration has no bounded entry receipt");
   uint64_t PreviousEnd = 0;
@@ -2191,6 +2198,93 @@ validateCOFFRegistrationPatch(llvm::ArrayRef<uint8_t> Binary,
         uint32_t(Original + 5 + readLE<uint32_t>(Bytes + 1)) != Generated)
       return reject("installed registration entry differs from its exact "
                     "compiler trampoline");
+  }
+  size_t CxxOwners = 0;
+  for (const auto &Encoding : Update.EntryEncodings) {
+    if (!Encoding)
+      continue;
+    if (*Encoding == ExceptionEncoding::X86CxxFuncInfo)
+      ++CxxOwners;
+    else if (*Encoding != ExceptionEncoding::X86ScopeTableEH3 &&
+             *Encoding != ExceptionEncoding::X86ScopeTableEH4)
+      return reject("installed registration has an unsupported entry encoding");
+  }
+  if (CxxOwners != Update.GeneratedCxxGraphs.size())
+    return reject("installed C++ graph set differs from its entry encodings");
+  if (CxxOwners) {
+    BinaryImage Reparsed;
+    Reparsed.Base = Update.ImageBase;
+    Reparsed.Arch = Arch::X86;
+    Reparsed.Bits = Bitness::Bits32;
+    Reparsed.Format = BinaryFormat::COFF;
+    bool InvalidSections = false;
+    std::vector<std::pair<uint64_t, uint64_t>> VirtualRanges, RawRanges;
+    forEachPESection(PE, [&](const PESectionFields &Section, uint16_t) {
+      const uint64_t Extent = std::max(uint32_t(Section.VirtualSize),
+                                       uint32_t(Section.SizeOfRawData));
+      if (!Extent)
+        return;
+      const uint64_t VA = uint64_t(Update.ImageBase) + Section.VirtualAddress;
+      if (VA > UINT32_MAX || Extent > uint64_t(UINT32_MAX) + 1 - VA ||
+          !rangeInBounds(Section.PointerToRawData, Section.SizeOfRawData,
+                         Binary.size())) {
+        InvalidSections = true;
+        return;
+      }
+      VirtualRanges.emplace_back(VA, VA + Extent);
+      if (Section.SizeOfRawData)
+        RawRanges.emplace_back(Section.PointerToRawData,
+                               uint64_t(Section.PointerToRawData) +
+                                   Section.SizeOfRawData);
+      Segment Mapped;
+      Mapped.VA = VA;
+      Mapped.Size = Extent;
+      Mapped.Flags = coffFlagsToNd(Section.Characteristics);
+      Mapped.Data.assign(Binary.begin() + Section.PointerToRawData,
+                         Binary.begin() + Section.PointerToRawData +
+                             Section.SizeOfRawData);
+      Reparsed.Segments.push_back(std::move(Mapped));
+    });
+    auto Overlaps = [](auto &Ranges) {
+      llvm::sort(Ranges);
+      for (size_t I = 1; I < Ranges.size(); ++I)
+        if (Ranges[I].first < Ranges[I - 1].second)
+          return true;
+      return false;
+    };
+    if (InvalidSections || Overlaps(VirtualRanges) || Overlaps(RawRanges))
+      return reject("installed C++ graph has conflicting PE section storage");
+    std::set<va_t> FuncInfos;
+    size_t Work = CxxOwners;
+    for (const auto &Expected : Update.GeneratedCxxGraphs) {
+      const auto Charge = [&](size_t Amount) {
+        if (Amount > limits::kMaxRegistrationEHStateWork - Work)
+          return false;
+        Work += Amount;
+        return true;
+      };
+      if (!Charge(Expected.UnwindMap.size() + Expected.TryBlocks.size() +
+                  Expected.IPMap.size() + Expected.ExceptionSpecTypes.size() +
+                  1))
+        return reject(
+            "installed C++ graph reanalysis exhausted its work budget");
+      for (const auto &Try : Expected.TryBlocks)
+        if (!Charge(Try.Handlers.size()))
+          return reject(
+              "installed C++ catch reanalysis exhausted its work budget");
+      if (!FuncInfos.insert(Expected.NativeFuncInfoVA).second)
+        return reject("installed C++ graphs reuse one FuncInfo owner");
+      auto Decoded = coff_loader::getCheckedX86CxxFuncInfoRecords(
+          Reparsed, Expected.NativeFuncInfoVA);
+      if (!Decoded || !Decoded->HasDistinctRanges || Decoded->Cxx != Expected)
+        return reject(
+            "installed C++ FuncInfo differs from its normalized graph");
+      for (const auto &Range : Decoded->Ranges)
+        if (Range.Begin < uint64_t(Update.ImageBase) + Update.SectionRVA ||
+            Range.End > uint64_t(Update.ImageBase) + Update.SectionRVA +
+                            Update.SectionSize)
+          return reject("installed C++ record leaves its generated section");
+    }
   }
   const auto *Reloc = getPEDataDirectory(PE, llvm::COFF::BASE_RELOCATION_TABLE);
   if (!Reloc || Reloc->RelativeVirtualAddress != Update.RelocationRVA ||

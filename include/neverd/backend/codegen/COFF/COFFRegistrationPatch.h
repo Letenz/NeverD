@@ -8,6 +8,8 @@
 
 #include "neverd/Common.h"
 #include "neverd/loader/ExceptionCommon.h"
+#include "neverd/loader/ExceptionEncoding.h"
+#include "neverd/loader/ExceptionWindowsEH.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -56,6 +58,10 @@ struct COFFRegistrationPatchUpdate {
   /// Sorted original/generated RVAs whose exact compiler owners were checked
   /// during preparation. Final validation closes the committed E9 entries.
   std::vector<std::pair<uint32_t, uint32_t>> PatchedEntryRVAs;
+  std::vector<std::optional<ExceptionEncoding>> EntryEncodings;
+  /// Complete generated wire graphs decoded through the shared COFF format
+  /// owner after compiler/source projection checks. Final PE reparses them.
+  std::vector<CxxExceptionInfo> GeneratedCxxGraphs;
 };
 
 llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
@@ -90,6 +96,7 @@ struct COFFRegistrationCxxTableReceipt {
   std::array<std::pair<va_t, va_t>, 3> Tables{};
   std::map<int32_t, int32_t> SourceToGeneratedStates;
   std::vector<va_t> AbsolutePointerFields;
+  CxxExceptionInfo GeneratedCxxGraph;
 };
 llvm::Expected<COFFRegistrationCxxTableReceipt>
 getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
