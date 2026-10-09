@@ -7,8 +7,9 @@
 /// \file
 /// x86 and x86-64 stack-argument recovery.  Both use the shared spilled-store
 /// scan (slot width is TRI.PointerSize).  i386 cdecl/stdcall additionally
-/// pushes each argument, so every STORE looks like slot 0; walk those pushes
-/// backward (last push is arg0).
+/// pushes each argument, so every STORE looks like slot 0: place each store
+/// by its offset from the stack pointer the call is made with, or else walk
+/// the pushes backward (last push is arg0).
 ///
 //===----------------------------------------------------------------------===//
 
@@ -94,6 +95,71 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   // replacing the arguments below; the arguments leave out those that can
   // be none (IsNoArgumentStore), such as a local written between two pushes
   // or GCC's `mov [esp+N]` stores (MinGW's `mov [ebp-0xc], 0` beside them).
+  //
+  // With the stack pointer the call is made with known, a store's slot is
+  // its offset from it instead: a push, a `mov [esp+N]` in any order, or
+  // clang -O0's store through a copy of ESP.  A slot below it (a get-PC
+  // push the code popped again) or past the callee's arguments holds none.
+  auto stores = [&](auto &&Take) {
+    auto walk = [&](const std::vector<MedOp> &Ops, int Before) {
+      for (int J = Before; J >= 0; --J) {
+        const MedOp &Prev = Ops[static_cast<size_t>(J)];
+        if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
+            Prev.Opcode == NdOp::INTRINSIC)
+          return true;
+        if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
+            Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+          continue;
+        // A callee-saved register's entry value is a prologue save; a value
+        // computed into one is an argument (clang -O0 keeps them in EBX, ESI
+        // and EDI).
+        if (Scan.IsCalleeSave(Prev.Inputs[1]) && Prev.Inputs[1].SSAVer == 0)
+          continue;
+        if (!Take(Prev))
+          return false;
+      }
+      return true;
+    };
+    if (Scan.Ops && !walk(*Scan.Ops, static_cast<int>(Scan.CallIdx) - 1))
+      return;
+    for (const auto &W : Scan.ExtraWindows)
+      if (W.Ops && !walk(*W.Ops, W.Before))
+        return;
+  };
+  // Stores outnumbering the arguments found make a cdecl call, whose ECX
+  // and EDX written before it are scratch (clang -O0 loads a value there
+  // before storing it).
+  size_t StoreCount = 0;
+  stores([&](const MedOp &) {
+    return ++StoreCount < static_cast<size_t>(Scan.MaxArgs);
+  });
+  if (StoreCount <= Args.size())
+    return;
+  if (Scan.CallStackEntryOffset && Scan.EntryOffsetOf) {
+    const int64_t SlotBytes = static_cast<int64_t>(Scan.TRI->PointerSize);
+    std::vector<ExprPtr> Slots(static_cast<size_t>(Scan.MaxArgs));
+    stores([&](const MedOp &Store) {
+      const std::optional<int64_t> Entry = Scan.EntryOffsetOf(Store.Inputs[0]);
+      if (!Entry || *Entry < *Scan.CallStackEntryOffset)
+        return true;
+      const int64_t Offset = *Entry - *Scan.CallStackEntryOffset;
+      if (Offset % SlotBytes == 0 && Offset / SlotBytes < Scan.MaxArgs)
+        if (ExprPtr &Slot = Slots[static_cast<size_t>(Offset / SlotBytes)];
+            !Slot)
+          Slot = Scan.ToExpr(Store.Inputs[1]);
+      return true;
+    });
+    size_t Placed = 0;
+    while (Placed < Slots.size() && Slots[Placed])
+      ++Placed;
+    if (Placed) {
+      for (size_t K = 0; K < Placed && K < Found.size(); ++K)
+        Found[K] = Slots[K];
+      Args.assign(Slots.begin(), Slots.begin() + Placed);
+      return;
+    }
+  }
+
   std::vector<ExprPtr> Pushed, Arguments;
   auto walkPushes = [&](const std::vector<MedOp> &Ops, int Before) {
     for (int J = Before; J >= 0; --J) {
@@ -104,7 +170,7 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
           Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         continue;
-      if (Scan.IsCalleeSave(Prev.Inputs[1]))
+      if (Scan.IsCalleeSave(Prev.Inputs[1]) && Prev.Inputs[1].SSAVer == 0)
         continue;
       ExprPtr Value = Scan.ToExpr(Prev.Inputs[1]);
       if (!Scan.IsNoArgumentStore || !Scan.IsNoArgumentStore(Prev.Inputs[0]))

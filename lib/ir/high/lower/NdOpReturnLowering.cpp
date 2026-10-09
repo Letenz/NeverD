@@ -13,6 +13,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedReturnValue.h"
 
 #include <algorithm>
 #include <set>
@@ -188,6 +189,11 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
   if (ExplicitABI && Med.SourceParametersBound &&
       !Med.SourceTypeHint->ReturnComponents.empty() && CurOp.NumInputs == 1 &&
       CurOp.Inputs[0].Size == Func.ReturnType->Size)
+    RetVal = medvarToExpr(CurOp.Inputs[0]);
+
+  if (!RetVal && !ExplicitABI && !UsesFPReturnReg && !Med.FPReturnViaX87 &&
+      Func.ReturnType && Func.ReturnType->Kind == NdTypeKind::Int &&
+      hasPropagatedIntegerReturnValue(CurOp, TargetArch, Func.ReturnType->Size))
     RetVal = medvarToExpr(CurOp.Inputs[0]);
 
   if (!RetVal && CurOp.NumInputs >= 1 && CurOp.Inputs[0].Id >= 0 &&

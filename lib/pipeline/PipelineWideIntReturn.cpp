@@ -17,6 +17,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/loader/SymbolDecoration.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -449,6 +450,16 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
       std::map<va_t, const MedFunc *> ByEntry;
       for (const auto &MF : Result.MedFuncs)
         ByEntry[MF.Entry] = &MF;
+      // A compiler runtime routine that returns a double-word integer
+      // (CompilerRuntimeDoubleWord.def) returns the pair with no caller in
+      // view: `___udivdi3` decompiled alone.
+      std::set<va_t> NamedPairs;
+      for (const auto &MF : Result.MedFuncs)
+        if (libc::returnsDoubleWord(
+                cNameOfSymbol(MF.Name, Img.Format, Img.Arch))) {
+          WideRetCallees.insert(MF.Entry);
+          NamedPairs.insert(MF.Entry);
+        }
       std::set<va_t> ReadHigh;
       for (const auto &MF : Result.MedFuncs)
         for (const auto &Blk : MF.Blocks)
@@ -475,7 +486,7 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
           continue;
         }
         bool PassesPair = writesRegister(*Callee->second, TRI.IntReturnReg2) &&
-                          (ReadHigh.count(*It) ||
+                          (ReadHigh.count(*It) || NamedPairs.count(*It) ||
                            returnsRegisterPairI64(*Callee->second, TRI));
         for (const auto &Blk : Callee->second->Blocks)
           for (size_t I = 0; I + 1 < Blk.Ops.size(); ++I) {

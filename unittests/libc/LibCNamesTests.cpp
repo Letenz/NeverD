@@ -506,6 +506,30 @@ TEST(LibCPrototype, PointerTypes) {
   EXPECT_FALSE(isPointerType("size_t"));
 }
 
+TEST(LibCReturnsValue, ReadsTheDeclaredResult) {
+  // A header's declaration.
+  EXPECT_EQ(libcReturnsValue("calloc", BinaryFormat::ELF), true);
+  EXPECT_EQ(libcReturnsValue("atexit", BinaryFormat::COFF), true);
+  EXPECT_EQ(libcReturnsValue("free", BinaryFormat::COFF), false);
+  EXPECT_EQ(libcReturnsValue("qsort", BinaryFormat::MachO), false);
+  // A function returning a pointer to a function returns a value.
+  EXPECT_EQ(libcReturnsValue("signal", BinaryFormat::ELF), true);
+  // A prototype's result, in the image format it applies to.
+  EXPECT_EQ(libcReturnsValue("_strtoi64", BinaryFormat::COFF), true);
+  EXPECT_EQ(libcReturnsValue("_initterm", BinaryFormat::COFF), false);
+  EXPECT_FALSE(libcReturnsValue("_strtoi64", BinaryFormat::ELF).has_value());
+  EXPECT_EQ(libcReturnsValue("__libc_start_main", BinaryFormat::ELF), true);
+  // Neither declares it.
+  EXPECT_FALSE(libcReturnsValue("neverd_unknown_routine", BinaryFormat::ELF)
+                   .has_value());
+}
+
+TEST(LibCReturnsValue, TheGeneratedTableNamesOnlyKnownRoutines) {
+#define NEVERD_LIBC_RETURN_KIND(NAME, KIND) EXPECT_TRUE(isKnownFunction(NAME));
+#include "neverd/libc/LibCReturnKinds.inc"
+#undef NEVERD_LIBC_RETURN_KIND
+}
+
 TEST(VarArgFixedCount, IsoAliasesTakeTheStandardRoutinesArguments) {
   EXPECT_EQ(varArgFixedCount("__isoc99_scanf"), 1u);
   EXPECT_EQ(varArgFixedCount("__isoc99_sscanf"), 2u);

@@ -1,0 +1,68 @@
+//===- CompilerRuntimeDoubleWord.def - Double-word results ------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// The compiler runtime routines that return a double-word integer.  On a
+// 32-bit target GCC's libgcc, LLVM's compiler-rt and the Microsoft C runtime
+// implement 64-bit arithmetic and conversions with them, and each returns its
+// result in a register pair: EDX:EAX on x86, R1:R0 on ARM.  The routines that
+// return more than the pair (__aeabi_uldivmod's remainder in R3:R2, MSVC's
+// _aulldvrm in ECX:EBX) and those returning an int or a float are not here.
+//
+// NEVERD_DOUBLE_WORD_RESULT(Name): the C name of one routine.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_DOUBLE_WORD_RESULT
+#error "define NEVERD_DOUBLE_WORD_RESULT(Name) before including this file"
+#endif
+
+// libgcc and compiler-rt integer arithmetic.
+NEVERD_DOUBLE_WORD_RESULT("__absvdi2")
+NEVERD_DOUBLE_WORD_RESULT("__addvdi3")
+NEVERD_DOUBLE_WORD_RESULT("__ashldi3")
+NEVERD_DOUBLE_WORD_RESULT("__ashrdi3")
+NEVERD_DOUBLE_WORD_RESULT("__bswapdi2")
+NEVERD_DOUBLE_WORD_RESULT("__divdi3")
+NEVERD_DOUBLE_WORD_RESULT("__divmoddi4")
+NEVERD_DOUBLE_WORD_RESULT("__lshrdi3")
+NEVERD_DOUBLE_WORD_RESULT("__moddi3")
+NEVERD_DOUBLE_WORD_RESULT("__muldi3")
+NEVERD_DOUBLE_WORD_RESULT("__mulvdi3")
+NEVERD_DOUBLE_WORD_RESULT("__negdi2")
+NEVERD_DOUBLE_WORD_RESULT("__negvdi2")
+NEVERD_DOUBLE_WORD_RESULT("__subvdi3")
+NEVERD_DOUBLE_WORD_RESULT("__udivdi3")
+NEVERD_DOUBLE_WORD_RESULT("__udivmoddi4")
+NEVERD_DOUBLE_WORD_RESULT("__umoddi3")
+// libgcc and compiler-rt floating-point to 64-bit integer conversions.
+NEVERD_DOUBLE_WORD_RESULT("__fixdfdi")
+NEVERD_DOUBLE_WORD_RESULT("__fixsfdi")
+NEVERD_DOUBLE_WORD_RESULT("__fixtfdi")
+NEVERD_DOUBLE_WORD_RESULT("__fixunsdfdi")
+NEVERD_DOUBLE_WORD_RESULT("__fixunssfdi")
+NEVERD_DOUBLE_WORD_RESULT("__fixunstfdi")
+NEVERD_DOUBLE_WORD_RESULT("__fixunsxfdi")
+NEVERD_DOUBLE_WORD_RESULT("__fixxfdi")
+// The ARM run-time ABI's 64-bit helpers.
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_d2lz")
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_d2ulz")
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_f2lz")
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_f2ulz")
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_lasr")
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_llsl")
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_llsr")
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_lmul")
+// The Microsoft C runtime's 32-bit x86 helpers.
+NEVERD_DOUBLE_WORD_RESULT("_alldiv")
+NEVERD_DOUBLE_WORD_RESULT("_allmul")
+NEVERD_DOUBLE_WORD_RESULT("_allrem")
+NEVERD_DOUBLE_WORD_RESULT("_allshl")
+NEVERD_DOUBLE_WORD_RESULT("_allshr")
+NEVERD_DOUBLE_WORD_RESULT("_aulldiv")
+NEVERD_DOUBLE_WORD_RESULT("_aullrem")
+NEVERD_DOUBLE_WORD_RESULT("_aullshr")
+
+#undef NEVERD_DOUBLE_WORD_RESULT

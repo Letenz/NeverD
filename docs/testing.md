@@ -36,6 +36,23 @@ backend evidence, not as semantic success.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
+## x86 invalid encodings and instruction boundaries
+
+`NeverDX86EncodingAccuracyTests` checks raw illegal LOCK forms and MOV-to-CS
+before any LowIR effects are published, in strict and permissive lifting.
+Legal memory-destination LOCK operations and segment moves remain controls.
+UD1 golden encodings exercise complete ModR/M, SIB and displacement extents,
+32/64-bit address modes, address overrides, every truncated prefix, and the
+15-byte limit. Detailed, lightweight and lifting decode routes must agree and
+leave a following NOP at the correct boundary. UD1 retains its unconditional
+invalid-opcode identity; this suite does not select a processor's UD0 policy.
+
+```sh
+cmake --build build-release --target NeverDX86EncodingAccuracyTests
+ctest --test-dir build-release -L '^NeverDX86EncodingAccuracyTests$' \
+  --output-on-failure
+```
+
 ## Inline C memory accesses
 
 `NeverDCMemoryCopyTests` executes HighC and LLVMC output at `-O0` and `-O2`

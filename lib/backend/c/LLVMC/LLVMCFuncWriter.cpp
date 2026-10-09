@@ -12,6 +12,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../VariadicImportStub.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -8454,6 +8455,22 @@ dropUnreferencedFallthroughEHLabels(std::string Text,
 } // namespace
 
 void LLVMCWriter::writeFunction(llvm::Function &Fn) {
+  if (Img && !Fn.isDeclaration()) {
+    std::optional<uint64_t> Entry;
+    if (auto VA = rewrite_source::getOriginalVA(Fn))
+      Entry = *VA;
+    else
+      llvm::consumeError(VA.takeError());
+    if (const std::string Import =
+            Entry ? c_stub::variadicImportOfStub(*Img, *Entry) : std::string();
+        !Import.empty()) {
+      std::string Text;
+      llvm::raw_string_ostream Stub(Text);
+      c_stub::writeVariadicImportStub(Stub, functionIdentifier(Fn), Import, {});
+      OS << Text;
+      return;
+    }
+  }
   if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Fn) &&
       (functionHasWindowsEHPads(Fn) || functionNeedsAnalysisOnlyEHWrap(Fn))) {
     writeAnalysisOnlyFunction(Fn);
