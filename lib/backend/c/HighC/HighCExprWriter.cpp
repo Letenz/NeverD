@@ -124,26 +124,12 @@ std::string HighCWriter::varName(const MedVar &V) const {
     return "var_" + llvm::utohexstr(static_cast<uint64_t>(
                         V.StackOff < 0 ? -V.StackOff : V.StackOff));
   case MedVar::Param:
-    if (Dbg && CurrentFunc) {
-      if (auto FS = Dbg->resolveFunction(CurrentFunc->Entry); FS) {
-        if (isMsvcIndirectReturn(FS->ReturnType)) {
-          const bool HiddenSret =
-              highIRIncludesIndirectReturn(*CurrentFunc, *FS);
-          const int SretId = indirectReturnParamId(*FS);
-          if (HiddenSret && V.Id == SretId)
-            return "result";
-          size_t DebugIdx = static_cast<size_t>(V.Id);
-          if (HiddenSret && V.Id > SretId)
-            DebugIdx = static_cast<size_t>(V.Id) - 1;
-          if (V.Id >= 0 && DebugIdx < FS->Params.size() &&
-              !FS->Params[DebugIdx].first.empty())
-            return FS->Params[DebugIdx].first;
-        } else if (V.Id >= 0 && static_cast<size_t>(V.Id) < FS->Params.size() &&
-                   !FS->Params[static_cast<size_t>(V.Id)].first.empty()) {
-          return FS->Params[static_cast<size_t>(V.Id)].first;
-        }
-      }
-    }
+    // The debug signature names the parameter by where it arrives.
+    if (Dbg && CurrentFunc && V.Id >= 0 && !CurrentFunc->SourceTypeHint)
+      if (std::string Name =
+              debugParamName(*CurrentFunc, static_cast<size_t>(V.Id));
+          !Name.empty())
+        return Name;
     if (auto It = ParamDisplayNames.find(V.Id); It != ParamDisplayNames.end())
       return It->second;
     if (CurrentFunc && V.Id >= 0 &&
@@ -1096,7 +1082,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       }
     }
     if (Callee) {
-      if (const TypeRef Expected = expectedDebugCallArgType(*Callee, I)) {
+      // A callee this file defines takes what its prototype declares.
+      if (const TypeRef Expected = Defined
+                                       ? emittedParamType(*Defined, I)
+                                       : expectedDebugCallArgType(*Callee, I)) {
         S += exprStrAsTypedArg(*Op, Expected, Defined != nullptr);
         continue;
       }
@@ -1993,6 +1982,10 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
     return I < Have && isCtorDisplayOperand(E.Operands[I].get());
   };
   if (const auto Callee = debugCallee(E)) {
+    // The call passes the machine arguments of another signature, whatever
+    // their count.
+    if (!positionalDebugSignature(*Callee))
+      return Have;
     const bool Indirect = isMsvcIndirectReturn(Callee->ReturnType);
     const bool Member = Indirect && isWin64MemberIndirectReturn(*Callee);
     size_t Limit = 0;
@@ -2100,6 +2093,10 @@ TypeRef HighCWriter::displayCallArgType(const HighExpr &Call,
 
 TypeRef HighCWriter::expectedDebugCallArgType(const FunctionSym &FS,
                                               size_t Index) const {
+  // A call's arguments come in the convention's order, which matches the
+  // signature's only for a positional one.
+  if (!positionalDebugSignature(FS))
+    return nullptr;
   const bool Indirect = isMsvcIndirectReturn(FS.ReturnType);
   const bool Member = Indirect && isWin64MemberIndirectReturn(FS);
   TypeRef Sret;
@@ -2441,25 +2438,18 @@ TypeRef HighCWriter::debugParamType(const MedVar &V) const {
   if (!Dbg || !CurrentFunc || V.Kind != MedVar::Param || V.RenameTag >= 0 ||
       V.Id < 0)
     return nullptr;
-  auto FS = Dbg->resolveFunction(CurrentFunc->Entry);
-  if (!FS)
+  // The debug parameter whose whole value the parameter holds.
+  const DebugParamBinding B =
+      debugParamBinding(*CurrentFunc, static_cast<size_t>(V.Id));
+  if (B.Index < 0 || !B.Whole)
     return nullptr;
-  size_t DebugIdx = static_cast<size_t>(V.Id);
-  if (isMsvcIndirectReturn(FS->ReturnType) &&
-      highIRIncludesIndirectReturn(*CurrentFunc, *FS)) {
-    const int SretId = indirectReturnParamId(*FS);
-    if (V.Id == SretId)
-      return nullptr;
-    if (V.Id > SretId)
-      DebugIdx = static_cast<size_t>(V.Id) - 1;
-  }
-  if (DebugIdx < FS->Params.size()) {
-    TypeRef Ty = FS->Params[DebugIdx].second;
-    if (Ty)
-      Dbg->completeType(Ty);
-    return Ty;
-  }
-  return nullptr;
+  auto FS = Dbg->resolveFunction(CurrentFunc->Entry);
+  if (!FS || static_cast<size_t>(B.Index) >= FS->Params.size())
+    return nullptr;
+  TypeRef Ty = FS->Params[B.Index].second;
+  if (Ty)
+    Dbg->completeType(Ty);
+  return Ty;
 }
 
 namespace {
@@ -4664,6 +4654,11 @@ bool HighCWriter::isReservedParamDisplayName(llvm::StringRef Name) const {
         if (!Param.first.empty() && Name == Param.first)
           return true;
     }
+    // The names the debug signature gives the parameters where they arrive,
+    // such as `p_8` for a record's second register.
+    for (size_t I = 0; I < CurrentFunc->Params.size(); ++I)
+      if (Name == debugParamName(*CurrentFunc, I))
+        return true;
   }
   return false;
 }

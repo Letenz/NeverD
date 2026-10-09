@@ -271,6 +271,30 @@ public:
   /// The type \p Func's definition declares its HighIR parameter \p Index
   /// with, which its prototype and every use of the parameter share.
   TypeRef emittedParamType(const HighFunc &Func, size_t Index) const;
+  /// What a parameter holds of its function's debug signature, matched by
+  /// where the convention passes each (SourceParameterPlacement), never by
+  /// position: System V passes `f(double x, int n)` with n in the first
+  /// integer register.
+  struct DebugParamBinding {
+    /// The debug parameter it holds a piece of, or -1.
+    int Index = -1;
+    /// Where the piece starts in that parameter's value.
+    uint16_t Offset = 0;
+    /// It holds the whole value the debug type describes.
+    bool Whole = false;
+    /// It holds the hidden pointer to the result's storage.
+    bool Result = false;
+  };
+  DebugParamBinding debugParamBinding(const HighFunc &Func, size_t Index) const;
+  /// The name \p Func's parameter \p Index reads as by its debug signature:
+  /// the debug parameter's, `<name>_<offset>` for a later piece of one, or
+  /// empty.
+  std::string debugParamName(const HighFunc &Func, size_t Index) const;
+  /// Whether a call passes \p FS's parameters in signature order: one
+  /// integer or one floating value each, and no hidden result pointer.  A
+  /// call's arguments come in the convention's order, integer registers
+  /// first, so another signature cannot type them by position.
+  bool positionalDebugSignature(const FunctionSym &FS) const;
   TypeRef debugParamType(const MedVar &V) const;
   TypeRef declaredRecordPointee(const HighExpr &Base) const;
   std::optional<std::pair<const HighExpr *, uint64_t>>
@@ -714,10 +738,22 @@ public:
   bool InferredVoid = false;
   TypeRef FuncReturnType;
   const HighFunc *CurrentFunc = nullptr;
-  /// emittedParamType's answers for the function it last answered for.
-  mutable const HighFunc *EmittedParamTypesOf = nullptr;
-  mutable va_t EmittedParamTypesEntry = 0;
+  /// The parameter bindings and emitted types of the function last asked
+  /// about.
+  mutable const HighFunc *ParamCacheOf = nullptr;
+  mutable va_t ParamCacheEntry = 0;
+  mutable std::vector<DebugParamBinding> ParamBindings;
   mutable std::vector<TypeRef> EmittedParamTypes;
+  mutable std::vector<std::string> ParamDebugNames;
+  /// Fills the cache for \p Func.
+  void bindParams(const HighFunc &Func) const;
+  /// Where a stack parameter of \p Func arrives, from the entry stack
+  /// pointer; none for a register parameter or an unknown location.
+  std::optional<int64_t> stackParamOffset(const HighFunc &Func,
+                                          size_t Index) const;
+  /// emittedParamIndices' answers, which walk the function's body.
+  mutable std::map<std::pair<const HighFunc *, va_t>, std::vector<size_t>>
+      EmittedParamIndices;
   CSourceRecorder *SourceRecorder = nullptr;
   /// Win64 hidden sret parameter name (`result`) when TPI returns a class.
   std::string IndirectReturnName;

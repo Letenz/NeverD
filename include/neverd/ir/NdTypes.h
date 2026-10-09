@@ -33,6 +33,34 @@ enum class NdTypeKind : uint8_t {
   Unknown
 };
 
+/// How a calling convention passes a record argument.  Unknown where the
+/// source does not say; a convention then places no argument from it on.
+enum class NdRecordPassing : uint8_t {
+  Unknown,
+  /// As its bytes, as C passes its records.
+  ByValue,
+  /// By the address of a copy, as the Itanium C++ ABI passes a class with a
+  /// non-trivial copy constructor or destructor.
+  ByReference,
+  /// A complex number, whose two parts most conventions pass as such a
+  /// record's bytes but some return in registers where they would return
+  /// the record through memory.
+  Complex,
+  /// A record of a program that follows the Microsoft C++ ABI, which does
+  /// not say whether the class is trivially copyable: i386 passes it as its
+  /// bytes, x64 as its bytes or as the address of a copy in the same
+  /// position.
+  Microsoft,
+};
+
+/// A scalar in a value's bytes: where it starts, its size, and whether it is
+/// floating point.  A bit field is the bytes that hold its bits.
+struct NdScalarLeaf {
+  uint16_t Offset = 0;
+  uint16_t Size = 0;
+  bool Floating = false;
+};
+
 struct NdType {
   NdTypeKind Kind = NdTypeKind::Unknown;
   uint16_t Size = 0;
@@ -70,6 +98,13 @@ struct NdType {
   std::vector<std::shared_ptr<NdType>> FieldDisplayTypes;
   /// LF_ENUM records share the named-record encoding; they return in RAX.
   bool IsEnum = false;
+  /// For a record: how a call passes it (NdRecordPassing).
+  NdRecordPassing Passing = NdRecordPassing::Unknown;
+  /// For a record the debug information lays out: its scalars in offset
+  /// order, through nested records and arrays, all of them or none.  They
+  /// say where a calling convention passes the record; they are no C layout
+  /// and no display members, and authorize no spelling or extents.
+  std::vector<NdScalarLeaf> ScalarLeaves;
 
   /// Unique display field at exactly \p Offset.  Ambiguous or unnamed
   /// slots return nullopt; do not guess a member.  A nonzero
@@ -80,9 +115,8 @@ struct NdType {
     if (Kind != NdTypeKind::Struct ||
         FieldDisplayNames.size() != FieldDisplayOffsets.size())
       return std::nullopt;
-    const bool FilterSize =
-        AccessSize != 0 &&
-        FieldDisplayTypes.size() == FieldDisplayOffsets.size();
+    const bool FilterSize = AccessSize != 0 && FieldDisplayTypes.size() ==
+                                                   FieldDisplayOffsets.size();
     const std::string *Found = nullptr;
     for (size_t I = 0; I < FieldDisplayOffsets.size(); ++I) {
       if (FieldDisplayOffsets[I] != Offset || FieldDisplayNames[I].empty())
@@ -165,9 +199,9 @@ struct NdType {
   /// (`holder.p`, `record.id`).  No exact slot and no unique
   /// containing record field stay raw. A nonzero \p AccessSize may
   /// pick one overlay at a shared offset; same-width overlays stay raw.
-  std::optional<std::string> displayFieldPathAt(
-      uint64_t Offset, uint16_t AccessSize = 0,
-      bool EnterNestedAtZero = true) const {
+  std::optional<std::string>
+  displayFieldPathAt(uint64_t Offset, uint16_t AccessSize = 0,
+                     bool EnterNestedAtZero = true) const {
     if (auto Exact = displayFieldNameAt(Offset, AccessSize)) {
       if (EnterNestedAtZero &&
           FieldDisplayTypes.size() == FieldDisplayOffsets.size()) {
@@ -220,8 +254,8 @@ struct NdType {
       }
       return FieldDisplayNames[Best];
     }
-    auto Inner = FieldDisplayTypes[Best]->displayFieldPathAt(
-        Rel, AccessSize, EnterNestedAtZero);
+    auto Inner = FieldDisplayTypes[Best]->displayFieldPathAt(Rel, AccessSize,
+                                                             EnterNestedAtZero);
     if (!Inner)
       return std::nullopt;
     return FieldDisplayNames[Best] + "." + *Inner;
@@ -275,8 +309,8 @@ struct NdType {
     T->IsEnum = Enum;
     return T;
   }
-  static std::shared_ptr<NdType>
-  makeArray(std::shared_ptr<NdType> Elem, uint32_t Count, uint16_t Size) {
+  static std::shared_ptr<NdType> makeArray(std::shared_ptr<NdType> Elem,
+                                           uint32_t Count, uint16_t Size) {
     auto T = std::make_shared<NdType>();
     T->Kind = NdTypeKind::Array;
     T->ElemType = std::move(Elem);
