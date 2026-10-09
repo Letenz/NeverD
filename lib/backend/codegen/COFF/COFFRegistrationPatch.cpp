@@ -1721,10 +1721,20 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
           coff_registration::getCheckedCxxControlIRProof(*Function, *EH, Image);
       if (!Proof)
         return Proof.takeError();
-      for (const auto &[Call, Checked] : Proof->Calls)
-        if (Mappings.count(Checked.Contract.Target))
-          return reject("preserved C++ callee is also patched without a native "
-                        "replacement contract");
+      size_t CalleeWork = 0;
+      for (const auto &[Call, Checked] : Proof->Calls) {
+        if (Checked.Contract.CodeRanges.empty())
+          return reject("preserved C++ callee has no complete code extent");
+        for (const auto &[Entry, Generated] : Mappings)
+          for (const auto &Range : Checked.Contract.CodeRanges) {
+            if (++CalleeWork > limits::kMaxRegistrationEHStateWork)
+              return reject("C++ preserved code proof exceeds its work budget");
+            if (!Range.isValid() || Range.End > uint64_t(UINT32_MAX) + 1 ||
+                ExceptionAddressRange{Entry, Entry + 5}.overlaps(Range))
+              return reject("entry trampoline overwrites preserved C++ callee "
+                            "code without a native replacement contract");
+          }
+      }
       auto Runtime = coff_loader::getCheckedX86CxxPersonalityABI(Image, *EH);
       if (!Runtime)
         return reject("preserved C++ CRT dispatch has no original ABI");
@@ -1733,12 +1743,6 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
           if (ExceptionAddressRange{Entry, Entry + 5}.overlaps(Range))
             return reject("entry trampoline overwrites preserved C++ CRT "
                           "dispatch code");
-      // This source contract preserves its original helpers. Their complete
-      // instruction extents do not yet authorize a concurrent replacement,
-      // including a trampoline placed inside a helper rather than at entry.
-      if (Mappings.size() != 1)
-        return reject("C++ reconstruction cannot patch another entry without "
-                      "complete preserved-callee code extents");
       auto Receipt = getCheckedCOFFRegistrationCxxHandlerReceipt(
           *Function, *EH, Image, Compiled);
       if (!Receipt)

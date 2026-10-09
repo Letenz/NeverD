@@ -35,6 +35,7 @@ struct RegistrationLeafCalleeABI {
   std::vector<ExceptionAddressRange> ImageReads;
   std::vector<ExceptionAddressRange> ImageWrites;
   std::vector<ExceptionAddressRange> CallerPCWrites;
+  std::vector<ExceptionAddressRange> CodeRanges;
 };
 
 /// Prove a complete returning PE32 leaf with a private stack, preserved
@@ -71,6 +72,7 @@ struct RegistrationThrowCalleeABI {
   std::vector<ExceptionAddressRange> ImageReads;
   std::vector<ExceptionAddressRange> ImageWrites;
   std::vector<ExceptionAddressRange> CallerPCWrites;
+  std::vector<ExceptionAddressRange> CodeRanges;
 };
 
 /// Prove a closed PE32 helper that initializes a private scalar object and

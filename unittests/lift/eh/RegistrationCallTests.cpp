@@ -260,6 +260,44 @@ TEST(RegistrationCallABI, BindsTheThrowImportAndInitializedPrivateObject) {
     ASSERT_EQ(P->CallerPCWrites.size(), 1u);
     EXPECT_EQ(P->CallerPCWrites.front().Begin, ThrowImage::CallerPCVA);
     EXPECT_EQ(P->CallerPCWrites.front().End, ThrowImage::CallerPCVA + 4);
+    ASSERT_EQ(P->CodeRanges.size(), 2u);
+    EXPECT_EQ(P->CodeRanges[0].Begin, ThrowImage::TextVA);
+    EXPECT_EQ(P->CodeRanges[0].End, F.CallVA + 5);
+    EXPECT_EQ(P->CodeRanges[1].Begin, ThrowImage::ImportVA);
+    EXPECT_EQ(P->CodeRanges[1].End, ThrowImage::ImportVA + 6);
+  }
+}
+
+TEST(RegistrationCallABI, PreservedCodeExtentsExcludeUnreachablePadding) {
+  ThrowImage F;
+  auto &Text = F.Image.Segments[0];
+  Text.Data.assign(0x26, 0xcc);
+  Text.Data[0] = 0xe9;
+  writeLE<int32_t>(Text.Data.data() + 1, 0x20 - 5);
+  Text.Data[0x20] = 0xb8;
+  writeLE<uint32_t>(Text.Data.data() + 0x21, 1);
+  Text.Data[0x25] = 0xc3;
+  Text.Size = Text.FileSz = Text.Data.size();
+  auto Leaf = getCheckedX86RegistrationLeafCalleeABI(F.Image, Text.VA);
+  ASSERT_TRUE(Leaf);
+  ASSERT_EQ(Leaf->CodeRanges.size(), 2u);
+  EXPECT_EQ(Leaf->CodeRanges[0].Begin, Text.VA);
+  EXPECT_EQ(Leaf->CodeRanges[0].End, Text.VA + 5);
+  EXPECT_EQ(Leaf->CodeRanges[1].Begin, Text.VA + 0x20);
+  EXPECT_EQ(Leaf->CodeRanges[1].End, Text.VA + 0x26);
+}
+
+TEST(RegistrationCallABI, PrivateThrowCannotInheritAChangedImportThunk) {
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    ThrowImage F;
+    auto &Text = F.Image.Segments[0];
+    if (Mutation == 1)
+      Text.Data[0x81] = 0x15;
+    if (Mutation == 2)
+      writeLE<uint32_t>(Text.Data.data() + 0x82, ThrowImage::IATVA + 4);
+    EXPECT_EQ(bool(getCheckedX86RegistrationThrowCalleeABI(F.Image,
+                                                           ThrowImage::TextVA)),
+              Mutation == 0);
   }
 }
 

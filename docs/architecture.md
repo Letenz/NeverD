@@ -152,9 +152,11 @@ only when the input already enables SafeSEH. Every dispatch pointer belongs to
 the emitted HIGHLOW closure; failures leave the generated image unchanged.
 The original loader owns load-config's declared structure extent even when
 MSVC's directory retains its 64-byte compatibility size. Installation requires
-a complete unique raw-backed extent. C++ currently permits one patched entry
-because preserved helper instruction extents do not authorize concurrent
-replacement. The public C++ output capability remains closed pending installed
+a complete unique raw-backed extent. The checked LowIR callee ABI also owns
+precise executed-instruction extents, including a private throw's exact import
+thunk. The transaction rejects every five-byte entry patch that intersects this
+preserved code or CRT dispatch, including interior sites; unrelated replacements
+may coexist. The public C++ output capability remains closed pending installed
 source runtime verification.
 Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction

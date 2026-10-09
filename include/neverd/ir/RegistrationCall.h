@@ -36,6 +36,9 @@ struct RegistrationCalleeFrameContract {
   std::vector<ExceptionAddressRange> ImageReads;
   std::vector<ExceptionAddressRange> ImageWrites;
   std::vector<ExceptionAddressRange> CallerPCWrites;
+  /// Complete executed instruction extents of original code this contract
+  /// preserves, including a private throw's authenticated import thunk.
+  std::vector<ExceptionAddressRange> CodeRanges;
 };
 
 /// One exact source call with a proved stack and bounded, initialized object

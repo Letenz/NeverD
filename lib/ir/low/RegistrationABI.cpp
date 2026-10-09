@@ -87,6 +87,31 @@ bool chargeDecodedCallee(size_t &Work, const LowFunc &Function) {
   return true;
 }
 
+bool collectCalleeCodeRanges(const LowFunc &Function, const BinaryImage &Image,
+                             size_t &Work,
+                             std::vector<ExceptionAddressRange> &Ranges) {
+  if (auto Error = validateLowInstructionBoundaries(
+          Function, LowInstructionBoundaryRequirement::Required)) {
+    llvm::consumeError(std::move(Error));
+    return false;
+  }
+  std::set<std::pair<va_t, va_t>> Instructions;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Boundary : Block.InstructionBoundaries) {
+      if (!chargeCalleeWork(Work, 1) || !Boundary.Size ||
+          Boundary.Address > UINT32_MAX ||
+          Boundary.Size > uint64_t(UINT32_MAX) + 1 - Boundary.Address ||
+          !Image.isCodeAddress(Boundary.Address) ||
+          !Image.readVA(Boundary.Address, Boundary.Size))
+        return false;
+      Instructions.emplace(Boundary.Address, Boundary.Address + Boundary.Size);
+    }
+  copyExtents(Instructions, Ranges);
+  return !Ranges.empty() && llvm::any_of(Ranges, [&](const auto &Range) {
+    return Range.contains(Function.Entry);
+  });
+}
+
 bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                            size_t &Work, ImageFrameEffects &Effects,
                            bool BorrowECX = false,
@@ -447,6 +472,8 @@ getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
   RegistrationLeafCalleeABI Result;
   Result.Target = Target;
   Result.HasIndependentScalarReturn = IndependentScalarReturn;
+  if (!collectCalleeCodeRanges(Callee, Image, Work, Result.CodeRanges))
+    return std::nullopt;
   copyExtents(Effects.ECXReads, Result.ECXReads);
   copyExtents(Effects.ECXWrites, Result.ECXWrites);
   copyExtents(Effects.Reads, Result.ImageReads);
@@ -535,6 +562,22 @@ getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target,
       if (Write.overlaps(Range))
         return std::nullopt;
   }
+  if (!collectCalleeCodeRanges(Callee, Image, Work, Result.CodeRanges) ||
+      !chargeCalleeWork(Work, 1))
+    return std::nullopt;
+  // The original helper calls this exact EAX-preserving import stub. Keeping
+  // the helper alone cannot authorize an entry patch that changes its tail.
+  const auto *Stub = Image.readVA(Result.ImportVA, 6);
+  if (Result.ImportVA > uint64_t(UINT32_MAX) - 5 ||
+      !Image.isCodeAddress(Result.ImportVA) || !Stub || Stub[0] != 0xff ||
+      Stub[1] != 0x25 || readLE<uint32_t>(Stub + 2) != Result.ImportIATVA)
+    return std::nullopt;
+  std::set<std::pair<va_t, va_t>> Code;
+  for (const auto &Range : Result.CodeRanges)
+    Code.emplace(Range.Begin, Range.End);
+  Code.emplace(Result.ImportVA, Result.ImportVA + 6);
+  Result.CodeRanges.clear();
+  copyExtents(Code, Result.CodeRanges);
   copyExtents(Effects.Reads, Result.ImageReads);
   copyExtents(Effects.Writes, Result.ImageWrites);
   copyExtents(Effects.CallerPCWrites, Result.CallerPCWrites);
@@ -604,6 +647,7 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
         Contract->ImageReads = std::move(Leaf->ImageReads);
         Contract->ImageWrites = std::move(Leaf->ImageWrites);
         Contract->CallerPCWrites = std::move(Leaf->CallerPCWrites);
+        Contract->CodeRanges = std::move(Leaf->CodeRanges);
       } else if (auto Throw = getCheckedX86RegistrationThrowCalleeABI(
                      Image, Target, &Work)) {
         Contract.emplace();
@@ -616,6 +660,7 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
         Contract->ImageReads = std::move(Throw->ImageReads);
         Contract->ImageWrites = std::move(Throw->ImageWrites);
         Contract->CallerPCWrites = std::move(Throw->CallerPCWrites);
+        Contract->CodeRanges = std::move(Throw->CodeRanges);
       }
       if (Work == limits::kMaxRegistrationEHStateWork)
         return std::nullopt;
@@ -627,7 +672,8 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
                                       Contract.ECXWrites.size() +
                                       Contract.ImageReads.size() +
                                       Contract.ImageWrites.size() +
-                                      Contract.CallerPCWrites.size() + 1))
+                                      Contract.CallerPCWrites.size() +
+                                      Contract.CodeRanges.size() + 1))
         return std::nullopt;
       Result.push_back(Contract);
     }
@@ -664,10 +710,10 @@ RegistrationCallCalleeIndex::cleanupContracts(const LowFunc &Function) {
       continue;
     const auto &Relay = *It->second;
     const auto &Leaf = Relay.Leaf;
-    if (!chargeCalleeWork(Work, Leaf.ECXReads.size() + Leaf.ECXWrites.size() +
-                                    Leaf.ImageReads.size() +
-                                    Leaf.ImageWrites.size() +
-                                    Leaf.CallerPCWrites.size() + 1))
+    if (!chargeCalleeWork(
+            Work, Leaf.ECXReads.size() + Leaf.ECXWrites.size() +
+                      Leaf.ImageReads.size() + Leaf.ImageWrites.size() +
+                      Leaf.CallerPCWrites.size() + Leaf.CodeRanges.size() + 1))
       return std::nullopt;
     RegistrationCleanupFrameContract Contract;
     Contract.ActionState = State;
@@ -680,6 +726,7 @@ RegistrationCallCalleeIndex::cleanupContracts(const LowFunc &Function) {
     Contract.Leaf.ImageReads = Leaf.ImageReads;
     Contract.Leaf.ImageWrites = Leaf.ImageWrites;
     Contract.Leaf.CallerPCWrites = Leaf.CallerPCWrites;
+    Contract.Leaf.CodeRanges = Leaf.CodeRanges;
     Result.push_back(std::move(Contract));
   }
   return Result;

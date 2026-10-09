@@ -1294,7 +1294,51 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
     ChangedMappings.emplace_back(
         Low.RegistrationStates->CalleeContracts[0].Target + 1, Row.OwnerVA);
     RejectTransaction(Binary, OriginalCompiled, *Module, ChangedMappings,
-                      "another entry");
+                      "preserved C++ callee");
+  }
+  {
+    const auto Throw = llvm::find_if(
+        Low.RegistrationStates->CalleeContracts, [](const auto &Contract) {
+          return Contract.CalleeKind ==
+                 RegistrationCalleeFrameContract::Kind::PrivateThrow;
+        });
+    ASSERT_NE(Throw, Low.RegistrationStates->CalleeContracts.end());
+    auto ABI = getCheckedX86RegistrationThrowCalleeABI(*Loaded, Throw->Target);
+    ASSERT_TRUE(ABI);
+    auto ChangedMappings = Mappings;
+    ChangedMappings.emplace_back(ABI->ImportVA + 1, Row.OwnerVA);
+    RejectTransaction(Binary, OriginalCompiled, *Module, ChangedMappings,
+                      "preserved C++ callee");
+  }
+  {
+    auto Expanded = llvm::CloneModule(*Module);
+    auto *Unrelated = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(Context), false),
+        llvm::GlobalValue::ExternalLinkage, "unrelated_replacement", *Expanded);
+    rewrite_source::setOriginalVA(*Unrelated, Loaded->Entry);
+    llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Unrelated));
+    B.CreateRet(B.getInt32(0));
+    auto Changed =
+        compileImageForPatch(*Expanded, Arch::X86, BinaryFormat::COFF, CodeVA,
+                             Resolve, Loaded->Base);
+    ASSERT_TRUE(Changed.Success);
+    ASSERT_TRUE(Changed.Unresolved.empty());
+    std::vector<std::pair<va_t, va_t>> ExpandedMappings;
+    for (const auto &Owner : Changed.SourceFunctionOwners) {
+      if (Owner.Kind !=
+          llvm::mc_rewrite::RewriteSourceFunctionOwnerKind::FunctionEntry)
+        continue;
+      if (Owner.SourceFunction == Parent->getName())
+        ExpandedMappings.emplace_back(Source->CodeRange.Begin, Owner.OwnerVA);
+      if (Owner.SourceFunction == Unrelated->getName())
+        ExpandedMappings.emplace_back(Loaded->Entry, Owner.OwnerVA);
+    }
+    ASSERT_EQ(ExpandedMappings.size(), 2u);
+    auto ExpandedUpdate = prepareCOFFRegistrationPatch(
+        Binary, *Loaded, Changed, ExpandedMappings, CodeVA, *Expanded);
+    ASSERT_TRUE(bool(ExpandedUpdate))
+        << llvm::toString(ExpandedUpdate.takeError());
+    EXPECT_TRUE(ExpandedUpdate->Apply);
   }
   {
     auto Input = Binary;
