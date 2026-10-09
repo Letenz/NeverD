@@ -13,6 +13,7 @@
 #ifndef NEVERD_IR_MED_MEDABIPASS_H
 #define NEVERD_IR_MED_MEDABIPASS_H
 
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -63,6 +64,9 @@ std::set<va_t> findFrameLocalLeafCallees(const std::vector<MedFunc> &Funcs,
 // findFrameLocalLeafCallees for these same bodies, before ABI mutation. It lets
 // Darwin indirect-target recovery preserve a caller-frame spill across a call
 // only when the caller slot and the callee writes are provably disjoint.
+// \p CalleeIntRegs gives the integer argument registers, in order, of each
+// direct callee that takes them in another order than the convention's
+// (MedFunc::IntegerArgumentRegisters); a call to it passes them so.
 // LowToMed runs before whole-program return types are known.  It can
 // therefore leave a scalar-FP call modeled as defining the integer return
 // register: when the result is read only by the next call's implicit XMM0/V0
@@ -87,7 +91,14 @@ void recoverCallAbi(
     const std::map<va_t, bool> *CalleeHasSret = nullptr,
     std::map<va_t, bool> *CalleeIsVariadic = nullptr,
     const std::map<va_t, bool> *CalleeConsumesVaList = nullptr,
-    const std::set<va_t> *FrameLocalLeafCallees = nullptr);
+    const std::set<va_t> *FrameLocalLeafCallees = nullptr,
+    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs = nullptr);
+
+/// The integer argument layout \p Func takes its register arguments in: its
+/// own register order (MedFunc::IntegerArgumentRegisters) where it has one,
+/// else its convention's.  The layout refers to \p Func's registers.
+IntegerArgumentLayout integerArgumentLayoutOf(const MedFunc &Func,
+                                              const TargetRegInfo &TRI);
 
 // Finalize the overflow stack parameters of every variadic callee once all call
 // sites have been recovered.  A variadic function's va_arg overflow reads land

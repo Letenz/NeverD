@@ -26,6 +26,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <cstddef>
@@ -87,6 +88,11 @@ struct CallArgumentConvention {
   /// imported or indirectly called function takes every argument on the
   /// stack, so a parameter register live at such a call is scratch.
   bool RegparmOnlyForInternalCalls = false;
+  /// Whether an import of \p Img may still take register arguments where
+  /// RegparmOnlyForInternalCalls holds (a Windows __fastcall routine takes
+  /// ECX and EDX).  Null where none may: a parameter register live at a call
+  /// to an import is then scratch, whatever the import's signature.
+  bool (*ImportsMayTakeRegisterArguments)(const BinaryImage &Img) = nullptr;
   /// The first stack argument directly follows the last register argument
   /// the call uses, rather than every register position.
   bool StackArgumentsFollowUsedRegisters = false;
@@ -108,6 +114,13 @@ struct CallArgumentConvention {
   /// Register arguments fill the argument registers in order with no gap
   /// (regparm), so a live register after an unread one is not an argument.
   bool RegisterArgumentsFillInOrder = false;
+  /// Another order of integer argument registers, beside the format's, an
+  /// image's internal functions may take their arguments in: GCC gives a
+  /// local i386 function regparm (EAX, EDX, ECX), where Clang gives it
+  /// fastcall (ECX, EDX).  A function that reads at entry a register of this
+  /// order alone takes its arguments in this order, and its callers pass
+  /// them so.
+  llvm::ArrayRef<uint64_t> AlternateRegisterOrder;
   /// Whether an external routine of \p Img takes its floating-point
   /// arguments in the integer argument registers, as the base AAPCS (ARM
   /// softfp) passes them, rather than in the floating-point registers the

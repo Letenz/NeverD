@@ -975,12 +975,61 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   Scan.OwnStackParam = OwnStackParam;
   // The single definition of \p V in this function, or null.
   auto UniqueDef = [&](const MedVar &V) { return uniqueMedDefinition(V); };
+  // The single PHI defining \p V in this function, or null.
+  auto UniquePhi = [&](const MedVar &V) -> const PhiNode * {
+    if (!CurMed)
+      return nullptr;
+    indexMedDefinitions();
+    auto PhiIt =
+        EntryOffsetPhis.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
+    return PhiIt == EntryOffsetPhis.end() ? nullptr : PhiIt->second;
+  };
+  // The offset each PHI being resolved is assumed to have: none while its
+  // incoming values are collected, then the one they agree on.
+  std::map<const PhiNode *, std::optional<int64_t>> AssumedPhiOffsets;
   std::function<std::optional<int64_t>(const MedVar &, int)> EntryOffset =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
     if (!CurMed || Depth > limits::kCallArgStoreAddressDepth)
       return std::nullopt;
     if (V.Kind == MedVar::Reg && V.RegOff == SpRegOff && V.SSAVer == 0)
       return 0;
+    // A loop head's stack pointer is a PHI of the one the loop is entered
+    // with and of those its back edges carry, which equal it where the body
+    // pops what it pushes.  Assume the offset the values that do not depend
+    // on the PHI agree on, then require every incoming value to have it.
+    if (const PhiNode *Phi = UniquePhi(V)) {
+      if (auto It = AssumedPhiOffsets.find(Phi); It != AssumedPhiOffsets.end())
+        return It->second;
+      if (auto It = EntryOffsetPhiCache.find(Phi);
+          It != EntryOffsetPhiCache.end())
+        return It->second;
+      if (Phi->ExceptionalEntry || Phi->Args.empty())
+        return std::nullopt;
+      AssumedPhiOffsets.emplace(Phi, std::nullopt);
+      std::optional<int64_t> Offset;
+      bool Agree = true;
+      for (const auto &[Pred, In] : Phi->Args)
+        if (const auto InOffset = EntryOffset(In, Depth + 1)) {
+          Agree = Agree && (!Offset || *Offset == *InOffset);
+          Offset = InOffset;
+        }
+      if (!Agree)
+        Offset.reset();
+      if (Offset) {
+        AssumedPhiOffsets[Phi] = Offset;
+        for (const auto &[Pred, In] : Phi->Args)
+          if (EntryOffset(In, Depth + 1) != Offset) {
+            Offset.reset();
+            break;
+          }
+      }
+      AssumedPhiOffsets.erase(Phi);
+      // An offset found while an enclosing PHI is assumed holds only under
+      // that assumption.
+      if (AssumedPhiOffsets.empty())
+        EntryOffsetPhiCache.emplace(Phi, Offset);
+      return Offset;
+    }
     const MedOp *Def = UniqueDef(V);
     if (!Def || Def->NumInputs < 1)
       return std::nullopt;
@@ -1213,9 +1262,12 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
           ++End;
         for (size_t I = FromABI.size(); I < End; ++I)
           FromABI.push_back(Found[I]);
+        // The scan numbers registers in the convention's order, which does
+        // not index arguments passed in the callee's own.
         for (size_t I = 0; I < FromABI.size(); ++I)
           if ((!FromABI[I] || FromABI[I]->Kind == ExprKind::Undef) &&
-              Found[I] && Found[I]->Kind != ExprKind::Undef)
+              !CI->ArgumentsInCalleeRegisterOrder && Found[I] &&
+              Found[I]->Kind != ExprKind::Undef)
             FromABI[I] = Found[I];
         return BoundKnownCalleeArity(std::move(FromABI));
       }

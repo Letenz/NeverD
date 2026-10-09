@@ -32,7 +32,8 @@ constexpr bool CanRunX64ELF = false;
 class DataSymbolBindingTest : public NeverDLiftTest {
 protected:
   fs::path library(llvm::StringRef Target, bool Relro = true,
-                   bool StandardIO = false, bool Sectionless = false) {
+                   bool StandardIO = false, bool Sectionless = false,
+                   bool LoopCall = false) {
     auto Source = tmpFile(Target.str() + ".c");
     auto Object = tmpFile(Target.str() + ".o");
     auto Library = tmpFile(Target.str() + ".so");
@@ -43,6 +44,12 @@ protected:
     if (StandardIO)
       Out << "#include <stdio.h>\n"
              "int put(const char *s) { return fputs(s, stdout); }\n";
+    if (LoopCall)
+      Out << "extern int abs(int);\n"
+             "__attribute__((no_builtin(\"abs\"))) int call_loop(void) {\n"
+             "  int result=0;\n"
+             "  for(int i=0;i<4;++i) result += abs(shared_counter+i);\n"
+             "  return result;\n}\n";
     Out.close();
     auto Compile =
         exec(NEVERD_TEST_CLANG, {"--target=" + Target.str(), "-fPIC", "-O1",
@@ -188,6 +195,28 @@ TEST_F(DataSymbolBindingTest, ExternalDataRunsAndDoesNotConflictWithHeaders) {
   EXPECT_NE(Single.find("extern unsigned char neverd_data_shared_counter[]"),
             std::string::npos)
       << Single;
+}
+
+TEST_F(DataSymbolBindingTest, PICLoopCallsKeepTheirStackArguments) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires cross-target Clang and ld.lld";
+  auto Loaded = loadBinary(library("i386-linux-gnu", true, false, false, true));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  const auto C = source(*Loaded, false, {"call_loop"});
+  EXPECT_NE(C.find("shared_counter"), std::string::npos) << C;
+  EXPECT_NE(C.find("abs("), std::string::npos) << C;
+  EXPECT_EQ(C.find("unknown value"), std::string::npos) << C;
+  EXPECT_EQ(C.find("__builtin_trap"), std::string::npos) << C;
+  // PIC loads can populate the shared definition index before the loop's
+  // stack PHIs are visited. The abs prototype verifies that its pushed
+  // argument survives either lookup order.
+  const auto Output = tmpFile("pic-loop.c");
+  std::ofstream(Output) << "extern int abs(int);\n" << C;
+  const auto Compile =
+      exec(NEVERD_TEST_CLANG, {"--target=i386-linux-gnu", "-ffreestanding",
+                               "-Werror=implicit-function-declaration", "-c",
+                               Output.string(), "-o", Output.string() + ".o"});
+  EXPECT_TRUE(Compile.ok()) << Compile.err << C;
 }
 
 TEST_F(DataSymbolBindingTest, WritableSlotsRetainStorageAndSymbolInitializer) {

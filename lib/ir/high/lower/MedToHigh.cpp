@@ -589,21 +589,34 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   return HighExpr::makeVar(V);
 }
 
+void MedToHighConverter::indexMedDefinitions() {
+  if (!CurMed || EntryOffsetDefsFor == CurMed)
+    return;
+  EntryOffsetDefs.clear();
+  EntryOffsetPhis.clear();
+  EntryOffsetPhiCache.clear();
+  auto Key = [](const MedVar &V) {
+    return std::make_tuple(static_cast<int>(V.Kind), V.Id, V.SSAVer);
+  };
+  for (const auto &Blk : CurMed->Blocks) {
+    for (const auto &Phi : Blk.Phis)
+      if (auto [It, Inserted] =
+              EntryOffsetPhis.try_emplace(Key(Phi.Output), &Phi);
+          !Inserted)
+        It->second = nullptr;
+    for (const auto &Op : Blk.Ops)
+      if (auto [It, Inserted] =
+              EntryOffsetDefs.try_emplace(Key(Op.Output), &Op);
+          !Inserted)
+        It->second = nullptr;
+  }
+  EntryOffsetDefsFor = CurMed;
+}
+
 const MedOp *MedToHighConverter::uniqueMedDefinition(const MedVar &V) {
   if (!CurMed)
     return nullptr;
-  if (EntryOffsetDefsFor != CurMed) {
-    EntryOffsetDefs.clear();
-    for (const auto &Blk : CurMed->Blocks)
-      for (const auto &Op : Blk.Ops) {
-        auto [It, Inserted] = EntryOffsetDefs.try_emplace(
-            {static_cast<int>(Op.Output.Kind), Op.Output.Id, Op.Output.SSAVer},
-            &Op);
-        if (!Inserted)
-          It->second = nullptr;
-      }
-    EntryOffsetDefsFor = CurMed;
-  }
+  indexMedDefinitions();
   auto DefIt = EntryOffsetDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
   return DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
 }
@@ -928,10 +941,29 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   // ABI recovery binds call operands after SSA, outside the MedOp input
   // array. They are real uses of their reaching definitions: omitting them
   // makes a computed outgoing register look dead before HighIR builds calls.
-  for (const MedCallInfo &Call : Med.CallInfos)
+  // An operand the call's block also stores before the call (an i386 push)
+  // is read once: that store is the argument itself, which dead-store
+  // elimination drops, so a single-use definition still prints inline.
+  std::map<int, const MedBlock *> BlockById;
+  for (const auto &Blk : Med.Blocks)
+    BlockById.emplace(Blk.Id, &Blk);
+  for (const MedCallInfo &Call : Med.CallInfos) {
+    VarKeySet Stored;
+    if (auto It = BlockById.find(Call.BlockId); It != BlockById.end())
+      for (int J = Call.OpIdx - 1;
+           J >= 0 && J < static_cast<int>(It->second->Ops.size()); --J) {
+        const MedOp &Op = It->second->Ops[static_cast<size_t>(J)];
+        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+            Op.Opcode == NdOp::INTRINSIC)
+          break;
+        if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
+            Op.Inputs[1].Id >= 0)
+          Stored.insert(varKey(Op.Inputs[1]));
+      }
     for (const MedVar &Arg : Call.Args)
-      if (Arg.Id >= 0)
+      if (Arg.Id >= 0 && !Stored.count(varKey(Arg)))
         UseCount[varKey(Arg)]++;
+  }
 
   // Build each definition before its uses: a use builds its single-use
   // definition inline, and a definition that is not yet built leaves a name

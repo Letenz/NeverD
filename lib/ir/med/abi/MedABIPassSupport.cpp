@@ -995,8 +995,8 @@ findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
     auto BIt = ById.find(BId);
     if (BIt == ById.end())
       continue;
-    if (auto V =
-            scanBlock(*BIt->second, static_cast<int>(BIt->second->Ops.size()))) {
+    if (auto V = scanBlock(*BIt->second,
+                           static_cast<int>(BIt->second->Ops.size()))) {
       if (FoundDef)
         *FoundDef = true;
       return V;
@@ -1017,8 +1017,13 @@ findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
     for (const auto &P : Func.Params)
       if ((P.Kind == MedVar::Reg || P.Kind == MedVar::Param) &&
           P.RegOff == Reg) {
+        // The parameter itself, named by its register as a promoted
+        // forwarder parameter is: no register variable of this function
+        // need hold the incoming value, so a register id would name another
+        // value.
         MedVar V;
-        V.Kind = MedVar::Reg;
+        V.Kind = MedVar::Param;
+        V.Id = -1;
         V.RegOff = Reg;
         V.SSAVer = 0;
         V.Size = P.Size > 0 ? P.Size : static_cast<uint16_t>(TRI.PointerSize);
@@ -1041,7 +1046,7 @@ findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
 }
 
 std::optional<MedVar> uniquePredNonNullGuard(const MedFunc &Func,
-                                            const MedBlock &Blk) {
+                                             const MedBlock &Blk) {
   auto blockById = [&](int Id) -> const MedBlock * {
     for (const auto &B : Func.Blocks)
       if (B.Id == Id)
