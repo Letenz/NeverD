@@ -21,10 +21,11 @@
 namespace neverd {
 
 namespace {
-/// Reading AL at entry is the variadic prologue's `test al, al`: no System V
-/// parameter is passed in RAX.
+/// Reading exactly AL at entry is the variadic prologue's `test al, al`: no
+/// System V parameter is passed in RAX.  A wider read is not the vector
+/// count: `sete al; mov r14d, eax` copies bytes of RAX no caller set.
 bool readsVectorCount(const GPRReadWidths &Reads) {
-  return Reads[x86reg::RAX / 8] != 0;
+  return Reads[x86reg::RAX / 8] == 1;
 }
 } // namespace
 

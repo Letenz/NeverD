@@ -729,6 +729,41 @@ TEST(SysVCallContract, AVariadicPrologueSpillReadsNoParameter) {
   }
 }
 
+TEST(SysVCallContract, ACopyOfEaxAfterSeteIsNoVectorCount) {
+  // is_slash(c) is `c == '/'`: GCC sets AL with sete and copies the whole of
+  // EAX, so the summary reads RAX's upper bytes as well.  Only a read of
+  // exactly AL is a variadic prologue's vector count, so the call still
+  // passes is_slash's one parameter, not the RSI the caller left set.
+  constexpr va_t IsSlash = Text, Caller = Text + 0x20;
+  std::vector<uint8_t> Code(0x40, 0xCC);
+  put(Code, IsSlash,
+      {0x83, 0xFF, 0x2F, // cmp edi, '/'
+       0x0F, 0x94, 0xC0, // sete al
+       0x89, 0xC2,       // mov edx, eax
+       0x89, 0xD0,       // mov eax, edx
+       0xC3});           // ret
+  std::vector<uint8_t> CallerCode = {
+      0x48, 0x83, 0xEC, 0x08,       // sub rsp, 8
+      0xBE, 0x03, 0x00, 0x00, 0x00, // mov esi, 3
+      0xBF, 0x5C, 0x00, 0x00, 0x00, // mov edi, '\\'
+      0xE8};                        // call is_slash
+  for (uint8_t B : rel32(Caller + CallerCode.size() + 4, IsSlash))
+    CallerCode.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                    0xC3})                  // ret
+    CallerCode.push_back(B);
+  put(Code, Caller, CallerCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{IsSlash, "is_slash"}, {Caller, "caller"}}, {});
+  const std::string Source = liftEntries(Img, {Caller});
+  const std::string Body = body(Source, "caller");
+  ASSERT_FALSE(Body.empty()) << Source;
+  const size_t Call = Body.find("is_slash(");
+  ASSERT_NE(Call, std::string::npos) << Body;
+  const std::string Line = Body.substr(Call, Body.find('\n', Call) - Call);
+  EXPECT_EQ(Line.find(','), std::string::npos) << Line;
+}
+
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {
   // die() calls the variadic panic("out of memory") and never returns, so
   // it aligns the stack for the call with a push of RAX (Clang) or a push,
