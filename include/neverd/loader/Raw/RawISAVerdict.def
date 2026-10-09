@@ -1,0 +1,25 @@
+//===- RawISAVerdict.def - What a binary file's bytes settle -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// NEVERD_RAW_VERDICT(Id, Name): what the bytes of a binary file settle of the
+// instruction set they hold (ISAIdentify.h), by the name the C API reports it
+// with.  RawISA.def holds the sets and the limits that decide it.
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_RAW_VERDICT
+// No part of the file looks like code.
+NEVERD_RAW_VERDICT(NoCode, "no_code")
+// The code looks like sets of several families, or too little of the file
+// shows one family for the file to be read as it.
+NEVERD_RAW_VERDICT(Unclear, "unclear")
+// One family, but its instructions do not tell its 32-bit set from its
+// 64-bit set.
+NEVERD_RAW_VERDICT(WidthUnclear, "width_unclear")
+// One set.
+NEVERD_RAW_VERDICT(Settled, "settled")
+#undef NEVERD_RAW_VERDICT
+#endif

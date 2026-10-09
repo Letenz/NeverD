@@ -404,6 +404,14 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     NdVar Src = L.operandRead(S, X86.operands[1]);
     NdVar DstV = L.operandWrite(X86.operands[0]);
 
+    // MOVD/MOVQ select a scalar even when both operands name full XMMs.
+    if ((InsnId == X86_INS_MOVD || InsnId == X86_INS_MOVQ) &&
+        Src.Size > (InsnId == X86_INS_MOVD ? 4 : 8)) {
+      NdVar Low = S.makeTemp(InsnId == X86_INS_MOVD ? 4 : 8);
+      S.emit(NdOp::SUBBYTES, Low, {Src, NdVar::cst(0, 4)});
+      Src = Low;
+    }
+
     if (InsnId == X86_INS_MOVZX) {
       NdVar Ext = S.makeTemp(DstV.Size);
       S.emit(NdOp::INT_ZEXT, Ext, {Src});

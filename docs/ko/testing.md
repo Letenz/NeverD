@@ -419,6 +419,7 @@ target 이름과 같은 CTest label을 지정합니다.
 | `unittests/TestProcessTests.cpp` | `NeverDTestProcessTests` | 교차 플랫폼 하위 프로세스 호출, quoting, redirect, 종료 코드 |
 | `unittests/libc` | `NeverDLibCTests` | 알려진 libc 이름과 분류 |
 | `unittests/safety` | `NeverDSafetyTests`, `NeverDSafetyIntegrationTests` | 싱크 카탈로그, 신원 우선순위, 인수 사전 필터, 복사 오버플로 헌트, 힙 수명 감사, 필수 PE/ELF/Mach-O × x86-64/AArch64 6셀 매트릭스 |
+| `unittests/loader` | `NeverDRawISATests` | 바이너리 파일: 바이트로부터의 명령어 집합 식별(데이터, 테스트 자신의 코드, 2바이트 어긋난 코드, 패밀리별 32비트와 64비트 인코딩, 0으로 시작하는 파일)과 Cortex-M 벡터 테이블. `scripts/validate_isa_model.py --engine build/bin/libneverd.so`는 모델이 본 적 없는 실제 프로그램과 라이브러리 180개를 해시로 내려받아 검사합니다. 네트워크가 필요하며 CTest에 포함되지 않습니다 |
 | `unittests/lift` | `NeverDLiftTests` | Decoder/lifter LowIR 모양, IR 단계, loader, relocation, 포맷 fixture, 디컴파일, 대표 patch 흐름 |
 | `unittests/semantic`의 대부분 파일 | `NeverDSemanticTests` | 명령어, ABI, 제어 흐름, C 표현식, lift/recompile 차등 의미론 |
 | `unittests/evm` | `NeverDEVMOpcodeTests`, `NeverDEVMBytecodeTests`, `NeverDEVMLoaderTests`, `NeverDEVMABITests`, `NeverDEVMAnalyzerTests`, `NeverDEVMDecoderPropertyTests`, `NeverDEVMProxyTests`, `NeverDEVMCallTests`, `NeverDEVMSemanticTests`, `NeverDEVMEmitterTests`, `NeverDEVMIntegrationTests` | hardfork metadata, input normalization, ABI/signature ambiguity, CFG/SSA/recovery, decoder boundary 전수 검사와 hostile input, proxy/call fact, interpreter semantics, LLVM/C/Solidity differential execution, public API routing |

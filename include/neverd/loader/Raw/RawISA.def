@@ -1,0 +1,223 @@
+//===- RawISA.def - Instruction sets a binary file's bytes can show -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// NEVERD_RAW_ISA(Id, Name, Processor, Family): an instruction set the ISA
+// model (lib/loader/Raw/ISAModel.bin, scripts/generate_isa_model.py) knows,
+// by its name in the model, the name the user reads, the RawLoader.def
+// processor a binary file is read as (empty when NeverD cannot decode the
+// set), and its family: sets that differ only in word size share one, so a
+// window that tells them apart weakly still counts as code.
+//
+// NEVERD_RAW_FAMILY(Family, Unit): the bytes a family's instructions align
+// to, where more than one; its position statistics tell where in a file its
+// instructions start.
+//
+// NEVERD_RAW_WIDTH(Family, Narrow, Wide, Encoding, Reader, BigEndian,
+// Evidence): a family of a 32-bit and a 64-bit set, how its instructions are
+// read to tell which -- as 32-bit Words in the family's byte order, as RISC-V
+// Parcels (16 bits, or 32 when the low two bits are set), or as every
+// BytePair, the first byte high -- and what the user reads the 64-bit set's
+// encodings as.
+//
+// NEVERD_RAW_WIDE(Encoding, Mask, Value): an instruction only the 64-bit set
+// of an encoding has, by the bits under Mask.  The 32-bit set's code holds
+// none; a RISC-V Parcel reader matches 32-bit instructions only.
+//
+// NEVERD_RAW_ISA_LIMIT(Id, Value): how windows of a binary file are read,
+// and how much of it must show one set for the file to be read as it.
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_RAW_ISA
+NEVERD_RAW_ISA("x86", "Intel x86 (32-bit)", "x86", "x86")
+NEVERD_RAW_ISA("x86_64", "x86-64", "x86_64", "x86")
+NEVERD_RAW_ISA("arm", "ARM (A32)", "arm", "arm")
+NEVERD_RAW_ISA("thumb", "ARM Thumb", "thumb", "thumb")
+NEVERD_RAW_ISA("aarch64", "ARM64 (AArch64)", "aarch64", "aarch64")
+NEVERD_RAW_ISA("armeb", "ARM big-endian", "", "armeb")
+NEVERD_RAW_ISA("mips", "MIPS big-endian (32-bit)", "", "mips-be")
+NEVERD_RAW_ISA("mips64", "MIPS big-endian (64-bit)", "", "mips-be")
+NEVERD_RAW_ISA("mipsel", "MIPS little-endian (32-bit)", "", "mips-le")
+NEVERD_RAW_ISA("mips64el", "MIPS little-endian (64-bit)", "", "mips-le")
+NEVERD_RAW_ISA("ppc", "PowerPC big-endian (32-bit)", "", "ppc-be")
+NEVERD_RAW_ISA("ppc64", "PowerPC big-endian (64-bit)", "", "ppc-be")
+NEVERD_RAW_ISA("ppc64le", "PowerPC little-endian (64-bit)", "", "ppc64le")
+NEVERD_RAW_ISA("riscv32", "RISC-V (32-bit)", "", "riscv")
+NEVERD_RAW_ISA("riscv64", "RISC-V (64-bit)", "", "riscv")
+NEVERD_RAW_ISA("sparc", "SPARC (32-bit)", "", "sparc")
+NEVERD_RAW_ISA("sparcv9", "SPARC V9 (64-bit)", "", "sparc")
+NEVERD_RAW_ISA("s390x", "IBM z/Architecture", "", "s390x")
+NEVERD_RAW_ISA("m68k", "Motorola 68000", "", "m68k")
+NEVERD_RAW_ISA("hexagon", "Qualcomm Hexagon", "", "hexagon")
+NEVERD_RAW_ISA("loongarch64", "LoongArch (64-bit)", "", "loongarch64")
+NEVERD_RAW_ISA("msp430", "TI MSP430", "", "msp430")
+NEVERD_RAW_ISA("avr", "Atmel AVR", "", "avr")
+NEVERD_RAW_ISA("xtensa", "Tensilica Xtensa", "", "xtensa")
+NEVERD_RAW_ISA("bpf", "eBPF", "", "bpf")
+NEVERD_RAW_ISA("alpha", "DEC Alpha", "", "alpha")
+NEVERD_RAW_ISA("hppa", "HP PA-RISC", "", "hppa")
+NEVERD_RAW_ISA("sh4", "Renesas SuperH (SH-4)", "", "sh")
+#undef NEVERD_RAW_ISA
+#endif
+
+#ifdef NEVERD_RAW_FAMILY
+NEVERD_RAW_FAMILY("arm", 4)
+NEVERD_RAW_FAMILY("thumb", 2)
+NEVERD_RAW_FAMILY("aarch64", 4)
+NEVERD_RAW_FAMILY("armeb", 4)
+NEVERD_RAW_FAMILY("mips-be", 4)
+NEVERD_RAW_FAMILY("mips-le", 4)
+NEVERD_RAW_FAMILY("ppc-be", 4)
+NEVERD_RAW_FAMILY("ppc64le", 4)
+NEVERD_RAW_FAMILY("riscv", 2)
+NEVERD_RAW_FAMILY("sparc", 4)
+NEVERD_RAW_FAMILY("s390x", 2)
+NEVERD_RAW_FAMILY("m68k", 2)
+NEVERD_RAW_FAMILY("hexagon", 4)
+NEVERD_RAW_FAMILY("loongarch64", 4)
+NEVERD_RAW_FAMILY("msp430", 2)
+NEVERD_RAW_FAMILY("avr", 2)
+NEVERD_RAW_FAMILY("alpha", 4)
+NEVERD_RAW_FAMILY("hppa", 4)
+NEVERD_RAW_FAMILY("sh", 2)
+#undef NEVERD_RAW_FAMILY
+#endif
+
+#ifdef NEVERD_RAW_WIDTH
+NEVERD_RAW_WIDTH("x86", "x86", "x86_64", "x86", BytePair, false,
+                 "REX.W prefixes")
+NEVERD_RAW_WIDTH("mips-be", "mips", "mips64", "mips", Word, true,
+                 "64-bit-only instructions")
+NEVERD_RAW_WIDTH("mips-le", "mipsel", "mips64el", "mips", Word, false,
+                 "64-bit-only instructions")
+NEVERD_RAW_WIDTH("ppc-be", "ppc", "ppc64", "ppc", Word, true,
+                 "64-bit-only instructions")
+NEVERD_RAW_WIDTH("riscv", "riscv32", "riscv64", "riscv", Parcel, false,
+                 "64-bit-only instructions")
+NEVERD_RAW_WIDTH("sparc", "sparc", "sparcv9", "sparc", Word, true,
+                 "64-bit-only instructions")
+#undef NEVERD_RAW_WIDTH
+#endif
+
+#ifdef NEVERD_RAW_WIDE
+// x86-64: REX.W before an opcode common in code, which 32-bit code reads as
+// dec eax and then that opcode.
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4889)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x488b)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x488d)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4883)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4885)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4801)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4829)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4831)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4839)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4863)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x48c7)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4881)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x483b)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4803)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x482b)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4833)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4809)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4821)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x480f)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x48c1)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x48d1)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x48f7)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x48ff)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4898)
+NEVERD_RAW_WIDE("x86", 0xffff, 0x4899)
+// MIPS64: daddi, daddiu, ldl, ldr, lwu, sdl, sdr, lld, ld, scd, sd.
+NEVERD_RAW_WIDE("mips", 0xfc000000, 0x60000000)
+NEVERD_RAW_WIDE("mips", 0xfc000000, 0x64000000)
+NEVERD_RAW_WIDE("mips", 0xfc000000, 0x68000000)
+NEVERD_RAW_WIDE("mips", 0xfc000000, 0x6c000000)
+NEVERD_RAW_WIDE("mips", 0xfc000000, 0x9c000000)
+NEVERD_RAW_WIDE("mips", 0xfc000000, 0xb0000000)
+NEVERD_RAW_WIDE("mips", 0xfc000000, 0xb4000000)
+NEVERD_RAW_WIDE("mips", 0xfc000000, 0xd0000000)
+NEVERD_RAW_WIDE("mips", 0xfc000000, 0xdc000000)
+NEVERD_RAW_WIDE("mips", 0xfc000000, 0xf0000000)
+NEVERD_RAW_WIDE("mips", 0xfc000000, 0xfc000000)
+// MIPS64 SPECIAL: dsllv, dsrlv, dsrav, dmult, dmultu, ddiv, ddivu, dadd,
+// daddu, dsub, dsubu, dsll, dsrl, dsra, dsll32, dsrl32, dsra32.
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x00000014)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x00000016)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x00000017)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000001c)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000001d)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000001e)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000001f)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000002c)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000002d)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000002e)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000002f)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x00000038)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000003a)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000003b)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000003c)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000003e)
+NEVERD_RAW_WIDE("mips", 0xfc00003f, 0x0000003f)
+// PowerPC64: rld*, ld/ldu/lwa, std/stdu.
+NEVERD_RAW_WIDE("ppc", 0xfc000000, 0x78000000)
+NEVERD_RAW_WIDE("ppc", 0xfc000000, 0xe8000000)
+NEVERD_RAW_WIDE("ppc", 0xfc000000, 0xf8000000)
+// SPARC V9: ldx, stx; sllx, srlx, srax.
+NEVERD_RAW_WIDE("sparc", 0xc1f80000, 0xc0580000)
+NEVERD_RAW_WIDE("sparc", 0xc1f80000, 0xc0700000)
+NEVERD_RAW_WIDE("sparc", 0xc1f81000, 0x81281000)
+NEVERD_RAW_WIDE("sparc", 0xc1f81000, 0x81301000)
+NEVERD_RAW_WIDE("sparc", 0xc1f81000, 0x81381000)
+// RV64: OP-IMM-32, OP-32; ld, lwu; sd.
+NEVERD_RAW_WIDE("riscv", 0x7f, 0x1b)
+NEVERD_RAW_WIDE("riscv", 0x7f, 0x3b)
+NEVERD_RAW_WIDE("riscv", 0x707f, 0x3003)
+NEVERD_RAW_WIDE("riscv", 0x707f, 0x6003)
+NEVERD_RAW_WIDE("riscv", 0x707f, 0x3023)
+#undef NEVERD_RAW_WIDE
+#endif
+
+#ifdef NEVERD_RAW_ISA_LIMIT
+// Bytes a window holds, and the fewest a file may hold to be read at all.
+NEVERD_RAW_ISA_LIMIT(WindowBytes, 4096)
+NEVERD_RAW_ISA_LIMIT(LeastBytes, 512)
+// Windows read at most, spread evenly over a larger file.
+NEVERD_RAW_ISA_LIMIT(MostWindows, 1024)
+// Bits of byte entropy below which a window is padding and above which it
+// is compressed or encrypted, in tenths.
+NEVERD_RAW_ISA_LIMIT(LeastEntropyTenths, 30)
+NEVERD_RAW_ISA_LIMIT(MostEntropyTenths, 75)
+// Percent of printable ASCII from which a window is text.
+NEVERD_RAW_ISA_LIMIT(TextPercent, 85)
+// Thousandths of a nat per byte by which the likeliest set must explain a
+// window better than any set of another family for the window to count as
+// code; it votes with the excess.
+NEVERD_RAW_ISA_LIMIT(MarginMilli, 500)
+// What settles a file on one family: the percent of the weight it takes;
+// the windows that must vote for it (every window that may be code, in a
+// file with fewer); and in thousandths, the weight it needs per window that
+// may be code, the least weight in all, and the least per window it took.
+// Code of a set the model lacks scatters a little weight over a few windows.
+NEVERD_RAW_ISA_LIMIT(FamilyPercent, 90)
+NEVERD_RAW_ISA_LIMIT(LeastVotes, 2)
+NEVERD_RAW_ISA_LIMIT(WeightMilliPerWindow, 20)
+NEVERD_RAW_ISA_LIMIT(LeastWeightMilli, 500)
+NEVERD_RAW_ISA_LIMIT(VoteWeightMilli, 300)
+// Windows of the family read for its alignment and width, spread evenly.
+NEVERD_RAW_ISA_LIMIT(MostWidthWindows, 128)
+// Thousandths of a nat per byte by which the instructions' likeliest
+// alignment must fit the set's position statistics better than any other
+// for the code to count as starting off the file's alignment.
+NEVERD_RAW_ISA_LIMIT(OffsetMilli, 100)
+// Of a width family's instructions, in hundredths of a percent, the median
+// window's 64-bit-only share at most for the 32-bit set and at least for the
+// 64-bit set; a share between leaves the width unclear.
+NEVERD_RAW_ISA_LIMIT(NarrowMostBasisPoints, 50)
+NEVERD_RAW_ISA_LIMIT(WideLeastBasisPoints, 150)
+// The least share a guess is listed with, in percent.
+NEVERD_RAW_ISA_LIMIT(ListedPercent, 1)
+#undef NEVERD_RAW_ISA_LIMIT
+#endif

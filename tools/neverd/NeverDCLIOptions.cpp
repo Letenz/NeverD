@@ -349,7 +349,7 @@ cl::opt<std::string> LoadLoader(
 cl::opt<std::string> LoadProcessor(
     "processor",
     cl::desc("Processor a binary file's code runs on: x86, x86_64, arm, "
-             "thumb or aarch64"),
+             "thumb or aarch64; auto, the default, reads it from the bytes"),
     cl::init(""), cl::value_desc("processor"), cl::sub(LiftCmd),
     cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
     cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
