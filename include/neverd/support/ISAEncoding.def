@@ -185,7 +185,6 @@ NEVERD_AARCH64_ENCODING(uint32_t, kADD_X16_X16_Mask, branch::A64AddX16X16.Mask)
 NEVERD_AARCH64_ENCODING(uint32_t, kADD_X16_X16_Match,
                         branch::A64AddX16X16.Match)
 NEVERD_AARCH64_ENCODING(size_t, kThunkLen, 12)
-NEVERD_AARCH64_ENCODING(size_t, kELFPLTThunkLen, 16)
 
 // --- Miscellaneous ---
 NEVERD_AARCH64_ENCODING(uint32_t, kNop, 0xD503201F)
@@ -195,6 +194,10 @@ NEVERD_AARCH64_ENCODING(uint32_t, kBR_X17, 0xD61F0220)
 // --- Branch target identification: the landing pads of indirect calls ---
 NEVERD_AARCH64_ENCODING(uint32_t, kBTI_C, 0xD503245F)
 NEVERD_AARCH64_ENCODING(uint32_t, kBTI_JC, 0xD50324DF)
+
+// --- Pointer authentication of x17 with x16 as the modifier (PAC PLT) ---
+NEVERD_AARCH64_ENCODING(uint32_t, kAUTIA1716, 0xD503219F)
+NEVERD_AARCH64_ENCODING(uint32_t, kAUTIB1716, 0xD50321DF)
 
 // +/- 128 MB reach of B/BL: a signed 26-bit offset in instructions.
 NEVERD_AARCH64_ENCODING(int64_t, kBranchRange,
