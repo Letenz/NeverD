@@ -70,7 +70,6 @@ add_neverd_component_library(NeverDLoader
   Go/GoPclntab.cpp
   Go/GoRuntimeEH.cpp
   Go/GoStackMaps.cpp
-  InputDigest.cpp
   Loader.cpp
   PointerRelocation.cpp
   MachO/DarwinRuntimeCalls.cpp
@@ -143,6 +142,7 @@ add_neverd_component_library(NeverDLoader
   language/SymbolSpellingSwift.cpp
 
   LINK_COMPONENTS
+  Digest
   EVM
   IR
   SBF

@@ -152,12 +152,14 @@ llvm::Error readImports(const Reader &R, const data_directory &D, Image &Out,
       if (!IAT)
         return IAT.takeError();
       const uint64_t NameRVA = llvm::support::endian::read64le(Symbol->data());
-      if (NameRVA != llvm::support::endian::read64le(IAT->data()))
-        return failure(text::Imports);
+      // An independent lookup table owns the count, even when the next IAT
+      // cell is a pending delay-load thunk rather than a null terminator.
       if (!NameRVA) {
         End = true;
         break;
       }
+      if (NameRVA != llvm::support::endian::read64le(IAT->data()))
+        return failure(text::Imports);
       if (Out.Imports.size() == MaxImports || !Slots.insert(Slot).second)
         return failure(text::Imports);
       if (!R.record())
@@ -608,7 +610,9 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
                             ? Arch::X64
                             : Arch::AArch64) ||
       Decoded->Segments.size() != Out.Regions.size() ||
-      Decoded->Imports.size() != Out.Imports.size())
+      std::count_if(Decoded->Imports.begin(), Decoded->Imports.end(),
+                    [](const auto &I) { return !I.IsDelayImport; }) !=
+          Out.Imports.size())
     return failure(text::LoaderDisagreement);
   for (size_t I = 0; I < R.Sections.size(); ++I)
     if (Decoded->Segments[I].VA != Out.Regions[I].Address ||
@@ -617,7 +621,7 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
   for (const auto &Import : Out.Imports)
     if (std::none_of(Decoded->Imports.begin(), Decoded->Imports.end(),
                      [&](const auto &I) {
-                       return I.IATAddr == Import.Slot &&
+                       return !I.IsDelayImport && I.IATAddr == Import.Slot &&
                               (Import.Ordinal ? I.Ordinal == *Import.Ordinal
                                               : I.Name == Import.Name) &&
                               llvm::StringRef(I.Module).lower() ==

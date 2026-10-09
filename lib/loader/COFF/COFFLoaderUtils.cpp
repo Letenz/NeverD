@@ -402,6 +402,7 @@ parseDelayImportDescriptor(const delay_import_directory_table_entry &Desc,
     Import Imp;
     Imp.Module = (llvm::Twine(Resolved->Module) + kDelayImportSuffix).str();
     Imp.IATAddr = IATSlot;
+    Imp.IsDelayImport = true;
 
     const uint64_t OrdinalMask =
         Img.is64Bit() ? (uint64_t(1) << 63) : (uint64_t(1) << 31);
