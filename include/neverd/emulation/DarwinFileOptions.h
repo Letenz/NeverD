@@ -186,6 +186,12 @@ struct DarwinFileOptions {
   /// excluded. Neither permissions nor host attributes are inferred.
   std::map<std::string, std::vector<DarwinExtendedAttribute>>
       ExtendedAttributes;
+  /// Independent ordinary xattr mutation grants on initial objects with a
+  /// complete observed list. Created objects and reused names do not inherit
+  /// them. Replacement keeps its slot, deletion removes it, creation appends.
+  /// Initial bytes/count remain reserved; runtime excess shares the catalogue
+  /// limits. Success invalidates complete stat, without changing enumeration.
+  std::set<std::string> MutableExtendedAttributes;
   /// Explicit directories, including empty ones; root and ancestors are
   /// implicit.
   std::set<std::string> Directories;

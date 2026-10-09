@@ -3631,3 +3631,8 @@ The Objective-C source exporter clears `CEmitterOptions::EmitRecordGuards` and `
 ## Bounded bulk directory attributes
 
 DarwinFiles owns common attribute import, name/stat validity and record encoding. DarwinDirectory owns bulk grouping, explicit object authorization and description-owned iteration/cursor/EOF state, sharing the live child membership projection with getdirentries64. Dup shares one description; zero seek resets its iteration contract. JSON supplies explicit policy inputs, and service dispatch delegates without inventing filesystem observations.
+
+
+## Ordinary Darwin attribute mutations
+
+DarwinFiles owns retained attribute state, initial-object mutation grants, shared name import and complete-stat validity. DarwinExtendedAttributes stages value/list changes before one commit. Fixed initial reservations and runtime attribute excess use the same storage/count owner as content and namespace mutations; unlinked objects and mapping leases retain their dynamic charge until final release. JSON only imports explicit grants. Directory attribute mutation invalidates full metadata independently of membership, snapshots and enumeration versions.

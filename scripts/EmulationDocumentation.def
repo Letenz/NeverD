@@ -1811,3 +1811,15 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "bulk-attributes")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "bulk-attributes-values")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "bulk-attributes-unsupported")
 #endif
+
+// Ordinary extended-attribute mutation vocabulary.
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "setxattr(236)")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "fsetxattr(237)")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "removexattr(238)")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "fremovexattr(239)")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "mutable_extended_attributes=true")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "xattr-mutations")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "xattr-mutations-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "xattr-mutations-unsupported")
+#endif

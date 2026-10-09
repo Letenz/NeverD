@@ -85,7 +85,7 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
     results = []
     for mode, status, output in cases:
         case_input = input_file
-        if mode in ("common-attributes", "extended-attributes", "attribute-names", "bulk-attributes"):
+        if mode in ("common-attributes", "extended-attributes", "attribute-names", "bulk-attributes", "xattr-mutations"):
             catalogue = initial_root / mode
             (catalogue / "empty").mkdir(parents=True)
             for name, target in (("alias", "data"), ("dangling", "missing"),

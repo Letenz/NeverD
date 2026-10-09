@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 3d8ffe1d66c00abb1d60b3d786625b140504809467f73d6d11e5c7bea8c580fc -->
+<!-- i18n-source: aa19cf02d09c66c62cfde94ee71c93b210f3d92165151c58778e1e91ec0df607 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -910,3 +910,15 @@ Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distribut
 يشترك dup في التقدم وتبقى عمليات open المنفصلة مستقلة. يحفظ الاجتياز المكتمل غير الصفري EOF بعد تغييرات مساحة الأسماء ويتجاوز الحجم/الإخراج بعد تحقق الطلب. يعيد الدليل الفارغ أولياً عند offset0 فحص العرض. يعيد lseek الصفري ضبط التكرار. تغير العضوية قبل EOF وseek غير صفري عشوائي وخلط getdirentries64/bulk توقف صراحة. NAME-only وعناصر ERROR واللقطات وACL/الأذونات وترتيب المضيف وغيرها من mask/options غير مدعومة. تتحقق bulk-attributes / bulk-attributes-values / bulk-attributes-unsupported من السلوك الأصلي المشترك والبايتات الافتراضية الحرفية والاختيار المجهول مع حفظ الإخراج السابق. نجح إعداد ARM64 الخاص في728 مقارنة raw/SDK محمية. تبقى native5s وguest/Python5,000,000us/quantum1024 وpublic10s بلا تغيير. Intel الأصلي وiOS الفعلي والبيئات الكاملة غير متحققة أو غير مكتملة.
 
 Sources: [XNU bulk ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/man/man2/getattrlistbulk.2), [XNU attribute definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h). Original implementation and probes; no Apple implementation copied.
+
+## تعديل السمات الممتدة العادية بإذن صريح
+
+تتطلب setxattr(236) وfsetxattr(237) وremovexattr(238) وfremovexattr(239) إذنًا مستقلًا للكائن الأولي: `MutableExtendedAttributes` في C++، والقيمة المنطقية الصارمة `mutable_extended_attributes=true` في JSON. يجب أن يعلن كل ملف أو دليل أو رابط مأذون له قائمة كاملة من `extended_attributes` العادية، بما فيها قائمة فارغة معلومة. الإذن بكتابة المحتوى أو تعديل فضاء الأسماء لا يمنح هذا الإذن. تتبع الأذونات والقيم الكائن المحتفظ به عبر dup والنقل والحذف والاحتفاظ بتعيينات الذاكرة. تبدأ سمات الكائنات الجديدة والأسماء المعاد استخدامها بوصفها مجهولة. لا تُدعم الأسماء البديلة المعروفة، أو أعلام البيانات الوصفية المتعارضة، أو سمات النظام المحمية، أو ResourceFork، أو FinderInfo، أو دلالات الضغط.
+
+يحافظ الاستبدال على موضع العنصر في القائمة الافتراضية، ويزيل الحذف العنصر، وتضيفه عملية الإنشاء إلى النهاية. هذا ترتيب معلن داخل العملية، ولا يُستنتج منه ترتيب APFS. تظل بايتات السمات وأعدادها الأولية ومراجع مسارات الإذن محجوزة. تشترك الزيادة أثناء التنفيذ في الحد الحالي 16 MiB/4096؛ ولا يستعيد الحذف أو إبطال المحتوى أو التحرير النهائي للكائن إلا هذه الزيادة. لا تنشر أخطاء السعة أو النقل أو الموعد النهائي الحالة المؤقتة. يُرجع الإدخال المطلوب غير القابل للقراءة كليًا EFAULT؛ أما القابل للقراءة جزئيًا فيتوقف صراحة قبل النشر بوصفه غير مدعوم. يُبطل النجاح stat الكامل دون اختلاق أوقات، مع الحفاظ على الهوية وأعضاء الدليل وإصدار/لقطة التعداد والمؤشرات.
+
+تستخدم ABI التعديل low32 FD/options/position وfull64 size. تسبق الفحوص المبكرة للخيارات ذات الامتياز وخيارات روابط FD استيراد الاسم، ويسبق استيراد الاسم البحث عن الكائن. ترفض set مؤشر NULL بطول غير صفري قبل إدخال VFS المفرط (E2BIG7)؛ ويسبق البحث التحقق من الاسم العادي وposition والتعارضات. تستورد set القيمة الكاملة قبل EEXIST17 عند CREATE موجود أو ENOATTR93 عند REPLACE مفقود. يعطي الجمع بين CREATE وREPLACE الخطأ EINVAL؛ ويتجاهل الحذف هذين البتّين. لا تقرأ set ذات الحجم الصفري مؤشر القيمة. تتوقف صراحة الأعلام الأخرى والأذونات المجهولة وسلوك المزوّد غير المرصود.
+
+تختبر xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported ضوابط أصلية للتنفيذ الأصلي/الضيف، وبايتات افتراضية حرفية مستقلة، وتوقفًا بسبب غياب الإذن يحافظ على الناتج السابق. تحققت تهيئة ARM64 الخاصة من726 استدعاء raw/SDK، وملاحظات محمية كاملة بحجم544 بايت، وصفحات كاملة قابلة للقراءة. تبقى native5s/compile120s/drain1s/reap1s وguest/Python5,000,000us/quantum1024 وpublic10s دون تغيير. لا يزال Intel الأصلي وiOS الفعلي وdyld وMach IPC والخيوط/الإشارات وبيئات Objective-C/Swift وأطر العمل الكاملة غير متحقق منها أو غير مكتملة.
+
+مراجع ABI الأولية: [تصريحات استدعاءات XNU](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master)، [تعريفات xattr](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). الشيفرة والمجسّات أصلية؛ لم تُنسخ تطبيقات Apple.

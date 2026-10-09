@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3d8ffe1d66c00abb1d60b3d786625b140504809467f73d6d11e5c7bea8c580fc -->
+<!-- i18n-source: aa19cf02d09c66c62cfde94ee71c93b210f3d92165151c58778e1e91ec0df607 -->
 
 [← 文件索引](README.md)
 
@@ -912,3 +912,15 @@ getattrlistbulk(461) 需要明確 enumeration_policy.bulk_attributes=true；省�
 dup 共用進度，獨立 open 各自前進。非零已完成遍歷在命名空間變化後仍保留 EOF，在請求驗證後略過大小與輸出檢查；初始空目錄 offset0 重新檢查檢視。零 lseek 重設迭代；EOF 前成員變化、任意非零 seek、混用 getdirentries64/bulk 明確停止。NAME-only 回退、含 ERROR 的項目、快照、ACL/權限判斷、主機順序及其他 mask/options 不支援。bulk-attributes / bulk-attributes-values / bulk-attributes-unsupported 檢查原生共同行為、虛擬字面位元組及保留既有輸出的未知選擇停止。ARM64 私有準備通過728組含保護區的 raw/SDK 比較。native5s、guest/Python5,000,000us/quantum1024、public10s 不變。原生 Intel、iOS 真機及完整執行期/框架仍未驗證或未完成。
 
 Sources: [XNU bulk ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/man/man2/getattrlistbulk.2), [XNU attribute definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h). Original implementation and probes; no Apple implementation copied.
+
+## 明確授權的普通延伸屬性修改
+
+setxattr(236)、fsetxattr(237)、removexattr(238) 與 fremovexattr(239) 使用針對初始物件的獨立授權：C++ `MutableExtendedAttributes`，嚴格布林 JSON `mutable_extended_attributes=true`。獲授權的檔案、目錄或符號連結必須宣告完整的普通 `extended_attributes` 清單，也可宣告已知空清單。內容可寫或名稱空間可修改不會授予此權限。授權和值隨保留的物件經過 dup、移動、刪除及映射租約繼續存在；新建物件及重用名稱的屬性起初未知。已知別名、衝突的中繼資料旗標、受保護的系統屬性、ResourceFork、FinderInfo 與壓縮語義仍不支援。
+
+取代保留虛擬清單位置，刪除移除該項，新建附加至末尾。這是宣告的行程內順序，不推測 APFS 順序。初始屬性的位元組、數量及授權路徑參照始終預留。執行期超出初始預留的部分由既有 16 MiB/4096 限額統一管理；刪除、內容失效或最終釋放物件只回收這部分增量。容量、傳輸或截止時間失敗不會發布暫存狀態。必要輸入完全不可讀時傳回 EFAULT；部分可讀時在發布前明確報告不支援。修改成功使完整 stat 失效，不猜測時間，同時保留物件身分、目錄成員、列舉版本/快照與游標。
+
+修改 ABI 使用 low32 FD/options/position 及 full64 size。特權與 FD 連結選項的早期檢查先於名稱匯入，名稱匯入先於物件查找。set 在檢查過大的 VFS 輸入（E2BIG7）前拒絕非空長度的 NULL；查找先於普通名稱、position 及衝突檢查。set 先匯入完整值，再傳回 CREATE 已存在的 EEXIST17 或 REPLACE 不存在的 ENOATTR93。CREATE 與 REPLACE 同時設定傳回 EINVAL；刪除操作忽略這兩個位元。長度為零的 set 不讀取值指標。其他旗標、未知權限及未觀察的提供者行為均明確停止。
+
+xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported 使用原創原生/客體對照、獨立虛擬位元組常值，以及保留既有輸出的缺少授權停止案例。ARM64 私有準備驗證了726次 raw/SDK 呼叫、完整544位元組保護區觀察及完整可讀頁。native5s/compile120s/drain1s/reap1s、guest/Python5,000,000us/quantum1024、public10s 均不變。原生 Intel、iOS 實機、dyld、Mach IPC、執行緒/訊號、Objective-C/Swift 執行環境及完整框架仍未驗證或未完成。
+
+主要 ABI 參考：[XNU 系統呼叫宣告](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master)、[xattr 定義](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h)。實作與探針均為原創，未複製 Apple 實作。

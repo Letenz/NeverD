@@ -30,6 +30,34 @@ inline DarwinFileOptions kernelPathConfOptions() {
 inline constexpr char AttributeNamesHex[] =
     "2c0000000900008000000000000000000000000000000000"
     "0c00000005000000010000006461746100000000";
+inline constexpr char XattrMutationsHex[] =
+    "00ff410080420a757365722e6e65766572642e6265746100";
+inline DarwinFileOptions xattrMutationsOptions() {
+  auto O = kernelPathConfOptions();
+  O.WorkingDirectory = "/";
+  O.Files["/readonly"] = {};
+  O.MutableDirectories.insert("/");
+  for (const auto &[Path, Target] : O.SymbolicLinks)
+    O.MutableSymbolicLinks.insert(Path);
+  for (const char *Path : {"/data", "/empty", "/alias", "/readonly"})
+    O.ExtendedAttributes[Path] = {};
+  O.MutableExtendedAttributes = {"/data", "/empty", "/alias"};
+  return O;
+}
+inline constexpr char XattrMutationsJSON[] = R"({
+  "files":[
+    {"path":"/data","bytes_hex":"30313233343536373839",
+     "extended_attributes":[],"mutable_extended_attributes":true},
+    {"path":"/readonly","bytes_hex":"","extended_attributes":[]}],
+  "directories":[{"path":"/","mutable":true},
+    {"path":"/empty","extended_attributes":[],
+     "mutable_extended_attributes":true}],
+  "symbolic_links":[
+    {"path":"/alias","target_hex":"64617461","mutable":true,
+     "extended_attributes":[],"mutable_extended_attributes":true},
+    {"path":"/dangling","target_hex":"6d697373696e67","mutable":true},
+    {"path":"/cycle","target_hex":"6379636c65","mutable":true}],
+  "working_directory":"/"})";
 inline DarwinFileOptions attributeNamesOptions() {
   auto O = kernelPathConfOptions();
   O.WorkingDirectory = "/";

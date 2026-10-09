@@ -254,6 +254,94 @@ static int xattr_bytes(const u64 *words, const unsigned char *expected,
   }
   return 0;
 }
+static int xattr_mutations(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 200;
+  parent[last ? last : 1] = 0;
+  u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 201;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary || xattr_result(13, root, 0, 0, 0, 0, 0, 0, 0))
+    return 202;
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || xattr_result(199, file, 37, 0, 0, 0, 0, 37, 0))
+    return 203;
+  const char *beta = "user.neverd.beta", *empty = "user.neverd.empty";
+  const unsigned char value[7] = {0, 255, 'A', 0, 128, 'B', '\n'};
+  const unsigned char link_value = 42;
+  if (xattr_result(236, (u64) "data", (u64)beta, (u64)value, 7, 0, 2, 0, 0) ||
+      xattr_result(236, (u64) "data", (u64)beta, (u64)value, 7, 0, 2, 17, 1) ||
+      xattr_result(237, copy, (u64) "user.neverd.missing", (u64)value, 7, 0, 4,
+                   93, 1) ||
+      xattr_result(237, copy, (u64)beta, -1UL, 7, 0, 2, 14, 1) ||
+      xattr_result(237, copy, (u64)beta, 0, 1, 0, 0, 22, 1) ||
+      xattr_result(237, copy, (u64)beta, -1UL, 0, 1, 0, 22, 1) ||
+      xattr_result(237, 99, (u64)beta, -1UL, 0, 0, 0, 9, 1) ||
+      xattr_result(239, 99, -1UL, 0, 0, 0, 0, 14, 1) ||
+      xattr_result(237, 99, -1UL, 0, 0, 0, 1, 22, 1))
+    return 204;
+  u64 words[36];
+  unsigned char *out = (unsigned char *)words + 16;
+  xattr_canary(words);
+  if (xattr_result(235, file, (u64)beta, (u64)out, 7, 0, 0, 7, 0) ||
+      xattr_bytes(words, value, 7) ||
+      xattr_result(237, copy | 0x1234567800000000UL, (u64)empty, -1UL, 0,
+                   0x1234567800000000UL, 0, 0, 0) ||
+      xattr_result(239, copy, (u64)empty, 6, -1UL, -1UL, -1UL, 0, 0) ||
+      xattr_result(239, copy, (u64)empty, 4, -1UL, -1UL, -1UL, 93, 1))
+    return 205;
+  if (xattr_result(236, (u64) "alias", (u64)beta, (u64)&link_value, 1, 0, 65, 0,
+                   0))
+    return 206;
+  xattr_canary(words);
+  if (xattr_result(234, (u64) "alias", (u64)beta, (u64)out, 1, 0, 1, 1, 0) ||
+      xattr_bytes(words, &link_value, 1) ||
+      xattr_result(238, (u64) "alias", (u64)beta, 1, -1UL, -1UL, -1UL, 0, 0) ||
+      xattr_result(236, (u64) "empty", (u64)beta, -1UL, 0, 0, 0, 0, 0) ||
+      xattr_result(238, (u64) "empty", (u64)beta, 0, -1UL, -1UL, -1UL, 0, 0))
+    return 207;
+  if (xattr_result(128, (u64) "data", (u64) "moved", 0, 0, 0, 0, 0, 0) ||
+      xattr_result(238, (u64) "moved", (u64)beta, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(237, copy, (u64)beta, (u64)value, 7, 0, 2, 0, 0) ||
+      xattr_result(10, (u64) "moved", 0, 0, 0, 0, 0, 0, 0))
+    return 208;
+  xattr_canary(words);
+  if (xattr_result(235, file, (u64)beta, (u64)out, 7, 0, 0, 7, 0) ||
+      xattr_bytes(words, value, 7) ||
+      xattr_result(199, copy, 0, 1, 0, 0, 0, 37, 0))
+    return 209;
+  if (mode == 1) {
+    /* Complete virtual order is declared; no APFS order is inferred. */
+    xattr_canary(words);
+    if (xattr_result(241, copy, (u64)out, 256, 0, 0, 0, 17, 0) ||
+        xattr_bytes(words, (const unsigned char *)beta, 17) ||
+        xattr_result(4, 1, (u64)value, 7, 0, 0, 0, 7, 0) ||
+        xattr_result(4, 1, (u64)out, 17, 0, 0, 0, 17, 0))
+      return 210;
+  } else if (xattr_result(4, 1, (u64) "V", 1, 0, 0, 0, 1, 0)) {
+    return 211;
+  }
+  if (mode == 2) {
+    call(236, (u64) "readonly", (u64)beta, 0, 0, 0, 0, &error);
+    return 212;
+  }
+  if (xattr_result(6, copy, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, file, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, root, 0, 0, 0, 0, 0, 0, 0))
+    return 213;
+  return 37;
+}
+
 static int extended_attributes(const char *path, unsigned mode) {
   unsigned error;
   char parent[1024];
@@ -6502,6 +6590,16 @@ int main(int argc, char **argv, char **envp, char **apple) {
                : attribute_names(argv[2],
                                  equal(argv[1], "attribute-names-values") ? 1
                                  : equal(argv[1], "attribute-names-unsupported")
+                                     ? 2
+                                     : 0);
+  if (equal(argv[1], "xattr-mutations") ||
+      equal(argv[1], "xattr-mutations-values") ||
+      equal(argv[1], "xattr-mutations-unsupported"))
+    return argc < 3
+               ? 2
+               : xattr_mutations(argv[2],
+                                 equal(argv[1], "xattr-mutations-values") ? 1
+                                 : equal(argv[1], "xattr-mutations-unsupported")
                                      ? 2
                                      : 0);
   if (equal(argv[1], "extended-attributes") ||

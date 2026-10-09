@@ -70,12 +70,31 @@ private:
     int32_t Device;
     uint32_t GID;
   };
+  struct AttributeState {
+    const std::vector<DarwinExtendedAttribute> *Initial = nullptr;
+    std::optional<std::vector<DarwinExtendedAttribute>> Modified;
+    uint64_t InitialCharge = 0;
+    uint64_t DynamicCharge = 0;
+    uint32_t ExtraCount = 0;
+    bool Mutable = false;
+    bool Invalidated = false;
+    const std::vector<DarwinExtendedAttribute> *get() const {
+      return Invalidated ? nullptr : Modified ? &*Modified : Initial;
+    }
+    void attach(const std::vector<DarwinExtendedAttribute> &Attributes,
+                bool Grant) {
+      Initial = &Attributes;
+      Mutable = Grant;
+      for (const auto &Attribute : Attributes)
+        InitialCharge += Attribute.Name.size() + 1 + Attribute.Bytes.size();
+    }
+  };
   struct DirectoryNode {
     std::string Path;
     std::shared_ptr<DirectoryNode> Parent;
     std::optional<DirectoryIdentity> Identity;
     const DarwinFileMetadata *Metadata = nullptr;
-    const std::vector<DarwinExtendedAttribute> *ExtendedAttributes = nullptr;
+    AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;
     uint32_t DirectoryEntrySize = 0;
     const DarwinFileTime *MutationTime = nullptr;
@@ -88,6 +107,7 @@ private:
     bool Created = false;
     bool Linked = true;
     bool Changed = false;
+    bool MetadataInvalidated = false;
     bool Mutable = false;
     bool Removable = false;
     bool Movable = false;
@@ -109,7 +129,7 @@ private:
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> Modified;
     const DarwinFileMetadata *InitialMetadata = nullptr;
-    const std::vector<DarwinExtendedAttribute> *ExtendedAttributes = nullptr;
+    AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;
     const DarwinFileMutationPolicy *Policy = nullptr;
     std::optional<llvm::BitVector> Allocated;
@@ -133,7 +153,7 @@ private:
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> CreatedTarget;
     const DarwinFileMetadata *Metadata = nullptr;
-    const std::vector<DarwinExtendedAttribute> *ExtendedAttributes = nullptr;
+    AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;
     const DarwinFileTime *MutationTime = nullptr;
     std::string Path;
@@ -146,7 +166,8 @@ private:
       return CreatedTarget ? llvm::ArrayRef<uint8_t>(*CreatedTarget) : Initial;
     }
     uint64_t dynamicCharge() const {
-      return PathCharge + (CreatedTarget ? CreatedTarget->size() : 0);
+      return PathCharge + (CreatedTarget ? CreatedTarget->size() : 0) +
+             ExtendedAttributes.DynamicCharge;
     }
   };
   enum class DirectoryIteration { None, Entries, Bulk };
@@ -204,6 +225,7 @@ private:
   uint16_t CurrentUmask = 0;
   std::optional<uint64_t> StorageUsed;
   uint32_t FixedEntries = 0;
+  uint32_t AttributeSlots = 0;
   std::shared_ptr<DirectoryNode> CurrentDirectory;
 
   uint32_t limit() const;
@@ -254,9 +276,16 @@ private:
   llvm::Expected<Pathname> readExtendedAttributeName(uint64_t Address);
   const std::vector<DarwinExtendedAttribute> *
   extendedAttributes(const Description &File) const;
+  AttributeState *attributeState(const Description &File) const;
+  void invalidateAttributes(AttributeState &State);
+  void invalidateAttributeMetadata(Description &File);
   llvm::Expected<std::optional<ServiceResult>>
   extendedAttributeRead(ServiceKind Service, const ProcessServiceEvent &Event,
                         ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  extendedAttributeMutation(ServiceKind Service,
+                            const ProcessServiceEvent &Event,
+                            ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   extendedAttributeResult(const Description &File,
                           std::optional<llvm::StringRef> Name, uint64_t Address,

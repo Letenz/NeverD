@@ -307,6 +307,13 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         return Parsed.takeError();
       Out.ExtendedAttributes.emplace(Path.str(), std::move(*Parsed));
     }
+    if (const auto *Value = Object.get(field::MutableExtendedAttributes)) {
+      auto Mutable = Value->getAsBoolean();
+      if (!Mutable)
+        return invalid(field::MutableExtendedAttributes);
+      if (*Mutable)
+        Out.MutableExtendedAttributes.insert(Path.str());
+    }
     return llvm::Error::success();
   };
   for (const auto &[Key, V] : *Object) {
@@ -347,6 +354,7 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
             D->size() !=
                 1 + unsigned(bool(D->get(field::FileMetadata))) +
                     unsigned(bool(D->get(field::ExtendedAttributes))) +
+                    unsigned(bool(D->get(field::MutableExtendedAttributes))) +
                     unsigned(bool(D->get(field::DirectoryContents))) +
                     unsigned(bool(D->get(field::DirectoryEnumerationPolicy))) +
                     unsigned(bool(D->get(field::DirectoryMutationPolicy))) +
@@ -433,6 +441,8 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
             Link->size() !=
                 2 + unsigned(bool(Link->get(field::FileMetadata))) +
                     unsigned(bool(Link->get(field::ExtendedAttributes))) +
+                    unsigned(
+                        bool(Link->get(field::MutableExtendedAttributes))) +
                     unsigned(bool(Link->get(field::SymbolicLinkMutable))) +
                     unsigned(
                         bool(Link->get(field::SymbolicLinkMutationPolicy))))
@@ -476,10 +486,12 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
       for (const auto &File : *Files) {
         const auto *F = File.getAsObject();
         if (!F || !F->get(field::Bytes) ||
-            F->size() != 2 + unsigned(bool(F->get(field::FileMetadata))) +
-                             unsigned(bool(F->get(field::ExtendedAttributes))) +
-                             unsigned(bool(F->get(field::FileWritable))) +
-                             unsigned(bool(F->get(field::FileMutationPolicy))))
+            F->size() !=
+                2 + unsigned(bool(F->get(field::FileMetadata))) +
+                    unsigned(bool(F->get(field::ExtendedAttributes))) +
+                    unsigned(bool(F->get(field::MutableExtendedAttributes))) +
+                    unsigned(bool(F->get(field::FileWritable))) +
+                    unsigned(bool(F->get(field::FileMutationPolicy))))
           return invalid(Name);
         auto Path = F->getString(field::Path);
         if (!Path || Path->size() >= Remaining)

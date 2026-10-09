@@ -91,6 +91,7 @@ std::optional<ServiceResult> unsupported(ProcessResult &Result,
 struct FileFootprint {
   uint64_t Bytes;
   uint32_t Entries;
+  uint32_t Attributes;
 };
 bool validTime(const DarwinFileTime &Time) {
   return Time.Nanoseconds >= 0 && Time.Nanoseconds < 1000000000;
@@ -322,6 +323,19 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     }
     return false;
   };
+  for (const auto &Path : Options.MutableExtendedAttributes) {
+    const auto Kind = pathKind(Options, Path);
+    const auto M = Options.Metadata.find(Path);
+    if (Kind == PathKind::Missing ||
+        !Options.ExtendedAttributes.contains(Path) || HasAlias(Path) ||
+        (M != Options.Metadata.end() &&
+         (M->second.Flags ||
+          (Kind != PathKind::Directory && M->second.LinkCount != 1))))
+      return failure(diagnostic::ExtendedAttributeMutationOption);
+    // A grant retains one additional fixed path reference, never a new entry.
+    if (auto E = PathInput(Path, Kind == PathKind::Directory))
+      return E;
+  }
   for (const auto &Path : Options.MutableDirectories) {
     if (pathKind(Options, Path) != PathKind::Directory)
       return failure(diagnostic::DirectoryMutableOption);
@@ -492,7 +506,7 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
       if (!Options.Metadata.contains(Path))
         return failure(diagnostic::FileCreationParent);
   }
-  return FileFootprint{Total, uint32_t(Entries)};
+  return FileFootprint{Total, uint32_t(Entries), uint32_t(AttributeCount)};
 }
 } // namespace
 
@@ -558,7 +572,9 @@ void DarwinFiles::initializeNamespace() {
     Node->Writable = Options->WritableFiles.contains(Path);
     const auto Attributes = Options->ExtendedAttributes.find(Path);
     if (Attributes != Options->ExtendedAttributes.end())
-      Node->ExtendedAttributes = &Attributes->second;
+      Node->ExtendedAttributes.attach(
+          Attributes->second,
+          Options->MutableExtendedAttributes.contains(Path));
     const auto Metadata = Options->Metadata.find(Path);
     if (Metadata != Options->Metadata.end())
       Node->InitialMetadata = &Metadata->second;
@@ -575,7 +591,9 @@ void DarwinFiles::initializeNamespace() {
     Node->Protected = !Options->MutableSymbolicLinks.contains(Path);
     const auto Attributes = Options->ExtendedAttributes.find(Path);
     if (Attributes != Options->ExtendedAttributes.end())
-      Node->ExtendedAttributes = &Attributes->second;
+      Node->ExtendedAttributes.attach(
+          Attributes->second,
+          Options->MutableExtendedAttributes.contains(Path));
     const auto Metadata = Options->Metadata.find(Path);
     if (Metadata != Options->Metadata.end())
       Node->Metadata = &Metadata->second;
@@ -592,7 +610,9 @@ void DarwinFiles::initializeNamespace() {
 void DarwinFiles::reclaimUnlinked() {
   for (auto I = Unlinked.begin(); I != Unlinked.end();) {
     if (I->use_count() == 1 && (*I)->Lease.use_count() == 1) {
-      *StorageUsed -= (*I)->bytes().size() + (*I)->PathCharge;
+      *StorageUsed -= (*I)->bytes().size() + (*I)->PathCharge +
+                      (*I)->ExtendedAttributes.DynamicCharge;
+      AttributeSlots -= (*I)->ExtendedAttributes.ExtraCount;
       I = Unlinked.erase(I);
     } else {
       ++I;
@@ -606,7 +626,9 @@ void DarwinFiles::reclaimUnlinked() {
     for (auto I = UnlinkedDirectories.begin();
          I != UnlinkedDirectories.end();) {
       if (I->use_count() == 1) {
-        *StorageUsed -= (*I)->PathCharge;
+        *StorageUsed -=
+            (*I)->PathCharge + (*I)->ExtendedAttributes.DynamicCharge;
+        AttributeSlots -= (*I)->ExtendedAttributes.ExtraCount;
         I = UnlinkedDirectories.erase(I);
         Reclaimed = true;
       } else {
@@ -635,7 +657,8 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
     Node->Parent = initialDirectoryNode(parentPath(Path));
   const auto Attributes = Options->ExtendedAttributes.find(Path);
   if (Attributes != Options->ExtendedAttributes.end())
-    Node->ExtendedAttributes = &Attributes->second;
+    Node->ExtendedAttributes.attach(
+        Attributes->second, Options->MutableExtendedAttributes.contains(Path));
   const auto Metadata = Options->Metadata.find(Path);
   if (Metadata != Options->Metadata.end()) {
     Node->Metadata = &Metadata->second;
@@ -696,6 +719,7 @@ llvm::Error DarwinFiles::prepareMutation() {
       return Footprint.takeError();
     StorageUsed = Footprint->Bytes;
     FixedEntries = Footprint->Entries - Options->Files.size();
+    AttributeSlots = Footprint->Attributes;
   }
   reclaimUnlinked();
   return llvm::Error::success();
@@ -1046,8 +1070,9 @@ const DarwinFileMetadata *DarwinFiles::metadata(const Description &File) const {
 
 DarwinFiles::StatusMetadata
 DarwinFiles::statusMetadata(const Description &File) const {
-  if (File.Type == Kind::Directory && File.Directory->Changed &&
-      !File.Directory->CurrentMetadata)
+  if (File.Type == Kind::Directory &&
+      (File.Directory->MetadataInvalidated ||
+       (File.Directory->Changed && !File.Directory->CurrentMetadata)))
     return diagnostic::DirectoryMutated;
   if (File.File && File.File->MetadataInvalidated)
     return diagnostic::FileMutatedMetadata;
@@ -1471,6 +1496,7 @@ DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result,
     const uint64_t Charge = Link->dynamicCharge();
     Links.erase(Link->Path);
     *StorageUsed -= Charge;
+    AttributeSlots -= Link->ExtendedAttributes.ExtraCount;
     updateDirectoryMetadata(*Link->Parent, true);
     return returned(0);
   }
@@ -1518,6 +1544,8 @@ void DarwinFiles::updateDirectoryMetadata(DirectoryNode &Node,
     ++Node.EnumerationVersion;
   // Only the explicit initial-directory policy authorizes keeping the full
   // observed record. Copying its scalar fields allocates nothing after commit.
+  if (Node.MetadataInvalidated)
+    return;
   if (!Node.CurrentMetadata && Node.DirectoryEntrySize)
     Node.CurrentMetadata = *Node.Metadata;
   if (!Node.CurrentMetadata)
@@ -1744,7 +1772,8 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   const uint64_t FileCredit =
       Target.File && Target.File.use_count() == 2 &&
               Target.File->Lease.use_count() == 1
-          ? Target.bytes().size() + Target.File->PathCharge
+          ? Target.bytes().size() + Target.File->PathCharge +
+                Target.File->ExtendedAttributes.DynamicCharge
           : 0;
   // Link replacement credit comes from this object's dynamic costs, never
   // fixed initial declarations or the independent leases of its referent.
@@ -1785,6 +1814,8 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   }
   // Reclaim below deducts FileCredit once, after the lookup releases it.
   *StorageUsed = *StorageUsed - OldCharge - LinkCredit + Charge;
+  if (Target.Link)
+    AttributeSlots -= Target.Link->ExtendedAttributes.ExtraCount;
   updateDirectoryMetadata(*Parent, true);
   updateDirectoryMetadata(*TargetParent, true);
   Target.File.reset();
@@ -1839,7 +1870,8 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
     return std::move(E);
   const uint64_t Credit =
       !Swap && Target.Directory && Target.Directory.use_count() == 2
-          ? Target.Directory->PathCharge
+          ? Target.Directory->PathCharge +
+                Target.Directory->ExtendedAttributes.DynamicCharge
           : 0;
   struct DirectoryMove {
     std::shared_ptr<DirectoryNode> Node;
@@ -2099,7 +2131,9 @@ DarwinFiles::admitMutation(const Description &File, uint64_t Size,
     return unsupported(Result, diagnostic::FileMutationMapping);
   if (auto E = prepareMutation())
     return std::move(E);
-  const uint64_t Other = *StorageUsed - File.bytes().size();
+  // Successful content publication releases only runtime attribute growth.
+  const uint64_t Other = *StorageUsed - File.bytes().size() -
+                         File.File->ExtendedAttributes.DynamicCharge;
   if (Size > limits::Bytes - Other)
     return unsupported(Result, diagnostic::FileMutationLimit);
   return returned(0);
@@ -2112,7 +2146,7 @@ void DarwinFiles::publish(
   auto &Node = *File.File;
   Node.Modified = std::move(Bytes);
   // Content mutation does not prove any provider's xattr retention rule.
-  Node.ExtendedAttributes = nullptr;
+  invalidateAttributes(Node.ExtendedAttributes);
   if (!Node.Policy || Node.MetadataInvalidated) {
     Node.MetadataInvalidated = true;
     return;
@@ -2273,6 +2307,10 @@ llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
                     ProcessResult &Result) {
   const auto &A = Event.Arguments;
+  if (Service == ServiceKind::SetXattr || Service == ServiceKind::FsetXattr ||
+      Service == ServiceKind::RemoveXattr ||
+      Service == ServiceKind::FremoveXattr)
+    return extendedAttributeMutation(Service, Event, Result);
   if (Service == ServiceKind::GetXattr || Service == ServiceKind::FgetXattr ||
       Service == ServiceKind::ListXattr || Service == ServiceKind::FlistXattr)
     return extendedAttributeRead(Service, Event, Result);
@@ -2549,7 +2587,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
           !metadata(File))
         return unsupported(Result, diagnostic::FileMetadata);
       if (File.Type == Kind::Directory && uint32_t(A[2]) == 2 &&
-          File.Directory->Changed && !File.Directory->CurrentMetadata)
+          (File.Directory->MetadataInvalidated ||
+           (File.Directory->Changed && !File.Directory->CurrentMetadata)))
         return unsupported(Result, diagnostic::DirectoryMutated);
     }
     return std::optional<ServiceResult>(seek(File, A[1], A[2]));

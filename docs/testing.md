@@ -3216,3 +3216,8 @@ See [released GKI contracts](android-gki-kernels.md).
 ## Bounded bulk directory attributes
 
 The bulk-attributes workload checks whole groups, name/type membership, guarded unused bytes, low32 FD, bitmap words, native errors, dup/shared progress, independent opens, cached EOF and zero rewind. Literal and unknown modes are virtual-only. Model tests also cover full stat, invalidation, NFD/255-byte names, request/output aliasing, transport/budget failures, held moves/SWAP/removal/reuse and explicit authorization. Required native inventory is 63 workloads per platform: 189 matching ARM64 cases and 126 Intel cases. Only matching ARM64 HVF execution is locally verified. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
+
+
+## Darwin ordinary attribute mutations
+
+`XattrMutation*` model tests check both4KiB/16KiB pages, guarded literal values, low carriers, import/existence precedence, permission separation, name/value aliases, transport and budget rollback, reserved initial slots, shared growth and orphan/mapping lifetime. Strict JSON tests cover all three initial object kinds. The original `xattr-mutations`, `xattr-mutations-values` and `xattr-mutations-unsupported` workload modes cover all five thin Mach-O profiles through guest, C, CLI and the complete Python method. Native inventories retain every existing case and require the new workload on each available matching transport. Native Intel/physical iOS and complete Apple frameworks are separate unavailable coverage.

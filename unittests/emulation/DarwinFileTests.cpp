@@ -13705,6 +13705,467 @@ TEST_P(DarwinFileTest, AttributeBulkDoesNotInheritIntoCreatedDirectories) {
   EXPECT_EQ(directoryBytes(Child).size(), 64u);
 }
 
+TEST_P(DarwinFileTest, XattrMutationPreservesOpaqueValuesAndLowCarriers) {
+  Options->MutableExtendedAttributes.insert("/data");
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 37, 0}), 37u);
+  const std::array<uint8_t, 7> Value{255, 65, 0, 128, 66, 10, 0};
+  llvm::cantFail(Space->write(Base + 512, Value));
+  for (auto Service : {ServiceKind::SetXattr, ServiceKind::FsetXattr}) {
+    const auto Object =
+        Service == ServiceKind::SetXattr ? Base : 0x1234567800000000ULL | FD;
+    EXPECT_EQ(ok(Service, {Object, Base + 128, Base + 512, 7,
+                           0x1234567800000000ULL, 0x1234567800000004ULL}),
+              0u);
+    xattrBuffer(ServiceKind::FgetXattr, {FD, Base + 128, Base + Page + 16, 7},
+                "ff410080420a00", 7);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 37u);
+    contents(FD, {'a', 'b', 0, 255, 'e', 'f'});
+  }
+  EXPECT_EQ(Options->ExtendedAttributes.at("/data")[0].Bytes,
+            (std::vector<uint8_t>{0, 255, 65, 0, 128, 66, 10}));
+}
+
+TEST_P(DarwinFileTest, XattrMutationVirtualOrderAndEmptyValuesAreExplicit) {
+  Options->MutableExtendedAttributes.insert("/data");
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {FD, Base + 128, UINT64_MAX, 0}), 0u);
+  xattrBuffer(ServiceKind::FgetXattr, {FD, Base + 128, UINT64_MAX, 0}, "", 0);
+  EXPECT_EQ(ok(ServiceKind::FremoveXattr, {FD, Base + 128, 6}), 0u);
+  error(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}, 93);
+  EXPECT_EQ(ok(ServiceKind::SetXattr, {Base, Base + 128, 0, 0, 0, 2}), 0u);
+  xattrBuffer(ServiceKind::FlistXattr, {FD, Base + Page + 16, 128},
+              "757365722e6e65766572642e616c70686100757365722e6e65766572642e"
+              "656d70747900757365722e6e65766572642e6265746100",
+              53);
+  EXPECT_EQ(ok(ServiceKind::RemoveXattr, {Base, Base + 128, 2}), 0u);
+  error(ServiceKind::RemoveXattr, {Base, Base + 128, 4}, 93);
+  EXPECT_EQ(Options->ExtendedAttributes.at("/data").size(), 3u);
+}
+
+TEST_P(DarwinFileTest, XattrMutationImportsBeforeExistenceChecks) {
+  Options->MutableExtendedAttributes.insert("/data");
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  llvm::cantFail(Space->write(Base + 512, std::array<uint8_t, 7>{}));
+  for (auto Service : {ServiceKind::SetXattr, ServiceKind::FsetXattr}) {
+    const auto Object = Service == ServiceKind::SetXattr ? Base : FD;
+    error(Service, {Object, Base + 128, UINT64_MAX, 7, 0, 2}, 14);
+    error(Service, {Object, Base + 128, Base + 512, 7, 0, 2}, 17);
+    error(Service, {Object, Base + 128, UINT64_MAX, 7, 0, 6}, 22);
+    xattrBuffer(ServiceKind::FgetXattr, {FD, Base + 128, Base + Page + 16, 7},
+                "00ff410080420a", 7);
+    path("user.neverd.missing", Base + 128);
+    error(Service, {Object, Base + 128, UINT64_MAX, 7, 0, 4}, 14);
+    error(Service, {Object, Base + 128, Base + 512, 7, 0, 4}, 93);
+    path("user.neverd.beta", Base + 128);
+  }
+}
+
+TEST_P(DarwinFileTest, XattrMutationNameSizeAndLookupPrecedenceIsNative) {
+  xattrs();
+  for (auto Service : {ServiceKind::SetXattr, ServiceKind::FsetXattr,
+                       ServiceKind::RemoveXattr, ServiceKind::FremoveXattr}) {
+    const bool Held = Service == ServiceKind::FsetXattr ||
+                      Service == ServiceKind::FremoveXattr;
+    const bool Set =
+        Service == ServiceKind::SetXattr || Service == ServiceKind::FsetXattr;
+    path("/missing");
+    const auto Object = Held ? UINT64_MAX : Base;
+    error(Service, {Object, UINT64_MAX, 0, 0}, 14);
+    error(Service,
+          {Object, Base + 128, Set ? UINT64_MAX : 0, 0, 1, Set ? 6u : 0u},
+          Held ? 9 : 2);
+    if (Set) {
+      error(Service, {Object, Base + 128, 0, 0x80000000ULL}, 22);
+      error(Service, {Object, Base + 128, UINT64_MAX, 0x80000000ULL}, 7);
+      error(Service, {Object, UINT64_MAX, UINT64_MAX, UINT64_MAX}, 14);
+    }
+    path("/data");
+    error(Service, {Held ? 99 : Base, 0, Set ? 0u : 8u, 0, 0, Set ? 8u : 0u},
+          22);
+    path("", Base + 128);
+    error(Service, {Base, Base + 128, 0, 0}, Held ? 9 : 22);
+    path("user.neverd.beta", Base + 128);
+  }
+}
+
+TEST_P(DarwinFileTest, XattrMutationRejectsPartialInputWithoutPublication) {
+  Options->MutableExtendedAttributes.insert("/data");
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const uint64_t End = Base + Page * 2;
+  std::array<uint8_t, 64> Canary;
+  Canary.fill(0xa5);
+  llvm::cantFail(Space->write(End - 64, Canary));
+  for (uint64_t Prefix : {1u, 3u, 7u, 16u, 32u}) {
+    EXPECT_FALSE(
+        invoke(ServiceKind::FsetXattr, {FD, Base + 128, End - Prefix, 33}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeInput);
+    std::array<uint8_t, 64> After;
+    llvm::cantFail(Space->read(End - 64, After));
+    EXPECT_EQ(After, Canary);
+    xattrBuffer(ServiceKind::FgetXattr, {FD, Base + 128, Base + Page + 16, 7},
+                "00ff410080420a", 7);
+  }
+  error(ServiceKind::FsetXattr, {FD, Base + 128, End, 33}, 14);
+}
+
+TEST_P(DarwinFileTest, XattrMutationNameValueAliasingKeepsInputPrivate) {
+  Options->MutableExtendedAttributes.insert("/data");
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {FD, Base + 128, Base + 128, 17}), 0u);
+  xattrBuffer(ServiceKind::FgetXattr, {FD, Base + 128, Base + Page + 16, 17},
+              "757365722e6e65766572642e6265746100", 17);
+  std::array<uint8_t, 17> After;
+  llvm::cantFail(Space->read(Base + 128, After));
+  EXPECT_EQ(llvm::toHex(After), "757365722E6E65766572642E6265746100");
+}
+
+TEST_P(DarwinFileTest, XattrMutationRequiresIndependentCapturedAuthority) {
+  Options->WritableFiles.insert("/data");
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  Options->MutableExtendedAttributes.insert("/data");
+  EXPECT_FALSE(invoke(ServiceKind::FsetXattr, {FD, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeNotMutable);
+  EXPECT_FALSE(invoke(ServiceKind::FremoveXattr, {FD, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeNotMutable);
+  xattrBuffer(ServiceKind::FgetXattr, {FD, Base + 128, Base + Page + 16, 7},
+              "00ff410080420a", 7);
+  Options->ExtendedAttributes.clear();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  EXPECT_FALSE(invoke(ServiceKind::SetXattr, {Base, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeUnknown);
+}
+
+TEST_P(DarwinFileTest, XattrMutationSharesIdentityAcrossRenameUnlinkAndReuse) {
+  creationPolicy();
+  Options->MutableExtendedAttributes.insert("/data");
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const auto Separate = ok(ServiceKind::Open, {Base});
+  const auto Dup = ok(ServiceKind::Dup, {FD});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 37, 0}), 37u);
+  path("/moved", Base + 256);
+  EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 256}), 0u);
+  EXPECT_EQ(ok(ServiceKind::FremoveXattr, {Dup, Base + 128}), 0u);
+  error(ServiceKind::FgetXattr, {Separate, Base + 128, 0, 0}, 93);
+  EXPECT_EQ(
+      ok(ServiceKind::SetXattr, {Base + 256, Base + 128, UINT64_MAX, 0, 0, 2}),
+      0u);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base + 256}), 0u);
+  const auto New = ok(ServiceKind::Open, {Base + 256, 0x202, 0644});
+  EXPECT_FALSE(invoke(ServiceKind::FsetXattr, {New, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeUnknown);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {Dup, Base + 128, 0, 0, 0, 4}), 0u);
+  EXPECT_EQ(ok(ServiceKind::FgetXattr, {Separate, Base + 128, 0, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dup, 0, 1}), 37u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Separate, 0, 1}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::SetXattr, {Base + 256, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeUnknown);
+}
+
+TEST_P(DarwinFileTest,
+       XattrMutationDirectoryStatAndEnumerationStayIndependent) {
+  enumerationPolicy();
+  Options->ExtendedAttributes["/"] = {};
+  Options->MutableExtendedAttributes.insert("/");
+  Options->DirectoryEnumerationPolicies["/"].BulkAttributes = true;
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  path("user.neverd.beta", Base + 256);
+  attributeRequest(0x80000009);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Root, Base + 128, Base + Page + 16, 48}),
+            1u);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {Root, Base + 256, 0, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 1u);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk, {Root, Base + 128, UINT64_MAX, 1}),
+            0u);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Root, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_FALSE(invoke(ServiceKind::Lseek, {Root, 0, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::GetAttrListBulk,
+               {Root, Base + 128, Base + Page + 16, 48}),
+            1u);
+  // A later namespace mutation policy must not resurrect the full stat.
+  path("/new", Base + 512);
+  const auto Child = ok(ServiceKind::Open, {Base + 512, 0x202, 0644});
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Root, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_EQ(ok(ServiceKind::Close, {Child}), 0u);
+}
+
+TEST_P(DarwinFileTest, XattrMutationLinkPoliciesAndMetadataAreExplicit) {
+  Options->SymbolicLinks["/alias"] = {'/', 'd', 'a', 't', 'a'};
+  Options->ExtendedAttributes["/alias"] = {};
+  Options->MutableExtendedAttributes = {"/data", "/alias"};
+  Options->Metadata["/data"] = darwin_test::mutationMetadata(6);
+  Options->Metadata["/alias"] = darwin_test::initialSymbolicLinkMetadata(5);
+  Options->Metadata["/data"].Flags = Options->Metadata["/alias"].Flags = 0;
+  xattrs();
+  path("/alias");
+  EXPECT_EQ(ok(ServiceKind::SetXattr, {Base, Base + 128, 0, 0, 0, 65}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Lstat64, {Base, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkMutatedMetadata);
+  xattrBuffer(ServiceKind::GetXattr, {Base, Base + 128, 0, 0, 0, 1}, "", 0);
+  error(ServiceKind::RemoveXattr, {Base, Base + 128, 64}, 62);
+  EXPECT_EQ(ok(ServiceKind::RemoveXattr, {Base, Base + 128, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::SetXattr, {Base, Base + 128, 0, 0}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Stat64, {Base, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+}
+
+TEST_P(DarwinFileTest, XattrMutationTransportFailuresNeverPublishScratch) {
+  Options->MutableExtendedAttributes.insert("/data");
+  xattrs();
+  FailingFileInput Input(*Space);
+  Files = std::make_unique<DarwinFiles>(Input, Options);
+  const auto FD = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 37, 0}), 37u);
+  const std::array<uint8_t, 16> Canary{0, 255, 128, 42};
+  llvm::cantFail(Space->write(Base + 512, Canary));
+  for (unsigned Phase = 0; Phase != 4; ++Phase)
+    for (bool Budget : {false, true}) {
+      Input.FailureAddress = Phase < 2 ? Base + 128 : Base + 512;
+      Input.FailAccess = Phase == 0 || Phase == 2;
+      Input.FailRead = Phase == 1 || Phase == 3;
+      Input.FailBudget = Budget;
+      auto Failed = Files->handle(
+          ServiceKind::FsetXattr,
+          {0, 0, {FD, Base + 128, Base + 512, 7}, std::nullopt}, Result);
+      ASSERT_FALSE(bool(Failed));
+      llvm::consumeError(Failed.takeError());
+      Input.FailAccess = Input.FailRead = Input.FailBudget = false;
+      xattrBuffer(ServiceKind::FgetXattr, {FD, Base + 128, Base + Page + 16, 7},
+                  "00ff410080420a", 7);
+      std::array<uint8_t, 16> After;
+      llvm::cantFail(Space->read(Base + 512, After));
+      EXPECT_EQ(After, Canary);
+      EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 37u);
+    }
+}
+
+TEST_P(DarwinFileTest, XattrMutationByteCapacityRollsBackAndReusesGrowth) {
+  Options->Files["/data"] = {};
+  Options->ExtendedAttributes["/data"] = {};
+  Options->MutableExtendedAttributes.insert("/data");
+  // Two six-byte path references leave exactly nine bytes for runtime xattrs.
+  Options->StandardInput = std::vector<uint8_t>(darwin_file_limits::Bytes - 21);
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto FD = ok(ServiceKind::Open, {Base});
+  path("n", Base + 128);
+  llvm::cantFail(Space->write(Base + 512, std::array<uint8_t, 8>{}));
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {FD, Base + 128, Base + 512, 7}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::FsetXattr, {FD, Base + 128, Base + 512, 8}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeMutationLimit);
+  EXPECT_EQ(ok(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}), 7u);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {FD, Base + 128, Base + 512, 1}), 0u);
+  path("q", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {FD, Base + 128, 0, 0}), 0u);
+  path("n", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::FremoveXattr, {FD, Base + 128}), 0u);
+  path("q", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {FD, Base + 128, Base + 512, 7}), 0u);
+}
+
+TEST_P(DarwinFileTest, XattrMutationSlotsShareCapacityAndContentInvalidation) {
+  Options->ExtendedAttributes["/data"] = {};
+  for (unsigned I = 0; I != 4095; ++I)
+    Options->ExtendedAttributes["/data"].push_back({std::to_string(I), {}});
+  Options->Files["/other"] = {};
+  Options->ExtendedAttributes["/other"] = {};
+  Options->MutableExtendedAttributes = {"/data", "/other"};
+  Options->WritableFiles.insert("/data");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto FD = ok(ServiceKind::Open, {Base, 2});
+  path("/other", Base + 256);
+  const auto Other = ok(ServiceKind::Open, {Base + 256});
+  path("new", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {FD, Base + 128, 0, 0}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::FsetXattr, {Other, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeMutationLimit);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {Other, Base + 128, 0, 0}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeUnknown);
+  EXPECT_FALSE(invoke(ServiceKind::FsetXattr, {FD, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeUnknown);
+}
+
+TEST(DarwinFileOptions, XattrMutationAdmissionRequiresKnownIndependentObjects) {
+  DarwinFileOptions O;
+  O.Files["/data"] = {};
+  O.MutableExtendedAttributes.insert("/data");
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::ExtendedAttributeMutationOption);
+  O.ExtendedAttributes["/data"] = {};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Metadata["/data"] = darwin_test::mutationMetadata(0);
+  O.Metadata["/data"].Flags = 2;
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::ExtendedAttributeMutationOption);
+  O.Metadata["/data"].Flags = 0;
+  O.Files["/alias"] = {};
+  O.Metadata["/alias"] = O.Metadata["/data"];
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::ExtendedAttributeMutationOption);
+}
+
+TEST_P(DarwinFileTest, XattrMutationContentCanReuseReleasedRuntimeBytes) {
+  Options->Files["/data"] = {};
+  Options->ExtendedAttributes["/data"] = {};
+  Options->MutableExtendedAttributes.insert("/data");
+  Options->WritableFiles.insert("/data");
+  Options->StandardInput = std::vector<uint8_t>(darwin_file_limits::Bytes - 25);
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto FD = ok(ServiceKind::Open, {Base, 2});
+  path("n", Base + 128);
+  llvm::cantFail(Space->write(Base + 512, std::array<uint8_t, 5>{}));
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {FD, Base + 128, Base + 512, 5}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, 7}), 0u);
+  contents(FD, {0, 0, 0, 0, 0, 0, 0});
+  EXPECT_FALSE(invoke(ServiceKind::FgetXattr, {FD, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeUnknown);
+}
+
+TEST_P(DarwinFileTest, XattrMutationOrphanSlotsWaitForTheLastDescription) {
+  creationPolicy();
+  Options->ExtendedAttributes["/data"] = {};
+  for (unsigned I = 0; I != 4095; ++I)
+    Options->ExtendedAttributes["/data"].push_back({std::to_string(I), {}});
+  Options->Files["/other"] = {};
+  Options->ExtendedAttributes["/other"] = {};
+  Options->MutableExtendedAttributes = {"/data", "/other"};
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const auto Dup = ok(ServiceKind::Dup, {FD});
+  path("/other", Base + 256);
+  const auto Other = ok(ServiceKind::Open, {Base + 256});
+  path("new", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {FD, Base + 128, 0, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::FsetXattr, {Other, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeMutationLimit);
+  EXPECT_EQ(ok(ServiceKind::FgetXattr, {Dup, Base + 128, 0, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Dup}), 0u);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {Other, Base + 128, 0, 0}), 0u);
+  // Initial 4095 slots stay reserved even after the original object is gone.
+  path("extra", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::FsetXattr, {Other, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeMutationLimit);
+}
+
+TEST_P(DarwinFileTest, XattrMutationRemovedDirectoryKeepsItsOwnGrant) {
+  namespacePolicy();
+  Options->Directories.insert("/dir");
+  Options->RemovableDirectories.insert("/dir");
+  Options->ExtendedAttributes["/dir"] = {};
+  Options->MutableExtendedAttributes.insert("/dir");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/dir");
+  const auto Held = ok(ServiceKind::Open, {Base});
+  path("name", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {Held, Base + 128, 0, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  const auto New = makeDirectory("/dir");
+  EXPECT_EQ(ok(ServiceKind::FremoveXattr, {Held, Base + 128}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::FsetXattr, {New, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeUnknown);
+}
+
+TEST_P(DarwinFileTest, XattrMutationUnsupportedControlsKeepKnownValues) {
+  Options->MutableExtendedAttributes.insert("/data");
+  xattrs();
+  const auto FD = ok(ServiceKind::Open, {Base});
+  for (uint64_t Flags : {32u, 128u, 0x80000000u}) {
+    EXPECT_FALSE(invoke(ServiceKind::FremoveXattr, {FD, Base + 128, Flags}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeFlags);
+  }
+  for (const char *Name : {"com.apple.ResourceFork", "com.apple.FinderInfo",
+                           "com.apple.system.test", "com.apple.decmpfs"}) {
+    path(Name, Base + 128);
+    EXPECT_FALSE(invoke(ServiceKind::FsetXattr, {FD, Base + 128, 0, 0}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeSpecial);
+  }
+  path("user.neverd.beta", Base + 128);
+  for (uint64_t Position : {1u, UINT32_MAX})
+    error(ServiceKind::FsetXattr, {FD, Base + 128, UINT64_MAX, 0, Position},
+          22);
+  path(std::string(128, 'x'), Base + 128);
+  error(ServiceKind::FremoveXattr, {99, Base + 128}, 63);
+  path("user.neverd.beta", Base + 128);
+  xattrBuffer(ServiceKind::FgetXattr, {FD, Base + 128, Base + Page + 16, 7},
+              "00ff410080420a", 7);
+}
+
+TEST(DarwinFileOptions, XattrMutationGrantChargesOneFixedPathReference) {
+  DarwinFileOptions O;
+  O.Files["/a"] = {};
+  O.ExtendedAttributes["/a"] = {};
+  O.MutableExtendedAttributes.insert("/a");
+  O.StandardInput = std::vector<uint8_t>(darwin_file_limits::Bytes - 6);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.StandardInput->push_back(0);
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileOptionsLimit);
+}
+
+TEST_P(DarwinFileTest, XattrMutationMappingLeaseRetainsOnlyObjectGrowth) {
+  creationPolicy();
+  Options->ExtendedAttributes["/data"] = {};
+  for (unsigned I = 0; I != 4095; ++I)
+    Options->ExtendedAttributes["/data"].push_back({std::to_string(I), {}});
+  Options->Files["/other"] = {};
+  Options->ExtendedAttributes["/other"] = {};
+  Options->MutableExtendedAttributes = {"/data", "/other"};
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto FD = ok(ServiceKind::Open, {Base});
+  std::optional<DarwinFiles::MappingSource> Mapping = Files->mappingSource(FD);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(*Mapping));
+  path("new", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {FD, Base + 128, 0, 0}), 0u);
+  EXPECT_EQ(llvm::toHex(std::get<DarwinFiles::Mapping>(*Mapping).Bytes),
+            "616200FF6566");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  path("/other", Base + 256);
+  const auto Other = ok(ServiceKind::Open, {Base + 256});
+  EXPECT_FALSE(invoke(ServiceKind::FsetXattr, {Other, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeMutationLimit);
+  Mapping.reset();
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {Other, Base + 128, 0, 0}), 0u);
+}
+
+TEST_P(DarwinFileTest, XattrMutationNameImportStopsAtNativeBoundaries) {
+  Options->MutableExtendedAttributes.insert("/data");
+  xattrs();
+  const uint64_t End = Base + 2 * Page;
+  const std::array<uint8_t, 128> Name = [] {
+    std::array<uint8_t, 128> Out;
+    Out.fill('x');
+    return Out;
+  }();
+  llvm::cantFail(Space->write(End - 128, Name));
+  for (auto Service : {ServiceKind::FsetXattr, ServiceKind::FremoveXattr}) {
+    for (uint64_t Prefix : {0u, 1u, 126u, 127u})
+      error(Service, {99, End - Prefix, 0, 0}, 14);
+    error(Service, {99, End - 128, 0, 0}, 63);
+    std::array<uint8_t, 128> After;
+    llvm::cantFail(Space->read(End - 128, After));
+    EXPECT_EQ(After, Name);
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));
 } // namespace
 } // namespace neverd::emulation::darwin_model
