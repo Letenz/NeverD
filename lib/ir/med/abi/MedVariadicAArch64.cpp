@@ -12,6 +12,12 @@
 
 #include "MedVariadicDetail.h"
 
+#include "llvm/ADT/STLExtras.h"
+
+#include <map>
+#include <optional>
+#include <set>
+
 namespace neverd {
 namespace med_variadic_detail {
 
@@ -34,6 +40,48 @@ bool hasAAPCS64VariadicPrologue(VariadicScan &S) {
   // registers; Darwin variadics use the home-slot test (MedVariadicDarwin.cpp).
   return countParamRegSpills(Func, TRI.IntParamRegs) >= kMinSaveAreaRegs &&
          countParamRegSpills(Func, TRI.FPParamRegs) >= kMinSaveAreaRegs;
+}
+
+/// The integer argument register the AAPCS64 register save area starts at:
+/// va_start's prologue spills each argument register from the first unnamed
+/// one through x7, still holding its entry value, to consecutive doublewords
+/// below __gr_top.  A named parameter's own slot (-O0) lies elsewhere.
+std::optional<int> aapcs64FirstVariadicRegister(VariadicScan &S) {
+  const llvm::ArrayRef<uint64_t> Regs = S.TRI.IntParamRegs;
+  // Each register's spill slots, as offsets from the entry stack pointer.
+  std::map<size_t, std::set<int64_t>> Slots;
+  for (const auto &Blk : S.Func.Blocks)
+    for (const auto &Op : Blk.Ops) {
+      if (Op.Opcode != NdOp::STORE || Op.NumInputs < 2 ||
+          Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        continue;
+      const MedVar &Value = Op.Inputs[1];
+      if (Value.Kind != MedVar::Reg || Value.SSAVer != 0 ||
+          Value.Size != S.TRI.PointerSize)
+        continue;
+      const auto *It = llvm::find(Regs, Value.RegOff);
+      if (It == Regs.end())
+        continue;
+      if (auto Offset = entrySpDelta(S.values(), S.SpOff, Op.Inputs[0], 0))
+        Slots[static_cast<size_t>(It - Regs.begin())].insert(*Offset);
+    }
+  // Walk down from x7 while each register's slot sits just below the next's.
+  size_t First = Regs.size();
+  std::set<int64_t> Above;
+  while (First > 0) {
+    const auto It = Slots.find(First - 1);
+    if (It == Slots.end())
+      break;
+    std::set<int64_t> Chained;
+    for (int64_t Offset : It->second)
+      if (First == Regs.size() || Above.count(Offset + S.TRI.PointerSize))
+        Chained.insert(Offset);
+    if (Chained.empty())
+      break;
+    Above = std::move(Chained);
+    --First;
+  }
+  return static_cast<int>(First);
 }
 
 } // namespace med_variadic_detail

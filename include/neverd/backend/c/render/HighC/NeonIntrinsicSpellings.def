@@ -1,0 +1,129 @@
+//===- NeonIntrinsicSpellings.def - ACLE intrinsic spellings ----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// How HighC spells AArch64 operations as ACLE intrinsics whose names the
+/// operation alone does not fix: the shape of their operands picks the
+/// name's suffix and the C types of their operands and result, each bit cast
+/// from and to the integer type of the same width that HighC carries.
+///
+//===----------------------------------------------------------------------===//
+
+// The floating-point estimate and step instructions (FRECPE, FRSQRTE,
+// FRECPS, FRSQRTS, FMULX).  The lifter passes the element width as the last
+// operand; with the result's width it selects one shape, a scalar when the
+// two are equal, else a 64- or 128-bit vector.  The intrinsic is the
+// operation's base followed by the shape's suffix (vrecpes_f32, vrecpe_f32,
+// vrecpeq_f32).
+//
+// NEVERD_NEON_FLOAT_SHAPE(ResultBytes, ElementBytes, RawType, ValueType,
+//                         Suffix)
+// NEVERD_NEON_FLOAT_OPERATION(Intrinsic, Base, Operands)
+#ifndef NEVERD_NEON_FLOAT_SHAPE
+#define NEVERD_NEON_FLOAT_SHAPE(ResultBytes, ElementBytes, RawType, ValueType, \
+                                Suffix)
+#endif
+#ifndef NEVERD_NEON_FLOAT_OPERATION
+#define NEVERD_NEON_FLOAT_OPERATION(Intrinsic, Base, Operands)
+#endif
+
+NEVERD_NEON_FLOAT_SHAPE(2, 2, "uint16_t", "float16_t", "h_f16")
+NEVERD_NEON_FLOAT_SHAPE(4, 4, "uint32_t", "float32_t", "s_f32")
+NEVERD_NEON_FLOAT_SHAPE(8, 8, "uint64_t", "float64_t", "d_f64")
+NEVERD_NEON_FLOAT_SHAPE(8, 2, "uint64_t", "float16x4_t", "_f16")
+NEVERD_NEON_FLOAT_SHAPE(8, 4, "uint64_t", "float32x2_t", "_f32")
+NEVERD_NEON_FLOAT_SHAPE(16, 2, "unsigned __int128", "float16x8_t", "q_f16")
+NEVERD_NEON_FLOAT_SHAPE(16, 4, "unsigned __int128", "float32x4_t", "q_f32")
+NEVERD_NEON_FLOAT_SHAPE(16, 8, "unsigned __int128", "float64x2_t", "q_f64")
+
+NEVERD_NEON_FLOAT_OPERATION(A64_Frecpe, "vrecpe", 1)
+NEVERD_NEON_FLOAT_OPERATION(A64_Frsqrte, "vrsqrte", 1)
+NEVERD_NEON_FLOAT_OPERATION(A64_Frecps, "vrecps", 2)
+NEVERD_NEON_FLOAT_OPERATION(A64_Frsqrts, "vrsqrts", 2)
+NEVERD_NEON_FLOAT_OPERATION(A64_Fmulx, "vmulx", 2)
+
+#undef NEVERD_NEON_FLOAT_SHAPE
+#undef NEVERD_NEON_FLOAT_OPERATION
+
+// The unsigned estimates (URECPE, URSQRTE) take 32-bit lanes of a 64- or
+// 128-bit vector.
+//
+// NEVERD_NEON_U32_SHAPE(ResultBytes, RawType, ValueType, Suffix)
+// NEVERD_NEON_U32_OPERATION(Intrinsic, Base)
+#ifndef NEVERD_NEON_U32_SHAPE
+#define NEVERD_NEON_U32_SHAPE(ResultBytes, RawType, ValueType, Suffix)
+#endif
+#ifndef NEVERD_NEON_U32_OPERATION
+#define NEVERD_NEON_U32_OPERATION(Intrinsic, Base)
+#endif
+
+NEVERD_NEON_U32_SHAPE(8, "uint64_t", "uint32x2_t", "_u32")
+NEVERD_NEON_U32_SHAPE(16, "unsigned __int128", "uint32x4_t", "q_u32")
+
+NEVERD_NEON_U32_OPERATION(A64_Urecpe, "vrecpe")
+NEVERD_NEON_U32_OPERATION(A64_Ursqrte, "vrsqrte")
+
+#undef NEVERD_NEON_U32_SHAPE
+#undef NEVERD_NEON_U32_OPERATION
+
+// The saturating integer operations the lifter keeps as one intrinsic: a
+// scalar of the result's width (SQADD d0, d1, d2), or one 64-bit lane.  The
+// intrinsic is the base, the width's letter, and the signed or unsigned
+// element (vqaddd_s64, vqaddb_u8); its operands and result are that element.
+//
+// NEVERD_NEON_SATURATING_WIDTH(Bytes, Letter, Bits)
+// NEVERD_NEON_SATURATING_OPERATION(Intrinsic, Base, Signed)
+#ifndef NEVERD_NEON_SATURATING_WIDTH
+#define NEVERD_NEON_SATURATING_WIDTH(Bytes, Letter, Bits)
+#endif
+#ifndef NEVERD_NEON_SATURATING_OPERATION
+#define NEVERD_NEON_SATURATING_OPERATION(Intrinsic, Base, Signed)
+#endif
+
+NEVERD_NEON_SATURATING_WIDTH(1, "b", "8")
+NEVERD_NEON_SATURATING_WIDTH(2, "h", "16")
+NEVERD_NEON_SATURATING_WIDTH(4, "s", "32")
+NEVERD_NEON_SATURATING_WIDTH(8, "d", "64")
+
+NEVERD_NEON_SATURATING_OPERATION(A64Sqadd, "vqadd", true)
+NEVERD_NEON_SATURATING_OPERATION(A64Uqadd, "vqadd", false)
+NEVERD_NEON_SATURATING_OPERATION(A64Sqsub, "vqsub", true)
+NEVERD_NEON_SATURATING_OPERATION(A64Uqsub, "vqsub", false)
+
+#undef NEVERD_NEON_SATURATING_WIDTH
+#undef NEVERD_NEON_SATURATING_OPERATION
+
+// FCVTXN narrows doubles to floats rounding to odd: one double to a float
+// (the scalar form), or two to a 64-bit vector of floats.
+//
+// NEVERD_NEON_FCVTXN(ResultBytes, Name, SourceRawType, SourceType,
+//                    ResultRawType)
+#ifndef NEVERD_NEON_FCVTXN
+#define NEVERD_NEON_FCVTXN(ResultBytes, Name, SourceRawType, SourceType,       \
+                           ResultRawType)
+#endif
+
+NEVERD_NEON_FCVTXN(4, "vcvtxd_f32_f64", "uint64_t", "float64_t", "uint32_t")
+NEVERD_NEON_FCVTXN(8, "vcvtx_f32_f64", "unsigned __int128", "float64x2_t",
+                   "uint64_t")
+
+#undef NEVERD_NEON_FCVTXN
+
+// The element kinds an ACLE vector intrinsic's name ends with (`_u8`,
+// `_p64`), and the C type each element is: `vaeseq_u8` takes and returns
+// uint8x16_t, a `q` before the suffix marking a 128-bit vector.
+//
+// NEVERD_NEON_ELEMENT_KIND(Letter, TypePrefix)
+#ifndef NEVERD_NEON_ELEMENT_KIND
+#define NEVERD_NEON_ELEMENT_KIND(Letter, TypePrefix)
+#endif
+
+NEVERD_NEON_ELEMENT_KIND("u", "uint")
+NEVERD_NEON_ELEMENT_KIND("s", "int")
+NEVERD_NEON_ELEMENT_KIND("p", "poly")
+NEVERD_NEON_ELEMENT_KIND("f", "float")
+
+#undef NEVERD_NEON_ELEMENT_KIND

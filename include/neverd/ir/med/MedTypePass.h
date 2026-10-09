@@ -26,9 +26,10 @@ void inferMedTypes(
     MedFunc &Func, Arch TheArch,
     const std::map<va_t, uint16_t> *CalleeFloatReturns = nullptr);
 
-/// Refresh recovered ARM parameters and propagate a callee's proven pointer
-/// role through exact entry-register forwarding calls to a fixed point.
-void propagateARMForwardedPointerParams(std::vector<MedFunc> &Funcs);
+/// Refresh the parameters call-ABI recovery added to \p Funcs, code of
+/// \p TheArch, and propagate a callee's proven pointer role through exact
+/// entry-register forwarding calls to a fixed point.
+void propagateForwardedPointerParams(std::vector<MedFunc> &Funcs, Arch TheArch);
 
 } // namespace neverd
 

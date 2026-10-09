@@ -748,6 +748,8 @@ KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::Paralle
 
 共用 pass 中新增的目標專屬規則應放在依目標劃分的表中，而不是內聯判斷架構或格式。ISA 的事實是一個 `TargetRegInfo` 特性，在該 ISA 的 `lib/ir/TargetRegInfo<ISA>.cpp` 中設定。呼叫慣例規則是一個 `CallArgumentConvention` 條目，定義在獨立的 `lib/ir/med/abi/MedCallConvention<Name>.cpp` 中，並在 `MedCallConvention.cpp` 中登記。永不返回的函式依執行環境分別列在 `include/neverd/libc` 下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）。如此支援新目標只需新增檔案或表項，而無需在共用 pass 中加分支。
 
+可重定位目的檔中未定義符號的解析由一個共用層負責：`include/neverd/loader/ObjectExterns.h`。各格式的載入器收集重定位所引用的符號、是否有呼叫或分支到達每個符號（`<Format>ObjectRelocations.def`）、其 common 符號，以及某些參照經由其到達符號的單元（ELF 與 Mach-O 的 GOT 項、COFF 的 `__imp_` 指標）。該層把它們放在目的檔各節之後：一個可寫的 `extern` 區段和一個唯讀的單元區段。被呼叫的外部符號在那裡是匯入，資料則是符號；弱參照不配置位址，因為程式碼對它所做的空值判斷屬於程式本身。
+
 <a id="support-and-test-depth"></a>
 
 ### 支援範圍與測試深度
@@ -1107,7 +1109,7 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 `WindowsSystemModules` 為兩種 ISA 建立有界的 `ntdll.dll`、`kernelbase.dll` 與 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 和 `GetProcAddress` 共用映射基址；PEB/LDR 與 `MEM_IMAGE` 描述相同映像。靜態匯入、名稱查詢與客體 DLL 轉送使用相同 API 跳板及匯出解析器。提供者固定駐留，不執行客體初始化回呼，普通客體 DLL 全部卸載後不會阻止進入點傳回。標頭或匯出中繼資料改變會停止查詢。未知系統匯出名稱與非零系統序號查詢明確停止；已建模名稱的大小寫不符及空名稱傳回錯誤 127，空指標查詢傳回 87。產生的位元組與位址屬於模型策略，不重建特定 Windows DLL 配置、原生序號或跨提供者別名。`WindowsSystemTests.cpp` 對照原始 x64/ARM64 EXE 與原生 Windows，並獨立觀察八次初始執行緒傳回。
 
-`WindowsProcessFiles.cpp` 為 `KnownDlls` 中固定駐留、非不透明的提供者管理 `ZwOpenSection` 控制代碼。僅支援自動位址、零位移的完整檢視，內容來自載入器的不可變映像；`VirtualMemory` 記錄 `MEM_IMAGE` 所有權，`AddressSpace` 保留映像頁面權限。關閉控制代碼不會釋放檢視。不支援未知命名空間、寫入存取、部分或固定位址檢視，以及沒有既有 API 入口身分的執行。`IntegerABI` 統一定位 x64 與 ARM64 映射呼叫的兩個尾端參數，ULONG 欄位忽略未定義的高位元。目前執行緒資訊類別 `0x11` 保存隱藏狀態並嚴格檢查緩衝區長度；類別 `4` 僅接受模型公布的單處理器親和性遮罩。
+`WindowsProcessFiles.cpp` 為 `KnownDlls` 中固定駐留、非不透明的提供者管理 `ZwOpenSection` 控制代碼。僅支援自動位址、零位移的完整檢視，內容來自載入器的不可變映像；`VirtualMemory` 記錄 `MEM_IMAGE` 所有權，`AddressSpace` 保留映像頁面權限。關閉控制代碼不會釋放檢視。不支援未知命名空間、寫入存取、部分或固定位址檢視，以及沒有既有 API 入口身分的執行。`IntegerABI` 統一定位 x64 與 ARM64 映射呼叫的兩個尾端參數，ULONG 欄位忽略未定義的高位元。目前執行緒資訊類別 `0x11` 保存隱藏狀態並嚴格檢查緩衝區長度；類別 `4` 將要求的親和性與模型公布的行程遮罩取交集；沒有可用處理器時傳回 `STATUS_INVALID_PARAMETER`。 唯讀 section 控制代碼要求 `PAGE_READWRITE` 時傳回 `STATUS_ACCESS_DENIED`，且不發布檢視。類別 `0x11` 保留 Windows 的探測順序：非空設定緩衝區要求 ULONG 對齊，查詢緩衝區從四位元組起要求相同對齊；零長度設定忽略輸入指標。
 
 `WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。ARM64 以堆疊框架為基礎的 SEH／展開、偵錯器派送及執行／防護頁例外仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。
 

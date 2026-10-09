@@ -966,10 +966,12 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       return true;
     };
     std::vector<std::string> OpStrs;
+    std::vector<uint16_t> OpBytes;
     for (size_t I = 0; I < E.Operands.size(); ++I) {
       const auto &Op = E.Operands[I];
       if (!Op)
         continue;
+      OpBytes.push_back(Op->Type ? Op->Type->Size : 0);
       if (LinuxSyscallArgs == 1 && I >= 2 && CanOmit(CanOmit, Op.get(), 0)) {
         OpStrs.push_back("0");
         continue;
@@ -999,9 +1001,12 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         OpStrs.push_back(GPRBytes == 8 ? "1" : "0");
     }
 
+    // Operands added for the intrinsic's spelling have no width.
+    if (OpBytes.size() != OpStrs.size())
+      OpBytes.clear();
     auto Rendered = renderIntrinsicCall(
         E.IntrinsicId, Opts.TheArch, OpStrs, E.Type ? E.Type->Size : 0,
-        HasCIntrinsics, Opts.Format != BinaryFormat::COFF);
+        HasCIntrinsics, Opts.Format != BinaryFormat::COFF, OpBytes);
     if (!Rendered.empty())
       return Rendered;
   }

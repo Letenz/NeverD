@@ -815,6 +815,8 @@ pipeline を続行するためだけに `UnliftedInstruction` を捕捉しない
 
 共有パスに追加するターゲット固有の規則は、アーキテクチャやフォーマットのインライン判定ではなく、ターゲットごとの表に置きます。ISA に関する事実は、その ISA の `lib/ir/TargetRegInfo<ISA>.cpp` で設定する `TargetRegInfo` の特性です。呼び出し規約の規則は、専用の `lib/ir/med/abi/MedCallConvention<Name>.cpp` に定義し `MedCallConvention.cpp` に登録する `CallArgumentConvention` エントリです。戻らない関数はランタイムごとに `include/neverd/libc` 以下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）に列挙します。これにより、新しいターゲットの対応は共有パスへの分岐ではなく、ファイルまたは表エントリの追加で済みます。
 
+再配置可能オブジェクトの未定義シンボルは、共有レイヤー `include/neverd/loader/ObjectExterns.h` で解決されます。各フォーマットのローダーは、再配置が参照するシンボル、各シンボルに呼び出しや分岐が到達するかどうか（`<Format>ObjectRelocations.def`）、コモンシンボル、そして一部の参照がシンボルに到達する際に経由するセル（ELF と Mach-O の GOT エントリ、COFF の `__imp_` ポインタ）を収集します。このレイヤーはそれらをオブジェクトのセクションの後ろ、書き込み可能な `extern` セグメントと読み取り専用のセルセグメントに配置します。呼び出される外部シンボルはそこでインポートとなり、データはシンボルとなります。弱参照にはアドレスを与えません。コードが行う null 判定はプログラム自身のものだからです。
+
 <a id="support-and-test-depth"></a>
 
 ### サポートとテストの深さ
@@ -1179,7 +1181,7 @@ UIButton の `contentEdgeInsets`、`imageEdgeInsets`、`titleEdgeInsets` の get
 
 `WindowsSystemModules` は両 ISA 向けに `ntdll.dll`、`kernelbase.dll`、`kernel32.dll` の有界な PE64 モデルイメージを構築します。ASCII の `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW`、`GetProcAddress` はそのマップ済みベースを共有し、PEB/LDR と `MEM_IMAGE` も同じイメージを示します。静的インポート、名前検索、ゲスト DLL の転送は同じ API ゲートとエクスポート解決器を使います。提供元は常駐し、ゲスト初期化コールバックを持たず、通常のゲスト DLL をすべて解放すればエントリから復帰できます。ヘッダーやエクスポートメタデータの変更で検索を停止します。未対応のシステムエクスポート名と非ゼロ序数は明示的に停止し、対応名の大小文字違いと空名はエラー 127、NULL 検索は 87 を返します。生成バイトとアドレスはモデル方針であり、Windows DLL の版別配置、実際の序数、提供元間の別名は再構築しません。`WindowsSystemTests.cpp` は独自 x64/ARM64 EXE をネイティブ Windows と比較し、初期スレッドの復帰を独立して 8 回観測します。
 
-`WindowsProcessFiles.cpp` は `KnownDlls` 内の固定常駐かつ非不透明なプロバイダーの `ZwOpenSection` ハンドルを管理します。自動配置・オフセットゼロの全体ビューはローダーの不変なイメージを使い、`VirtualMemory` が `MEM_IMAGE` の所有権を記録し、`AddressSpace` がページ権限を保ちます。ハンドルを閉じてもビューは解放しません。未知の名前空間、書き込みアクセス、部分・固定アドレスのビュー、既存 API ゲートのない実行は未対応です。`IntegerABI` が x64/ARM64 の末尾引数を特定し、ULONG の未定義上位ビットを無視します。現在のスレッドの情報クラス `0x11` は厳密な長さで隠蔽状態を保持し、クラス `4` は公開された単一プロセッサの affinity マスクだけを受理します。
+`WindowsProcessFiles.cpp` は `KnownDlls` 内の固定常駐かつ非不透明なプロバイダーの `ZwOpenSection` ハンドルを管理します。自動配置・オフセットゼロの全体ビューはローダーの不変なイメージを使い、`VirtualMemory` が `MEM_IMAGE` の所有権を記録し、`AddressSpace` がページ権限を保ちます。ハンドルを閉じてもビューは解放しません。未知の名前空間、書き込みアクセス、部分・固定アドレスのビュー、既存 API ゲートのない実行は未対応です。`IntegerABI` が x64/ARM64 の末尾引数を特定し、ULONG の未定義上位ビットを無視します。現在のスレッドの情報クラス `0x11` は厳密な長さで隠蔽状態を保持し、クラス `4` は要求された affinity とプロセスマスクの共通部分を取り、プロセッサが残らなければ `STATUS_INVALID_PARAMETER` を返します。 読み取り専用の section ハンドルで `PAGE_READWRITE` を要求すると、ビューを公開せず `STATUS_ACCESS_DENIED` を返します。クラス `0x11` は Windows の検査順序を維持します。非空の設定バッファには ULONG アラインメントが必要で、照会バッファには長さが 4 バイト以上の場合に必要です。長さゼロの設定では入力ポインターを無視します。
 
 `WindowsProcessExceptions` は同じ CPU とプロセス予算で `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler`、`RaiseException` を実装します。順序付きハンドラーは登録・削除、入れ子の例外、モデル化 API、DLL 読み込み、プロセス終了を扱えます。x64/ARM64 のデータアクセス違反と x64 の整数除算例外は、ゲストが変更した `CONTEXT` の検証後に再開できます。汎用レジスター、SIMD、対応する FP 状態を保持し、ソフトウェア例外はモデル提供元内の実際の return 命令から再開します。保持する登録は 128 件、入れ子は 16 フレームまでです。不正な処置、例外ポインターの変更、未対応フィールド、上限超過は明示的に失敗します。ARM64 のフレームベースの SEH／アンワインド、デバッガー配送、実行／ガードページ例外は未対応です。`WindowsExceptionTests.cpp` は独自 EXE／DLL をネイティブ Windows と比較します。ARM64 KVM/WHP の実機証拠は未取得です。 ソフトウェア例外レコードには `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`）が付き、呼び出し元の継続不可フラグとは個別に扱います。元の Windows 実行ファイルでソフトウェア例外とハードウェア例外のフラグ値を厳密に照合します。
 

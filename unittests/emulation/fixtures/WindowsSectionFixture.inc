@@ -94,7 +94,12 @@ static void sections(void *Native, U32 Mode) {
   void *Process = (void *)~(U64)0;
   require(mapLowWords(Third, Process, &A, 0, 0, &Offset, &SizeA, 1, 0, 2) >= 0,
           55);
-  require(mapLowWords(Third, Process, &B, 0, 0, 0, &SizeB, 2, 0, 4) >= 0 &&
+  // Image page protections do not grant write access to a read-only handle.
+  require((U32)mapLowWords(Third, Process, &B, 0, 0, 0, &SizeB, 2, 0, 4) ==
+                  0xc0000022u &&
+              B == 0 && SizeB == 0,
+          65);
+  require(mapLowWords(Third, Process, &B, 0, 0, 0, &SizeB, 2, 0, 2) >= 0 &&
               A != B,
           56);
   require(Close(Third) == 0, 57);

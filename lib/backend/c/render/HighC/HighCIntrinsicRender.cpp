@@ -30,10 +30,14 @@ std::string MultiOutputRender::operator()(
 std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
                                 const std::vector<std::string> &Ops,
                                 uint16_t ResultBytes, bool &HasCIntrinsics,
-                                bool GnuToolchain) {
+                                bool GnuToolchain,
+                                llvm::ArrayRef<uint16_t> OperandBytes) {
   std::string Result;
   if (TheArch == Arch::ARM || TheArch == Arch::AArch64) {
     Result = renderARMIntrinsicCall(Id, Ops, ResultBytes, HasCIntrinsics);
+    if (Result.empty())
+      Result = renderNeonVectorIntrinsic(Id, Ops, OperandBytes, ResultBytes,
+                                         HasCIntrinsics);
     if (!Result.empty())
       return Result;
   } else {
