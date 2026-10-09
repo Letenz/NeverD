@@ -973,41 +973,13 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     return nullptr;
   };
   Scan.OwnStackParam = OwnStackParam;
-  // Index this function's definitions: each value's single defining op or
-  // PHI, or null where it has more than one.
-  auto IndexDefinitions = [&] {
-    if (!CurMed || EntryOffsetDefsFor == CurMed)
-      return;
-    EntryOffsetDefs.clear();
-    EntryOffsetPhis.clear();
-    EntryOffsetPhiCache.clear();
-    auto Key = [](const MedVar &V) {
-      return std::make_tuple(static_cast<int>(V.Kind), V.Id, V.SSAVer);
-    };
-    for (const auto &Blk : CurMed->Blocks) {
-      for (const auto &Phi : Blk.Phis)
-        if (auto [It, Inserted] =
-                EntryOffsetPhis.try_emplace(Key(Phi.Output), &Phi);
-            !Inserted)
-          It->second = nullptr;
-      for (const auto &Op : Blk.Ops)
-        if (auto [It, Inserted] =
-                EntryOffsetDefs.try_emplace(Key(Op.Output), &Op);
-            !Inserted)
-          It->second = nullptr;
-    }
-    EntryOffsetDefsFor = CurMed;
-  };
   // The single definition of \p V in this function, or null.
-  auto UniqueDef = [&](const MedVar &V) -> const MedOp * {
-    IndexDefinitions();
-    auto DefIt =
-        EntryOffsetDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
-    return DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
-  };
+  auto UniqueDef = [&](const MedVar &V) { return uniqueMedDefinition(V); };
   // The single PHI defining \p V in this function, or null.
   auto UniquePhi = [&](const MedVar &V) -> const PhiNode * {
-    IndexDefinitions();
+    if (!CurMed)
+      return nullptr;
+    indexMedDefinitions();
     auto PhiIt =
         EntryOffsetPhis.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
     return PhiIt == EntryOffsetPhis.end() ? nullptr : PhiIt->second;

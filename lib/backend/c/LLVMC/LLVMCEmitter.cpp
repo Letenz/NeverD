@@ -85,6 +85,7 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
   FunctionIdentifiers.clear();
   FunctionSymbolNames.clear();
+  ExternalDataIdentifiers.clear();
   const std::set<std::string> ImportCNames =
       Img ? peImportCNames(*Img) : std::set<std::string>{};
   for (llvm::Function &Fn : Mod) {
@@ -158,6 +159,25 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
     FunctionIdentifiers.emplace(
         &Fn, GlobalIdentifierAllocator.allocate(CName, "nd_function"));
   }
+  std::set<const llvm::GlobalVariable *> CallableGlobals;
+  for (const auto &Function : Mod)
+    for (const auto &Block : Function)
+      for (const auto &Instruction : Block)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction))
+          if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(
+                  Call->getCalledOperand()->stripPointerCasts()))
+            CallableGlobals.insert(Global);
+  for (const auto &Global : Mod.globals())
+    if (Global.isDeclaration() && !Global.getName().empty() &&
+        Global.getMetadata("neverd.data-symbol") &&
+        !CallableGlobals.count(&Global) &&
+        !parseNdDataSymbol(Global.getName()) &&
+        !parseNdCodePtrSymbol(Global.getName()) &&
+        !Global.getName().starts_with("__imp_") &&
+        !Global.getName().starts_with("_imp_"))
+      ExternalDataIdentifiers.emplace(
+          &Global, GlobalIdentifierAllocator.allocate(
+                       "neverd_data_" + Global.getName().str(), "neverd_data"));
 }
 
 std::string LLVMCWriter::functionIdentifier(const llvm::Function &Fn) const {
@@ -184,6 +204,17 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   writeIncludes(Mod);
   OS << "\n";
   writeStructDefs(Mod);
+  for (const auto &Global : Mod.globals()) {
+    const auto It = ExternalDataIdentifiers.find(&Global);
+    if (It == ExternalDataIdentifiers.end())
+      continue;
+    const auto &Identifier = It->second;
+    OS << "extern unsigned char " << Identifier << "[] __asm__(\""
+       << escapeCString(cNameOfGlobal(Global.getName(), true)) << "\")";
+    if (Global.hasExternalWeakLinkage())
+      OS << " __attribute__((weak))";
+    OS << ";\n";
+  }
   if (!OnlyFunction) {
     writeGlobals(Mod);
     writeForwardDecls(Mod);
@@ -497,6 +528,34 @@ void LLVMCWriter::writeStructDefs(llvm::Module &Mod) {
   }
 }
 
+void LLVMCWriter::writeImageByteArray(const llvm::GlobalVariable &Global,
+                                      llvm::StringRef Name) {
+  const auto *Array = llvm::cast<llvm::ArrayType>(Global.getValueType());
+  if (Global.hasLocalLinkage())
+    OS << "static ";
+  if (Global.isConstant())
+    OS << "const ";
+  OS << "uint8_t " << Name << "[" << Array->getNumElements() << "] = {";
+  bool Any = false;
+  if (!Global.getInitializer()->isNullValue())
+    for (uint64_t I = 0; I < Array->getNumElements(); ++I) {
+      const auto *Element = llvm::dyn_cast_or_null<llvm::ConstantInt>(
+          Global.getInitializer()->getAggregateElement(
+              static_cast<unsigned>(I)));
+      if (!Element)
+        throw std::invalid_argument(
+            "non-byte initializer in image byte storage");
+      if (!Element->isZero()) {
+        OS << (Any ? ", " : "") << "[" << I
+           << "] = " << Element->getZExtValue();
+        Any = true;
+      }
+    }
+  if (!Any)
+    OS << "0";
+  OS << "};\n";
+}
+
 void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
   // Permission to read a scalar from the image is not permission to remove a
   // volatile/atomic access. Its named object must survive declaration pruning.
@@ -519,6 +578,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
     if (RawName.empty())
       continue;
 
+    if (ExternalDataIdentifiers.count(&GV))
+      continue;
     // IAT/import slots are callable names at call sites, not C objects.
     // Printing `__imp_??1?$CStringT@...` as `extern uint64_t` is not C.
     if (!GV.hasInitializer()) {
@@ -602,13 +663,9 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
     if (const auto *Array = llvm::dyn_cast<llvm::ArrayType>(GV.getValueType());
         parseNdDataSymbol(RawName) && Array &&
         Array->getElementType()->isIntegerTy(8) &&
-        llvm::isa<llvm::ConstantAggregateZero>(Init)) {
-      if (GV.hasLocalLinkage())
-        OS << "static ";
-      if (GV.isConstant())
-        OS << "const ";
-      OS << "uint8_t " << Name << "[" << Array->getNumElements()
-         << "] = {0};\n";
+        (llvm::isa<llvm::ConstantAggregateZero>(Init) ||
+         llvm::isa<llvm::ConstantDataArray>(Init))) {
+      writeImageByteArray(GV, Name);
       continue;
     }
 
@@ -693,15 +750,8 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn) {
   for (const auto &[Name, Ty] : Objs) {
     OS << "extern " << typeToCLLVM(Ty) << " " << Name << ";\n";
   }
-  for (const auto &[Base, GV] : ByteArrays) {
-    const auto *Array = llvm::cast<llvm::ArrayType>(GV->getValueType());
-    if (GV->hasLocalLinkage())
-      OS << "static ";
-    if (GV->isConstant())
-      OS << "const ";
-    OS << "uint8_t " << namedImageObject(Base) << "[" << Array->getNumElements()
-       << "] = {0};\n";
-  }
+  for (const auto &[Base, GV] : ByteArrays)
+    writeImageByteArray(*GV, namedImageObject(Base));
   if (!Objs.empty() || !ByteArrays.empty())
     OS << "\n";
 }

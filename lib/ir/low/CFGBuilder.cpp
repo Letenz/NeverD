@@ -2263,8 +2263,10 @@ std::set<va_t> CFGBuilder::currentRelocatedInstructionTableAnchors(
 void CFGBuilder::completeExactI386GOTBaseModels(const BinaryImage &Img) {
   // Destruction here was prepaid when the preceding generation published
   // each occurrence.  I386GetPcOccurrence initializes RawPCAuthenticated to
-  // false; ELF stage refreshes never set it, while the non-ELF path runs only
-  // once after multi-stage resolution, so no per-stage reset scan is needed.
+  // false. Reset the published permission before every proof refresh so a
+  // changed root set or an exhausted budget cannot retain an earlier proof.
+  for (auto &Occurrence : I386GetPcOccurrences)
+    Occurrence.RawPCAuthenticated = false;
   RelocatedInstructionScalarModelOccurrences.clear();
   I386GOTModelEvidenceIncomplete = false;
   if (Img.Arch != Arch::X86 || Img.getPointerSize() != 4 ||
@@ -2511,8 +2513,9 @@ void CFGBuilder::completeExactI386GOTBaseModels(const BinaryImage &Img) {
   // ordinary LOAD/COPY: Low-to-Med will bind the exact surviving occurrence,
   // and the LLVM data resolver may fold only arithmetic rooted at that bound
   // value.  ELF keeps its stricter combined call/POP + exact GOTPC contract
-  // below, so a raw encoded displacement cannot borrow this permission.
-  if (!Img.isELF()) {
+  // below for relocatable objects. Linked ELF has already applied its GOTPC
+  // displacement, so the same exact PC root is sufficient there.
+  if (!Img.isELF() || !Img.IsRelocatable) {
     if (!ConsumeProducts({{AuthenticatedGetPcSeeds.size(), 2}}))
       return;
     for (I386GetPcOccurrence *Seed : AuthenticatedGetPcSeeds)

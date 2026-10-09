@@ -87,8 +87,10 @@ void MedLLVMEmitter::ensureImportStorageSnapshot() const {
   ImportStorageSnapshotImage = Img;
   EffectiveImportStorageSlots.clear();
   ConflictingImportStorageSlots.clear();
+  DataSymbolBindings.clear();
   if (!Img)
     return;
+  DataSymbolBindings = collectDataSymbolBindings(*Img);
   ImportStorageSlotCollection ImportStorage = Img->collectImportStorageSlots();
   EffectiveImportStorageSlots = std::move(ImportStorage.Slots);
   ConflictingImportStorageSlots = std::move(ImportStorage.Conflicts);

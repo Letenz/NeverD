@@ -107,7 +107,7 @@ void scanImportThunks(BinaryImage &Img) {
   for (size_t I = 0; I < Img.Imports.size(); ++I)
     if (Img.Imports[I].IATAddr != 0)
       TargetImports.try_emplace(Img.Imports[I].IATAddr, I);
-  if (TargetImports.empty())
+  if (TargetImports.empty() && Img.RuntimeCallablePointerSlots.empty())
     return;
 
   auto Existing = Img.getSymbolAddresses();
@@ -196,6 +196,8 @@ static bool hasDisjointOwners(const BinaryImage &Img) {
 static std::vector<std::pair<va_t, va_t>>
 collectClaimedCodeRanges(const BinaryImage &Img) {
   std::vector<std::pair<va_t, va_t>> Known = Img.KnownCodeRanges, Sized;
+  Known.insert(Known.end(), Img.ImportStubRanges.begin(),
+               Img.ImportStubRanges.end());
   for (const Symbol &Sym : Img.Symbols) {
     if (!Sym.IsFunc || Sym.Size == 0 || Sym.Size > InvalidVA - Sym.Addr)
       continue;

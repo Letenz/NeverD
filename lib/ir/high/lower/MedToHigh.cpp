@@ -25,6 +25,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighFlowOracle.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -588,8 +589,47 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   return HighExpr::makeVar(V);
 }
 
+void MedToHighConverter::indexMedDefinitions() {
+  if (!CurMed || EntryOffsetDefsFor == CurMed)
+    return;
+  EntryOffsetDefs.clear();
+  EntryOffsetPhis.clear();
+  EntryOffsetPhiCache.clear();
+  auto Key = [](const MedVar &V) {
+    return std::make_tuple(static_cast<int>(V.Kind), V.Id, V.SSAVer);
+  };
+  for (const auto &Blk : CurMed->Blocks) {
+    for (const auto &Phi : Blk.Phis)
+      if (auto [It, Inserted] =
+              EntryOffsetPhis.try_emplace(Key(Phi.Output), &Phi);
+          !Inserted)
+        It->second = nullptr;
+    for (const auto &Op : Blk.Ops)
+      if (auto [It, Inserted] =
+              EntryOffsetDefs.try_emplace(Key(Op.Output), &Op);
+          !Inserted)
+        It->second = nullptr;
+  }
+  EntryOffsetDefsFor = CurMed;
+}
+
+const MedOp *MedToHighConverter::uniqueMedDefinition(const MedVar &V) {
+  if (!CurMed)
+    return nullptr;
+  indexMedDefinitions();
+  auto DefIt = EntryOffsetDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
+  return DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
+}
+
 ExprPtr MedToHighConverter::memoryAddressExpr(const MedVar &V,
                                               bool InlineDefinition) {
+  if (CurMed && TargetArch == Arch::X86 && Image &&
+      (!Image->isELF() || !Image->IsRelocatable))
+    if (auto Address = foldI386PicAddress(*CurMed, V, [&](const MedVar &Value) {
+          return uniqueMedDefinition(Value);
+        }))
+      return HighExpr::makeConst(*Address, V.Size,
+                                 ConstantAddressProvenance::DataAddress);
   ExprPtr Address;
   if (InlineDefinition && V.Id >= 0)
     Address = inlineableDefinition(varKey(V));

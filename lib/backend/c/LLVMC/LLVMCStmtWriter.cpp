@@ -1517,6 +1517,19 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       AddressText = "&" + valueStr(Address->stripPointerCasts());
     else
       AddressText = valueStr(Address);
+    if (!OnlyFunction && !Load->isAtomic())
+      if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(
+              llvm::getUnderlyingObject(Address));
+          Global && parseNdCodePtrSymbol(Global->getName())) {
+        // Relocated pointer mirrors have a packed byte layout. Keep one
+        // volatile scalar access without claiming its original alignment or
+        // a separate scalar object's C effective type.
+        emitIndent(Indent);
+        OS << getName(Load)
+           << " = ((const volatile struct __attribute__((packed, may_alias)) { "
+           << Type << " value; } *)(" << AddressText << "))->value;\n";
+        return;
+      }
     const std::string Pointer = "(" + Type +
                                 (Load->isVolatile() ? " volatile" : "") +
                                 "*)(" + AddressText + ")";
@@ -3437,7 +3450,8 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
   else if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Address)) {
     // Named globals denote C objects, not addresses. An exact type match
     // permits direct access; differently typed views still copy object bytes.
-    if (Global->getValueType() == Type) {
+    if (Global->getValueType() == Type &&
+        !ExternalDataIdentifiers.count(Global)) {
       emitIndent(Indent);
       if (Load)
         OS << getName(Load) << " = " << Pointer << ";\n";
@@ -4333,7 +4347,14 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
   for (unsigned ArgIdx = 0; ArgIdx < Limit; ++ArgIdx) {
     if (ArgIdx > 0)
       Expr += ", ";
-    Expr += callArgStr(Call.getArgOperand(ArgIdx), Call, ArgIdx);
+    std::string Argument = callArgStr(Call.getArgOperand(ArgIdx), Call, ArgIdx);
+    const auto *Callee = Call.getCalledFunction();
+    if (!Opts.PreserveLLVMFunctionTypes && Callee && Callee->isDeclaration() &&
+        libc::headerFor(CalleeName) &&
+        libc::isObjectPointerParameter(CalleeName, ArgIdx) &&
+        Call.getArgOperand(ArgIdx)->getType()->isIntegerTy())
+      Argument = "(void *)(uintptr_t)(" + Argument + ")";
+    Expr += Argument;
   }
   Expr += ")";
   RenderingCalls.pop_back();

@@ -1042,9 +1042,11 @@ struct BinaryImage {
     return Seg && Seg->isReadable() && !isCodeAddress(Addr);
   }
 
-  /// Read a fixed scalar from an AArch32 literal island only when mapping
-  /// symbols prove the entire access is immutable data. A relocation may
-  /// change the stored value at load time, so such slots stay memory reads.
+  /// Read a fixed scalar from an immutable AArch32 literal island. With
+  /// sections, mapping symbols must prove its complete extent. A sectionless
+  /// linked ELF retains immutable executable bytes but loses those symbols;
+  /// reading those bytes does not classify them as code or as a literal pool.
+  /// Relocations remain memory reads because the loader can change their value.
   std::optional<uint64_t> readImmutableARMLiteral(va_t Addr,
                                                   uint16_t Size) const {
     if (Arch != neverd::Arch::ARM ||
@@ -1052,20 +1054,25 @@ struct BinaryImage {
       return std::nullopt;
     const ARMCodeRegion *Region = armMappingRegionAt(Addr);
     const Segment *Seg = getSegmentFor(Addr);
-    if (!Region || Region->Kind != ARMCodeRegionKind::Data ||
-        Size > Region->End - Addr || !Seg || !Seg->isReadable() ||
-        !Seg->isExecutable() || Seg->isWritable())
+    const bool SectionlessELF = isELF() && !IsRelocatable && Sections.empty();
+    if ((Region ? Region->Kind != ARMCodeRegionKind::Data ||
+                      Size > Region->End - Addr
+                : !SectionlessELF) ||
+        !Seg || !Seg->isReadable() || !Seg->isExecutable() || Seg->isWritable())
+      return std::nullopt;
+    const uint8_t *Bytes = readVA(Addr, Size);
+    if (!Bytes || Addr > InvalidVA - (Size - 1))
       return std::nullopt;
     // A fixup can begin before this access and overlap it. Conservatively
     // exclude every possible eight-byte slot touching the scalar.
     const va_t First = Addr >= 7 ? Addr - 7 : 0;
     const va_t Last = Addr + Size - 1;
-    for (va_t Byte = First; Byte <= Last; ++Byte)
+    for (va_t Byte = First;; ++Byte) {
       if (hasRelocationProvenanceAt(Byte))
         return std::nullopt;
-    const uint8_t *Bytes = readVA(Addr, Size);
-    if (!Bytes)
-      return std::nullopt;
+      if (Byte == Last)
+        break;
+    }
     uint64_t Value = 0;
     for (uint16_t I = 0; I < Size; ++I)
       Value |= static_cast<uint64_t>(Bytes[I]) << (8 * I);

@@ -157,6 +157,23 @@ Generic LLVM arithmetic and control builtins do not request target ISA headers.
 Both C routes reject string-literal replacement when loader fixup provenance
 overlaps any candidate byte, including its terminator.
 
+ELF GOT data identities come from the exact relocation symbol snapshot through
+`collectDataSymbolBindings`, shared by HighC and LLVM emission. The loader's
+relocation inventory owns addend rules; complete PT_GNU_RELRO coverage owns
+whether a slot load can become a symbolic address. Writable slots retain
+addressable storage and a symbolic initializer. Undefined data uses an opaque
+assembly-name alias in C, avoiding invented types and system-header conflicts.
+Defined data uses its existing image backing. TLS and IFUNC records are excluded.
+This contract also works without section headers. In sectionless ARM ELF,
+immutable executable bytes can supply scalar literal reads without classifying
+unreached bytes as instructions; overlapping relocations prevent folding.
+
+The shared i386 get-PC recognizer requires the complete `mov r32,[esp]; ret`
+encoding, with bounded NOP padding. Its own HighC, LLVM and LLVM C bodies retain
+that instruction sequence in a naked helper, preserving the selected register,
+stack and flags. Caller rewriting continues to require CFG-authenticated
+occurrences; helper names alone prove nothing.
+
 For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
 `N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct
 control-flow edges through the shared reachable-mode analysis. A cross-state

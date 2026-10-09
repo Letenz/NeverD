@@ -242,6 +242,20 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
               if (auto Error = RecordARMMode(Value, SymbolMode))
                 return Error;
           }
+        } else if (OwnerSections.empty() && !IsRelocatable && IsFunction &&
+                   Sym.st_shndx < SHN_LORESERVE &&
+                   Img.hasExecutableCodeOwnerAt(Value)) {
+          // In a sectionless image st_shndx still names the removed table.
+          // The defined dynamic function value retains its ARM/Thumb bit;
+          // PT_LOAD supplies code ownership, not an invented section index.
+          const unsigned Alignment =
+              SymbolMode == InstructionMode::Thumb ? 2 : 4;
+          if (Value % Alignment != 0)
+            return llvm::make_error<llvm::StringError>(
+                "elf: misaligned ARM/Thumb code-mode symbol",
+                llvm::inconvertibleErrorCode());
+          if (auto Error = RecordARMMode(Value, SymbolMode))
+            return Error;
         }
       }
 
