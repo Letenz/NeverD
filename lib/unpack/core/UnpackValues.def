@@ -29,6 +29,10 @@ NEVERD_UNPACK_PRIVATE_TEXT(
 NEVERD_UNPACK_PRIVATE_TEXT(
     UnknownHeapState, "the process profile has no live heap inventory contract "
                       "(snapshot_only emits analysis bytes)")
+NEVERD_UNPACK_PRIVATE_TEXT(
+    DirectServiceState,
+    "execution used direct model service numbers; their native binding is "
+    "not reconstructed (snapshot_only emits analysis bytes)")
 NEVERD_UNPACK_PRIVATE_TEXT(HeapInventory,
                            "the process heap inventory has invalid extents")
 NEVERD_UNPACK_PRIVATE_TEXT(ImportHelperLimit,

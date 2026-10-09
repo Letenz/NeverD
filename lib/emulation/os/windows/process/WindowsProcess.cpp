@@ -4,11 +4,13 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../../../runtime/RuntimeValues.h"
+#include "WindowsNativeServices.h"
 #include "WindowsProcessExceptions.h"
 #include "WindowsProcessLoader.h"
 
 #include "neverd/emulation/ExecutionSession.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 
@@ -348,6 +350,24 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   StoppedProcess Stopped(CPU, **Space, *ABI, *Program, *Env, Active,
                          Initializers, Result, OS,
                          {StackBase, Options.StackSize});
+  NativeEntryEvidence NativeEntries(X64 ? llvm::ArrayRef(Program->Gates)
+                                        : llvm::ArrayRef<Import>{});
+  const auto NativeWatches = NativeEntries.watches();
+  std::vector<ExecutionWatch> ObserverWatches;
+  auto SetWatches = [&](std::vector<ExecutionWatch> Watches) {
+    ObserverWatches = std::move(Watches);
+    auto Combined = ObserverWatches;
+    // Keep an already ordered observer set ordered. Appending the lower
+    // system-image range would force a full sort at every watched instruction.
+    // The session still validates and normalizes arbitrary caller ordering.
+    if (!NativeWatches.empty()) {
+      auto Position = llvm::find_if(Combined, [&](const ExecutionWatch &W) {
+        return W.Address >= NativeWatches.front().Address;
+      });
+      Combined.insert(Position, NativeWatches.begin(), NativeWatches.end());
+    }
+    return (*Session)->watchExecution(std::move(Combined));
+  };
   bool Observing = false;
   auto Invoking = [&]() -> llvm::Error {
     if (!Observing || !Observer)
@@ -356,7 +376,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     if (!Watches)
       return Watches.takeError();
     if (*Watches)
-      if (auto E = (*Session)->watchExecution(std::move(**Watches)))
+      if (auto E = SetWatches(std::move(**Watches)))
         return E;
     return (*Session)->watchMemoryWrites(Observer->writeWatches());
   };
@@ -416,8 +436,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     auto Watches = Observer->started(Stopped);
     if (!Watches)
       return Watches.takeError();
-    if (auto E = (*Session)->watchExecution(std::move(*Watches)))
+    if (auto E = SetWatches(std::move(*Watches)))
       return std::move(E);
+  } else if (auto E = SetWatches({})) {
+    return std::move(E);
   }
   Observing = true;
   auto Failed = [&](llvm::Error E) {
@@ -437,7 +459,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         break;
       }
       if (*Watches)
-        if (auto E = (*Session)->watchExecution(std::move(**Watches))) {
+        if (auto E = SetWatches(std::move(**Watches))) {
           Failed(std::move(E));
           break;
         }
@@ -467,8 +489,21 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       continue;
     if (Exit->Kind == SessionExitKind::ExecutionWatch) {
       Stopped.setWatchedMemoryUnchanged(true);
-      // Only an observer installs watches. The watched instruction has not
-      // been admitted, so the process is exactly at its boundary.
+      // The watched instruction has not executed. Internal native-entry
+      // watches are independent of the caller's observation contract.
+      if (auto E = NativeEntries.watched(CPU, Result.PC)) {
+        Failed(std::move(E));
+        break;
+      }
+      const auto ContainsPC = [&](const ExecutionWatch &W) {
+        return Result.PC >= W.Address && Result.PC - W.Address < W.Size;
+      };
+      // The installed set is exactly the union of both owners. Outside the
+      // small native range, the observer necessarily requested this stop;
+      // scanning its entire image-watch list again would be quadratic work.
+      if (!Observer || (llvm::any_of(NativeWatches, ContainsPC) &&
+                        !llvm::any_of(ObserverWatches, ContainsPC)))
+        continue;
       auto Next = Observer->watched(Stopped, Result.PC);
       if (!Next) {
         Failed(Next.takeError());
@@ -479,7 +514,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         Result.Diagnostic = runtime::ObserverStop;
         break;
       }
-      if (auto E = (*Session)->watchExecution(std::move(**Next))) {
+      if (auto E = SetWatches(std::move(**Next))) {
         Failed(std::move(E));
         break;
       }
@@ -512,6 +547,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       break;
     }
     if (Fault) {
+      NativeEntries.invalidate();
       auto Raised = (*Session)->takeRecoverableFault();
       if (!Raised) {
         Failed(Raised.takeError());
@@ -535,6 +571,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Failed(Request.takeError());
       break;
     }
+    const bool EnteredNativeExport = NativeEntries.take(Request->PC);
     auto SP = CPU.readRegister(ABI->info().StackPointer);
     if (!SP) {
       Failed(SP.takeError());
@@ -593,21 +630,47 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       continue;
     }
     const Import *Import = nullptr;
-    auto NativeSyscall = [](llvm::StringRef Name) {
-      return (Name.starts_with("Nt") || Name.starts_with("Zw"));
-    };
     for (const auto &I : Program->Gates)
       if (I.Gate == Request->PC ||
-          (Request->PC == I.Gate + NativeSyscallOffset &&
-           NativeSyscall(I.Name))) {
+          (I.Module == text::NTDLL &&
+           Request->PC == I.Gate + NativeSyscallOffset &&
+           nativeServiceNumber(I.Name))) {
         Import = &I;
         break;
       }
+    const struct Import *Export = Import;
+    struct Import NativeImport{};
+    std::optional<uint64_t> DirectServiceNumber;
+    const bool NativeCall =
+        X64 && (!Import || (Request->PC == Import->Gate + NativeSyscallOffset &&
+                            nativeServiceNumber(Import->Name)));
+    if (NativeCall) {
+      auto Number = CPU.reg(X64Register::AX);
+      if (!Number) {
+        Failed(Number.takeError());
+        break;
+      }
+      // Witness the complete prologue and the actual declared number. Equal
+      // RCX/R10 values alone cannot distinguish a call from an interior jump.
+      if (Export && (!EnteredNativeExport ||
+                     nativeServiceNumber(Export->Name) != *Number))
+        Export = nullptr;
+      Import = nullptr;
+      if (const auto *Native = findNativeService(*Number)) {
+        NativeImport.Module = text::NTDLL;
+        NativeImport.Name = Native->Name;
+        NativeImport.Gate = Request->PC;
+        NativeImport.Target = findService(text::NTDLL, Native->Name);
+        Import = &NativeImport;
+        if (!Export)
+          DirectServiceNumber = *Number;
+      }
+    }
     if (!Import) {
       Result.Stop = ProcessStopReason::UnsupportedService;
       Result.Diagnostic = text::Service;
-      // Report the stopped register values without assigning them a syscall
-      // ABI or using their contents to select a Windows service.
+      // No model service has this identity. Keep the stopped inputs in the
+      // diagnostic; never guess a Windows-version-specific number mapping.
       if (X64) {
         const std::pair<const char *, CPURegister> Registers[] = {
             {"rax", CPURegister::X64AX}, {"r10", CPURegister::X64R10},
@@ -625,7 +688,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       }
       break;
     }
-    if (Observing && Observer) {
+    if (Observing && Observer && Export) {
       // This is call-boundary metadata, not an API result or signature.
       // Read only committed RAM/registers; a missing return cannot authorize
       // an import repair and does not change an opaque export's outcome.
@@ -645,7 +708,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       }
       if (auto E = Observer->exporting(
               Stopped,
-              {Import->Gate, Import->Module, Import->Name, Import->Ordinal},
+              {Export->Gate, Export->Module, Export->Name, Export->Ordinal},
               ReturnAddress)) {
         Failed(std::move(E));
         break;
@@ -670,15 +733,16 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     }
     // User accessibility is an OS call-boundary requirement in addition to
     // the ABI's generic trusted-memory checks. Preflight before API effects.
-    if (Import->Target->Returns && X64)
+    if (Import->Target->Returns && X64 && !NativeCall)
       if (auto E = Validate(StackPointer, PointerSize, Read)) {
         Failed(std::move(E));
         break;
       }
     NativeCallEvent Event{Request->PC, Import->Target->Name};
     Event.Module = Import->Module;
+    Event.DirectServiceNumber = DirectServiceNumber;
     Event.ArgumentCount = Import->Target->Arguments;
-    if (X64) {
+    if (X64 && Export) {
       auto Ret = (*Space)->readInteger(StackPointer, PointerSize);
       if (!Ret)
         llvm::consumeError(Ret.takeError());
@@ -699,7 +763,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
           Invalid = true;
           break;
         }
-      auto V = ABI->readArgument(CPU, StackPointer, I);
+      auto V = NativeCall ? readNativeServiceArgument(CPU, StackPointer, I)
+                          : ABI->readArgument(CPU, StackPointer, I);
       if (!V) {
         Failed(V.takeError());
         Invalid = true;
@@ -791,6 +856,15 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         continue;
       Complete();
       break;
+    }
+    if (NativeCall) {
+      if (auto E = returnNativeService(CPU, *Request, *V->Value)) {
+        Failed(std::move(E));
+        break;
+      }
+      Result.NativeCalls[EventIndex].Result = *V->Value;
+      Result.PC = Request->NextPC;
+      continue;
     }
     if (auto E = Return(StackPointer, EventIndex, *V->Value)) {
       Failed(std::move(E));

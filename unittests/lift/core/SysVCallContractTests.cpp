@@ -467,7 +467,10 @@ TEST(SysVCallContract, PassThroughArgumentsReachAPrototypedImport) {
     SCOPED_TRACE(Name);
     const std::string Body = body(Source, Name);
     ASSERT_FALSE(Body.empty()) << Source;
-    EXPECT_NE(Body.find("fputs(arg0, arg1)"), std::string::npos) << Body;
+    EXPECT_NE(
+        Body.find("fputs((void *)(uintptr_t)arg0, (void *)(uintptr_t)arg1)"),
+        std::string::npos)
+        << Body;
     EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
   }
 }
@@ -504,6 +507,60 @@ TEST(SysVCallContract, AFloatArgumentReachesTheCalleeThatReadsIt) {
   compileAndRun(Source + R"(
 int main(void) {
   return quadruple(1.5) == 6.0 && quadruple(-0.25) == -1.0 ? 0 : 1;
+}
+)");
+}
+
+TEST(SysVCallContract, PushedStackArgumentsReachTheCalleeThatReadsThem) {
+  // ten(a, ..., j) reads its six register arguments and its four stack
+  // arguments, the last in its own order: ((g * 10 + h) * 10 + i) * 10 + j.
+  // caller(x) pushes j, i, h and then x as g, each at the stack pointer it
+  // is made with, and passes x on in rdi.
+  constexpr va_t Ten = Text, Caller = Text + 0x40;
+  std::vector<uint8_t> Code(0x80, 0xCC);
+  put(Code, Ten, {0x48, 0x8B, 0x44, 0x24, 0x08, // mov rax, [rsp+8]
+                  0x48, 0x6B, 0xC0, 0x0A,       // imul rax, rax, 10
+                  0x48, 0x03, 0x44, 0x24, 0x10, // add rax, [rsp+16]
+                  0x48, 0x6B, 0xC0, 0x0A,       // imul rax, rax, 10
+                  0x48, 0x03, 0x44, 0x24, 0x18, // add rax, [rsp+24]
+                  0x48, 0x6B, 0xC0, 0x0A,       // imul rax, rax, 10
+                  0x48, 0x03, 0x44, 0x24, 0x20, // add rax, [rsp+32]
+                  0x48, 0x01, 0xF8,             // add rax, rdi
+                  0x48, 0x01, 0xF0,             // add rax, rsi
+                  0x48, 0x01, 0xD0,             // add rax, rdx
+                  0x48, 0x01, 0xC8,             // add rax, rcx
+                  0x4C, 0x01, 0xC0,             // add rax, r8
+                  0x4C, 0x01, 0xC8,             // add rax, r9
+                  0xC3});                       // ret
+  std::vector<uint8_t> CallerCode = {
+      0x6A, 0x04,                         // push 4
+      0x6A, 0x03,                         // push 3
+      0x6A, 0x02,                         // push 2
+      0x57,                               // push rdi
+      0xBE, 0x0A, 0x00, 0x00, 0x00,       // mov esi, 10
+      0xBA, 0x14, 0x00, 0x00, 0x00,       // mov edx, 20
+      0xB9, 0x1E, 0x00, 0x00, 0x00,       // mov ecx, 30
+      0x41, 0xB8, 0x28, 0x00, 0x00, 0x00, // mov r8d, 40
+      0x41, 0xB9, 0x32, 0x00, 0x00, 0x00, // mov r9d, 50
+      0xE8};                              // call ten
+  for (uint8_t B : rel32(Caller + CallerCode.size() + 4, Ten))
+    CallerCode.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x20, // add rsp, 32
+                    0xC3})                  // ret
+    CallerCode.push_back(B);
+  put(Code, Caller, CallerCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Ten, "ten"}, {Caller, "caller"}}, {});
+  const std::string Source = liftEntries(Img, {Ten, Caller});
+  const std::string Body = body(Source, "caller");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("ten(arg0, 10, 20, 30, 40, 50, arg0, 2, 3, 4)"),
+            std::string::npos)
+      << Body;
+  EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+  compileAndRun(Source + R"(
+int main(void) {
+  return caller(5) == 1001 * 5 + 384 && caller(-7) == 1001 * -7 + 384 ? 0 : 1;
 }
 )");
 }
@@ -918,7 +975,10 @@ TEST(SysVCallContract, ACallThroughALoaderBoundSlotPassesThePrototype) {
   const std::string Source = liftEntries(Img, {Wrap});
   const std::string Body = body(Source, "wrap");
   ASSERT_FALSE(Body.empty()) << Source;
-  EXPECT_NE(Body.find("fputs(arg0, arg1)"), std::string::npos) << Body;
+  EXPECT_NE(
+      Body.find("fputs((void *)(uintptr_t)arg0, (void *)(uintptr_t)arg1)"),
+      std::string::npos)
+      << Body;
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
 }
 
@@ -1322,7 +1382,10 @@ TEST(SysVCallContract, ErrorCheckingWrapperEndsAtItsExitHelper) {
   const std::string Source = liftEntries(Img, {Put});
   const std::string Body = body(Source, "put");
   ASSERT_FALSE(Body.empty()) << Source;
-  EXPECT_NE(Body.find("fputs(arg0, arg1)"), std::string::npos) << Body;
+  EXPECT_NE(
+      Body.find("fputs((void *)(uintptr_t)arg0, (void *)(uintptr_t)arg1)"),
+      std::string::npos)
+      << Body;
   EXPECT_NE(Body.find("die(3)"), std::string::npos) << Body;
   EXPECT_EQ(Body.find("next("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;

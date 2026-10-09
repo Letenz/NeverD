@@ -159,7 +159,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
     const Elf_Shdr *SymSH = getShdr<ELFT>(Sections, SH.sh_link);
     llvm::StringRef StrTab;
     if (SymSH) {
-      auto TabOr = ELF.getStringTableForSymtab(*SymSH);
+      auto TabOr = ELF.getStringTableForSymtab(*SymSH, Sections);
       if (TabOr)
         StrTab = *TabOr;
       else

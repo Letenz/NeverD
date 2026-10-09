@@ -642,7 +642,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
 NEVERD_EMULATION_DOC_TOKEN(
     NativeDriverCI,
-    "5033 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5395")
+    "5037 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5399")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -1341,6 +1341,7 @@ NEVERD_EMULATION_DOC_TOKEN(Unpack, "unsupported_state")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "snapshot_only")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "runtime_state.heap_inventory_known")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "possible_heap_references")
+NEVERD_EMULATION_DOC_TOKEN(Unpack, "runtime_state.direct_service_calls")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "heap_references")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "windows.defer_unmodeled")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "IMAGE_FILE_RELOCS_STRIPPED")
@@ -1388,6 +1389,8 @@ NEVERD_EMULATION_DOC_TOKEN(
 NEVERD_EMULATION_DOC_TOKEN(
     UnpackTests, "ExplicitSnapshotsKeepExternalHeapDependenciesVisible")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "ReleasedHeapStateDoesNotBlockRecovery")
+NEVERD_EMULATION_DOC_TOKEN(
+    UnpackTests, "DirectServiceBindingsRequireAnExplicitSnapshot")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests,
                            "HeapReferencesInCapturedTLSCannotBeDiscarded")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "UnpackLibraryTests.cpp")
@@ -1775,6 +1778,8 @@ NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "KnownDlls")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "MEM_IMAGE")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "IntegerABI")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "0x11")
+NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "DeleteCriticalSection")
+NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "RtlDeleteCriticalSection")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSectionTests, "WindowsSectionFixture.inc")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSectionTests, "WindowsThreadFixture.inc")
 #endif

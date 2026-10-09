@@ -18,6 +18,7 @@
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
 #include "Resolve.h"
+#include "SecondaryTextDelegate.h"
 #include "Session.h"
 #include "SettingsKeys.h"
 #include "Theme.h"
@@ -65,6 +66,7 @@
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QStorageInfo>
+#include <QStyle>
 #include <QTextStream>
 #include <QToolBar>
 #include <QTreeView>
@@ -137,7 +139,12 @@ public:
     layout->addWidget(view_);
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    layout->addWidget(buttons);
+    // The list runs to the dialog's edges; the buttons keep the usual margin.
+    auto *footer = new QVBoxLayout;
+    const int margin = style()->pixelMetric(QStyle::PM_LayoutRightMargin);
+    footer->setContentsMargins(margin, 0, margin, margin);
+    footer->addWidget(buttons);
+    layout->addLayout(footer);
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
       chosen_ = view_->currentAddress();
       accept();
@@ -1884,12 +1891,15 @@ void MainWindow::showShortcuts() {
 
 void MainWindow::showCommandPalette() {
   QDialog dialog(this, Qt::Popup | Qt::FramelessWindowHint);
+  dialog.setObjectName(QStringLiteral("commandPalette"));
   dialog.setWindowTitle(tr("Command palette"));
   dialog.resize(560, 420);
   auto *layout = new QVBoxLayout(&dialog);
   auto *filter = new QLineEdit(&dialog);
   filter->setPlaceholderText(tr("Type a command"));
   auto *list = new QListWidget(&dialog);
+  // Shortcuts line up at the right of their commands.
+  list->setItemDelegate(new SecondaryTextDelegate(std::nullopt, list));
   layout->addWidget(filter);
   layout->addWidget(list, 1);
   const auto populate = [this, list](const QString &text) {
@@ -1900,14 +1910,9 @@ void MainWindow::showCommandPalette() {
       const QString label = action->text().remove(QLatin1Char('&'));
       if (!text.isEmpty() && !label.contains(text, Qt::CaseInsensitive))
         continue;
-      auto *item = new QListWidgetItem(
-          action->icon(),
-          action->shortcut().isEmpty()
-              ? label
-              : QStringLiteral("%1    %2")
-                    .arg(label,
-                         action->shortcut().toString(QKeySequence::NativeText)),
-          list);
+      auto *item = new QListWidgetItem(action->icon(), label, list);
+      item->setData(SecondaryTextDelegate::SecondaryTextRole,
+                    action->shortcut().toString(QKeySequence::NativeText));
       item->setData(Qt::UserRole, action->objectName());
     }
     if (list->count())

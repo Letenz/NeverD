@@ -31,6 +31,7 @@
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSet>
+#include <QSplitter>
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QStyleOptionButton>
@@ -999,6 +1000,12 @@ private slots:
       // Dialog buttons carry no icons.
       for (auto *button : buttons->buttons())
         QVERIFY(button->icon().isNull());
+      // Splitters inside views are hairlines, like those between docks.
+      QSplitter splitter;
+      splitter.addWidget(new QWidget);
+      splitter.addWidget(new QWidget);
+      splitter.ensurePolished();
+      QCOMPARE(splitter.handleWidth(), 1);
     }
     theme.setMode(Theme::Mode::Dark);
   }

@@ -442,21 +442,25 @@ StackValue stackValueOf(const StackState &S, const NdVar &V) {
   return It == S.end() ? StackValue{} : It->second;
 }
 
-/// Bound the incoming stack-argument slots \p F reads, per Win64: the body
-/// reads slot K when it loads from the entry stack pointer plus
-/// EntryStackBase + K * SlotBytes, directly or through a tail call made at
-/// the entry stack pointer.  Anything that could read those slots out of
-/// sight makes the bound unknown.
+/// Bound the incoming stack-argument slots \p F reads: the body reads slot K
+/// when it loads from the entry stack pointer plus EntryStackBase +
+/// K * SlotBytes, directly or through a tail call made at the entry stack
+/// pointer.  Anything that could read those slots out of sight makes the
+/// bound unknown.
 void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
                                  const std::map<int, size_t> &IndexOfId,
                                  const std::set<va_t> &BlockStarts,
                                  LocalRegisterEffect &Effect) {
-  if (Img.Arch != Arch::X64 || Img.abiFormat() != BinaryFormat::COFF) {
+  if (Img.Arch != Arch::X64) {
     Effect.UnknownStackReads = true;
     return;
   }
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
-  const IntegerArgumentLayout Layout = TRI.integerArgumentLayout(true);
+  const IntegerArgumentLayout Layout =
+      TRI.integerArgumentLayout(Img.abiFormat());
+  // Win64 reserves a home slot for each register argument just above the
+  // return address; System V passes the first stack argument there.
+  const bool HomeSlots = Layout.CallStackBase > 0;
   const StackKey SP{false, TRI.StackPointer};
   const size_t NumArgRegs = Layout.Registers.size();
   // The home slot of argument register K lies just above the return address.
@@ -594,8 +598,8 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
         // other code read them.
         Unknown |= Escapes(In(1));
         const StackValue A = In(0);
-        if (&Block == &F.Blocks.front() && A.K == StackValue::Range &&
-            A.Lo == A.Hi && Op.NumInputs >= 2)
+        if (HomeSlots && &Block == &F.Blocks.front() &&
+            A.K == StackValue::Range && A.Lo == A.Hi && Op.NumInputs >= 2)
           for (size_t K = 0; K < NumArgRegs; ++K)
             if (A.Lo == HomeSlot(K) &&
                 Op.Inputs[1] == NdVar::reg(Layout.Registers[K], 8) &&
@@ -714,7 +718,7 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
   // load reads back, with no pointer to the incoming area escaping, reads
   // nothing either: only this function could observe its home slots.
   int VariadicFrom = -1;
-  if (LowestEscape && *LowestEscape >= HomeSlot(1) &&
+  if (HomeSlots && LowestEscape && *LowestEscape >= HomeSlot(1) &&
       (*LowestEscape - HomeSlot(0)) % Layout.SlotBytes == 0) {
     const size_t First =
         static_cast<size_t>((*LowestEscape - HomeSlot(0)) / Layout.SlotBytes);

@@ -101,6 +101,7 @@ llvm::Error buildSections(llvm::ArrayRef<typename ELFT::Shdr> Sections,
 template <typename ELFT>
 llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
                            llvm::ArrayRef<typename ELFT::Shdr> Sections,
+                           llvm::ArrayRef<typename ELFT::Shdr> OwnerSections,
                            size_t Size, const std::vector<va_t> &SecBase,
                            bool IsRelocatable,
                            const std::map<std::string, va_t> &CommonSlots,
@@ -147,7 +148,7 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
       llvm::consumeError(SymsOr.takeError());
       return llvm::Error::success();
     }
-    auto StrTabOr = ELF.getStringTableForSymtab(SH);
+    auto StrTabOr = ELF.getStringTableForSymtab(SH, Sections);
     if (!StrTabOr) {
       llvm::consumeError(StrTabOr.takeError());
       return llvm::Error::success();
@@ -209,8 +210,9 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
                 ? InstructionMode::Thumb
                 : InstructionMode::ARM;
         if ((IsFunction || IsARMMapping || IsThumbMapping || IsDataMapping) &&
-            Sym.st_shndx < SHN_LORESERVE && Sym.st_shndx < Sections.size()) {
-          const Elf_Shdr &Owner = Sections[Sym.st_shndx];
+            Sym.st_shndx < SHN_LORESERVE &&
+            Sym.st_shndx < OwnerSections.size()) {
+          const Elf_Shdr &Owner = OwnerSections[Sym.st_shndx];
           const va_t OwnerVA =
               sectionVA<ELFT>(IsRelocatable, SecBase, Owner, Sym.st_shndx);
           if ((Owner.sh_flags & (SHF_ALLOC | SHF_EXECINSTR)) ==
@@ -256,8 +258,8 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
       // section symbols, TLS, COMMON, and distances to neighbouring symbols
       // are not interchangeable with a C object extent.
       if (Type == STT_OBJECT && Sym.st_size != 0 &&
-          Sym.st_shndx < SHN_LORESERVE && Sym.st_shndx < Sections.size()) {
-        const Elf_Shdr &Owner = Sections[Sym.st_shndx];
+          Sym.st_shndx < SHN_LORESERVE && Sym.st_shndx < OwnerSections.size()) {
+        const Elf_Shdr &Owner = OwnerSections[Sym.st_shndx];
         const va_t OwnerVA =
             sectionVA<ELFT>(IsRelocatable, SecBase, Owner, Sym.st_shndx);
         if ((Owner.sh_flags & SHF_ALLOC) != 0 &&
@@ -290,8 +292,8 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
     if (auto Error = AddSymbolsFrom(SH))
       return Error;
   if (Img.Arch == Arch::ARM) {
-    for (uint32_t Index = 0; Index < Sections.size(); ++Index) {
-      const Elf_Shdr &Owner = Sections[Index];
+    for (uint32_t Index = 0; Index < OwnerSections.size(); ++Index) {
+      const Elf_Shdr &Owner = OwnerSections[Index];
       if ((Owner.sh_flags & (SHF_ALLOC | SHF_EXECINSTR)) !=
               (SHF_ALLOC | SHF_EXECINSTR) ||
           Owner.sh_size == 0)
@@ -350,11 +352,13 @@ template llvm::Error buildSections<llvm::object::ELF64LE>(
 
 template llvm::Error collectSymbols<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,
+    llvm::ArrayRef<llvm::object::ELF32LE::Shdr>,
     llvm::ArrayRef<llvm::object::ELF32LE::Shdr>, size_t,
     const std::vector<va_t> &, bool, const std::map<std::string, va_t> &,
     BinaryImage &);
 template llvm::Error collectSymbols<llvm::object::ELF64LE>(
     const llvm::object::ELFFile<llvm::object::ELF64LE> &,
+    llvm::ArrayRef<llvm::object::ELF64LE::Shdr>,
     llvm::ArrayRef<llvm::object::ELF64LE::Shdr>, size_t,
     const std::vector<va_t> &, bool, const std::map<std::string, va_t> &,
     BinaryImage &);

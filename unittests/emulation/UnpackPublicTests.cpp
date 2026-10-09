@@ -155,19 +155,24 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
 #ifndef NEVERD_UNPACK_GENERATED_FIXTURE_DIR
   GTEST_SKIP() << generated::MissingTools;
 #else
-  for (const char *File :
-       {generated::ProgramFile, generated::TLSHeapProgramFile}) {
+  const std::pair<const char *, unsigned> Cases[] = {
+      {generated::ProgramFile, generated::HeapStateMode},
+      {generated::TLSHeapProgramFile, generated::HeapStateMode},
+      {generated::ProgramFile, generated::DirectServiceMode},
+      {generated::ProgramFile, generated::LateDirectServiceMode}};
+  for (const auto &[File, Mode] : Cases) {
     SCOPED_TRACE(File);
+    SCOPED_TRACE(Mode);
     const auto Original =
         readImage(std::filesystem::path(NEVERD_UNPACK_GENERATED_FIXTURE_DIR) /
                   generated::X64Dir / File);
-    const auto Packed =
-        generated::pack(Original, Original.File, generated::HeapStateMode);
+    const auto Packed = generated::pack(Original, Original.File, Mode);
     ASSERT_FALSE(HasFailure());
     const auto Input =
         (Directory / (std::string(File) + generated::PackedFile)).string();
     const auto Output =
-        (Directory / (std::string(File) + FirstOutput)).string();
+        (Directory / (std::string(File) + std::to_string(Mode) + FirstOutput))
+            .string();
     writeFile(Input, Packed);
     auto Report = api(Input, Output, nullptr);
     if (!Report) {
@@ -185,7 +190,13 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
     ASSERT_NE(State, nullptr);
     EXPECT_EQ(State->getBoolean(text::HeapKnownField), true);
     ASSERT_TRUE(State->getInteger(text::HeapReferenceCountField));
-    EXPECT_GT(*State->getInteger(text::HeapReferenceCountField), 0);
+    if (Mode == generated::HeapStateMode)
+      EXPECT_GT(*State->getInteger(text::HeapReferenceCountField), 0);
+    else {
+      EXPECT_EQ(*State->getInteger(text::HeapReferenceCountField), 0);
+      ASSERT_TRUE(State->getInteger("direct_service_calls"));
+      EXPECT_GT(*State->getInteger("direct_service_calls"), 0);
+    }
     EXPECT_FALSE(std::filesystem::exists(Output));
     EXPECT_EQ(cli(Input, Output, text::EmptyOptions).first,
               unpack_cli::Incomplete);

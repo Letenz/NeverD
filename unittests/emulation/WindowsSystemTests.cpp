@@ -15,6 +15,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
@@ -101,6 +102,44 @@ TEST_P(WindowsSystem, ExecutesOriginalSystemModuleScenarios) {
     EXPECT_EQ(R->ExitStatus, ExitStatus) << llvm::toHex(R->StandardError);
     EXPECT_TRUE(R->StandardError.empty());
     EXPECT_EQ(llvm::toHex(R->StandardOutput), C.Expected);
+    if (llvm::StringRef(C.Argument) == "!Y") {
+      const auto Raw = std::count_if(
+          R->NativeCalls.begin(), R->NativeCalls.end(), [](const auto &Call) {
+            return Call.Name == "ZwQueryInformationThread" &&
+                   Call.DirectServiceNumber && !Call.ReturnAddress;
+          });
+      // ARM64 uses named calls; the copied x64 boundary has no function-return
+      // evidence and must not be reported as a repairable imported call.
+      if (GetParam().ISA == GuestArchitecture::X64)
+        EXPECT_EQ(Raw, 6);
+      struct ExportObservation : ProcessObserver {
+        unsigned NativeExports = 0;
+        llvm::Expected<std::vector<ExecutionWatch>>
+        started(ProcessView &) override {
+          return std::vector<ExecutionWatch>{};
+        }
+        llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+        watched(ProcessView &, uint64_t) override {
+          ADD_FAILURE() << "internal service watches leaked to the observer";
+          return std::nullopt;
+        }
+        llvm::Error exporting(ProcessView &, const ProcessExportView &Export,
+                              std::optional<uint64_t>) override {
+          if (Export.Name == "NtQueryInformationThread" ||
+              Export.Name == "ZwQueryInformationThread")
+            ++NativeExports;
+          return llvm::Error::success();
+        }
+      } Observer;
+      auto Observed =
+          observeProcess(Path, ProcessProfile::WindowsPE64, Options, Observer);
+      ASSERT_TRUE(bool(Observed)) << llvm::toString(Observed.takeError());
+      EXPECT_EQ(Observed->Stop, R->Stop) << Observed->Diagnostic;
+      EXPECT_EQ(Observed->ExitStatus, R->ExitStatus);
+      EXPECT_EQ(Observed->StandardOutput, R->StandardOutput);
+      EXPECT_EQ(Observed->StandardError, R->StandardError);
+      EXPECT_EQ(Observer.NativeExports, 2u);
+    }
     if (llvm::StringRef(C.Argument) == ReturnArgument)
       EXPECT_EQ(R->ReturnValue, ExitStatus);
   }
@@ -128,6 +167,26 @@ TEST_P(WindowsSystem, RejectsUnmodeledExportsOrdinalsAndChangedImages) {
     EXPECT_TRUE(R->StandardError.empty());
     ASSERT_FALSE(R->NativeCalls.empty());
     EXPECT_FALSE(R->NativeCalls.back().Result);
+  }
+  if (GetParam().ISA == GuestArchitecture::X64) {
+    for (const auto &[Argument, Diagnostic] :
+         {std::pair{"!y", "unregistered Windows service entry"},
+          std::pair{"!z", "NtAddAtom"}}) {
+      SCOPED_TRACE(Argument);
+      Options.Arguments = {ProgramFile, Argument};
+      auto R = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService)
+          << R->Diagnostic;
+      EXPECT_NE(R->Diagnostic.find(Diagnostic), std::string::npos);
+      EXPECT_FALSE(R->ExitStatus);
+      EXPECT_TRUE(R->StandardOutput.empty());
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_TRUE(std::none_of(R->NativeCalls.begin(), R->NativeCalls.end(),
+                               [](const auto &Call) {
+                                 return Call.Name == "ZwQueryInformationThread";
+                               }));
+    }
   }
 }
 TEST_P(WindowsSystem, ProviderImagesUseSharedMappingsAndExportResolution) {
@@ -205,6 +264,41 @@ TEST_P(WindowsSystem, ProviderImagesUseSharedMappingsAndExportResolution) {
                                       *Budget, Backend->CPU.get());
     ASSERT_TRUE(bool(Address)) << llvm::toString(Address.takeError());
     EXPECT_EQ(Address->Address, Import.Gate);
+  }
+  if (GetParam().ISA == GuestArchitecture::X64) {
+    std::map<std::string, uint64_t> Native;
+    for (const auto &Gate : P->Gates)
+      if (Gate.Module == NtdllName)
+        Native.emplace(Gate.Name, Gate.Gate);
+    // Public export order and advertised stub numbers must describe the same
+    // catalogue. Check every Nt/Zw pair, including opaque entries,
+    // independently of which subset currently has implementations.
+    std::map<uint64_t, uint32_t> Ordered;
+    for (const auto &[Name, Address] : Native) {
+      if (!llvm::StringRef(Name).starts_with("Nt"))
+        continue;
+      std::array<uint8_t, 11> Code{};
+      ASSERT_FALSE(bool(Backend->CPU->read(Address, Code)));
+      if (Code[0] != 0x4c || Code[1] != 0x8b || Code[2] != 0xd1 ||
+          Code[3] != 0xb8)
+        continue;
+      auto Alias = Native.find("Zw" + Name.substr(2));
+      ASSERT_NE(Alias, Native.end()) << Name;
+      EXPECT_EQ(Alias->second, Address) << Name;
+      EXPECT_EQ(win::findService(NtdllName, Name),
+                win::findService(NtdllName, Alias->first));
+      EXPECT_EQ(Code[8], 0x0f);
+      EXPECT_EQ(Code[9], 0x05);
+      EXPECT_EQ(Code[10], 0xc3);
+      EXPECT_TRUE(Ordered
+                      .emplace(Address,
+                               llvm::support::endian::read32le(Code.data() + 4))
+                      .second);
+    }
+    ASSERT_GT(Ordered.size(), 100u);
+    uint32_t Number = 0;
+    for (const auto &[Address, Immediate] : Ordered)
+      EXPECT_EQ(Immediate, Number++) << llvm::utohexstr(Address);
   }
   P->Reads.MetadataBytes = 0;
   auto Index = win::findModule(*P, Kernel32Name);

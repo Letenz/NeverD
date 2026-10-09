@@ -491,10 +491,16 @@ ChooserView::ChooserView(Session &session, const AddressSpace &space,
       table_->fontMetrics().horizontalAdvance(QLatin1Char('0'));
   const int codeDigit =
       QFontMetrics(codeColumnFont()).horizontalAdvance(QLatin1Char('0'));
+  auto *header = table_->header();
+  // Titles measure with the style sheet's padding.
+  header->ensurePolished();
   for (int i = 0; i + 1 < model_->columnCount(); ++i) {
     const auto format = model_->column(i).format;
-    table_->header()->resizeSection(
-        i, columnChars(format) * (codeFormat(format) ? codeDigit : textDigit));
+    // A column is never narrower than its title.
+    header->resizeSection(
+        i, std::max(header->sectionSizeHint(i),
+                    columnChars(format) *
+                        (codeFormat(format) ? codeDigit : textDigit)));
   }
   updateStatus();
 }

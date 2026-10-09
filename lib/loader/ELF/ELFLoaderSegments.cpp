@@ -58,6 +58,7 @@ llvm::Error buildSegments(const llvm::object::ELFFile<ELFT> &ELF,
                                      Header.e_phentsize,
                                      {}};
   auto &Metadata = *Img.ELFMetadata;
+  Metadata.HeaderSize = Header.e_ehsize;
   Metadata.ProgramHeaders.reserve(PhdrsOr->size());
   for (const Elf_Phdr &PH : *PhdrsOr)
     Metadata.ProgramHeaders.push_back({PH.p_type, PH.p_flags, PH.p_offset,

@@ -999,7 +999,7 @@ private slots:
       if (!dialog || dialog->objectName() != QLatin1String("quickStartDialog"))
         return;
       drag.stop();
-      accepted = dropFile(dialog->findChild<QListWidget *>(), path);
+      accepted = dropFile(dialog, path);
       if (!accepted)
         dialog->reject();
     });
@@ -1160,6 +1160,28 @@ private slots:
     input.show();
     QVERIFY(QTest::qWaitForWindowExposed(&input));
     QVERIFY2(input.width() >= 420, qPrintable(QString::number(input.width())));
+  }
+
+  void graphStopsWaitingWhenTheFileCloses() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->findChild<DisassemblyView *>();
+    QVERIFY(disassembly);
+    disassembly->navigate(Base + 0x140);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x140));
+    // The graph says it is laying out until its layout arrives...
+    bench.action(ActionId::ViewToggleGraph)->trigger();
+    QVERIFY(disassembly->graph()->waiting());
+    // ...and stops when the file closes first.
+    bench.session.closeFile();
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!disassembly->graph()->waiting());
   }
 
   void hexViewShownBeforeOpeningLoadsItsBytes() {

@@ -370,13 +370,16 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
   }
 
   if (E.Op == NdOp::FLOAT_FMA) {
+    const char *Builtin = nullptr;
+#define NEVERD_C_FLOAT_TYPE(Bytes, Spelling, FusedMultiplyAdd, ComputesWider)  \
+  if (E.Type && E.Type->Size == Bytes)                                         \
+    Builtin = FusedMultiplyAdd;
+#include "neverd/backend/c/render/CFloatTypes.def"
     if (E.Operands.size() != 3 || !E.Type ||
-        E.Type->Kind != NdTypeKind::Float ||
-        (E.Type->Size != 4 && E.Type->Size != 8))
+        E.Type->Kind != NdTypeKind::Float || !Builtin)
       llvm::report_fatal_error(
           "HighC cannot render an invalid fused multiply-add");
-    std::string Result =
-        E.Type->Size == 4 ? "__builtin_fmaf(" : "__builtin_fma(";
+    std::string Result = std::string(Builtin) + "(";
     for (unsigned I = 0; I < 3; ++I) {
       const auto &Operand = E.Operands[I];
       if (!Operand || !Operand->Type ||
@@ -996,8 +999,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
   const bool Bitwise = E.Op == NdOp::INT_AND || E.Op == NdOp::INT_OR ||
                        E.Op == NdOp::INT_XOR || E.Op == NdOp::BOOL_XOR;
   const int OperandPrec = Bitwise ? getOpPrecedence(NdOp::INT_LESS) : MyPrec;
-  std::string LHS = exprStr(*E.Operands[0], OperandPrec);
-  std::string RHS = exprStr(*E.Operands[1], OperandPrec);
+  std::string LHS = floatOperandStr(*E.Operands[0], OperandPrec);
+  std::string RHS = floatOperandStr(*E.Operands[1], OperandPrec);
   if (E.Op == NdOp::INT_EQUAL || E.Op == NdOp::INT_NOTEQUAL) {
     const HighExpr *A = unwrapIntegerView(E.Operands[0].get());
     const HighExpr *B = unwrapIntegerView(E.Operands[1].get());

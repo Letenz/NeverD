@@ -8,6 +8,7 @@
 
 #include "neverd/loader/DWARF/EHFrame.h"
 #include "neverd/loader/DWARF/LSDA.h"
+#include "neverd/loader/ELF/ELFImageMetadata.h"
 #include "neverd/loader/LanguageRuntime.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -17,10 +18,13 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cstring>
+#include <limits>
 #include <map>
 #include <optional>
 
@@ -28,6 +32,71 @@
 
 namespace neverd::dwarf_eh {
 namespace {
+
+/// Locate .eh_frame the way an ELF image's unwinder does, which needs no
+/// section header: PT_GNU_EH_FRAME locates .eh_frame_hdr, its eh_frame_ptr
+/// says where .eh_frame begins, and its records run to a zero length.
+bool findFrameTableFromProgramHeaders(const BinaryImage &Img,
+                                      FrameSection &Out) {
+  using namespace dweh;
+  if (!Img.ELFMetadata)
+    return false;
+  for (const ELFProgramHeader &P : Img.ELFMetadata->ProgramHeaders) {
+    if (P.Type != llvm::ELF::PT_GNU_EH_FRAME)
+      continue;
+    const size_t HeaderSize =
+        static_cast<size_t>(std::min<uint64_t>(P.FileSize, kEhFrameHdrMinSize));
+    const uint8_t *Header = Img.readVA(P.VirtualAddress, HeaderSize);
+    if (!Header || HeaderSize < kEhFrameHdrMinSize ||
+        Header[0] != kEhFrameHdrVersion)
+      return false;
+    PointerBases Bases;
+    Bases.Data = P.VirtualAddress;
+    size_t Cursor = sizeof(EhFrameHdrHeader);
+    va_t FrameVA = 0;
+    if (!readEncodedPointer(Header, HeaderSize, Cursor, P.VirtualAddress,
+                            Header[1], Bases, Img.getPointerSize(), &Img,
+                            FrameVA))
+      return false;
+    va_t End = FrameVA;
+    for (;;) {
+      const uint8_t *Length = Img.readVA(End, kRecordLengthSize);
+      if (!Length)
+        break;
+      uint32_t Word;
+      std::memcpy(&Word, Length, sizeof(Word));
+      if (Word == 0) {
+        End += kRecordLengthSize;
+        break;
+      }
+      uint64_t RecordSize = kRecordLengthSize + uint64_t(Word);
+      if (Word == kDwarf64LengthEscape) {
+        const uint8_t *Long =
+            Img.readVA(End + kRecordLengthSize, kDwarf64LengthSize);
+        if (!Long)
+          break;
+        uint64_t LongLength;
+        std::memcpy(&LongLength, Long, sizeof(LongLength));
+        RecordSize = kRecordLengthSize + kDwarf64LengthSize + LongLength;
+      }
+      if (RecordSize > std::numeric_limits<size_t>::max() ||
+          !Img.readVA(End, static_cast<size_t>(RecordSize)))
+        break;
+      End += RecordSize;
+    }
+    if (End == FrameVA)
+      return false;
+    const uint8_t *Bytes =
+        Img.readVA(FrameVA, static_cast<size_t>(End - FrameVA));
+    if (!Bytes)
+      return false;
+    Out.Data = Bytes;
+    Out.Size = static_cast<size_t>(End - FrameVA);
+    Out.VA = FrameVA;
+    return true;
+  }
+  return false;
+}
 
 /// Locate the call frame section and where it is mapped.
 ///
@@ -60,7 +129,7 @@ bool findFrameSection(const BinaryImage &Img, FrameSection &Out) {
       }
     }
   }
-  return false;
+  return findFrameTableFromProgramHeaders(Img, Out);
 }
 
 PointerBases computeBases(const BinaryImage &Img) {
@@ -81,10 +150,20 @@ PointerBases computeBases(const BinaryImage &Img) {
       break;
     }
   }
+  // Without section headers the GOT is where DT_PLTGOT says, and
+  // .eh_frame_hdr where PT_GNU_EH_FRAME does.
+  if (Bases.Data == 0)
+    Bases.Data = Img.DynInfo.PltGotAddr;
   if (Bases.Data == 0)
     if (const Section *Hdr =
             Img.getSectionByName(section_names::elf::EhFrameHdr))
       Bases.Data = Hdr->VA;
+  if (Bases.Data == 0 && Img.ELFMetadata)
+    for (const ELFProgramHeader &P : Img.ELFMetadata->ProgramHeaders)
+      if (P.Type == llvm::ELF::PT_GNU_EH_FRAME) {
+        Bases.Data = P.VirtualAddress;
+        break;
+      }
   return Bases;
 }
 

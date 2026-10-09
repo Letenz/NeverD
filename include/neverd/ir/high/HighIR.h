@@ -538,6 +538,11 @@ inline bool switchAlwaysReturns(const HighStmt &Stmt) {
 struct HighParam {
   std::string Name;
   TypeRef Type;
+  /// Where the caller passes it: the register, or kNoParamReg for a stack
+  /// argument, whose MedIR parameter index \ref MedIndex names its slot.
+  /// Lowering sets both; a hand-built function may leave them unknown.
+  uint64_t RegOff = kNoParamReg;
+  int MedIndex = -1;
 };
 
 struct HighLocal {

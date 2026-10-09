@@ -3,6 +3,7 @@
    for the active theme; Mode names the theme itself, which picks the glyphs
    drawn for it, and CodeFont is the code font in which text fields type. */
 QMainWindow, QDialog { background: ${Window}; }
+QDialog#commandPalette { border: 1px solid ${MenuSeparator}; }
 QMenuBar { background: ${MenuBar}; color: ${MenuBarText}; border: none; padding: 0 2px; }
 QMenuBar::item { background: transparent; padding: 4px 8px; border-radius: 3px; }
 QMenuBar::item:selected, QMenuBar::item:pressed { background: ${MenuBarSelection}; }
@@ -54,6 +55,7 @@ QPushButton:default:hover { background: ${ButtonPrimaryHover}; }
 QPushButton:disabled { color: ${DisabledText}; }
 QDialogButtonBox { dialogbuttonbox-buttons-have-icons: 0; }
 QCheckBox, QRadioButton, QLabel, QGroupBox { color: ${WindowText}; }
+QLabel[placeholder="true"] { color: ${PlaceholderText}; background: ${Base}; }
 QCheckBox, QRadioButton { spacing: 6px; }
 QCheckBox:disabled, QRadioButton:disabled { color: ${DisabledText}; }
 QCheckBox::indicator, QGroupBox::indicator, QAbstractItemView::indicator { width: 14px; height: 14px; border: 1px solid ${CheckboxBorder}; border-radius: 3px; background: ${CheckboxBackground}; }
@@ -82,7 +84,8 @@ QTabBar::close-button { image: url(:/neverd/icons/close_small.svg); subcontrol-p
 QTabBar::close-button:hover { background: ${ToolBarHover}; }
 QTabWidget::pane { border: none; }
 QToolTip { background: ${ToolTipBase}; color: ${ToolTipText}; border: 1px solid ${MenuSeparator}; padding: 3px; }
-QSplitter::handle { background: ${Border}; }
+QSplitter::handle { background: ${DockSeparator}; width: 1px; height: 1px; }
+QSplitter::handle:hover, QSplitter::handle:pressed { background: ${DockSeparatorHover}; }
 QAbstractScrollArea { border: none; }
 #quickStartHeader { background: ${Base}; border-bottom: 1px solid ${Border}; }
 #quickStartFooter { background: ${Window}; border-top: 1px solid ${Border}; }

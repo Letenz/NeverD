@@ -1019,10 +1019,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   };
   auto EntryOffsetOf = [&](const MedVar &V) { return EntryOffset(V, 0); };
   Scan.EntryOffsetOf = EntryOffsetOf;
-  // i386 places an outgoing argument by the stack pointer the call is made
-  // with (CallArgCollectionX86.cpp): the last one its block defines, or else
-  // the one reaching the block.
-  if (TargetArch == Arch::X86) {
+  // An outgoing stack argument is placed by the stack pointer the call is
+  // made with (CallArgCollectionX86.cpp): the last one its block defines, or
+  // else the one reaching the block.
+  {
     MedVar CallStack;
     bool Known = false;
     for (size_t J = CallIdx; J-- > 0;)
