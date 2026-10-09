@@ -540,22 +540,23 @@ double sin(double value) { return value * value; }
 int main(void) {
   return twice_sin(1.5) == 18.0 && twice_sin(-0.25) == 0.5 ? 0 : 1;
 }
+)");
+}
 
 TEST(SysVCallContract, AScalarMathImportWithAnIntegerArgumentKeepsItsReturn) {
   constexpr va_t Wrap = Text, Stub = Text + 0x20;
   std::vector<uint8_t> Code(0x30, 0xCC);
-  std::vector<uint8_t> WrapCode = {
-      0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
-      0xBF, 0x02, 0x00, 0x00, 0x00, // mov edi, 2
-      0xE8}; // call ldexp
+  std::vector<uint8_t> WrapCode = {0x48, 0x83, 0xEC, 0x08,       // sub rsp, 8
+                                   0xBF, 0x02, 0x00, 0x00, 0x00, // mov edi, 2
+                                   0xE8};                        // call ldexp
   for (uint8_t B : rel32(Wrap + WrapCode.size() + 4, Stub))
     WrapCode.push_back(B);
   for (uint8_t B : {0xF2, 0x0F, 0x58, 0xC0, // addsd xmm0, xmm0
-                   0x48, 0x83, 0xC4, 0x08, 0xC3})
+                    0x48, 0x83, 0xC4, 0x08, 0xC3})
     WrapCode.push_back(B);
   put(Code, Wrap, WrapCode);
-  const BinaryImage Img = makeImportImage(
-      Code, {{Wrap, "twice_ldexp"}}, {{Stub, "ldexp"}});
+  const BinaryImage Img =
+      makeImportImage(Code, {{Wrap, "twice_ldexp"}}, {{Stub, "ldexp"}});
   const std::string Source = liftEntries(Img, {Wrap});
   compileAndRun("#define ldexp neverd_test_ldexp\n" + Source + R"(
 double ldexp(double value, int exponent) {
@@ -585,19 +586,25 @@ TEST(SysVCallContract, ALocalMathNameDoesNotOverrideMixedReturnEvidence) {
     Block.Id = 0;
     Block.StartAddr = Text;
     Block.EndAddr = Text + 16;
-    NdInsn Call(NdOp::CALL, NdVar::reg(x86reg::RAX, 8),
-                NdVar::constant(Stub, 8));
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Output = NdVar::reg(x86reg::RAX, 8);
+    Call.addInput(NdVar::cst(Stub, 8));
     Call.Addr = Text;
     Block.Ops.push_back(Call);
     for (const auto &[Address, Register] :
          {std::pair<uint64_t, uint64_t>{0x404000, x86reg::RAX},
           {0x404008, x86reg::XMM0}}) {
-      NdInsn Store(NdOp::STORE, {}, NdVar::constant(Address, 8),
-                   NdVar::reg(Register, 8));
+      LowOp Store;
+      Store.Opcode = NdOp::STORE;
+      Store.addInput(NdVar::cst(Address, 8));
+      Store.addInput(NdVar::reg(Register, 8));
       Store.Addr = Text + 4;
       Block.Ops.push_back(Store);
     }
-    NdInsn Return(NdOp::RETURN, {}, NdVar::reg(x86reg::RAX, 8));
+    LowOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(NdVar::reg(x86reg::RAX, 8));
     Return.Addr = Text + 12;
     Block.Ops.push_back(Return);
     Low.Blocks.push_back(Block);
@@ -614,8 +621,6 @@ TEST(SysVCallContract, ALocalMathNameDoesNotOverrideMixedReturnEvidence) {
         }
     EXPECT_EQ(Calls, 1U);
   }
-}
-)");
 }
 
 TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
