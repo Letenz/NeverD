@@ -42,22 +42,60 @@ std::optional<SourceDialect> neverd::sourceDialectFromKey(llvm::StringRef Key) {
   return std::nullopt;
 }
 
-SourceDialect neverd::sourceDialectOfSymbol(llvm::StringRef Symbol, bool Named,
-                                            SourceDialect ImageDialect) {
-  if (!Named)
-    return ImageDialect;
-  switch (symbolScheme(Symbol)) {
-  case SymbolScheme::RustLegacy:
-  case SymbolScheme::RustV0:
+std::optional<SourceDialect>
+neverd::dialectOfRuntime(SourceLanguageRuntime Runtime) {
+  switch (Runtime) {
+  case SourceLanguageRuntime::Rust:
     return SourceDialect::Rust;
-  case SymbolScheme::None:
-    // Go names a function by its package path: `main.main`.
-    if (ImageDialect == SourceDialect::Go && Symbol.contains('.'))
-      return SourceDialect::Go;
-    return SourceDialect::C;
+  case SourceLanguageRuntime::Go:
+    return SourceDialect::Go;
   default:
-    return SourceDialect::C;
+    return std::nullopt;
   }
+}
+
+std::vector<SourceDialect>
+neverd::offeredSourceDialects(const LanguageRuntimeInfo &Language) {
+  std::vector<SourceDialect> Offered = {SourceDialect::C};
+  // In the order SourceDialects.def lists them.
+  for (SourceDialect Dialect : {SourceDialect::Rust, SourceDialect::Go}) {
+    bool Runs = dialectOfRuntime(Language.Runtime) == Dialect;
+    for (SourceLanguageRuntime Runtime : Language.SecondaryRuntimes)
+      Runs |= dialectOfRuntime(Runtime) == Dialect;
+    if (Runs)
+      Offered.push_back(Dialect);
+  }
+  return Offered;
+}
+
+SourceDialect
+neverd::sourceDialectOfFunction(llvm::StringRef Symbol, bool Named,
+                                const LanguageRuntimeInfo &Language) {
+  const SourceDialect Image =
+      dialectOfRuntime(Language.Runtime).value_or(SourceDialect::C);
+  SourceDialect Chosen = SourceDialect::C;
+  if (!Named) {
+    Chosen = Image;
+  } else {
+    switch (symbolScheme(Symbol)) {
+    case SymbolScheme::RustLegacy:
+    case SymbolScheme::RustV0:
+      Chosen = SourceDialect::Rust;
+      break;
+    case SymbolScheme::None:
+      // Go names a function by its package path: `main.main`.
+      if (Image == SourceDialect::Go && Symbol.contains('.'))
+        Chosen = SourceDialect::Go;
+      break;
+    default:
+      break;
+    }
+  }
+  // A program written in C or C++ reads in C, whatever a symbol says.
+  const std::vector<SourceDialect> Offered = offeredSourceDialects(Language);
+  if (!llvm::is_contained(Offered, Chosen))
+    return SourceDialect::C;
+  return Chosen;
 }
 
 SourceDialectText neverd::spellInDialect(llvm::StringRef C,
