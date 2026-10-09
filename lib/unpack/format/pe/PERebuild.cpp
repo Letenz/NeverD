@@ -50,14 +50,24 @@ std::vector<Group> groupSlots(llvm::ArrayRef<Slot> Slots);
 /// Recover complete, terminated arrays of bindable export pointers. A pointer
 /// match alone cannot grant ownership of the following program bytes to the
 /// loader: each descriptor needs its own intact null terminator.
-llvm::Expected<std::vector<Slot>> findSlots(const Image &In, const Capture &C,
-                                            llvm::ArrayRef<uint8_t> Memory) {
+llvm::Expected<std::vector<Slot>>
+findSlots(const Image &In, const Capture &C, llvm::ArrayRef<uint8_t> Memory,
+          llvm::ArrayRef<DelayImportRange> Owned) {
   std::vector<Slot> Slots;
   for (const auto &R : In.regions()) {
     const uint64_t End = R.RVA + R.MemorySize;
     // Thunk arrays are usually aligned, but neither the loader nor a stub
     // requires it. A cell is consumed whole, so matches cannot overlap.
     for (uint64_t RVA = R.RVA; RVA + value::PointerSize <= End; ++RVA) {
+      const auto Reserved =
+          llvm::lower_bound(Owned, RVA, [](const auto &Range, uint64_t At) {
+            return Range.End <= At;
+          });
+      if (Reserved != Owned.end() &&
+          Reserved->Begin < RVA + value::PointerSize) {
+        RVA = Reserved->End - 1;
+        continue;
+      }
       const uint64_t Pointer = endian::read64le(Memory.data() + RVA);
       // An address inside the image remains an internal pointer even when
       // that function or datum is exported. Binding it as an import would
@@ -426,7 +436,10 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   if (!In.regionAt(C.EntryRVA))
     return failure(unpack::text::EntryOutside);
   std::vector<uint8_t> Memory(C.Memory.begin(), C.Memory.end());
-  auto Slots = findSlots(In, C, Memory);
+  auto Delay = restoreDelayImports(In, C, Memory);
+  if (!Delay)
+    return Delay.takeError();
+  auto Slots = findSlots(In, C, Memory, *Delay);
   if (!Slots)
     return Slots.takeError();
   auto Repairs = planTailImports(In, C, Plan.TailImports, Memory, *Slots);
@@ -478,6 +491,13 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
 
   auto Directories = H.Directories;
   std::vector<uint64_t> Required(Regions.size());
+  for (const auto &Range : *Delay)
+    for (size_t I = 0; I < Regions.size(); ++I) {
+      const auto &R = Regions[I];
+      const uint64_t End = std::min(Range.End, R.RVA + R.MemorySize);
+      if (Range.Begin < End && R.RVA < Range.End)
+        Required[I] = std::max(Required[I], End - R.RVA);
+    }
   retainDebugStorage(In, Directories, Memory, Required);
 
   // Section bytes are the observed memory without its trailing zero fill.

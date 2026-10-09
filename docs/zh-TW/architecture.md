@@ -1129,6 +1129,8 @@ Windows 行程時間策略由 `os/windows/process/` 的 `WindowsProcessTime.cpp`
 
 `WindowsLibraryHost.cpp` 負責 DLL 宿主建構，Windows 載入器負責一般載入與卸載生命週期。`ProcessView::inputModule()` 區分觀察輸入與宿主 EXE，允許延後建立初始快照。`ProcessView::callFrame()` 透過 `IntegerABI` 讀取整數參數與返回事實；`dynamic/ProcessTransfer` 負責匹配返回位址與堆疊的完成證據。僅 `PETLS.cpp` 決定該證據是否完成程序附加回呼。
 
+`PEDelayImports.cpp` 負責新處理程序中的延遲載入狀態還原及中繼資料儲存排除。COFF 載入器根據描述符來源記錄 `Import::IsDelayImport`，Windows 執行准入僅比較一般匯入。完整卸載表或未變更的初始映射為映像內跳板提供依據。無效狀態明確報錯，程式自身的輔助函式保留按需解析行為。
+
 `ExportObserver` 也觀察駐留來賓相依的可執行匯出；建模提供者仍透過服務分派觀察。輸入映像自身匯出被排除。模組變更會更新觀察點，每次修復仍須由即時匯出身分授權。發現紀錄不超過宣告的匯入上限。DLL 夾具同時要求修復系統 API 與來賓相依的跳板，並透過原生載入驗證不殘留模擬位址。
 
 `MemoryProjection` 負責物理 RAM 寫入失效記錄，`ExecutionSession` 負責相應的停止與續接。x64 分頁表建構器為直接執行施加暫時寫入保護，不包含映像或保護器策略。Windows 程序觀察在恢復執行前重新檢查服務期間的寫入。只有 `dynamic/ProcessTransfer` 依據實際解碼的指令位元組判定世代，並持續觀察混合世代頁面。

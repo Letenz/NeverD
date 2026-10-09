@@ -15,6 +15,8 @@ NEVERD_UNPACK_PE_VALUE(OrdinalFlag, 1ull << 63)
 NEVERD_UNPACK_PE_VALUE(HintBytes, 2)
 NEVERD_UNPACK_PE_VALUE(MaxDebugRecords, 4096)
 NEVERD_UNPACK_PE_VALUE(MaxTLSCallbacks, 256)
+NEVERD_UNPACK_PE_VALUE(MaxDelayDescriptors, 4096)
+NEVERD_UNPACK_PE_VALUE(MaxDelayNameBytes, 4096)
 #endif
 
 #ifdef NEVERD_UNPACK_PE_BYTES
@@ -67,4 +69,11 @@ NEVERD_UNPACK_PE_TEXT(ImportRange,
 NEVERD_UNPACK_PE_TEXT(
     IATProtection,
     "read-only import cells cannot share a safe native IAT protection range")
+NEVERD_UNPACK_PE_TEXT(
+    DelayLayout,
+    "delay-import metadata is incomplete or overlaps owned storage")
+NEVERD_UNPACK_PE_TEXT(DelayAttributes,
+                      "delay-import restoration requires RVA-based descriptors")
+NEVERD_UNPACK_PE_TEXT(
+    DelayState, "delay-import restoration requires initial in-image thunks")
 #endif

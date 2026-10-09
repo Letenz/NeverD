@@ -35,6 +35,36 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.ResolvedCellsReturnToTheirLoaderThunks")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.PendingCellsAndMetadataRemainByteExact")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.CompleteUnloadTablesAuthorizeMaterializedThunks")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.BoundCachesCannotBecomeOrdinaryImports")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.InitialThunksUseTheObservedImageBase")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.ZeroTerminatorsKeepTheirCompleteFileBacking")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.MissingThunkEvidenceFailsInsteadOfKeepingGuestPointers")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.UnknownResolvedTargetsCannotAuthorizeRestoration")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.ChangedDescriptorsNeedACompleteUnloadTable")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.IncompleteTablesAndNamesFailExplicitly")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.BothTheDescriptorAndThunkArraysNeedTerminators")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.OverlappingOwnersCannotResetEachOthersStorage")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.UnloadTablesCannotAliasTheLiveIAT")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.DelayImportsRetainLazyLoadingAfterCapture/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.DelayImportsRetainLazyLoadingAfterCapture/{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "PEMapping.NativeSectionRangesAgreeWithUnpackAndRuntime")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "PEMapping.RebuildingPreservesNativeRangesAndFileAlignment")

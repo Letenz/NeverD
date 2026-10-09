@@ -608,7 +608,9 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
                             ? Arch::X64
                             : Arch::AArch64) ||
       Decoded->Segments.size() != Out.Regions.size() ||
-      Decoded->Imports.size() != Out.Imports.size())
+      std::count_if(Decoded->Imports.begin(), Decoded->Imports.end(),
+                    [](const auto &I) { return !I.IsDelayImport; }) !=
+          Out.Imports.size())
     return failure(text::LoaderDisagreement);
   for (size_t I = 0; I < R.Sections.size(); ++I)
     if (Decoded->Segments[I].VA != Out.Regions[I].Address ||
@@ -617,7 +619,7 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
   for (const auto &Import : Out.Imports)
     if (std::none_of(Decoded->Imports.begin(), Decoded->Imports.end(),
                      [&](const auto &I) {
-                       return I.IATAddr == Import.Slot &&
+                       return !I.IsDelayImport && I.IATAddr == Import.Slot &&
                               (Import.Ordinal ? I.Ordinal == *Import.Ordinal
                                               : I.Name == Import.Name) &&
                               llvm::StringRef(I.Module).lower() ==

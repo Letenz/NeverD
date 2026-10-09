@@ -13,6 +13,7 @@ set(_unpack_sources
   core/Unpack.cpp
   core/UnpackJSON.cpp
   core/UnpackNames.cpp
+  format/pe/PEDelayImports.cpp
   format/pe/PEFormat.cpp
   format/pe/PEImage.cpp
   format/pe/PERebuild.cpp

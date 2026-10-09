@@ -21,6 +21,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Program.h"
 
 namespace neverd::unpack {
 namespace {
@@ -990,6 +991,88 @@ TEST_P(UnpackGenerated,
   ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
   EXPECT_EQ(Run->Stop, ProcessStopReason::Exited) << Run->Diagnostic;
   EXPECT_EQ(Run->ExitStatus, 37u);
+#endif
+}
+
+TEST_P(UnpackGenerated, DelayImportsRetainLazyLoadingAfterCapture) {
+#ifndef NEVERD_UNPACK_GENERATED_FIXTURE_DIR
+  GTEST_SKIP() << MissingTools;
+#else
+  using namespace llvm::support::endian;
+  const auto Directory =
+      std::filesystem::path(NEVERD_UNPACK_GENERATED_FIXTURE_DIR) /
+      GetParam().Directory;
+  const auto Linked = test::readImage(Directory / "delay.exe");
+  ASSERT_FALSE(HasFailure());
+  const auto *Program = Linked.section(".prog");
+  const auto *Record = Linked.section(".pay");
+  ASSERT_NE(Program, nullptr);
+  ASSERT_NE(Record, nullptr);
+  ASSERT_LE(Program->VirtualSize, 4096u);
+  ASSERT_LE(Program->VirtualSize, Program->FileSize);
+  ASSERT_EQ(Program->RVA, Linked.Entry);
+  Options.Process.Windows->Modules = {
+      {"unpack_delay.dll", Directory / "unpack_delay.dll"}};
+  test::writeFile(Scratch / "unpack_delay.dll",
+                  test::readFile(Directory / "unpack_delay.dll"));
+  for (bool ResolveAll : {false, true}) {
+    SCOPED_TRACE(ResolveAll);
+    auto Bytes = Linked.File;
+    uint8_t *Pay = Bytes.data() + Record->FileOffset;
+    write32le(Pay, Program->VirtualSize);
+    write32le(Pay + 4, ResolveAll);
+    for (uint32_t I = 0; I < Program->VirtualSize; ++I) {
+      Pay[8 + I] = Bytes[Program->FileOffset + I] ^ 0xa5;
+      Bytes[Program->FileOffset + I] = 0;
+    }
+    write32le(Bytes.data() + Linked.EntryOffset, Linked.Exports.at("loader"));
+    const auto Input = Scratch / "delay-packed.exe";
+    const auto Output = Scratch / "delay-rebuilt.exe";
+    test::writeFile(Input, Bytes);
+    auto OriginalRun =
+        emulateProcess(Input, ProcessProfile::WindowsPE64, Options.Process);
+    ASSERT_TRUE(bool(OriginalRun)) << llvm::toString(OriginalRun.takeError());
+    ASSERT_EQ(OriginalRun->Stop, ProcessStopReason::Exited)
+        << OriginalRun->Diagnostic;
+    ASSERT_EQ(OriginalRun->ExitStatus, 43u);
+    auto Result = unpackFile(Input, Options);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Outcome, UnpackOutcome::Unpacked) << Result->Diagnostic;
+    EXPECT_EQ(Result->EntryRVA, Linked.Entry);
+    const auto Rebuilt = test::readImage(Result->Image);
+    ASSERT_FALSE(HasFailure());
+    const auto Delay = Rebuilt.directory(llvm::COFF::DELAY_IMPORT_DESCRIPTOR);
+    ASSERT_NE(Delay.Size, 0u);
+    const auto *D = Rebuilt.Mapped.data() + Delay.RelativeVirtualAddress;
+    const uint64_t Handle = read32le(D + 8), IAT = read32le(D + 12);
+    EXPECT_EQ(read64le(Rebuilt.Mapped.data() + Handle), 0u);
+    EXPECT_EQ(read64le(Rebuilt.Mapped.data() + IAT),
+              read64le(Linked.Mapped.data() + IAT));
+    EXPECT_EQ(read64le(Rebuilt.Mapped.data() + IAT + 8),
+              read64le(Linked.Mapped.data() + IAT + 8));
+    EXPECT_FALSE(llvm::any_of(Result->Imports, [](const auto &I) {
+      return I.Module == "unpack_delay.dll";
+    }));
+    test::writeFile(Output, Result->Image);
+    auto Run =
+        emulateProcess(Output, ProcessProfile::WindowsPE64, Options.Process);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    EXPECT_EQ(Run->Stop, ProcessStopReason::Exited) << Run->Diagnostic;
+    EXPECT_EQ(Run->ExitStatus, 43u);
+#if defined(_WIN32) && defined(_M_X64)
+    if (GetParam().ISA == GuestArchitecture::X64)
+      for (const auto &Path : {Input, Output}) {
+        const auto Native = Path.string();
+        std::string Diagnostic;
+        bool Failed = false;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(Native, {Native}, std::nullopt, {},
+                                            30, 0, &Diagnostic, &Failed),
+                  43)
+            << Diagnostic;
+        EXPECT_FALSE(Failed) << Diagnostic;
+      }
+#endif
+  }
 #endif
 }
 

@@ -1178,6 +1178,8 @@ Windows 프로세스 시간 정책은 `os/windows/process/`의 `WindowsProcessTi
 
 `WindowsLibraryHost.cpp`는 DLL 호스트 구성, Windows 로더는 일반 로드·언로드 수명주기를 소유합니다. `ProcessView::inputModule()`은 관측 입력과 호스트 EXE를 구분하여 초기 스냅샷을 늦출 수 있습니다. `ProcessView::callFrame()`은 `IntegerABI`로 정수 인수와 반환 사실을 읽습니다. `dynamic/ProcessTransfer`는 연속 실행 주소 및 스택 일치 증거를 소유하며 `PETLS.cpp`만 프로세스 연결 콜백 완료 여부를 결정합니다.
 
+`PEDelayImports.cpp`는 새 프로세스의 지연 로드 상태 복원과 메타데이터 저장소 제외를 담당합니다. COFF 로더는 설명자 출처에 따라 `Import::IsDelayImport`를 기록하며 Windows 실행 허용은 일반 가져오기만 비교합니다. 완전한 언로드 테이블 또는 변경되지 않은 초기 매핑이 내부 썽크의 근거입니다. 잘못된 상태는 명시적으로 실패하며 게스트 도우미의 필요 시 해석을 유지합니다.
+
 `ExportObserver`는 상주 게스트 의존성의 실행 가능한 내보내기도 관측합니다. 모델링된 제공자는 서비스 디스패치로 관측하며 입력 자체 내보내기는 제외합니다. 모듈 변경 시 관측점을 갱신하고 현재 내보내기 식별로만 수정합니다. 기록 수는 선언된 가져오기 한도 이내입니다. DLL 테스트는 시스템 API와 게스트 의존성 헬퍼 모두를 수정하고 네이티브 로드로 에뮬레이션 주소가 남지 않음을 검증합니다.
 
 `MemoryProjection`은 물리 RAM 쓰기 무효화를, `ExecutionSession`은 정지와 재개를 소유합니다. x64 페이지 테이블 생성기는 direct 실행에 임시 쓰기 보호를 적용하며 이미지나 보호 제품 정책은 포함하지 않습니다. Windows 프로세스 관찰은 재개 전에 서비스 중 쓰기를 다시 확인합니다. `dynamic/ProcessTransfer`만 실제 디코딩한 명령 바이트로 세대를 분류하고 세대가 섞인 페이지를 계속 관찰합니다.
