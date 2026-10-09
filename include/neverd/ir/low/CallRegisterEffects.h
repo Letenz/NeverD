@@ -104,6 +104,12 @@ struct RegisterStep {
   va_t ImportCallee = InvalidVA;
   /// Nothing after this step executes (a call that does not return).
   bool Exits = false;
+  /// A call whose arguments a contract at this site fixes (a printf-family
+  /// call with a constant format, FormattedCall): it reads exactly these and
+  /// may change every volatile register, and a tail call passes nothing else
+  /// on.  No summarized function is called.
+  std::optional<GPRReadWidths> FixedArguments;
+  bool FixedTailCall = false;
 };
 
 struct RegisterBlock {
@@ -123,6 +129,9 @@ struct LocalRegisterEffect {
   /// Some effect escapes the may-write summary (an unknown call, an
   /// incomplete lift).
   bool Unknown = false;
+  /// A call with fixed arguments (RegisterStep::FixedArguments) may change
+  /// every volatile register.
+  bool CallsFixedContract = false;
   /// The body itself is not fully known, so neither summary exists.
   bool Incomplete = false;
   /// Control leaves for code no summary describes (an indirect tail call)
@@ -156,9 +165,12 @@ struct LocalRegisterEffect {
 /// Summarize \p F.  A call into a function \p NoReturnTargets names as
 /// never returning (a flagged call, or a tail call the LowIR contract keeps
 /// unflagged) ends its path: nothing it writes reaches a caller.
-LocalRegisterEffect
-localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
-                    const libc::NoReturnTargetIndex *NoReturnTargets = nullptr);
+/// A call whose instruction address \p FixedCallReads names reads exactly
+/// those bytes (RegisterStep::FixedArguments).
+LocalRegisterEffect localRegisterEffect(
+    const BinaryImage &Img, const LowFunc &F,
+    const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
+    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr);
 
 struct CallRegisterSummaries {
   /// Families a call may change, for functions whose whole call tree is

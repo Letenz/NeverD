@@ -210,6 +210,20 @@ const char *headerFor(std::string_view Name);
 /// if the function is not variadic.
 unsigned varArgFixedCount(std::string_view Name);
 
+/// A printf-family routine (LibCPrintfFormats.inc): its return type and the
+/// C types of its fixed parameters, the last of which is the format whose
+/// conversions name the further arguments.
+struct LibCPrintfFormat {
+  std::string_view Name;
+  std::string_view Return;
+  std::array<std::string_view, 6> Params{};
+  uint8_t ParamCount = 0;
+};
+
+/// The printf-family routine C name \p Name links to, or null.  Its format is
+/// its last fixed parameter.
+const LibCPrintfFormat *libcPrintfFormat(std::string_view Name);
+
 /// ABI category of one fixed parameter in a known variadic function.  Pointer
 /// parameters must be symbolized before code generation; integer parameters
 /// must remain scalar values even when a small constant happens to overlap a

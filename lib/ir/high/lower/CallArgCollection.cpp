@@ -383,6 +383,29 @@ std::vector<ExprPtr>
 MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
                                     va_t ResolvedSlot) {
   const auto &Ops = CurBlock.Ops;
+  // A call whose inputs are every argument it passes (a formatted call)
+  // passes exactly those: a floating one as its bits' value, an integer one
+  // that carries an address as that address.
+  if (CallIdx < Ops.size() && Ops[CallIdx].ExactArguments) {
+    const MedOp &Call = Ops[CallIdx];
+    std::vector<ExprPtr> Exact;
+    for (unsigned I = 1; I < Call.NumInputs; ++I) {
+      ExprPtr Value = medvarToExpr(Call.Inputs[I]);
+      if (Value && Value->Type && ((Call.ExactFloatInputs >> (I - 1)) & 1)) {
+        Value =
+            HighExpr::makeBitCast(Value, NdType::makeFloat(Value->Type->Size));
+      } else if (Value && Value->Type && Value->Type->Kind == NdTypeKind::Int &&
+                 ((Call.ExactPointerInputs >> (I - 1)) & 1)) {
+        auto Address = std::make_shared<HighExpr>();
+        Address->Kind = ExprKind::Cast;
+        Address->Type = Address->CastTo = NdType::makePtr(NdType::makeVoid());
+        Address->Operands.push_back(std::move(Value));
+        Value = std::move(Address);
+      }
+      Exact.push_back(std::move(Value));
+    }
+    return Exact;
+  }
   std::vector<ExprPtr> Hinted;
   if (CallIdx < Ops.size() && Ops[CallIdx].SourceCallHint) {
     const auto &Call = Ops[CallIdx];
