@@ -43,6 +43,7 @@
 #include <sys/uio.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 // The raw LP64 entry point exported by libsystem_kernel; the public legacy
 // getdirentries declaration is unavailable with the 64-bit-inode SDK ABI.
@@ -1103,7 +1104,8 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
   for (const auto &Test : Cases) {
     SCOPED_TRACE(Test.Mode);
     auto CaseInput = Input;
-    if (llvm::StringRef(Test.Mode) == "common-attributes") {
+    if (llvm::StringRef(Test.Mode) == "common-attributes" ||
+        llvm::StringRef(Test.Mode) == "extended-attributes") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
       for (const auto &[Name, Target] :
@@ -1175,6 +1177,20 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
       std::ofstream File(CaseInput, std::ios::binary | std::ios::trunc);
       File << "0123456789";
       ASSERT_TRUE(File.good());
+    }
+    if (llvm::StringRef(Test.Mode) == "extended-attributes") {
+      const uint8_t Beta[] = {0, 255, 'A', 0, 128, 'B', '\n'};
+      ASSERT_EQ(::setxattr(CaseInput.c_str(), "user.neverd.beta", Beta,
+                           sizeof(Beta), 0, 0),
+                0)
+          << std::strerror(errno);
+      ASSERT_EQ(
+          ::setxattr(CaseInput.c_str(), "user.neverd.alpha", "alpha", 5, 0, 0),
+          0)
+          << std::strerror(errno);
+      ASSERT_EQ(::setxattr(CaseInput.c_str(), "user.neverd.empty", "", 0, 0, 0),
+                0)
+          << std::strerror(errno);
     }
     // ExecuteAndWait does not truncate an existing redirection target on
     // every host. Keep each observation separate, including shorter outputs.
