@@ -39,8 +39,6 @@ M("clwb",        "_mm_clwb")
 // Save / restore
 M("fxsave64",    "_fxsave64")
 M("fxrstor64",   "_fxrstor64")
-M("ldmxcsr",     "_mm_setcsr")
-M("stmxcsr",     "_mm_getcsr")
 
 // Traps / debug
 M("int3",        "__debugbreak")
