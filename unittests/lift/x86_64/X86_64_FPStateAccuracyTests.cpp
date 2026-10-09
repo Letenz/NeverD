@@ -498,7 +498,104 @@ int main(void) {
       EXPECT_EQ(Actual.Status, 0) << Actual.Out << Actual.Error << Source;
     }
   }
+
+  void compareFloatingReturn(bool IsDouble) {
+    if (!nativeX64())
+      GTEST_SKIP() << "native x86_64 host required";
+    const std::vector<uint8_t> Bytes = {
+        static_cast<uint8_t>(IsDouble ? 0xf2 : 0xf3), 0x0f, 0x58, 0xc0, 0xc3};
+    const auto Native = file("return-native.s");
+    const auto NativeObject = file("return-native.o");
+    auto Assembly = assembly(Bytes);
+    for (size_t Position = 0;
+         (Position = Assembly.find("isa_probe", Position)) !=
+         std::string::npos;)
+      Assembly.replace(Position, 9, "native_probe");
+    write(Native, Assembly);
+    auto Built = command(Compiler, {"-c", Native, "-o", NativeObject});
+    ASSERT_EQ(Built.Status, 0) << Built.Error;
+    const std::string Scalar = IsDouble ? "double" : "float";
+    const auto Common = floatingDriver(IsDouble, false);
+    const auto Values = Common.find("static const");
+    const auto Main = Common.find("int main(void)");
+    ASSERT_NE(Values, std::string::npos);
+    ASSERT_NE(Main, std::string::npos);
+    std::string Driver = "\n#include <stdint.h>\n#include <string.h>\n"
+                         "#include <immintrin.h>\nextern " +
+                         Scalar + " native_probe(" + Scalar + ");\n" +
+                         Common.substr(Values, Main - Values) +
+                         "\nint main(void) {\nuint32_t saved = _mm_getcsr();\n";
+    Driver += R"(
+for (unsigned rounding = 0; rounding < 4; ++rounding)
+  for (unsigned environment = 0; environment < 4; ++environment)
+    for (unsigned sticky = 0; sticky < 2; ++sticky)
+      for (unsigned a = 0; a < sizeof(values)/sizeof(values[0]); ++a) {
+        uint32_t state = 0x1f80 | (rounding << 13) |
+          ((environment & 1) ? 0x40 : 0) | ((environment & 2) ? 0x8000 : 0) |
+          (sticky ? 0x25 : 0);
+)";
+    Driver += Scalar +
+              " input; __builtin_memcpy(&input, &values[a], sizeof(input));\n"
+              "_mm_setcsr(state);\n" +
+              Scalar +
+              " expected = native_probe(input);\n"
+              "uint32_t expected_state = _mm_getcsr();\n"
+              "_mm_setcsr(state);\n" +
+              Scalar +
+              " actual = isa_probe(input);\n"
+              "uint32_t actual_state = _mm_getcsr();\n_mm_setcsr(saved);\n"
+              "if (expected_state != actual_state || memcmp(&expected, "
+              "&actual, sizeof(actual))) return 1;\n"
+              "}\nreturn 0;\n}\n";
+    for (bool NoOpt : {false, true})
+      for (bool LLVM : {false, true}) {
+        SCOPED_TRACE(LLVM ? "LLVMC return" : "HighC return");
+        SCOPED_TRACE(NoOpt);
+        llvm::LLVMContext Context;
+        auto Image = image(Bytes);
+        PipelineOptions Options;
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = LLVM;
+        Options.NoOpt = NoOpt;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Entry};
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        CEmitterOptions Emission;
+        Emission.TheArch = Arch::X64;
+        Emission.Format = hostFormat();
+        Emission.PreserveLLVMFunctionTypes = true;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        if (LLVM) {
+          ASSERT_NE(Result.LlvmModule, nullptr);
+          ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, Emission,
+                                          nullptr, &Image));
+        } else {
+          ASSERT_EQ(Result.HighFuncs.size(), 1U);
+          ASSERT_NE(Result.HighFuncs[0].ReturnType, nullptr);
+          ASSERT_EQ(Result.HighFuncs[0].ReturnType->Kind, NdTypeKind::Float);
+          ASSERT_EQ(Result.HighFuncs[0].ReturnType->Size, IsDouble ? 8 : 4);
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Out, Emission));
+        }
+        const auto C = file("return-driver.c");
+        write(C, Source + Driver);
+        for (const char *Optimization : {"-O0", "-O2"}) {
+          const auto Executable = file("return.exe");
+          Built = command(Compiler,
+                          {Optimization, NativeObject, C, "-o", Executable});
+          ASSERT_EQ(Built.Status, 0) << Built.Error << Source;
+          const auto Actual = command(Executable, {});
+          EXPECT_EQ(Actual.Status, 0) << Actual.Out << Actual.Error << Source;
+        }
+      }
+  }
 };
+
+TEST_F(X86FPStateAccuracy, FloatingReturnBitsAndMxcsrSurviveSourceProjection) {
+  compareFloatingReturn(false);
+  compareFloatingReturn(true);
+}
 
 TEST_F(X86FPStateAccuracy, HighCTypedStatePreservesBitsAndHelperNames) {
   if (!nativeX64())
