@@ -43,6 +43,36 @@ std::string bareLoad(std::string Text, int ParentPrec) {
              ? c_memory::unparenthesized(Text)
              : Text;
 }
+
+/// Whether C may compute an operation of float type \p Ty in a wider type
+/// until a cast or an assignment rounds it (CFloatTypes.def).
+bool computesWider(const TypeRef &Ty) {
+  if (!Ty || Ty->Kind != NdTypeKind::Float)
+    return false;
+#define NEVERD_C_FLOAT_TYPE(Bytes, Spelling, FusedMultiplyAdd, ComputesWider)  \
+  if (Ty->Size == Bytes)                                                       \
+    return ComputesWider;
+#include "neverd/backend/c/render/CFloatTypes.def"
+  return false;
+}
+
+/// Whether \p E prints as a C arithmetic operator on floats, whose result
+/// may keep excess precision into an enclosing one.
+bool isFloatArithmetic(const HighExpr &E) {
+  if (E.Kind == ExprKind::UnaryOp)
+    return E.Op == NdOp::FLOAT_NEG;
+  if (E.Kind != ExprKind::BinOp)
+    return false;
+  switch (E.Op) {
+  case NdOp::FLOAT_ADD:
+  case NdOp::FLOAT_SUB:
+  case NdOp::FLOAT_MULT:
+  case NdOp::FLOAT_DIV:
+    return true;
+  default:
+    return false;
+  }
+}
 } // namespace
 
 std::string frameStorageAddress(int64_t Displacement) {
@@ -689,7 +719,7 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     return typedText(E, std::move(Text), sizeof(int32_t), true);
   }
   case NdOp::FLOAT_NEG:
-    return "-" + exprStr(*E.Operands[0], 99);
+    return "-" + floatOperandStr(*E.Operands[0], 99);
   case NdOp::FLOAT_ABS:
   case NdOp::FLOAT_SQRT:
   case NdOp::FLOAT_CEIL:
@@ -3456,6 +3486,15 @@ bool HighCWriter::isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const {
   return false;
 }
 
+std::string HighCWriter::floatOperandStr(const HighExpr &Operand,
+                                         int ParentPrec) {
+  if (computesWider(Operand.Type))
+    if (const HighExpr *Printed = forwardedExpr(&Operand);
+        Printed && isFloatArithmetic(*Printed))
+      return "(" + typeToC(Operand.Type) + ")(" + exprStr(Operand) + ")";
+  return exprStr(Operand, ParentPrec);
+}
+
 const HighExpr *HighCWriter::forwardedExpr(const HighExpr *E) const {
   unsigned Depth = 0;
   while (E && Depth++ < limits::kMaxIntegerViewUnwrapDepth) {
@@ -4116,8 +4155,11 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     // of a value of this type are that value.
     if (const HighExpr *Call = floatCallResult(Src, E.Type))
       return renderCallExpr(*Call);
-    if (const HighExpr *Value = floatBitsValue(Src, E.Type))
+    if (const HighExpr *Value = floatBitsValue(Src, E.Type)) {
+      if (computesWider(E.Type) && isFloatArithmetic(*Value))
+        return "(" + typeToC(E.Type) + ")(" + exprStr(*Value) + ")";
       return exprStr(*Value, ParentPrec);
+    }
     // A float whose bits are a constant, or read from constant data, is that
     // constant.
     if (const auto Literal = floatConstantBitsText(Src, E.Type))

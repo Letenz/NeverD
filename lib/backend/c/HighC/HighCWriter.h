@@ -338,6 +338,10 @@ public:
   /// (`(int32_t)(int8_t)v` is not `v`).
   const HighExpr *sameWidthVariable(const HighExpr &E) const;
   const HighExpr *forwardedExpr(const HighExpr *E) const;
+  /// \p Operand's text as an operand of a floating-point operator.  An
+  /// operation whose type C may compute wider (CFloatTypes.def) is cast to
+  /// that type, which rounds it where the instruction rounded.
+  std::string floatOperandStr(const HighExpr &Operand, int ParentPrec);
   /// True when \p E prints as an unsigned integer of exactly \p Width bytes.
   /// Widening views and untyped add/sub/mul stay wrapped.
   bool isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const;
