@@ -2874,9 +2874,10 @@ private:
       if (Count && *Count == 0)
         continue;
       const std::optional<uint64_t> Bytes =
-          Count ? detail::exactCopyReadBytes(
-                      callName(CI),
-                      In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown, *Count)
+          Count ? detail::exactCopyReadBytes(callName(CI),
+                                             In.Img ? In.Img->abiFormat()
+                                                    : BinaryFormat::Unknown,
+                                             *Count)
                 : std::nullopt;
       bool AccessMayBeSuppressed = false;
       if (E->CapArg >= 0) {
@@ -2885,8 +2886,9 @@ private:
         AccessMayBeSuppressed = !Count || !Capacity;
         if (Count && Capacity &&
             detail::fortifiedCountedAccessIsRejected(
-                callName(CI), In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown,
-                *Count, *Capacity))
+                callName(CI),
+                In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown, *Count,
+                *Capacity))
           continue;
       }
       auditCallStackSource(
@@ -2928,8 +2930,9 @@ private:
           if (!Count || !Capacity)
             return CallUse::Possible;
           if (detail::fortifiedCountedAccessIsRejected(
-                  callName(CI), In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown,
-                  *Count, *Capacity))
+                  callName(CI),
+                  In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown, *Count,
+                  *Capacity))
             return CallUse::None;
         }
         if (!detail::copyAccessRequiresPositiveCount(
@@ -2954,8 +2957,9 @@ private:
           if (!Limit || !Capacity)
             return CallUse::Possible;
           if (detail::fortifiedCountedAccessIsRejected(
-                  callName(CI), In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown,
-                  *Limit, *Capacity))
+                  callName(CI),
+                  In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown, *Limit,
+                  *Capacity))
             return CallUse::None;
         }
         if (ArgIndex == E->FmtArg)

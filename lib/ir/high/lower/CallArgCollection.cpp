@@ -422,7 +422,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   std::vector<ExprPtr> Found(MaxArgs);
 
   const auto &TRI = getTargetRegInfo(TargetArch);
-  const BinaryFormat Format = Image ? Image->abiFormat() : BinaryFormat::Unknown;
+  const BinaryFormat Format =
+      Image ? Image->abiFormat() : BinaryFormat::Unknown;
   const auto ParamRegs = TRI.integerParamRegs(Format);
   const CallArgumentConvention *Convention =
       callArgumentConvention(TargetArch, Format);
@@ -478,7 +479,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   // Walk the trailing window for the last write of that register.
   auto exprFromWindowValue = [&](MedVar V, const std::vector<MedOp> &Ops,
                                  int Before) -> ExprPtr {
-    const BinaryFormat Format = Image ? Image->abiFormat() : BinaryFormat::Unknown;
+    const BinaryFormat Format =
+        Image ? Image->abiFormat() : BinaryFormat::Unknown;
     auto preserved = [&](const MedVar &Reg) {
       return Reg.Kind == MedVar::Reg && call_args_detail::isCallPreservedReg(
                                             TRI, Format, Reg.RegOff, Reg.Size);

@@ -20,7 +20,8 @@
 namespace neverd {
 namespace call_args_detail {
 
-void collectCallArgsAArch64(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
+void collectCallArgsAArch64(const CallArgScan &Scan,
+                            std::vector<ExprPtr> &Found,
                             std::vector<ExprPtr> &Args) {
   const auto &Ops = *Scan.Ops;
   if (Scan.Image && Scan.CallIdx < Ops.size()) {

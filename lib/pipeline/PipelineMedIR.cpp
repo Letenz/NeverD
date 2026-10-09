@@ -136,7 +136,8 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
         trimFuncStorage(MF);
         MF.EntryKind = functionEntryKind(MF, Img.stackEntryKindAt(MF.Entry));
         if (!Opts.PatchMode && (!Opts.LiftMode || Opts.SourceProjection))
-          simplifyProvenStackAlignment(MF, Img.Arch, Img.abiFormat(), MF.EntryKind);
+          simplifyProvenStackAlignment(MF, Img.Arch, Img.abiFormat(),
+                                       MF.EntryKind);
         MF.OriginalSize = LF.OriginalSize;
         MF.DebugName = LF.DebugName;
         MF.SourceFile = LF.SourceFile;

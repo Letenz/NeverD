@@ -1180,7 +1180,8 @@ ExploreHit exploreSink(const AnalysisInput &In, const SinkCatalog &Cat,
   std::vector<SymRegisterRange> Preserved;
   if (In.Img) {
     const TargetRegInfo &TRI = getTargetRegInfo(In.Img->Arch);
-    for (const TargetRegisterRange &R : TRI.callPreservedRanges(In.Img->abiFormat()))
+    for (const TargetRegisterRange &R :
+         TRI.callPreservedRanges(In.Img->abiFormat()))
       Preserved.push_back({R.Offset, R.Bytes});
   }
 

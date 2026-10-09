@@ -612,8 +612,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   if (UseShards) {
     LLVMEmissionResult Emission = emitLLVMSharded(
-        Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img, Img.abiFormat(), Opts.NoOpt,
-        Workers, !Result.LibraryRecognitions.empty(),
+        Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img, Img.abiFormat(),
+        Opts.NoOpt, Workers, !Result.LibraryRecognitions.empty(),
         Result.LibraryRecognitions);
     Result.BackendUnhandledValueIntrinsics = Emission.UnhandledValueIntrinsics;
     Result.LLVMVerifierFailed = Emission.LLVMVerifierFailed;

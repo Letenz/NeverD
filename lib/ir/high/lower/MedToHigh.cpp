@@ -471,7 +471,8 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   // GS_HANDLER_DATA bit-2 align edge; mapping every later r10 SSA to arg0
   // deletes that edge.
   if (CurMed && V.Kind == MedVar::Reg && TargetArch == Arch::X64 && Image &&
-      Image->abiFormat() == BinaryFormat::COFF && !PhiOutputVars.count(varKey(V))) {
+      Image->abiFormat() == BinaryFormat::COFF &&
+      !PhiOutputVars.count(varKey(V))) {
     if (ParamCopyIndexFunc != CurMed) {
       // One pass over the function instead of one per variable reference.
       ParamCopyIndexFunc = CurMed;

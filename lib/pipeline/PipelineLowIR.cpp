@@ -1574,7 +1574,8 @@ bool collectLowAddressUses(
                 TRI.StackPointer, static_cast<uint16_t>(TRI.PointerSize)));
             if (CurrentSP.isPrivateFrameOnly()) {
               int64_t Cursor = *CurrentSP.FrameOffsets.begin();
-              if (Img.Arch == Arch::X64 && Img.abiFormat() == BinaryFormat::COFF) {
+              if (Img.Arch == Arch::X64 &&
+                  Img.abiFormat() == BinaryFormat::COFF) {
                 int64_t AfterShadow = 0;
                 if (llvm::AddOverflow(Cursor, int64_t{32}, AfterShadow))
                   return false;
@@ -2874,9 +2875,10 @@ importPrototypeArguments(const BinaryImage &Img,
                          bool StackArguments, bool RegisterArguments = true) {
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const llvm::ArrayRef<uint64_t> Registers =
-      RegisterArguments ? llvm::ArrayRef<uint64_t>(
-                              TRI.integerArgumentLayout(Img.abiFormat()).Registers)
-                        : llvm::ArrayRef<uint64_t>();
+      RegisterArguments
+          ? llvm::ArrayRef<uint64_t>(
+                TRI.integerArgumentLayout(Img.abiFormat()).Registers)
+          : llvm::ArrayRef<uint64_t>();
   // A runtime's own prototype names its routine exactly, where stripping
   // leading underscores for the arity tables could reach another runtime's.
   auto IntegerArguments = [&](const std::string &Name) -> std::optional<int> {
