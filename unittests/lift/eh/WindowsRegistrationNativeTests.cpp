@@ -22,6 +22,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/COFF/COFFLoader.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/object/PELayout.h"
 
@@ -44,6 +45,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <set>
 
 namespace neverd {
 class MedLLVMEmitterTestPeer {
@@ -586,8 +588,15 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
     }
     return std::nullopt;
   };
+  auto Buffer = llvm::MemoryBuffer::getFile(Path);
+  ASSERT_TRUE(bool(Buffer));
+  const auto InputBytes = (*Buffer)->getBuffer();
+  std::vector<uint8_t> Binary(InputBytes.bytes_begin(), InputBytes.bytes_end());
+  COFFPatcher Patcher;
+  const va_t CodeVA = Patcher.plannedExecSegmentVA(Binary, Arch::X86);
+  ASSERT_GE(CodeVA, Loaded->Base);
   auto Compiled = compileImageForPatch(*Module, Arch::X86, BinaryFormat::COFF,
-                                       0x405000, Resolve, Loaded->Base);
+                                       CodeVA, Resolve, Loaded->Base);
   ASSERT_TRUE(Compiled.Success);
   ASSERT_TRUE(Compiled.Unresolved.empty());
 #ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
@@ -607,9 +616,9 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
   EXPECT_EQ(Row.Token, *windows_eh_semantics::getCxxCatchSemanticToken(
                            *Source, Arch::X86, 0, 0));
   EXPECT_EQ(Row.RecordSize, 16u);
-  EXPECT_GE(Row.OwnerVA, 0x405000u);
+  EXPECT_GE(Row.OwnerVA, CodeVA);
   EXPECT_GT(Row.HandlerVA, Row.OwnerVA);
-  EXPECT_GE(Row.ContainerVA, 0x405000u);
+  EXPECT_GE(Row.ContainerVA, CodeVA);
 #ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
   ASSERT_TRUE(Row.X86CxxLayout);
   const auto &Layout = *Row.X86CxxLayout;
@@ -1099,6 +1108,298 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
         Compiled.WinEHSemanticRecords, Compiled.SourceFunctionOwners, Ranges,
         Compiled.FunctionOwnerAddrs));
   }
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+  const std::pair<va_t, va_t> Mapping{Source->CodeRange.Begin, Row.OwnerVA};
+  const auto OriginalCompiled = Compiled;
+  auto Update = prepareCOFFRegistrationPatch(Binary, *Loaded, Compiled,
+                                             {Mapping}, CodeVA, *Module);
+  ASSERT_TRUE(bool(Update)) << llvm::toString(Update.takeError());
+  ASSERT_TRUE(Update->Apply);
+  EXPECT_GT(Compiled.Bytes.size(), OriginalCompiled.Bytes.size());
+  auto RawOffset = [&](llvm::ArrayRef<uint8_t> Bytes, uint32_t RVA,
+                       size_t Size) -> std::optional<size_t> {
+    auto PE =
+        locatePEHeaders(const_cast<uint8_t *>(Bytes.data()), Bytes.size());
+    std::optional<size_t> Found;
+    forEachPESection(PE, [&](const PESectionFields &Section, uint16_t) {
+      if (RVA >= Section.VirtualAddress &&
+          rangeInBounds(RVA - Section.VirtualAddress, Size,
+                        Section.SizeOfRawData)) {
+        const size_t Offset =
+            Section.PointerToRawData + RVA - Section.VirtualAddress;
+        if (rangeInBounds(Offset, Size, Bytes.size()))
+          Found = Offset;
+      }
+    });
+    return Found;
+  };
+  auto PE = locatePEHeaders(Binary.data(), Binary.size());
+  ASSERT_FALSE(PE.Is64);
+  ASSERT_FALSE(PE.FileHeader->Characteristics &
+               llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED);
+  const auto *LoadConfig =
+      getPEDataDirectory(PE, llvm::COFF::LOAD_CONFIG_TABLE);
+  ASSERT_TRUE(LoadConfig);
+  using LC = llvm::object::coff_load_configuration32;
+  const uint32_t SafeFieldsRVA =
+      LoadConfig->RelativeVirtualAddress + offsetof(LC, SEHandlerTable);
+  auto SafeFields = RawOffset(Binary, SafeFieldsRVA, 8);
+  ASSERT_TRUE(SafeFields);
+  const uint32_t OriginalTable =
+      llvm::support::endian::read32le(Binary.data() + *SafeFields);
+  const uint32_t OriginalCount =
+      llvm::support::endian::read32le(Binary.data() + *SafeFields + 4);
+  ASSERT_GT(OriginalCount, 0u);
+  auto OriginalSafe =
+      RawOffset(Binary, OriginalTable - Loaded->Base, OriginalCount * 4);
+  ASSERT_TRUE(OriginalSafe);
+  EXPECT_EQ(Update->SafeSEHHandlers.size(), size_t(OriginalCount) + 1);
+  for (uint32_t I = 0; I < OriginalCount; ++I)
+    EXPECT_TRUE(llvm::is_contained(Update->SafeSEHHandlers,
+                                   llvm::support::endian::read32le(
+                                       Binary.data() + *OriginalSafe + I * 4)));
+  EXPECT_TRUE(llvm::is_contained(Update->SafeSEHHandlers,
+                                 uint32_t(RegistrationVA - Loaded->Base)));
+  ASSERT_EQ(Update->LoadConfigBytes.size(), 8u);
+  EXPECT_EQ(llvm::support::endian::read32le(Update->LoadConfigBytes.data() + 4),
+            Update->SafeSEHHandlers.size());
+  std::set<uint32_t> Relocations;
+  ASSERT_GE(Update->RelocationRVA, CodeVA - Loaded->Base);
+  const size_t RelocOffset = Update->RelocationRVA - (CodeVA - Loaded->Base);
+  ASSERT_TRUE(rangeInBounds(RelocOffset, Update->RelocationSize,
+                            Compiled.Bytes.size()));
+  for (size_t Cursor = RelocOffset;
+       Cursor < RelocOffset + Update->RelocationSize;) {
+    ASSERT_TRUE(rangeInBounds(Cursor, 8, Compiled.Bytes.size()));
+    const uint32_t Page =
+        llvm::support::endian::read32le(Compiled.Bytes.data() + Cursor);
+    const uint32_t Size =
+        llvm::support::endian::read32le(Compiled.Bytes.data() + Cursor + 4);
+    ASSERT_GE(Size, 8u);
+    ASSERT_TRUE(
+        rangeInBounds(Cursor, Size, RelocOffset + Update->RelocationSize));
+    for (size_t I = 8; I < Size; I += 2) {
+      const uint16_t Entry =
+          llvm::support::endian::read16le(Compiled.Bytes.data() + Cursor + I);
+      if (!Entry)
+        continue;
+      ASSERT_EQ(Entry >> 12, llvm::COFF::IMAGE_REL_BASED_HIGHLOW);
+      EXPECT_TRUE(Relocations.insert(Page + (Entry & 0xfff)).second);
+    }
+    Cursor += Size;
+  }
+  for (va_t Field : HandlerReceipt->AbsolutePointerFields)
+    EXPECT_TRUE(Relocations.count(uint32_t(Field - Loaded->Base)));
+  EXPECT_TRUE(Relocations.count(SafeFieldsRVA));
+
+  auto RejectTransaction = [&](const auto &Input, auto Changed,
+                               const llvm::Module &IR, const auto &Mappings,
+                               llvm::StringRef Reason) {
+    const auto Before = Changed.Bytes;
+    auto Failure = prepareCOFFRegistrationPatch(Input, *Loaded, Changed,
+                                                Mappings, CodeVA, IR);
+    EXPECT_FALSE(bool(Failure));
+    if (!Failure)
+      EXPECT_NE(llvm::toString(Failure.takeError()).find(Reason.str()),
+                std::string::npos);
+    EXPECT_EQ(Changed.Bytes, Before);
+  };
+  const std::vector<std::pair<va_t, va_t>> Mappings{Mapping};
+  {
+    auto Input = Binary;
+    uint32_t NewCount = 0;
+    for (uint32_t I = 0; I < OriginalCount; ++I) {
+      const uint32_t RVA =
+          llvm::support::endian::read32le(Input.data() + *OriginalSafe + I * 4);
+      if (RVA != Source->PersonalityVA - Loaded->Base)
+        llvm::support::endian::write32le(
+            Input.data() + *OriginalSafe + NewCount++ * 4, RVA);
+    }
+    ASSERT_EQ(NewCount + 1, OriginalCount);
+    ASSERT_GT(NewCount, 0u);
+    llvm::support::endian::write32le(Input.data() + *SafeFields + 4, NewCount);
+    RejectTransaction(Input, OriginalCompiled, *Module, Mappings,
+                      "absent from SafeSEH");
+  }
+  {
+    auto Input = Binary;
+    auto AlteredPE = locatePEHeaders(Input.data(), Input.size());
+    setPEDataDirectory(AlteredPE, llvm::COFF::BASE_RELOCATION_TABLE, 0, 0);
+    RejectTransaction(Input, OriginalCompiled, *Module, Mappings,
+                      "relocation contract");
+  }
+  {
+    auto Changed = OriginalCompiled;
+    Changed.Sections[SafeIndex].SymbolIndexReferences[SafeRowIndex].TargetVA =
+        Source->PersonalityVA;
+    RejectTransaction(Binary, Changed, *Module, Mappings, "handler");
+  }
+  {
+    auto Edited = llvm::CloneModule(*Module);
+    Edited->getFunction(Parent->getName())
+        ->removeFnAttr(llvm::RewriteWinX86CxxFrameAttribute);
+    RejectTransaction(Binary, OriginalCompiled, *Edited, Mappings, "C++");
+  }
+  {
+    auto Changed = OriginalCompiled;
+    bool Added = false;
+    for (auto &Section : Changed.Sections) {
+      for (const auto &Fixup : Section.FixupReferences) {
+        const va_t Field = Section.VA + Fixup.Offset;
+        if (Fixup.IsPCRel || Fixup.Kind != llvm::FK_Data_4 ||
+            Fixup.BitWidth != 32 || !Fixup.SubtractSymbol.empty() ||
+            llvm::is_contained(HandlerReceipt->AbsolutePointerFields, Field) ||
+            !rangeInBounds(Fixup.Offset, 5, Section.Size))
+          continue;
+        auto Extra = Fixup;
+        ++Extra.Offset;
+        Extra.ResolvedValue = llvm::support::endian::read32le(
+            Changed.Bytes.data() + Section.Offset + Extra.Offset);
+        Section.FixupReferences.push_back(Extra);
+        Added = true;
+        break;
+      }
+      if (Added)
+        break;
+    }
+    ASSERT_TRUE(Added);
+    auto StillChecked = getCheckedCOFFRegistrationCxxHandlerReceipt(
+        *Parent, *Source, *Loaded, Changed);
+    ASSERT_TRUE(bool(StillChecked)) << llvm::toString(StillChecked.takeError());
+    RejectTransaction(Binary, Changed, *Module, Mappings,
+                      "fixup fields overlap");
+  }
+  {
+    ASSERT_FALSE(Low.RegistrationStates->CalleeContracts.empty());
+    auto ChangedMappings = Mappings;
+    ChangedMappings.emplace_back(
+        Low.RegistrationStates->CalleeContracts[0].Target, Row.OwnerVA);
+    RejectTransaction(Binary, OriginalCompiled, *Module, ChangedMappings,
+                      "preserved C++ callee");
+  }
+  {
+    auto Runtime =
+        coff_loader::getCheckedX86CxxPersonalityABI(*Loaded, *Source);
+    ASSERT_TRUE(Runtime);
+    auto ChangedMappings = Mappings;
+    ChangedMappings.emplace_back(Runtime->RuntimeVA, Row.OwnerVA);
+    RejectTransaction(Binary, OriginalCompiled, *Module, ChangedMappings,
+                      "preserved C++ CRT");
+  }
+  {
+    auto ChangedMappings = Mappings;
+    ChangedMappings.emplace_back(
+        Low.RegistrationStates->CalleeContracts[0].Target + 1, Row.OwnerVA);
+    RejectTransaction(Binary, OriginalCompiled, *Module, ChangedMappings,
+                      "another entry");
+  }
+  {
+    auto Input = Binary;
+    auto AlteredPE = locatePEHeaders(Input.data(), Input.size());
+    AlteredPE.FileHeader->Characteristics |=
+        llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED;
+    setPEDataDirectory(AlteredPE, llvm::COFF::BASE_RELOCATION_TABLE, 0, 0);
+    auto Changed = OriginalCompiled;
+    auto Fixed = prepareCOFFRegistrationPatch(Input, *Loaded, Changed, Mappings,
+                                              CodeVA, *Module);
+    ASSERT_TRUE(bool(Fixed)) << llvm::toString(Fixed.takeError());
+    EXPECT_TRUE(Fixed->Apply);
+    EXPECT_EQ(Fixed->RelocationRVA, 0u);
+    EXPECT_EQ(Fixed->RelocationSize, 0u);
+    EXPECT_EQ(Fixed->SafeSEHHandlers, Update->SafeSEHHandlers);
+  }
+  {
+    auto Input = Binary;
+    auto AlteredPE = locatePEHeaders(Input.data(), Input.size());
+    const auto *Directory =
+        getPEDataDirectory(AlteredPE, llvm::COFF::BASE_RELOCATION_TABLE);
+    auto Offset =
+        RawOffset(Input, Directory->RelativeVirtualAddress, Directory->Size);
+    ASSERT_TRUE(Offset);
+    bool Removed = false;
+    for (size_t Cursor = 0; Cursor < Directory->Size;) {
+      const uint32_t Page =
+          llvm::support::endian::read32le(Input.data() + *Offset + Cursor);
+      const uint32_t Size =
+          llvm::support::endian::read32le(Input.data() + *Offset + Cursor + 4);
+      for (size_t I = 8; I < Size; I += 2) {
+        auto *Field = Input.data() + *Offset + Cursor + I;
+        const uint16_t Entry = llvm::support::endian::read16le(Field);
+        if (Entry >> 12 == llvm::COFF::IMAGE_REL_BASED_HIGHLOW &&
+            Page + (Entry & 0xfff) == SafeFieldsRVA) {
+          llvm::support::endian::write16le(Field, 0);
+          Removed = true;
+        }
+      }
+      Cursor += Size;
+    }
+    ASSERT_TRUE(Removed);
+    llvm::support::endian::write64le(Input.data() + *SafeFields, 0);
+    auto Changed = OriginalCompiled;
+    auto Disabled = prepareCOFFRegistrationPatch(Input, *Loaded, Changed,
+                                                 Mappings, CodeVA, *Module);
+    ASSERT_TRUE(bool(Disabled)) << llvm::toString(Disabled.takeError());
+    EXPECT_TRUE(Disabled->SafeSEHHandlers.empty());
+    EXPECT_EQ(Disabled->LoadConfigBytes, std::vector<uint8_t>(8, 0));
+  }
+  ASSERT_EQ(Patcher.appendExecSegment(Binary, Compiled.Bytes, kNdTextSection,
+                                      Arch::X86),
+            CodeVA);
+  auto Entry = RawOffset(Binary, Source->CodeRange.Begin - Loaded->Base, 5);
+  ASSERT_TRUE(Entry);
+  Binary[*Entry] = 0xe9;
+  llvm::support::endian::write32le(
+      Binary.data() + *Entry + 1,
+      uint32_t(Row.OwnerVA - Source->CodeRange.Begin - 5));
+  auto Installed = applyCOFFRegistrationPatch(Binary, *Update);
+  ASSERT_FALSE(bool(Installed)) << llvm::toString(std::move(Installed));
+  auto Checked = validateCOFFRegistrationPatch(Binary, *Update);
+  ASSERT_FALSE(bool(Checked)) << llvm::toString(std::move(Checked));
+  const auto FinalSafeFields = RawOffset(Binary, SafeFieldsRVA, 8);
+  ASSERT_TRUE(FinalSafeFields);
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Binary;
+    auto ChangedPE = locatePEHeaders(Changed.data(), Changed.size());
+    switch (Mutation) {
+    case 0: {
+      auto Offset = RawOffset(Changed, RegistrationVA - Loaded->Base, 1);
+      ASSERT_TRUE(Offset);
+      Changed[*Offset] ^= 1;
+      break;
+    }
+    case 1:
+      setPEDataDirectory(ChangedPE, llvm::COFF::BASE_RELOCATION_TABLE, 0, 0);
+      break;
+    case 2:
+      Changed[*FinalSafeFields + 4] ^= 1;
+      break;
+    case 3: {
+      const uint32_t Table =
+          llvm::support::endian::read32le(Changed.data() + *FinalSafeFields);
+      auto Offset = RawOffset(Changed, Table - Loaded->Base, 4);
+      ASSERT_TRUE(Offset);
+      Changed[*Offset] ^= 1;
+      break;
+    }
+    case 4: {
+      auto Offset = RawOffset(Changed, Update->LoadConfigRVA, 4);
+      ASSERT_TRUE(Offset);
+      Changed[*Offset] ^= 1;
+      break;
+    }
+    }
+    auto Failure = validateCOFFRegistrationPatch(Changed, *Update);
+    EXPECT_TRUE(bool(Failure));
+    llvm::consumeError(std::move(Failure));
+  }
+  if (const char *Output = std::getenv("NEVERD_REGISTRATION_OUTPUT_CXX_PE32")) {
+    std::error_code EC;
+    llvm::raw_fd_ostream Stream(Output, EC);
+    ASSERT_FALSE(bool(EC)) << EC.message();
+    Stream.write(reinterpret_cast<const char *>(Binary.data()), Binary.size());
+  }
+#endif
 }
 #endif
 

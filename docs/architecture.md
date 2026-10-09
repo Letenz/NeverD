@@ -145,9 +145,17 @@ table identity and physical registration-node base/offset. The COFF handler
 validator checks its FuncInfo load and original CRT tail branch, exact fixups,
 the decoded parent store into that node and the compiler's SafeSEH row. Kind,
 PC-relative flag and final encoded displacement retain separate meanings.
-This IR and machine-code capability does not grant installation:
-edited IR, the complete generated FuncInfo and the final PE still require
-independent validation.
+These individual IR and machine-code receipts do not grant installation. The
+C++ transaction composes fresh full IR, complete table and handler proofs,
+preserves the original SafeSEH handlers and adds the compiler-owned handler
+only when the input already enables SafeSEH. Every dispatch pointer belongs to
+the emitted HIGHLOW closure; failures leave the generated image unchanged.
+The original loader owns load-config's declared structure extent even when
+MSVC's directory retains its 64-byte compatibility size. Installation requires
+a complete unique raw-backed extent. C++ currently permits one patched entry
+because preserved helper instruction extents do not authorize concurrent
+replacement. The public C++ output capability remains closed pending installed
+source runtime verification.
 Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction
 authenticates emitted scope rows, SafeSEH and absolute relocations before

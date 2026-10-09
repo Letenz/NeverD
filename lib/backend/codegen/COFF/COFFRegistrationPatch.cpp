@@ -7,6 +7,7 @@
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 
 #include "COFFNativeEHProvenance.h"
+#include "COFFRegistrationCxxIRProof.h"
 #include "COFFRegistrationFrameProof.h"
 #include "COFFRegistrationIRProof.h"
 #include "COFFRegistrationTableProof.h"
@@ -1692,6 +1693,9 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
             RewriteModule, Image.Base, getPESizeOfImage(PE)))
       return std::move(Error);
   std::set<uint32_t> RequiredHandlers;
+  std::set<uint32_t> OriginalHandlers;
+  std::set<uint32_t> GeneratedHandlers;
+  std::set<va_t> RequiredAbsoluteFields;
   std::set<std::string> SourceNames;
   for (const auto &[Original, EH] : Sources) {
     const llvm::Function *Function = nullptr;
@@ -1709,18 +1713,61 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
     if (*Owner != Mappings.at(Original))
       return reject(
           "entry trampoline names a different compiler function owner");
-    if (llvm::Error Error = validateCOFFRegistrationIR(*Function, *EH, Image))
-      return std::move(Error);
-    if (llvm::Error Error =
-            validateCOFFRegistrationSemanticRows(*Function, *EH, Compiled))
-      return std::move(Error);
+    if (EH->Cxx) {
+      if (llvm::Error Error =
+              validateCOFFRegistrationCxxIR(*Function, *EH, Image))
+        return std::move(Error);
+      auto Proof =
+          coff_registration::getCheckedCxxControlIRProof(*Function, *EH, Image);
+      if (!Proof)
+        return Proof.takeError();
+      for (const auto &[Call, Checked] : Proof->Calls)
+        if (Mappings.count(Checked.Contract.Target))
+          return reject("preserved C++ callee is also patched without a native "
+                        "replacement contract");
+      auto Runtime = coff_loader::getCheckedX86CxxPersonalityABI(Image, *EH);
+      if (!Runtime)
+        return reject("preserved C++ CRT dispatch has no original ABI");
+      for (const auto &[Entry, Generated] : Mappings)
+        for (const auto &Range : Runtime->CodeRanges)
+          if (ExceptionAddressRange{Entry, Entry + 5}.overlaps(Range))
+            return reject("entry trampoline overwrites preserved C++ CRT "
+                          "dispatch code");
+      // This source contract preserves its original helpers. Their complete
+      // instruction extents do not yet authorize a concurrent replacement,
+      // including a trampoline placed inside a helper rather than at entry.
+      if (Mappings.size() != 1)
+        return reject("C++ reconstruction cannot patch another entry without "
+                      "complete preserved-callee code extents");
+      auto Receipt = getCheckedCOFFRegistrationCxxHandlerReceipt(
+          *Function, *EH, Image, Compiled);
+      if (!Receipt)
+        return Receipt.takeError();
+      if (Receipt->CodeRange.Begin < NewSectionVA ||
+          Receipt->CodeRange.Begin < Image.Base ||
+          Receipt->CodeRange.Begin > UINT32_MAX)
+        return reject(
+            "generated C++ registration handler is outside its image");
+      const uint32_t RVA = Receipt->CodeRange.Begin - Image.Base;
+      GeneratedHandlers.insert(RVA);
+      RequiredHandlers.insert(RVA);
+      RequiredAbsoluteFields.insert(Receipt->AbsolutePointerFields.begin(),
+                                    Receipt->AbsolutePointerFields.end());
+    } else {
+      if (llvm::Error Error = validateCOFFRegistrationIR(*Function, *EH, Image))
+        return std::move(Error);
+      if (llvm::Error Error =
+              validateCOFFRegistrationSemanticRows(*Function, *EH, Compiled))
+        return std::move(Error);
+      RequiredHandlers.insert(uint32_t(EH->PersonalityVA - Image.Base));
+    }
     SourceNames.insert(Function->getName().str());
     if (EH->PersonalityVA < Image.Base || EH->PersonalityVA > UINT32_MAX ||
         !Image.isCodeAddress(EH->PersonalityVA) ||
         !Image.readVA(EH->PersonalityVA, 1))
       return reject(
           "source registration personality is not executable image code");
-    RequiredHandlers.insert(uint32_t(EH->PersonalityVA - Image.Base));
+    OriginalHandlers.insert(uint32_t(EH->PersonalityVA - Image.Base));
     if (EH->Personality == ExceptionPersonality::ExceptHandler4) {
       const uint64_t Cookie = Image.Base + Image.DynInfo.SecurityCookieRVA;
       if (!Image.DynInfo.SecurityCookieRVA || Cookie > UINT32_MAX ||
@@ -1808,6 +1855,7 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
       Cursor += Size;
     }
   }
+  std::set<va_t> AbsoluteFields;
   for (const auto &Section : Compiled.Sections) {
     if (Section.Name == ".sxdata") {
       if (Section.IsAllocated || Section.IsInImage || Section.Size % 4 ||
@@ -1852,6 +1900,12 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
                            Fixup.Offset) != Fixup.ResolvedValue)
         return reject(
             "generated absolute address has no PE32 HIGHLOW contract");
+      const va_t Field = Section.VA + Fixup.Offset;
+      auto Next = AbsoluteFields.lower_bound(Field);
+      if ((Next != AbsoluteFields.end() && *Next < Field + 4) ||
+          (Next != AbsoluteFields.begin() && *std::prev(Next) + 4 > Field))
+        return reject("generated absolute fixup fields overlap");
+      AbsoluteFields.insert(Next, Field);
       if (!Fixed)
         if (!Relocations
                  .insert(uint32_t(Section.VA + Fixup.Offset - Image.Base))
@@ -1859,6 +1913,9 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
           return reject("generated absolute fixup fields overlap");
     }
   }
+  for (va_t Field : RequiredAbsoluteFields)
+    if (!AbsoluteFields.count(Field))
+      return reject("C++ dispatch pointer has no complete HIGHLOW closure");
 
   const auto *LoadConfig =
       getPEDataDirectory(PE, llvm::COFF::LOAD_CONFIG_TABLE);
@@ -1873,11 +1930,23 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
                   LoadConfig->Size);
     if (!ConfigOffset)
       return ConfigOffset.takeError();
-    const auto Config = OriginalBinary.slice(*ConfigOffset, LoadConfig->Size);
-    if (Config.size() < 4 || readLE<uint32_t>(Config.data()) < 4 ||
-        readLE<uint32_t>(Config.data()) > Config.size())
+    if (LoadConfig->Size < 4 ||
+        readLE<uint32_t>(OriginalBinary.data() + *ConfigOffset) < 4)
       return reject("input load configuration is truncated");
-    Update.LoadConfigDeclaredSize = readLE<uint32_t>(Config.data());
+    Update.LoadConfigDeclaredSize =
+        readLE<uint32_t>(OriginalBinary.data() + *ConfigOffset);
+    // MSVC keeps the directory's compatibility size at 64 while the structure
+    // declares its actual append-only ABI. The loader already owns that rule;
+    // require its complete extent and a unique raw-backed section here.
+    if (Image.DynInfo.LoadConfigRVA != Update.LoadConfigRVA ||
+        Image.DynInfo.LoadConfigSize != Update.LoadConfigDeclaredSize)
+      return reject("input load configuration differs from its loaded extent");
+    ConfigOffset = rawOffset(PE, OriginalBinary, Update.LoadConfigRVA,
+                             Update.LoadConfigDeclaredSize);
+    if (!ConfigOffset)
+      return ConfigOffset.takeError();
+    const auto Config =
+        OriginalBinary.slice(*ConfigOffset, Update.LoadConfigDeclaredSize);
     using LC = llvm::object::coff_load_configuration32;
     if (GuardUpdate) {
       const std::tuple<bool, uint64_t, size_t> GuardFields[] = {
@@ -1928,10 +1997,18 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
                 "input SafeSEH handlers are not ordered executable RVAs");
           Update.SafeSEHHandlers.push_back(RVA);
         }
-        for (uint32_t Handler : RequiredHandlers)
+        for (uint32_t Handler : OriginalHandlers)
           if (!llvm::is_contained(Update.SafeSEHHandlers, Handler))
             return reject(
                 "registered source personality is absent from SafeSEH");
+        for (uint32_t Handler : GeneratedHandlers)
+          Update.SafeSEHHandlers.push_back(Handler);
+        llvm::sort(Update.SafeSEHHandlers);
+        Update.SafeSEHHandlers.erase(std::unique(Update.SafeSEHHandlers.begin(),
+                                                 Update.SafeSEHHandlers.end()),
+                                     Update.SafeSEHHandlers.end());
+        if (Update.SafeSEHHandlers.size() > limits::kMaxRegistrationEHStateWork)
+          return reject("merged SafeSEH handlers exceed the work budget");
         std::vector<uint8_t> TableBytes(Update.SafeSEHHandlers.size() * 4);
         for (size_t I = 0; I < Update.SafeSEHHandlers.size(); ++I)
           writeLE<uint32_t>(TableBytes.data() + I * 4,
@@ -1940,7 +2017,8 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
         if (!RVA)
           return RVA.takeError();
         writeLE<uint32_t>(Update.LoadConfigBytes.data(), Image.Base + *RVA);
-        writeLE<uint32_t>(Update.LoadConfigBytes.data() + 4, Count);
+        writeLE<uint32_t>(Update.LoadConfigBytes.data() + 4,
+                          Update.SafeSEHHandlers.size());
         if (!Fixed)
           Relocations.insert(Update.LoadConfigRVA + TableOffset);
       }
@@ -2069,7 +2147,7 @@ validateCOFFRegistrationPatch(llvm::ArrayRef<uint8_t> Binary,
   }
   if (!Update.LoadConfigBytes.empty()) {
     if (!Config ||
-        Config->Size <
+        Update.LoadConfigDeclaredSize <
             offsetof(llvm::object::coff_load_configuration32, SEHandlerCount) +
                 4)
       return reject("installed SafeSEH load configuration changed");
