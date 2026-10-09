@@ -70,6 +70,23 @@ representation. Each worker must keep its matching engine and runtime libraries.
 Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
 
+## Source dialects and DWARF ingestion
+
+`NeverDSourceDialectTests` checks C++ symbol validation, STL aliases, preserved
+custom template arguments, ATL names, and the C exception projection's native
+calls and handlers. `NeverDSessionCAPITests` checks detected defaults, explicit
+language pages and emission caches; `NeverDGuiController` checks the C++ title,
+switching back to C, and absence of a redundant C choice in C-only images.
+`NeverDDebugInfoTests` compares the extent sweep with a pairwise policy oracle,
+merges duplicate DIEs across parallel workers, and checks that DWARF references
+retain qualified record identity. Existing language/EH and source ABI suites
+cover the shared runtime detection and parameter-placement boundaries.
+
+For load benchmarks use Release, the same binary and warm-cache repetitions
+with `NEVERD_THREADS=1` and a fixed parallel count. Measure session loading
+separately from decompilation. Report algorithmic and parallel gains separately;
+thread count alone does not establish faster loading on every input.
+
 ## Scalar x86 floating-point state
 
 `NeverDX86FPStateAccuracyTests` compares original scalar SSE byte fixtures

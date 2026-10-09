@@ -45,6 +45,9 @@ std::optional<SourceDialect> neverd::sourceDialectFromKey(llvm::StringRef Key) {
 std::optional<SourceDialect>
 neverd::dialectOfRuntime(SourceLanguageRuntime Runtime) {
   switch (Runtime) {
+  case SourceLanguageRuntime::CxxItanium:
+  case SourceLanguageRuntime::CxxMSVC:
+    return SourceDialect::Cpp;
   case SourceLanguageRuntime::Rust:
     return SourceDialect::Rust;
   case SourceLanguageRuntime::Go:
@@ -58,7 +61,8 @@ std::vector<SourceDialect>
 neverd::offeredSourceDialects(const LanguageRuntimeInfo &Language) {
   std::vector<SourceDialect> Offered = {SourceDialect::C};
   // In the order SourceDialects.def lists them.
-  for (SourceDialect Dialect : {SourceDialect::Rust, SourceDialect::Go}) {
+  for (SourceDialect Dialect :
+       {SourceDialect::Cpp, SourceDialect::Rust, SourceDialect::Go}) {
     bool Runs = dialectOfRuntime(Language.Runtime) == Dialect;
     for (SourceLanguageRuntime Runtime : Language.SecondaryRuntimes)
       Runs |= dialectOfRuntime(Runtime) == Dialect;
@@ -78,11 +82,20 @@ neverd::sourceDialectOfFunction(llvm::StringRef Symbol, bool Named,
     Chosen = Image;
   } else {
     switch (symbolScheme(Symbol)) {
+    case SymbolScheme::Itanium:
+    case SymbolScheme::Microsoft:
+      if (!readableSymbolName(Symbol).empty())
+        Chosen = SourceDialect::Cpp;
+      break;
     case SymbolScheme::RustLegacy:
     case SymbolScheme::RustV0:
       Chosen = SourceDialect::Rust;
       break;
     case SymbolScheme::None:
+      // C-linkage entry points (including main) in a C++ image still read
+      // in C++; their names alone cannot classify their implementation.
+      if (Image == SourceDialect::Cpp)
+        Chosen = Image;
       // Go names a function by its package path: `main.main`.
       if (Image == SourceDialect::Go && Symbol.contains('.'))
         Chosen = SourceDialect::Go;
@@ -91,7 +104,7 @@ neverd::sourceDialectOfFunction(llvm::StringRef Symbol, bool Named,
       break;
     }
   }
-  // A program written in C or C++ reads in C, whatever a symbol says.
+  // A symbol cannot offer a language the image has not established.
   const std::vector<SourceDialect> Offered = offeredSourceDialects(Language);
   if (!llvm::is_contained(Offered, Chosen))
     return SourceDialect::C;
@@ -113,6 +126,7 @@ SourceDialectText neverd::spellInDialect(llvm::StringRef C,
     Printer = makeGoPrinter(T, Options);
     break;
   case SourceDialect::C:
+  case SourceDialect::Cpp:
     Printer = makeCPrinter(T, Options);
     break;
   }

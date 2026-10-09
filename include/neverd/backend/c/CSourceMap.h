@@ -39,11 +39,12 @@ struct CSourceDefinition {
 /// stands for, so that a reader of the text can name it as its source
 /// language does.
 struct CSourceName {
-  enum class Kind : uint8_t { Function, Object };
+  enum class Kind : uint8_t { Function, Object, Type };
   Kind TheKind = Kind::Function;
   /// The C identifier the text spells.
   std::string Identifier;
-  /// The symbol as the image spells it; empty for a name the emitter made
+  /// The symbol as the image spells it (the debug type name for Type); empty
+  /// for a name the emitter made
   /// itself (`off_4010`) and for one several symbols share (an MSVC stem).
   std::string Symbol;
   /// The function's entry or the object's address, when the emitter knows it.

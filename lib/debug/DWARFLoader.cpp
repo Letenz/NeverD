@@ -15,6 +15,8 @@
 #include "neverd/support/FilePath.h"
 
 #define DEBUG_TYPE "neverd-dwarf-loader"
+#include "neverd/support/Parallel.h"
+
 #include "llvm/DebugInfo/DWARF/DWARFAbbreviationDeclaration.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "llvm/DebugInfo/DWARF/DWARFDie.h"
@@ -140,19 +142,72 @@ void SubprogramExtentRegistry::insert(va_t Entry,
   New.Ranges.assign(Ranges.begin(), Ranges.end());
   New.Ambiguous = Entry == InvalidVA || malformedRanges(Ranges);
 
-  for (Record &Existing : Records) {
-    if (Existing.Entry != Entry && !rangesOverlap(Existing.Ranges, New.Ranges))
-      continue;
-    Existing.Ambiguous = true;
-    New.Ambiguous = true;
-  }
   Records.push_back(std::move(New));
+  Dirty = true;
+}
+
+void SubprogramExtentRegistry::finalize() const {
+  if (!Dirty)
+    return;
+  AmbiguousEntries.clear();
+  std::unordered_set<va_t> Entries;
+  struct Extent {
+    va_t Begin, End;
+    size_t Owner;
+  };
+  std::vector<Extent> Extents;
+  std::vector<size_t> Malformed;
+  for (size_t I = 0; I < Records.size(); ++I) {
+    const Record &R = Records[I];
+    if (R.Ambiguous || !Entries.insert(R.Entry).second)
+      AmbiguousEntries.insert(R.Entry);
+    for (const auto &[Begin, End] : R.Ranges) {
+      if (Begin < End)
+        Extents.push_back({Begin, End, I});
+      else
+        Malformed.push_back(I);
+    }
+  }
+  std::sort(Extents.begin(), Extents.end(),
+            [](const Extent &A, const Extent &B) {
+              return std::tie(A.Begin, A.End, A.Owner) <
+                     std::tie(B.Begin, B.End, B.Owner);
+            });
+  // Connected overlap components need only one sweep. Once a component
+  // contains two DIEs, each of its owners overlaps a different owner. Ranges
+  // of a single discontiguous DIE do not make that DIE ambiguous by itself.
+  for (size_t First = 0; First < Extents.size();) {
+    size_t Last = First + 1;
+    va_t End = Extents[First].End;
+    bool Different = false;
+    for (; Last < Extents.size() && Extents[Last].Begin < End; ++Last) {
+      End = std::max(End, Extents[Last].End);
+      Different |= Extents[Last].Owner != Extents[First].Owner;
+    }
+    if (Different)
+      for (size_t I = First; I < Last; ++I)
+        AmbiguousEntries.insert(Records[Extents[I].Owner].Entry);
+    First = Last;
+  }
+  // Retain the old conservative comparison for malformed extents. They are
+  // never a trusted owner, but a containing valid DIE must stay ambiguous.
+  for (size_t I : Malformed)
+    for (const Record &R : Records)
+      if (!AmbiguousEntries.contains(R.Entry) &&
+          rangesOverlap(R.Ranges, Records[I].Ranges))
+        AmbiguousEntries.insert(R.Entry);
+  Dirty = false;
+}
+
+void SubprogramExtentRegistry::append(SubprogramExtentRegistry &&Other) {
+  Records.insert(Records.end(), std::make_move_iterator(Other.Records.begin()),
+                 std::make_move_iterator(Other.Records.end()));
+  Dirty = true;
 }
 
 bool SubprogramExtentRegistry::isAmbiguous(va_t Entry) const {
-  return std::any_of(Records.begin(), Records.end(), [&](const Record &Record) {
-    return Record.Entry == Entry && Record.Ambiguous;
-  });
+  finalize();
+  return AmbiguousEntries.contains(Entry);
 }
 
 ReturnTypeProvenanceStatus
@@ -297,7 +352,8 @@ struct DWARFDebugContext::Impl {
                                         bool IsFrameBase) const;
   VariableExtentLookup lookupLocal(va_t FuncAddr, va_t UsePC, int64_t Offset,
                                    StackCoordinate Coordinate) const;
-  void parseCompileUnits();
+  void parseCompileUnits(const llvm::object::ObjectFile &Object);
+  void parseUnits(size_t Begin, size_t End);
   void parseFunction(llvm::DWARFDie Die, llvm::DWARFUnit *Unit);
   void parseLocalVariable(llvm::DWARFDie Die, va_t FuncAddr, bool IsParam,
                           llvm::ArrayRef<AddressRange> ScopeRanges);
@@ -510,6 +566,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
           Ctx->PImpl->AuthenticatedObjectExtents =
               HasDwarf && Trust == DWARFLoadTrust::InImage && SnapshotMatches &&
               MainUUID && DSYMUUID && *MainUUID == *DSYMUUID;
+          Obj = std::move(DSYMObj);
         }
       }
     }
@@ -524,7 +581,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   LLVM_DEBUG(llvm::dbgs() << "debug: "
                           << Ctx->PImpl->DwarfCtx->getNumCompileUnits()
                           << " compile units found" << "\n");
-  Ctx->PImpl->parseCompileUnits();
+  Ctx->PImpl->parseCompileUnits(*Obj);
   Ctx->PImpl->Loaded = true;
 
   LLVM_DEBUG(llvm::dbgs() << "debug: loaded " << Ctx->PImpl->FuncList.size()
@@ -1056,7 +1113,9 @@ TypeRef DWARFDebugContext::Impl::convertDwarfType(llvm::DWARFDie Die,
     }
     return NdType::makeInt(Sz);
   }
-  case llvm::dwarf::DW_TAG_pointer_type: {
+  case llvm::dwarf::DW_TAG_pointer_type:
+  case llvm::dwarf::DW_TAG_reference_type:
+  case llvm::dwarf::DW_TAG_rvalue_reference_type: {
     auto PointeeDie =
         Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
     auto PT = PointeeDie.isValid() ? convertDwarfType(PointeeDie, Depth + 1)
@@ -1102,6 +1161,10 @@ TypeRef DWARFDebugContext::Impl::convertDwarfType(llvm::DWARFDie Die,
   case llvm::dwarf::DW_TAG_union_type: {
     auto T = std::make_shared<NdType>();
     T->Kind = NdTypeKind::Struct;
+    if (Die.getName(llvm::DINameKind::ShortName)) {
+      llvm::raw_string_ostream Name(T->SourceName);
+      llvm::dumpTypeQualifiedName(Die, Name);
+    }
     auto Sz = Die.find(llvm::dwarf::DW_AT_byte_size);
     T->Size =
         Sz ? static_cast<uint16_t>(Sz->getAsUnsignedConstant().value_or(0)) : 0;
@@ -1611,8 +1674,13 @@ void DWARFDebugContext::Impl::parseFunction(llvm::DWARFDie Die,
   FuncList.push_back(Sym);
 }
 
-void DWARFDebugContext::Impl::parseCompileUnits() {
+void DWARFDebugContext::Impl::parseUnits(size_t Begin, size_t End) {
+  size_t Index = 0;
   for (auto &CU : DwarfCtx->compile_units()) {
+    if (Index >= End)
+      break;
+    if (Index++ < Begin)
+      continue;
     auto Root = CU->getUnitDIE(false);
     if (!Root.isValid())
       continue;
@@ -1631,7 +1699,88 @@ void DWARFDebugContext::Impl::parseCompileUnits() {
     };
     Walk(Root);
   }
+}
 
+void DWARFDebugContext::Impl::parseCompileUnits(
+    const llvm::object::ObjectFile &InputObject) {
+  const auto ObjectData = InputObject.getMemoryBufferRef();
+  const size_t Units = DwarfCtx->getNumCompileUnits();
+  // Independent contexts would each decompress the entire debug section.
+  // Keep compressed inputs serial rather than multiplying their peak memory.
+  const bool Compressed =
+      llvm::any_of(InputObject.sections(), [](auto Section) {
+        if (Section.isCompressed())
+          return true;
+        auto Name = Section.getName();
+        if (!Name) {
+          llvm::consumeError(Name.takeError());
+          return true;
+        }
+        return Name->starts_with(".zdebug_");
+      });
+  // A DWARFContext lazily fills cross-unit, abbreviation and line caches.
+  // Each worker owns its object/context and output; sharing just the mapped
+  // bytes avoids racing those caches. Small images stay on the calling thread.
+  const unsigned Workers =
+      !Compressed && Units >= 8 && ObjectData.getBufferSize() >= 256 * 1024
+          ? static_cast<unsigned>(
+                std::min<size_t>(workerThreadCount(), Units / 4))
+          : 1;
+  bool Parsed = false;
+  if (Workers > 1) {
+    std::vector<std::unique_ptr<Impl>> Parts(Workers);
+    std::atomic<unsigned> Next{0};
+    auto Parse = [&] {
+      const unsigned I = Next.fetch_add(1, std::memory_order_relaxed);
+      auto Object = llvm::object::ObjectFile::createObjectFile(ObjectData);
+      if (!Object) {
+        llvm::consumeError(Object.takeError());
+        return;
+      }
+      auto Part = std::make_unique<Impl>();
+      Part->DwarfCtx = llvm::DWARFContext::create(**Object);
+      if (!Part->DwarfCtx || Part->DwarfCtx->getNumCompileUnits() != Units)
+        return;
+      Part->MachineArch = MachineArch;
+      Part->DwarfStackPointerReg = DwarfStackPointerReg;
+      Part->DwarfFramePointerReg = DwarfFramePointerReg;
+      Part->AuthenticatedObjectExtents = AuthenticatedObjectExtents;
+      Part->parseUnits(Units * I / Workers, Units * (I + 1) / Workers);
+      // No lazy LLVM reader escapes the worker. Published facts own their
+      // names, types and locations; the main context remains the query reader.
+      Part->DwarfCtx.reset();
+      Parts[I] = std::move(Part);
+    };
+    runWithLargeStackThreads(Workers, Parse);
+    Parsed = std::all_of(Parts.begin(), Parts.end(),
+                         [](const auto &Part) { return bool(Part); });
+    if (Parsed) {
+      auto Merge = [](auto &Into, auto &From) {
+        for (auto &[Key, Value] : From)
+          Into.insert_or_assign(Key, std::move(Value));
+      };
+      // Source order, including duplicate entries, is identical to serial
+      // ingestion. The global extent index sees every DIE before it decides
+      // whether any object's bounds or return type can be trusted.
+      for (auto &Part : Parts) {
+        Merge(FuncMap, Part->FuncMap);
+        Merge(ReturnValueStates, Part->ReturnValueStates);
+        Merge(RecordParameters, Part->RecordParameters);
+        Merge(Functions, Part->Functions);
+        FuncList.insert(FuncList.end(),
+                        std::make_move_iterator(Part->FuncList.begin()),
+                        std::make_move_iterator(Part->FuncList.end()));
+        DataObjects.insert(DataObjects.end(),
+                           std::make_move_iterator(Part->DataObjects.begin()),
+                           std::make_move_iterator(Part->DataObjects.end()));
+        SubprogramExtents.append(std::move(Part->SubprogramExtents));
+      }
+    }
+  }
+  if (!Parsed)
+    parseUnits(0, Units);
+
+  SubprogramExtents.finalize();
   std::sort(FuncList.begin(), FuncList.end(),
             [](const FunctionSym &A, const FunctionSym &B) {
               return A.Addr < B.Addr;

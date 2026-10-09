@@ -3623,6 +3623,22 @@ TEST_F(SessionCAPITest, SourceViewsReadInTheProgramsLanguages) {
               llvm::StringRef::npos);
   }
 
+  // C++ without a runtime import is still recognized by a complete symbol.
+  const std::string CppPath =
+      write("cpp.elf", makeNamedNativeELF("_ZN4Demo4workEi"));
+  ASSERT_EQ(neverd_session_load(Session, CppPath.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(Languages(), std::vector<std::string>({"c", "cpp"}));
+  const auto CppEntry = neverd_session_entry_addr(Session);
+  llvm::json::Object CppPage;
+  const std::string Cpp = Assemble(CppEntry, "source", CppPage);
+  EXPECT_EQ(CppPage.getString("dialect"), "cpp");
+  EXPECT_NE(Cpp.find("Demo::work("), std::string::npos) << Cpp;
+  EXPECT_EQ(Assemble(CppEntry, "cpp", CppPage), Cpp);
+  const std::string PlainC = Assemble(CppEntry, "c", CPage);
+  EXPECT_EQ(CPage.getString("dialect"), "c");
+  EXPECT_NE(PlainC.find("Demo_work("), std::string::npos) << PlainC;
+
   // A Rust program reads its Rust functions as Rust, named as Rust names
   // them, and offers C beside it but not Go.
   const std::string RustPath = write(
@@ -3796,7 +3812,7 @@ TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
   for (const bool HighC : {true, false}) {
     const char *Stage = HighC ? "c" : "llvmc";
     SCOPED_TRACE(Stage);
-    const Route Kind = HighC ? Route::HighC : Route::LLVMC;
+    const Route Kind = HighC ? Route::PlainC : Route::LLVMC;
     const std::string Original = Decompile(HighC);
     ASSERT_FALSE(Original.empty()) << takeString(neverd_last_error(Session));
     if (HighC)
@@ -3847,6 +3863,46 @@ TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
   neverd_session_restrict_function(Session, 0);
   EXPECT_TRUE(State.FunctionSources.empty());
   EXPECT_EQ(Decompile(true), HighCText);
+}
+
+TEST_F(SessionCAPITest, CViewIncludesOnlyTheRequestedFunctionsNativeHandlers) {
+  const auto Path = write("handlers.elf", makeNativeELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  ASSERT_EQ(neverd_session_analyze(Session), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  neverd::HighFunc Parent;
+  Parent.Entry = Entry;
+  Parent.Name = "parent";
+  Parent.ReturnType = neverd::NdType::makeVoid();
+  neverd::HighStmt Region;
+  Region.Kind = neverd::StmtKind::CxxTry;
+  Region.EHRange = {Entry, Entry + 6};
+  neverd::HighEHClause Catch;
+  Catch.Kind = neverd::HighEHClauseKind::CxxCatch;
+  Catch.HandlerVA = Entry + 0x100;
+  Region.EHClauses.push_back(Catch);
+  Parent.Body.push_back(Region);
+  Parent.StructuredExceptionRegions = 1;
+  neverd::HighFunc Handler;
+  Handler.Entry = Catch.HandlerVA;
+  Handler.Name = "native_handler";
+  Handler.ReturnType = neverd::NdType::makeVoid();
+  neverd::HighStmt Return;
+  Return.Kind = neverd::StmtKind::Return;
+  Handler.Body.push_back(Return);
+  auto Unrelated = Handler;
+  Unrelated.Entry += 0x100;
+  Unrelated.Name = "unrelated_function";
+  State.PipeResult.HighFuncs = {Parent, Handler, Unrelated};
+  const auto Text = takeString(neverd_decompile(Session, Entry));
+  ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(Text.find("native_handler(void)"), std::string::npos) << Text;
+  EXPECT_EQ(Text.find("unrelated_function"), std::string::npos) << Text;
+  EXPECT_EQ(Text.find("try {"), std::string::npos) << Text;
+  EXPECT_EQ(takeView(neverd_ir_view_json(Session, Entry, "c", 0, 2048))
+                .getString("text"),
+            Text);
 }
 
 TEST_F(SessionCAPITest, IRViewRejectsInvalidUTF8Representation) {

@@ -241,9 +241,10 @@ void neverd_session_set_debug_info_enabled(neverd_session_t s, int enabled) {
 const char *neverd_headers_json(neverd_session_t s) {
   // The Rust and Go fixtures read in their own language too.
   const std::string runtime =
-      session(s)->path.ends_with("pseudocode-rust.bin") ? "rust"
-      : session(s)->path.ends_with("pseudocode-go.bin") ? "go"
-                                                        : "c";
+      session(s)->path.ends_with("pseudocode-rust.bin")  ? "rust"
+      : session(s)->path.ends_with("pseudocode-go.bin")  ? "go"
+      : session(s)->path.ends_with("pseudocode-cpp.bin") ? "cpp"
+                                                         : "c";
   Json pseudocode = Json::array({"c"});
   if (runtime != "c")
     pseudocode.push_back(runtime);
@@ -649,14 +650,19 @@ std::string spelledPage(neverd_session_t s, neverd_va_t address,
                         std::size_t limit) {
   std::string language = representation;
   if (representation == "source")
-    language = session(s)->path.ends_with("pseudocode-rust.bin") ? "rust"
-               : session(s)->path.ends_with("pseudocode-go.bin") ? "go"
-                                                                 : "c";
+    language = session(s)->path.ends_with("pseudocode-rust.bin")  ? "rust"
+               : session(s)->path.ends_with("pseudocode-go.bin")  ? "go"
+               : session(s)->path.ends_with("pseudocode-cpp.bin") ? "cpp"
+                                                                  : "c";
   std::string full;
   if (language == "c") {
     const char *c = neverd_decompile(s, address);
     full = c;
     std::free(const_cast<char *>(c));
+  } else if (language == "cpp") {
+    full = "int Demo::length(const std::string *text) {\n"
+           "    return text->size();\n"
+           "}\n";
   } else if (language == "rust") {
     full = "// NeverD pseudocode in Rust syntax\n"
            "unsafe fn rust_probe::main() -> i64 {\n"
