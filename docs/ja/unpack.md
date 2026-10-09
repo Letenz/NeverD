@@ -33,7 +33,7 @@ neverd unpack packed.exe -o unpacked.exe \
 
 `runtime_state.heap_inventory_known` は既知の空一覧と出所不明を区別します。`possible_heap_references` は全一致数、`heap_references` は最大で最初の 64 件です。イメージ、TLS の順で、各々 `offset` 順に記録します。各記録には `storage`（`image` または `thread_local`）、アドレスと割り当て範囲があります。`rva` はイメージでは十六進値、TLS では null です。アドレスとオフセットは十六進文字列です。
 
-`runtime_state.direct_service_calls` は入口観測とインポート探索中に実行された直接モデルサービス呼び出しを数えます。ネイティブ Windows 用の番号束縛を復元していないため、取得した入口の後で初めて実行される場合も `unsupported_state` を返します。明示的な `snapshot_only` は件数と診断を保持します。コピーされたシステムコールは修復可能なインポート関数呼び出しとは扱いません。
+`runtime_state.direct_service_calls` は入口観測とインポート探索中に実行された直接モデルサービス呼び出しを数えます。ネイティブ Windows 用の番号束縛を復元していないため、取得した入口の後で初めて実行される場合も `unsupported_state` を返します。明示的な `snapshot_only` は件数と診断を保持します。コピーされたシステムコールは修復可能なインポート関数呼び出しとは扱いません。 `no_entry` のレポートでもこの件数は保持されます。入口を取得できなかった場合、ヒープ一覧は不明のままです。
 
 `--options='{"snapshot_only":true}'` は解析用バイトを明示的に要求します。入口が受理され再構築に成功すると結果は常に `snapshot` で、実行時状態の診断は残ります。ヒープの復元、再配置の推定、ネイティブ実行の保証、仮想化解除は行いません。参照数ゼロも他の OS 状態や未実行経路を保証しません。
 
