@@ -35,6 +35,7 @@
 #include <set>
 #include <string_view>
 #include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -3043,26 +3044,6 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
         return true;
     return false;
   };
-  auto countUses = [&](const HighExpr &E, const std::string &Name,
-                       auto &&Self) -> unsigned {
-    unsigned Uses = 0;
-    if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
-        varName(E.Var) == Name)
-      ++Uses;
-    if (E.Kind == ExprKind::Call) {
-      const size_t Limit = debugCallArgLimit(E);
-      for (size_t I = 0; I < E.Operands.size() && I < Limit; ++I)
-        if (E.Operands[I])
-          Uses += Self(*E.Operands[I], Name, Self);
-      if (E.IndirectTarget)
-        Uses += Self(*E.IndirectTarget, Name, Self);
-      return Uses;
-    }
-    for (const ExprPtr &Op : E.Operands)
-      if (Op)
-        Uses += Self(*Op, Name, Self);
-    return Uses;
-  };
   struct Site {
     const HighStmt *Stmt = nullptr;
     std::string Name;
@@ -3399,6 +3380,69 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
   std::map<std::string, const HighStmt *> CandidateDefs;
   for (const Candidate &C : Candidates)
     CandidateDefs.emplace(C.Name, C.Stmt);
+  // Which sites define each name, which name it, and how often each site
+  // reads it, in site order: a candidate then looks only at the sites that
+  // name it rather than rescanning every site.  A read in an assignment's
+  // destination is counted apart, since it is skipped for the name the
+  // destination writes.
+  struct SiteNames {
+    std::unordered_map<std::string, unsigned> Reads, DestReads;
+    std::string DestName;
+  };
+  std::unordered_map<const HighStmt *, SiteNames> NamesAt;
+  std::unordered_map<std::string, std::vector<const HighStmt *>> DefsOf;
+  std::unordered_map<std::string, std::vector<const HighStmt *>> SitesNaming;
+  std::function<void(const HighExpr &,
+                     std::unordered_map<std::string, unsigned> &)>
+      CountReads = [&](const HighExpr &E,
+                       std::unordered_map<std::string, unsigned> &Into) {
+        // A call's reads stop at its debug argument limit.
+        if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi)
+          ++Into[varName(E.Var)];
+        if (E.Kind == ExprKind::Call) {
+          const size_t Limit = debugCallArgLimit(E);
+          for (size_t I = 0; I < E.Operands.size() && I < Limit; ++I)
+            if (E.Operands[I])
+              CountReads(*E.Operands[I], Into);
+          if (E.IndirectTarget)
+            CountReads(*E.IndirectTarget, Into);
+          return;
+        }
+        for (const ExprPtr &Op : E.Operands)
+          if (Op)
+            CountReads(*Op, Into);
+      };
+  for (const auto &[Stmt, Info] : Sites) {
+    (void)Info;
+    SiteNames &Names = NamesAt[Stmt];
+    const bool Assign = Stmt->Kind == StmtKind::Assign && Stmt->Dst;
+    if (Assign)
+      Names.DestName = varName(Stmt->Dst->Var);
+    forEachExpr(*Stmt, [&](const ExprPtr &E) {
+      if (E)
+        CountReads(*E,
+                   Assign && E == Stmt->Dst ? Names.DestReads : Names.Reads);
+    });
+    std::set<std::string> Named;
+    for (const auto &Entry : Names.Reads)
+      Named.insert(Entry.first);
+    for (const auto &Entry : Names.DestReads)
+      Named.insert(Entry.first);
+    if (Assign && (Stmt->Dst->Kind == ExprKind::Var ||
+                   Stmt->Dst->Kind == ExprKind::Phi)) {
+      DefsOf[Names.DestName].push_back(Stmt);
+      Named.insert(Names.DestName);
+    }
+    for (const std::string &Name : Named)
+      SitesNaming[Name].push_back(Stmt);
+  }
+  static const std::vector<const HighStmt *> NoSites;
+  auto sitesIn =
+      [](const auto &Index,
+         const std::string &Name) -> const std::vector<const HighStmt *> & {
+    const auto It = Index.find(Name);
+    return It == Index.end() ? NoSites : It->second;
+  };
   auto scalarSourceRedefined = [&](const Candidate &C) {
     if (!C.Stmt->Val)
       return true;
@@ -3406,16 +3450,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     if (!Src || (Src->Kind != ExprKind::Var && Src->Kind != ExprKind::Phi))
       return true;
     const std::string SrcName = varName(Src->Var);
-    for (const auto &[DefStmt, DefInfo] : Sites) {
-      if (DefStmt == C.Stmt || !DefStmt->Dst)
+    for (const HighStmt *DefStmt : sitesIn(DefsOf, SrcName)) {
+      if (DefStmt == C.Stmt)
         continue;
-      if (DefStmt->Kind != StmtKind::Assign)
-        continue;
-      if (DefStmt->Dst->Kind != ExprKind::Var &&
-          DefStmt->Dst->Kind != ExprKind::Phi)
-        continue;
-      if (varName(DefStmt->Dst->Var) != SrcName)
-        continue;
+      const Site &DefInfo = Sites.at(DefStmt);
       if (DefInfo.Region == C.Region && DefInfo.Index < C.Index)
         continue;
       if (DefInfo.Region != C.Region &&
@@ -3438,35 +3476,22 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       if (!Cur || (Cur->Kind != ExprKind::Var && Cur->Kind != ExprKind::Phi))
         return false;
       const std::string Src = varName(Cur->Var);
-      for (const auto &[Stmt, Info] : Sites) {
-        (void)Info;
-        if (!Stmt->Val || Stmt->Kind != StmtKind::Assign || !Stmt->Dst)
-          continue;
-        if (Stmt->Dst->Kind != ExprKind::Var &&
-            Stmt->Dst->Kind != ExprKind::Phi)
-          continue;
-        if (varName(Stmt->Dst->Var) != Src)
-          continue;
-        if (isReloadableLoad(*Stmt->Val))
+      for (const HighStmt *Stmt : sitesIn(DefsOf, Src))
+        if (Stmt->Val && isReloadableLoad(*Stmt->Val))
           return true;
-      }
       return false;
     };
     const bool ReloadableLoad = C.Stmt->Val && valIsReloadable(*C.Stmt->Val);
     std::vector<const HighStmt *> UseStmts;
     std::set<uint64_t> DefiningRegions;
-    for (const auto &[Stmt, Info] : Sites) {
-      if (Stmt == C.Stmt)
-        continue;
-      if (Stmt->Kind == StmtKind::Assign && Stmt->Dst &&
-          (Stmt->Dst->Kind == ExprKind::Var ||
-           Stmt->Dst->Kind == ExprKind::Phi) &&
-          varName(Stmt->Dst->Var) == C.Name)
-        DefiningRegions.insert(Info.Region);
-    }
+    for (const HighStmt *Stmt : sitesIn(DefsOf, C.Name))
+      if (Stmt != C.Stmt)
+        DefiningRegions.insert(Sites.at(Stmt).Region);
     if (!DefiningRegions.empty())
       continue;
-    for (const auto &[Stmt, Info] : Sites) {
+    // A site that neither reads nor writes the name changes nothing below.
+    for (const HighStmt *Stmt : sitesIn(SitesNaming, C.Name)) {
+      const Site &Info = Sites.at(Stmt);
       if (Stmt == C.Stmt || Analysis.DeadStmts.count(Stmt))
         continue;
       if (stmtHiddenFromC(*Stmt)) {
@@ -3490,15 +3515,14 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
         Redefined = true;
         continue;
       }
-      unsigned Local = 0;
-      forEachExpr(*Stmt, [&](const ExprPtr &E) {
-        if (!E)
-          return;
-        if (Stmt->Kind == StmtKind::Assign && E == Stmt->Dst &&
-            varName(Stmt->Dst->Var) == C.Name)
-          return;
-        Local += countUses(*E, C.Name, countUses);
-      });
+      const SiteNames &Names = NamesAt.at(Stmt);
+      const auto ReadsOf = [&](const auto &Reads) {
+        const auto It = Reads.find(C.Name);
+        return It == Reads.end() ? 0u : It->second;
+      };
+      const unsigned Local =
+          ReadsOf(Names.Reads) +
+          (Names.DestName == C.Name ? 0u : ReadsOf(Names.DestReads));
       if (!Local)
         continue;
       Uses += Local;

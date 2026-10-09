@@ -3924,8 +3924,10 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                                 const MedFunc *Med,
                                 bool ChildrenStructured = false);
 
+/// \p IsTarget tells whether a goto may enter an address; it is asked only
+/// once a pair of guards could fold, which is rare.
 static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
-                                   const std::set<va_t> &Targets) {
+                                   llvm::function_ref<bool(va_t)> IsTarget) {
   bool Changed = false;
   for (int I = 0; I < static_cast<int>(Body.size()); ++I) {
     HighStmt &Stmt = Body[I];
@@ -3950,7 +3952,7 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
     bool Entered = false;
     for (size_t K = static_cast<size_t>(I) + 1; K <= J && !Entered; ++K)
       walkStmts(std::vector<HighStmt>{Body[K]}, [&](const HighStmt &N) {
-        Entered |= N.Addr && N.Addr != InvalidVA && Targets.count(N.Addr);
+        Entered |= N.Addr && N.Addr != InvalidVA && IsTarget(N.Addr);
       });
     if (Entered)
       continue;
@@ -4018,7 +4020,8 @@ static void dropDuplicateSkipGotosNested(std::vector<HighStmt> &Body,
     for (auto &Clause : S.EHClauseBodies)
       dropDuplicateSkipGotosNested(Clause, Targets);
   }
-  dropDuplicateSkipGotos(Body, Targets);
+  dropDuplicateSkipGotos(Body,
+                         [&](va_t Address) { return Targets.count(Address); });
 }
 
 static void foldJoinValueGotoChainNested(std::vector<HighStmt> &Body) {
@@ -5784,11 +5787,15 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
     NestedChanged |= Changed;
   }
   {
-    std::set<va_t> Targets = gotoTargets(Body);
-    if (IfElseFunctionTargets)
-      Targets.insert(IfElseFunctionTargets->begin(),
-                     IfElseFunctionTargets->end());
-    NestedChanged |= dropDuplicateSkipGotos(Body, Targets);
+    // The list's own targets are collected only when a pair could fold, and
+    // the function's are not copied: this runs for every list on every visit.
+    std::optional<std::set<va_t>> Targets;
+    NestedChanged |= dropDuplicateSkipGotos(Body, [&](va_t Address) {
+      if (!Targets)
+        Targets = gotoTargets(Body);
+      return Targets->count(Address) ||
+             (IfElseFunctionTargets && IfElseFunctionTargets->count(Address));
+    });
   }
   for (size_t I = 0; I < Body.size(); ++I) {
     HighStmt &S = Body[I];
