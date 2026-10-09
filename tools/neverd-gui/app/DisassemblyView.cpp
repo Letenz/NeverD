@@ -4,6 +4,7 @@
 #include "GraphView.h"
 #include "ListingView.h"
 #include "Session.h"
+#include "ShrinkableRow.h"
 #include "Theme.h"
 
 #include <QLabel>
@@ -30,6 +31,7 @@ DisassemblyView::DisassemblyView(Session &session, const AddressSpace &space,
   layout->addWidget(stack_, 1);
   status_->setContentsMargins(6, 2, 6, 2);
   status_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  makeRowShrinkable(*status_);
   layout->addWidget(status_);
   const auto applyFont = [this] {
     QFont font = Theme::instance().codeFont();
