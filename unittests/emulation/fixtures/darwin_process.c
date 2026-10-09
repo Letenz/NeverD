@@ -241,7 +241,10 @@ static int common_attributes(const char *path, unsigned mode) {
       secondary)
     return 251;
   unsigned request[6] = {0xffff0005, 0x82079e0a, 0, 0, 0, 0};
-  unsigned char status[144], observed[120], guarded[160];
+  unsigned char status[144], observed[120];
+  u64 guarded_words[20];
+  unsigned char *guarded = (unsigned char *)guarded_words;
+  const u64 canary = 0xa5a5a5a5a5a5a5a5UL;
   if (attribute_result(339, file, (u64)status, 0, 0, 0, 0, 0, 0) ||
       attribute_result(228, file, (u64)request, (u64)observed, 120, 0, -1UL, 0,
                        0) ||
@@ -249,8 +252,9 @@ static int common_attributes(const char *path, unsigned mode) {
     return 252;
   const u64 sizes[] = {4, 7, 24, 27, 100, 119, 120, 512};
   for (unsigned i = 0; i != 8; ++i) {
-    for (unsigned j = 0; j != sizeof(guarded); ++j)
-      guarded[j] = 0xa5;
+    for (unsigned j = 0; j != 20; j += 4)
+      guarded_words[j] = guarded_words[j + 1] = guarded_words[j + 2] =
+          guarded_words[j + 3] = canary;
     u64 flags = i % 3 == 0 ? 0 : i % 3 == 1 ? 4 : 8;
     int failed =
         i % 3 == 0
@@ -264,9 +268,21 @@ static int common_attributes(const char *path, unsigned mode) {
     if (failed)
       return 253;
     unsigned count = sizes[i] < 120 ? (unsigned)sizes[i] : 120;
-    for (unsigned j = 0; j != sizeof(guarded); ++j)
-      if (guarded[j] != (j >= 16 && j < 16 + count ? observed[j - 16] : 0xa5))
+    // Compare every output and guard byte in bounded words. A partial final
+    // word combines exactly its written prefix with the untouched canary.
+    const unsigned whole = count / 8, partial = count % 8;
+    for (unsigned j = 0; j != 20; ++j) {
+      u64 expected = canary;
+      if (j >= 2 && j < 2 + whole)
+        expected = little_integer(observed + (j - 2) * 8, 8);
+      else if (j == 2 + whole && partial) {
+        const u64 mask = (1UL << (partial * 8)) - 1;
+        expected =
+            (little_integer(observed + whole * 8, 8) & mask) | (canary & ~mask);
+      }
+      if (guarded_words[j] != expected)
         return 254;
+    }
   }
   if (attribute_result(476, -1UL, (u64)path, (u64)request, (u64)guarded, 120, 0,
                        0, 0) ||
