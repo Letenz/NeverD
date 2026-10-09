@@ -20,6 +20,7 @@
 #include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/FileSystem.h"
@@ -179,16 +180,16 @@ void compileAndRun(const std::string &Source) {
   ASSERT_TRUE(bool(Program)) << "clang is required for emitted C execution";
   const std::string Compiler = *Program;
 #endif
-  llvm::SmallString<128> SourcePath, BinaryPath, ErrorPath;
+  llvm::SmallString<128> Directory;
   ASSERT_FALSE(
-      llvm::sys::fs::createTemporaryFile("neverd-sysv-call", "c", SourcePath));
-  llvm::FileRemover RemoveSource(SourcePath);
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-sysv-call", "exe",
-                                                  BinaryPath));
-  llvm::FileRemover RemoveBinary(BinaryPath);
-  ASSERT_FALSE(
-      llvm::sys::fs::createTemporaryFile("neverd-sysv-call", "err", ErrorPath));
-  llvm::FileRemover RemoveError(ErrorPath);
+      llvm::sys::fs::createUniqueDirectory("neverd-sysv-call", Directory));
+  const auto Cleanup = llvm::make_scope_exit(
+      [&] { llvm::sys::fs::remove_directories(Directory); });
+  llvm::SmallString<128> SourcePath(Directory), BinaryPath(Directory),
+      ErrorPath(Directory);
+  llvm::sys::path::append(SourcePath, "program.c");
+  llvm::sys::path::append(BinaryPath, "program.exe");
+  llvm::sys::path::append(ErrorPath, "program.err");
   std::error_code EC;
   {
     llvm::raw_fd_ostream Out(SourcePath, EC);
@@ -197,8 +198,31 @@ void compileAndRun(const std::string &Source) {
   }
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
+#ifdef _WIN32
+  // Retain both sanitizers. The static ASan runtime cannot intercept some
+  // current UCRT math prologues; Clang's own dynamic runtime supports them.
+  // Keep that DLL beside this test's executable, without changing PATH or
+  // copying runtime files into another test's temporary directory.
+  llvm::SmallString<128> RuntimePath(Directory);
+  llvm::sys::path::append(RuntimePath, "runtime.txt");
+  const std::optional<llvm::StringRef> RuntimeRedirects[] = {
+      std::nullopt, RuntimePath.str(), ErrorPath.str()};
+  ASSERT_EQ(
+      llvm::sys::ExecuteAndWait(
+          Compiler,
+          {Compiler,
+           "-print-file-name=lib/windows/clang_rt.asan_dynamic-x86_64.dll"},
+          std::nullopt, RuntimeRedirects, 30),
+      0);
+  auto Runtime = llvm::MemoryBuffer::getFile(RuntimePath);
+  ASSERT_TRUE(bool(Runtime));
+  llvm::SmallString<128> RuntimeCopy(Directory);
+  llvm::sys::path::append(RuntimeCopy, "clang_rt.asan_dynamic-x86_64.dll");
+  ASSERT_FALSE(
+      llvm::sys::fs::copy_file((*Runtime)->getBuffer().trim(), RuntimeCopy));
+#endif
   for (const char *Optimization : {"-O0", "-O2"}) {
-    const llvm::SmallVector<llvm::StringRef, 12> Arguments{
+    llvm::SmallVector<llvm::StringRef, 12> Arguments{
         Compiler,
         "-std=c11",
         Optimization,
@@ -208,6 +232,9 @@ void compileAndRun(const std::string &Source) {
         SourcePath,
         "-o",
         BinaryPath};
+#ifdef _WIN32
+    Arguments.push_back("-shared-libasan");
+#endif
     std::string Error;
     int Result = llvm::sys::ExecuteAndWait(Compiler, Arguments, std::nullopt,
                                            Redirects, 60, 0, &Error);
