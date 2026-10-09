@@ -1250,6 +1250,7 @@ add_neverd_unittest(NeverDRegistrationEHTests
 
 add_neverd_unittest(NeverDWindowsRegistrationFrameTests
   eh/WindowsRegistrationFrameTests.cpp
+  eh/WindowsRegistrationCxxFrameTests.cpp
 
   LINK_COMPONENTS
   WindowsRegistrationFrame

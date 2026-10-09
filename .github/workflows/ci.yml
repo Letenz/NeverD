@@ -2190,6 +2190,7 @@ jobs:
           NEVERD_REGISTRATION_RUNTIME_OBJECT: build-windows-eh/evidence/frame-runtime.obj
           NEVERD_REGISTRATION_EH4_RUNTIME_OBJECT: build-windows-eh/evidence/eh4-cookie-frame.obj
           NEVERD_REGISTRATION_EH4_GS_RUNTIME_OBJECT: build-windows-eh/evidence/eh4-gs-cookie-frame.obj
+          NEVERD_REGISTRATION_CXX_RUNTIME_OBJECT: build-windows-eh/evidence/cxx-catch-frame.obj
         run: |
           build-windows-eh/bin/NeverDRegistrationStateTests --gtest_output=xml:build-windows-eh/evidence/state.xml
           build-windows-eh/bin/NeverDRegistrationEHTests --gtest_output=xml:build-windows-eh/evidence/registration.xml
@@ -2287,7 +2288,16 @@ jobs:
         with:
           arch: x86
       - name: Establish genuine C++ cleanup and catch-object ABI baselines
-        run: python scripts/check_windows_registration_cxx.py --output build-windows-eh/cxx-original
+        shell: pwsh
+        run: |
+          $frame = "build-windows-eh/evidence/cxx-catch-frame.obj"
+          if (Test-Path $frame) {
+            python scripts/check_windows_registration_cxx.py --output build-windows-eh/cxx-original --frame-object $frame
+          } elseif ("${{ inputs.windows_eh_replay_artifact_run }}" -ne "") {
+            python scripts/check_windows_registration_cxx.py --output build-windows-eh/cxx-original
+          } else {
+            throw "The exact compiler build did not produce the required C++ catch-frame object"
+          }
       - name: Execute the exact original and reconstructed images with the Windows CRT
         run: python scripts/replay_windows_registration.py --evidence-root build-windows-eh/evidence --source-profile ${{ inputs.windows_eh_replay_artifact_run != '' && 'seh3-eh4' || 'all' }} --output build-windows-eh/native-replay.json
       - name: Preserve native loader evidence

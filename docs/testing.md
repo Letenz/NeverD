@@ -1794,8 +1794,14 @@ execution.
 The native Windows job also builds `registration_cxx_runtime.cpp` with MSVC
 and its actual runtime libraries. Value and reference catches must preserve
 the caught object, destructor trace `213`, repeated calls and FS:[0] at both
-load bases. `check_windows_registration_cxx.py` labels these original-program
-ABI baselines separately; they do not establish native C++ reconstruction.
+load bases. When the compiler provides checked catch subfields, the frame unit
+suite emits `NEVERD_REGISTRATION_CXX_RUNTIME_OBJECT`. The native runner links
+that exact object with the same real MSVC RTTI, throw helper and destructor to
+check value/reference catches in ordinary and 64-byte-aligned generated frames.
+Caller stack padding varies on repeated calls, and the recorded throw caller
+must belong to the selected parent according to its export and linker map.
+`check_windows_registration_cxx.py` labels original-program and generated-frame
+ABI evidence separately; neither establishes source C++ reconstruction.
 
 ### Language exception models
 

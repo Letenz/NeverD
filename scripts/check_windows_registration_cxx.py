@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and execute genuine MSVC PE32 C++ ABI baselines, not rewrite evidence."""
+"""Execute original and optional generated PE32 C++ ABI probes, not source rewrites."""
 from __future__ import annotations
 
 import argparse
@@ -23,10 +23,27 @@ OBSERVATION = re.compile(
     r"caught=(\d+)\s*")
 
 
+def parent_code_end(map_path: Path, image: PE32, entry: int) -> int:
+    """Bound the exported parent by real linker function starts, including funclets."""
+    starts = sorted({int(match.group(1), 16) - image.base
+                     for line in map_path.read_text(errors="replace").splitlines()
+                     if (match := re.match(
+                         r"\s+[0-9a-fA-F]{4}:[0-9a-fA-F]+\s+\S+\s+"
+                         r"([0-9a-fA-F]+)\s+f\b", line))})
+    if entry not in starts:
+        raise ValueError("C++ parent export has no linker function owner")
+    following = [start for start in starts if start > entry]
+    if not following:
+        raise ValueError("C++ parent has no bounded linker code extent")
+    return following[0]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--compiler", default="cl")
+    parser.add_argument("--frame-object", type=Path,
+                        help="LLVM-generated catch-frame object linked with genuine MSVC RTTI")
     args = parser.parse_args(argv)
     if os.name != "nt":
         parser.error("building this oracle requires native Windows MSVC")
@@ -37,12 +54,24 @@ def main(argv: list[str] | None = None) -> int:
               "source_sha256": hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
               "cases": []}
     try:
-        for reference in (False, True):
-            name = "reference" if reference else "value"
+        profiles = [("reference" if reference else "value", reference,
+                     False, False) for reference in (False, True)]
+        if args.frame_object:
+            frame_object = args.frame_object.resolve()
+            report["frame_object_sha256"] = hashlib.sha256(
+                frame_object.read_bytes()).hexdigest()
+            report["evidence"] = "original-and-generated-msvc-cxx-frame-runtime"
+            profiles += [("generated-" + ("aligned-" if aligned else "") +
+                          ("reference" if reference else "value"), reference,
+                          True, aligned)
+                         for aligned in (False, True)
+                         for reference in (False, True)]
+        for name, reference, generated, aligned in profiles:
             case = output / name
             case.mkdir(exist_ok=True)
             image = case / "original.exe"
-            record = {"case": name, "passed": False, "observations": []}
+            record = {"case": name, "passed": False, "observations": [],
+                      "evidence": "generated-frame-abi" if generated else "original-msvc-abi"}
             report["cases"].append(record)
             # /EHs retains unwinding across the exported C-linkage throw
             # helper; /EHc would incorrectly promise that call cannot throw.
@@ -50,8 +79,12 @@ def main(argv: list[str] | None = None) -> int:
                        "/GS-", "/Od", "/Oy-", "/Z7", "/MD",
                        "/D_CRT_SECURE_NO_WARNINGS",
                        f"/DREGISTRATION_CXX_REFERENCE={int(reference)}",
-                       f"/Fo{case / 'original.obj'}", f"/Fe{image}", str(SOURCE),
-                       "/link", "/debug", "/incremental:no", "/dynamicbase:no",
+                       f"/DREGISTRATION_CXX_GENERATED={int(generated)}",
+                       f"/DREGISTRATION_CXX_ALIGNED={int(aligned)}",
+                       f"/Fo{case / 'original.obj'}", f"/Fe{image}", str(SOURCE)]
+            if generated:
+                command.append(str(frame_object))
+            command += ["/link", "/debug", "/incremental:no", "/dynamicbase:no",
                        "/fixed:no", f"/pdb:{case / 'original.pdb'}",
                        f"/map:{case / 'original.map'}"]
             compiled = subprocess.run(command, cwd=case, capture_output=True,
@@ -63,7 +96,13 @@ def main(argv: list[str] | None = None) -> int:
             if compiled.returncode:
                 raise ValueError(f"MSVC compilation failed for {name}")
             pe = PE32(image.read_bytes())
-            entry = pe.entry(b"registration_cxx_probe")
+            entry_name = ("registration_cxx_generated_" +
+                          ("aligned_" if aligned else "") +
+                          ("reference" if reference else "value")
+                          if generated else "registration_cxx_probe")
+            entry = pe.entry(entry_name.encode("ascii"))
+            code_end = parent_code_end(case / "original.map", pe, entry)
+            record["entry_symbol"] = entry_name
             rebased = case / "original-rebased.exe"
             rebased.write_bytes(pe.rebase(0x530000))
             for path in (image, rebased):
@@ -85,10 +124,13 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError("C++ cleanup, catch object, chain or base differs")
                 owners = [n for n, rva, size, _, _ in data.sections
                           if rva <= caller - data.base < rva + size]
-                if owners != [".text"]:
-                    raise ValueError("C++ caller PC has no original text owner")
+                if (owners != [".text"] or
+                        not entry <= caller - data.base < code_end):
+                    raise ValueError("C++ caller PC is outside the selected parent")
                 observation.update(passed=True, value=value, trace=trace,
                                    caught=caught, caller_rva=caller - data.base,
+                                   caller_owner_begin_rva=entry,
+                                   caller_owner_end_rva=code_end,
                                    runtime_base=data.base, chain_restored=True,
                                    iterations=iterations)
             record["passed"] = True
@@ -99,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
         destination = output / "cxx-runtime.json"
         destination.write_text(json.dumps(report, indent=2))
     print(("PASS" if report["passed"] else "FAIL") +
-          " original MSVC C++ runtime: " + str(destination))
+          " MSVC C++ frame runtime: " + str(destination))
     return 0 if report["passed"] else 1
 
 
