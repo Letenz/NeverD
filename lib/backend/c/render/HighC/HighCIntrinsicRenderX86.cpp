@@ -19,8 +19,10 @@
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
+#include "neverd/ir/intrinsics/X86StringCompare.h"
 #include "neverd/lift/X86Regs.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -1278,7 +1280,16 @@ bool x86UsesImplicitRegisterAsm(Intrinsic Id) {
 }
 
 bool x86UsesGnuIntrinsicHeader(Intrinsic Id) {
-  return Id == Intrinsic::PrefetchW;
+  switch (Id) {
+  case Intrinsic::PrefetchW:
+  // __readeflags and __writeeflags (ia32intrin.h), which immintrin.h does
+  // not declare.
+  case Intrinsic::Pushf:
+  case Intrinsic::Popf:
+    return true;
+  default:
+    return false;
+  }
 }
 
 bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id) {
@@ -1419,6 +1430,53 @@ std::string x86VectorCType(llvm::StringRef CName, uint16_t Bytes) {
          (Integers  ? "i"
           : Doubles ? "d"
                     : "");
+}
+
+/// An SSE4.2 string compare (PCMPISTRI/M, PCMPESTRI/M), or a status flag one
+/// leaves: its strings convert to __m128i and its explicit lengths to int,
+/// its control byte stays the constant it is, and a mask comes back as the
+/// 16 bytes HighC carries.  A flag's intrinsic ends with the letter of the
+/// flag its selector names (X86StringCompare.h).  Empty for any other call.
+std::string
+renderX86StringCompare(const HighExpr &Call,
+                       std::function<std::string(const HighExpr &)> &ExprFn,
+                       bool &HasCIntrinsics) {
+  using I = Intrinsic;
+  const I Id = Call.IntrinsicId;
+  const bool Explicit =
+      Id == I::Pcmpestri || Id == I::Pcmpestrm || Id == I::PcmpestrFlag;
+  const bool Flag = Id == I::PcmpistrFlag || Id == I::PcmpestrFlag;
+  const bool Mask = Id == I::Pcmpistrm || Id == I::Pcmpestrm;
+  const char *CName = intrinsicCName(Id);
+  if ((!Explicit && !Flag && !Mask && Id != I::Pcmpistri) || !CName ||
+      Call.Operands.size() != (Explicit ? 5u : 3u) ||
+      llvm::any_of(Call.Operands, [](const ExprPtr &Op) { return !Op; }) ||
+      Call.Operands.back()->Kind != ExprKind::Const)
+    return {};
+  const uint64_t Immediate = Call.Operands.back()->ConstVal;
+  std::string Name = CName;
+  if (Flag) {
+    const char *Suffix =
+        x86StringCompareFlagSuffix(Immediate >> kX86StringCompareFlagShift);
+    if (!Suffix)
+      return {};
+    Name += Suffix;
+  }
+  auto String = [&](size_t Index) {
+    return "__builtin_bit_cast(__m128i, (unsigned __int128)(" +
+           ExprFn(*Call.Operands[Index]) + "))";
+  };
+  auto Length = [&](size_t Index) {
+    return "(int)(" + ExprFn(*Call.Operands[Index]) + ")";
+  };
+  const std::string Strings = Explicit ? String(0) + ", " + Length(1) + ", " +
+                                             String(2) + ", " + Length(3)
+                                       : String(0) + ", " + String(1);
+  const std::string Text =
+      Name + "(" + Strings + ", " +
+      std::to_string(Immediate & kX86StringCompareControlMask) + ")";
+  HasCIntrinsics = true;
+  return Mask ? "__builtin_bit_cast(unsigned __int128, " + Text + ")" : Text;
 }
 
 /// An x86 vector intrinsic over registers HighC carries as same-width
@@ -1567,6 +1625,11 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
            ExprFn(*Call.Operands[1]) + "), (void *)(uintptr_t)(" +
            ExprFn(*Call.Operands[0]) + "))";
   }
+  if (TheArch == Arch::X86 || TheArch == Arch::X64)
+    if (std::string Compare =
+            renderX86StringCompare(Call, ExprFn, HasCIntrinsics);
+        !Compare.empty())
+      return Compare;
   const bool IsGfni = Call.IntrinsicId == I::Gf2p8MulB ||
                       Call.IntrinsicId == I::Gf2p8AffineQb ||
                       Call.IntrinsicId == I::Gf2p8AffineInvQb;

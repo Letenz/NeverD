@@ -68,8 +68,10 @@ C(Intrinsic::Pcmpistri, "_mm_cmpistri");
 C(Intrinsic::Pcmpistrm, "_mm_cmpistrm");
 C(Intrinsic::Pcmpestri, "_mm_cmpestri");
 C(Intrinsic::Pcmpestrm, "_mm_cmpestrm");
-C(Intrinsic::PcmpistrFlag, "_mm_cmpistr_flag");
-C(Intrinsic::PcmpestrFlag, "_mm_cmpestr_flag");
+// The status-flag forms end with the letter of the flag they read
+// (X86StringCompareFlags.def): _mm_cmpistrc, _mm_cmpestrz.
+C(Intrinsic::PcmpistrFlag, "_mm_cmpistr");
+C(Intrinsic::PcmpestrFlag, "_mm_cmpestr");
 C(Intrinsic::Movddup, "_mm_movedup_pd");
 
 // AVX broadcast
