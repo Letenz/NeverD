@@ -12,8 +12,12 @@ import re
 import subprocess
 import sys
 
-from check_windows_registration_eh import run_image
-from check_windows_registration_rewrite import PE32
+if __package__:
+    from .check_windows_registration_eh import run_image
+    from .check_windows_registration_rewrite import PE32
+else:
+    from check_windows_registration_eh import run_image
+    from check_windows_registration_rewrite import PE32
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "unittests/lift/eh/fixtures/registration_cxx_runtime.cpp"

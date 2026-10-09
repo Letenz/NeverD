@@ -2095,9 +2095,36 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows-eh-cxx-fixtures:
+    name: Windows EH (MSVC PE32 C++ source fixtures)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' && inputs.windows_eh_llvm_artifact_run != '' }}
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - name: Select the native x86 MSVC compiler
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x86
+      - name: Build and execute genuine value/reference source images
+        run: python scripts/check_windows_registration_cxx.py --output build-windows-eh/cxx-source-inputs
+      - name: Preserve the exact native MSVC source inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-eh-msvc-pe32-cxx-sources
+          path: build-windows-eh/cxx-source-inputs/
+          if-no-files-found: error
+          retention-days: 14
+
   windows-eh-focused:
     name: Windows EH (x86 Wine and ARM32 PE contracts)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' }}
+    needs: windows-eh-cxx-fixtures
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' && (inputs.windows_eh_llvm_artifact_run == '' || needs.windows-eh-cxx-fixtures.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     env:
@@ -2122,7 +2149,13 @@ jobs:
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 \
             install --yes --no-install-recommends lld wine wine32:i386
       - name: Verify runtime evidence admission
-        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie -v
+        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite -v
+      - name: Fetch genuine MSVC C++ source inputs
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-eh-msvc-pe32-cxx-sources
+          path: build-windows-eh/cxx-source-inputs
       - name: Observe original x86 SEH and C++ EH across GS and optimization modes
         run: python scripts/check_windows_registration_eh.py --output build-windows-eh/evidence/original-runtime --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Fetch the exact compiler build for native registration reconstruction
@@ -2160,6 +2193,7 @@ jobs:
               assert b'#define LLVM_NEVERD_X86_REGISTRATION_EH 1' in header
               assert b'#define LLVM_NEVERD_X86_REGISTRATION_COOKIES 1' in header
               assert b'#define LLVM_NEVERD_X86_REGISTRATION_GS 1' in header
+              assert b'#define LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS 1' in header
           with open(os.environ['GITHUB_ENV'], 'a') as output:
               output.write(f'REGISTRATION_LLVM_ARCHIVE_DIR={destination}\n')
               output.write(f'REGISTRATION_LLVM_ARCHIVE_SHA256={digest}\n')
@@ -2243,6 +2277,14 @@ jobs:
               --output "build-windows-eh/evidence/source-${registration_case}" \
               --wine-prefix "$RUNNER_TEMP/neverd-wine32"
           done
+      - name: Execute actual source C++ reconstruction with ordered cleanups and reference effects
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        run: |
+          python scripts/check_windows_registration_cxx_rewrite.py \
+            --input-root build-windows-eh/cxx-source-inputs \
+            --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
+            --output build-windows-eh/evidence/source-cxx \
+            --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Require executed checks without missing-fixture skips
         run: |
           python - <<'PY'
@@ -2253,6 +2295,13 @@ jobs:
               result = ET.parse(root / (name + '.xml')).getroot()
               assert int(result.get('tests', '0')) > 0, name
               assert not result.findall('.//skipped'), name
+          if '${{ inputs.windows_eh_llvm_artifact_run }}':
+              for case in ('value', 'reference'):
+                  result = ET.parse(root / 'source-cxx' / case / 'rewrite.xml').getroot()
+                  assert int(result.get('tests', '0')) == 1, case
+                  assert not result.findall('.//skipped'), case
+                  assert not int(result.get('failures', '0')), case
+                  assert not int(result.get('errors', '0')), case
           PY
       - name: Preserve runtime and cross-target evidence
         if: ${{ always() }}
@@ -2309,6 +2358,9 @@ jobs:
       - name: Execute the exact original and reconstructed images with the Windows CRT
         if: ${{ !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration.py --evidence-root build-windows-eh/evidence --source-profile ${{ inputs.windows_eh_replay_artifact_run != '' && 'seh3-eh4' || 'all' }} --output build-windows-eh/native-replay.json
+      - name: Execute the exact installed C++ source images with the Windows CRT
+        if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
+        run: python scripts/replay_windows_registration_cxx.py --evidence-root build-windows-eh/evidence/source-cxx --output build-windows-eh/native-cxx-replay.json
       - name: Preserve native loader evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -2316,6 +2368,7 @@ jobs:
           name: windows-eh-native-pe32-runtime
           path: |
             build-windows-eh/native-replay.json
+            build-windows-eh/native-cxx-replay.json
             build-windows-eh/runtime-diagnostics.json
             build-windows-eh/cxx-original/
           if-no-files-found: error

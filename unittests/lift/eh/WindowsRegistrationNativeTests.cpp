@@ -38,7 +38,10 @@
 #include "llvm/IR/WinEHFrame.h"
 #endif
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -1398,6 +1401,41 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
     llvm::raw_fd_ostream Stream(Output, EC);
     ASSERT_FALSE(bool(EC)) << EC.message();
     Stream.write(reinterpret_cast<const char *>(Binary.data()), Binary.size());
+  }
+  if (const char *Output =
+          std::getenv("NEVERD_REGISTRATION_OUTPUT_CXX_RECEIPT")) {
+    const auto ParentRange =
+        llvm::find_if(OriginalCompiled.FunctionRanges, [&](const auto &Range) {
+          return Range.OwnerVA == Row.OwnerVA && Range.BeginVA == Row.OwnerVA &&
+                 Range.ParentOwnerSymbol.empty();
+        });
+    ASSERT_NE(ParentRange, OriginalCompiled.FunctionRanges.end());
+    llvm::json::Array Fields;
+    for (va_t Field : HandlerReceipt->AbsolutePointerFields)
+      Fields.push_back(llvm::json::Object{
+          {"rva", Field - Loaded->Base},
+          {"value", llvm::support::endian::read32le(
+                        OriginalCompiled.Bytes.data() + Field - CodeVA)}});
+    llvm::json::Object Receipt{
+        {"schema", 1},
+        {"evidence", "checked-cxx-manual-installation"},
+        {"image_base", Loaded->Base},
+        {"source_entry_rva", Source->CodeRange.Begin - Loaded->Base},
+        {"generated_code_begin_rva", ParentRange->BeginVA - Loaded->Base},
+        {"generated_code_end_rva", ParentRange->EndVA - Loaded->Base},
+        {"registration_handler_rva", RegistrationVA - Loaded->Base},
+        {"func_info_rva", HandlerReceipt->Tables.FuncInfoVA - Loaded->Base},
+        {"absolute_pointer_fields", std::move(Fields)},
+        {"image_sha256", llvm::toHex(llvm::SHA256::hash(Binary), true)},
+        {"source_image_sha256",
+         llvm::toHex(llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
+                         reinterpret_cast<const uint8_t *>(InputBytes.data()),
+                         InputBytes.size())),
+                     true)}};
+    std::error_code EC;
+    llvm::raw_fd_ostream Stream(Output, EC);
+    ASSERT_FALSE(bool(EC)) << EC.message();
+    Stream << llvm::formatv("{0:2}\n", llvm::json::Value(std::move(Receipt)));
   }
 #endif
 }
