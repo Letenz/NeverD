@@ -208,6 +208,10 @@ TEST_P(WindowsProcess, DirectSyscallsDoNotSelectWindowsServices) {
   const auto R = run(Unknown);
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
   EXPECT_FALSE(R.ExitStatus);
+  if (GetParam().ISA == GuestArchitecture::X64) {
+    EXPECT_NE(R.Diagnostic.find("rax=0x"), std::string::npos);
+    EXPECT_NE(R.Diagnostic.find("r10=0x"), std::string::npos);
+  }
 }
 TEST_P(WindowsProcess, PrivilegedInstructionsCannotExecuteAsKernel) {
   const auto R = run(Privileged);
