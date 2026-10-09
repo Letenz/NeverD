@@ -90,6 +90,10 @@ the physical registration and callback frame recovery. The COFF transaction
 authenticates emitted scope rows, SafeSEH and absolute relocations before
 installing the complete module through either patch mode. Analysis facts alone
 cannot authorize native installation.
+COFF owns the bounded SEH3/EH4 scope-table byte extent. Both preserved callees
+and edited/generated LLVM must leave that complete table unchanged; EH4 also
+protects the exact image cookie. A compiler-owned scope snapshot cannot replace
+a runtime-mutated source table.
 The same LowIR frame domain owns EH4 cookie initialization and exact source
 checker occurrences. Native lowering may replace an authenticated pure check
 with a source-indexed execution event while LLVM owns the physical GS check.

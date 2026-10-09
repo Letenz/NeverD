@@ -1757,6 +1757,9 @@ borrows, registration/SavedESP separation, partial stores, pointer taint,
 conflicting predecessors and preserved catch resumption after a private throw.
 The native call target checks cumulative failed-proof budgets and fresh-image
 callee indices.
+Scope mutation tests cover both SEH3 and EH4, exact exclusive table ends,
+partial overlap, PE32 overflow and cookie separation. The real source fixture
+also rejects an edited LLVM write to either format's scope table.
 Native installation needs a source build of the LLVM fork exposing
 `LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need

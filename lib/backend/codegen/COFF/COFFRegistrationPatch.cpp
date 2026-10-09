@@ -1530,12 +1530,13 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       FSReads != ExpectedFSReads || Dispatches.size() != Scopes.size())
     return reject("registration chain or dispatch set is incomplete");
   std::vector<ExceptionAddressRange> ImmutableImageRanges;
+  auto SourceTable = coff_loader::getX86RegistrationSEHScopeTableRange(Source);
+  if (!SourceTable)
+    return reject("source registration scope-table extent is invalid");
+  ImmutableImageRanges.push_back(*SourceTable);
   if (Source.Personality == ExceptionPersonality::ExceptHandler4) {
     ImmutableImageRanges.push_back(
         {States.SecurityCookieVA, States.SecurityCookieVA + 4});
-    ImmutableImageRanges.push_back({Source.Registration->ScopeTableVA,
-                                    Source.Registration->ScopeTableVA + 16 +
-                                        uint64_t(Scopes.size()) * 12});
   }
   if (llvm::Error Error = coff_registration::validateFramePrivacy(
           Function, CallbackFunctions, Frame->Slot, ExceptionBridges,

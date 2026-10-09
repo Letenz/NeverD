@@ -372,15 +372,16 @@ inline llvm::Error validateFramePrivacy(
                   Global->getName() == "__security_cookie")
                 Base = SecurityCookieVA;
               if (!Base || *Base > UINT32_MAX)
-                return Reject("unproved EH4 image write");
+                return Reject("unproved registration image write");
               const int64_t Address = int64_t(*Base) + Where->Offset;
               if (Address < 0 || Address > UINT32_MAX ||
                   Bytes > uint64_t(UINT32_MAX) + 1 - uint64_t(Address))
-                return Reject("wrapping EH4 image write");
+                return Reject("wrapping registration image write");
               for (const auto &Range : ImmutableImageRanges)
                 if (uint64_t(Address) < Range.End &&
                     Range.Begin < uint64_t(Address) + Bytes)
-                  return Reject("EH4 cookie or scope table is written");
+                  return Reject(
+                      "registration scope table or cookie is written");
             }
             if ((Where && llvm::isa<llvm::AllocaInst>(Where->Root) &&
                  (!Bounded(*Where, Bytes) || Store->isAtomic())) ||

@@ -150,6 +150,21 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
     const auto Message = llvm::toString(std::move(Failure));
     EXPECT_NE(Message.find(Diagnostic.str()), std::string::npos) << Message;
   };
+  RejectMutation(
+      "edited LLVM cannot overwrite either registration scope format",
+      [&](llvm::Function &F) {
+        llvm::IRBuilder<> B(F.getEntryBlock().getTerminator());
+        const std::string Name =
+            "__nd_data_" + llvm::utohexstr(EH.Registration->ScopeTableVA);
+        auto *Target = F.getParent()->getNamedGlobal(Name);
+        if (!Target)
+          Target = new llvm::GlobalVariable(
+              *F.getParent(), B.getInt32Ty(), false,
+              llvm::GlobalValue::ExternalLinkage, nullptr, Name);
+        B.CreateStore(B.getInt32(42), Target)->setVolatile(true);
+        return true;
+      },
+      "registration scope table or cookie is written");
   if (EH.Personality == ExceptionPersonality::ExceptHandler4) {
     ASSERT_TRUE(Low.RegistrationStates->SecurityCookiesComplete);
     EXPECT_EQ(Low.RegistrationStates->SecurityCookieVA,
@@ -190,7 +205,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
             B.CreateStore(B.getInt32(42), Target)->setVolatile(true);
             return true;
           },
-          "EH4 cookie or scope table is written");
+          "registration scope table or cookie is written");
     if (EH.Registration->GSCookieOffset != -2) {
       for (unsigned Mutation = 0; Mutation != 4; ++Mutation)
         RejectMutation(

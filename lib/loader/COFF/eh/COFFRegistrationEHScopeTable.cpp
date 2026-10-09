@@ -6,7 +6,9 @@
 
 #include "COFFRegistrationEHDetail.h"
 
+#include "neverd/Limits.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include <algorithm>
@@ -232,3 +234,26 @@ bool decodeEH4Header(const BinaryImage &Img, va_t TableVA,
 }
 
 } // namespace neverd::coff_loader::registration_detail
+
+namespace neverd::coff_loader {
+std::optional<ExceptionAddressRange>
+getX86RegistrationSEHScopeTableRange(const ExceptionFunction &Function) {
+  const bool EH3 =
+      Function.Personality == ExceptionPersonality::ExceptHandler3 &&
+      Function.Encoding == ExceptionEncoding::X86ScopeTableEH3;
+  const bool EH4 =
+      Function.Personality == ExceptionPersonality::ExceptHandler4 &&
+      Function.Encoding == ExceptionEncoding::X86ScopeTableEH4;
+  if ((!EH3 && !EH4) || !Function.Registration)
+    return std::nullopt;
+  const auto &Chain = *Function.Registration;
+  if (!Chain.ScopeTableVA || Chain.ScopeTableVA > UINT32_MAX ||
+      Chain.Scopes.empty() ||
+      Chain.Scopes.size() > limits::kMaxRegistrationEHRecords)
+    return std::nullopt;
+  const uint64_t Bytes = uint64_t(Chain.Scopes.size()) * 12 + (EH4 ? 16 : 0);
+  if (Bytes > uint64_t(UINT32_MAX) + 1 - Chain.ScopeTableVA)
+    return std::nullopt;
+  return ExceptionAddressRange{Chain.ScopeTableVA, Chain.ScopeTableVA + Bytes};
+}
+} // namespace neverd::coff_loader

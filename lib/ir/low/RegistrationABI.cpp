@@ -704,18 +704,23 @@ bool hasCallerCleanupRegistrationABI(
       }
   }
   if (Function.ExceptionMetadata &&
-      Function.ExceptionMetadata->Personality ==
-          ExceptionPersonality::ExceptHandler4 &&
+      (Function.ExceptionMetadata->Personality ==
+           ExceptionPersonality::ExceptHandler3 ||
+       Function.ExceptionMetadata->Personality ==
+           ExceptionPersonality::ExceptHandler4) &&
       Function.ExceptionMetadata->Registration) {
-    const auto &Chain = *Function.ExceptionMetadata->Registration;
+    const auto Table = coff_loader::getX86RegistrationSEHScopeTableRange(
+        *Function.ExceptionMetadata);
+    if (!Table)
+      return false;
+    const bool EH4 = Function.ExceptionMetadata->Personality ==
+                     ExceptionPersonality::ExceptHandler4;
     const va_t CookieVA = Image.Base + Image.DynInfo.SecurityCookieRVA;
-    const uint64_t TableEnd =
-        Chain.ScopeTableVA + 16 + uint64_t(Chain.Scopes.size()) * 12;
-    if (!Image.DynInfo.SecurityCookieRVA || CookieVA > UINT32_MAX - 3)
+    if (EH4 && (!Image.DynInfo.SecurityCookieRVA || CookieVA > UINT32_MAX - 3))
       return false;
     for (const auto &[Begin, End] : Effects.Writes)
-      if ((Begin < CookieVA + 4 && CookieVA < End) ||
-          (Begin < TableEnd && Chain.ScopeTableVA < End))
+      if ((EH4 && Begin < CookieVA + 4 && CookieVA < End) ||
+          Table->overlaps({Begin, End}))
         return false;
   }
   if (Effects.CallerPCWrites.empty())

@@ -40,6 +40,12 @@ namespace neverd::coff_loader {
 /// install site and handler names come from symbols and import veneers.
 void parseX86RegistrationExceptions(BinaryImage &Img);
 
+/// The PE32 byte extent of the normalized SEH3/EH4 scope graph, including
+/// EH4's four cookie fields. This describes format-owned storage only; it
+/// grants neither immutable runtime contents nor permission to copy a table.
+std::optional<ExceptionAddressRange>
+getX86RegistrationSEHScopeTableRange(const ExceptionFunction &Function);
+
 /// Reparse an absolute-pointer FuncInfo and require equality with its checked
 /// normalized graph. Only these exact native fields carry runtime callback
 /// roles; independent references to the same target keep their ordinary role.

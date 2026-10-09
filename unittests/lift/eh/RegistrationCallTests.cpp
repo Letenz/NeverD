@@ -322,3 +322,86 @@ TEST(RegistrationCallABI, BindsTheMemoizedContractToOneBuildImage) {
   ASSERT_TRUE(Changed);
   EXPECT_TRUE(Changed->empty());
 }
+
+TEST(RegistrationCallABI, ScopeExtentKeepsTheFormatHeaderAndPE32Bounds) {
+  for (bool EH4 : {false, true}) {
+    ExceptionFunction F;
+    F.Personality = EH4 ? ExceptionPersonality::ExceptHandler4
+                        : ExceptionPersonality::ExceptHandler3;
+    F.Encoding = EH4 ? ExceptionEncoding::X86ScopeTableEH4
+                     : ExceptionEncoding::X86ScopeTableEH3;
+    auto &C = F.Registration.emplace();
+    C.ScopeTableVA = 0x403000;
+    C.Scopes.resize(2);
+    const auto Extent = coff_loader::getX86RegistrationSEHScopeTableRange(F);
+    ASSERT_TRUE(Extent);
+    EXPECT_EQ(Extent->Begin, 0x403000u);
+    EXPECT_EQ(Extent->End, 0x403000u + 24 + (EH4 ? 16 : 0));
+    C.Scopes.resize(1);
+    C.ScopeTableVA = uint64_t(UINT32_MAX) + 1 - 12 - (EH4 ? 16 : 0);
+    const auto Last = coff_loader::getX86RegistrationSEHScopeTableRange(F);
+    ASSERT_TRUE(Last);
+    EXPECT_EQ(Last->End, uint64_t(UINT32_MAX) + 1);
+    ++C.ScopeTableVA;
+    EXPECT_FALSE(coff_loader::getX86RegistrationSEHScopeTableRange(F));
+    C.ScopeTableVA = 0;
+    EXPECT_FALSE(coff_loader::getX86RegistrationSEHScopeTableRange(F));
+    C.ScopeTableVA = 0x403000;
+    C.Scopes.clear();
+    EXPECT_FALSE(coff_loader::getX86RegistrationSEHScopeTableRange(F));
+    C.Scopes.resize(1);
+    F.Encoding = ExceptionEncoding::X86CxxFuncInfo;
+    EXPECT_FALSE(coff_loader::getX86RegistrationSEHScopeTableRange(F));
+  }
+}
+
+TEST(RegistrationCallABI, PreservedCalleesCannotChangeEitherSEHScopeFormat) {
+  for (bool EH4 : {false, true}) {
+    const va_t TableVA = 0x403000;
+    const va_t CookieVA = 0x403040;
+    const va_t EndVA = TableVA + 24 + (EH4 ? 16 : 0);
+    for (va_t WriteVA : {TableVA - 4, TableVA, TableVA + 8, EndVA - 4,
+                         EndVA - 1, EndVA, CookieVA}) {
+      SCOPED_TRACE(WriteVA);
+      BinaryImage Image;
+      Image.Arch = Arch::X86;
+      Image.Bits = Bitness::Bits32;
+      Image.Format = BinaryFormat::COFF;
+      Image.Base = 0x400000;
+      Image.DynInfo.SecurityCookieRVA = CookieVA - Image.Base;
+      Segment Text;
+      Text.VA = 0x401000;
+      Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      Text.Data = {0xc7, 0x05, 0, 0, 0, 0, 7, 0, 0, 0, 0x31, 0xc0, 0xc3};
+      writeLE<uint32_t>(Text.Data.data() + 2, WriteVA);
+      Text.Size = Text.Data.size();
+      Image.Segments.push_back(Text);
+      Segment Data;
+      Data.VA = TableVA - 16;
+      Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      Data.Data.resize(128);
+      Data.Size = Data.Data.size();
+      Image.Segments.push_back(Data);
+      LowFunc Source;
+      Source.Entry = 0x402000;
+      Source.Blocks.emplace_back();
+      LowOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.addInput(NdVar::cst(Text.VA, 4));
+      Source.Blocks[0].Ops.push_back(Call);
+      auto &F = Source.ExceptionMetadata.emplace();
+      F.Personality = EH4 ? ExceptionPersonality::ExceptHandler4
+                          : ExceptionPersonality::ExceptHandler3;
+      F.Encoding = EH4 ? ExceptionEncoding::X86ScopeTableEH4
+                       : ExceptionEncoding::X86ScopeTableEH3;
+      auto &C = F.Registration.emplace();
+      C.ScopeTableVA = TableVA;
+      C.Scopes = {{-1, 0x402040, 0x402050, false},
+                  {0, 0x402060, 0x402070, false}};
+      const bool WritesTable = WriteVA < EndVA && TableVA < WriteVA + 4;
+      EXPECT_EQ(hasCallerCleanupRegistrationABI(Source, Image),
+                !WritesTable && !(EH4 && WriteVA == CookieVA))
+          << EH4;
+    }
+  }
+}
