@@ -195,9 +195,10 @@ void recoverTryLevelStores(const BinaryImage &Img,
 bool decodeEH4Header(const BinaryImage &Img, va_t TableVA,
                      RegistrationChainInfo &Chain);
 
-bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
-                       va_t FuncInfoVA,
-                       std::map<va_t, va_t> *CallbackSources = nullptr);
+bool decodeX86FuncInfo(
+    ExceptionFunction &F, const BinaryImage &Img, va_t FuncInfoVA,
+    std::map<va_t, va_t> *CallbackSources = nullptr,
+    std::vector<ExceptionAddressRange> *RecordRanges = nullptr);
 
 } // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE registration_detail
 } // namespace neverd::coff_loader

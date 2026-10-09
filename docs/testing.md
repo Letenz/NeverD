@@ -1776,6 +1776,13 @@ checks all four runtime object occurrences.
 Scope mutation tests cover both SEH3 and EH4, exact exclusive table ends,
 partial overlap, PE32 overflow and cookie separation. The real source fixture
 also rejects an edited LLVM write to either format's scope table.
+C++ metadata tests cover all three FuncInfo versions, exception-spec records,
+reparsed graph equality, PE32 exclusive ends, distinct record overlap and
+writes from ordinary calls and cleanup relays. A private-throw closure test
+requires the exact checked CRT import and retains caller-PC write/read guards.
+The genuine MSVC fixture also rechecks all four record extents and its throwing
+helper and cleanup relays. These component facts do not imply source native
+C++ installation.
 Native installation needs a source build of the LLVM fork exposing
 `LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need

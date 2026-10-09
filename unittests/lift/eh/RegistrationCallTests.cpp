@@ -587,3 +587,228 @@ TEST(RegistrationCallABI, MemoizesCleanupRelaysWithoutGrantingAFrameBorrow) {
   ASSERT_TRUE(NextImage.cleanupContracts(Parent));
   EXPECT_TRUE(NextImage.cleanupContracts(Parent)->empty());
 }
+
+namespace {
+struct CxxMetadataImage {
+  static constexpr va_t TableVA = 0x403000;
+  CleanupRelayImage Code;
+  ExceptionFunction EH;
+
+  CxxMetadataImage() {
+    Segment Table;
+    Table.VA = TableVA;
+    Table.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Table.Data.resize(0x100);
+    Table.Size = Table.FileSz = Table.Data.size();
+    auto Word = [&](size_t Offset, uint32_t Value) {
+      writeLE<uint32_t>(Table.Data.data() + Offset, Value);
+    };
+    Word(0, 0x19930522);
+    Word(4, 2);
+    Word(8, TableVA + 0x30);
+    Word(12, 1);
+    Word(16, TableVA + 0x50);
+    Word(32, 1);
+    Word(0x30, uint32_t(-1));
+    Word(0x38, 0);
+    Word(0x3c, CleanupRelayImage::RelayVA);
+    Word(0x58, 1);
+    Word(0x5c, 1);
+    Word(0x60, TableVA + 0x70);
+    Word(0x7c, CleanupRelayImage::LeafVA);
+    Code.Image.Segments.push_back(Table);
+    EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
+    EH.Personality = ExceptionPersonality::CxxFrameHandler3;
+    EH.HandlerDataVA = TableVA;
+    EH.Registration.emplace().ScopeTableVA = TableVA;
+    auto &Cxx = EH.Cxx.emplace();
+    Cxx.NativeFuncInfoVA = TableVA;
+    Cxx.Magic = 0x19930522;
+    Cxx.Version = CxxFuncInfoVersion::WithEHFlags;
+    Cxx.MaxState = 2;
+    Cxx.Flags = 1;
+    Cxx.IsSynchronous = true;
+    Cxx.UnwindMap = {
+        {-1, 0, CxxUnwindAction::ActionKind::None},
+        {0, CleanupRelayImage::RelayVA, CxxUnwindAction::ActionKind::Direct}};
+    CxxTryBlock Try;
+    Try.TryLow = Try.TryHigh = 0;
+    Try.CatchHigh = 1;
+    CxxCatchHandler Catch;
+    Catch.HandlerVA = CleanupRelayImage::LeafVA;
+    Try.Handlers.push_back(Catch);
+    Cxx.TryBlocks.push_back(Try);
+  }
+
+  void tableWord(size_t Offset, uint32_t Value) {
+    writeLE<uint32_t>(Code.Image.Segments.back().Data.data() + Offset, Value);
+  }
+};
+} // namespace
+
+TEST(RegistrationCallABI, CxxMetadataExtentsBindTheReparsedSourceGraph) {
+  CxxMetadataImage F;
+  const auto Ranges =
+      coff_loader::getCheckedX86CxxMetadataRanges(F.Code.Image, F.EH);
+  ASSERT_TRUE(Ranges);
+  ASSERT_EQ(Ranges->size(), 4u);
+  const std::pair<uint32_t, uint32_t> Expected[] = {
+      {0, 36}, {0x30, 0x40}, {0x50, 0x64}, {0x70, 0x80}};
+  for (size_t I = 0; I < Ranges->size(); ++I) {
+    EXPECT_EQ((*Ranges)[I].Begin, F.TableVA + Expected[I].first);
+    EXPECT_EQ((*Ranges)[I].End, F.TableVA + Expected[I].second);
+  }
+  F.tableWord(0x58, 0);
+  EXPECT_FALSE(coff_loader::getCheckedX86CxxMetadataRanges(F.Code.Image, F.EH));
+  EXPECT_FALSE(
+      coff_loader::getCheckedX86CxxCallbackPointerSources(F.Code.Image, F.EH));
+}
+
+TEST(RegistrationCallABI, CxxMetadataExtentsIncludeLegacyAndSpecRecords) {
+  for (uint32_t Magic : {0x19930520u, 0x19930521u, 0x19930522u}) {
+    SCOPED_TRACE(Magic);
+    CxxMetadataImage F;
+    F.tableWord(0, Magic);
+    auto &Cxx = *F.EH.Cxx;
+    Cxx.Magic = Magic;
+    Cxx.Version = CxxFuncInfoVersion(uint8_t(Magic - 0x19930520));
+    if (Magic != 0x19930522u) {
+      Cxx.Flags = 0;
+      Cxx.IsSynchronous = false;
+    }
+    if (Magic != 0x19930520u) {
+      F.tableWord(28, F.TableVA + 0x90);
+      F.tableWord(0x90, 1);
+      F.tableWord(0x94, F.TableVA + 0xa0);
+      Cxx.ESTypeListVA = F.TableVA + 0x90;
+      Cxx.ExceptionSpecTypes.resize(1);
+    }
+    const auto Ranges =
+        coff_loader::getCheckedX86CxxMetadataRanges(F.Code.Image, F.EH);
+    ASSERT_TRUE(Ranges);
+    EXPECT_EQ(Ranges->front().End, F.TableVA + (Magic == 0x19930520u   ? 28
+                                                : Magic == 0x19930521u ? 32
+                                                                       : 36));
+    EXPECT_EQ(Ranges->size(), Magic == 0x19930520u ? 4u : 6u);
+    if (Ranges->size() == 6) {
+      EXPECT_EQ((*Ranges)[4].Begin, F.TableVA + 0x90);
+      EXPECT_EQ((*Ranges)[4].End, F.TableVA + 0x98);
+      EXPECT_EQ((*Ranges)[5].Begin, F.TableVA + 0xa0);
+      EXPECT_EQ((*Ranges)[5].End, F.TableVA + 0xb0);
+    }
+  }
+}
+
+TEST(RegistrationCallABI, CxxMetadataExtentsRejectDistinctOverlappingRecords) {
+  CxxMetadataImage F;
+  F.tableWord(0, 0x19930520);
+  F.tableWord(8, F.TableVA + 24);
+  F.tableWord(24, uint32_t(-1));
+  F.tableWord(28, 0);
+  F.tableWord(32, 0);
+  F.tableWord(36, CleanupRelayImage::RelayVA);
+  auto &Cxx = *F.EH.Cxx;
+  Cxx.Magic = 0x19930520;
+  Cxx.Version = CxxFuncInfoVersion::Original;
+  Cxx.Flags = 0;
+  Cxx.IsSynchronous = false;
+  // The unused legacy IP-map word aliases a valid first unwind row. Analysis
+  // may describe that graph; replacing its records requires disjoint owners.
+  ASSERT_TRUE(
+      coff_loader::getCheckedX86CxxCallbackPointerSources(F.Code.Image, F.EH));
+  EXPECT_FALSE(coff_loader::getCheckedX86CxxMetadataRanges(F.Code.Image, F.EH));
+}
+
+TEST(RegistrationCallABI, CxxMetadataBoundsDoNotWrapAtThePE32Limit) {
+  CxxMetadataImage F;
+  auto &Table = F.Code.Image.Segments.back();
+  Table.VA = uint64_t(UINT32_MAX) + 1 - 36;
+  Table.Data.resize(36);
+  Table.Size = Table.FileSz = 36;
+  writeLE<uint32_t>(Table.Data.data() + 4, 0);
+  writeLE<uint32_t>(Table.Data.data() + 12, 0);
+  auto &Cxx = *F.EH.Cxx;
+  Cxx.NativeFuncInfoVA = F.EH.HandlerDataVA = F.EH.Registration->ScopeTableVA =
+      Table.VA;
+  Cxx.MaxState = 0;
+  Cxx.UnwindMap.clear();
+  Cxx.TryBlocks.clear();
+  const auto Ranges =
+      coff_loader::getCheckedX86CxxMetadataRanges(F.Code.Image, F.EH);
+  ASSERT_TRUE(Ranges);
+  ASSERT_EQ(Ranges->size(), 1u);
+  EXPECT_EQ(Ranges->front().End, uint64_t(UINT32_MAX) + 1);
+  ++Table.VA;
+  Cxx.NativeFuncInfoVA = F.EH.HandlerDataVA = F.EH.Registration->ScopeTableVA =
+      Table.VA;
+  EXPECT_FALSE(coff_loader::getCheckedX86CxxMetadataRanges(F.Code.Image, F.EH));
+}
+
+TEST(RegistrationCallABI, PreservedCallsAndCleanupCannotMutateCxxMetadata) {
+  for (bool Cleanup : {false, true}) {
+    for (uint32_t Offset : {0u, 32u, 36u, 0x30u, 0x3fu, 0x40u, 0x50u, 0x60u,
+                            0x64u, 0x70u, 0x7fu, 0x80u}) {
+      SCOPED_TRACE(Cleanup);
+      SCOPED_TRACE(Offset);
+      CxxMetadataImage F;
+      auto &Text = F.Code.Image.Segments.front();
+      const uint8_t Leaf[] = {0xc7, 0x05, 0, 0,    0,    0,   7,
+                              0,    0,    0, 0x31, 0xc0, 0xc3};
+      std::copy(std::begin(Leaf), std::end(Leaf), Text.Data.begin() + 0x40);
+      writeLE<uint32_t>(Text.Data.data() + 0x42, F.TableVA + Offset);
+      LowFunc Parent;
+      Parent.Entry = 0x402000;
+      Parent.ExceptionMetadata = F.EH;
+      if (!Cleanup) {
+        Parent.Blocks.resize(1);
+        LowOp Call;
+        Call.Opcode = NdOp::CALL;
+        Call.addInput(NdVar::cst(CleanupRelayImage::LeafVA, 4));
+        Parent.Blocks[0].Ops.push_back(Call);
+      }
+      const bool TouchesRecord = Offset < 36 ||
+                                 (Offset < 0x40 && Offset + 4 > 0x30) ||
+                                 (Offset < 0x64 && Offset + 4 > 0x50) ||
+                                 (Offset < 0x80 && Offset + 4 > 0x70);
+      EXPECT_EQ(hasCallerCleanupRegistrationABI(Parent, F.Code.Image),
+                !TouchesRecord);
+    }
+  }
+}
+
+TEST(RegistrationCallABI, CxxClosureConsumesTheCheckedPrivateThrowHelper) {
+  ThrowImage Throw;
+  CxxMetadataImage Metadata;
+  auto Table = Metadata.Code.Image.Segments.back();
+  Table.VA = 0x405000;
+  auto Word = [&](size_t Offset, uint32_t Value) {
+    writeLE<uint32_t>(Table.Data.data() + Offset, Value);
+  };
+  Word(8, Table.VA + 0x30);
+  Word(16, Table.VA + 0x50);
+  Word(0x60, Table.VA + 0x70);
+  Word(0x3c, 0);
+  Throw.Image.Segments.push_back(Table);
+  auto &Cxx = *Metadata.EH.Cxx;
+  Cxx.NativeFuncInfoVA = Metadata.EH.HandlerDataVA =
+      Metadata.EH.Registration->ScopeTableVA = Table.VA;
+  Cxx.UnwindMap[1].ActionVA = 0;
+  Cxx.UnwindMap[1].Kind = CxxUnwindAction::ActionKind::None;
+  LowFunc Parent;
+  Parent.Entry = 0x406000;
+  Parent.ExceptionMetadata = Metadata.EH;
+  Parent.Blocks.resize(1);
+  LowOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.addInput(NdVar::cst(ThrowImage::TextVA, 4));
+  Parent.Blocks[0].Ops.push_back(Call);
+  Parent.RegistrationStates.emplace().ImageReadsComplete = true;
+  std::vector<ExceptionAddressRange> PCs;
+  EXPECT_TRUE(hasCallerCleanupRegistrationABI(Parent, Throw.Image, &PCs));
+  ASSERT_EQ(PCs.size(), 1u);
+  EXPECT_EQ(PCs[0].Begin, ThrowImage::CallerPCVA);
+  EXPECT_EQ(PCs[0].End, ThrowImage::CallerPCVA + 4);
+  Throw.Image.Imports[0].Name = "unknown_throw";
+  EXPECT_FALSE(hasCallerCleanupRegistrationABI(Parent, Throw.Image, &PCs));
+  EXPECT_TRUE(PCs.empty());
+}

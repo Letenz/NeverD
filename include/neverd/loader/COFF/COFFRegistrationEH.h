@@ -53,6 +53,14 @@ std::optional<std::map<va_t, va_t>>
 getCheckedX86CxxCallbackPointerSources(const BinaryImage &Img,
                                        const ExceptionFunction &Function);
 
+/// Reparse the same complete FuncInfo graph and describe its exact PE32
+/// record extents, including unwind, try, handler and exception-spec maps.
+/// Overlapping distinct records are rejected. These ranges describe source
+/// storage; they do not claim immutable runtime contents or copy permission.
+std::optional<std::vector<ExceptionAddressRange>>
+getCheckedX86CxxMetadataRanges(const BinaryImage &Img,
+                               const ExceptionFunction &Function);
+
 /// Image-wide callback pointer roles, reconstructed from the same checked
 /// FuncInfo parser. RuntimeOnlyPointerTargets have no independent relocated
 /// code-pointer source; exports, stated symbols and ordinary calls can still

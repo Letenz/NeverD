@@ -745,6 +745,22 @@ bool hasCallerCleanupRegistrationABI(
       // Caller cleanup alone does not project those slots onto the recursive
       // invocation's physical argument area.
       return false;
+    if (Function.ExceptionMetadata && Function.ExceptionMetadata->Cxx &&
+        Function.ExceptionMetadata->Registration)
+      if (const auto Throw =
+              getCheckedX86RegistrationThrowCalleeABI(Image, Target, &Work)) {
+        if (!chargeCalleeWork(Work, Throw->ImageReads.size() +
+                                        Throw->ImageWrites.size() +
+                                        Throw->CallerPCWrites.size()))
+          return false;
+        for (const auto &Read : Throw->ImageReads)
+          Effects.Reads.emplace(Read.Begin, Read.End);
+        for (const auto &Write : Throw->ImageWrites)
+          Effects.Writes.emplace(Write.Begin, Write.End);
+        for (const auto &Write : Throw->CallerPCWrites)
+          Effects.CallerPCWrites.emplace(Write.Begin, Write.End);
+        continue;
+      }
     const LowFunc Callee = Builder.build(Image, Decoder, Target, "abi-callee");
     if (Callee.CalleePopBytes || !Callee.hasCompleteLiftCoverage() ||
         Callee.Blocks.empty() ||
@@ -808,6 +824,43 @@ bool hasCallerCleanupRegistrationABI(
       if ((EH4 && Begin < CookieVA + 4 && CookieVA < End) ||
           Table->overlaps({Begin, End}))
         return false;
+  }
+  if (Function.ExceptionMetadata && Function.ExceptionMetadata->Cxx &&
+      Function.ExceptionMetadata->Registration) {
+    const auto &EH = *Function.ExceptionMetadata;
+    const auto Ranges = coff_loader::getCheckedX86CxxMetadataRanges(Image, EH);
+    if (!Ranges)
+      return false;
+    // The language dispatcher also calls these preserved actions. Their
+    // physical leaf proof supplies image effects, never a parent-object borrow.
+    for (const auto &Action : EH.Cxx->UnwindMap) {
+      if (!chargeCalleeWork(Work, 1))
+        return false;
+      if (!Action.ActionVA)
+        continue;
+      if (Action.Kind != CxxUnwindAction::ActionKind::Direct ||
+          Action.ObjectOffset)
+        return false;
+      const auto Relay = getCheckedX86RegistrationCleanupRelayABI(
+          Image, Action.ActionVA, &Work);
+      if (!Relay || !Relay->Leaf.CallerPCWrites.empty() ||
+          !chargeCalleeWork(Work, Relay->Leaf.ImageReads.size() +
+                                      Relay->Leaf.ImageWrites.size()))
+        return false;
+      for (const auto &Read : Relay->Leaf.ImageReads)
+        Effects.Reads.emplace(Read.Begin, Read.End);
+      for (const auto &Write : Relay->Leaf.ImageWrites)
+        Effects.Writes.emplace(Write.Begin, Write.End);
+    }
+    if (Ranges->size() &&
+        Effects.Writes.size() >
+            (limits::kMaxRegistrationEHStateWork - Work) / Ranges->size())
+      return false;
+    Work += Effects.Writes.size() * Ranges->size();
+    for (const auto &[Begin, End] : Effects.Writes)
+      for (const auto &Range : *Ranges)
+        if (Range.overlaps({Begin, End}))
+          return false;
   }
   if (Effects.CallerPCWrites.empty())
     return true;

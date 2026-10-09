@@ -114,6 +114,12 @@ COFF owns the bounded SEH3/EH4 scope-table byte extent. Both preserved callees
 and edited/generated LLVM must leave that complete table unchanged; EH4 also
 protects the exact image cookie. A compiler-owned scope snapshot cannot replace
 a runtime-mutated source table.
+The same FuncInfo decoder owns C++ metadata record extents and callback pointer
+fields. Native checks reparse the complete normalized graph before using those
+extents and reject distinct overlapping records. Preserved ordinary callees
+and cleanup relays must leave every language record unchanged. A checked
+private throw contributes its authenticated image and caller-PC effects;
+separate state reachability and object projection still govern native calls.
 The same LowIR frame domain owns EH4 cookie initialization and exact source
 checker occurrences. Native lowering may replace an authenticated pure check
 with a source-indexed execution event while LLVM owns the physical GS check.
