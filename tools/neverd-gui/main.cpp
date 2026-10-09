@@ -1,4 +1,5 @@
 #include "app/DisassemblyView.h"
+#include "app/Docking.h"
 #include "app/GnomeModalDialogs.h"
 #include "app/InteractionMetrics.h"
 #include "app/Language.h"
@@ -21,8 +22,6 @@
 #include <QTimer>
 #include <QWindow>
 #include <functional>
-#include <kddockwidgets/Config.h>
-#include <kddockwidgets/KDDockWidgets.h>
 #include <memory>
 #include <utility>
 
@@ -39,19 +38,6 @@ constexpr int CaptureDelayMs = 6000;
 constexpr int SmokeDelayMs = 1500;
 constexpr int DefaultWidth = 1600;
 constexpr int DefaultHeight = 1000;
-
-void configureDocking() {
-  KDDockWidgets::initFrontend(KDDockWidgets::FrontendType::QtWidgets);
-  auto &config = KDDockWidgets::Config::self();
-  // Every docked window carries a closable tab, as in classic disassemblers.
-  config.setFlags(KDDockWidgets::Config::Flag_AlwaysShowTabs |
-                  KDDockWidgets::Config::Flag_HideTitleBarWhenTabsVisible |
-                  KDDockWidgets::Config::Flag_TabsHaveCloseButton |
-                  KDDockWidgets::Config::Flag_AllowReorderTabs |
-                  KDDockWidgets::Config::Flag_TitleBarIsFocusable |
-                  KDDockWidgets::Config::Flag_DoubleClickMaximizes);
-  config.setSeparatorThickness(4);
-}
 
 /// Runs an action once a window is first exposed, after the window manager
 /// has placed it: a dialog shown before then centers on where the window was
