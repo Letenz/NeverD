@@ -25,7 +25,15 @@ neverd unpack packed.exe -o unpacked.exe \
   --options='{"backend":"unicorn","instruction_limit":400000000,"transfer":2}'
 ```
 
-該命令輸出一份 JSON 報告。結束碼 0 表示映像已寫出；3 表示有界執行在接受入口之前結束（`outcome` 為 `no_entry`，不寫入任何檔案）；1 表示輸入、選項無效或準備失敗。報告會給出實際執行的 `format`、`architecture` 和 `profile`。C 入口是 `neverd_unpack_json`；Python 提供 `Session.unpack`。選項為[行程選項](process-emulation.md)加上 `transfer`。外殼需要更多資源之處預設值不同：100000000 條指令、600 秒、512 MiB，並且 `windows.defer_unmodeled` 預設開啟。
+該命令輸出一份 JSON 報告。結束碼 0 表示已寫出 `unpacked` 映像或明確要求的 `snapshot`；3 表示 `no_entry` 或 `unsupported_state`，不會建立或截斷輸出檔案；1 表示輸入、選項無效或準備失敗。報告會給出實際執行的 `format`、`architecture` 和 `profile`。C 入口是 `neverd_unpack_json`；Python 提供 `Session.unpack`。選項為[行程選項](process-emulation.md)加上 `transfer` 和 `snapshot_only`。外殼需要更多資源之處預設值不同：100000000 條指令、600 秒、512 MiB，並且 `windows.defer_unmodeled` 預設開啟。
+
+## 執行階段狀態與分析快照
+
+在接受轉移時，行程設定提供仍存活的堆積配置清單。恢復流程保守地掃描擷取的映像與目前執行緒 TLS 位元組中的所有指標寬度值，包括未對齊值及配置內部的位址。匹配值可能只是整數或未使用資料，不代表已確認的指標，也不能據此重定位。清單來源未知或存在可能的參照時，預設回報 `unsupported_state`，即使已接受 `entry`；CLI 與 C API 都不會建立或截斷輸出檔案。
+
+`runtime_state.heap_inventory_known` 區分已知空清單與缺少來源證據。`possible_heap_references` 統計全部匹配；`heap_references` 最多保留前 64 筆，先映像後 TLS，各自依 `offset` 排序。記錄包含 `storage`（`image` 或 `thread_local`）、位址及配置範圍。映像記錄的 `rva` 為十六進位值，TLS 記錄為 null；位址與偏移採十六進位字串。
+
+`--options='{"snapshot_only":true}'` 明確要求分析位元組。接受入口且重建成功後，結果一律為 `snapshot`，並保留執行階段狀態診斷。此選項不會恢復堆積資料、推斷重定位、證明原生執行成功或反虛擬化。堆積參照數量為零也不能證明其他 OS 狀態或未執行路徑正確。
 
 ## 入口如何確定
 

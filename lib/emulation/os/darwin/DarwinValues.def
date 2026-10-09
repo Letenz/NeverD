@@ -36,6 +36,13 @@ NEVERD_DARWIN_VALUE(IllegalSeek, 29)
 NEVERD_DARWIN_VALUE(SeekHole, 3)
 NEVERD_DARWIN_VALUE(SeekData, 4)
 NEVERD_DARWIN_VALUE(NameTooLong, 63)
+NEVERD_DARWIN_VALUE(NoAttribute, 93)
+NEVERD_DARWIN_VALUE(XattrNoFollow, 1)
+NEVERD_DARWIN_VALUE(XattrCreate, 2)
+NEVERD_DARWIN_VALUE(XattrReplace, 4)
+NEVERD_DARWIN_VALUE(XattrNoSecurity, 8)
+NEVERD_DARWIN_VALUE(XattrNoDefault, 16)
+NEVERD_DARWIN_VALUE(XattrNoFollowAny, 64)
 NEVERD_DARWIN_VALUE(DirectoryNotEmpty, 66)
 NEVERD_DARWIN_VALUE(TooManyLinks, 62)
 NEVERD_DARWIN_VALUE(MaxSymbolicLinks, 32)
@@ -76,6 +83,25 @@ NEVERD_DARWIN_VALUE(GetFileFlags, 3)
 NEVERD_DARWIN_VALUE(SetFileFlags, 4)
 NEVERD_DARWIN_VALUE(DuplicateCloseOnExec, 67)
 NEVERD_DARWIN_VALUE(FileStatusSize, 144)
+NEVERD_DARWIN_VALUE(AttributeRequestSize, 24)
+NEVERD_DARWIN_VALUE(AttributeBitmapCount, 5)
+NEVERD_DARWIN_VALUE(AttributeName, 0x00000001)
+NEVERD_DARWIN_VALUE(AttributeDevice, 0x00000002)
+NEVERD_DARWIN_VALUE(AttributeObjectType, 0x00000008)
+NEVERD_DARWIN_VALUE(AttributeBirthTime, 0x00000200)
+NEVERD_DARWIN_VALUE(AttributeModificationTime, 0x00000400)
+NEVERD_DARWIN_VALUE(AttributeChangeTime, 0x00000800)
+NEVERD_DARWIN_VALUE(AttributeAccessTime, 0x00001000)
+NEVERD_DARWIN_VALUE(AttributeUID, 0x00008000)
+NEVERD_DARWIN_VALUE(AttributeGID, 0x00010000)
+NEVERD_DARWIN_VALUE(AttributeMode, 0x00020000)
+NEVERD_DARWIN_VALUE(AttributeFlags, 0x00040000)
+NEVERD_DARWIN_VALUE(AttributeInode, 0x02000000)
+NEVERD_DARWIN_VALUE(AttributeReturned, 0x80000000)
+NEVERD_DARWIN_VALUE(AttributeNoFollow, 0x1)
+NEVERD_DARWIN_VALUE(AttributeFullSize, 0x4)
+NEVERD_DARWIN_VALUE(AttributePackInvalid, 0x8)
+NEVERD_DARWIN_VALUE(AttributeNoFollowAny, 0x800)
 NEVERD_DARWIN_VALUE(FileRegularMode, 0x8000)
 NEVERD_DARWIN_VALUE(FileDirectoryMode, 0x4000)
 NEVERD_DARWIN_VALUE(FileSymbolicLinkMode, 0xa000)
@@ -163,6 +189,15 @@ NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
 NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
 NEVERD_DARWIN_SERVICE(GetRlimit, 194, Int)
+NEVERD_DARWIN_SERVICE(PathConf, 191, Int)
+NEVERD_DARWIN_SERVICE(FpathConf, 192, Int)
+NEVERD_DARWIN_SERVICE(GetAttrList, 220, Int)
+NEVERD_DARWIN_SERVICE(FgetAttrList, 228, Int)
+NEVERD_DARWIN_SERVICE(GetAttrListAt, 476, Int)
+NEVERD_DARWIN_SERVICE(GetXattr, 234, Wide)
+NEVERD_DARWIN_SERVICE(FgetXattr, 235, Wide)
+NEVERD_DARWIN_SERVICE(ListXattr, 240, Wide)
+NEVERD_DARWIN_SERVICE(FlistXattr, 241, Wide)
 NEVERD_DARWIN_SERVICE(Truncate, 200, Int)
 NEVERD_DARWIN_SERVICE(Ftruncate, 201, Int)
 NEVERD_DARWIN_SERVICE(Sysctl, 202, Int)
@@ -310,6 +345,18 @@ NEVERD_DARWIN_DIAGNOSTIC(
     SymbolicLinkMutation,
     "Darwin symbolic link namespace mutation is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(
+    SymbolicLinkMutableOption,
+    "Darwin mutable symbolic links require initial links and mutable parents")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SymbolicLinkMutableDevice,
+    "Darwin mutable symbolic links have conflicting parent devices")
+NEVERD_DARWIN_DIAGNOSTIC(SymbolicLinkMetadataMutationOption,
+                         "Darwin symbolic link metadata mutation requires a "
+                         "grant, nonzero observed inode and valid time")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SymbolicLinkMutatedMetadata,
+    "Darwin symbolic link metadata is unknown after namespace mutation")
+NEVERD_DARWIN_DIAGNOSTIC(
     SymbolicLinkPartialOutput,
     "Darwin symbolic link target output is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(
@@ -344,6 +391,9 @@ NEVERD_DARWIN_DIAGNOSTIC(FileMetadataOption,
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadataPath,
                          "Darwin metadata requires an existing catalogue path")
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadata, "Darwin file metadata is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAttributeName,
+    "Darwin object name is outside the bounded UTF-8 catalogue contract")
 NEVERD_DARWIN_DIAGNOSTIC(
     FilePartialStatus,
     "Darwin stat64 into a partially writable buffer is unsupported")
@@ -449,6 +499,21 @@ NEVERD_DARWIN_DIAGNOSTIC(DirectoryContents,
                          "Darwin directory contents are not configured")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryContentsOption,
                          "invalid or incoherent Darwin directory contents")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryMetadataMutationOption,
+    "invalid Darwin initial-directory metadata mutation policy or identity")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryEnumerationOption,
+    "invalid Darwin virtual directory enumeration policy or identity")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryEnumerationIdentity,
+    "Darwin virtual directory enumeration requires known nonzero inodes")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryEnumerationVersion,
+    "Darwin virtual directory cursor requires rewind for the current namespace")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryEnumerationLimit,
+    "Darwin virtual directory generation capacity is exhausted")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryPosition,
                          "Darwin directory position is not in the snapshot")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryPartialData,
@@ -459,6 +524,42 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryPartialFlags,
                          "Darwin directory flags buffer is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(FileControl, "unsupported Darwin fcntl command")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FilePathConf,
+    "Darwin filesystem-dependent pathconf selector is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FilePathConfKind, "Darwin pathconf native descriptor kind is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(FileAttributeSelection,
+                         "Darwin selected file attributes are not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(ExtendedAttributeOption,
+                         "invalid Darwin extended-attribute observations")
+NEVERD_DARWIN_DIAGNOSTIC(ExtendedAttributeUnknown,
+                         "Darwin extended-attribute observations are unknown")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ExtendedAttributeKind,
+    "Darwin extended-attribute descriptor kind is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ExtendedAttributeSpecial,
+    "Darwin special extended-attribute semantics are not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(ExtendedAttributeFlags,
+                         "Darwin extended-attribute options are not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ExtendedAttributeEmptyNegative,
+    "Darwin empty attribute list with negative buffer size is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ExtendedAttributeOutput,
+    "Darwin extended-attribute buffer is not completely writable")
+NEVERD_DARWIN_DIAGNOSTIC(FileAttributeOptions,
+                         "Darwin attribute-list options are not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAttributeKind,
+    "Darwin attribute-list native descriptor kind is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAttributePartialInput,
+    "Darwin partially readable attribute list is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAttributePartialOutput,
+    "Darwin partially writable attribute output is not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(FileSeek, "unsupported Darwin data/hole seek")
 NEVERD_DARWIN_DIAGNOSTIC(
     FilePartialRead,

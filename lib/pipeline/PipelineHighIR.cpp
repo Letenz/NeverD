@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineCallAbiDetail.h"
 #include "PipelineReturnModelingDetail.h"
 
 #include "neverd/Common.h"
@@ -17,6 +18,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -112,7 +114,16 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
   settleReturnContracts(Img, Result);
 
   auto AllFuncNames = buildFuncNameMap(Img, Result);
-  if (Img.Arch == Arch::ARM) {
+  // Without callee summaries, a convention's call arguments, and the
+  // parameters a forwarder passes straight through, are the setup each caller
+  // writes, as the LLVM route recovers them.
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(Img.Arch, Img.abiFormat());
+  if (Convention && Convention->ArgumentsFromCallSetup) {
+    recoverModuleCallAbi(Img, Result, AllFuncNames);
+    matchCallsToCalleeSignatures(Img, Result);
+    propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
+  } else if (Img.Arch == Arch::ARM) {
     const auto &TRI = getTargetRegInfo(Img.Arch);
     std::map<va_t, int> RegisterArity;
     std::map<va_t, int> TotalArity;
@@ -178,7 +189,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     for (MedFunc &MF : Result.MedFuncs)
       recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &RegisterArity,
                      &TotalArity);
-    propagateARMForwardedPointerParams(Result.MedFuncs);
+    propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
   }
   if (Dbg && Dbg->hasInfo()) {
     for (const MedFunc &MF : Result.MedFuncs) {

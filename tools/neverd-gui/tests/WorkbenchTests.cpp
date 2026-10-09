@@ -3,6 +3,7 @@
 #include "ChooserView.h"
 #include "CodeView.h"
 #include "DisassemblyView.h"
+#include "Docking.h"
 #include "GraphView.h"
 #include "HexView.h"
 #include "ListingView.h"
@@ -752,6 +753,7 @@ private slots:
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        settingsDirectory_.path());
+    configureDocking();
   }
 
   void hexViewShownBeforeOpeningLoadsItsBytes() {

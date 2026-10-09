@@ -18,9 +18,11 @@
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86FPStateHelpers.h"
 #include "HighCWriter.h"
 
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
+#include "neverd/ir/high/X86FPStateShape.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/ArchSupport.h"
@@ -450,6 +452,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   Has512BitInteger = false;
   Int128AsBitInt = false;
   X87Helpers.clear();
+  X86FPStateHelpers.clear();
   UsesX87Extended = false;
   DebugParamBindings.clear();
   // Native AArch64 vector carriers are projected to SVE ACLE types.  x86
@@ -482,6 +485,17 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     CollectWideType(E.CastTo);
     if (const auto Helper = x87HelperFor(E))
       X87Helpers.insert(*Helper);
+    if (E.Kind == ExprKind::Call && isX86FPStateIntrinsic(E.IntrinsicId)) {
+      const auto Shape = x86FPStateHighShape(E, Opts.TheArch);
+      if (!x86FPStateShapeIsValid(E.IntrinsicId, Shape))
+        llvm::report_fatal_error("invalid x86 FP state C contract");
+      const unsigned Bytes = x86FPStateHelperLayout(E.IntrinsicId, Shape);
+      auto [It, Inserted] =
+          X86FPStateHelpers.try_emplace(std::pair{E.IntrinsicId, Bytes});
+      if (Inserted)
+        It->second = GlobalIdentifierAllocator.allocate(
+            x86FPStateCHelper(E.IntrinsicId, Bytes), "nd_fp_state");
+    }
     if (E.Kind == ExprKind::UnaryOp && E.Op == NdOp::LZCOUNT &&
         !E.Operands.empty() && E.Operands[0]) {
       const unsigned Bits = countedBits(*E.Operands[0]);
@@ -2832,6 +2846,7 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
               [&](const HighStmt &Stmt) { forEachExpr(Stmt, Visit); });
   }
   writeX87CHelpers(OS, UsesX87Extended, X87Helpers);
+  writeX86FPStateCHelpers(OS, X86FPStateHelpers);
   writeMemoryHelpers();
   writeX64SyscallHelper();
   writeX64WindowsSyscallHelper();

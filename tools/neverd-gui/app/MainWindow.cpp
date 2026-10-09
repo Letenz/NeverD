@@ -4,6 +4,7 @@
 #include "CodeView.h"
 #include "ConnectionsDialog.h"
 #include "DisassemblyView.h"
+#include "Docking.h"
 #include "ExtensionsView.h"
 #include "GraphView.h"
 #include "HexView.h"
@@ -160,6 +161,7 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
       session_(session), mcp_(mcp), broker_(broker), actions_(this) {
   instance_ = this;
   setWindowIcon(icon(QStringLiteral("app")));
+  setCenterWidgetMargins(dockAreaMargins());
   setAcceptDrops(true);
   // Mouse Back/Forward buttons walk the navigation history anywhere inside.
   qApp->installEventFilter(this);

@@ -16,6 +16,7 @@
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86StringCompare.h"
 #include "neverd/lift/X86Lifter.h"
 
 #include <algorithm>
@@ -529,14 +530,18 @@ bool liftSIMDCompare(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       uint64_t Sel;
       uint64_t Reg;
     } StatusFlags[] = {
-        {0, x86reg::CF}, {1, x86reg::ZF}, {2, x86reg::SF}, {3, x86reg::OF}};
+#define X86_STRING_COMPARE_FLAG(SELECTOR, FLAG, SUFFIX)                        \
+  {SELECTOR, x86reg::FLAG},
+#include "neverd/ir/intrinsics/X86StringCompareFlags.def"
+    };
     uint64_t ImmVal = X86.operands[2].imm & 0xFF;
     for (const auto &F : StatusFlags) {
       NdVar Bit = S.makeTemp(1);
       // Pack the control imm (bits 0-7) and the flag selector (bits 8-9) into a
       // single operand so the explicit form stays within the 6-input INTRINSIC
       // limit (A/LA/B/LB/immsel + the intrinsic code).
-      NdVar ImmSel = NdVar::cst(ImmVal | (F.Sel << 8), 2);
+      NdVar ImmSel =
+          NdVar::cst(ImmVal | (F.Sel << kX86StringCompareFlagShift), 2);
       if (IsExplicit)
         S.emitIntrinsic(FlagId, Bit, {A, La, B, Lb, ImmSel});
       else

@@ -171,6 +171,7 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
   const CallArgumentConvention *Convention =
       callArgumentConvention(TargetArch, Fmt);
   bool Marked = false;
+  std::optional<int> FirstVariadicRegister;
   switch (TargetArch) {
   case Arch::X64:
     Marked = hasX64VariadicPrologue(S);
@@ -179,9 +180,13 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
     Marked = hasI386VariadicPrologue(S);
     break;
   case Arch::AArch64:
-    Marked = Convention && Convention->VariadicArgumentsOnStack
-                 ? hasDarwinVariadicPrologue(S)
-                 : hasAAPCS64VariadicPrologue(S);
+    if (Convention && Convention->VariadicArgumentsOnStack) {
+      Marked = hasDarwinVariadicPrologue(S);
+    } else {
+      Marked = hasAAPCS64VariadicPrologue(S);
+      if (Marked)
+        FirstVariadicRegister = aapcs64FirstVariadicRegister(S);
+    }
     break;
   case Arch::ARM:
     Marked = hasAAPCS32VariadicPrologue(S);
@@ -210,6 +215,7 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
   Func.IsVariadic = true;
   Func.VariadicOverflowBase =
       Base.value_or(TRI.CallPushesReturnAddress ? TRI.PointerSize : 0);
+  Func.VariadicFirstRegister = FirstVariadicRegister.value_or(-1);
 }
 
 } // namespace neverd

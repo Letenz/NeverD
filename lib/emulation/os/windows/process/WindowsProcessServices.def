@@ -32,8 +32,10 @@ NEVERD_WINDOWS_PROCESS_API(HeapSize, Kernel, 3, true)
 NEVERD_WINDOWS_PROCESS_API(ZwOpenFile, Native, 6, true)
 // Read-only SEC_COMMIT section of a file opened above.
 NEVERD_WINDOWS_PROCESS_API(ZwCreateSection, Native, 7, true)
+// Read-only views of the resident modeled providers in the KnownDlls namespace.
+NEVERD_WINDOWS_PROCESS_API(ZwOpenSection, Native, 3, true)
 // The call has ten arguments. The process record holds eight, and the model
-// reads the trailing allocation type and protection from the x64 stack.
+// reads the trailing allocation type and protection through IntegerABI.
 NEVERD_WINDOWS_PROCESS_API(ZwMapViewOfSection, Native, 8, true)
 NEVERD_WINDOWS_PROCESS_API(ZwUnmapViewOfSection, Native, 2, true)
 NEVERD_WINDOWS_PROCESS_API(ZwClose, Native, 1, true)
@@ -42,9 +44,9 @@ NEVERD_WINDOWS_PROCESS_API(ZwProtectVirtualMemory, Native, 5, true)
 NEVERD_WINDOWS_PROCESS_API(ZwQuerySystemInformation, Native, 4, true)
 // ProcessBasicInformation for the current process only.
 NEVERD_WINDOWS_PROCESS_API(ZwQueryInformationProcess, Native, 5, true)
-// ThreadBasicInformation for the current thread only.
+// ThreadBasicInformation and ThreadHideFromDebugger for the current thread.
 NEVERD_WINDOWS_PROCESS_API(ZwQueryInformationThread, Native, 5, true)
-// ThreadHideFromDebugger for the current thread. The call is acknowledged.
+// Current-thread hiding state and the reported single-processor affinity.
 NEVERD_WINDOWS_PROCESS_API(ZwSetInformationThread, Native, 4, true)
 // Nonalertable relative intervals within DelayCapNanoseconds use the host
 // clock. Absolute, alertable and longer delays stop without claiming

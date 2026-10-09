@@ -14,6 +14,7 @@
 
 #include "neverd/loader/COFF/COFFLoader.h"
 
+#include "COFFObjectExterns.h"
 #include "COFFObjectView.h"
 
 #include "neverd/Limits.h"
@@ -265,6 +266,18 @@ COFFLoader::load(const std::filesystem::path &Path) {
     Img.Sections.push_back(std::move(Sec));
   }
 
+  // The undefined and common symbols of an object take addresses past every
+  // section, beside the import pointers its `__imp_` symbols name.
+  coff_loader::ObjectExterns Externs;
+  if (IsRelocatable) {
+    auto PlanOr =
+        coff_loader::planObjectExterns(Obj, SectionVAs, NextRelocatableVA);
+    if (!PlanOr)
+      return PlanOr.takeError();
+    Externs = std::move(*PlanOr);
+    coff_loader::addObjectExterns(Externs, Img.Arch, Img);
+  }
+
   // --- COFF Relocations ---
   for (const SectionRef &SecRef : Obj.sections()) {
     const unsigned SectionID = Obj.getSectionID(SecRef);
@@ -294,6 +307,25 @@ COFFLoader::load(const std::filesystem::path &Path) {
 
   // --- Apply relocations for .obj files ---
   if (IsRelocatable) {
+    // An undefined symbol resolves to its extern address: a common one to its
+    // storage, an `__imp_` one to its cell, a branch to the import.
+    auto resolveExtern =
+        [&](const llvm::object::SymbolRef &Sym, COFFSymbolRef CoffSym,
+            uint32_t RType, uint64_t RAddr,
+            const Segment &ApplySeg) -> std::optional<std::pair<va_t, va_t>> {
+      if (CoffSym.getSectionNumber() != llvm::COFF::IMAGE_SYM_UNDEFINED)
+        return std::nullopt;
+      auto NameOr = Sym.getName();
+      if (!NameOr) {
+        llvm::consumeError(NameOr.takeError());
+        return std::nullopt;
+      }
+      const bool Branch =
+          coff_loader::isBranchReference(Obj.getMachine(), RType, ApplySeg.Data,
+                                         RAddr, ApplySeg.isExecutable());
+      return coff_loader::resolveObjectExtern(Externs, *NameOr,
+                                              CoffSym.getValue() != 0, Branch);
+    };
     for (const SectionRef &SecRef : Obj.sections()) {
       const coff_section *ApplySec = Obj.getCOFFSection(SecRef);
       if (!ApplySec)
@@ -332,6 +364,10 @@ COFFLoader::load(const std::filesystem::path &Path) {
             continue;
           SymOwnerVA = SectionVAs[SymbolSection];
           SymVal = SectionVAs[SymbolSection] + CoffSym.getValue();
+        } else if (std::optional<std::pair<va_t, va_t>> Extern = resolveExtern(
+                       *SymIt, CoffSym, RType, RAddr, *ApplySeg)) {
+          SymVal = Extern->first;
+          SymOwnerVA = Extern->second;
         } else {
           auto SymAddrOrErr = SymIt->getAddress();
           if (SymAddrOrErr) {

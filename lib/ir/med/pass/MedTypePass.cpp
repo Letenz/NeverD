@@ -16,6 +16,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
 
 #include <algorithm>
@@ -66,6 +67,57 @@ fpReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
   if (It == Defs.end())
     return 0;
   const MedOp *Def = It->second;
+  if ((Def->Opcode == NdOp::SUBBYTES && Def->NumInputs == 2 &&
+       Def->Inputs[1].isConst()) ||
+      (Def->Opcode == NdOp::COPY && Def->NumInputs == 1)) {
+    const MedVar *Carrier = &V;
+    uint64_t Offset = 0;
+    const unsigned Bytes = V.Size;
+    bool CompleteSpan = true;
+    for (unsigned Step = 0; Step < 16 && !Carrier->isConst(); ++Step) {
+      const auto Producer = Defs.find({Carrier->Id, Carrier->SSAVer});
+      if (Producer == Defs.end())
+        break;
+      const MedOp &Source = *Producer->second;
+      if (Offset > Source.Output.Size || Bytes > Source.Output.Size - Offset)
+        CompleteSpan = false;
+      if (Source.Opcode == NdOp::INTRINSIC && Source.NumInputs &&
+          Source.Inputs[0].isConst()) {
+        const auto Id = static_cast<Intrinsic>(Source.Inputs[0].ConstVal);
+        if (isX86FPStateIntrinsic(Id))
+          return CompleteSpan
+                     ? static_cast<uint16_t>(x86FPStateNumericalSliceSize(
+                           Id, x86FPStateMedShape(Source), Offset, Bytes))
+                     : 0;
+      }
+      if (Source.Opcode == NdOp::SUBBYTES && Source.NumInputs == 2 &&
+          Source.Inputs[1].isConst()) {
+        const uint64_t NextOffset = Source.Inputs[1].ConstVal;
+        // Keeping the complete span prevents a high or shortened view of
+        // a numerical slice from inheriting its original scalar FP width.
+        if (NextOffset > Source.Inputs[0].Size ||
+            Offset > Source.Inputs[0].Size - NextOffset ||
+            Bytes > Source.Inputs[0].Size - NextOffset - Offset)
+          return 0;
+        Offset += NextOffset;
+      } else if (Source.Opcode == NdOp::COPY && Source.NumInputs == 1) {
+        // A later widening copy cannot recover bytes an earlier copy lost.
+        // Track that loss to the state owner without changing the existing
+        // inference contract for ordinary FLOAT producers.
+        if (Offset > Source.Inputs[0].Size ||
+            Bytes > Source.Inputs[0].Size - Offset)
+          CompleteSpan = false;
+      } else
+        break;
+      Carrier = &Source.Inputs[0];
+    }
+  }
+  // The state primitive's aggregate and MXCSR words are raw carriers. Only
+  // its exact numerical slice above establishes a scalar FP return.
+  if (Def->Opcode == NdOp::INTRINSIC && Def->NumInputs &&
+      Def->Inputs[0].isConst() &&
+      isX86FPStateIntrinsic(static_cast<Intrinsic>(Def->Inputs[0].ConstVal)))
+    return 0;
   if (Def->Opcode == NdOp::INTRINSIC && Def->NumInputs >= 3 &&
       Def->Inputs[0].isConst() &&
       static_cast<Intrinsic>(Def->Inputs[0].ConstVal) ==
@@ -1274,8 +1326,9 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
   Func.FPReturnViaX87 = false;
 }
 
-void propagateARMForwardedPointerParams(std::vector<MedFunc> &Funcs) {
-  const auto &TRI = getTargetRegInfo(Arch::ARM);
+void propagateForwardedPointerParams(std::vector<MedFunc> &Funcs,
+                                     Arch TheArch) {
+  const auto &TRI = getTargetRegInfo(TheArch);
   std::map<va_t, size_t> ByEntry;
   for (size_t I = 0; I < Funcs.size(); ++I) {
     ByEntry.emplace(Funcs[I].Entry, I);

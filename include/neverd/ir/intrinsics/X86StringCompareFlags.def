@@ -1,0 +1,27 @@
+//===- X86StringCompareFlags.def - PCMPxSTRx status flags -------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// X86_STRING_COMPARE_FLAG(SELECTOR, FLAG, SUFFIX)
+//
+//   SELECTOR  The number a PcmpistrFlag or PcmpestrFlag intrinsic names the
+//             flag by, above the instruction's control byte in its immediate
+//             operand (X86StringCompare.h).
+//   FLAG      The x86reg flag the SSE4.2 string compare sets.
+//   SUFFIX    The letter that ends the C intrinsic reading that flag
+//             (_mm_cmpistrc, _mm_cmpestrz).
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef X86_STRING_COMPARE_FLAG
+#define X86_STRING_COMPARE_FLAG(SELECTOR, FLAG, SUFFIX)
+#endif
+
+X86_STRING_COMPARE_FLAG(0, CF, "c")
+X86_STRING_COMPARE_FLAG(1, ZF, "z")
+X86_STRING_COMPARE_FLAG(2, SF, "s")
+X86_STRING_COMPARE_FLAG(3, OF, "o")
+
+#undef X86_STRING_COMPARE_FLAG

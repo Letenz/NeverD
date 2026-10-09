@@ -14,6 +14,7 @@ add_custom_command(
 add_neverd_component_library(NeverDLoader
   COFF/COFFLoader.cpp
   COFF/COFFLoaderUtils.cpp
+  COFF/COFFObjectExterns.cpp
   COFF/COFFObjectView.cpp
   COFF/PEImports.cpp
   COFF/PEFixedImage.cpp
@@ -51,6 +52,7 @@ add_neverd_component_library(NeverDLoader
   ELF/ARMEHABITypeTable.cpp
   ELF/ARMEHABIUnwind.cpp
   ELF/ELFLoader.cpp
+  ELF/ELFLoaderExterns.cpp
   ELF/ELFLoaderRelocations.cpp
   ELF/ELFLoaderSections.cpp
   ELF/ELFLoaderSegments.cpp
@@ -71,6 +73,7 @@ add_neverd_component_library(NeverDLoader
   Go/GoRuntimeEH.cpp
   Go/GoStackMaps.cpp
   Loader.cpp
+  ObjectExterns.cpp
   PointerRelocation.cpp
   MachO/DarwinRuntimeCalls.cpp
   MachO/DarwinSourceDeclarations.cpp
@@ -91,6 +94,7 @@ add_neverd_component_library(NeverDLoader
   MachO/MachOExecutionImage.cpp
   MachO/MachOLoaderUtils.cpp
   MachO/MachOLocalFunction.cpp
+  MachO/MachOObjectExterns.cpp
   MachO/SourceRegisterCopy.cpp
   MachO/SourceLocalCall.cpp
   ObjC/ObjCClassGetterCalls.cpp

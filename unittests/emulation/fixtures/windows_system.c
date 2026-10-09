@@ -185,6 +185,7 @@ static void clocks(void **Modules) {
               GetLastError() == LastErrorSeed,
           42);
 }
+#include "WindowsSectionFixture.inc"
 U32 entry(void) {
   U32 Mode = LoadMode;
   for (const U16 *P = GetCommandLineW(); *P; ++P)
@@ -204,6 +205,10 @@ U32 entry(void) {
     GetProcAddress(Modules[0], (const char *)(U64)QueryOrdinal);
   if (Mode == ClocksMode)
     clocks(Modules);
+  if (Mode == SectionsMode || Mode == SectionNamespaceMode ||
+      Mode == SectionAccessMode || Mode == SectionFixedMode ||
+      Mode == SectionOffsetMode)
+    sections(Modules[2], Mode);
   if (Mode == AbsoluteDelayMode) {
     U32 (*Delay)(U8, const long long *) =
         lookup(Modules[2], "ZwDelayExecution");

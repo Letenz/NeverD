@@ -94,6 +94,33 @@ inline std::string symbolOfImportName(llvm::StringRef Name, BinaryFormat Format,
                                       : Name.str();
 }
 
+/// The name an import entry gives the function symbol \p Symbol links: on a
+/// format whose import entries name C names, the C name without the argument
+/// bytes a stdcall or fastcall name carries (SymbolDecorations.def), so that
+/// `__imp__Sleep@4` imports `Sleep`.
+inline llvm::StringRef importNameOfSymbol(llvm::StringRef Symbol,
+                                          BinaryFormat Format, Arch Target) {
+  if (!importNamesAreCNames(Format))
+    return Symbol;
+  llvm::StringRef Name = cNameOfSymbol(Symbol, Format, Target);
+  bool ArgumentBytes = false;
+#define NEVERD_ABI_ARGUMENT_BYTES_SUFFIX(FormatId, ArchId)                     \
+  if (Format == BinaryFormat::FormatId && Target == Arch::ArchId)              \
+    ArgumentBytes = true;
+#include "neverd/loader/SymbolDecorations.def"
+  // A Microsoft C++ name spells its own `@`s.
+  if (!ArgumentBytes || Name.starts_with("?"))
+    return Name;
+  const size_t At = Name.rfind('@');
+  if (At == llvm::StringRef::npos || At + 1 == Name.size() ||
+      Name.drop_front(At + 1).find_first_not_of("0123456789") !=
+          llvm::StringRef::npos)
+    return Name;
+  Name = Name.take_front(At);
+  Name.consume_front("@");
+  return Name;
+}
+
 } // namespace neverd
 
 #endif // NEVERD_LOADER_SYMBOLDECORATION_H

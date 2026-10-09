@@ -521,6 +521,7 @@ INSTANTIATE_TEST_SUITE_P(Fixtures, UnpackBackends, testing::ValuesIn(Fixtures),
 TEST(UnpackOptions, DefaultsDeferUnmodeledLoaderFacts) {
   const UnpackOptions Options;
   EXPECT_EQ(Options.Transfer, 0u);
+  EXPECT_FALSE(Options.SnapshotOnly);
   EXPECT_EQ(Options.Process.Limits.Instructions, defaults::Instructions);
   EXPECT_EQ(Options.Process.MemoryLimit, defaults::Memory);
   ASSERT_TRUE(Options.Process.Windows);
@@ -545,6 +546,17 @@ TEST(UnpackOptions, DecodingIsStrictAndKeepsUnpackingDefaults) {
   ASSERT_TRUE(bool(Strict)) << llvm::toString(Strict.takeError());
   ASSERT_TRUE(Strict->Process.Windows);
   EXPECT_FALSE(Strict->Process.Windows->DeferUnmodeled);
+
+  auto Snapshot = unpackOptionsFromJSON("{\"snapshot_only\":true}");
+  ASSERT_TRUE(bool(Snapshot)) << llvm::toString(Snapshot.takeError());
+  EXPECT_TRUE(Snapshot->SnapshotOnly);
+  for (const char *Invalid :
+       {"{\"snapshot_only\":null}", "{\"snapshot_only\":1}",
+        "{\"snapshot_only\":\"true\"}"}) {
+    auto Rejected = unpackOptionsFromJSON(Invalid);
+    EXPECT_FALSE(bool(Rejected)) << Invalid;
+    llvm::consumeError(Rejected.takeError());
+  }
 
   for (const char *Invalid : {UnknownOption, ZeroTransfer, "[]", ""}) {
     auto Rejected = unpackOptionsFromJSON(Invalid);

@@ -63,6 +63,19 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "PRIO_PROCESS")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "id_t")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "process-priority")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "virtual-process-priority")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "getattrlist")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "fgetattrlist")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "getattrlistat")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ATTR_CMN_RETURNED_ATTRS")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "FSOPT_REPORT_FULLSIZE")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "FSOPT_PACK_INVAL_ATTRS")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "FSOPT_NOFOLLOW_ANY")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "common-attributes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "common-attributes-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "common-attributes-unsupported")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "kernel-pathconf")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "kernel-pathconf-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "kernel-pathconf-unsupported")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "getpgrp")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "getpgid")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "getsid")
@@ -629,7 +642,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
 NEVERD_EMULATION_DOC_TOKEN(
     NativeDriverCI,
-    "5018 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5380")
+    "5033 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5395")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -1324,6 +1337,11 @@ NEVERD_EMULATION_DOC_PATH(Unpack, "docs/{locale}/unpack.md")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "stack_balanced")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "entry_source")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "no_entry")
+NEVERD_EMULATION_DOC_TOKEN(Unpack, "unsupported_state")
+NEVERD_EMULATION_DOC_TOKEN(Unpack, "snapshot_only")
+NEVERD_EMULATION_DOC_TOKEN(Unpack, "runtime_state.heap_inventory_known")
+NEVERD_EMULATION_DOC_TOKEN(Unpack, "possible_heap_references")
+NEVERD_EMULATION_DOC_TOKEN(Unpack, "heap_references")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "windows.defer_unmodeled")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "IMAGE_FILE_RELOCS_STRIPPED")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "import_repair")
@@ -1351,6 +1369,9 @@ NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "ProcessObserver")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "WindowsLibraryHost.cpp")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "ProcessView::inputModule()")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "ProcessView::callFrame()")
+NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "ProcessView::heapAllocations()")
+NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "core/Unpack.cpp")
+NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "dynamic/ProcessTransfer.cpp")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "IntegerABI")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "ExportObserver")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "exporting")
@@ -1362,6 +1383,13 @@ NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "NeverDUnpackExecutionTests")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "NeverDUnpackPublicTests")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "WindowsDeferredTests.cpp")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "UnpackGeneratedTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(
+    UnpackTests, "LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage")
+NEVERD_EMULATION_DOC_TOKEN(
+    UnpackTests, "ExplicitSnapshotsKeepExternalHeapDependenciesVisible")
+NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "ReleasedHeapStateDoesNotBlockRecovery")
+NEVERD_EMULATION_DOC_TOKEN(UnpackTests,
+                           "HeapReferencesInCapturedTLSCannotBeDiscarded")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "UnpackLibraryTests.cpp")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "ExportObserver")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests,
@@ -1699,6 +1727,7 @@ NEVERD_EMULATION_DOC_TOKEN(
     GeneratedTLSStorage,
     "WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback")
 NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage, "WindowsDeferredCases.def")
+
 NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage, ".gentls")
 NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage,
                            "IMAGE_SCN_CNT_UNINITIALIZED_DATA")
@@ -1732,4 +1761,43 @@ NEVERD_EMULATION_DOC_TOKEN(NativeMethodSerialPolicy,
 NEVERD_EMULATION_DOC_TOKEN(NativeMethodSerialPolicy,
                            "NativeMethodExecution.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeMethodSerialPolicy, "RUN_SERIAL")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WindowsImageSections, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WindowsImageSections, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WindowsImageSectionTests, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsImageSectionTests, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "ZwOpenSection")
+NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "KnownDlls")
+NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "MEM_IMAGE")
+NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "IntegerABI")
+NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "0x11")
+NEVERD_EMULATION_DOC_TOKEN(WindowsImageSectionTests, "WindowsSectionFixture.inc")
+NEVERD_EMULATION_DOC_TOKEN(WindowsImageSectionTests, "WindowsThreadFixture.inc")
+#endif
+
+// Additional ordinary attribute read vocabulary.
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "getxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "fgetxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "listxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "flistxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended_attributes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes-unsupported")
+#endif
+
+// Bounded variable-length object-name vocabulary.
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ATTR_CMN_NAME=1")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attrreference_t")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attr_dataoffset")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attr_length")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names-unsupported")
 #endif

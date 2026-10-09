@@ -11,20 +11,26 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../X86FPStateHelpers.h"
+
 #include "neverd/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/c/render/X86SegmentAsm.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/ir/high/X86FPStateShape.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
+#include "neverd/ir/intrinsics/X86StringCompare.h"
 #include "neverd/lift/X86Regs.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <cctype>
 #include <limits>
 #include <string>
@@ -1265,7 +1271,16 @@ bool x86UsesImplicitRegisterAsm(Intrinsic Id) {
 }
 
 bool x86UsesGnuIntrinsicHeader(Intrinsic Id) {
-  return Id == Intrinsic::PrefetchW;
+  switch (Id) {
+  case Intrinsic::PrefetchW:
+  // __readeflags and __writeeflags (ia32intrin.h), which immintrin.h does
+  // not declare.
+  case Intrinsic::Pushf:
+  case Intrinsic::Popf:
+    return true;
+  default:
+    return false;
+  }
 }
 
 bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id) {
@@ -1408,6 +1423,53 @@ std::string x86VectorCType(llvm::StringRef CName, uint16_t Bytes) {
                     : "");
 }
 
+/// An SSE4.2 string compare (PCMPISTRI/M, PCMPESTRI/M), or a status flag one
+/// leaves: its strings convert to __m128i and its explicit lengths to int,
+/// its control byte stays the constant it is, and a mask comes back as the
+/// 16 bytes HighC carries.  A flag's intrinsic ends with the letter of the
+/// flag its selector names (X86StringCompare.h).  Empty for any other call.
+std::string
+renderX86StringCompare(const HighExpr &Call,
+                       std::function<std::string(const HighExpr &)> &ExprFn,
+                       bool &HasCIntrinsics) {
+  using I = Intrinsic;
+  const I Id = Call.IntrinsicId;
+  const bool Explicit =
+      Id == I::Pcmpestri || Id == I::Pcmpestrm || Id == I::PcmpestrFlag;
+  const bool Flag = Id == I::PcmpistrFlag || Id == I::PcmpestrFlag;
+  const bool Mask = Id == I::Pcmpistrm || Id == I::Pcmpestrm;
+  const char *CName = intrinsicCName(Id);
+  if ((!Explicit && !Flag && !Mask && Id != I::Pcmpistri) || !CName ||
+      Call.Operands.size() != (Explicit ? 5u : 3u) ||
+      llvm::any_of(Call.Operands, [](const ExprPtr &Op) { return !Op; }) ||
+      Call.Operands.back()->Kind != ExprKind::Const)
+    return {};
+  const uint64_t Immediate = Call.Operands.back()->ConstVal;
+  std::string Name = CName;
+  if (Flag) {
+    const char *Suffix =
+        x86StringCompareFlagSuffix(Immediate >> kX86StringCompareFlagShift);
+    if (!Suffix)
+      return {};
+    Name += Suffix;
+  }
+  auto String = [&](size_t Index) {
+    return "__builtin_bit_cast(__m128i, (unsigned __int128)(" +
+           ExprFn(*Call.Operands[Index]) + "))";
+  };
+  auto Length = [&](size_t Index) {
+    return "(int)(" + ExprFn(*Call.Operands[Index]) + ")";
+  };
+  const std::string Strings = Explicit ? String(0) + ", " + Length(1) + ", " +
+                                             String(2) + ", " + Length(3)
+                                       : String(0) + ", " + String(1);
+  const std::string Text =
+      Name + "(" + Strings + ", " +
+      std::to_string(Immediate & kX86StringCompareControlMask) + ")";
+  HasCIntrinsics = true;
+  return Mask ? "__builtin_bit_cast(unsigned __int128, " + Text + ")" : Text;
+}
+
 /// An x86 vector intrinsic over registers HighC carries as same-width
 /// integers: each register operand converts to the intrinsic's vector type,
 /// and its result back.  Empty when \p Call is no such intrinsic.
@@ -1454,11 +1516,41 @@ renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
 }
 } // namespace
 
-std::string
-renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
-                            std::function<std::string(const HighExpr &)> ExprFn,
-                            bool &HasCIntrinsics, bool GnuToolchain) {
+std::string renderX86TypedIntrinsicCall(
+    Arch TheArch, const HighExpr &Call,
+    std::function<std::string(const HighExpr &)> ExprFn, bool &HasCIntrinsics,
+    bool GnuToolchain,
+    std::function<std::string(Intrinsic, unsigned)> FPHelperName) {
   using I = Intrinsic;
+  if (isX86FPStateIntrinsic(Call.IntrinsicId)) {
+    const unsigned ResultBytes = Call.Type ? Call.Type->Size : 0;
+    if (ResultBytes && Call.Type->Kind != NdTypeKind::Int)
+      llvm::report_fatal_error(
+          "x86 FP numerical/state result requires raw bits");
+    const auto Shape = x86FPStateHighShape(Call, TheArch);
+    if (!x86FPStateShapeIsValid(Call.IntrinsicId, Shape))
+      llvm::report_fatal_error("invalid x86 FP state C contract");
+    const unsigned Bytes = x86FPStateHelperLayout(Call.IntrinsicId, Shape);
+    std::string Result =
+        (FPHelperName ? FPHelperName(Call.IntrinsicId, Bytes)
+                      : x86FPStateCHelper(Call.IntrinsicId, Bytes)) +
+        "(";
+    const unsigned Operands = isX86FPConversionStateIntrinsic(Call.IntrinsicId)
+                                  ? 2
+                                  : Call.Operands.size();
+    for (unsigned Index = 0; Index < Operands; ++Index) {
+      if (Index)
+        Result += ", ";
+      const auto &Operand = *Call.Operands[Index];
+      const auto Text = ExprFn(Operand);
+      if (Operand.Type && Operand.Type->Kind == NdTypeKind::Float)
+        Result += "__builtin_bit_cast(uint" +
+                  std::to_string(Operand.Type->Size * 8) + "_t, " + Text + ")";
+      else
+        Result += Text;
+    }
+    return Result + ")";
+  }
   if (Call.IntrinsicId == I::X87Ffree) {
     if ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
         Call.Operands.size() != 2 || !Call.Operands[1] ||
@@ -1554,6 +1646,11 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
            ExprFn(*Call.Operands[1]) + "), (void *)(uintptr_t)(" +
            ExprFn(*Call.Operands[0]) + "))";
   }
+  if (TheArch == Arch::X86 || TheArch == Arch::X64)
+    if (std::string Compare =
+            renderX86StringCompare(Call, ExprFn, HasCIntrinsics);
+        !Compare.empty())
+      return Compare;
   const bool IsGfni = Call.IntrinsicId == I::Gf2p8MulB ||
                       Call.IntrinsicId == I::Gf2p8AffineQb ||
                       Call.IntrinsicId == I::Gf2p8AffineInvQb;

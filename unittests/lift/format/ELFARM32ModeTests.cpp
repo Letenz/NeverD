@@ -800,7 +800,7 @@ TEST_F(ELFARM32ModeTest, PointerRoleFollowsOnlyExactEntryForwarding) {
   AddForward(Redefined, 0x3000, Later);
 
   std::vector<MedFunc> Functions{Outer, Middle, Leaf, Redefined};
-  propagateARMForwardedPointerParams(Functions);
+  propagateForwardedPointerParams(Functions, Arch::ARM);
   for (size_t I : {0u, 1u, 2u}) {
     ASSERT_EQ(Functions[I].TypedParams.size(), 1u);
     ASSERT_TRUE(Functions[I].TypedParams[0].Type);

@@ -15,10 +15,22 @@ NEVERD_UNPACK_FORMAT_MODULE(PE64, pe)
 NEVERD_UNPACK_VALUE(PageSize, 4096)
 NEVERD_UNPACK_VALUE(MaxImportHelperSites, 256)
 NEVERD_UNPACK_VALUE(ImportLookbackBytes, 256)
+NEVERD_UNPACK_VALUE(HeapReferenceRecords, 64)
+NEVERD_UNPACK_VALUE(PointerBytes, 8)
 #endif
 
 #ifdef NEVERD_UNPACK_PRIVATE_TEXT
 NEVERD_UNPACK_PRIVATE_TEXT(ImportRepairSetupFailed, "setup_failure")
+NEVERD_UNPACK_PRIVATE_TEXT(
+    ExternalHeapState,
+    "the captured image or TLS bytes contain possible references to live "
+    "process heap allocations; "
+    "their state is not reconstructed (snapshot_only emits analysis bytes)")
+NEVERD_UNPACK_PRIVATE_TEXT(
+    UnknownHeapState, "the process profile has no live heap inventory contract "
+                      "(snapshot_only emits analysis bytes)")
+NEVERD_UNPACK_PRIVATE_TEXT(HeapInventory,
+                           "the process heap inventory has invalid extents")
 NEVERD_UNPACK_PRIVATE_TEXT(ImportHelperLimit,
                            "import-helper candidate limit reached")
 // Rebuilt metadata lives in one appended extent so that no original byte of
