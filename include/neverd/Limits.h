@@ -182,6 +182,12 @@ constexpr uint32_t kMaxJumpTableTerminalUseEvidenceWork = 16777216;
 /// call stack before the work counter can fail the proof closed.
 constexpr uint32_t kMaxJumpTableGuardExpressionDepth = 64;
 
+/// Blocks searched straight back through single predecessors for an earlier
+/// load of the address a table index loads again.  GCC bounds a switch on a
+/// structure field as `cmp dword [rcx], 6; ja default` and loads the index
+/// with `mov eax, [rcx]` in the next block.
+constexpr uint32_t kMaxJumpTableReloadSearchBlocks = 4;
+
 /// Target/address-role and mask fixed-point value reconstruction can cross
 /// several independently authenticated loop back edges in one expanded O0
 /// dispatch graph.  A 3-machine x64 selector reaches 65 distinct exact states
