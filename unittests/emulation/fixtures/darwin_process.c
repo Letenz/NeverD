@@ -1420,8 +1420,14 @@ static int mutable_initial_link_status(u64 dir, const char *name, u64 *record) {
       error || guarded[0] != 0xa5a5a5a5a5a5a5a5UL ||
       guarded[19] != 0xa5a5a5a5a5a5a5a5UL)
     return 0;
-  for (unsigned i = 0; i != 18; ++i)
+  for (unsigned i = 0; i != 16; i += 4) {
     record[i] = guarded[i + 1];
+    record[i + 1] = guarded[i + 2];
+    record[i + 2] = guarded[i + 3];
+    record[i + 3] = guarded[i + 4];
+  }
+  record[16] = guarded[17];
+  record[17] = guarded[18];
   return 1;
 }
 static int mutable_initial_link_identity(const u64 *before, const u64 *after,
@@ -1564,6 +1570,8 @@ static int mutable_initial_links(const char *path, int virtual_bytes) {
   return 37;
 }
 
+/* Fixed stat words retain every comparison; grouping only removes loop and
+ * per-word branch overhead from the original bounded workload. */
 static int directory_link_root_record(const u64 *before, const u64 *after,
                                       int virtual_bytes, u64 seconds,
                                       unsigned nanoseconds) {
@@ -1571,36 +1579,50 @@ static int directory_link_root_record(const u64 *before, const u64 *after,
       before[12] != after[12])
     return 0;
   if (virtual_bytes) {
-    for (unsigned i = 0; i != 18; ++i)
-      if (i != 8 && i != 9 && before[i] != after[i])
-        return 0;
-    return after[8] == seconds && after[9] == nanoseconds;
+    u64 different = 0;
+    for (unsigned i = 0; i != 8; i += 4)
+      different |= (before[i] ^ after[i]) | (before[i + 1] ^ after[i + 1]) |
+                   (before[i + 2] ^ after[i + 2]) |
+                   (before[i + 3] ^ after[i + 3]);
+    for (unsigned i = 10; i != 18; i += 4)
+      different |= (before[i] ^ after[i]) | (before[i + 1] ^ after[i + 1]) |
+                   (before[i + 2] ^ after[i + 2]) |
+                   (before[i + 3] ^ after[i + 3]);
+    return !different && after[8] == seconds && after[9] == nanoseconds;
   }
   return 1;
 }
 static int directory_link_root_unchanged(const u64 *before, const u64 *after,
                                          int virtual_bytes) {
-  for (unsigned i = 0; i != 18; ++i)
-    if ((virtual_bytes || i == 0 || i == 1 || i == 2 || i == 12) &&
-        before[i] != after[i])
-      return 0;
-  return 1;
+  if (!virtual_bytes)
+    return before[0] == after[0] && before[1] == after[1] &&
+           before[2] == after[2] && before[12] == after[12];
+  u64 different = (before[16] ^ after[16]) | (before[17] ^ after[17]);
+  for (unsigned i = 0; i != 16; i += 4)
+    different |= (before[i] ^ after[i]) | (before[i + 1] ^ after[i + 1]) |
+                 (before[i + 2] ^ after[i + 2]) |
+                 (before[i + 3] ^ after[i + 3]);
+  return !different;
 }
 static int directory_link_root_target(u64 dir, const char *name,
                                       const char *expected) {
   unsigned error = 0, length = 0;
-  unsigned char guarded[40];
-  for (unsigned i = 0; i != 40; ++i)
-    guarded[i] = 0xa5;
+  const u64 canary = 0xa5a5a5a5a5a5a5a5UL;
+  u64 guarded_words[5] = {canary, canary, canary, canary, canary};
+  u64 expected_words[5] = {canary, canary, canary, canary, canary};
+  unsigned char *guarded = (unsigned char *)guarded_words;
+  unsigned char *expected_bytes = (unsigned char *)expected_words;
   while (expected[length])
     ++length;
   if (call(473, dir, (u64)name, (u64)(guarded + 4), 32, 0, 0, &error) !=
           length ||
-      error)
+      error || length > 32)
     return 0;
-  for (unsigned i = 0; i != 40; ++i)
-    if (guarded[i] !=
-        (i >= 4 && i < 4 + length ? (unsigned char)expected[i - 4] : 0xa5))
+  for (unsigned i = 0; i != length; ++i)
+    expected_bytes[4 + i] = (unsigned char)expected[i];
+  // All 40 output/guard bytes remain compared, including the unwritten suffix.
+  for (unsigned i = 0; i != 5; ++i)
+    if (guarded_words[i] != expected_words[i])
       return 0;
   return 1;
 }
@@ -1676,9 +1698,16 @@ static int directory_link_roots(const char *path, int virtual_bytes) {
     ROOT_EXPECT(mutable_initial_link_status(a, "d", after));
     ROOT_EXPECT(directory_link_root_record(before, after, virtual_bytes,
                                            (u64)-13, 456));
-    if (i == 0)
-      for (unsigned word = 0; word != 18; ++word)
+    if (i == 0) {
+      for (unsigned word = 0; word != 16; word += 4) {
         captured[word] = after[word];
+        captured[word + 1] = after[word + 1];
+        captured[word + 2] = after[word + 2];
+        captured[word + 3] = after[word + 3];
+      }
+      captured[16] = after[16];
+      captured[17] = after[17];
+    }
     ROOT_EXPECT(directory_link_root_target(a, "d", targets[i]));
     ROOT_EXPECT(mutable_initial_link_status(b, names[i], after));
     ROOT_EXPECT(directory_link_root_record(directory, after, virtual_bytes,
@@ -1765,12 +1794,21 @@ static int enumeration_records(const unsigned char *bytes, u64 size,
     if (length != 32 || name_length > 7 || record[21 + name_length] ||
         little_integer(record + 8, 8))
       return 0;
-    for (u64 i = 21 + name_length; i != length; ++i)
-      if (record[i])
-        return 0;
+    const unsigned terminator = 21 + (unsigned)name_length;
+    // Every byte from the terminator through byte 31 must still be zero.
+    // Both shifts are below 64, and both fixed words stay inside this record.
+    if ((terminator < 24 &&
+         (little_integer(record + 16, 8) >> ((terminator - 16) * 8))) ||
+        (little_integer(record + 24, 8) >>
+         ((terminator < 24 ? 0 : terminator - 24) * 8)))
+      return 0;
     unsigned matched = count;
+    const u64 name_word = little_integer(record + 21, 8);
+    // Each expected Name[8] is a zero-filled original scalar array. Compare
+    // its complete bytes, including NUL/padding, without per-candidate scans.
     for (unsigned i = 0; i != count; ++i)
-      if (equal((const char *)record + 21, members[i].name))
+      if (name_word ==
+          little_integer((const unsigned char *)members[i].name, 8))
         matched = i;
     if (matched == count || (seen & (1U << matched)) ||
         little_integer(record, 8) != members[matched].inode ||
@@ -1782,7 +1820,7 @@ static int enumeration_records(const unsigned char *bytes, u64 size,
   return seen == (1U << count) - 1;
 }
 static int enumeration_view(u64 fd, const struct enumeration_member *members,
-                            unsigned count, unsigned char *capture) {
+                            unsigned count, u64 *capture) {
   unsigned error = 0;
   u64 guarded_words[130];
   unsigned char *guarded = (unsigned char *)guarded_words;
@@ -1807,20 +1845,19 @@ static int enumeration_view(u64 fd, const struct enumeration_member *members,
       guarded_words[128] != 0x00000001a5a5a5a5UL)
     return 0;
   /* Check every untouched byte; batching only reduces guest loop overhead. */
-  u64 corrupt = 0, i = 1 + size / 8;
+  u64 i = 1 + size / 8;
   for (; i + 8 <= 128; i += 8)
-    corrupt |=
-        (guarded_words[i] ^ canary) | (guarded_words[i + 1] ^ canary) |
-        (guarded_words[i + 2] ^ canary) | (guarded_words[i + 3] ^ canary) |
-        (guarded_words[i + 4] ^ canary) | (guarded_words[i + 5] ^ canary) |
-        (guarded_words[i + 6] ^ canary) | (guarded_words[i + 7] ^ canary);
+    if (guarded_words[i] != canary || guarded_words[i + 1] != canary ||
+        guarded_words[i + 2] != canary || guarded_words[i + 3] != canary ||
+        guarded_words[i + 4] != canary || guarded_words[i + 5] != canary ||
+        guarded_words[i + 6] != canary || guarded_words[i + 7] != canary)
+      return 0;
   for (; i != 128; ++i)
-    corrupt |= guarded_words[i] ^ canary;
-  if (corrupt)
-    return 0;
+    if (guarded_words[i] != canary)
+      return 0;
   if (capture)
-    for (u64 i = 0; i != size; ++i)
-      capture[i] = guarded[8 + i];
+    for (u64 i = 0; i != size / 8; ++i)
+      capture[i] = guarded_words[1 + i];
   return 1;
 }
 static int directory_enumeration_mutations(const char *path,
@@ -1845,7 +1882,8 @@ static int directory_enumeration_mutations(const char *path,
   parent[last ? last : 1] = 0;
   u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
   ENUM_EXPECT(!error);
-  unsigned char status[144], captured[160];
+  unsigned char status[144];
+  u64 captured[20];
   ENUM_EXPECT(call(339, root, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
   const u64 root_inode = little_integer(status + 8, 8);
   call(60, 0027, 0, 0, 0, 0, 0, &error);
