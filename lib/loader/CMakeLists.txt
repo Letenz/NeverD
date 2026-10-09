@@ -94,6 +94,7 @@ add_neverd_component_library(NeverDLoader
   MachO/MachOExecutionImage.cpp
   MachO/MachOLoaderUtils.cpp
   MachO/MachOLocalFunction.cpp
+  MachO/MachOObjectExterns.cpp
   MachO/SourceRegisterCopy.cpp
   MachO/SourceLocalCall.cpp
   ObjC/ObjCClassGetterCalls.cpp

@@ -2287,6 +2287,22 @@ foreach(coff_target "x86_64-pc-windows-msvc" "i686-pc-windows-msvc"
   list(APPEND TEST_OBJECTS ${coff_externs_obj})
 endforeach()
 
+# The ELF extern fixture as Mach-O objects, which reach data and some calls
+# through GOT entries.
+set(macho_externs_src "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_extern_calls.c")
+foreach(macho_target "x86_64-apple-macos11" "arm64-apple-macos11")
+  string(REGEX MATCH "^[a-z0-9_]+" macho_arch "${macho_target}")
+  set(macho_externs_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_extern_calls_macho_${macho_arch}.o")
+  add_custom_command(
+    OUTPUT ${macho_externs_obj}
+    COMMAND ${CLANG_EXEC} -target ${macho_target} -O2 -fcommon -c
+            ${macho_externs_src} -o ${macho_externs_obj}
+    DEPENDS ${macho_externs_src}
+    COMMENT "Compiling Mach-O extern fixture for ${macho_target}")
+  list(APPEND TEST_OBJECTS ${macho_externs_obj})
+endforeach()
+
 set(macho_i386_src
     "${CMAKE_CURRENT_SOURCE_DIR}/format/test_macho_i386.c")
 set(macho_i386_obj

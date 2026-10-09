@@ -237,6 +237,67 @@ TEST(ObjectExterns, COFFObjectsOnEveryMachine) {
   }
 }
 
+TEST(ObjectExterns, MachOObjectsOnEveryArchitecture) {
+  // A Mach-O object names its externs with the format's underscore and reaches
+  // data, and the addresses it takes, through GOT entries.
+  for (const char *Object : {"test_extern_calls_macho_x86_64.o",
+                             "test_extern_calls_macho_arm64.o"}) {
+    SCOPED_TRACE(Object);
+    const BinaryImage Img = loadFixture(Object);
+    ASSERT_FALSE(Img.Segments.empty());
+    std::set<std::string> Imports;
+    for (const Import &Imp : Img.Imports)
+      Imports.insert(Imp.Name);
+    for (const char *Called : {"_perror", "_exit", "_fputs"})
+      EXPECT_TRUE(Imports.count(Called)) << Called;
+
+    std::vector<va_t> Entries;
+    for (const char *Name : {"_die", "_put", "_bump", "_read_tentative"}) {
+      const Symbol *Sym = Img.findSymbol(Name);
+      ASSERT_NE(Sym, nullptr) << Name;
+      Entries.push_back(Sym->Addr);
+    }
+    llvm::LLVMContext Ctx;
+    PipelineOptions Opts;
+    Opts.EmitDumpOutput = false;
+    Opts.OnlyFunctionEntries.insert(Entries.begin(), Entries.end());
+    const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Img.Arch;
+    Options.Format = Img.Format;
+    Options.Image = &Img;
+    ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+
+    const std::string DieBody = definitionBody(Source, "die");
+    ASSERT_FALSE(DieBody.empty()) << Source;
+    EXPECT_NE(DieBody.find("perror("), std::string::npos) << DieBody;
+    EXPECT_NE(DieBody.find("exit("), std::string::npos) << DieBody;
+    EXPECT_EQ(DieBody.find("first("), std::string::npos) << DieBody;
+    const std::string PutBody = definitionBody(Source, "put");
+    ASSERT_FALSE(PutBody.empty()) << Source;
+    EXPECT_NE(PutBody.find("fputs("), std::string::npos) << PutBody;
+    // The data the GOT reaches prints by name or by the address it holds.
+    for (const auto &[Function, Data] :
+         {std::pair<const char *, const char *>{"bump", "_counter"},
+          {"read_tentative", "_tentative"}}) {
+      const Symbol *Target = dataSymbol(Img, Data);
+      ASSERT_NE(Target, nullptr) << Data;
+      const Segment *Storage = Img.getSegmentFor(Target->Addr);
+      ASSERT_NE(Storage, nullptr) << Data;
+      EXPECT_TRUE(Storage->isWritable()) << Data;
+      const std::string Body = definitionBody(Source, Function);
+      ASSERT_FALSE(Body.empty()) << Function << Source;
+      EXPECT_TRUE(Body.find(llvm::StringRef(Data).drop_front().str()) !=
+                      std::string::npos ||
+                  mentionsAddress(Body, Target->Addr))
+          << Function << Body;
+    }
+  }
+}
+
 TEST(ObjectExterns, LiftedModuleStoresOnlyIntoMutableGlobals) {
   // Another module defines what an extern holds and may change it: the
   // lifted module must not fold it into constant data or store into one.

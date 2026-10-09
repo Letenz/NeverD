@@ -432,6 +432,11 @@ MachOLoader::load(const std::filesystem::path &Path) {
     }
     if (NameOrErr->empty())
       continue;
+    // LLVM's local `ltmp<N>` marks where a section of an object starts, for
+    // the relocations that name it, at the address of whatever begins there:
+    // a function or a datum another symbol names.
+    if ((NType & llvm::MachO::N_EXT) == 0 && NameOrErr->starts_with("ltmp"))
+      continue;
 
     if (Img.Arch == Arch::ARM && IsSect)
       SymAddr = clearThumbBit(SymAddr);
