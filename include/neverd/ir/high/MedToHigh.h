@@ -339,13 +339,18 @@ private:
   /// Prefer a non-synthetic FuncNames entry, then an import or image symbol.
   std::string calleeDisplayName(va_t Target) const;
 
-  /// The fixed parameter count of the variadic C library import that call
-  /// \p CallIdx of \p Ops reaches by its stub or slot, else 0.
-  unsigned importVarArgFixedCount(size_t CallIdx,
-                                  const std::vector<MedOp> &Ops) const;
+  /// How many integer parameters the C library import that call \p CallIdx
+  /// of \p Ops reaches always reads: a variadic one's fixed parameters,
+  /// else all of them; 0 when unknown or when one is floating-point.  The
+  /// call names the import by its stub or slot, or through a register
+  /// loaded from \p ResolvedSlot.
+  unsigned importFixedArgCount(size_t CallIdx, const std::vector<MedOp> &Ops,
+                               va_t ResolvedSlot) const;
 
-  std::vector<ExprPtr> collectCallArgs(const MedBlock &CurBlock,
-                                       size_t CallIdx);
+  /// \p ResolvedSlot is the import slot an indirect call was resolved to
+  /// through the register it calls, else 0.
+  std::vector<ExprPtr> collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
+                                       va_t ResolvedSlot = 0);
 
   /// Resolve the SSA variable of register \p RegOff reaching the ENTRY of
   /// \p B (its live-in value: a PHI in B, else the single reaching definition

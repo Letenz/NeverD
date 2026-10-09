@@ -110,6 +110,42 @@ bool returnsRegisterPairI64(const MedFunc &MF, const TargetRegInfo &TRI) {
   return SawReturn;
 }
 
+// Whether \p MF gives register \p RegOff a value: an operation or a PHI
+// defining it, other than the identity copy that names its entry value.
+bool writesRegister(const MedFunc &MF, uint64_t RegOff) {
+  auto Defines = [&](const MedVar &V) {
+    return V.Kind == MedVar::Reg && V.RegOff == RegOff && V.Size > 0;
+  };
+  for (const auto &Blk : MF.Blocks) {
+    for (const auto &Phi : Blk.Phis)
+      if (Defines(Phi.Output))
+        return true;
+    for (const auto &Op : Blk.Ops) {
+      if (!Defines(Op.Output))
+        continue;
+      const bool EntryIdentity = Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
+                                 Op.Inputs[0].Kind == MedVar::Reg &&
+                                 Op.Inputs[0].RegOff == RegOff &&
+                                 Op.Inputs[0].Id == Op.Output.Id &&
+                                 Op.Inputs[0].SSAVer == Op.Output.SSAVer;
+      if (!EntryIdentity)
+        return true;
+    }
+  }
+  return false;
+}
+
+// Whether an operation of \p MF other than a PHI reads value \p V.
+bool readsOutsidePhis(const MedFunc &MF, const MedVar &V) {
+  for (const auto &Blk : MF.Blocks)
+    for (const auto &Op : Blk.Ops)
+      for (uint8_t I = 0; I < Op.NumInputs; ++I)
+        if (Op.Inputs[I].Kind == V.Kind && Op.Inputs[I].Id == V.Id &&
+            Op.Inputs[I].SSAVer == V.SSAVer && Op.Inputs[I].RegOff == V.RegOff)
+          return true;
+  return false;
+}
+
 // Resolve a call-target operand to its absolute VA, folding the COPY / INT_ADD
 // / INT_SUB / literal-pool LOAD chain the emitter resolves — so an ARM32
 // PC-relative function pointer (`add rT, pc, [litpool]`), which never appears
@@ -397,6 +433,70 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
               if (TargetI64 || HasAddrTakenI64)
                 IndirectI64SitesByFunc[MF.Entry].insert(Op.Addr);
             }
+      }
+    }
+
+    // A widened call is no proof by itself: its caller may carry the high
+    // register past it in a loop, or keep a value there the callee leaves
+    // alone (GCC -fipa-ra).  A lifted callee returns a pair where it
+    // computes the high register and a caller reads the high half outside a
+    // PHI, or where every return defines it (an accumulator the caller
+    // threads around a loop), or where it tail-calls a callee that returns
+    // one: a widened function, or an import a caller reads the high half
+    // of.  One that never writes the register returns only what a tail call
+    // passes on.
+    {
+      std::map<va_t, const MedFunc *> ByEntry;
+      for (const auto &MF : Result.MedFuncs)
+        ByEntry[MF.Entry] = &MF;
+      std::set<va_t> ReadHigh;
+      for (const auto &MF : Result.MedFuncs)
+        for (const auto &Blk : MF.Blocks)
+          for (size_t I = 0; I + 1 < Blk.Ops.size(); ++I) {
+            const MedOp &Call = Blk.Ops[I];
+            if (Call.Opcode != NdOp::CALL || Call.NumInputs < 1 ||
+                !Call.Inputs[0].isConst() || Call.Output.Kind != MedVar::Temp ||
+                Call.Output.Size != 2 * TRI.PointerSize)
+              continue;
+            for (size_t J = I + 1; J < Blk.Ops.size() && J <= I + 2; ++J) {
+              const MedOp &High = Blk.Ops[J];
+              if (High.Opcode != NdOp::SUBBYTES ||
+                  High.Output.Kind != MedVar::Reg ||
+                  High.Output.RegOff != TRI.IntReturnReg2)
+                continue;
+              if (readsOutsidePhis(MF, High.Output))
+                ReadHigh.insert(Call.Inputs[0].ConstVal);
+            }
+          }
+      for (auto It = WideRetCallees.begin(); It != WideRetCallees.end();) {
+        auto Callee = ByEntry.find(*It);
+        if (Callee == ByEntry.end()) {
+          ++It;
+          continue;
+        }
+        bool PassesPair = writesRegister(*Callee->second, TRI.IntReturnReg2) &&
+                          (ReadHigh.count(*It) ||
+                           returnsRegisterPairI64(*Callee->second, TRI));
+        for (const auto &Blk : Callee->second->Blocks)
+          for (size_t I = 0; I + 1 < Blk.Ops.size(); ++I) {
+            const MedOp &Call = Blk.Ops[I];
+            if ((Call.Opcode != NdOp::CALL &&
+                 Call.Opcode != NdOp::INDIR_CALL) ||
+                Blk.Ops[I + 1].Opcode != NdOp::RETURN ||
+                Blk.Ops[I + 1].Addr != Call.Addr)
+              continue;
+            const bool Internal = Call.Opcode == NdOp::CALL &&
+                                  Call.NumInputs >= 1 &&
+                                  Call.Inputs[0].isConst() &&
+                                  ByEntry.count(Call.Inputs[0].ConstVal);
+            PassesPair |=
+                Internal ? WideRetCallees.count(Call.Inputs[0].ConstVal) != 0
+                         : ReadHigh.count(*It) != 0;
+          }
+        if (PassesPair)
+          ++It;
+        else
+          It = WideRetCallees.erase(It);
       }
     }
 

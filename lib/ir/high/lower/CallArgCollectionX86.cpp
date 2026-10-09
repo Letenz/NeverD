@@ -90,8 +90,11 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   // Every i386 `push` stores at the current ESP, so the spilled-slot scan
   // sees StackOff 0 for each of them and keeps only the last push (arg0).
   // Walk STORE values backward (last push is arg0). Call-only IP-map splits
-  // leave the earlier pushes in ExtraWindows.
-  std::vector<ExprPtr> Pushed;
+  // leave the earlier pushes in ExtraWindows.  Every store counts toward
+  // replacing the arguments below; the arguments leave out those that can
+  // be none (IsNoArgumentStore), such as a local written between two pushes
+  // or GCC's `mov [esp+N]` stores (MinGW's `mov [ebp-0xc], 0` beside them).
+  std::vector<ExprPtr> Pushed, Arguments;
   auto walkPushes = [&](const std::vector<MedOp> &Ops, int Before) {
     for (int J = Before; J >= 0; --J) {
       const MedOp &Prev = Ops[static_cast<size_t>(J)];
@@ -103,7 +106,10 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
         continue;
       if (Scan.IsCalleeSave(Prev.Inputs[1]))
         continue;
-      Pushed.push_back(Scan.ToExpr(Prev.Inputs[1]));
+      ExprPtr Value = Scan.ToExpr(Prev.Inputs[1]);
+      if (!Scan.IsNoArgumentStore || !Scan.IsNoArgumentStore(Prev.Inputs[0]))
+        Arguments.push_back(Value);
+      Pushed.push_back(std::move(Value));
       if (static_cast<int>(Pushed.size()) == Scan.MaxArgs)
         return;
     }
@@ -120,8 +126,8 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   if (Pushed.size() <= Args.size())
     return;
   for (size_t K = 0; K < Pushed.size() && K < Found.size(); ++K)
-    Found[K] = Pushed[K];
-  Args = std::move(Pushed);
+    Found[K] = K < Arguments.size() ? Arguments[K] : nullptr;
+  Args = std::move(Arguments);
 }
 
 /// i386 cdecl and stdcall push their arguments, and a block boundary between
