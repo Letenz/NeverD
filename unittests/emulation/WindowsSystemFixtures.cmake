@@ -42,6 +42,7 @@ foreach(_arch X64 AArch64)
       fixtures/WindowsSectionFixture.inc
       fixtures/WindowsCriticalSectionFixture.inc
       fixtures/WindowsNativeServiceFixture.inc
+      fixtures/WindowsFLSExitFixture.inc
       "${_system_dir}/provider.def" VERBATIM)
   add_custom_command(OUTPUT "${_dir}/${_system_ForwardFile}" "${_dir}/forward.obj"
     COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_system_${_arch}Target}"

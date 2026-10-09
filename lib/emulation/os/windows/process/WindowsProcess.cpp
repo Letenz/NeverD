@@ -317,6 +317,9 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   std::vector<uint64_t> Initializers;
   uint64_t ExpectedSP = 0, ExpectedGate = 0;
   uint64_t RootStackPointer = StackTop;
+  std::optional<FLSCleanup> ExitCleanup;
+  uint32_t NextExitSlot = 0;
+  bool ExitCleanupDone = false;
   struct Continuation {
     using Work = std::variant<Loader::Operation, FLSCleanup>;
     Work Operation;
@@ -363,7 +366,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
                       .Notifications;
   };
   auto CurrentCleanup = [&]() -> FLSCleanup * {
-    return Pending.empty() ? nullptr
+    return Pending.empty() ? (ExitCleanup ? &*ExitCleanup : nullptr)
                            : std::get_if<FLSCleanup>(&Pending.back().Operation);
   };
   StoppedProcess Stopped(CPU, **Space, *ABI, *Program, *Env, Active,
@@ -416,6 +419,17 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   };
   auto Prepare = [&]() -> llvm::Expected<bool> {
     while (true) {
+      // Root thread cleanup precedes DLL/TLS process-detach notifications.
+      // Keep the cursor across guest calls so a callback can initialize a
+      // later slot without replaying an already completed callback.
+      if (Pending.empty() && Life.exitsNormally() && !ExitCleanup &&
+          !ExitCleanupDone) {
+        auto Next = OS.exitCleanup(NextExitSlot);
+        if (!Next)
+          return Next.takeError();
+        ExitCleanup = std::move(*Next);
+        ExitCleanupDone = !ExitCleanup;
+      }
       if (const auto *Cleanup = CurrentCleanup()) {
         auto Executable =
             CPU.canAccess(Cleanup->Function, 1, Execute | UserAccessible);
@@ -655,28 +669,32 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
           Failed(std::move(E));
           break;
         }
-        if (auto E = Resume(1, 0)) {
+        if (!Pending.empty()) {
+          if (auto E = Resume(1, 0)) {
+            Failed(std::move(E));
+            break;
+          }
+          continue;
+        }
+        ExitCleanup.reset();
+      } else {
+        auto V = CPU.readRegister(ABI->info().Result);
+        if (!V) {
+          Failed(V.takeError());
+          break;
+        }
+        if (Active->Kind == Lifetime::CallKind::Entry)
+          Result.ReturnValue = (*V)[0];
+        if (auto E = CurrentLife().returned((*V)[0])) {
           Failed(std::move(E));
           break;
         }
-        continue;
+        auto Input = inputModule(*Program);
+        if (Active->Kind == Lifetime::CallKind::TLS && Input &&
+            Active->Arguments[0] == Program->Modules[*Input].Loaded.Base &&
+            Active->Arguments[1] == DLLProcessAttach)
+          Initializers.push_back(Active->PC);
       }
-      auto V = CPU.readRegister(ABI->info().Result);
-      if (!V) {
-        Failed(V.takeError());
-        break;
-      }
-      if (Active->Kind == Lifetime::CallKind::Entry)
-        Result.ReturnValue = (*V)[0];
-      if (auto E = CurrentLife().returned((*V)[0])) {
-        Failed(std::move(E));
-        break;
-      }
-      auto Input = inputModule(*Program);
-      if (Active->Kind == Lifetime::CallKind::TLS && Input &&
-          Active->Arguments[0] == Program->Modules[*Input].Loaded.Base &&
-          Active->Arguments[1] == DLLProcessAttach)
-        Initializers.push_back(Active->PC);
       auto More = Prepare();
       if (!More) {
         Failed(More.takeError());
@@ -872,6 +890,13 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       continue;
     }
     if (V->Request) {
+      // Loader operations during termination do not share the ordinary
+      // load/unload contract. Stop before acquiring or releasing references.
+      if (ExitCleanup) {
+        Result.Stop = ProcessStopReason::UnsupportedService;
+        Result.Diagnostic = text::FLSExitLoader;
+        break;
+      }
       auto Operation = Modules.begin(*V->Request);
       if (!Operation) {
         Failed(Operation.takeError());

@@ -26,6 +26,7 @@ public:
   bool detaching() const {
     return Kind == Mode::Unload || Kind == Mode::Rollback || Kind == Mode::Exit;
   }
+  bool exitsNormally() const { return Kind == Mode::Exit && !StartupFailed; }
   llvm::Expected<std::optional<Call>> next(ExecutionBackend &CPU);
   llvm::Error returned(uint64_t Value);
   llvm::Error exit(uint32_t Status);
@@ -46,6 +47,7 @@ private:
   size_t Position = 0, Callback = 0;
   std::optional<uint64_t> CallbackArray;
   bool Running = false;
+  bool StartupFailed = false;
   std::optional<uint32_t> ExitStatus;
 };
 } // namespace neverd::emulation::windows_process

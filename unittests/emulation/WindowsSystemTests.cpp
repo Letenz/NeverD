@@ -140,9 +140,59 @@ TEST_P(WindowsSystem, ExecutesOriginalSystemModuleScenarios) {
       EXPECT_EQ(Observed->StandardError, R->StandardError);
       EXPECT_EQ(Observer.NativeExports, 2u);
     }
-    if (llvm::StringRef(C.Argument) == ReturnArgument)
+    if (llvm::StringRef(C.Argument) == ReturnArgument ||
+        llvm::StringRef(C.Argument) == FLSReturnArgument)
       EXPECT_EQ(R->ReturnValue, ExitStatus);
   }
+}
+TEST_P(WindowsSystem, FLSExitCallbacksAreNotProgramInvocations) {
+  for (const auto &C : Cases) {
+    if (!llvm::StringRef(C.Name).starts_with("FLS"))
+      continue;
+    SCOPED_TRACE(C.Name);
+    struct Observation final : ProcessObserver {
+      std::vector<bool> Program;
+      llvm::Expected<std::vector<ExecutionWatch>>
+      started(ProcessView &P) override {
+        Program.push_back(P.programInvocation());
+        return std::vector<ExecutionWatch>{};
+      }
+      llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+      invoking(ProcessView &P) override {
+        Program.push_back(P.programInvocation());
+        EXPECT_TRUE(P.completedInitializers().empty());
+        return std::nullopt;
+      }
+      llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+      watched(ProcessView &, uint64_t) override {
+        ADD_FAILURE() << "unexpected FLS exit watch";
+        return std::nullopt;
+      }
+    } Observer;
+    Options.Arguments = {ProgramFile, C.Argument};
+    auto R =
+        observeProcess(Path, ProcessProfile::WindowsPE64, Options, Observer);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, ExitStatus);
+    EXPECT_EQ(llvm::toHex(R->StandardOutput), C.Expected);
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(Observer.Program, (std::vector<bool>{true, false, false}));
+  }
+}
+TEST_P(WindowsSystem, FLSExitCleanupUsesTheProcessEventBudget) {
+  Options.Arguments = {ProgramFile, FLSReturnArgument};
+  auto Complete = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
+  ASSERT_TRUE(bool(Complete)) << llvm::toString(Complete.takeError());
+  ASSERT_EQ(Complete->Stop, ProcessStopReason::Exited) << Complete->Diagnostic;
+  ASSERT_GT(Complete->Events, 1u);
+  Options.Limits.Events = Complete->Events - 1;
+  auto Limited = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
+  ASSERT_TRUE(bool(Limited)) << llvm::toString(Limited.takeError());
+  EXPECT_EQ(Limited->Stop, ProcessStopReason::EventLimit)
+      << Limited->Diagnostic;
+  EXPECT_EQ(Limited->Events, Options.Limits.Events);
+  EXPECT_FALSE(Limited->ExitStatus);
 }
 TEST_P(WindowsSystem, RejectsUnmodeledExportsOrdinalsAndChangedImages) {
   struct Negative {
@@ -332,7 +382,8 @@ TEST(WindowsSystemNative, RunsOriginalSystemModuleExecutable) {
   const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
                                                       Error};
   for (const auto &C : Cases) {
-    const bool Returns = llvm::StringRef(C.Argument) == ReturnArgument;
+    const bool Returns = llvm::StringRef(C.Argument) == ReturnArgument ||
+                         llvm::StringRef(C.Argument) == FLSReturnArgument;
     for (unsigned I = 0; I < (Returns ? RepeatCount : 1); ++I) {
       SCOPED_TRACE(C.Name);
       int Status;
