@@ -1135,6 +1135,68 @@ TEST(HighCPointerAddresses, StringLiteralInIntegerMaskUsesItsAddress) {
   EXPECT_NE(Source.find("Format(L\"%s\")"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, HeaderBytesAreNoStringLiteral) {
+  // An image loaded at zero maps its file header, where a small integer
+  // lands: 32 is `e_phoff`, whose bytes 40 00 00 00 read as L"@".  No
+  // section holds them, so 32 stays a number; a string in a section still
+  // reads as its literal.
+  std::vector<uint8_t> Bytes(0x60, 0);
+  Bytes[0x20] = 0x40;
+  const char Text[] = "%d\n";
+  std::copy(std::begin(Text), std::end(Text), Bytes.begin() + 0x40);
+  BinaryImage Img = makeImageObjectFixture(0, Bytes, false);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Section Rodata;
+  Rodata.Name = ".rodata";
+  Rodata.VA = 0x40;
+  Rodata.Size = 0x20;
+  Rodata.Flags = SegmentFlags::Readable;
+  Img.Sections.push_back(Rodata);
+
+  HighFunc Func;
+  Func.Name = "print_both";
+  Func.ReturnType = NdType::makeVoid();
+  for (va_t Addr : {0x20, 0x40}) {
+    HighStmt Call;
+    Call.Kind = StmtKind::Call;
+    Call.CallExpr =
+        HighExpr::makeCall("Format", 0x1000, {HighExpr::makeConst(Addr, 8)});
+    Func.Body.push_back(std::move(Call));
+  }
+  const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
+  EXPECT_EQ(Source.find("L\"@\""), std::string::npos) << Source;
+  EXPECT_NE(Source.find("Format(32)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("Format(\"%d\\n\")"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, GoImageBytesAreNoCString) {
+  // Go keeps a string's length beside its pointer and packs the bytes
+  // without a NUL, so bytes that end with one, such as a type descriptor's
+  // first field, are text by coincidence: no literal stands for them in a
+  // Go image, as one does in a C image.
+  for (bool Go : {false, true}) {
+    SCOPED_TRACE(Go);
+    BinaryImage Img = makeImageObjectFixture(
+        0x4A3AE0, {'t', 'y', 'p', 'e', 0x00, 0x00, 0x00, 0x00}, false);
+    Img.Format = BinaryFormat::ELF;
+    if (Go)
+      Img.ExceptionMetadata.Runtime.Runtime = SourceLanguageRuntime::Go;
+    HighFunc Func;
+    Func.Name = "grow";
+    Func.ReturnType = NdType::makeVoid();
+    HighStmt Call;
+    Call.Kind = StmtKind::Call;
+    Call.CallExpr = HighExpr::makeCall("runtime_growslice", 0x1000,
+                                       {HighExpr::makeConst(0x4A3AE0, 8)});
+    Func.Body.push_back(std::move(Call));
+    const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
+    EXPECT_EQ(Source.find("runtime_growslice(\"type\")") != std::string::npos,
+              !Go)
+        << Source;
+  }
+}
+
 TEST(HighCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
   BinaryImage Img = makeImageObjectFixture(
       0x140003400, {0x25, 0x00, 0x73, 0x00, 0x00, 0x00}, false);
