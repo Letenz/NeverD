@@ -872,61 +872,63 @@ Services::criticalSection(const Service &S, const NativeCallEvent &Event) {
                      S.Kind == API::RtlLeaveCriticalSection;
   const bool Try = S.Kind == API::TryEnterCriticalSection ||
                    S.Kind == API::RtlTryEnterCriticalSection;
+  const bool Delete = S.Kind == API::DeleteCriticalSection ||
+                      S.Kind == API::RtlDeleteCriticalSection;
   if (!A[0])
     return failure(text::Access);
+  auto Existing = CriticalSections.find(A[0]);
+  if (Init ? Existing != CriticalSections.end()
+           : Existing == CriticalSections.end())
+    return unsupported(S);
+  auto Accessible = access(A[0], CriticalSectionSize, Read | Write);
+  if (!Accessible)
+    return Accessible.takeError();
+  if (!*Accessible)
+    return failure(text::Access);
+  std::array<uint8_t, CriticalSectionSize> Bytes{};
+  using namespace llvm::support::endian;
   if (Init) {
-    auto Writable = access(A[0], CriticalSectionSize, Write);
-    if (!Writable)
-      return Writable.takeError();
-    if (!*Writable)
-      return failure(text::Access);
-    std::array<uint8_t, CriticalSectionSize> Bytes{};
-    using namespace llvm::support::endian;
-    write32le(Bytes.data() + CriticalSectionLock, 0xffffffffu);
-    const bool WithSpin =
-        S.Kind == API::InitializeCriticalSectionAndSpinCount ||
-        S.Kind == API::RtlInitializeCriticalSectionAndSpinCount;
-    write64le(Bytes.data() + CriticalSectionSpin, WithSpin ? A[1] : 0);
+    write32le(Bytes.data() + CriticalSectionLock, UINT32_MAX);
+    // Windows ignores the requested spin count on a single-processor system.
+    // The process profile advertises that same one-processor mask.
     if (auto E = CPU.write(A[0], Bytes))
       return std::move(E);
-    return std::optional<uint64_t>(1);
+    CriticalSections.emplace(A[0], 0);
+    return std::optional<uint64_t>(
+        S.Kind == API::InitializeCriticalSectionAndSpinCount ? 1 : 0);
   }
-  auto Readable = access(A[0] + CriticalSectionLock, DWordSize, Read | Write);
-  if (!Readable)
-    return Readable.takeError();
-  if (!*Readable)
-    return failure(text::Access);
-  auto Lock = CPU.readInteger(A[0] + CriticalSectionLock, DWordSize);
-  if (!Lock)
-    return Lock.takeError();
-  auto Depth = CPU.readInteger(A[0] + CriticalSectionRecursion, DWordSize);
-  if (!Depth)
-    return Depth.takeError();
-  if (Leave) {
-    const uint32_t Next = *Depth > 1 ? uint32_t(*Lock) - 1 : 0xffffffffu;
-    const uint32_t Recursion = *Depth > 1 ? uint32_t(*Depth) - 1 : 0;
-    if (auto E = CPU.writeInteger(A[0] + CriticalSectionLock, Next, DWordSize))
+  if (auto E = CPU.read(A[0], Bytes))
+    return std::move(E);
+  const uint32_t Depth = Existing->second;
+  const uint32_t Lock = Depth ? UINT32_MAX - 1 : UINT32_MAX;
+  const uint64_t Owner = Depth ? ThreadID : 0;
+  std::array<uint8_t, CriticalSectionSize> Expected{};
+  write32le(Expected.data() + CriticalSectionLock, Lock);
+  write32le(Expected.data() + CriticalSectionRecursion, Depth);
+  write64le(Expected.data() + CriticalSectionOwner, Owner);
+  if (Bytes != Expected)
+    return unsupported(S);
+  // Invalid lifecycle, contention and corrupted state have no supported
+  // single-thread transition. Refuse before changing memory or ownership.
+  if (Delete) {
+    if (Depth)
+      return unsupported(S);
+    Bytes.fill(0);
+    if (auto E = CPU.write(A[0], Bytes))
       return std::move(E);
-    if (auto E = CPU.writeInteger(A[0] + CriticalSectionRecursion, Recursion,
-                                  DWordSize))
-      return std::move(E);
-    if (!Recursion)
-      if (auto E =
-              CPU.writeInteger(A[0] + CriticalSectionOwner, 0, PointerSize))
-        return std::move(E);
+    CriticalSections.erase(Existing);
     return std::optional<uint64_t>(0);
   }
-  const bool Free = uint32_t(*Lock) == 0xffffffffu;
-  if (auto E = CPU.writeInteger(A[0] + CriticalSectionLock,
-                                Free ? 0 : uint32_t(*Lock) + 1, DWordSize))
+  if ((Leave && !Depth) || (!Leave && Depth == INT32_MAX))
+    return unsupported(S);
+  const uint32_t Next = Leave ? Depth - 1 : Depth + 1;
+  write32le(Bytes.data() + CriticalSectionLock,
+            Next ? UINT32_MAX - 1 : UINT32_MAX);
+  write32le(Bytes.data() + CriticalSectionRecursion, Next);
+  write64le(Bytes.data() + CriticalSectionOwner, Next ? ThreadID : 0);
+  if (auto E = CPU.write(A[0], Bytes))
     return std::move(E);
-  if (auto E = CPU.writeInteger(A[0] + CriticalSectionRecursion,
-                                Free ? 1 : uint32_t(*Depth) + 1, DWordSize))
-    return std::move(E);
-  if (Free)
-    if (auto E = CPU.writeInteger(A[0] + CriticalSectionOwner, ThreadID,
-                                  PointerSize))
-      return std::move(E);
+  Existing->second = Next;
   return std::optional<uint64_t>(Try ? 1 : 0);
 }
 

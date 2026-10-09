@@ -186,6 +186,7 @@ static void clocks(void **Modules) {
           42);
 }
 #include "WindowsSectionFixture.inc"
+#include "WindowsCriticalSectionFixture.inc"
 U32 entry(void) {
   U32 Mode = LoadMode;
   for (const U16 *P = GetCommandLineW(); *P; ++P)
@@ -252,6 +253,11 @@ U32 entry(void) {
   }
   if (Mode == ForwardMode)
     forward();
+  if (Mode == CriticalSectionsMode || Mode == CriticalUninitializedMode ||
+      Mode == CriticalUnownedLeaveMode || Mode == CriticalReinitializeMode ||
+      Mode == CriticalDeletedMode || Mode == CriticalCorruptedMode ||
+      Mode == CriticalOwnedDeleteMode)
+    criticalSections(Modules[0], Modules[2], Mode);
   U32 Result[] = {1, Mode}, Written;
   require(WriteFile(GetStdHandle(StdoutSelector), Result, sizeof(Result),
                     &Written, 0) &&
