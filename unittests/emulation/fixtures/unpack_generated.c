@@ -304,7 +304,9 @@ directDelay(U64 Alert, const long long *Interval, U32 Number) {
           "syscall\n\t"
           "retq\n\t");
 }
-static void useDirectService(void) {
+// Keep the failure exit outside .prog so the ordinary tail-call oracle still
+// executes every import call that its independent packer transforms.
+__attribute__((noinline)) static void useDirectService(void) {
   const long long Interval = -1;
   if (directDelay(0, &Interval, NativeDelayNumber) != 0)
     ExitProcess(FailureStatus);
