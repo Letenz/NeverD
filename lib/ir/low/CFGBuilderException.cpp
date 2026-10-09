@@ -128,12 +128,14 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   Func.RegistrationStates.reset();
   if (Metadata.Registration) {
     std::optional<std::vector<RegistrationCalleeFrameContract>> Callees;
+    std::optional<std::vector<RegistrationCleanupFrameContract>> Cleanups;
     const bool CheckCalls = CurrentImg && Metadata.Cxx.has_value();
     if (CheckCalls) {
       if (!RegistrationCallees)
         RegistrationCallees =
             std::make_shared<RegistrationCallCalleeIndex>(*CurrentImg);
       Callees = RegistrationCallees->contracts(Func);
+      Cleanups = RegistrationCallees->cleanupContracts(Func);
     }
     va_t CookieCheckVA = 0;
     if (CurrentImg &&
@@ -149,8 +151,9 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
         CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
             ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
             : 0,
-        CookieCheckVA, CheckCalls && Callees ? &*Callees : nullptr);
-    if (CheckCalls && !Callees)
+        CookieCheckVA, CheckCalls && Callees ? &*Callees : nullptr,
+        CheckCalls && Cleanups ? &*Cleanups : nullptr);
+    if (CheckCalls && (!Callees || !Cleanups))
       Func.RegistrationStates->Diagnostics.push_back(
           "registration callee proof budget exhausted");
   }

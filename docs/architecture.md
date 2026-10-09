@@ -90,6 +90,12 @@ at joins and excludes the registration record and SavedESP from object borrows.
 May-writes discard old value facts without inventing definite initialization.
 A checked private throw stops ordinary flow while retaining runtime dispatch
 and catch resumption; LowToMed consumes its source-indexed no-return fact.
+The same projection authenticates cleanup objects at every reachable unwind
+dispatch, including catch dispatch through its checked SavedESP. Every
+action must bind a checked relay and initialized, pointer-free read extent;
+conflicting predecessors or unproved actions discard cleanup and image-read
+authority. Cleanup receipts retain the source block, active state, action
+and projected extents.
 These call facts remain separate from a compiler or installation receipt.
 Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction

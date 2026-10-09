@@ -624,6 +624,56 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
   return Result;
 }
 
+std::optional<std::vector<RegistrationCleanupFrameContract>>
+RegistrationCallCalleeIndex::cleanupContracts(const LowFunc &Function) {
+  std::vector<RegistrationCleanupFrameContract> Result;
+  if (!Function.ExceptionMetadata || !Function.ExceptionMetadata->Cxx)
+    return Result;
+  const auto &Actions = Function.ExceptionMetadata->Cxx->UnwindMap;
+  if (Actions.size() > limits::kMaxRegistrationEHRecords)
+    return std::nullopt;
+  for (uint32_t State = 0; State < Actions.size(); ++State) {
+    if (!chargeCalleeWork(Work, 1))
+      return std::nullopt;
+    const auto &Action = Actions[State];
+    if (Action.Kind != CxxUnwindAction::ActionKind::Direct ||
+        !Action.ActionVA || Action.ObjectOffset)
+      continue;
+    auto It = CleanupCache.find(Action.ActionVA);
+    if (It == CleanupCache.end()) {
+      if (CleanupCache.size() == 256)
+        return std::nullopt;
+      auto Relay = getCheckedX86RegistrationCleanupRelayABI(
+          Image, Action.ActionVA, &Work);
+      if (Work == limits::kMaxRegistrationEHStateWork)
+        return std::nullopt;
+      It = CleanupCache.emplace(Action.ActionVA, std::move(Relay)).first;
+    }
+    if (!It->second)
+      continue;
+    const auto &Relay = *It->second;
+    const auto &Leaf = Relay.Leaf;
+    if (!chargeCalleeWork(Work, Leaf.ECXReads.size() + Leaf.ECXWrites.size() +
+                                    Leaf.ImageReads.size() +
+                                    Leaf.ImageWrites.size() +
+                                    Leaf.CallerPCWrites.size() + 1))
+      return std::nullopt;
+    RegistrationCleanupFrameContract Contract;
+    Contract.ActionState = State;
+    Contract.RelayTarget = Relay.Target;
+    Contract.ObjectFrameOffset = Relay.ObjectFrameOffset;
+    Contract.Leaf.Target = Leaf.Target;
+    Contract.Leaf.StackPopBytes = Leaf.StackPopBytes;
+    Contract.Leaf.ECXReads = Leaf.ECXReads;
+    Contract.Leaf.ECXWrites = Leaf.ECXWrites;
+    Contract.Leaf.ImageReads = Leaf.ImageReads;
+    Contract.Leaf.ImageWrites = Leaf.ImageWrites;
+    Contract.Leaf.CallerPCWrites = Leaf.CallerPCWrites;
+    Result.push_back(std::move(Contract));
+  }
+  return Result;
+}
+
 bool hasCallerCleanupRegistrationABI(
     const LowFunc &Function, const BinaryImage &Image,
     std::vector<ExceptionAddressRange> *CallerPCWrites) {

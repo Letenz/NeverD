@@ -637,6 +637,145 @@ TEST(RegistrationState, ProjectsTheInitializedObjectAtTheExactSourceCall) {
   EXPECT_EQ(A.ImageReads.front().Begin, 0x3000u);
 }
 
+namespace {
+LowFunc makeCxxObjectCleanup() {
+  auto F = makeCxxObjectCall();
+  F.ExceptionMetadata->Cxx->UnwindMap[0] = {
+      -1, 0x2200, CxxUnwindAction::ActionKind::Direct};
+  return F;
+}
+
+RegistrationCleanupFrameContract objectCleanupContract() {
+  RegistrationCleanupFrameContract C;
+  C.ActionState = 0;
+  C.RelayTarget = 0x2200;
+  C.ObjectFrameOffset = -24;
+  C.Leaf = objectLeafContract();
+  return C;
+}
+} // namespace
+
+TEST(RegistrationState, ProjectsInitializedCleanupObjectsAtEveryDispatch) {
+  auto F = makeCxxObjectCleanup();
+  const std::vector Calls{objectLeafContract()};
+  const std::vector Cleanups{objectCleanupContract()};
+  const auto A = analyzeRegistrationStates(F, 0, 0, &Calls, &Cleanups);
+  ASSERT_TRUE(A.Complete);
+  ASSERT_TRUE(A.CleanupFrameEffectsComplete);
+  ASSERT_FALSE(A.CleanupFrameEffects.empty());
+  for (const auto &Effect : A.CleanupFrameEffects) {
+    EXPECT_EQ(Effect.ActionState, 0u);
+    EXPECT_EQ(Effect.CleanupIndex, 0u);
+    EXPECT_EQ(Effect.DispatchLevel, 0);
+    EXPECT_EQ(Effect.StackOffset, -28);
+    EXPECT_EQ(Effect.FrameReads,
+              (std::vector<RegistrationObjectExtent>{{-24, -20}}));
+    EXPECT_TRUE(Effect.FrameWrites.empty());
+    ASSERT_GE(Effect.BlockId, 0);
+    EXPECT_EQ(Effect.Range.Begin, F.Blocks[Effect.BlockId].StartAddr);
+  }
+}
+
+TEST(RegistrationState, RejectsUnprovedCleanupObjectsAndContracts) {
+  for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = makeCxxObjectCleanup();
+    std::vector Calls{objectLeafContract()};
+    std::vector Cleanups{objectCleanupContract()};
+    auto &C = Cleanups[0];
+    switch (Mutation) {
+    case 0:
+      Cleanups.clear();
+      break;
+    case 1:
+      C.RelayTarget = 0x2201;
+      break;
+    case 2:
+      C.ActionState = 1;
+      break;
+    case 3:
+      C.ObjectFrameOffset = -16; // SavedESP.
+      break;
+    case 4:
+      C.ObjectFrameOffset = -12; // The registration link.
+      break;
+    case 5:
+      C.ObjectFrameOffset = -32; // Below the allocated parent stack.
+      break;
+    case 6:
+      C.ObjectFrameOffset = 0; // Saved EBP.
+      break;
+    case 7:
+      C.Leaf.StackPopBytes = 4;
+      break;
+    case 8:
+      C.Leaf.ECXReads[0].End = 8; // Four bytes remain uninitialized.
+      break;
+    case 9:
+      C.Leaf.CallerPCWrites = {{0x3100, 0x3104}};
+      break;
+    case 10:
+      for (auto &Op : F.Blocks[1].Ops)
+        if (Op.Opcode == NdOp::STORE && Op.Inputs[0].isReg() &&
+            Op.Inputs[0].Offset == x86reg::RCX)
+          Op.Inputs[1] = NdVar::reg(x86reg::RBP, 4);
+      break;
+    case 11:
+      C.Leaf.ECXReads = {{4, 4}};
+      break;
+    }
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Calls, &Cleanups);
+    EXPECT_FALSE(A.CleanupFrameEffectsComplete);
+    EXPECT_TRUE(A.CleanupFrameEffects.empty());
+  }
+}
+
+TEST(RegistrationState, CleanupInitializationMustPrecedeStateActivation) {
+  for (bool BothInitialized : {false, true}) {
+    auto F = makeCxxObjectCleanup();
+    const std::vector Calls{objectLeafContract()};
+    const std::vector Cleanups{objectCleanupContract()};
+    auto &Body = F.Blocks[1];
+    Body.Ops.erase(std::remove_if(Body.Ops.begin(), Body.Ops.end(),
+                                  [](const auto &Op) {
+                                    return Op.Addr == 0x1016 ||
+                                           (Op.Opcode == NdOp::STORE &&
+                                            Op.Inputs[0].isReg() &&
+                                            Op.Inputs[0].Offset == x86reg::RCX);
+                                  }),
+                   Body.Ops.end());
+    Body.Succs = {8, 9};
+    for (int Id : {8, 9}) {
+      LowBlock B;
+      B.Id = Id;
+      B.StartAddr = 0x1120 + (Id - 8) * 8;
+      B.EndAddr = B.StartAddr + 7;
+      B.InstructionBoundaries = {{B.StartAddr, 7}};
+      B.Succs = {10};
+      if (Id == 8 || BothInitialized)
+        emitOp(B, B.StartAddr, NdOp::STORE, {},
+               {NdVar::reg(x86reg::RCX, 4), NdVar::cst(7, 4)});
+      F.Blocks.push_back(std::move(B));
+    }
+    LowBlock Activate;
+    Activate.Id = 10;
+    Activate.StartAddr = 0x1140;
+    Activate.EndAddr = 0x1147;
+    Activate.InstructionBoundaries = {{0x1140, 7}};
+    Activate.Succs = {7};
+    addSlotStore(Activate, 0);
+    F.Blocks.push_back(Activate);
+    auto &Stores = F.ExceptionMetadata->Registration->TryLevelStores;
+    for (auto &Store : Stores)
+      if (Store.StoreVA == 0x1016) {
+        Store.StoreVA = 0x1140;
+        Store.EndVA = 0x1147;
+      }
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Calls, &Cleanups);
+    EXPECT_EQ(A.CleanupFrameEffectsComplete, BothInitialized);
+  }
+}
+
 TEST(RegistrationState, RejectsUnprovenObjectAndCallProjections) {
   for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
     auto F = makeCxxObjectCall();

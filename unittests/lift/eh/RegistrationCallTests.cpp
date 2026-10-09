@@ -562,3 +562,28 @@ TEST(RegistrationCallABI, UsesPE32RelativeBranchWrapWithoutWrappingStorage) {
       getCheckedX86RegistrationCleanupRelayABI(F.Image, Last.VA, &Work));
   EXPECT_GT(Work, EarlierWork);
 }
+
+TEST(RegistrationCallABI, MemoizesCleanupRelaysWithoutGrantingAFrameBorrow) {
+  CleanupRelayImage F;
+  LowFunc Parent;
+  auto &EH = Parent.ExceptionMetadata.emplace();
+  auto &Cxx = EH.Cxx.emplace();
+  Cxx.UnwindMap = {
+      {-1, 0, CxxUnwindAction::ActionKind::None},
+      {0, CleanupRelayImage::RelayVA, CxxUnwindAction::ActionKind::Direct}};
+  RegistrationCallCalleeIndex Index(F.Image);
+  const auto Contracts = Index.cleanupContracts(Parent);
+  ASSERT_TRUE(Contracts);
+  ASSERT_EQ(Contracts->size(), 1u);
+  const auto &C = Contracts->front();
+  EXPECT_EQ(C.ActionState, 1u);
+  EXPECT_EQ(C.RelayTarget, CleanupRelayImage::RelayVA);
+  EXPECT_EQ(C.ObjectFrameOffset, -24);
+  EXPECT_EQ(C.Leaf.Target, CleanupRelayImage::LeafVA);
+  EXPECT_EQ(C.Leaf.ECXReads, (std::vector<RegistrationObjectExtent>{{0, 4}}));
+  EXPECT_EQ(Index.cleanupContracts(Parent)->size(), 1u);
+  F.Image.Segments[0].Data[0] = 0x90;
+  RegistrationCallCalleeIndex NextImage(F.Image);
+  ASSERT_TRUE(NextImage.cleanupContracts(Parent));
+  EXPECT_TRUE(NextImage.cleanupContracts(Parent)->empty());
+}

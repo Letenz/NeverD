@@ -1762,6 +1762,11 @@ borrows, registration/SavedESP separation, partial stores, pointer taint,
 conflicting predecessors and preserved catch resumption after a private throw.
 The native call target checks cumulative failed-proof budgets and fresh-image
 callee indices.
+Cleanup projection tests check every reachable unwind state, initialization
+before state activation, missing or mismatched contracts, registration and
+SavedESP overlap, released storage, pointer taint and predecessor conflicts.
+The native call index memoizes relay contracts under the same shared budget;
+a descriptor alone grants no initialized object borrow.
 Scope mutation tests cover both SEH3 and EH4, exact exclusive table ends,
 partial overlap, PE32 overflow and cookie separation. The real source fixture
 also rejects an edited LLVM write to either format's scope table.

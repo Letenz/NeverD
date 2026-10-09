@@ -122,6 +122,9 @@ struct RegistrationStateAnalysis {
   bool CallFrameEffectsComplete = false;
   std::vector<RegistrationCalleeFrameContract> CalleeContracts;
   std::vector<RegistrationCallFrameEffect> CallFrameEffects;
+  bool CleanupFrameEffectsComplete = false;
+  std::vector<RegistrationCleanupFrameContract> CleanupContracts;
+  std::vector<RegistrationCleanupFrameEffect> CleanupFrameEffects;
   /// EH4 source initialization, encoding and immutable cookie lifetime have
   /// been checked across every ordinary and runtime path. This does not prove
   /// the compiler's physical cookie; native codegen validates that separately.
@@ -197,7 +200,8 @@ struct RegistrationStateAnalysis {
 /// join is retained; address order never selects a predecessor's state.
 RegistrationStateAnalysis analyzeRegistrationStates(
     const LowFunc &Function, va_t SecurityCookieVA = 0, va_t CookieCheckVA = 0,
-    const std::vector<RegistrationCalleeFrameContract> *Callees = nullptr);
+    const std::vector<RegistrationCalleeFrameContract> *Callees = nullptr,
+    const std::vector<RegistrationCleanupFrameContract> *Cleanups = nullptr);
 
 /// Return exact address intervals only if every reaching state agrees about
 /// membership. An ambiguous join cannot be flattened into a lexical try range.

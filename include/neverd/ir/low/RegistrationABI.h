@@ -86,11 +86,14 @@ public:
       : Image(Image) {}
   std::optional<std::vector<RegistrationCalleeFrameContract>>
   contracts(const LowFunc &Function);
+  std::optional<std::vector<RegistrationCleanupFrameContract>>
+  cleanupContracts(const LowFunc &Function);
 
 private:
   const BinaryImage &Image;
   size_t Work = 0;
   std::map<va_t, std::optional<RegistrationCalleeFrameContract>> Cache;
+  std::map<va_t, std::optional<RegistrationCleanupRelayABI>> CleanupCache;
 };
 
 /// Native registration lowering currently emits caller-cleanup calls. Require

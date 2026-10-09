@@ -55,6 +55,36 @@ struct RegistrationCallFrameEffect {
   bool operator==(const RegistrationCallFrameEffect &) const = default;
 };
 
+/// A source unwind-map action with an authenticated EBP-to-ECX relay and
+/// returning leaf. It grants no object borrow until the state solver checks
+/// all dispatch predecessors against the allocated, initialized parent frame.
+struct RegistrationCleanupFrameContract {
+  uint32_t ActionState = 0;
+  va_t RelayTarget = InvalidVA;
+  int32_t ObjectFrameOffset = 0;
+  RegistrationCalleeFrameContract Leaf;
+};
+
+struct RegistrationCleanupFrameEffect {
+  int BlockId = -1;
+  ExceptionAddressRange Range;
+  int32_t DispatchLevel = -1;
+  uint32_t ActionState = 0;
+  uint32_t CleanupIndex = 0;
+  int32_t StackOffset = 0;
+  std::vector<RegistrationObjectExtent> FrameReads;
+  std::vector<RegistrationObjectExtent> FrameWrites;
+  bool operator==(const RegistrationCleanupFrameEffect &Other) const {
+    return BlockId == Other.BlockId && Range.Begin == Other.Range.Begin &&
+           Range.End == Other.Range.End &&
+           DispatchLevel == Other.DispatchLevel &&
+           ActionState == Other.ActionState &&
+           CleanupIndex == Other.CleanupIndex &&
+           StackOffset == Other.StackOffset && FrameReads == Other.FrameReads &&
+           FrameWrites == Other.FrameWrites;
+  }
+};
+
 } // namespace neverd
 
 #endif
