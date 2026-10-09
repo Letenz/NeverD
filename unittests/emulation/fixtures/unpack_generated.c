@@ -21,6 +21,10 @@ __declspec(dllimport) void *SetUnhandledExceptionFilter(void *);
 __declspec(dllimport) void *GetModuleHandleA(const char *);
 __declspec(dllimport) void *GetProcAddress(void *, const char *);
 __declspec(dllimport) int GetSystemMetrics(int);
+__declspec(dllimport) void *GetProcessHeap(void);
+__declspec(dllimport) void *HeapAlloc(void *, U32, U64);
+__declspec(dllimport) int HeapFree(void *, U32, void *);
+volatile U32 *HeapState;
 
 // Keep independently linked export lookup cells on both instruction sets.
 // A generated loader may use them to ask a modeled service to write its code.
@@ -292,6 +296,8 @@ PROGRAM_CODE static U32 status(U32 Written) {
 }
 
 PROGRAM_ENTRY U32 program(void) {
+  if (Pack.Mode == HeapStateMode && *HeapState != InitializeResult)
+    ExitProcess(FailureStatus);
 #if defined(__x86_64__)
   if (Pack.Mode == ReboundOpaqueCallMode || Pack.Mode == LateOpaqueCallMode) {
     resolveLateImport();
@@ -341,6 +347,17 @@ RELAY_ENTRY U32 relay(void) {
 // Every path leaves by a jump on the stack the process started with, as a
 // loader does when it hands control to the program it carried.
 __declspec(dllexport) U32 loader(void) {
+  if (Pack.Mode == HeapStateMode || Pack.Mode == ReleasedHeapStateMode) {
+    HeapState = (U32 *)HeapAlloc(GetProcessHeap(), 0, sizeof(*HeapState));
+    if (!HeapState)
+      ExitProcess(FailureStatus);
+    *HeapState = InitializeResult;
+    if (Pack.Mode == ReleasedHeapStateMode) {
+      if (!HeapFree(GetProcessHeap(), 0, (void *)HeapState))
+        ExitProcess(FailureStatus);
+      HeapState = 0;
+    }
+  }
 #if defined(__x86_64__)
   if (Pack.Mode == ReboundOpaqueCallMode)
     resolveLateImport();

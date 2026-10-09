@@ -1203,6 +1203,8 @@ Windows プロセスの時刻ポリシーは `os/windows/process/` の `WindowsP
 
 `WindowsLibraryHost.cpp` は DLL ホストの構築、Windows ローダーは通常のロード・アンロードを所有します。`ProcessView::inputModule()` は観測入力をホスト EXE と分離し、初期スナップショットの遅延を許可します。`ProcessView::callFrame()` は `IntegerABI` 経由で整数引数と戻り先を読みます。`dynamic/ProcessTransfer` は継続先とスタックの一致を証明し、`PETLS.cpp` だけがプロセスアタッチコールバックの完了を判断します。
 
+`ProcessView::heapAllocations()` は停止境界で Windows の `Services` が所有する生存中のヒープ一覧を公開し、ゲストポインタを読まず状態も変更しません。`dynamic/ProcessTransfer.cpp` が一覧を検証して捕捉したイメージと TLS の保守的なアドレス一致を記録し、`core/Unpack.cpp` だけが `unsupported_state` または明示的な `snapshot` を選びます。PE ライターはヒープ再配置や起動の意味を推測しません。
+
 `PEDelayImports.cpp` は新しいプロセス向けの遅延ロード修復とメタデータ領域の除外を担当します。COFF ローダーは記述子の出所から `Import::IsDelayImport` を記録し、Windows 実行受付は通常のインポートだけを比較します。検証済みの遅延記述子が解決済みセルの再バインド範囲を定め、未解決の内部サンクは必要時の解決を維持します。独立したルックアップ表がバインド数を定め、後続の未解決セルを保持します。不正な状態は明示的に失敗します。
 
 `ExportObserver` は常駐ゲスト依存モジュールの実行可能エクスポートも監視します。モデル化プロバイダーはサービス分配で観測し、入力自身のエクスポートは除外します。モジュール変更で監視を更新し、修復には現在のエクスポート識別を必要とします。記録数は宣言済みインポート上限以内です。DLL テストはシステム API とゲスト依存関数の両ヘルパーを修復し、ネイティブロードでエミュレートされたアドレスが残らないことを検証します。

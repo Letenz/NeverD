@@ -102,6 +102,37 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProcessTransfer.AnInvocationRetainsChangesFromEverySavedImage")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.CapturesUnalignedAndInteriorHeapReferences")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.MissingHeapInventoryRemainsUnknown")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.HeapReferencesInCapturedTLSCannotBeDiscarded")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.HeapReferenceReportingRemainsBoundedWithoutLosingCount")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.InvalidHeapInventoryCannotAuthorizeCapture")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ExplicitSnapshotsKeepExternalHeapDependenciesVisible/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ExplicitSnapshotsKeepExternalHeapDependenciesVisible/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ReleasedHeapStateDoesNotBlockRecovery/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ReleasedHeapStateDoesNotBlockRecovery/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackLibrary."
     "WrappedEntriesRequireExplicitTransferEvidence/{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(

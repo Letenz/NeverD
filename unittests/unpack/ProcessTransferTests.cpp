@@ -7,6 +7,7 @@
 #include "unpack/dynamic/ProcessTransfer.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 
 #include <map>
@@ -32,6 +33,8 @@ public:
   std::vector<uint64_t> Initializers;
   std::optional<std::vector<uint8_t>> TLS;
   std::optional<ProcessCallFrame> Frame;
+  std::optional<std::vector<ProcessHeapAllocationView>> Heap =
+      std::vector<ProcessHeapAllocationView>{};
   GuestArchitecture architecture() const override {
     return GuestArchitecture::X64;
   }
@@ -58,6 +61,10 @@ public:
   }
   std::vector<ProcessExportView> exports() override { return {}; }
   bool programInvocation() const override { return EntryInvocation; }
+  std::optional<std::vector<ProcessHeapAllocationView>>
+  heapAllocations() const override {
+    return Heap;
+  }
   std::vector<uint64_t> completedInitializers() const override {
     return Initializers;
   }
@@ -106,6 +113,99 @@ protected:
     return Next.value_or(std::vector<ExecutionWatch>{});
   }
 };
+
+TEST_F(ProcessTransfer, CapturesUnalignedAndInteriorHeapReferences) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  start();
+  Process.Bytes[65] = 42;
+  Process.Heap =
+      std::vector<ProcessHeapAllocationView>{{0x12000, 0x100}, {0x10000, 0x80}};
+  using llvm::support::endian::write64le;
+  write64le(Process.Bytes.data() + 101, 0x10017);
+  write64le(Process.Bytes.data() + 200, 0x10080); // Exclusive end.
+  write64le(Process.Bytes.data() + 8192 - 8, 0x12000);
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  const auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  const auto &State = Captured->RuntimeState;
+  EXPECT_TRUE(State.HeapInventoryKnown);
+  EXPECT_EQ(State.PossibleHeapReferences, 2u);
+  ASSERT_EQ(State.HeapReferences.size(), 2u);
+  EXPECT_EQ(State.HeapReferences[0].Offset, 101u);
+  EXPECT_EQ(State.HeapReferences[0].Location,
+            UnpackHeapReference::Storage::Image);
+  EXPECT_EQ(State.HeapReferences[0].Address, 0x10017u);
+  EXPECT_EQ(State.HeapReferences[0].AllocationAddress, 0x10000u);
+  EXPECT_EQ(State.HeapReferences[0].AllocationSize, 0x80u);
+  EXPECT_EQ(State.HeapReferences[1].Offset, 8184u);
+}
+
+TEST_F(ProcessTransfer, MissingHeapInventoryRemainsUnknown) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  start();
+  Process.Heap.reset();
+  Process.Bytes[65] = 42;
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  const auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  EXPECT_FALSE(Captured->RuntimeState.HeapInventoryKnown);
+}
+
+TEST_F(ProcessTransfer, HeapReferencesInCapturedTLSCannotBeDiscarded) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  start();
+  Process.Bytes[65] = 42;
+  Process.Heap = std::vector<ProcessHeapAllocationView>{{0x10000, 0x80}};
+  Process.TLS = std::vector<uint8_t>(17);
+  llvm::support::endian::write64le(Process.TLS->data() + 3, 0x10017);
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  const auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  EXPECT_TRUE(Captured->RuntimeState.HeapInventoryKnown);
+  EXPECT_EQ(Captured->RuntimeState.PossibleHeapReferences, 1u);
+  ASSERT_EQ(Captured->RuntimeState.HeapReferences.size(), 1u);
+  const auto &Reference = Captured->RuntimeState.HeapReferences.front();
+  EXPECT_EQ(Reference.Location, UnpackHeapReference::Storage::ThreadLocal);
+  EXPECT_EQ(Reference.Offset, 3u);
+  EXPECT_EQ(Reference.Address, 0x10017u);
+}
+
+TEST_F(ProcessTransfer,
+       HeapReferenceReportingRemainsBoundedWithoutLosingCount) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  start();
+  Process.Bytes[65] = 42;
+  Process.Heap = std::vector<ProcessHeapAllocationView>{{0x10000, 0x80}};
+  for (unsigned I = 0; I != 80; ++I)
+    llvm::support::endian::write64le(Process.Bytes.data() + 1024 + I * 8,
+                                     0x10017);
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  const auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  EXPECT_EQ(Captured->RuntimeState.PossibleHeapReferences, 80u);
+  ASSERT_EQ(Captured->RuntimeState.HeapReferences.size(), 64u);
+  EXPECT_EQ(Captured->RuntimeState.HeapReferences.front().Offset, 1024u);
+  EXPECT_EQ(Captured->RuntimeState.HeapReferences.back().Offset, 1528u);
+}
+
+TEST_F(ProcessTransfer, InvalidHeapInventoryCannotAuthorizeCapture) {
+  for (const std::vector<ProcessHeapAllocationView> Heap :
+       {std::vector<ProcessHeapAllocationView>{{0x10000, 0}},
+        {{0x10000, 0x100}, {0x10080, 0x100}},
+        {{UINT64_MAX, 2}}}) {
+    TransferProcess P;
+    TransferObserver O{Image, {CPURegister::X64SP, 15}, 0};
+    P.instruction(64, {0xb8, 0, 0, 0, 0});
+    llvm::cantFail(O.started(P));
+    P.Heap = Heap;
+    P.Bytes[65] = 42;
+    auto Stopped = O.watched(P, 64);
+    ASSERT_FALSE(bool(Stopped));
+    EXPECT_NE(llvm::toString(Stopped.takeError()).find("heap inventory"),
+              std::string::npos);
+    EXPECT_FALSE(O.take());
+  }
+}
 
 TEST_F(ProcessTransfer, ReusesWholeInstructionsWithUnchangedOpcodeBytes) {
   Process.instruction(64, {0xb8, 0, 0, 0, 0});

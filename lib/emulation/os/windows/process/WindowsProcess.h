@@ -177,6 +177,7 @@ public:
         Budget(Budget), Exceptions(Exceptions) {}
   llvm::Expected<ServiceOutcome> invoke(const Service &Service,
                                         const NativeCallEvent &Event);
+  std::vector<ProcessHeapAllocationView> heapAllocations() const;
 
 private:
   std::optional<uint64_t> unsupported(const Service &Service);

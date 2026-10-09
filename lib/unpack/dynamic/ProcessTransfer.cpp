@@ -6,6 +6,7 @@
 #include "ProcessTransfer.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
@@ -389,6 +390,46 @@ TransferObserver::watched(ProcessView &Process, uint64_t PC) {
   if (!ThreadLocal)
     return ThreadLocal.takeError();
   Observed.ThreadLocal = std::move(*ThreadLocal);
+  if (auto Allocations = Process.heapAllocations()) {
+    Observed.RuntimeState.HeapInventoryKnown = true;
+    llvm::sort(*Allocations, [](const auto &A, const auto &B) {
+      return A.Address < B.Address;
+    });
+    uint64_t End = 0;
+    for (const auto &A : *Allocations) {
+      if (!A.Size || A.Address < End || A.Size > UINT64_MAX - A.Address)
+        return failure(text::HeapInventory);
+      End = A.Address + A.Size;
+    }
+    auto Scan = [&](llvm::ArrayRef<uint8_t> Bytes,
+                    UnpackHeapReference::Storage Location) {
+      if (Allocations->empty())
+        return;
+      for (uint64_t Offset = 0; Offset + value::PointerBytes <= Bytes.size();
+           ++Offset) {
+        const uint64_t Address =
+            llvm::support::endian::read64le(Bytes.data() + Offset);
+        if (Address < Allocations->front().Address || Address >= End)
+          continue;
+        auto Next = llvm::upper_bound(
+            *Allocations, Address,
+            [](uint64_t At, const auto &A) { return At < A.Address; });
+        if (Next == Allocations->begin())
+          continue;
+        const auto &A = *std::prev(Next);
+        if (Address - A.Address >= A.Size)
+          continue;
+        auto &State = Observed.RuntimeState;
+        ++State.PossibleHeapReferences;
+        if (State.HeapReferences.size() < value::HeapReferenceRecords)
+          State.HeapReferences.push_back(
+              {Offset, Address, A.Address, A.Size, Location});
+      }
+    };
+    Scan(Observed.Memory, UnpackHeapReference::Storage::Image);
+    if (Observed.ThreadLocal)
+      Scan(*Observed.ThreadLocal, UnpackHeapReference::Storage::ThreadLocal);
+  }
   // Several identities may share one address. Keep a named one, in a stable
   // order, so the rebuilt directory does not depend on enumeration order.
   for (auto &Export : Process.exports()) {

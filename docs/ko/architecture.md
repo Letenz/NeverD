@@ -1180,6 +1180,8 @@ Windows 프로세스 시간 정책은 `os/windows/process/`의 `WindowsProcessTi
 
 `WindowsLibraryHost.cpp`는 DLL 호스트 구성, Windows 로더는 일반 로드·언로드 수명주기를 소유합니다. `ProcessView::inputModule()`은 관측 입력과 호스트 EXE를 구분하여 초기 스냅샷을 늦출 수 있습니다. `ProcessView::callFrame()`은 `IntegerABI`로 정수 인수와 반환 사실을 읽습니다. `dynamic/ProcessTransfer`는 연속 실행 주소 및 스택 일치 증거를 소유하며 `PETLS.cpp`만 프로세스 연결 콜백 완료 여부를 결정합니다.
 
+`ProcessView::heapAllocations()`는 중지 경계에서 Windows `Services`가 소유한 살아 있는 힙 목록을 노출하며 게스트 포인터를 읽거나 상태를 바꾸지 않습니다. `dynamic/ProcessTransfer.cpp`가 목록을 검증하고 캡처한 이미지와 TLS의 보수적인 주소 일치를 기록하며, `core/Unpack.cpp`만 `unsupported_state` 또는 명시적인 `snapshot`을 선택합니다. PE 기록기는 힙 재배치나 시작 의미를 추측하지 않습니다.
+
 `PEDelayImports.cpp`는 새 프로세스의 지연 로드 복구와 메타데이터 저장소 제외를 담당합니다. COFF 로더는 설명자 출처에 따라 `Import::IsDelayImport`를 기록하며 Windows 실행 허용은 일반 가져오기만 비교합니다. 검증된 지연 설명자가 해결된 셀의 재바인딩 범위를 정하고 미해결 내부 썽크는 필요 시 해석을 유지합니다. 독립 조회 테이블이 바인딩 수를 제한하여 다음 미해결 셀을 보존합니다. 잘못된 상태는 명시적으로 실패합니다.
 
 `ExportObserver`는 상주 게스트 의존성의 실행 가능한 내보내기도 관측합니다. 모델링된 제공자는 서비스 디스패치로 관측하며 입력 자체 내보내기는 제외합니다. 모듈 변경 시 관측점을 갱신하고 현재 내보내기 식별로만 수정합니다. 기록 수는 선언된 가져오기 한도 이내입니다. DLL 테스트는 시스템 API와 게스트 의존성 헬퍼 모두를 수정하고 네이티브 로드로 에뮬레이션 주소가 남지 않음을 검증합니다.
