@@ -265,6 +265,52 @@ then took 5.0 / 12.9 ms instead of 187 / 426 ms. The two sampled ntoskrnl
 "functions" without a graph ("function not found") are text inside `.text`
 that function discovery took for code.
 
+## Against IDA
+
+Two runners measure the workbench against an installed IDA on the same
+inputs, on the same machine, one after the other. Neither ships IDA or reads
+anything from it but its own output; both need a local installation.
+
+`ida_compare_bench.py` compares the engine work behind the window. The
+workbench side drives the real worker as the GUI does when it opens a file:
+open, the first page of the function list and of the listing (browsable),
+then the reference index, which an explicit cross-reference query finishes
+on demand (analysis complete), then the first page of each sampled
+function's pseudocode, which F5 decompiles on demand. The IDA side runs IDA
+as a library (idalib) in the Python that has its `idapro` package: one
+process loads the file without analysis (browsable), another opens it with
+auto-analysis and waits for it (analysis complete), then decompiles the same
+functions and prints each as text. The functions are a seeded sample of the
+entries both sides found. Every sample starts fresh processes on a fresh copy
+of the input, so no database or decompiled function is reused:
+
+```sh
+python3 tools/neverd-gui/benchmarks/ida_compare_bench.py \
+  --worker /path/to/neverd-worker --ida-python /path/to/python-with-idapro \
+  --samples 3 --decompile 100 --output build-bench/vs-ida.json \
+  --markdown build-bench/vs-ida.md /path/to/binary...
+```
+
+`gui_vs_ida_bench.py` times both windows from launch on a private X server
+(Xvfb, through Qt's xcb plugin), with default preferences: the workbench
+with temporary settings and a fresh layout, IDA with a scratch user
+directory holding a copy of the license and configuration but no plug-ins.
+The workbench reports its first frame and the first painted listing of the
+file through `--startup-benchmark`, whose report records its clock origin on
+the monotonic clock; IDA runs a script once the file is open in its window
+(`-S`), which records that moment and the end of auto-analysis:
+
+```sh
+python3 tools/neverd-gui/benchmarks/gui_vs_ida_bench.py \
+  --gui /path/to/neverd-gui --worker /path/to/neverd-worker \
+  --ida /path/to/ida --samples 3 --warmup 1 \
+  --output build-bench/gui-vs-ida.json /path/to/binary...
+```
+
+Both keep every raw sample beside nearest-rank percentiles. OS file caches
+stay warm, and other activity on the machine is not controlled: the GUI
+runner records the load average.
+
 ## Synthetic viewport harness
 
 Build and run the Qt harness independently:
