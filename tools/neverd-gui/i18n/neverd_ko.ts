@@ -1993,6 +1993,10 @@ Signed: %4</source>
         <translation>최근 파일:</translation>
     </message>
     <message>
+        <source>No recent files. Choose New, or drop a file here.</source>
+        <translation>최근 파일이 없습니다. [새 파일]을 선택하거나 여기에 파일을 끌어다 놓으세요.</translation>
+    </message>
+    <message>
         <source>Open binary or database</source>
         <translation>바이너리 또는 데이터베이스 열기</translation>
     </message>

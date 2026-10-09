@@ -56,6 +56,7 @@ NEVERD_X86_ENCODING(uint8_t, kJccNearEnd, 0x8F)
 NEVERD_X86_ENCODING(uint8_t, kInt3, 0xCC)
 NEVERD_X86_ENCODING(uint8_t, kIntImm8, 0xCD)
 NEVERD_X86_ENCODING(uint8_t, kNop, 0x90)
+NEVERD_X86_ENCODING(uint8_t, kRetNear, 0xC3)
 NEVERD_X86_ENCODING(uint8_t, kJmpIndirectOp, 0xFF)
 NEVERD_X86_ENCODING(uint8_t, kJmpIndirectModRM, 0x25)
 // `jmp [ebx+disp32]`: a 32-bit position-independent PLT entry jumps through
@@ -89,6 +90,8 @@ NEVERD_X86_ENCODING(uint8_t, kRmSIB, 4)
 // rm 101 (or SIB base 101) under mod 00 means a 32-bit displacement and no
 // base register (RIP-relative for rm in 64-bit mode).
 NEVERD_X86_ENCODING(uint8_t, kRmDisp32, 5)
+// SIB 00 100 100: base ESP and no index, the operand [esp].
+NEVERD_X86_ENCODING(uint8_t, kSIBStackTop, 0x24)
 
 // --- EVEX prefix: 62 P0 P1 P2 ---
 NEVERD_X86_ENCODING(uint8_t, kEvexEscape, 0x62)
@@ -113,6 +116,10 @@ NEVERD_X86_ENCODING(size_t, kIntImm8Len, 2)
 NEVERD_X86_ENCODING(size_t, kDisp8Len, 1)
 NEVERD_X86_ENCODING(size_t, kDisp32Len, 4)
 NEVERD_X86_ENCODING(size_t, kMaxInstructionLen, 15)
+// An i386 get-PC thunk's body, `mov r32, [esp]; ret`, and the eight nop GCC
+// pads a short function with when it tunes for in-order Atom.
+NEVERD_X86_ENCODING(size_t, kGetPcThunkBodyLen, 4)
+NEVERD_X86_ENCODING(size_t, kShortFunctionPadding, 8)
 
 // ===--------------------------------------------------------------------===//
 // AArch64 instruction encoding

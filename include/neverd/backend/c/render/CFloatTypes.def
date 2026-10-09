@@ -1,0 +1,32 @@
+//===- CFloatTypes.def - C floating types by width --------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The C type of each floating-point width HighC computes in, the builtin
+/// that fuses a multiply-add in it, and whether C may compute an operation's
+/// result wider than the type (excess precision) until a cast or an
+/// assignment rounds it: `_Float16` arithmetic computes in float where the
+/// target has no half-precision instructions.  `_Float16` is C23's (Clang and
+/// GCC on Arm and x86); a 10-byte float is the x87 extended format, which the
+/// output's x87 prelude asserts `long double` is.  A debug declaration's
+/// `long double` fills its 12 or 16 bytes of storage, as AArch64's binary128
+/// does.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_C_FLOAT_TYPE(Bytes, Spelling, FusedMultiplyAdd, ComputesWider)
+#ifndef NEVERD_C_FLOAT_TYPE
+#define NEVERD_C_FLOAT_TYPE(Bytes, Spelling, FusedMultiplyAdd, ComputesWider)
+#endif
+
+NEVERD_C_FLOAT_TYPE(2, "_Float16", "__builtin_fmaf16", true)
+NEVERD_C_FLOAT_TYPE(4, "float", "__builtin_fmaf", false)
+NEVERD_C_FLOAT_TYPE(8, "double", "__builtin_fma", false)
+NEVERD_C_FLOAT_TYPE(10, "long double", "__builtin_fmal", false)
+NEVERD_C_FLOAT_TYPE(12, "long double", "__builtin_fmal", false)
+NEVERD_C_FLOAT_TYPE(16, "long double", "__builtin_fmal", false)
+
+#undef NEVERD_C_FLOAT_TYPE

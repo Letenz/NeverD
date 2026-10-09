@@ -38,6 +38,7 @@ const CallArgumentConvention SysVX64CallArguments = {
     .VectorArgumentsFromCalleeSummary = true,
     .ImportArgumentsFromPrototype = true,
     .SummaryListsNoParameters = readsVectorCount,
+    .StackArgumentSummary = true,
     .UndefinedIncomingScratchRegisters = true,
     .IndirectCallsTakePrecedingSetup = true,
     .FormattedCallArguments = true,

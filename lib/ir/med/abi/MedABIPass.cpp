@@ -670,6 +670,19 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                                        static_cast<int>(IntParamRegs.size()));
         CalleeArgs = ExternalArity->IntArgs;
       }
+      // An external routine whose floats the base AAPCS passes in the
+      // integer registers takes each float in the next one (doubles, which
+      // take an even-odd pair, keep the floating-point model below).
+      const bool CoreRegisterFloats =
+          UseExternalArity && ExternalArity->FpArgs > 0 &&
+          ExternalArity->FpIsFloat && Img && Convention &&
+          Convention->ExternalFloatsInCoreRegisters &&
+          Convention->ExternalFloatsInCoreRegisters(*Img);
+      if (CoreRegisterFloats) {
+        CalleeArgs = ExternalArity->IntArgs + ExternalArity->FpArgs;
+        CalleeRegArgs =
+            std::min(CalleeArgs, static_cast<int>(IntParamRegs.size()));
+      }
 
       // Apple/Darwin AArch64 passes EVERY variadic argument on the stack
       // (unlike AAPCS64/Linux, which fills x0-x7 first).  For a known-variadic
@@ -1645,7 +1658,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // the real variadic arguments so the callee reads the wrong slots
       // (printf("p[%d]=%.3f", i, v) then prints "p[0]=0.000").
       std::vector<MedVar> FoundFP;
-      if (RegArgsApply && !TRI.FPParamRegs.empty() && DarwinVarArgBase < 0) {
+      if (RegArgsApply && !TRI.FPParamRegs.empty() && DarwinVarArgBase < 0 &&
+          !CoreRegisterFloats) {
         // The FP-argument registers to probe, in ABI order.  Default to the
         // architecture's FP parameter registers (XMM0-7 / V0-7 / ARM D0-7); for
         // a direct call whose callee's exact FP layout is known, use it instead
@@ -1826,13 +1840,16 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // arity is otherwise unknown, so an intra-module function that happens
       // to share a registered name keeps its recovered signature.
       if (UseExternalArity) {
-        for (int K = std::max(0, ExternalArity->IntArgs); K < MaxArgs; ++K) {
+        const int Integers = ExternalArity->IntArgs +
+                             (CoreRegisterFloats ? ExternalArity->FpArgs : 0);
+        for (int K = std::max(0, Integers); K < MaxArgs; ++K) {
           FoundMask[K] = false;
           Found[K] = MedVar();
           FromStackScan[K] = false;
         }
-        if (static_cast<int>(FoundFP.size()) > ExternalArity->FpArgs)
-          FoundFP.resize(std::max(0, ExternalArity->FpArgs));
+        const int Floats = CoreRegisterFloats ? 0 : ExternalArity->FpArgs;
+        if (static_cast<int>(FoundFP.size()) > Floats)
+          FoundFP.resize(std::max(0, Floats));
       }
 
       // --- Assemble the argument list in callee parameter order ---

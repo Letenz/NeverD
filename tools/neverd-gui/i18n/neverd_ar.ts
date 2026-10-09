@@ -2013,6 +2013,10 @@ Signed: %4</source>
         <translation>الملفات الأخيرة:</translation>
     </message>
     <message>
+        <source>No recent files. Choose New, or drop a file here.</source>
+        <translation>لا توجد ملفات أخيرة. اختر «جديد»، أو أفلت ملفًا هنا.</translation>
+    </message>
+    <message>
         <source>Open binary or database</source>
         <translation>فتح ملف ثنائي أو قاعدة بيانات</translation>
     </message>

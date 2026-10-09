@@ -1997,6 +1997,10 @@ Signé : %4</translation>
         <translation>Fichiers récents :</translation>
     </message>
     <message>
+        <source>No recent files. Choose New, or drop a file here.</source>
+        <translation>Aucun fichier récent. Choisissez « Nouveau » ou déposez un fichier ici.</translation>
+    </message>
+    <message>
         <source>Open binary or database</source>
         <translation>Ouvrir un binaire ou une base de données</translation>
     </message>

@@ -33259,6 +33259,54 @@ int main(void) {
 )");
 }
 
+TEST(HighCPointerAddresses, BareSiblingReturnKeepsTheReturnedCall) {
+  // The same function, whose other path returns the call itself: printed
+  // void, it still makes the call exactly once.
+  HighFunc Func;
+  Func.Name = "cookie";
+  Func.Entry = 0x140001350;
+  Func.ReturnType = NdType::makeInt(8);
+  Func.Params = {{"arg0", NdType::makeInt(8)}};
+
+  HighStmt IfElse;
+  IfElse.Kind = StmtKind::IfElse;
+  IfElse.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0),
+                                    HighExpr::makeConst(1, 8));
+  HighStmt Ok;
+  Ok.Kind = StmtKind::Return;
+  MedVar Rax;
+  Rax.Kind = MedVar::Reg;
+  Rax.Id = 0;
+  Rax.SSAVer = 0;
+  Rax.Size = 8;
+  Ok.RetVal = HighExpr::makeVar(Rax);
+  IfElse.Body.push_back(std::move(Ok));
+  Func.Body.push_back(std::move(IfElse));
+
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Ret.RetVal = HighExpr::makeCall("sub_14000173C", 0x14000173C, {parameter(0)});
+  Func.Body.push_back(std::move(Ret));
+
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("void cookie"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    sub_14000173C(arg0);"), std::string::npos)
+      << Source;
+  compileAndRunCallOrdering(Source + R"(
+static int calls;
+int64_t sub_14000173C(int64_t input) {
+    ++calls;
+    return (int)input;
+}
+int main(void) {
+    cookie(7);
+    if (calls != 1) return 1;
+    cookie(1);
+    return calls == 1 ? 0 : 2;
+}
+)");
+}
+
 TEST(HighCPointerAddresses,
      DebugVoidReturnPreservesEvaluationAndMatchesForwardPrototype) {
   class ReturnDbg : public NullDebugContext {
@@ -40826,23 +40874,36 @@ TEST(HighCPointerAddresses, DestructorDoesNotReturnItsTailCallResult) {
 
 TEST(HighCPointerAddresses, ReadOfADestructorResultIsUnknown) {
   // A caller that is not a destructor itself still reads RAX after the call.
-  // The callee returns nothing, so the read has no defined value.
-  HighFunc Func;
-  Func.Name = "release_disk";
-  Func.Entry = 0x140001000;
-  Func.ReturnType = NdType::makeInt(8);
-  Func.Params = {{"arg0", NdType::makeInt(8)}};
-  const MedVar Result = temporary(1, 1);
-  Func.Body = {
-      assignTo(Result, HighExpr::makeCall("??1SC_DEVICE@@QEAA@XZ", 0x140002000,
-                                          {parameter(0)}))};
-  returnValue(Func, HighExpr::makeVar(Result));
-  const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("    SC_DEVICE_dtor((SC_DEVICE*)(uintptr_t)arg0);"),
-            std::string::npos)
-      << Source;
-  EXPECT_NE(Source.find(" = 0 /* unknown */;"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("= SC_DEVICE_dtor("), std::string::npos) << Source;
+  // The callee returns nothing, so the read has no defined value.  A caller
+  // that only returns what the destructor left there returns nothing either.
+  for (const bool OnlyReturned : {false, true}) {
+    SCOPED_TRACE(OnlyReturned);
+    HighFunc Func;
+    Func.Name = "release_disk";
+    Func.Entry = 0x140001000;
+    Func.ReturnType = NdType::makeInt(8);
+    Func.Params = {{"arg0", NdType::makeInt(8)}};
+    const MedVar Result = temporary(1, 1);
+    Func.Body = {
+        assignTo(Result, HighExpr::makeCall("??1SC_DEVICE@@QEAA@XZ",
+                                            0x140002000, {parameter(0)}))};
+    ExprPtr Read = HighExpr::makeVar(Result);
+    returnValue(Func, OnlyReturned
+                          ? Read
+                          : HighExpr::makeBinop(NdOp::INT_ADD, Read,
+                                                HighExpr::makeConst(1, 8)));
+    const std::string Source = emitFunctions({Func});
+    EXPECT_NE(Source.find("    SC_DEVICE_dtor((SC_DEVICE*)(uintptr_t)arg0);"),
+              std::string::npos)
+        << Source;
+    EXPECT_EQ(Source.find(" = 0 /* unknown */;") != std::string::npos,
+              !OnlyReturned)
+        << Source;
+    EXPECT_EQ(Source.find("void release_disk(") != std::string::npos,
+              OnlyReturned)
+        << Source;
+    EXPECT_EQ(Source.find("= SC_DEVICE_dtor("), std::string::npos) << Source;
+  }
 }
 
 TEST(HighCPointerAddresses, UnprovenIndirectBranchTrapsInsteadOfNamingNoLabel) {

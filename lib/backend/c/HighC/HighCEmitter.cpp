@@ -2084,11 +2084,39 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
 
   if (!ExternFuncs.empty())
     OS << "\n";
+
+  // An import slot the code reads as data is a pointer the loader fills with
+  // the import's address, declared by the name it links as.  A slot a call
+  // goes through as well is already the function pointer the call declares.
+  ImportDataSlotNames.clear();
+  bool DeclaredDataSlot = false;
+  for (va_t Slot : ImportDataSlotReads) {
+    const std::string Symbol = importDataSlotIdentifier(Slot);
+    if (Symbol.empty())
+      continue;
+    if (ImportSlotIdentifiers.count(Symbol))
+      if (const auto Declared = ExternalFunctionIdentifiers.find(Symbol);
+          Declared != ExternalFunctionIdentifiers.end()) {
+        ImportDataSlotNames.emplace(Slot, Declared->second);
+        continue;
+      }
+    const std::string Identifier =
+        GlobalIdentifierAllocator.allocateVerbatim(Symbol);
+    OS << "extern void *" << Identifier;
+    if (Identifier != Symbol)
+      OS << " __asm__(\"" << Symbol << "\")";
+    OS << ";\n";
+    ImportDataSlotNames.emplace(Slot, Identifier);
+    DeclaredDataSlot = true;
+  }
+  if (DeclaredDataSlot)
+    OS << "\n";
 }
 
 void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   ImageObjects.clear();
   ImageBackings.clear();
+  ImportDataSlotReads.clear();
   FunctionAddressNames.clear();
   AddressTakenFunctions.clear();
   AddressTakenDefinitions.clear();
@@ -2199,6 +2227,17 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           ImageObjects[E.ConstVal].AddressTaken = true;
       }
     }
+    // A data import read names the import's slot; the read-only pointer it
+    // may be read through (MinGW's `.refptr`) is no object of the program's.
+    if (E.Kind == ExprKind::Load &&
+        E.MemoryOrdering == NdMemoryOrdering::None &&
+        E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        !E.Operands.empty() && E.Operands[0])
+      if (const auto Slot =
+              importDataSlotRead(*E.Operands[0], E.Type ? E.Type->Size : 0)) {
+        ImportDataSlotReads.insert(*Slot);
+        return;
+      }
     if (E.Kind == ExprKind::Load &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         !E.Operands.empty() && E.Operands[0]) {

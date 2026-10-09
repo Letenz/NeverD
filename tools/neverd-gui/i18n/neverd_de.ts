@@ -1997,6 +1997,10 @@ Mit Vorzeichen: %4</translation>
         <translation>Zuletzt verwendete Dateien:</translation>
     </message>
     <message>
+        <source>No recent files. Choose New, or drop a file here.</source>
+        <translation>Keine zuletzt verwendeten Dateien. Wählen Sie „Neu“ oder ziehen Sie eine Datei hierher.</translation>
+    </message>
+    <message>
         <source>Open binary or database</source>
         <translation>Binärdatei oder Datenbank öffnen</translation>
     </message>

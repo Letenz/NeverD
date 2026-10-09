@@ -37,6 +37,7 @@ add_neverd_unittest(NeverDLiftTests
   aarch64/AArch64_NativeDecodeParityLoadStoreTests.cpp
   aarch64/AArch64_NativeDecodeParitySweepTests.cpp
   arm32/ARM32_ArithTests.cpp
+  arm32/ARM32_CallAbiTests.cpp
   arm32/ARM32_CarryTests.cpp
   arm32/ARM32_ControlTests.cpp
   arm32/ARM32_ExtendTests.cpp
@@ -2133,6 +2134,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_target_ownership.s
   x86_64/test_jumptable_selector_occurrence.s
   x86_64/test_jumptable_mask_equal_bound.s
+  x86_64/test_jumptable_field_reload.s
   x86_64/test_module_address_owner_induction.s
   x86_64/test_module_readonly_table_writer.s
   x86_64/test_extern_calls.c

@@ -7,6 +7,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QFontMetrics>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
@@ -19,6 +20,7 @@ namespace neverd::gui {
 namespace {
 constexpr int PageSize = 256;
 constexpr int MaxCachedPages = 64;
+constexpr int MaxPendingPages = 4;
 constexpr int FilterDebounceMs = 150;
 
 struct ChooserSpec {
@@ -35,6 +37,19 @@ constexpr ChooserSpec Specs[] = {
 };
 
 /// The digit widths a column of \p format starts at (ChooserFormats.def).
+/// Addresses and hex values print in the code font, at the list's size.
+bool codeFormat(ChooserModel::Format format) {
+  return format == ChooserModel::Format::Address ||
+         format == ChooserModel::Format::Hex ||
+         format == ChooserModel::Format::SegmentAddress;
+}
+
+QFont codeColumnFont() {
+  QFont font = Theme::instance().codeFont();
+  font.setPointSize(QApplication::font().pointSize());
+  return font;
+}
+
 int columnChars(ChooserModel::Format format) {
   switch (format) {
 #define NEVERD_CHOOSER_FORMAT(Id, Columns)                                     \
@@ -136,11 +151,14 @@ void ChooserModel::addressSpaceChanged() {
 void ChooserModel::reload() {
   if (localRows_)
     return;
-  beginResetModel();
   ++serial_;
+  // Old filters, sorts and revisions no longer need their queued pages.
+  session_.queries().unsubscribeOwner(this);
+  beginResetModel();
   pages_.clear();
   pageOrder_.clear();
-  inFlight_.clear();
+  pageRequests_.clear();
+  requestOrder_.clear();
   total_ = 0;
   endResetModel();
   emit totalChanged(total_);
@@ -151,9 +169,16 @@ void ChooserModel::reload() {
 }
 
 void ChooserModel::requestPage(int page) const {
-  if (inFlight_.contains(page) || !session_.loaded() || operation_.isEmpty())
+  if (pageRequests_.contains(page) || !session_.loaded() ||
+      operation_.isEmpty())
     return;
-  inFlight_.insert(page);
+  // Fast scrolling replaces older viewport requests instead of filling the
+  // shared dispatcher. The latest pages leave room for other views and edits.
+  while (int(requestOrder_.size()) >= MaxPendingPages) {
+    const int oldPage = requestOrder_.back();
+    requestOrder_.pop_back();
+    session_.queries().unsubscribe(pageRequests_.take(oldPage));
+  }
   QJsonObject payload = request_;
   payload["offset"] = page * PageSize;
   payload["limit"] = PageSize;
@@ -165,7 +190,7 @@ void ChooserModel::requestPage(int page) const {
   }
   const quint64 serial = serial_;
   auto *self = const_cast<ChooserModel *>(this);
-  session_.read(
+  const auto subscription = session_.read(
       operation_, payload, self,
       [self, page, serial](const QJsonObject &result) {
         self->accept(page, serial, result);
@@ -173,18 +198,22 @@ void ChooserModel::requestPage(int page) const {
       [self, page, serial](const QString &code, const QString &message) {
         if (serial != self->serial_)
           return;
-        self->inFlight_.remove(page);
+        self->pageRequests_.remove(page);
+        self->requestOrder_.remove(page);
         emit self->failed(code == QLatin1String("analysis_pending")
                               ? tr("References are still being indexed…")
                               : message);
       });
+  pageRequests_.insert(page, subscription);
+  requestOrder_.push_front(page);
 }
 
 void ChooserModel::accept(int page, quint64 serial,
                           const QJsonObject &payload) {
   if (serial != serial_)
     return;
-  inFlight_.remove(page);
+  pageRequests_.remove(page);
+  requestOrder_.remove(page);
   const auto items = payload.value("items").toArray();
   const int total = payload.contains("total")
                         ? payload.value("total").toInt()
@@ -365,12 +394,8 @@ QVariant ChooserModel::data(const QModelIndex &index, int role) const {
     }
     return {};
   case Qt::FontRole:
-    if (column.format == Format::Address || column.format == Format::Hex ||
-        column.format == Format::SegmentAddress) {
-      QFont font = Theme::instance().codeFont();
-      font.setPointSize(QApplication::font().pointSize());
-      return font;
-    }
+    if (codeFormat(column.format))
+      return codeColumnFont();
     return {};
   case Qt::TextAlignmentRole:
     if (column.format == Format::Hex || column.format == Format::Decimal)
@@ -461,11 +486,22 @@ ChooserView::ChooserView(Session &session, const AddressSpace &space,
   connect(model_, &ChooserModel::failed, this,
           [this](const QString &message) { status_->setText(message); });
   // Each column but the last, which stretches, starts as wide as its
-  // format needs.
-  const int digit = table_->fontMetrics().horizontalAdvance(QLatin1Char('0'));
-  for (int i = 0; i + 1 < model_->columnCount(); ++i)
-    table_->header()->resizeSection(i, columnChars(model_->column(i).format) *
-                                           digit);
+  // format needs in the font it prints in.
+  const int textDigit =
+      table_->fontMetrics().horizontalAdvance(QLatin1Char('0'));
+  const int codeDigit =
+      QFontMetrics(codeColumnFont()).horizontalAdvance(QLatin1Char('0'));
+  auto *header = table_->header();
+  // Titles measure with the style sheet's padding.
+  header->ensurePolished();
+  for (int i = 0; i + 1 < model_->columnCount(); ++i) {
+    const auto format = model_->column(i).format;
+    // A column is never narrower than its title.
+    header->resizeSection(
+        i, std::max(header->sectionSizeHint(i),
+                    columnChars(format) *
+                        (codeFormat(format) ? codeDigit : textDigit)));
+  }
   updateStatus();
 }
 

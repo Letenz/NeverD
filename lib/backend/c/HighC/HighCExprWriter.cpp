@@ -43,6 +43,36 @@ std::string bareLoad(std::string Text, int ParentPrec) {
              ? c_memory::unparenthesized(Text)
              : Text;
 }
+
+/// Whether C may compute an operation of float type \p Ty in a wider type
+/// until a cast or an assignment rounds it (CFloatTypes.def).
+bool computesWider(const TypeRef &Ty) {
+  if (!Ty || Ty->Kind != NdTypeKind::Float)
+    return false;
+#define NEVERD_C_FLOAT_TYPE(Bytes, Spelling, FusedMultiplyAdd, ComputesWider)  \
+  if (Ty->Size == Bytes)                                                       \
+    return ComputesWider;
+#include "neverd/backend/c/render/CFloatTypes.def"
+  return false;
+}
+
+/// Whether \p E prints as a C arithmetic operator on floats, whose result
+/// may keep excess precision into an enclosing one.
+bool isFloatArithmetic(const HighExpr &E) {
+  if (E.Kind == ExprKind::UnaryOp)
+    return E.Op == NdOp::FLOAT_NEG;
+  if (E.Kind != ExprKind::BinOp)
+    return false;
+  switch (E.Op) {
+  case NdOp::FLOAT_ADD:
+  case NdOp::FLOAT_SUB:
+  case NdOp::FLOAT_MULT:
+  case NdOp::FLOAT_DIV:
+    return true;
+  default:
+    return false;
+  }
+}
 } // namespace
 
 std::string frameStorageAddress(int64_t Displacement) {
@@ -673,7 +703,7 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     return typedText(E, std::move(Text), sizeof(int32_t), true);
   }
   case NdOp::FLOAT_NEG:
-    return "-" + exprStr(*E.Operands[0], 99);
+    return "-" + floatOperandStr(*E.Operands[0], 99);
   case NdOp::FLOAT_ABS:
   case NdOp::FLOAT_SQRT:
   case NdOp::FLOAT_CEIL:
@@ -821,6 +851,36 @@ std::string HighCWriter::importSlotIdentifier(const HighExpr &E) const {
     if (!isCProjectionIdentifierByte(static_cast<unsigned char>(Ch)))
       Ch = '_';
   return Identifier;
+}
+
+std::string HighCWriter::importDataSlotIdentifier(va_t Addr) const {
+  if (!Opts.Image)
+    return {};
+  const Import *Imp = Opts.Image->findImportAt(Addr);
+  if (!Imp || Imp->IATAddr != Addr)
+    return {};
+  HighExpr Slot;
+  Slot.CallAddr = Addr;
+  return importSlotIdentifier(Slot);
+}
+
+std::optional<va_t> HighCWriter::importDataSlotRead(const HighExpr &Address,
+                                                    uint16_t Size) const {
+  if (!Opts.Image || Size == 0 || Size != Opts.Image->getPointerSize())
+    return std::nullopt;
+  std::optional<va_t> Slot = constAddress(Address);
+  if (!Slot) {
+    const HighExpr *Pointer = unwrapIntegerView(&Address);
+    if (Pointer && Pointer->Kind == ExprKind::Load &&
+        Pointer->MemoryOrdering == NdMemoryOrdering::None &&
+        Pointer->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        Pointer->Operands.size() == 1 && Pointer->Operands[0])
+      if (const auto Holder = constAddress(*Pointer->Operands[0]))
+        Slot = foldReadonlyScalar(*Holder, Size);
+  }
+  if (!Slot || importDataSlotIdentifier(*Slot).empty())
+    return std::nullopt;
+  return Slot;
 }
 
 std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
@@ -1592,6 +1652,11 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
 bool HighCWriter::knownVoidCall(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
     return false;
+  // A function this unit defines returns what its definition declares: a
+  // bound source signature decides over debug information.
+  if (const HighFunc *Definition = calledDefinition(E))
+    if (const TypeRef Declared = declaredFunctionReturnType(*Definition))
+      return Declared->Kind == NdTypeKind::Void;
   // Other special-member rows are declared `void` too, but an MSVC
   // constructor or assignment returns `this`, and so does an ARM32 Itanium
   // destructor: a read of their result is real.
@@ -3534,6 +3599,15 @@ bool HighCWriter::isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const {
   return false;
 }
 
+std::string HighCWriter::floatOperandStr(const HighExpr &Operand,
+                                         int ParentPrec) {
+  if (computesWider(Operand.Type))
+    if (const HighExpr *Printed = forwardedExpr(&Operand);
+        Printed && isFloatArithmetic(*Printed))
+      return "(" + typeToC(Operand.Type) + ")(" + exprStr(Operand) + ")";
+  return exprStr(Operand, ParentPrec);
+}
+
 const HighExpr *HighCWriter::forwardedExpr(const HighExpr *E) const {
   unsigned Depth = 0;
   while (E && Depth++ < limits::kMaxIntegerViewUnwrapDepth) {
@@ -4061,6 +4135,13 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")(" + *Fwd + ")";
       if (auto Slot = namedSlotLoadDisplay(E))
         return *Slot;
+      // A data import's slot holds the import's address, which the read
+      // takes: `(int64_t)__imp__commode`.
+      if (const auto Slot =
+              importDataSlotRead(*E.Operands[0], E.Type ? E.Type->Size : 0))
+        if (const auto Name = ImportDataSlotNames.find(*Slot);
+            Name != ImportDataSlotNames.end())
+          return "(" + typeToC(E.Type) + ")" + Name->second;
       if (auto VA = constAddress(*E.Operands[0])) {
         const uint16_t Size = E.Type ? E.Type->Size : 0;
         if (auto Imm = foldReadonlyScalar(*VA, Size)) {
@@ -4194,8 +4275,11 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     // of a value of this type are that value.
     if (const HighExpr *Call = floatCallResult(Src, E.Type))
       return renderCallExpr(*Call);
-    if (const HighExpr *Value = floatBitsValue(Src, E.Type))
+    if (const HighExpr *Value = floatBitsValue(Src, E.Type)) {
+      if (computesWider(E.Type) && isFloatArithmetic(*Value))
+        return "(" + typeToC(E.Type) + ")(" + exprStr(*Value) + ")";
       return exprStr(*Value, ParentPrec);
+    }
     // A float whose bits are a constant, or read from constant data, is that
     // constant.
     if (const auto Literal = floatConstantBitsText(Src, E.Type))
