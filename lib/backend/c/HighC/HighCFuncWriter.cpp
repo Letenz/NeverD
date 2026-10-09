@@ -2992,7 +2992,12 @@ void HighCWriter::foldSignedJleConds(std::vector<HighStmt> &Stmts) {
 bool HighCWriter::readsThroughForwards(const HighExpr &E,
                                        const std::string &Name) const {
   std::set<std::string> Followed;
+  // Expressions share subexpressions: one explored without finding the name
+  // does not read it from anywhere else either.
+  std::set<const HighExpr *> Explored;
   std::function<bool(const HighExpr &)> Reads = [&](const HighExpr &Cur) {
+    if (!Explored.insert(&Cur).second)
+      return false;
     if (Cur.Kind == ExprKind::Var || Cur.Kind == ExprKind::Phi) {
       const std::string Read = varName(Cur.Var);
       const std::string Printed = copyForwardName(Read);
