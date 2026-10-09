@@ -2119,10 +2119,6 @@ Signed: %4</source>
         <translation>버전 %1</translation>
     </message>
     <message>
-        <source>Start</source>
-        <translation>시작</translation>
-    </message>
-    <message>
         <source>Recent files</source>
         <translation>최근 파일</translation>
     </message>

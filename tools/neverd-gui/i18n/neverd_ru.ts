@@ -2127,10 +2127,6 @@ Signed: %4</source>
         <translation>Версия %1</translation>
     </message>
     <message>
-        <source>Start</source>
-        <translation>Начало</translation>
-    </message>
-    <message>
         <source>Recent files</source>
         <translation>Недавние файлы</translation>
     </message>

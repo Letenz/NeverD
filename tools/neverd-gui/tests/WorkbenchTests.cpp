@@ -26,6 +26,7 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QDragEnterEvent>
+#include <QDragLeaveEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QFile>
@@ -1014,6 +1015,44 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(bench.session.filePath(), path, OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QVERIFY(!QApplication::activeModalWidget());
+  }
+
+  void quickStartShowsWhatADropWouldDo() {
+    // A file dragged over the quick start shows that a drop opens it, until
+    // it leaves; a folder, which cannot open, shows nothing.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    QTimer drag;
+    bool shown = false, hidden = false, folderShown = true;
+    connect(&drag, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!dialog || dialog->objectName() != QLatin1String("quickStartDialog"))
+        return;
+      drag.stop();
+      auto *target =
+          dialog->findChild<QWidget *>(QStringLiteral("quickStartDropTarget"));
+      const auto enter = [dialog](const QString &dragged) {
+        QMimeData mime;
+        mime.setUrls({QUrl::fromLocalFile(dragged)});
+        QDragEnterEvent event(QPoint(10, 10), Qt::CopyAction, &mime,
+                              Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(dialog, &event);
+      };
+      QDragLeaveEvent leave;
+      enter(path);
+      shown = target && target->isVisible();
+      QApplication::sendEvent(dialog, &leave);
+      hidden = target && !target->isVisible();
+      enter(directory.path());
+      folderShown = target && target->isVisible();
+      dialog->reject();
+    });
+    drag.start(10);
+    bench.window->showQuickStart();
+    QVERIFY(shown);
+    QVERIFY(hidden);
+    QVERIFY(!folderShown);
   }
 
   void reloadReadsTheInputFileAgainWithItsSavedComments() {

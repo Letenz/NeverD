@@ -2139,10 +2139,6 @@ Signed: %4</source>
         <translation>الإصدار %1</translation>
     </message>
     <message>
-        <source>Start</source>
-        <translation>البدء</translation>
-    </message>
-    <message>
         <source>Recent files</source>
         <translation>الملفات الأخيرة</translation>
     </message>
