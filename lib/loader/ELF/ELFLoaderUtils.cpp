@@ -381,6 +381,7 @@ void parseDynamic(const llvm::object::ELFFile<ELFT> &ELF,
                                 Img.DynInfo.FiniArray, Img);
       break;
     case DT_PLTGOT:
+      Img.DynInfo.PltGotAddr = E.Val;
       recordLazyBindingSlots(E.Val, sizeof(typename ELFT::Addr), Img);
       break;
     default:

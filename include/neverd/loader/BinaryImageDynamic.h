@@ -67,6 +67,9 @@ struct DynamicInfo {
   std::vector<va_t> PreinitArray;
   std::vector<va_t> InitArray;
   std::vector<va_t> FiniArray;
+  /// ELF DT_PLTGOT: the table a PLT entry reaches its import's slot in.  An
+  /// i386 PIC PLT entry addresses that slot from this base, held in EBX.
+  va_t PltGotAddr = 0;
 
   /// PDB path (PE/COFF) or build-id string (ELF).
   std::string PDBPath;
