@@ -85,6 +85,49 @@ std::vector<uint8_t> callerThen(std::vector<uint8_t> Callee) {
   return Code;
 }
 
+TEST(InternalNoReturn, NoReturnInstructionStillFollowsExceptionalPaths) {
+  for (const auto Kind :
+       {ExceptionalEdgeKind::CxxCatch, ExceptionalEdgeKind::SEHHandler,
+        ExceptionalEdgeKind::ItaniumCatchPad, ExceptionalEdgeKind::GoRecover}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    for (unsigned Destination = 0; Destination != 4; ++Destination) {
+      SCOPED_TRACE(Destination);
+      auto NoReturnBlock = [](int Id) {
+        LowBlock Block;
+        Block.Id = Id;
+        Block.StartAddr = Base + 0x10 * Id;
+        Block.EndAddr = Block.StartAddr + 5;
+        LowInstructionBoundary Insn;
+        Insn.Address = Block.StartAddr;
+        Insn.Size = 5;
+        Insn.ControlFlags = LowInstructionControlFlag::NoReturn;
+        Block.InstructionBoundaries.push_back(Insn);
+        return Block;
+      };
+      auto Entry = NoReturnBlock(0);
+      Entry.Succs.push_back(2);
+      Entry.ExceptionalSuccs.push_back({Destination == 2   ? -1
+                                        : Destination == 3 ? 99
+                                                           : 1,
+                                        Base + 0x10, Kind});
+      auto Handler = NoReturnBlock(1);
+      auto Returning = NoReturnBlock(2);
+      LowOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Returning.InstructionBoundaries.clear();
+      Returning.Ops.push_back(Return);
+      if (Destination != 1) {
+        Handler.InstructionBoundaries.clear();
+        Handler.Ops.push_back(Return);
+      }
+      LowFunc Function;
+      Function.Entry = Base;
+      Function.Blocks = {Entry, Handler, Returning};
+      EXPECT_EQ(lowFunctionNeverReturns(Function, Arch::X86), Destination == 1);
+    }
+  }
+}
+
 TEST(InternalNoReturn, CallThroughALoaderBoundNoReturnSlotEndsItsBlock) {
   // `_start: call *__libc_start_main@GOT(%rip); hlt`. The import the loader
   // binds to the slot is the callee; nothing after the call runs.

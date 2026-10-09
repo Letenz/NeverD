@@ -64,20 +64,22 @@ bool lowFunctionNeverReturns(const LowFunc &Func, Arch TheArch) {
       for (const LowOp &Op : Block.Ops)
         if (Op.Opcode == NdOp::RETURN)
           return false;
-    if (PathEnds) {
-      SawTerminator = true;
-      continue;
-    }
-    std::vector<int> Next(Block.Succs.begin(), Block.Succs.end());
+    // No-return applies to the ordinary call continuation. The call can
+    // still throw into a handler that returns from this enclosing function.
+    std::vector<int> Next;
     for (const ExceptionalEdge &Edge : Block.ExceptionalSuccs) {
       // A handler outside the lifted body may return normally.
       if (Edge.BlockId < 0)
         return false;
       Next.push_back(Edge.BlockId);
     }
+    if (PathEnds)
+      SawTerminator = true;
+    else
+      Next.insert(Next.end(), Block.Succs.begin(), Block.Succs.end());
     // A path that stops without a terminator (an unresolved jump, a decode
     // failure) proves nothing.
-    if (Next.empty())
+    if (Next.empty() && !PathEnds)
       return false;
     for (int Id : Next) {
       auto It = BlocksById.find(Id);

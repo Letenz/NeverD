@@ -2182,7 +2182,7 @@ jobs:
         run: |
           cmake --build build-windows-eh --parallel 4 --target \
             NeverDRegistrationStateTests NeverDRegistrationEHTests NeverDLiftTests \
-            NeverDMedStackAlignmentTests \
+            NeverDMedStackAlignmentTests NeverDNoReturnTests \
             NeverDWindowsRegistrationFrameTests \
             NeverDWindowsEHMetadataEncoderTests NeverDWindowsEHCorpusTests \
             NeverDCOFFExceptionPatchTests NeverDWindowsRegistrationNativeTests neverd
@@ -2196,6 +2196,7 @@ jobs:
           build-windows-eh/bin/NeverDRegistrationStateTests --gtest_output=xml:build-windows-eh/evidence/state.xml
           build-windows-eh/bin/NeverDRegistrationEHTests --gtest_output=xml:build-windows-eh/evidence/registration.xml
           build-windows-eh/bin/NeverDMedStackAlignmentTests --gtest_output=xml:build-windows-eh/evidence/stack.xml
+          build-windows-eh/bin/NeverDNoReturnTests --gtest_output=xml:build-windows-eh/evidence/noreturn.xml
           build-windows-eh/bin/NeverDWindowsRegistrationFrameTests --gtest_output=xml:build-windows-eh/evidence/frame.xml
           build-windows-eh/bin/NeverDWindowsEHMetadataEncoderTests --gtest_output=xml:build-windows-eh/evidence/metadata.xml
           build-windows-eh/bin/NeverDCOFFExceptionPatchTests --gtest_output=xml:build-windows-eh/evidence/planner.xml
@@ -2243,7 +2244,7 @@ jobs:
           from pathlib import Path
           import xml.etree.ElementTree as ET
           root = Path('build-windows-eh/evidence')
-          for name in ('state', 'registration', 'stack', 'frame', 'metadata', 'planner', 'ir-pe', 'corpus'):
+          for name in ('state', 'registration', 'stack', 'noreturn', 'frame', 'metadata', 'planner', 'ir-pe', 'corpus'):
               result = ET.parse(root / (name + '.xml')).getroot()
               assert int(result.get('tests', '0')) > 0, name
               assert not result.findall('.//skipped'), name

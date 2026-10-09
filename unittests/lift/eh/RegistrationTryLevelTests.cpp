@@ -20,12 +20,16 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/FuncDetector.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
+#include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
+#include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Endian.h"
 
 #include <string>
@@ -827,6 +831,137 @@ TEST(RegistrationTryLevel, CxxFuncInfoPointersKeepTheirRuntimeEntryRole) {
     if (Block.StartAddr == kText + 0xa0)
       for (const auto &Op : Block.Ops)
         EXPECT_EQ(Op.RegistrationRoot, MedOp::RegistrationRootKind::None);
+}
+
+TEST(RegistrationTryLevel, CxxCallbackRolesSurviveModuleFunctionDiscovery) {
+  for (unsigned OrdinarySource = 0; OrdinarySource != 5; ++OrdinarySource) {
+    SCOPED_TRACE(OrdinarySource);
+    auto Img = makeCxxContinuationImage();
+    Img.Entry = kText;
+    auto CallbackSymbol = Symbol::makeFunc(kText + 0xa0);
+    if (OrdinarySource == 2)
+      CallbackSymbol.Origin = NameOrigin::Stated;
+    Img.Symbols.push_back(CallbackSymbol);
+    if (OrdinarySource == 1) {
+      llvm::support::endian::write32le(Img.Segments[1].Data.data() + 0x80,
+                                       kText + 0xa0);
+      Img.CodePtrRelocSlots.insert(kRData + 0x80);
+    }
+    if (OrdinarySource == 3)
+      Img.Exports.push_back({"ordinary_callback", 0, kText + 0xa0});
+    if (OrdinarySource == 4) {
+      auto &Text = Img.Segments[0].Data;
+      Text[0xe0] = 0xe8;
+      llvm::support::endian::write32le(Text.data() + 0xe1, uint32_t(-0x45));
+      Text[0xe5] = 0xc3;
+    }
+    const auto Roles = coff_loader::getCheckedX86CxxCallbackPointerRoles(Img);
+    ASSERT_TRUE(Roles);
+    EXPECT_EQ(Roles->Sources,
+              (std::map<va_t, va_t>{{kRData + 0x6c, kText + 0xa0}}));
+    EXPECT_EQ(Roles->RuntimeOnlyPointerTargets.count(kText + 0xa0),
+              OrdinarySource != 1);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Img));
+    const auto Entries = FuncDetector().detect(Img, Dec);
+    const bool HasCallback =
+        std::any_of(Entries.begin(), Entries.end(), [&](const auto &Entry) {
+          return Entry.first == kText + 0xa0;
+        });
+    EXPECT_EQ(HasCallback, OrdinarySource != 0);
+  }
+}
+
+TEST(RegistrationTryLevel, RegistrationParserKeepsItsFocusedLanguageOwnership) {
+  for (unsigned OrdinarySource = 0; OrdinarySource != 3; ++OrdinarySource) {
+    SCOPED_TRACE(OrdinarySource);
+    auto Img = makeCxxContinuationImage();
+    auto &Text = Img.Segments[0];
+    Text.Data.resize(0x110, 0xcc);
+    Text.Size = Text.Data.size();
+    Text.Data[0x100] = 0xb8;
+    llvm::support::endian::write32le(Text.Data.data() + 0x101, kRData);
+    Text.Data[0x105] = 0xff;
+    Text.Data[0x106] = 0x25;
+    llvm::support::endian::write32le(Text.Data.data() + 0x107, kRData + 0x90);
+    for (auto &Symbol : Img.Symbols)
+      if (Symbol.Addr == kPersonality)
+        Symbol.Name = "cxx_personality_thunk";
+    Img.Imports.push_back(
+        {"vcruntime140.dll", "__CxxFrameHandler3", 0, kRData + 0x90});
+    auto CallbackSymbol = Symbol::makeFunc(kText + 0xa0);
+    if (OrdinarySource == 2)
+      CallbackSymbol.Origin = NameOrigin::Stated;
+    Img.Symbols.push_back(CallbackSymbol);
+    if (OrdinarySource == 1) {
+      llvm::support::endian::write32le(Img.Segments[1].Data.data() + 0x80,
+                                       kText + 0xa0);
+      Img.CodePtrRelocSlots.insert(kRData + 0x80);
+    }
+    Img.ExceptionMetadata.Functions.clear();
+    Img.ExceptionMetadata.rebuildIndex();
+    coff_loader::parseX86RegistrationExceptions(Img);
+    const auto *EH = Img.ExceptionMetadata.findFunction(kText);
+    ASSERT_NE(EH, nullptr);
+    ASSERT_TRUE(EH->Cxx);
+    ASSERT_EQ(EH->ParseStatus, ExceptionParseStatus::Complete);
+    EXPECT_EQ(EH->Personality, ExceptionPersonality::CxxFrameHandler3);
+    EXPECT_TRUE(EH->LanguageTablesResolved);
+    const auto Graph = *EH->Cxx;
+    Img.LoadOnlyFunctionEntries.insert(kText);
+    coff_loader::ensureExceptionHandlers(Img, {kText});
+    EH = Img.ExceptionMetadata.findFunction(kText);
+    ASSERT_NE(EH, nullptr);
+    EXPECT_EQ(EH->ParseStatus, ExceptionParseStatus::Complete);
+    EXPECT_EQ(EH->Personality, ExceptionPersonality::CxxFrameHandler3);
+    ASSERT_TRUE(EH->Cxx);
+    EXPECT_EQ(*EH->Cxx, Graph);
+    EXPECT_EQ(std::any_of(Img.Symbols.begin(), Img.Symbols.end(),
+                          [&](const auto &Symbol) {
+                            return Symbol.Addr == kText + 0xa0 && Symbol.IsFunc;
+                          }),
+              OrdinarySource != 0);
+  }
+}
+
+TEST(RegistrationTryLevel,
+     CxxPipelineKeepsRuntimeContinuationsAcrossSelection) {
+  for (const bool Selected : {false, true}) {
+    SCOPED_TRACE(Selected);
+    auto Img = makeCxxContinuationImage(kText + 0xc0, false, true);
+    Img.Entry = kText;
+    Img.Symbols.push_back(Symbol::makeFunc(kText + 0xa0));
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.NoOpt = true;
+    Options.EmitDumpOutput = false;
+    Options.MaxFunctions = 1;
+    if (Selected)
+      Options.OnlyFunctionEntries.insert(kText);
+    const auto Result = Pipeline().run(Img, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_EQ(Result.LowFuncs.size(), 1u);
+    ASSERT_EQ(Result.LowFuncs.front().Entry, kText);
+    ASSERT_TRUE(Result.LowFuncs.front().RegistrationStates);
+    const auto &State = *Result.LowFuncs.front().RegistrationStates;
+    ASSERT_TRUE(State.Complete);
+    ASSERT_TRUE(State.CxxContinuationsComplete);
+    ASSERT_EQ(State.CxxContinuations.size(), 1u);
+    ASSERT_EQ(Result.HighFuncs.size(), 1u);
+    const auto &High = Result.HighFuncs.front();
+    EXPECT_EQ(High.Entry, kText);
+    bool HasContinuation = false;
+    walkStmts(High.Body, [&](const HighStmt &Statement) {
+      if (Statement.Kind == StmtKind::Return && Statement.RetVal &&
+          Statement.RetVal->Kind == ExprKind::Const)
+        EXPECT_NE(Statement.RetVal->ConstVal, kText + 0xc0);
+      for (const auto &Clause : Statement.EHClauses)
+        HasContinuation |=
+            Clause.Kind == HighEHClauseKind::CxxCatch &&
+            Clause.ContinuationVAs == std::vector<va_t>{kText + 0xc0};
+    });
+    EXPECT_TRUE(HasContinuation);
+  }
 }
 
 TEST(RegistrationTryLevel, CxxPointerRolesRequireTheExactReparsedGraph) {

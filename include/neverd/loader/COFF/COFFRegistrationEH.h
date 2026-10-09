@@ -26,6 +26,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 
 namespace neverd::coff_loader {
 
@@ -44,6 +45,17 @@ void parseX86RegistrationExceptions(BinaryImage &Img);
 std::optional<std::map<va_t, va_t>>
 getCheckedX86CxxCallbackPointerSources(const BinaryImage &Img,
                                        const ExceptionFunction &Function);
+
+/// Image-wide callback pointer roles, reconstructed from the same checked
+/// FuncInfo parser. RuntimeOnlyPointerTargets have no independent relocated
+/// code-pointer source; exports, stated symbols and ordinary calls can still
+/// give them independent function-entry roles.
+struct X86CxxCallbackPointerRoles {
+  std::map<va_t, va_t> Sources;
+  std::set<va_t> RuntimeOnlyPointerTargets;
+};
+std::optional<X86CxxCallbackPointerRoles>
+getCheckedX86CxxCallbackPointerRoles(const BinaryImage &Img);
 
 /// Authenticate an argument-preserving veneer to the known CRT SEH3 import.
 bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA);

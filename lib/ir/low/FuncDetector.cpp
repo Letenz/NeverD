@@ -19,6 +19,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
 
@@ -179,6 +180,13 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   }
   const std::set<va_t> ExceptionThunks =
       Img.ExceptionMetadata.registrationScopeThunks();
+  const auto CxxPointerRoles =
+      coff_loader::getCheckedX86CxxCallbackPointerRoles(Img);
+  std::set<va_t> IndependentEntries = Entries;
+  IndependentEntries.insert(ExceptionEntries.begin(), ExceptionEntries.end());
+  for (const auto &Sym : Img.Symbols)
+    if (Sym.IsFunc && Sym.Origin != NameOrigin::Synthesized)
+      IndependentEntries.insert(Sym.Addr);
 
   for (const auto &Sym : Img.Symbols) {
     if (!Sym.IsFunc)
@@ -192,6 +200,9 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     if (SkipAddrs.count(Sym.Addr))
       continue;
     if (ExceptionThunks.count(Sym.Addr))
+      continue;
+    if (Sym.Origin == NameOrigin::Synthesized && CxxPointerRoles &&
+        CxxPointerRoles->RuntimeOnlyPointerTargets.count(Sym.Addr))
       continue;
     if (Img.hasExecutableCodeOwnerAt(Sym.Addr)) {
       Entries.insert(Sym.Addr);
@@ -255,6 +266,11 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
         continue;
       const va_t Target = normalizeCodeAddress(readPtr(Bytes, Img.is64Bit()),
                                                Img.Arch, Img.Mode);
+      if (CxxPointerRoles)
+        if (const auto Source = CxxPointerRoles->Sources.find(Slot);
+            Source != CxxPointerRoles->Sources.end() &&
+            Source->second == Target)
+          continue;
       if (Img.hasExecutableCodeOwnerAt(Target) && !IsMachOLocalLabel(Target)) {
         Entries.insert(Target);
         RelocationCodeTargets.insert(Target);
@@ -270,6 +286,11 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     if (IsX86LinkedCOFF)
       scanX86UnsymbolizedEntries(Img, Dec, Entries);
   }
+
+  if (CxxPointerRoles)
+    for (va_t Target : CxxPointerRoles->RuntimeOnlyPointerTargets)
+      if (!IndependentEntries.count(Target) && !DirectCallTargets.count(Target))
+        Entries.erase(Target);
 
   for (va_t Thunk : ExceptionThunks)
     Entries.erase(Thunk);

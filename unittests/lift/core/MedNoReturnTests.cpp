@@ -165,6 +165,56 @@ TEST(MedNoReturn, RuntimeImportEffectSurvivesAnInventoriedVeneer) {
   }
 }
 
+TEST(MedNoReturn, NoReturnCallStillFollowsExceptionalContinuations) {
+  for (const auto Kind :
+       {ExceptionalEdgeKind::CxxCatch, ExceptionalEdgeKind::SEHHandler,
+        ExceptionalEdgeKind::ItaniumCatchPad, ExceptionalEdgeKind::GoRecover}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    for (bool Indirect : {false, true}) {
+      SCOPED_TRACE(Indirect);
+      for (unsigned Destination = 0; Destination != 4; ++Destination) {
+        SCOPED_TRACE(Destination);
+        auto Call = callOp(0x2000);
+        if (Indirect) {
+          Call.Opcode = NdOp::INDIR_CALL;
+          Call.DoesNotReturn = true;
+        }
+        auto Entry = block(0, {Call}, {2});
+        // 0: a handler returns; 1: it also terminates; 2: outside this
+        // body; 3: a missing block. Only destination 1 proves no return.
+        Entry.ExceptionalSuccs.push_back({Destination == 2   ? -1
+                                          : Destination == 3 ? 99
+                                                             : 1,
+                                          0x1010, Kind});
+        std::vector<MedFunc> Functions = {
+            function(0x1000,
+                     {Entry,
+                      block(1, {Destination == 1 ? trapOp() : returnOp()}),
+                      block(2, {returnOp()})}),
+            function(0x2000, {block(0, {trapOp()})}),
+            function(0x3000, {block(0, {callOp(0x1000), returnOp()})})};
+        for (unsigned Refresh = 0; Refresh != 2; ++Refresh) {
+          propagateInternalNoReturn(Functions, Arch::AArch64);
+          EXPECT_EQ(Functions[0].DoesNotReturn, Destination == 1);
+          EXPECT_TRUE(Functions[0].Blocks[0].Ops[0].DoesNotReturn);
+          EXPECT_EQ(Functions[2].DoesNotReturn, Destination == 1);
+          EXPECT_TRUE(Functions[1].DoesNotReturn);
+        }
+      }
+    }
+  }
+}
+
+TEST(MedNoReturn, EarlierExceptionalPathSurvivesALaterTerminatingCall) {
+  auto Entry = block(0, {}, {1});
+  Entry.ExceptionalSuccs.push_back({2, 0x1020, ExceptionalEdgeKind::CxxCatch});
+  auto Call = callOp(0x2000);
+  Call.DoesNotReturn = true;
+  const auto Function =
+      function(0x1000, {Entry, block(1, {Call}), block(2, {returnOp()})});
+  EXPECT_FALSE(hasProvenNoReturnExit(Function, Arch::X86));
+}
+
 TEST(MedNoReturn, CallFollowedByInt3DoesNotProveNoreturn) {
   constexpr va_t Entry = 0x140001000;
   constexpr va_t Helper = 0x140002000;
@@ -172,8 +222,8 @@ TEST(MedNoReturn, CallFollowedByInt3DoesNotProveNoreturn) {
   Int3.Opcode = NdOp::INTRINSIC;
   Int3.addInput(MedVar::makeConst(static_cast<uint64_t>(Intrinsic::Int3), 2));
   std::vector<MedFunc> Funcs;
-  Funcs.push_back(function(
-      Entry, {block(0, {callOp(Helper), Int3, returnOp()})}));
+  Funcs.push_back(
+      function(Entry, {block(0, {callOp(Helper), Int3, returnOp()})}));
 
   propagateInternalNoReturn(Funcs, Arch::X64);
 

@@ -250,6 +250,10 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
                             Chain);
 
     F.Registration = std::move(Chain);
+    // Registration personalities and language tables were resolved together
+    // above. The generic table-driven resolver must not reinterpret this
+    // absolute-pointer FuncInfo as a trailing x64 language-data record.
+    F.LanguageTablesResolved = true;
     if (F.Personality == ExceptionPersonality::Unknown)
       diagnose(F, ExceptionParseStatus::Partial,
                "unknown x86 registration handler");
@@ -279,9 +283,11 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
   // that installed the record, as FuncDetector treats them: a guess goes, and
   // a stated symbol stays as a label.
   const std::set<va_t> Thunks = Img.ExceptionMetadata.registrationScopeThunks();
+  const auto CxxRoles = getCheckedX86CxxCallbackPointerRoles(Img);
   llvm::erase_if(Img.Symbols, [&](const Symbol &Sym) {
     return Sym.IsFunc && Sym.Origin == NameOrigin::Synthesized &&
-           Thunks.count(Sym.Addr);
+           (Thunks.count(Sym.Addr) ||
+            (CxxRoles && CxxRoles->RuntimeOnlyPointerTargets.count(Sym.Addr)));
   });
   for (Symbol &Sym : Img.Symbols)
     if (Sym.IsFunc && Thunks.count(Sym.Addr))

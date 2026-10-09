@@ -1234,6 +1234,15 @@ add_neverd_unittest(NeverDWindowsEHMetadataEncoderTests
   WindowsEHMetadata
 )
 
+add_neverd_unittest(NeverDNoReturnTests
+  core/MedNoReturnTests.cpp
+  core/InternalNoReturnTests.cpp
+
+  LINK_COMPONENTS
+  IRLow
+  IRMed
+)
+
 add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTests.cpp
 
@@ -1248,6 +1257,7 @@ add_neverd_unittest(NeverDRegistrationEHTests
   IRLow
   IRMed
   IRHigh
+  Pipeline
 )
 
 add_neverd_unittest(NeverDWindowsRegistrationFrameTests

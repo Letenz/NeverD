@@ -46,8 +46,11 @@ CFG construction closes those targets against function and instruction
 ownership and replays the analysis; it does not turn them into independent
 ordinary entries or insert a fabricated IP-to-state map into FuncInfo.
 The FuncInfo parser also authenticates the exact stored callback-pointer
-fields used by indirect-entry discovery; independent references still create
-ordinary roots. MedIR distinguishes established parent EBP, private callback
+fields used by module function discovery and indirect-entry discovery;
+independent pointer references, exports, stated symbols and direct calls still
+create ordinary entries. Focused loading retains this parser's language-table
+ownership rather than reparsing registration data as table-driven EH.
+MedIR distinguishes established parent EBP, private callback
 ESP and a continuation's checked saved ESP. Its shared root-shape and
 entry-stack-coordinate helpers are consumed by stack proofs, HighIR and LLVM;
 a generic COPY or a conflicting ordinary entry cannot substitute for that
@@ -324,7 +327,10 @@ rechecks the current graph. Bound calls retain their exact parameters and
 effects; only recognized architectural terminators bypass the ordinary
 intrinsic restriction. The final interprocedural no-return fixed point copies
 its result into each exact native source-call hint, including clearing stale
-effects on a later run. HighIR therefore sees the same termination boundary.
+effects on a later run. Both LowIR and MedIR proofs follow exceptional
+successors even when a no-return call ends the ordinary path. A handler that
+returns or whose body is unresolved prevents proving the enclosing function
+non-returning. HighIR therefore sees the same termination boundary.
 Publication revalidates the typed callee's complete source flow and requires
 its dependency closure; a function flag alone never authorizes a terminating
 source call. Reports, writes and traps before termination remain observable.

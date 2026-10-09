@@ -1741,7 +1741,7 @@ for the analysis/native support matrix and the fail-closed patch contract.
 
 PE32 registration changes also require the focused state, frame and native
 targets. Changes to runtime entry stacks also require
-`NeverDMedStackAlignmentTests` and the `MedSSAMultiRoot`,
+`NeverDMedStackAlignmentTests`, `NeverDNoReturnTests` and the `MedSSAMultiRoot`,
 `MedSEHEstablisherFrame`, `MedSEHHandlerEntry`, `MedTempIdentity` and
 `Win64Forwarder` regressions in `NeverDLiftTests`. These cover independent
 ordinary entries, restored versus private callback stacks, malformed root
@@ -1754,9 +1754,11 @@ Native installation needs a source build of the LLVM fork exposing
 ```bash
 cmake --build build --parallel 4 --target neverd \
   NeverDRegistrationStateTests NeverDRegistrationEHTests \
-  NeverDWindowsRegistrationFrameTests NeverDWindowsRegistrationNativeTests
+  NeverDWindowsRegistrationFrameTests NeverDWindowsRegistrationNativeTests \
+  NeverDNoReturnTests
 build/bin/NeverDRegistrationStateTests
 build/bin/NeverDRegistrationEHTests
+build/bin/NeverDNoReturnTests
 build/bin/NeverDWindowsRegistrationFrameTests
 build/bin/NeverDWindowsRegistrationNativeTests \
   --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract

@@ -135,6 +135,14 @@ bool provesNoReturn(const MedFunc &Func, Arch TheArch,
       }
     }
 
+    // A no-return call stops ordinary execution, but it can still dispatch
+    // to a local handler that resumes this function. Prove those paths too;
+    // an external or missing handler leaves the return behavior unknown.
+    for (const ExceptionalEdge &Edge : Block.ExceptionalSuccs) {
+      if (Edge.BlockId < 0)
+        return false;
+      Pending.push(Edge.BlockId);
+    }
     if (PathTerminates)
       continue;
     if (Block.Succs.empty())
