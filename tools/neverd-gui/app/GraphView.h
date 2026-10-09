@@ -8,6 +8,8 @@
 #include <QWidget>
 #include <optional>
 
+class QPainter;
+
 namespace neverd::gui {
 
 class Session;
@@ -49,6 +51,10 @@ public:
   QString currentToken() const;
   QString currentRowText() const;
   bool loaded() const { return !nodes_.isEmpty(); }
+  /// A layout is on its way and nothing is drawn yet.
+  bool waiting() const { return waiting_ && nodes_.isEmpty(); }
+  /// Say, in \p area, that a layout is on its way.
+  void drawWaiting(QPainter &painter, const QRect &area) const;
 
   // Overview support.
   const QVector<Node> &nodes() const { return nodes_; }
@@ -108,6 +114,7 @@ private:
   qreal charWidth_ = 8, lineHeight_ = 16, ascent_ = 12;
   quint64 styleStamp_ = 1;
   bool fitPending_ = false;
+  bool waiting_ = false;
 };
 
 /// The graph overview: the whole graph in miniature with the visible area;

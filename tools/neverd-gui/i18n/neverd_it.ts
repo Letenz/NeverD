@@ -16,8 +16,8 @@
         <translation>&amp;Ricarica il file di input</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>Ricarica il binario e le relative annotazioni salvate</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>Rileggere il file di input, con le sue annotazioni salvate</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>Impossibile copiare %1 in %2</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>Impossibile leggere %1: %2</translation>
     </message>
@@ -1707,6 +1711,10 @@ Fai doppio clic per andare alla dichiarazione.</translation>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>Ricarica il file di input</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>Banda di navigazione</translation>
     </message>
@@ -1965,38 +1973,6 @@ Con segno: %4</translation>
         <translation>Nessun desktop salvato</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: Avvio rapido</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>Nuovo</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>Disassembla un nuovo file</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Vai</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>Lavora in autonomia</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>Precedente</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>Carica il file recente selezionato</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>File recenti:</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>Apri binario o database</translation>
     </message>
@@ -2133,7 +2109,98 @@ Con segno: %4</translation>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>Avvio rapido</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>Disassemblatore e decompilatore interattivo</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>Versione %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>Inizia</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>File recenti</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;Nuovo</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>Disassembla un nuovo file</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>&amp;Vai</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>Lavora in autonomia</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>&amp;Precedente</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>Carica il file recente selezionato</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>&amp;Mostra all'avvio</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>Trascina qui un file per aprirlo</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>Mancante</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>C&amp;arica</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>&amp;Copia percorso</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>&amp;Rimuovi dall'elenco</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>Oggi, %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>Ieri, %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>Nessun file recente</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>Qui compaiono i file che apri. Scegli Nuovo o trascina un file su questa finestra.</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 si trova in una cartella in cui non puoi scrivere; il suo database è conservato in %2</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>Avvio del processo di analisi…</translation>
@@ -2159,8 +2226,8 @@ Con segno: %4</translation>
         <translation>%1: %2 %3, %4 funzioni</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>Annotazioni ricaricate</translation>
+        <source>Reloaded the input file</source>
+        <translation>File di input ricaricato</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2429,8 +2496,8 @@ Con segno: %4</translation>
         <translation>AMD64 e Intel 64 (64 bit)</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM e Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM little-endian, avvio in stato ARM</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2445,8 +2512,8 @@ Con segno: %4</translation>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM little-endian, avvio in stato Thumb</translation>
     </message>
 </context>
 <context>

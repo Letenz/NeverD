@@ -437,5 +437,32 @@ TEST_F(ProcessTransfer, FirstVisitRefreshesPreviouslyUnwatchedFetchTails) {
   Process.MemoryUnchanged = true;
   EXPECT_TRUE(watched(refresh(), 4094));
 }
+
+TEST_F(ProcessTransfer, RestoredPageBytesRetainTheirNewerGeneration) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  Process.instruction(4096, {0x90});
+  start();
+  observe(64);
+  observe(4096);
+  Process.SP -= 40;
+  Process.Bytes[65] = 1;
+  EXPECT_TRUE(watched(refresh(), 64));
+  observe(64);
+  EXPECT_TRUE(watched(observe(4096), 64));
+  // Reverting to the original file bytes is a change from the later image.
+  Process.Bytes[65] = 0;
+  EXPECT_TRUE(watched(refresh(), 64));
+  observe(64);
+  ASSERT_EQ(Observer.transfers().size(), 2u);
+  EXPECT_EQ(Observer.transfers().back().Generation, 2u);
+  EXPECT_TRUE(watched(observe(4096), 64));
+  Process.SP = 0x8000;
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  EXPECT_EQ(Captured->Baseline[65], 0);
+  EXPECT_EQ(Captured->Memory[65], 0);
+  EXPECT_EQ(Captured->Transfers.back().Generation, 2u);
+}
 } // namespace
 } // namespace neverd::unpack

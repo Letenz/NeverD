@@ -252,11 +252,6 @@ public:
   std::optional<I386GetPcOccurrence> getX86GetPcOccurrence() const;
 
 private:
-  /// UD1 has a ModR/M and its complete addressing extent in every x86 mode.
-  /// Keep the unconditional #UD identity while correcting Capstone's short
-  /// descriptor; both detailed and lightweight stepping use this owner.
-  bool normalizeX86UD1Extent(const uint8_t *Bytes, size_t Len);
-
   /// Decode an x86 fence carrying otherwise redundant operand-size prefixes.
   /// Capstone rejects these encodings even though LLVM and real x86-64
   /// binaries accept them.  Returns true after populating InsnBuf.

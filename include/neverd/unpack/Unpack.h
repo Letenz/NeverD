@@ -105,8 +105,8 @@ struct UnpackOptions {
   /// that unpacks in stages, or that calls the program instead of jumping to
   /// it, needs the explicit position that a previous report lists.
   uint64_t Transfer = 0;
-  /// Write an image snapshot for analysis, even when possible live heap
-  /// dependencies cannot be reconstructed. This produces Snapshot rather
+  /// Write an image snapshot for analysis, even when runtime dependencies
+  /// cannot be reconstructed. This produces Snapshot rather
   /// than Unpacked and does not claim a runnable native executable.
   bool SnapshotOnly = false;
 };
@@ -123,6 +123,9 @@ struct UnpackHeapReference {
 struct UnpackRuntimeState {
   bool HeapInventoryKnown = false;
   uint64_t PossibleHeapReferences = 0;
+  /// Direct model service calls witnessed during entry and import discovery.
+  /// Their numeric binding has not been made portable to native Windows.
+  uint64_t DirectServiceCalls = 0;
   /// At most the first 64 matches, image first and then TLS, in offset order.
   /// The count covers all matches.
   std::vector<UnpackHeapReference> HeapReferences;

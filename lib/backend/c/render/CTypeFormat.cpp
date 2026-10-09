@@ -550,14 +550,10 @@ std::string typeToC(const TypeRef &Ty) {
   case NdTypeKind::Float:
     if (!Ty->SourceName.empty())
       return Ty->SourceName;
-    // A 10-byte float is the x87 extended format: `long double` on the x86
-    // targets whose output asserts that width (see the x87 prelude).  A
-    // debug declaration's `long double` fills its 12 or 16 bytes of storage,
-    // as AArch64's binary128 does.
-    if (Ty->Size == 4)
-      return "float";
-    if (Ty->Size == 10 || Ty->Size == 12 || Ty->Size == 16)
-      return "long double";
+#define NEVERD_C_FLOAT_TYPE(Bytes, Spelling, FusedMultiplyAdd, ComputesWider)  \
+  if (Ty->Size == Bytes)                                                       \
+    return Spelling;
+#include "neverd/backend/c/render/CFloatTypes.def"
     return "double";
   case NdTypeKind::Ptr:
     if (!Ty->Pointee || Ty->Pointee->Kind == NdTypeKind::Void)

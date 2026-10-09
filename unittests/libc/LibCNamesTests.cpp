@@ -547,6 +547,23 @@ TEST(VarArgFixedCount, IsoAliasesTakeTheStandardRoutinesArguments) {
   EXPECT_TRUE(isVaListConsumer("stdio_common_vfprintf"));
 }
 
+TEST(ObjectPointerParameter, HeadersSayWhichParametersTakePointers) {
+  EXPECT_TRUE(isObjectPointerParameter("memcpy", 0));
+  EXPECT_TRUE(isObjectPointerParameter("memcpy", 1));
+  EXPECT_FALSE(isObjectPointerParameter("memcpy", 2));
+  EXPECT_TRUE(isObjectPointerParameter("__memcpy", 1));
+  EXPECT_TRUE(isObjectPointerParameter("fputs", 1));
+  EXPECT_TRUE(isObjectPointerParameter("strtol", 1));
+  EXPECT_TRUE(isObjectPointerParameter("pthread_create", 3));
+  // A function pointer and a va_list have their own rules.
+  EXPECT_FALSE(isObjectPointerParameter("qsort", 3));
+  EXPECT_FALSE(isObjectPointerParameter("pthread_create", 2));
+  EXPECT_FALSE(isObjectPointerParameter("signal", 1));
+  EXPECT_TRUE(isObjectPointerParameter("vprintf", 0));
+  EXPECT_FALSE(isObjectPointerParameter("vprintf", 1));
+  EXPECT_FALSE(isObjectPointerParameter("not_a_libc_function", 0));
+}
+
 TEST(FunctionPointerParameter, StandardCallbacks) {
   EXPECT_EQ(functionPointerParameter("qsort", 3),
             "int (*)(const void *, const void *)");
@@ -621,6 +638,15 @@ TEST(IsNoReturnFunction, MsvcGsHelpers) {
   EXPECT_TRUE(isNoReturnFunction("raise_securityfailure"));
   EXPECT_TRUE(isNoReturnFunction("_raise_securityfailure"));
   EXPECT_TRUE(isNoReturnFunction("TerminateProcess"));
+}
+
+TEST(IsNoReturnFunction, MicrosoftRuntimeTerminators) {
+  EXPECT_TRUE(isNoReturnFunction("_amsg_exit"));
+  EXPECT_TRUE(isNoReturnFunction("_invoke_watson"));
+  EXPECT_TRUE(isNoReturnFunction("_invalid_parameter_noinfo_noreturn"));
+  EXPECT_TRUE(isNoReturnFunction("__std_terminate"));
+  // A program's own function may take the name terminate.
+  EXPECT_FALSE(isNoReturnFunction("terminate"));
 }
 
 TEST(IsNoReturnFunction, SometimesReturningExcluded) {

@@ -4,6 +4,7 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDialogButtonBox>
+#include <QFontMetrics>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -20,11 +21,8 @@
 namespace neverd::gui {
 namespace {
 
-/// The path as the dialog shows it: its end when it is long.
-QString shownPath(const QString &path) {
-  constexpr int Shown = 80;
-  return path.size() > Shown ? QStringLiteral("...") + path.right(Shown) : path;
-}
+// Room for the file's path and the processors' names.
+constexpr int DialogWidth = 560;
 
 struct ProcessorFamily {
   const char *id, *name;
@@ -53,13 +51,17 @@ constexpr int BinaryRole = Qt::UserRole + 1;
 
 LoadFileDialog::LoadFileDialog(const QString &path, const QJsonArray &rows,
                                QWidget *parent)
-    : QDialog(parent), rows_(rows) {
+    : QDialog(parent), path_(path), rows_(rows) {
   setWindowTitle(tr("Load a new file"));
+  setMinimumWidth(DialogWidth);
   auto *layout = new QVBoxLayout(this);
 
   // The loaders that read the file, as the engine lists them.
-  auto *heading = new QLabel(tr("Load file %1 &as").arg(shownPath(path)), this);
+  auto *heading = heading_ = new QLabel(this);
   heading->setTextFormat(Qt::PlainText);
+  heading->setToolTip(path);
+  // The heading takes the dialog's width rather than setting it.
+  heading->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   loaders_ = new QListWidget(this);
   loaders_->setObjectName(QStringLiteral("loaders"));
   loaders_->setToolTip(tr("The input file possibly has the listed formats"));
@@ -298,6 +300,37 @@ void LoadFileDialog::setBinaryProcessor(const QString &processor) {
   select(loaders_->currentRow());
 }
 
+void LoadFileDialog::setOptions(const QJsonObject &load) {
+  const auto loader = load.value("loader").toString();
+  for (int index = 0; index < loaders_->count(); ++index)
+    if ((loaders_->item(index)->flags() & Qt::ItemIsEnabled) &&
+        rows_[index].toObject().value("loader").toString() == loader) {
+      loaders_->setCurrentRow(index);
+      break;
+    }
+  const auto chosen = [&](const char *source) {
+    return load.value(QLatin1String(source)).toString() ==
+           QLatin1String("chosen");
+  };
+  // A processor the user chose beats the one the bytes name; a detected
+  // one is read again.
+  if (chosen("processor_source")) {
+    detectedProcessor_.clear();
+    binaryProcessor_ = load.value("processor").toString();
+  }
+  base_->setText(load.value("base").toString(base_->text()));
+  offset_->setText(load.value("offset").toString(offset_->text()));
+  const auto size = load.value("size").toString();
+  size_->setText(size == QLatin1String("0x0") ? QString() : size);
+  entry_->setText(load.value("entry").toString());
+  const int platform = platform_->findData(
+      chosen("platform_source") ? load.value("platform").toString()
+                                : QString());
+  if (platform >= 0)
+    platform_->setCurrentIndex(platform);
+  select(loaders_->currentRow());
+}
+
 void LoadFileDialog::select(int row) {
   const bool raw = binary();
   // A header names the processor; a binary file's is the user's to pick.
@@ -337,6 +370,24 @@ void LoadFileDialog::select(int row) {
     }
   }
   update();
+}
+
+void LoadFileDialog::resizeEvent(QResizeEvent *event) {
+  QDialog::resizeEvent(event);
+  elidePath();
+}
+
+void LoadFileDialog::elidePath() {
+  const QString heading = tr("Load file %1 &as");
+  QString plain = heading;
+  plain.remove(QLatin1Char('&'));
+  const QFontMetrics metrics(heading_->font());
+  const int room = heading_->contentsRect().width() -
+                   metrics.horizontalAdvance(plain.arg(QString()));
+  QString shown = metrics.elidedText(path_, Qt::ElideMiddle, std::max(0, room));
+  // An ampersand in the path is text, not the heading's shortcut.
+  shown.replace(QLatin1Char('&'), QStringLiteral("&&"));
+  heading_->setText(heading.arg(shown));
 }
 
 QString LoadFileDialog::identification() const {

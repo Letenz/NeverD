@@ -17,6 +17,7 @@
 
 #include "../FloatConversion.h"
 #include "../UnalignedMemory.h"
+#include "../VariadicImportStub.h"
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
@@ -27,6 +28,7 @@
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
+#include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
@@ -320,6 +322,24 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
       }
     }
   }
+
+  // A stub of a variadic import passes its arguments on through stdarg.h.
+  if (Img)
+    for (llvm::Function &Fn : Mod) {
+      if (Fn.isDeclaration())
+        continue;
+      auto VA = rewrite_source::getOriginalVA(Fn);
+      if (!VA) {
+        llvm::consumeError(VA.takeError());
+        continue;
+      }
+      if (!*VA)
+        continue;
+      if (const std::string Import = c_stub::variadicImportOfStub(*Img, **VA);
+          !Import.empty())
+        if (const auto *Forward = libc::libcVariadicForward(Import))
+          c_stub::addVariadicStubHeaders(Headers, *Forward);
+    }
 
   if (HasCIntrinsics)
     for (const char *Hdr : getArchIntrinsicHeaders(Opts.TheArch))

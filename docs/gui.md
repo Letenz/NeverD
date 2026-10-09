@@ -62,9 +62,11 @@ loading binaries, companion PDB/MAP files, signatures and project sidecars.
 Chinese names, spaces and other Unicode characters are supported without
 changing the Windows system code page.
 
-The default application and code font is Consolas at 10 points when that
-family is installed. Otherwise, the system fixed-width font is used. A saved
-code-font choice continues to override the default for code views.
+Code views, the output window and text fields use the code font: Consolas at
+10 points when that family is installed, otherwise the system fixed-width font.
+Menus, tabs, lists, buttons and labels keep the system font, as in the classic
+disassembler's default font settings. A saved code-font choice overrides the
+default for code views and text fields.
 
 Double-clicking a function name in a code view follows it in that same window,
 keeping its C or LLVM C representation even when the window is locked. Back and
@@ -77,8 +79,14 @@ worker never links the test engine.
 
 ## Layout
 
-The first start shows the quick-start dialog (New, Go, Previous and the recent
-files) over the default desktop:
+A start without a file shows the quick start over the default desktop, as IDA
+does: **New** (N) disassembles a new file, **Go** (G) works on your own and
+**Previous** (P) loads the selected recent file. Each recent file shows its
+format (ELF, PE, Mach-O, a NeverD database or a plain binary file), its name and
+folder, and when it was last opened; Delete or its context menu forgets it, and
+a file dropped on the dialog opens. **Display at startup** decides whether the
+next start shows it again; **File → Quick start** shows it any time. Behind it
+is the default desktop:
 
 - the navigation band across the top: the whole address space colored by
   library functions, regular functions, instructions, data, unexplored bytes
@@ -323,12 +331,30 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Shift+F3, Shift+F4, Shift+F7, Shift+F12 | Functions, Names, Segments, Strings |
 | Ctrl+Shift+F12 | String references |
 | F6 / Shift+F6 | Next / previous window |
+| Ctrl+F | Quick filter in a list; find text in a disassembly, pseudocode or IR window |
+| Ctrl+F5 | Write the function's pseudocode to a C file |
+| Alt+A | String literal options |
 | Ctrl+W | Save the database |
 | Ctrl+Shift+P | Command palette |
 
 Single-key shortcuts apply only while an analysis view has the keyboard focus,
 so typing in a field or dialog keeps normal text editing. **Options →
 Shortcuts** lists every command with its key.
+
+A command IDA also has takes IDA's default key: the legacy scheme of IDA's
+`cfg/idagui.cfg`, and the decompiler's F5, Tab and Ctrl+F5.
+`tools/neverd-gui/app/IdaActions.def` pairs each command with IDA's, and the
+workbench unit tests fail when a default drifts from IDA's or when a command of
+the workbench's own takes a key IDA gives another command. **File → Open**
+therefore has no key: IDA's Ctrl+O makes an operand an offset into the current
+segment. One difference is deliberate: in a disassembly, pseudocode or IR
+window Ctrl+F finds text, where IDA's disassembly goes to the next error.
+
+`scripts/compare_gui_with_ida.py --ida <installation>` checks the table against
+an IDA installation and reports, menu by menu, which of IDA's commands the
+workbench has, plans and lacks. Against IDA 9.4 on 2026-10-09, all 89 rows
+matched IDA's configuration, and the workbench had 83 of the 255 commands in
+IDA's main menus, with 59 more planned.
 
 **Edit → Copy** (Ctrl+C) copies from the window that has the keyboard focus:
 the selected lines of a disassembly, pseudocode or IR window (the current line
@@ -339,7 +365,18 @@ GNOME attaches a modal dialog to its parent window, so dragging the dialog
 would drag the whole workbench. On GNOME the workbench keeps dialogs
 free-standing: under X11 a modal dialog takes the utility window type, and
 under Wayland the compositor is not told which dialogs are modal
-(`xdg-dialog-v1`). A modal dialog still blocks the workbench until it closes.
+(`xdg-dialog-v1`). File, color and font dialogs are Qt's own there, styled
+like the rest of the workbench, because GTK's are another toolkit's windows,
+which GNOME attaches. A modal dialog still blocks the workbench until it
+closes.
+
+Without a remembered size the window opens centered at three quarters of the
+screen's width and four fifths of its height. GNOME maximizes a window that
+opens at nearly the size of the screen, and a maximized window does not resize
+from its edges; IDA opens that way. Under Wayland GNOME draws no frame and the
+one Qt draws resizes only from a few pixels outside the visible edge, so the
+last four pixels inside the left, right and bottom edges resize the window
+too, under the matching cursor.
 
 ## Loading a new file
 
@@ -362,8 +399,11 @@ be changed, since every loader takes it from the header.
 
 **Binary file** reads any file as one processor's code, as firmware and memory
 dumps need. Its processor list reads **Processor type (double-click to set)**
-and offers the processors NeverD can decode (x86, x86-64, ARM, Thumb and
-AArch64). The engine reads the processor from the bytes and the list opens on
+and offers the processors NeverD can decode: x86, x86-64, AArch64, and two ARM
+rows, **ARM Little-endian, starting in ARM state** and **ARM Little-endian,
+starting in Thumb state**. Both read ARM and Thumb code, as IDA's single ARM
+Little-endian processor does; they differ only in the state the code starts in,
+which IDA sets with its T segment register. The engine reads the processor from the bytes and the list opens on
 it. Each instruction set leaves its own statistics of which byte follows which;
 4 KiB windows of the file vote for the set that explains them best, padding,
 text and compressed data are passed over, and a set settles the file only when
@@ -418,6 +458,14 @@ same choice with `--loader binary --processor aarch64 --load-base 0x80000`
 auto|sysv|windows|darwin`), or `--loader evm`, keeps it too, and `neverd info`
 prints the platform and its evidence.
 
+**File → Load file → Reload the input file** reads the input file again
+through a fresh worker, as IDA's command does: the bytes are the file's as it
+is now, and the saved names, comments and other annotations come back with it.
+Unsaved changes are saved or discarded first, as the user chooses. A binary
+file shows the dialog again, opened on the choice it was loaded with, so a
+wrong processor, base or offset changes without starting over; a processor or
+platform the engine read from the bytes is read again.
+
 **Analysis → Enabled**
 turns idle-time analysis (function discovery and the reference index) on or off
 for the file, **Indicator enabled** shows or hides the status line's analysis
@@ -444,6 +492,13 @@ saved location, bookmarks and desktop; when its comment files are missing they
 are restored from the database, and a database that describes a different
 version of the file is reported and left unused until the next save replaces
 it. Closing the window updates the saved location of an existing database.
+
+A binary in a folder you cannot write to, such as `/usr/bin` or a read-only
+mount, opens all the same. IDA asks for another place for its database; the
+workbench keeps the database, the comment files and the writer lock in the
+user's data directory, beside a copy of the binary, and says where in the
+output window. Opening or reloading the binary again finds them there, and a
+copy whose original changed size or time is made again.
 
 Every database carries the SQLite application id `NDDB` (`0x4E444442`) in its
 header, so a renamed database still opens as a project and `file` tells it from

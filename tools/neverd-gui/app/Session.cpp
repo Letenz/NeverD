@@ -1,9 +1,12 @@
 #include "Session.h"
 
 #include "ProjectDatabase.h"
+#include "SettingsKeys.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -16,7 +19,6 @@
 namespace neverd::gui {
 namespace {
 constexpr int CacheMiB = 256;
-constexpr char RecentFilesKey[] = "files/recent";
 constexpr char StringEncodingsKey[] = "strings/encodings";
 constexpr char StringPreferredKey[] = "strings/preferred";
 constexpr char StringMinLengthKey[] = "strings/minLength";
@@ -300,7 +302,7 @@ namespace {
 /// What opening a path needs once databases are unpacked or consulted.
 struct PreparedOpen {
   QString input, database, error;
-  QStringList warnings;
+  QStringList notes, warnings;
   QHash<QString, QByteArray> state;
 };
 
@@ -320,7 +322,24 @@ PreparedOpen prepareOpen(const QString &requested) {
     return prepared;
   }
   prepared.input = requested;
-  prepared.database = ProjectDatabase::pathFor(requested);
+  if (!ProjectDatabase::canKeepBeside(requested)) {
+    // A file in a folder this user cannot write to, such as a system
+    // directory or a read-only mount, keeps its database, sidecars and lock
+    // in the user's data directory, beside a copy of it.  IDA asks for
+    // another place for its database instead.
+    prepared.input = ProjectDatabase::workingCopy(requested, &prepared.error);
+    if (!prepared.error.isEmpty())
+      return prepared;
+    prepared.notes.append(
+        QCoreApplication::translate(
+            "neverd::gui::Session",
+            "%1 is in a folder you cannot write to; its database is kept in "
+            "%2")
+            .arg(QDir::toNativeSeparators(requested),
+                 QDir::toNativeSeparators(
+                     QFileInfo(prepared.input).absolutePath())));
+  }
+  prepared.database = ProjectDatabase::pathFor(prepared.input);
   if (!QFileInfo::exists(prepared.database))
     return prepared;
   QString error;
@@ -329,7 +348,7 @@ PreparedOpen prepareOpen(const QString &requested) {
     prepared.warnings.append(error);
     return prepared;
   }
-  QFile input(requested);
+  QFile input(prepared.input);
   QCryptographicHash hash(QCryptographicHash::Sha256);
   if (!input.open(QIODevice::ReadOnly) || !hash.addData(&input) ||
       QString::fromLatin1(hash.result().toHex()) != contents->inputSha256) {
@@ -344,11 +363,12 @@ PreparedOpen prepareOpen(const QString &requested) {
   prepared.state = contents->state;
   bool sidecarsPresent = false;
   for (const auto &suffix : ProjectDatabase::sidecarSuffixes())
-    sidecarsPresent = sidecarsPresent || QFileInfo::exists(requested + suffix);
+    sidecarsPresent =
+        sidecarsPresent || QFileInfo::exists(prepared.input + suffix);
   if (!sidecarsPresent)
     for (auto it = contents->sidecars.cbegin(); it != contents->sidecars.cend();
          ++it) {
-      QSaveFile sidecar(requested + it.key());
+      QSaveFile sidecar(prepared.input + it.key());
       if (!sidecar.open(QIODevice::WriteOnly) ||
           sidecar.write(it.value()) != it.value().size() || !sidecar.commit())
         prepared.warnings.append(QCoreApplication::translate(
@@ -374,6 +394,8 @@ void Session::openPending() {
           [this, watcher, requested, options] {
             const PreparedOpen prepared = watcher->result();
             watcher->deleteLater();
+            for (const auto &note : prepared.notes)
+              emit message(note, 0);
             for (const auto &warning : prepared.warnings)
               emit message(warning, 1);
             if (!prepared.error.isEmpty()) {
@@ -426,13 +448,21 @@ void Session::sendOpen(const QString &requested, const QString &path,
         databasePath_ = database;
         databaseState_ = state;
         loaded_ = true;
-        QSettings settings;
-        auto recent = settings.value(RecentFilesKey).toStringList();
+        QSettings store;
+        auto recent = store.value(settings::RecentFiles).toStringList();
         recent.removeAll(requested);
         recent.prepend(requested);
         while (recent.size() > MaxRecentFiles)
           recent.removeLast();
-        settings.setValue(RecentFilesKey, recent);
+        store.setValue(settings::RecentFiles, recent);
+        // When each was last opened, for the quick start.
+        QVariantMap openedAt;
+        const QVariantMap known = store.value(settings::RecentOpened).toMap();
+        for (const QString &file : recent)
+          if (known.contains(file))
+            openedAt.insert(file, known.value(file));
+        openedAt.insert(requested, QDateTime::currentDateTime());
+        store.setValue(settings::RecentOpened, openedAt);
         for (const auto &warning : payload.value("warnings").toArray())
           emit message(warning.toString(), 1);
         emit message(
@@ -452,6 +482,8 @@ void Session::sendOpen(const QString &requested, const QString &path,
                   : tr("Platform: %1, as chosen").arg(platform),
               0);
         }
+        if (std::exchange(reloading_, false))
+          emit message(tr("Reloaded the input file"), 0);
         emit opened();
         emit stateChanged();
         refreshHistory();
@@ -461,6 +493,7 @@ void Session::sendOpen(const QString &requested, const QString &path,
       },
       [this](const QString &, const QString &) {
         opening_ = false;
+        reloading_ = false;
         emit stateChanged();
         if (!pendingFile_.isEmpty())
           openPending();
@@ -484,19 +517,24 @@ void Session::closeFile() {
   client_.stop();
 }
 
-void Session::reload() {
+void Session::reload(std::optional<LoadOptions> options) {
   if (!loaded_)
     return;
+  reloadOptions_ = std::move(options);
   if (dirty()) {
     requestTransition(QStringLiteral("reload"));
     return;
   }
-  command(QStringLiteral("reload"), {}, [this](const QJsonObject &payload) {
-    metadata_ = payload;
-    dirty_ = false;
-    refreshHistory();
-    emit message(tr("Annotations reloaded"), 0);
-  });
+  // A fresh worker reads the file's bytes as they are now; the annotations
+  // come from what was saved.  The file opened is the one the user named:
+  // a working copy is refreshed from it.
+  pendingFile_ = projectPath_.isEmpty() ? filePath_ : projectPath_;
+  pendingOptions_ = std::exchange(reloadOptions_, {}).value_or(loadOptions_);
+  reloading_ = true;
+  resetState();
+  emit unloaded();
+  restartPending_ = true;
+  client_.stop();
 }
 
 void Session::restart() {
@@ -532,6 +570,7 @@ void Session::resolveTransition(const QString &choice) {
     transition_.clear();
     transitionReady_ = false;
     pendingFile_.clear();
+    reloadOptions_.reset();
     return;
   }
   if (choice == QLatin1String("save")) {
@@ -568,7 +607,7 @@ void Session::finishTransition() {
   } else if (action == QLatin1String("close")) {
     closeFile();
   } else if (action == QLatin1String("reload")) {
-    reload();
+    reload(std::exchange(reloadOptions_, {}));
   } else if (action == QLatin1String("restart")) {
     restart();
   }

@@ -70,6 +70,7 @@ GraphView::GraphView(Session &session, QWidget *parent)
     nodes_.clear();
     edges_.clear();
     function_.reset();
+    waiting_ = false;
     update();
     emit viewChanged();
   });
@@ -89,7 +90,10 @@ void GraphView::showFunction(Address function, std::optional<Address> cursor) {
   if (!sameFunction)
     fitPending_ = true;
   const quint64 serial = ++serial_;
+  waiting_ = true;
   emit statusChanged(tr("Laying out graph…"));
+  update();
+  emit viewChanged();
   request(0, 0, {}, serial);
 }
 
@@ -115,13 +119,21 @@ void GraphView::request(int nodeOffset, int edgeOffset, const QString &layout,
         if (response.value("status").toString() != QLatin1String("ok")) {
           const auto error = response.value("error").toObject();
           const auto code = error.value("code").toString();
+          // No layout follows these, so the view stops waiting for one.
           if (code == QLatin1String("session_changed") ||
               code == QLatin1String("worker_stopped") ||
-              response.value("status").toString() == QLatin1String("cancelled"))
+              response.value("status").toString() ==
+                  QLatin1String("cancelled")) {
+            waiting_ = false;
+            update();
+            emit viewChanged();
             return;
+          }
           nodes_.clear();
           edges_.clear();
+          waiting_ = false;
           update();
+          emit viewChanged();
           emit statusChanged(error.value("message").toString(code));
           return;
         }
@@ -138,6 +150,7 @@ void GraphView::accept(const QJsonObject &payload, quint64 serial) {
   if (firstPage) {
     nodes_.clear();
     edges_.clear();
+    waiting_ = false;
     layoutRevision_ = layout;
     const auto bounds = summary.value("bounds").toObject();
     bounds_ = QRectF(bounds.value("x").toDouble(), bounds.value("y").toDouble(),
@@ -448,12 +461,23 @@ void GraphView::paintNode(QPainter &painter, int index, bool text) const {
   painter.drawRect(box);
 }
 
+void GraphView::drawWaiting(QPainter &painter, const QRect &area) const {
+  painter.save();
+  painter.setFont(font());
+  painter.setPen(Theme::instance().chrome(QStringLiteral("PlaceholderText")));
+  painter.drawText(area, Qt::AlignCenter, tr("Laying out graph…"));
+  painter.restore();
+}
+
 void GraphView::paintEvent(QPaintEvent *) {
   QPainter painter(this);
   const auto &theme = Theme::instance();
   painter.fillRect(rect(), theme.color(ColorRole::GraphBackground));
-  if (nodes_.isEmpty())
+  if (nodes_.isEmpty()) {
+    if (waiting_)
+      drawWaiting(painter, rect());
     return;
+  }
   const QRectF view = visibleScene();
   painter.save();
   painter.scale(scale_, scale_);
@@ -692,6 +716,8 @@ void GraphOverview::paintEvent(QPaintEvent *) {
   QPainter painter(this);
   const auto &theme = Theme::instance();
   painter.fillRect(rect(), theme.color(ColorRole::GraphBackground));
+  if (graph_ && graph_->waiting())
+    graph_->drawWaiting(painter, rect());
   if (!graph_ || !graph_->loaded())
     return;
   painter.setTransform(transform());

@@ -16,8 +16,8 @@
         <translation>重新加载输入文件(&amp;R)</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>重新加载二进制文件及其已保存的注释</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>重新读取输入文件，保留已保存的注释</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>无法将 %1 复制到 %2</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>无法读取 %1：%2</translation>
     </message>
@@ -1703,6 +1707,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>重新加载输入文件</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>导航栏</translation>
     </message>
@@ -1961,38 +1969,6 @@ Signed: %4</source>
         <translation>没有已保存的桌面布局</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD：快速开始</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>新建</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>反汇编一个新文件</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>直接开始</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>自行开始工作</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>最近</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>加载所选的最近文件</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>最近的文件：</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>打开二进制文件或数据库</translation>
     </message>
@@ -2129,7 +2105,98 @@ Signed: %4</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>快速开始</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>交互式反汇编器与反编译器</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>版本 %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>开始</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>最近的文件</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>新建(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>反汇编一个新文件</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>直接开始(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>自行开始工作</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>最近(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>加载所选的最近文件</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>启动时显示(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>将文件拖放到此处即可打开</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>已丢失</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>加载(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>复制路径(&amp;C)</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>从列表中移除(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>今天 %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>昨天 %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>没有最近的文件</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>你打开过的文件会显示在这里。选择“新建”，或将文件拖放到此窗口。</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 所在的文件夹不可写；其数据库保存在 %2</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>正在启动分析进程…</translation>
@@ -2155,8 +2222,8 @@ Signed: %4</source>
         <translation>%1：%2 %3，%4 个函数</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>注释已重新加载</translation>
+        <source>Reloaded the input file</source>
+        <translation>已重新加载输入文件</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2425,8 +2492,8 @@ Signed: %4</source>
         <translation>AMD64 与 Intel 64（64 位）</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM 与 Thumb（AArch32）</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM 小端序，从 ARM 状态开始</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2441,8 +2508,8 @@ Signed: %4</source>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb（AArch32）</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM 小端序，从 Thumb 状态开始</translation>
     </message>
 </context>
 <context>

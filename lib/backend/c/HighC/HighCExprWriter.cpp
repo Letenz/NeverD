@@ -43,6 +43,36 @@ std::string bareLoad(std::string Text, int ParentPrec) {
              ? c_memory::unparenthesized(Text)
              : Text;
 }
+
+/// Whether C may compute an operation of float type \p Ty in a wider type
+/// until a cast or an assignment rounds it (CFloatTypes.def).
+bool computesWider(const TypeRef &Ty) {
+  if (!Ty || Ty->Kind != NdTypeKind::Float)
+    return false;
+#define NEVERD_C_FLOAT_TYPE(Bytes, Spelling, FusedMultiplyAdd, ComputesWider)  \
+  if (Ty->Size == Bytes)                                                       \
+    return ComputesWider;
+#include "neverd/backend/c/render/CFloatTypes.def"
+  return false;
+}
+
+/// Whether \p E prints as a C arithmetic operator on floats, whose result
+/// may keep excess precision into an enclosing one.
+bool isFloatArithmetic(const HighExpr &E) {
+  if (E.Kind == ExprKind::UnaryOp)
+    return E.Op == NdOp::FLOAT_NEG;
+  if (E.Kind != ExprKind::BinOp)
+    return false;
+  switch (E.Op) {
+  case NdOp::FLOAT_ADD:
+  case NdOp::FLOAT_SUB:
+  case NdOp::FLOAT_MULT:
+  case NdOp::FLOAT_DIV:
+    return true;
+  default:
+    return false;
+  }
+}
 } // namespace
 
 std::string frameStorageAddress(int64_t Displacement) {
@@ -125,28 +155,12 @@ std::string HighCWriter::varName(const MedVar &V) const {
     return "var_" + llvm::utohexstr(static_cast<uint64_t>(
                         V.StackOff < 0 ? -V.StackOff : V.StackOff));
   case MedVar::Param:
-    if (Dbg && CurrentFunc) {
-      if (auto FS = Dbg->resolveFunction(CurrentFunc->Entry); FS) {
-        if (isMsvcIndirectReturn(FS->ReturnType)) {
-          const bool HiddenSret =
-              highIRIncludesIndirectReturn(*CurrentFunc, *FS);
-          const int SretId = indirectReturnParamId(*FS);
-          if (HiddenSret && V.Id == SretId)
-            return "result";
-          size_t DebugIdx = static_cast<size_t>(V.Id);
-          if (HiddenSret && V.Id > SretId)
-            DebugIdx = static_cast<size_t>(V.Id) - 1;
-          if (V.Id >= 0 && DebugIdx < FS->Params.size() &&
-              !FS->Params[DebugIdx].first.empty())
-            return FS->Params[DebugIdx].first;
-        } else if (const auto DI = debugParamIndex(*CurrentFunc, V.Id,
-                                                   static_cast<size_t>(V.Id));
-                   V.Id >= 0 && DI && *DI < FS->Params.size() &&
-                   !FS->Params[*DI].first.empty()) {
-          return FS->Params[*DI].first;
-        }
-      }
-    }
+    // The debug signature names the parameter by where it arrives.
+    if (Dbg && CurrentFunc && V.Id >= 0 && !CurrentFunc->SourceTypeHint)
+      if (std::string Name =
+              debugParamName(*CurrentFunc, static_cast<size_t>(V.Id));
+          !Name.empty())
+        return Name;
     if (auto It = ParamDisplayNames.find(V.Id); It != ParamDisplayNames.end())
       return It->second;
     if (CurrentFunc && V.Id >= 0 &&
@@ -689,7 +703,7 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     return typedText(E, std::move(Text), sizeof(int32_t), true);
   }
   case NdOp::FLOAT_NEG:
-    return "-" + exprStr(*E.Operands[0], 99);
+    return "-" + floatOperandStr(*E.Operands[0], 99);
   case NdOp::FLOAT_ABS:
   case NdOp::FLOAT_SQRT:
   case NdOp::FLOAT_CEIL:
@@ -837,6 +851,36 @@ std::string HighCWriter::importSlotIdentifier(const HighExpr &E) const {
     if (!isCProjectionIdentifierByte(static_cast<unsigned char>(Ch)))
       Ch = '_';
   return Identifier;
+}
+
+std::string HighCWriter::importDataSlotIdentifier(va_t Addr) const {
+  if (!Opts.Image)
+    return {};
+  const Import *Imp = Opts.Image->findImportAt(Addr);
+  if (!Imp || Imp->IATAddr != Addr)
+    return {};
+  HighExpr Slot;
+  Slot.CallAddr = Addr;
+  return importSlotIdentifier(Slot);
+}
+
+std::optional<va_t> HighCWriter::importDataSlotRead(const HighExpr &Address,
+                                                    uint16_t Size) const {
+  if (!Opts.Image || Size == 0 || Size != Opts.Image->getPointerSize())
+    return std::nullopt;
+  std::optional<va_t> Slot = constAddress(Address);
+  if (!Slot) {
+    const HighExpr *Pointer = unwrapIntegerView(&Address);
+    if (Pointer && Pointer->Kind == ExprKind::Load &&
+        Pointer->MemoryOrdering == NdMemoryOrdering::None &&
+        Pointer->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        Pointer->Operands.size() == 1 && Pointer->Operands[0])
+      if (const auto Holder = constAddress(*Pointer->Operands[0]))
+        Slot = foldReadonlyScalar(*Holder, Size);
+  }
+  if (!Slot || importDataSlotIdentifier(*Slot).empty())
+    return std::nullopt;
+  return Slot;
 }
 
 std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
@@ -1092,8 +1136,11 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       }
     }
     if (Callee) {
-      if (const TypeRef Expected = expectedDebugCallArgType(*Callee, I)) {
-        S += exprStrAsTypedArg(*Op, Expected, Defined != nullptr);
+      // A callee this file defines takes what its prototype declares.
+      if (const TypeRef Expected = Defined
+                                       ? emittedParamType(*Defined, I)
+                                       : expectedDebugCallArgType(*Callee, I)) {
+        S += exprStrAsTypedArg(*Op, Expected);
         continue;
       }
     }
@@ -1236,12 +1283,22 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           Arg = "(" + std::string(*Type) + ")" +
                 (WidensToPointer ? "(uintptr_t)" : "") + castOperand(Arg);
       }
+    // Its object pointer parameter takes a machine integer converted to a
+    // pointer, which C does not do itself; any object pointer converts on.
+    if (!HeaderCallee.empty() && !PointerArgument &&
+        libc::isObjectPointerParameter(HeaderCallee,
+                                       static_cast<unsigned>(I)) &&
+        printsAsInteger(Imm ? *Imm : *Op, Arg))
+      Arg = "(void *)(uintptr_t)" + castOperand(Arg);
     // A callee printed in this file has a prototype: convert between pointer
     // and integer arguments the way the machine passed them, in a register.
     if (Defined && I < Defined->Params.size() && DefinedParam && Op->Type) {
       const TypeRef &Param = DefinedParam;
       const bool ParamPtr = Param->Kind == NdTypeKind::Ptr;
-      const bool ArgPtr = Op->Type->Kind == NdTypeKind::Ptr;
+      // A string or another pointer the machine passes as an integer still
+      // converts to an integer parameter.
+      const bool ArgPtr = Op->Type->Kind == NdTypeKind::Ptr ||
+                          (!ParamPtr && printsAsPointer(Arg));
       if (ParamPtr != ArgPtr && (ParamPtr ? Op->Type->Kind == NdTypeKind::Int
                                           : Param->Kind == NdTypeKind::Int))
         Arg = "(" + typeToC(Param) + ")(uintptr_t)(" + Arg + ")";
@@ -1595,6 +1652,11 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
 bool HighCWriter::knownVoidCall(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
     return false;
+  // A function this unit defines returns what its definition declares: a
+  // bound source signature decides over debug information.
+  if (const HighFunc *Definition = calledDefinition(E))
+    if (const TypeRef Declared = declaredFunctionReturnType(*Definition))
+      return Declared->Kind == NdTypeKind::Void;
   // Other special-member rows are declared `void` too, but an MSVC
   // constructor or assignment returns `this`, and so does an ARM32 Itanium
   // destructor: a read of their result is real.
@@ -1989,6 +2051,10 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
     return I < Have && isCtorDisplayOperand(E.Operands[I].get());
   };
   if (const auto Callee = debugCallee(E)) {
+    // The call passes the machine arguments of another signature, whatever
+    // their count.
+    if (!positionalDebugSignature(*Callee))
+      return Have;
     const bool Indirect = isMsvcIndirectReturn(Callee->ReturnType);
     const bool Member = Indirect && isWin64MemberIndirectReturn(*Callee);
     size_t Limit = 0;
@@ -2096,6 +2162,10 @@ TypeRef HighCWriter::displayCallArgType(const HighExpr &Call,
 
 TypeRef HighCWriter::expectedDebugCallArgType(const FunctionSym &FS,
                                               size_t Index) const {
+  // A call's arguments come in the convention's order, which matches the
+  // signature's only for a positional one.
+  if (!positionalDebugSignature(FS))
+    return nullptr;
   const bool Indirect = isMsvcIndirectReturn(FS.ReturnType);
   const bool Member = Indirect && isWin64MemberIndirectReturn(FS);
   TypeRef Sret;
@@ -2241,8 +2311,17 @@ HighCWriter::floatArgumentText(const HighExpr &Arg, const TypeRef &Expected) {
 }
 
 std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
-                                           const TypeRef &Expected,
-                                           bool DefinedCallee) {
+                                           const TypeRef &Expected) {
+  std::string Text = typedArgumentText(E, Expected);
+  // A pointer converts to an integer parameter, which C does not do itself.
+  if (Expected && Expected->Kind == NdTypeKind::Int && !Expected->IsEnum &&
+      printsAsPointer(Text))
+    return "(" + typeToC(Expected) + ")(uintptr_t)" + castOperand(Text);
+  return Text;
+}
+
+std::string HighCWriter::typedArgumentText(const HighExpr &E,
+                                           const TypeRef &Expected) {
   if (const auto Float = floatArgumentText(E, Expected))
     return *Float;
   // C converts an integer argument by the signedness of its own type, so an
@@ -2309,20 +2388,27 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
     if (const auto Disp = certifiedFrameStorageDisplacement(*Inner))
       return "(" + typeToC(Expected) + ")(uintptr_t)(" +
              frameStorageAddress(*Disp) + ")";
+    // An integer, such as a variable C declares as one or the integer
+    // expression it forwards, converts to the pointer the parameter takes;
+    // a pointer passes as it is.
+    auto AsPointer = [&](const HighExpr &Printed, std::string Text) {
+      if (!printsAsInteger(Printed, Text))
+        return Text;
+      return "(" + typeToC(Expected) + ")(uintptr_t)" + castOperand(Text);
+    };
     if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
       const std::string Name = copyForwardName(varName(Inner->Var));
-      // A variable C declares as an integer converts to the pointer the
-      // parameter takes; a pointer variable passes as it is.
-      if (const TypeRef Declared = declaredTypeOf(*Inner, Name);
-          DefinedCallee && Declared && Declared->Kind == NdTypeKind::Int &&
-          printedForwardedVar(Name, 16) == Name)
-        return "(" + typeToC(Expected) + ")(uintptr_t)" + Name;
-      return printedForwardedVar(Name, 16);
+      const HighExpr *From = nullptr;
+      std::string Text = printedForwardedVar(Name, 16, &From);
+      if (Text == Name)
+        return AsPointer(*Inner, std::move(Text));
+      return From ? AsPointer(*From, std::move(Text)) : Text;
     }
     if (Inner->Kind == ExprKind::Addr)
       return exprStr(*Inner);
     if (Inner != &E)
-      return exprStr(*Inner);
+      return AsPointer(*Inner, exprStr(*Inner));
+    return AsPointer(E, exprStr(E));
   }
   if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
     const std::string Name = copyForwardName(varName(Inner->Var));
@@ -2355,6 +2441,70 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
   if (Expected && Expected->Kind == NdTypeKind::Int && Inner != &E)
     return exprStr(*Inner);
   return exprStr(E);
+}
+
+bool HighCWriter::printsAsInteger(const HighExpr &E,
+                                  llvm::StringRef Text) const {
+  auto Integer = [](const TypeRef &Type) {
+    return Type && (Type->Kind == NdTypeKind::Int ||
+                    (Type->Kind == NdTypeKind::Struct && Type->IsEnum));
+  };
+  // A string literal and an address are pointers; a constant 0 is a null
+  // pointer constant.
+  if (Text.starts_with("\"") || Text.starts_with("L\"") ||
+      Text.starts_with("u\"") || Text.starts_with("U\"") ||
+      Text.starts_with("u8\"") || Text.starts_with("&"))
+    return false;
+  if (E.Kind == ExprKind::Const)
+    return E.ConstVal != 0;
+  // A name has the type C declares for it, and a member the type its record
+  // gives it, whatever the machine value they print for.
+  if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+    const std::string Name = copyForwardName(varName(E.Var));
+    if (Text == Name)
+      if (const TypeRef Declared = declaredTypeOf(E, Name))
+        return Integer(Declared);
+  }
+  if (const TypeRef Declared = declaredTypeNamed(Text))
+    return Integer(Declared);
+  if (E.Kind == ExprKind::Load && !E.Operands.empty() && E.Operands[0] &&
+      !Text.starts_with("*"))
+    if (const TypeRef Member =
+            typedMemberType(*E.Operands[0], E.Type ? E.Type->Size : 0))
+      return Integer(Member);
+  return Integer(E.Type);
+}
+
+bool HighCWriter::printsAsPointer(llvm::StringRef Text) const {
+  if (Text.starts_with("\"") || Text.starts_with("L\"") ||
+      Text.starts_with("u\"") || Text.starts_with("U\"") ||
+      Text.starts_with("u8\"") || Text.starts_with("&"))
+    return true;
+  const TypeRef Declared = declaredTypeNamed(Text);
+  return Declared && Declared->Kind == NdTypeKind::Ptr;
+}
+
+TypeRef HighCWriter::declaredTypeNamed(llvm::StringRef Text) const {
+  if (Text.empty() || !(llvm::isAlpha(Text[0]) || Text[0] == '_') ||
+      !llvm::all_of(Text,
+                    [](char Ch) { return llvm::isAlnum(Ch) || Ch == '_'; }))
+    return nullptr;
+  if (auto It = DeclaredCTypes.find(Text.str()); It != DeclaredCTypes.end())
+    return It->second;
+  if (CurrentFunc)
+    for (size_t PI = 0; PI < CurrentFunc->Params.size(); ++PI) {
+      MedVar Param;
+      Param.Kind = MedVar::Param;
+      Param.Id = static_cast<int>(PI);
+      if (varName(Param) == Text)
+        return emittedParamType(*CurrentFunc, PI);
+    }
+  for (const auto &[Disp, Slot] : FrameSlots) {
+    (void)Disp;
+    if (Slot.Name == Text && Slot.Type)
+      return Slot.Type;
+  }
+  return nullptr;
 }
 
 std::string HighCWriter::debugSignatureKey(const FunctionSym &FS) {
@@ -2514,25 +2664,18 @@ TypeRef HighCWriter::debugParamType(const MedVar &V) const {
   if (!Dbg || !CurrentFunc || V.Kind != MedVar::Param || V.RenameTag >= 0 ||
       V.Id < 0)
     return nullptr;
-  auto FS = Dbg->resolveFunction(CurrentFunc->Entry);
-  if (!FS)
+  // The debug parameter whose whole value the parameter holds.
+  const DebugParamBinding B =
+      debugParamBinding(*CurrentFunc, static_cast<size_t>(V.Id));
+  if (B.Index < 0 || !B.Whole)
     return nullptr;
-  size_t DebugIdx = static_cast<size_t>(V.Id);
-  if (isMsvcIndirectReturn(FS->ReturnType) &&
-      highIRIncludesIndirectReturn(*CurrentFunc, *FS)) {
-    const int SretId = indirectReturnParamId(*FS);
-    if (V.Id == SretId)
-      return nullptr;
-    if (V.Id > SretId)
-      DebugIdx = static_cast<size_t>(V.Id) - 1;
-  }
-  if (DebugIdx < FS->Params.size()) {
-    TypeRef Ty = FS->Params[DebugIdx].second;
-    if (Ty)
-      Dbg->completeType(Ty);
-    return Ty;
-  }
-  return nullptr;
+  auto FS = Dbg->resolveFunction(CurrentFunc->Entry);
+  if (!FS || static_cast<size_t>(B.Index) >= FS->Params.size())
+    return nullptr;
+  TypeRef Ty = FS->Params[B.Index].second;
+  if (Ty)
+    Dbg->completeType(Ty);
+  return Ty;
 }
 
 namespace {
@@ -3456,6 +3599,15 @@ bool HighCWriter::isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const {
   return false;
 }
 
+std::string HighCWriter::floatOperandStr(const HighExpr &Operand,
+                                         int ParentPrec) {
+  if (computesWider(Operand.Type))
+    if (const HighExpr *Printed = forwardedExpr(&Operand);
+        Printed && isFloatArithmetic(*Printed))
+      return "(" + typeToC(Operand.Type) + ")(" + exprStr(Operand) + ")";
+  return exprStr(Operand, ParentPrec);
+}
+
 const HighExpr *HighCWriter::forwardedExpr(const HighExpr *E) const {
   unsigned Depth = 0;
   while (E && Depth++ < limits::kMaxIntegerViewUnwrapDepth) {
@@ -3983,6 +4135,13 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")(" + *Fwd + ")";
       if (auto Slot = namedSlotLoadDisplay(E))
         return *Slot;
+      // A data import's slot holds the import's address, which the read
+      // takes: `(int64_t)__imp__commode`.
+      if (const auto Slot =
+              importDataSlotRead(*E.Operands[0], E.Type ? E.Type->Size : 0))
+        if (const auto Name = ImportDataSlotNames.find(*Slot);
+            Name != ImportDataSlotNames.end())
+          return "(" + typeToC(E.Type) + ")" + Name->second;
       if (auto VA = constAddress(*E.Operands[0])) {
         const uint16_t Size = E.Type ? E.Type->Size : 0;
         if (auto Imm = foldReadonlyScalar(*VA, Size)) {
@@ -4116,8 +4275,11 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     // of a value of this type are that value.
     if (const HighExpr *Call = floatCallResult(Src, E.Type))
       return renderCallExpr(*Call);
-    if (const HighExpr *Value = floatBitsValue(Src, E.Type))
+    if (const HighExpr *Value = floatBitsValue(Src, E.Type)) {
+      if (computesWider(E.Type) && isFloatArithmetic(*Value))
+        return "(" + typeToC(E.Type) + ")(" + exprStr(*Value) + ")";
       return exprStr(*Value, ParentPrec);
+    }
     // A float whose bits are a constant, or read from constant data, is that
     // constant.
     if (const auto Literal = floatConstantBitsText(Src, E.Type))
@@ -4566,8 +4728,8 @@ std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {
     if (Addr < Backing.Base)
       break;
     if (Addr < Backing.End)
-      return "&" + Backing.Name + "[" + std::to_string(Addr - Backing.Base) +
-             "]";
+      return "&" + Backing.Name + "[" +
+             std::to_string(Backing.Pad + (Addr - Backing.Base)) + "]";
   }
   return std::nullopt;
 }
@@ -4723,6 +4885,11 @@ bool HighCWriter::isReservedParamDisplayName(llvm::StringRef Name) const {
         if (!Param.first.empty() && Name == Param.first)
           return true;
     }
+    // The names the debug signature gives the parameters where they arrive,
+    // such as `p_8` for a record's second register.
+    for (size_t I = 0; I < CurrentFunc->Params.size(); ++I)
+      if (Name == debugParamName(*CurrentFunc, I))
+        return true;
   }
   return false;
 }

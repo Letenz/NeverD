@@ -56,8 +56,9 @@ void analyzeDeadStores(HighCAnalysisState &State, const HighFunc &Func,
 void analyzeStoreForwarding(HighCAnalysisState &State, const HighFunc &Func,
                             VarNameFn VarFn, ExprStrFn ExprFn);
 
-bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
-                       VarNameFn VarFn, ExprStrFn ExprFn);
+/// Whether C shows \p Func as returning nothing: its declaration says so, or
+/// MedIR settled that it returns no value (settleReturnContracts).
+bool analyzeVoidReturn(const HighFunc &Func);
 
 /// True for a known libc noreturn call or architectural x86 fast-fail.
 /// Caller return shapes cannot prove that an unknown callee never returns.

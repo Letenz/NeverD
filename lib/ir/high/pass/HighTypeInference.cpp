@@ -36,7 +36,7 @@ void MedToHighConverter::inferTypes(HighFunc &Func) {
            Op == NdOp::FLOAT_MAXNUM;
   };
 
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   std::function<void(const HighExpr &)> ScanExpr = [&](const HighExpr &E) {
     if (!Seen.insert(&E).second)
       return;
@@ -189,8 +189,7 @@ std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med) {
   std::set<uint64_t> SegmentOffsetRegs;
   auto recordAddressRegs = [&](const MedVar &AddrVar,
                                std::set<uint64_t> &Roles) {
-    if (AddrVar.Kind == MedVar::Reg && AddrVar.Id >= 0 &&
-        AddrVar.SSAVer == 0)
+    if (AddrVar.Kind == MedVar::Reg && AddrVar.Id >= 0 && AddrVar.SSAVer == 0)
       Roles.insert(AddrVar.RegOff);
     if (AddrVar.Kind != MedVar::Temp || AddrVar.Id < 0)
       return;
@@ -211,8 +210,7 @@ std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med) {
       }
       const MedVar *MemoryAddress = nullptr;
       if ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE ||
-           Op.Opcode == NdOp::ATOMIC_XCHG ||
-           Op.Opcode == NdOp::ATOMIC_ADD ||
+           Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
            Op.Opcode == NdOp::ATOMIC_CMPXCHG) &&
           Op.NumInputs >= 1)
         MemoryAddress = &Op.Inputs[0];
@@ -224,11 +222,10 @@ std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med) {
                    static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
         MemoryAddress = &Op.Inputs[1];
       if (MemoryAddress) {
-        recordAddressRegs(
-            *MemoryAddress,
-            Op.MemoryAddressSpace == NdMemoryAddressSpace::Default
-                ? PtrRegs
-                : SegmentOffsetRegs);
+        recordAddressRegs(*MemoryAddress,
+                          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default
+                              ? PtrRegs
+                              : SegmentOffsetRegs);
       }
     }
   }

@@ -1143,6 +1143,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.FrameHeadroom = Med.FrameHeadroom;
   Func.Name = Med.Name;
   Func.DoesNotReturn = Med.DoesNotReturn;
+  Func.ReturnsNoValue = Med.ReturnsNoValue;
   Func.EntryKind = Med.EntryKind;
   Func.ExceptionMetadata = Med.ExceptionMetadata;
   Func.ReturnType =
@@ -1234,6 +1235,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
       auto &MP = Med.Params[PI];
       HighParam HP;
       HP.Name = "arg" + std::to_string(PI);
+      HP.RegOff = MP.RegOff;
+      HP.MedIndex = MP.Id;
       if (Med.SourceTypeHint && PI < Med.TypedParams.size()) {
         HP.Name = Med.TypedParams[PI].Name;
         HP.Type = Med.TypedParams[PI].Type;

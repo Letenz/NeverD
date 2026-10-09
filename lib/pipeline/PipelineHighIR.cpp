@@ -111,6 +111,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
       inferMedTypes(MF, Img.Arch);
   modelWideIntReturns(Img, Result);
   bindFloatCallResults(Img, Result);
+  settleReturnContracts(Img, Result, Dbg);
 
   auto AllFuncNames = buildFuncNameMap(Img, Result);
   // Without callee summaries, a convention's call arguments, and the
@@ -365,6 +366,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
         HF.SourceLine = MF.SourceLine;
         HF.ExceptionMetadata = MF.ExceptionMetadata;
         HF.ReturnType = MF.ReturnType ? MF.ReturnType : NdType::makeInt(4);
+        HF.ReturnsNoValue = MF.ReturnsNoValue;
         HF.SourceTypeHint = MF.SourceTypeHint;
         if (!MF.Blocks.empty()) {
           fillUnstructuredGotoSkeleton(HF, MF);

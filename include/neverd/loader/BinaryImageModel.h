@@ -747,11 +747,25 @@ struct BinaryImage {
     return false;
   }
 
+  /// True when \p Addr in \p Seg holds the ELF file header or program
+  /// header table, which a load segment maps but no object data occupies.
+  bool isELFHeaderByte(const Segment &Seg, va_t Addr) const {
+    if (!ELFMetadata || Addr < Seg.VA || Addr - Seg.VA >= Seg.FileSz)
+      return false;
+    const uint64_t Offset = Seg.FileOff + (Addr - Seg.VA);
+    if (Offset < ELFMetadata->HeaderSize)
+      return true;
+    const uint64_t TableSize = uint64_t(ELFMetadata->ProgramHeaderEntrySize) *
+                               ELFMetadata->ProgramHeaders.size();
+    return Offset >= ELFMetadata->ProgramHeaderFileOffset &&
+           Offset - ELFMetadata->ProgramHeaderFileOffset < TableSize;
+  }
+
   /// True when \p Addr is backed by format-native object data, rather than
   /// merely falling inside a coarse readable load segment. Exact section
   /// metadata excludes executable bytes plus ELF/Mach-O headers and alignment
   /// gaps; section-less images conservatively fall back to non-executable
-  /// file-backed segments.
+  /// file-backed segments, less the ELF headers they map.
   bool hasObjectDataProvenance(va_t Addr) const {
     const Segment *Seg = getSegmentFor(Addr);
     if (!Seg || Seg->Data.empty() || Addr < Seg->VA ||
@@ -759,7 +773,7 @@ struct BinaryImage {
       return false;
 
     if (Sections.empty())
-      return !Seg->isExecutable();
+      return !Seg->isExecutable() && !isELFHeaderByte(*Seg, Addr);
     if (const Section *Sec = getSectionFor(Addr))
       return Sec->isReadable() &&
              (isMachO() ? !isCodeAddress(Addr) : !Sec->isExecutable());
@@ -1521,23 +1535,27 @@ struct BinaryImage {
     return Result;
   }
 
+  /// How well \p Sym names the function starting at its address: a function
+  /// symbol a producer stated, above another symbol there, above a
+  /// synthesized `sub_` start.  A section's own symbol (COFF's `.text` where
+  /// an object's first function or an import library object's thunk starts)
+  /// names no function a function symbol names, and a synthesized start names
+  /// none a label does.  Among equal ranks the first symbol names it.
+  static int functionNameRank(const Symbol &Sym) {
+    if (Sym.Origin == NameOrigin::Synthesized)
+      return 0;
+    return Sym.IsFunc ? 2 : 1;
+  }
+
   /// Resolve the best available display name for a function address: an
-  /// export, else a function symbol a producer stated, else another symbol
-  /// there.  A section's own symbol (COFF's `.text` where an import library
-  /// object's thunk starts) names no function a function symbol names, and a
-  /// synthesized `sub_` start names none a label does.
+  /// export, else the symbol there of the highest functionNameRank.
   std::string getFunctionNameAt(va_t Addr) const {
     if (const Export *Exp = findExportAt(Addr); Exp && !Exp->Name.empty())
       return Exp->Name;
     const Symbol *Best = nullptr;
-    auto Rank = [](const Symbol &Sym) {
-      if (Sym.Origin == NameOrigin::Synthesized)
-        return 0;
-      return Sym.IsFunc ? 2 : 1;
-    };
     for (const auto &Sym : Symbols)
       if (Sym.Addr == Addr && !Sym.Name.empty() &&
-          (!Best || Rank(Sym) > Rank(*Best)))
+          (!Best || functionNameRank(Sym) > functionNameRank(*Best)))
         Best = &Sym;
     if (Best)
       return Best->Name;

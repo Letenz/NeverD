@@ -33,6 +33,8 @@ Am akzeptierten Transfer liefert das Prozessprofil die noch lebenden Heap-Zuweis
 
 `runtime_state.heap_inventory_known` unterscheidet ein bekanntes leeres Inventar von fehlender Herkunft. `possible_heap_references` zählt alle Treffer; `heap_references` enthält höchstens die ersten 64, erst Abbild, dann TLS, jeweils nach `offset`. Jeder Datensatz nennt `storage` (`image` oder `thread_local`), Adresse und Zuweisungsumfang. `rva` ist für das Abbild ein Hexadezimalwert, für TLS null. Adressen und Offsets sind Hexadezimalstrings.
 
+`runtime_state.direct_service_calls` zählt direkte Modellaufrufe während der Einstiegsbeobachtung und Importermittlung. Ihre numerische Bindung an natives Windows wird nicht rekonstruiert; daher entsteht `unsupported_state`, auch wenn der erste Aufruf erst nach dem erfassten Einstieg erfolgt. Explizites `snapshot_only` erhält Anzahl und Diagnose. Ein kopierter Systemaufruf gilt nicht als reparierbarer Importaufruf. Die Anzahl bleibt auch in `no_entry`-Berichten erhalten; ohne erfassten Einstieg bleibt das Heap-Inventar unbekannt.
+
 `--options='{"snapshot_only":true}'` fordert ausdrücklich Analysebytes an. Nach akzeptiertem Einstieg und erfolgreichem Wiederaufbau lautet das Ergebnis stets `snapshot`; die Laufzeitdiagnose bleibt erhalten. Die Option stellt keinen Heap wieder her, schätzt keine Relokationen, bestätigt keine native Ausführung und devirtualisiert nicht. Null Treffer bestätigen auch keinen anderen OS-Zustand oder unerreichte Pfade.
 
 ## Wie der Einstieg bestimmt wird

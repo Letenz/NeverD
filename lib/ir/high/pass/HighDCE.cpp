@@ -44,9 +44,7 @@ static bool isLocalExpr(const HighExpr &E) {
 // Expression cycle detection and breaking
 //===----------------------------------------------------------------------===//
 
-static void
-breakExprCycles(ExprPtr &Root,
-                std::unordered_set<const HighExpr *> &KnownAcyclic) {
+static void breakExprCycles(ExprPtr &Root, HighExprSet &KnownAcyclic) {
   struct Frame {
     ExprPtr *Slot = nullptr;
     size_t NextOperand = 0;
@@ -54,7 +52,7 @@ breakExprCycles(ExprPtr &Root,
   };
 
   std::vector<Frame> Work{{&Root, 0, false}};
-  std::unordered_set<const HighExpr *> Path;
+  HighExprSet Path;
   while (!Work.empty()) {
     Frame &Current = Work.back();
     if (!*Current.Slot) {
@@ -103,7 +101,7 @@ breakExprCycles(ExprPtr &Root,
 }
 
 static void breakStmtCycles(std::vector<HighStmt> &Stmts) {
-  std::unordered_set<const HighExpr *> Safe;
+  HighExprSet Safe;
   walkStmts(Stmts, [&Safe](HighStmt &S) {
     forEachExpr(S, [&Safe](ExprPtr &EP) { breakExprCycles(EP, Safe); });
   });
@@ -114,7 +112,7 @@ static void breakStmtCycles(std::vector<HighStmt> &Stmts) {
 //===----------------------------------------------------------------------===//
 
 static void collectRefExpr(const ExprPtr &Root, VarKeySet &Refs) {
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   std::vector<const HighExpr *> Work{Root.get()};
   while (!Work.empty()) {
     const auto *E = Work.back();
@@ -133,7 +131,7 @@ static bool removableAssignment(const HighStmt &S) {
       !S.Body.empty() || !S.ElseBody.empty() || !S.Cases.empty() ||
       !S.DefaultBody.empty() || !S.EHClauseBodies.empty())
     return false;
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   std::vector<const HighExpr *> Work{S.Val.get()};
   while (!Work.empty()) {
     const auto *E = Work.back();

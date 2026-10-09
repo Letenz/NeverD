@@ -16,8 +16,8 @@
         <translation>입력 파일 다시 불러오기(&amp;R)</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>바이너리와 저장된 주석을 다시 불러옵니다</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>저장된 주석과 함께 입력 파일을 다시 읽습니다</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>%1을(를) %2(으)로 복사할 수 없습니다</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>%1을(를) 읽을 수 없습니다: %2</translation>
     </message>
@@ -1703,6 +1707,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>입력 파일 다시 불러오기</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>내비게이션 밴드</translation>
     </message>
@@ -1961,38 +1969,6 @@ Signed: %4</source>
         <translation>저장된 데스크톱이 없습니다</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: 빠른 시작</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>새 파일</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>새 파일을 디스어셈블합니다</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>시작</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>파일을 열지 않고 작업을 시작합니다</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>이전</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>선택한 최근 파일을 불러옵니다</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>최근 파일:</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>바이너리 또는 데이터베이스 열기</translation>
     </message>
@@ -2129,7 +2105,98 @@ Signed: %4</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>빠른 시작</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>대화형 디스어셈블러 및 디컴파일러</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>버전 %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>시작</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>최근 파일</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>새 파일(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>새 파일을 디스어셈블합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>시작(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>파일을 열지 않고 작업을 시작합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>이전(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>선택한 최근 파일을 불러옵니다</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>시작할 때 표시(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>여기에 파일을 놓으면 열립니다</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>없음</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>불러오기(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>경로 복사(&amp;C)</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>목록에서 제거(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>오늘 %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>어제 %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>최근 파일이 없습니다</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>연 파일이 여기에 표시됩니다. [새 파일]을 선택하거나 이 창에 파일을 놓으세요.</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1은(는) 쓸 수 없는 폴더에 있으므로 데이터베이스를 %2에 보관합니다</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>분석 프로세스 시작 중…</translation>
@@ -2155,8 +2222,8 @@ Signed: %4</source>
         <translation>%1: %2 %3, 함수 %4개</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>주석 다시 불러옴</translation>
+        <source>Reloaded the input file</source>
+        <translation>입력 파일을 다시 불러왔습니다</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2425,8 +2492,8 @@ Signed: %4</source>
         <translation>AMD64 및 Intel 64(64비트)</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM 및 Thumb(AArch32)</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM 리틀 엔디언, ARM 상태로 시작</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2441,8 +2508,8 @@ Signed: %4</source>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb(AArch32)</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM 리틀 엔디언, Thumb 상태로 시작</translation>
     </message>
 </context>
 <context>

@@ -38,7 +38,7 @@ void eliminateGotoToLoop(std::vector<HighStmt> &Stmts);
 void rewriteRhsVars(std::vector<HighStmt> &Stmts,
                     const VarKeyMap<ExprPtr> &Map);
 void countExprVarUses(const ExprPtr &E, VarKeyMap<int> &Uses,
-                      std::unordered_set<const HighExpr *> &Seen);
+                      HighExprSet &Seen);
 /// Single-use inlining must count a shared expression once per use site,
 /// rather than once per DAG node. Counts saturate at two because only the
 /// distinction between one and multiple uses matters here.

@@ -33,6 +33,8 @@ neverd unpack packed.exe -o unpacked.exe \
 
 `runtime_state.heap_inventory_known`은 알려진 빈 목록과 출처 정보 누락을 구분합니다. `possible_heap_references`는 전체 일치 수이며 `heap_references`는 처음 64개까지 보관합니다. 이미지, TLS 순서로 각각 `offset`순으로 기록합니다. 각 기록에는 `storage`(`image` 또는 `thread_local`), 주소와 할당 범위가 있습니다. `rva`는 이미지에서는 16진수 값, TLS에서는 null입니다. 주소와 오프셋은 16진수 문자열입니다.
 
+`runtime_state.direct_service_calls`는 진입점 관찰과 가져오기 탐색 중 실행한 직접 모델 서비스 호출 수입니다. 네이티브 Windows용 번호 바인딩을 복원하지 않았으므로 캡처한 진입점 이후에 처음 실행한 경우에도 `unsupported_state`를 반환합니다. 명시적인 `snapshot_only`는 수와 진단을 유지합니다. 복사된 시스템 호출은 복구할 수 있는 가져온 함수 호출로 취급하지 않습니다. `no_entry` 보고서에서도 이 수를 유지합니다. 진입점을 캡처하지 못하면 힙 할당 목록은 알 수 없는 상태로 남습니다.
+
 `--options='{"snapshot_only":true}'`는 분석 바이트를 명시적으로 요청합니다. 진입점을 채택하고 재구성에 성공하면 결과는 항상 `snapshot`이며 런타임 상태 진단은 유지됩니다. 이 옵션은 힙 데이터를 복원하거나 재배치를 추론하거나 네이티브 실행을 보증하거나 가상화를 해제하지 않습니다. 힙 참조 수가 0이어도 다른 OS 상태나 실행하지 않은 경로를 보증하지 않습니다.
 
 ## 진입점을 정하는 방법

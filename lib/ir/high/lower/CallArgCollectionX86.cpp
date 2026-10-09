@@ -30,6 +30,61 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       Scan.Image ? Scan.Image->abiFormat() : BinaryFormat::Unknown;
   const size_t RegisterPositions =
       Scan.TRI->integerArgumentLayout(Format).Registers.size();
+  // The stores before the call, latest first, until an earlier call: a
+  // callee-saved register's entry value stored there is a prologue save,
+  // and a value computed into one is an argument (clang -O0 keeps them in
+  // EBX, ESI and EDI).  \p Take returns false to stop.
+  auto stores = [&](auto &&Take) {
+    auto walk = [&](const std::vector<MedOp> &Ops, int Before) {
+      for (int J = Before; J >= 0; --J) {
+        const MedOp &Prev = Ops[static_cast<size_t>(J)];
+        if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
+            Prev.Opcode == NdOp::INTRINSIC)
+          return true;
+        if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
+            Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+          continue;
+        if (Scan.IsCalleeSave(Prev.Inputs[1]) && Prev.Inputs[1].SSAVer == 0)
+          continue;
+        if (!Take(Prev))
+          return false;
+      }
+      return true;
+    };
+    if (Scan.Ops && !walk(*Scan.Ops, static_cast<int>(Scan.CallIdx) - 1))
+      return;
+    for (const auto &W : Scan.ExtraWindows)
+      if (W.Ops && !walk(*W.Ops, W.Before))
+        return;
+  };
+  // Where no outgoing area is reserved, the stack arguments are pushed, or
+  // stored at the stack pointer the call is made with, one slot each past
+  // the register positions.  Each push is at offset 0 from the stack pointer
+  // it is made with, so the spilled-store scan above sees only the last;
+  // place every store by its offset from the call's stack pointer instead,
+  // as far as the callee's summary says it reads.
+  const bool ReservedArea =
+      Scan.Convention && Scan.Convention->ReservedOutgoingArea;
+  if (Scan.TheArch == Arch::X64 && !ReservedArea && Scan.CallStackEntryOffset &&
+      Scan.EntryOffsetOf &&
+      Scan.CalleeStackArgs > static_cast<int>(RegisterPositions)) {
+    const int64_t SlotBytes = static_cast<int64_t>(Scan.TRI->PointerSize);
+    const int64_t StackSlots =
+        Scan.CalleeStackArgs - static_cast<int64_t>(RegisterPositions);
+    stores([&](const MedOp &Store) {
+      const std::optional<int64_t> Entry = Scan.EntryOffsetOf(Store.Inputs[0]);
+      if (!Entry || *Entry < *Scan.CallStackEntryOffset)
+        return true;
+      const int64_t Offset = *Entry - *Scan.CallStackEntryOffset;
+      if (Offset % SlotBytes != 0 || Offset / SlotBytes >= StackSlots)
+        return true;
+      const size_t K =
+          RegisterPositions + static_cast<size_t>(Offset / SlotBytes);
+      if (K < Found.size() && !Found[K])
+        Found[K] = Scan.ToExpr(Store.Inputs[1]);
+      return true;
+    });
+  }
   // A summarized callee reads no stack slot past the last one its body, or
   // a tail call it makes, reads: an outgoing-area store beyond that belongs
   // to another call or is a local.
@@ -100,32 +155,7 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   // its offset from it instead: a push, a `mov [esp+N]` in any order, or
   // clang -O0's store through a copy of ESP.  A slot below it (a get-PC
   // push the code popped again) or past the callee's arguments holds none.
-  auto stores = [&](auto &&Take) {
-    auto walk = [&](const std::vector<MedOp> &Ops, int Before) {
-      for (int J = Before; J >= 0; --J) {
-        const MedOp &Prev = Ops[static_cast<size_t>(J)];
-        if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-            Prev.Opcode == NdOp::INTRINSIC)
-          return true;
-        if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
-            Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)
-          continue;
-        // A callee-saved register's entry value is a prologue save; a value
-        // computed into one is an argument (clang -O0 keeps them in EBX, ESI
-        // and EDI).
-        if (Scan.IsCalleeSave(Prev.Inputs[1]) && Prev.Inputs[1].SSAVer == 0)
-          continue;
-        if (!Take(Prev))
-          return false;
-      }
-      return true;
-    };
-    if (Scan.Ops && !walk(*Scan.Ops, static_cast<int>(Scan.CallIdx) - 1))
-      return;
-    for (const auto &W : Scan.ExtraWindows)
-      if (W.Ops && !walk(*W.Ops, W.Before))
-        return;
-  };
+  //
   // Stores outnumbering the arguments found make a cdecl call, whose ECX
   // and EDX written before it are scratch (clang -O0 loads a value there
   // before storing it).
@@ -143,10 +173,33 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       if (!Entry || *Entry < *Scan.CallStackEntryOffset)
         return true;
       const int64_t Offset = *Entry - *Scan.CallStackEntryOffset;
-      if (Offset % SlotBytes == 0 && Offset / SlotBytes < Scan.MaxArgs)
-        if (ExprPtr &Slot = Slots[static_cast<size_t>(Offset / SlotBytes)];
-            !Slot)
-          Slot = Scan.ToExpr(Store.Inputs[1]);
+      if (Offset % SlotBytes != 0)
+        return true;
+      // A store wider than a slot, clang's `movsd [esp], xmm0` copying an
+      // eight-byte structure, fills each slot it covers with its piece.
+      const int64_t Width = Store.Inputs[1].Size;
+      const int64_t Pieces =
+          Width > SlotBytes && Width % SlotBytes == 0 ? Width / SlotBytes : 1;
+      for (int64_t Piece = 0; Piece < Pieces; ++Piece) {
+        const int64_t Index = Offset / SlotBytes + Piece;
+        if (Index >= Scan.MaxArgs)
+          break;
+        ExprPtr &Slot = Slots[static_cast<size_t>(Index)];
+        if (Slot)
+          continue;
+        ExprPtr Value = Scan.ToExpr(Store.Inputs[1]);
+        if (Pieces > 1) {
+          if (!Value->Type || Value->Type->Kind != NdTypeKind::Int)
+            Value = HighExpr::makeBitCast(
+                Value, NdType::makeInt(static_cast<uint16_t>(Width), false));
+          Value = HighExpr::makeBinop(
+              NdOp::SUBBYTES, Value,
+              HighExpr::makeConst(static_cast<uint64_t>(Piece * SlotBytes), 4));
+          Value->Type =
+              NdType::makeInt(static_cast<uint16_t>(SlotBytes), false);
+        }
+        Slot = std::move(Value);
+      }
       return true;
     });
     size_t Placed = 0;

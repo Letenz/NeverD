@@ -16,8 +16,8 @@
         <translation>&amp;Перезагрузить входной файл</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>Перезагрузить двоичный файл и его сохранённые аннотации</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>Перечитать входной файл с сохранёнными аннотациями</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>Не удаётся скопировать %1 в %2</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>Не удаётся прочитать %1: %2</translation>
     </message>
@@ -1711,6 +1715,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>Перезагрузить входной файл</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>Полоса навигации</translation>
     </message>
@@ -1969,38 +1977,6 @@ Signed: %4</source>
         <translation>Нет сохранённого рабочего стола</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: быстрый старт</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>Новый</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>Дизассемблировать новый файл</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Начать</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>Работать самостоятельно</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>Предыдущий</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>Загрузить выбранный недавний файл</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>Недавние файлы:</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>Открыть двоичный файл или базу данных</translation>
     </message>
@@ -2137,7 +2113,98 @@ Signed: %4</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>Быстрый старт</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>Интерактивный дизассемблер и декомпилятор</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>Версия %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>Начало</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>Недавние файлы</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;Новый</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>Дизассемблировать новый файл</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>Н&amp;ачать</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>Работать самостоятельно</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>&amp;Предыдущий</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>Загрузить выбранный недавний файл</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>&amp;Показывать при запуске</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>Перетащите файл сюда, чтобы открыть его</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>Отсутствует</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>&amp;Загрузить</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>&amp;Копировать путь</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>&amp;Удалить из списка</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>Сегодня, %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>Вчера, %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>Нет недавних файлов</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>Здесь появляются открытые вами файлы. Выберите «Новый» или перетащите файл в это окно.</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 находится в папке, недоступной для записи; его база данных хранится в %2</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>Запуск процесса анализа…</translation>
@@ -2163,8 +2230,8 @@ Signed: %4</source>
         <translation>%1: %2 %3, функций: %4</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>Аннотации перезагружены</translation>
+        <source>Reloaded the input file</source>
+        <translation>Входной файл перезагружен</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2433,8 +2500,8 @@ Signed: %4</source>
         <translation>AMD64 и Intel 64 (64 бита)</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM и Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM little-endian, запуск в состоянии ARM</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2449,8 +2516,8 @@ Signed: %4</source>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM little-endian, запуск в состоянии Thumb</translation>
     </message>
 </context>
 <context>

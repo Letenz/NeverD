@@ -17,6 +17,7 @@ namespace neverd {
 
 struct BinaryImage;
 struct PipelineResult;
+class DebugContext;
 
 /// Widen every callee that returns a 64-bit integer in a register pair to an
 /// i64 return, and remodel the call sites (including loop-carried i64
@@ -43,6 +44,11 @@ void recoverStructReturnFromBody(const BinaryImage &Img,
 /// op reads.  AArch64 only.
 void materializeKnownStructReturnCallSites(const BinaryImage &Img,
                                            PipelineResult &Result);
+
+/// Settle which functions return no value a caller could rely on
+/// (MedFunc::ReturnsNoValue), once for both C backends.
+void settleReturnContracts(const BinaryImage &Img, PipelineResult &Result,
+                           const DebugContext *Dbg = nullptr);
 
 /// Remodel struct-return tail-call forwarders after call-ABI recovery so the
 /// forwarding call produces every field register the RETURN reassembles.

@@ -36,6 +36,32 @@ backend evidence, not as semantic success.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
+## GUI function lists and navigation
+
+With the optional Qt desktop targets enabled, `NeverDGuiController` exercises
+the production views against the deterministic worker. Its chooser regressions
+replace queued filters and scroll a 20,000-function fixture across more pages
+than the dispatcher admits. Functions activation covers Pseudocode, explicit C,
+LLVM C and IR windows, multiple windows, pinned views and back/forward history.
+The file-drop cases wait for the worker's loader-identification capability and
+check UTF-8 filenames through the Windows fixture boundary.
+
+```sh
+cmake --build build-gui --target neverd-gui-tests neverd-gui-query-tests
+ctest --test-dir build-gui -R '^NeverDGui' --output-on-failure
+```
+
+Two optional profiles use a real worker and user-owned input copies. Set
+`NEVERD_LARGE_PE_WORKER` and `NEVERD_LARGE_PE_FILE` for the `native-pe` row of
+`rapidlyScrollingLargeListsKeepsTheLastPageAvailable`; discovery and table
+replies retain a finite 30-second deadline. Set `NEVERD_CODE_NAV_WORKER` and
+`NEVERD_CODE_NAV_FILE` for the `native-c` and `native-llvmc` rows of
+`functionsActivationKeepsCodeWindow`, using a supported PE with at least three
+functions. The Pseudocode profile needs a worker that supports the `source`
+representation. Each worker must keep its matching engine and runtime libraries.
+Run `neverd-gui-tests` directly with the native Qt platform to exercise native
+widgets; CTest sets the controller's platform to `offscreen`.
+
 ## Scalar x86 floating-point state
 
 `NeverDX86FPStateAccuracyTests` compares original scalar SSE byte fixtures
@@ -99,10 +125,9 @@ recovered C types, rather than claiming scalar prototype recovery.
 This conversion suite does not certify packed, unsigned, EVEX/SAE or x87
 conversion state. Its native byte oracles require x64 and Clang; VEX byte
 oracles additionally require AVX.
-The pinned Capstone decoder currently refuses the legacy i386 address-override
-fixture `67 F2 0F 2D 00`; direct Capstone and NeverD decoding both fail before
-lifting. That form remains an unavailable decoder capability and is recorded
-separately from the supported conversion matrix.
+The pinned Capstone decoder supports the legacy i386 address-override fixture
+`67 F2 0F 2D 00`. The encoding suite checks its 16-bit memory addressing;
+conversion execution remains covered by the conversion suites above.
 
 ```bash
 cmake --build build-release --target NeverDX86FPStateAccuracyTests --parallel 4
@@ -113,14 +138,19 @@ ctest --test-dir build-release -L '^NeverDX86FPConversionAccuracyTests$' --outpu
 
 ## x86 invalid encodings and instruction boundaries
 
-`NeverDX86EncodingAccuracyTests` checks raw illegal LOCK forms and MOV-to-CS
-before any LowIR effects are published, in strict and permissive lifting.
-Legal memory-destination LOCK operations and segment moves remain controls.
+`NeverDX86EncodingAccuracyTests` requires raw illegal LOCK forms (including
+memory-source arithmetic and multi-byte NOP) and MOV-to-CS to fail in every
+decode route, independently of strict, detail and text settings. Legal
+memory-destination LOCK operations, HLE prefix orders and segment moves remain
+controls.
 UD1 golden encodings exercise complete ModR/M, SIB and displacement extents,
 32/64-bit address modes, address overrides, every truncated prefix, and the
-15-byte limit. Detailed, lightweight and lifting decode routes must agree and
-leave a following NOP at the correct boundary. UD1 retains its unconditional
-invalid-opcode identity; this suite does not select a processor's UD0 policy.
+15-byte limit, including REX2 map 1 encodings. Detailed, lightweight and lifting
+decode routes must agree and leave a following NOP at the correct boundary.
+Capstone owns validity and instruction extent; NeverD has no duplicate UD1
+length parser or LOCK/MOV-to-CS predicate. UD1 operands remain an
+unconditional invalid-opcode intrinsic without ordinary memory or arithmetic
+operations; this suite does not select a processor's UD0 policy.
 
 ```sh
 cmake --build build-release --target NeverDX86EncodingAccuracyTests
@@ -2532,7 +2562,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5033 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5395`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5037 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5399`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -2820,6 +2850,10 @@ A missing library anywhere in a `GetProcAddress` forwarder chain returns error 1
 `NeverDUnpackTests`, `NeverDUnpackExecutionTests` and `NeverDUnpackPublicTests` cover packed-image recovery; see [unpacking](unpack.md). `UnpackGeneratedTests.cpp` checks the entry rules on x86-64 and ARM64 with a program the test packs itself. `X64ReturnPrefixTests.cpp` checks the two-byte near return on every transport and that every other prefixed return stays rejected. `WindowsDeferredTests.cpp` checks opaque entries and stopped-process observation; `ExecutionSessionTests.cpp` checks execution watches. `DirectX64Tests.cpp` checks partial-page watches, cross-page instructions, one-instruction resumption, service traps, invalid instructions and deadline state on Unicorn/KVM/WHP; native CI requires the matching KVM/WHP cases.
 
 `LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage`, `ExplicitSnapshotsKeepExternalHeapDependenciesVisible` and `ReleasedHeapStateDoesNotBlockRecovery` compare independently compiled startup/entry behavior on available checked and direct backends. `HeapReferencesInCapturedTLSCannotBeDiscarded` covers TLS-only dependencies. Public tests require refusal to preserve existing output files and explicit snapshots to agree across C API and CLI. Address matches remain conservative evidence, not a native-execution certificate.
+
+`DirectServiceBindingsRequireAnExplicitSnapshot` covers direct service bindings first used before and after the captured entry; C API and CLI checks also preserve existing output on rejection.
+
+`PrivateHeapDestructionReleasesOnlyOwnedBlocks` checks moved allocation ownership, cross-heap refusal, retired handles and reuse of live-heap capacity.
 
 `UnpackLibraryTests.cpp` packs independent x64/ARM64 DLLs and checks dependency order, ordinary and generated TLS callbacks, failed attach cleanup, input/host identity, self-file access, export names/ordinals/data/forwarders, and absence of self-imports. Native Windows loads original and rebuilt DLLs through a separate EXE and calls their declared exports; checked and direct WHP cases are mandatory. `CompletedGeneratedTLSCallsRequireTheAttachABI` rejects changed entry/arguments; `GeneratedCallsNeedTheirReturnedStackAtTheContinuation` rejects a wrong return stack. These tests establish unpacking behavior, without devirtualization.
 

@@ -133,6 +133,76 @@ int main(void) {
   }
 }
 
+// Half-precision arithmetic computes in _Float16, each result rounded to
+// half precision as the instruction rounds it, where it used to print every
+// value as unknown.  Compile the C on the host, which computes _Float16 in
+// float and rounds once per operation: exact for these operations, since
+// float has more than twice the bits of half precision.
+TEST_F(AArch64_FP, HalfPrecisionArithmeticExecutesThroughHighC) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "floating-point source execution requires Clang";
+  const auto Assembly = tmpFile("fp16-ops.s");
+  const auto Object = tmpFile("fp16-ops.o");
+  std::ofstream(Assembly) << R"(.text
+.global half_ops
+.type half_ops,%function
+half_ops:
+  fmov h0, w0
+  fmov h1, w1
+  fadd h2, h0, h1
+  fmul h2, h2, h0
+  fsub h2, h2, h1
+  fdiv h3, h2, h1
+  fmadd h0, h0, h1, h3
+  fmov w0, h0
+  ret
+.size half_ops,.-half_ops
+)";
+  const auto Assembled =
+      exec(NEVERD_TEST_CLANG,
+           {"-target", "aarch64-none-elf", "-march=armv8.2-a+fp16", "-c",
+            Assembly.string(), "-o", Object.string()});
+  ASSERT_EQ(Assembled.exitCode, 0) << Assembled.err;
+  const auto Decompiled = decompileToHighC(Object);
+  ASSERT_EQ(Decompiled.exitCode, 0) << Decompiled.err;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  ASSERT_TRUE(Input.good());
+  const std::string Source((std::istreambuf_iterator<char>(Input)),
+                           std::istreambuf_iterator<char>());
+  ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("_Float16"), std::string::npos) << Source;
+  const std::string Harness = R"C(
+static uint16_t half_reference(uint16_t A, uint16_t B) {
+  const _Float16 a = __builtin_bit_cast(_Float16, A);
+  const _Float16 b = __builtin_bit_cast(_Float16, B);
+  _Float16 t = a + b;
+  t = t * a;
+  t = t - b;
+  t = t / b;
+  return __builtin_bit_cast(uint16_t, __builtin_fmaf16(a, b, t));
+}
+int main(void) {
+  static const uint16_t Values[] = {0x3C00, 0x4000, 0x3555, 0xC500, 0x7BFF,
+                                    0x0001, 0x3800, 0x8400, 0x5BFF};
+  for (unsigned I = 0; I != sizeof(Values) / sizeof(Values[0]); ++I)
+    for (unsigned J = 0; J != sizeof(Values) / sizeof(Values[0]); ++J)
+      if ((uint16_t)half_ops(Values[I], Values[J]) !=
+          half_reference(Values[I], Values[J]))
+        return 1;
+  return 0;
+}
+)C";
+  const auto CFile = tmpFile("fp16-ops-host.c");
+  std::ofstream(CFile) << Source << "\n" << Harness;
+  const auto Program = tmpFile("fp16-ops-host.exe");
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG, {"-std=gnu11", "-O2", CFile.string(), "-lm", "-o",
+                               Program.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err << "\n" << Source;
+  const auto Executed = exec(Program.string(), {});
+  EXPECT_EQ(Executed.exitCode, 0) << Source;
+}
+
 TEST_F(AArch64_FP, FaddLifts) {
   verifyLowIRContains(testObj(), "test_fadd_a64", "FLOAT_ADD");
 }

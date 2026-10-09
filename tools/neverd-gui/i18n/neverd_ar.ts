@@ -16,8 +16,8 @@
         <translation>إعادة تحميل ملف الإدخال(&amp;R)</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>إعادة تحميل الملف الثنائي وتعليقاته التوضيحية المحفوظة</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>قراءة ملف الإدخال مرة أخرى مع التعليقات التوضيحية المحفوظة</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>تعذّر نسخ %1 إلى %2</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>تعذّرت قراءة %1: %2</translation>
     </message>
@@ -1723,6 +1727,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>إعادة تحميل ملف الإدخال</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>شريط التنقل</translation>
     </message>
@@ -1981,38 +1989,6 @@ Signed: %4</source>
         <translation>لا يوجد سطح مكتب محفوظ</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: البدء السريع</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>جديد</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>تفكيك ملف جديد</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>ابدأ</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>العمل بمفردك</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>السابق</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>تحميل الملف المحدد من الملفات الأخيرة</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>الملفات الأخيرة:</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>فتح ملف ثنائي أو قاعدة بيانات</translation>
     </message>
@@ -2149,7 +2125,98 @@ Signed: %4</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>بدء سريع</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>أداة تفاعلية لفك التجميع وفك الترجمة</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>الإصدار %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>البدء</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>الملفات الأخيرة</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;جديد</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>تفكيك ملف جديد</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>اب&amp;دأ</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>العمل بمفردك</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>ال&amp;سابق</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>تحميل الملف المحدد من الملفات الأخيرة</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>&amp;عرض عند بدء التشغيل</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>أفلِت ملفًا هنا لفتحه</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>مفقود</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>&amp;تحميل</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>&amp;نسخ المسار</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>إ&amp;زالة من القائمة</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>اليوم، %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>أمس، %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>لا توجد ملفات حديثة</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>تظهر هنا الملفات التي تفتحها. اختر «جديد» أو أفلِت ملفًا على هذه النافذة.</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>يقع %1 في مجلد لا يمكنك الكتابة فيه؛ تُحفظ قاعدة بياناته في %2</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>جارٍ بدء عملية التحليل…</translation>
@@ -2175,8 +2242,8 @@ Signed: %4</source>
         <translation>%1: %2 %3، عدد الدوال: %4</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>تمت إعادة تحميل التعليقات التوضيحية</translation>
+        <source>Reloaded the input file</source>
+        <translation>أُعيد تحميل ملف الإدخال</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2445,8 +2512,8 @@ Signed: %4</source>
         <translation>AMD64 وIntel 64 (64 بت)</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM وThumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM بترتيب البايتات الصغير، يبدأ في حالة ARM</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2461,8 +2528,8 @@ Signed: %4</source>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM بترتيب البايتات الصغير، يبدأ في حالة Thumb</translation>
     </message>
 </context>
 <context>

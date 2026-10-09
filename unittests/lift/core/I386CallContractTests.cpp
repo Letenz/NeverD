@@ -247,6 +247,28 @@ TEST(I386CallContract, StoresThroughACopyOfESPAreArgumentsByOffset) {
   EXPECT_NE(Call.find("(arg0, arg1)"), std::string::npos) << Call;
 }
 
+TEST(I386CallContract, AStoreWiderThanASlotFillsEachSlotItCovers) {
+  // clang -O0 copies an eight-byte structure argument into the outgoing area
+  // with one `movsd [esp], xmm0`: its two halves are the first two arguments.
+  std::vector<uint8_t> Code = {
+      0x55,                         // push ebp
+      0x89, 0xE5,                   // mov ebp, esp
+      0x83, 0xEC, 0x18,             // sub esp, 0x18
+      0xF2, 0x0F, 0x10, 0x45, 0x08, // movsd xmm0, [ebp+8]
+      0x89, 0xE0,                   // mov eax, esp
+      0xF2, 0x0F, 0x11, 0x00,       // movsd [eax], xmm0
+  };
+  for (uint8_t B : callThroughSlot(slot(0)))
+    Code.push_back(B);
+  for (uint8_t B : {0x83, 0xC4, 0x18, // add esp, 0x18
+                    0x5D,             // pop ebp
+                    0xC3})            // ret
+    Code.push_back(B);
+  const std::string Call = callIn(makeImage(Code, {"calloc"}), "calloc");
+  EXPECT_EQ(Call.find("unknown"), std::string::npos) << Call;
+  EXPECT_NE(Call.find(">> 32"), std::string::npos) << Call;
+}
+
 /// The HighC signature of the function at Text of \p Img, decompiled alone.
 std::string signatureOf(const BinaryImage &Img, const std::string &Name) {
   llvm::LLVMContext Ctx;
@@ -286,9 +308,10 @@ TEST(I386CallContract, ARuntimeDoubleWordRoutineReturnsThePairAlone) {
   EXPECT_EQ(Wrap.find("64_t wrap("), std::string::npos) << Wrap;
 }
 
-TEST(I386CallContract, AStubOfAVariadicImportIsTheImport) {
+TEST(I386CallContract, AStubOfAVariadicImportPassesItsArgumentsOn) {
   // `jmp dword ptr [__imp__fprintf]` passes every argument on, the variadic
-  // ones too, which no C body can: the stub prints as the import.
+  // ones too.  C passes no `...` on, so the stub hands them to vfprintf, which
+  // takes them as fprintf does.
   const std::vector<uint8_t> Code = {0xFF,
                                      0x25, // jmp dword ptr [slot]
                                      static_cast<uint8_t>(slot(0)),
@@ -311,7 +334,13 @@ TEST(I386CallContract, AStubOfAVariadicImportIsTheImport) {
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
   EXPECT_NE(Source.find("wrap jumps to the import fprintf"), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find(" wrap("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("#include <stdarg.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int wrap(FILE *arg0, const char *format, ...) {"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("vfprintf(arg0, format, arguments);"),
+            std::string::npos)
+      << Source;
 }
 
 } // namespace

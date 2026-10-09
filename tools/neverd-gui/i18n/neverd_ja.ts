@@ -16,8 +16,8 @@
         <translation>入力ファイルを再読み込み(&amp;R)</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>バイナリと保存済みの注釈を再読み込みします</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>入力ファイルを再読み込みし、保存済みの注釈を保持します</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1218,6 +1218,10 @@
 <context>
     <name>ProjectDatabase</name>
     <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>%1 を %2 にコピーできません</translation>
+    </message>
+    <message>
         <source>Cannot read %1: %2</source>
         <translation>%1 を読み込めません: %2</translation>
     </message>
@@ -1703,6 +1707,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>入力ファイルの再読み込み</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>ナビゲーションバンド</translation>
     </message>
@@ -1961,38 +1969,6 @@ Signed: %4</source>
         <translation>保存されたデスクトップがありません</translation>
     </message>
     <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: クイックスタート</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>新規</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>新しいファイルを逆アセンブルします</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>開始</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>ファイルを開かずに作業を始めます</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>前回</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>選択した最近のファイルを読み込みます</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>最近使ったファイル：</translation>
-    </message>
-    <message>
         <source>Open binary or database</source>
         <translation>バイナリまたはデータベースを開く</translation>
     </message>
@@ -2129,7 +2105,98 @@ Signed: %4</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>クイックスタート</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>対話型の逆アセンブラーおよび逆コンパイラー</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>バージョン %1</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>開始</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>最近使ったファイル</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>新規(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>新しいファイルを逆アセンブルします</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>開始(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>ファイルを開かずに作業を始めます</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>前回(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>選択した最近のファイルを読み込みます</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>起動時に表示(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>ここにファイルをドロップすると開きます</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>見つかりません</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>読み込む(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>パスをコピー(&amp;C)</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>一覧から削除(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>今日 %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>昨日 %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>最近使ったファイルはありません</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>開いたファイルがここに表示されます。[新規] を選ぶか、このウィンドウにファイルをドロップしてください。</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 は書き込みできないフォルダーにあるため、そのデータベースは %2 に保存されます</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>解析プロセスを起動中…</translation>
@@ -2155,8 +2222,8 @@ Signed: %4</source>
         <translation>%1: %2 %3、関数 %4 個</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>注釈を再読み込みしました</translation>
+        <source>Reloaded the input file</source>
+        <translation>入力ファイルを再読み込みしました</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2425,8 +2492,8 @@ Signed: %4</source>
         <translation>AMD64 および Intel 64（64 ビット）</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM および Thumb（AArch32）</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM リトルエンディアン、ARM ステートで開始</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2441,8 +2508,8 @@ Signed: %4</source>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb（AArch32）</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM リトルエンディアン、Thumb ステートで開始</translation>
     </message>
 </context>
 <context>

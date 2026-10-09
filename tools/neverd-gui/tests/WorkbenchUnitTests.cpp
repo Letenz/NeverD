@@ -13,8 +13,10 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialogButtonBox>
 #include <QDirIterator>
 #include <QFile>
+#include <QFontInfo>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -23,14 +25,22 @@
 #include <QListWidget>
 #include <QMainWindow>
 #include <QMenuBar>
+#include <QMetaEnum>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRandomGenerator>
+#include <QRegularExpression>
+#include <QSet>
+#include <QSplitter>
 #include <QSqlDatabase>
 #include <QSqlQuery>
+#include <QStyleOptionButton>
+#include <QStyleOptionComboBox>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolBar>
 #include <QTreeWidget>
+#include <QVBoxLayout>
 #include <kddockwidgets/KDDockWidgets.h>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
@@ -81,6 +91,43 @@ struct DockPair {
                                               contentRect(left).center().y());
   }
 };
+
+/// The keys IDA's configuration means by \p spelling: "Ctrl-Shift-Down",
+/// "Enter", or a platform key such as "sys(ZoomOut)".
+QList<QKeySequence> idaKeys(QLatin1StringView spelling) {
+  QString rest = spelling.toString();
+  if (rest.isEmpty())
+    return {};
+  if (rest.startsWith(u"sys(") && rest.endsWith(u')')) {
+    bool known = false;
+    const int standard =
+        QMetaEnum::fromType<QKeySequence::StandardKey>().keyToValue(
+            rest.mid(4, rest.size() - 5).toLatin1().constData(), &known);
+    return known ? QKeySequence::keyBindings(
+                       static_cast<QKeySequence::StandardKey>(standard))
+                 : QList<QKeySequence>{};
+  }
+  // IDA joins the modifiers with '-' and calls Return "Enter".
+  QStringList parts;
+  for (bool modifier = true; modifier;) {
+    modifier = false;
+    for (const auto name :
+         {QLatin1StringView("Ctrl-"), QLatin1StringView("Shift-"),
+          QLatin1StringView("Alt-"), QLatin1StringView("Meta-")})
+      if (rest.size() > name.size() &&
+          rest.startsWith(name, Qt::CaseInsensitive)) {
+        parts << name.chopped(1).toString();
+        rest.remove(0, name.size());
+        modifier = true;
+      }
+  }
+  parts << (rest == u"Enter" ? QStringLiteral("Return") : rest);
+  const auto key =
+      QKeySequence::fromString(parts.join(u'+'), QKeySequence::PortableText);
+  if (key.isEmpty() || key[0].key() == Qt::Key_unknown)
+    return {};
+  return {key};
+}
 } // namespace
 
 class WorkbenchUnitTests : public QObject {
@@ -237,6 +284,48 @@ private slots:
       QVERIFY2(reachable.contains(action), qPrintable(action->objectName()));
   }
 
+  void commandsKeepIdasShortcuts() {
+    ActionRegistry registry;
+    QSet<QAction *> shared;
+    // Every key IDA gives a command, so that a command IDA does not have
+    // takes none of them.
+    QHash<QKeySequence, QString> idaCommands;
+#define NEVERD_IDA_ACTION(IdaAction, Shortcut, NeverDAction)                   \
+  {                                                                            \
+    auto *action = registry.action(ActionId::NeverDAction);                    \
+    const auto keys = idaKeys(QLatin1StringView(Shortcut));                    \
+    QVERIFY2(keys.isEmpty() ? action->shortcut().isEmpty()                     \
+                            : keys.contains(action->shortcut()),               \
+             qPrintable(QStringLiteral("%1 has \"%2\", IDA's %3 \"%4\"")       \
+                            .arg(action->objectName(),                         \
+                                 action->shortcut().toString(                  \
+                                     QKeySequence::PortableText),              \
+                                 QLatin1StringView(IdaAction),                 \
+                                 QLatin1StringView(Shortcut))));               \
+    shared.insert(action);                                                     \
+    for (const auto &key : keys)                                               \
+      idaCommands.insert(key, QStringLiteral(IdaAction));                      \
+  }
+#define NEVERD_IDA_PLANNED(IdaAction, Shortcut, Group)                         \
+  for (const auto &key : idaKeys(QLatin1StringView(Shortcut)))                 \
+    idaCommands.insert(key, QStringLiteral(IdaAction));
+#include "IdaActions.def"
+    QVERIFY(shared.size() > int(ActionId::Count) * 3 / 4);
+    for (auto *action : registry.allActions())
+      if (!shared.contains(action) && !action->shortcut().isEmpty())
+        QVERIFY2(!idaCommands.contains(action->shortcut()),
+                 qPrintable(action->objectName() +
+                            QStringLiteral(" takes the key of IDA's ") +
+                            idaCommands.value(action->shortcut())));
+    // The spellings the table uses mean the keys Qt reads.
+    QCOMPARE(idaKeys(QLatin1StringView("Ctrl-Shift-Down")),
+             QList{QKeySequence(QStringLiteral("Ctrl+Shift+Down"))});
+    QCOMPARE(idaKeys(QLatin1StringView("Enter")),
+             QList{QKeySequence(Qt::Key_Return)});
+    QCOMPARE(idaKeys(QLatin1StringView("sys(ZoomOut)")),
+             QKeySequence::keyBindings(QKeySequence::ZoomOut));
+  }
+
   void everyIconRenders() {
     QDirIterator icons(QStringLiteral(":/neverd/icons"),
                        {QStringLiteral("*.svg")});
@@ -249,6 +338,57 @@ private slots:
     }
     QVERIFY(count >= 60);
     QVERIFY(icon(QStringLiteral("no-such-icon")).isNull());
+  }
+
+  void iconsAreRecordedOriginalArtwork() {
+    QSet<QString> palette;
+    QHash<QString, QString> groups;
+#define NEVERD_ICON_COLOR(Hex, Use) palette.insert(QStringLiteral(Hex));
+#define NEVERD_ICON(Name, Group, Shows)                                        \
+  groups.insert(QStringLiteral(Name), QStringLiteral(#Group));
+#include "IconSet.def"
+    // Drawn by hand on the grid: no raster image, text, external reference,
+    // script or editor metadata, and colors only from the record.
+    static const QRegularExpression Foreign(
+        QStringLiteral("<image|<text|<foreignObject|<metadata|<script|href=|"
+                       "url\\(|@import|style=|rgb\\(|inkscape:|sodipodi:"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression Color(QStringLiteral("#[0-9A-Fa-f]{3,8}"));
+    static const QRegularExpression Paint(
+        QStringLiteral("(?:fill|stroke|stop-color)=\"([^\"]*)\""));
+    QSet<QString> files;
+    QDirIterator icons(QStringLiteral(":/neverd/icons"),
+                       {QStringLiteral("*.svg")});
+    while (icons.hasNext()) {
+      const QFileInfo info(icons.next());
+      const auto name = info.completeBaseName();
+      files.insert(name);
+      QVERIFY2(groups.contains(name),
+               qPrintable(name + QStringLiteral(" is not in IconSet.def")));
+      if (groups.value(name) == QLatin1String("Brand"))
+        continue;
+      QFile file(info.filePath());
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      const auto svg = QString::fromUtf8(file.readAll());
+      // Control chrome takes the size of the part it draws.
+      if (groups.value(name) != QLatin1String("Chrome"))
+        QVERIFY2(svg.contains(QStringLiteral("viewBox=\"0 0 16 16\"")),
+                 qPrintable(name));
+      const auto foreign = Foreign.match(svg);
+      QVERIFY2(!foreign.hasMatch(),
+               qPrintable(name + QStringLiteral(": ") + foreign.captured()));
+      for (auto paints = Paint.globalMatch(svg); paints.hasNext();) {
+        const auto paint = paints.next().captured(1);
+        QVERIFY2(paint == QLatin1String("none") ||
+                     (Color.match(paint).captured() == paint &&
+                      palette.contains(paint.toUpper())),
+                 qPrintable(name + QStringLiteral(" paints ") + paint));
+      }
+    }
+    for (auto it = groups.cbegin(); it != groups.cend(); ++it)
+      QVERIFY2(files.contains(it.key()),
+               qPrintable(it.key() + QStringLiteral(" is recorded but has no "
+                                                    "file")));
   }
 
   void projectDatabaseRoundTrip() {
@@ -798,6 +938,76 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(window));
     QCOMPARE(window->grab().toImage().pixelColor(0, window->height() / 2),
              theme.chrome(QStringLiteral("FloatingWindowBorder")));
+  }
+
+  void themeDrawsFlatControls() {
+    auto &theme = Theme::instance();
+    for (const auto mode : {Theme::Mode::Dark, Theme::Mode::Light}) {
+      theme.setMode(mode);
+      theme.apply();
+      QDialog dialog;
+      auto *layout = new QVBoxLayout(&dialog);
+      auto *box = new QCheckBox(QStringLiteral("Unchecked"), &dialog);
+      auto *combo = new QComboBox(&dialog);
+      combo->addItem(QStringLiteral("Item"));
+      auto *edit = new QLineEdit(&dialog);
+      auto *log = new QPlainTextEdit(&dialog);
+      log->setReadOnly(true);
+      auto *buttons = new QDialogButtonBox(
+          QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+      for (QWidget *widget :
+           {static_cast<QWidget *>(box), static_cast<QWidget *>(combo),
+            static_cast<QWidget *>(edit), static_cast<QWidget *>(log),
+            static_cast<QWidget *>(buttons)})
+        layout->addWidget(widget);
+      dialog.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+      const QImage image = dialog.grab().toImage();
+      const auto pixel = [&](QWidget *widget, QPoint point) {
+        return image.pixelColor(widget->mapTo(&dialog, point));
+      };
+
+      // An unchecked box stands out from the dialog behind it.
+      QStyleOptionButton option;
+      option.initFrom(box);
+      const QRect indicator = box->style()->subElementRect(
+          QStyle::SE_CheckBoxIndicator, &option, box);
+      const QPoint middle(indicator.left(), indicator.center().y());
+      QCOMPARE(pixel(box, middle),
+               theme.chrome(QStringLiteral("CheckboxBorder")));
+      QCOMPARE(pixel(box, indicator.center()),
+               theme.chrome(QStringLiteral("CheckboxBackground")));
+      QVERIFY(theme.chrome(QStringLiteral("CheckboxBorder")) !=
+              theme.chrome(QStringLiteral("Window")));
+
+      // The combo box draws its chevron on the field.
+      QStyleOptionComboBox comboOption;
+      comboOption.initFrom(combo);
+      const QRect arrow = combo->style()->subControlRect(
+          QStyle::CC_ComboBox, &comboOption, QStyle::SC_ComboBoxArrow, combo);
+      int glyph = 0;
+      for (int y = arrow.top(); y <= arrow.bottom(); ++y)
+        for (int x = arrow.left(); x <= arrow.right(); ++x)
+          glyph +=
+              pixel(combo, {x, y}) != theme.chrome(QStringLiteral("Input"));
+      QVERIFY(glyph > 4);
+
+      // Text fields type in the code font; read-only text reads as content.
+      QVERIFY(QFontInfo(edit->font()).fixedPitch());
+      QVERIFY(!QFontInfo(box->font()).fixedPitch());
+      QCOMPARE(pixel(log, log->rect().center()),
+               theme.chrome(QStringLiteral("Base")));
+      // Dialog buttons carry no icons.
+      for (auto *button : buttons->buttons())
+        QVERIFY(button->icon().isNull());
+      // Splitters inside views are hairlines, like those between docks.
+      QSplitter splitter;
+      splitter.addWidget(new QWidget);
+      splitter.addWidget(new QWidget);
+      splitter.ensurePolished();
+      QCOMPARE(splitter.handleWidth(), 1);
+    }
+    theme.setMode(Theme::Mode::Dark);
   }
 
   void themesDefineEveryColor() {
