@@ -452,6 +452,8 @@ void Session::sendOpen(const QString &requested, const QString &path,
                   : tr("Platform: %1, as chosen").arg(platform),
               0);
         }
+        if (std::exchange(reloading_, false))
+          emit message(tr("Reloaded the input file"), 0);
         emit opened();
         emit stateChanged();
         refreshHistory();
@@ -461,6 +463,7 @@ void Session::sendOpen(const QString &requested, const QString &path,
       },
       [this](const QString &, const QString &) {
         opening_ = false;
+        reloading_ = false;
         emit stateChanged();
         if (!pendingFile_.isEmpty())
           openPending();
@@ -484,19 +487,23 @@ void Session::closeFile() {
   client_.stop();
 }
 
-void Session::reload() {
+void Session::reload(std::optional<LoadOptions> options) {
   if (!loaded_)
     return;
+  reloadOptions_ = std::move(options);
   if (dirty()) {
     requestTransition(QStringLiteral("reload"));
     return;
   }
-  command(QStringLiteral("reload"), {}, [this](const QJsonObject &payload) {
-    metadata_ = payload;
-    dirty_ = false;
-    refreshHistory();
-    emit message(tr("Annotations reloaded"), 0);
-  });
+  // A fresh worker reads the file's bytes as they are now; the annotations
+  // come from what was saved.
+  pendingFile_ = filePath_;
+  pendingOptions_ = std::exchange(reloadOptions_, {}).value_or(loadOptions_);
+  reloading_ = true;
+  resetState();
+  emit unloaded();
+  restartPending_ = true;
+  client_.stop();
 }
 
 void Session::restart() {
@@ -532,6 +539,7 @@ void Session::resolveTransition(const QString &choice) {
     transition_.clear();
     transitionReady_ = false;
     pendingFile_.clear();
+    reloadOptions_.reset();
     return;
   }
   if (choice == QLatin1String("save")) {
@@ -568,7 +576,7 @@ void Session::finishTransition() {
   } else if (action == QLatin1String("close")) {
     closeFile();
   } else if (action == QLatin1String("reload")) {
-    reload();
+    reload(std::exchange(reloadOptions_, {}));
   } else if (action == QLatin1String("restart")) {
     restart();
   }

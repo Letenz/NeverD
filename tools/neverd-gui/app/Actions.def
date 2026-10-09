@@ -33,7 +33,8 @@ NEVERD_ACTION(FileReload,
               QT_TRANSLATE_NOOP("Actions", "&Reload the input file"), "",
               "refresh",
               QT_TRANSLATE_NOOP("Actions",
-                                "Reload the binary and its saved annotations"))
+                                "Read the input file again, with its saved "
+                                "annotations"))
 NEVERD_ACTION(
     FileLoadSignatures,
     QT_TRANSLATE_NOOP("Actions", "&FLIRT signature file..."), "", "signatures",

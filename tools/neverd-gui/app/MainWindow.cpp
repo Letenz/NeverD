@@ -903,7 +903,7 @@ void MainWindow::connectActions() {
     connect(actions_.action(id), &QAction::triggered, this, slot);
   };
   on(ActionId::FileOpen, [this] { openDialog(); });
-  on(ActionId::FileReload, [this] { session_.reload(); });
+  on(ActionId::FileReload, [this] { reloadInput(); });
   on(ActionId::FileLoadSignatures, [this] {
     const auto path = QFileDialog::getOpenFileName(
         this, tr("Load signature pack"), {},
@@ -1354,6 +1354,36 @@ void MainWindow::chooseLoader(const QString &path) {
             tr("The ways to load %1 are unknown: %2").arg(path, message), 1);
         openFile(path);
       });
+}
+
+void MainWindow::reloadInput() {
+  if (!session_.loaded())
+    return;
+  // A binary file is read as the processor and at the address the user
+  // chose, which IDA asks for when it loads one: reloading asks again,
+  // starting from the choice the file was loaded with.
+  const QJsonObject load = session_.loadOptionsJson();
+  if (load.value("loader").toString() != QLatin1String("binary") ||
+      !session_.identifiesFiles()) {
+    session_.reload();
+    return;
+  }
+  const QString path = session_.filePath();
+  session_.read(
+      QStringLiteral("identify"), {{"path", path}}, this,
+      [this, path, load](const QJsonObject &payload) {
+        LoadFileDialog dialog(path, payload.value("rows").toArray(), this);
+        dialog.setWindowTitle(tr("Reload the input file"));
+        dialog.setIndicator(
+            QSettings().value(AnalysisIndicatorKey, true).toBool());
+        dialog.setOptions(load);
+        if (dialog.exec() != QDialog::Accepted || dialog.row() < 0)
+          return;
+        QSettings().setValue(AnalysisIndicatorKey, dialog.indicator());
+        applyIndicator();
+        session_.reload(dialog.options());
+      },
+      [this](const QString &, const QString &) { session_.reload(); });
 }
 
 void MainWindow::applyIndicator() {

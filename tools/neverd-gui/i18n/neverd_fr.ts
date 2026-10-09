@@ -16,8 +16,8 @@
         <translation>&amp;Recharger le fichier d&apos;entrée</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>Recharger le binaire et ses annotations enregistrées</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>Relire le fichier d’entrée, avec ses annotations enregistrées</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1707,6 +1707,10 @@ Double-cliquez pour aller à la déclaration.</translation>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>Recharger le fichier d’entrée</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>Bande de navigation</translation>
     </message>
@@ -2159,8 +2163,8 @@ Signé : %4</translation>
         <translation>%1 : %2 %3, %4 fonctions</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>Annotations rechargées</translation>
+        <source>Reloaded the input file</source>
+        <translation>Fichier d’entrée rechargé</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2429,8 +2433,8 @@ Signé : %4</translation>
         <translation>AMD64 et Intel 64 (64 bits)</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM et Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM petit-boutiste, démarrant en état ARM</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2445,8 +2449,8 @@ Signé : %4</translation>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM petit-boutiste, démarrant en état Thumb</translation>
     </message>
 </context>
 <context>

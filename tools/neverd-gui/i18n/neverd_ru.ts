@@ -16,8 +16,8 @@
         <translation>&amp;Перезагрузить входной файл</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>Перезагрузить двоичный файл и его сохранённые аннотации</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>Перечитать входной файл с сохранёнными аннотациями</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1711,6 +1711,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>Перезагрузить входной файл</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>Полоса навигации</translation>
     </message>
@@ -2163,8 +2167,8 @@ Signed: %4</source>
         <translation>%1: %2 %3, функций: %4</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>Аннотации перезагружены</translation>
+        <source>Reloaded the input file</source>
+        <translation>Входной файл перезагружен</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2433,8 +2437,8 @@ Signed: %4</source>
         <translation>AMD64 и Intel 64 (64 бита)</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM и Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM little-endian, запуск в состоянии ARM</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2449,8 +2453,8 @@ Signed: %4</source>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM little-endian, запуск в состоянии Thumb</translation>
     </message>
 </context>
 <context>

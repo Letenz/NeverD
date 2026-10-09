@@ -16,8 +16,8 @@
         <translation>重新加载输入文件(&amp;R)</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>重新加载二进制文件及其已保存的注释</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>重新读取输入文件，保留已保存的注释</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1703,6 +1703,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>重新加载输入文件</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>导航栏</translation>
     </message>
@@ -2155,8 +2159,8 @@ Signed: %4</source>
         <translation>%1：%2 %3，%4 个函数</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>注释已重新加载</translation>
+        <source>Reloaded the input file</source>
+        <translation>已重新加载输入文件</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2425,8 +2429,8 @@ Signed: %4</source>
         <translation>AMD64 与 Intel 64（64 位）</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM 与 Thumb（AArch32）</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM 小端序，从 ARM 状态开始</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2441,8 +2445,8 @@ Signed: %4</source>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb（AArch32）</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM 小端序，从 Thumb 状态开始</translation>
     </message>
 </context>
 <context>

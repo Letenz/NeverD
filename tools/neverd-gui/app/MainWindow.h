@@ -121,6 +121,9 @@ private:
   /// Open \p path, first asking how to load it when NeverD keeps no project
   /// for it, as IDA's "Load a new file" dialog does.
   void chooseLoader(const QString &path);
+  /// File, Load file, Reload the input file: read the file again, asking
+  /// again how to read a binary file.
+  void reloadInput();
   /// Show or hide the status line's analysis indicator, as the load dialog
   /// last chose.
   void applyIndicator();

@@ -16,8 +16,8 @@
         <translation>إعادة تحميل ملف الإدخال(&amp;R)</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>إعادة تحميل الملف الثنائي وتعليقاته التوضيحية المحفوظة</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>قراءة ملف الإدخال مرة أخرى مع التعليقات التوضيحية المحفوظة</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1723,6 +1723,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>إعادة تحميل ملف الإدخال</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>شريط التنقل</translation>
     </message>
@@ -2175,8 +2179,8 @@ Signed: %4</source>
         <translation>%1: %2 %3، عدد الدوال: %4</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>تمت إعادة تحميل التعليقات التوضيحية</translation>
+        <source>Reloaded the input file</source>
+        <translation>أُعيد تحميل ملف الإدخال</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2445,8 +2449,8 @@ Signed: %4</source>
         <translation>AMD64 وIntel 64 (64 بت)</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM وThumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM بترتيب البايتات الصغير، يبدأ في حالة ARM</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2461,8 +2465,8 @@ Signed: %4</source>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb (AArch32)</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM بترتيب البايتات الصغير، يبدأ في حالة Thumb</translation>
     </message>
 </context>
 <context>

@@ -671,6 +671,53 @@ private slots:
     QVERIFY(!QApplication::activeModalWidget());
   }
 
+  void reloadReadsTheInputFileAgainWithItsSavedComments() {
+    // As IDA's File, Load file, Reload the input file: a fresh worker reads
+    // the file again, with the comments that were saved; unsaved ones go
+    // when the user discards them.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.session.setComment(Base, QStringLiteral("saved comment"));
+    QTRY_VERIFY(bench.session.dirty());
+    bench.session.save();
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(path + ".neverd-annotations.json"),
+                             OpenTimeoutMs);
+    QTRY_VERIFY(!bench.session.dirty());
+    bench.session.setComment(Base + 0x140, QStringLiteral("unsaved comment"));
+    QTRY_VERIFY(bench.session.dirty());
+
+    const quint64 epoch = bench.session.epoch();
+    LoadDialogAcceptor loadDialogs;
+    QTimer discard;
+    bool prompted = false;
+    connect(&discard, &QTimer::timeout, this, [&] {
+      if (auto *box =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        prompted = true;
+        box->button(QMessageBox::Discard)->click();
+      }
+    });
+    discard.start(10);
+    bench.action(ActionId::FileReload)->trigger();
+    QTRY_VERIFY(prompted);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded() &&
+                                 bench.session.epoch() != epoch,
+                             OpenTimeoutMs);
+    QCOMPARE(bench.session.filePath(), path);
+    QVERIFY(!bench.session.dirty());
+    const auto saved = readAll(path + ".neverd-annotations.json");
+    QVERIFY(saved.contains("saved comment"));
+    QVERIFY(!saved.contains("unsaved comment"));
+    auto *log = bench.window->findChild<OutputWindow *>()
+                    ->findChild<QPlainTextEdit *>();
+    QVERIFY(log);
+    QTRY_VERIFY(
+        log->toPlainText().contains(QStringLiteral("Reloaded the input file")));
+  }
+
   void fileDropKeepsUnsavedChangesWhenCancelled() {
     QTemporaryDir directory;
     const auto first = writeFixture(directory, QStringLiteral("first.bin"));

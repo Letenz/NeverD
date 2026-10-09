@@ -360,8 +360,11 @@ be changed, since every loader takes it from the header.
 
 **Binary file** reads any file as one processor's code, as firmware and memory
 dumps need. Its processor list reads **Processor type (double-click to set)**
-and offers the processors NeverD can decode (x86, x86-64, ARM, Thumb and
-AArch64). The engine reads the processor from the bytes and the list opens on
+and offers the processors NeverD can decode: x86, x86-64, AArch64, and two ARM
+rows, **ARM Little-endian, starting in ARM state** and **ARM Little-endian,
+starting in Thumb state**. Both read ARM and Thumb code, as IDA's single ARM
+Little-endian processor does; they differ only in the state the code starts in,
+which IDA sets with its T segment register. The engine reads the processor from the bytes and the list opens on
 it. Each instruction set leaves its own statistics of which byte follows which;
 4 KiB windows of the file vote for the set that explains them best, padding,
 text and compressed data are passed over, and a set settles the file only when
@@ -415,6 +418,14 @@ same choice with `--loader binary --processor aarch64 --load-base 0x80000`
 (plus `--load-offset`, `--load-size`, `--load-entry` and `--platform
 auto|sysv|windows|darwin`), or `--loader evm`, keeps it too, and `neverd info`
 prints the platform and its evidence.
+
+**File → Load file → Reload the input file** reads the input file again
+through a fresh worker, as IDA's command does: the bytes are the file's as it
+is now, and the saved names, comments and other annotations come back with it.
+Unsaved changes are saved or discarded first, as the user chooses. A binary
+file shows the dialog again, opened on the choice it was loaded with, so a
+wrong processor, base or offset changes without starting over; a processor or
+platform the engine read from the bytes is read again.
 
 **Analysis → Enabled**
 turns idle-time analysis (function discovery and the reference index) on or off

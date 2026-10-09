@@ -16,8 +16,8 @@
         <translation>입력 파일 다시 불러오기(&amp;R)</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>바이너리와 저장된 주석을 다시 불러옵니다</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>저장된 주석과 함께 입력 파일을 다시 읽습니다</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1703,6 +1703,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>입력 파일 다시 불러오기</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>내비게이션 밴드</translation>
     </message>
@@ -2155,8 +2159,8 @@ Signed: %4</source>
         <translation>%1: %2 %3, 함수 %4개</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>주석 다시 불러옴</translation>
+        <source>Reloaded the input file</source>
+        <translation>입력 파일을 다시 불러왔습니다</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2425,8 +2429,8 @@ Signed: %4</source>
         <translation>AMD64 및 Intel 64(64비트)</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM 및 Thumb(AArch32)</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM 리틀 엔디언, ARM 상태로 시작</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2441,8 +2445,8 @@ Signed: %4</source>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb(AArch32)</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM 리틀 엔디언, Thumb 상태로 시작</translation>
     </message>
 </context>
 <context>

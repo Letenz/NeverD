@@ -16,8 +16,8 @@
         <translation>入力ファイルを再読み込み(&amp;R)</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>バイナリと保存済みの注釈を再読み込みします</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>入力ファイルを再読み込みし、保存済みの注釈を保持します</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -1703,6 +1703,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>入力ファイルの再読み込み</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>ナビゲーションバンド</translation>
     </message>
@@ -2155,8 +2159,8 @@ Signed: %4</source>
         <translation>%1: %2 %3、関数 %4 個</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>注釈を再読み込みしました</translation>
+        <source>Reloaded the input file</source>
+        <translation>入力ファイルを再読み込みしました</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2425,8 +2429,8 @@ Signed: %4</source>
         <translation>AMD64 および Intel 64（64 ビット）</translation>
     </message>
     <message>
-        <source>ARM and Thumb (AArch32)</source>
-        <translation>ARM および Thumb（AArch32）</translation>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM リトルエンディアン、ARM ステートで開始</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2441,8 +2445,8 @@ Signed: %4</source>
         <translation>Solana BPF</translation>
     </message>
     <message>
-        <source>Thumb (AArch32)</source>
-        <translation>Thumb（AArch32）</translation>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM リトルエンディアン、Thumb ステートで開始</translation>
     </message>
 </context>
 <context>

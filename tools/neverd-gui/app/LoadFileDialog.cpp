@@ -298,6 +298,37 @@ void LoadFileDialog::setBinaryProcessor(const QString &processor) {
   select(loaders_->currentRow());
 }
 
+void LoadFileDialog::setOptions(const QJsonObject &load) {
+  const auto loader = load.value("loader").toString();
+  for (int index = 0; index < loaders_->count(); ++index)
+    if ((loaders_->item(index)->flags() & Qt::ItemIsEnabled) &&
+        rows_[index].toObject().value("loader").toString() == loader) {
+      loaders_->setCurrentRow(index);
+      break;
+    }
+  const auto chosen = [&](const char *source) {
+    return load.value(QLatin1String(source)).toString() ==
+           QLatin1String("chosen");
+  };
+  // A processor the user chose beats the one the bytes name; a detected
+  // one is read again.
+  if (chosen("processor_source")) {
+    detectedProcessor_.clear();
+    binaryProcessor_ = load.value("processor").toString();
+  }
+  base_->setText(load.value("base").toString(base_->text()));
+  offset_->setText(load.value("offset").toString(offset_->text()));
+  const auto size = load.value("size").toString();
+  size_->setText(size == QLatin1String("0x0") ? QString() : size);
+  entry_->setText(load.value("entry").toString());
+  const int platform = platform_->findData(
+      chosen("platform_source") ? load.value("platform").toString()
+                                : QString());
+  if (platform >= 0)
+    platform_->setCurrentIndex(platform);
+  select(loaders_->currentRow());
+}
+
 void LoadFileDialog::select(int row) {
   const bool raw = binary();
   // A header names the processor; a binary file's is the user's to pick.
