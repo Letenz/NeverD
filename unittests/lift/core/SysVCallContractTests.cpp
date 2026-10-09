@@ -25,9 +25,11 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstdlib>
 #include <set>
 #include <string>
 #include <utility>
@@ -385,6 +387,20 @@ std::string liftEntries(const BinaryImage &Img, std::set<va_t> Entries) {
   Opts.OnlyFunctionEntries = std::move(Entries);
   auto Result = Pipeline().run(Img, Ctx, Opts);
   EXPECT_TRUE(Result.Success) << Result.Error;
+  if (const auto *Root = std::getenv("NEVERD_ISA_REGRESSION_ARTIFACT_DIR")) {
+    llvm::SmallString<128> Directory(Root);
+    llvm::sys::path::append(
+        Directory,
+        testing::UnitTest::GetInstance()->current_test_info()->name());
+    EXPECT_FALSE(llvm::sys::fs::create_directories(Directory));
+    llvm::SmallString<128> Path(Directory);
+    llvm::sys::path::append(Path, "call-return-med.txt");
+    std::error_code Error;
+    llvm::raw_fd_ostream Dump(Path, Error);
+    EXPECT_FALSE(Error);
+    if (!Error)
+      Pipeline::dumpMedIR(Result.MedFuncs, Dump);
+  }
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
