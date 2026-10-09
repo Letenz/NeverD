@@ -40022,6 +40022,37 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   EXPECT_EQ(Source.find("var_m14"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, CorpusRustFormatKeepsTheEntryStackPointer) {
+  // alloc::fmt::format at -O0 drops a call's result and stores what the
+  // frame holds next.  The entry stack pointer is never assigned, but the
+  // frame storage defines it: taking it for the dropped result forwarded
+  // `frame_base` into a value that reads `frame_base`, and the writer
+  // recursed until the stack ran out.
+  if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
+    GTEST_SKIP() << "rust-eh corpus root is not configured";
+  const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                    "corpus/rust-eh/x86_64-unknown-linux-gnu/unwind/o0/bin/"
+                    "rust_eh_probe-x86_64-unknown-linux-gnu-unwind-o0";
+  if (!std::filesystem::exists(Path))
+    GTEST_SKIP() << Path.string() << " is missing";
+
+  constexpr va_t Entry = 0x18C70;
+  BinaryLoadOptions FuncOpts;
+  FuncOpts.OnlyFunctionEntries.insert(Entry);
+  auto Img = loadBinary(Path, FuncOpts);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
+  ASSERT_NE(Source.find("const uintptr_t frame_base = "), std::string::npos)
+      << Source;
+  const auto Call =
+      Source.find("core_slice_raw_from_raw_parts_precondition_check(");
+  ASSERT_NE(Call, std::string::npos) << Source;
+  // What follows the call reads the frame, not the dropped result.
+  EXPECT_NE(Source.find("= *(int64_t *)(frame_base - 72);", Call),
+            std::string::npos)
+      << Source;
+}
+
 TEST(HighCPointerAddresses, RsdsPdbNamesFrameSlotsOnSafetyFixture) {
   const auto Exe = std::filesystem::path(__FILE__)
                        .parent_path()

@@ -446,6 +446,10 @@ public:
   /// prefers `if (b > a) else-arm else then-arm`.
   std::optional<std::string> preferGreaterIfElseCond(const HighExpr &E);
   std::string copyForwardName(const std::string &Name) const;
+  /// Whether \p E reads \p Name, itself or through the values already
+  /// forwarded into it.  A forward that does stands for itself: printing it
+  /// in place never ends.
+  bool readsThroughForwards(const HighExpr &E, const std::string &Name) const;
   std::optional<std::string>
   forwardedStoreValue(const HighExpr &Addr, const std::string &Printed) const;
   bool isCopyForwardDestination(const MedVar &V) const;

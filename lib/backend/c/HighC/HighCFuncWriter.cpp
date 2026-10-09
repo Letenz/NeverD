@@ -2989,6 +2989,27 @@ void HighCWriter::foldSignedJleConds(std::vector<HighStmt> &Stmts) {
   Walk(Stmts);
 }
 
+bool HighCWriter::readsThroughForwards(const HighExpr &E,
+                                       const std::string &Name) const {
+  std::set<std::string> Followed;
+  std::function<bool(const HighExpr &)> Reads = [&](const HighExpr &Cur) {
+    if (Cur.Kind == ExprKind::Var || Cur.Kind == ExprKind::Phi) {
+      const std::string Read = varName(Cur.Var);
+      const std::string Printed = copyForwardName(Read);
+      if (Read == Name || Printed == Name)
+        return true;
+      const auto Fwd = ValueForward.find(Printed);
+      return Fwd != ValueForward.end() && Fwd->second &&
+             Followed.insert(Printed).second && Reads(*Fwd->second);
+    }
+    bool Found = false;
+    Cur.forEachChildExpr(
+        [&](const ExprPtr &Child) { Found = Found || Reads(*Child); });
+    return Found;
+  };
+  return Reads(E);
+}
+
 void HighCWriter::collectValueForward(const HighFunc &Func) {
   ValueForward.clear();
   auto containsName = [&](const HighExpr &E, const std::string &Name,
@@ -3931,6 +3952,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     if (Fwd && (isParamCopy(*Fwd) || isIntegerViewOfScalar(*Fwd)))
       if (const HighExpr *Inner = sameWidthVariable(*Fwd))
         Fwd = Inner;
+    if (!Fwd || readsThroughForwards(*Fwd, C.Name))
+      continue;
     ValueForward[C.Name] = Fwd;
     // A field value is not a frame-address alias, but that alone must not
     // force its definition to print after this proof has folded every use.
@@ -4004,9 +4027,12 @@ void HighCWriter::collectUnusedCallStoreAlias(const HighFunc &Func) {
         const bool SizeOk = Cur->Var.Size == Size ||
                             (Size == 4 && Cur->Var.Size == 8) ||
                             (Size == 8 && Cur->Var.Size == 4);
+        // The entry stack pointer is never assigned either, but the frame
+        // storage defines it: it is no call's result.
         if (Name.empty() || Cur->Var.Kind == MedVar::Param ||
             isReservedParamDisplayName(Name) || Assigned.count(Name) ||
-            ValueForward.count(Name) || FieldForward.count(Name) || !SizeOk)
+            ValueForward.count(Name) || FieldForward.count(Name) || !SizeOk ||
+            isSyntheticEntryStackPointer(Cur->Var, Func, Opts.TheArch))
           return;
         if (Found.empty())
           Found = Name;
@@ -4069,7 +4095,7 @@ void HighCWriter::collectUnusedCallStoreAlias(const HighFunc &Func) {
           if (!Val)
             continue;
           auto Name = UniqueUndeclared(Val, S.Dst->Var.Size);
-          if (!Name)
+          if (!Name || readsThroughForwards(*S.Val, *Name))
             continue;
           ValueForward[*Name] = S.Val.get();
           Analysis.DeadStmts.insert(&S);
