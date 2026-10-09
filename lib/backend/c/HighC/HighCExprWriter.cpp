@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../UnalignedMemory.h"
+#include "../VariadicImportStub.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -138,9 +139,11 @@ std::string HighCWriter::varName(const MedVar &V) const {
           if (V.Id >= 0 && DebugIdx < FS->Params.size() &&
               !FS->Params[DebugIdx].first.empty())
             return FS->Params[DebugIdx].first;
-        } else if (V.Id >= 0 && static_cast<size_t>(V.Id) < FS->Params.size() &&
-                   !FS->Params[static_cast<size_t>(V.Id)].first.empty()) {
-          return FS->Params[static_cast<size_t>(V.Id)].first;
+        } else if (const auto DI = debugParamIndex(*CurrentFunc, V.Id,
+                                                   static_cast<size_t>(V.Id));
+                   V.Id >= 0 && DI && *DI < FS->Params.size() &&
+                   !FS->Params[*DI].first.empty()) {
+          return FS->Params[*DI].first;
         }
       }
     }
@@ -728,12 +731,6 @@ std::optional<X87CHelper> HighCWriter::x87HelperFor(const HighExpr &E) const {
   if (E.Kind == ExprKind::Var && E.Var.SSAVer == 0 &&
       isX87ControlWord(Opts.TheArch, E.Var))
     return X87CHelper::ControlWord;
-  if (E.Kind == ExprKind::BitCast && E.Operands.size() == 1 && E.Operands[0]) {
-    if (isX87Value(E))
-      return X87CHelper::Value;
-    if (isX87Value(*E.Operands[0]))
-      return X87CHelper::Bits;
-  }
   if (E.Kind == ExprKind::UnaryOp &&
       (E.Op == NdOp::FLOAT_ROUNDEVEN || E.Op == NdOp::FLOAT_SQRT) &&
       !E.Operands.empty() && E.Operands[0] && isX87Value(*E.Operands[0]))
@@ -790,20 +787,8 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
 }
 
 bool HighCWriter::isVariadicImportStub(const HighFunc &Func) const {
-  if (!Opts.Image || !Func.Entry)
-    return false;
-  const Import *Imp = Opts.Image->findImportAt(Func.Entry);
-  if (!Imp || Imp->IATAddr == Func.Entry || Imp->Name.empty())
-    return false;
-  // A PE import entry is the C name; other formats name the symbol.
-  const std::string Name =
-      importNamesAreCNames(Opts.Format)
-          ? Imp->Name
-          : cNameOfSymbol(Imp->Name, Opts.Format, Opts.TheArch).str();
-  if (const libc::LibCPrototype *Prototype =
-          libc::libcPrototype(Name, Opts.Format))
-    return Prototype->Variadic;
-  return libc::isKnownFunction(Name) && libc::varArgFixedCount(Name) > 0;
+  return Opts.Image &&
+         !c_stub::variadicImportOfStub(*Opts.Image, Func.Entry).empty();
 }
 
 const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {
@@ -2132,43 +2117,95 @@ TypeRef HighCWriter::expectedDebugCallArgType(const FunctionSym &FS,
   return Declared(Index);
 }
 
-const HighExpr *HighCWriter::floatCallResult(const HighExpr &Bits,
+const HighExpr *HighCWriter::floatBitsSource(const HighExpr &Bits,
                                              const TypeRef &Float) const {
   if (!Float || Float->Kind != NdTypeKind::Float)
     return nullptr;
   // Each step keeps at least the float's bytes: a view of the low bytes, a
-  // conversion or a forwarded copy.  A forwarded call carries no type of its
-  // own; its declaration says what it returns.
+  // reinterpretation or a forwarded copy.  The walk ends at a value of the
+  // float's type, or at a call, which carries no type of its own when
+  // forwarded.
   const HighExpr *Inner = &Bits;
-  for (unsigned Step = 0; Inner && Step < limits::kMaxIntegerViewUnwrapDepth &&
-                          Inner->Kind != ExprKind::Call;
+  for (unsigned Step = 0; Inner && Step < limits::kMaxIntegerViewUnwrapDepth;
        ++Step) {
-    if (!Inner->Type || Inner->Type->Size < Float->Size)
+    if (Inner->Kind == ExprKind::Call)
+      return Inner;
+    if (!Inner->Type)
       return nullptr;
+    if (Inner->Type->Kind == NdTypeKind::Float)
+      return equalSourceTypes(Inner->Type, Float) ? Inner : nullptr;
+    if (Inner->Type->Size < Float->Size)
+      return nullptr;
+    const HighExpr *Operand =
+        Inner->Operands.empty() ? nullptr : Inner->Operands[0].get();
+    const HighExpr *Next = nullptr;
     if (Inner->Kind == ExprKind::BinOp && Inner->Op == NdOp::SUBBYTES &&
-        Inner->Operands.size() == 2 && Inner->Operands[0] &&
-        Inner->Operands[1] && Inner->Operands[1]->Kind == ExprKind::Const &&
-        Inner->Operands[1]->ConstVal == 0) {
-      Inner = Inner->Operands[0].get();
-      continue;
-    }
-    if (const HighExpr *View = unwrapIntegerView(Inner); View != Inner) {
-      Inner = View;
-      continue;
-    }
-    if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi)
+        Inner->Operands.size() == 2 && Inner->Operands[1] &&
+        Inner->Operands[1]->Kind == ExprKind::Const &&
+        Inner->Operands[1]->ConstVal == 0)
+      Next = Operand;
+    else if (Inner->Kind == ExprKind::UnaryOp &&
+             (Inner->Op == NdOp::INT_ZEXT || Inner->Op == NdOp::INT_SEXT))
+      Next = Operand;
+    // A cast of a floating value converts it; one of integer bits views
+    // them.
+    else if (Inner->Kind == ExprKind::Cast && Operand &&
+             (!Operand->Type || Operand->Type->Kind == NdTypeKind::Int ||
+              Operand->Type->Kind == NdTypeKind::Ptr))
+      Next = Operand;
+    else if (Inner->Kind == ExprKind::BitCast)
+      Next = Operand;
+    else if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi)
       if (const auto Fwd =
               ValueForward.find(copyForwardName(varName(Inner->Var)));
-          Fwd != ValueForward.end() && Fwd->second && Fwd->second != Inner) {
-        Inner = Fwd->second;
-        continue;
-      }
-    break;
+          Fwd != ValueForward.end() && Fwd->second && Fwd->second != Inner)
+        Next = Fwd->second;
+    if (!Next)
+      return Inner;
+    Inner = Next;
   }
-  if (!Inner || Inner->Kind != ExprKind::Call)
+  return Inner;
+}
+
+const HighExpr *HighCWriter::floatCallResult(const HighExpr &Bits,
+                                             const TypeRef &Float) const {
+  const HighExpr *Source = floatBitsSource(Bits, Float);
+  if (!Source || Source->Kind != ExprKind::Call)
     return nullptr;
-  const TypeRef Return = knownCallReturnType(*Inner);
-  return Return && equalSourceTypes(Return, Float) ? Inner : nullptr;
+  const TypeRef Return = knownCallReturnType(*Source);
+  return Return && equalSourceTypes(Return, Float) ? Source : nullptr;
+}
+
+const HighExpr *HighCWriter::floatBitsValue(const HighExpr &Bits,
+                                            const TypeRef &Float) const {
+  const HighExpr *Source = floatBitsSource(Bits, Float);
+  return Source && Source->Kind != ExprKind::Call && Source->Type &&
+                 Source->Type->Kind == NdTypeKind::Float
+             ? Source
+             : nullptr;
+}
+
+std::optional<std::string>
+HighCWriter::floatConstantBitsText(const HighExpr &Bits,
+                                   const TypeRef &Float) const {
+  const HighExpr *Source = floatBitsSource(Bits, Float);
+  if (!Source || !Source->Type || Source->Type->Size < Float->Size)
+    return std::nullopt;
+  std::optional<uint64_t> Value;
+  if (Source->Kind == ExprKind::Const)
+    Value = Source->ConstVal;
+  else if (Source->Kind == ExprKind::Load &&
+           Source->MemoryOrdering == NdMemoryOrdering::None &&
+           Source->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+           !Source->Operands.empty() && Source->Operands[0])
+    if (const auto VA = constAddress(*Source->Operands[0]))
+      Value = foldReadonlyScalar(*VA, Source->Type->Size);
+  if (!Value)
+    return std::nullopt;
+  return floatConstantText(
+      *Value & (Float->Size >= 8 ? ~uint64_t{0}
+                                 : (uint64_t{1} << (Float->Size * 8)) - 1),
+      Float);
 }
 
 std::optional<std::string>
@@ -2178,31 +2215,14 @@ HighCWriter::floatArgumentText(const HighExpr &Arg, const TypeRef &Expected) {
       !Arg.Type || Arg.Type->Kind != NdTypeKind::Int ||
       Arg.Type->Size < Expected->Size)
     return std::nullopt;
-  // The bits of a value of the parameter's own type pass as that value: its
-  // bit cast, under integer views that keep its low bytes.
-  const HighExpr *Bits = &Arg;
-  for (unsigned Peel = 0;
-       Bits && Peel < limits::kMaxIntegerViewUnwrapDepth && Bits->Type &&
-       Bits->Type->Kind == NdTypeKind::Int &&
-       Bits->Type->Size >= Expected->Size && Bits->Operands.size() >= 1 &&
-       Bits->Operands[0] && Bits->Operands[0]->Type &&
-       Bits->Operands[0]->Type->Size >= Expected->Size &&
-       (Bits->Kind == ExprKind::Cast ||
-        (Bits->Kind == ExprKind::UnaryOp &&
-         (Bits->Op == NdOp::INT_ZEXT || Bits->Op == NdOp::INT_SEXT)) ||
-        (Bits->Kind == ExprKind::BinOp && Bits->Op == NdOp::SUBBYTES &&
-         Bits->Operands.size() == 2 && Bits->Operands[1] &&
-         Bits->Operands[1]->Kind == ExprKind::Const &&
-         Bits->Operands[1]->ConstVal == 0));
-       ++Peel)
-    Bits = Bits->Operands[0].get();
-  if (Bits && Bits->Kind == ExprKind::BitCast && !Bits->Operands.empty() &&
-      Bits->Operands[0] && Bits->Operands[0]->Type &&
-      equalSourceTypes(Bits->Operands[0]->Type, Expected))
-    return exprStr(*Bits->Operands[0]);
-  // The result of a call that returns the parameter's type passes as it is.
+  // The bits of a value of the parameter's own type, or of a call returning
+  // it, pass as that value.
+  if (const HighExpr *Value = floatBitsValue(Arg, Expected))
+    return exprStr(*Value);
   if (const HighExpr *Call = floatCallResult(Arg, Expected))
     return renderCallExpr(*Call);
+  if (const auto Literal = floatConstantBitsText(Arg, Expected))
+    return *Literal;
   // A register's integer bits are the argument's bits: C would convert
   // their value instead.
   return "__builtin_bit_cast(" + typeToC(Expected) + ", " +
@@ -4081,45 +4101,25 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                          E.Type->IsSigned);
       return "(" + typeToC(E.Type) + ")" + exprStr(Src, 99);
     }
-    // The bits of a call that returns this float are its result.
+    // The bits of a call that returns this float are its result, and those
+    // of a value of this type are that value.
     if (const HighExpr *Call = floatCallResult(Src, E.Type))
       return renderCallExpr(*Call);
+    if (const HighExpr *Value = floatBitsValue(Src, E.Type))
+      return exprStr(*Value, ParentPrec);
     // A float whose bits are a constant, or read from constant data, is that
     // constant.
-    const HighExpr *Bits = unwrapIntegerView(&Src);
-    for (unsigned Follow = 0;
-         Bits && Follow < limits::kMaxIntegerViewUnwrapDepth &&
-         (Bits->Kind == ExprKind::Var || Bits->Kind == ExprKind::Phi);
-         ++Follow) {
-      const auto Fwd = ValueForward.find(copyForwardName(varName(Bits->Var)));
-      if (Fwd == ValueForward.end() || !Fwd->second || Fwd->second == Bits)
-        break;
-      Bits = unwrapIntegerView(Fwd->second);
-    }
-    if (Bits && Bits->Type && Bits->Type->Size >= E.Type->Size) {
-      std::optional<uint64_t> Value;
-      if (Bits->Kind == ExprKind::Const)
-        Value = Bits->ConstVal;
-      else if (Bits->Kind == ExprKind::Load &&
-               Bits->MemoryOrdering == NdMemoryOrdering::None &&
-               Bits->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-               !Bits->Operands.empty() && Bits->Operands[0])
-        if (const auto VA = constAddress(*Bits->Operands[0]))
-          Value = foldReadonlyScalar(*VA, Bits->Type->Size);
-      if (Value)
-        if (const auto Literal = floatConstantText(
-                *Value & (E.Type->Size >= 8
-                              ? ~uint64_t{0}
-                              : (uint64_t{1} << (E.Type->Size * 8)) - 1),
-                E.Type))
-          return *Literal;
-    }
-    // An x87 value's 80 bits fill ten bytes of a wider C object, which
-    // __builtin_bit_cast cannot reinterpret: they are copied.
+    if (const auto Literal = floatConstantBitsText(Src, E.Type))
+      return *Literal;
+    // An x87 value's 80 bits are the low ten bytes of a `long double`, whose
+    // size the unit asserts is that of the `unsigned _BitInt(80)` carrying
+    // them; the bytes past them are padding to both.
     if (isX87Value(E))
-      return useX87Helper(X87CHelper::Value) + "(" + exprStr(Src) + ")";
+      return "__builtin_bit_cast(long double, (unsigned _BitInt(80))(" +
+             exprStr(Src) + "))";
     if (isX87Value(Src))
-      return useX87Helper(X87CHelper::Bits) + "(" + exprStr(Src) + ")";
+      return "__builtin_bit_cast(unsigned _BitInt(80), (long double)(" +
+             exprStr(Src) + "))";
     // The explicit source cast prevents integer promotions (or an unsuffixed
     // constant) from changing the operand's byte width inside the builtin.
     return "__builtin_bit_cast(" + typeToC(E.Type) + ", (" + typeToC(Src.Type) +

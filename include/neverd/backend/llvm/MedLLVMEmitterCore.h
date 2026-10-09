@@ -1437,6 +1437,9 @@ private:
   /// one (`pdata` EndAddress).  Returns a function constant or a GEP past
   /// the last byte; null if the image has no such function identity.
   llvm::Constant *resolveImageFunctionAddress(va_t Address);
+  /// \p Address inside a function this module only declares, as that
+  /// function's address plus the offset; null otherwise.
+  llvm::Constant *resolveDeclaredFunctionInterior(va_t Address);
   /// The function entry at \p Address: a lifted function, or a declaration
   /// of the image function symbol that starts there.
   llvm::Function *resolveImageFunctionEntry(va_t Address);
@@ -1968,6 +1971,10 @@ private:
   /// MedFunc::Name; an address-backed native personality body uses its stable
   /// auto name so the canonical ABI name remains an external declaration.
   std::map<va_t, std::string> EmittedFuncNames;
+  /// The C names of a PE image's imports (PEImportShadow.h): a local function
+  /// whose symbol spells one is another function, which a call reaches by its
+  /// own name.
+  std::set<std::string> PEImportCNames;
   std::map<va_t, std::string> FuncNames;
   // Ordinary LLVM blocks are created for every body-emitted MedFunc before
   // any body operation runs.  This makes blockaddress resolution independent

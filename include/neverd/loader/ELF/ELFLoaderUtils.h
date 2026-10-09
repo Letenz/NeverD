@@ -59,6 +59,20 @@ bool recordImportSlotBinding(uint32_t RelocType, va_t Slot,
 bool recordIRelativeResolver(uint32_t RelocType, va_t Slot,
                              std::optional<int64_t> Addend, BinaryImage &Img);
 
+/// Record the slot of a dynamic relocation the dynamic linker fills with a
+/// function only it chooses -- a GNU indirect function's implementation
+/// (IRELATIVE) or a TLS descriptor's resolver: a call through it calls what
+/// the slot holds when the call runs.
+bool recordRuntimeCallableRelocation(uint32_t RelocType, va_t Slot,
+                                     BinaryImage &Img);
+
+/// What the dynamic linker writes for relocation \p RelocType bound to a
+/// symbol at \p SymbolVA with \p Addend; none for a type that does not store
+/// its symbol's address.
+std::optional<uint64_t> symbolRelocationValue(Arch Target, uint32_t RelocType,
+                                              uint64_t SymbolVA,
+                                              int64_t Addend);
+
 /// Parse .rela.plt / .rel.plt entries and populate Img.Imports with
 /// PLT-resolved external symbols.
 template <typename ELFT>

@@ -29,6 +29,7 @@
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/PEImportShadow.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -80,6 +81,8 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
   FunctionIdentifiers.clear();
   FunctionSymbolNames.clear();
+  const std::set<std::string> ImportCNames =
+      Img ? peImportCNames(*Img) : std::set<std::string>{};
   for (llvm::Function &Fn : Mod) {
     llvm::StringRef Name = Fn.getName();
     std::string IntrinsicHelper;
@@ -128,6 +131,10 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
               Img->getFunctionNameAt(static_cast<va_t>(Addr));
           if (!FromImage.empty() && !isSynthesizedFuncName(FromImage))
             DebugName = std::move(FromImage);
+          if (!DebugName.empty())
+            if (auto Shadow =
+                    peImportShadowName(ImportCNames, *Img, Addr, DebugName))
+              DebugName = std::move(*Shadow);
           if (DebugName.empty())
             if (const Import *Imp = Img->findImportStubAt(Addr);
                 Imp && !Imp->Name.empty())
