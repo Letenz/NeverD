@@ -747,8 +747,8 @@ CMake-Helper bereitgestellten LLVM- und Capstone-Bibliotheken.
 
 | Verzeichnis | Verantwortung | Wichtige Abhängigkeiten |
 |-------------|---------------|-------------------------|
-| `lib/loader` | Formaterkennung, PE/COFF-, ELF- und Mach-O-Laden, normalisiertes `BinaryImage`, Funktionserkennung | LLVM Object APIs |
-| `lib/lift` | Handgeschriebene x86/i386-, AArch64- und ARM32-Instruktionssemantik | IR-Datentypen |
+| `lib/loader` | Formaterkennung, PE/COFF-, ELF- und Mach-O-Laden, normalisiertes `BinaryImage`, Funktionserkennung | LLVM Object APIs, `NeverDDigest` |
+| `lib/lift` | Handgeschriebene x86/i386-, AArch64- und ARM32-Instruktionssemantik | IR-Datentypen, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native-Decodierung und Dispatch an Architektur-Lifter | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | Gemeinsame Typen sowie LowIR-, MedIR-, HighIR- und Intrinsic-Definitionen/-Transformationen | Vier IR-Unterkomponenten |
 | `lib/pipeline` | Funktionserkennung und Koordination der Low/Med/High/LLVM-Pfade | IR, decode, lift, LLVM-Backend, Debuginfo, IR-Pässe |
@@ -761,8 +761,10 @@ CMake-Helper bereitgestellten LLVM- und Capstone-Bibliotheken.
 | `lib/sigs` | Signaturparsing, Datenbanken und Matching | Loader |
 | `lib/libc` | Bekannte libc-Namen und Aufrufmodell-Unterstützung | Eigenständige Komponente |
 | `lib/safety` | Heap-Lebensdauer-Audit und Copy-Überlauf-Hunt auf geliftetem IR | Symbolic, Solver |
-| `lib/support` | Gemeinsame Hilfen zum Binärladen | Loader |
+| `lib/support` | Gemeinsame Binärladehilfen und unabhängiges SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | Versionierte Guest-State/Policy/Exit-Verträge, feste Runtime-ABI, geprüfter Guest-Speicher, Audits erzeugter IR/Objekte/LinkGraphs, versiegeltes natives Linken und der experimentelle C++-Dispatcher von x86-64 zu AArch64 | IR-, LLVM-, LLVM-Object- und JITLink-Verträge |
+
+`NeverDDigest` besitzt die bestehende SHA-256-Implementierung für einen Aufruf in `lib/support`, mit unveränderten Laufzeitprüfungen der CPU-Funktionen und portablem Rückfallpfad, ohne Loader- oder IR-Abhängigkeit. `loader/InputDigest.h` bleibt ein weiterleitender Header. `NeverDIRLowValidation` besitzt `lowUndefinedOperationDigest`; Lift bindet diesen Baustein ausdrücklich ein. Die v1-Identität behält Domäne, Little-Endian-Wörter, alle sechs gespeicherten Eingabeplätze, Herkunft und Quellkoordinaten bei. Bis zu 199 Operationen werden in höchstens 64 KiB serialisiert; größere Bereiche verwenden den ursprünglichen inkrementellen Pfad. Beide Pfade zählen dieselben Felder auf und erhalten die Evidenzprüfungen.
 
 ### Architekturgrenzen für Analyse und Vereinfachung
 
@@ -1324,6 +1326,8 @@ Die Zeitregeln für Windows-Prozesse liegen in `WindowsProcessTime.cpp` unter `o
 `lib/unpack` stellt gepackte Abbilder in vier Schichten wieder her. `core` besitzt die Orchestrierung und das Formatregister. `format/pe` validiert den Container und rekonstruiert beobachteten Speicher, Imports und Metadaten; `PETLS.cpp` prüft ersetzte TLS-Datensätze anhand der Loader-Allokation und beobachteter Callbacks. Weder Schutzprogrammregister noch statische Stub-Signaturen wählen den Einstieg. `dynamic` beobachtet einen Gastprozess über `observeProcess`: `Observation.def` ordnet jedem Container und Befehlssatz ein Prozessprofil zu und gibt jedem Befehlssatz seinen Stapelzeiger und sein Befehlsfenster. Ein neues Ziel ist eine Tabellenzeile und ein Modulverzeichnis, und eine Eingabe ohne Zeile wird namentlich abgelehnt. `ExecutionSession` besitzt die Ausführungsüberwachungen; ein `ProcessObserver` liest einen angehaltenen Prozess und wählt den nächsten Halt, kann den Gastzustand aber nicht ändern. Die Emulationsschicht kennt nur `defer_unmodeled`, das nicht modellierte Importe an opake Einstiege bindet, die bei ihrer Ausführung stoppen. Siehe [Entpacken](unpack.md). Verzögertes Laden erlaubt ausführbare Callback- und Eintrittsziele in nullgefülltem Speicher, deren Code frühere Initialisierer erzeugen. Callbackfelder und TLS-Zuteilungsmetadaten benötigen weiterhin geprüfte Dateiinhalte; strenges Laden behält seine Dateiprüfung. Das OS-Modell liefert die Aufrufzugehörigkeit und benachrichtigt Beobachter beim Vorbereiten eines Aufrufs oder Wiederherstellen eines angehaltenen Aufrufers. An diesen Grenzen werden Übergangswachen neu gesetzt, auch wenn Callback und erzeugter Eintritt dieselbe Seite teilen.
 
 `WindowsLibraryHost.cpp` baut den DLL-Host; der Windows-Lader besitzt den normalen Lade-/Entladelebenszyklus. `ProcessView::inputModule()` trennt beobachtete Eingabe und Host-EXE und erlaubt eine späte Anfangsaufnahme. `ProcessView::callFrame()` liest Integerargumente und Rücksprungfakten über `IntegerABI`. `dynamic/ProcessTransfer` besitzt den Nachweis passender Fortsetzung und Stapel. Nur `PETLS.cpp` entscheidet, ob damit ein Prozess-Anfügecallback abgeschlossen ist.
+
+`PEDelayImports.cpp` verantwortet die Reparatur verzögerter Bindungen für einen neuen Prozess und den Ausschluss ihres Metadatenspeichers. Der COFF-Loader setzt `Import::IsDelayImport` anhand der Deskriptorherkunft; die Windows-Ausführungszulassung vergleicht nur gewöhnliche Importe. Validierte Deskriptoren autorisieren genaue aufgelöste Zellen zur Neubindung, während ungelöste interne Thunks bedarfsgesteuert bleiben. Unabhängige Lookup-Tabellen begrenzen die Bindungszahl und erhalten folgende ungelöste Zellen. Ungültige Zustände scheitern explizit.
 
 `ExportObserver` beobachtet auch ausführbare Exporte residenter Gastabhängigkeiten; modellierte Anbieter bleiben an der Dienstverteilung beobachtet. Eigene Eingabe-Exporte sind ausgeschlossen. Moduländerungen erneuern die Haltepunkte; jede Reparatur verlangt die aktuelle Exportidentität. Aufzeichnungen bleiben innerhalb des deklarierten Importlimits. DLL-Tests reparieren System-API- und Gastabhängigkeitshelfer; natives Laden prüft, dass keine emulierte Adresse übrig bleibt.
 

@@ -661,8 +661,8 @@ NeverD 依赖，不穷举 CMake helper 统一提供的 LLVM 和 Capstone 库。
 
 | 目录 | 职责 | 重要依赖 |
 |------|------|----------|
-| `lib/loader` | 格式检测、PE/COFF、ELF、Mach-O 加载；规范化 `BinaryImage`；函数发现 | LLVM Object API |
-| `lib/lift` | 手写 x86/i386、AArch64、ARM32 指令语义 | IR 数据类型 |
+| `lib/loader` | 格式检测、PE/COFF、ELF、Mach-O 加载；规范化 `BinaryImage`；函数发现 | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | 手写 x86/i386、AArch64、ARM32 指令语义 | IR 数据类型, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native 解码并分派到架构 lifter | `NeverDIR`、`NeverDLift` |
 | `lib/ir` | 公共类型以及 LowIR、MedIR、HighIR、intrinsic 定义/转换 | 四个 IR 子组件 |
 | `lib/pipeline` | 函数检测与 Low/Med/High/LLVM 路径编排 | IR、decode、lift、LLVM backend、调试信息、IR pass |
@@ -675,8 +675,10 @@ NeverD 依赖，不穷举 CMake helper 统一提供的 LLVM 和 Capstone 库。
 | `lib/sigs` | 签名解析、数据库与匹配 | Loader |
 | `lib/libc` | 已知 libc 名称与调用模型支持 | 独立组件 |
 | `lib/safety` | 提升 IR 上的堆生命周期审计与拷贝越界猎取 | Symbolic、Solver |
-| `lib/support` | 共享二进制加载 helper | Loader |
+| `lib/support` | 共享二进制加载辅助函数及独立 SHA-256 | Support：Loader；Digest：LLVM Support/TargetParser |
 | `lib/translate` | 带版本的 guest state/策略/退出、固定 runtime ABI、受检 guest memory、生成 IR/目标文件/LinkGraph 审计、sealed 原生链接，以及实验性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 与 JITLink 契约 |
+
+`NeverDDigest` 在 `lib/support` 中负责现有的一次性 SHA-256 实现，保留运行时特性检查与可移植回退，不依赖 Loader 或 IR。`loader/InputDigest.h` 保留为转发头文件。`NeverDIRLowValidation` 负责 `lowUndefinedOperationDigest`，Lift 显式链接该组件。v1 身份保持原有域、小端字、全部六个已存储输入槽、来源信息和源码坐标。最多 199 个操作使用不超过 64 KiB 的序列化缓冲，更长跨度使用原增量路径；两条路径枚举相同字段并保留证据检查。
 
 ### 分析与化简的架构归属
 
@@ -1188,6 +1190,8 @@ Windows 进程时间策略归 `os/windows/process/` 中的 `WindowsProcessTime.c
 `lib/unpack` 分四层恢复加壳镜像。`core` 负责编排和格式注册表。`format/pe` 校验容器并重建观察到的内存、导入和元数据；`PETLS.cpp` 依据加载器分配信息和实际观察到的回调校验替换的 TLS 记录。不使用保护器注册表或静态外壳签名选择入口。`dynamic` 通过 `observeProcess` 观察来宾进程：`Observation.def` 把每种容器与指令集映射到一个进程配置，并给出每种指令集的栈指针和指令窗口。新增一个目标只需一行表项和一个模块目录，表中没有对应行的输入会被按名称拒绝。`ExecutionSession` 负责执行监视；`ProcessObserver` 读取已停止的进程并选择下一个停止点，但不能改变来宾状态。模拟层只知道 `defer_unmodeled`，它把未建模的导入绑定到一旦执行就停止的不透明入口。参见[脱壳](unpack.md)。 延迟加载允许可执行回调或入口目标位于零填充内存，由先前的初始化器生成其代码。回调数组和 TLS 分配元数据仍要求经过校验的文件内容；普通严格加载保留文件覆盖检查。操作系统模型提供调用归属，并在准备调用或恢复挂起的调用者时通知观察器。转移监视在这些边界重新布置，覆盖回调与生成入口同处一页的情况。
 
 `WindowsLibraryHost.cpp` 负责 DLL 宿主构造，Windows 加载器负责普通加载与卸载生命周期。`ProcessView::inputModule()` 区分观察输入与宿主 EXE，允许延后建立初始快照。`ProcessView::callFrame()` 通过 `IntegerABI` 读取整数参数和返回事实；`dynamic/ProcessTransfer` 负责匹配返回地址与栈的完成证据。仅 `PETLS.cpp` 决定该证据是否完成进程附加回调。
+
+`PEDelayImports.cpp` 负责新进程中的延迟加载修复及元数据存储排除。COFF 加载器根据描述符来源记录 `Import::IsDelayImport`，Windows 执行准入仅比较普通导入。经过验证的延迟描述符为已解析单元的重新绑定提供准确范围，待解析的内部跳板保留按需行为。独立查找表限定绑定数量，保留后续待解析单元。无效状态明确报错。
 
 `ExportObserver` 也观察驻留来宾依赖的可执行导出；建模提供者仍通过服务分派观察。输入镜像自身导出被排除。模块变化会刷新观察点，每次修复仍须由实时导出身份授权。发现记录不超过声明的导入上限。DLL 夹具同时要求修复系统 API 与来宾依赖的跳板，并通过原生加载验证不残留模拟地址。
 

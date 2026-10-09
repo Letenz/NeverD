@@ -137,7 +137,7 @@ void Decoder::configureFor(const BinaryImage &Img) {
   // A PE image runs on Windows, whose system service convention an x64
   // SYSCALL follows.
   if (X86)
-    X86->setSyscallConvention(Img.Format == BinaryFormat::COFF
+    X86->setSyscallConvention(Img.abiFormat() == BinaryFormat::COFF
                                   ? X86Lifter::SyscallConvention::WindowsNT
                                   : X86Lifter::SyscallConvention::Linux);
 }

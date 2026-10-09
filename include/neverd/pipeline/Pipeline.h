@@ -201,6 +201,9 @@ struct PipelineResult {
   /// Bytes of each GPR family a lifted callee reads before writing (its
   /// register arguments, including pass-throughs), keyed by callee entry.
   std::map<va_t, GPRReadWidths> CallEntryReadGPRs;
+  /// Bytes of the scalar float each prototyped import returns in the vector
+  /// return register, keyed by the stub or slot a call names it by.
+  std::map<va_t, uint16_t> CallFloatReturns;
   /// Positional arguments implied by the incoming stack slots a lifted callee
   /// reads, including through tail calls (0 when none), keyed by callee
   /// entry. Absent entries leave the stack arguments to the call-site scan.

@@ -29,19 +29,35 @@ constexpr uint64_t kX64GPRBytes = 16 * 8;
 constexpr unsigned kX64StackPointerFamily = 4; // RSP
 
 GPRFamilyMask familyBit(Arch A, uint64_t RegOff) {
-  auto Family = gprFamilyOf(A, RegOff);
-  if (!Family || *Family == kX64StackPointerFamily)
+  auto Family = registerFamilyOf(A, RegOff);
+  if (!Family || Family->first == kX64StackPointerFamily)
     return 0;
-  return GPRFamilyMask(1) << *Family;
+  return GPRFamilyMask(1) << Family->first;
+}
+
+/// The bytes a family's register holds.
+unsigned familyBytes(unsigned Family) {
+  return Family >= kX64VectorFamilyBase ? 16 : 8;
 }
 
 /// Record a read of \p Size bytes at \p RegOff.
 void addRead(Arch A, GPRReadWidths &Reads, uint64_t RegOff, uint64_t Size) {
-  auto Family = gprFamilyOf(A, RegOff);
-  if (!Family || *Family == kX64StackPointerFamily)
+  auto Family = registerFamilyOf(A, RegOff);
+  if (!Family || Family->first == kX64StackPointerFamily)
     return;
-  const uint64_t End = std::min<uint64_t>(RegOff % 8 + Size, 8);
-  Reads[*Family] = std::max(Reads[*Family], static_cast<uint8_t>(End));
+  const uint64_t End =
+      std::min<uint64_t>(Family->second + Size, familyBytes(Family->first));
+  Reads[Family->first] =
+      std::max(Reads[Family->first], static_cast<uint8_t>(End));
+}
+
+/// The vector argument family \p V names as a whole register, if any.
+std::optional<unsigned> wholeVectorFamily(Arch A, const NdVar &V) {
+  const auto Family = V.isReg() ? registerFamilyOf(A, V.Offset) : std::nullopt;
+  if (!Family || Family->first < kX64VectorFamilyBase || Family->second ||
+      V.Size != 16)
+    return std::nullopt;
+  return Family->first;
 }
 
 void joinReads(GPRReadWidths &Into, const GPRReadWidths &From) {
@@ -57,17 +73,19 @@ void joinReads(GPRReadWidths &Into, const GPRReadWidths &From) {
 /// position through the last, each still unwritten, to consecutive slots off
 /// one unchanged base register: in the entry block (GCC, optimizing Clang) or
 /// where the branch rejoins (Clang -O0).  Such a spill reads no parameter: a
-/// caller passes exactly the variadic arguments it sets.
+/// caller passes exactly the variadic arguments it sets.  The vector argument
+/// registers spilled in the block a test of AL alone branches around are the
+/// save area's too: a caller passes the vector arguments AL counts.
 std::set<std::pair<size_t, size_t>>
 findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
                            const std::map<int, size_t> &IndexOfId) {
   std::set<std::pair<size_t, size_t>> Spills;
-  if (Img.Arch != Arch::X64 || Img.Format == BinaryFormat::COFF ||
+  if (Img.Arch != Arch::X64 || Img.abiFormat() == BinaryFormat::COFF ||
       F.Blocks.empty())
     return Spills;
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const llvm::ArrayRef<uint64_t> Registers =
-      TRI.integerArgumentLayout(Img.Format).Registers;
+      TRI.integerArgumentLayout(Img.abiFormat()).Registers;
   auto IndexOf = [&](int Id) -> std::optional<size_t> {
     if (auto It = IndexOfId.find(Id); It != IndexOfId.end())
       return It->second;
@@ -83,6 +101,7 @@ findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
   // around a block that writes no integer register and the two paths rejoin
   // with no other way in, the join.
   std::vector<size_t> Prologue{0};
+  std::optional<size_t> VectorSpillBlock;
   const LowBlock &Entry = F.Blocks.front();
   if (Entry.Succs.size() == 2)
     if (auto A = IndexOf(Entry.Succs[0]), B = IndexOf(Entry.Succs[1]); A && B)
@@ -94,6 +113,7 @@ findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
             Skipped.Preds.size() == 1 && F.Blocks[Join].Preds.size() == 2 &&
             !WritesGPR(Skipped)) {
           Prologue.push_back(Join);
+          VectorSpillBlock = Around;
           break;
         }
       }
@@ -113,6 +133,8 @@ findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
   std::map<uint64_t, Slot> TempSlots;
   GPRFamilyMask Written = 0;
   bool ReadsVectorCount = false;
+  // `test al, al` reads AL alone, where an alignment `push rax` reads RAX.
+  bool TestsAL = false;
   std::vector<std::optional<Spill>> Stored(Registers.size());
   auto SlotOf = [&](const NdVar &V) -> std::optional<Slot> {
     if (V.isTemp()) {
@@ -138,8 +160,11 @@ findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
       for (uint8_t In = 0; In < Op.NumInputs; ++In)
         if (Op.Inputs[In].isReg() && VectorCount &&
             gprFamilyOf(Img.Arch, Op.Inputs[In].Offset) == VectorCount &&
-            !((Written >> *VectorCount) & 1))
+            !((Written >> *VectorCount) & 1)) {
           ReadsVectorCount = true;
+          TestsAL |=
+              Op.Inputs[In].Offset == x86reg::RAX && Op.Inputs[In].Size == 1;
+        }
       if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
           Op.Inputs[1].isReg() && Op.Inputs[1].Size == TRI.PointerSize)
         for (size_t K = 0; K < Registers.size(); ++K)
@@ -189,6 +214,18 @@ findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
   }
   for (size_t K = First; K < Registers.size(); ++K)
     Spills.insert({Stored[K]->Block, Stored[K]->Op});
+  if (TestsAL && VectorSpillBlock) {
+    const LowBlock &Block = F.Blocks[*VectorSpillBlock];
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      const LowOp &Op = Block.Ops[I];
+      if (Op.Opcode != NdOp::STORE || Op.NumInputs < 2 || !Op.Inputs[1].isReg())
+        continue;
+      if (const auto Family = registerFamilyOf(Img.Arch, Op.Inputs[1].Offset);
+          Family && Family->first >= kX64VectorFamilyBase &&
+          Family->second == 0)
+        Spills.insert({*VectorSpillBlock, I});
+    }
+  }
   return Spills;
 }
 
@@ -262,6 +299,59 @@ void findMaskedMerges(const LowBlock &Block, std::map<size_t, uint8_t> &Writes,
   }
 }
 
+/// The scalar writes in \p Block that keep a vector register's upper lanes:
+/// `t = SUBBYTES(X, k); X = CONCAT(t, low)` (`cvtsi2sd xmm0, edi` keeps
+/// XMM0[127:64]), the CONCAT perhaps first into a temporary that is copied to
+/// X.  The kept lanes are no read of X, and the write defines only its low k
+/// bytes.  \p Writes maps the op writing X to k; \p Reads gets the
+/// SUBBYTES.
+void findLaneMerges(Arch A, const LowBlock &Block,
+                    std::map<size_t, uint8_t> &Writes,
+                    std::set<size_t> &Reads) {
+  auto Same = [](const NdVar &L, const NdVar &R) {
+    return L.Space == R.Space && L.Offset == R.Offset && L.Size == R.Size;
+  };
+  for (size_t C = 0; C < Block.Ops.size(); ++C) {
+    const LowOp &Concat = Block.Ops[C];
+    if (Concat.Opcode != NdOp::CONCAT || Concat.NumInputs != 2 ||
+        Concat.Output.Size != 16 || !Concat.Inputs[0].isTemp())
+      continue;
+    const unsigned Low = Concat.Inputs[1].Size;
+    // The register the merge writes: CONCAT's own output, or the register a
+    // following copy moves it to.
+    size_t Write = C;
+    std::optional<unsigned> Family = wholeVectorFamily(A, Concat.Output);
+    if (!Family && Concat.Output.isTemp())
+      for (size_t K = C + 1; K < Block.Ops.size() && !Family; ++K) {
+        const LowOp &Copy = Block.Ops[K];
+        if (Copy.Opcode == NdOp::COPY && Copy.NumInputs == 1 &&
+            Same(Copy.Inputs[0], Concat.Output)) {
+          Family = wholeVectorFamily(A, Copy.Output);
+          Write = K;
+        }
+      }
+    if (!Family || Low == 0 || Low >= 16)
+      continue;
+    const NdVar &Target = Block.Ops[Write].Output;
+    // The kept lanes: a slice of the same register at the low part's width,
+    // with no write to the register between it and the merge.
+    for (size_t S = C; S-- > 0;) {
+      const LowOp &Op = Block.Ops[S];
+      if (Op.Output.isReg() && Op.Output.Offset >= Target.Offset &&
+          Op.Output.Offset < Target.Offset + 16)
+        break;
+      if (Op.Opcode != NdOp::SUBBYTES || !Same(Op.Output, Concat.Inputs[0]))
+        continue;
+      if (Op.NumInputs == 2 && Same(Op.Inputs[0], Target) &&
+          Op.Inputs[1].isConst() && Op.Inputs[1].Offset == Low) {
+        Reads.insert(S);
+        Writes[Write] = static_cast<uint8_t>(Low);
+      }
+      break;
+    }
+  }
+}
+
 /// A value's relation to the stack pointer at function entry: unrelated, an
 /// entry-relative byte offset in [Lo, Hi], or a stack address whose offset is
 /// not known.
@@ -323,7 +413,7 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
                                  const std::map<int, size_t> &IndexOfId,
                                  const std::set<va_t> &BlockStarts,
                                  LocalRegisterEffect &Effect) {
-  if (Img.Arch != Arch::X64 || Img.Format != BinaryFormat::COFF) {
+  if (Img.Arch != Arch::X64 || Img.abiFormat() != BinaryFormat::COFF) {
     Effect.UnknownStackReads = true;
     return;
   }
@@ -617,6 +707,22 @@ std::optional<unsigned> gprFamilyOf(Arch A, uint64_t RegOff) {
   return static_cast<unsigned>(RegOff / 8);
 }
 
+std::optional<std::pair<unsigned, unsigned>> registerFamilyOf(Arch A,
+                                                              uint64_t RegOff) {
+  if (const auto Family = gprFamilyOf(A, RegOff))
+    return std::pair{*Family, static_cast<unsigned>(RegOff % 8)};
+  if (A != Arch::X64 || RegOff < x86reg::VectorBase)
+    return std::nullopt;
+  const uint64_t Index =
+      (RegOff - x86reg::VectorBase) / x86reg::VectorRegStride;
+  const uint64_t Offset =
+      (RegOff - x86reg::VectorBase) % x86reg::VectorRegStride;
+  if (Index >= kX64VectorArgumentFamilies || Offset >= 16)
+    return std::nullopt;
+  return std::pair{kX64VectorFamilyBase + static_cast<unsigned>(Index),
+                   static_cast<unsigned>(Offset)};
+}
+
 LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
                     const libc::NoReturnTargetIndex *NoReturnTargets) {
@@ -658,6 +764,7 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
     std::map<size_t, uint8_t> MergeWrites;
     std::set<size_t> MergeReads;
     findMaskedMerges(Block, MergeWrites, MergeReads);
+    findLaneMerges(Img.Arch, Block, MergeWrites, MergeReads);
     auto ControlOf = [&](size_t OpIndex) {
       for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
         if (OpIndex >= Boundary.FirstOp &&
@@ -691,11 +798,37 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
               libc::StackProbeEffect::Probe)
         continue;
       RegisterStep Step;
-      for (uint8_t In = 0; In < Op.NumInputs; ++In)
-        if (Op.Inputs[In].isReg() && !(In == 0 && MergeReads.count(I)) &&
-            !(In == 1 && SaveAreaSpills.count({BI, I})))
+      // A slice of a vector register reads that slice's bytes only, and a
+      // whole copy reads the source as wide as the copy is read.
+      const std::optional<unsigned> SlicedVector =
+          Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
+                  Op.Inputs[1].isConst()
+              ? wholeVectorFamily(Img.Arch, Op.Inputs[0])
+              : std::nullopt;
+      const std::optional<unsigned> CopiedVector =
+          Op.Opcode == NdOp::COPY && Op.NumInputs == 1
+              ? wholeVectorFamily(Img.Arch, Op.Inputs[0])
+              : std::nullopt;
+      const std::optional<unsigned> CopyTarget =
+          CopiedVector ? wholeVectorFamily(Img.Arch, Op.Output) : std::nullopt;
+      if (CopiedVector && CopyTarget && !MergeWrites.count(I))
+        Step.VectorCopy = {static_cast<uint8_t>(*CopyTarget),
+                           static_cast<uint8_t>(*CopiedVector)};
+      // A RETURN hands its caller the return register, which is no
+      // argument: a function that leaves RAX alone does not read it.
+      for (uint8_t In = 0; In < Op.NumInputs && Op.Opcode != NdOp::RETURN;
+           ++In) {
+        if (!Op.Inputs[In].isReg() || (In == 0 && MergeReads.count(I)) ||
+            (In == 1 && SaveAreaSpills.count({BI, I})) ||
+            (In == 0 && Step.VectorCopy))
+          continue;
+        if (In == 0 && SlicedVector)
+          addRead(Img.Arch, Step.Reads,
+                  Op.Inputs[0].Offset + Op.Inputs[1].Offset, Op.Output.Size);
+        else
           addRead(Img.Arch, Step.Reads, Op.Inputs[In].Offset,
                   Op.Inputs[In].Size);
+      }
       // The result of a call that never returns reaches no one.
       if (Op.Output.isReg() && !NoReturnCall) {
         const GPRFamilyMask Bit = familyBit(Img.Arch, Op.Output.Offset);
@@ -705,10 +838,22 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
         // A 32- or 64-bit write defines the whole register; a byte or word
         // write keeps the rest of the old value, which stays live exactly as
         // wide as a later read needs it.
+        const auto VectorOut = registerFamilyOf(Img.Arch, Op.Output.Offset);
+        const bool Vector =
+            VectorOut && VectorOut->first >= kX64VectorFamilyBase;
         if (auto Merge = MergeWrites.find(I); Merge != MergeWrites.end()) {
-          if (auto Family = gprFamilyOf(Img.Arch, Op.Output.Offset))
-            Step.LowWrites[*Family] =
-                std::max(Step.LowWrites[*Family], Merge->second);
+          if (auto Family = registerFamilyOf(Img.Arch, Op.Output.Offset))
+            Step.LowWrites[Family->first] =
+                std::max(Step.LowWrites[Family->first], Merge->second);
+        } else if (Vector) {
+          // A vector register is defined whole only by a write of all its
+          // bytes; a narrower one at its start keeps the rest.
+          if (VectorOut->second == 0 && Op.Output.Size >= 16)
+            Step.Kills |= Bit;
+          else if (VectorOut->second == 0)
+            Step.LowWrites[VectorOut->first] =
+                std::max(Step.LowWrites[VectorOut->first],
+                         static_cast<uint8_t>(Op.Output.Size));
         } else if (Op.Output.Size >= 4)
           Step.Kills |= Bit;
         else if (auto Family = gprFamilyOf(Img.Arch, Op.Output.Offset);
@@ -822,11 +967,17 @@ GPRReadWidths entryLiveWidths(const LocalRegisterEffect &F,
         if (auto R = EntryReads.find(Step.Callee); R != EntryReads.end())
           joinReads(Live, R->second);
       }
+      // The bytes of the copy that later reads need, before the copy's
+      // write ends their life.
+      const uint8_t Copied = Step.VectorCopy ? Live[Step.VectorCopy->first] : 0;
       Clear(Live, Step.Kills);
       for (size_t I = 0; I < Live.size(); ++I)
         if (Step.LowWrites[I] && Live[I] <= Step.LowWrites[I])
           Live[I] = 0;
       joinReads(Live, Step.Reads);
+      if (Step.VectorCopy)
+        Live[Step.VectorCopy->second] =
+            std::max(Live[Step.VectorCopy->second], Copied);
     }
     return Live;
   };

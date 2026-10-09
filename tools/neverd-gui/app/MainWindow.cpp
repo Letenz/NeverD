@@ -1299,8 +1299,11 @@ void MainWindow::updateStatusBar() {
       tr("Disk: %1GB").arg(storage.bytesAvailable() / (1024LL * 1024 * 1024)));
   fileLabel_->setText(
       session_.loaded()
-          ? QStringLiteral("%1 · %2%3")
+          ? QStringLiteral("%1 · %2%3%4")
                 .arg(session_.architecture(), session_.format(),
+                     session_.platformName().isEmpty()
+                         ? QString()
+                         : QStringLiteral(" · ") + session_.platformName(),
                      session_.readOnly() ? tr(" · read-only") : QString())
           : QString());
 }

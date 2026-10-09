@@ -7,6 +7,7 @@
 #include <optional>
 
 class QCheckBox;
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -52,6 +53,7 @@ private:
   QLabel *processorHeading_;
   QTreeWidget *processors_;
   QLineEdit *base_, *offset_, *size_, *entry_;
+  QComboBox *platform_;
   QLabel *note_;
   QCheckBox *analysis_, *indicator_, *debugInfo_;
   QPushButton *ok_;

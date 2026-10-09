@@ -12,6 +12,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallingConvDetail.h"
 #include "neverd/ir/med/MedSwitchNorm.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -6286,6 +6287,52 @@ TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
   EXPECT_EQ(Reads[Family(x86reg::RDX)], 0u);
   EXPECT_EQ(Reads[Family(x86reg::RCX)], 4u);
   EXPECT_EQ(Reads[Family(x86reg::R8)], 1u);
+}
+
+TEST(CallRegisterEffects, AScalarFloatReadIsTheLowLaneOfItsVectorRegister) {
+  // `addsd xmm0, xmm0` reads the low eight bytes of xmm0; the merge that
+  // keeps its upper lane observes nothing. Through `movaps xmm1, xmm0` the
+  // read of xmm1 is one of xmm0. The RETURN's operands are read by nothing.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  const NdVar XMM0 = NdVar::reg(x86reg::XMM0, 16);
+  const NdVar XMM1 = NdVar::reg(x86reg::XMM1, 16);
+  const GPRFamilyMask Args =
+      (1u << (x86reg::RDI / 8)) | vectorArgumentFamilies(8);
+  for (bool ThroughCopy : {false, true}) {
+    SCOPED_TRACE(ThroughCopy);
+    LowFunc Low = makeOneBlockLow(0x1000, "twice", [&](auto Push) {
+      if (ThroughCopy)
+        Push(NdOp::COPY, XMM1, {XMM0});
+      Push(NdOp::SUBBYTES, NdVar::tmp(1, 8),
+           {ThroughCopy ? XMM1 : XMM0, NdVar::cst(0, 4)});
+      Push(NdOp::FLOAT_ADD, NdVar::tmp(2, 8),
+           {NdVar::tmp(1, 8), NdVar::tmp(1, 8)});
+      Push(NdOp::SUBBYTES, NdVar::tmp(3, 8), {XMM0, NdVar::cst(8, 4)});
+      Push(NdOp::CONCAT, XMM0, {NdVar::tmp(3, 8), NdVar::tmp(2, 8)});
+      Push(NdOp::RETURN, NdVar{}, {NdVar::reg(x86reg::RAX, 8)});
+    });
+    const auto Summaries = solveCallRegisterEffects(
+        {{0x1000, localRegisterEffect(Img, Low)}}, Args, Args);
+    const GPRReadWidths &Reads = Summaries.EntryReads.at(0x1000);
+    EXPECT_EQ(Reads[kX64VectorFamilyBase], 8u);
+    EXPECT_EQ(Reads[kX64VectorFamilyBase + 1], 0u);
+    EXPECT_EQ(Reads[x86reg::RAX / 8], 0u);
+  }
+}
+
+TEST(CallRegisterEffects, OnlyAnALReadCountsVariadicVectorArguments) {
+  // A System V variadic prologue tests AL; the alignment `push rax` before
+  // a call reads all of RAX and passes nothing.
+  const CallArgumentConvention *SysV =
+      callArgumentConvention(Arch::X64, BinaryFormat::ELF);
+  ASSERT_TRUE(SysV && SysV->SummaryListsNoParameters);
+  GPRReadWidths Reads{};
+  Reads[x86reg::RAX / 8] = 1;
+  EXPECT_TRUE(SysV->SummaryListsNoParameters(Reads));
+  Reads[x86reg::RAX / 8] = 8;
+  EXPECT_FALSE(SysV->SummaryListsNoParameters(Reads));
 }
 
 namespace {

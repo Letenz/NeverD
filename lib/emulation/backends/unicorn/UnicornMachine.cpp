@@ -435,7 +435,13 @@ public:
     Control = Control.forNativeStep();
     if (auto E = CPU.synchronize())
       return E;
-    if (CPU.UserMode) {
+    const bool UserReady = UserSpace.lock() == CPU.Memory.addressSpace() &&
+                           UserGeneration == CPU.Memory.mappingGeneration() &&
+                           UserTransportBase == CPU.Memory.transportPhysical(0);
+    // A failed step may leave the engine in a partially installed state.
+    // Reuse EL0 only after a complete, successful capture on this mapping.
+    UserSpace.reset();
+    if (CPU.UserMode && !UserReady) {
       // The pinned engine's direct PSTATE write does not rebuild cached EL
       // flags. Configure EL1 before CP_REG writes, then use architectural ERET
       // to enter EL0. Selector/mode metadata alone is not privilege evidence.
@@ -507,13 +513,26 @@ public:
               return Value;
             }))
       return E;
+    uint64_t Mode = 0;
+    if (CPU.UserMode) {
+      if (auto E = check(uc_reg_read(CPU.Engine, UC_ARM64_REG_PSTATE, &Mode)))
+        return E;
+    }
     if (Control.interrupted())
       return diagnostic::interrupted(diagnostic::UnicornRun, Control);
+    if (CPU.UserMode &&
+        (Mode & aarch64::PStateModeMask) == aarch64::PStateEL0t) {
+      UserSpace = CPU.Memory.addressSpace();
+      UserGeneration = CPU.Memory.mappingGeneration();
+      UserTransportBase = CPU.Memory.transportPhysical(0);
+    }
     State = Next;
     return llvm::Error::success();
   }
 
 private:
+  std::weak_ptr<AddressSpace> UserSpace;
+  uint64_t UserGeneration = 0, UserTransportBase = 0;
   static int registerID(AArch64Register Register) {
     switch (Register) {
 #define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \

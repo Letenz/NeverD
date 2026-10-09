@@ -93,7 +93,7 @@ void CFGBuilder::convertIndirectTailCalls(LowFunc &Func) {
       NeedsFrameGuard && DecodeFailureAddresses.empty() &&
               UnsupportedInstructionAddresses.empty() &&
               TruncatedPathAddresses.empty()
-          ? restoredAArch64IndirectTailFrames(Func, CurrentImg->Format)
+          ? restoredAArch64IndirectTailFrames(Func, CurrentImg->abiFormat())
           : std::set<va_t>{};
   bool Changed = false;
   for (auto &[Addr, Rec] : Insns) {
