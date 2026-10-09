@@ -413,6 +413,14 @@ TransferObserver::watched(ProcessView &Process, uint64_t PC) {
   if (!ThreadLocal)
     return ThreadLocal.takeError();
   Observed.ThreadLocal = std::move(*ThreadLocal);
+  auto DynamicState = Process.dynamicThreadLocalState();
+  if (!DynamicState)
+    return DynamicState.takeError();
+  if (*DynamicState) {
+    Observed.RuntimeState.DynamicThreadLocalInventoryKnown = true;
+    Observed.RuntimeState.LiveDynamicTLSSlots = (**DynamicState).ThreadSlots;
+    Observed.RuntimeState.LiveDynamicFLSSlots = (**DynamicState).FiberSlots;
+  }
   if (auto Allocations = Process.heapAllocations()) {
     Observed.RuntimeState.HeapInventoryKnown = true;
     llvm::sort(*Allocations, [](const auto &A, const auto &B) {

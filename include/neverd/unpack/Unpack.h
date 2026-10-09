@@ -138,6 +138,9 @@ struct UnpackRuntimeState {
   };
   /// At most 64 locations, image first and then TLS, in offset order.
   std::vector<EncodedPointerReference> EncodedPointerReferences;
+  /// Dynamic slot ownership/values are not reconstructed by static TLS repair.
+  bool DynamicThreadLocalInventoryKnown = false;
+  uint64_t LiveDynamicTLSSlots = 0, LiveDynamicFLSSlots = 0;
 };
 
 /// One transfer into code newer than the code that was running.

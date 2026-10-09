@@ -196,6 +196,8 @@ public:
   std::vector<uint64_t> encodedPointers() const {
     return {EncodedPointers.begin(), EncodedPointers.end()};
   }
+  llvm::Expected<ProcessDynamicThreadLocalState>
+  dynamicThreadLocalState() const;
 
 private:
   std::optional<uint64_t> unsupported(const Service &Service);

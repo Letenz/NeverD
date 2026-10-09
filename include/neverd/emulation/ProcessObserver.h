@@ -55,6 +55,13 @@ struct ProcessHeapAllocationView {
   uint64_t Address, Size;
 };
 
+/// Dynamic local slots whose ownership or current-thread value survives.
+/// Allocated zero-valued slots and nonzero cells without allocation records
+/// both carry state. This is separate from the input image's static TLS.
+struct ProcessDynamicThreadLocalState {
+  uint64_t ThreadSlots = 0, FiberSlots = 0;
+};
+
 /// Integer ABI facts at a stopped entry boundary. They describe the current
 /// return location and first three arguments, not a function signature or
 /// evidence that a call instruction executed.
@@ -108,6 +115,12 @@ public:
   /// These are values, not storage locations or proof of pointer types.
   /// Empty establishes no observed values; absent means no inventory contract.
   virtual std::optional<std::vector<uint64_t>> encodedPointers() const {
+    return std::nullopt;
+  }
+  /// Dynamic thread/fiber-local state at this boundary. Zero counts establish
+  /// no retained slots; absent means the profile supplies no inventory.
+  virtual llvm::Expected<std::optional<ProcessDynamicThreadLocalState>>
+  dynamicThreadLocalState() {
     return std::nullopt;
   }
   /// Number of OS service invocations so far, including calls still active.

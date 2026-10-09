@@ -151,7 +151,7 @@ TEST_F(UnpackPublic, ExplicitSnapshotsHaveTheSameCAPIAndCLIContract) {
             text::SnapshotOutcome);
 }
 
-TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
+TEST_F(UnpackPublic, UnsupportedRuntimeStateNeverCreatesOrTruncatesOutput) {
 #ifndef NEVERD_UNPACK_GENERATED_FIXTURE_DIR
   GTEST_SKIP() << generated::MissingTools;
 #else
@@ -161,10 +161,14 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
       {generated::ProgramFile, generated::DirectServiceMode},
       {generated::ProgramFile, generated::LateDirectServiceMode},
       {generated::ProgramFile, generated::EncodedPointerMode},
-      {generated::TLSHeapProgramFile, generated::EncodedPointerMode}};
+      {generated::TLSHeapProgramFile, generated::EncodedPointerMode},
+      {generated::ProgramFile, generated::DynamicTLSMode},
+      {generated::ProgramFile, generated::DynamicFLSMode}};
   for (const auto &[File, Mode] : Cases) {
     SCOPED_TRACE(File);
     SCOPED_TRACE(Mode);
+    const bool Dynamic =
+        Mode == generated::DynamicTLSMode || Mode == generated::DynamicFLSMode;
     const auto Original =
         readImage(std::filesystem::path(NEVERD_UNPACK_GENERATED_FIXTURE_DIR) /
                   generated::X64Dir / File);
@@ -207,6 +211,13 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
                                                       : "image");
       EXPECT_TRUE(Reference->getString("value"));
       EXPECT_TRUE(Reference->getString("offset"));
+    } else if (Dynamic) {
+      EXPECT_EQ(State->getBoolean("dynamic_thread_local_inventory_known"),
+                true);
+      EXPECT_EQ(State->getInteger("live_dynamic_tls_slots"),
+                Mode == generated::DynamicTLSMode ? 1 : 0);
+      EXPECT_EQ(State->getInteger("live_dynamic_fls_slots"),
+                Mode == generated::DynamicFLSMode ? 1 : 0);
     } else {
       EXPECT_EQ(*State->getInteger(text::HeapReferenceCountField), 0);
       ASSERT_TRUE(State->getInteger("direct_service_calls"));
@@ -227,14 +238,23 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
     const auto [Status, Text] = cli(Input, Output, text::EmptyOptions);
     EXPECT_EQ(Status, unpack_cli::Incomplete) << Text;
     EXPECT_EQ(readFile(Output), Existing);
-    if (Mode == generated::EncodedPointerMode) {
+    if (Mode == generated::EncodedPointerMode || Dynamic) {
       const char *Snapshot = "{\"snapshot_only\":true}";
       Report = api(Input, Output, Snapshot);
       ASSERT_TRUE(Report) << neverd_last_error(Session);
       EXPECT_EQ(Report->getString(text::OutcomeField), text::SnapshotOutcome);
       const auto *State = Report->getObject(text::RuntimeStateField);
       ASSERT_NE(State, nullptr);
-      EXPECT_EQ(State->getInteger("possible_encoded_pointers"), 1);
+      if (Mode == generated::EncodedPointerMode)
+        EXPECT_EQ(State->getInteger("possible_encoded_pointers"), 1);
+      else {
+        EXPECT_EQ(State->getBoolean("dynamic_thread_local_inventory_known"),
+                  true);
+        EXPECT_EQ(State->getInteger("live_dynamic_tls_slots"),
+                  Mode == generated::DynamicTLSMode ? 1 : 0);
+        EXPECT_EQ(State->getInteger("live_dynamic_fls_slots"),
+                  Mode == generated::DynamicFLSMode ? 1 : 0);
+      }
       const auto Bytes = readFile(Output);
       EXPECT_FALSE(Bytes.empty());
       const auto [SnapshotStatus, SnapshotText] = cli(Input, Output, Snapshot);

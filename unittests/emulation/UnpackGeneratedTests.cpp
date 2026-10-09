@@ -109,6 +109,24 @@ protected:
       std::filesystem::remove_all(Scratch);
   }
 
+  void expectNativeWindows(const std::filesystem::path &Path, int Status) {
+#if defined(_WIN32) && defined(_M_X64)
+    if (GetParam().ISA != GuestArchitecture::X64)
+      return;
+    const auto Native = Path.string();
+    std::string Diagnostic;
+    bool Failed = false;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Native, {Native}, std::nullopt, {}, 30,
+                                        0, &Diagnostic, &Failed),
+              Status)
+        << Diagnostic;
+    EXPECT_FALSE(Failed) << Diagnostic;
+#else
+    (void)Path;
+    (void)Status;
+#endif
+  }
+
   /// Replace each import call with an independent helper. The linked file
   /// stays the oracle; only this copy carries the transformed call.
   bool mutateImportCalls(std::vector<uint8_t> &Bytes, uint32_t Mode) {
@@ -779,6 +797,71 @@ TEST_P(UnpackGenerated, ClearedAndPostEntryEncodingsDoNotBlockRecovery) {
       EXPECT_EQ(Actual.ExitStatus, ExitStatus);
       EXPECT_EQ(Actual.StandardOutput, Message);
     }
+  }
+}
+
+TEST_P(UnpackGenerated, LiveDynamicSlotsRequireAnExplicitSnapshot) {
+  for (unsigned Mode : {DynamicTLSMode, DynamicFLSMode, ZeroDynamicTLSMode,
+                        ZeroDynamicFLSMode, UnallocatedTLSValueMode}) {
+    SCOPED_TRACE(Mode);
+    const auto Packed = pack(Mode);
+    ASSERT_FALSE(HasFailure());
+    const auto Expected = run(Packed);
+    ASSERT_EQ(Expected.Stop, ProcessStopReason::Exited) << Expected.Diagnostic;
+    ASSERT_EQ(Expected.ExitStatus, ExitStatus);
+    EXPECT_EQ(Expected.StandardOutput, Message);
+    expectNativeWindows(Packed, ExitStatus);
+    for (bool Snapshot : {false, true}) {
+      SCOPED_TRACE(Snapshot);
+      Options.SnapshotOnly = Snapshot;
+      const auto Result = unpack(Mode);
+      ASSERT_FALSE(HasFailure());
+      EXPECT_EQ(Result.Outcome, Snapshot ? UnpackOutcome::Snapshot
+                                         : UnpackOutcome::UnsupportedState);
+      EXPECT_EQ(Result.Image.empty(), !Snapshot);
+      EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+      EXPECT_EQ(Result.RuntimeState.PossibleEncodedPointers, 0u);
+      EXPECT_EQ(Result.RuntimeState.DirectServiceCalls, 0u);
+      EXPECT_TRUE(Result.RuntimeState.DynamicThreadLocalInventoryKnown);
+      const bool Fiber = Mode == DynamicFLSMode || Mode == ZeroDynamicFLSMode;
+      EXPECT_EQ(Result.RuntimeState.LiveDynamicTLSSlots, Fiber ? 0u : 1u);
+      EXPECT_EQ(Result.RuntimeState.LiveDynamicFLSSlots, Fiber ? 1u : 0u);
+      EXPECT_NE(Result.Diagnostic.find("dynamic TLS/FLS"), std::string::npos);
+      if (Snapshot && (Mode == DynamicTLSMode || Mode == DynamicFLSMode ||
+                       Mode == UnallocatedTLSValueMode)) {
+        const auto Path = Scratch / RebuiltFile;
+        test::writeFile(Path, Result.Image);
+        const auto Replay = run(Path);
+        EXPECT_EQ(Replay.Stop, ProcessStopReason::Exited) << Replay.Diagnostic;
+        EXPECT_EQ(Replay.ExitStatus, FailureStatus);
+        EXPECT_EQ(Replay.StandardOutput, Message);
+        expectNativeWindows(Path, FailureStatus);
+      }
+    }
+  }
+}
+
+TEST_P(UnpackGenerated, ReleasedAndPostEntryDynamicSlotsDoNotBlockRecovery) {
+  for (unsigned Mode :
+       {ReleasedDynamicTLSMode, ReleasedDynamicFLSMode, LateDynamicTLSMode,
+        LateDynamicFLSMode, ClearedUnallocatedTLSValueMode}) {
+    SCOPED_TRACE(Mode);
+    const auto Packed = pack(Mode);
+    ASSERT_FALSE(HasFailure());
+    expectNativeWindows(Packed, ExitStatus);
+    const auto Result = unpack(Mode);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
+    EXPECT_TRUE(Result.RuntimeState.DynamicThreadLocalInventoryKnown);
+    EXPECT_EQ(Result.RuntimeState.LiveDynamicTLSSlots, 0u);
+    EXPECT_EQ(Result.RuntimeState.LiveDynamicFLSSlots, 0u);
+    const auto Path = Scratch / RebuiltFile;
+    test::writeFile(Path, Result.Image);
+    const auto Actual = run(Path);
+    EXPECT_EQ(Actual.Stop, ProcessStopReason::Exited) << Actual.Diagnostic;
+    EXPECT_EQ(Actual.ExitStatus, ExitStatus);
+    EXPECT_EQ(Actual.StandardOutput, Message);
+    expectNativeWindows(Path, ExitStatus);
   }
 }
 
