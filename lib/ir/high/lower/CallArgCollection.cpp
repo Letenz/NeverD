@@ -973,7 +973,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   };
   std::function<std::optional<int64_t>(const MedVar &, int)> EntryOffset =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
-    if (!CurMed || Depth > 8)
+    if (!CurMed || Depth > limits::kCallArgStoreAddressDepth)
       return std::nullopt;
     if (V.Kind == MedVar::Reg && V.RegOff == SpRegOff && V.SSAVer == 0)
       return 0;
@@ -996,6 +996,25 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   };
   auto EntryOffsetOf = [&](const MedVar &V) { return EntryOffset(V, 0); };
   Scan.EntryOffsetOf = EntryOffsetOf;
+  // i386 places an outgoing argument by the stack pointer the call is made
+  // with (CallArgCollectionX86.cpp): the last one its block defines, or else
+  // the one reaching the block.
+  if (TargetArch == Arch::X86) {
+    MedVar CallStack;
+    bool Known = false;
+    for (size_t J = CallIdx; J-- > 0;)
+      if (const MedOp &Op = Ops[J]; Op.Output.Kind == MedVar::Reg &&
+                                    Op.Output.RegOff == SpRegOff &&
+                                    Op.Output.Size) {
+        CallStack = Op.Output;
+        Known = true;
+        break;
+      }
+    if (!Known)
+      Known = reachingRegAtBlockEntry(CurBlock, SpRegOff, CallStack);
+    if (Known)
+      Scan.CallStackEntryOffset = EntryOffsetOf(CallStack);
+  }
   // A stack slot below the stack pointer an address is made from, another
   // pointer (read from memory, or a register this function received), or a
   // fixed address holds no outgoing argument.  An address this cannot
