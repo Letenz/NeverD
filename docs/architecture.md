@@ -152,7 +152,10 @@ only when the input already enables SafeSEH. Every dispatch pointer belongs to
 the emitted HIGHLOW closure; failures leave the generated image unchanged.
 The original loader owns load-config's declared structure extent even when
 MSVC's directory retains its 64-byte compatibility size. Installation requires
-a complete unique raw-backed extent. The checked LowIR callee ABI also owns
+a complete unique raw-backed extent. Final guard validation uses this same
+declared extent, so a compatibility directory cannot hide CF or EH continuation
+fields; the complete declaration must remain inside one raw-backed section.
+The checked LowIR callee ABI also owns
 precise executed-instruction extents, including a private throw's exact import
 thunk. The transaction rejects every five-byte entry patch that intersects this
 preserved code or CRT dispatch, including interior sites; unrelated replacements

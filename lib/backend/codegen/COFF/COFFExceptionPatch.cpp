@@ -4995,8 +4995,18 @@ static llvm::Error validatePatchedCOFFImageImpl(
   uint32_t DeclaredLoadSize = readLE<uint32_t>(Binary.data() + *LoadOffset);
   if (DeclaredLoadSize < sizeof(uint32_t))
     return patchError("final load configuration declares an invalid size");
-  uint32_t EffectiveLoadSize =
-      std::min<uint32_t>(LoadConfigDirectory->Size, DeclaredLoadSize);
+  // The loader owns the append-only structure's declared extent. MSVC keeps
+  // a smaller compatibility directory; clamping to it would hide later guard
+  // fields and accept an invalid table after installation.
+  if (DeclaredLoadSize >
+      SizeOfImage - LoadConfigDirectory->RelativeVirtualAddress)
+    return patchError("final declared load configuration leaves the image");
+  LoadOffset =
+      rvaToFileOffset(PE, Binary, LoadConfigDirectory->RelativeVirtualAddress,
+                      DeclaredLoadSize);
+  if (!LoadOffset)
+    return patchError("final declared load configuration is not file-backed");
+  const uint32_t EffectiveLoadSize = DeclaredLoadSize;
 
   uint32_t GuardFlags = 0;
   uint64_t CFTableVA = 0, CFCount = 0, EHTableVA = 0, EHCount = 0;

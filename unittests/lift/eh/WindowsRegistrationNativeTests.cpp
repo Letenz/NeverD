@@ -1413,6 +1413,61 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
   ASSERT_FALSE(bool(Installed)) << llvm::toString(std::move(Installed));
   auto Checked = validateCOFFRegistrationPatch(Binary, *Update);
   ASSERT_FALSE(bool(Checked)) << llvm::toString(std::move(Checked));
+  auto FinalImage = validatePatchedCOFFImage(Binary, Arch::X86, false);
+  ASSERT_FALSE(bool(FinalImage)) << llvm::toString(std::move(FinalImage));
+  {
+    using LC = llvm::object::coff_load_configuration32;
+    auto Fields = RawOffset(Binary, Update->LoadConfigRVA,
+                            Update->LoadConfigDeclaredSize);
+    ASSERT_TRUE(Fields);
+    ASSERT_GE(Update->LoadConfigDeclaredSize, offsetof(LC, GuardFlags) + 4);
+    const uint32_t Flags[] = {
+        uint32_t(llvm::COFF::GuardFlags::CF_FUNCTION_TABLE_PRESENT),
+        uint32_t(llvm::COFF::GuardFlags::EH_CONTINUATION_TABLE_PRESENT)};
+    for (bool CF : {false, true}) {
+      SCOPED_TRACE(CF);
+      const size_t Table = CF ? offsetof(LC, GuardCFFunctionTable)
+                              : offsetof(LC, GuardEHContinuationTable);
+      const size_t Count = CF ? offsetof(LC, GuardCFFunctionCount)
+                              : offsetof(LC, GuardEHContinuationCount);
+      auto Valid = Binary;
+      // The compatibility directory may remain64. The appended structure's
+      // declared size owns these later fields, and both readers must see them.
+      llvm::support::endian::write32le(
+          Valid.data() + *Fields + offsetof(LC, GuardFlags), Flags[CF ? 0 : 1]);
+      llvm::support::endian::write32le(
+          Valid.data() + *Fields + Table,
+          llvm::support::endian::read32le(Update->LoadConfigBytes.data()));
+      llvm::support::endian::write32le(Valid.data() + *Fields + Count,
+                                       Update->SafeSEHHandlers.size());
+      auto Complete = validatePatchedCOFFImage(Valid, Arch::X86, false);
+      ASSERT_FALSE(bool(Complete)) << llvm::toString(std::move(Complete));
+      llvm::support::endian::write32le(Valid.data() + *Fields + Table, 0);
+      auto Missing = validatePatchedCOFFImage(Valid, Arch::X86, false);
+      ASSERT_TRUE(bool(Missing));
+      EXPECT_NE(
+          llvm::toString(std::move(Missing)).find("invalid pointer/count"),
+          std::string::npos);
+    }
+    uint32_t BeyondRaw = 0;
+    auto FinalPE = locatePEHeaders(Binary.data(), Binary.size());
+    forEachPESection(FinalPE, [&](const PESectionFields &Section, uint16_t) {
+      if (Update->LoadConfigRVA >= Section.VirtualAddress &&
+          Update->LoadConfigRVA - Section.VirtualAddress <
+              Section.SizeOfRawData)
+        BeyondRaw = Section.SizeOfRawData -
+                    (Update->LoadConfigRVA - Section.VirtualAddress) + 1;
+    });
+    ASSERT_GT(BeyondRaw, Update->LoadConfigDeclaredSize);
+    for (uint32_t Declared : {uint32_t(Binary.size() * 2), BeyondRaw}) {
+      auto Truncated = Binary;
+      llvm::support::endian::write32le(Truncated.data() + *Fields, Declared);
+      auto Missing = validatePatchedCOFFImage(Truncated, Arch::X86, false);
+      ASSERT_TRUE(bool(Missing));
+      EXPECT_NE(llvm::toString(std::move(Missing)).find("declared load"),
+                std::string::npos);
+    }
+  }
   const auto FinalSafeFields = RawOffset(Binary, SafeFieldsRVA, 8);
   ASSERT_TRUE(FinalSafeFields);
   for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
