@@ -17,6 +17,7 @@
 
 #define DEBUG_TYPE "neverd-codegen"
 #include "neverd/ArchSupport.h"
+#include "neverd/backend/llvm/LLVMX86StackEffects.h"
 #include "neverd/object/SectionNames.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -46,6 +47,18 @@
 #include <tuple>
 
 namespace neverd {
+
+/// Reapply the frame requirement after optimization, including inlining into
+/// a function that originally had no stack-writing architectural operations.
+static void reserveX86StackTemporaries(llvm::Module &Mod, Arch TargetArch) {
+  if (TargetArch != Arch::X86 && TargetArch != Arch::X64)
+    return;
+  for (llvm::Function &Function : Mod)
+    for (llvm::BasicBlock &Block : Function)
+      for (llvm::Instruction &Instruction : Block)
+        if (Instruction.getMetadata(X86StackTemporaryMetadata))
+          Function.addFnAttr(llvm::Attribute::NoRedZone);
+}
 
 static bool tripleMatchesTarget(const llvm::Triple &TT, Arch TargetArch,
                                 BinaryFormat ObjectFormat) {
@@ -332,6 +345,8 @@ CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
 
   Mod.setDataLayout(TM->createDataLayout());
 
+  reserveX86StackTemporaries(Mod, TargetArch);
+
   expandNarrowFunnelShifts(Mod);
 
   llvm::SmallVector<char, 4096> ObjBuf;
@@ -542,6 +557,7 @@ Codegen::compileForRewrite(llvm::Module &Mod, Arch TargetArch,
   }
 
   Mod.setDataLayout(TM->createDataLayout());
+  reserveX86StackTemporaries(Mod, TargetArch);
   expandNarrowFunnelShifts(Mod);
 
   // Pre-pass: convert __nd_data_* defined globals to external declarations.

@@ -249,8 +249,14 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
-          if (llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand()))
+          if (const auto *Asm =
+                  llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand())) {
+            if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+                (Asm->getAsmString() == "ldmxcsr ($0)" ||
+                 Asm->getAsmString() == "stmxcsr ($0)"))
+              HasCIntrinsics = true;
             continue;
+          }
           auto *Callee = CI->getCalledFunction();
           if (!Callee)
             continue;
