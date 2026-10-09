@@ -780,6 +780,9 @@ public:
   mutable std::vector<DebugParamBinding> ParamBindings;
   mutable std::vector<TypeRef> EmittedParamTypes;
   mutable std::vector<std::string> ParamDebugNames;
+  /// The convention's rules placed the cached function's debug parameters
+  /// by where they arrive, rather than by position.
+  mutable bool ParamsPlaced = false;
   /// Fills the cache for \p Func.
   void bindParams(const HighFunc &Func) const;
   /// Where a stack parameter of \p Func arrives, from the entry stack

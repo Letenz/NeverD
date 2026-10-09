@@ -4309,6 +4309,7 @@ void HighCWriter::bindParams(const HighFunc &Func) const {
   ParamCacheEntry = Func.Entry;
   ParamBindings.assign(Func.Params.size(), {});
   ParamDebugNames.assign(Func.Params.size(), {});
+  ParamsPlaced = false;
   EmittedParamTypes.clear();
   for (const HighParam &Param : Func.Params)
     EmittedParamTypes.push_back(Param.Type);
@@ -4368,6 +4369,7 @@ void HighCWriter::bindParams(const HighFunc &Func) const {
                                     DebugFn->ReturnType, Types)
             : std::nullopt;
     if (Placement) {
+      ParamsPlaced = true;
       for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
         const HighParam &Param = Func.Params[PI];
         const std::optional<int64_t> Stack = stackParamOffset(Func, PI);
@@ -4546,23 +4548,31 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     });
   });
   if (DebugFn && !DebugFn->Params.empty()) {
-    // As many parameters as the debug signature lists (a stdcall definition
-    // pops what they fill), and every one up to the last the signature
-    // describes or the code reads: one the code reads stays declared even
-    // where the signature has fewer, such as the second register of a record.
-    size_t Count = std::min(N, DebugFn->Params.size());
-    for (size_t I = 0; I < N; ++I) {
-      const DebugParamBinding B = debugParamBinding(Func, I);
-      if (B.Index >= 0 || B.Result || Used.count(static_cast<int>(I)))
-        Count = std::max(Count, I + 1);
+    bindParams(Func);
+    if (ParamsPlaced) {
+      // Placed by location, a parameter is one the signature describes or
+      // the code reads; the lift's other registers are none, as they are
+      // without a signature.
+      std::set<int> Kept = Used;
+      for (size_t I = 0; I < N; ++I)
+        if (ParamBindings[I].Index >= 0 || ParamBindings[I].Result)
+          Kept.insert(static_cast<int>(I));
+      Used = std::move(Kept);
+    } else {
+      // As many parameters as the debug signature lists (a stdcall
+      // definition pops what they fill), and every one up to the last the
+      // code reads.
+      size_t Count = std::min(N, DebugFn->Params.size());
+      for (size_t I = 0; I < N; ++I)
+        if (ParamBindings[I].Index >= 0 || Used.count(static_cast<int>(I)))
+          Count = std::max(Count, I + 1);
+      All.resize(Count);
+      for (size_t I = 0; I < Count; ++I)
+        All[I] = I;
+      EmittedParamIndices[Key] = All;
+      return All;
     }
-    All.resize(Count);
-    for (size_t I = 0; I < Count; ++I)
-      All[I] = I;
-    EmittedParamIndices[Key] = All;
-    return All;
-  }
-  if (Func.SourceTypeHint) {
+  } else if (Func.SourceTypeHint) {
     All.resize(N);
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
