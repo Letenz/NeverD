@@ -1,5 +1,6 @@
 // Interface languages: bundled catalogs, the first-launch default and live
 // switching of the production window.
+#include "Docking.h"
 #include "Language.h"
 #include "MainWindow.h"
 #include "Session.h"
@@ -12,8 +13,6 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTranslator>
-#include <kddockwidgets/Config.h>
-#include <kddockwidgets/KDDockWidgets.h>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 
 using namespace neverd::gui;
@@ -34,7 +33,7 @@ private slots:
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        settingsDirectory_.path());
-    KDDockWidgets::initFrontend(KDDockWidgets::FrontendType::QtWidgets);
+    configureDocking();
   }
 
   void bundledCatalogsCoverEveryLocale() {

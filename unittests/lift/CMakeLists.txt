@@ -3473,6 +3473,19 @@ add_dependencies(NeverDLibraryRecognitionTests neverd-library-libc-fixtures)
 target_compile_definitions(NeverDLibraryRecognitionTests PRIVATE
   NEVERD_LIBRARY_LIBC_FIXTURE_DIR="${_library_libc_dir}")
 
+add_neverd_unittest(NeverDX86FPStateAccuracyTests
+  x86_64/X86_64_FPStateAccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPStateAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/X86FPStateTestExecution.cmake")
+
+add_neverd_unittest(NeverDX86FPConversionAccuracyTests
+  x86_64/X86_64_FPConversionAccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPConversionAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
 add_neverd_unittest(NeverDX86EncodingAccuracyTests
   x86_64/X86_64_EncodingAccuracyTests.cpp
   LINK_COMPONENTS Decode Lift Loader)

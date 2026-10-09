@@ -2,6 +2,7 @@
 #include "ActionRegistry.h"
 #include "Address.h"
 #include "AddressSpace.h"
+#include "Docking.h"
 #include "Expression.h"
 #include "Icons.h"
 #include "LoadFileDialog.h"
@@ -30,12 +31,66 @@
 #include <QTest>
 #include <QToolBar>
 #include <QTreeWidget>
+#include <kddockwidgets/KDDockWidgets.h>
+#include <kddockwidgets/qtwidgets/views/DockWidget.h>
+#include <kddockwidgets/qtwidgets/views/MainWindow.h>
+#include <kddockwidgets/qtwidgets/views/Separator.h>
+#include <memory>
 
 using namespace neverd::gui;
+
+namespace {
+/// Two docks side by side in a main window, each filled with a plain color.
+struct DockPair {
+  static constexpr QColor LeftColor{0x10, 0x20, 0x30};
+  static constexpr QColor RightColor{0x30, 0x20, 0x10};
+
+  KDDockWidgets::QtWidgets::MainWindow window{QStringLiteral("DockPair")};
+  KDDockWidgets::QtWidgets::DockWidget *left = dock("left", LeftColor);
+  KDDockWidgets::QtWidgets::DockWidget *right = dock("right", RightColor);
+
+  DockPair() {
+    window.setCenterWidgetMargins(dockAreaMargins());
+    window.addDockWidget(left, KDDockWidgets::Location_OnLeft);
+    window.addDockWidget(right, KDDockWidgets::Location_OnRight);
+    window.resize(640, 480);
+    window.show();
+  }
+  static KDDockWidgets::QtWidgets::DockWidget *dock(const char *name,
+                                                    QColor color) {
+    auto *dock =
+        new KDDockWidgets::QtWidgets::DockWidget(QString::fromLatin1(name));
+    auto *content = new QWidget;
+    content->setAutoFillBackground(true);
+    QPalette palette = content->palette();
+    palette.setColor(QPalette::Window, color);
+    content->setPalette(palette);
+    dock->setWidget(content);
+    return dock;
+  }
+  QRect contentRect(KDDockWidgets::QtWidgets::DockWidget *dock) {
+    auto *content = dock->widget();
+    return {content->mapTo(&window, QPoint()), content->size()};
+  }
+  KDDockWidgets::QtWidgets::Separator *separator() {
+    return window.findChild<KDDockWidgets::QtWidgets::Separator *>();
+  }
+  /// Column \p x of the window's middle row.
+  QColor pixel(int x) {
+    return window.grab().toImage().pixelColor(x,
+                                              contentRect(left).center().y());
+  }
+};
+} // namespace
 
 class WorkbenchUnitTests : public QObject {
   Q_OBJECT
 private slots:
+  void initTestCase() {
+    // Docking chrome is fixed before the first dock exists.
+    configureDocking();
+  }
+
   void addressSpellings() {
     QCOMPARE(hexAddress(0xffff800012340000ULL),
              QStringLiteral("0xffff800012340000"));
@@ -663,6 +718,86 @@ private slots:
              QStringLiteral("0x8000040"));
     QCOMPARE(firmware.options().processor, QStringLiteral("auto"));
     QCOMPARE(firmware.options().base, quint64(0x8000000));
+  }
+
+  void dockSeparatorsAreHairlines() {
+    auto &theme = Theme::instance();
+    theme.setMode(Theme::Mode::Dark);
+    theme.apply();
+    DockPair pair;
+    QVERIFY(QTest::qWaitForWindowExposed(&pair.window));
+    // The docks' contents meet at a one-pixel gap, with no frame of their own.
+    const QRect left = pair.contentRect(pair.left);
+    const QRect right = pair.contentRect(pair.right);
+    const int gap = left.right() + 1;
+    QCOMPARE(right.left(), gap + 1);
+    QCOMPARE(pair.pixel(gap), theme.chrome(QStringLiteral("DockSeparator")));
+    QCOMPARE(pair.pixel(gap - 1), DockPair::LeftColor);
+    QCOMPARE(pair.pixel(gap + 1), DockPair::RightColor);
+    // The separator's grab area spreads two pixels over either neighbor.
+    auto *separator = pair.separator();
+    QVERIFY(separator);
+    QCOMPARE(separator->mapTo(&pair.window, QPoint()).x(), gap - 2);
+    QCOMPARE(separator->width(), 5);
+
+    theme.setMode(Theme::Mode::Light);
+    QCOMPARE(pair.pixel(gap), theme.chrome(QStringLiteral("DockSeparator")));
+    theme.setMode(Theme::Mode::Dark);
+  }
+
+  void dockSeparatorsLightUpWhileHoveredOrDragged() {
+    auto &theme = Theme::instance();
+    theme.setMode(Theme::Mode::Dark);
+    theme.apply();
+    DockPair pair;
+    QVERIFY(QTest::qWaitForWindowExposed(&pair.window));
+    auto *separator = pair.separator();
+    QVERIFY(separator);
+    const int gap = pair.contentRect(pair.left).right() + 1;
+    const QColor hover = theme.chrome(QStringLiteral("DockSeparatorHover"));
+    const QPoint hairline(2, separator->height() / 2);
+
+    // A pointer that only crosses the separator leaves it alone.
+    QEnterEvent enter(hairline, separator->mapTo(&pair.window, hairline),
+                      separator->mapToGlobal(hairline));
+    QCoreApplication::sendEvent(separator, &enter);
+    QCOMPARE(pair.pixel(gap - 1), DockPair::LeftColor);
+    // One that rests on it lights a bar over the hairline and its neighbors.
+    QTRY_COMPARE(pair.pixel(gap - 1), hover);
+    QCOMPARE(pair.pixel(gap), hover);
+    QCOMPARE(pair.pixel(gap + 1), hover);
+    QCOMPARE(pair.pixel(gap - 2), DockPair::LeftColor);
+    QEvent leave(QEvent::Leave);
+    QCoreApplication::sendEvent(separator, &leave);
+    QTRY_COMPARE(pair.pixel(gap),
+                 theme.chrome(QStringLiteral("DockSeparator")));
+    QCOMPARE(pair.pixel(gap - 1), DockPair::LeftColor);
+
+    // Dragging moves the gap with the pointer and keeps the bar lit.  On
+    // Windows the layout asks the system whether the button is really down,
+    // and a synthesized press is not.
+#ifndef Q_OS_WIN
+    const int width = pair.left->widget()->width();
+    QTest::mousePress(separator, Qt::LeftButton, {}, hairline);
+    QTest::mouseMove(separator, hairline + QPoint(40, 0));
+    QTest::mouseRelease(separator, Qt::LeftButton, {}, hairline);
+    QCOMPARE(pair.left->widget()->width(), width + 40);
+    QTRY_COMPARE(pair.pixel(gap + 40), hover);
+#endif
+  }
+
+  void floatingWindowsTakeTheThemeOutline() {
+    auto &theme = Theme::instance();
+    theme.setMode(Theme::Mode::Dark);
+    theme.apply();
+    auto dock = std::unique_ptr<KDDockWidgets::QtWidgets::DockWidget>(
+        DockPair::dock("floating", DockPair::LeftColor));
+    dock->show();
+    QWidget *window = dock->QWidget::window();
+    QVERIFY(window != dock.get());
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    QCOMPARE(window->grab().toImage().pixelColor(0, window->height() / 2),
+             theme.chrome(QStringLiteral("FloatingWindowBorder")));
   }
 
   void themesDefineEveryColor() {

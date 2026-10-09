@@ -63,6 +63,7 @@ struct Capture {
   std::vector<CompletedCall> CompletedCalls;
   /// Live main-thread TLS outside the image, when the profile can capture it.
   std::optional<std::vector<uint8_t>> ThreadLocal;
+  UnpackRuntimeState RuntimeState;
   /// Entry addresses of every export the guest loader can bind.
   std::map<uint64_t, ExportBinding> Exports;
 };

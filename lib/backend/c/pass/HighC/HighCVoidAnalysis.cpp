@@ -11,6 +11,7 @@
 
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
+#include "neverd/ir/X86FPState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCNames.h"
 
@@ -179,6 +180,8 @@ bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
           return true;
         // The x64 debug service returns its status in RAX.
         if (Src->IntrinsicId == Intrinsic::DebugService)
+          return false;
+        if (x86FPStateReturnsValue(Src->IntrinsicId))
           return false;
         if (Src->IntrinsicId != Intrinsic::None)
           return isSideeffectIntrinsic(Src->IntrinsicId) ||

@@ -12,6 +12,7 @@
 #ifndef NEVERD_IR_MED_INTRINSICSHAPES_H
 #define NEVERD_IR_MED_INTRINSICSHAPES_H
 
+#include "neverd/ir/X86FPState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedIR.h"
 
@@ -38,6 +39,47 @@ inline bool isMedIntrinsicScalarInput(const MedVar &Value) {
 
 inline bool isMedIntrinsicWritableScalar(const MedVar &Value) {
   return Value.Kind == MedVar::Reg || Value.Kind == MedVar::Temp;
+}
+
+inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
+                                          Arch TargetArch = Arch::Unknown) {
+  const bool Conversion = Op.NumInputs && Op.Inputs[0].isConst() &&
+                          isX86FPConversionStateIntrinsic(
+                              static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
+  bool Scalar = true;
+  bool ArchitectureMatchesOperands = true;
+  const auto ObserveArch = [&](const MedVar &Value) {
+    if (Value.TheArch == Arch::Unknown)
+      return;
+    if (TargetArch == Arch::Unknown)
+      TargetArch = Value.TheArch;
+    else if (TargetArch != Value.TheArch)
+      ArchitectureMatchesOperands = false;
+  };
+  ObserveArch(Op.Output);
+  for (unsigned Index = 1; Index < Op.NumInputs; ++Index) {
+    Scalar &= isMedIntrinsicScalarInput(Op.Inputs[Index]) ||
+              Op.Inputs[Index].Kind == MedVar::Param;
+    ObserveArch(Op.Inputs[Index]);
+  }
+  return {.TargetArch = TargetArch,
+          .MemoryOrdering = Op.MemoryOrdering,
+          .MemoryAddressSpace = Op.MemoryAddressSpace,
+          .NumInputs = Op.NumInputs,
+          .IdIsConst = Op.NumInputs && Op.Inputs[0].isConst(),
+          .IdSize = Op.NumInputs ? Op.Inputs[0].Size : 0U,
+          .OutputIsWritable = isMedIntrinsicWritableScalar(Op.Output),
+          .OutputSize = Op.Output.Size,
+          .OperandsAreScalar = Scalar,
+          .LeftSize = Op.NumInputs > 1 ? Op.Inputs[1].Size : 0U,
+          .RightSize = Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U,
+          .StateSize = Conversion ? (Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U)
+                                  : (Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U),
+          .HasAuxiliaryOutputs = !Op.IntrinsicOutputs.empty(),
+          .DestinationIsConst = Op.NumInputs > 3 && Op.Inputs[3].isConst(),
+          .DestinationSelectorSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U,
+          .DestinationBytes = Op.NumInputs > 3 ? Op.Inputs[3].ConstVal : 0U,
+          .ArchitectureMatchesOperands = ArchitectureMatchesOperands};
 }
 
 inline ApxAtomicIntrinsicShape apxAtomicMedShape(const MedOp &Op) {
