@@ -342,7 +342,7 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
 
   CEmitterOptions Opts;
   Opts.TheArch = S->Img.Arch;
-  Opts.Format = S->Img.Format;
+  Opts.Format = S->Img.abiFormat();
   Opts.Image = &S->Img;
   Opts.UserNames = &S->Renames;
   if (SourceMap) {
@@ -422,7 +422,7 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   llvm::raw_string_ostream OS(Out);
   CEmitterOptions Opts;
   Opts.TheArch = S->Img.Arch;
-  Opts.Format = S->Img.Format;
+  Opts.Format = S->Img.abiFormat();
   Opts.UserNames = &S->Renames;
   if (SourceMap) {
     SourceMap->Recognitions = &S->PipeResult.LibraryRecognitions;
@@ -509,7 +509,7 @@ const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
   SourceDialectOptions Options;
   Options.Dialect = Dialect;
   Options.TheArch = S.Img.Arch;
-  Options.Format = S.Img.Format;
+  Options.Format = S.Img.abiFormat();
   Options.Names = Map.Names;
   SourceDialectText Spelled = spellInDialect(Raw, Options);
   for (CSourceRegion &Region : Map.Regions) {
@@ -1187,7 +1187,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       return nullptr;
     CEmitterOptions COpts;
     COpts.TheArch = R.Img.Arch;
-    COpts.Format = R.Img.Format;
+    COpts.Format = R.Img.abiFormat();
     COpts.UserNames = S ? &S->Renames : nullptr;
     try {
       LLVMCEmitter Emitter;
@@ -1200,7 +1200,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   } else {
     CEmitterOptions COpts;
     COpts.TheArch = R.Img.Arch;
-    COpts.Format = R.Img.Format;
+    COpts.Format = R.Img.abiFormat();
     COpts.Image = &R.Img;
     COpts.UserNames = S ? &S->Renames : nullptr;
     std::vector<CSourceName> Names;
@@ -1218,7 +1218,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       SourceDialectOptions Options;
       Options.Dialect = *Dialect;
       Options.TheArch = R.Img.Arch;
-      Options.Format = R.Img.Format;
+      Options.Format = R.Img.abiFormat();
       Options.Names = Names;
       return dupStr(spellInDialect(Buf, Options).Text);
     }

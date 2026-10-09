@@ -38,6 +38,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <charconv>
 #include <functional>
 #include <limits>
 #include <map>
@@ -156,7 +157,7 @@ void validateMemoryAddressSpaceForC(NdMemoryAddressSpace AddressSpace,
 
 bool useMsvcSegmentedRead(const CEmitterOptions &Opts, const HighFunc *Func) {
   return (Func && Func->ExceptionMetadata) ||
-         (Opts.Image && Opts.Image->Format == BinaryFormat::COFF);
+         (Opts.Image && Opts.Image->abiFormat() == BinaryFormat::COFF);
 }
 
 std::string memoryHelperName(llvm::StringRef Operation, llvm::StringRef Type,
@@ -2663,15 +2664,24 @@ HighCWriter::floatConstantText(uint64_t Value, const TypeRef &Type) const {
   const llvm::APFloat Float(Type->Size == 4 ? llvm::APFloat::IEEEsingle()
                                             : llvm::APFloat::IEEEdouble(),
                             llvm::APInt(Type->Size * 8, Value));
-  // A hexadecimal floating constant is exact; C has none for infinities
-  // and NaNs, which take their bits.
+  // C has no constant for infinities and NaNs, which take their bits.
   if (!Float.isFinite())
     return "__builtin_bit_cast(" + typeToC(Type) + ", 0x" +
            llvm::utohexstr(Value) + (Type->Size == 4 ? "u" : "ull") + ")";
-  char Text[64];
-  Float.convertToHexString(Text, 0, /*UpperCase=*/false,
-                           llvm::APFloat::rmNearestTiesToEven);
-  return std::string(Text) + (Type->Size == 4 ? "f" : "");
+  // The shortest decimal that reads back as the same bits: exact, the way
+  // the source spelled it, and in no locale's notation.
+  const bool Single = Type->Size == sizeof(float);
+  char Buffer[64];
+  const std::to_chars_result Written =
+      Single ? std::to_chars(Buffer, Buffer + sizeof(Buffer),
+                             Float.convertToFloat())
+             : std::to_chars(Buffer, Buffer + sizeof(Buffer),
+                             Float.convertToDouble());
+  std::string Text(Buffer, Written.ptr);
+  // `1` alone would be an integer constant.
+  if (Text.find_first_of(".e") == std::string::npos)
+    Text += ".0";
+  return Text + (Single ? "f" : "");
 }
 
 void HighCWriter::writeX64SyscallHelper() {

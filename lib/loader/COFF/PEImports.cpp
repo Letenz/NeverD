@@ -130,11 +130,10 @@ public:
       if (auto Error = account(Width * 2))
         return std::move(Error);
       const uint64_t Value = word(Lookup->data() + I * Width);
-      if (!Value) {
-        if (word(IAT->data() + I * Width) != 0)
-          return invalid("lookup and IAT terminators disagree");
+      // The separate lookup table limits binding to its declared cells;
+      // the following IAT cell can belong to another owner.
+      if (!Value)
         return Result;
-      }
       const uint64_t SlotRVA = uint64_t{IATRVA} + I * Width;
       if (SlotRVA >= (uint64_t{1} << 32) || SlotRVA > InvalidVA - Image.Base ||
           Width - 1 > InvalidVA - (Image.Base + SlotRVA) ||

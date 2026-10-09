@@ -2242,6 +2242,14 @@ Signed: %4</translation>
         <source>Defined %1 at %2</source>
         <translation>Defined %1 at %2</translation>
     </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>Platform: %1, as chosen</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>Platform: %1, read from the code: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2365,6 +2373,14 @@ Signed: %4</translation>
         <source>Where in the file the loaded bytes start</source>
         <translation>Where in the file the loaded bytes start</translation>
     </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>&amp;Platform</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2407,6 +2423,25 @@ Signed: %4</translation>
     <message>
         <source>Thumb (AArch32)</source>
         <translation>Thumb (AArch32)</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple (macOS, iOS)</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>Detect from the code</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V (Linux, BSD, Android)</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>

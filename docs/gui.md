@@ -365,17 +365,27 @@ AArch64); none is assumed, so OK stays disabled until one is chosen, and the
 one chosen last time is chosen again. **Image base** is the address the bytes
 map at, **File offset** and **Loading size** pick the bytes (the rest of the
 file when the size is empty), and **Entry point** is where execution starts (the
-image base when empty); all are hexadecimal. The file opens as one read and
-execute segment, `seg000`, with `start` at the entry point; idle-time function
-discovery finds the functions its calls reach. A binary file is browsed --
-listing, hex view, graph (from its decoded instructions), names, strings and
-cross references -- but not decompiled: nothing in it states the calling
-convention, and NeverD does not guess one, so pseudocode says why it is
-unavailable. The engine keeps the choice in `<input>.neverd-load.json` (packed
-into the `.nddb`), so the file reopens the same way without the dialog. The
-command line takes the same choice with `--loader binary --processor aarch64
---load-base 0x80000` (plus `--load-offset`, `--load-size` and `--load-entry`),
-or `--loader evm`, and keeps it too.
+image base when empty); all are hexadecimal. **Platform** is the platform the
+code was built for, whose conventions decompiling follows: how calls pass
+arguments, which registers they keep and the sizes of C types. It defaults to
+**Detect from the code**: the engine reads it from where calls put their first
+argument (`rdi` under System V, `rcx` under Windows), what prologues save and
+spill, the thread block and system calls the code reaches, and the system
+libraries its text names; when the code shows too little it assumes System V
+and says so. IDA, by comparison, leaves a binary file's compiler unknown and
+reads x86-64 arguments in System V order, so a Windows function gains phantom
+parameters. The Output window reports the platform and the evidence ("Platform:
+Windows, read from the code: calls set their first argument in rcx (212)"), and
+the status line names it. The file opens as one read and execute segment,
+`seg000`, with `start` at the entry point; idle-time function discovery finds
+the functions its calls reach and, in x86-64 code, the functions it takes the
+address of (`lea rdi, [rip+main]`). The engine keeps the choice, the detected
+platform with it, in `<input>.neverd-load.json` (packed into the `.nddb`), so
+the file reopens the same way without the dialog. The command line takes the
+same choice with `--loader binary --processor aarch64 --load-base 0x80000`
+(plus `--load-offset`, `--load-size`, `--load-entry` and `--platform
+auto|sysv|windows|darwin`), or `--loader evm`, keeps it too, and `neverd info`
+prints the platform and its evidence.
 
 **Analysis → Enabled**
 turns idle-time analysis (function discovery and the reference index) on or off

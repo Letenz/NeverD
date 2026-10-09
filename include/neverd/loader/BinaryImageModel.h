@@ -276,6 +276,10 @@ struct BinaryImage {
   /// them; a pointer-sized literal alone does not authenticate an entry.
   std::set<va_t> ARMVeneerTargets;
   BinaryFormat Format = BinaryFormat::Unknown;
+  /// The platform a binary file's code was built for, whose conventions it
+  /// follows: ELF for System V and AAPCS, COFF for Windows, Mach-O for
+  /// Apple.  Only a binary file sets it; see abiFormat().
+  BinaryFormat ConventionFormat = BinaryFormat::Unknown;
   Bitness Bits = Bitness::Unknown;
   bool IsRelocatable = false;
   /// The image runs at its link-time addresses: no loader rebases it, so an
@@ -1357,6 +1361,16 @@ struct BinaryImage {
   }
 
   /// Get the format name as a string.
+  /// The format whose platform conventions the code follows: its calling
+  /// conventions, callee-saved registers, stack alignment and data model.
+  /// A binary file names no format of its own, so its code follows the
+  /// platform it was read for; any other image follows its own format.
+  /// Container questions -- sections, imports, relocations, exception
+  /// tables, symbol decoration -- read Format instead.
+  BinaryFormat abiFormat() const {
+    return Format == BinaryFormat::Raw ? ConventionFormat : Format;
+  }
+
   const char *getFormatName() const {
     switch (Format) {
     case BinaryFormat::ELF:

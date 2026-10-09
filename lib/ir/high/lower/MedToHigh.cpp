@@ -400,6 +400,27 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   if (CurMed && CurMed->SourceTypeHint && V.Kind == MedVar::Param &&
       V.Id >= 0 && static_cast<size_t>(V.Id) < CurMed->TypedParams.size())
     return SourceParameter(V, static_cast<size_t>(V.Id));
+  // A float or double parameter fills the low lane of its vector register;
+  // the register's other bytes, which the function does not read, are zero.
+  auto ScalarParameter = [&](MedVar Param, size_t Index) -> ExprPtr {
+    if (!CurMed || CurMed->SourceTypeHint ||
+        Index >= CurMed->TypedParams.size())
+      return nullptr;
+    const TypeRef &Scalar = CurMed->TypedParams[Index].Type;
+    if (!Scalar || Scalar->Kind != NdTypeKind::Float || !V.Size)
+      return nullptr;
+    Param.Size = Scalar->Size;
+    auto Bits = HighExpr::makeBitCast(HighExpr::makeVar(Param, Scalar),
+                                      NdType::makeInt(Scalar->Size, false));
+    if (V.Size == Scalar->Size)
+      return Bits;
+    ExprPtr Carrier = V.Size > Scalar->Size
+                          ? HighExpr::makeUnary(NdOp::INT_ZEXT, Bits)
+                          : HighExpr::makeBinop(NdOp::SUBBYTES, Bits,
+                                                HighExpr::makeConst(0, 4));
+    Carrier->Type = NdType::makeInt(V.Size, false);
+    return Carrier;
+  };
   if (CurMed && V.Kind == MedVar::Param) {
     const int Slot = abiParamIndex(V);
     if (Slot >= 0) {
@@ -412,6 +433,8 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
       TypeRef Type;
       if (static_cast<size_t>(Slot) < CurMed->Params.size())
         Param.RegOff = CurMed->Params[static_cast<size_t>(Slot)].RegOff;
+      if (auto Scalar = ScalarParameter(Param, static_cast<size_t>(Slot)))
+        return Scalar;
       return HighExpr::makeVar(Param, Type);
     }
   }
@@ -428,6 +451,8 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
       TypeRef Type;
       if (CurMed->SourceTypeHint && I < CurMed->TypedParams.size())
         return SourceParameter(Param, I);
+      if (auto Scalar = ScalarParameter(Param, I))
+        return Scalar;
       return HighExpr::makeVar(Param, Type);
     }
   }
@@ -446,7 +471,8 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   // GS_HANDLER_DATA bit-2 align edge; mapping every later r10 SSA to arg0
   // deletes that edge.
   if (CurMed && V.Kind == MedVar::Reg && TargetArch == Arch::X64 && Image &&
-      Image->Format == BinaryFormat::COFF && !PhiOutputVars.count(varKey(V))) {
+      Image->abiFormat() == BinaryFormat::COFF &&
+      !PhiOutputVars.count(varKey(V))) {
     if (ParamCopyIndexFunc != CurMed) {
       // One pass over the function instead of one per variable reference.
       ParamCopyIndexFunc = CurMed;
@@ -1212,7 +1238,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
         HP.Name = Med.TypedParams[PI].Name;
         HP.Type = Med.TypedParams[PI].Type;
       } else if (PI < Med.TypedParams.size() && Med.TypedParams[PI].Type &&
-                 Med.TypedParams[PI].Type->Kind == NdTypeKind::Ptr) {
+                 (Med.TypedParams[PI].Type->Kind == NdTypeKind::Ptr ||
+                  Med.TypedParams[PI].Type->Kind == NdTypeKind::Float)) {
         // Direct memory uses and exact forwarded call roles share the MedIR
         // parameter certificate with the LLVM backend.
         HP.Type = Med.TypedParams[PI].Type;

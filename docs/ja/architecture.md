@@ -642,8 +642,8 @@ Capstone ライブラリは網羅しません。
 
 | ディレクトリ | 責務 | 主な依存関係 |
 |--------------|------|--------------|
-| `lib/loader` | 形式検出、PE/COFF・ELF・Mach-O 読込み、正規化 `BinaryImage`、関数検出 | LLVM Object API |
-| `lib/lift` | 手書きの x86/i386・AArch64・ARM32 命令セマンティクス | IR データ型 |
+| `lib/loader` | 形式検出、PE/COFF・ELF・Mach-O 読込み、正規化 `BinaryImage`、関数検出 | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | 手書きの x86/i386・AArch64・ARM32 命令セマンティクス | IR データ型, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native デコードと各アーキテクチャ lifter へのディスパッチ | `NeverDIR`、`NeverDLift` |
 | `lib/ir` | 共通型、LowIR・MedIR・HighIR・intrinsic の定義/変換 | 4 つの IR サブコンポーネント |
 | `lib/pipeline` | 関数検出と Low/Med/High/LLVM 経路の調整 | IR、decode、lift、LLVM backend、デバッグ情報、IR pass |
@@ -656,8 +656,10 @@ Capstone ライブラリは網羅しません。
 | `lib/sigs` | シグネチャ解析、データベース、マッチング | Loader |
 | `lib/libc` | 既知の libc 名と呼出モデルのサポート | 独立コンポーネント |
 | `lib/safety` | リフト済み IR 上のヒープ寿命監査とコピー越境ハント | Symbolic、Solver |
-| `lib/support` | 共通のバイナリ読込み helper | Loader |
+| `lib/support` | 共有バイナリ読み込み補助と独立した SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | version 付き guest state/policy/exit、固定 runtime ABI、検査付き guest memory、生成 IR/object/LinkGraph audit、sealed native linking、experimental x86-64-to-AArch64 C++ dispatcher | IR、LLVM、LLVM Object、JITLink の契約 |
+
+`NeverDDigest` は `lib/support` 内の既存の一括 SHA-256 実装を所有します。実行時機能検査と移植可能なフォールバックを維持し、Loader や IR には依存しません。`loader/InputDigest.h` は転送ヘッダーとして残ります。`NeverDIRLowValidation` が `lowUndefinedOperationDigest` を所有し、Lift は明示的にリンクします。v1 の識別は従来のドメイン、リトルエンディアンのワード、保存された全 6 入力スロット、由来情報とソース座標を維持します。199 操作までは最大 64 KiB の直列化バッファを使い、それ以上は従来の逐次経路を使います。両経路は同じフィールドを列挙し、証拠検査を維持します。
 
 ### 解析と簡約のアーキテクチャ境界
 
@@ -1200,6 +1202,8 @@ Windows プロセスの時刻ポリシーは `os/windows/process/` の `WindowsP
 `lib/unpack` は 4 層でパックされたイメージを復元します。`core` は実行の調整と形式の登録を担当します。`format/pe` はコンテナを検証し、観測したメモリ、インポート、メタデータを再構築します。`PETLS.cpp` はローダーの割り当てと観測済みコールバックに基づき置換 TLS レコードを検証します。プロテクター登録や静的なスタブ署名で入口を選択しません。`dynamic` は `observeProcess` を通じてゲストプロセスを観測します。`Observation.def` は各コンテナと命令セットをプロセスプロファイルに対応付け、各命令セットのスタックポインタと命令ウィンドウを与えます。新しい対象は表の 1 行とモジュールのディレクトリ 1 つであり、行のない入力は名前を挙げて拒否されます。`ExecutionSession` が実行ウォッチを所有します。`ProcessObserver` は停止したプロセスを読み取り、次の停止位置を選びますが、ゲストの状態を変えることはできません。エミュレーション層が知っているのは `defer_unmodeled` だけです。これは未モデルのインポートを、実行された時点で停止する不透明なエントリに束縛します。[アンパック](unpack.md)を参照してください。 遅延ロードでは、先行する初期化処理がコードを生成するゼロ埋めメモリを、実行可能なコールバックや入口の対象にできます。コールバック配列と TLS 割り当てメタデータには検証済みのファイル内容が必要で、通常の厳格ロードはファイル裏付け検査を維持します。OS モデルは呼び出しの帰属を示し、呼び出しの準備時や中断した呼び出し元の復元時に観察器へ通知します。これらの境界で転送監視を再設定し、コールバックと生成された入口が同じページにある場合も扱います。
 
 `WindowsLibraryHost.cpp` は DLL ホストの構築、Windows ローダーは通常のロード・アンロードを所有します。`ProcessView::inputModule()` は観測入力をホスト EXE と分離し、初期スナップショットの遅延を許可します。`ProcessView::callFrame()` は `IntegerABI` 経由で整数引数と戻り先を読みます。`dynamic/ProcessTransfer` は継続先とスタックの一致を証明し、`PETLS.cpp` だけがプロセスアタッチコールバックの完了を判断します。
+
+`PEDelayImports.cpp` は新しいプロセス向けの遅延ロード修復とメタデータ領域の除外を担当します。COFF ローダーは記述子の出所から `Import::IsDelayImport` を記録し、Windows 実行受付は通常のインポートだけを比較します。検証済みの遅延記述子が解決済みセルの再バインド範囲を定め、未解決の内部サンクは必要時の解決を維持します。独立したルックアップ表がバインド数を定め、後続の未解決セルを保持します。不正な状態は明示的に失敗します。
 
 `ExportObserver` は常駐ゲスト依存モジュールの実行可能エクスポートも監視します。モデル化プロバイダーはサービス分配で観測し、入力自身のエクスポートは除外します。モジュール変更で監視を更新し、修復には現在のエクスポート識別を必要とします。記録数は宣言済みインポート上限以内です。DLL テストはシステム API とゲスト依存関数の両ヘルパーを修復し、ネイティブロードでエミュレートされたアドレスが残らないことを検証します。
 

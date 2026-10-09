@@ -334,7 +334,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
 
   const auto &TRI = getTargetRegInfo(TheArch);
   const AbiSpillContext SpillContext{Func, TRI, FrameLocalLeafCallees};
-  const BinaryFormat Fmt = Img ? Img->Format : BinaryFormat::Unknown;
+  const BinaryFormat Fmt = Img ? Img->abiFormat() : BinaryFormat::Unknown;
   const CallArgumentConvention *Convention =
       callArgumentConvention(TheArch, Fmt);
   const AbiCallPolicy *Policy = abiCallPolicy(TheArch, Fmt);
@@ -648,6 +648,12 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         if (AIt != CalleeTotalArity->end())
           CalleeArgs = AIt->second;
       }
+      // A prototyped import's argument positions, as its summary counts them
+      // (MedOp::CalleeStackArgs), bound a forwarder's however it reaches the
+      // import: through a stub, or through the slot as a thunk jumps.
+      const bool ImportStackArgs = CalleeArgs < 0 && Op.CalleeStackArgs > 0;
+      if (ImportStackArgs)
+        CalleeArgs = Op.CalleeStackArgs;
 
       // Executable import veneers can also appear in Callee*Arity as tiny
       // discovered functions.  Their apparent live-in set is not the imported
@@ -1604,7 +1610,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           if (Param.RegOff != kNoParamReg)
             ++CallerStackBase;
       }
-      if (IsTailJump && !CI.IsIndirect && CalleeArgs > CalleeStackBase) {
+      if (IsTailJump && (!CI.IsIndirect || ImportStackArgs) &&
+          CalleeArgs > CalleeStackBase) {
         for (int K = CalleeStackBase; K < CalleeArgs && K < MaxArgs; ++K) {
           if (FoundMask[K])
             continue;

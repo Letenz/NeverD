@@ -432,6 +432,14 @@ constexpr unsigned kStackOffsetWideningJoins = 8;
 /// How many stores before a call to scan for stack-passed arguments.
 constexpr int kCallArgStoreScanWindow = 12;
 
+/// How many copies, extensions and constant adjustments a store address
+/// before a call is followed back to the pointer it is made from.
+constexpr int kCallArgStoreAddressDepth = 32;
+
+/// How many definitions a register an indirect call goes through is
+/// followed back to the slot it was loaded from.
+constexpr int kCallTargetSlotDepth = 16;
+
 /// AArch64 calls with the complete x0-x7 prefix can have an integer argument
 /// at [sp]. Materializing eight constants may expand into several MedIR ops per
 /// register, so keep a larger but finite window once the full bank itself
@@ -568,6 +576,37 @@ constexpr size_t kMinFuncScanPiece = 16 * 1024;
 /// Pieces an x86 call sweep gives each worker.  Workers claim pieces as they
 /// finish, so with several each a slow core holds up only its last piece.
 constexpr size_t kFuncScanPiecesPerWorker = 8;
+
+/// Instructions of a binary file's x86 code read for evidence of its
+/// platform, and bytes of other code: enough for thousands of call sites,
+/// and a bounded share of opening a large file.
+constexpr uint64_t kPlatformEvidenceInstructions = 1024 * 1024;
+constexpr uint64_t kPlatformEvidenceBytes = 64 * 1024 * 1024;
+
+/// The evidence that decides a binary file's platform: at least this score
+/// for the leader, and this many times the runner-up's.  Reading stops early
+/// once the leader has the decisive score and ratio.
+constexpr uint64_t kPlatformMinimumScore = 4;
+/// x86 instructions a linear sweep may read per point of a binary file's
+/// platform evidence.  Compiled code sets a call's arguments every few
+/// dozen instructions; data the sweep decodes as code scores a hundred
+/// times more sparsely, so sparse evidence decides nothing.
+constexpr uint64_t kPlatformInstructionsPerScore = 500;
+constexpr uint64_t kPlatformMarginRatio = 3;
+constexpr uint64_t kPlatformDecisiveScore = 256;
+constexpr uint64_t kPlatformDecisiveRatio = 16;
+
+/// Instructions from where a function may start that its prologue spans,
+/// for prologue evidence of a binary file's platform, and the alignment
+/// compilers start functions at.
+constexpr unsigned kPlatformPrologueInstructions = 6;
+constexpr uint64_t kPlatformFunctionAlignment = 16;
+
+/// How far beside a binary file's code a call may land and still count as
+/// one the code makes, as its text calls the stubs next to it, and the
+/// instructions before a call read for the arguments it sets.
+constexpr int64_t kPlatformCallReach = 16 * 1024 * 1024;
+constexpr size_t kPlatformCallWindow = 8;
 
 /// Minimum number of detected candidates before the entry-verification trial
 /// decode is spread across worker threads.  Below this the per-thread decoder

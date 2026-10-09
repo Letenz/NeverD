@@ -158,11 +158,15 @@ TEST(PEBrowseCompatibility, NamesComeFromLookupEvenWhenIATIsAlreadyBound) {
     F.word(F.IData + 0x100, 0x20c0);
     F.name(F.IData + 0xc2, "TestFunction");
     F.word(F.IData + 0x180, 0x774c1234);
+    // A separate lookup table owns the import count. A following program
+    // cell can be nonzero, including an unresolved delay-load thunk.
+    F.word(F.IData + 0x180 + F.Width, F.Base + 0x1020);
     auto Image = load(F);
     ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
     ASSERT_EQ(Image->Imports.size(), 1u);
     EXPECT_EQ(Image->Imports[0].Name, "TestFunction");
     EXPECT_EQ(Image->Imports[0].IATAddr, F.Base + 0x2180);
+    EXPECT_EQ(Image->findImportAt(F.Base + 0x2180 + F.Width), nullptr);
     EXPECT_TRUE(Image->LoadDiagnostics.empty());
   }
 }

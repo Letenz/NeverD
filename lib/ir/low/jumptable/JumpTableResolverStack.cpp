@@ -296,7 +296,7 @@ va_t CFGBuilder::resolveStackMaterializedTableSource(
 
   const TargetRegInfo &TRI = getTargetRegInfo(CurrentImg->Arch);
   const llvm::ArrayRef<uint64_t> IntParamRegs =
-      TRI.integerParamRegs(CurrentImg->Format);
+      TRI.integerParamRegs(CurrentImg->abiFormat());
   auto isGuestAddressZExt = [&](const LowOp &Op) {
     return Op.Opcode == NdOp::INT_ZEXT && Op.NumInputs >= 1 &&
            Op.Inputs[0].Size == CurrentImg->getPointerSize() &&

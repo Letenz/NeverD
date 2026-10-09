@@ -120,7 +120,7 @@ receivers(const BinaryImage &Image, const MedFunc &Function, DebugContext *Dbg,
     std::string Identity = Parameter.QualifiedType;
     for (const auto &[ID, Pack] : Packs) {
       (void)ID;
-      if (!Pack.accepts(Image.Arch, Image.Format, Image.Bits))
+      if (!Pack.accepts(Image.Arch, Image.abiFormat(), Image.Bits))
         continue;
       for (const auto &[LayoutID, Layout] : Pack.Layouts) {
         (void)LayoutID;
@@ -168,7 +168,7 @@ void Pipeline::recognizeLibraries(const BinaryImage &Img,
         if (Layout == Pack.Layouts.end())
           return "";
         const auto Params =
-            getTargetRegInfo(Img.Arch).integerParamRegs(Img.Format);
+            getTargetRegInfo(Img.Arch).integerParamRegs(Img.abiFormat());
         if (Params.empty())
           return "";
         for (const auto &R : Receivers.at(Entry)) {

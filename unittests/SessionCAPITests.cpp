@@ -2722,7 +2722,7 @@ TEST_F(SessionCAPITest, IdentifyListsWhatLoadingReads) {
   EXPECT_EQ(text(Rows[0]), "Binary file");
 }
 
-TEST_F(SessionCAPITest, BinaryFilesLoadAsAskedAndAreNotAnalyzed) {
+TEST_F(SessionCAPITest, BinaryFilesLoadAsAskedAndDecompile) {
   // nop; nop; mov eax, 7; ret: x86-64 code no header describes, named as EVM
   // bytecode often is.
   const std::string Code("\x90\x90\xb8\x07\x00\x00\x00\xc3", 8);
@@ -2738,11 +2738,21 @@ TEST_F(SessionCAPITest, BinaryFilesLoadAsAskedAndAreNotAnalyzed) {
   EXPECT_EQ(neverd_session_entry_addr(Session), 0x400002u);
   EXPECT_NE(takeString(neverd_disasm_json(Session, 0x400002, 1)).find("mov"),
             std::string::npos);
-  // Nothing states its calling convention: analysis refuses it, and says so.
-  EXPECT_EQ(takeString(neverd_decompile(Session, 0x400002)), "");
-  EXPECT_NE(takeString(neverd_last_error(Session)).find("calling convention"),
-            std::string::npos);
-  EXPECT_EQ(neverd_session_analyze(Session), 0);
+  // Three instructions show no platform: System V is assumed, and says so.
+  auto Load =
+      llvm::json::parse(takeString(neverd_session_load_options_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Load));
+  EXPECT_EQ(Load->getAsObject()->getString("platform"), "sysv");
+  EXPECT_EQ(Load->getAsObject()->getString("platform_source"), "detected");
+  EXPECT_NE(Load->getAsObject()
+                ->getString("platform_evidence")
+                .value_or("")
+                .find("assumed"),
+            llvm::StringRef::npos);
+  EXPECT_NE(takeString(neverd_decompile(Session, 0x400002)).find("7"),
+            std::string::npos)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(neverd_session_analyze(Session), 1);
   // Kept with the input, the choice reads the file the same way unasked.
   // "auto" refuses it: only its .bin name ties it to EVM bytecode, which
   // the user reads it as by choosing that loader.
@@ -2786,6 +2796,100 @@ TEST_F(SessionCAPITest, BinaryFilesLoadAsAskedAndAreNotAnalyzed) {
   EXPECT_EQ(neverd_session_load(Session, Path.c_str()), 0);
   EXPECT_NE(takeString(neverd_last_error(Session)).find("4 GiB"),
             std::string::npos);
+}
+
+/// Six calls of a two-argument function, and the function, as a System V or
+/// a Windows x86-64 compiler emits them; \p Add is where the function starts.
+std::string twoArgumentProgram(bool Windows, size_t &Add) {
+  constexpr unsigned Calls = 6;
+  constexpr size_t CallBytes = 15, FrameBytes = 4;
+  const auto le32 = [](std::string &Code, uint32_t Value) {
+    for (unsigned Byte = 0; Byte < 4; ++Byte)
+      Code += static_cast<char>(Value >> (8 * Byte));
+  };
+  std::string Code;
+  // Windows reserves the home slots of a callee's arguments.
+  if (Windows)
+    Code.append("\x48\x83\xec\x28", FrameBytes); // sub rsp, 0x28
+  const size_t Returns =
+      Code.size() + Calls * CallBytes + (Windows ? FrameBytes : 0) + 1;
+  Add = (Returns + 15) & ~size_t(15);
+  for (unsigned I = 0; I < Calls; ++I) {
+    // mov second, 2*I+2; mov first, 2*I+1; call add -- edx and ecx under
+    // Windows, esi and edi under System V.
+    Code += static_cast<char>(Windows ? 0xba : 0xbe);
+    le32(Code, 2 * I + 2);
+    Code += static_cast<char>(Windows ? 0xb9 : 0xbf);
+    le32(Code, 2 * I + 1);
+    Code += '\xe8';
+    le32(Code, static_cast<uint32_t>(Add - (Code.size() + 4)));
+  }
+  if (Windows)
+    Code.append("\x48\x83\xc4\x28", FrameBytes); // add rsp, 0x28
+  Code += '\xc3';
+  Code.resize(Add, '\xcc');
+  // lea eax, [first+second]; ret
+  Code.append(Windows ? "\x8d\x04\x11" : "\x8d\x04\x37", 3);
+  Code += '\xc3';
+  return Code;
+}
+
+/// The parameter count of \p Name's definition in decompiled \p Source.
+int parameterCount(const std::string &Source, const std::string &Name) {
+  const size_t At = Source.find(Name + "(");
+  if (At == std::string::npos)
+    return -1;
+  const size_t Open = At + Name.size() + 1, Close = Source.find(')', Open);
+  const llvm::StringRef Inside =
+      llvm::StringRef(Source).slice(Open, Close).trim();
+  return Inside.empty() || Inside == "void"
+             ? 0
+             : static_cast<int>(Inside.count(',')) + 1;
+}
+
+TEST_F(SessionCAPITest, BinaryFilesDecompileUnderThePlatformTheirCodeShows) {
+  for (const bool Windows : {false, true}) {
+    size_t Add = 0;
+    const auto Path = write(Windows ? "windows.bin" : "sysv.bin",
+                            twoArgumentProgram(Windows, Add));
+    neverd_session_t Program = neverd_session_create();
+    ASSERT_EQ(neverd_session_set_load_options(
+                  Program, R"({"loader":"binary","processor":"x86_64",)"
+                           R"("base":"0x400000"})"),
+              0);
+    ASSERT_EQ(neverd_session_load(Program, Path.c_str()), 1)
+        << takeString(neverd_last_error(Program));
+    auto Load = llvm::json::parse(
+        takeString(neverd_session_load_options_json(Program)));
+    ASSERT_TRUE(static_cast<bool>(Load));
+    EXPECT_EQ(Load->getAsObject()->getString("platform"),
+              Windows ? "windows" : "sysv");
+    EXPECT_EQ(Load->getAsObject()->getString("platform_source"), "detected");
+    // Two arguments in rcx and rdx under Windows, not four with phantom rdi
+    // and rsi, as a System V reading gives.
+    const uint64_t AddVA = 0x400000 + Add;
+    const std::string Source = takeString(neverd_decompile(Program, AddVA));
+    EXPECT_EQ(parameterCount(Source, "sub_" + llvm::utohexstr(AddVA)), 2)
+        << Source << takeString(neverd_last_error(Program));
+    neverd_session_destroy(Program);
+  }
+  // A platform the user names is theirs, the code notwithstanding.
+  size_t Add = 0;
+  const auto Path = write("named.bin", twoArgumentProgram(true, Add));
+  ASSERT_EQ(neverd_session_set_load_options(
+                Session, R"({"loader":"binary","processor":"x86_64",)"
+                         R"("base":"0x400000","platform":"sysv"})"),
+            0);
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  auto Load =
+      llvm::json::parse(takeString(neverd_session_load_options_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Load));
+  EXPECT_EQ(Load->getAsObject()->getString("platform"), "sysv");
+  EXPECT_EQ(Load->getAsObject()->getString("platform_source"), "user");
+  EXPECT_EQ(neverd_session_set_load_options(
+                Session, R"({"loader":"binary","processor":"x86_64",)"
+                         R"("platform":"beos"})"),
+            -1);
 }
 
 TEST_F(SessionCAPITest, InputSha256IsTheHashOfTheLoadedFile) {

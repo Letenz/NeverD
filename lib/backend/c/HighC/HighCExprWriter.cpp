@@ -1038,6 +1038,20 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   std::string S = Name + "(";
   const auto Callee = debugCallee(E);
   const libc::LibCPrototype *Prototype = calleePrototype(E);
+  // A routine known only by its argument counts: the call collects its
+  // integer arguments first, while a libm helper such as ldexp declares its
+  // floating ones first.
+  const std::optional<libc::LibCArity> Arity =
+      !Prototype && !Defined && E.IntrinsicId == Intrinsic::None
+          ? libc::libcArityForSymbol(Name)
+          : std::nullopt;
+  const size_t ArityIntegers = Arity ? std::max(0, Arity->IntArgs) : 0;
+  const size_t ArityFloats = Arity ? std::max(0, Arity->FpArgs) : 0;
+  auto OperandIndex = [&](size_t I) {
+    if (!Arity || !Arity->FpFirst || I >= ArityIntegers + ArityFloats)
+      return I;
+    return I < ArityFloats ? ArityIntegers + I : I - ArityFloats;
+  };
   const llvm::StringRef HeaderCallee = headerDeclaredCallee(E);
   const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   // A callee printed in this file fixes the count by its signature; otherwise
@@ -1054,7 +1068,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     if (I > 0)
       S += ", ";
     ExprPtr Missing;
-    const HighExpr *Op = I < E.Operands.size() ? E.Operands[I].get() : nullptr;
+    const size_t Source = OperandIndex(I);
+    const HighExpr *Op =
+        Source < E.Operands.size() ? E.Operands[Source].get() : nullptr;
     if (!Op) {
       // Keep absent required operands on the same failure and type-conversion
       // path as explicit unknowns, including pointer parameters.
@@ -1146,6 +1162,28 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                Function && takesPointerArgument(E, I, false) &&
                PointerArgumentOperands.insert(Function).second) {
       PointerArgument = Function;
+    }
+    // A floating parameter of the callee's prototype takes the bits.
+    TypeRef FloatParam = Defined && I < Defined->Params.size()
+                             ? emittedParamType(*Defined, I)
+                             : nullptr;
+    if (!FloatParam && Prototype && I < Prototype->ParamCount) {
+      if (Prototype->Params[I] == "double")
+        FloatParam = NdType::makeFloat(sizeof(double));
+      else if (Prototype->Params[I] == "float")
+        FloatParam = NdType::makeFloat(sizeof(float));
+    }
+    // A routine known by its argument counts takes its floating arguments
+    // after its integer ones, as the call collects them.
+    if (!FloatParam && Arity && Source >= ArityIntegers &&
+        Source < ArityIntegers + ArityFloats)
+      FloatParam =
+          NdType::makeFloat(Arity->FpIsFloat ? sizeof(float) : sizeof(double));
+    if (const auto Float = floatArgumentText(*Op, FloatParam)) {
+      if (PointerArgument)
+        PointerArgumentOperands.erase(PointerArgument);
+      S += *Float;
+      continue;
     }
     std::string Arg = exprStr(Imm ? *Imm : *Op);
     if (PointerArgument)
@@ -1542,10 +1580,29 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   const std::string Name = callIdentifier(E);
   if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format))
     return msvcSyntheticReturn(Msvc->ReturnKind);
-  // A result whose type C cannot spell is the register it arrives in.
-  if (const auto Callee = debugCallee(E))
-    if (hasCSpelling(cDisplayType(Callee->ReturnType)))
-      return Callee->ReturnType;
+  if (const auto Callee = debugCallee(E)) {
+    // A result whose type C cannot spell is the register it arrives in.
+    if (!hasCSpelling(cDisplayType(Callee->ReturnType)))
+      return {};
+    return Callee->ReturnType;
+  }
+  // A function this unit defines returns the type its definition prints.
+  if (const auto Defined = DefinedFunctionsByIdentifier.find(Name);
+      Defined != DefinedFunctionsByIdentifier.end() && Defined->second)
+    return Defined->second->ReturnType;
+  // A C library routine returns the floating type its declaration names,
+  // or a math routine the one its arguments have.
+  if (const libc::LibCPrototype *Prototype = calleePrototype(E)) {
+    if (Prototype->Return == "double")
+      return NdType::makeFloat(sizeof(double));
+    if (Prototype->Return == "float")
+      return NdType::makeFloat(sizeof(float));
+  }
+  if (const auto Arity = libc::libcArityForSymbol(Name);
+      Arity && !Arity->FpRetLongDouble && !Arity->FpRetComplex &&
+      (Arity->FpRet || Arity->FpFirst ||
+       (Arity->FpArgs > 0 && Arity->IntArgs == 0)))
+    return NdType::makeFloat(Arity->FpIsFloat ? sizeof(float) : sizeof(double));
   return {};
 }
 
@@ -2085,9 +2142,46 @@ TypeRef HighCWriter::expectedDebugCallArgType(const FunctionSym &FS,
   return Declared(Index);
 }
 
+std::optional<std::string>
+HighCWriter::floatArgumentText(const HighExpr &Arg, const TypeRef &Expected) {
+  if (!Expected || Expected->Kind != NdTypeKind::Float ||
+      (Expected->Size != sizeof(float) && Expected->Size != sizeof(double)) ||
+      !Arg.Type || Arg.Type->Kind != NdTypeKind::Int ||
+      Arg.Type->Size < Expected->Size)
+    return std::nullopt;
+  // The bits of a value of the parameter's own type pass as that value: its
+  // bit cast, under integer views that keep its low bytes.
+  const HighExpr *Bits = &Arg;
+  for (unsigned Peel = 0;
+       Bits && Peel < limits::kMaxIntegerViewUnwrapDepth && Bits->Type &&
+       Bits->Type->Kind == NdTypeKind::Int &&
+       Bits->Type->Size >= Expected->Size && Bits->Operands.size() >= 1 &&
+       Bits->Operands[0] && Bits->Operands[0]->Type &&
+       Bits->Operands[0]->Type->Size >= Expected->Size &&
+       (Bits->Kind == ExprKind::Cast ||
+        (Bits->Kind == ExprKind::UnaryOp &&
+         (Bits->Op == NdOp::INT_ZEXT || Bits->Op == NdOp::INT_SEXT)) ||
+        (Bits->Kind == ExprKind::BinOp && Bits->Op == NdOp::SUBBYTES &&
+         Bits->Operands.size() == 2 && Bits->Operands[1] &&
+         Bits->Operands[1]->Kind == ExprKind::Const &&
+         Bits->Operands[1]->ConstVal == 0));
+       ++Peel)
+    Bits = Bits->Operands[0].get();
+  if (Bits && Bits->Kind == ExprKind::BitCast && !Bits->Operands.empty() &&
+      Bits->Operands[0] && Bits->Operands[0]->Type &&
+      equalSourceTypes(Bits->Operands[0]->Type, Expected))
+    return exprStr(*Bits->Operands[0]);
+  // A register's integer bits are the argument's bits: C would convert
+  // their value instead.
+  return "__builtin_bit_cast(" + typeToC(Expected) + ", " +
+         integerView(Arg, NdType::makeInt(Expected->Size, false), 0) + ")";
+}
+
 std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
                                            const TypeRef &Expected,
                                            bool DefinedCallee) {
+  if (const auto Float = floatArgumentText(E, Expected))
+    return *Float;
   // C converts an integer argument by the signedness of its own type, so an
   // extension to a wider parameter cannot pass its narrower source unless
   // that source extends the same way.
@@ -3900,6 +3994,18 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                           E.Type->IsSigned)
                    ? "(" + typeToC(E.Type) + ")(uintptr_t)" + Text
                    : PointerInteger("(uintptr_t)" + Text);
+    // A floating result returns in the low lane of a register the HighIR
+    // reads as integer bits: the C reads those bits, not the value converted
+    // to an integer.  The lane's other bytes are unspecified after a call.
+    if (&E != StatementCall && (!E.Type || E.Type->Kind == NdTypeKind::Int))
+      if (const TypeRef Return = knownCallReturnType(E);
+          Return && Return->Kind == NdTypeKind::Float &&
+          (Return->Size == sizeof(float) || Return->Size == sizeof(double)))
+        return typedText(E,
+                         "__builtin_bit_cast(" +
+                             typeToC(NdType::makeInt(Return->Size, false)) +
+                             ", " + Text + ")",
+                         Return->Size, false);
     // `callee(...)` has the return type its declaration prints.
     if (const TypeRef Return = knownCallReturnType(E); isPlainInteger(Return)) {
       const std::string Prefix = callIdentifier(E) + "(";
@@ -3942,6 +4048,36 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return typedText(E, integerView(Src, E.Type, ParentPrec), E.Type->Size,
                          E.Type->IsSigned);
       return "(" + typeToC(E.Type) + ")" + exprStr(Src, 99);
+    }
+    // A float whose bits are a constant, or read from constant data, is that
+    // constant.
+    const HighExpr *Bits = unwrapIntegerView(&Src);
+    for (unsigned Follow = 0;
+         Bits && Follow < limits::kMaxIntegerViewUnwrapDepth &&
+         (Bits->Kind == ExprKind::Var || Bits->Kind == ExprKind::Phi);
+         ++Follow) {
+      const auto Fwd = ValueForward.find(copyForwardName(varName(Bits->Var)));
+      if (Fwd == ValueForward.end() || !Fwd->second || Fwd->second == Bits)
+        break;
+      Bits = unwrapIntegerView(Fwd->second);
+    }
+    if (Bits && Bits->Type && Bits->Type->Size >= E.Type->Size) {
+      std::optional<uint64_t> Value;
+      if (Bits->Kind == ExprKind::Const)
+        Value = Bits->ConstVal;
+      else if (Bits->Kind == ExprKind::Load &&
+               Bits->MemoryOrdering == NdMemoryOrdering::None &&
+               Bits->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+               !Bits->Operands.empty() && Bits->Operands[0])
+        if (const auto VA = constAddress(*Bits->Operands[0]))
+          Value = foldReadonlyScalar(*VA, Bits->Type->Size);
+      if (Value)
+        if (const auto Literal = floatConstantText(
+                *Value & (E.Type->Size >= 8
+                              ? ~uint64_t{0}
+                              : (uint64_t{1} << (E.Type->Size * 8)) - 1),
+                E.Type))
+          return *Literal;
     }
     // An x87 value's 80 bits fill ten bytes of a wider C object, which
     // __builtin_bit_cast cannot reinterpret: they are copied.

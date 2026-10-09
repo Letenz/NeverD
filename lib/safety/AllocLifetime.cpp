@@ -2239,7 +2239,7 @@ private:
       const TargetRegInfo &TRI = getTargetRegInfo(In.Img->Arch);
       const uint16_t Bytes = TRI.PointerSize ? TRI.PointerSize : 8;
       for (const TargetRegisterRange &R :
-           TRI.callPreservedRanges(In.Img->Format))
+           TRI.callPreservedRanges(In.Img->abiFormat()))
         Opts.CallPreservedRegisters.push_back({R.Offset, R.Bytes});
       Opts.TrackedCallResultRegister =
           symbolic::SymRegisterRange{TRI.IntReturnReg, Bytes};
@@ -2841,7 +2841,7 @@ private:
       if (Kind == StringDuplicationKind::None)
         continue;
       std::optional<uint64_t> Bytes = minimumStringDuplicationReadBytes(
-          Kind, In.Img ? In.Img->Format : BinaryFormat::Unknown);
+          Kind, In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown);
       if (Kind == StringDuplicationKind::Counted) {
         if (CI.Args.size() <= 1)
           Bytes = std::nullopt;
@@ -2874,9 +2874,10 @@ private:
       if (Count && *Count == 0)
         continue;
       const std::optional<uint64_t> Bytes =
-          Count ? detail::exactCopyReadBytes(
-                      callName(CI),
-                      In.Img ? In.Img->Format : BinaryFormat::Unknown, *Count)
+          Count ? detail::exactCopyReadBytes(callName(CI),
+                                             In.Img ? In.Img->abiFormat()
+                                                    : BinaryFormat::Unknown,
+                                             *Count)
                 : std::nullopt;
       bool AccessMayBeSuppressed = false;
       if (E->CapArg >= 0) {
@@ -2885,8 +2886,9 @@ private:
         AccessMayBeSuppressed = !Count || !Capacity;
         if (Count && Capacity &&
             detail::fortifiedCountedAccessIsRejected(
-                callName(CI), In.Img ? In.Img->Format : BinaryFormat::Unknown,
-                *Count, *Capacity))
+                callName(CI),
+                In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown, *Count,
+                *Capacity))
           continue;
       }
       auditCallStackSource(
@@ -2928,8 +2930,9 @@ private:
           if (!Count || !Capacity)
             return CallUse::Possible;
           if (detail::fortifiedCountedAccessIsRejected(
-                  callName(CI), In.Img ? In.Img->Format : BinaryFormat::Unknown,
-                  *Count, *Capacity))
+                  callName(CI),
+                  In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown, *Count,
+                  *Capacity))
             return CallUse::None;
         }
         if (!detail::copyAccessRequiresPositiveCount(
@@ -2954,8 +2957,9 @@ private:
           if (!Limit || !Capacity)
             return CallUse::Possible;
           if (detail::fortifiedCountedAccessIsRejected(
-                  callName(CI), In.Img ? In.Img->Format : BinaryFormat::Unknown,
-                  *Limit, *Capacity))
+                  callName(CI),
+                  In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown, *Limit,
+                  *Capacity))
             return CallUse::None;
         }
         if (ArgIndex == E->FmtArg)
@@ -3043,7 +3047,7 @@ private:
           Normalized == "recv" || Normalized == "recvfrom" ||
           Normalized == "recv_chk" || Normalized == "recvfrom_chk")
         return countedOutputUse(
-            2, In.Img && In.Img->Format == BinaryFormat::COFF ? 32 : 0);
+            2, In.Img && In.Img->abiFormat() == BinaryFormat::COFF ? 32 : 0);
       if (Normalized == "ReadFile" || Normalized == "GetEnvironmentVariableA" ||
           Normalized == "GetEnvironmentVariableW")
         return countedOutputUse(2, 32);

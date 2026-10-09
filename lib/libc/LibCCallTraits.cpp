@@ -269,7 +269,7 @@ std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
 #include "neverd/libc/StackProbeRoutines.inc"
   };
   const auto Applies = [&](const Routine &R) {
-    return R.Format == Img.Format && R.Architecture == Img.Arch;
+    return R.Format == Img.abiFormat() && R.Architecture == Img.Arch;
   };
   if (std::none_of(std::begin(Routines), std::end(Routines), Applies))
     return std::nullopt;

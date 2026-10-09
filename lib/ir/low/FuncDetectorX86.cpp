@@ -118,6 +118,59 @@ std::optional<CallScanStep> stepCallsX86(const BinaryImage &Img, Decoder &Dec,
   return Step;
 }
 
+void scanCodePointersX64(const BinaryImage &Img, Decoder &Dec,
+                         std::set<va_t> &Out) {
+  const bool KeptDetail = Dec.detailEnabled(), KeptText = Dec.textEnabled();
+  Dec.setText(false);
+  for (const Segment &Seg : Img.Segments) {
+    if (!Seg.isExecutable() || Seg.Data.empty())
+      continue;
+    for (size_t Off = 0; Off < Seg.Data.size();) {
+      const va_t Cur = Seg.VA + Off;
+      const uint8_t *Bytes = Seg.Data.data() + Off;
+      const size_t Remain = Seg.Data.size() - Off;
+      DecodedInsn DI;
+      Dec.setText(false);
+      Dec.setDetail(false);
+      const int Size = Dec.decodeOneLight(Bytes, Remain, Cur, DI);
+      if (Size <= 0) {
+        ++Off;
+        continue;
+      }
+      Off += static_cast<size_t>(Size);
+      // Only a lea's operand detail, which comes with text, says where it
+      // points.
+      if (DI.Id != X86_INS_LEA)
+        continue;
+      Dec.setText(true);
+      Dec.setDetail(true);
+      if (Dec.decodeOneLight(Bytes, Remain, Cur, DI) != Size || !DI.Raw ||
+          !DI.Raw->detail)
+        continue;
+      const cs_x86 &X86 = DI.Raw->detail->x86;
+      if (X86.op_count != 2 || X86.operands[1].type != X86_OP_MEM ||
+          X86.operands[1].mem.base != X86_REG_RIP ||
+          X86.operands[1].mem.index != X86_REG_INVALID)
+        continue;
+      const va_t Target = Cur + static_cast<va_t>(Size) +
+                          static_cast<va_t>(X86.operands[1].mem.disp);
+      const Segment *Owner = Img.getSegmentFor(Target);
+      if (!Owner || !Img.hasExecutableCodeOwnerAt(Target))
+        continue;
+      const size_t At = static_cast<size_t>(Target - Owner->VA);
+      if (At >= Owner->Data.size())
+        continue;
+      const uint8_t *Start = Owner->Data.data() + At;
+      const size_t Left = Owner->Data.size() - At;
+      const size_t Marker = x86BranchTargetMarkerLength(Start, Left);
+      if (isPrologueAt(Start + Marker, Left - Marker, Img.Arch))
+        Out.insert(Target);
+    }
+  }
+  Dec.setDetail(KeptDetail);
+  Dec.setText(KeptText);
+}
+
 void scanSegmentCallsX86(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,
                          std::set<va_t> &Out) {
