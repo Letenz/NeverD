@@ -19,6 +19,7 @@ const CallArgumentConvention DarwinAArch64CallArguments = {
     .TheArch = Arch::AArch64,
     .Format = BinaryFormat::MachO,
     .VariadicArgumentsOnStack = true,
+    .TargetSpillsSurviveLeafCalls = true,
 };
 
 } // namespace neverd

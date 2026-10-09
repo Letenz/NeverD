@@ -177,7 +177,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     for (MedFunc &MF : Result.MedFuncs)
       recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &RegisterArity,
                      &TotalArity);
-    propagateARMForwardedPointerParams(Result.MedFuncs);
+    propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
   }
   if (Dbg && Dbg->hasInfo()) {
     for (const MedFunc &MF : Result.MedFuncs) {

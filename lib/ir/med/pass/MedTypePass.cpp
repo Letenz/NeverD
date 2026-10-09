@@ -1274,8 +1274,9 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
   Func.FPReturnViaX87 = false;
 }
 
-void propagateARMForwardedPointerParams(std::vector<MedFunc> &Funcs) {
-  const auto &TRI = getTargetRegInfo(Arch::ARM);
+void propagateForwardedPointerParams(std::vector<MedFunc> &Funcs,
+                                     Arch TheArch) {
+  const auto &TRI = getTargetRegInfo(TheArch);
   std::map<va_t, size_t> ByEntry;
   for (size_t I = 0; I < Funcs.size(); ++I) {
     ByEntry.emplace(Funcs[I].Entry, I);

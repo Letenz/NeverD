@@ -161,6 +161,11 @@ struct TargetRegInfo {
   /// getTargetRegInfo().
   bool ReturnsFPInX87 = false;
 
+  /// A scalar floating-point return wider than eight bytes (long double)
+  /// leaves in x87 st0, even where narrower ones use the vector return
+  /// register (x86-64).  Set by getTargetRegInfo().
+  bool WideFloatsReturnInX87 = false;
+
   /// A RETURN operation's operand is the integer return register's value
   /// (x86 `ret` leaves the result in EAX/RAX), so whatever SSA left there is
   /// the value returned.  Elsewhere the operand can be the return address.
