@@ -365,7 +365,18 @@ GNOME attaches a modal dialog to its parent window, so dragging the dialog
 would drag the whole workbench. On GNOME the workbench keeps dialogs
 free-standing: under X11 a modal dialog takes the utility window type, and
 under Wayland the compositor is not told which dialogs are modal
-(`xdg-dialog-v1`). A modal dialog still blocks the workbench until it closes.
+(`xdg-dialog-v1`). File, color and font dialogs are Qt's own there, styled
+like the rest of the workbench, because GTK's are another toolkit's windows,
+which GNOME attaches. A modal dialog still blocks the workbench until it
+closes.
+
+Without a remembered size the window opens centered at three quarters of the
+screen's width and four fifths of its height. GNOME maximizes a window that
+opens at nearly the size of the screen, and a maximized window does not resize
+from its edges; IDA opens that way. Under Wayland GNOME draws no frame and the
+one Qt draws resizes only from a few pixels outside the visible edge, so the
+last four pixels inside the left, right and bottom edges resize the window
+too, under the matching cursor.
 
 ## Loading a new file
 
