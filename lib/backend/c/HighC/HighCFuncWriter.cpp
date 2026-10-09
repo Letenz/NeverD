@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../VariadicImportStub.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -970,6 +971,18 @@ void HighCWriter::writeExceptionAnnotation(const HighFunc &Func) {
 }
 
 void HighCWriter::writeFunction(const HighFunc &Func) {
+  if (Opts.Image)
+    if (const std::string Import =
+            c_stub::variadicImportOfStub(*Opts.Image, Func.Entry);
+        !Import.empty()) {
+      if (EmitFunctionWrapper)
+        OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
+      HighExpr Slot;
+      Slot.CallAddr = Func.Entry;
+      c_stub::writeVariadicImportStub(OS, functionIdentifier(Func), Import,
+                                      importSlotIdentifier(Slot));
+      return;
+    }
   if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Func)) {
     writeAnalysisOnlyFunction(Func);
     return;

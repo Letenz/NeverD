@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../UnalignedMemory.h"
+#include "../VariadicImportStub.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -785,20 +786,8 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
 }
 
 bool HighCWriter::isVariadicImportStub(const HighFunc &Func) const {
-  if (!Opts.Image || !Func.Entry)
-    return false;
-  const Import *Imp = Opts.Image->findImportAt(Func.Entry);
-  if (!Imp || Imp->IATAddr == Func.Entry || Imp->Name.empty())
-    return false;
-  // A PE import entry is the C name; other formats name the symbol.
-  const std::string Name =
-      importNamesAreCNames(Opts.Format)
-          ? Imp->Name
-          : cNameOfSymbol(Imp->Name, Opts.Format, Opts.TheArch).str();
-  if (const libc::LibCPrototype *Prototype =
-          libc::libcPrototype(Name, Opts.Format))
-    return Prototype->Variadic;
-  return libc::isKnownFunction(Name) && libc::varArgFixedCount(Name) > 0;
+  return Opts.Image &&
+         !c_stub::variadicImportOfStub(*Opts.Image, Func.Entry).empty();
 }
 
 const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {

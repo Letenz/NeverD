@@ -106,6 +106,10 @@ struct CallArgScan {
   /// resolves through copies and constant adjustments (an `r11 = rsp`
   /// frame); nullopt otherwise.
   llvm::function_ref<std::optional<int64_t>(const MedVar &)> EntryOffsetOf;
+  /// The entry offset of the stack pointer the call is made with, where it
+  /// is known (i386): a store EntryOffsetOf places at or above it is in the
+  /// slot at that distance.
+  std::optional<int64_t> CallStackEntryOffset;
   /// Bytes the prologue moved the stack pointer below its entry value.
   int64_t FrameSize = 0;
   /// Entry-relative stack slots the function loads; see MedToHigh.h.

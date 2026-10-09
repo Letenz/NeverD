@@ -348,6 +348,14 @@ std::optional<bool> libcReturnsValue(std::string_view Name,
   return It->second == ReturnKind::Value;
 }
 
+bool returnsDoubleWord(std::string_view Name) {
+  static const std::unordered_set<std::string_view> Names = {
+#define NEVERD_DOUBLE_WORD_RESULT(NAME) NAME,
+#include "neverd/libc/CompilerRuntimeDoubleWord.def"
+  };
+  return Names.count(Name) != 0;
+}
+
 std::optional<LibCArity> libcArityForSymbol(std::string_view Name) {
   // Mach-O prepends one underscore to the C identifier `__error`, producing
   // `___error`.  Do not normalize it to `error`: GNU error(3) is a distinct
