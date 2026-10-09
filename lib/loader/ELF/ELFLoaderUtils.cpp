@@ -36,6 +36,18 @@ va_t normalizeELFFunctionAddress(va_t Addr, const BinaryImage &Img) {
   return Img.Arch == Arch::ARM ? clearThumbBit(Addr) : Addr;
 }
 
+/// The DT_PLTGOT slots the psABI gives the dynamic linker: their callers
+/// call what it writes there, whatever the file holds.
+void recordLazyBindingSlots(uint64_t PltGot, unsigned PointerSize,
+                            BinaryImage &Img) {
+#define NEVERD_ELF_LAZY_RESOLVER_SLOT(Target, Index)                           \
+  if (Img.Arch == Arch::Target)                                                \
+    Img.recordRuntimeCallablePointerSlot(                                      \
+        PltGot + Index * PointerSize,                                          \
+        RuntimeCallablePointerSlotKind::ELFLazyResolver);
+#include "ELFLazyBinding.def"
+}
+
 bool isIRelativeRelocation(uint32_t Type, Arch TargetArch) {
 #define NEVERD_ELF_IRELATIVE(Target, Kind)                                     \
   if (TargetArch == Arch::Target && Type == Kind)                              \
@@ -235,6 +247,28 @@ bool recordIRelativeResolver(uint32_t RelocType, va_t Slot,
   return Img.recordRuntimeFunction(normalizeELFFunctionAddress(Resolver, Img));
 }
 
+bool recordRuntimeCallableRelocation(uint32_t RelocType, va_t Slot,
+                                     BinaryImage &Img) {
+  if (isIRelativeRelocation(RelocType, Img.Arch))
+    return Img.IndirectFunctionSlots.insert(Slot).second;
+#define NEVERD_ELF_TLS_DESCRIPTOR(Target, Kind)                                \
+  if (Img.Arch == Arch::Target && RelocType == Kind)                           \
+    return Img.recordRuntimeCallablePointerSlot(                               \
+        Slot, RuntimeCallablePointerSlotKind::ELFTLSDescriptor);
+#include "ELFDynamicRelocations.def"
+  return false;
+}
+
+std::optional<uint64_t> symbolRelocationValue(Arch Target, uint32_t RelocType,
+                                              uint64_t SymbolVA,
+                                              int64_t Addend) {
+#define NEVERD_ELF_SYMBOL_VALUE(TargetArch, Kind, AddsAddend)                  \
+  if (Target == Arch::TargetArch && RelocType == Kind)                         \
+    return SymbolVA + (AddsAddend ? static_cast<uint64_t>(Addend) : 0);
+#include "ELFDynamicRelocations.def"
+  return std::nullopt;
+}
+
 // ===--------------------------------------------------------------------===//
 // .dynamic section parsing
 // ===--------------------------------------------------------------------===//
@@ -345,6 +379,9 @@ void parseDynamic(const llvm::object::ELFFile<ELFT> &ELF,
     case DT_FINI_ARRAY:
       recordRuntimePointerArray(E.Val, FindVal(DT_FINI_ARRAYSZ),
                                 Img.DynInfo.FiniArray, Img);
+      break;
+    case DT_PLTGOT:
+      recordLazyBindingSlots(E.Val, sizeof(typename ELFT::Addr), Img);
       break;
     default:
       break;

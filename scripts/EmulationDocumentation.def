@@ -63,6 +63,19 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "PRIO_PROCESS")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "id_t")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "process-priority")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "virtual-process-priority")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "getattrlist")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "fgetattrlist")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "getattrlistat")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ATTR_CMN_RETURNED_ATTRS")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "FSOPT_REPORT_FULLSIZE")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "FSOPT_PACK_INVAL_ATTRS")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "FSOPT_NOFOLLOW_ANY")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "common-attributes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "common-attributes-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "common-attributes-unsupported")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "kernel-pathconf")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "kernel-pathconf-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "kernel-pathconf-unsupported")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "getpgrp")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "getpgid")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "getsid")
@@ -1764,4 +1777,27 @@ NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "IntegerABI")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "0x11")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSectionTests, "WindowsSectionFixture.inc")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSectionTests, "WindowsThreadFixture.inc")
+#endif
+
+// Additional ordinary attribute read vocabulary.
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "getxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "fgetxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "listxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "flistxattr")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended_attributes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "extended-attributes-unsupported")
+#endif
+
+// Bounded variable-length object-name vocabulary.
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ATTR_CMN_NAME=1")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attrreference_t")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attr_dataoffset")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attr_length")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names-values")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "attribute-names-unsupported")
 #endif

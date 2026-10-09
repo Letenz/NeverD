@@ -73,6 +73,28 @@ class DarwinKernelReferenceTests(unittest.TestCase):
                 self.assertTrue((path.parent / "cycle").is_symlink())
                 self.assertEqual((path.parent / "dirlink").readlink(), Path("empty"))
                 self.assertFalse((path.parent / "dangling").exists())
+            elif command[1] in ("kernel-pathconf", "common-attributes", "extended-attributes", "attribute-names"):
+                self.assertEqual({item.name for item in path.parent.iterdir()},
+                                 {"data", "empty", "alias", "dangling", "cycle"})
+                self.assertEqual((path.parent / "alias").readlink(), Path("data"))
+                self.assertEqual((path.parent / "cycle").readlink(), Path("cycle"))
+                self.assertFalse((path.parent / "dangling").exists())
+            elif command[1] == "directory-link-roots":
+                catalogue = path.parent
+                self.assertEqual({item.name for item in catalogue.iterdir()}, {"data", "a", "b"})
+                for name, value in (("a/target", 11), ("b/target", 22),
+                                    ("a/d/c", 31), ("a/other/mark", 41),
+                                    ("b/other/mark", 42)):
+                    self.assertEqual((catalogue / name).read_bytes(), bytes([value]))
+                for name, target in (("b/l", "target"), ("b/dang", "missing"),
+                                     ("b/dirlink", "other"), ("b/self", "../a/d"),
+                                     ("a/d/inside", "../target")):
+                    self.assertEqual((catalogue / name).readlink(), Path(target))
+            elif command[1] == "mutable-initial-links":
+                self.assertEqual({item.name for item in path.parent.iterdir()},
+                                 {"data", "empty", "initial", "initial-dir"})
+                self.assertEqual((path.parent / "initial").readlink(), Path("data"))
+                self.assertEqual((path.parent / "initial-dir").readlink(), Path("empty"))
             elif command[1] in ("symbolic-link-mutations", "symbolic-link-creation", "symbolic-link-unlink", "symbolic-link-rename"):
                 catalogue = path.parent.parent
                 self.assertEqual({item.name for item in catalogue.iterdir()}, {"static", "work"})
@@ -85,22 +107,50 @@ class DarwinKernelReferenceTests(unittest.TestCase):
             else:
                 self.assertEqual({item.name for item in path.parent.iterdir()}, {"data", "empty"})
             return subprocess.CompletedProcess(command, 37, b"", b"")
-        with mock.patch.object(reference.subprocess, "run", side_effect=execute):
+        with (mock.patch.object(reference.subprocess, "run", side_effect=execute),
+              mock.patch.object(reference, "set_native_attribute") as attributes):
             results = reference.execute_cases(Path("native"),
                 [("directory-entries", 37, b""), ("symbolic-links", 37, b""),
                  ("symbolic-link-mutations", 37, b""),
                  ("symbolic-link-creation", 37, b""),
                  ("symbolic-link-unlink", 37, b""),
                  ("symbolic-link-rename", 37, b""),
-                 ("directory-entries", 37, b"")])
+                 ("mutable-initial-links", 37, b""),
+                 ("directory-link-roots", 37, b""),
+                 ("directory-entries", 37, b""),
+                 ("kernel-pathconf", 37, b""), ("common-attributes", 37, b""),
+                 ("extended-attributes", 37, b""), ("attribute-names", 37, b"")])
+            self.assertEqual(attributes.call_count, 3)
+            self.assertEqual([(call.args[1], call.args[2]) for call in attributes.call_args_list],
+                             [("user.neverd.beta", b"\x00\xffA\x00\x80B\n"),
+                              ("user.neverd.alpha", b"alpha"), ("user.neverd.empty", b"")])
         self.assertTrue(all(result["passed"] for result in results))
-        self.assertEqual(roots[0], roots[6])
+        self.assertEqual(roots[0], roots[8])
+        self.assertNotIn(roots[9], roots[:9])
+        self.assertNotIn(roots[10], roots[:10])
+        self.assertNotIn(roots[11], roots[:11])
+        self.assertNotIn(roots[12], roots[:12])
         self.assertNotEqual(roots[0], roots[1])
         self.assertNotIn(roots[2], roots[:2])
         self.assertNotIn(roots[3], roots[:3])
         self.assertNotIn(roots[4], roots[:4])
         self.assertNotIn(roots[5], roots[:5])
+        self.assertNotIn(roots[6], roots[:6])
+        self.assertNotIn(roots[7], roots[:7])
         self.assertTrue(all(not path.exists() for path in roots))
+
+    def test_native_attribute_setup_failures_preserve_the_case_and_do_not_run_it(self):
+        with (mock.patch.object(reference, "set_native_attribute",
+                                side_effect=OSError(1, "private seed refused")),
+              mock.patch.object(reference.subprocess, "run") as execute):
+            result = reference.execute_cases(Path("native"),
+                                             [("extended-attributes", 37, b"X")])
+        execute.assert_not_called()
+        self.assertEqual(len(result), 1)
+        self.assertFalse(result[0]["passed"])
+        self.assertIsNone(result[0]["exit_status"])
+        self.assertEqual(result[0]["error"], "native attribute setup failed")
+        self.assertIn("private seed refused", result[0]["setup_error"])
 
     def test_native_file_cases_receive_real_isolated_input_bytes(self):
         paths = []

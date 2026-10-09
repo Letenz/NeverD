@@ -406,6 +406,22 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
     for (const auto &[Mode, Expected] :
          {std::pair{"files", "66"},
           std::pair{"files-nocancel", "66"},
+          std::pair{"common-attributes", "41"},
+          std::pair{"common-attributes-values",
+                    emulation::darwin_test::CommonAttributesHex},
+          std::pair{"common-attributes-unsupported", "41"},
+          std::pair{"extended-attributes", "58"},
+          std::pair{"extended-attributes-values",
+                    emulation::darwin_test::ExtendedAttributesHex},
+          std::pair{"extended-attributes-unsupported", "58"},
+          std::pair{"attribute-names", "4e"},
+          std::pair{"attribute-names-values",
+                    emulation::darwin_test::AttributeNamesHex},
+          std::pair{"attribute-names-unsupported", "4e"},
+          std::pair{"kernel-pathconf", "43"},
+          std::pair{"kernel-pathconf-values",
+                    emulation::darwin_test::KernelPathConfHex},
+          std::pair{"kernel-pathconf-unsupported", "43"},
           std::pair{"writable-files", "303030303665"},
           std::pair{"writable-files-nocancel", "303030303665"},
           std::pair{"virtual-file-metadata",
@@ -414,6 +430,21 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"unlinked-file", "75"},
           std::pair{"created-file", "63"},
           std::pair{"created-file-metadata", "71"},
+          std::pair{"mutable-initial-links", "4d"},
+          std::pair{"virtual-mutable-initial-links",
+                    emulation::darwin_test::InitialSymbolicLinkMetadataHex},
+          std::pair{"directory-link-roots", "52"},
+          std::pair{"virtual-directory-link-roots",
+                    emulation::darwin_test::DirectoryLinkRootMetadataHex},
+          std::pair{"initial-directory-metadata", "49"},
+          std::pair{"virtual-initial-directory-metadata",
+                    emulation::darwin_test::InitialDirectoryMetadataHex},
+          std::pair{"directory-enumeration-mutations", "45"},
+          std::pair{"virtual-directory-enumeration",
+                    emulation::darwin_test::EnumerationMetadataHex},
+          std::pair{"created-namespace-metadata", "4e"},
+          std::pair{"virtual-created-namespace-metadata",
+                    emulation::darwin_test::NamespaceMetadataHex},
           std::pair{"renamed-file", "72"},
           std::pair{"renamed-directory", "64"},
           std::pair{"swapped-directory", "73"},
@@ -492,6 +523,12 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   const bool RenameLinks = ModeName.starts_with("symbolic-link-rename");
   const bool ProtectedLink =
       (UnlinkLinks || RenameLinks) && ModeName.ends_with("-protected");
+  const bool UnknownPathConf = ModeName == "kernel-pathconf-unsupported";
+  const bool UnknownAttributes = ModeName == "common-attributes-unsupported";
+  const bool UnknownXattrs = ModeName == "extended-attributes-unsupported";
+  const bool UnknownNames = ModeName == "attribute-names-unsupported";
+  const bool Incomplete = ProtectedLink || UnknownPathConf ||
+                          UnknownAttributes || UnknownXattrs || UnknownNames;
   const bool X64 = llvm::StringRef(File).ends_with("x86_64");
   SCOPED_TRACE(File);
   Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
@@ -642,6 +679,191 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
             .getAsObject())[field::DirectoryRemovable] = true;
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (ModeName == "created-namespace-metadata" ||
+      ModeName == "virtual-created-namespace-metadata" ||
+      ModeName == "mutable-initial-links" ||
+      ModeName == "virtual-mutable-initial-links" ||
+      ModeName == "initial-directory-metadata" ||
+      ModeName == "virtual-initial-directory-metadata") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Files)[field::FileUmask] = 0027;
+    (*Files)[field::FileCreationPolicy] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::NamespaceCreationPolicyJSON));
+    auto *M = Files->getArray(field::Files)
+                  ->front()
+                  .getAsObject()
+                  ->getObject(field::FileMetadata);
+    (*M)[field::FileFlags] = 0;
+    (*M)[field::FileLinkCount] = 1;
+    auto Parent =
+        llvm::cantFail(llvm::json::parse(emulation::darwin_test::MetadataJSON));
+    auto *PM = Parent.getAsObject();
+    (*PM)[field::FileMode] = 0040755;
+    (*PM)[field::FileInode] = 41;
+    (*PM)[field::Size] = 0;
+    (*PM)[field::FileBlocks] = 0;
+    (*PM)[field::FileFlags] = 0;
+    auto *Directory =
+        Files->getArray(field::Directories)->front().getAsObject();
+    (*Directory)[field::DirectoryMutable] = true;
+    (*Directory)[field::DirectorySwapRename] = true;
+    (*Directory)[field::FileMetadata] = std::move(Parent);
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName == "mutable-initial-links" ||
+      ModeName == "virtual-mutable-initial-links") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
+    auto *Root = Files->getArray(field::Directories)->front().getAsObject();
+    Root->erase(field::DirectoryContents);
+    auto M = *Files->getArray(field::Files)
+                  ->front()
+                  .getAsObject()
+                  ->getObject(field::FileMetadata);
+    M[field::FileMode] = 0120777;
+    M[field::FileInode] = 57;
+    M[field::Size] = 4;
+    (*Files)[field::SymbolicLinks] = llvm::json::Array{
+        llvm::json::Object{
+            {field::Path, "/initial"},
+            {field::SymbolicLinkTarget, "64617461"},
+            {field::SymbolicLinkMutable, true},
+            {field::FileMetadata, std::move(M)},
+            {field::SymbolicLinkMutationPolicy,
+             llvm::cantFail(llvm::json::parse(
+                 emulation::darwin_test::InitialSymbolicLinkPolicyJSON))}},
+        llvm::json::Object{{field::Path, "/initial-dir"},
+                           {field::SymbolicLinkTarget, "656d707479"},
+                           {field::SymbolicLinkMutable, true}}};
+    auto Parent = *Root->getObject(field::FileMetadata);
+    Parent[field::FileInode] = 42;
+    (*Files->getArray(field::Directories)
+          ->back()
+          .getAsObject())[field::FileMetadata] = std::move(Parent);
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName == "directory-link-roots" ||
+      ModeName == "virtual-directory-link-roots") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
+    (*Files)[field::WorkingDirectory] = "/";
+    (*Files)[field::FileUmask] = 0027;
+    (*Files)[field::FileCreationPolicy] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::NamespaceCreationPolicyJSON));
+    auto Metadata = [](uint64_t Inode, uint16_t Mode, uint64_t Size,
+                       uint64_t Blocks) {
+      auto M = llvm::cantFail(
+          llvm::json::parse(emulation::darwin_test::MetadataJSON));
+      auto *Record = M.getAsObject();
+      (*Record)[field::FileInode] = Inode;
+      (*Record)[field::FileMode] = Mode;
+      (*Record)[field::Size] = Size;
+      (*Record)[field::FileBlocks] = Blocks;
+      (*Record)[field::FileLinkCount] = 1;
+      (*Record)[field::FileFlags] = 0;
+      return M;
+    };
+    llvm::json::Array Directories;
+    uint64_t Inode = 41;
+    for (const char *Name : {"/", "/a", "/a/d", "/a/other", "/b", "/b/other"}) {
+      const llvm::StringRef PathName(Name);
+      llvm::json::Object D{
+          {field::Path, Name},
+          {field::FileMetadata, Metadata(Inode++, 0040755, 0, 0)}};
+      if (PathName == "/" || PathName == "/a" || PathName == "/b" ||
+          PathName == "/a/d")
+        D[field::DirectoryMutable] = true;
+      if (PathName == "/a" || PathName == "/b" || PathName == "/a/d") {
+        D[field::DirectoryMovable] = true;
+        D[field::DirectorySwapRename] = true;
+      }
+      if (PathName == "/a/d") {
+        D[field::DirectoryExchangeable] = true;
+        D[field::DirectoryMutationPolicy] = llvm::cantFail(llvm::json::parse(
+            emulation::darwin_test::InitialDirectoryMutationPolicyJSON));
+      }
+      Directories.push_back(std::move(D));
+    }
+    (*Files)[field::Directories] = std::move(Directories);
+    llvm::json::Array Contents;
+    Inode = 101;
+    for (const auto &[Name, Bytes] :
+         {std::pair{"/a/d/c", "1f"}, std::pair{"/a/other/mark", "29"},
+          std::pair{"/a/target", "0b"}, std::pair{"/b/other/mark", "2a"},
+          std::pair{"/b/target", "16"}})
+      Contents.push_back(llvm::json::Object{
+          {field::Path, Name},
+          {field::Bytes, Bytes},
+          {field::FileMetadata, Metadata(Inode++, 0100644, 1, 8)}});
+    (*Files)[field::Files] = std::move(Contents);
+    llvm::json::Array Links;
+    Inode = 57;
+    for (const auto &[Name, Target] :
+         {std::pair{"/b/l", "target"}, std::pair{"/b/dang", "missing"},
+          std::pair{"/b/dirlink", "other"}, std::pair{"/b/self", "../a/d"},
+          std::pair{"/a/d/inside", "../target"}}) {
+      const llvm::StringRef RawTarget(Target);
+      Links.push_back(llvm::json::Object{
+          {field::Path, Name},
+          {field::SymbolicLinkTarget, llvm::toHex(RawTarget)},
+          {field::SymbolicLinkMutable, true},
+          {field::FileMetadata,
+           Metadata(Inode++, 0120777, RawTarget.size(), 8)},
+          {field::SymbolicLinkMutationPolicy,
+           llvm::cantFail(llvm::json::parse(
+               emulation::darwin_test::InitialSymbolicLinkPolicyJSON))}});
+    }
+    (*Files)[field::SymbolicLinks] = std::move(Links);
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName == "initial-directory-metadata" ||
+      ModeName == "virtual-initial-directory-metadata") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    auto *Directory = Input.getAsObject()
+                          ->getObject(field::DarwinFiles)
+                          ->getArray(field::Directories)
+                          ->front()
+                          .getAsObject();
+    (*Directory)[field::DirectoryMutationPolicy] =
+        llvm::cantFail(llvm::json::parse(
+            emulation::darwin_test::InitialDirectoryMutationPolicyJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName == "directory-enumeration-mutations" ||
+      ModeName == "virtual-directory-enumeration") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
+    (*Files)[field::FileUmask] = 0027;
+    (*Files)[field::FileCreationPolicy] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::NamespaceCreationPolicyJSON));
+    auto *M = Files->getArray(field::Files)
+                  ->front()
+                  .getAsObject()
+                  ->getObject(field::FileMetadata);
+    (*M)[field::FileFlags] = 0;
+    (*M)[field::FileLinkCount] = 1;
+    auto Parent =
+        llvm::cantFail(llvm::json::parse(emulation::darwin_test::MetadataJSON));
+    auto *PM = Parent.getAsObject();
+    (*PM)[field::FileMode] = 0040755;
+    (*PM)[field::FileInode] = 41;
+    (*PM)[field::Size] = 0;
+    (*PM)[field::FileBlocks] = 0;
+    (*PM)[field::FileFlags] = 0;
+    auto *Directory =
+        Files->getArray(field::Directories)->front().getAsObject();
+    Directory->erase(field::DirectoryContents);
+    (*Directory)[field::DirectoryMutable] = true;
+    (*Directory)[field::DirectorySwapRename] = true;
+    (*Directory)[field::FileMetadata] = std::move(Parent);
+    (*Directory)[field::DirectoryEnumerationPolicy] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::EnumerationPolicyJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
   if (ModeName == "symbolic-links") {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
@@ -716,14 +938,42 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     }
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (ModeName.starts_with("common-attributes")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::CommonAttributesJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName.starts_with("attribute-names")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::AttributeNamesJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName.starts_with("extended-attributes")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::ExtendedAttributesJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName.starts_with("kernel-pathconf")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::KernelPathConfJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
   auto Text = takeString(neverd_emulate_process_json(Session, Path.c_str(),
                                                      Profile, Options.c_str()));
   ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
   auto Report = llvm::json::parse(Text);
   ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
   EXPECT_EQ(Report->getAsObject()->getString(field::Stop),
-            ProtectedLink ? "unsupported_service" : "exited");
-  if (ProtectedLink) {
+            Incomplete ? "unsupported_service" : "exited");
+  if (Incomplete) {
     ASSERT_NE(Report->getAsObject()->get(field::ExitStatus), nullptr);
     EXPECT_EQ(*Report->getAsObject()->get(field::ExitStatus),
               llvm::json::Value(nullptr));
@@ -731,6 +981,47 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
   }
   EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
+  if (UnknownAttributes || UnknownNames) {
+    EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
+              UnknownNames ? "Darwin object name is outside the bounded UTF-8 "
+                             "catalogue contract"
+                           : "Darwin selected file attributes are not modeled");
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    ASSERT_FALSE(Services->empty());
+    const auto *Last = Services->back().getAsObject();
+    ASSERT_NE(Last, nullptr);
+    EXPECT_EQ(Last->getString(field::Number), X64 ? "20000dc" : "dc");
+    EXPECT_EQ(Last->get(field::Error), nullptr);
+    ASSERT_NE(Last->get(field::Result), nullptr);
+    EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+    EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+  }
+  if (UnknownXattrs) {
+    EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
+              "Darwin extended-attribute observations are unknown");
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    ASSERT_FALSE(Services->empty());
+    const auto *Last = Services->back().getAsObject();
+    ASSERT_NE(Last, nullptr);
+    EXPECT_EQ(Last->getString(field::Number), X64 ? "20000ea" : "ea");
+    EXPECT_EQ(Last->get(field::Error), nullptr);
+    ASSERT_NE(Last->get(field::Result), nullptr);
+    EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+  }
+  if (UnknownPathConf) {
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    ASSERT_FALSE(Services->empty());
+    const auto *Last = Services->back().getAsObject();
+    ASSERT_NE(Last, nullptr);
+    EXPECT_EQ(Last->getString(field::Number), X64 ? "20000bf" : "bf");
+    EXPECT_EQ(Last->get(field::Error), nullptr);
+    ASSERT_NE(Last->get(field::Result), nullptr);
+    EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+    EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+  }
   if (UnlinkLinks) {
     // The guest validates target FD/map identity before emitting U. Also
     // require actual removal and repeated-removal errors in the public trace.
@@ -845,8 +1136,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
                        test::shellQuote(Options) +
                        test::redirectStdout(Output) + test::silenceStderr();
   EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            ProtectedLink ? process_cli::Incomplete
-                          : process_cli::GuestFailure);
+            Incomplete ? process_cli::Incomplete : process_cli::GuestFailure);
   auto Buffer = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Buffer));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())), *Report);

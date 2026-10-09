@@ -158,6 +158,13 @@ bool validateCanonicalVex3RegisterTail(
     const cs_insn *Insn, const cs_x86 &X86,
     const CanonicalVex3EncodingInfo &Encoding, size_t TrailingBytes = 0);
 
+/// Reuse the ordinary ModRM/SIB/displacement owner for scalar conversions.
+/// Prefix parsing and instruction-family register rules belong to the caller.
+bool validateCanonicalScalarConversionTail(
+    const cs_insn *Insn, const cs_x86 &X86, size_t TailOffset,
+    uint8_t SegmentPrefix, bool Is64Bit, uint16_t AddressSize,
+    unsigned BaseExtension, unsigned IndexExtension, const cs_x86_op &Operand);
+
 /// Load an EVEX vector memory source under a compact K-register mask.  Full
 /// tuples fault-suppress each inactive lane.  Broadcast tuples perform at most
 /// one scalar load when any destination lane is active and then replicate it.

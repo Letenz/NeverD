@@ -36,6 +36,66 @@ backend evidence, not as semantic success.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
+## Scalar x86 floating-point state
+
+`NeverDX86FPStateAccuracyTests` compares original scalar SSE byte fixtures
+against actual NeverD Codegen objects and standalone HighC/LLVMC source.
+Default/NoOpt IR and C O0/O2 cover all four rounding modes, DAZ/FTZ, seeded
+sticky status, signed zeros, subnormals, infinities and different NaN payloads
+in both operand orders. Complete memory and MXCSR observations also cover dead
+numerical results, repeated operations, branches and loop joins. Bounded
+native children verify unmasked divide-by-zero before numerical output is
+committed. The concrete evaluator runs the same scalar state matrix against
+an independent native SSE oracle; malformed contracts and unknown callee state
+must refuse. Standalone source also checks typed state bits, helper-name
+collisions and unaligned state memory at C O0/O2 with UB traps.
+Actual scalar C return observers verify numerical bit patterns and MXCSR,
+including NaN payloads and signed zeros, at both source optimization levels.
+MedIR controls distinguish a complete numerical slice from the whole state
+aggregate, status bytes, a partial slice or a narrowed copy. The accompanying
+`NeverDSysVCallContractTests` execute internal and loader-bound math calls,
+including mixed FP/integer parameters, while retaining mixed-aggregate evidence
+for unknown imports and same-name local functions. Windows uses Clang's own
+dynamic ASan runtime beside each private test executable; both address and
+undefined-behavior checks remain enabled.
+Native execution requires an x64 host and Clang; the in-process SSE oracle
+additionally requires GCC/Clang. Skips on other hosts are explicit.
+This suite does not establish packed FP, VEX or x87 state coverage.
+
+`NeverDX86FPConversionAccuracyTests` separately covers signed scalar
+CVTSS2SI/CVTSD2SI and CVTTSS2SI/CVTTSD2SI, including their VEX forms. Independent
+32/64-bit source and destination widths, register and memory sources, every
+MXCSR rounding mode, DAZ/FTZ, sticky status, integer boundaries, NaNs and
+subnormals are compared against native instructions. The byte fixtures execute
+through bundled LLVM Codegen with default/NoOpt pipelines and standalone
+HighC/LLVMC at O0/O2. Complete memory and MXCSR observers cover dead results and
+32-bit GPR zero-extension. Bounded native children verify unmasked invalid and
+precision exceptions before output stores; the concrete evaluator retains the
+old aggregate on failure. Source controls check typed bit transport, allocated
+helper names and unaligned state memory with UB traps. Decode/lift controls
+reject reserved VEX fields and inconsistent address tails. Supported SIB,
+displacement, segment and extended-register controls also verify that
+VEX.W is ignored for the supported 32-bit destination in x86-32 mode. A
+64-bit integer destination in that mode is rejected at each IR/C boundary.
+Direct C return observers verify an integer result and MXCSR after a floating
+argument; default HighC and LLVMC emission must retain those results despite
+their state effects. LLVM vector argument carriers are passed using their
+recovered C types, rather than claiming scalar prototype recovery.
+This conversion suite does not certify packed, unsigned, EVEX/SAE or x87
+conversion state. Its native byte oracles require x64 and Clang; VEX byte
+oracles additionally require AVX.
+The pinned Capstone decoder currently refuses the legacy i386 address-override
+fixture `67 F2 0F 2D 00`; direct Capstone and NeverD decoding both fail before
+lifting. That form remains an unavailable decoder capability and is recorded
+separately from the supported conversion matrix.
+
+```bash
+cmake --build build-release --target NeverDX86FPStateAccuracyTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX86FPStateAccuracyTests$' --output-on-failure
+cmake --build build-release --target NeverDX86FPConversionAccuracyTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX86FPConversionAccuracyTests$' --output-on-failure
+```
+
 ## x86 invalid encodings and instruction boundaries
 
 `NeverDX86EncodingAccuracyTests` checks raw illegal LOCK forms and MOV-to-CS
@@ -3145,3 +3205,10 @@ These tests execute the model; they do not boot the eight pinned GKI kernels.
 See [released GKI contracts](android-gki-kernels.md).
 
 `FrameOffsets.Cached*` covers translated addresses with arbitrary high root bits, unsigned wrap, sum-shape changes, both cache modes, predicate separation, zero capacity, query/node budget refusals, and distinct empty/nonunique domains. Cold requests retain complete solver proofs; later translations may use an already completed proof with no remaining query budget.
+
+
+### Explicit Darwin extended-attribute reads
+
+`DarwinFileTest.Xattr*` exercises both4096/16384-byte pages, full/short/query buffers, name and carrier bounds, complete ordered list prefixes, aliases and inaccessible tails, transport/budget errors, CWD/link policy, dup/removal/name reuse, independent stat validity and content invalidation. `DarwinFileOptions.Xattr*` bounds names/count/bytes and implicit-directory entry costs; `ProcessReport.DarwinXattr*` rejects malformed records without losing UTF8/order/opaque bytes. `DarwinProcess.ExtendedAttributesPreserveValuesNamesAndObjectLifetime` is required for every available ARM64 HVF profile. The three original modes also run through C/CLI and the unchanged Python SDK integration method across five thin profiles.
+
+`extended-attributes` is the only new native case. The private runner seeds ordinary attributes on its own file after resetting bytes, then the original raw-call workload derives list boundaries from the provider’s actual names, including automatic provenance. Literal and unknown modes are virtual-only. Native5s, newguest/Python5,000,000us/quantum1024 and public10s remain unchanged. Negative buffers on an explicitly empty list are unsupported because the private clear operation never produced a verified native empty list. Native Intel/physical iOS remain unverified. Root-only serial epochs retain source, products, controller inputs, failures, timeout captures and reap evidence.

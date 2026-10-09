@@ -896,6 +896,22 @@ both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
 
+`ir/X86FPState.h` owns scalar SSE numerical/state contracts. Legacy
+ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate
+containing raw result bits and outgoing MXCSR, and commit that state. SUBBYTES
+defines both transports through ordinary SSA; auxiliary-output discovery and
+caller-clobbered pseudo-registers are not used. Imports occur at instruction
+boundaries, so a changed caller or callee environment is observed again.
+Native LLVM and both C routes lower the same operation-specific completion
+scope, retaining rounding, DAZ/FTZ, NaN source priority, sticky exceptions and
+unmasked traps. A discarded numerical result does not discard its state
+effect. The concrete emulator reuses its existing packed evaluator with one
+active lane, and an unknown stepped-over call invalidates imported MXCSR
+evidence. Its configured reset environment remains the concrete starting
+profile. Generic external FLOAT operations, packed FP, VEX arithmetic and
+remaining x87 control/TOP/tag semantics retain their separate contracts;
+this scalar state surface does not certify them.
+
 The experimental [interpreter recovery stage](interpreter-recovery.md)
 specializes strictly lifted LowIR before the common MedIR boundary. Its
 provider owns immutable image evidence, `SymExec` owns instruction semantics,

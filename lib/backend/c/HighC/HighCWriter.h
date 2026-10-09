@@ -659,7 +659,37 @@ public:
   /// The x87 helpers the output calls, and whether it computes with the
   /// x87 extended `long double`.
   std::set<X87CHelper> X87Helpers;
+  std::map<std::pair<Intrinsic, unsigned>, std::string> X86FPStateHelpers;
   bool UsesX87Extended = false;
+  /// How a function's debug declaration names and types its parameters.
+  struct DebugParamBinding {
+    enum class Kind : uint8_t {
+      /// By position: the declaration's index is the parameter's.
+      Positional,
+      /// By the register the ABI passes each declared parameter in.
+      Located,
+    };
+    Kind TheKind = Kind::Positional;
+    /// Under a located binding, the declared parameter of each parameter
+    /// the body reads from a register that passes one.
+    std::map<int, size_t> DebugOfId;
+    /// The parameters the body reads.
+    std::set<int> ReadIds;
+  };
+  /// By function and entry: a unit can hold two bodies of one entry.
+  mutable std::map<std::pair<const HighFunc *, va_t>, DebugParamBinding>
+      DebugParamBindings;
+  const DebugParamBinding &debugParamBinding(const HighFunc &Func) const;
+  /// The declared parameter that parameter \p ParamId of \p Func takes its
+  /// name and type from; \p Adjusted is the position a hidden result pointer
+  /// shifts it to under a positional binding.
+  std::optional<size_t> debugParamIndex(const HighFunc &Func, int ParamId,
+                                        size_t Adjusted) const;
+  /// The bytes a plain access of the C memory type \p Type copies inline: 0
+  /// for its whole object, the value's bytes for a bit-precise integer
+  /// narrower than its storage on a little-endian target, none when only
+  /// the byte-order-aware helper reads it.
+  std::optional<unsigned> inlineMemoryBytes(llvm::StringRef Type) const;
   /// An x87 extended value: what `long double` holds.
   static bool isX87Value(const HighExpr &E);
   /// The x87 helper \p E prints through, if any.

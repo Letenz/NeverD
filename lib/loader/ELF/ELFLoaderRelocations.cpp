@@ -193,6 +193,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
             RE.HasExplicitAddend ? std::optional<int64_t>(RE.Addend)
                                  : std::nullopt,
             Img);
+        elf_loader::recordRuntimeCallableRelocation(RE.Type, RE.Address, Img);
         // The dynamic linker writes the symbol's address; a REL slot's
         // implicit addend is not added.
         elf_loader::recordImportSlotBinding(
@@ -389,6 +390,15 @@ void applyDynamicRelativeRelocations(
         !rangeInBounds(SH.sh_offset, SH.sh_size, Size))
       continue;
 
+    // The symbols the section's relocations name, for slots bound to a
+    // definition in this file.
+    llvm::ArrayRef<typename ELFT::Sym> Symbols;
+    if (SH.sh_link < Sections.size()) {
+      if (auto SymsOr = ELF.symbols(&Sections[SH.sh_link]))
+        Symbols = *SymsOr;
+      else
+        llvm::consumeError(SymsOr.takeError());
+    }
     const size_t Count = static_cast<size_t>(SH.sh_size / SH.sh_entsize);
     for (size_t I = 0; I < Count; ++I) {
       const uint64_t EntryOff =
@@ -419,9 +429,30 @@ void applyDynamicRelativeRelocations(
           continue;
         TargetVA = readPtr(Existing, ELFT::Is64Bits);
       }
-      if (Symbol != 0 || !IsRelative(Type))
+      if (Symbol == 0) {
+        if (IsRelative(Type))
+          ApplyPointerSlot(SlotVA, TargetVA);
         continue;
-      ApplyPointerSlot(SlotVA, TargetVA);
+      }
+      // A slot bound to a symbol this file defines: the dynamic linker
+      // writes its address -- or, for a GNU indirect function, what its
+      // resolver returns -- unless another module interposes a definition.
+      // TargetVA holds the explicit or the implicit addend.
+      if (Symbol >= Symbols.size())
+        continue;
+      const typename ELFT::Sym &Sym = Symbols[Symbol];
+      if (Sym.st_shndx == llvm::ELF::SHN_UNDEF ||
+          Sym.st_shndx >= llvm::ELF::SHN_LORESERVE || Sym.st_value == 0 ||
+          Sym.getType() == llvm::ELF::STT_TLS)
+        continue;
+      const std::optional<uint64_t> Value = elf_loader::symbolRelocationValue(
+          Img.Arch, Type, Sym.st_value, static_cast<int64_t>(TargetVA));
+      if (!Value)
+        continue;
+      if (Sym.getType() == llvm::ELF::STT_GNU_IFUNC)
+        Img.IndirectFunctionSlots.insert(SlotVA);
+      else
+        ApplyPointerSlot(SlotVA, *Value);
     }
   }
 }
