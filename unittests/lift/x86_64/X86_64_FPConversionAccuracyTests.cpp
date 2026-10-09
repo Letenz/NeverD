@@ -499,6 +499,21 @@ protected:
                              : "UINT64_C(0x7ff0000000000000)");
       Replace("0x3f800000", PrecisionFault ? "0x3fc00000" : "0x7f800000");
       Replace("0x1d80", PrecisionFault ? "0x0f80" : "0x1f00");
+      Replace("static void on_fault(int signal_number) {\n"
+              "  _exit(signal_number == SIGFPE && numerical_output_untouched() "
+              "? 0 : 1);\n}",
+              "static void on_fault(int signal_number, siginfo_t *info, "
+              "void *context) {\n"
+              "  (void)context;\n  _exit(signal_number == SIGFPE && "
+              "info->si_code == " +
+                  std::string(PrecisionFault ? "FPE_FLTRES" : "FPE_FLTINV") +
+                  " && numerical_output_untouched() ? 0 : 1);\n}");
+      Replace(
+          "if (signal(SIGFPE, on_fault) == SIG_ERR) return 77;",
+          "struct sigaction action; memset(&action, 0, sizeof(action));\n"
+          "  action.sa_sigaction = on_fault; action.sa_flags = SA_SIGINFO;\n"
+          "  sigemptyset(&action.sa_mask);\n"
+          "  if (sigaction(SIGFPE, &action, 0)) return 77;");
       return Text;
     }
     auto Text = floatingDriver(IsDouble, DeclareProbe);
@@ -729,5 +744,116 @@ int main(void) {
       memory[0] != 0x59 || memory[5] != 0x73 || memory[6] != 0x91 || memory[7] != 0x25;
 }
 )");
+    }
+}
+
+TEST_F(X86FPConversionExecution, IntegerReturnAndFloatingArgumentKeepTheirAbi) {
+  if (!nativeX64())
+    GTEST_SKIP() << "native x64 host required";
+  for (bool IsDouble : {false, true})
+    for (unsigned Destination : {4U, 8U}) {
+      const std::string Scalar = IsDouble ? "double" : "float";
+      const std::string Integer =
+          "uint" + std::to_string(Destination * 8) + "_t";
+      std::vector<uint8_t> Bytes{static_cast<uint8_t>(IsDouble ? 0xf2 : 0xf3)};
+      if (Destination == 8)
+        Bytes.push_back(0x48);
+      Bytes.insert(Bytes.end(), {0x0f, 0x2d, 0xc0, 0xc3});
+      auto NativeText = assembly(Bytes);
+      for (size_t Position = 0;
+           (Position = NativeText.find("isa_probe", Position)) !=
+           std::string::npos;)
+        NativeText.replace(Position, 9, "native_probe");
+      const auto Native = file("abi-native.s");
+      const auto Object = file("abi-native.o");
+      write(Native, NativeText);
+      auto Built = command(Compiler, {"-c", Native, "-o", Object});
+      ASSERT_EQ(Built.Status, 0) << Built.Error;
+      std::string Driver = "\n#include <stdint.h>\n#include <string.h>\n"
+                           "#include <immintrin.h>\nextern " +
+                           Integer + " native_probe(" + Scalar +
+                           ");\n"
+                           "static const uint64_t values[] = {";
+      for (uint64_t Bits : conversionValues(IsDouble))
+        Driver += "UINT64_C(" + std::to_string(Bits) + "),";
+      Driver +=
+          "};\nint main(void) {\nuint32_t saved = _mm_getcsr();\n"
+          "for (unsigned rounding=0; rounding<4; ++rounding)\n"
+          "for (unsigned daz=0; daz<2; ++daz)\n"
+          "for (unsigned a=0; a<sizeof(values)/sizeof(values[0]); ++a) {\n"
+          "uint32_t state = 0x1f80 | (rounding << 13) | (daz ? 0x40 : 0);\n" +
+          Scalar +
+          " input; __builtin_memcpy(&input, &values[a], sizeof(input));\n"
+          "_mm_setcsr(state);\n" +
+          Integer +
+          " expected = native_probe(input);\n"
+          "uint32_t expected_state = _mm_getcsr();\n"
+          "_mm_setcsr(state);\n" +
+          Integer +
+          " actual = isa_probe(input);\n"
+          "uint32_t actual_state = _mm_getcsr();\n_mm_setcsr(saved);\n"
+          "if (expected != actual || expected_state != actual_state) "
+          "return 1;\n}\nreturn 0;\n}\n";
+      for (bool NoOpt : {false, true})
+        for (bool LLVM : {false, true}) {
+          SCOPED_TRACE(testing::Message()
+                       << Scalar << "->" << Integer << " NoOpt=" << NoOpt
+                       << " LLVMC=" << LLVM);
+          auto Image = image(Bytes);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.LiftMode = LLVM;
+          Options.SourceProjection = LLVM;
+          Options.NoOpt = NoOpt;
+          Options.EmitDumpOutput = false;
+          Options.OnlyFunctionEntries = {Entry};
+          auto Result = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          CEmitterOptions Emission;
+          Emission.TheArch = Arch::X64;
+          Emission.Format = hostFormat();
+          Emission.PreserveLLVMFunctionTypes = false;
+          std::string Source;
+          llvm::raw_string_ostream Out(Source);
+          auto TypedDriver = Driver;
+          if (LLVM) {
+            ASSERT_NE(Result.LlvmModule, nullptr);
+            ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, Emission,
+                                            nullptr, &Image));
+            const auto *Function = Result.LlvmModule->getFunction("isa_probe");
+            ASSERT_NE(Function, nullptr);
+            ASSERT_EQ(Function->arg_size(), 1U);
+            ASSERT_TRUE(Function->getReturnType()->isIntegerTy());
+            if (Function->getArg(0)->getType()->isVectorTy()) {
+              const std::string Call = Integer + " actual = isa_probe(input);";
+              const auto Position = TypedDriver.find(Call);
+              ASSERT_NE(Position, std::string::npos);
+              TypedDriver.replace(
+                  Position, Call.size(),
+                  "uint64_t __attribute__((vector_size(16))) incoming = "
+                  "{0,0};\n"
+                  "__builtin_memcpy(&incoming, &input, sizeof(input));\n" +
+                      Integer + " actual = isa_probe(incoming);");
+            }
+          } else {
+            ASSERT_EQ(Result.HighFuncs.size(), 1U);
+            const auto &Function = Result.HighFuncs.front();
+            ASSERT_EQ(Function.ReturnType->Kind, NdTypeKind::Int);
+            ASSERT_EQ(Function.Params.size(), 1U);
+            ASSERT_EQ(Function.Params.front().Type->Kind, NdTypeKind::Float);
+            ASSERT_EQ(Function.Params.front().Type->Size, IsDouble ? 8U : 4U);
+            ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Out, Emission));
+          }
+          const auto C = file("abi-return.c");
+          write(C, Source + TypedDriver);
+          for (const char *Optimization : {"-O0", "-O2"}) {
+            const auto Executable = file("abi-return.exe");
+            Built =
+                command(Compiler, {Optimization, Object, C, "-o", Executable});
+            ASSERT_EQ(Built.Status, 0) << Built.Error << Source;
+            const auto Actual = command(Executable, {});
+            EXPECT_EQ(Actual.Status, 0) << Actual.Out << Actual.Error << Source;
+          }
+        }
     }
 }

@@ -33,6 +33,12 @@ constexpr bool isX86FPConversionStateIntrinsic(Intrinsic Id) {
          Id == Intrinsic::X86FPTruncToIntState;
 }
 
+/// A state effect does not imply a void result. Reads and completed
+/// numerical/state aggregates produce values; only the explicit commit is void.
+constexpr bool x86FPStateReturnsValue(Intrinsic Id) {
+  return isX86FPStateIntrinsic(Id) && Id != Intrinsic::X86WriteMXCSR;
+}
+
 constexpr const char *x86FPStateConversionMnemonic(Intrinsic Id,
                                                    unsigned SourceBytes) {
   if (Id == Intrinsic::X86FPCvtToIntState)
