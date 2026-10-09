@@ -1292,14 +1292,6 @@
         <source>C</source>
         <translation>C</translation>
     </message>
-    <message>
-        <source>Rust</source>
-        <translation>Rust</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Go</translation>
-    </message>
 </context>
 <context>
     <name>Toolbars</name>

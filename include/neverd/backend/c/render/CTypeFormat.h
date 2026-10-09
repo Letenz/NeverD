@@ -32,7 +32,13 @@ namespace neverd {
 
 struct BinaryImage;
 
+/// \p Ty as C.  Throws std::invalid_argument for a type C cannot spell, such
+/// as a record with neither a source name nor a supported layout.
 std::string typeToC(const TypeRef &Ty);
+
+/// Whether typeToC spells \p Ty, for a caller that has another type to use
+/// when it does not, such as the machine type of a debug parameter.
+bool hasCSpelling(const TypeRef &Ty);
 
 /// Readonly printable C/wchar image bytes as `"..."` / `L"..."`.
 /// Non-ASCII or writable/executable bytes stay unnamed. Empty NUL-only

@@ -604,6 +604,13 @@ int runDecompile(neverd_session_t Sess) {
                                 "Go; use the whole-program output\n";
           return 1;
         }
+        // Rust and Go are offered for programs written in them.
+        if (Page->getString("mapping_status") == "unsupported_representation") {
+          WithColor::error() << Page->getString("reason").value_or(
+                                    "this view is not offered for this program")
+                             << '\n';
+          return 1;
+        }
         if (auto PageText = Page->getString("text"))
           Text += *PageText;
         const bool Complete = Page->getBoolean("complete").value_or(false);

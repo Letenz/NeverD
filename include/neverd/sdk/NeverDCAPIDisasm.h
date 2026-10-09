@@ -218,27 +218,30 @@ NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
 /// "low", "med", "c", "llvmc", "rust", "go" or "source"; "rust" and "go"
 /// spell the HighC page in that language and "source" in the function's own
 /// (Rust, Go or C), adding dialect, unread and source_names (where each
-/// source name such as core::fmt::write is). Offset is an absolute zero-based
-/// rendered line and Limit is 1..2048. Text is byte-for-byte the corresponding
-/// legacy IR dump slice. Rows carry line, object_id, kind, mapping_status,
-/// addresses (hex strings), and origin_seq when available. An instruction
-/// anchor identifies the originating instruction, not every contributing
-/// instruction after data propagation. Headers, PHIs and synthetic/unbound
-/// operations remain unmapped. Unsupported representations/architectures return
-/// an explicit mapping_status with empty rows and no text. Errors return NULL
-/// and set neverd_last_error. C source pages add library_regions with rule and
-/// identity evidence, precise original occurrences, foldable and spans.
-/// Optional function_identity shares raw/display/linkage names with
-/// neverd_resolve_addr; original direct-call regions add callee and
-/// callee_identity. Span begin_byte/end_byte are half-open UTF-8 byte offsets
-/// in the complete source; byte_offset locates this page in it. An unknown
-/// mapping stays unfolded. C source pages also carry prelude {lines,
-/// end_byte} when the emitter recorded where the function's definition
-/// begins: the whole lines before it (includes, support types and
-/// declarations) and the byte where the definition starts. Source text is
-/// always complete code, identical to the legacy C emitter. The page text is
-/// capped at 2 MiB; Low/Med retain no whole IR string for paging, while C
-/// renders one bounded function (at most 32 MiB). Object IDs are stable for a
+/// source name such as core::fmt::write is). "rust" and "go" are offered for
+/// an image with that language's code (neverd_headers_json's
+/// language.pseudocode); for another the page is mapping_status
+/// "unsupported_representation" with the reason. Offset is an absolute
+/// zero-based rendered line and Limit is 1..2048. Text is byte-for-byte the
+/// corresponding legacy IR dump slice. Rows carry line, object_id, kind,
+/// mapping_status, addresses (hex strings), and origin_seq when available. An
+/// instruction anchor identifies the originating instruction, not every
+/// contributing instruction after data propagation. Headers, PHIs and
+/// synthetic/unbound operations remain unmapped. Unsupported
+/// representations/architectures return an explicit mapping_status with empty
+/// rows and no text. Errors return NULL and set neverd_last_error. C source
+/// pages add library_regions with rule and identity evidence, precise original
+/// occurrences, foldable and spans. Optional function_identity shares
+/// raw/display/linkage names with neverd_resolve_addr; original direct-call
+/// regions add callee and callee_identity. Span begin_byte/end_byte are
+/// half-open UTF-8 byte offsets in the complete source; byte_offset locates
+/// this page in it. An unknown mapping stays unfolded. C source pages also
+/// carry prelude {lines, end_byte} when the emitter recorded where the
+/// function's definition begins: the whole lines before it (includes, support
+/// types and declarations) and the byte where the definition starts. Source
+/// text is always complete code, identical to the legacy C emitter. The page
+/// text is capped at 2 MiB; Low/Med retain no whole IR string for paging, while
+/// C renders one bounded function (at most 32 MiB). Object IDs are stable for a
 /// fixed analysis snapshot, not across revisions. Free the result with
 /// neverd_free_string().
 NEVERD_API const char *neverd_ir_view_json(neverd_session_t Sess,

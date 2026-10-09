@@ -225,9 +225,10 @@ copied into a comment.
 function as Rust, a Go function as Go and any other as C. The choice is made
 for each function, from its symbol, and for a function without one from the
 language the image was built in; the window says when it is not C
-(`Pseudocode-A (Rust)`). **C**, **Rust** and **Go** in the window's menu show
-every function in one of them. The Rust and Go views spell exactly what the C
-says. Each conversion C makes on its own is written out (`a as u32 + b as u32`,
+(`Pseudocode-A (Rust)`). A program with Rust or Go code also offers **C** in
+the window's menu, to read every function as C; a C or C++ program's
+Pseudocode is C, so its menu offers no other language. The Rust and Go views
+spell exactly what the C says. Each conversion C makes on its own is written out (`a as u32 + b as u32`,
 `uint32(a) + uint32(b)`), conditions compare with zero (`v != 0`,
 `!p.is_null()`, `p != nil`), memory is read and written through a pointer made
 from the address (`*((v0 + 8) as *mut i64)`, `*(*int64)(v0 + 8)`), and names
@@ -244,9 +245,11 @@ address space, is shown as C with the reason above it, and the status line
 counts them. Rust that avoids those forms compiles: the test suite builds the
 Rust view of a set of functions with rustc and checks that it computes what the
 C does. `neverd decompile --language=rust`, `go` or `source` prints the same
-views for the whole program or, with `--func`, one function; `source` reads
-native code in the image's language, EVM bytecode as Solidity and an SBF
-program as Rust.
+views for the whole program or, with `--func`, one function, and refuses Rust
+or Go for a program without that language's code; `source` reads native code
+in the image's language, EVM bytecode as Solidity and an SBF program as Rust.
+`neverd headers --json` lists the languages a program offers under
+`language.pseudocode`.
 
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
