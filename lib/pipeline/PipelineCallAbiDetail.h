@@ -35,6 +35,18 @@ struct PipelineResult;
 void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                           const std::map<va_t, std::string> &AllFuncNames);
 
+/// Give each call in \p Result exactly its callee's parameters, as the LLVM
+/// emitter does when it truncates a call to its callee's declaration: once
+/// every signature is final, a register the caller set for something else,
+/// still live at the call, is no argument of a callee that takes fewer.  (The
+/// recovery keeps such a register while a forwarder's parameters may still
+/// grow, and the LLVM route's escape checks see it there.)  A variadic callee
+/// takes what its caller passes, parameters bound to a source declaration
+/// need not count ABI positions, and an import's veneer, lifted like a
+/// function, takes the import's arguments.
+void matchCallsToCalleeSignatures(const BinaryImage &Img,
+                                  PipelineResult &Result);
+
 } // namespace neverd
 
 #endif // NEVERD_LIB_PIPELINE_PIPELINECALLABIDETAIL_H

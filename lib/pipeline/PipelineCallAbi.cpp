@@ -44,6 +44,16 @@ int callRecoveryTotalArity(const MedFunc &Func, int MaxParamIndex) {
   return Func.IsVariadic ? limits::kMaxCallArgs : MaxParamIndex + 1;
 }
 
+/// The integer register arguments a call to \p Func passes through: its
+/// register parameters through \p MaxRegisterIndex, but only the named ones
+/// of a variadic function whose save area spills the rest.
+int callRegisterArity(const MedFunc &Func, int MaxRegisterIndex) {
+  const int Arity = MaxRegisterIndex + 1;
+  return Func.IsVariadic && Func.VariadicFirstRegister >= 0
+             ? std::min(Arity, Func.VariadicFirstRegister)
+             : Arity;
+}
+
 /// Count FP arguments a callee takes from its entry-block live-in self-copies
 /// (`COPY D0,D0; COPY D1,D1; ...` before any real body).  Used to prime
 /// CalleeFPArity for intra-module callees (e.g. `mkD2`) before recoverCallAbi
@@ -143,7 +153,7 @@ void propagateForwardedCallArities(
     }
     std::sort(FPRegs.begin(), FPRegs.end());
 
-    const int RegArity = MaxRegIdx + 1;
+    const int RegArity = callRegisterArity(Probe, MaxRegIdx);
     const bool IsVariadicPublic =
         Probe.IsVariadic || (CalleeIsVariadic.count(Probe.Entry) != 0 &&
                              CalleeIsVariadic.at(Probe.Entry));
@@ -251,7 +261,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
           }
       CalleeConsumesVaList[MF.Entry] = ConsumesVaList;
       std::sort(FPRegs.begin(), FPRegs.end());
-      CalleeRegArity[MF.Entry] = MaxRegIdx + 1;
+      CalleeRegArity[MF.Entry] = callRegisterArity(MF, MaxRegIdx);
       CalleeTotalArity[MF.Entry] = callRecoveryTotalArity(MF, MaxIdx);
       CalleeHasSret[MF.Entry] = HasSret;
       CalleeIsVariadic[MF.Entry] = MF.IsVariadic;
@@ -455,6 +465,26 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                      &CalleeFPArity, &CalleeFPReturnSize, &CalleeFPRegs,
                      &CalleeHasSret, &CalleeIsVariadic, &CalleeConsumesVaList);
   }
+}
+
+void matchCallsToCalleeSignatures(const BinaryImage &Img,
+                                  PipelineResult &Result) {
+  std::map<va_t, const MedFunc *> ByEntry;
+  for (const MedFunc &MF : Result.MedFuncs)
+    ByEntry.emplace(MF.Entry, &MF);
+  for (MedFunc &MF : Result.MedFuncs)
+    for (MedCallInfo &CI : MF.CallInfos) {
+      const auto It =
+          CI.IsIndirect ? ByEntry.end() : ByEntry.find(CI.TargetAddr);
+      if (It == ByEntry.end())
+        continue;
+      const MedFunc &Callee = *It->second;
+      if (Callee.IsVariadic || Callee.SourceParametersBound ||
+          Img.findImportAt(Callee.Entry))
+        continue;
+      if (CI.Args.size() > Callee.Params.size())
+        CI.Args.resize(Callee.Params.size());
+    }
 }
 
 } // namespace neverd

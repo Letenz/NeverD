@@ -111,6 +111,11 @@ struct CallArgumentConvention {
   /// The argument count a platform prototype gives a named function (the
   /// WDK's, for Windows kernel routines), or nullopt.
   std::optional<size_t> (*PrototypeArgCount)(llvm::StringRef Name) = nullptr;
+  /// No callee summary gives a call its arguments: the HighIR route
+  /// recovers them, and the parameters a forwarder passes straight through,
+  /// from the setup each caller writes before its calls, as the LLVM route
+  /// does for every convention (recoverModuleCallAbi).
+  bool ArgumentsFromCallSetup = false;
   /// A function-pointer value spilled to the caller's frame is still there
   /// after a call to a leaf function whose writes all stay below its own
   /// entry stack pointer, so an indirect call's target can be followed
