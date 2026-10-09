@@ -255,6 +255,9 @@ private:
   uint64_t NextThreadSnapshot = value::ThreadSnapshotBase;
   uint32_t ThreadErrorMode = 0;
   bool ThreadHiddenFromDebugger = false;
+  // The process profile has one executing thread. Keep initialization and
+  // recursion authoritative instead of accepting fabricated guest fields.
+  std::map<uint64_t, uint32_t> CriticalSections;
   bool knownHeap(uint64_t Handle) const {
     if (Handle == value::HeapHandle)
       return true;

@@ -2001,6 +2001,10 @@ Signed: %4</source>
         <translation>Недавние файлы:</translation>
     </message>
     <message>
+        <source>No recent files. Choose New, or drop a file here.</source>
+        <translation>Нет недавних файлов. Выберите «Новый» или перетащите файл сюда.</translation>
+    </message>
+    <message>
         <source>Open binary or database</source>
         <translation>Открыть двоичный файл или базу данных</translation>
     </message>

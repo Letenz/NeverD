@@ -275,27 +275,17 @@ std::optional<uint64_t> symbolRelocationValue(Arch Target, uint32_t RelocType,
 
 template <typename ELFT>
 void parseDynamic(const llvm::object::ELFFile<ELFT> &ELF,
+                  llvm::ArrayRef<typename ELFT::Shdr> Sections,
                   const typename ELFT::Shdr &DynamicSH, const uint8_t *Data,
                   size_t Size, BinaryImage &Img) {
   using Elf_Dyn = typename ELFT::Dyn;
-  using Elf_Shdr = typename ELFT::Shdr;
   if (DynamicSH.sh_entsize < sizeof(Elf_Dyn) ||
       !rangeInBounds(DynamicSH.sh_offset, DynamicSH.sh_size, Size))
     return;
 
   llvm::StringRef DynStrTab;
-  auto GetShdr = [&](uint32_t Idx) -> const Elf_Shdr * {
-    auto SectionsOr = ELF.sections();
-    if (!SectionsOr) {
-      llvm::consumeError(SectionsOr.takeError());
-      return nullptr;
-    }
-    if (Idx >= SectionsOr->size())
-      return nullptr;
-    return &(*SectionsOr)[Idx];
-  };
-
-  if (const Elf_Shdr *StrSH = GetShdr(DynamicSH.sh_link)) {
+  if (DynamicSH.sh_link != 0 && DynamicSH.sh_link < Sections.size()) {
+    const typename ELFT::Shdr *StrSH = &Sections[DynamicSH.sh_link];
     auto TabOr = ELF.getStringTable(*StrSH);
     if (TabOr)
       DynStrTab = *TabOr;
@@ -397,20 +387,16 @@ void parseDynamic(const llvm::object::ELFFile<ELFT> &ELF,
 template <typename ELFT>
 void parsePLTImports(const llvm::object::ELFFile<ELFT> &ELF,
                      llvm::ArrayRef<typename ELFT::Shdr> Sections,
-                     const uint8_t *Data, size_t Size, BinaryImage &Img) {
+                     llvm::StringRef ShStrTab, const uint8_t *Data, size_t Size,
+                     BinaryImage &Img) {
   using Elf_Shdr = typename ELFT::Shdr;
   using Elf_Rel = typename ELFT::Rel;
   using Elf_Rela = typename ELFT::Rela;
 
   auto GetSecName = [&](const Elf_Shdr &SH) -> llvm::StringRef {
-    auto ShStrTabOr = ELF.getSectionStringTable(Sections);
-    if (!ShStrTabOr) {
-      llvm::consumeError(ShStrTabOr.takeError());
+    if (SH.sh_name >= ShStrTab.size())
       return {};
-    }
-    if (SH.sh_name >= ShStrTabOr->size())
-      return {};
-    return ShStrTabOr->substr(SH.sh_name).split('\0').first;
+    return ShStrTab.substr(SH.sh_name).split('\0').first;
   };
 
   const Elf_Shdr *DynSymSH = nullptr;
@@ -430,7 +416,7 @@ void parsePLTImports(const llvm::object::ELFFile<ELFT> &ELF,
   }
 
   if (DynSymSH) {
-    auto TabOr = ELF.getStringTableForSymtab(*DynSymSH);
+    auto TabOr = ELF.getStringTableForSymtab(*DynSymSH, Sections);
     if (TabOr)
       DynStr = *TabOr;
     else
@@ -602,21 +588,23 @@ void parseNotes(const llvm::object::ELFFile<ELFT> &ELF, const uint8_t *Data,
 
 template void parseDynamic<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,
+    llvm::ArrayRef<llvm::object::ELF32LE::Shdr>,
     const llvm::object::ELF32LE::Shdr &, const uint8_t *, size_t,
     BinaryImage &);
 template void parseDynamic<llvm::object::ELF64LE>(
     const llvm::object::ELFFile<llvm::object::ELF64LE> &,
+    llvm::ArrayRef<llvm::object::ELF64LE::Shdr>,
     const llvm::object::ELF64LE::Shdr &, const uint8_t *, size_t,
     BinaryImage &);
 
 template void parsePLTImports<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,
-    llvm::ArrayRef<llvm::object::ELF32LE::Shdr>, const uint8_t *, size_t,
-    BinaryImage &);
+    llvm::ArrayRef<llvm::object::ELF32LE::Shdr>, llvm::StringRef,
+    const uint8_t *, size_t, BinaryImage &);
 template void parsePLTImports<llvm::object::ELF64LE>(
     const llvm::object::ELFFile<llvm::object::ELF64LE> &,
-    llvm::ArrayRef<llvm::object::ELF64LE::Shdr>, const uint8_t *, size_t,
-    BinaryImage &);
+    llvm::ArrayRef<llvm::object::ELF64LE::Shdr>, llvm::StringRef,
+    const uint8_t *, size_t, BinaryImage &);
 
 template void parseGOTEntries<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,

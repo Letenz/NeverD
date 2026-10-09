@@ -65,6 +65,11 @@ struct FunctionSym {
   TypeRef ReturnType;
   std::vector<std::pair<std::string, TypeRef>> Params;
   DebugCallConv CallConv = DebugCallConv::Unknown;
+  /// The function follows the platform's C calling convention, as C, C++,
+  /// Objective-C and Rust code does.  False for a language with conventions
+  /// of its own, such as Go's register ABI, or one the debug information
+  /// does not name: no C placement rules locate its parameters.
+  bool PlatformConvention = true;
 
   bool contains(va_t Address) const {
     return Address >= Addr && Address - Addr < Size;

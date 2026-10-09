@@ -1003,6 +1003,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
       }
       TypeRef Named =
           NdType::makeNamedRecord(Name, boundedTypeSize(Union.getSize()));
+      Named->Passing = NdRecordPassing::Microsoft;
       noteRecordFields(Named, Union.getFieldList(), UseIpi);
       if (!Union.isForwardRef() && Walk == TpiWalk::Fields) {
         attachDisplayFields(Named, Union.getFieldList(), UseIpi, Depth);
@@ -1034,8 +1035,11 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
       if (Full && *Full != Self)
         return Recurse(*Full);
     }
+    // The program follows the Microsoft C++ ABI, whose class traits PDB
+    // does not record.
     TypeRef Named =
         NdType::makeNamedRecord(Name, boundedTypeSize(Rec.getSize()));
+    Named->Passing = NdRecordPassing::Microsoft;
     noteRecordFields(Named, Rec.getFieldList(), UseIpi);
     if (!Rec.isForwardRef() && Walk == TpiWalk::Fields) {
       attachDisplayFields(Named, Rec.getFieldList(), UseIpi, Depth);

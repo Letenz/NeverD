@@ -1111,6 +1111,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 `WindowsProcessFiles.cpp` 為 `KnownDlls` 中固定駐留、非不透明的提供者管理 `ZwOpenSection` 控制代碼。僅支援自動位址、零位移的完整檢視，內容來自載入器的不可變映像；`VirtualMemory` 記錄 `MEM_IMAGE` 所有權，`AddressSpace` 保留映像頁面權限。關閉控制代碼不會釋放檢視。不支援未知命名空間、寫入存取、部分或固定位址檢視，以及沒有既有 API 入口身分的執行。`IntegerABI` 統一定位 x64 與 ARM64 映射呼叫的兩個尾端參數，ULONG 欄位忽略未定義的高位元。目前執行緒資訊類別 `0x11` 保存隱藏狀態並嚴格檢查緩衝區長度；類別 `4` 將要求的親和性與模型公布的行程遮罩取交集；沒有可用處理器時傳回 `STATUS_INVALID_PARAMETER`。 唯讀 section 控制代碼要求 `PAGE_READWRITE` 時傳回 `STATUS_ACCESS_DENIED`，且不發布檢視。類別 `0x11` 保留 Windows 的探測順序：非空設定緩衝區要求 ULONG 對齊，查詢緩衝區從四位元組起要求相同對齊；零長度設定忽略輸入指標。
 
+目前執行緒的臨界區在 Kernel32 與 ntdll 呼叫之間共享初始化、遞迴進入、嘗試進入、平衡離開與刪除狀態。`DeleteCriticalSection` 與 `RtlDeleteCriticalSection` 要求物件已初始化且無人持有；刪除後可重新初始化。未初始化、重複初始化、已銷毀或損壞的狀態會在寫入前遭拒絕。Rtl 初始化傳回 NTSTATUS 零，BOOL 自旋初始化傳回真。單處理器設定的自旋計數為零，不模擬執行緒間競爭。
+
 `WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。ARM64 以堆疊框架為基礎的 SEH／展開、偵錯器派送及執行／防護頁例外仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。
 
 `os/windows/exception/X64SIMDException` 依據保留的 MXCSR 與原生觀察到的優先順序，統一負責真實 x64 `#XM` 的 Windows 狀態碼及參數分類。使用者態分發要求故障中繼資料一致，並在例外記錄中包含 `{0, MXCSR}`；僅有黏滯狀態位元不能證明發生了故障。 關於遮罩例外的 x64 指令說明描述可攜基線。KVM/WHP 為 `driver-strict`、`checked-x64-v1` 與 `checked-user-x64-v1` 增加 `precise_simd_exceptions`：原生啟動探針驗證精確 `#XM` 及兩種重試後，才允許未遮罩的 MXCSR 寫入、`LDMXCSR` 與 Windows `CONTEXT` 還原。`ExecutionProfiles.def` 統一負責選擇，`supportsSIMDExceptions` 提供已解析的實例能力。checked Unicorn 仍要求遮罩；本次不擴展 ARM64 或 HVF 的例外能力。
@@ -1190,6 +1192,8 @@ Combine 的精確強匯入 `Publisher.sink(receiveValue:)` 多載在 `Failure ==
 HighIR 在複製尾部呼叫前查詢 `SourceCallTypeHint::requiresUniqueSourceOccurrence`。布林結果、回呼參數、不可變目標、框架中的值見證、虛擬分派和原生 Swift 接收者憑據各自對應一次原始機器呼叫；返回尾部、跳轉尾部和巢狀出口改寫均保留共用求值位置，即使複製後的原始碼路徑互斥也不複製憑據。一般呼叫宣告繼續使用原有複製規則。發布仍重新證明目前的機器、ABI、運算元和動態目標，並要求唯一原始碼求值。測試涵蓋全部憑據類型、巢狀運算式、一般呼叫最佳化，以及完整 ARM64 共用儲存和回呼尾部與產生 C 在 O0/O2 下的對照。
 
 共用 `SourceABI` 所有者區分邏輯上的按值結構體與實體位址載體。Darwin ARM64 C 宣告中的六個或十六個 double 保留完整結構體型別，透過八位元組整數暫存器或自然對齊堆疊槽傳參，獨立於浮點引數暫存器與 x8 返回指標。ABI 相等判斷與投影分組保留此區別、呼叫慣例及引數角色，拒絕部分、重疊、不相容或過時載體。僅有宣告不能繫結 LowIR 呼叫、投影入口、輸出 HighC 呼叫或授權框架借用，仍需獨立副本儲存證明。編譯器與原生 ABI 測試涵蓋暫存器耗盡、堆疊配置、任意浮點位元模式、副本改寫隔離及獨立間接返回；這不是完整 `setTransform:` 恢復測試。
+
+除錯簽名依參數的到達位置而非序號為復原出的參數命名。`SourceParameterPlacement` 依目標的一般呼叫慣例放置每個原始碼參數：System V x86-64、Microsoft x64、AAPCS64 及 i386 cdecl/stdcall，各佔一個檔案。它給出承載各參數片段的暫存器與堆疊槽，以及隱藏的返回指標。HighC 將復原出的參數繫結到其暫存器或入口堆疊偏移處的片段；後續片段以參數名加位元組偏移命名（`p_8`），僅當該位置以原始位元組承載完整值時才採用宣告型別。放置在規則無法確定位置的第一個參數處停止：原始碼未說明傳遞方式的結構體、寬於暫存器的純量、對齊未知的記憶體傳遞結構體，或 Apple arm64 的堆疊緊湊排列。其後的參數保留機器名稱；Go 等擁有自身呼叫慣例的語言中的函式不做任何繫結。DWARF 載入器只為參數與返回型別提供傳遞方式和純量配置：C 結構體按值傳遞，C++ 類別依 `DW_AT_calling_convention` 的說明傳遞，`_Complex` 值按複數傳遞。Rust 結構體維持未知，因為 Rust 自身 ABI 與 `extern "C"` 對部分結構體的傳遞方式不同。PDB 結構體遵循 Microsoft C++ ABI：i386 以原始位元組傳遞，x64 則在同一位置以原始位元組或位址傳遞。呼叫原型與引數轉換仍只來自可依位置對應的簽名，即參數全為整數或全為浮點值。
 
 共享的 `SourceFrameAnalysis` 在獨立效果憑據說明消費方及完整間接結果產生者後，可驗證原始呼叫處已初始化的私有傳值副本。分析涵蓋全部到達路徑和迴圈回邊、精確有效範圍、其他引數別名及後續使用。消費副本會使初始化事實和已儲存位元組身分失效；後續讀取必須先有新的確定寫入。可能寫入和堆疊框架釋放也會清除初始化事實，同時保留 Swift scratch 的有效生命週期義務。查詢只有在完整框架恢復證明通過後才傳回引數範圍，不授予機器身分、SDK 效果、呼叫繫結或原始碼發布權限。測試涵蓋分支、迴圈、部分寫入、別名及保留的 scratch；真實 ObjC/CALayer 的 ARM64 案例拒絕讀取已消費副本，接受獨立證明已初始化且可捨棄的副本。
 

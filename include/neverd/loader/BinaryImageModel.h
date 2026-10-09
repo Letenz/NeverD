@@ -747,11 +747,25 @@ struct BinaryImage {
     return false;
   }
 
+  /// True when \p Addr in \p Seg holds the ELF file header or program
+  /// header table, which a load segment maps but no object data occupies.
+  bool isELFHeaderByte(const Segment &Seg, va_t Addr) const {
+    if (!ELFMetadata || Addr < Seg.VA || Addr - Seg.VA >= Seg.FileSz)
+      return false;
+    const uint64_t Offset = Seg.FileOff + (Addr - Seg.VA);
+    if (Offset < ELFMetadata->HeaderSize)
+      return true;
+    const uint64_t TableSize = uint64_t(ELFMetadata->ProgramHeaderEntrySize) *
+                               ELFMetadata->ProgramHeaders.size();
+    return Offset >= ELFMetadata->ProgramHeaderFileOffset &&
+           Offset - ELFMetadata->ProgramHeaderFileOffset < TableSize;
+  }
+
   /// True when \p Addr is backed by format-native object data, rather than
   /// merely falling inside a coarse readable load segment. Exact section
   /// metadata excludes executable bytes plus ELF/Mach-O headers and alignment
   /// gaps; section-less images conservatively fall back to non-executable
-  /// file-backed segments.
+  /// file-backed segments, less the ELF headers they map.
   bool hasObjectDataProvenance(va_t Addr) const {
     const Segment *Seg = getSegmentFor(Addr);
     if (!Seg || Seg->Data.empty() || Addr < Seg->VA ||
@@ -759,7 +773,7 @@ struct BinaryImage {
       return false;
 
     if (Sections.empty())
-      return !Seg->isExecutable();
+      return !Seg->isExecutable() && !isELFHeaderByte(*Seg, Addr);
     if (const Section *Sec = getSectionFor(Addr))
       return Sec->isReadable() &&
              (isMachO() ? !isCodeAddress(Addr) : !Sec->isExecutable());

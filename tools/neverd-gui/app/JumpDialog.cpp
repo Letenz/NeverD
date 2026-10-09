@@ -2,6 +2,7 @@
 
 #include "Address.h"
 #include "Icons.h"
+#include "SecondaryTextDelegate.h"
 #include "Session.h"
 #include "Theme.h"
 
@@ -48,8 +49,11 @@ JumpDialog::JumpDialog(Session &session, QWidget *parent)
   input_->setFont(Theme::instance().codeFont());
   input_->installEventFilter(this);
   layout->addWidget(input_);
-  matches_->setFont(Theme::instance().codeFont());
   matches_->setUniformItemSizes(true);
+  // Names read in the list's font; their addresses line up at the right.
+  QFont addresses = Theme::instance().codeFont();
+  addresses.setPointSize(matches_->font().pointSize());
+  matches_->setItemDelegate(new SecondaryTextDelegate(addresses, matches_));
   layout->addWidget(matches_, 1);
   layout->addWidget(hint_);
   auto *buttons = new QDialogButtonBox(
@@ -99,10 +103,9 @@ void JumpDialog::search() {
                                        ? "data_item"
                                        : "functions";
           auto *item = new QListWidgetItem(
-              icon(iconName),
-              QStringLiteral("%1   %2").arg(row.value("name").toString(),
-                                            displayAddress(*address, digits)),
-              matches_);
+              icon(iconName), row.value("name").toString(), matches_);
+          item->setData(SecondaryTextDelegate::SecondaryTextRole,
+                        displayAddress(*address, digits));
           item->setData(AddressRole, hexAddress(*address));
         }
         hint_->setText(

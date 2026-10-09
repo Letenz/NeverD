@@ -272,6 +272,11 @@ bool isCStringParameter(std::string_view Name, unsigned Index);
 std::optional<std::string_view> functionPointerParameter(std::string_view Name,
                                                          unsigned Index);
 
+/// Whether parameter \p Index of the standard C or POSIX function \p Name
+/// takes an object pointer (`memcpy`'s destination, `fputs`'s stream), which
+/// C does not convert an integer to.  Leading underscores are ignored.
+bool isObjectPointerParameter(std::string_view Name, unsigned Index);
+
 /// What a compiler stack-probe helper does (StackProbeRoutines.inc).
 enum class StackProbeEffect : uint8_t {
   /// Touches the frame's pages and changes nothing the program observes.
