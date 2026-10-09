@@ -6,10 +6,13 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/object/SectionNames.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -140,6 +143,40 @@ MedFunc makeLocalFunction(llvm::StringRef Name, va_t Entry = LocalVA) {
   return Func;
 }
 
+/// `jmp [Slot]` lifted at \p Entry: `RAX = call [Slot]; return RAX`.
+MedFunc makeSlotThunk(va_t Entry, va_t Slot) {
+  MedFunc Func;
+  Func.Entry = Entry;
+  Func.Name = "slot_thunk";
+  Func.ReturnType = NdType::makeInt(8);
+
+  MedVar Result;
+  Result.Kind = MedVar::Reg;
+  Result.TheArch = Arch::X64;
+  Result.Id = 1;
+  Result.SSAVer = 1;
+  Result.Size = 8;
+  Result.RegOff = getTargetRegInfo(Arch::X64).IntReturnReg;
+
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Entry;
+  Block.EndAddr = Entry + 8;
+  MedOp Call;
+  Call.Opcode = NdOp::INDIR_CALL;
+  Call.Addr = Entry;
+  Call.Output = Result;
+  Call.addInput(MedVar::makeConst(Slot, 8, ConstantAddressProvenance::Address));
+  Block.Ops.push_back(std::move(Call));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = Entry + 6;
+  Return.addInput(Result);
+  Block.Ops.push_back(std::move(Return));
+  Func.Blocks.push_back(std::move(Block));
+  return Func;
+}
+
 void expectValidModule(const llvm::Module &Module) {
   std::string Verification;
   llvm::raw_string_ostream OS(Verification);
@@ -208,6 +245,39 @@ TEST(LLVMImportVeneerBoundary,
   EXPECT_EQ(Module, nullptr);
   EXPECT_NE(Diagnostic.find("collides with a lifted symbol"), std::string::npos)
       << Diagnostic;
+}
+
+TEST(LLVMImportVeneerBoundary, ACallThroughASlotReturnsWhatTheImportDeclares) {
+  // calloc returns its allocation; free returns nothing, so what it leaves
+  // in RAX is no result of the thunk's.
+  for (const auto &[Name, ReturnsValue] :
+       {std::pair{"calloc", true}, std::pair{"free", false}}) {
+    SCOPED_TRACE(Name);
+    BinaryImage Image = makeCodePointerImage();
+    Image.CodePtrRelocSlots.clear();
+    addImport(Image, Name, IATVA);
+    // The PE loader binds each import's slot of the address table.
+    ASSERT_TRUE(Image.recordImportStorageSlot(
+        IATVA, Name, 0, ImportStorageEvidence::ImportDirectory));
+    llvm::LLVMContext Context;
+    auto Module = MedLLVMEmitter().emit(
+        {makeSlotThunk(LocalVA, IATVA)}, Context, "slot-thunk", Arch::X64,
+        importNames(Image), &Image, BinaryFormat::COFF);
+    ASSERT_NE(Module, nullptr);
+    expectValidModule(*Module);
+    const llvm::Function *Thunk = Module->getFunction("slot_thunk");
+    ASSERT_NE(Thunk, nullptr);
+    size_t Calls = 0;
+    bool Produces = false;
+    for (const llvm::BasicBlock &Block : *Thunk)
+      for (const llvm::Instruction &Instruction : Block)
+        if (llvm::isa<llvm::CallInst>(Instruction)) {
+          ++Calls;
+          Produces |= llvm_value_provenance::isSemanticProducer(Instruction);
+        }
+    EXPECT_EQ(Calls, 1u);
+    EXPECT_EQ(Produces, ReturnsValue);
+  }
 }
 
 TEST(LLVMImportVeneerBoundary, AStubLiftedUnderItsImportNameLeavesTheName) {

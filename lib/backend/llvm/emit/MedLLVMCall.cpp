@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
@@ -811,6 +812,28 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     Emitted->setMetadata(language_eh_md::InternalSourceCallAttachment,
                          llvm::MDNode::get(*Ctx, {Address}));
     CallSiteAddrs[Emitted] = Op.Addr;
+    // A routine whose C declaration returns a value returns one: its result
+    // is not what a void routine leaves in the return register.  The routine
+    // is the external one called, or the import whose slot is called through.
+    std::string ImportName;
+    if (const llvm::Function *Called = Emitted->getCalledFunction();
+        Called && Called->isDeclaration())
+      ImportName = Called->getName().str();
+    else if (Op.Opcode == NdOp::INDIR_CALL && Op.Inputs[0].isConst()) {
+      const va_t Slot = Op.Inputs[0].ConstVal;
+      if (auto It = EffectiveImportStorageSlots.find(Slot);
+          It != EffectiveImportStorageSlots.end() && It->second.Addend == 0)
+        ImportName = It->second.Name;
+      else if (const Import *Imp = Img ? Img->findImportAt(Slot) : nullptr;
+               Imp && Imp->IATAddr == Slot)
+        ImportName = Imp->Name;
+      if (!ImportName.empty())
+        ImportName =
+            llvm_name::fromObjectSymbol(ImportName, TargetFormat).str();
+    }
+    if (!ImportName.empty() &&
+        libc::libcReturnsValue(ImportName, TargetFormat).value_or(false))
+      llvm_value_provenance::markSemanticProducer(*Emitted);
   }
 
   if (Op.DoesNotReturn) {
