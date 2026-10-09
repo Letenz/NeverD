@@ -22,6 +22,7 @@
 
 #include <capstone/capstone.h>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -203,6 +204,10 @@ public:
   /// Whether \p Insn ends a function's straight-line decode.  Dispatches to
   /// the active architecture lifter's terminator classification.
   bool isFunctionTerminator(const DecodedInsn &Insn) const;
+
+  /// Whether \p Insn returns to a caller, as the active architecture
+  /// lifter classifies it, or nullopt when no lifter classifies returns.
+  std::optional<bool> returnsToCaller(const DecodedInsn &Insn) const;
 
   /// Direct (immediate) call target of \p Insn, or InvalidVA if \p Insn is
   /// not a direct call.  Dispatches to the active architecture lifter.

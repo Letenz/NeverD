@@ -1885,6 +1885,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       throw Error("invalid_request", "limit must be at least 1");
     prepareFunction(address);
     std::string mappingStatus = "unsupported_representation";
+    // Why the engine offers no page, such as Rust asked of a C program.
+    std::string reason;
     if (representation == "low" || representation == "med" ||
         representation == "c" || representation == "llvmc" || spelled) {
       if (auto named = namedViewPage(address, representation, offset, limit))
@@ -1895,6 +1897,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
             true);
         mappingStatus =
             result.value("mapping_status", std::string("unavailable"));
+        if (result.contains("reason") && result["reason"].is_string())
+          reason = result["reason"].get<std::string>();
         if (result.contains("text")) {
           if (!result["text"].is_string() ||
               result["text"].get_ref<const std::string &>().size() >
@@ -1911,7 +1915,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         mappingStatus = "unavailable_engine_api";
     }
     if (spelled)
-      throw Error("unavailable", error().empty()
+      throw Error("unavailable", !reason.empty() ? reason
+                                 : error().empty()
                                      ? "This representation is unavailable"
                                      : error());
     const auto key = hexAddress(address) + ":" + representation;

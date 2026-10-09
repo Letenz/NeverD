@@ -733,6 +733,19 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   if (Policy && Policy->ResolvePassThroughParams && CurMed)
     Policy->ResolvePassThroughParams(Ctx);
 
+  // A floating argument is the low bytes of its vector register the callee
+  // reads; the register's other lanes, perhaps never defined, are no part
+  // of it.
+  auto CallInput = [&](const MedOp &Call, unsigned Input) {
+    ExprPtr Value = medvarToExpr(Call.Inputs[Input]);
+    const uint16_t Width = Call.vectorArgumentWidth(Input);
+    if (Width && Value->Type && Width < Value->Type->Size) {
+      Value =
+          HighExpr::makeBinop(NdOp::SUBBYTES, Value, HighExpr::makeConst(0, 4));
+      Value->Type = NdType::makeInt(Width, false);
+    }
+    return Value;
+  };
   // A summarized callee published exactly the register arguments it reads
   // as the CALL's inputs (LowToMed); SSA already renamed them to the values
   // reaching the call, including a caller's pass-through argument.
@@ -742,7 +755,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     const int RegisterSlots = static_cast<int>(ParamRegs.size());
     for (int I = 0; I < RegisterSlots && I < MaxArgs; ++I)
       Found[I] = I < Call.CalleeRegisterArgs && 1 + I < Call.NumInputs
-                     ? medvarToExpr(Call.Inputs[1 + I])
+                     ? CallInput(Call, static_cast<unsigned>(1 + I))
                      : nullptr;
     // So did its floating arguments, which follow the register arguments
     // below: a vector register the scan above saw written is none, nor the
@@ -1222,19 +1235,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
         std::min(Args.size(), static_cast<size_t>(std::max(0, ReadSlots)));
     std::vector<ExprPtr> Vectors;
     for (int K = 0; K < Call.CalleeVectorArgs && First + K < Call.NumInputs;
-         ++K) {
-      // The callee reads the register's low bytes only; its other lanes,
-      // perhaps never defined, are no part of the argument.
-      ExprPtr Value = medvarToExpr(Call.Inputs[First + K]);
-      const uint16_t Width =
-          Call.vectorArgumentWidth(static_cast<unsigned>(First + K));
-      if (Width && Value->Type && Width < Value->Type->Size) {
-        Value = HighExpr::makeBinop(NdOp::SUBBYTES, Value,
-                                    HighExpr::makeConst(0, 4));
-        Value->Type = NdType::makeInt(Width, false);
-      }
-      Vectors.push_back(Value);
-    }
+         ++K)
+      Vectors.push_back(CallInput(Call, static_cast<unsigned>(First + K)));
     Args.insert(Args.begin() + static_cast<std::ptrdiff_t>(At), Vectors.begin(),
                 Vectors.end());
   }

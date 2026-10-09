@@ -577,8 +577,8 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 
 | 目錄 | 職責 | 重要相依 |
 |------|------|----------|
-| `lib/loader` | 格式偵測、PE/COFF、ELF、Mach-O 載入；正規化 `BinaryImage`；函式發現 | LLVM Object API |
-| `lib/lift` | 手寫 x86/i386、AArch64、ARM32 指令語意 | IR 資料型別 |
+| `lib/loader` | 格式偵測、PE/COFF、ELF、Mach-O 載入；正規化 `BinaryImage`；函式發現 | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | 手寫 x86/i386、AArch64、ARM32 指令語意 | IR 資料型別, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native 解碼並分派到架構 lifter | `NeverDIR`、`NeverDLift` |
 | `lib/ir` | 共用型別以及 LowIR、MedIR、HighIR、intrinsic 定義/轉換 | 四個 IR 子元件 |
 | `lib/pipeline` | 函式偵測與 Low/Med/High/LLVM 路徑編排 | IR、decode、lift、LLVM backend、除錯資訊、IR pass |
@@ -591,8 +591,10 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 | `lib/sigs` | 簽章解析、資料庫與比對 | Loader |
 | `lib/libc` | 已知 libc 名稱與呼叫模型支援 | 獨立元件 |
 | `lib/safety` | 提升 IR 上的堆積生命週期稽核與拷貝越界獵取 | Symbolic、Solver |
-| `lib/support` | 共用二進位載入 helper | Loader |
+| `lib/support` | 共用二進位載入輔助函式及獨立 SHA-256 | Support：Loader；Digest：LLVM Support/TargetParser |
 | `lib/translate` | 帶版本的 guest state/策略/退出、固定 runtime ABI、受檢 guest memory、產生 IR/目標檔/LinkGraph 稽核、sealed 原生連結，以及實驗性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 與 JITLink 契約 |
+
+`NeverDDigest` 在 `lib/support` 中負責既有的一次性 SHA-256 實作，保留執行時特性檢查與可攜回退，不依賴 Loader 或 IR。`loader/InputDigest.h` 保留為轉送標頭。`NeverDIRLowValidation` 負責 `lowUndefinedOperationDigest`，Lift 明確連結此元件。v1 身分保留原有域、小端序字、全部六個已儲存輸入槽、來源資訊及原始碼座標。最多 199 個操作使用不超過 64 KiB 的序列化緩衝；更長範圍使用原增量路徑。兩條路徑列舉相同欄位並保留證據檢查。
 
 ### 分析與化簡的架構歸屬
 

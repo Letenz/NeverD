@@ -234,8 +234,15 @@ void CodeText::clear() {
   cursorLine_ = cursorColumn_ = 0;
   anchor_.reset();
   marked_.clear();
+  sourceNames_.clear();
+  sourceNameIndex_.clear();
+  unread_ = 0;
   updateRange();
   viewport()->update();
+  if (!pageLanguage_.isEmpty()) {
+    pageLanguage_.clear();
+    emit languageChanged();
+  }
   emit statusChanged();
 }
 
@@ -1205,11 +1212,8 @@ CodeView::CodeView(Session &session, const QString &representation,
   layout->setSpacing(0);
   auto *bar = new QHBoxLayout;
   bar->setContentsMargins(4, 2, 4, 2);
-  for (const auto &entry : Representations)
-    selector_->addItem(
-        QCoreApplication::translate("Representations", entry.title),
-        QString::fromLatin1(entry.name));
-  selector_->setCurrentIndex(selector_->findData(representation));
+  selector_->addItem(QString(), representation);
+  updateRepresentations();
   bar->addWidget(selector_);
   fold_->setCheckable(true);
   fold_->setAutoRaise(true);
@@ -1236,6 +1240,9 @@ CodeView::CodeView(Session &session, const QString &representation,
       text_->load(*text_->function(), name);
     emit representationChanged(name);
   });
+  connect(&session_, &Session::opened, this, &CodeView::updateRepresentations);
+  connect(&session_, &Session::unloaded, this,
+          &CodeView::updateRepresentations);
   connect(text_, &CodeText::statusChanged, this, &CodeView::updateStatus);
   connect(text_, &CodeText::languageChanged, this, &CodeView::languageChanged);
   connect(fold_, &QToolButton::toggled, text_, &CodeText::setFolded);
@@ -1244,6 +1251,38 @@ CodeView::CodeView(Session &session, const QString &representation,
     const QSignalBlocker blocker(fold_);
     fold_->setChecked(text_->libraryFolded());
   });
+}
+
+void CodeView::updateRepresentations() {
+  // Pseudocode reads each function in its program's languages: C, and the
+  // Rust or Go a function was written in.  C beside it is the one other
+  // choice, for a program with another language; until a program says, it
+  // stays.
+  const auto pseudocode =
+      session_.metadata().value("language").toObject().value("pseudocode");
+  const bool otherLanguage =
+      !pseudocode.isArray() || pseudocode.toArray().size() > 1;
+  const auto offered = [&](const Representation &entry) {
+    return otherLanguage || QLatin1String(entry.name) != QLatin1String("c");
+  };
+  const QString current = selector_->currentData().toString();
+  {
+    const QSignalBlocker blocker(selector_);
+    selector_->clear();
+    for (const auto &entry : Representations)
+      if (offered(entry))
+        selector_->addItem(
+            QCoreApplication::translate("Representations", entry.title),
+            QString::fromLatin1(entry.name));
+  }
+  const int index = selector_->findData(current);
+  {
+    const QSignalBlocker blocker(selector_);
+    selector_->setCurrentIndex(index);
+  }
+  // A view the program does not offer shows Pseudocode instead.
+  if (index < 0)
+    selector_->setCurrentIndex(selector_->findData(pseudocodeRepresentation()));
 }
 
 void CodeView::showFunction(Address function) {

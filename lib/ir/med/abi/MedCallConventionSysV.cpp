@@ -21,9 +21,10 @@
 namespace neverd {
 
 namespace {
-/// Reading AL at entry is the variadic prologue's `test al, al`: no System V
-/// parameter is passed in RAX.  The alignment `push rax` before a call reads
-/// the whole register, which carries nothing, and is no such test.
+/// Reading exactly AL at entry is the variadic prologue's `test al, al`: no
+/// System V parameter is passed in RAX.  A wider read is no such test: an
+/// alignment `push rax` before a call reads the whole register, and
+/// `sete al; mov r14d, eax` copies bytes of RAX no caller set.
 bool readsVectorCount(const GPRReadWidths &Reads) {
   return Reads[x86reg::RAX / 8] == 1;
 }

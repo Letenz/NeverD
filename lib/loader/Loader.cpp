@@ -19,6 +19,8 @@
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/ObjectFileUtils.h"
 
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Support/MemoryBuffer.h"
 
@@ -60,6 +62,8 @@ std::vector<LoadCandidate> identifyFile(const std::filesystem::path &Path) {
   std::vector<LoadCandidate> Rows;
   auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path), /*IsText=*/false,
                                             /*RequiresNullTerminator=*/false);
+  // Whether no header names the file's format.
+  bool Headerless = false;
   if (Buffer) {
     // The loaders Loader::create picks for the file, in its order.
     const llvm::MemoryBufferRef Ref = (*Buffer)->getMemBufferRef();
@@ -76,6 +80,7 @@ std::vector<LoadCandidate> identifyFile(const std::filesystem::path &Path) {
     case BinaryFormat::EVM:
     case BinaryFormat::Unknown:
     case BinaryFormat::Raw:
+      Headerless = true;
       // Binary data under a name other tools share reads as bytecode only
       // when the user chooses so.
       switch (evm::matchEVMInput(Path)) {
@@ -99,6 +104,13 @@ std::vector<LoadCandidate> identifyFile(const std::filesystem::path &Path) {
   Binary.Format = BinaryFormat::Raw;
   Binary.Description = getLoadRowText(LoadRow::Binary).str();
   Binary.Loadable = true;
+  // When no header names a processor NeverD reads, only the bytes can.
+  if (Buffer &&
+      (Headerless || llvm::none_of(Rows, [](const LoadCandidate &Row) {
+         return Row.Loadable;
+       })))
+    Binary.ISA =
+        identifyISA(llvm::arrayRefFromStringRef((*Buffer)->getBuffer()));
   Rows.push_back(std::move(Binary));
   return Rows;
 }

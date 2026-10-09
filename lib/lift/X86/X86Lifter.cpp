@@ -1287,6 +1287,20 @@ bool X86Lifter::isFunctionTerminator(const cs_insn *I) {
   }
 }
 
+bool X86Lifter::isReturn(const cs_insn *I) {
+  switch (I->id) {
+  case X86_INS_RET:
+  case X86_INS_RETF:
+  case X86_INS_RETFQ:
+  case X86_INS_IRET:
+  case X86_INS_IRETD:
+  case X86_INS_IRETQ:
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool X86Lifter::isResumableTrap(const cs_insn *I) {
   return I->id == X86_INS_INT3;
 }

@@ -110,6 +110,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_TerminatorTests.cpp
   x86_64/X86_64_SwitchTests.cpp
   x86_64/X86_64_RoundTripTests.cpp
+  x86_64/X86_64_DebugRecordTests.cpp
   aarch64/AArch64_SwitchTests.cpp
   aarch64/AArch64_RoundTripTests.cpp
   arm32/ARM32_SwitchTests.cpp
@@ -2108,6 +2109,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_intrinsics_system.c
   x86_64/test_switch.c
   x86_64/test_roundtrip.c
+  x86_64/test_debug_records.c
   x86_64/test_jumptable_enhanced.c
   x86_64/test_jumptable_inclusive_postload_clobber.s
   x86_64/test_jumptable_inclusive_postload_unrelated.s
@@ -2125,6 +2127,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_selector_occurrence.s
   x86_64/test_jumptable_mask_equal_bound.s
   x86_64/test_module_address_owner_induction.s
+  x86_64/test_module_readonly_table_writer.s
   x86_64/test_twolevel_switch.c
   x86_64/test_jumptable_masked_abs.c
   x86_64/test_jumptable_worldclass.c
@@ -2390,6 +2393,9 @@ foreach(src ${X86_64_TEST_SOURCES})
     set(extra_flags -msse4.2 -mavx)
   elseif(src MATCHES "test_flags_misc")
     set(extra_flags -mbmi -mlzcnt -mpopcnt)
+  elseif(src MATCHES "test_debug_records")
+    # The records under test come from the DWARF description.
+    set(extra_flags -g)
   endif()
   add_custom_command(
     OUTPUT ${obj}
@@ -3469,3 +3475,9 @@ target_compile_definitions(NeverDLibraryRecognitionTests PRIVATE
 add_neverd_unittest(NeverDX86EncodingAccuracyTests
   x86_64/X86_64_EncodingAccuracyTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86SIMDAccuracyTests
+  x86_64/X86_64_SIMDAccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86SIMDAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)

@@ -747,8 +747,8 @@ CMake-Helper bereitgestellten LLVM- und Capstone-Bibliotheken.
 
 | Verzeichnis | Verantwortung | Wichtige Abhängigkeiten |
 |-------------|---------------|-------------------------|
-| `lib/loader` | Formaterkennung, PE/COFF-, ELF- und Mach-O-Laden, normalisiertes `BinaryImage`, Funktionserkennung | LLVM Object APIs |
-| `lib/lift` | Handgeschriebene x86/i386-, AArch64- und ARM32-Instruktionssemantik | IR-Datentypen |
+| `lib/loader` | Formaterkennung, PE/COFF-, ELF- und Mach-O-Laden, normalisiertes `BinaryImage`, Funktionserkennung | LLVM Object APIs, `NeverDDigest` |
+| `lib/lift` | Handgeschriebene x86/i386-, AArch64- und ARM32-Instruktionssemantik | IR-Datentypen, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native-Decodierung und Dispatch an Architektur-Lifter | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | Gemeinsame Typen sowie LowIR-, MedIR-, HighIR- und Intrinsic-Definitionen/-Transformationen | Vier IR-Unterkomponenten |
 | `lib/pipeline` | Funktionserkennung und Koordination der Low/Med/High/LLVM-Pfade | IR, decode, lift, LLVM-Backend, Debuginfo, IR-Pässe |
@@ -761,8 +761,10 @@ CMake-Helper bereitgestellten LLVM- und Capstone-Bibliotheken.
 | `lib/sigs` | Signaturparsing, Datenbanken und Matching | Loader |
 | `lib/libc` | Bekannte libc-Namen und Aufrufmodell-Unterstützung | Eigenständige Komponente |
 | `lib/safety` | Heap-Lebensdauer-Audit und Copy-Überlauf-Hunt auf geliftetem IR | Symbolic, Solver |
-| `lib/support` | Gemeinsame Hilfen zum Binärladen | Loader |
+| `lib/support` | Gemeinsame Binärladehilfen und unabhängiges SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | Versionierte Guest-State/Policy/Exit-Verträge, feste Runtime-ABI, geprüfter Guest-Speicher, Audits erzeugter IR/Objekte/LinkGraphs, versiegeltes natives Linken und der experimentelle C++-Dispatcher von x86-64 zu AArch64 | IR-, LLVM-, LLVM-Object- und JITLink-Verträge |
+
+`NeverDDigest` besitzt die bestehende SHA-256-Implementierung für einen Aufruf in `lib/support`, mit unveränderten Laufzeitprüfungen der CPU-Funktionen und portablem Rückfallpfad, ohne Loader- oder IR-Abhängigkeit. `loader/InputDigest.h` bleibt ein weiterleitender Header. `NeverDIRLowValidation` besitzt `lowUndefinedOperationDigest`; Lift bindet diesen Baustein ausdrücklich ein. Die v1-Identität behält Domäne, Little-Endian-Wörter, alle sechs gespeicherten Eingabeplätze, Herkunft und Quellkoordinaten bei. Bis zu 199 Operationen werden in höchstens 64 KiB serialisiert; größere Bereiche verwenden den ursprünglichen inkrementellen Pfad. Beide Pfade zählen dieselben Felder auf und erhalten die Evidenzprüfungen.
 
 ### Architekturgrenzen für Analyse und Vereinfachung
 

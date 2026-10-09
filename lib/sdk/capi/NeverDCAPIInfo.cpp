@@ -13,6 +13,7 @@
 #include "LibraryPresentation.h"
 #include "SessionImpl.h"
 
+#include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/evm/bytecode/EVMBytecode.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
 #include "neverd/loader/ExceptionCommon.h"
@@ -740,6 +741,11 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   for (const std::string &Item : Language.Evidence)
     Evidence.push_back(jsonSafeText(Item));
   LanguageInfo["evidence"] = std::move(Evidence);
+  // The languages its pseudocode reads in: C, and the program's own.
+  llvm::json::Array Pseudocode;
+  for (SourceDialect Dialect : offeredSourceDialects(Language))
+    Pseudocode.push_back(sourceDialectKey(Dialect));
+  LanguageInfo["pseudocode"] = std::move(Pseudocode);
   Root["language"] = std::move(LanguageInfo);
 
   llvm::json::Object Dyn;

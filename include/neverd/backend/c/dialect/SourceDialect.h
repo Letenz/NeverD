@@ -18,6 +18,7 @@
 #define NEVERD_BACKEND_C_DIALECT_SOURCEDIALECT_H
 
 #include "neverd/Common.h"
+#include "neverd/loader/ExceptionCommon.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -41,11 +42,22 @@ llvm::StringRef sourceDialectKey(SourceDialect Dialect);
 llvm::StringRef sourceDialectDisplayName(SourceDialect Dialect);
 std::optional<SourceDialect> sourceDialectFromKey(llvm::StringRef Key);
 
-/// The dialect a function reads best in: Rust for a Rust symbol, Go for a
-/// Go symbol, C for any other name; \p ImageDialect, the language of the
-/// image, for a function without a name of its own.
-SourceDialect sourceDialectOfSymbol(llvm::StringRef Symbol, bool Named,
-                                    SourceDialect ImageDialect);
+/// The dialect a runtime's code reads in other than C: Rust for Rust, Go for
+/// Go.
+std::optional<SourceDialect> dialectOfRuntime(SourceLanguageRuntime Runtime);
+
+/// The dialects an image's pseudocode is offered in: C, and Rust or Go where
+/// a runtime of the image is that language.  A C or C++ program reads in C
+/// alone.
+std::vector<SourceDialect>
+offeredSourceDialects(const LanguageRuntimeInfo &Language);
+
+/// The dialect a function of an image reads best in, among those the image
+/// is offered in: Rust for a Rust symbol, Go for a Go symbol, C for any
+/// other name, and the image's own language for a function the image does
+/// not name (\p Named false).
+SourceDialect sourceDialectOfFunction(llvm::StringRef Symbol, bool Named,
+                                      const LanguageRuntimeInfo &Language);
 
 struct SourceDialectOptions {
   SourceDialect Dialect = SourceDialect::C;

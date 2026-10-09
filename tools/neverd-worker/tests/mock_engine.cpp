@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -208,8 +209,13 @@ int neverd_session_set_load_options(neverd_session_t s, const char *json) {
   const Json options = Json::parse(json, nullptr, false);
   const std::string loader =
       options.is_object() ? options.value("loader", "auto") : "";
+  // A binary file's processor is named, or read from the bytes when absent
+  // or auto.
+  static const std::set<std::string> processors{
+      "", "auto", "x86", "x86_64", "arm", "thumb", "aarch64"};
   if ((loader != "auto" && loader != "evm" && loader != "binary") ||
-      (loader == "binary" && options.value("processor", "").empty())) {
+      (loader == "binary" &&
+       !processors.count(options.value("processor", "")))) {
     session(s)->error = "mock: unusable load options";
     return -1;
   }
@@ -222,8 +228,21 @@ const char *neverd_session_load_options_json(neverd_session_t s) {
 void neverd_session_set_debug_info_enabled(neverd_session_t s, int enabled) {
   session(s)->debugInfo = enabled != 0;
 }
-const char *neverd_headers_json(neverd_session_t) {
-  return copy(R"({"language":{"runtime":"c","secondary":[],"evidence":[]}})");
+const char *neverd_headers_json(neverd_session_t s) {
+  // The Rust and Go fixtures read in their own language too.
+  const std::string runtime =
+      session(s)->path.ends_with("pseudocode-rust.bin") ? "rust"
+      : session(s)->path.ends_with("pseudocode-go.bin") ? "go"
+                                                        : "c";
+  Json pseudocode = Json::array({"c"});
+  if (runtime != "c")
+    pseudocode.push_back(runtime);
+  return copy(Json{{"language",
+                    {{"runtime", runtime},
+                     {"secondary", Json::array()},
+                     {"evidence", Json::array()},
+                     {"pseudocode", pseudocode}}}}
+                  .dump());
 }
 
 // Deterministic fixture-only identity. The real engine uses SHA-256; the
@@ -615,7 +634,9 @@ std::string spelledPage(neverd_session_t s, neverd_va_t address,
                         std::size_t limit) {
   std::string language = representation;
   if (representation == "source")
-    language = session(s)->path.ends_with("pseudocode-rust.bin") ? "rust" : "c";
+    language = session(s)->path.ends_with("pseudocode-rust.bin") ? "rust"
+               : session(s)->path.ends_with("pseudocode-go.bin") ? "go"
+                                                                 : "c";
   std::string full;
   if (language == "c") {
     const char *c = neverd_decompile(s, address);

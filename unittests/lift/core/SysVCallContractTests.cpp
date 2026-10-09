@@ -28,6 +28,7 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <set>
 #include <string>
 #include <utility>
@@ -490,6 +491,64 @@ TEST(SysVCallContract, AFloatArgumentReachesAPrototypedImport) {
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
 }
 
+TEST(SysVCallContract, ACallerReturnsTheFloatItsImportReturns) {
+  // sin_twice(x) = sin(x + x): the result sin leaves in xmm0 is the one
+  // sin_twice returns, though no instruction of its own writes it.
+  constexpr va_t SinTwice = Text, Stub = Text + 0x20;
+  std::vector<uint8_t> Code(0x30, 0xCC);
+  std::vector<uint8_t> SinTwiceCode = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                       0xF2, 0x0F, 0x58,
+                                       0xC0,  // addsd xmm0, xmm0
+                                       0xE8}; // call sin
+  for (uint8_t B : rel32(SinTwice + 13, Stub))
+    SinTwiceCode.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                    0xC3})                  // ret
+    SinTwiceCode.push_back(B);
+  put(Code, SinTwice, SinTwiceCode);
+  const BinaryImage Img = makeImportImage(
+      Code, {{SinTwice, "sin_twice"}, {Stub, "sin_stub"}}, {{Stub, "sin"}});
+  const std::string Body =
+      body(liftEntries(Img, {SinTwice, Stub}), "sin_twice");
+  ASSERT_FALSE(Body.empty());
+  EXPECT_NE(Body.find("double sin_twice(double arg0)"), std::string::npos)
+      << Body;
+  EXPECT_NE(Body.find("return sin(arg0 + arg0);"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+}
+
+TEST(SysVCallContract, AForwarderReturnsTheFloatItsCalleeReturns) {
+  // forward(x) = twice(x) passes x on and returns twice's result in xmm0,
+  // writing neither itself.
+  constexpr va_t Twice = Text, Forward = Text + 0x10;
+  std::vector<uint8_t> Code(0x20, 0xCC);
+  put(Code, Twice,
+      {0xF2, 0x0F, 0x58, 0xC0,               // addsd xmm0, xmm0
+       0xC3});                               // ret
+  std::vector<uint8_t> ForwardCode = {0x50,  // push rax
+                                      0xE8}; // call twice
+  for (uint8_t B : rel32(Forward + 6, Twice))
+    ForwardCode.push_back(B);
+  for (uint8_t B : {0x59,  // pop rcx
+                    0xC3}) // ret
+    ForwardCode.push_back(B);
+  put(Code, Forward, ForwardCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Twice, "twice"}, {Forward, "forward"}}, {});
+  const std::string Source = liftEntries(Img, {Twice, Forward});
+  const std::string Body = body(Source, "forward");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("double forward(double arg0)"), std::string::npos)
+      << Body;
+  EXPECT_NE(Body.find("twice(arg0)"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+  compileAndRun(Source + R"(
+int main(void) {
+  return forward(1.5) == 3.0 && forward(-0.25) == -0.5 ? 0 : 1;
+}
+)");
+}
+
 TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
   // wrap(flag) picks the format in either arm of an `if` and calls
   // __fprintf_chk(0, 2, fmt) after the join: the format reaches the call as
@@ -790,6 +849,96 @@ TEST(SysVCallContract, AVariadicPrologueSpillReadsNoParameter) {
     EXPECT_NE(Body.find("wrapper(arg0)"), std::string::npos) << Body;
     EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
   }
+}
+
+TEST(SysVCallContract, ACopyOfEaxAfterSeteIsNoVectorCount) {
+  // is_slash(c) is `c == '/'`: GCC sets AL with sete and copies the whole of
+  // EAX, so the summary reads RAX's upper bytes as well.  Only a read of
+  // exactly AL is a variadic prologue's vector count, so the call still
+  // passes is_slash's one parameter, not the RSI the caller left set.
+  constexpr va_t IsSlash = Text, Caller = Text + 0x20;
+  std::vector<uint8_t> Code(0x40, 0xCC);
+  put(Code, IsSlash,
+      {0x83, 0xFF, 0x2F, // cmp edi, '/'
+       0x0F, 0x94, 0xC0, // sete al
+       0x89, 0xC2,       // mov edx, eax
+       0x89, 0xD0,       // mov eax, edx
+       0xC3});           // ret
+  std::vector<uint8_t> CallerCode = {
+      0x48, 0x83, 0xEC, 0x08,       // sub rsp, 8
+      0xBE, 0x03, 0x00, 0x00, 0x00, // mov esi, 3
+      0xBF, 0x5C, 0x00, 0x00, 0x00, // mov edi, '\\'
+      0xE8};                        // call is_slash
+  for (uint8_t B : rel32(Caller + CallerCode.size() + 4, IsSlash))
+    CallerCode.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                    0xC3})                  // ret
+    CallerCode.push_back(B);
+  put(Code, Caller, CallerCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{IsSlash, "is_slash"}, {Caller, "caller"}}, {});
+  const std::string Source = liftEntries(Img, {Caller});
+  const std::string Body = body(Source, "caller");
+  ASSERT_FALSE(Body.empty()) << Source;
+  const size_t Call = Body.find("is_slash(");
+  ASSERT_NE(Call, std::string::npos) << Body;
+  const std::string Line = Body.substr(Call, Body.find('\n', Call) - Call);
+  EXPECT_EQ(Line.find(','), std::string::npos) << Line;
+}
+
+TEST(SysVCallContract, GccSplitVaStartMarksTheFunctionVariadic) {
+  // fatal(fmt, ...) as GCC builds it: va_start stores gp_offset and fp_offset
+  // as two 32-bit constants where Clang stores one 64-bit word.  Either marks
+  // the variadic prologue, so its vector register save area is no parameter.
+  constexpr va_t Fatal = Text, VprintfStub = Text + 0x100,
+                 ExitStub = Text + 0x110;
+  std::vector<uint8_t> Code(0x120, 0xCC);
+  std::vector<uint8_t> FatalCode = {
+      0x55,                                     // push rbp
+      0x48, 0x89, 0xE5,                         // mov rbp, rsp
+      0x48, 0x81, 0xEC, 0xD0, 0x00, 0x00, 0x00, // sub rsp, 0xd0
+      0x48, 0x89, 0xB5, 0x58, 0xFF, 0xFF, 0xFF, // mov [rbp-0xa8], rsi
+      0x48, 0x89, 0x95, 0x60, 0xFF, 0xFF, 0xFF, // mov [rbp-0xa0], rdx
+      0x48, 0x89, 0x8D, 0x68, 0xFF, 0xFF, 0xFF, // mov [rbp-0x98], rcx
+      0x4C, 0x89, 0x85, 0x70, 0xFF, 0xFF, 0xFF, // mov [rbp-0x90], r8
+      0x4C, 0x89, 0x8D, 0x78, 0xFF, 0xFF, 0xFF, // mov [rbp-0x88], r9
+      0x84, 0xC0,                               // test al, al
+      0x74, 0x04,                               // je spilled
+      0x0F, 0x29, 0x45, 0x80,                   // movaps [rbp-0x80], xmm0
+      0x48, 0x8D, 0x45, 0x10,                   // spilled: lea rax, [rbp+0x10]
+      0x48, 0x89, 0x85, 0x38, 0xFF, 0xFF, 0xFF, // mov [rbp-0xc8], rax
+      0x48, 0x8D, 0x85, 0x50, 0xFF, 0xFF, 0xFF, // lea rax, [rbp-0xb0]
+      0x48, 0x89, 0x85, 0x40, 0xFF, 0xFF, 0xFF, // mov [rbp-0xc0], rax
+      0xC7, 0x85, 0x30, 0xFF, 0xFF, 0xFF,       // mov dword [rbp-0xd0],
+      0x08, 0x00, 0x00, 0x00,                   //   8 (gp_offset)
+      0xC7, 0x85, 0x34, 0xFF, 0xFF, 0xFF,       // mov dword [rbp-0xcc],
+      0x30, 0x00, 0x00, 0x00,                   //   0x30 (fp_offset)
+      0x48, 0x8D, 0xB5, 0x30, 0xFF, 0xFF, 0xFF, // lea rsi, [rbp-0xd0]
+      0xE8};                                    // call vprintf
+  for (uint8_t B : rel32(Fatal + FatalCode.size() + 4, VprintfStub))
+    FatalCode.push_back(B);
+  for (uint8_t B : {0xBF, 0x02, 0x00, 0x00, 0x00, // mov edi, 2
+                    0xE8})                        // call exit
+    FatalCode.push_back(B);
+  for (uint8_t B : rel32(Fatal + FatalCode.size() + 4, ExitStub))
+    FatalCode.push_back(B);
+  ASSERT_LE(FatalCode.size(), VprintfStub - Fatal);
+  put(Code, Fatal, FatalCode);
+  const BinaryImage Img = makeImportImage(
+      Code, {{Fatal, "fatal"}}, {{VprintfStub, "vprintf"}, {ExitStub, "exit"}});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Fatal};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const auto F = std::find_if(
+      Result.MedFuncs.begin(), Result.MedFuncs.end(),
+      [&](const MedFunc &Function) { return Function.Entry == Fatal; });
+  ASSERT_NE(F, Result.MedFuncs.end());
+  EXPECT_TRUE(F->IsVariadic);
+  for (const MedVar &Param : F->Params)
+    EXPECT_LE(Param.Size, 8u) << "vector save-area slot as a parameter";
 }
 
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {

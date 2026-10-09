@@ -91,7 +91,12 @@ TypeRef HighCWriter::debugTypeForDisplacement(va_t Entry, int64_t Disp) const {
     Ty = Accept(Dbg->resolveVariable(Entry, Disp));
   if (Ty)
     Dbg->completeType(Ty);
-  return cDisplayType(Ty);
+  // A local whose type C cannot spell keeps the type its accesses give it,
+  // as a parameter keeps its machine type.
+  TypeRef Display = cDisplayType(Ty);
+  if (Display && !hasCSpelling(Display))
+    return {};
+  return Display;
 }
 
 std::string HighCWriter::varName(const MedVar &V) const {
@@ -1092,7 +1097,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     }
     if (Callee) {
       if (const TypeRef Expected = expectedDebugCallArgType(*Callee, I)) {
-        S += exprStrAsTypedArg(*Op, Expected);
+        S += exprStrAsTypedArg(*Op, Expected, Defined != nullptr);
         continue;
       }
     }
@@ -1160,7 +1165,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     }
     // A floating parameter of the callee's prototype takes the bits.
     TypeRef FloatParam = Defined && I < Defined->Params.size()
-                             ? Defined->Params[I].Type
+                             ? emittedParamType(*Defined, I)
                              : nullptr;
     if (!FloatParam && Prototype && I < Prototype->ParamCount) {
       if (Prototype->Params[I] == "double")
@@ -1172,8 +1177,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // after its integer ones, as the call collects them.
     if (!FloatParam && Arity && Source >= ArityIntegers &&
         Source < ArityIntegers + ArityFloats)
-      FloatParam = NdType::makeFloat(Arity->FpIsFloat ? sizeof(float)
-                                                      : sizeof(double));
+      FloatParam =
+          NdType::makeFloat(Arity->FpIsFloat ? sizeof(float) : sizeof(double));
     if (const auto Float = floatArgumentText(*Op, FloatParam)) {
       if (PointerArgument)
         PointerArgumentOperands.erase(PointerArgument);
@@ -1186,7 +1191,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // A signed result of at least an int's width passes the same register
     // bits as its unsigned carrier, unless a prototype widens it.
     const TypeRef DefinedParam = Defined && I < Defined->Params.size()
-                                     ? Defined->Params[I].Type
+                                     ? emittedParamType(*Defined, I)
                                      : nullptr;
     if (!Imm && !PointerArgument && Op->Type && Op->Type->Size >= 4 &&
         (!DefinedParam || (DefinedParam->Kind == NdTypeKind::Int &&
@@ -1237,9 +1242,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       }
     // A callee printed in this file has a prototype: convert between pointer
     // and integer arguments the way the machine passed them, in a register.
-    if (Defined && I < Defined->Params.size() && Defined->Params[I].Type &&
-        Op->Type) {
-      const TypeRef &Param = Defined->Params[I].Type;
+    if (Defined && I < Defined->Params.size() && DefinedParam && Op->Type) {
+      const TypeRef &Param = DefinedParam;
       const bool ParamPtr = Param->Kind == NdTypeKind::Ptr;
       const bool ArgPtr = Op->Type->Kind == NdTypeKind::Ptr;
       if (ParamPtr != ArgPtr && (ParamPtr ? Op->Type->Kind == NdTypeKind::Int
@@ -1569,8 +1573,12 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   const std::string Name = callIdentifier(E);
   if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format))
     return msvcSyntheticReturn(Msvc->ReturnKind);
-  if (const auto Callee = debugCallee(E))
+  if (const auto Callee = debugCallee(E)) {
+    // A result whose type C cannot spell is the register it arrives in.
+    if (!hasCSpelling(cDisplayType(Callee->ReturnType)))
+      return {};
     return Callee->ReturnType;
+  }
   // A function this unit defines returns the type its definition prints.
   if (const auto Defined = DefinedFunctionsByIdentifier.find(Name);
       Defined != DefinedFunctionsByIdentifier.end() && Defined->second)
@@ -1578,17 +1586,13 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   // A C library routine returns the floating type its declaration names,
   // or a math routine the one its arguments have.
   if (const libc::LibCPrototype *Prototype = calleePrototype(E)) {
-    if (Prototype->Return == "double")
-      return NdType::makeFloat(sizeof(double));
-    if (Prototype->Return == "float")
-      return NdType::makeFloat(sizeof(float));
+    if (const uint16_t Bytes = libc::floatReturnBytes(*Prototype))
+      return NdType::makeFloat(Bytes);
+    return {};
   }
-  if (const auto Arity = libc::libcArityForSymbol(Name);
-      Arity && !Arity->FpRetLongDouble && !Arity->FpRetComplex &&
-      (Arity->FpRet || Arity->FpFirst ||
-       (Arity->FpArgs > 0 && Arity->IntArgs == 0)))
-    return NdType::makeFloat(Arity->FpIsFloat ? sizeof(float)
-                                              : sizeof(double));
+  if (const auto Arity = libc::libcArityForSymbol(Name))
+    if (const uint16_t Bytes = libc::floatReturnBytes(*Arity))
+      return NdType::makeFloat(Bytes);
   return {};
 }
 
@@ -2103,25 +2107,68 @@ TypeRef HighCWriter::expectedDebugCallArgType(const FunctionSym &FS,
     if (TypeRef Record = msvcIndirectReturnRecordType(FS.ReturnType))
       Sret = NdType::makePtr(cDisplayType(Record));
   }
+  // The callee's declaration gives a parameter whose type C cannot spell the
+  // register it travels in (debugExternPrototype).
+  auto Declared = [&](size_t Param) -> TypeRef {
+    if (Param >= FS.Params.size())
+      return nullptr;
+    const TypeRef &Ty = FS.Params[Param].second;
+    if (Ty && !hasCSpelling(cDisplayType(Ty)))
+      return NdType::makeInt(pointerBytes(Opts.TheArch), false);
+    return Ty;
+  };
   if (Member) {
     if (Index == 0)
-      return FS.Params.empty() ? nullptr : FS.Params[0].second;
+      return Declared(0);
     if (Index == 1)
       return Sret;
-    if (Index - 1 < FS.Params.size())
-      return FS.Params[Index - 1].second;
-    return nullptr;
+    return Declared(Index - 1);
   }
   if (Indirect) {
     if (Index == 0)
       return Sret;
-    if (Index - 1 < FS.Params.size())
-      return FS.Params[Index - 1].second;
-    return nullptr;
+    return Declared(Index - 1);
   }
-  if (Index < FS.Params.size())
-    return FS.Params[Index].second;
-  return nullptr;
+  return Declared(Index);
+}
+
+const HighExpr *HighCWriter::floatCallResult(const HighExpr &Bits,
+                                             const TypeRef &Float) const {
+  if (!Float || Float->Kind != NdTypeKind::Float)
+    return nullptr;
+  // Each step keeps at least the float's bytes: a view of the low bytes, a
+  // conversion or a forwarded copy.  A forwarded call carries no type of its
+  // own; its declaration says what it returns.
+  const HighExpr *Inner = &Bits;
+  for (unsigned Step = 0; Inner && Step < limits::kMaxIntegerViewUnwrapDepth &&
+                          Inner->Kind != ExprKind::Call;
+       ++Step) {
+    if (!Inner->Type || Inner->Type->Size < Float->Size)
+      return nullptr;
+    if (Inner->Kind == ExprKind::BinOp && Inner->Op == NdOp::SUBBYTES &&
+        Inner->Operands.size() == 2 && Inner->Operands[0] &&
+        Inner->Operands[1] && Inner->Operands[1]->Kind == ExprKind::Const &&
+        Inner->Operands[1]->ConstVal == 0) {
+      Inner = Inner->Operands[0].get();
+      continue;
+    }
+    if (const HighExpr *View = unwrapIntegerView(Inner); View != Inner) {
+      Inner = View;
+      continue;
+    }
+    if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi)
+      if (const auto Fwd =
+              ValueForward.find(copyForwardName(varName(Inner->Var)));
+          Fwd != ValueForward.end() && Fwd->second && Fwd->second != Inner) {
+        Inner = Fwd->second;
+        continue;
+      }
+    break;
+  }
+  if (!Inner || Inner->Kind != ExprKind::Call)
+    return nullptr;
+  const TypeRef Return = knownCallReturnType(*Inner);
+  return Return && equalSourceTypes(Return, Float) ? Inner : nullptr;
 }
 
 std::optional<std::string>
@@ -2153,6 +2200,9 @@ HighCWriter::floatArgumentText(const HighExpr &Arg, const TypeRef &Expected) {
       Bits->Operands[0] && Bits->Operands[0]->Type &&
       equalSourceTypes(Bits->Operands[0]->Type, Expected))
     return exprStr(*Bits->Operands[0]);
+  // The result of a call that returns the parameter's type passes as it is.
+  if (const HighExpr *Call = floatCallResult(Arg, Expected))
+    return renderCallExpr(*Call);
   // A register's integer bits are the argument's bits: C would convert
   // their value instead.
   return "__builtin_bit_cast(" + typeToC(Expected) + ", " +
@@ -2160,7 +2210,8 @@ HighCWriter::floatArgumentText(const HighExpr &Arg, const TypeRef &Expected) {
 }
 
 std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
-                                           const TypeRef &Expected) {
+                                           const TypeRef &Expected,
+                                           bool DefinedCallee) {
   if (const auto Float = floatArgumentText(E, Expected))
     return *Float;
   // C converts an integer argument by the signedness of its own type, so an
@@ -2227,8 +2278,16 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
     if (const auto Disp = certifiedFrameStorageDisplacement(*Inner))
       return "(" + typeToC(Expected) + ")(uintptr_t)(" +
              frameStorageAddress(*Disp) + ")";
-    if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi)
-      return printedForwardedVar(copyForwardName(varName(Inner->Var)), 16);
+    if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
+      const std::string Name = copyForwardName(varName(Inner->Var));
+      // A variable C declares as an integer converts to the pointer the
+      // parameter takes; a pointer variable passes as it is.
+      if (const TypeRef Declared = declaredTypeOf(*Inner, Name);
+          DefinedCallee && Declared && Declared->Kind == NdTypeKind::Int &&
+          printedForwardedVar(Name, 16) == Name)
+        return "(" + typeToC(Expected) + ")(uintptr_t)" + Name;
+      return printedForwardedVar(Name, 16);
+    }
     if (Inner->Kind == ExprKind::Addr)
       return exprStr(*Inner);
     if (Inner != &E)
@@ -2268,15 +2327,20 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
 }
 
 std::string HighCWriter::debugSignatureKey(const FunctionSym &FS) {
+  // A type C cannot spell is declared as its machine type, the same for
+  // every such type.
+  auto Spell = [](const TypeRef &Ty) {
+    return hasCSpelling(Ty) ? typeToC(Ty) : std::string("?");
+  };
   std::string Key;
   if (FS.ReturnType)
-    Key += typeToC(FS.ReturnType);
+    Key += Spell(FS.ReturnType);
   Key += "/";
   for (const auto &Param : FS.Params) {
     Key += Param.first;
     Key += ":";
     if (Param.second)
-      Key += typeToC(Param.second);
+      Key += Spell(Param.second);
     Key += ";";
   }
   return Key;
@@ -2330,6 +2394,9 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
   TypeRef ReturnType = FS.ReturnType
                            ? cDisplayType(FS.ReturnType)
                            : NdType::makeInt(pointerBytes(Opts.TheArch), false);
+  // So does one whose type C cannot spell.
+  if (!hasCSpelling(ReturnType))
+    ReturnType = NdType::makeInt(pointerBytes(Opts.TheArch), false);
   TypeRef SretPtr;
   const bool Indirect = debugExternUsesHiddenSret(
       FS, ExternName.empty() ? Identifier : ExternName);
@@ -2351,6 +2418,9 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
     Ty = cDisplayType(Ty);
     if (!Ty)
       Ty = NdType::makeInt(8);
+    // A parameter whose type C cannot spell is the register it travels in.
+    if (!hasCSpelling(Ty))
+      Ty = NdType::makeInt(pointerBytes(Opts.TheArch), false);
     // MSVC x64 passes a named class through a hidden pointer. The PDB
     // still records the class. Enums stay in a register.
     if (Opts.TheArch == Arch::X64 && isMsvcClassValueReturn(Ty))
@@ -2403,7 +2473,10 @@ TypeRef HighCWriter::declaredParamType(const MedVar &V) const {
   if (!CurrentFunc || V.Kind != MedVar::Param || V.RenameTag >= 0 || V.Id < 0 ||
       static_cast<size_t>(V.Id) >= CurrentFunc->Params.size())
     return nullptr;
-  return CurrentFunc->Params[V.Id].Type;
+  // The definition may declare the debug information's type, such as
+  // `int32_t *out` for a machine word: an offset from `out` is in bytes only
+  // through its integer view.
+  return emittedParamType(*CurrentFunc, static_cast<size_t>(V.Id));
 }
 
 TypeRef HighCWriter::debugParamType(const MedVar &V) const {
@@ -4008,6 +4081,9 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                          E.Type->IsSigned);
       return "(" + typeToC(E.Type) + ")" + exprStr(Src, 99);
     }
+    // The bits of a call that returns this float are its result.
+    if (const HighExpr *Call = floatCallResult(Src, E.Type))
+      return renderCallExpr(*Call);
     // A float whose bits are a constant, or read from constant data, is that
     // constant.
     const HighExpr *Bits = unwrapIntegerView(&Src);
@@ -4172,6 +4248,9 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
     return HiLo;
 
   if (FuncReturnType && FuncReturnType->Kind == NdTypeKind::Float) {
+    // A call that returns this float is the value returned.
+    if (const HighExpr *Call = floatCallResult(Expr, FuncReturnType))
+      return renderCallExpr(*Call);
     const HighExpr *Raw = &Expr;
     if (Raw->Kind == ExprKind::UnaryOp && Raw->Op == NdOp::INT_ZEXT &&
         !Raw->Operands.empty() && Raw->Operands[0] && Raw->Operands[0]->Type &&

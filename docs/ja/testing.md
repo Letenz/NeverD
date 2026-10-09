@@ -198,6 +198,13 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `NeverDX86DecodeDetailTests` は三つのデコード経路、両方の x64 アドレス幅、符号付き変位の境界、必須接頭辞、実際の i386 disp16、moffs、切り詰め入力、詳細情報なしの再利用を検証します。再配置は正確なフィールドだけに結び付き、幅・位置・値が違う場合は結び付きません。ネイティブ独立性と関係証明のテストはフレーム全体の書き込みを保持し、観測される任意フラグと変更されたシフト候補を拒否します。
 
+`NeverDLowUndefinedDigestTests` は独立した SHA-256 ベクトル、全保存フィールド、符号付き連番のビット、順序、パディング除外、入力の不変性を検査します。インラインバッファの拡張、199/200 操作境界、さらに長い逐次入力を扱います。`LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` は両経路で実際の古い証拠の拒否と再結合を検査します。`NeverDLiftTests` の `InputDigest.*` を維持し、独立実装を変更したら影響する呼び出し側を再ビルドしてください。sanitizer、移植可能経路、ホストの実際の検証範囲を記録します。ダイジェストのマイクロベンチマークだけではネイティブ等価性を証明できません。
+
+```bash
+cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
+build-release/bin/NeverDLowUndefinedDigestTests
+```
+
 `NeverDX86UndefinedEffectsTests` は未定義ビットのメタデータ、定義済み／保持されるフラグ、古い証明書の拒否を検査します。`NeverDX86CarryArithmeticFlagTests` は算術オラクルにより、レジスター形式とメモリ形式の ADC/SBB の補助キャリーを検査します。`NeverDX86LogicIdentityTests` は、同一オペランドの AND が 64 ビットモードで 32 ビットの宛先に書き込む際、対応する 64 ビットレジスターのビット 63:32 をゼロにし、狭い書き込みでは未書き込みのビットを保持することを検査します。
 
 `X86RotateUndefinedEffects.*` は全生カウント、オペランド幅、CL の重なり、上位バイトの別名、メモリ宛先をスカラー算術の参照実装と比較します。`X86BitTestUndefinedEffects.*` はレジスタ/即値インデックス、ソースと宛先の重なり、拡張レジスタ、定義済みフラグ、上位レジスタへの書き込みを検査します。メタデータの反例は変更されたオペランド、符号化、未対応形式を拒否します。ネイティブ証明は相関する読み取りと独立した任意フラグを区別し、生成数予算の境界と不足を検査し、観測可能な未定義 OF を拒否します。全状態の精緻化は選択した証人を受け入れ、ゼロビット証人や変更した候補を拒否します。
@@ -413,6 +420,7 @@ V9 の schema テストは 8 種の名前の往復と共有最終状態検証を
 | `unittests/TestProcessTests.cpp` | `NeverDTestProcessTests` | クロスプラットフォーム子プロセス、引用、リダイレクト、終了コード |
 | `unittests/libc` | `NeverDLibCTests` | 既知の libc 名と分類 |
 | `unittests/safety` | `NeverDSafetyTests`、`NeverDSafetyIntegrationTests` | シンクカタログ、識別優先順位、引数事前フィルタ、コピー越境ハント、ヒープ寿命監査、必須の PE/ELF/Mach-O × x86-64/AArch64 6 セル行列 |
+| `unittests/loader` | `NeverDRawISATests` | バイナリファイル：バイト列からの命令セット識別（データ、テスト自身のコード、2 バイトずれたコード、ファミリーごとの 32 ビットと 64 ビットのエンコーディング、ゼロで始まるファイル）と Cortex-M ベクタテーブル。`scripts/validate_isa_model.py --engine build/bin/libneverd.so` はモデルが見たことのない実プログラムとライブラリ 180 件をハッシュ指定でダウンロードして検査します。ネットワークが必要で、CTest には含まれません |
 | `unittests/lift` | `NeverDLiftTests` | Decoder/lifter の LowIR 形状、IR 段階、loader、relocation、形式 fixture、デコンパイル、代表的 patch 経路 |
 | `unittests/semantic` の大半 | `NeverDSemanticTests` | 命令、ABI、制御フロー、C 式、lift/recompile の差分セマンティクス |
 | `unittests/evm` | `NeverDEVMOpcodeTests`、`NeverDEVMBytecodeTests`、`NeverDEVMLoaderTests`、`NeverDEVMABITests`、`NeverDEVMAnalyzerTests`、`NeverDEVMDecoderPropertyTests`、`NeverDEVMProxyTests`、`NeverDEVMCallTests`、`NeverDEVMSemanticTests`、`NeverDEVMEmitterTests`、`NeverDEVMIntegrationTests` | hardfork metadata、input normalization、ABI/signature ambiguity、CFG/SSA/recovery、decoder boundary 全網羅と hostile input、proxy/call fact、interpreter semantics、LLVM/C/Solidity differential execution、public API routing |

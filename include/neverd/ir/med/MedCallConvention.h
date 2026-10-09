@@ -41,8 +41,9 @@ struct CallArgumentConvention {
   /// A call to a summarized direct callee passes the argument registers the
   /// callee reads at entry (LowToMed publishes them as the CALL's inputs).
   bool RegisterArgumentsFromCalleeSummary = false;
-  /// So does it the vector argument registers the callee reads, after the
-  /// integer ones: each floating argument takes the next vector register.
+  /// So does it the vector argument registers the callee reads: each
+  /// floating argument takes the next vector register after the integer
+  /// ones, or with PositionalArgumentSlots its own slot's vector register.
   bool VectorArgumentsFromCalleeSummary = false;
   /// An import whose libc prototype is fixed reads exactly its argument
   /// registers, and with StackArgumentSummary its stack arguments, so its

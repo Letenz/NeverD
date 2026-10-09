@@ -267,6 +267,12 @@ static const char *keptSource(Session &S, va_t Entry,
   return Result;
 }
 
+/// Why C emission refused: the C type layer throws for a type C cannot
+/// spell, which ends the decompile with that reason, not the process.
+static std::string emissionFailure(const std::exception &Error) {
+  return std::string("C emission failed: ") + Error.what();
+}
+
 static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
                                   CSourceMap *SourceMap) {
   auto *S = toSession(Sess);
@@ -344,8 +350,13 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     SourceMap->HighSources = &S->PipeResult.HighSources;
     Opts.SourceMap = SourceMap;
   }
-  HighCEmitter Emitter;
-  Emitter.emit(Single, OS, Opts, S->Dbg.get());
+  try {
+    HighCEmitter Emitter;
+    Emitter.emit(Single, OS, Opts, S->Dbg.get());
+  } catch (const std::exception &Error) {
+    S->setError(emissionFailure(Error));
+    return dupStr(std::string());
+  }
 
   return keptSource(*S, FuncEntry, Session::SourceRoute::HighC, std::move(Out),
                     SourceMap);
@@ -418,8 +429,13 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
     SourceMap->LLVMSources = Native->Sources.get();
     Opts.SourceMap = SourceMap;
   }
-  LLVMCEmitter Emitter;
-  Emitter.emit(*Native->Module, OS, Opts, S->Dbg.get(), &S->Img, LF);
+  try {
+    LLVMCEmitter Emitter;
+    Emitter.emit(*Native->Module, OS, Opts, S->Dbg.get(), &S->Img, LF);
+  } catch (const std::exception &Error) {
+    S->setError(emissionFailure(Error));
+    return dupStr(std::string());
+  }
   return keptSource(*S, FuncEntry, Route, std::move(Out), SourceMap);
 }
 
@@ -429,18 +445,6 @@ const char *neverd_decompile_llvm_ex(neverd_session_t Sess,
 }
 
 namespace {
-
-/// The language whose syntax an image's own code reads in.
-SourceDialect imageDialect(const BinaryImage &Img) {
-  switch (Img.ExceptionMetadata.Runtime.Runtime) {
-  case SourceLanguageRuntime::Rust:
-    return SourceDialect::Rust;
-  case SourceLanguageRuntime::Go:
-    return SourceDialect::Go;
-  default:
-    return SourceDialect::C;
-  }
-}
 
 /// The symbol naming the function at \p Entry, or empty for a function the
 /// image does not name.
@@ -453,13 +457,36 @@ llvm::StringRef functionSymbol(const BinaryImage &Img, va_t Entry) {
 }
 
 /// The language a source view of \p Entry reads in: the one \p Stage
-/// names, or for `source` the function's own.
-SourceDialect viewDialect(const Session &S, va_t Entry, llvm::StringRef Stage) {
+/// names, or for `source` the function's own; none for a language the image
+/// is not offered in.
+std::optional<SourceDialect> viewDialect(const Session &S, va_t Entry,
+                                         llvm::StringRef Stage) {
+  const LanguageRuntimeInfo &Language = S.Img.ExceptionMetadata.Runtime;
   if (Stage == "source") {
     const llvm::StringRef Symbol = functionSymbol(S.Img, Entry);
-    return sourceDialectOfSymbol(Symbol, !Symbol.empty(), imageDialect(S.Img));
+    return sourceDialectOfFunction(Symbol, !Symbol.empty(), Language);
   }
-  return sourceDialectFromKey(Stage).value_or(SourceDialect::C);
+  const SourceDialect Dialect =
+      sourceDialectFromKey(Stage).value_or(SourceDialect::C);
+  if (!llvm::is_contained(offeredSourceDialects(Language), Dialect))
+    return std::nullopt;
+  return Dialect;
+}
+
+/// Why \p Dialect is not offered for an image: the languages it reads in.
+std::string unofferedDialectReason(SourceDialect Dialect,
+                                   const LanguageRuntimeInfo &Language) {
+  std::string Offered;
+  const std::vector<SourceDialect> Dialects = offeredSourceDialects(Language);
+  for (size_t I = 0; I < Dialects.size(); ++I)
+    Offered += (I == 0                     ? ""
+                : I + 1 == Dialects.size() ? " and "
+                                           : ", ") +
+               sourceDialectDisplayName(Dialects[I]).str();
+  return (sourceDialectDisplayName(Dialect) + " pseudocode is offered for " +
+          sourceDialectDisplayName(Dialect) +
+          " programs; this program's reads in " + Offered)
+      .str();
 }
 
 /// \p Entry's HighC source spelled in \p Dialect, with its library regions
@@ -515,6 +542,7 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
   std::optional<SourceDialect> Dialect;
   if (Stage != "llvmc")
     Dialect = viewDialect(S, Entry, Stage);
+  assert((Stage == "llvmc" || Dialect) && "an unoffered view reached a page");
   std::string Spelled;
   std::vector<std::string> Unread;
   std::vector<SourceDialectName> Names;
@@ -747,6 +775,14 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
         sourceDialectFromKey(Stage)) {
       if (S->Img.Arch == Arch::EVM || S->Img.Arch == Arch::SBF) {
         Result["mapping_status"] = "unsupported_architecture";
+        return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
+      }
+      // Rust and Go are offered for programs written in them.
+      if (Stage != "llvmc" && !viewDialect(*S, FuncEntry, Stage)) {
+        Result["mapping_status"] = "unsupported_representation";
+        Result["reason"] = unofferedDialectReason(
+            sourceDialectFromKey(Stage).value_or(SourceDialect::C),
+            S->Img.ExceptionMetadata.Runtime);
         return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
       }
       auto Page = sourcePage(Sess, FuncEntry, Stage, Offset, Limit);
@@ -1121,13 +1157,23 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   }
   // Native code reads in the language a request names, or its own: the
   // HighC source, spelled in it.
+  const LanguageRuntimeInfo &ImageLanguage = R.Img.ExceptionMetadata.Runtime;
   std::optional<SourceDialect> Dialect;
   if (Language == NEVERD_OUTPUT_RUST)
     Dialect = SourceDialect::Rust;
   else if (Language == NEVERD_OUTPUT_GO)
     Dialect = SourceDialect::Go;
   else if (Language == NEVERD_OUTPUT_SOURCE)
-    Dialect = imageDialect(R.Img);
+    Dialect = dialectOfRuntime(ImageLanguage.Runtime);
+  if (Dialect &&
+      !llvm::is_contained(offeredSourceDialects(ImageLanguage), *Dialect)) {
+    if (Language != NEVERD_OUTPUT_SOURCE) {
+      if (S)
+        S->setError(unofferedDialectReason(*Dialect, ImageLanguage));
+      return nullptr;
+    }
+    Dialect.reset();
+  }
   if (Dialect == SourceDialect::C)
     Dialect.reset();
   if (Dialect && UseLlvmRoute) {
@@ -1143,8 +1189,14 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.TheArch = R.Img.Arch;
     COpts.Format = R.Img.abiFormat();
     COpts.UserNames = S ? &S->Renames : nullptr;
-    LLVMCEmitter Emitter;
-    Emitter.emit(*R.Result.LlvmModule, OS, COpts, R.Dbg.get(), &R.Img);
+    try {
+      LLVMCEmitter Emitter;
+      Emitter.emit(*R.Result.LlvmModule, OS, COpts, R.Dbg.get(), &R.Img);
+    } catch (const std::exception &Error) {
+      if (S)
+        S->setError(emissionFailure(Error));
+      return nullptr;
+    }
   } else {
     CEmitterOptions COpts;
     COpts.TheArch = R.Img.Arch;
@@ -1154,8 +1206,14 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     std::vector<CSourceName> Names;
     if (Dialect)
       COpts.SourceNames = &Names;
-    HighCEmitter Emitter;
-    Emitter.emit(R.Result.HighFuncs, OS, COpts, R.Dbg.get());
+    try {
+      HighCEmitter Emitter;
+      Emitter.emit(R.Result.HighFuncs, OS, COpts, R.Dbg.get());
+    } catch (const std::exception &Error) {
+      if (S)
+        S->setError(emissionFailure(Error));
+      return nullptr;
+    }
     if (Dialect) {
       SourceDialectOptions Options;
       Options.Dialect = *Dialect;
