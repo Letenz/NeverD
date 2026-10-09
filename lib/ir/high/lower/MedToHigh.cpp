@@ -1143,6 +1143,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.FrameHeadroom = Med.FrameHeadroom;
   Func.Name = Med.Name;
   Func.DoesNotReturn = Med.DoesNotReturn;
+  Func.ReturnsNoValue = Med.ReturnsNoValue;
   Func.EntryKind = Med.EntryKind;
   Func.ExceptionMetadata = Med.ExceptionMetadata;
   Func.ReturnType =

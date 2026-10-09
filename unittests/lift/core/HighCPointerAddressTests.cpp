@@ -33128,12 +33128,15 @@ TEST(HighCPointerAddresses, ConstantReturnIsNotInferredVoid) {
 
 TEST(HighCPointerAddresses, BareSiblingReturnMakesATailCallingFunctionVoid) {
   // One path returns RAX as the caller left it, so no caller can rely on a
-  // result: the function is void, the bare path returns normally, and the
-  // other path still makes its call exactly once.
+  // result: MedIR settles that the function returns no value
+  // (ReturnContracts.AnUndefinedPathWithoutADeliberateValueIsNoValue).  It is
+  // void, the bare path returns normally, and the other path still makes its
+  // call exactly once.
   HighFunc Func;
   Func.Name = "cookie";
   Func.Entry = 0x140001350;
   Func.ReturnType = NdType::makeInt(8);
+  Func.ReturnsNoValue = true;
   Func.Params = {{"arg0", NdType::makeInt(8)}};
 
   HighStmt IfElse;
@@ -33361,10 +33364,13 @@ int main(void) {
 }
 
 TEST(HighCPointerAddresses, FastFailBranchOmitsSuccessReturn) {
+  // MedIR settles that a function whose other path fails fast returns no
+  // value.
   HighFunc Func;
   Func.Name = "cookie";
   Func.Entry = 0x140001350;
   Func.ReturnType = NdType::makeInt(8);
+  Func.ReturnsNoValue = true;
   Func.Params = {{"arg0", NdType::makeInt(8)}};
 
   HighStmt IfElse;

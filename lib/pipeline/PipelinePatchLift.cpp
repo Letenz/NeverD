@@ -305,6 +305,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   materializeKnownStructReturnCallSites(Img, Result);
 
+  settleReturnContracts(Img, Result);
+
   std::map<va_t, int> CalleeRegArity;
   std::map<va_t, int> CalleeTotalArity;
   std::map<va_t, int> CalleeFPArity;

@@ -412,9 +412,8 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
     Analysis.AssignedVars.insert(VarFn(S.Dst->Var));
   });
   const TypeRef DeclaredReturn = declaredFunctionReturnType(Func);
-  InferredVoid = DeclaredReturn
-                     ? DeclaredReturn->Kind == NdTypeKind::Void
-                     : analyzeVoidReturn(Analysis, Func, VarFn, ExprFn);
+  InferredVoid = DeclaredReturn ? DeclaredReturn->Kind == NdTypeKind::Void
+                                : analyzeVoidReturn(Func);
 
   HiLoPairs.clear();
   auto RegisterHiLo = [this](const HighStmt &S, const HighExpr &CE) {

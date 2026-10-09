@@ -21,6 +21,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -292,6 +293,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     return nullptr;
 
   auto *LLVMFunc = declareFunc(Func);
+  if (Func.ReturnsNoValue)
+    llvm_value_provenance::markReturnsNoValue(*LLVMFunc);
   // PUSHF/POPF assembly writes below the compiler's stack pointer. A memory
   // clobber does not reserve that footprint: SysV spills must use a real frame.
   if (TargetArch == Arch::X86 || TargetArch == Arch::X64)

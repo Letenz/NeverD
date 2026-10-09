@@ -44,6 +44,10 @@ void recoverStructReturnFromBody(const BinaryImage &Img,
 void materializeKnownStructReturnCallSites(const BinaryImage &Img,
                                            PipelineResult &Result);
 
+/// Settle which functions return no value a caller could rely on
+/// (MedFunc::ReturnsNoValue), once for both C backends.
+void settleReturnContracts(const BinaryImage &Img, PipelineResult &Result);
+
 /// Remodel struct-return tail-call forwarders after call-ABI recovery so the
 /// forwarding call produces every field register the RETURN reassembles.
 /// 64-bit targets.

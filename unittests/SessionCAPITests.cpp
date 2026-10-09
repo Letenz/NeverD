@@ -4195,6 +4195,68 @@ TEST_F(SessionCAPITest, StubsOfVariadicImportsPassTheirArgumentsOn) {
 #endif
 }
 
+TEST_F(SessionCAPITest, BothCBackendsAgreeWhichFunctionsReturnAValue) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // Whether a function returns a value is settled once, on MedIR.  LLVM-C
+  // once showed a function that hands back its callee's result as void while
+  // its callers used the result, and register_tm_clones, which returns 0,
+  // too; HighC showed register_tm_clones' branch on a link-time 0.
+  const std::string Binary = buildProgram(
+      "returns",
+      "int g;\n"
+      "__attribute__((noinline)) void sink(int x) { g = x; }\n"
+      "__attribute__((noinline)) int value(int x) { return x * 3; }\n"
+      "__attribute__((noinline)) void tail_void(int x) {\n"
+      "  sink(x + 1);\n"
+      "}\n"
+      "__attribute__((noinline)) int tail_value(int x) {\n"
+      "  return value(x + 1);\n"
+      "}\n"
+      "int main(int argc, char **argv) {\n"
+      "  (void)argv;\n"
+      "  tail_void(argc);\n"
+      "  return tail_value(argc) + g;\n"
+      "}\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_session_analyze(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const auto ReturnType = [&](const std::string &Page,
+                              const std::string &Name) -> std::string {
+    std::smatch Match;
+    const std::regex Definition("(^|\n)([^ \n][^\n]*?)\\b" + Name +
+                                "\\([^\n]*\\) \\{");
+    return std::regex_search(Page, Match, Definition)
+               ? llvm::StringRef(Match[2].str()).trim().str()
+               : "";
+  };
+  const std::map<std::string, bool> Void = {{"sink", true},
+                                            {"tail_void", true},
+                                            {"value", false},
+                                            {"tail_value", false},
+                                            {"register_tm_clones", false}};
+  for (const auto &[Name, IsVoid] : Void) {
+    SCOPED_TRACE(Name);
+    const int Index = neverd_func_find_by_name(Session, Name.c_str());
+    ASSERT_GE(Index, 0);
+    const neverd_va_t Entry = neverd_func_entry(Session, Index);
+    const std::string HighC = takeString(neverd_decompile(Session, Entry));
+    const std::string LLVMC = takeString(neverd_decompile_llvm(Session, Entry));
+    EXPECT_EQ(ReturnType(HighC, Name) == "void", IsVoid) << HighC;
+    EXPECT_EQ(ReturnType(LLVMC, Name) == "void", IsVoid) << LLVMC;
+    if (Name == "register_tm_clones") {
+      EXPECT_EQ(HighC.find("if ("), std::string::npos) << HighC;
+      EXPECT_NE(LLVMC.find("return 0;"), std::string::npos) << LLVMC;
+    }
+  }
+#endif
+}
+
 TEST_F(SessionCAPITest, StartAloneCallsTheBoundStartupImportWithMain) {
 #if !defined(__linux__)
   GTEST_SKIP() << "builds a glibc program";
