@@ -1775,7 +1775,8 @@ NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "KnownDlls")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "MEM_IMAGE")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "IntegerABI")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSections, "0x11")
-NEVERD_EMULATION_DOC_TOKEN(WindowsImageSectionTests, "WindowsSectionFixture.inc")
+NEVERD_EMULATION_DOC_TOKEN(WindowsImageSectionTests,
+                           "WindowsSectionFixture.inc")
 NEVERD_EMULATION_DOC_TOKEN(WindowsImageSectionTests, "WindowsThreadFixture.inc")
 #endif
 
