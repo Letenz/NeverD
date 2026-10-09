@@ -37,7 +37,7 @@ neverd unpack packed.exe -o unpacked.exe \
 
 `runtime_state.encoded_pointer_inventory_known` 表示程序設定是否提供已觀察的指標編碼值。`possible_encoded_pointers` 統計擷取映像與主執行緒 TLS 中完全相等的指標寬度值，包括未對齊儲存；`encoded_pointer_references` 保留前 64 個位置的 `storage`、`offset`、`rva` 和 `value`。Windows 從已完成的 `EncodePointer`/`RtlEncodePointer` 傳回值和 `DecodePointer`/`RtlDecodePointer` 輸入收集編碼值。缺少清單或存在符合值時傳回 `unsupported_state`；明確要求的快照保留診斷。符合值也可能是整數或未使用資料，不能據此授權重新編碼。擷取前已清除的值、僅在擷取後產生的編碼不會觸發此拒絕。清單不涵蓋自訂編碼、部分或轉換後的值、暫存器、堆疊狀態及未到達路徑。
 
-`runtime_state.dynamic_thread_local_inventory_known` 表示程序設定是否提供擷取時的動態執行緒／纖程區域槽位狀態。`live_dynamic_tls_slots` 與 `live_dynamic_fls_slots` 和 PE 靜態 TLS 分開計數：已配置槽位即使值為零也計入；沒有配置紀錄的非零 TLS 單元也計入。清單未知或仍有槽位狀態時傳回 `unsupported_state`，明確要求的快照保留計數與診斷。擷取前已釋放的槽位、已清零且未配置的 TLS 單元，以及擷取後才建立的狀態不會觸發此拒絕。計數不重建槽位所有權、值或回呼，也不證明其他執行緒或纖程的狀態。
+`runtime_state.dynamic_thread_local_inventory_known` 表示程序設定是否提供擷取時的動態執行緒／纖程區域槽位狀態。`live_dynamic_tls_slots` 與 `live_dynamic_fls_slots` 和 PE 靜態 TLS 分開計數：已配置槽位即使值為零也計入；沒有配置紀錄的非零 TLS 單元也計入。清單未知或仍有槽位狀態時傳回 `unsupported_state`，明確要求的快照保留計數與診斷。擷取前已釋放的槽位、已清零且未配置的 TLS 單元，以及擷取後才建立的狀態不會觸發此拒絕。計數不重建槽位所有權、值或回呼，也不證明其他執行緒或纖程的狀態。 已註冊清理回呼且槽值非零時，`FlsFree` 明確停止為 `unsupported_service`；空槽或未註冊回呼的釋放仍受支援。
 
 `--options='{"snapshot_only":true}'` 明確要求分析位元組。接受入口且重建成功後，結果一律為 `snapshot`，並保留執行階段狀態診斷。此選項不會恢復堆積資料、推斷重定位、證明原生執行成功或反虛擬化。堆積參照數量為零也不能證明其他 OS 狀態或未執行路徑正確。
 

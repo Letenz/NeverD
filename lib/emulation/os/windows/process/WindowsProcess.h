@@ -259,7 +259,10 @@ private:
   ExceptionDispatcher &Exceptions;
   std::bitset<value::DynamicTLSCount> TLSSlots;
   std::bitset<value::DynamicTLSCount> FLSSlots;
-  std::map<uint32_t, uint64_t> FLSValues;
+  struct FiberData {
+    uint64_t Callback, Value;
+  };
+  std::map<uint32_t, FiberData> FLSData;
   struct Allocation {
     uint64_t Size, MappedSize;
     bool EnvironmentSnapshot = false;

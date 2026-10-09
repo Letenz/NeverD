@@ -865,6 +865,50 @@ TEST_P(UnpackGenerated, ReleasedAndPostEntryDynamicSlotsDoNotBlockRecovery) {
   }
 }
 
+TEST_P(UnpackGenerated, FLSCleanupCallbacksCannotBeSilentlyDiscarded) {
+  const auto Packed = pack(FreedFLSCallbackMode);
+  ASSERT_FALSE(HasFailure());
+  expectNativeWindows(Packed, ExitStatus);
+  const auto Executed = run(Packed);
+  ASSERT_EQ(Executed.Stop, ProcessStopReason::UnsupportedService)
+      << Executed.Diagnostic;
+  EXPECT_FALSE(Executed.ExitStatus);
+  ASSERT_FALSE(Executed.NativeCalls.empty());
+  EXPECT_EQ(Executed.NativeCalls.back().Name, "FlsFree");
+  EXPECT_FALSE(Executed.NativeCalls.back().Result);
+  for (bool Snapshot : {false, true}) {
+    SCOPED_TRACE(Snapshot);
+    Options.SnapshotOnly = Snapshot;
+    const auto Result = unpack(FreedFLSCallbackMode);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(Result.Outcome, UnpackOutcome::NoEntry);
+    EXPECT_TRUE(Result.Image.empty());
+    EXPECT_EQ(Result.ProcessStop, "unsupported_service");
+    EXPECT_NE(Result.ProcessDiagnostic.find("FlsFree"), std::string::npos);
+  }
+}
+
+TEST_P(UnpackGenerated, EmptyAndReusedFLSSlotsDoNotInvokeStaleCallbacks) {
+  for (unsigned Mode : {EmptyFLSCallbackMode, ReusedFLSCallbackMode}) {
+    SCOPED_TRACE(Mode);
+    const auto Packed = pack(Mode);
+    ASSERT_FALSE(HasFailure());
+    expectNativeWindows(Packed, ExitStatus);
+    const auto Result = unpack(Mode);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
+    EXPECT_TRUE(Result.RuntimeState.DynamicThreadLocalInventoryKnown);
+    EXPECT_EQ(Result.RuntimeState.LiveDynamicFLSSlots, 0u);
+    const auto Path = Scratch / RebuiltFile;
+    test::writeFile(Path, Result.Image);
+    const auto Actual = run(Path);
+    EXPECT_EQ(Actual.Stop, ProcessStopReason::Exited) << Actual.Diagnostic;
+    EXPECT_EQ(Actual.ExitStatus, ExitStatus);
+    EXPECT_EQ(Actual.StandardOutput, Message);
+    expectNativeWindows(Path, ExitStatus);
+  }
+}
+
 TEST_P(UnpackGenerated, LoaderGeneratesItsEntryInThePageItIsExecuting) {
   expectSamePage(SamePageCode::GeneratedJump);
 }

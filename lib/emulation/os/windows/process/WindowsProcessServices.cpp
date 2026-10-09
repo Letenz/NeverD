@@ -303,7 +303,7 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
       if (FLSSlots[I])
         continue;
       FLSSlots.set(I);
-      FLSValues[I] = 0;
+      FLSData[I] = {A[0], 0};
       return Value(I);
     }
     return WinError(ErrorNotEnoughMemory, TLSOutOfIndexes);
@@ -313,13 +313,20 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
     const uint32_t Index = A[0];
     if (Index >= DynamicTLSCount || !FLSSlots[Index])
       return WinError(ErrorInvalidParameter, 0);
+    auto &Data = FLSData[Index];
     if (S.Kind == API::FlsGetValue)
-      return WinError(ErrorSuccess, FLSValues[Index]);
+      return WinError(ErrorSuccess, Data.Value);
     if (S.Kind == API::FlsFree) {
+      // Freeing a nonempty slot must invoke its registered guest callback.
+      // Until that continuation is modeled, stop before discarding either
+      // the callback or its value; an empty inventory cannot certify the
+      // missing callback's effects for a later snapshot.
+      if (Data.Callback && Data.Value)
+        return ServiceOutcome(unsupported(S));
       FLSSlots.reset(Index);
-      FLSValues.erase(Index);
+      FLSData.erase(Index);
     } else
-      FLSValues[Index] = A[1];
+      Data.Value = A[1];
     return Value(1);
   }
   case API::GetStdHandle:
