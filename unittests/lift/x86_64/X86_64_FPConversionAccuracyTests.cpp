@@ -298,6 +298,62 @@ TEST(X86FPConversionContract, ReservedVexFieldsRefuseAndI386IgnoresW) {
     }
 }
 
+TEST(X86FPConversionContract,
+     SupportedAddressAndExtendedRegisterFormsKeepWidths) {
+  using namespace neverd;
+  struct Fixture {
+    Arch Target;
+    unsigned Source;
+    unsigned Destination;
+    std::vector<uint8_t> Bytes;
+  };
+  const Fixture Cases[] = {
+      {Arch::X64, 4, 4, {0xf3, 0x0f, 0x2d, 0xc1}},
+      {Arch::X64, 8, 8, {0xf2, 0x4d, 0x0f, 0x2d, 0xc1}},
+      {Arch::X64, 4, 8, {0xc4, 0x41, 0xfa, 0x2d, 0xc1}},
+      {Arch::X64, 8, 4, {0xc5, 0xfb, 0x2d, 0xc1}},
+      {Arch::X64, 4, 4, {0xf3, 0x0f, 0x2d, 0x44, 0x88, 0x10}},
+      {Arch::X64, 8, 8, {0xf2, 0x4b, 0x0f, 0x2d, 0x44, 0x88, 0x10}},
+      {Arch::X64, 8, 4, {0xf2, 0x0f, 0x2d, 0x05, 0x10, 0, 0, 0}},
+      {Arch::X64, 4, 4, {0x67, 0xf3, 0x0f, 0x2d, 0x00}},
+      {Arch::X64, 4, 4, {0x64, 0xf3, 0x0f, 0x2d, 0x00}},
+      {Arch::X64, 4, 4, {0x65, 0xc5, 0xfa, 0x2d, 0x00}},
+      {Arch::X64, 8, 8, {0xc4, 0xa1, 0xfb, 0x2d, 0x44, 0x88, 0x10}},
+      {Arch::X86, 4, 4, {0xf3, 0x0f, 0x2d, 0x44, 0x88, 0x10}},
+      {Arch::X86, 4, 4, {0x67, 0xc4, 0xe1, 0xfa, 0x2d, 0x00}},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(testing::Message()
+                 << "arch=" << static_cast<unsigned>(Case.Target)
+                 << " bytes=" << testing::PrintToString(Case.Bytes));
+    Decoder Decode;
+    ASSERT_TRUE(Decode.init(Case.Target));
+    Decode.setStrict(true);
+    DecodedInsn Insn;
+    ASSERT_EQ(
+        Decode.decodeOne(Case.Bytes.data(), Case.Bytes.size(), Entry, Insn),
+        Case.Bytes.size());
+    SCOPED_TRACE(Insn.Raw->op_str);
+    std::vector<LowOp> Ops;
+    ASSERT_NO_THROW(Decode.liftToLow(Insn, Ops));
+    unsigned Found = 0;
+    for (const auto &Op : Ops)
+      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+          Op.Inputs[0].isConst() &&
+          Op.Inputs[0].Offset ==
+              static_cast<unsigned>(Intrinsic::X86FPCvtToIntState)) {
+        ++Found;
+        EXPECT_EQ(Op.Inputs[1].Size, Case.Source);
+        EXPECT_EQ(Op.Inputs[2].Size, 4U);
+        EXPECT_EQ(Op.Inputs[3].Offset, Case.Destination);
+        EXPECT_TRUE(
+            x86FPStateShapeIsValid(Intrinsic::X86FPCvtToIntState,
+                                   x86FPStateLowShape(Op, Case.Target)));
+      }
+    EXPECT_EQ(Found, 1U);
+  }
+}
+
 TEST(X86FPConversionContract, LLVMCRejectsI386WithA64BitIntegerDestination) {
   using namespace neverd;
   llvm::LLVMContext Context;

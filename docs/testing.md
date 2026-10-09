@@ -73,12 +73,21 @@ HighC/LLVMC at O0/O2. Complete memory and MXCSR observers cover dead results and
 precision exceptions before output stores; the concrete evaluator retains the
 old aggregate on failure. Source controls check typed bit transport, allocated
 helper names and unaligned state memory with UB traps. Decode/lift controls
-reject reserved VEX fields and inconsistent address tails, and verify that
+reject reserved VEX fields and inconsistent address tails. Supported SIB,
+displacement, segment and extended-register controls also verify that
 VEX.W is ignored for the supported 32-bit destination in x86-32 mode. A
 64-bit integer destination in that mode is rejected at each IR/C boundary.
+Direct C return observers verify an integer result and MXCSR after a floating
+argument; default HighC and LLVMC emission must retain those results despite
+their state effects. LLVM vector argument carriers are passed using their
+recovered C types, rather than claiming scalar prototype recovery.
 This conversion suite does not certify packed, unsigned, EVEX/SAE or x87
 conversion state. Its native byte oracles require x64 and Clang; VEX byte
 oracles additionally require AVX.
+The pinned Capstone decoder currently refuses the legacy i386 address-override
+fixture `67 F2 0F 2D 00`; direct Capstone and NeverD decoding both fail before
+lifting. That form remains an unavailable decoder capability and is recorded
+separately from the supported conversion matrix.
 
 ```bash
 cmake --build build-release --target NeverDX86FPStateAccuracyTests --parallel 4
