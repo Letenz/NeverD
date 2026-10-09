@@ -98,6 +98,10 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProcessTransfer.SelectedTransfersRejectFailedThreadStateCapture")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.UnchangedVisitedPagesKeepOnlyUnvisitedPageWatches")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.AnInvocationRetainsChangesFromEverySavedImage")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackLibrary."
     "WrappedEntriesRequireExplicitTransferEvidence/{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(

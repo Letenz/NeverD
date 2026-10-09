@@ -159,6 +159,39 @@ TEST_F(ProcessTransfer, ADelayedInputUsesItsOwnInvocationStackAndBaseline) {
   EXPECT_TRUE(Observer.transfers().front().ProgramInvocation);
 }
 
+TEST_F(ProcessTransfer, UnchangedVisitedPagesKeepOnlyUnvisitedPageWatches) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  start();
+  auto Watches = observe(64);
+  ASSERT_EQ(Watches.size(), 1u);
+  EXPECT_EQ(Watches.front().Address, 4096u);
+  EXPECT_EQ(Watches.front().Size, 4096u);
+  Process.instruction(4096, {0xb8, 0, 0, 0, 0});
+  // Materializing the previously unvisited page is still a new generation.
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 4096)));
+  ASSERT_TRUE(Observer.take());
+}
+
+TEST_F(ProcessTransfer, AnInvocationRetainsChangesFromEverySavedImage) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  start();
+  Process.SP -= 64;
+  Process.Bytes[65] = 42;
+  observe(64);
+  ASSERT_EQ(Observer.transfers().size(), 1u);
+  Process.SP = 0x8000;
+  auto Watches = llvm::cantFail(Observer.invoking(Process));
+  ASSERT_TRUE(Watches);
+  EXPECT_TRUE(watched(*Watches, 64));
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  EXPECT_EQ(Captured->Baseline[65], 0);
+  EXPECT_EQ(Captured->Memory[65], 42);
+  ASSERT_EQ(Captured->Transfers.size(), 2u);
+  EXPECT_TRUE(Captured->Transfers.back().StackBalanced);
+}
+
 TEST_F(ProcessTransfer, GeneratedCallsNeedTheirReturnedStackAtTheContinuation) {
   for (bool Returns : {false, true}) {
     SCOPED_TRACE(Returns);

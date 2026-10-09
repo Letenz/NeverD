@@ -69,6 +69,15 @@ void TransferObserver::refreshWatches() {
       Add(Begin, End);
       continue;
     }
+    // Most visited stub pages still belong entirely to generation zero.
+    // Compare a page at once before classifying its individual bytes. Every
+    // saved image must agree: matching only the latest snapshot could hide
+    // code generated during an earlier invocation.
+    if (!Running && llvm::all_of(Images, [&](const auto &Image) {
+          return std::equal(Current.begin() + Begin, Current.begin() + End,
+                            Image.begin() + Begin);
+        }))
+      continue;
     // A page can mix old stub bytes and newly generated code. Conservatively
     // watch every possible instruction start whose bytes may belong to a
     // different generation. watched() decides using the actual decoded size.
