@@ -28,6 +28,7 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <set>
 #include <string>
 #include <utility>
@@ -762,6 +763,61 @@ TEST(SysVCallContract, ACopyOfEaxAfterSeteIsNoVectorCount) {
   ASSERT_NE(Call, std::string::npos) << Body;
   const std::string Line = Body.substr(Call, Body.find('\n', Call) - Call);
   EXPECT_EQ(Line.find(','), std::string::npos) << Line;
+}
+
+TEST(SysVCallContract, GccSplitVaStartMarksTheFunctionVariadic) {
+  // fatal(fmt, ...) as GCC builds it: va_start stores gp_offset and fp_offset
+  // as two 32-bit constants where Clang stores one 64-bit word.  Either marks
+  // the variadic prologue, so its vector register save area is no parameter.
+  constexpr va_t Fatal = Text, VprintfStub = Text + 0x100,
+                 ExitStub = Text + 0x110;
+  std::vector<uint8_t> Code(0x120, 0xCC);
+  std::vector<uint8_t> FatalCode = {
+      0x55,                                     // push rbp
+      0x48, 0x89, 0xE5,                         // mov rbp, rsp
+      0x48, 0x81, 0xEC, 0xD0, 0x00, 0x00, 0x00, // sub rsp, 0xd0
+      0x48, 0x89, 0xB5, 0x58, 0xFF, 0xFF, 0xFF, // mov [rbp-0xa8], rsi
+      0x48, 0x89, 0x95, 0x60, 0xFF, 0xFF, 0xFF, // mov [rbp-0xa0], rdx
+      0x48, 0x89, 0x8D, 0x68, 0xFF, 0xFF, 0xFF, // mov [rbp-0x98], rcx
+      0x4C, 0x89, 0x85, 0x70, 0xFF, 0xFF, 0xFF, // mov [rbp-0x90], r8
+      0x4C, 0x89, 0x8D, 0x78, 0xFF, 0xFF, 0xFF, // mov [rbp-0x88], r9
+      0x84, 0xC0,                               // test al, al
+      0x74, 0x04,                               // je spilled
+      0x0F, 0x29, 0x45, 0x80,                   // movaps [rbp-0x80], xmm0
+      0x48, 0x8D, 0x45, 0x10,                   // spilled: lea rax, [rbp+0x10]
+      0x48, 0x89, 0x85, 0x38, 0xFF, 0xFF, 0xFF, // mov [rbp-0xc8], rax
+      0x48, 0x8D, 0x85, 0x50, 0xFF, 0xFF, 0xFF, // lea rax, [rbp-0xb0]
+      0x48, 0x89, 0x85, 0x40, 0xFF, 0xFF, 0xFF, // mov [rbp-0xc0], rax
+      0xC7, 0x85, 0x30, 0xFF, 0xFF, 0xFF,       // mov dword [rbp-0xd0],
+      0x08, 0x00, 0x00, 0x00,                   //   8 (gp_offset)
+      0xC7, 0x85, 0x34, 0xFF, 0xFF, 0xFF,       // mov dword [rbp-0xcc],
+      0x30, 0x00, 0x00, 0x00,                   //   0x30 (fp_offset)
+      0x48, 0x8D, 0xB5, 0x30, 0xFF, 0xFF, 0xFF, // lea rsi, [rbp-0xd0]
+      0xE8};                                    // call vprintf
+  for (uint8_t B : rel32(Fatal + FatalCode.size() + 4, VprintfStub))
+    FatalCode.push_back(B);
+  for (uint8_t B : {0xBF, 0x02, 0x00, 0x00, 0x00, // mov edi, 2
+                    0xE8})                        // call exit
+    FatalCode.push_back(B);
+  for (uint8_t B : rel32(Fatal + FatalCode.size() + 4, ExitStub))
+    FatalCode.push_back(B);
+  ASSERT_LE(FatalCode.size(), VprintfStub - Fatal);
+  put(Code, Fatal, FatalCode);
+  const BinaryImage Img = makeImportImage(
+      Code, {{Fatal, "fatal"}}, {{VprintfStub, "vprintf"}, {ExitStub, "exit"}});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Fatal};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const auto F = std::find_if(
+      Result.MedFuncs.begin(), Result.MedFuncs.end(),
+      [&](const MedFunc &Function) { return Function.Entry == Fatal; });
+  ASSERT_NE(F, Result.MedFuncs.end());
+  EXPECT_TRUE(F->IsVariadic);
+  for (const MedVar &Param : F->Params)
+    EXPECT_LE(Param.Size, 8u) << "vector save-area slot as a parameter";
 }
 
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {
