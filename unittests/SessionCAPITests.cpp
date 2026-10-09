@@ -38,6 +38,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -4027,6 +4028,113 @@ TEST_F(SessionCAPITest, SourcePagesLocateTheFunctionAfterItsPrelude) {
     if (std::strcmp(Stage, "c") == 0)
       EXPECT_EQ(Text.compare(*End, 18, "/* neverd.entry: 0"), 0) << Text;
   }
+}
+
+TEST_F(SessionCAPITest, EveryFunctionOfALazilyBoundProgramShowsAsLLVMC) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // printf binds lazily: its PLT entry jumps through a GOT slot the dynamic
+  // linker writes, and the first PLT entry through the slot it fills with its
+  // resolver.  Every function, stubs and all, is C a compiler accepts: no
+  // call goes through a data pointer.
+  const std::string Binary =
+      buildProgram("lazy", "#include <stdio.h>\n"
+                           "int main(int argc, char **argv) {\n"
+                           "  printf(\"%d %s\\n\", argc, argv[0]);\n"
+                           "  return 0;\n"
+                           "}\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Count = neverd_func_count(Session);
+  ASSERT_GT(Count, 0);
+  const std::regex DataPointerCall(R"(\(\(void\s*\*\)[^()]*\)\s*\()");
+  for (int I = 0; I < Count; ++I) {
+    const neverd_va_t Entry = neverd_func_entry(Session, I);
+    const std::string LLVMC = takeString(neverd_decompile_llvm(Session, Entry));
+    EXPECT_FALSE(LLVMC.empty()) << "0x" << llvm::utohexstr(Entry) << ": "
+                                << takeString(neverd_last_error(Session));
+    EXPECT_FALSE(std::regex_search(LLVMC, DataPointerCall)) << LLVMC;
+  }
+#endif
+}
+
+TEST_F(SessionCAPITest, TLSDescriptorCallsShowAsCallsThroughTheDescriptor) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "builds an x86-64 ELF shared object";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // Under the GNU2 dialect, code reaches a thread-local variable by calling
+  // the resolver the dynamic linker writes into its TLS descriptor.
+  const auto Source = write("tls.c", "__thread int counter;\n"
+                                     "int bump(int by) {\n"
+                                     "  counter += by;\n"
+                                     "  return counter;\n"
+                                     "}\n");
+  const std::string Library = (Directory / "libtls.so").string();
+  std::string Message;
+  if (llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                {NEVERD_RUNTIME_FIXTURE_COMPILER, "-O1",
+                                 "-fPIC", "-shared", "-mtls-dialect=gnu2",
+                                 Source, "-o", Library},
+                                std::nullopt, {}, 60, 0, &Message) != 0)
+    GTEST_SKIP() << "the compiler has no GNU2 TLS dialect: " << Message;
+  ASSERT_EQ(neverd_session_load(Session, Library.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Bump = neverd_func_find_by_name(Session, "bump");
+  ASSERT_GE(Bump, 0);
+  const std::string LLVMC = takeString(
+      neverd_decompile_llvm(Session, neverd_func_entry(Session, Bump)));
+  ASSERT_FALSE(LLVMC.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(LLVMC.find("(*)("), std::string::npos) << LLVMC;
+#endif
+}
+
+TEST_F(SessionCAPITest, DebugParametersNameTheRegistersTheyArriveIn) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "builds an x86-64 System V program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // a and b arrive in xmm0 and xmm1 and c, an x87 long double, on the
+  // stack: the reads of xmm0 and xmm1 are a and b, as the debug
+  // declaration names them, whatever numbering the lift gave them.
+  const auto Source =
+      write("mix.c", "__attribute__((noinline))\n"
+                     "double mix(double a, float b, long double c) {\n"
+                     "  return a * 1.5 + b / 3.0 + (double)(c + c);\n"
+                     "}\n"
+                     "int main(int argc, char **argv) {\n"
+                     "  return (int)mix(argc, 2.0f, 3.0L);\n"
+                     "}\n");
+  const std::string Binary = (Directory / "mix").string();
+  std::string Message;
+  ASSERT_EQ(
+      llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                {NEVERD_RUNTIME_FIXTURE_COMPILER, "-O2", "-g",
+                                 "-fPIE", "-pie", Source, "-o", Binary},
+                                std::nullopt, {}, 60, 0, &Message),
+      0)
+      << Message;
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Mix = neverd_func_find_by_name(Session, "mix");
+  ASSERT_GE(Mix, 0);
+  const std::string HighC =
+      takeString(neverd_decompile(Session, neverd_func_entry(Session, Mix)));
+  ASSERT_FALSE(HighC.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(HighC.find("double mix(double a, float b"), std::string::npos)
+      << HighC;
+  EXPECT_EQ(HighC.find("arg6"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("arg7"), std::string::npos) << HighC;
+  // The x87 value converts where it is used: no helper function.
+  EXPECT_EQ(HighC.find("neverd_x87_value"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("neverd_mem_"), std::string::npos) << HighC;
+#endif
 }
 
 TEST_F(SessionCAPITest, StartAloneCallsTheBoundStartupImportWithMain) {

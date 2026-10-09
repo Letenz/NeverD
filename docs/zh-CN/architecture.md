@@ -833,6 +833,8 @@ KVM、WHP 和 Unicorn 的 checked x64/ARM64 可请求 `ExecutionFeature::Paralle
 
 共享 pass 中新增的目标专属规则应放在按目标划分的表中，而不是内联判断架构或格式。ISA 的事实是一个 `TargetRegInfo` 特性，在该 ISA 的 `lib/ir/TargetRegInfo<ISA>.cpp` 中设置。调用约定规则是一个 `CallArgumentConvention` 条目，定义在独立的 `lib/ir/med/abi/MedCallConvention<Name>.cpp` 中，并在 `MedCallConvention.cpp` 中登记。永不返回的函数按运行时分别列在 `include/neverd/libc` 下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）。这样支持新目标只需新增文件或表项，而无需在共享 pass 中加分支。
 
+可重定位目标文件中未定义符号的解析由一个共享层负责：`include/neverd/loader/ObjectExterns.h`。各格式的加载器收集重定位所引用的符号、是否有调用或分支到达每个符号（`<Format>ObjectRelocations.def`）、其 common 符号，以及某些引用经由其到达符号的单元（ELF 与 Mach-O 的 GOT 项、COFF 的 `__imp_` 指针）。该层把它们放在目标文件各节之后：一个可写的 `extern` 段和一个只读的单元段。被调用的外部符号在那里是导入，数据则是符号；弱引用不分配地址，因为代码对它所做的空值判断属于程序本身。
+
 <a id="support-and-test-depth"></a>
 
 ### 支持范围与测试深度
@@ -1167,6 +1169,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读�
 
 `WindowsSystemModules` 为两种 ISA 构造有界的 `ntdll.dll`、`kernelbase.dll` 和 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 与 `GetProcAddress` 共用其映射基址；PEB/LDR 和 `MEM_IMAGE` 描述同一批映像。静态导入、按名称查询和客户 DLL 转发使用相同 API 跳板与导出解析器。提供方固定驻留，不执行客户初始化回调，普通客户 DLL 全部卸载后不会阻止入口返回。头部或导出元数据改变会停止查询。未知系统导出名称和非零系统序号查询明确停止；已建模名称的大小写不匹配和空名称返回错误 127，空指针查询返回 87。生成的字节和地址属于模型策略，不复刻特定 Windows DLL 布局、原生序号或跨提供方别名。`WindowsSystemTests.cpp` 对照原始 x64/ARM64 EXE 与原生 Windows，并独立观察八次初始线程返回。
 
+`WindowsProcessFiles.cpp` 为 `KnownDlls` 中固定驻留、非不透明的提供者管理 `ZwOpenSection` 句柄。仅支持自动地址、零偏移的完整视图，内容来自加载器的不可变映像；`VirtualMemory` 记录 `MEM_IMAGE` 所有权，`AddressSpace` 保留映像页面权限。关闭 section 句柄不会释放视图。不支持未知命名空间、写访问、部分或固定地址视图，以及没有现有 API 入口身份的执行。`IntegerABI` 统一定位 x64 和 ARM64 映射调用的两个尾部参数，ULONG 字段忽略未定义的高位。当前线程信息类 `0x11` 保存隐藏状态并严格检查缓冲区长度；类别 `4` 仅接受模型公布的单处理器亲和性掩码。
+
 `WindowsProcessExceptions` 在同一 CPU 和进程预算内实现 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序处理器可注册或移除处理器、触发嵌套异常、调用已建模 API、加载 DLL 以及退出进程。x64/ARM64 数据访问异常和 x64 整数除法异常可在校验客户对 `CONTEXT` 的修改后恢复；通用寄存器、SIMD 和受支持的浮点状态会保留。软件异常经模型提供方中的真实返回指令继续执行。模型限制为最多保留 128 个注册项、嵌套 16 层。非法处置值、被修改的异常指针、不支持的上下文字段和超限均明确失败。ARM64 基于栈帧的 SEH／展开、调试器派发及执行／保护页异常仍不支持。`WindowsExceptionTests.cpp` 将原创 EXE／DLL 场景与原生 Windows 对照；原生 ARM64 KVM/WHP 证据仍待补齐。 软件异常记录带有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），与调用者传入的不可继续标志分别处理；原始 Windows 可执行文件精确核对软件异常和硬件异常的标志值。
 
 `os/windows/exception/X64SIMDException` 根据保留的 MXCSR 和原生观察到的优先级，统一负责真实 x64 `#XM` 的 Windows 状态码与参数分类。用户态分发要求故障元数据一致，并在异常记录中包含 `{0, MXCSR}`；仅有粘滞状态位不能证明发生了故障。 关于屏蔽异常的 x64 指令说明描述可移植基线。KVM/WHP 为 `driver-strict`、`checked-x64-v1` 和 `checked-user-x64-v1` 增加 `precise_simd_exceptions`：原生启动探针验证精确 `#XM` 及两种重试后，才允许未屏蔽的 MXCSR 写入、`LDMXCSR` 和 Windows `CONTEXT` 恢复。`ExecutionProfiles.def` 统一负责选择，`supportsSIMDExceptions` 提供已解析的实例能力。checked Unicorn 仍要求屏蔽；本次不扩展 ARM64 或 HVF 的异常能力。
@@ -1190,6 +1194,8 @@ Windows 进程时间策略归 `os/windows/process/` 中的 `WindowsProcessTime.c
 `lib/unpack` 分四层恢复加壳镜像。`core` 负责编排和格式注册表。`format/pe` 校验容器并重建观察到的内存、导入和元数据；`PETLS.cpp` 依据加载器分配信息和实际观察到的回调校验替换的 TLS 记录。不使用保护器注册表或静态外壳签名选择入口。`dynamic` 通过 `observeProcess` 观察来宾进程：`Observation.def` 把每种容器与指令集映射到一个进程配置，并给出每种指令集的栈指针和指令窗口。新增一个目标只需一行表项和一个模块目录，表中没有对应行的输入会被按名称拒绝。`ExecutionSession` 负责执行监视；`ProcessObserver` 读取已停止的进程并选择下一个停止点，但不能改变来宾状态。模拟层只知道 `defer_unmodeled`，它把未建模的导入绑定到一旦执行就停止的不透明入口。参见[脱壳](unpack.md)。 延迟加载允许可执行回调或入口目标位于零填充内存，由先前的初始化器生成其代码。回调数组和 TLS 分配元数据仍要求经过校验的文件内容；普通严格加载保留文件覆盖检查。操作系统模型提供调用归属，并在准备调用或恢复挂起的调用者时通知观察器。转移监视在这些边界重新布置，覆盖回调与生成入口同处一页的情况。
 
 `WindowsLibraryHost.cpp` 负责 DLL 宿主构造，Windows 加载器负责普通加载与卸载生命周期。`ProcessView::inputModule()` 区分观察输入与宿主 EXE，允许延后建立初始快照。`ProcessView::callFrame()` 通过 `IntegerABI` 读取整数参数和返回事实；`dynamic/ProcessTransfer` 负责匹配返回地址与栈的完成证据。仅 `PETLS.cpp` 决定该证据是否完成进程附加回调。
+
+`ProcessView::heapAllocations()` 在停止边界提供 Windows `Services` 所拥有的存活堆清单，不读取客体指针或修改状态。`dynamic/ProcessTransfer.cpp` 验证清单，并记录捕获的镜像与 TLS 字节中的保守地址匹配；仅由 `core/Unpack.cpp` 决定 `unsupported_state` 或显式请求的 `snapshot`。PE 写出器不会猜测堆重定位或启动语义。
 
 `PEDelayImports.cpp` 负责新进程中的延迟加载修复及元数据存储排除。COFF 加载器根据描述符来源记录 `Import::IsDelayImport`，Windows 执行准入仅比较普通导入。经过验证的延迟描述符为已解析单元的重新绑定提供准确范围，待解析的内部跳板保留按需行为。独立查找表限定绑定数量，保留后续待解析单元。无效状态明确报错。
 

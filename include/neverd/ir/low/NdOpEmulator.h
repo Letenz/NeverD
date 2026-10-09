@@ -89,7 +89,10 @@ public:
   /// scalar API remains the low-64-bit view used by jump-table emulation.
   void setRegisterBytes(uint64_t RegOff, llvm::ArrayRef<uint8_t> Value);
   std::optional<std::vector<uint8_t>> getRegisterBytes(uint64_t RegOff) const;
-  void setMXCSR(uint32_t Value) { MXCSR = Value; }
+  void setMXCSR(uint32_t Value) {
+    MXCSR = Value;
+    MXCSRKnown = true;
+  }
   uint32_t getMXCSR() const { return MXCSR; }
 
   /// Configure an architecture-defined memory address-space base.  FS/GS
@@ -195,6 +198,7 @@ private:
   std::map<uint64_t, uint64_t> MemStore;
   std::map<uint64_t, uint8_t> MemStoreBytes;
   uint32_t MXCSR = 0x1f80;
+  bool MXCSRKnown = true;
   bool CollectLoads = false;
   std::vector<LoadRecord> LoadLog;
   std::map<NdMemoryAddressSpace, uint64_t> MemoryAddressSpaceBases;
@@ -236,6 +240,7 @@ private:
   bool executeIntrinsic(const LowOp &Op);
   bool executeX86Crypto(const LowOp &Op);
   bool executeX86FPArith(const LowOp &Op);
+  bool executeX86ScalarFPState(const LowOp &Op);
   bool executeX86FPConvert(const LowOp &Op);
   bool executeX86FPRoundTransform(const LowOp &Op);
   bool executeX86FPExtract(const LowOp &Op);

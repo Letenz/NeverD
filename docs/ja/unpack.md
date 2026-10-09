@@ -25,7 +25,15 @@ neverd unpack packed.exe -o unpacked.exe \
   --options='{"backend":"unicorn","instruction_limit":400000000,"transfer":2}'
 ```
 
-コマンドは JSON レポートを 1 つ出力します。終了コード 0 はイメージが書き出されたこと、3 はエントリが受理される前に有界な実行が終了したこと（`outcome` は `no_entry` で、何も書き出されません）、1 は入力・オプションの不正または準備の失敗を表します。レポートには、実際に実行された `format`、`architecture`、`profile` が記載されます。C のエントリポイントは `neverd_unpack_json`、Python では `Session.unpack` です。オプションは[プロセスオプション](process-emulation.md)に `transfer` を加えたものです。スタブがより多くの資源を必要とする項目では既定値が異なります。100000000 命令、600 秒、512 MiB で、`windows.defer_unmodeled` は有効です。
+コマンドは JSON レポートを 1 つ出力します。終了コード 0 は `unpacked` イメージまたは明示的に要求した `snapshot` の書き出し、3 は `no_entry` または `unsupported_state`（出力ファイルを作成・切り詰めしない）、1 は入力・オプションの不正または準備の失敗を表します。レポートには、実際に実行された `format`、`architecture`、`profile` が記載されます。C のエントリポイントは `neverd_unpack_json`、Python では `Session.unpack` です。オプションは[プロセスオプション](process-emulation.md)に `transfer` と `snapshot_only` を加えたものです。スタブがより多くの資源を必要とする項目では既定値が異なります。100000000 命令、600 秒、512 MiB で、`windows.defer_unmodeled` は有効です。
+
+## 実行時状態と解析用スナップショット
+
+転送の受理時に、プロセスプロファイルは生存中のヒープ割り当て一覧を提供します。回復処理は、捕捉したイメージと現在のスレッドの TLS バイト内の全ポインタ幅の値を保守的に走査し、非整列の値や割り当て内部のアドレスも調べます。一致は整数や未使用データかもしれず、型付きポインタや再配置の根拠ではありません。一覧の出所が不明、または参照の可能性がある場合、受理済みの `entry` があっても既定では `unsupported_state` となります。CLI と C API は出力を作成・切り詰めしません。
+
+`runtime_state.heap_inventory_known` は既知の空一覧と出所不明を区別します。`possible_heap_references` は全一致数、`heap_references` は最大で最初の 64 件です。イメージ、TLS の順で、各々 `offset` 順に記録します。各記録には `storage`（`image` または `thread_local`）、アドレスと割り当て範囲があります。`rva` はイメージでは十六進値、TLS では null です。アドレスとオフセットは十六進文字列です。
+
+`--options='{"snapshot_only":true}'` は解析用バイトを明示的に要求します。入口が受理され再構築に成功すると結果は常に `snapshot` で、実行時状態の診断は残ります。ヒープの復元、再配置の推定、ネイティブ実行の保証、仮想化解除は行いません。参照数ゼロも他の OS 状態や未実行経路を保証しません。
 
 ## エントリの確定方法
 

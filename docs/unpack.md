@@ -23,7 +23,15 @@ neverd unpack packed.exe -o unpacked.exe \
   --options='{"backend":"unicorn","instruction_limit":400000000,"transfer":2}'
 ```
 
-The command prints one JSON report. Exit code 0 means the image was written, 3 means the bounded run ended before an entry was accepted (`outcome` is `no_entry` and nothing is written), and 1 is an invalid input, option or setup failure. The report names the `format`, the `architecture` and the `profile` that ran. The C entry point is `neverd_unpack_json`; Python exposes `Session.unpack`. Options are the [process options](process-emulation.md) plus `transfer`. Defaults differ where a stub needs more room: 100000000 instructions, 600 seconds and 512 MiB, and `windows.defer_unmodeled` is on.
+The command prints one JSON report. Exit code 0 means an `unpacked` image or an explicitly requested `snapshot` was written; 3 means `no_entry` or `unsupported_state`, with no file created or truncated; 1 means an invalid input, option or setup failure. The report names the `format`, the `architecture` and the `profile` that ran. The C entry point is `neverd_unpack_json`; Python exposes `Session.unpack`. Options are the [process options](process-emulation.md) plus `transfer` and `snapshot_only`. Defaults differ where a stub needs more room: 100000000 instructions, 600 seconds and 512 MiB, and `windows.defer_unmodeled` is on.
+
+## Runtime state and analysis snapshots
+
+At the accepted transfer, the process profile supplies its live heap allocation inventory. Recovery conservatively scans every pointer-sized value in captured image and current-thread TLS bytes, including unaligned values and interior allocation addresses. A match may be an integer or unused data; it is not a typed pointer or permission to relocate it. An unknown inventory or a possible reference produces `unsupported_state` by default, even with an accepted `entry`. Neither the CLI nor C API creates or truncates the output in this case.
+
+`runtime_state.heap_inventory_known` distinguishes an empty known inventory from missing provenance. `possible_heap_references` counts all matches; `heap_references` retains at most the first 64, image first and then TLS, ordered by `offset`. Each record names its `storage` (`image` or `thread_local`), address and allocation extent. `rva` is present as a hexadecimal value for image storage and null for TLS. Addresses and offsets use hexadecimal strings.
+
+`--options='{"snapshot_only":true}'` explicitly requests analysis bytes. Once an entry is accepted and rebuilding succeeds, the outcome is always `snapshot`; the runtime-state diagnostic remains visible. This option does not restore heap data, infer relocations, certify native execution or devirtualize code. An empty heap-reference count also does not certify other OS state or unreached paths.
 
 ## How the entry is established
 

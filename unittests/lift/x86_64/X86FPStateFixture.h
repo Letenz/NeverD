@@ -1,0 +1,38 @@
+//===- X86FPStateFixture.h - Scalar FP state dump contracts -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_UNITTESTS_X86FPSTATEFIXTURE_H
+#define NEVERD_UNITTESTS_X86FPSTATEFIXTURE_H
+
+#include "../NeverDLiftFixture.h"
+
+#include "neverd/ir/X86FPState.h"
+
+#include "llvm/ADT/StringExtras.h"
+
+class X86FPStateLiftTest : public NeverDLiftTest {
+protected:
+  void verifyScalarFPState(const fs::path &Binary, const std::string &Function,
+                           neverd::Intrinsic Operation) {
+    const auto Result = liftToLowIR(Binary, Function);
+    ASSERT_EQ(Result.exitCode, 0) << Result.err;
+    size_t Position = 0;
+    for (neverd::Intrinsic Id : {neverd::Intrinsic::X86ReadMXCSR, Operation,
+                                 neverd::Intrinsic::X86WriteMXCSR}) {
+      const std::string Operand =
+          " cst:0x" + llvm::utohexstr(static_cast<unsigned>(Id)) + ":2";
+      const auto Found = Result.out.find(Operand, Position);
+      ASSERT_NE(Found, std::string::npos) << Result.out;
+      const auto Begin = Result.out.rfind('\n', Found);
+      const auto Intrinsic =
+          Result.out.find("INTRINSIC", Begin == std::string::npos ? 0 : Begin);
+      ASSERT_LE(Intrinsic, Found) << Result.out;
+      Position = Found + Operand.size();
+    }
+  }
+};
+
+#endif

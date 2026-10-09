@@ -748,6 +748,8 @@ KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::Paralle
 
 共用 pass 中新增的目標專屬規則應放在依目標劃分的表中，而不是內聯判斷架構或格式。ISA 的事實是一個 `TargetRegInfo` 特性，在該 ISA 的 `lib/ir/TargetRegInfo<ISA>.cpp` 中設定。呼叫慣例規則是一個 `CallArgumentConvention` 條目，定義在獨立的 `lib/ir/med/abi/MedCallConvention<Name>.cpp` 中，並在 `MedCallConvention.cpp` 中登記。永不返回的函式依執行環境分別列在 `include/neverd/libc` 下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）。如此支援新目標只需新增檔案或表項，而無需在共用 pass 中加分支。
 
+可重定位目的檔中未定義符號的解析由一個共用層負責：`include/neverd/loader/ObjectExterns.h`。各格式的載入器收集重定位所引用的符號、是否有呼叫或分支到達每個符號（`<Format>ObjectRelocations.def`）、其 common 符號，以及某些參照經由其到達符號的單元（ELF 與 Mach-O 的 GOT 項、COFF 的 `__imp_` 指標）。該層把它們放在目的檔各節之後：一個可寫的 `extern` 區段和一個唯讀的單元區段。被呼叫的外部符號在那裡是匯入，資料則是符號；弱參照不配置位址，因為程式碼對它所做的空值判斷屬於程式本身。
+
 <a id="support-and-test-depth"></a>
 
 ### 支援範圍與測試深度
@@ -1107,6 +1109,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 `WindowsSystemModules` 為兩種 ISA 建立有界的 `ntdll.dll`、`kernelbase.dll` 與 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 和 `GetProcAddress` 共用映射基址；PEB/LDR 與 `MEM_IMAGE` 描述相同映像。靜態匯入、名稱查詢與客體 DLL 轉送使用相同 API 跳板及匯出解析器。提供者固定駐留，不執行客體初始化回呼，普通客體 DLL 全部卸載後不會阻止進入點傳回。標頭或匯出中繼資料改變會停止查詢。未知系統匯出名稱與非零系統序號查詢明確停止；已建模名稱的大小寫不符及空名稱傳回錯誤 127，空指標查詢傳回 87。產生的位元組與位址屬於模型策略，不重建特定 Windows DLL 配置、原生序號或跨提供者別名。`WindowsSystemTests.cpp` 對照原始 x64/ARM64 EXE 與原生 Windows，並獨立觀察八次初始執行緒傳回。
 
+`WindowsProcessFiles.cpp` 為 `KnownDlls` 中固定駐留、非不透明的提供者管理 `ZwOpenSection` 控制代碼。僅支援自動位址、零位移的完整檢視，內容來自載入器的不可變映像；`VirtualMemory` 記錄 `MEM_IMAGE` 所有權，`AddressSpace` 保留映像頁面權限。關閉控制代碼不會釋放檢視。不支援未知命名空間、寫入存取、部分或固定位址檢視，以及沒有既有 API 入口身分的執行。`IntegerABI` 統一定位 x64 與 ARM64 映射呼叫的兩個尾端參數，ULONG 欄位忽略未定義的高位元。目前執行緒資訊類別 `0x11` 保存隱藏狀態並嚴格檢查緩衝區長度；類別 `4` 僅接受模型公布的單處理器親和性遮罩。
+
 `WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。ARM64 以堆疊框架為基礎的 SEH／展開、偵錯器派送及執行／防護頁例外仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。
 
 `os/windows/exception/X64SIMDException` 依據保留的 MXCSR 與原生觀察到的優先順序，統一負責真實 x64 `#XM` 的 Windows 狀態碼及參數分類。使用者態分發要求故障中繼資料一致，並在例外記錄中包含 `{0, MXCSR}`；僅有黏滯狀態位元不能證明發生了故障。 關於遮罩例外的 x64 指令說明描述可攜基線。KVM/WHP 為 `driver-strict`、`checked-x64-v1` 與 `checked-user-x64-v1` 增加 `precise_simd_exceptions`：原生啟動探針驗證精確 `#XM` 及兩種重試後，才允許未遮罩的 MXCSR 寫入、`LDMXCSR` 與 Windows `CONTEXT` 還原。`ExecutionProfiles.def` 統一負責選擇，`supportsSIMDExceptions` 提供已解析的實例能力。checked Unicorn 仍要求遮罩；本次不擴展 ARM64 或 HVF 的例外能力。
@@ -1130,6 +1134,8 @@ Windows 行程時間策略由 `os/windows/process/` 的 `WindowsProcessTime.cpp`
 `lib/unpack` 分四層恢復加殼鏡像。`core` 負責編排和格式註冊表。`format/pe` 驗證容器並重建觀察到的記憶體、導入和中繼資料；`PETLS.cpp` 根據載入器分配資訊及觀察到的回呼驗證替換的 TLS 記錄。不使用保護器註冊表或靜態外殼簽章選擇入口。`dynamic` 透過 `observeProcess` 觀察來賓行程：`Observation.def` 把每種容器與指令集對應到一個行程設定檔，並給出每種指令集的堆疊指標和指令視窗。新增一個目標只需一列表項和一個模組目錄，表中沒有對應列的輸入會被依名稱拒絕。`ExecutionSession` 負責執行監視；`ProcessObserver` 讀取已停止的行程並選擇下一個停止點，但不能改變來賓狀態。模擬層只知道 `defer_unmodeled`，它把未建模的匯入繫結到一旦執行就停止的不透明入口。參見[脫殼](unpack.md)。 延遲載入允許可執行回呼或入口目標位於零填充記憶體，由先前的初始化器產生程式碼。回呼陣列與 TLS 配置中繼資料仍須有經驗證的檔案內容；一般嚴格載入保留檔案覆蓋檢查。作業系統模型提供呼叫歸屬，並在準備呼叫或恢復暫停的呼叫者時通知觀察器。轉移監視在這些邊界重新設定，涵蓋回呼與產生的入口位於同一頁的情況。
 
 `WindowsLibraryHost.cpp` 負責 DLL 宿主建構，Windows 載入器負責一般載入與卸載生命週期。`ProcessView::inputModule()` 區分觀察輸入與宿主 EXE，允許延後建立初始快照。`ProcessView::callFrame()` 透過 `IntegerABI` 讀取整數參數與返回事實；`dynamic/ProcessTransfer` 負責匹配返回位址與堆疊的完成證據。僅 `PETLS.cpp` 決定該證據是否完成程序附加回呼。
+
+`ProcessView::heapAllocations()` 在停止邊界提供 Windows `Services` 所擁有的存活堆積清單，不讀取客體指標或修改狀態。`dynamic/ProcessTransfer.cpp` 驗證清單，並記錄擷取的映像與 TLS 位元組中的保守位址匹配；僅由 `core/Unpack.cpp` 決定 `unsupported_state` 或明確要求的 `snapshot`。PE 寫出器不會猜測堆積重定位或啟動語義。
 
 `PEDelayImports.cpp` 負責新處理程序中的延遲載入修復及中繼資料儲存排除。COFF 載入器根據描述符來源記錄 `Import::IsDelayImport`，Windows 執行准入僅比較一般匯入。經過驗證的延遲描述符為已解析單元的重新繫結提供準確範圍，待解析的內部跳板保留按需行為。獨立查找表限定繫結數量，保留後續待解析單元。無效狀態明確報錯。
 

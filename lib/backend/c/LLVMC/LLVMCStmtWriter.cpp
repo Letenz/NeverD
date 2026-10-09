@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../UnalignedMemory.h"
+#include "../render/X86FPStateHelpers.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
@@ -20,6 +21,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
@@ -32,6 +34,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <cctype>
@@ -3711,6 +3714,47 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   if (!IA)
     return false;
 
+  if (auto Shape = classifyX86FPStateAsm(Call)) {
+    if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
+      llvm::report_fatal_error("x86 FP state C projection requires x86");
+    const auto [Id, Bytes] = *Shape;
+    emitIndent(Indent);
+    if (!Bytes) {
+      const std::string Pointer = valueStr(Call.getArgOperand(0));
+      OS << "__asm__ volatile(\""
+         << (Id == Intrinsic::X86ReadMXCSR ? "stmxcsr" : "ldmxcsr")
+         << " (%0)\" :: \"r\"(" << Pointer << ") : \"memory\");\n";
+      return true;
+    }
+    const auto BitcastInput = [&](unsigned Index) {
+      return "__builtin_bit_cast(uint" +
+             std::to_string(x86FPStateSourceBytes(Bytes) * 8) + "_t, " +
+             valueStr(Call.getArgOperand(Index)) + ")";
+    };
+    const auto Helper = FPStateHelperNames.find(*Shape);
+    if (Helper == FPStateHelperNames.end())
+      llvm::report_fatal_error("uncollected x86 FP state C helper");
+    if (isX86FPConversionStateIntrinsic(Id)) {
+      const std::string Expression = Helper->second + "(" + BitcastInput(0) +
+                                     ", (void*)" +
+                                     valueStr(Call.getArgOperand(1)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = " << Expression << ";\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
+    std::string Expression = Helper->second + "(" + BitcastInput(0) + ", " +
+                             BitcastInput(1) + ", (void*)" +
+                             valueStr(Call.getArgOperand(2)) + ")";
+    if (!Call.use_empty())
+      OS << Name << " = __builtin_bit_cast("
+         << (Bytes == 4 ? "float" : "double") << ", " << Expression << ");\n";
+    else
+      OS << "(void)" << Expression << ";\n";
+    return true;
+  }
+
   std::string AsmStr = IA->getAsmString().str();
   if (AsmStr.empty())
     return false;
@@ -4140,8 +4184,8 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
   AfterCxxThrow = NoReturn;
 }
 
-std::string
-LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
+std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
+                                            bool Strict) {
   const auto *Type = Call.getFunctionType();
   std::string Convention;
   switch (Call.getCallingConv()) {
@@ -4160,7 +4204,10 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
     Convention = "__attribute__((fastcall)) ";
     break;
   default:
-    throw std::runtime_error("unsupported preserved indirect-call convention");
+    if (Strict)
+      throw std::runtime_error(
+          "unsupported preserved indirect-call convention");
+    break;
   }
   std::string Parameters;
   for (auto *Parameter : Type->params()) {
@@ -4169,17 +4216,26 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
     Parameters += typeToCLLVM(Parameter);
   }
   if (Type->isVarArg()) {
-    if (Parameters.empty())
+    // C before C23 names no variadic type without a fixed parameter; shown
+    // C leaves such a callee unprototyped.
+    if (!Parameters.empty())
+      Parameters += ", ...";
+    else if (Strict)
       throw std::runtime_error(
           "C variadic indirect call lacks a fixed parameter");
-    Parameters += ", ...";
   } else if (Parameters.empty()) {
     Parameters = "void";
   }
+  return typeToCLLVM(Type->getReturnType()) + " (" + Convention + "*)(" +
+         Parameters + ")";
+}
+
+std::string
+LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
   // Opaque LLVM pointers do not carry a C function-pointer type. The call
   // instruction owns the exact result, parameter widths and convention.
-  return "((" + typeToCLLVM(Type->getReturnType()) + " (" + Convention + "*)(" +
-         Parameters + "))(" + valueStr(Call.getCalledOperand()) + "))";
+  return "((" + indirectCalleeType(Call, /*Strict=*/true) + ")(" +
+         valueStr(Call.getCalledOperand()) + "))";
 }
 
 std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
@@ -4252,11 +4308,18 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
   } else {
     CalleeName = resolveImportCalleeName(Call.getCalledOperand());
     if (CalleeName.empty()) {
-      if (std::string Slot = indirectCalleeStr(Call.getCalledOperand());
-          !Slot.empty())
-        CalleeName = Slot;
-      else
-        CalleeName = "(" + valueStr(Call.getCalledOperand()) + ")";
+      // C calls no data pointer: the call's own type names the function a
+      // pointer or an address held as an integer reaches.
+      std::string Target = indirectCalleeStr(Call.getCalledOperand());
+      if (Target.empty()) {
+        const llvm::Value *Callee = Call.getCalledOperand();
+        if (const auto *Cast = llvm::dyn_cast<llvm::Operator>(Callee);
+            Cast && Cast->getOpcode() == llvm::Instruction::IntToPtr)
+          Callee = Cast->getOperand(0);
+        Target = "(" + valueStr(Callee) + ")";
+      }
+      CalleeName = "((" + indirectCalleeType(Call, /*Strict=*/false) + ")" +
+                   Target + ")";
     }
   }
   if (Call.getCalledFunction() &&

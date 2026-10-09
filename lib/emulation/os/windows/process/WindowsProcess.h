@@ -177,6 +177,7 @@ public:
         Budget(Budget), Exceptions(Exceptions) {}
   llvm::Expected<ServiceOutcome> invoke(const Service &Service,
                                         const NativeCallEvent &Event);
+  std::vector<ProcessHeapAllocationView> heapAllocations() const;
 
 private:
   std::optional<uint64_t> unsupported(const Service &Service);
@@ -188,6 +189,8 @@ private:
                                                     const NativeCallEvent &);
   llvm::Expected<std::optional<uint64_t>>
   createSection(const Service &, const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> openSection(const Service &,
+                                                      const NativeCallEvent &);
   llvm::Expected<std::optional<uint64_t>> mapSection(const Service &,
                                                      const NativeCallEvent &);
   llvm::Expected<std::optional<uint64_t>> unmapSection(const Service &,
@@ -251,6 +254,7 @@ private:
   std::map<uint64_t, bool> ThreadSnapshots;
   uint64_t NextThreadSnapshot = value::ThreadSnapshotBase;
   uint32_t ThreadErrorMode = 0;
+  bool ThreadHiddenFromDebugger = false;
   bool knownHeap(uint64_t Handle) const {
     if (Handle == value::HeapHandle)
       return true;
@@ -264,9 +268,11 @@ private:
   struct SectionObject {
     std::filesystem::path Path;
     uint64_t Size = 0;
+    std::optional<size_t> SystemModule;
   };
   struct MappedView {
     uint64_t Size = 0;
+    bool Image = false;
   };
   std::map<uint64_t, OpenedFile> Files;
   std::map<uint64_t, SectionObject> Sections;

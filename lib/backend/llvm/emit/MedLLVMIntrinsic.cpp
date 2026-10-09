@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/ir/X86FPState.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-intrinsic"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -94,10 +95,15 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
   using I = Intrinsic;
   auto IC = static_cast<I>(IntrCode);
 
+  if (isX86FPStateIntrinsic(IC)) {
+    if (TargetArch != Arch::X86 && TargetArch != Arch::X64)
+      llvm::report_fatal_error("x86 FP state requires an x86 target");
+    return emitX86IntrinsicValue(Op, IC, Builder);
+  }
+
   if (IC == I::X86RequireDivPrecondition && TargetArch != Arch::X86 &&
       TargetArch != Arch::X64)
-    llvm::report_fatal_error(
-        "x86 divide precondition requires an x86 target");
+    llvm::report_fatal_error("x86 divide precondition requires an x86 target");
 
   // LowIR carries AMX as exact 64-byte TILECFG and 1-KiB tile values.  A
   // faithful compiled lowering additionally needs checked strided bulk memory,
@@ -132,7 +138,8 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
     return emitVdbpsadbwIntrinsic(Op, IC, Builder);
   }
   if (IC == I::X86FourFMA)
-    llvm::report_fatal_error("x86 four-iteration FMA lowering is not available");
+    llvm::report_fatal_error(
+        "x86 four-iteration FMA lowering is not available");
   if (isX86VP4DPIntrinsic(IC))
     llvm::report_fatal_error(
         "x86 VP4DP word dot-product lowering is not available");
@@ -147,17 +154,11 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
     if (!intrinsicSupportsMemoryAddressSpace(IC))
       llvm::report_fatal_error(
           "intrinsic does not support a memory address space");
-    if (!intrinsicMemoryAddressSpaceShapeIsValid(IC, Op.NumInputs,
-                                                 Op.Output.Size,
-                                                 Op.NumInputs > 1
-                                                     ? Op.Inputs[1].Size
-                                                     : 0,
-                                                 Op.NumInputs > 2
-                                                     ? Op.Inputs[2].Size
-                                                     : 0,
-                                                 Op.NumInputs > 3
-                                                     ? Op.Inputs[3].Size
-                                                     : 0))
+    if (!intrinsicMemoryAddressSpaceShapeIsValid(
+            IC, Op.NumInputs, Op.Output.Size,
+            Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,
+            Op.NumInputs > 2 ? Op.Inputs[2].Size : 0,
+            Op.NumInputs > 3 ? Op.Inputs[3].Size : 0))
       llvm::report_fatal_error(
           "segmented-memory intrinsic has an invalid operand/output shape");
   }

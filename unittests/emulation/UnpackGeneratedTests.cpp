@@ -12,7 +12,7 @@
 ///
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
-#include "UnpackTestSupport.h"
+#include "UnpackGeneratedTestSupport.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessSession.h"
@@ -28,16 +28,7 @@ namespace {
 using namespace emulation;
 using test::differingBytes;
 using test::Image;
-namespace generated {
-#define NEVERD_GENERATED_VALUE(Name, Value) constexpr uint64_t Name = Value;
-#define NEVERD_GENERATED_MODE(Name, Value)                                     \
-  constexpr uint32_t Name##Mode = Value;
-#define NEVERD_GENERATED_TEXT(Name, Text) constexpr char Name[] = Text;
-#include "fixtures/UnpackGeneratedCases.def"
-#undef NEVERD_GENERATED_TEXT
-#undef NEVERD_GENERATED_MODE
-#undef NEVERD_GENERATED_VALUE
-} // namespace generated
+namespace generated = test::generated;
 using namespace generated;
 
 struct Profile {
@@ -181,28 +172,7 @@ protected:
   /// transformed copy and start at the loader that restores it.
   std::filesystem::path pack(uint32_t Mode) {
     using namespace llvm::support::endian;
-    const auto *Pay = Original.section(PackSection);
-    const auto Loader = Original.Exports.find(LoaderExport);
-    if (!Pay || Loader == Original.Exports.end() ||
-        Pay->FileSize < RelayOffset + Capacity) {
-      ADD_FAILURE() << MissingRecord;
-      return {};
-    }
     auto Bytes = Original.File;
-    uint8_t *Record = Bytes.data() + Pay->FileOffset;
-    write32le(Record + ModeOffset, Mode);
-    write32le(Record + KeyOffset, uint32_t(Key));
-    auto Move = [&](const char *Name, uint64_t SizeAt, uint64_t DataAt) {
-      const auto *S = Original.section(Name);
-      if (!S || S->VirtualSize > Capacity || S->VirtualSize > S->FileSize) {
-        ADD_FAILURE() << Name << RecordOverflow;
-        return;
-      }
-      for (uint32_t I = 0; I < S->VirtualSize; ++I)
-        Record[DataAt + I] = uint8_t(Bytes[S->FileOffset + I] ^ Key);
-      std::fill_n(Bytes.begin() + S->FileOffset, S->FileSize, 0);
-      write32le(Record + SizeAt, S->VirtualSize);
-    };
     if ((Mode == MutatedMode || Mode == PaddedCallMode ||
          Mode == ImpureCallMode) &&
         !mutateImportCalls(Bytes, Mode))
@@ -284,10 +254,9 @@ protected:
         Bytes[At + 7] = Mode == CompactAddressMode ? 0x90 : 0xc3;
       }
     }
-    Move(ProgramSection, ProgramBytesOffset, ProgramOffset);
-    if (Mode == StagedMode)
-      Move(RelaySection, RelayBytesOffset, RelayOffset);
-    write32le(Bytes.data() + Original.EntryOffset, Loader->second);
+    Bytes = generated::pack(Original, std::move(Bytes), Mode);
+    if (HasFailure())
+      return {};
     const auto Path = Scratch / PackedFile;
     test::writeFile(Path, Bytes);
     return Path;
@@ -620,6 +589,60 @@ TEST_P(UnpackGenerated, LoaderThatLeavesForTheProgramYieldsTheLinkedImage) {
   EXPECT_EQ(Result.EntryRVA, Original.Entry);
   EXPECT_EQ(Result.Source, EntrySource::Transfer);
   expectOriginalProgram(Result);
+}
+
+TEST_P(UnpackGenerated,
+       LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage) {
+  const auto Packed = pack(HeapStateMode);
+  ASSERT_FALSE(HasFailure());
+  const auto OriginalRun = run(Packed);
+  ASSERT_EQ(OriginalRun.Stop, ProcessStopReason::Exited)
+      << OriginalRun.Diagnostic;
+  EXPECT_EQ(OriginalRun.ExitStatus, ExitStatus);
+  EXPECT_EQ(OriginalRun.StandardOutput, Message);
+  const auto Result = unpack(HeapStateMode);
+  ASSERT_FALSE(HasFailure());
+  EXPECT_EQ(Result.Outcome, UnpackOutcome::UnsupportedState);
+  EXPECT_EQ(Result.EntryRVA, Original.Entry);
+  EXPECT_TRUE(Result.Image.empty());
+  EXPECT_TRUE(Result.RuntimeState.HeapInventoryKnown);
+  EXPECT_GT(Result.RuntimeState.PossibleHeapReferences, 0u);
+  EXPECT_FALSE(Result.RuntimeState.HeapReferences.empty());
+  EXPECT_NE(Result.Diagnostic.find("heap allocations"), std::string::npos);
+}
+
+TEST_P(UnpackGenerated, ExplicitSnapshotsKeepExternalHeapDependenciesVisible) {
+  Options.SnapshotOnly = true;
+  const auto Result = unpack(HeapStateMode);
+  ASSERT_FALSE(HasFailure());
+  ASSERT_EQ(Result.Outcome, UnpackOutcome::Snapshot) << Result.Diagnostic;
+  ASSERT_FALSE(Result.Image.empty());
+  EXPECT_GT(Result.RuntimeState.PossibleHeapReferences, 0u);
+  const auto Path = Scratch / RebuiltFile;
+  test::writeFile(Path, Result.Image);
+  const auto Replay = run(Path);
+  EXPECT_EQ(Replay.Stop, ProcessStopReason::CPUFailure) << Replay.Diagnostic;
+  EXPECT_FALSE(Replay.ExitStatus);
+  EXPECT_TRUE(Replay.StandardOutput.empty());
+}
+
+TEST_P(UnpackGenerated, ReleasedHeapStateDoesNotBlockRecovery) {
+  const auto Packed = pack(ReleasedHeapStateMode);
+  ASSERT_FALSE(HasFailure());
+  const auto Expected = run(Packed);
+  ASSERT_EQ(Expected.Stop, ProcessStopReason::Exited) << Expected.Diagnostic;
+  EXPECT_EQ(Expected.ExitStatus, ExitStatus);
+  const auto Result = unpack(ReleasedHeapStateMode);
+  ASSERT_FALSE(HasFailure());
+  ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
+  EXPECT_TRUE(Result.RuntimeState.HeapInventoryKnown);
+  EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+  const auto Path = Scratch / RebuiltFile;
+  test::writeFile(Path, Result.Image);
+  const auto Actual = run(Path);
+  EXPECT_EQ(Actual.Stop, Expected.Stop) << Actual.Diagnostic;
+  EXPECT_EQ(Actual.ExitStatus, Expected.ExitStatus);
+  EXPECT_EQ(Actual.StandardOutput, Expected.StandardOutput);
 }
 
 TEST_P(UnpackGenerated, LoaderGeneratesItsEntryInThePageItIsExecuting) {

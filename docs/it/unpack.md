@@ -25,7 +25,15 @@ neverd unpack packed.exe -o unpacked.exe \
   --options='{"backend":"unicorn","instruction_limit":400000000,"transfer":2}'
 ```
 
-Il comando stampa un rapporto JSON. Il codice di uscita 0 indica che l'immagine è stata scritta, 3 che l'esecuzione limitata è terminata prima che un ingresso fosse accettato (`outcome` vale `no_entry` e non viene scritto nulla), e 1 un input, un'opzione o una preparazione non validi. Il rapporto indica il `format`, l'`architecture` e il `profile` effettivamente eseguiti. Il punto di ingresso C è `neverd_unpack_json`; Python espone `Session.unpack`. Le opzioni sono le [opzioni di processo](process-emulation.md) più `transfer`. I valori predefiniti differiscono dove uno stub richiede più risorse: 100000000 istruzioni, 600 secondi e 512 MiB, e `windows.defer_unmodeled` è attivo.
+Il comando stampa un rapporto JSON. Il codice di uscita 0 indica la scrittura di un’immagine `unpacked` o di uno `snapshot` richiesto esplicitamente; 3 indica `no_entry` o `unsupported_state`, senza creare o troncare il file di uscita; 1 indica input o opzioni non validi, o un errore di preparazione. Il rapporto indica il `format`, l'`architecture` e il `profile` effettivamente eseguiti. Il punto di ingresso C è `neverd_unpack_json`; Python espone `Session.unpack`. Le opzioni sono le [opzioni di processo](process-emulation.md) più `transfer` e `snapshot_only`. I valori predefiniti differiscono dove uno stub richiede più risorse: 100000000 istruzioni, 600 secondi e 512 MiB, e `windows.defer_unmodeled` è attivo.
+
+## Stato di esecuzione e snapshot di analisi
+
+Al trasferimento accettato, il profilo fornisce l’inventario delle allocazioni vive dell’heap. Il recupero esamina conservativamente ogni valore della dimensione di un puntatore nell’immagine acquisita e nel TLS del thread corrente, inclusi valori non allineati e indirizzi interni. Una corrispondenza può essere un intero o un dato inutilizzato; non prova un tipo puntatore né autorizza una rilocazione. Un inventario sconosciuto o un possibile riferimento produce per impostazione predefinita `unsupported_state`, anche con una `entry` accettata. CLI e API C non creano né troncano l’uscita.
+
+`runtime_state.heap_inventory_known` distingue un inventario vuoto noto dall’assenza di provenienza. `possible_heap_references` conta tutte le corrispondenze; `heap_references` conserva al massimo le prime 64, prima immagine e poi TLS, per `offset`. Ogni record indica `storage` (`image` o `thread_local`), indirizzo ed estensione dell’allocazione. `rva` è esadecimale per l’immagine e null per TLS. Indirizzi e offset sono stringhe esadecimali.
+
+`--options='{"snapshot_only":true}'` richiede esplicitamente byte di analisi. Se l’ingresso è accettato e la ricostruzione riesce, l’esito è sempre `snapshot` e la diagnostica resta visibile. Questa opzione non ripristina l’heap, deduce rilocazioni, certifica l’esecuzione nativa né devirtualizza. Un conteggio zero non certifica altri stati OS o percorsi non raggiunti.
 
 ## Come viene stabilito l'ingresso
 
