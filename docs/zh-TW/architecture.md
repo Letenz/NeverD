@@ -1107,6 +1107,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 `WindowsSystemModules` 為兩種 ISA 建立有界的 `ntdll.dll`、`kernelbase.dll` 與 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 和 `GetProcAddress` 共用映射基址；PEB/LDR 與 `MEM_IMAGE` 描述相同映像。靜態匯入、名稱查詢與客體 DLL 轉送使用相同 API 跳板及匯出解析器。提供者固定駐留，不執行客體初始化回呼，普通客體 DLL 全部卸載後不會阻止進入點傳回。標頭或匯出中繼資料改變會停止查詢。未知系統匯出名稱與非零系統序號查詢明確停止；已建模名稱的大小寫不符及空名稱傳回錯誤 127，空指標查詢傳回 87。產生的位元組與位址屬於模型策略，不重建特定 Windows DLL 配置、原生序號或跨提供者別名。`WindowsSystemTests.cpp` 對照原始 x64/ARM64 EXE 與原生 Windows，並獨立觀察八次初始執行緒傳回。
 
+`WindowsNativeServices` 統一管理明確的模型服務編號。帶編號的 Nt/Zw 別名共用入口，並依序言中宣告的編號排列。x64 原生服務邊界從 R10 讀取首參，保留 Win64 樁函式的堆疊配置，包括 RSP + 0x28 的堆疊參數及入口對齊要求。返回時繼續執行下一條指令，維持 RSP，並套用 SYSCALL 的 RCX/R11 覆寫語意。複製或行內入口記錄 `direct_service_number`，不構成匯出函式呼叫證據。未知編號與未實作服務會明確停止；模型編號不能代表任意 Windows 版本。 [Nt/Zw](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-nt-and-zw-versions-of-the-native-system-services-routines).
+
 `WindowsProcessFiles.cpp` 為 `KnownDlls` 中固定駐留、非不透明的提供者管理 `ZwOpenSection` 控制代碼。僅支援自動位址、零位移的完整檢視，內容來自載入器的不可變映像；`VirtualMemory` 記錄 `MEM_IMAGE` 所有權，`AddressSpace` 保留映像頁面權限。關閉控制代碼不會釋放檢視。不支援未知命名空間、寫入存取、部分或固定位址檢視，以及沒有既有 API 入口身分的執行。`IntegerABI` 統一定位 x64 與 ARM64 映射呼叫的兩個尾端參數，ULONG 欄位忽略未定義的高位元。目前執行緒資訊類別 `0x11` 保存隱藏狀態並嚴格檢查緩衝區長度；類別 `4` 將要求的親和性與模型公布的行程遮罩取交集；沒有可用處理器時傳回 `STATUS_INVALID_PARAMETER`。 唯讀 section 控制代碼要求 `PAGE_READWRITE` 時傳回 `STATUS_ACCESS_DENIED`，且不發布檢視。類別 `0x11` 保留 Windows 的探測順序：非空設定緩衝區要求 ULONG 對齊，查詢緩衝區從四位元組起要求相同對齊；零長度設定忽略輸入指標。
 
 目前執行緒的臨界區在 Kernel32 與 ntdll 呼叫之間共享初始化、遞迴進入、嘗試進入、平衡離開與刪除狀態。`DeleteCriticalSection` 與 `RtlDeleteCriticalSection` 要求物件已初始化且無人持有；刪除後可重新初始化。未初始化、重複初始化、已銷毀或損壞的狀態會在寫入前遭拒絕。Rtl 初始化傳回 NTSTATUS 零，BOOL 自旋初始化傳回真。單處理器設定的自旋計數為零，不模擬執行緒間競爭。

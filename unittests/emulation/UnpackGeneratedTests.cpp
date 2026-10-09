@@ -655,6 +655,33 @@ TEST_P(UnpackGenerated, ExplicitSnapshotsKeepExternalHeapDependenciesVisible) {
   }
 }
 
+TEST_P(UnpackGenerated, DirectServiceBindingsRequireAnExplicitSnapshot) {
+  if (GetParam().ISA != GuestArchitecture::X64)
+    GTEST_SKIP() << "the direct service fixture uses the x64 Windows ABI";
+  for (unsigned Mode : {DirectServiceMode, LateDirectServiceMode}) {
+    SCOPED_TRACE(Mode);
+    auto Packed = pack(Mode);
+    ASSERT_FALSE(HasFailure());
+    auto OriginalRun = run(Packed);
+    ASSERT_EQ(OriginalRun.Stop, ProcessStopReason::Exited)
+        << OriginalRun.Diagnostic;
+    EXPECT_EQ(OriginalRun.ExitStatus, ExitStatus);
+    EXPECT_EQ(OriginalRun.StandardOutput, Message);
+    for (bool Snapshot : {false, true}) {
+      SCOPED_TRACE(Snapshot);
+      Options.SnapshotOnly = Snapshot;
+      auto Result = unpack(Mode);
+      ASSERT_FALSE(HasFailure());
+      EXPECT_EQ(Result.Outcome, Snapshot ? UnpackOutcome::Snapshot
+                                         : UnpackOutcome::UnsupportedState);
+      EXPECT_EQ(Result.Image.empty(), !Snapshot);
+      EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+      EXPECT_GT(Result.RuntimeState.DirectServiceCalls, 0u);
+      EXPECT_NE(Result.Diagnostic.find("native binding"), std::string::npos);
+    }
+  }
+}
+
 TEST_P(UnpackGenerated, ReleasedHeapStateDoesNotBlockRecovery) {
   for (bool TLSOnly : {false, true}) {
     SCOPED_TRACE(TLSOnly);

@@ -231,13 +231,16 @@ std::string processResultJSON(const ProcessResult &Result) {
       llvm::json::Array Arguments;
       for (unsigned I = 0; I < Event.ArgumentCount; ++I)
         Arguments.push_back(bits(Event.Arguments[I]));
-      Calls.push_back(llvm::json::Object{
+      llvm::json::Object Call{
           {field::PC, bits(Event.PC)},
           {field::Module, Event.Module},
           {field::Name, Event.Name},
           {field::Arguments, std::move(Arguments)},
           {field::Result,
-           Event.Result ? llvm::json::Value(bits(*Event.Result)) : nullptr}});
+           Event.Result ? llvm::json::Value(bits(*Event.Result)) : nullptr}};
+      if (Event.DirectServiceNumber)
+        Call[field::DirectServiceNumber] = bits(*Event.DirectServiceNumber);
+      Calls.push_back(std::move(Call));
     }
     Object[field::Windows] =
         llvm::json::Object{{field::Initialize, Result.InitializersEnabled},

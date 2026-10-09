@@ -33,6 +33,8 @@ Au transfert accepté, le profil fournit l’inventaire des allocations vivantes
 
 `runtime_state.heap_inventory_known` distingue un inventaire vide connu d’une provenance absente. `possible_heap_references` compte toutes les correspondances ; `heap_references` conserve au plus les 64 premières, image puis TLS, par `offset`. Chaque entrée indique `storage` (`image` ou `thread_local`), l’adresse et l’étendue de l’allocation. `rva` est une valeur hexadécimale pour l’image et null pour TLS. Adresses et offsets sont des chaînes hexadécimales.
 
+`runtime_state.direct_service_calls` compte les appels directs du modèle observés pendant la recherche du point d’entrée et des imports. Leur liaison numérique à Windows natif n’est pas reconstruite : le résultat est `unsupported_state`, même si le premier appel survient après le point d’entrée capturé. L’option explicite `snapshot_only` conserve le compteur et le diagnostic. Un syscall copié ne constitue pas un appel importé réparable.
+
 `--options='{"snapshot_only":true}'` demande explicitement des octets d’analyse. Si une entrée est acceptée et la reconstruction réussit, le résultat est toujours `snapshot` et le diagnostic reste visible. Cette option ne restaure pas le tas, ne déduit pas de relocations, ne certifie pas l’exécution native et ne dévirtualise pas. Un compteur nul ne certifie pas non plus les autres états OS ou chemins non atteints.
 
 ## Comment l'entrée est établie

@@ -593,21 +593,59 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       continue;
     }
     const Import *Import = nullptr;
-    auto NativeSyscall = [](llvm::StringRef Name) {
-      return (Name.starts_with("Nt") || Name.starts_with("Zw"));
-    };
     for (const auto &I : Program->Gates)
       if (I.Gate == Request->PC ||
-          (Request->PC == I.Gate + NativeSyscallOffset &&
-           NativeSyscall(I.Name))) {
+          (I.Module == text::NTDLL &&
+           Request->PC == I.Gate + NativeSyscallOffset &&
+           nativeServiceNumber(I.Name))) {
         Import = &I;
         break;
       }
+    const struct Import *Export = Import;
+    struct Import NativeImport{};
+    std::optional<uint64_t> DirectServiceNumber;
+    const bool NativeCall =
+        X64 && (!Import || (Request->PC == Import->Gate + NativeSyscallOffset &&
+                            nativeServiceNumber(Import->Name)));
+    if (NativeCall) {
+      auto Number = CPU.reg(X64Register::AX);
+      if (!Number) {
+        Failed(Number.takeError());
+        break;
+      }
+      // A generated export supplies provenance only if its declared number
+      // still matches the actual request. Copied/inline gates are services,
+      // not evidence of an exported function call or a repairable import.
+      if (Export && nativeServiceNumber(Export->Name) != *Number)
+        Export = nullptr;
+      if (Export) {
+        auto First = CPU.reg(X64Register::CX);
+        auto NativeFirst = CPU.reg(X64Register::R10);
+        if (!First || !NativeFirst) {
+          Failed(llvm::joinErrors(First.takeError(), NativeFirst.takeError()));
+          break;
+        }
+        // Jumping into the middle of a gate can bypass its argument move.
+        // Such a request has no Win64 export-call proof when RCX differs.
+        if (*First != *NativeFirst)
+          Export = nullptr;
+      }
+      Import = nullptr;
+      if (const auto *Native = findNativeService(*Number)) {
+        NativeImport.Module = text::NTDLL;
+        NativeImport.Name = Native->Name;
+        NativeImport.Gate = Request->PC;
+        NativeImport.Target = findService(text::NTDLL, Native->Name);
+        Import = &NativeImport;
+        if (!Export)
+          DirectServiceNumber = *Number;
+      }
+    }
     if (!Import) {
       Result.Stop = ProcessStopReason::UnsupportedService;
       Result.Diagnostic = text::Service;
-      // Report the stopped register values without assigning them a syscall
-      // ABI or using their contents to select a Windows service.
+      // No model service has this identity. Keep the stopped inputs in the
+      // diagnostic; never guess a Windows-version-specific number mapping.
       if (X64) {
         const std::pair<const char *, CPURegister> Registers[] = {
             {"rax", CPURegister::X64AX}, {"r10", CPURegister::X64R10},
@@ -625,7 +663,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       }
       break;
     }
-    if (Observing && Observer) {
+    if (Observing && Observer && Export) {
       // This is call-boundary metadata, not an API result or signature.
       // Read only committed RAM/registers; a missing return cannot authorize
       // an import repair and does not change an opaque export's outcome.
@@ -645,7 +683,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       }
       if (auto E = Observer->exporting(
               Stopped,
-              {Import->Gate, Import->Module, Import->Name, Import->Ordinal},
+              {Export->Gate, Export->Module, Export->Name, Export->Ordinal},
               ReturnAddress)) {
         Failed(std::move(E));
         break;
@@ -670,15 +708,16 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     }
     // User accessibility is an OS call-boundary requirement in addition to
     // the ABI's generic trusted-memory checks. Preflight before API effects.
-    if (Import->Target->Returns && X64)
+    if (Import->Target->Returns && X64 && !NativeCall)
       if (auto E = Validate(StackPointer, PointerSize, Read)) {
         Failed(std::move(E));
         break;
       }
     NativeCallEvent Event{Request->PC, Import->Target->Name};
     Event.Module = Import->Module;
+    Event.DirectServiceNumber = DirectServiceNumber;
     Event.ArgumentCount = Import->Target->Arguments;
-    if (X64) {
+    if (X64 && Export) {
       auto Ret = (*Space)->readInteger(StackPointer, PointerSize);
       if (!Ret)
         llvm::consumeError(Ret.takeError());
@@ -699,7 +738,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
           Invalid = true;
           break;
         }
-      auto V = ABI->readArgument(CPU, StackPointer, I);
+      auto V = NativeCall ? readNativeServiceArgument(CPU, StackPointer, I)
+                          : ABI->readArgument(CPU, StackPointer, I);
       if (!V) {
         Failed(V.takeError());
         Invalid = true;
@@ -791,6 +831,15 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         continue;
       Complete();
       break;
+    }
+    if (NativeCall) {
+      if (auto E = returnNativeService(CPU, *Request, *V->Value)) {
+        Failed(std::move(E));
+        break;
+      }
+      Result.NativeCalls[EventIndex].Result = *V->Value;
+      Result.PC = Request->NextPC;
+      continue;
     }
     if (auto E = Return(StackPointer, EventIndex, *V->Value)) {
       Failed(std::move(E));

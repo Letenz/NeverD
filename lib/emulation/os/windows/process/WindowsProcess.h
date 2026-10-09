@@ -72,6 +72,19 @@ struct Service {
   APIProvider Provider;
   bool Returns;
 };
+struct NativeService {
+  const char *Name;
+  uint32_t Number;
+};
+llvm::ArrayRef<NativeService> nativeServices();
+std::optional<uint32_t> nativeServiceNumber(llvm::StringRef Name);
+const NativeService *findNativeService(uint64_t Number);
+/// The model's x64 native boundary uses the Win64 stub stack layout, with
+/// argument zero in R10. Unknown numbers never select a named API.
+llvm::Expected<uint64_t> readNativeServiceArgument(ExecutionBackend &CPU,
+                                                   uint64_t SP, unsigned Index);
+llvm::Error returnNativeService(ExecutionBackend &CPU,
+                                const ServiceRequest &Request, uint64_t Result);
 llvm::ArrayRef<Service> services();
 std::optional<APIProvider> findProvider(llvm::StringRef Module);
 const Service *findService(llvm::StringRef Module, llvm::StringRef Name);

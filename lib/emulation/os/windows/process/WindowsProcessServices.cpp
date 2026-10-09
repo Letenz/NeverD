@@ -36,6 +36,12 @@ static_assert([] {
 const Service *findDeclaredService(llvm::StringRef Module,
                                    llvm::StringRef Name) {
   const auto Provider = findProvider(Module);
+  std::string Alias;
+  if (Provider == APIProvider::Native && Name.starts_with("Nt") &&
+      nativeServiceNumber(Name)) {
+    Alias = ("Zw" + Name.drop_front(2)).str();
+    Name = Alias;
+  }
   for (const auto &S : Registry)
     if (Name == S.Name && Provider == S.Provider)
       return &S;
