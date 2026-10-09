@@ -70,21 +70,42 @@ void TransferObserver::refreshWatches() {
       Add(Begin, End);
       continue;
     }
-    // Most visited stub pages still belong entirely to generation zero.
-    // Compare a page at once before classifying its individual bytes. Every
-    // saved image must agree: matching only the latest snapshot could hide
-    // code generated during an earlier invocation.
-    if (!Running && llvm::all_of(Images, [&](const auto &Image) {
-          return std::equal(Current.begin() + Begin, Current.begin() + End,
-                            Image.begin() + Begin);
-        }))
-      continue;
-    // A page can mix old stub bytes and newly generated code. Conservatively
-    // watch every possible instruction start whose bytes may belong to a
-    // different generation. watched() decides using the actual decoded size.
-    for (uint64_t At = Begin; At < End; ++At)
-      if (generation(llvm::ArrayRef(Current).slice(At, 1), At) != Running)
-        Add(At - std::min(At, Traits.InstructionWindow - 1), At + 1);
+    // Visiting another page need not reclassify this one byte by byte. The
+    // history is append-only, so its length, the running generation and the
+    // complete current page are the inputs that can invalidate this union.
+    auto &Cached = CachedPages[Page];
+    if (!Cached || Cached->Running != Running ||
+        Cached->HistorySize != Images.size() ||
+        !std::equal(Current.begin() + Begin, Current.begin() + End,
+                    Cached->Bytes.begin())) {
+      if (!Cached)
+        Cached = std::make_unique<PageWatchCache>();
+      Cached->Running = Running;
+      Cached->HistorySize = Images.size();
+      llvm::copy(llvm::ArrayRef(Current).slice(Begin, value::PageSize),
+                 Cached->Bytes.begin());
+      Cached->Ranges.clear();
+      const bool Unchanged =
+          !Running && llvm::all_of(Images, [&](const auto &Image) {
+            return std::equal(Current.begin() + Begin, Current.begin() + End,
+                              Image.begin() + Begin);
+          });
+      if (!Unchanged)
+        for (uint64_t At = Begin; At < End; ++At) {
+          if (generation(llvm::ArrayRef(Current).slice(At, 1), At) == Running)
+            continue;
+          const uint64_t First =
+              At - std::min(At, Traits.InstructionWindow - 1);
+          if (!Cached->Ranges.empty() &&
+              First - Cached->Ranges.back().Address <=
+                  Cached->Ranges.back().Size)
+            Cached->Ranges.back().Size = At + 1 - Cached->Ranges.back().Address;
+          else
+            Cached->Ranges.push_back({First, At + 1 - First});
+        }
+    }
+    for (const auto &Range : Cached->Ranges)
+      Add(Range.Address, Range.Address + Range.Size);
   }
   // A generated instruction can retain old opcode bytes. Its observed extent
   // proves its generation even when the byte-level conservative union watches
@@ -255,6 +276,8 @@ TransferObserver::started(ProcessView &Process) {
   EnteredProgram = Process.programInvocation();
   Visited.assign(Extent / value::PageSize, false);
   Instructions.clear();
+  CachedPages.clear();
+  CachedPages.resize(Visited.size());
   RefreshNeeded = true;
   Current = Images.front();
   refreshWatches();
@@ -424,6 +447,32 @@ TransferObserver::watched(ProcessView &Process, uint64_t PC) {
         if (State.HeapReferences.size() < value::HeapReferenceRecords)
           State.HeapReferences.push_back(
               {Offset, Address, A.Address, A.Size, Location});
+      }
+    };
+    Scan(Observed.Memory, UnpackHeapReference::Storage::Image);
+    if (Observed.ThreadLocal)
+      Scan(*Observed.ThreadLocal, UnpackHeapReference::Storage::ThreadLocal);
+  }
+  if (auto Encoded = Process.encodedPointers()) {
+    auto &State = Observed.RuntimeState;
+    State.EncodedPointerInventoryKnown = true;
+    llvm::sort(*Encoded);
+    Encoded->erase(std::unique(Encoded->begin(), Encoded->end()),
+                   Encoded->end());
+    auto Scan = [&](llvm::ArrayRef<uint8_t> Bytes,
+                    UnpackHeapReference::Storage Location) {
+      if (Encoded->empty())
+        return;
+      for (uint64_t Offset = 0; Offset + value::PointerBytes <= Bytes.size();
+           ++Offset) {
+        const uint64_t Value =
+            llvm::support::endian::read64le(Bytes.data() + Offset);
+        if (!std::binary_search(Encoded->begin(), Encoded->end(), Value))
+          continue;
+        ++State.PossibleEncodedPointers;
+        if (State.EncodedPointerReferences.size() <
+            value::EncodedPointerRecords)
+          State.EncodedPointerReferences.push_back({Offset, Value, Location});
       }
     };
     Scan(Observed.Memory, UnpackHeapReference::Storage::Image);

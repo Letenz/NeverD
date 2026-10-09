@@ -126,7 +126,11 @@ llvm::Function *defineUnmarkedCallResidual(llvm::Module &Module) {
   return Function;
 }
 
-TEST(LLVMCVoidAnalysis, DistinguishesReturnedProducerFromDiscardedCall) {
+TEST(LLVMCVoidAnalysis, ReturnsNoValueOnlyWhereMedIRSettledIt) {
+  // The IR folds the undefined register a function hands back to the same
+  // constant as a deliberate zero, so whether a function returns a value is
+  // settled on MedIR (settleReturnContracts) and read from its mark: a
+  // returned call result or zero is a value unless the function is marked.
   llvm::LLVMContext Context;
   llvm::Module Module("value-producer-void-analysis", Context);
   llvm::Function *Returned = defineReturnedProducer(Module);
@@ -135,8 +139,10 @@ TEST(LLVMCVoidAnalysis, DistinguishesReturnedProducerFromDiscardedCall) {
   neverd::LLVMCAnalysisState State;
 
   EXPECT_FALSE(neverd::analyzeVoidReturn(State, *Returned));
+  EXPECT_FALSE(neverd::analyzeVoidReturn(State, *Discarded));
+  EXPECT_FALSE(neverd::analyzeVoidReturn(State, *Unmarked));
+  neverd::llvm_value_provenance::markReturnsNoValue(*Discarded);
   EXPECT_TRUE(neverd::analyzeVoidReturn(State, *Discarded));
-  EXPECT_TRUE(neverd::analyzeVoidReturn(State, *Unmarked));
 }
 
 TEST(LLVMCVoidAnalysis, FreezeMaterializesOneDefinedChoiceForEveryUseCount) {
@@ -322,14 +328,15 @@ int main(void) {
   }
 }
 
-TEST(LLVMCVoidAnalysis, FreezeThroughComparisonKeepsDefinedChoiceAndRejectsPoison) {
+TEST(LLVMCVoidAnalysis,
+     FreezeThroughComparisonKeepsDefinedChoiceAndRejectsPoison) {
   for (bool MayBePoison : {false, true}) {
     SCOPED_TRACE(MayBePoison);
     llvm::LLVMContext Context;
     llvm::Module Module("freeze-comparison", Context);
     auto *I64 = llvm::Type::getInt64Ty(Context);
     auto *Type = llvm::FunctionType::get(llvm::Type::getInt1Ty(Context),
-                                        {I64, I64}, false);
+                                         {I64, I64}, false);
     auto *Function = llvm::Function::Create(
         Type, llvm::GlobalValue::ExternalLinkage, "freeze_compare", Module);
     for (auto &Argument : Function->args())

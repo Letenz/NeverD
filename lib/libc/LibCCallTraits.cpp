@@ -18,7 +18,9 @@
 #include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <string_view>
+#include <unordered_map>
 
 namespace neverd::libc {
 namespace {
@@ -255,6 +257,22 @@ std::optional<std::string_view> functionPointerParameter(std::string_view Name,
   return std::nullopt;
 }
 
+bool isObjectPointerParameter(std::string_view Name, unsigned Index) {
+  // Each function's object pointer parameters, as a mask of positions.
+  static const std::unordered_map<std::string_view, uint64_t> Masks = [] {
+    std::unordered_map<std::string_view, uint64_t> Map;
+#define LIBC_OBJECT_POINTER_PARAM(Name, Index)                                 \
+  Map[Name] |= uint64_t(1) << (Index);
+#include "neverd/libc/LibCObjectPointerParams.inc"
+#undef LIBC_OBJECT_POINTER_PARAM
+    return Map;
+  }();
+  if (Index >= 64)
+    return false;
+  const auto It = Masks.find(stripLeadingUnderscores(Name));
+  return It != Masks.end() && (It->second >> Index & 1);
+}
+
 std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
                                                  va_t Target) {
   struct Routine {
@@ -461,6 +479,48 @@ const LibCPrintfFormat *libcPrintfFormat(std::string_view Name) {
   for (const LibCPrintfFormat &Format : Formats)
     if (Format.Name == Name)
       return &Format;
+  return nullptr;
+}
+
+const LibCVariadicForward *libcVariadicForward(std::string_view Name) {
+  using Kind = LibCVariadicForward::Kind;
+#define NEVERD_FIXED_PARAMETERS(...)                                           \
+  {__VA_ARGS__},                                                               \
+      static_cast<uint8_t>(                                                    \
+          std::initializer_list<std::string_view>{__VA_ARGS__}.size())
+  static constexpr LibCVariadicForward Forwards[] = {
+#define LIBC_VA_LIST_FORM(Routine, ReturnType, TypeHeader, Form, ...)          \
+  {Kind::VaList,                                                               \
+   Routine,                                                                    \
+   ReturnType,                                                                 \
+   TypeHeader,                                                                 \
+   Form,                                                                       \
+   NEVERD_FIXED_PARAMETERS(__VA_ARGS__),                                       \
+   0,                                                                          \
+   {},                                                                         \
+   false},
+#define LIBC_BOUNDED_VARARGS(Routine, ReturnType, TypeHeader, Read, ReadType,  \
+                             ...)                                              \
+  {Kind::Bounded, Routine,  ReturnType,                                        \
+   TypeHeader,    Routine,  NEVERD_FIXED_PARAMETERS(__VA_ARGS__),              \
+   Read,          ReadType, false},
+#define LIBC_SENTINEL_VARARGS(Routine, ReturnType, TypeHeader, Vector,         \
+                              WithEnvironment, ...)                            \
+  {Kind::Sentinel,                                                             \
+   Routine,                                                                    \
+   ReturnType,                                                                 \
+   TypeHeader,                                                                 \
+   Vector,                                                                     \
+   NEVERD_FIXED_PARAMETERS(__VA_ARGS__),                                       \
+   0,                                                                          \
+   {},                                                                         \
+   WithEnvironment},
+#include "neverd/libc/LibCVariadicForwards.inc"
+  };
+#undef NEVERD_FIXED_PARAMETERS
+  for (const LibCVariadicForward &Forward : Forwards)
+    if (Forward.Name == Name)
+      return &Forward;
   return nullptr;
 }
 

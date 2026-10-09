@@ -151,6 +151,16 @@ constexpr size_t kFdeEntrySize = 8;
 /// Alignment of `.eh_frame_hdr`: every field of the table is a 4-byte word.
 constexpr size_t kEhFrameHdrAlignment = 4;
 
+// ===--------------------------------------------------------------------===//
+// .eh_frame record lengths
+// ===--------------------------------------------------------------------===//
+
+/// A CIE or FDE begins with its length in a 4-byte word.  The escape value
+/// says an 8-byte length follows; a zero length ends the table.
+constexpr size_t kRecordLengthSize = 4;
+constexpr uint32_t kDwarf64LengthEscape = 0xFFFFFFFF;
+constexpr size_t kDwarf64LengthSize = 8;
+
 } // namespace dweh
 } // namespace neverd
 

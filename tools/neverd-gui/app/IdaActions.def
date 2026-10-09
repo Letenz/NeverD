@@ -1,0 +1,191 @@
+//===- IdaActions.def - IDA commands and NeverD's ---------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// IDA's commands by action name, with the default shortcut of IDA's legacy
+/// scheme (cfg/idagui.cfg), against the NeverD command that does the same.
+/// The workbench unit tests hold every NeverD default to IDA's, and
+/// scripts/compare_gui_with_ida.py reports the coverage, checked against an
+/// IDA installation when one is given.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_IDA_ACTION(IdaAction, Shortcut, NeverDAction): a command NeverD has;
+// an empty shortcut where IDA has none either.
+// NEVERD_IDA_PLANNED(IdaAction, Shortcut, Group): a command NeverD does not
+// have yet, by the group of IDA's commands it belongs to.
+#ifndef NEVERD_IDA_ACTION
+#define NEVERD_IDA_ACTION(IdaAction, Shortcut, NeverDAction)
+#endif
+#ifndef NEVERD_IDA_PLANNED
+#define NEVERD_IDA_PLANNED(IdaAction, Shortcut, Group)
+#endif
+
+// File.
+NEVERD_IDA_ACTION("LoadNewFile", "", FileOpen)
+NEVERD_IDA_ACTION("ReloadFile", "", FileReload)
+NEVERD_IDA_ACTION("LoadSigFile", "", FileLoadSignatures)
+NEVERD_IDA_ACTION("ProduceLst", "", FileExportListing)
+NEVERD_IDA_ACTION("hx:CreateCFile", "Ctrl-F5", FileExportPseudocode)
+NEVERD_IDA_ACTION("SaveBase", "Ctrl-W", FileSave)
+NEVERD_IDA_ACTION("CloseBase", "", FileClose)
+NEVERD_IDA_ACTION("QuickStart", "", FileQuickStart)
+NEVERD_IDA_ACTION("QuitIDA", "Alt-X", FileExit)
+NEVERD_IDA_PLANNED("LoadFile", "", "File")
+NEVERD_IDA_PLANNED("LoadPdbFile", "", "File")
+NEVERD_IDA_PLANNED("LoadHeaderFile", "Ctrl-F9", "File")
+NEVERD_IDA_PLANNED("ProduceAsm", "Alt-F10", "File")
+NEVERD_IDA_PLANNED("ProduceMap", "", "File")
+NEVERD_IDA_PLANNED("ProduceExe", "", "File")
+NEVERD_IDA_PLANNED("ProduceDiff", "", "File")
+NEVERD_IDA_PLANNED("SaveBaseAs", "", "File")
+NEVERD_IDA_PLANNED("SaveBaseSnap", "Ctrl-Shift-W", "File")
+NEVERD_IDA_PLANNED("Execute", "Alt-F7", "Scripts")
+NEVERD_IDA_PLANNED("ExecuteLine", "Shift-F2", "Scripts")
+NEVERD_IDA_PLANNED("RecentScripts", "Alt-F9", "Scripts")
+
+// Edit.
+NEVERD_IDA_ACTION("UndoAction", "Ctrl-Z", EditUndo)
+NEVERD_IDA_ACTION("RedoAction", "Ctrl-Shift-Z", EditRedo)
+NEVERD_IDA_ACTION("EditCopy", "Ctrl-C", EditCopy)
+NEVERD_IDA_ACTION("MakeData", "D", EditDefineData)
+NEVERD_IDA_ACTION("MakeStrlit", "A", EditDefineString)
+NEVERD_IDA_ACTION("MakeUnknown", "U", EditUndefine)
+NEVERD_IDA_ACTION("MakeName", "N", EditRename)
+NEVERD_IDA_ACTION("MakeFunction", "P", EditCreateFunction)
+NEVERD_IDA_ACTION("DelFunction", "", EditDeleteFunction)
+NEVERD_IDA_ACTION("MakeComment", ":", EditComment)
+NEVERD_IDA_ACTION("MakeRptCmt", ";", EditRepeatableComment)
+NEVERD_IDA_ACTION("MarkPosition", "Alt-M", EditBookmark)
+NEVERD_IDA_ACTION("OpNumber", "#", EditOperandNumber)
+NEVERD_IDA_ACTION("OpHex", "Q", EditOperandHex)
+NEVERD_IDA_ACTION("OpDecimal", "H", EditOperandDecimal)
+NEVERD_IDA_ACTION("OpBinary", "B", EditOperandBinary)
+NEVERD_IDA_ACTION("OpChar", "R", EditOperandChar)
+NEVERD_IDA_ACTION("OpOffset", "O", EditOperandOffset)
+NEVERD_IDA_ACTION("ChangeSign", "_", EditOperandNegate)
+NEVERD_IDA_ACTION("BitwiseNegate", "~", EditOperandInvert)
+NEVERD_IDA_PLANNED("MakeCode", "C", "Edit")
+NEVERD_IDA_PLANNED("MakeArray", "*", "Edit")
+NEVERD_IDA_PLANNED("MakeAlignment", "L", "Edit")
+NEVERD_IDA_PLANNED("SetType", "Y", "Edit")
+NEVERD_IDA_PLANNED("EditFunction", "Alt-P", "Edit")
+NEVERD_IDA_PLANNED("FunctionEnd", "E", "Edit")
+NEVERD_IDA_PLANNED("OpenStackVariables", "Ctrl-K", "Edit")
+NEVERD_IDA_PLANNED("ChangeStackPointer", "Alt-K", "Edit")
+NEVERD_IDA_PLANNED("RenameRegister", "V", "Edit")
+NEVERD_IDA_PLANNED("MakeExtraLineA", "Ins", "Edit")
+NEVERD_IDA_PLANNED("MakeExtraLineB", "Shift-Ins", "Edit")
+NEVERD_IDA_PLANNED("ManualInstruction", "Alt-F2", "Edit")
+NEVERD_IDA_PLANNED("ManualOperand", "Alt-F1", "Edit")
+NEVERD_IDA_PLANNED("ToggleLeadingZeroes", "0", "Edit")
+NEVERD_IDA_PLANNED("OpSegment", "S", "Edit")
+NEVERD_IDA_PLANNED("OpOffsetCs", "Ctrl-O", "Edit")
+NEVERD_IDA_PLANNED("OpAnyOffset", "Alt-R", "Edit")
+NEVERD_IDA_PLANNED("OpUserOffset", "Ctrl-R", "Edit")
+NEVERD_IDA_PLANNED("OpStructOffset", "T", "Edit")
+NEVERD_IDA_PLANNED("OpStackVariable", "K", "Edit")
+NEVERD_IDA_PLANNED("OpEnum", "M", "Edit")
+NEVERD_IDA_PLANNED("EditSegment", "Alt-S", "Edit")
+NEVERD_IDA_PLANNED("SetSegmentRegister", "Alt-G", "Edit")
+NEVERD_IDA_PLANNED("PatchedBytes", "Ctrl-Alt-P", "Edit")
+NEVERD_IDA_PLANNED("ExportData", "Shift-E", "Edit")
+
+// Jump.
+NEVERD_IDA_ACTION("JumpEnter", "Enter", JumpOperand)
+NEVERD_IDA_ACTION("JumpEnterNew", "Alt-Enter", JumpNewWindow)
+NEVERD_IDA_ACTION("Return", "Esc", JumpBack)
+NEVERD_IDA_ACTION("UndoReturn", "Ctrl-Enter", JumpForward)
+NEVERD_IDA_ACTION("JumpNextFunc", "Ctrl-Shift-Down", JumpNextFunction)
+NEVERD_IDA_ACTION("JumpPrevFunc", "Ctrl-Shift-Up", JumpPreviousFunction)
+NEVERD_IDA_ACTION("hx:JumpPseudo", "Tab", JumpPseudocode)
+NEVERD_IDA_ACTION("JumpAnywhere", "G", JumpAnywhere)
+NEVERD_IDA_ACTION("JumpAsk", "G", JumpAnywhere)
+NEVERD_IDA_ACTION("JumpName", "Ctrl-L", JumpByName)
+NEVERD_IDA_ACTION("JumpFunction", "Ctrl-P", JumpFunction)
+NEVERD_IDA_ACTION("JumpSegment", "Ctrl-S", JumpSegment)
+NEVERD_IDA_ACTION("JumpEntryPoint", "Ctrl-E", JumpEntry)
+NEVERD_IDA_ACTION("JumpXref", "Ctrl-X", JumpXrefsTo)
+NEVERD_IDA_ACTION("JumpXrefFrom", "Ctrl-J", JumpXrefsFrom)
+NEVERD_IDA_ACTION("JumpOpXref", "X", JumpXrefOperand)
+NEVERD_IDA_ACTION("JumpPosition", "Ctrl-M", JumpMark)
+NEVERD_IDA_PLANNED("JumpSegmentRegister", "Ctrl-G", "Jump")
+NEVERD_IDA_PLANNED("CenterInWindow", "Ctrl-Shift-C", "Jump")
+
+// Search.
+NEVERD_IDA_ACTION("AskNextText", "Alt-T", SearchText)
+NEVERD_IDA_ACTION("JumpText", "Ctrl-T", SearchNextText)
+NEVERD_IDA_ACTION("AskBinaryText", "Alt-B", SearchBytes)
+NEVERD_IDA_ACTION("JumpBinaryText", "Ctrl-B", SearchNextBytes)
+NEVERD_IDA_ACTION("SearchHighlightUp", "Alt-Up", SearchHighlightUp)
+NEVERD_IDA_ACTION("SearchHighlightDown", "Alt-Down", SearchHighlightDown)
+NEVERD_IDA_PLANNED("JumpSuspicious", "Ctrl-V", "Search")
+NEVERD_IDA_PLANNED("JumpCode", "Alt-C", "Search")
+NEVERD_IDA_PLANNED("JumpData", "Ctrl-D", "Search")
+NEVERD_IDA_PLANNED("JumpUnknown", "Ctrl-U", "Search")
+NEVERD_IDA_PLANNED("JumpExplored", "Ctrl-A", "Search")
+NEVERD_IDA_PLANNED("AskNextImmediate", "Alt-I", "Search")
+NEVERD_IDA_PLANNED("JumpImmediate", "Ctrl-I", "Search")
+NEVERD_IDA_PLANNED("FindRegisterDefinition", "Shift-Alt-Up", "Search")
+NEVERD_IDA_PLANNED("FindRegisterUse", "Shift-Alt-Down", "Search")
+NEVERD_IDA_PLANNED("FindRegisterValue", "Shift-Alt-V", "Search")
+
+// View.
+NEVERD_IDA_ACTION("QuickView", "Ctrl-1", ViewQuickView)
+NEVERD_IDA_ACTION("ToggleRenderer", "Space", ViewToggleGraph)
+NEVERD_IDA_ACTION("hx:GenPseudo", "F5", ViewPseudocode)
+NEVERD_IDA_ACTION("WindowOpen", "", ViewDisassembly)
+NEVERD_IDA_ACTION("ToggleDump", "", ViewHex)
+NEVERD_IDA_ACTION("OpenXrefs", "", ViewCrossReferences)
+NEVERD_IDA_ACTION("GraphOverview", "", ViewGraphOverview)
+NEVERD_IDA_ACTION("ShowUndoHistory", "", ViewUndoHistory)
+NEVERD_IDA_ACTION("OpenExports", "", ViewExports)
+NEVERD_IDA_ACTION("OpenImports", "", ViewImports)
+NEVERD_IDA_ACTION("OpenNames", "Shift-F4", ViewNames)
+NEVERD_IDA_ACTION("OpenFunctions", "Shift-F3", ViewFunctions)
+NEVERD_IDA_ACTION("OpenStrings", "Shift-F12", ViewStrings)
+NEVERD_IDA_ACTION("OpenSegments", "Shift-F7", ViewSegments)
+NEVERD_IDA_ACTION("OpenBookmarks", "Ctrl-Shift-M", ViewBookmarks)
+NEVERD_IDA_ACTION("OutputWindow", "Alt-0", ViewOutput)
+NEVERD_IDA_ACTION("Calculate", "?", ViewCalculator)
+NEVERD_IDA_ACTION("FullScreen", "F11", ViewFullScreen)
+NEVERD_IDA_ACTION("FontSizeIncrease", "Ctrl-=", ViewZoomIn)
+NEVERD_IDA_ACTION("FontSizeDecrease", "sys(ZoomOut)", ViewZoomOut)
+NEVERD_IDA_ACTION("FontSizeReset", "Ctrl-0", ViewZoomReset)
+NEVERD_IDA_PLANNED("OpenSignatures", "Shift-F5", "View")
+NEVERD_IDA_PLANNED("OpenSegmentRegisters", "Shift-F8", "View")
+NEVERD_IDA_PLANNED("OpenXrefsTree", "Shift-X", "View")
+NEVERD_IDA_PLANNED("OpenPathfinder", "Shift-F9", "View")
+NEVERD_IDA_PLANNED("OpenTypeLibraries", "Shift-F11", "View")
+NEVERD_IDA_PLANNED("OpenLocalTypes", "Shift-F1", "View")
+NEVERD_IDA_PLANNED("ShowFlags", "F", "View")
+NEVERD_IDA_PLANNED("Hide", "Ctrl-Numpad-", "View")
+NEVERD_IDA_PLANNED("UnHide", "Ctrl-Numpad+", "View")
+
+// Options and windows.
+NEVERD_IDA_ACTION("Options", "", OptionsGeneral)
+NEVERD_IDA_ACTION("SetStrlitStyle", "Alt-A", OptionsStrings)
+NEVERD_IDA_ACTION("SetColors", "", OptionsColors)
+NEVERD_IDA_ACTION("SetFont", "", OptionsFont)
+NEVERD_IDA_ACTION("ShortcutEditor", "", OptionsShortcuts)
+NEVERD_IDA_ACTION("CommandPalette", "Ctrl-Shift-P", OptionsPalette)
+NEVERD_IDA_ACTION("RepeatLastPaletteCommand", "Ctrl-Shift-R",
+                  OptionsRepeatPalette)
+NEVERD_IDA_ACTION("SaveDesktop", "", WindowsSaveDesktop)
+NEVERD_IDA_ACTION("LoadDesktop", "", WindowsLoadDesktop)
+NEVERD_IDA_ACTION("ResetDesktop", "", WindowsResetDesktop)
+NEVERD_IDA_ACTION("NextWindow", "F6", WindowsNext)
+NEVERD_IDA_ACTION("PrevWindow", "Shift-F6", WindowsPrevious)
+NEVERD_IDA_ACTION("CloseWindow", "Alt-F3", WindowsClose)
+NEVERD_IDA_ACTION("FocusCLI2", "Ctrl-.", WindowsFocusCommand)
+NEVERD_IDA_ACTION("ShowHelp", "F1", HelpContents)
+NEVERD_IDA_ACTION("About", "", HelpAbout)
+NEVERD_IDA_PLANNED("FocusCLI", ".", "Windows")
+NEVERD_IDA_PLANNED("WindowActivate1", "Alt-1", "Windows")
+NEVERD_IDA_PLANNED("WindowsListNext", "Ctrl-Tab", "Windows")
+
+#undef NEVERD_IDA_ACTION
+#undef NEVERD_IDA_PLANNED

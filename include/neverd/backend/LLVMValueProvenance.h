@@ -16,6 +16,7 @@
 #define NEVERD_BACKEND_LLVMVALUEPROVENANCE_H
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
@@ -59,6 +60,19 @@ inline void markExplicitSourceReturn(llvm::ReturnInst &Return) {
 
 inline bool isExplicitSourceReturn(const llvm::ReturnInst &Return) {
   return Return.getMetadata(ExplicitSourceReturnAttachment) != nullptr;
+}
+inline constexpr llvm::StringLiteral
+    ReturnsNoValueAttachment("neverd.function.returns-no-value");
+/// MedFunc::ReturnsNoValue: the function returns no value a caller could
+/// rely on, though it keeps the return register for code generation.  The IR
+/// folds the undefined register it hands back to the same constant as a
+/// deliberate zero, so C display reads the answer here.
+inline void markReturnsNoValue(llvm::Function &Function) {
+  Function.setMetadata(ReturnsNoValueAttachment,
+                       llvm::MDNode::get(Function.getContext(), {}));
+}
+inline bool returnsNoValue(const llvm::Function &Function) {
+  return Function.getMetadata(ReturnsNoValueAttachment) != nullptr;
 }
 
 } // namespace neverd::llvm_value_provenance

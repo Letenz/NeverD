@@ -26,9 +26,10 @@ namespace neverd {
 namespace elf_loader {
 
 /// Parse the .dynamic section and populate DynInfo (NEEDED, SONAME, RPATH,
-/// INIT/FINI).
+/// INIT/FINI).  Its string table is the one of \p Sections its sh_link names.
 template <typename ELFT>
 void parseDynamic(const llvm::object::ELFFile<ELFT> &ELF,
+                  llvm::ArrayRef<typename ELFT::Shdr> Sections,
                   const typename ELFT::Shdr &DynamicSH, const uint8_t *Data,
                   size_t Size, BinaryImage &Img);
 
@@ -74,11 +75,12 @@ std::optional<uint64_t> symbolRelocationValue(Arch Target, uint32_t RelocType,
                                               int64_t Addend);
 
 /// Parse .rela.plt / .rel.plt entries and populate Img.Imports with
-/// PLT-resolved external symbols.
+/// PLT-resolved external symbols.  \p ShStrTab names \p Sections.
 template <typename ELFT>
 void parsePLTImports(const llvm::object::ELFFile<ELFT> &ELF,
                      llvm::ArrayRef<typename ELFT::Shdr> Sections,
-                     const uint8_t *Data, size_t Size, BinaryImage &Img);
+                     llvm::StringRef ShStrTab, const uint8_t *Data, size_t Size,
+                     BinaryImage &Img);
 
 /// Attach each ARM `.plt` veneer to the import it forwards to.
 ///

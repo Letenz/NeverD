@@ -8,30 +8,41 @@
 // which loads one register with its return address and leaves the others as
 // they were, so `scale` and `twice` keep a value in %ecx across the call.
 // `twice` calls a thunk padded as GCC pads one for in-order Atom
-// (-mtune=bonnell).
+// (-mtune=bonnell).  Each function has the unwind record GCC gives it.
 
 	.text
 	.p2align 4
 	.globl	put
 	.type	put, @function
 put:
+	.cfi_startproc
 	pushl	%ebx
+	.cfi_def_cfa_offset 8
+	.cfi_offset 3, -8
 	call	__x86.get_pc_thunk.bx
 	addl	$_GLOBAL_OFFSET_TABLE_, %ebx
 	subl	$16, %esp
+	.cfi_def_cfa_offset 24
 	movl	stdout@GOT(%ebx), %eax
 	pushl	(%eax)
+	.cfi_def_cfa_offset 28
 	pushl	28(%esp)
+	.cfi_def_cfa_offset 32
 	call	fputs@PLT
 	addl	$24, %esp
+	.cfi_def_cfa_offset 8
 	popl	%ebx
+	.cfi_restore 3
+	.cfi_def_cfa_offset 4
 	ret
+	.cfi_endproc
 	.size	put, .-put
 
 	.p2align 4
 	.globl	scale
 	.type	scale, @function
 scale:
+	.cfi_startproc
 	movl	4(%esp), %ecx
 	addl	8(%esp), %ecx
 	call	__x86.get_pc_thunk.ax
@@ -39,12 +50,14 @@ scale:
 	imull	factor@GOTOFF(%eax), %ecx
 	movl	%ecx, %eax
 	ret
+	.cfi_endproc
 	.size	scale, .-scale
 
 	.p2align 4
 	.globl	twice
 	.type	twice, @function
 twice:
+	.cfi_startproc
 	movl	4(%esp), %ecx
 	addl	%ecx, %ecx
 	call	__x86.get_pc_thunk.dx
@@ -52,6 +65,7 @@ twice:
 	movl	factor@GOTOFF(%edx), %eax
 	addl	%ecx, %eax
 	ret
+	.cfi_endproc
 	.size	twice, .-twice
 
 	.data
@@ -66,22 +80,27 @@ factor:
 	.hidden	__x86.get_pc_thunk.bx
 	.type	__x86.get_pc_thunk.bx, @function
 __x86.get_pc_thunk.bx:
+	.cfi_startproc
 	movl	(%esp), %ebx
 	ret
+	.cfi_endproc
 
 	.section	.text.__x86.get_pc_thunk.ax,"axG",@progbits,__x86.get_pc_thunk.ax,comdat
 	.globl	__x86.get_pc_thunk.ax
 	.hidden	__x86.get_pc_thunk.ax
 	.type	__x86.get_pc_thunk.ax, @function
 __x86.get_pc_thunk.ax:
+	.cfi_startproc
 	movl	(%esp), %eax
 	ret
+	.cfi_endproc
 
 	.section	.text.__x86.get_pc_thunk.dx,"axG",@progbits,__x86.get_pc_thunk.dx,comdat
 	.globl	__x86.get_pc_thunk.dx
 	.hidden	__x86.get_pc_thunk.dx
 	.type	__x86.get_pc_thunk.dx, @function
 __x86.get_pc_thunk.dx:
+	.cfi_startproc
 	nop
 	nop
 	nop
@@ -92,5 +111,6 @@ __x86.get_pc_thunk.dx:
 	nop
 	movl	(%esp), %edx
 	ret
+	.cfi_endproc
 
 	.section	.note.GNU-stack,"",@progbits

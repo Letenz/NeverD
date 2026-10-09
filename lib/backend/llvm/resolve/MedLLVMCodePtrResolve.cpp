@@ -530,7 +530,12 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
   for (const auto &K : Kept) {
     addBytes(Cursor, K.Off);
     llvm::Constant *FieldVal = nullptr;
-    if (K.Kind == PtrSlotKind::Code) {
+    if (const auto Binding = DataSymbolBindings.find(RunStart + K.Off);
+        Binding != DataSymbolBindings.end()) {
+      // Writable slots keep their storage, while their initial value uses the
+      // same exact symbol/addend identity as an immutable direct GOT load.
+      FieldVal = resolveDataSymbolAddress(Binding->second);
+    } else if (K.Kind == PtrSlotKind::Code) {
       llvm::Constant *Target = resolveImageFunctionAddress(K.TargetVA);
       if (!Target) {
         FatalCodePointerResolution = true;

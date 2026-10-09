@@ -216,13 +216,14 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
         // The chain is a linked list inside a table the decoder already
         // bounded, so a step budget of the action count both terminates a
         // cycle and cannot cut a well-formed chain short.
-        for (size_t Step = 0; Offset && Step <= Itanium.Actions.size(); ++Step) {
+        for (size_t Step = 0; Offset && Step <= Itanium.Actions.size();
+             ++Step) {
           const ItaniumAction *Action = FindAction(*Offset);
           if (!Action)
             break;
-          AddClause(Action->isCleanup()   ? ExceptionalEdgeKind::ItaniumCleanupPad
-                    : Action->isCatch()   ? ExceptionalEdgeKind::ItaniumCatchPad
-                                          : ExceptionalEdgeKind::ItaniumSpecPad,
+          AddClause(Action->isCleanup() ? ExceptionalEdgeKind::ItaniumCleanupPad
+                    : Action->isCatch() ? ExceptionalEdgeKind::ItaniumCatchPad
+                                        : ExceptionalEdgeKind::ItaniumSpecPad,
                     Action->TypeFilter);
           Offset = Action->NextActionOffset;
         }

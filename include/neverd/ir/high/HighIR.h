@@ -20,6 +20,8 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
+
 #include <algorithm>
 #include <map>
 #include <memory>
@@ -161,13 +163,16 @@ struct HighExpr {
 };
 
 using ExprPtr = std::shared_ptr<HighExpr>;
+/// Expressions a walk over a shared expression graph has met, for membership
+/// only: its order is unspecified.  Walks run per statement and pass, so the
+/// set keeps small graphs inline and allocates nothing per member.
+using HighExprSet = llvm::SmallPtrSet<const HighExpr *, 16>;
 
 /// All reachable expressions containing ordered or non-default-address-space
 /// memory, including through an indirect call target. Analyze shared nodes
 /// once. The borrowed identities remain valid only while this graph is kept
 /// alive and no transformation introduces or relocates a memory access.
-std::unordered_set<const HighExpr *>
-findOrderedMemoryAncestors(const std::vector<ExprPtr> &Roots);
+HighExprSet findOrderedMemoryAncestors(const std::vector<ExprPtr> &Roots);
 
 /// Termination promised by the bound source routine, independently of a
 /// native CFG flag or call spelling. Source admission revalidates the binding.
@@ -540,6 +545,11 @@ inline bool switchAlwaysReturns(const HighStmt &Stmt) {
 struct HighParam {
   std::string Name;
   TypeRef Type;
+  /// Where the caller passes it: the register, or kNoParamReg for a stack
+  /// argument, whose MedIR parameter index \ref MedIndex names its slot.
+  /// Lowering sets both; a hand-built function may leave them unknown.
+  uint64_t RegOff = kNoParamReg;
+  int MedIndex = -1;
 };
 
 struct HighLocal {
@@ -559,6 +569,8 @@ struct HighFunc {
   std::string SourceFile;
   uint32_t SourceLine = 0;
   bool DoesNotReturn = false;
+  /// MedFunc::ReturnsNoValue: C shows the function as void.
+  bool ReturnsNoValue = false;
   /// How execution reaches Entry (MedFunc::EntryKind).
   StackEntryKind EntryKind = StackEntryKind::Call;
   TypeRef ReturnType;

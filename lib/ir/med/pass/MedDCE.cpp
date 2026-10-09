@@ -14,6 +14,10 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/loader/BinaryImage.h"
+
+#include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
 #include <map>
@@ -187,8 +191,17 @@ void LowToMedConverter::runDce(MedFunc &Func) {
     }
   }
 
-  // Seed: parameter register assignments before CALL/INDIR_CALL/tail-call
-  auto seedParamWrites = [&](const std::vector<MedOp> &Ops, int Before) {
+  // Seed: parameter register assignments before CALL/INDIR_CALL/tail-call.
+  // A direct call of a function of the image may also take its arguments in
+  // the convention's alternate register order (GCC's i386 regparm EAX, EDX,
+  // ECX); an import never does.
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(TargetArch, TargetFormat);
+  const llvm::ArrayRef<uint64_t> AlternateArgumentRegisters =
+      Convention ? Convention->AlternateRegisterOrder
+                 : llvm::ArrayRef<uint64_t>();
+  auto seedParamWrites = [&](const std::vector<MedOp> &Ops, int Before,
+                             bool DirectCall) {
     for (int J = Before; J >= 0; --J) {
       const MedOp &Prev = Ops[static_cast<size_t>(J)];
       if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
@@ -196,7 +209,9 @@ void LowToMedConverter::runDce(MedFunc &Func) {
         break;
       if (Prev.Output.Kind == MedVar::Reg && Prev.Output.Size > 0 &&
           (TRI.isParamReg(Prev.Output.RegOff) ||
-           TRI.isVectorReg(Prev.Output.RegOff)))
+           TRI.isVectorReg(Prev.Output.RegOff) ||
+           (DirectCall && llvm::is_contained(AlternateArgumentRegisters,
+                                             Prev.Output.RegOff))))
         MarkLive(Prev.Output);
     }
   };
@@ -259,7 +274,12 @@ void LowToMedConverter::runDce(MedFunc &Func) {
       if (!IsCall && !IsTail)
         continue;
       seedReachingStackPointer(Blk, static_cast<int>(I) - 1);
-      seedParamWrites(Blk.Ops, static_cast<int>(I) - 1);
+      const MedOp &Call = Blk.Ops[I];
+      const bool DirectCall =
+          Call.Opcode == NdOp::CALL && Call.NumInputs >= 1 &&
+          Call.Inputs[0].isConst() &&
+          !(Image && Image->findImportAt(Call.Inputs[0].ConstVal));
+      seedParamWrites(Blk.Ops, static_cast<int>(I) - 1, DirectCall);
       // IP-map / EH splits often isolate the CALL. `lea r8; mov edx; lea rcx`
       // then sit in the predecessor and must stay live as call setup.  A
       // conditional choice between two calls does the same: each arm may add
@@ -275,7 +295,8 @@ void LowToMedConverter::runDce(MedFunc &Func) {
         continue;
       for (int PredId : Blk.Preds)
         if (const MedBlock *Pred = blockById(PredId))
-          seedParamWrites(Pred->Ops, static_cast<int>(Pred->Ops.size()) - 1);
+          seedParamWrites(Pred->Ops, static_cast<int>(Pred->Ops.size()) - 1,
+                          DirectCall);
     }
   }
 

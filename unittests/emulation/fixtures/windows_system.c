@@ -185,6 +185,8 @@ static void clocks(void **Modules) {
               GetLastError() == LastErrorSeed,
           42);
 }
+#include "WindowsCriticalSectionFixture.inc"
+#include "WindowsNativeServiceFixture.inc"
 #include "WindowsSectionFixture.inc"
 U32 entry(void) {
   U32 Mode = LoadMode;
@@ -252,6 +254,14 @@ U32 entry(void) {
   }
   if (Mode == ForwardMode)
     forward();
+  if (Mode == NativeServicesMode || Mode == NativeUnknownMode ||
+      Mode == NativeUnimplementedMode)
+    nativeServices(Modules[2], Mode);
+  if (Mode == CriticalSectionsMode || Mode == CriticalUninitializedMode ||
+      Mode == CriticalUnownedLeaveMode || Mode == CriticalReinitializeMode ||
+      Mode == CriticalDeletedMode || Mode == CriticalCorruptedMode ||
+      Mode == CriticalOwnedDeleteMode)
+    criticalSections(Modules[0], Modules[2], Mode);
   U32 Result[] = {1, Mode}, Written;
   require(WriteFile(GetStdHandle(StdoutSelector), Result, sizeof(Result),
                     &Written, 0) &&

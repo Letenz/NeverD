@@ -26,6 +26,7 @@
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -1182,7 +1183,30 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
 
   // --- Build the ordered parameter register list ---
   std::vector<uint64_t> ParamRegs;
-  const auto IntegerRegs = TRI.integerArgumentLayout(Fmt).Registers;
+  llvm::ArrayRef<uint64_t> IntegerRegs =
+      TRI.integerArgumentLayout(Fmt).Registers;
+  // A function that reads at entry, as a value and not as scratch, a
+  // register only the convention's alternate order has takes its arguments
+  // in that order (GCC's i386 regparm EAX, EDX, ECX).  A push that only
+  // reserves a stack slot (clang's `push eax`) stores the register without
+  // reading it.
+  if (Convention && !Convention->AlternateRegisterOrder.empty() &&
+      !Func.Blocks.empty()) {
+    const llvm::ArrayRef<uint64_t> Alternate =
+        Convention->AlternateRegisterOrder;
+    const std::set<uint64_t> Reads =
+        findLiveInParamRegs(Func.Blocks.front(), Alternate);
+    if (llvm::any_of(Reads, [&](uint64_t Register) {
+          return !llvm::is_contained(IntegerRegs, Register) &&
+                 !med_calling_conv_detail::liveInOnlyFeedsScratch(Func,
+                                                                  Register) &&
+                 med_calling_conv_detail::liveInReachesNonPushUse(Func,
+                                                                  Register);
+        })) {
+      Func.IntegerArgumentRegisters.assign(Alternate.begin(), Alternate.end());
+      IntegerRegs = Func.IntegerArgumentRegisters;
+    }
+  }
   if (Convention && Convention->PositionalArgumentSlots) {
     // The FP argument registers take the same positions as the integer ones.
     ParamRegs.assign(IntegerRegs.begin(), IntegerRegs.end());

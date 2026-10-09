@@ -155,19 +155,26 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
 #ifndef NEVERD_UNPACK_GENERATED_FIXTURE_DIR
   GTEST_SKIP() << generated::MissingTools;
 #else
-  for (const char *File :
-       {generated::ProgramFile, generated::TLSHeapProgramFile}) {
+  const std::pair<const char *, unsigned> Cases[] = {
+      {generated::ProgramFile, generated::HeapStateMode},
+      {generated::TLSHeapProgramFile, generated::HeapStateMode},
+      {generated::ProgramFile, generated::DirectServiceMode},
+      {generated::ProgramFile, generated::LateDirectServiceMode},
+      {generated::ProgramFile, generated::EncodedPointerMode},
+      {generated::TLSHeapProgramFile, generated::EncodedPointerMode}};
+  for (const auto &[File, Mode] : Cases) {
     SCOPED_TRACE(File);
+    SCOPED_TRACE(Mode);
     const auto Original =
         readImage(std::filesystem::path(NEVERD_UNPACK_GENERATED_FIXTURE_DIR) /
                   generated::X64Dir / File);
-    const auto Packed =
-        generated::pack(Original, Original.File, generated::HeapStateMode);
+    const auto Packed = generated::pack(Original, Original.File, Mode);
     ASSERT_FALSE(HasFailure());
     const auto Input =
         (Directory / (std::string(File) + generated::PackedFile)).string();
     const auto Output =
-        (Directory / (std::string(File) + FirstOutput)).string();
+        (Directory / (std::string(File) + std::to_string(Mode) + FirstOutput))
+            .string();
     writeFile(Input, Packed);
     auto Report = api(Input, Output, nullptr);
     if (!Report) {
@@ -185,7 +192,26 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
     ASSERT_NE(State, nullptr);
     EXPECT_EQ(State->getBoolean(text::HeapKnownField), true);
     ASSERT_TRUE(State->getInteger(text::HeapReferenceCountField));
-    EXPECT_GT(*State->getInteger(text::HeapReferenceCountField), 0);
+    if (Mode == generated::HeapStateMode)
+      EXPECT_GT(*State->getInteger(text::HeapReferenceCountField), 0);
+    else if (Mode == generated::EncodedPointerMode) {
+      EXPECT_EQ(State->getInteger("possible_encoded_pointers"), 1);
+      EXPECT_EQ(State->getBoolean("encoded_pointer_inventory_known"), true);
+      const auto *References = State->getArray("encoded_pointer_references");
+      ASSERT_NE(References, nullptr);
+      ASSERT_EQ(References->size(), 1u);
+      const auto *Reference = References->front().getAsObject();
+      ASSERT_NE(Reference, nullptr);
+      EXPECT_EQ(Reference->getString("storage"),
+                File == generated::TLSHeapProgramFile ? "thread_local"
+                                                      : "image");
+      EXPECT_TRUE(Reference->getString("value"));
+      EXPECT_TRUE(Reference->getString("offset"));
+    } else {
+      EXPECT_EQ(*State->getInteger(text::HeapReferenceCountField), 0);
+      ASSERT_TRUE(State->getInteger("direct_service_calls"));
+      EXPECT_GT(*State->getInteger("direct_service_calls"), 0);
+    }
     EXPECT_FALSE(std::filesystem::exists(Output));
     EXPECT_EQ(cli(Input, Output, text::EmptyOptions).first,
               unpack_cli::Incomplete);
@@ -201,6 +227,25 @@ TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
     const auto [Status, Text] = cli(Input, Output, text::EmptyOptions);
     EXPECT_EQ(Status, unpack_cli::Incomplete) << Text;
     EXPECT_EQ(readFile(Output), Existing);
+    if (Mode == generated::EncodedPointerMode) {
+      const char *Snapshot = "{\"snapshot_only\":true}";
+      Report = api(Input, Output, Snapshot);
+      ASSERT_TRUE(Report) << neverd_last_error(Session);
+      EXPECT_EQ(Report->getString(text::OutcomeField), text::SnapshotOutcome);
+      const auto *State = Report->getObject(text::RuntimeStateField);
+      ASSERT_NE(State, nullptr);
+      EXPECT_EQ(State->getInteger("possible_encoded_pointers"), 1);
+      const auto Bytes = readFile(Output);
+      EXPECT_FALSE(Bytes.empty());
+      const auto [SnapshotStatus, SnapshotText] = cli(Input, Output, Snapshot);
+      EXPECT_EQ(SnapshotStatus, unpack_cli::Success) << SnapshotText;
+      EXPECT_EQ(readFile(Output), Bytes);
+      auto Parsed = llvm::json::parse(SnapshotText);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      ASSERT_TRUE(Parsed->getAsObject());
+      EXPECT_EQ(*Parsed->getAsObject()->get(text::RuntimeStateField),
+                *Report->get(text::RuntimeStateField));
+    }
   }
 #endif
 }

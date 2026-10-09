@@ -236,6 +236,38 @@ struct LibCPrintfFormat {
 /// its last fixed parameter.
 const LibCPrintfFormat *libcPrintfFormat(std::string_view Name);
 
+/// How C passes every argument a function receives on to a variadic routine
+/// (LibCVariadicForwards.inc), as a stub that jumps to the routine does.
+struct LibCVariadicForward {
+  enum class Kind : uint8_t {
+    /// Target takes the variadic arguments as a va_list after the fixed
+    /// parameters, the last of which is the format.
+    VaList,
+    /// The routine, Target, reads at most Count variadic arguments of Type.
+    Bounded,
+    /// The variadic arguments are pointers up to a null one, which Target
+    /// takes as an array after the first fixed parameter, followed by an
+    /// environment array when Environment.
+    Sentinel,
+  };
+  Kind TheKind = Kind::VaList;
+  std::string_view Name;
+  std::string_view Return;
+  /// The header declaring the types the fixed parameters name, or empty.
+  std::string_view Header;
+  std::string_view Target;
+  /// The C types of the fixed parameters.
+  std::array<std::string_view, 6> Fixed{};
+  uint8_t FixedCount = 0;
+  uint8_t Count = 0;
+  std::string_view Type;
+  bool Environment = false;
+};
+
+/// How a function passes its arguments on to the variadic routine C name
+/// \p Name links to, or null when C cannot.
+const LibCVariadicForward *libcVariadicForward(std::string_view Name);
+
 /// ABI category of one fixed parameter in a known variadic function.  Pointer
 /// parameters must be symbolized before code generation; integer parameters
 /// must remain scalar values even when a small constant happens to overlap a
@@ -271,6 +303,11 @@ bool isCStringParameter(std::string_view Name, unsigned Index);
 /// Leading underscores are ignored.
 std::optional<std::string_view> functionPointerParameter(std::string_view Name,
                                                          unsigned Index);
+
+/// Whether parameter \p Index of the standard C or POSIX function \p Name
+/// takes an object pointer (`memcpy`'s destination, `fputs`'s stream), which
+/// C does not convert an integer to.  Leading underscores are ignored.
+bool isObjectPointerParameter(std::string_view Name, unsigned Index);
 
 /// What a compiler stack-probe helper does (StackProbeRoutines.inc).
 enum class StackProbeEffect : uint8_t {

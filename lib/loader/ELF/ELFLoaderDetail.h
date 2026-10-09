@@ -157,13 +157,35 @@ void applyDynamicRelativeRelocations(
 /// Record the defined symbols of every SHT_SYMTAB / SHT_DYNSYM section in
 /// `Img.Symbols`, and every global or weak function among them in
 /// `Img.Exports`.
-/// A common symbol takes its address in \p CommonSlots.
+/// A common symbol takes its address in \p CommonSlots.  A symbol's
+/// `st_shndx` indexes \p OwnerSections, the file's own section headers, which
+/// are \p Sections unless those were reconstructed.
 template <typename ELFT>
 llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
                            llvm::ArrayRef<typename ELFT::Shdr> Sections,
+                           llvm::ArrayRef<typename ELFT::Shdr> OwnerSections,
                            size_t Size, const std::vector<va_t> &SecBase,
                            bool IsRelocatable,
                            const std::map<std::string, va_t> &CommonSlots,
+                           BinaryImage &Img);
+
+/// Section headers for the tables a linked image without section headers
+/// still has, and the string table naming them.
+template <typename ELFT> struct DynamicSections {
+  std::vector<typename ELFT::Shdr> Headers;
+  std::string Names;
+};
+
+/// Rebuild, for a linked image whose section header table was stripped
+/// (`sstrip`, `llvm-objcopy --strip-sections`), the headers of the tables its
+/// runtime still reads through the program headers: .dynamic, .dynstr,
+/// .dynsym, the dynamic, PLT and RELR relocation tables, and .eh_frame_hdr.
+/// They feed the loader's parsers only.  A symbol's `st_shndx` still names a
+/// section of the original table, which is gone.  A table the runtime would
+/// not find whole is reported in \p Img's load diagnostics and left out.
+template <typename ELFT>
+DynamicSections<ELFT>
+reconstructDynamicSections(const llvm::object::ELFFile<ELFT> &ELF,
                            BinaryImage &Img);
 
 } // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail

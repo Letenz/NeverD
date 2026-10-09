@@ -43,6 +43,12 @@ size_t scanImportThunksAArch64(BinaryImage &Img, const Segment &Seg,
     size_t At = I;
     if (WordAt(At) == kBTI_C)
       At += kInsnSize;
+    // ELF PLT0 saves the caller's x16 and LR before entering the loader's
+    // lazy resolver. That prologue is not an ordinary function entry.
+    const bool ResolverHeader =
+        Img.isELF() && WordAt(At) == 0xa9bf7bf0u; // stp x16,x30,[sp,#-16]!
+    if (ResolverHeader)
+      At += kInsnSize;
     const std::optional<uint32_t> W0 = WordAt(At), W1 = WordAt(At + kInsnSize),
                                   W2 = WordAt(At + 2 * kInsnSize);
     if (!W0 || !W1 || !W2 || (*W0 & kADRP_X16_Mask) != kADRP_X16_Match)
@@ -79,6 +85,15 @@ size_t scanImportThunksAArch64(BinaryImage &Img, const Segment &Seg,
     va_t Page = (AdrpVA & kPageMask) + Imm;
     uint32_t LdrOff = ((*W1 >> kLDR_Imm12Shift) & kLDR_Imm12Mask) << 3;
     va_t Target = Page + LdrOff;
+    if (ResolverHeader) {
+      if ((*W1 & kLDR_X16_X16_Mask) == kLDR_X17_X16_Match &&
+          Img.hasRuntimeCallablePointerSlotAt(
+              Target, RuntimeCallablePointerSlotKind::ELFLazyResolver)) {
+        Img.recordImportStubRange(StubVA, ThunkSize);
+        I = End - kInsnSize;
+      }
+      continue;
+    }
     auto TargetIt = Targets.find(Target);
     if (TargetIt == Targets.end())
       continue;

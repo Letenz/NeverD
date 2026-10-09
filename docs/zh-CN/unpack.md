@@ -33,6 +33,10 @@ neverd unpack packed.exe -o unpacked.exe \
 
 `runtime_state.heap_inventory_known` 区分已知空清单与缺少来源证据。`possible_heap_references` 统计全部匹配；`heap_references` 最多保留前 64 条，先镜像后 TLS，各自按 `offset` 排序。记录给出 `storage`（`image` 或 `thread_local`）、地址及分配范围。镜像记录的 `rva` 为十六进制值，TLS 记录为 null；地址和偏移采用十六进制字符串。
 
+`runtime_state.direct_service_calls` 统计入口观察和导入发现期间实际执行的直接模型服务调用。其编号尚未重建为原生 Windows 绑定，因此默认返回 `unsupported_state`，包括首次调用出现在捕获入口之后的情况。显式 `snapshot_only` 保留计数和诊断。复制的系统调用不会被当作可修复的导入函数调用。 `no_entry` 报告也保留此计数；未捕获入口时，堆清单仍为未知。
+
+`runtime_state.encoded_pointer_inventory_known` 表示进程配置是否提供已观察到的指针编码值。`possible_encoded_pointers` 统计捕获映像和主线程 TLS 中完全相等的指针宽度值，包括未对齐存储；`encoded_pointer_references` 保留前 64 个位置的 `storage`、`offset`、`rva` 和 `value`。Windows 从已完成的 `EncodePointer`/`RtlEncodePointer` 返回值和 `DecodePointer`/`RtlDecodePointer` 输入收集编码值。缺少清单或存在匹配时返回 `unsupported_state`；显式快照保留诊断。匹配也可能是整数或未使用数据，不能据此授权重新编码。捕获前已清除的值、仅在捕获后生成的编码不会触发该拒绝。清单不覆盖自定义编码、部分或变换后的值、寄存器、栈状态及未到达路径。
+
 `--options='{"snapshot_only":true}'` 显式请求分析字节。接受入口且重建成功后，结果始终为 `snapshot`，运行时状态诊断仍会保留。该选项不会恢复堆数据、推断重定位、证明原生运行成功或反虚拟化。堆引用数量为零也不能证明其他 OS 状态或未执行路径正确。
 
 ## 入口如何确定

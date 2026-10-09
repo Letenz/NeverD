@@ -655,6 +655,49 @@ TEST_P(UnpackGenerated, ExplicitSnapshotsKeepExternalHeapDependenciesVisible) {
   }
 }
 
+TEST_P(UnpackGenerated, DirectServiceBindingsRequireAnExplicitSnapshot) {
+  if (GetParam().ISA != GuestArchitecture::X64)
+    GTEST_SKIP() << "the direct service fixture uses the x64 Windows ABI";
+  for (unsigned Mode : {DirectServiceMode, LateDirectServiceMode}) {
+    SCOPED_TRACE(Mode);
+    auto Packed = pack(Mode);
+    ASSERT_FALSE(HasFailure());
+    auto OriginalRun = run(Packed);
+    ASSERT_EQ(OriginalRun.Stop, ProcessStopReason::Exited)
+        << OriginalRun.Diagnostic;
+    EXPECT_EQ(OriginalRun.ExitStatus, ExitStatus);
+    EXPECT_EQ(OriginalRun.StandardOutput, Message);
+    for (bool Snapshot : {false, true}) {
+      SCOPED_TRACE(Snapshot);
+      Options.SnapshotOnly = Snapshot;
+      auto Result = unpack(Mode);
+      ASSERT_FALSE(HasFailure());
+      EXPECT_EQ(Result.Outcome, Snapshot ? UnpackOutcome::Snapshot
+                                         : UnpackOutcome::UnsupportedState);
+      EXPECT_EQ(Result.Image.empty(), !Snapshot);
+      EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+      EXPECT_GT(Result.RuntimeState.DirectServiceCalls, 0u);
+      EXPECT_NE(Result.Diagnostic.find("native binding"), std::string::npos);
+    }
+    // Not selecting a transfer does not erase calls that actually executed.
+    Options.Transfer = defaults::MaxTransfers;
+    const auto MissingEntry = unpack(Mode);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(MissingEntry.Outcome, UnpackOutcome::NoEntry);
+    EXPECT_EQ(MissingEntry.ProcessStop,
+              processStopReasonName(ProcessStopReason::Exited));
+    EXPECT_FALSE(MissingEntry.EntryRVA);
+    EXPECT_TRUE(MissingEntry.Image.empty());
+    EXPECT_FALSE(MissingEntry.RuntimeState.HeapInventoryKnown);
+    EXPECT_EQ(MissingEntry.RuntimeState.DirectServiceCalls,
+              llvm::count_if(OriginalRun.NativeCalls, [](const auto &Call) {
+                return Call.DirectServiceNumber.has_value();
+              }));
+    EXPECT_GT(MissingEntry.RuntimeState.DirectServiceCalls, 0u);
+    Options.Transfer = 0;
+  }
+}
+
 TEST_P(UnpackGenerated, ReleasedHeapStateDoesNotBlockRecovery) {
   for (bool TLSOnly : {false, true}) {
     SCOPED_TRACE(TLSOnly);
@@ -677,6 +720,65 @@ TEST_P(UnpackGenerated, ReleasedHeapStateDoesNotBlockRecovery) {
     EXPECT_EQ(Actual.Stop, Expected.Stop) << Actual.Diagnostic;
     EXPECT_EQ(Actual.ExitStatus, Expected.ExitStatus);
     EXPECT_EQ(Actual.StandardOutput, Expected.StandardOutput);
+  }
+}
+
+TEST_P(UnpackGenerated, CapturedEncodedPointersRequireAnExplicitSnapshot) {
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    for (unsigned Mode : {EncodedPointerMode, NativeEncodedPointerMode,
+                          DecodedPointerMode, NativeDecodedPointerMode}) {
+      SCOPED_TRACE(Mode);
+      const auto Packed = pack(Mode);
+      ASSERT_FALSE(HasFailure());
+      const auto Expected = run(Packed);
+      ASSERT_EQ(Expected.Stop, ProcessStopReason::Exited)
+          << Expected.Diagnostic;
+      ASSERT_EQ(Expected.ExitStatus, ExitStatus);
+      EXPECT_EQ(Expected.StandardOutput, Message);
+      for (bool Snapshot : {false, true}) {
+        SCOPED_TRACE(Snapshot);
+        Options.SnapshotOnly = Snapshot;
+        const auto Result = unpack(Mode);
+        ASSERT_FALSE(HasFailure());
+        EXPECT_EQ(Result.Outcome, Snapshot ? UnpackOutcome::Snapshot
+                                           : UnpackOutcome::UnsupportedState);
+        EXPECT_EQ(Result.Image.empty(), !Snapshot);
+        EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+        EXPECT_EQ(Result.RuntimeState.DirectServiceCalls, 0u);
+        EXPECT_TRUE(Result.RuntimeState.EncodedPointerInventoryKnown);
+        EXPECT_EQ(Result.RuntimeState.PossibleEncodedPointers, 1u);
+        ASSERT_EQ(Result.RuntimeState.EncodedPointerReferences.size(), 1u);
+        EXPECT_EQ(Result.RuntimeState.EncodedPointerReferences[0].Location,
+                  TLSOnly ? UnpackHeapReference::Storage::ThreadLocal
+                          : UnpackHeapReference::Storage::Image);
+        EXPECT_NE(Result.Diagnostic.find("encoded pointer"), std::string::npos);
+      }
+    }
+  }
+}
+
+TEST_P(UnpackGenerated, ClearedAndPostEntryEncodingsDoNotBlockRecovery) {
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    for (unsigned Mode : {ClearedEncodedPointerMode, LateEncodedPointerMode}) {
+      SCOPED_TRACE(Mode);
+      const auto Result = unpack(Mode);
+      ASSERT_FALSE(HasFailure());
+      ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
+      EXPECT_TRUE(Result.RuntimeState.EncodedPointerInventoryKnown);
+      EXPECT_EQ(Result.RuntimeState.PossibleEncodedPointers, 0u);
+      const auto Path = Scratch / RebuiltFile;
+      test::writeFile(Path, Result.Image);
+      const auto Actual = run(Path);
+      EXPECT_EQ(Actual.Stop, ProcessStopReason::Exited) << Actual.Diagnostic;
+      EXPECT_EQ(Actual.ExitStatus, ExitStatus);
+      EXPECT_EQ(Actual.StandardOutput, Message);
+    }
   }
 }
 

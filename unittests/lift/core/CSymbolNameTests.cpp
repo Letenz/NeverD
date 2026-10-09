@@ -188,7 +188,43 @@ TEST(CSymbolNames, KnownArgumentsFillOneRegisterEach) {
             NotFound)
       << Source;
   EXPECT_NE(Source.find("__intrinsic_setjmpex(1, 2);"), NotFound) << Source;
-  EXPECT_NE(Source.find("longjmp(1, 4);"), NotFound) << Source;
+  EXPECT_NE(Source.find("longjmp((void *)(uintptr_t)1, 4);"), NotFound)
+      << Source;
+}
+
+TEST(CSymbolNames, LibraryPointerParametersTakeConvertedIntegers) {
+  // C converts an integer to none of fputs's pointer parameters, nor a
+  // pointer to an integer parameter: those values pass through casts, and
+  // the integer argument of strncmp as it is.
+  auto Param = [](int Id) {
+    MedVar Var;
+    Var.Kind = MedVar::Param;
+    Var.Id = Id;
+    Var.Size = 8;
+    return HighExpr::makeVar(Var, NdType::makeInt(8));
+  };
+  HighFunc Report = function(
+      "report", 0x1000,
+      {callStatement("fputs", 0x2000, {Param(0), Param(1)}),
+       callStatement("strncmp", 0x2010, {Param(0), Param(1), Param(2)}),
+       callStatement("sink", 0x3000, {Param(3)})});
+  Report.Params = {{"arg0", NdType::makeInt(8)},
+                   {"arg1", NdType::makeInt(8)},
+                   {"arg2", NdType::makeInt(8)},
+                   {"arg3", NdType::makePtr()}};
+  HighFunc Sink = function("sink", 0x3000, {});
+  Sink.Params = {{"arg0", NdType::makeInt(8)}};
+  const std::string Source =
+      emitHighC({Report, Sink}, BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("fputs((void *)(uintptr_t)arg0, "
+                        "(void *)(uintptr_t)arg1);"),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("strncmp((void *)(uintptr_t)arg0, "
+                        "(void *)(uintptr_t)arg1, arg2);"),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("sink((uintptr_t)arg3);"), NotFound) << Source;
 }
 
 TEST(CSymbolNames, TheEntryStackPointerIsAValue) {
@@ -690,6 +726,9 @@ TEST(CSymbolNames, AVoidRoutineLeavesNoResult) {
   Stub.Entry = 0x1000;
   Stub.ReturnType = U64;
   Stub.Body = {Assign, Return};
+  // MedIR settles that the stub returns no value (settleReturnContracts);
+  // this HighIR stands for its outcome.
+  Stub.ReturnsNoValue = true;
   const std::string Source = emitFor({Stub}, BinaryFormat::ELF, Arch::X64);
   EXPECT_NE(Source.find("extern void __cxa_finalize(void *);"), NotFound)
       << Source;
@@ -918,8 +957,12 @@ TEST(CSymbolNames, AThunkNamedLikeItsImportCallsThroughTheSlot) {
     Imp.Name = ImportName;
     Imp.IATAddr = 0x2000;
     Img.Imports.push_back(std::move(Imp));
-    const std::string Source = emitFor({slotThunk(Thunk, ImportName, Target)},
-                                       BinaryFormat::COFF, Target, &Img);
+    // MedIR settles whether the thunk returns a value
+    // (settleReturnContracts); this HighIR stands for its outcome.
+    HighFunc ThunkFunc = slotThunk(Thunk, ImportName, Target);
+    ThunkFunc.ReturnsNoValue = !ReturnsValue;
+    const std::string Source =
+        emitFor({ThunkFunc}, BinaryFormat::COFF, Target, &Img);
     // The thunk calls through the slot, declared as a function pointer, and
     // never calls itself.
     EXPECT_NE(Source.find("(*" + std::string(Slot) + ")("), NotFound) << Source;
@@ -1036,7 +1079,10 @@ TEST(CSymbolNames, ACallToAVariadicImportsStubKeepsItsArguments) {
       BinaryFormat::COFF, Arch::X64, &Img);
   const size_t Body = Source.find(" report(");
   ASSERT_NE(Body, NotFound) << Source;
-  EXPECT_NE(Source.find("__imp_fprintf(arg0, arg1, arg2)", Body), NotFound)
+  EXPECT_NE(Source.find("__imp_fprintf((void *)(uintptr_t)arg0, "
+                        "(void *)(uintptr_t)arg1, arg2)",
+                        Body),
+            NotFound)
       << Source;
 }
 

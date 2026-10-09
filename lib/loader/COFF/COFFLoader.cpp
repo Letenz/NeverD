@@ -23,6 +23,7 @@
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/DWARF/ItaniumEH.h"
+#include "neverd/loader/DirectBranch.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/loader/Go/GoRuntimeEH.h"
 #include "neverd/loader/LanguageRuntime.h"
@@ -196,7 +197,15 @@ COFFLoader::load(const std::filesystem::path &Path) {
                                                 CoffSec->SizeOfRawData);
     va_t SectionVA = 0;
     if (IsRelocatable) {
-      const uint64_t Alignment = std::max<uint64_t>(CoffSec->getAlignment(), 1);
+      // Empty sections still reserve a distinct synthetic address. Keep a
+      // following code section on an instruction boundary even when the
+      // object only requests byte alignment.
+      const unsigned CodeAlignment =
+          (CoffSec->Characteristics & IMAGE_SCN_MEM_EXECUTE)
+              ? getBranchScanStride(Img.Arch, Img.Mode)
+              : 1;
+      const uint64_t Alignment =
+          std::max<uint64_t>(CoffSec->getAlignment(), CodeAlignment);
       const uint64_t Remainder = NextRelocatableVA % Alignment;
       const uint64_t Padding = Remainder == 0 ? 0 : Alignment - Remainder;
       if (Padding > InvalidVA - NextRelocatableVA)
@@ -348,9 +357,22 @@ COFFLoader::load(const std::filesystem::path &Path) {
       for (const auto &Reloc : SecRef.relocations()) {
         uint64_t RAddr = Reloc.getOffset();
         uint32_t RType = Reloc.getType();
+        const bool ThumbBranch =
+            Img.Arch == Arch::ARM &&
+            (RType == IMAGE_REL_ARM_BRANCH20T ||
+             RType == IMAGE_REL_ARM_BRANCH24T || RType == IMAGE_REL_ARM_BLX23T);
+        if (ThumbBranch &&
+            (!rangeInBounds(RAddr, 4, ApplySeg->Data.size()) ||
+             ApplyVA > UINT32_MAX || RAddr > UINT32_MAX - ApplyVA))
+          return llvm::createStringError(
+              "coff: Thumb branch relocation field is out of bounds");
         auto SymIt = Reloc.getSymbol();
-        if (SymIt == Obj.symbol_end())
+        if (SymIt == Obj.symbol_end()) {
+          if (ThumbBranch)
+            return llvm::createStringError(
+                "coff: Thumb branch relocation has no symbol");
           continue;
+        }
 
         uint64_t SymVal = 0;
         va_t SymOwnerVA = InvalidVA;
@@ -369,6 +391,9 @@ COFFLoader::load(const std::filesystem::path &Path) {
           SymVal = Extern->first;
           SymOwnerVA = Extern->second;
         } else {
+          if (ThumbBranch && CoffSym.getSectionNumber() != IMAGE_SYM_ABSOLUTE)
+            return llvm::createStringError(
+                "coff: Thumb branch relocation has an unresolved symbol");
           auto SymAddrOrErr = SymIt->getAddress();
           if (SymAddrOrErr) {
             SymVal = *SymAddrOrErr;
@@ -748,7 +773,78 @@ COFFLoader::load(const std::filesystem::path &Path) {
             std::memcpy(ApplySeg->Data.data() + RAddr, &Val, 4);
           }
         } else if (Img.Arch == Arch::ARM) {
-          if (RType == IMAGE_REL_ARM_ADDR32) {
+          if (RType == IMAGE_REL_ARM_BRANCH20T ||
+              RType == IMAGE_REL_ARM_BRANCH24T ||
+              RType == IMAGE_REL_ARM_BLX23T) {
+            auto Reject = [&](llvm::StringRef Reason) {
+              return llvm::make_error<llvm::StringError>(
+                  "coff: Thumb branch relocation " + Reason.str(),
+                  llvm::inconvertibleErrorCode());
+            };
+            if (!rangeInBounds(RAddr, 4, ApplySeg->Data.size()) ||
+                (P & 1u) != 0 || P > UINT32_MAX - 4)
+              return Reject("field is out of bounds or unaligned");
+            uint16_t Hi = readLE<uint16_t>(ApplySeg->Data.data() + RAddr);
+            uint16_t Lo = readLE<uint16_t>(ApplySeg->Data.data() + RAddr + 2);
+            const bool Conditional = RType == IMAGE_REL_ARM_BRANCH20T;
+            const bool Exchange = RType == IMAGE_REL_ARM_BLX23T;
+            const uint16_t Form = Lo & 0xd000u;
+            if ((Hi & 0xf800u) != 0xf000u ||
+                (Conditional ? Form != 0x8000u || ((Hi >> 6) & 15u) >= 14
+                 : Exchange  ? Form != 0xc000u || (Lo & 1u) != 0
+                             : Form != 0x9000u && Form != 0xd000u))
+              return Reject("has an invalid instruction");
+            const uint32_t Sign = (Hi >> 10) & 1u;
+            const uint32_t Encoded =
+                Conditional
+                    ? (Sign << 20) | ((Lo & 0x0800u) << 8) |
+                          ((Lo & 0x2000u) << 5) | ((Hi & 0x003fu) << 12) |
+                          ((Lo & 0x07ffu) << 1)
+                    : (Sign << 24) | ((~((Lo >> 13) ^ Sign) & 1u) << 23) |
+                          ((~((Lo >> 11) ^ Sign) & 1u) << 22) |
+                          ((Hi & 0x03ffu) << 12) | ((Lo & 0x07ffu) << 1);
+            const unsigned Bits = Conditional ? 21 : 25;
+            const auto Target = AddSignedAddend(S, SignExtend(Encoded, Bits));
+            const uint64_t Base = Exchange ? (P + 4) & ~uint64_t(3) : P + 4;
+            if (!Target || *Target > UINT32_MAX ||
+                (*Target & (Exchange ? 3u : 1u)) != 0)
+              return Reject("target is out of bounds or unaligned");
+            const auto Delta = SignedDifference(*Target, Base);
+            if (!Delta || !llvm::isIntN(Bits, *Delta))
+              return Reject("target exceeds direct range");
+            // ARMNT is Thumb-only. An immediate BLX to an ordinary defined
+            // or imported function needs a linker veneer; it cannot enter
+            // that function in ARM state just because its address is even.
+            if (Exchange && (Img.hasExecutableCodeOwnerAt(*Target) ||
+                             Img.findImportAt(*Target)))
+              return Reject("needs an unsupported interworking veneer");
+            const uint32_t Value = static_cast<uint32_t>(*Delta);
+            if (Conditional) {
+              Hi = static_cast<uint16_t>((Hi & 0xfbc0u) |
+                                         ((Value >> 10) & 0x0400u) |
+                                         ((Value >> 12) & 0x003fu));
+              Lo = static_cast<uint16_t>(0x8000u | ((Value >> 8) & 0x0800u) |
+                                         ((Value >> 5) & 0x2000u) |
+                                         ((Value >> 1) & 0x07ffu));
+            } else {
+              const uint32_t SBit = (Value >> 24) & 1u;
+              Hi = static_cast<uint16_t>(0xf000u | (SBit << 10) |
+                                         ((Value >> 12) & 0x03ffu));
+              Lo = static_cast<uint16_t>(
+                  Form | ((~((Value >> 23) ^ SBit) & 1u) << 13) |
+                  ((~((Value >> 22) ^ SBit) & 1u) << 11) |
+                  ((Value >> 1) & 0x07ffu));
+            }
+            writeLE<uint16_t>(ApplySeg->Data.data() + RAddr, Hi);
+            writeLE<uint16_t>(ApplySeg->Data.data() + RAddr + 2, Lo);
+            for (Section &Section : Img.Sections)
+              if (Section.VA == ApplyVA &&
+                  rangeInBounds(RAddr, 4, Section.Data.size())) {
+                std::memcpy(Section.Data.data() + RAddr,
+                            ApplySeg->Data.data() + RAddr, 4);
+                break;
+              }
+          } else if (RType == IMAGE_REL_ARM_ADDR32) {
             if (RAddr + 4 > ApplySeg->Data.size())
               continue;
             int32_t InPlace = 0;

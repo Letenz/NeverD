@@ -45,12 +45,14 @@ add_neverd_component_library(NeverDLoader
   DWARF/EHFrameEncoding.cpp
   DWARF/ItaniumEH.cpp
   DWARF/LSDA.cpp
+  DataSymbolBinding.cpp
   DirectBranch.cpp
   ELF/ARMEHABI.cpp
   ELF/ARMEHABIEntry.cpp
   ELF/ARMEHABIIndex.cpp
   ELF/ARMEHABITypeTable.cpp
   ELF/ARMEHABIUnwind.cpp
+  ELF/ELFDynamicSections.cpp
   ELF/ELFLoader.cpp
   ELF/ELFLoaderExterns.cpp
   ELF/ELFLoaderRelocations.cpp

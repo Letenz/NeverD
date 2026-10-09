@@ -102,6 +102,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProcessTransfer.AnInvocationRetainsChangesFromEverySavedImage")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.RestoredPageBytesRetainTheirNewerGeneration")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProcessTransfer.CapturesUnalignedAndInteriorHeapReferences")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProcessTransfer.MissingHeapInventoryRemainsUnknown")
@@ -125,6 +127,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
     "ExplicitSnapshotsKeepExternalHeapDependenciesVisible/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.DirectServiceBindingsRequireAnExplicitSnapshot/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.DirectServiceBindingsRequireAnExplicitSnapshot/"
     "{backend_title}DirectX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated.ReleasedHeapStateDoesNotBlockRecovery/"
@@ -2358,6 +2366,9 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsEnvironment.ValidatesUpdatesBeforePublishingGuestBytes/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsHeap.PrivateHeapDestructionReleasesOnlyOwnedBlocks/"
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsHeap.ExecutesOriginalHeapScenarios/{backend_title}X64")

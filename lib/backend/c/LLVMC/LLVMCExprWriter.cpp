@@ -25,6 +25,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/ConstantFolding.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 
@@ -468,7 +469,8 @@ LLVMCWriter::imageByteArrayBacking(const llvm::Value *V,
     const auto *Array = llvm::dyn_cast<llvm::ArrayType>(GV.getValueType());
     if (!Base || !Array || !Array->getElementType()->isIntegerTy(8) ||
         !GV.hasInitializer() ||
-        !llvm::isa<llvm::ConstantAggregateZero>(GV.getInitializer()) ||
+        (!llvm::isa<llvm::ConstantAggregateZero>(GV.getInitializer()) &&
+         !llvm::isa<llvm::ConstantDataArray>(GV.getInitializer())) ||
         *Addr < *Base || AccessSize > Array->getNumElements())
       continue;
     const uint64_t Offset = *Addr - *Base;
@@ -509,6 +511,14 @@ std::optional<uint64_t> LLVMCWriter::foldReadonlyScalar(va_t Addr,
 }
 
 std::string LLVMCWriter::imageDataCName(const llvm::Value *V) const {
+  // Full-module output owns these bytes in a pointer mirror. Its interior
+  // fields are offsets into that object, not separate globals at the original
+  // VAs. Single-function output instead declares the referenced image objects.
+  if (!OnlyFunction && V->getType()->isPointerTy())
+    if (const auto *Global =
+            llvm::dyn_cast<llvm::GlobalVariable>(llvm::getUnderlyingObject(V));
+        Global && parseNdCodePtrSymbol(Global->getName()))
+      return {};
   const auto VA = imageDataVA(V);
   if (!VA)
     return {};
@@ -641,12 +651,13 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
         return "(" + typeToCLLVM(CE->getType()) + ")(void*)" +
                functionIdentifier(*Fn);
       }
-      if (auto *GV = llvm::dyn_cast<llvm::GlobalVariable>(Src)) {
-        // A global is an address even when its initializer is a byte array.
-        // Reading initializer bytes here would turn ptrtoint into a load.
-        return "(" + typeToCLLVM(CE->getType()) + ")(void*)&(" + constStr(GV) +
-               ")";
-      }
+      // A global denotes its address, never its initializer bytes. Arrays
+      // decay to that address; imported data already carries an address.
+      if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Src);
+          Global && !Global->isDeclaration() &&
+          !Global->getValueType()->isArrayTy() &&
+          !ExternalDataIdentifiers.count(Global))
+        return "(" + typeToCLLVM(CE->getType()) + ")(void*)&" + valueStr(Src);
       return "(" + typeToCLLVM(CE->getType()) + ")(void*)" + valueStr(Src);
     }
     if (CE->getOpcode() == llvm::Instruction::IntToPtr) {
@@ -686,6 +697,10 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
   if (auto *GV = llvm::dyn_cast<llvm::GlobalValue>(C)) {
     if (const auto *Fn = llvm::dyn_cast<llvm::Function>(GV))
       return functionIdentifier(*Fn);
+    if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(GV))
+      if (const auto It = ExternalDataIdentifiers.find(Global);
+          It != ExternalDataIdentifiers.end())
+        return It->second;
     std::string N = GV->getName().str();
     if (N.empty())
       return getName(C);
@@ -730,7 +745,13 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       for (unsigned I = 0; I < Count; ++I) {
         if (I)
           Text += ", ";
-        Text += constStr(C->getAggregateElement(I));
+        const auto *Element = C->getAggregateElement(I);
+        // Aggregate integer elements are literal bits, never image addresses.
+        // Low byte values can coincide with strings in a low-VA ELF header.
+        if (const auto *Integer = llvm::dyn_cast<llvm::ConstantInt>(Element))
+          Text += integerConstantText(Integer->getValue());
+        else
+          Text += constStr(Element);
       }
     }
     return Text + (Array ? "}}" : "}");

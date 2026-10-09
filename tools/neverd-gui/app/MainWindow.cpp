@@ -16,9 +16,11 @@
 #include "NavigationBand.h"
 #include "OutputWindow.h"
 #include "ProjectDatabase.h"
+#include "QuickStartDialog.h"
 #include "Resolve.h"
 #include "SecondaryTextDelegate.h"
 #include "Session.h"
+#include "SettingsKeys.h"
 #include "Theme.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
@@ -61,7 +63,6 @@
 #include <QSet>
 #include <QSettings>
 #include <QSpinBox>
-#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QStorageInfo>
@@ -81,7 +82,6 @@ namespace {
 using KDDockWidgets::InitialOption;
 
 constexpr char LayoutFileName[] = "desktop.json";
-constexpr char RecentFilesKey[] = "files/recent";
 constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
 constexpr char AnalysisIndicatorKey[] = "analysis/indicator";
 constexpr char BinaryProcessorKey[] = "load/binaryProcessor";
@@ -102,9 +102,6 @@ constexpr int StatusRefreshMs = 30000;
 constexpr int MaxOpcodeBytes = 12;
 // Input dialogs leave room for a full name, comment or expression.
 constexpr int InputDialogWidth = 420;
-// The quick start dims a recent file's folder after its name.
-constexpr qreal QuickStartFolderOpacity = 0.6;
-constexpr int QuickStartColumnGap = 24;
 
 // Dock identifiers; titles follow the classic window names.
 constexpr char FunctionsDock[] = "functions";
@@ -331,7 +328,8 @@ void MainWindow::fillPlaceholder(QMenu *menu, const QString &name) {
       for (auto *action : menu->actions())
         if (action->property("recent").toBool())
           menu->removeAction(action), action->deleteLater();
-      const auto files = QSettings().value(RecentFilesKey).toStringList();
+      const auto files =
+          QSettings().value(settings::RecentFiles).toStringList();
       QAction *before = nullptr;
       for (auto *action : menu->actions())
         if (action->objectName() == QLatin1String("recentAnchor"))
@@ -956,7 +954,7 @@ void MainWindow::connectActions() {
     connect(actions_.action(id), &QAction::triggered, this, slot);
   };
   on(ActionId::FileOpen, [this] { openDialog(); });
-  on(ActionId::FileReload, [this] { session_.reload(); });
+  on(ActionId::FileReload, [this] { reloadInput(); });
   on(ActionId::FileLoadSignatures, [this] {
     const auto path = QFileDialog::getOpenFileName(
         this, tr("Load signature pack"), {},
@@ -1368,7 +1366,8 @@ void MainWindow::updateStatusBar() {
 void MainWindow::openFile(const QString &path) { session_.open(path); }
 
 void MainWindow::openDialog() {
-  const QString start = QFileInfo(session_.filePath()).absolutePath();
+  // The folder of the file the user opened, not of a working copy of it.
+  const QString start = QFileInfo(session_.projectPath()).absolutePath();
   const auto path = QFileDialog::getOpenFileName(
       this, tr("Open binary or database"),
       start.isEmpty() ? QDir::homePath() : start,
@@ -1407,6 +1406,36 @@ void MainWindow::chooseLoader(const QString &path) {
             tr("The ways to load %1 are unknown: %2").arg(path, message), 1);
         openFile(path);
       });
+}
+
+void MainWindow::reloadInput() {
+  if (!session_.loaded())
+    return;
+  // A binary file is read as the processor and at the address the user
+  // chose, which IDA asks for when it loads one: reloading asks again,
+  // starting from the choice the file was loaded with.
+  const QJsonObject load = session_.loadOptionsJson();
+  if (load.value("loader").toString() != QLatin1String("binary") ||
+      !session_.identifiesFiles()) {
+    session_.reload();
+    return;
+  }
+  const QString path = session_.filePath();
+  session_.read(
+      QStringLiteral("identify"), {{"path", path}}, this,
+      [this, path, load](const QJsonObject &payload) {
+        LoadFileDialog dialog(path, payload.value("rows").toArray(), this);
+        dialog.setWindowTitle(tr("Reload the input file"));
+        dialog.setIndicator(
+            QSettings().value(AnalysisIndicatorKey, true).toBool());
+        dialog.setOptions(load);
+        if (dialog.exec() != QDialog::Accepted || dialog.row() < 0)
+          return;
+        QSettings().setValue(AnalysisIndicatorKey, dialog.indicator());
+        applyIndicator();
+        session_.reload(dialog.options());
+      },
+      [this](const QString &, const QString &) { session_.reload(); });
 }
 
 void MainWindow::applyIndicator() {
@@ -2108,94 +2137,14 @@ void MainWindow::cycleWindows(bool forward) {
 }
 
 void MainWindow::showQuickStart() {
-  QDialog dialog(this);
+  QuickStartDialog dialog(this);
   quickStart_ = &dialog;
-  dialog.setObjectName(QStringLiteral("quickStartDialog"));
-  dialog.setAcceptDrops(true);
-  dialog.setWindowTitle(tr("NeverD: Quick start"));
-  dialog.setWindowIcon(icon(QStringLiteral("app")));
-  dialog.resize(560, 380);
-  auto *layout = new QVBoxLayout(&dialog);
-  auto *row = new QHBoxLayout;
-  auto *newButton =
-      new QPushButton(icon(QStringLiteral("open")), tr("New"), &dialog);
-  newButton->setToolTip(tr("Disassemble a new file"));
-  auto *goButton =
-      new QPushButton(icon(QStringLiteral("jump_entry")), tr("Go"), &dialog);
-  goButton->setToolTip(tr("Work on your own"));
-  auto *previousButton =
-      new QPushButton(icon(QStringLiteral("back")), tr("Previous"), &dialog);
-  previousButton->setToolTip(tr("Load the selected recent file"));
-  for (auto *button : {newButton, goButton, previousButton}) {
-    button->setIconSize(QSize(32, 32));
-    button->setMinimumHeight(56);
-    row->addWidget(button);
-  }
-  layout->addLayout(row);
-  // Each recent file reads as its name, then its folder.
-  auto *recent = new QTreeWidget(&dialog);
-  recent->setObjectName(QStringLiteral("recentFiles"));
-  recent->setColumnCount(2);
-  recent->setHeaderHidden(true);
-  recent->setRootIsDecorated(false);
-  recent->setUniformRowHeights(true);
-  recent->setAllColumnsShowFocus(true);
-  // A long folder keeps both its root and its nearest directory.
-  recent->setTextElideMode(Qt::ElideMiddle);
-  QColor folder = Theme::instance().chrome(QStringLiteral("Text"));
-  folder.setAlphaF(QuickStartFolderOpacity);
-  for (const auto &file : QSettings().value(RecentFilesKey).toStringList()) {
-    const QFileInfo info(file);
-    auto *item = new QTreeWidgetItem(
-        recent,
-        {info.fileName(), QDir::toNativeSeparators(info.absolutePath())});
-    item->setData(0, Qt::UserRole, file);
-    item->setForeground(1, folder);
-    item->setToolTip(0, file);
-    item->setToolTip(1, file);
-  }
-  recent->resizeColumnToContents(0);
-  recent->setColumnWidth(0, recent->columnWidth(0) + QuickStartColumnGap);
-  // Without recent files, the list says how to begin.
-  auto *none = new QLabel(
-      tr("No recent files. Choose New, or drop a file here."), &dialog);
-  none->setObjectName(QStringLiteral("recentFilesEmpty"));
-  none->setProperty("placeholder", true);
-  none->setAlignment(Qt::AlignCenter);
-  none->setWordWrap(true);
-  auto *files = new QStackedWidget(&dialog);
-  files->addWidget(recent);
-  files->addWidget(none);
-  const bool hasRecent = recent->topLevelItemCount() > 0;
-  files->setCurrentWidget(hasRecent ? static_cast<QWidget *>(recent) : none);
-  previousButton->setEnabled(hasRecent);
-  (hasRecent ? previousButton : newButton)->setDefault(true);
-  if (hasRecent) {
-    recent->setCurrentItem(recent->topLevelItem(0));
-    recent->setFocus();
-  }
-  layout->addWidget(new QLabel(tr("Recent files:"), &dialog));
-  layout->addWidget(files, 1);
-  QString choice;
-  connect(newButton, &QPushButton::clicked, &dialog, [&] {
-    choice = QStringLiteral("new");
-    dialog.accept();
-  });
-  connect(goButton, &QPushButton::clicked, &dialog, &QDialog::reject);
-  const auto previous = [&] {
-    if (!recent->currentItem())
-      return;
-    choice = recent->currentItem()->data(0, Qt::UserRole).toString();
-    dialog.accept();
-  };
-  connect(previousButton, &QPushButton::clicked, &dialog, previous);
-  connect(recent, &QTreeWidget::itemActivated, &dialog, previous);
   if (dialog.exec() != QDialog::Accepted)
     return;
-  if (choice == QLatin1String("new"))
+  if (dialog.start() == QuickStartDialog::Start::New)
     openDialog();
-  else if (!choice.isEmpty())
-    openFile(choice);
+  else if (dialog.start() == QuickStartDialog::Start::Previous)
+    openFile(dialog.file());
 }
 
 QHash<QString, QByteArray> MainWindow::projectState() const {

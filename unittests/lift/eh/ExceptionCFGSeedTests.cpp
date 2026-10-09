@@ -359,8 +359,8 @@ TEST(ExceptionCFGSeed, DecodesEveryDelphiOnExceptionArm) {
 
 TEST(ExceptionCFGSeed, DecodesTheGoDeferReturnResumptionPoint) {
   BinaryImage Img = makeImage(Arch::X64, BinaryFormat::ELF);
-  ExceptionFunction EH = makeRecord(ExceptionEncoding::GoFuncTable,
-                                    ExceptionPersonality::None);
+  ExceptionFunction EH =
+      makeRecord(ExceptionEncoding::GoFuncTable, ExceptionPersonality::None);
   GoFunctionEH Go;
   Go.EntryVA = kEntry;
   Go.DeferReturnOffset = 3;
@@ -372,8 +372,8 @@ TEST(ExceptionCFGSeed, DecodesTheGoDeferReturnResumptionPoint) {
 
 TEST(ExceptionCFGSeed, AddsNoRootForAGoFunctionThatDefersNothing) {
   BinaryImage Img = makeImage(Arch::X64, BinaryFormat::ELF);
-  ExceptionFunction EH = makeRecord(ExceptionEncoding::GoFuncTable,
-                                    ExceptionPersonality::None);
+  ExceptionFunction EH =
+      makeRecord(ExceptionEncoding::GoFuncTable, ExceptionPersonality::None);
   GoFunctionEH Go;
   Go.EntryVA = kEntry;
   EH.Go = std::move(Go);
@@ -392,8 +392,8 @@ TEST(ExceptionCFGSeed, AddsNoRootForAGoFunctionThatDefersNothing) {
 //===----------------------------------------------------------------------===//
 
 /// Every (kind, target) an edge list names, for a block, in encounter order.
-std::vector<std::pair<ExceptionalEdgeKind, va_t>>
-edgesFrom(const LowFunc &Func, va_t BlockStart) {
+std::vector<std::pair<ExceptionalEdgeKind, va_t>> edgesFrom(const LowFunc &Func,
+                                                            va_t BlockStart) {
   std::vector<std::pair<ExceptionalEdgeKind, va_t>> Edges;
   for (const LowBlock &Block : Func.Blocks) {
     if (Block.StartAddr != BlockStart)
@@ -420,16 +420,14 @@ TEST(ExceptionCFGEdge,
   Text.VA = kEntry;
   Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Text.Data = {
-      0x1f, 0x20, 0x03, 0xd5, 0x1f, 0x20, 0x03, 0xd5,
-      0x1f, 0x20, 0x03, 0xd5, 0x1f, 0x20, 0x03, 0xd5,
-      0xc0, 0x03, 0x5f, 0xd6, 0xc0, 0x03, 0x5f, 0xd6,
+      0x1f, 0x20, 0x03, 0xd5, 0x1f, 0x20, 0x03, 0xd5, 0x1f, 0x20, 0x03, 0xd5,
+      0x1f, 0x20, 0x03, 0xd5, 0xc0, 0x03, 0x5f, 0xd6, 0xc0, 0x03, 0x5f, 0xd6,
   };
   Text.Size = Text.Data.size();
   Img.Segments.push_back(std::move(Text));
 
-  ExceptionFunction EH =
-      makeRecord(ExceptionEncoding::ARM64Unpacked,
-                 ExceptionPersonality::CSpecificHandler);
+  ExceptionFunction EH = makeRecord(ExceptionEncoding::ARM64Unpacked,
+                                    ExceptionPersonality::CSpecificHandler);
   EH.CodeRange = {kEntry, kEntry + 0x18};
   EH.PersonalityVA = kBase + 0x3000;
   EH.SEH.emplace();
@@ -542,8 +540,9 @@ TEST(ExceptionCFGEdge, LeavesACallSiteWithNoLandingPadUnlinked) {
 
 TEST(ExceptionCFGEdge, LinksEachDelphiX64ScopeOverTheRangeItGuards) {
   BinaryImage Img = makeImage(Arch::X64, BinaryFormat::COFF);
-  ExceptionFunction EH = makeRecord(
-      ExceptionEncoding::X64UnwindV1, ExceptionPersonality::DelphiExceptionHandler);
+  ExceptionFunction EH =
+      makeRecord(ExceptionEncoding::X64UnwindV1,
+                 ExceptionPersonality::DelphiExceptionHandler);
   DelphiScopeTable Table;
   DelphiScopeRecord Cleanup;
   Cleanup.GuardedRange = {kEntry, kEntry + 1};
@@ -575,8 +574,8 @@ TEST(ExceptionCFGEdge, LinksEachDelphiX64ScopeOverTheRangeItGuards) {
 
 TEST(ExceptionCFGEdge, LinksGoPanicAndDeferSitesToDeferReturn) {
   BinaryImage Img = makeImage(Arch::X64, BinaryFormat::ELF);
-  ExceptionFunction EH = makeRecord(ExceptionEncoding::GoFuncTable,
-                                    ExceptionPersonality::None);
+  ExceptionFunction EH =
+      makeRecord(ExceptionEncoding::GoFuncTable, ExceptionPersonality::None);
   GoFunctionEH Go;
   Go.EntryVA = kEntry;
   Go.DeferReturnOffset = 3;

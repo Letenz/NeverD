@@ -63,7 +63,8 @@ foreach(_arch X64 AArch64)
       "/merge:${_generated_CacheMerge}"
       "${_dir}/program.obj" "${_dir}/kernel.lib" "${_dir}/user.lib"
       "/out:${_dir}/${_generated_ProgramFile}"
-    DEPENDS fixtures/unpack_generated.c "${_generated_cases}"
+    DEPENDS fixtures/unpack_generated.c fixtures/unpack_pointer_state.h
+      "${_generated_cases}"
       "${_generated_dir}/KERNEL.def" "${_generated_dir}/USER.def"
     VERBATIM)
   list(APPEND _generated_outputs "${_dir}/${_generated_ProgramFile}")
@@ -82,7 +83,8 @@ foreach(_arch X64 AArch64)
       "/section:${_generated_ProgramAccess}"
       "${_dir}/tls-heap.obj" "${_dir}/kernel.lib"
       "/out:${_dir}/${_generated_TLSHeapProgramFile}"
-    DEPENDS fixtures/unpack_tls_heap.c "${_generated_cases}"
+    DEPENDS fixtures/unpack_tls_heap.c fixtures/unpack_pointer_state.h
+      "${_generated_cases}"
       "${_dir}/${_generated_ProgramFile}"
     VERBATIM)
   list(APPEND _generated_outputs "${_dir}/${_generated_TLSHeapProgramFile}")

@@ -308,25 +308,25 @@ MedLLVMEmitter::tryResolveReadOnlyDataPtr(const MedVar &AddrVar,
   bool SawAmbiguous = false;
   const MedOp *Top = lookupDef(AddrVar);
   auto isKnownReadOnlyBase = [&](const MedVar &Value) {
-    std::optional<uint64_t> VA =
-        Value.isConst() ? std::optional<uint64_t>(Value.ConstVal)
-                        : traceSSAConst(Value);
+    std::optional<uint64_t> VA = Value.isConst()
+                                     ? std::optional<uint64_t>(Value.ConstVal)
+                                     : traceSSAConst(Value);
     return VA && isMaterializableReadOnlyDataAddress(*VA);
   };
-  const bool PreferIndexed =
-      Top && Top->Opcode == NdOp::INT_ADD && Top->NumInputs >= 2 &&
-      (isKnownReadOnlyBase(Top->Inputs[0]) ||
-       isKnownReadOnlyBase(Top->Inputs[1]));
+  const bool PreferIndexed = Top && Top->Opcode == NdOp::INT_ADD &&
+                             Top->NumInputs >= 2 &&
+                             (isKnownReadOnlyBase(Top->Inputs[0]) ||
+                              isKnownReadOnlyBase(Top->Inputs[1]));
   if (PreferIndexed)
     if (auto *P =
-        tryResolveIndexedGlobalPtr(AddrVar, SizeHint, FailClosed, Builder))
+            tryResolveIndexedGlobalPtr(AddrVar, SizeHint, FailClosed, Builder))
       return P;
   if (SelectMergeFailureCacheFor != CurMedFunc) {
     SelectMergeFailureCacheFor = CurMedFunc;
     SelectMergeFailureCache.clear();
   }
-  const auto SelectMergeKey = std::make_tuple(
-      addressProvenanceVarKey(AddrVar), SizeHint, FailClosed);
+  const auto SelectMergeKey =
+      std::make_tuple(addressProvenanceVarKey(AddrVar), SizeHint, FailClosed);
   if (!SelectMergeFailureCache.count(SelectMergeKey)) {
     if (auto *P = tryResolveSelectMergeTable(AddrVar, SizeHint, FailClosed,
                                              Builder, &SawAmbiguous))
@@ -338,7 +338,7 @@ MedLLVMEmitter::tryResolveReadOnlyDataPtr(const MedVar &AddrVar,
   }
   if (!PreferIndexed)
     if (auto *P =
-        tryResolveIndexedGlobalPtr(AddrVar, SizeHint, FailClosed, Builder))
+            tryResolveIndexedGlobalPtr(AddrVar, SizeHint, FailClosed, Builder))
       return P;
   if (auto *P = tryResolveLiteralPoolTable(AddrVar, SizeHint, Builder))
     return P;
@@ -369,8 +369,8 @@ llvm::Value *MedLLVMEmitter::tryResolvePointerArg(const MedVar &AddrVar,
     // read-only resolver proves one stable data owner.  Keep that exact
     // certificate; scalar and fragment values remain rejected.
     if (Occurrence.Model == ConstantProvenanceSummary::ValueModel::Mixed)
-      if (llvm::Value *P = tryResolveReadOnlyDataPtr(
-              AddrVar, /*SizeHint=*/0, FailClosed, Builder))
+      if (llvm::Value *P = tryResolveReadOnlyDataPtr(AddrVar, /*SizeHint=*/0,
+                                                     FailClosed, Builder))
         return P;
     return nullptr;
   }

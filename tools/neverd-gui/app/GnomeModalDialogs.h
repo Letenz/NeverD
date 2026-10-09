@@ -4,6 +4,9 @@ class QApplication;
 
 namespace neverd::gui::gnome {
 
+/// Whether the workbench runs on a GNOME desktop (XDG_CURRENT_DESKTOP).
+bool onGnome();
+
 /// GNOME attaches a modal dialog to its parent window: the dialog cannot move
 /// on its own, and dragging it drags the whole workbench.  These keep modal
 /// dialogs free-standing on GNOME while Qt still blocks input to their
@@ -11,7 +14,8 @@ namespace neverd::gui::gnome {
 
 /// Before the application object exists: a Wayland compositor is not told
 /// which dialogs are modal (xdg-dialog-v1), so it places them over their
-/// parent as plain child windows.
+/// parent as plain child windows.  Dialogs are Qt's own: the platform's file
+/// and color dialogs are other toolkits' windows, which GNOME attaches.
 void prepareModalDialogs();
 
 /// Once the application exists: under X11, modal dialogs take the utility

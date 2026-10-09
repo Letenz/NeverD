@@ -35,6 +35,7 @@ public:
   std::optional<ProcessCallFrame> Frame;
   std::optional<std::vector<ProcessHeapAllocationView>> Heap =
       std::vector<ProcessHeapAllocationView>{};
+  std::optional<std::vector<uint64_t>> Encoded = std::vector<uint64_t>{};
   GuestArchitecture architecture() const override {
     return GuestArchitecture::X64;
   }
@@ -64,6 +65,9 @@ public:
   std::optional<std::vector<ProcessHeapAllocationView>>
   heapAllocations() const override {
     return Heap;
+  }
+  std::optional<std::vector<uint64_t>> encodedPointers() const override {
+    return Encoded;
   }
   std::vector<uint64_t> completedInitializers() const override {
     return Initializers;
@@ -149,6 +153,62 @@ TEST_F(ProcessTransfer, MissingHeapInventoryRemainsUnknown) {
   const auto Captured = Observer.take();
   ASSERT_TRUE(Captured);
   EXPECT_FALSE(Captured->RuntimeState.HeapInventoryKnown);
+}
+
+TEST_F(ProcessTransfer, EncodedPointerInventoryRequiresExactCompleteValues) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  start();
+  Process.Bytes[65] = 42;
+  Process.Encoded = {0x123456789abcdef0, 0xfedcba9876543210,
+                     0x123456789abcdef0};
+  using llvm::support::endian::write64le;
+  write64le(Process.Bytes.data() + 101, 0xfedcba9876543210);
+  write64le(Process.Bytes.data() + 200, 0x123456789abcdef1);
+  write64le(Process.Bytes.data() + 8192 - 8, 0x123456789abcdef0);
+  Process.TLS = std::vector<uint8_t>(17);
+  write64le(Process.TLS->data() + 3, 0x123456789abcdef0);
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  const auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  const auto &State = Captured->RuntimeState;
+  EXPECT_TRUE(State.EncodedPointerInventoryKnown);
+  EXPECT_EQ(State.PossibleEncodedPointers, 3u);
+  ASSERT_EQ(State.EncodedPointerReferences.size(), 3u);
+  EXPECT_EQ(State.EncodedPointerReferences[0].Offset, 101u);
+  EXPECT_EQ(State.EncodedPointerReferences[0].Value, 0xfedcba9876543210);
+  EXPECT_EQ(State.EncodedPointerReferences[1].Offset, 8184u);
+  EXPECT_EQ(State.EncodedPointerReferences[2].Offset, 3u);
+  EXPECT_EQ(State.EncodedPointerReferences[2].Location,
+            UnpackHeapReference::Storage::ThreadLocal);
+}
+
+TEST_F(ProcessTransfer, UnknownEncodedPointerInventoryRemainsUnknown) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  start();
+  Process.Bytes[65] = 42;
+  Process.Encoded.reset();
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  const auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  EXPECT_FALSE(Captured->RuntimeState.EncodedPointerInventoryKnown);
+}
+
+TEST_F(ProcessTransfer, ZeroEncodingAndBoundedReportingRetainEveryMatch) {
+  llvm::fill(Process.Bytes, 0x55);
+  Process.instruction(64, {0xb8, 1, 1, 1, 1});
+  start();
+  Process.Bytes[65] = 42;
+  Process.Encoded = {0};
+  for (unsigned I = 0; I != 80; ++I)
+    llvm::support::endian::write64le(Process.Bytes.data() + 1024 + I * 9, 0);
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  const auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  const auto &State = Captured->RuntimeState;
+  EXPECT_EQ(State.PossibleEncodedPointers, 80u);
+  ASSERT_EQ(State.EncodedPointerReferences.size(), 64u);
+  EXPECT_EQ(State.EncodedPointerReferences.front().Offset, 1024u);
+  EXPECT_EQ(State.EncodedPointerReferences.back().Offset, 1591u);
 }
 
 TEST_F(ProcessTransfer, HeapReferencesInCapturedTLSCannotBeDiscarded) {
@@ -436,6 +496,33 @@ TEST_F(ProcessTransfer, FirstVisitRefreshesPreviouslyUnwatchedFetchTails) {
   EXPECT_FALSE(watched(Watches, 4094));
   Process.MemoryUnchanged = true;
   EXPECT_TRUE(watched(refresh(), 4094));
+}
+
+TEST_F(ProcessTransfer, RestoredPageBytesRetainTheirNewerGeneration) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  Process.instruction(4096, {0x90});
+  start();
+  observe(64);
+  observe(4096);
+  Process.SP -= 40;
+  Process.Bytes[65] = 1;
+  EXPECT_TRUE(watched(refresh(), 64));
+  observe(64);
+  EXPECT_TRUE(watched(observe(4096), 64));
+  // Reverting to the original file bytes is a change from the later image.
+  Process.Bytes[65] = 0;
+  EXPECT_TRUE(watched(refresh(), 64));
+  observe(64);
+  ASSERT_EQ(Observer.transfers().size(), 2u);
+  EXPECT_EQ(Observer.transfers().back().Generation, 2u);
+  EXPECT_TRUE(watched(observe(4096), 64));
+  Process.SP = 0x8000;
+  EXPECT_FALSE(llvm::cantFail(Observer.watched(Process, 64)));
+  auto Captured = Observer.take();
+  ASSERT_TRUE(Captured);
+  EXPECT_EQ(Captured->Baseline[65], 0);
+  EXPECT_EQ(Captured->Memory[65], 0);
+  EXPECT_EQ(Captured->Transfers.back().Generation, 2u);
 }
 } // namespace
 } // namespace neverd::unpack

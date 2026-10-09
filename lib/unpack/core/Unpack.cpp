@@ -49,12 +49,21 @@ readInput(const std::filesystem::path &Path) {
 }
 
 #ifdef NEVERD_UNPACK_EXECUTION
+void recordDirectServices(UnpackRuntimeState &State,
+                          const emulation::ProcessResult &Run) {
+  State.DirectServiceCalls = llvm::SaturatingAdd(
+      State.DirectServiceCalls,
+      uint64_t(llvm::count_if(Run.NativeCalls, [](const auto &Call) {
+        return Call.DirectServiceNumber.has_value();
+      })));
+}
+
 /// Run the recovered image and collect witnessed export calls and address
 /// loads. Failure leaves the image as the entry snapshot already rebuilt it.
 llvm::Expected<std::vector<TailImport>> observeTailImports(
     llvm::ArrayRef<uint8_t> Image, const std::filesystem::path &Input,
     emulation::ProcessProfile Profile, const emulation::ProcessOptions &Options,
-    UnpackResult::ImportRepairReport &Report) {
+    UnpackResult::ImportRepairReport &Report, UnpackRuntimeState &State) {
   llvm::SmallString<128> Directory;
   if (std::error_code Error =
           llvm::sys::fs::createUniqueDirectory("neverd-unpack", Directory))
@@ -78,6 +87,7 @@ llvm::Expected<std::vector<TailImport>> observeTailImports(
   auto Discovery = emulation::observeProcess(Path, Profile, Options, Exports);
   if (!Discovery)
     return Finish(Discovery.takeError());
+  recordDirectServices(State, *Discovery);
   Report.Stop = emulation::processStopReasonName(Discovery->Stop);
   Report.Diagnostic = Discovery->Diagnostic;
   Report.Instructions = Discovery->Instructions;
@@ -94,6 +104,7 @@ llvm::Expected<std::vector<TailImport>> observeTailImports(
   auto Ran = emulation::observeProcess(Path, Profile, Options, Observer);
   if (!Ran)
     return Finish(Ran.takeError());
+  recordDirectServices(State, *Ran);
   Report.Stop = emulation::processStopReasonName(Ran->Stop);
   Report.Diagnostic = Ran->Diagnostic;
   Report.Instructions =
@@ -147,6 +158,9 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
   Result.Instructions = Run->Instructions;
   Result.Events = Run->Events;
   auto Observed = Observer.take();
+  if (Observed)
+    Result.RuntimeState = std::move(Observed->RuntimeState);
+  recordDirectServices(Result.RuntimeState, *Run);
   if (!Observed) {
     Result.Diagnostic = text::NoEntry + Result.ProcessStop;
     return Result;
@@ -154,17 +168,34 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
   Result.ImageBase = Observed->Base;
   Result.EntryRVA = Observed->EntryRVA;
   Result.Source = Observed->Source;
-  Result.RuntimeState = std::move(Observed->RuntimeState);
-  if (!Result.RuntimeState.HeapInventoryKnown ||
-      Result.RuntimeState.PossibleHeapReferences) {
-    Result.Diagnostic = Result.RuntimeState.HeapInventoryKnown
-                            ? text::ExternalHeapState
-                            : text::UnknownHeapState;
-    if (!Options.SnapshotOnly) {
-      Result.Outcome = UnpackOutcome::UnsupportedState;
-      return Result;
+  auto UnsupportedState = [&] {
+    Result.Diagnostic.clear();
+    if (!Result.RuntimeState.HeapInventoryKnown ||
+        Result.RuntimeState.PossibleHeapReferences)
+      Result.Diagnostic = Result.RuntimeState.HeapInventoryKnown
+                              ? text::ExternalHeapState
+                              : text::UnknownHeapState;
+    if (Result.RuntimeState.DirectServiceCalls) {
+      if (!Result.Diagnostic.empty())
+        Result.Diagnostic += "; ";
+      Result.Diagnostic += text::DirectServiceState;
     }
-  }
+    if (!Result.RuntimeState.EncodedPointerInventoryKnown ||
+        Result.RuntimeState.PossibleEncodedPointers) {
+      if (!Result.Diagnostic.empty())
+        Result.Diagnostic += "; ";
+      Result.Diagnostic += Result.RuntimeState.EncodedPointerInventoryKnown
+                               ? text::EncodedPointerState
+                               : text::UnknownEncodedPointerState;
+    }
+    if (!Result.Diagnostic.empty() && !Options.SnapshotOnly) {
+      Result.Outcome = UnpackOutcome::UnsupportedState;
+      return true;
+    }
+    return false;
+  };
+  if (UnsupportedState())
+    return Result;
   RebuildPlan Plan;
   auto Rebuilt = Container->rebuild(Image, *Observed, Plan);
   if (!Rebuilt)
@@ -172,8 +203,9 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
   // The entry snapshot still has protector import calls. Running it shows
   // which export each one reaches, and a second rebuild turns those sites
   // into ordinary import calls when the container recognizes them.
-  auto Tails = observeTailImports(Rebuilt->File, Input, *Profile,
-                                  Options.Process, Result.ImportRepair);
+  auto Tails =
+      observeTailImports(Rebuilt->File, Input, *Profile, Options.Process,
+                         Result.ImportRepair, Result.RuntimeState);
   if (Tails && !Tails->empty()) {
     Plan.TailImports = std::move(*Tails);
     auto Repaired = Container->rebuild(Image, *Observed, Plan);
@@ -184,6 +216,10 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
     Result.ImportRepair.Stop = text::ImportRepairSetupFailed;
     Result.ImportRepair.Diagnostic = llvm::toString(Tails.takeError());
   }
+  // A direct binding may first execute after the captured entry. Import
+  // discovery must not turn that unresolved dependency into an ordinary image.
+  if (UnsupportedState())
+    return Result;
   Result.ImportRepair.RepairedCalls = Rebuilt->RepairedTailCalls;
   Result.ImportRepair.RepairedLoads = Rebuilt->RepairedImportLoads;
   Result.ImportRepair.ConflictingCalls = Rebuilt->ConflictingTailCalls;

@@ -33,11 +33,17 @@ NEVERD_PROCESSOR(X86, "x86",
 NEVERD_PROCESSOR(X86, "x86_64",
                  QT_TRANSLATE_NOOP("Processors", "AMD64 and Intel 64 (64-bit)"),
                  true)
+// Both read ARM and Thumb code (AArch32), IDA's "ARM Little-endian"; a
+// binary file's code starts in the state each names.
 NEVERD_PROCESSOR(ARM, "arm",
-                 QT_TRANSLATE_NOOP("Processors", "ARM and Thumb (AArch32)"),
+                 QT_TRANSLATE_NOOP("Processors",
+                                   "ARM Little-endian, starting in ARM state"),
                  true)
-NEVERD_PROCESSOR(ARM, "thumb",
-                 QT_TRANSLATE_NOOP("Processors", "Thumb (AArch32)"), true)
+NEVERD_PROCESSOR(
+    ARM, "thumb",
+    QT_TRANSLATE_NOOP("Processors",
+                      "ARM Little-endian, starting in Thumb state"),
+    true)
 NEVERD_PROCESSOR(ARM, "aarch64",
                  QT_TRANSLATE_NOOP("Processors", "ARM64 (AArch64)"), true)
 NEVERD_PROCESSOR(VirtualMachine, "evm",

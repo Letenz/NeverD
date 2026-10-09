@@ -120,6 +120,53 @@ TEST(X86_32_DebugHighC, StdcallParamsAndLocalsAppearInC) {
   EXPECT_NE(C.find("scratch"), std::string::npos) << C;
 }
 
+TEST(X86_32_DebugHighC, UnplacedParametersBindOnlyAnIntegerPrefix) {
+  // A function built without lowering does not say where its parameters
+  // arrive.  A double fills two of its stack slots, so no debug parameter
+  // from the double on is the one at its position.
+  HighFunc Func;
+  Func.Name = "scaled_count";
+  Func.Entry = 0x401200;
+  Func.ReturnType = NdType::makeInt(4, true);
+  for (int I = 0; I < 3; ++I) {
+    HighParam Param;
+    Param.Name = "arg" + std::to_string(I);
+    Param.Type = NdType::makeInt(4, true);
+    Func.Params.push_back(Param);
+  }
+  MedVar Last;
+  Last.Kind = MedVar::Param;
+  Last.Id = 2;
+  Last.Size = 4;
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Ret.RetVal = HighExpr::makeVar(Last, Func.Params[2].Type);
+  Func.Body.push_back(Ret);
+
+  Vc6DebugContext Dbg;
+  Dbg.Function.Name = "scaled_count";
+  Dbg.Function.Addr = 0x401200;
+  Dbg.Function.Size = 0x20;
+  Dbg.Function.CallConv = DebugCallConv::Cdecl;
+  Dbg.Function.ReturnType = NdType::makeInt(4, true);
+  Dbg.Function.Params = {{"scale_value", NdType::makeFloat(8)},
+                         {"item_count", NdType::makeInt(4, true)}};
+
+  std::string C;
+  llvm::raw_string_ostream OS(C);
+  CEmitterOptions Opts;
+  Opts.TheArch = Arch::X86;
+  Opts.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Opts, &Dbg));
+  OS.flush();
+
+  EXPECT_NE(C.find("scaled_count(int32_t arg0, int32_t arg1, int32_t arg2)"),
+            std::string::npos)
+      << C;
+  EXPECT_EQ(C.find("scale_value"), std::string::npos) << C;
+  EXPECT_EQ(C.find("item_count"), std::string::npos) << C;
+}
+
 TEST(X86_32_DebugHighC, EmptyBodyEmitsTrapNotSilentBraces) {
   HighFunc Func;
   Func.Name = "empty_target";

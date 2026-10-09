@@ -1087,6 +1087,57 @@ bool liveInOnlyFeedsScratch(const MedFunc &Func, uint64_t ParamRegOff) {
   return true; // all surviving incoming lanes feed scratch reconstruction only
 }
 
+bool liveInReachesNonPushUse(const MedFunc &Func, uint64_t RegOff) {
+  if (Func.Blocks.empty())
+    return true;
+  llvm::SmallVector<MedVar, 2> Seeds;
+  for (const MedOp &Op : Func.Blocks.front().Ops) {
+    if (Op.Opcode != NdOp::COPY)
+      break;
+    if (!isEntryLiveInCopy(Op, RegOff))
+      continue;
+    Seeds.push_back(Op.Output);
+    if (isRenamedEntryLiveInCopy(Op, RegOff))
+      Seeds.push_back(Op.Inputs[0]);
+  }
+  if (Seeds.empty())
+    return true;
+  // The operations that carry the value's bytes without reading them.
+  auto Carries = [](const MedOp &Op) {
+    switch (Op.Opcode) {
+    case NdOp::COPY:
+    case NdOp::SUBBYTES:
+    case NdOp::INT_ZEXT:
+    case NdOp::INT_SEXT:
+    case NdOp::CONCAT:
+      return true;
+    default:
+      return false;
+    }
+  };
+  const ValueSet Reached = computeForwardValueClosure(
+      Func, Seeds, [&](const MedOp &Op, unsigned) { return Carries(Op); });
+  for (const MedBlock &Block : Func.Blocks)
+    for (const MedOp &Op : Block.Ops) {
+      if (Carries(Op))
+        continue;
+      // A return reads the integer return register whatever the function
+      // returns (a float in XMM0 leaves EAX untouched).
+      if (Op.Opcode == NdOp::RETURN)
+        continue;
+      // A push stores at the stack pointer itself; a spill to a frame slot,
+      // read back later, is a use.
+      const bool Push = Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
+                        Op.Inputs[0].Kind == MedVar::Reg &&
+                        Op.Inputs[0].RegOff ==
+                            getTargetRegInfo(Op.Inputs[0].TheArch).StackPointer;
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        if (containsValue(Reached, Op.Inputs[I]) && !(Push && I == 1))
+          return true;
+    }
+  return false;
+}
+
 } // namespace med_calling_conv_detail
 
 } // namespace neverd

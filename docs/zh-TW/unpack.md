@@ -33,6 +33,10 @@ neverd unpack packed.exe -o unpacked.exe \
 
 `runtime_state.heap_inventory_known` 區分已知空清單與缺少來源證據。`possible_heap_references` 統計全部匹配；`heap_references` 最多保留前 64 筆，先映像後 TLS，各自依 `offset` 排序。記錄包含 `storage`（`image` 或 `thread_local`）、位址及配置範圍。映像記錄的 `rva` 為十六進位值，TLS 記錄為 null；位址與偏移採十六進位字串。
 
+`runtime_state.direct_service_calls` 統計入口觀察及匯入探索期間實際執行的直接模型服務呼叫。其編號尚未重建為原生 Windows 繫結，因此預設傳回 `unsupported_state`，包括首次呼叫出現在擷取入口之後的情況。明確指定 `snapshot_only` 會保留計數與診斷。複製的系統呼叫不會被視為可修復的匯入函式呼叫。 `no_entry` 報告也保留此計數；未擷取入口時，堆清單仍為未知。
+
+`runtime_state.encoded_pointer_inventory_known` 表示程序設定是否提供已觀察的指標編碼值。`possible_encoded_pointers` 統計擷取映像與主執行緒 TLS 中完全相等的指標寬度值，包括未對齊儲存；`encoded_pointer_references` 保留前 64 個位置的 `storage`、`offset`、`rva` 和 `value`。Windows 從已完成的 `EncodePointer`/`RtlEncodePointer` 傳回值和 `DecodePointer`/`RtlDecodePointer` 輸入收集編碼值。缺少清單或存在符合值時傳回 `unsupported_state`；明確要求的快照保留診斷。符合值也可能是整數或未使用資料，不能據此授權重新編碼。擷取前已清除的值、僅在擷取後產生的編碼不會觸發此拒絕。清單不涵蓋自訂編碼、部分或轉換後的值、暫存器、堆疊狀態及未到達路徑。
+
 `--options='{"snapshot_only":true}'` 明確要求分析位元組。接受入口且重建成功後，結果一律為 `snapshot`，並保留執行階段狀態診斷。此選項不會恢復堆積資料、推斷重定位、證明原生執行成功或反虛擬化。堆積參照數量為零也不能證明其他 OS 狀態或未執行路徑正確。
 
 ## 入口如何確定

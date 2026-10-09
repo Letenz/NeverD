@@ -62,6 +62,14 @@ public:
                         QString *error = nullptr);
   /// Where a database without its original input is unpacked.
   static QString workingDirectory(const QString &database);
+  /// Whether the database, sidecars and lock of \p binary can sit beside
+  /// it: its folder is writable.
+  static bool canKeepBeside(const QString &binary);
+  /// A copy of \p binary in the user's data directory, beside which its
+  /// database, sidecars and lock can sit; made, or refreshed when the
+  /// original's size or time changed.  Empty, with \p error set, when it
+  /// cannot be made.
+  static QString workingCopy(const QString &binary, QString *error = nullptr);
 
   /// Sidecar suffixes the worker keeps beside an input.
   static const QStringList &sidecarSuffixes();

@@ -36,7 +36,7 @@ foreach(_arch X64 AArch64)
       /subsystem:console "/machine:${_heap_${_arch}Machine}"
       "/base:${_heap_ProgramBase}" /timestamp:0
       "${_dir}/program.obj" "${_dir}/provider.lib" "/out:${_dir}/${_heap_ProgramFile}"
-    DEPENDS fixtures/windows_heap.c fixtures/WindowsHeapCases.def
+    DEPENDS fixtures/windows_heap.c fixtures/WindowsPrivateHeapFixture.inc fixtures/WindowsHeapCases.def
       "${_heap_dir}/provider.def" VERBATIM)
   list(APPEND _heap_outputs "${_dir}/${_heap_ProgramFile}")
 endforeach()
