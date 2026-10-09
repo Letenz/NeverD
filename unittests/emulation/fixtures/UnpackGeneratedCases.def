@@ -71,6 +71,10 @@ NEVERD_GENERATED_MODE(OpaqueCall, 16)
 NEVERD_GENERATED_MODE(ReboundOpaqueCall, 17)
 // The export does not exist until the recovered entry resolves it.
 NEVERD_GENERATED_MODE(LateOpaqueCall, 18)
+// Startup leaves an image pointer to live process-local heap data.
+NEVERD_GENERATED_MODE(HeapState, 19)
+// Startup frees that data and clears its image pointer before transfer.
+NEVERD_GENERATED_MODE(ReleasedHeapState, 20)
 #endif
 
 #ifdef NEVERD_GENERATED_ADDRESS_REGISTER
@@ -139,4 +143,7 @@ NEVERD_GENERATED_KERNEL_API(GetModuleHandleA)
 NEVERD_GENERATED_KERNEL_API(GetProcAddress)
 NEVERD_GENERATED_KERNEL_API(LoadLibraryA)
 NEVERD_GENERATED_KERNEL_API(WriteFile)
+NEVERD_GENERATED_KERNEL_API(GetProcessHeap)
+NEVERD_GENERATED_KERNEL_API(HeapAlloc)
+NEVERD_GENERATED_KERNEL_API(HeapFree)
 #endif

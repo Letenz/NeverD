@@ -765,6 +765,11 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                        E.Type->Size, E.Type->IsSigned);
     if (ByteOff == 0)
       return "(" + Ty + ")" + Src;
+    // Literals retain their C spelling width, which can be much narrower than
+    // their IR carrier. Shift the unsigned source bits at their declared width.
+    if (E.Operands[0]->Type && E.Operands[0]->Type->Kind == NdTypeKind::Int)
+      Src = "(" + typeToC(NdType::makeInt(E.Operands[0]->Type->Size, false)) +
+            ")" + Src;
     return "(" + Ty + ")(" + Src + " >> " + std::to_string(ByteOff * 8) + ")";
   }
   case NdOp::CONCAT: {
@@ -814,8 +819,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       return "(" + Text + ")";
     }
     // A constant upper part already fits its width: shift it in the carrier.
-    if (Number(HiE) && HiE.Type && E.Type &&
-        E.Type->Size <= 8 && LoE.Type && LoE.Type->Size < E.Type->Size) {
+    if (Number(HiE) && HiE.Type && E.Type && E.Type->Size <= 8 && LoE.Type &&
+        LoE.Type->Size < E.Type->Size) {
       const uint64_t HiMask = (uint64_t{1} << (8 * HiE.Type->Size)) - 1;
       const TypeRef Carrier = NdType::makeInt(E.Type->Size, false);
       const std::string Ty = typeToC(Carrier);

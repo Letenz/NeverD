@@ -170,6 +170,18 @@ inline constexpr std::string_view kWinapiMarker = "WINAPI ";
 /// format \p Format, or null.
 const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format);
 
+/// Whether the routine C name \p Name links to in an image of object format
+/// \p Format returns a value, as its C declaration says: the prototype above
+/// or, for a routine a C library header declares, the declared result
+/// (LibCReturnKinds.inc).  Unknown for a routine neither declares.
+std::optional<bool> libcReturnsValue(std::string_view Name,
+                                     BinaryFormat Format);
+
+/// Whether the compiler runtime routine C name \p Name returns a double-word
+/// integer in a register pair (CompilerRuntimeDoubleWord.def): `__udivdi3`
+/// on a 32-bit target.
+bool returnsDoubleWord(std::string_view Name);
+
 /// The fixed argument arity of a known NON-variadic libc function (e.g. fputs
 /// -> {2,0}, sqrt -> {0,1}), used to bound the heuristic argument recovery for
 /// an external call whose true signature is otherwise unknown.  Returns nullopt
@@ -209,6 +221,20 @@ const char *headerFor(std::string_view Name);
 /// returns the number of fixed parameters before the '...'. Returns 0
 /// if the function is not variadic.
 unsigned varArgFixedCount(std::string_view Name);
+
+/// A printf-family routine (LibCPrintfFormats.inc): its return type and the
+/// C types of its fixed parameters, the last of which is the format whose
+/// conversions name the further arguments.
+struct LibCPrintfFormat {
+  std::string_view Name;
+  std::string_view Return;
+  std::array<std::string_view, 6> Params{};
+  uint8_t ParamCount = 0;
+};
+
+/// The printf-family routine C name \p Name links to, or null.  Its format is
+/// its last fixed parameter.
+const LibCPrintfFormat *libcPrintfFormat(std::string_view Name);
 
 /// ABI category of one fixed parameter in a known variadic function.  Pointer
 /// parameters must be symbolized before code generation; integer parameters

@@ -315,7 +315,10 @@ TEST(Win64CallContract, AFloatArgumentReachesItsImportsSlot) {
   ASSERT_FALSE(Body.empty());
   EXPECT_NE(Body.find("double sin_twice(double arg0)"), std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("sin(arg0 + arg0)"), std::string::npos) << Body;
+  // ADD's numerical bits and MXCSR complete together before the import.
+  EXPECT_NE(Body.find("neverd_x86_fp_add_state_f64("), std::string::npos)
+      << Body;
+  EXPECT_NE(Body.find("return sin("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
 }
 } // namespace

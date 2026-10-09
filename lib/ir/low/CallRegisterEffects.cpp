@@ -763,7 +763,8 @@ std::optional<std::pair<unsigned, unsigned>> registerFamilyOf(Arch A,
 
 LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
-                    const libc::NoReturnTargetIndex *NoReturnTargets) {
+                    const libc::NoReturnTargetIndex *NoReturnTargets,
+                    const std::map<va_t, GPRReadWidths> *FixedCallReads) {
   LocalRegisterEffect Effect;
   if (!F.hasCompleteLiftCoverage() ||
       !F.UnsafeIndirectBranchAddresses.empty() || F.Blocks.empty()) {
@@ -899,6 +900,19 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
           Step.LowWrites[*Family] = std::max<uint8_t>(
               Step.LowWrites[*Family], static_cast<uint8_t>(Op.Output.Size));
       }
+      // A call whose arguments a contract at this site fixes reads exactly
+      // those; it calls no function a summary describes.
+      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          FixedCallReads)
+        if (const auto Site = FixedCallReads->find(Op.Addr);
+            Site != FixedCallReads->end()) {
+          Step.FixedArguments = Site->second;
+          Step.FixedTailCall = TailCall;
+          Step.Exits = NoReturnCall;
+          Effect.CallsFixedContract = true;
+          Out.Steps.push_back(Step);
+          continue;
+        }
       switch (Op.Opcode) {
       case NdOp::INDIR_CALL:
         // A rewritten indirect tail jump (`jmp [iat]` in an import thunk)
@@ -986,7 +1000,15 @@ GPRReadWidths entryLiveWidths(const LocalRegisterEffect &F,
                                    : EntryReads.end();
       if (Step.Exits)
         Live.fill(0);
-      if (Step.UnknownTailCall) {
+      if (Step.FixedArguments) {
+        // A call with fixed arguments reads exactly those; a tail call
+        // passes nothing else on.
+        if (Step.FixedTailCall)
+          Live.fill(0);
+        else
+          Clear(Live, VolatileFamilies);
+        joinReads(Live, *Step.FixedArguments);
+      } else if (Step.UnknownTailCall) {
         Live.fill(0);
         if (ImportReads != EntryReads.end())
           joinReads(Live, ImportReads->second);
@@ -1068,9 +1090,11 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   // Least fixed point of Writes(F) = Local(F) | Writes(callees); recursion
   // converges because masks only grow.
   std::map<va_t, GPRFamilyMask> &Writes = Result.MayWrite;
+  // A call with fixed arguments may change every volatile register.
   for (const auto &[Entry, Effect] : Funcs)
     if (!Unknown.count(Entry))
-      Writes[Entry] = Effect.Writes;
+      Writes[Entry] =
+          Effect.Writes | (Effect.CallsFixedContract ? VolatileFamilies : 0);
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (auto &[Entry, Mask] : Writes) {

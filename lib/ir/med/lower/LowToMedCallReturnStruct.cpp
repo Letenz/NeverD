@@ -12,6 +12,8 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/libc/LibCNames.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
 #include <optional>
@@ -105,6 +107,16 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
       // register.
       if (Op.Output.Kind != MedVar::Reg)
         continue;
+
+      // A loader-bound scalar libm result cannot become a mixed aggregate
+      // merely because RET still carries the lifter's default RAX dependency.
+      // Local functions with the same spelling remain subject to the ordinary
+      // field proof; only an exact executable import stub supplies this ABI.
+      if (Image && Op.Opcode == NdOp::CALL && Op.Inputs[0].isConst())
+        if (const Import *Imp = Image->findImportStubAt(Op.Inputs[0].ConstVal))
+          if (const auto Signature = libc::libcArityForSymbol(Imp->Name);
+              Signature && libc::floatReturnBytes(*Signature))
+            continue;
 
       // Which candidate return registers does the caller read straight-line
       // after the call (a genuine input) before that register is redefined?

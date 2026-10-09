@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../TestProcess.h"
+#include "UnpackGeneratedTestSupport.h"
 #include "UnpackLibraryTestSupport.h"
 #include "UnpackTestSupport.h"
 
@@ -122,6 +123,80 @@ TEST_F(UnpackPublic, RunWithoutAnEntryWritesNothingAndIsIncomplete) {
   EXPECT_EQ(Status, unpack_cli::Incomplete);
   EXPECT_FALSE(std::filesystem::exists(Output));
   EXPECT_NE(Text.find(text::NoEntryOutcome), std::string::npos);
+}
+
+TEST_F(UnpackPublic, ExplicitSnapshotsHaveTheSameCAPIAndCLIContract) {
+  const auto Input = fixture(PlainPacked).string();
+  const auto First = (Directory / FirstOutput).string();
+  const auto Second = (Directory / SecondOutput).string();
+  const char *Options = "{\"snapshot_only\":true}";
+  auto Report = api(Input, First, Options);
+  if (!Report) {
+    const std::string Reason = neverd_last_error(Session);
+    if (Reason.find(Unavailable) != std::string::npos ||
+        Reason == text::Disabled)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  EXPECT_EQ(Report->getString(text::OutcomeField), text::SnapshotOutcome);
+  ASSERT_TRUE(std::filesystem::exists(First));
+  const auto [Status, Text] = cli(Input, Second, Options);
+  EXPECT_EQ(Status, unpack_cli::Success) << Text;
+  ASSERT_TRUE(std::filesystem::exists(Second));
+  EXPECT_EQ(readFile(First), readFile(Second));
+  auto Parsed = llvm::json::parse(Text);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  ASSERT_TRUE(Parsed->getAsObject());
+  EXPECT_EQ(Parsed->getAsObject()->getString(text::OutcomeField),
+            text::SnapshotOutcome);
+}
+
+TEST_F(UnpackPublic, UnsupportedHeapStateNeverCreatesOrTruncatesOutput) {
+#ifndef NEVERD_UNPACK_GENERATED_FIXTURE_DIR
+  GTEST_SKIP() << generated::MissingTools;
+#else
+  const auto Original =
+      readImage(std::filesystem::path(NEVERD_UNPACK_GENERATED_FIXTURE_DIR) /
+                generated::X64Dir / generated::ProgramFile);
+  const auto Packed =
+      generated::pack(Original, Original.File, generated::HeapStateMode);
+  ASSERT_FALSE(HasFailure());
+  const auto Input = (Directory / generated::PackedFile).string();
+  const auto Output = (Directory / FirstOutput).string();
+  writeFile(Input, Packed);
+  auto Report = api(Input, Output, nullptr);
+  if (!Report) {
+    const std::string Reason = neverd_last_error(Session);
+    if (Reason.find(Unavailable) != std::string::npos ||
+        Reason == text::Disabled)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  EXPECT_EQ(Report->getString(text::OutcomeField),
+            text::UnsupportedStateOutcome);
+  ASSERT_NE(Report->get(text::OutputField), nullptr);
+  EXPECT_EQ(Report->get(text::OutputField)->kind(), llvm::json::Value::Null);
+  const auto *State = Report->getObject(text::RuntimeStateField);
+  ASSERT_NE(State, nullptr);
+  EXPECT_EQ(State->getBoolean(text::HeapKnownField), true);
+  ASSERT_TRUE(State->getInteger(text::HeapReferenceCountField));
+  EXPECT_GT(*State->getInteger(text::HeapReferenceCountField), 0);
+  EXPECT_FALSE(std::filesystem::exists(Output));
+  EXPECT_EQ(cli(Input, Output, text::EmptyOptions).first,
+            unpack_cli::Incomplete);
+  EXPECT_FALSE(std::filesystem::exists(Output));
+
+  const std::vector<uint8_t> Existing{'k', 'e', 'e', 'p'};
+  writeFile(Output, Existing);
+  Report = api(Input, Output, nullptr);
+  ASSERT_TRUE(Report) << neverd_last_error(Session);
+  EXPECT_EQ(Report->getString(text::OutcomeField),
+            text::UnsupportedStateOutcome);
+  EXPECT_EQ(readFile(Output), Existing);
+  const auto [Status, Text] = cli(Input, Output, text::EmptyOptions);
+  EXPECT_EQ(Status, unpack_cli::Incomplete) << Text;
+  EXPECT_EQ(readFile(Output), Existing);
+#endif
 }
 
 TEST_F(UnpackPublic, CAPIAndCLIPreserveDLLExportsAndTLS) {

@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 78e6754f811bc16b1a89770eb1987a7d484301f161646eba212d6fd496e19372 -->
+<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
 
 [← 文件索引](README.md)
 
@@ -136,7 +136,7 @@ O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般
 
 可選 `darwin_files.umask`（C++ `InitialUmask`）獨立宣告初始程序遮罩，範圍為八進位 0..07777，不要求建立授權。`umask(60)` 回傳舊遮罩並保存輸入的低 07777 位，不存取來賓記憶體，也不需要空閒 FD。省略代表未知，不讀取主機或猜測預設值。遮罩只初始化一次，只影響後續建立，不修改呼叫者輸入。下例十進位 18 即八進位 0022。
 
-可選 `darwin_files.creation_policy`（C++ `CreationPolicy`）為新物件提供完整中繼資料。嚴格物件恰含 `first_inode`、`block_size`、`generation`、`creation_time`、`mutation_policy`，時間與修改策略沿用既有格式。必須明確提供 umask、至少一個 mutable 父目錄，以及每個授權父目錄的完整 metadata。block_size 為 1..INT32_MAX、generation 為 uint32；配置單元是 512..16 MiB 的二次方，獨立於區塊大小和 VM 頁，奈秒須在 [0,1000000000)。first_inode 是非零 uint64，嚴格大於所有 stat/快照 inode，包含其他裝置；超過 JSON 精確整數範圍時使用十進位字串。
+未設定 `namespace_policy` 時，可選 `darwin_files.creation_policy`（C++ `CreationPolicy`）為新物件提供完整中繼資料。嚴格物件恰含 `first_inode`、`block_size`、`generation`、`creation_time`、`mutation_policy`，時間與修改策略沿用既有格式。必須明確提供 umask、至少一個 mutable 父目錄，以及每個授權父目錄的完整 metadata。block_size 為 1..INT32_MAX、generation 為 uint32；配置單元是 512..16 MiB 的二次方，獨立於區塊大小和 VM 頁，奈秒須在 [0,1000000000)。first_inode 是非零 uint64，嚴格大於所有 stat/快照 inode，包含其他裝置；超過 JSON 精確整數範圍時使用十進位字串。
 
 只有成功插入新名稱才消耗全域遞增 inode；成功使用 UINT64_MAX 後永久耗盡，關閉、刪除、名稱重用、umask 或後續查找不能重置。排他、FD、路徑、項目或位元組預算失敗不留下名稱、FD 或編號增量；既有 O_CREAT 不消耗編號。新 stat64 的 device/GID 繼承直接父目錄，UID 為設定選取的來賓有效使用者 ID（預設 1000），mode 為 `S_IFREG | (mode & 0777 & ~umask)`，nlink=1，size/blocks/flags=0；區塊大小、generation 及四個初始固定時間由策略提供。父目錄完整 stat/列舉失效後，仍可使用不變的 device/GID，但不恢復完整記錄。
 
@@ -732,7 +732,7 @@ sysctl 沿用既有複製階段。EUID0 的真實寫入在名稱/MIB 與 oldlenp
 
 ## 固定初始符號連結
 
-C++ `DarwinFileOptions::SymbolicLinks` 與 JSON `darwin_files.symbolic_links` 宣告固定連結：規範絕對 `path`、原始十六進位 `target_hex`，可選 `metadata` 描述連結自身。目標為1..1023非 NUL位元組，保留非 UTF-8、重複斜線與點，可懸空。`files` 仍必填，可為空陣列。名稱不得與檔案/目錄衝突或成為其他名稱祖先；路徑/NUL及目標共用256項、16 MiB限額。S_IFLNK、size=目標長度、DT_LNK=10及一致 inode 必須相符；配置 CWD須為實際目錄。
+下述初始名稱預設受保護；明確授權後的行為見文末初始連結可變授權一節。 C++ `DarwinFileOptions::SymbolicLinks` 與 JSON `darwin_files.symbolic_links` 宣告固定連結：規範絕對 `path`、原始十六進位 `target_hex`，可選 `metadata` 描述連結自身。目標為1..1023非 NUL位元組，保留非 UTF-8、重複斜線與點，可懸空。`files` 仍必填，可為空陣列。名稱不得與檔案/目錄衝突或成為其他名稱祖先；路徑/NUL及目標共用256項、16 MiB限額。S_IFLNK、size=目標長度、DT_LNK=10及一致 inode 必須相符；配置 CWD須為實際目錄。
 
 解析器先展開再處理點，相對目標從實際包含目錄開始，絕對目標從客體根開始。每次重解析尾斜線，已消耗的輸入斜線不會變成目標斜線。最多32次，第33次 ELOOP62；目標+剩餘後綴+NUL超過1024位元組 ENAMETOOLONG63。FD、CWD、F_GETPATH、mmap 持有最終目標。
 
@@ -740,7 +740,7 @@ stat64/open/access/truncate/chdir 跟隨末端；lstat64/readlink保留末端。
 
 readlink(58)使用有符號低32位count，readlinkat(473)保留完整size_t；皆返回int，超過INT32_MAX先於路徑/FD返回EINVAL22。只複製min(count,目標長度)，不補NUL，只預檢實際前綴。零長度仍驗證路徑/類型後忽略輸出指標；非連結EINVAL22，全不可寫EFAULT14，部分可寫在複製前停止；傳輸/記憶體預算錯誤傳遞。
 
-固定連結名稱與原始目標位元組保持不變。MutableDirectories 不得為根或任何固定連結名稱的路徑分段祖先；/work 不包含 /workspace/link。獨立可變目錄可容納連結目標，包括執行期間建立、移動、刪除及替換的名稱。既有父目錄、掛載、別名、旗標、交換授權與建立策略檢查仍適用；新 inode 必須大於所有中繼資料/快照 inode，包括受保護連結。 固定 WritableFiles/MutationPolicies仍可修改最終普通檔案；連結unlink/rename在效果前明確停止。執行期間連結建立見下節；硬連結、ACL與可變初始連結目錄未支援。ARM64 macOS獨立探針在原五秒內通過189觀察、115完整緩衝檢查；不單獨證明物理iOS、Intel HVF或完整OS。
+固定連結名稱與原始目標位元組保持不變。MutableDirectories 不得為根或任何固定連結名稱的路徑分段祖先；/work 不包含 /workspace/link。獨立可變目錄可容納連結目標，包括執行期間建立、移動、刪除及替換的名稱。既有父目錄、掛載、別名、旗標、交換授權與建立策略檢查仍適用；新 inode 必須大於所有中繼資料/快照 inode，包括受保護連結。 固定 WritableFiles/MutationPolicies仍可修改最終普通檔案；連結unlink/rename在效果前明確停止。執行期間連結建立見下節；硬連結、ACL與未獲單獨授權的初始連結修改未支援。ARM64 macOS獨立探針在原五秒內通過189觀察、115完整緩衝檢查；不單獨證明物理iOS、Intel HVF或完整OS。
 
 新增 60 項 ARM64 macOS DELETE/RENAME 原生矩陣在原五秒期限內記錄完整 stat 緩衝、變更前後命名空間及保留 FD/CWD 身分。尾端斜線可展開固定連結並修改實際目標；NOFOLLOW_ANY 拒絕必要展開並回傳 ELOOP。無 SDK 的 symbolic-link-mutations 程式亦檢查建立、懸空目標、改名/刪除/替換、保留 CWD 父物件及關閉描述符前全部原始 10 個檔案位元組，以及關閉後仍保留的全部 10 個映射位元組；這不證明實體 iOS 或原生 Intel 覆蓋。
 
@@ -756,7 +756,7 @@ readlink(58)使用有符號低32位count，readlinkat(473)保留完整size_t；�
 
 目前連結表持有實際名稱、父物件及原始位元組。既有末端名稱回傳 EEXIST17；懸空連結後已消耗的尾斜線可使建立發生於其目標名稱，舊連結不變。展開空目標回傳 ENOENT2；readlink 讀取空目標回傳0，正容量也不存取輸出指標，但仍先檢查計數、路徑與類型。
 
-名稱/NUL與目標僅計費一次，共用256項、16 MiB配額。拒絕不發布節點、不改變父目錄、不消耗 FD或普通檔案 inode。新連結完整中繼資料明確未知，不沿用普通檔案 CreationPolicy 或重用名稱的舊觀察；成功建立使父目錄 stat/快照未知。刪除或替換目標後，舊 FD/CWD/映射保留原物件。rmdir 與目錄替換會檢查連結子項；移動或 SWAP 任一側包含受保護初始連結時在作用前停止。連結與目錄的替換、硬連結、ACL與可變初始連結目錄仍未支援；別名不轉移實際父目錄授權。
+名稱/NUL與目標僅計費一次，共用256項、16 MiB配額。拒絕不發布節點、不改變父目錄、不消耗 FD或普通檔案 inode。新連結完整中繼資料明確未知，不沿用普通檔案 CreationPolicy 或重用名稱的舊觀察；成功建立使父目錄 stat/快照未知。刪除或替換目標後，舊 FD/CWD/映射保留原物件。rmdir 與目錄替換會檢查連結子項；移動或 SWAP 任一側包含受保護初始連結時在作用前停止。連結與目錄的替換、硬連結、ACL與未獲單獨授權的初始連結修改仍未支援；別名不轉移實際父目錄授權。
 
 原生 ARM64 macOS 的150項記錄保留四項觀察器失敗；獨立10項補充只核對實際新目標與空連結邊界，不改寫舊結果。無 SDK 的 `symbolic-link-creation` 程式檢查兩個入口、原始位元組與緩衝邊界、父物件、替換檔案及舊 FD/映射全部10位元組；不證明實體 iOS、原生 Intel 或完整 OS相容性。
 
@@ -795,3 +795,110 @@ readlink(58)使用有符號低32位count，readlinkat(473)保留完整size_t；�
 連結保留實際父目錄物件，父目錄路徑移動後，相對目標按新路徑解析；舊描述符、共用游標、CWD、已刪除節點與映射租約繼續保有原物件。受保護初始連結與所在樹仍不可變，根節點目錄/連結組合、執行時連結完整中繼資料、硬連結及ACL仍不支援。獨立ARM64 macOS的25項對照在原五秒期限內記錄5次移動、10次交換、2次同物件成功及8次保留命名空間的拒絕；跨父目錄案例檢查原文不變與相對目標重新綁定。擴充 `symbolic-link-rename` 覆蓋C++/SDK/CLI/Python，這些觀察不證明實體iOS、原生Intel或完整OS相容。
 
 [XNU rename / namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c).
+
+## 新建連結與目錄的中繼資料
+
+可選 `creation_policy.namespace_policy`（C++ `DarwinFileCreationPolicy::Namespace`）在原有五個必需欄位之外新增嚴格物件，僅含 `symbolic_link_allocation_unit`、`directory_entry_size`、`directory_blocks`。連結分配單位為512至16 MiB的2次冪；目錄項目大小為正值且不超過16 MiB；區塊數為不超過INT64_MAX的uint64，可用十進位字串。父目錄中繼資料、初始umask與新inode條件不變。省略擴充時，前文連結/目錄資料未知、僅一般檔案消耗建立inode的行為仍為預設。
+
+啟用後，一般檔案、symlink與mkdir成功插入共用一條inode序列，UINT64_MAX永久耗盡；失敗與開啟既有名稱不消耗inode。Device/GID來自實際父物件，UID來自有效來賓身分。連結模式為S_IFLNK加 `0777 & ~umask`，nlink=1，size為原始目標位元組數（含空目標與非UTF-8），blocks按宣告單位向上取整後以512位元組計。目錄模式為S_IFDIR加 `mode & 0777 & ~umask`，nlink為2加所有直接具名子項，size為nlink乘宣告項目大小，blocks固定；持有的已刪除空目錄也保留此規則。這是明示虛擬策略，不推斷APFS分配行為。
+
+初始時間用creation_time；子名稱成功變更更新新建父目錄mtime/ctime，直接移動連結/目錄僅用mutation_time更新其ctime；移動祖先保留後代資料。完整記錄隨物件經過dup、CWD、替換、SWAP、刪除與名稱重用。僅建立擴充不會保留初始父目錄完整 stat 或固定快照；下文獨立目錄策略提供 stat 與即時列舉依據。ACL、未獲單獨授權的初始連結修改與一般目錄/連結根交易仍未支援。原生 `created-namespace-metadata` 檢查模式、擁有者、身分與生命週期；`virtual-created-namespace-metadata` 經C++/SDK/CLI/Python對照完整144位元組目錄與連結常數記錄。定向驗證通過11項模型/准入、1項嚴格JSON、43項原生工作負載（仍限5秒）、8項客體組合（12項後端不可用略過，3項必需HVF皆執行）及10項公共入口。保留指標表造成的客體失敗及修正後ARM64靜態封裝；原生Intel與實體iOS尚未驗證。
+
+```json
+{"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
+```
+
+## 名稱空間修改後的虛擬目錄列舉
+
+可選 `directories[].enumeration_policy` 讓 `getdirentries64` 列舉目前名稱；C++ 使用 `DarwinFileOptions::DirectoryEnumerationPolicies` 與 `DarwinDirectoryEnumerationPolicy`。嚴格物件恰好要求 `minimum_buffer_size`、`initial_minimum_buffer_size`、`seek_offset`：前者為正，兩種下限不超過128 MiB，seek_offset 為無損 uint64。初始目錄須有自身非零 inode 中繼資料，不可同時提供不可變 `contents`；每個策略參照計入一次路徑加 NUL。mkdir 繼承實際父物件策略，既有子目錄保留自己的宣告；列舉與修改授權獨立。
+
+虛擬順序為 `.`、`..`，再按無符號位元組排序的直接連結名稱。inode 來自已觀察或行程建立的物件，`..` 沿實際保留父物件；子項或父身分缺失/為零會在輸出前停止。完整初始 stat 失效後只保留 inode 身分，不重用其他過期欄位。游標為從1開始的區域序號，d_seekoff 為宣告常數；dup 共用游標，open 各自獨立。成功成員變更或直接目錄移動後須先回捲到零，拒絕及同物件無操作不使游標失效，祖先移動保留後代游標。版本耗盡明確停止。保留的已刪除空目錄輸出零筆記錄，名稱重用不取代舊物件。
+
+本段描述僅設定列舉策略、尚未設定下文初始目錄 stat 策略的行為。 沿用記錄編碼、完整記錄封裝、緩衝下限、負載上限、EOF 後綴及資料/游標/位置/旗標順序。初始父目錄完整 stat 與固定快照仍失效；省略策略維持先前不支援行為，並不模擬 APFS 世代。ARM64 原生準備在不變的五秒期限內記錄25個事件、16個視圖。`directory-enumeration-mutations` 核對原生身分與物件保留；`virtual-directory-enumeration` 經客體、C/CLI、Python 核對160位元組固定視圖。Intel 原生、iOS 實機、ACL、硬連結與完整系統/框架仍未驗證或不支援。
+
+## 初始目錄的顯式 stat 修改策略
+
+可選 `directories[].mutation_policy` 讓已准入的初始目錄在名稱空間變更後保留完整 stat。C++ 使用 `DarwinDirectoryMutationPolicy` 與 `DarwinFileOptions::DirectoryMutationPolicies`。嚴格物件恰含 `directory_entry_size` 和 `mutation_time`：項目大小為正且不超過 16 MiB，時間採無損有號 64 位元秒數及 [0,1000000000) 範圍奈秒。目錄須提供自身完整 metadata 和非零 inode。策略參照計入一次路徑加 NUL 的費用；投影 size 不配置檔案位元組。策略不授予名稱空間操作或權限，也不要求建立或列舉策略。
+
+首次真正提交修改前，完整觀察記錄保持原樣；首次修改將純量欄位複製到目錄物件，無需配置。子名稱變更令 nlink 為 2 加所有類型的直接連結名稱數，size 為 nlink 乘 directory_entry_size，mtime/ctime 為 mutation_time。直接移動、SWAP 或刪除僅改 ctime；移動祖先保留後代記錄。拒絕與同一物件無操作均不修改記錄。Device、inode、mode、擁有者、blocks、區塊大小、flags、generation、atime 和 birthtime 保持觀察值。這是顯式虛擬規則，不推論 APFS 配置、連結數或時鐘。
+
+記錄與策略隨原物件經過 dup、保留 FD、CWD、替換、刪除和名稱重用。新 mkdir 物件使用獨立建立策略（若提供），不繼承父目錄或同名舊物件的初始目錄 stat 策略。不可變目錄快照在修改後仍未知；獨立 enumeration_policy 可提供即時檢視。省略本 stat 策略時，已修改初始目錄的完整中繼資料仍未知。
+
+獨立 ARM64 原生準備在不變的 5 秒期限內保留 27 個受保護原始 stat 檢視和 15 項操作，核對 144 位元組 SDK ABI 及保留身分，不推廣原生時間戳或配置規律。原創 `initial-directory-metadata` 檢查原生共同觀察；`virtual-initial-directory-metadata` 經 guest、C/CLI 和 Python 對照完整 144 位元組常數記錄。模型另涵蓋首次刪除、缺少修改授權、省略建立策略及快照/列舉獨立性。原生 Intel、實體 iOS、ACL 執行、硬連結、未獲單獨授權的初始連結修改及完整 OS/框架仍未驗證或未支援。
+
+```json
+{"mutation_policy":{"directory_entry_size":17,"mutation_time":{"seconds":-11,"nanoseconds":321}}}
+```
+
+## 初始符號連結的明確可變授權
+
+`symbolic_links[].mutable:true`（C++ `DarwinFileOptions::MutableSymbolicLinks`）授權原始連結物件修改命名空間，實際父目錄仍須另行可變。已知 flags、特殊 mode 位、非一的 link_count、身分別名或父裝置衝突拒絕輸入。省略時名稱受保護，不可位於可變祖先域。授權固定預留路徑/NUL 引用，不新增項目、不消耗建立 inode；初始目標位元組保持不變。
+
+unlink、普通/EXCL rename、葉連結/檔案/link SWAP 與授權目錄子樹交易保留實際父物件、mount 和 SWAP 條件。相對目標依新實際父目錄重新解析；FD/dup 游標、CWD、映射租約保留原物件。初始名稱/目標/引用成本於刪除或取代後仍固定預留，首次改名另預留動態名稱。僅退還物件擁有的動態名稱/新建目標成本；只有新建連結增加動態項目。拒絕及同物件空操作不提交變更。
+
+`symbolic_links[].mutation_policy` 使用 `DarwinSymbolicLinkMutationPolicy`、`DarwinFileOptions::SymbolicLinkMutationPolicies`。嚴格唯一欄位 `mutation_time` 的秒為無損有符號 64 位，奈秒 [0, 1000000000)；須有明確授權及完整非零 inode 觀測。首次直接移動/SWAP 無配置複製標量，只將 ctime 設為宣告時間，其餘欄位包括 blocks 保持；祖先移動、拒絕、空操作保留完整記錄。無策略時完整 stat 變為未知，列舉仍保留 inode，已知裝置衝突仍拒絕。策略預留一次路徑/NUL。重用名稱、新 symlink 不繼承初始記錄/策略，建立使用獨立 namespace policy。
+
+原生 ARM64 私有準備保存 14 個 guarded raw-stat 視圖、11 個操作、獨立 144 位元組 SDK ABI，維持 compile120s/native5s/drain1s/reap1s 並記錄清理。`mutable-initial-links` 驗證原生身分、目標重解析及持有目標；`virtual-mutable-initial-links` 於五種 guest、C/CLI、Python 檢查完整 stat。模型覆蓋兩種頁大小、子樹 SWAP、精確成本與條目/inode 耗盡。Intel、實體 iOS 未原生驗證；硬連結、ACL、完整 OS/runtime/framework 尚有缺口。
+
+```json
+{"mutable":true,"mutation_policy":{"mutation_time":{"seconds":-13,"nanoseconds":456}}}
+```
+
+## 目錄與符號連結根交易
+
+`renameatx_np(RENAME_SWAP)` 接受實際目錄與符號連結雙向交換，包含非空子樹。初始目錄需要 `exchangeable`，初始連結需要 `mutable`，雙方實際父目錄仍須在已確立的同一 mount 中有修改/SWAP 授權；受保護初始後代仍拒絕。在既有一般移動授權下，目錄到連結為 ENOTDIR20，反向為 EISDIR21，EXCL 對不同既有名稱為 EEXIST17。目錄與自身後代連結的兩個方向均在變更前回傳 EINVAL22。成功交換可能使連結自我引用，後續跟隨為 ELOOP62。
+
+既有三張名稱表的交易先檢查根、已連結或持有的後代、完整路徑及動態空間。初始名稱/目標/引用、檔案內容及映射租約不提供 SWAP 抵扣；首次初始名稱重鍵另計動態路徑/NUL，重複交換只替換舊費用。不消耗新條目、FD 或建立 inode。成員關係遵循實際父物件，同名舊孤立物件不加入新樹。原始目標不變，相對查找重新綁定父目錄；FD/dup 游標、CWD、目標與映射保持有效。直接根按各自 stat 策略只改 ctime，祖先移動保留後代記錄；省略策略保留未知完整 stat，但即時列舉仍可用已知 inode。相關列舉版本按既有歸零重讀契約失效，沒有新 JSON 欄位或權限。
+
+原創 ARM64 私有準備保存 36 個保護式 144 位元組 stat 視圖、16 次原始 rename，維持 compile120s/native5s/drain1s/reap1s、回收及清理。`directory-link-roots` 與 `virtual-directory-link-roots` 經五種 guest、C/CLI、Python 檢查原生身分與完整常量 stat；兩種頁模型涵蓋精確費用、未開啟後代溢出、孤立物件及 FD/條目/inode 耗盡。本節在上述授權內擴充前文限制；Intel 原生、實體 iOS、硬連結、ACL 與完整 OS/runtime/framework 仍待驗證或實作。
+
+## 固定核心 pathconf 查詢
+
+原始 pathconf(191) / fpathconf(192) 支援固定 XNU vnode 查詢：15/16/17→1，19/25→0，20/22/23→4096，21→65536，24→255。這些查詢涵蓋符號連結、分配與 I/O 宣告及傳輸建議；不啟用非同步執行或授權，也不推測頁面或目錄預算的檔案系統含義。
+
+完整路徑跟隨解析與 FD 查找先於低32位選擇器；保留 CWD、符號連結與 EFAULT/ENOENT/ENOTDIR/ELOOP，無效/關閉 FD 為 EBADF。一般檔案與目錄的保留物件跨 dup、重新命名、刪除及名稱重用仍可查詢，無須完整 stat。輸入/擷取描述符原生類型未知，明確停止。沿用 BSD int/進位/次要暫存器規則；查詢不複製輸出、不改游標或中繼資料/列舉，不配置條目/FD/inode。NAME_MAX、大小寫屬性及未知選擇器仍不支援；不借用宿主或猜測 EINVAL。
+
+kernel-pathconf、kernel-pathconf-values、kernel-pathconf-unsupported 檢查共同語義、獨立80位元組值及保留既有輸出的停止報告，涵蓋來賓/C/CLI/Python。私人 ARM64 原生準備完成250次查詢，249次對照 SDK，0.262秒且5秒期限不變。原生 Intel、實體 iOS、ACL、硬連結與完整執行階段/框架仍未驗證或未實作。
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.
+
+## 固定共通屬性列表
+
+getattrlist(220)、fgetattrlist(228)、getattrlistat(476) 查詢明確目錄中的十一項固定共通屬性：裝置、物件類型、四種時間、擁有者/群組、完整模式、旗標及檔案 ID。與 stat64 共用完整中繼資料的有效性判斷；缺失或失效的觀察維持未知。類型與空選擇不需 stat。根/掛載 NAME、卷宗、目錄/檔案/fork 專用屬性、ACL 及未知選項明確不支援，即使要求回傳遮罩也不省略未知資訊；不推斷主機資料或掛載名稱。
+
+路徑/at 入口先匯入 24 位元組請求，FD 入口先檢查 low32 FD 與原生類型，忽略 reserved 字。共用 CWD、相對 FD、連結解析，在大小/位圖檢查前保留原生錯誤。記錄採小端、四位元組對齊、完整 st_mode 與有號秒數；含回傳遮罩為 120 位元組，普通記錄為 100。短緩衝區僅接收指定前綴，長度仍報告完整需求。部分可存取的複製在該次複製前停止；超出有號 uio 大小只於有效且受支援的請求後回傳 EINVAL。查詢不改變游標、資料、列舉或項目/FD/inode 預算，持有物件沿用 dup、刪除、名稱重用生命週期。
+
+三個模式經 guest、C、CLI、Python 檢查原生共通行為、獨立設定位元組與保留既有輸出的未知 ATTR_CMN_EXTENDED_SECURITY。ARM64 私有準備通過 187 次原始查詢及 176 次路徑/FD SDK 對照，原生 5 秒限制不變；SDK15.5 未宣告 getattrlistat，raw476 另記。新增 guest/Python 保持 5,000,000us/quantum1024，既有公開測試保持 10s。原生 Intel、實體 iOS、檔案系統專用資訊、硬連結、權限/ACL 與完整執行階段/框架仍未驗證或未完成。
+
+```text
+ATTR_CMN_RETURNED_ATTRS=0x80000000
+FSOPT_NOFOLLOW=1, FSOPT_REPORT_FULLSIZE=4
+FSOPT_PACK_INVAL_ATTRS=8 (requires ATTR_CMN_RETURNED_ATTRS)
+FSOPT_NOFOLLOW_ANY=0x800
+common-attributes
+common-attributes-values
+common-attributes-unsupported
+```
+
+[XNU attrlist](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_attrlist.c), [XNU attr.h](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h).
+
+
+## 明確的延伸屬性讀取
+
+getxattr(234)、fgetxattr(235)、listxattr(240)、flistxattr(241) 讀取 darwin_files 中完整、有序的一般屬性觀察值。檔案、目錄、連結可提供 extended_attributes 陣列，嚴格使用 {name,bytes_hex}。省略代表未知，[] 代表已知空清單。名稱是 1..127 位元組 UTF-8，可含斜線；值為不透明位元組。拒絕重複名稱並保留順序。最多 4096 個屬性，名稱加 NUL 與值計入原有 16 MiB 預算，不重複計算既有物件路徑。
+
+屬性隨物件經歷 dup、移動、刪除、CWD 與名稱重用，獨立於完整 stat 與目錄列舉的有效性。新物件未知；內容寫入、成功截斷與不明確的非空複製失敗使屬性未知，複製前拒絕部分緩衝區則保留觀察值。查詢不改變偏移、輸入、中繼資料或條目/FD/inode 預算。
+
+ABI 使用低32位 FD/options/position、完整64位 size 與 BSD user_ssize_t/carry/secondary。NULL 查詢忽略 position；非空值的路徑介面在非NULL size0 時回傳 ERANGE，FD size0 查詢長度。只有路徑 get 的 UINT32_MAX/UINT64_MAX 是相容長度查詢；FD get 限制為 INT32_MAX。正長度短清單可先寫完整名稱前綴再回傳 ERANGE；非空清單的非NULL負64位長度回傳 ERANGE。未取得原生空清單證據，因此宣告為空的負長度清單仍為 UnsupportedService。輸出無法完整寫入時在複製前停止。NOFOLLOW1 與 NOFOLLOW_ANY64 獨立；8/16 在查找前拒絕，FD1/64 在 FD/名稱前拒絕。CREATE2/REPLACE4 在讀取中忽略；SHOWCOMPRESSION32 與未知位不支援。受保護的 com.apple.system.*、ResourceFork、FinderInfo、decmpfs、設定/刪除、權限/ACL 與檔案系統推測不在讀取契約內。
+
+extended-attributes / extended-attributes-values / extended-attributes-unsupported 分別驗證原生共用行為、虛擬字面值及保留先前輸出的未知觀察停止。guest/Python5,000,000us/quantum1024、公開介面10s、原生5s 不變。ARM64 私有準備完成320組 raw/SDK 對照，全部288位元組保護區、carry、secondary 一致。自動 com.apple.provenance 是觀察值，不能推測預設空清單。Intel 原生與 iOS 真機未驗證；完整 dyld、Mach IPC、Objective-C/Swift 與框架仍未完成。
+
+Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU xattr calls](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ordinary attributes](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_xattr.c), [XNU xattr definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h). Original code/probes; Apple implementation is not copied.
+
+## 有界物件名稱
+
+ATTR_CMN_NAME=1 經 getattrlist220/fgetattrlist228/getattrlistat476 支援明確目錄中名稱唯一的非根物件。葉名稱須為 1..255 位元組合法 UTF-8。與 F_GETPATH 共用的實際物件路徑在 dup、CWD、移動、SWAP、刪除與名稱重用後保留最後連結的拼寫；呼叫者別名不覆蓋它。名稱與類型不依賴 stat；所選 stat 欄位仍需完整有效觀察。根/掛載標籤、非法名稱、硬連結或大小寫別名、正規化與完整路徑屬性保持未知。
+
+8 位元組 attrreference_t 位於其他共通欄位之前；attr_dataoffset 相對於引用本身，attr_length 包含 NUL，末尾名稱區域按四位元組填補。短輸出保留完整所需長度及精確前綴，包括截斷的 UTF-8。attribute-names / attribute-names-values / attribute-names-unsupported 經 guest/C/CLI/Python 檢查原生行為、獨立位元組及保留既有輸出的根名稱停止。ARM64 私有對照通過 601 次原始查詢、453 次完整保護緩衝區 SDK 比較與 384 次前綴檢查。SDK15.5 無 raw476 類型宣告。native5s、guest/Python5,000,000us/quantum1024、既有公開測試10s 不變。原生 Intel、實體 iOS 與完整執行階段/框架仍未驗證或未完成。

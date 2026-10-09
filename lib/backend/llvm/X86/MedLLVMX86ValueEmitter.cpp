@@ -16,8 +16,11 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/LLVMValueProvenance.h"
+#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/LLVMX86StackEffects.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-x86-value"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -105,11 +108,10 @@ llvm::Value *MedLLVMEmitter::emitCpuidValue(const MedOp &Op,
       Subleaf = Builder.CreateTruncOrBitCast(Subleaf, I32Ty);
   }
   auto *StructTy = llvm::StructType::get(*Ctx, {I32Ty, I32Ty, I32Ty, I32Ty});
-  auto *AsmFnTy =
-      llvm::FunctionType::get(StructTy, {I32Ty, I32Ty}, false);
+  auto *AsmFnTy = llvm::FunctionType::get(StructTy, {I32Ty, I32Ty}, false);
   auto *IA = llvm::InlineAsm::get(
-      AsmFnTy, "cpuid",
-      "={eax},={ebx},={ecx},={edx},{eax},{ecx},~{memory}", true);
+      AsmFnTy, "cpuid", "={eax},={ebx},={ecx},={edx},{eax},{ecx},~{memory}",
+      true);
   auto *Res = Builder.CreateCall(IA, {Leaf, Subleaf}, "cpuid");
   auto *EAX = Builder.CreateExtractValue(Res, {0}, "cpuid_eax");
   auto *EBX = Builder.CreateExtractValue(Res, {1}, "cpuid_ebx");
@@ -534,6 +536,83 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
                                                    llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
 
+  if (isX86FPStateIntrinsic(IC)) {
+    const auto Shape = x86FPStateMedShape(Op, TargetArch);
+    if (!x86FPStateShapeIsValid(IC, Shape))
+      llvm::report_fatal_error("invalid x86 numerical/state contract");
+    auto *I32 = llvm::Type::getInt32Ty(*Ctx);
+    auto *Ptr = llvm::PointerType::getUnqual(*Ctx);
+    llvm::IRBuilder<> EntryBuilder(&CurFunc->getEntryBlock(),
+                                   CurFunc->getEntryBlock().begin());
+    auto *State = EntryBuilder.CreateAlloca(I32, nullptr, "mxcsr_state");
+    const auto Mark = [&](llvm::CallInst *Call) {
+      Call->setMetadata(X86FPStateAsmMetadata, llvm::MDNode::get(*Ctx, {}));
+    };
+    const auto Raw = [&](unsigned Index, unsigned Size) {
+      auto *Value = getVar(Op.Inputs[Index], Builder);
+      auto *Ty = llvm::Type::getIntNTy(*Ctx, Size * 8);
+      if (Value->getType()->isFloatingPointTy())
+        Value = Builder.CreateBitCast(Value, Ty);
+      else
+        Value = Builder.CreateZExtOrTrunc(Value, Ty);
+      return Value;
+    };
+    if (IC == I::X86ReadMXCSR || IC == I::X86WriteMXCSR) {
+      if (IC == I::X86WriteMXCSR)
+        Builder.CreateStore(Raw(1, 4), State);
+      auto *Fn =
+          llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx), {Ptr}, false);
+      auto *Asm = llvm::InlineAsm::get(
+          Fn, IC == I::X86ReadMXCSR ? X86FPStateReadAsm : X86FPStateWriteAsm,
+          X86FPStateTransferConstraints, true);
+      Mark(Builder.CreateCall(Asm, {State}));
+      return IC == I::X86ReadMXCSR ? Builder.CreateLoad(I32, State) : nullptr;
+    }
+    if (isX86FPConversionStateIntrinsic(IC)) {
+      const unsigned SourceBytes = Op.Inputs[1].Size;
+      const unsigned DestinationBytes =
+          static_cast<unsigned>(Shape.DestinationBytes);
+      auto *Scalar = SourceBytes == 4 ? llvm::Type::getFloatTy(*Ctx)
+                                      : llvm::Type::getDoubleTy(*Ctx);
+      auto *Integer = llvm::Type::getIntNTy(*Ctx, DestinationBytes * 8);
+      auto *Value = Builder.CreateBitCast(Raw(1, SourceBytes), Scalar);
+      Builder.CreateStore(Raw(2, 4), State);
+      auto *Fn = llvm::FunctionType::get(Integer, {Scalar, Ptr}, false);
+      auto *Asm =
+          llvm::InlineAsm::get(Fn, x86FPStateConversionAsm(IC, SourceBytes),
+                               X86FPStateConversionConstraints, true);
+      auto *Result = Builder.CreateCall(Asm, {Value, State}, "fp_integer");
+      Mark(Result);
+      auto *OutTy = sizeToType(Op.Output.Size);
+      auto *Status = Builder.CreateLoad(I32, State, "fp_state");
+      return Builder.CreateOr(
+          Builder.CreateZExt(Result, OutTy),
+          Builder.CreateShl(Builder.CreateZExt(Status, OutTy),
+                            DestinationBytes * 8));
+    }
+    const unsigned Bytes = Op.Inputs[1].Size;
+    auto *Scalar = Bytes == 4 ? llvm::Type::getFloatTy(*Ctx)
+                              : llvm::Type::getDoubleTy(*Ctx);
+    auto *Left = Builder.CreateBitCast(Raw(1, Bytes), Scalar);
+    auto *Right = Builder.CreateBitCast(Raw(2, Bytes), Scalar);
+    Builder.CreateStore(Raw(3, 4), State);
+    auto *Fn = llvm::FunctionType::get(Scalar, {Scalar, Scalar, Ptr}, false);
+    // One completion scope fixes dynamic rounding, DAZ/FTZ, sticky flags,
+    // unmasked traps and x86 NaN operand priority. Generic LLVM arithmetic
+    // cannot promise all of these even with constrained FP intrinsics.
+    auto *Asm = llvm::InlineAsm::get(Fn, x86FPStateBinaryAsm(IC, Bytes),
+                                     X86FPStateBinaryConstraints, true);
+    auto *Result = Builder.CreateCall(Asm, {Left, Right, State}, "fp_value");
+    Mark(Result);
+    auto *OutTy = sizeToType(Op.Output.Size);
+    auto *Bits =
+        Builder.CreateBitCast(Result, llvm::Type::getIntNTy(*Ctx, Bytes * 8));
+    auto *Status = Builder.CreateLoad(I32, State, "fp_state");
+    return Builder.CreateOr(
+        Builder.CreateZExt(Bits, OutTy),
+        Builder.CreateShl(Builder.CreateZExt(Status, OutTy), Bytes * 8));
+  }
+
   if (IC == I::X64Syscall) {
     if (TargetArch != Arch::X64 || TargetFormat != BinaryFormat::ELF ||
         !llvm::Triple(Mod->getTargetTriple()).isOSLinux())
@@ -726,9 +805,17 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
             Builder.CreateExtractValue(Pair, {1}, "x87_fprem_status");
         PendingX87FpremBlock = Builder.GetInsertBlock();
       } else {
+        bool PopsSecondInput = false;
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
+  if (IC == Intrinsic::ID)                                                     \
+    PopsSecondInput = PopsST1;
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
         auto *FnTy = llvm::FunctionType::get(F80Ty, {F80Ty, F80Ty}, false);
         auto *IA = llvm::InlineAsm::get(
-            FnTy, Mn, "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
+            FnTy, Mn,
+            PopsSecondInput
+                ? "=&{st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"
+                : "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
             /*hasSideEffects=*/true);
         Res = Builder.CreateCall(IA, {In0, In1}, "x87");
       }
@@ -968,6 +1055,7 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
         FnTy, Wide ? "pushfq\n\tpopq $0" : "pushfl\n\tpopl $0", "=r,~{memory}",
         /*hasSideEffects=*/true);
     llvm::Value *Flags = Builder.CreateCall(IA, {}, "eflags");
+    markX86StackTemporary(*llvm::cast<llvm::CallInst>(Flags));
     return Builder.CreateZExtOrTrunc(Flags, sizeToType(Op.Output.Size));
   }
 

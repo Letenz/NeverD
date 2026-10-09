@@ -16,6 +16,7 @@
 #define NEVERD_IR_MED_LOWTOMED_H
 
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/FormattedCall.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/ObjC/ObjCBlockCallHints.h"
@@ -105,6 +106,11 @@ public:
     CallDispatchThunks = S;
   }
   /// Variadic direct callees (PipelineResult::CallVariadicFrom).
+  /// Calls whose constant format names every argument they pass
+  /// (PipelineResult::FormattedCalls).
+  void setFormattedCalls(const std::map<va_t, FormattedCall> *M) {
+    FormattedCalls = M;
+  }
   void setCallVariadicFrom(const std::map<va_t, int> *M) {
     CallVariadicFrom = M;
   }
@@ -254,6 +260,9 @@ private:
   void neutralizeStackProbeCalls(MedFunc &Func);
   /// Record which GPRs a direct call's callee never writes.
   void applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp);
+  /// Bind the arguments of a formatted call as its inputs, adding to \p MB
+  /// the extraction of each floating one; false for any other operation.
+  bool bindFormattedCall(MedBlock &MB, MedOp &MOp, const LowOp &LOp);
   /// The import slot the register an INDIR_CALL being converted goes
   /// through was loaded from, else 0.
   va_t RegisterCallSlot = 0;
@@ -314,6 +323,7 @@ private:
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
   const std::set<va_t> *CallDispatchThunks = nullptr;
   const std::map<va_t, int> *CallVariadicFrom = nullptr;
+  const std::map<va_t, FormattedCall> *FormattedCalls = nullptr;
   /// Argument registers DispatchCallDefinedArgs tracks, one bit each.
   static constexpr size_t kTrackedArgSlots = 8;
   /// The calling convention's argument registers (bit I = its Ith integer

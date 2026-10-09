@@ -19,6 +19,14 @@ uint64_t mappedSize(uint64_t Size) {
 }
 } // namespace
 
+std::vector<ProcessHeapAllocationView> Services::heapAllocations() const {
+  std::vector<ProcessHeapAllocationView> Result;
+  Result.reserve(Allocations.size());
+  for (const auto &[Address, Allocation] : Allocations)
+    Result.push_back({Address, std::max<uint64_t>(Allocation.Size, 1)});
+  return Result;
+}
+
 llvm::Expected<bool> Services::mapHeapPages(uint64_t Address, uint64_t Size) {
   auto RAM = Memory.physicalMemory();
   if (Size > Options.MemoryLimit - Memory.mappedBytes() ||

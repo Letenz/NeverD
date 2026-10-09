@@ -11,12 +11,15 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../X86FPStateHelpers.h"
+
 #include "neverd/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/c/render/X86SegmentAsm.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/ir/high/X86FPStateShape.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 #include "neverd/lift/X86Regs.h"
@@ -25,6 +28,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <cctype>
 #include <limits>
 #include <string>
@@ -99,10 +103,6 @@ std::string renderX86InterruptAsm(
 
 const char *x87CHelperName(X87CHelper Helper) {
   switch (Helper) {
-  case X87CHelper::Value:
-    return "neverd_x87_value";
-  case X87CHelper::Bits:
-    return "neverd_x87_bits";
   case X87CHelper::Frndint:
     return "neverd_x87_frndint";
   case X87CHelper::Fsqrt:
@@ -114,7 +114,7 @@ const char *x87CHelperName(X87CHelper Helper) {
 #define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
   case X87CHelper::ID:                                                         \
     return Name;
-#include "neverd/backend/c/render/HighC/X87ValueHelpers.def"
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
   }
   llvm_unreachable("unknown x87 C helper");
 }
@@ -130,7 +130,7 @@ static unsigned x87ValueHelperOperands(X87CHelper Helper) {
 #define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
   case X87CHelper::ID:                                                         \
     return Operands;
-#include "neverd/backend/c/render/HighC/X87ValueHelpers.def"
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
   default:
     return 0;
   }
@@ -141,7 +141,7 @@ std::optional<X87CHelper> x87ValueHelper(Intrinsic Id) {
 #define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
   case Intrinsic::ID:                                                          \
     return X87CHelper::ID;
-#include "neverd/backend/c/render/HighC/X87ValueHelpers.def"
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
   default:
     return std::nullopt;
   }
@@ -151,25 +151,16 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
                       const std::set<X87CHelper> &Used) {
   // An x87 register holds 80 bits; C computes with them as `long double`
   // only where that is the x87 extended format, which the unit requires.
+  // The bits travel in an `unsigned _BitInt(80)` of the same size, so one
+  // __builtin_bit_cast turns either into the other.
   if (UsesExtended)
     OS << "_Static_assert(__LDBL_MANT_DIG__ == 64,\n"
           "               \"x87 values need the 80-bit extended long "
-          "double\");\n\n";
-  // The 80 bits fill ten bytes of either wider C object.
-  if (Used.count(X87CHelper::Value))
-    OS << "static inline long double neverd_x87_value(unsigned _BitInt(80) "
-          "bits) {\n"
-          "    long double value = 0;\n"
-          "    __builtin_memcpy(&value, &bits, 10);\n"
-          "    return value;\n"
-          "}\n\n";
-  if (Used.count(X87CHelper::Bits))
-    OS << "static inline unsigned _BitInt(80) neverd_x87_bits(long double "
-          "value) {\n"
-          "    unsigned _BitInt(80) bits = 0;\n"
-          "    __builtin_memcpy(&bits, &value, 10);\n"
-          "    return bits;\n"
-          "}\n\n";
+          "double\");\n"
+          "_Static_assert(sizeof(long double) == sizeof(unsigned "
+          "_BitInt(80)),\n"
+          "               \"x87 bits travel in a long double's "
+          "storage\");\n\n";
   // C's rint, nearbyint and sqrtl live in the C library; each instruction
   // computes in place as the machine did.
   for (const auto &[Helper, Mnemonic] :
@@ -206,7 +197,7 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
   };
 #define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
   WriteValueHelper(X87CHelper::ID, Asm, Operands, PopsST1);
-#include "neverd/backend/c/render/HighC/X87ValueHelpers.def"
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
   // The program runs with the control word the unit holds.
   if (Used.count(X87CHelper::ControlWord))
     OS << "static inline uint16_t neverd_x87_control_word(void) {\n"
@@ -1467,11 +1458,41 @@ renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
 }
 } // namespace
 
-std::string
-renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
-                            std::function<std::string(const HighExpr &)> ExprFn,
-                            bool &HasCIntrinsics, bool GnuToolchain) {
+std::string renderX86TypedIntrinsicCall(
+    Arch TheArch, const HighExpr &Call,
+    std::function<std::string(const HighExpr &)> ExprFn, bool &HasCIntrinsics,
+    bool GnuToolchain,
+    std::function<std::string(Intrinsic, unsigned)> FPHelperName) {
   using I = Intrinsic;
+  if (isX86FPStateIntrinsic(Call.IntrinsicId)) {
+    const unsigned ResultBytes = Call.Type ? Call.Type->Size : 0;
+    if (ResultBytes && Call.Type->Kind != NdTypeKind::Int)
+      llvm::report_fatal_error(
+          "x86 FP numerical/state result requires raw bits");
+    const auto Shape = x86FPStateHighShape(Call, TheArch);
+    if (!x86FPStateShapeIsValid(Call.IntrinsicId, Shape))
+      llvm::report_fatal_error("invalid x86 FP state C contract");
+    const unsigned Bytes = x86FPStateHelperLayout(Call.IntrinsicId, Shape);
+    std::string Result =
+        (FPHelperName ? FPHelperName(Call.IntrinsicId, Bytes)
+                      : x86FPStateCHelper(Call.IntrinsicId, Bytes)) +
+        "(";
+    const unsigned Operands = isX86FPConversionStateIntrinsic(Call.IntrinsicId)
+                                  ? 2
+                                  : Call.Operands.size();
+    for (unsigned Index = 0; Index < Operands; ++Index) {
+      if (Index)
+        Result += ", ";
+      const auto &Operand = *Call.Operands[Index];
+      const auto Text = ExprFn(Operand);
+      if (Operand.Type && Operand.Type->Kind == NdTypeKind::Float)
+        Result += "__builtin_bit_cast(uint" +
+                  std::to_string(Operand.Type->Size * 8) + "_t, " + Text + ")";
+      else
+        Result += Text;
+    }
+    return Result + ")";
+  }
   if (Call.IntrinsicId == I::X87Ffree) {
     if ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
         Call.Operands.size() != 2 || !Call.Operands[1] ||

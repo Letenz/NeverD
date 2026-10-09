@@ -222,4 +222,96 @@ TEST(I386CallContract, APoppedPushIsNoArgument) {
   EXPECT_NE(Line.find("arg0"), std::string::npos) << Source;
 }
 
+TEST(I386CallContract, StoresThroughACopyOfESPAreArgumentsByOffset) {
+  // clang -O0 addresses the outgoing area through a copy of ESP and stores
+  // in any order, and keeps a computed argument in a callee-saved register.
+  std::vector<uint8_t> Code = {
+      0x55,             // push ebp
+      0x89, 0xE5,       // mov ebp, esp
+      0x56,             // push esi
+      0x83, 0xEC, 0x14, // sub esp, 0x14
+      0x8B, 0x45, 0x08, // mov eax, [ebp+8]
+      0x8B, 0x75, 0x0C, // mov esi, [ebp+0xc]
+      0x89, 0xE2,       // mov edx, esp
+      0x89, 0x02,       // mov [edx], eax
+      0x89, 0x72, 0x04, // mov [edx+4], esi
+  };
+  for (uint8_t B : callThroughSlot(slot(0)))
+    Code.push_back(B);
+  for (uint8_t B : {0x83, 0xC4, 0x14, // add esp, 0x14
+                    0x5E,             // pop esi
+                    0x5D,             // pop ebp
+                    0xC3})            // ret
+    Code.push_back(B);
+  const std::string Call = callIn(makeImage(Code, {"calloc"}), "calloc");
+  EXPECT_NE(Call.find("(arg0, arg1)"), std::string::npos) << Call;
+}
+
+/// The HighC signature of the function at Text of \p Img, decompiled alone.
+std::string signatureOf(const BinaryImage &Img, const std::string &Name) {
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Text};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  EXPECT_TRUE(Result.Success) << Result.Error;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  Options.Image = &Img;
+  EXPECT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+  const size_t At = Source.find(" " + Name + "(");
+  if (At == std::string::npos) {
+    ADD_FAILURE() << Source;
+    return {};
+  }
+  const size_t Line = Source.rfind('\n', At) + 1;
+  return Source.substr(Line, Source.find('\n', At) - Line);
+}
+
+TEST(I386CallContract, ARuntimeDoubleWordRoutineReturnsThePairAlone) {
+  // libgcc's __udivdi3 returns its quotient in EDX:EAX.  Decompiled alone no
+  // caller reads EDX after it, and its name says it returns the pair.
+  const std::vector<uint8_t> Code = {0x8B, 0x44, 0x24, 0x04, // mov eax, [esp+4]
+                                     0x8B, 0x54, 0x24, 0x08, // mov edx, [esp+8]
+                                     0xC3};                  // ret
+  BinaryImage Img = makeImage(Code, {});
+  Img.Symbols.front().Name = "___udivdi3";
+  const std::string Signature = signatureOf(Img, "__udivdi3");
+  EXPECT_NE(Signature.find("64_t __udivdi3("), std::string::npos) << Signature;
+  // Without that name nothing shows the high half is a result.
+  const std::string Wrap = signatureOf(makeImage(Code, {}), "wrap");
+  EXPECT_EQ(Wrap.find("64_t wrap("), std::string::npos) << Wrap;
+}
+
+TEST(I386CallContract, AStubOfAVariadicImportIsTheImport) {
+  // `jmp dword ptr [__imp__fprintf]` passes every argument on, the variadic
+  // ones too, which no C body can: the stub prints as the import.
+  const std::vector<uint8_t> Code = {0xFF,
+                                     0x25, // jmp dword ptr [slot]
+                                     static_cast<uint8_t>(slot(0)),
+                                     static_cast<uint8_t>(slot(0) >> 8),
+                                     static_cast<uint8_t>(slot(0) >> 16),
+                                     static_cast<uint8_t>(slot(0) >> 24)};
+  const BinaryImage Img = makeImage(Code, {"fprintf"});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Text};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+  EXPECT_NE(Source.find("wrap jumps to the import fprintf"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find(" wrap("), std::string::npos) << Source;
+}
+
 } // namespace

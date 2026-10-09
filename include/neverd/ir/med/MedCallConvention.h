@@ -111,6 +111,11 @@ struct CallArgumentConvention {
   /// The argument count a platform prototype gives a named function (the
   /// WDK's, for Windows kernel routines), or nullopt.
   std::optional<size_t> (*PrototypeArgCount)(llvm::StringRef Name) = nullptr;
+  /// A printf-family call whose format is a constant string passes the
+  /// arguments its conversions name in registers, each class in its own
+  /// bank as for any other call: the call reads exactly those, in the
+  /// source's order (FormattedCall).
+  bool FormattedCallArguments = false;
 };
 
 /// The calling convention MedIR records for code of \p A in a \p F image, or
