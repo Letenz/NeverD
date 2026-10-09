@@ -84,10 +84,9 @@ recovered C types, rather than claiming scalar prototype recovery.
 This conversion suite does not certify packed, unsigned, EVEX/SAE or x87
 conversion state. Its native byte oracles require x64 and Clang; VEX byte
 oracles additionally require AVX.
-The pinned Capstone decoder currently refuses the legacy i386 address-override
-fixture `67 F2 0F 2D 00`; direct Capstone and NeverD decoding both fail before
-lifting. That form remains an unavailable decoder capability and is recorded
-separately from the supported conversion matrix.
+The pinned Capstone decoder supports the legacy i386 address-override fixture
+`67 F2 0F 2D 00`. The encoding suite checks its 16-bit memory addressing;
+conversion execution remains covered by the conversion suites above.
 
 ```bash
 cmake --build build-release --target NeverDX86FPStateAccuracyTests --parallel 4
@@ -98,14 +97,19 @@ ctest --test-dir build-release -L '^NeverDX86FPConversionAccuracyTests$' --outpu
 
 ## x86 invalid encodings and instruction boundaries
 
-`NeverDX86EncodingAccuracyTests` checks raw illegal LOCK forms and MOV-to-CS
-before any LowIR effects are published, in strict and permissive lifting.
-Legal memory-destination LOCK operations and segment moves remain controls.
+`NeverDX86EncodingAccuracyTests` requires raw illegal LOCK forms (including
+memory-source arithmetic and multi-byte NOP) and MOV-to-CS to fail in every
+decode route, independently of strict, detail and text settings. Legal
+memory-destination LOCK operations, HLE prefix orders and segment moves remain
+controls.
 UD1 golden encodings exercise complete ModR/M, SIB and displacement extents,
 32/64-bit address modes, address overrides, every truncated prefix, and the
-15-byte limit. Detailed, lightweight and lifting decode routes must agree and
-leave a following NOP at the correct boundary. UD1 retains its unconditional
-invalid-opcode identity; this suite does not select a processor's UD0 policy.
+15-byte limit, including REX2 map 1 encodings. Detailed, lightweight and lifting
+decode routes must agree and leave a following NOP at the correct boundary.
+Capstone owns validity and instruction extent; NeverD has no duplicate UD1
+length parser or LOCK/MOV-to-CS predicate. UD1 operands remain an
+unconditional invalid-opcode intrinsic without ordinary memory or arithmetic
+operations; this suite does not select a processor's UD0 policy.
 
 ```sh
 cmake --build build-release --target NeverDX86EncodingAccuracyTests
