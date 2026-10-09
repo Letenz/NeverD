@@ -17,12 +17,6 @@
 
 namespace neverd::sdk {
 
-/// Why analysis refuses a binary file: nothing states its calling convention,
-/// so lifting it would have to guess one.
-inline constexpr llvm::StringLiteral BinaryFileNotAnalyzed =
-    "a binary file states no calling convention; choose one to decompile it "
-    "(not available yet)";
-
 /// Parse neverd_session_set_load_options JSON: the loader the user chose.
 llvm::Expected<LoaderChoice> parseLoadOptions(llvm::StringRef Text);
 
@@ -33,6 +27,11 @@ std::string loadOptionsJson(const LoaderChoice &Choice);
 /// without one.
 llvm::Expected<LoaderChoice>
 readLoadOptionsSidecar(const std::filesystem::path &Input);
+
+/// Settle the platform whose conventions a binary file's code follows when
+/// the user named none: read it from the code, and keep in \p Choice what
+/// was read and why, so the file reopens under the same conventions.
+void settleBinaryFilePlatform(BinaryImage &Img, LoaderChoice &Choice);
 
 } // namespace neverd::sdk
 

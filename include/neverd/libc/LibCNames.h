@@ -70,6 +70,18 @@ struct LibCArity {
              ///< and the imaginary part is 0.
 };
 
+/// The bytes of the scalar float a routine of \p Arity returns: the tables
+/// list a routine with only floating arguments, or its floating arguments
+/// first, by its floating return, and mark one without (FpRet); a long
+/// double or complex return is no scalar in the vector register.
+constexpr uint16_t floatReturnBytes(const LibCArity &Arity) {
+  if (Arity.FpRetLongDouble || Arity.FpRetComplex ||
+      !(Arity.FpRet || Arity.FpFirst ||
+        (Arity.FpArgs > 0 && Arity.IntArgs == 0)))
+    return 0;
+  return Arity.FpIsFloat ? sizeof(float) : sizeof(double);
+}
+
 /// A single (name, arity) row of a per-header arity table (kStdioArity,
 /// kStringArity, ...).  These tables live beside the function-name lists in the
 /// libc_*.h headers; libcArity assembles them into one lookup map.
@@ -133,6 +145,14 @@ constexpr bool isPointerType(std::string_view Type) {
 /// conventions pass in a vector register.
 constexpr bool isFloatingType(std::string_view Type) {
   return Type == "float" || Type == "double" || Type == "long double";
+}
+
+/// The bytes of the scalar float a routine \p Prototype declares returns in
+/// the vector return register: 4 for `float`, 8 for `double`, else 0.
+constexpr uint16_t floatReturnBytes(const LibCPrototype &Prototype) {
+  return Prototype.Return == "double"  ? sizeof(double)
+         : Prototype.Return == "float" ? sizeof(float)
+                                       : 0;
 }
 
 /// Whether a parameter of C type \p Type takes a narrow string literal as it

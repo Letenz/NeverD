@@ -512,12 +512,6 @@ struct Session {
       setError("no binary loaded");
       return false;
     }
-    // Analysis would have to guess the calling convention of a binary file;
-    // its functions are browsed, not lifted.
-    if (Img.Format == BinaryFormat::Raw) {
-      setError(BinaryFileNotAnalyzed.str());
-      return false;
-    }
     if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())
       clearPipeline();
     if (!PipeRan) {
@@ -630,7 +624,7 @@ struct Session {
     }
     auto Candidate = Emitter.emit(
         PipeResult.MedFuncs, *LLVMCtx, "neverd_output", Img.Arch, ImportMap,
-        &Img, Img.Format, /*MergeableGlobals=*/false, BodyMask);
+        &Img, Img.abiFormat(), /*MergeableGlobals=*/false, BodyMask);
     if (Sources)
       Sources->preserveExpressionOrigins(PipeResult.LibraryRecognitions);
     if (!Candidate) {

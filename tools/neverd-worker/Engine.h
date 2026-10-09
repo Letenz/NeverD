@@ -120,10 +120,6 @@ private:
   /// A comment changed.  The listing reads comments as it formats lines, so
   /// only views that keep formatted text drop it.
   void commentsChanged();
-  /// Whether the open file is a binary file: no header states its calling
-  /// convention, so the engine does not analyze it and its graphs come from
-  /// the listing's decoding.
-  bool binaryFile() const;
   /// The control flow graph of the function at \p address, in the engine's
   /// cfg JSON shape.
   Json functionGraph(std::uint64_t address);

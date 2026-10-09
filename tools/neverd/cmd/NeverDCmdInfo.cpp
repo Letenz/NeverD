@@ -100,6 +100,22 @@ int runInfo(neverd_session_t Sess) {
   neverd_free_string(Fmt);
   outs() << "Base:   0x" << utohexstr(neverd_session_base_addr(Sess)) << "\n";
   outs() << "Entry:  0x" << utohexstr(neverd_session_entry_addr(Sess)) << "\n";
+  // A binary file's platform, and what detection read it from.
+  const char *LoadJson = neverd_session_load_options_json(Sess);
+  if (auto Load = json::parse(LoadJson); Load && Load->getAsObject()) {
+    const json::Object &Options = *Load->getAsObject();
+    if (auto Platform = Options.getString("platform");
+        Platform && *Platform != "auto") {
+      outs() << "Platform: " << *Platform;
+      if (Options.getString("platform_source") == "detected")
+        outs() << " (read from the code: "
+               << Options.getString("platform_evidence").value_or("") << ")";
+      outs() << "\n";
+    }
+  } else if (!Load) {
+    consumeError(Load.takeError());
+  }
+  neverd_free_string(LoadJson);
 
   const char *HeaderJson = neverd_headers_json(Sess);
   auto HeaderParsed = json::parse(HeaderJson ? HeaderJson : "{}");

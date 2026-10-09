@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <optional>
 
 namespace neverd {
@@ -155,6 +156,16 @@ inline size_t alignmentNopLength(Arch A, const uint8_t *Data, size_t Size) {
   default:
     return 0;
   }
+}
+
+/// Length of the indirect-branch-tracking marker (`endbr64`, `endbr32`) a
+/// function whose address the code takes starts with, or zero.
+inline size_t x86BranchTargetMarkerLength(const uint8_t *Data, size_t Size) {
+  // endbr64 is F3 0F 1E FA and endbr32 F3 0F 1E FB.
+  constexpr uint8_t Marker[] = {0xF3, 0x0F, 0x1E};
+  if (Size < 4 || !std::equal(std::begin(Marker), std::end(Marker), Data))
+    return 0;
+  return Data[3] == 0xFA || Data[3] == 0xFB ? 4 : 0;
 }
 
 /// Whether \p Byte is a trap a toolchain pads between \p A functions with, so

@@ -462,6 +462,10 @@ struct Import {
   std::string Name;
   uint16_t Ordinal = 0;
   va_t IATAddr = 0;
+  /// A PE delay descriptor names a guest-helper binding, rather than a cell
+  /// the OS loader must bind at image admission. Display names are not proof
+  /// of this distinction.
+  bool IsDelayImport = false;
 };
 
 struct Export {

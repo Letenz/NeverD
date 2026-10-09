@@ -262,9 +262,20 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     }
 
   std::set<va_t> DirectCallTargets;
+  // Functions a binary file's code takes the address of, whose prologue
+  // already vouches for them.
+  std::set<va_t> CodePointerTargets;
   if (Img.Entry != 0) {
     scanCallTargets(Img, Dec, DirectCallTargets);
     Entries.insert(DirectCallTargets.begin(), DirectCallTargets.end());
+    // A binary file has no symbols, unwind tables or relocations to name
+    // the functions its code only takes the address of.  A target starts
+    // with a prologue, so its decode below need only not fail: a function
+    // such as main runs far past the verifier's window before it returns.
+    if (Img.Format == BinaryFormat::Raw && Img.Arch == Arch::X64) {
+      func_detect_detail::scanCodePointersX64(Img, Dec, CodePointerTargets);
+      Entries.insert(CodePointerTargets.begin(), CodePointerTargets.end());
+    }
     if (Img.Arch == Arch::ARM)
       Entries.insert(Img.ARMVeneerTargets.begin(), Img.ARMVeneerTargets.end());
     if (IsX86LinkedCOFF)
@@ -389,7 +400,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
           verifyFunctionDecode(Img, LocalDec, Addr,
                                UntypedCOFFExports.count(Addr) != 0 ||
                                    UnsymbolizedX86Entries.count(Addr) != 0 ||
-                                   IsX86LinkedCallOrRelocTarget(Addr))
+                                   IsX86LinkedCallOrRelocTarget(Addr) ||
+                                   CodePointerTargets.count(Addr) != 0)
               ? 1
               : 0;
     };

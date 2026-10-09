@@ -221,6 +221,8 @@ static int realMain(int Argc, char *Argv[]) {
     json::Object Options{{"loader", LoadLoader.getValue()}};
     if (!LoadProcessor.empty())
       Options["processor"] = LoadProcessor.getValue();
+    if (!LoadPlatform.empty())
+      Options["platform"] = LoadPlatform.getValue();
     for (const auto &[Key, Flag] :
          {std::pair{"base", &LoadBase}, std::pair{"offset", &LoadOffset},
           std::pair{"size", &LoadSize}, std::pair{"entry", &LoadEntry}})

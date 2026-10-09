@@ -2250,6 +2250,14 @@ Mit Vorzeichen: %4</translation>
         <source>Defined %1 at %2</source>
         <translation>%1 bei %2 definiert</translation>
     </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>Plattform: %1, wie gewählt</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>Plattform: %1, aus dem Code erkannt: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2373,6 +2381,14 @@ Mit Vorzeichen: %4</translation>
         <source>Where in the file the loaded bytes start</source>
         <translation>Wo in der Datei die geladenen Bytes beginnen</translation>
     </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>&amp;Plattform</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>Die Plattform, für die der Code gebaut wurde und deren Konventionen er folgt: wie Aufrufe Argumente übergeben, welche Register sie erhalten und wie groß C-Typen sind</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2415,6 +2431,25 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>Thumb (AArch32)</source>
         <translation>Thumb (AArch32)</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple (macOS, iOS)</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>Aus dem Code erkennen</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V (Linux, BSD, Android)</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>

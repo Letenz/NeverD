@@ -945,6 +945,7 @@ TEST(RuntimeMetadata, ParsesRVADelayImportWithExactIATSlot) {
             1u);
   ASSERT_EQ(Fixture.Img.Imports.size(), 1u);
   EXPECT_EQ(Fixture.Img.Imports[0].Module, "example.dll [delay]");
+  EXPECT_TRUE(Fixture.Img.Imports[0].IsDelayImport);
   EXPECT_EQ(Fixture.Img.Imports[0].Name, "delayed_function");
   EXPECT_EQ(Fixture.Img.Imports[0].IATAddr, 0x401100u);
   ASSERT_EQ(Fixture.Img.ImportStorageSlots.count(0x401100u), 1u);

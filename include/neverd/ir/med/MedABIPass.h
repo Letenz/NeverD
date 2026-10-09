@@ -63,6 +63,19 @@ std::set<va_t> findFrameLocalLeafCallees(const std::vector<MedFunc> &Funcs,
 // findFrameLocalLeafCallees for these same bodies, before ABI mutation. It lets
 // Darwin indirect-target recovery preserve a caller-frame spill across a call
 // only when the caller slot and the callee writes are provably disjoint.
+// LowToMed runs before whole-program return types are known.  It can
+// therefore leave a scalar-FP call modeled as defining the integer return
+// register: when the result is read only by the next call's implicit XMM0/V0
+// argument, or only returned.  Once the callee is known to return \p Size
+// bytes through the vector register, promote the authoritative FP-return
+// clobber definition of the call at \p OpIdx of \p Blk into its output.
+// Existing SSA reads already name that definition.  A call already routed by
+// modelCallFPReturn, or one with an aggregate return, keeps its output; the
+// exact synthetic EDX:EAX/R1:R0 split is the one false aggregate this
+// scalar-FP certificate replaces.  Returns whether the call was rebound.
+bool promoteFloatCallResult(MedFunc &Func, MedBlock &Blk, size_t OpIdx,
+                            uint16_t Size, Arch TheArch);
+
 void recoverCallAbi(
     MedFunc &Func, Arch TheArch, const std::map<va_t, std::string> &FuncNames,
     const BinaryImage *Img = nullptr,

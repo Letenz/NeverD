@@ -2250,6 +2250,14 @@ Signé : %4</translation>
         <source>Defined %1 at %2</source>
         <translation>%1 défini à %2</translation>
     </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>Plate-forme : %1, choisie</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>Plate-forme : %1, détectée d&apos;après le code : %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2373,6 +2381,14 @@ Signé : %4</translation>
         <source>Where in the file the loaded bytes start</source>
         <translation>Où commencent dans le fichier les octets chargés</translation>
     </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>P&amp;late-forme</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>La plate-forme pour laquelle le code a été compilé, dont il suit les conventions : comment les appels passent les arguments, quels registres ils préservent et la taille des types C</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2415,6 +2431,25 @@ Signé : %4</translation>
     <message>
         <source>Thumb (AArch32)</source>
         <translation>Thumb (AArch32)</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple (macOS, iOS)</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>Détecter d&apos;après le code</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V (Linux, BSD, Android)</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>

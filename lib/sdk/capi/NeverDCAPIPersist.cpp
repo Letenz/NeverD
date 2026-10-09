@@ -12,6 +12,8 @@
 #include "LoadOptions.h"
 #include "SessionImpl.h"
 
+#include "neverd/decode/Decoder.h"
+#include "neverd/ir/low/PlatformEvidence.h"
 #include "neverd/loader/LoadCandidate.h"
 #include "neverd/support/AtomicOutput.h"
 #include "neverd/support/FilePath.h"
@@ -1020,8 +1022,12 @@ int neverd_items_load(neverd_session_t Sess) {
 
 namespace {
 
-/// The loader name that reads a file as its header or contents say.
+/// The loader name that reads a file as its header or contents say, and
+/// the platform name that reads a binary file's platform from its code.
 constexpr llvm::StringLiteral AutomaticLoaderName("auto");
+/// Who chose a binary file's platform: detection, or the user.
+constexpr llvm::StringLiteral DetectedPlatformSource("detected");
+constexpr llvm::StringLiteral ChosenPlatformSource("user");
 
 std::filesystem::path loadOptionsPath(const std::filesystem::path &Input) {
   auto Path = Input;
@@ -1097,6 +1103,18 @@ neverd::sdk::parseLoadOptions(llvm::StringRef Text) {
       return loadOptionsError("entry is a number");
     Options.Entry = *Entry;
   }
+  // The platform whose conventions the code follows; auto reads it from the
+  // code when the file loads.
+  if (const auto Platform = Object->getString("platform");
+      Platform && *Platform != AutomaticLoaderName) {
+    Options.Platform = parseRawPlatform(*Platform);
+    if (!Options.Platform)
+      return loadOptionsError("platform is auto, sysv, windows or darwin");
+    Options.PlatformDetected =
+        Object->getString("platform_source") == DetectedPlatformSource;
+    Options.PlatformEvidence =
+        Object->getString("platform_evidence").value_or("").str();
+  }
   return Choice;
 }
 
@@ -1115,6 +1133,15 @@ std::string neverd::sdk::loadOptionsJson(const LoaderChoice &Choice) {
     Object["size"] = vaHex(Raw.Size);
     if (Raw.Entry)
       Object["entry"] = vaHex(*Raw.Entry);
+    if (Raw.Platform) {
+      Object["platform"] = getRawPlatformName(*Raw.Platform);
+      Object["platform_source"] =
+          Raw.PlatformDetected ? DetectedPlatformSource : ChosenPlatformSource;
+      if (!Raw.PlatformEvidence.empty())
+        Object["platform_evidence"] = Raw.PlatformEvidence;
+    } else {
+      Object["platform"] = AutomaticLoaderName;
+    }
     break;
   }
   default:
@@ -1138,6 +1165,21 @@ neverd::sdk::readLoadOptionsSidecar(const std::filesystem::path &Input) {
     return loadOptionsError("load options sidecar: " +
                             llvm::toString(Options.takeError()));
   return Options;
+}
+
+void neverd::sdk::settleBinaryFilePlatform(BinaryImage &Img,
+                                           LoaderChoice &Choice) {
+  if (Img.Format != BinaryFormat::Raw ||
+      Img.ConventionFormat != BinaryFormat::Unknown)
+    return;
+  Decoder Dec;
+  PlatformEvidence Evidence;
+  if (Dec.init(Img))
+    Evidence = readPlatformEvidence(Img, Dec);
+  Img.ConventionFormat = Evidence.Platform;
+  Choice.Raw.Platform = Evidence.Platform;
+  Choice.Raw.PlatformDetected = true;
+  Choice.Raw.PlatformEvidence = Evidence.describe();
 }
 
 int neverd_session_set_load_options(neverd_session_t Sess,

@@ -2246,6 +2246,14 @@ Signed: %4</source>
         <source>Defined %1 at %2</source>
         <translation>%2에 %1을(를) 정의했습니다</translation>
     </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>플랫폼: %1(지정한 대로)</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>플랫폼: %1, 코드에서 판별: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2369,6 +2377,14 @@ Signed: %4</source>
         <source>Where in the file the loaded bytes start</source>
         <translation>불러올 바이트가 파일에서 시작하는 위치</translation>
     </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>플랫폼(&amp;P)</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>코드가 빌드된 플랫폼으로, 그 규약을 따릅니다: 호출이 인수를 전달하는 방식, 보존되는 레지스터, C 타입의 크기</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2411,6 +2427,25 @@ Signed: %4</source>
     <message>
         <source>Thumb (AArch32)</source>
         <translation>Thumb(AArch32)</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple(macOS, iOS)</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>코드에서 판별</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V(Linux, BSD, Android)</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>
