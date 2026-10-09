@@ -102,6 +102,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProcessTransfer.AnInvocationRetainsChangesFromEverySavedImage")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.RestoredPageBytesRetainTheirNewerGeneration")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProcessTransfer.CapturesUnalignedAndInteriorHeapReferences")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProcessTransfer.MissingHeapInventoryRemainsUnknown")
