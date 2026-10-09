@@ -12,6 +12,7 @@
 #ifndef NEVERD_LIB_PIPELINE_PIPELINELOWIRDETAIL_H
 #define NEVERD_LIB_PIPELINE_PIPELINELOWIRDETAIL_H
 
+#include "neverd/ir/low/FormattedCall.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -69,6 +70,13 @@ WindowsEHContinuationRootTestResult collectWindowsEHContinuationRootsForTesting(
     const BinaryImage &Img, const std::vector<LowFunc> &Funcs,
     const std::set<va_t> &FunctionEntries,
     std::optional<size_t> TestBudget = std::nullopt);
+
+/// The calls in \p F to a printf-family routine whose format is a constant
+/// string the image holds, keyed by the call instruction's address, added
+/// to \p Calls.  Only a convention whose formatted calls pass every argument
+/// in a register lists them (CallArgumentConvention::FormattedCallArguments).
+void collectFormattedCalls(const BinaryImage &Img, const LowFunc &F,
+                           std::map<va_t, FormattedCall> &Calls);
 
 } // namespace neverd::pipeline_detail
 

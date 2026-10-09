@@ -202,6 +202,47 @@ void splitEntryLoopHeader(MedFunc &Func) {
 
 } // namespace
 
+bool LowToMedConverter::bindFormattedCall(MedBlock &MB, MedOp &MOp,
+                                          const LowOp &LOp) {
+  if (!FormattedCalls ||
+      (LOp.Opcode != NdOp::CALL && LOp.Opcode != NdOp::INDIR_CALL) ||
+      MOp.NumInputs < 1)
+    return false;
+  const auto Call = FormattedCalls->find(LOp.Addr);
+  if (Call == FormattedCalls->end() ||
+      Call->second.Arguments.size() >
+          static_cast<size_t>(limits::kMaxBoundSourceCallArgs))
+    return false;
+  // Every argument the format names, in the source's order.  A floating one
+  // is the low lane of its whole vector register, whose value every write
+  // reaches.
+  const uint16_t VectorBytes = getTargetRegInfo(TargetArch).FPABIRegWidth;
+  MOp.NumInputs = 1;
+  for (const FormattedCallArgument &Argument : Call->second.Arguments) {
+    if (Argument.Pointer)
+      MOp.ExactPointerInputs |= uint64_t(1) << (MOp.NumInputs - 1);
+    if (!Argument.Floating) {
+      MOp.addInput(
+          ndVarToMedVar(NdVar::reg(Argument.Register, Argument.Bytes)));
+      continue;
+    }
+    MedOp Lane;
+    Lane.Opcode = NdOp::SUBBYTES;
+    Lane.Addr = LOp.Addr;
+    Lane.Output.Kind = MedVar::Temp;
+    Lane.Output.Id = allocVarId();
+    Lane.Output.Size = Argument.Bytes;
+    Lane.Output.TheArch = TargetArch;
+    Lane.addInput(ndVarToMedVar(NdVar::reg(Argument.Register, VectorBytes)));
+    Lane.addInput(MedVar::makeConst(0, 4, ConstantAddressProvenance::Scalar));
+    MOp.ExactFloatInputs |= uint64_t(1) << (MOp.NumInputs - 1);
+    MOp.addInput(Lane.Output);
+    MB.Ops.push_back(std::move(Lane));
+  }
+  MOp.ExactArguments = true;
+  return true;
+}
+
 void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   if ((LOp.Opcode != NdOp::CALL && LOp.Opcode != NdOp::INDIR_CALL) ||
       LOp.NumInputs == 0)
@@ -735,7 +776,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
                 loadedCallSlot(Low, LB, LowOpIndex, LOp.Inputs[0]);
             Slot && !importCalleeName(*Image, *Slot).empty())
           RegisterCallSlot = *Slot;
-      applyCallRegisterEffect(MOp, LOp);
+      if (!bindFormattedCall(MB, MOp, LOp))
+        applyCallRegisterEffect(MOp, LOp);
       if (TrackDispatchArgs)
         DispatchDefined = StepDefined(DispatchDefined, LOp);
 

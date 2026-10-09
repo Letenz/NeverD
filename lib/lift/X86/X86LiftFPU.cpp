@@ -19,8 +19,7 @@
 
 namespace neverd {
 
-#define ST(i)                                                                  \
-  NdVar::reg(x86reg::stReg((FPUTop + (i)) & 7), x86reg::FPURegSize)
+#define ST(i) NdVar::reg(x86reg::stReg((FPUTop + (i)) & 7), x86reg::FPURegSize)
 
 // Widen a 64-bit IEEE-754 double bit pattern into an 80-bit x87 register slot.
 // The built-in x87 constants (FLD1/FLDPI/...) are stored as doubles; the 80-bit
@@ -37,8 +36,8 @@ static void fpuSetFromDoubleBits(X86Lifter::LiftState &S, NdVar Dst,
 // FNSTSW (commonly fnstsw+sahf: C0->CF, C2->PF, C3->ZF) reads the result.
 // C0=lt|unord, C2=unord, C3=eq|unord; C1 and exception/TOP bits stay 0 (only
 // C0/C2/C3 are consumed by the compare idioms).
-static void emitFpuCompareStatus(X86Lifter::LiftState &S, NdVar Eq,
-                                 NdVar Lt, NdVar Unord) {
+static void emitFpuCompareStatus(X86Lifter::LiftState &S, NdVar Eq, NdVar Lt,
+                                 NdVar Unord) {
   NdVar C0 = S.makeTemp(1), C3 = S.makeTemp(1);
   S.emit(NdOp::BOOL_OR, C0, {Lt, Unord});
   S.emit(NdOp::BOOL_OR, C3, {Eq, Unord});
@@ -559,13 +558,11 @@ bool X86Lifter::liftFPU(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     break;
   case X86_INS_FPREM:
     S.emitIntrinsic(Intrinsic::X87Fprem, ST(0), {ST(0), ST(1)});
-    S.emitIntrinsic(Intrinsic::X87ReadStatus,
-                    NdVar::reg(x86reg::FPU_SW, 2));
+    S.emitIntrinsic(Intrinsic::X87ReadStatus, NdVar::reg(x86reg::FPU_SW, 2));
     break;
   case X86_INS_FPREM1:
     S.emitIntrinsic(Intrinsic::X87Fprem1, ST(0), {ST(0), ST(1)});
-    S.emitIntrinsic(Intrinsic::X87ReadStatus,
-                    NdVar::reg(x86reg::FPU_SW, 2));
+    S.emitIntrinsic(Intrinsic::X87ReadStatus, NdVar::reg(x86reg::FPU_SW, 2));
     break;
   // 2-operand, pop: result lands in st1, then st0 is popped (st1 becomes top).
   case X86_INS_FPATAN:
@@ -628,18 +625,15 @@ bool X86Lifter::liftFPU(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_FCMOVNBE:
   case X86_INS_FCMOVNE:
   case X86_INS_FCMOVNU: {
-    // Source st(i): the register operand that isn't st0 (mirrors FXCH).
-    int Idx = 1;
-    for (int I = 0; I < X86.op_count; ++I) {
-      if (X86.operands[I].type == X86_OP_REG) {
-        auto RI = mapCapstoneReg(static_cast<x86_reg>(X86.operands[I].reg));
-        int CandIdx = x86reg::stRegIndex(RI.Offset);
-        if (CandIdx != 0) {
-          Idx = CandIdx;
-          break;
-        }
-      }
-    }
+    // Intel order is destination ST0, then source ST(i). The source can itself
+    // be ST0; discarding that operand silently turns a self move into ST1.
+    if (X86.op_count == 0 || X86.op_count > 2)
+      return false;
+    const auto &Source = X86.operands[X86.op_count - 1];
+    if (Source.type != X86_OP_REG || Source.reg < X86_REG_ST0 ||
+        Source.reg > X86_REG_ST7)
+      return false;
+    const int Idx = static_cast<int>(Source.reg - X86_REG_ST0);
     NdVar Cf = NdVar::reg(x86reg::CF, 1);
     NdVar Zf = NdVar::reg(x86reg::ZF, 1);
     NdVar Pf = NdVar::reg(x86reg::PF, 1);

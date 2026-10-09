@@ -3053,8 +3053,27 @@ void computeCallRegisterEffects(
   std::map<va_t, int> Depth;
   std::vector<va_t> Work;
   std::set<va_t> GuardForwarders;
+  // A call a constant format describes reads exactly what it names; the
+  // functions MedIR converts also pass those arguments (FormattedCall).
+  std::map<va_t, GPRReadWidths> FixedCallReads;
+  auto CollectFormattedCalls = [&](const LowFunc &F, bool Converted) {
+    std::map<va_t, FormattedCall> Calls;
+    pipeline_detail::collectFormattedCalls(Img, F, Calls);
+    for (auto &[Address, Call] : Calls) {
+      GPRReadWidths &Reads = FixedCallReads[Address];
+      for (const FormattedCallArgument &Argument : Call.Arguments)
+        if (const auto Family = registerFamilyOf(Img.Arch, Argument.Register))
+          Reads[Family->first] = std::max<uint8_t>(
+              Reads[Family->first],
+              static_cast<uint8_t>(Family->second + Argument.Bytes));
+      if (Converted)
+        Result.FormattedCalls.emplace(Address, std::move(Call));
+    }
+  };
   for (const LowFunc &LF : Result.LowFuncs) {
-    Effects[LF.Entry] = localRegisterEffect(Img, LF, &NoReturnTargets);
+    CollectFormattedCalls(LF, /*Converted=*/true);
+    Effects[LF.Entry] =
+        localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads);
     if (forwardsToGuardDispatch(Img, LF))
       GuardForwarders.insert(LF.Entry);
     Depth[LF.Entry] = 0;
@@ -3089,7 +3108,9 @@ void computeCallRegisterEffects(
       ++ExtraLifts;
       LowFunc Body =
           ExtraCFG.build(Img, ExtraDec, Callee, Img.getFunctionNameAt(Callee));
-      Effects[Callee] = localRegisterEffect(Img, Body, &NoReturnTargets);
+      CollectFormattedCalls(Body, /*Converted=*/false);
+      Effects[Callee] =
+          localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads);
       if (forwardsToGuardDispatch(Img, Body))
         GuardForwarders.insert(Callee);
       Depth[Callee] = CalleeDepth;

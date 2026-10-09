@@ -549,6 +549,121 @@ int main(void) {
 )");
 }
 
+/// Map \p Bytes read-only at \p At in \p Img, where a constant format lives.
+void addReadOnlyData(BinaryImage &Img, va_t At, const std::string &Bytes) {
+  Segment Data;
+  Data.Name = ".rodata";
+  Data.VA = At;
+  Data.Size = Data.FileSz = Bytes.size() + 1;
+  Data.Data.assign(Bytes.begin(), Bytes.end());
+  Data.Data.push_back(0);
+  Data.Flags = SegmentFlags::Readable;
+  Img.Segments.push_back(std::move(Data));
+}
+
+TEST(SysVCallContract, AFormatNamesTheArgumentsAFormattedCallPasses) {
+  // show(a, s, x, b, f) = printf("%d %s %f %d %f\n", a, s, x, b, f): x stays
+  // in xmm0 and f widens into xmm1, and AL counts the two doubles.  pass(...)
+  // calls show with its own arguments: show reads xmm0 only by passing it on.
+  constexpr va_t Show = Text, Pass = Text + 0x30, Stub = Text + 0x40;
+  constexpr va_t Format = 0x402000;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> ShowCode = {0x89, 0xD1,             // mov ecx, edx
+                                   0x48, 0x89, 0xF2,       // mov rdx, rsi
+                                   0x89, 0xFE,             // mov esi, edi
+                                   0xF3, 0x0F, 0x5A, 0xC9, // cvtss2sd xmm1
+                                   0x48, 0x8D, 0x3D};      // lea rdi, [fmt]
+  for (uint8_t B : rel32(Show + 18, Format))
+    ShowCode.push_back(B);
+  for (uint8_t B : {0xB0, 0x02, // mov al, 2
+                    0xE9})      // jmp printf
+    ShowCode.push_back(B);
+  for (uint8_t B : rel32(Show + 25, Stub))
+    ShowCode.push_back(B);
+  put(Code, Show, ShowCode);
+  std::vector<uint8_t> PassCode = {0x50,  // push rax
+                                   0xE8}; // call show
+  for (uint8_t B : rel32(Pass + 6, Show))
+    PassCode.push_back(B);
+  for (uint8_t B : {0x59,  // pop rcx
+                    0xC3}) // ret
+    PassCode.push_back(B);
+  put(Code, Pass, PassCode);
+  BinaryImage Img = makeImportImage(
+      Code, {{Show, "show"}, {Pass, "pass"}, {Stub, "printf_stub"}},
+      {{Stub, "printf"}});
+  addReadOnlyData(Img, Format, "%d %s %f %d %f\n");
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Show, Pass, Stub};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  // show reads a, s and b, x by passing it on, and the low lane of f.
+  const auto Reads = Result.CallEntryReadGPRs.find(Show);
+  ASSERT_NE(Reads, Result.CallEntryReadGPRs.end());
+  EXPECT_EQ(Reads->second[x86reg::RDI / 8], 4);
+  EXPECT_EQ(Reads->second[x86reg::RSI / 8], 8);
+  EXPECT_EQ(Reads->second[x86reg::RDX / 8], 4);
+  EXPECT_EQ(Reads->second[kX64VectorFamilyBase], 8);
+  EXPECT_EQ(Reads->second[kX64VectorFamilyBase + 1], 4);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+  const std::string ShowBody = body(Source, "show");
+  ASSERT_FALSE(ShowBody.empty()) << Source;
+  EXPECT_NE(ShowBody.find("printf(\"%d %s %f %d %f\\n\", arg0, (void*)arg1, "
+                          "arg3, arg2, (double)arg4)"),
+            std::string::npos)
+      << ShowBody;
+  const std::string PassBody = body(Source, "pass");
+  ASSERT_FALSE(PassBody.empty()) << Source;
+  EXPECT_NE(PassBody.find("show(arg0, arg1, arg2, arg3, arg4)"),
+            std::string::npos)
+      << PassBody;
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+}
+
+TEST(SysVCallContract, AFormattedCallFormatsTheValuesItPasses) {
+  // fmt_show(buf, n, a, x) = snprintf(buf, n, "%d %.2f", a, x): the
+  // recompiled call writes what the original does.
+  constexpr va_t FmtShow = Text, Stub = Text + 0x20, Format = 0x402000;
+  std::vector<uint8_t> Code(0x30, 0xCC);
+  std::vector<uint8_t> FmtShowCode = {0x89, 0xD1,        // mov ecx, edx
+                                      0x48, 0x8D, 0x15}; // lea rdx, [fmt]
+  for (uint8_t B : rel32(FmtShow + 9, Format))
+    FmtShowCode.push_back(B);
+  for (uint8_t B : {0xB0, 0x01, // mov al, 1
+                    0xE9})      // jmp snprintf
+    FmtShowCode.push_back(B);
+  for (uint8_t B : rel32(FmtShow + 16, Stub))
+    FmtShowCode.push_back(B);
+  put(Code, FmtShow, FmtShowCode);
+  BinaryImage Img =
+      makeImportImage(Code, {{FmtShow, "fmt_show"}, {Stub, "snprintf_stub"}},
+                      {{Stub, "snprintf"}});
+  addReadOnlyData(Img, Format, "%d %.2f");
+  const std::string Source = liftEntries(Img, {FmtShow});
+  const std::string Body = body(Source, "fmt_show");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("\"%d %.2f\", arg2, arg3)"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+  compileAndRun(Source + R"(
+#include <string.h>
+int main(void) {
+  char Text[32];
+  int (*Call)(char *, unsigned long, int, double) =
+      (int (*)(char *, unsigned long, int, double))(void *)fmt_show;
+  Call(Text, sizeof Text, 42, 3.25);
+  return strcmp(Text, "42 3.25") == 0 ? 0 : 1;
+}
+)");
+}
+
 TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
   // wrap(flag) picks the format in either arm of an `if` and calls
   // __fprintf_chk(0, 2, fmt) after the join: the format reaches the call as

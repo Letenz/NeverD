@@ -227,6 +227,13 @@ struct MedOp {
   /// Where a positional convention passes a floating argument in its slot's
   /// vector register instead: bit K for register argument K, Inputs[1 + K].
   uint8_t CalleeVectorSlots = 0;
+  /// The inputs after the target are every argument the call passes, in the
+  /// source's order (a FormattedCall).  Bit K of ExactFloatInputs marks
+  /// Inputs[1 + K] as the bits of a floating one, of ExactPointerInputs as an
+  /// address.
+  bool ExactArguments = false;
+  uint64_t ExactFloatInputs = 0;
+  uint64_t ExactPointerInputs = 0;
   /// The bytes of each of those whole vector registers the callee reads:
   /// four bits per argument, or per slot, in four-byte units (1 float, 2
   /// double, 4 all).
