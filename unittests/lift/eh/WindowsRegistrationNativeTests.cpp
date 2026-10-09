@@ -1426,6 +1426,109 @@ TEST(WindowsRegistrationNative, ReplaysPreservedCalleeReturnCleanup) {
   }
 }
 
+TEST(WindowsRegistrationNative, ProvesSeparateLeafStackAndECXObjectDomains) {
+  struct Case {
+    std::vector<uint8_t> Code;
+    bool Accepted;
+    std::vector<RegistrationObjectExtent> Reads;
+    std::vector<RegistrationObjectExtent> Writes;
+  };
+  const std::vector<Case> Cases = {
+      // Read a scalar through the borrowed object.
+      {{0x8b, 0x01, 0xc3}, true, {{0, 4}}, {}},
+      // Real MSVC /Od thiscall destructor: spill this in its private frame,
+      // update an image trace from this->Tag, restore its frame and return.
+      {{0x55, 0x8b, 0xec, 0x51, 0x89, 0x4d, 0xfc, 0x6b, 0x05, 0x00,
+        0x30, 0x40, 0x00, 0x0a, 0x8b, 0x4d, 0xfc, 0x03, 0x01, 0xa3,
+        0x00, 0x30, 0x40, 0x00, 0x8b, 0xe5, 0x5d, 0xc3},
+       true,
+       {{0, 4}},
+       {}},
+      // Private stack offset zero and object offset zero are different cells.
+      // Writing the object must not replace the spilled this pointer.
+      {{0x51, 0xc7, 0x01, 0x07, 0x00, 0x00, 0x00, 0x8b, 0x0c, 0x24, 0x8b, 0x41,
+        0x04, 0x83, 0xc4, 0x04, 0xc3},
+       true,
+       {{4, 8}},
+       {{0, 4}}},
+      // Partial pointer spills retain unknown object provenance.
+      {{0x51, 0xc6, 0x04, 0x24, 0x00, 0x59, 0x8b, 0x01, 0xc3}, false, {}, {}},
+      // Byte reads retain their exact extent rather than claiming a word.
+      {{0x0f, 0xb6, 0x01, 0xc3}, true, {{0, 1}}, {}},
+      // Object pointers may not escape to the image, an object or a result.
+      {{0x89, 0x0d, 0x00, 0x30, 0x40, 0x00, 0xc3}, false, {}, {}},
+      {{0x89, 0x09, 0xc3}, false, {}, {}},
+      {{0x8b, 0xc1, 0xc3}, false, {}, {}},
+      // Unknown and unbounded object addresses need a different proof.
+      {{0x03, 0xca, 0x8b, 0x01, 0xc3}, false, {}, {}},
+      {{0x8b, 0x41, 0xfc, 0xc3}, false, {}, {}},
+      {{0x8b, 0x81, 0x00, 0x00, 0x10, 0x00, 0xc3}, false, {}, {}},
+      {{0x8b, 0x01, 0x8b, 0x00, 0xc3}, false, {}, {}},
+      // The private domain still rejects uninitialized and caller-frame reads.
+      {{0x8b, 0x44, 0x24, 0xf4, 0xc3}, false, {}, {}},
+      {{0x55, 0x8b, 0xec, 0x8b, 0x45, 0x00, 0x8b, 0x00, 0x5d, 0xc3},
+       false,
+       {},
+       {}},
+      {{0x8b, 0x44, 0x24, 0x08, 0xc3}, false, {}, {}},
+      // Address-dependent control and nonvolatile corruption are not scalar
+      // object access, even when every return uses caller cleanup.
+      {{0xf7, 0xc1, 0x0f, 0x00, 0x00, 0x00, 0x74, 0x03, 0x31, 0xc0, 0xc3, 0x31,
+        0xc0, 0xc3},
+       false,
+       {},
+       {}},
+      {{0x31, 0xdb, 0xc3}, false, {}, {}},
+      {{0x83, 0xec, 0x04, 0xc3}, false, {}, {}},
+      // Neither a callee-pop return, nested call, atomic object effect nor
+      // live FS observer belongs to this leaf certificate.
+      {{0xc2, 0x04, 0x00}, false, {}, {}},
+      {{0xff, 0xd0, 0xc3}, false, {}, {}},
+      {{0xf0, 0x87, 0x01, 0xc3}, false, {}, {}},
+      {{0x64, 0xa1, 0x00, 0x00, 0x00, 0x00, 0xc3}, false, {}, {}},
+      // Image accesses must fit a real mapped allocation.
+      {{0xa1, 0x07, 0x30, 0x40, 0x00, 0xc3}, false, {}, {}},
+      // Vector aliases cannot launder the borrowed object address.
+      {{0x66, 0x0f, 0x6e, 0xc1, 0x66, 0x0f, 0x7e, 0xc0, 0xc3}, false, {}, {}}};
+  for (size_t Index = 0; Index != Cases.size(); ++Index) {
+    SCOPED_TRACE(Index);
+    BinaryImage Image;
+    Image.Arch = Arch::X86;
+    Image.Bits = Bitness::Bits32;
+    Image.Format = BinaryFormat::COFF;
+    Segment Text;
+    Text.Name = ".text";
+    Text.VA = 0x401000;
+    Text.Data = Cases[Index].Code;
+    Text.Size = Text.Data.size();
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Image.Segments.push_back(Text);
+    Segment Data;
+    Data.Name = ".data";
+    Data.VA = 0x403000;
+    Data.Data.resize(8);
+    Data.Size = Data.Data.size();
+    Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Image.Segments.push_back(Data);
+    const auto Proof = getCheckedX86RegistrationLeafCalleeABI(Image, Text.VA);
+    ASSERT_EQ(Proof.has_value(), Cases[Index].Accepted);
+    if (!Proof)
+      continue;
+    EXPECT_EQ(Proof->Target, Text.VA);
+    EXPECT_EQ(Proof->StackPopBytes, 0u);
+    EXPECT_EQ(Proof->ECXReads, Cases[Index].Reads);
+    EXPECT_EQ(Proof->ECXWrites, Cases[Index].Writes);
+    if (Index == 1) {
+      ASSERT_EQ(Proof->ImageReads.size(), 1u);
+      ASSERT_EQ(Proof->ImageWrites.size(), 1u);
+      EXPECT_EQ(Proof->ImageReads.front().Begin, Data.VA);
+      EXPECT_EQ(Proof->ImageReads.front().End, Data.VA + 4);
+      EXPECT_EQ(Proof->ImageWrites.front().Begin, Data.VA);
+      EXPECT_EQ(Proof->ImageWrites.front().End, Data.VA + 4);
+    }
+  }
+}
+
 TEST(WindowsRegistrationNative, RejectsPreservedCallerFrameAndFSObservers) {
   const std::vector<std::vector<uint8_t>> Programs = {
       // Follow the saved caller EBP, then read its try-level slot.

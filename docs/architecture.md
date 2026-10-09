@@ -62,7 +62,13 @@ entry. Callback separation and body extraction commit together under a shared
 copy budget. A separately converted ordinary PE32 callback cannot be embedded
 without a parent-frame projection; its clause retains the native target.
 `hasCallerCleanupRegistrationABI` owns the current PE32 stack-cleanup check,
-which the writer replays against immutable input. Native LLVM lowering owns
+which the writer replays against immutable input.
+`getCheckedX86RegistrationLeafCalleeABI` uses the same affine transfer for
+callee-private stack and borrowed ECX object domains, with separate spill
+storage. Its exact object/image footprints describe a returning leaf; a caller
+still needs bounds, initialization and registration-separation proof. A leaf
+summary alone cannot establish a source call or native C++ capability.
+Native LLVM lowering owns
 the physical registration and callback frame recovery. The COFF transaction
 authenticates emitted scope rows, SafeSEH and absolute relocations before
 installing the complete module through either patch mode. Analysis facts alone

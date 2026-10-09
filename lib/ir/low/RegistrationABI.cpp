@@ -20,10 +20,14 @@ namespace neverd {
 namespace {
 struct PrivateFrameState {
   registration_state::FrameState Frame;
+  registration_state::FrameState Borrow;
+  registration_state::FrameState BorrowSpills;
   std::set<int32_t> Initialized;
 
   bool merge(const PrivateFrameState &Other) {
     bool Changed = Frame.merge(Other.Frame);
+    Changed |= Borrow.merge(Other.Borrow);
+    Changed |= BorrowSpills.merge(Other.BorrowSpills);
     for (auto It = Initialized.begin(); It != Initialized.end();)
       if (!Other.Initialized.count(*It)) {
         It = Initialized.erase(It);
@@ -37,9 +41,12 @@ struct ImageFrameEffects {
   std::set<std::pair<va_t, va_t>> Reads;
   std::set<std::pair<va_t, va_t>> Writes;
   std::set<std::pair<va_t, va_t>> CallerPCWrites;
+  std::set<std::pair<int32_t, int32_t>> ECXReads;
+  std::set<std::pair<int32_t, int32_t>> ECXWrites;
 };
 bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
-                           size_t &Work, ImageFrameEffects &Effects) {
+                           size_t &Work, ImageFrameEffects &Effects,
+                           bool BorrowECX = false) {
   using namespace registration_state;
   auto Charge = [&](size_t Amount) {
     if (Amount > limits::kMaxRegistrationEHStateWork - Work)
@@ -57,6 +64,11 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
   FrameValue CallerPC;
   CallerPC.MayBeFrame = CallerPC.ReturnPC = true;
   Initial.Frame.Cells[4] = CallerPC;
+  if (BorrowECX) {
+    Initial.Frame.Registers[x86reg::RCX / x86reg::GeneralRegStride] = {};
+    Initial.Borrow.Registers[x86reg::RCX / x86reg::GeneralRegStride] =
+        FrameValue::frame(0);
+  }
   for (const auto &Block : Function.Blocks) {
     Blocks.emplace(Block.Id, &Block);
     for (const auto &Op : Block.Ops)
@@ -84,10 +96,14 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
     if (!Blocks.count(Id) ||
         !Charge(1 + Incoming.at(Id).Frame.Cells.size() +
                 Incoming.at(Id).Frame.OtherRegisterBytes.size() +
+                Incoming.at(Id).Borrow.Cells.size() +
+                Incoming.at(Id).BorrowSpills.Cells.size() +
+                Incoming.at(Id).Borrow.OtherRegisterBytes.size() +
                 Incoming.at(Id).Initialized.size()))
       return false;
     PrivateFrameState State = Incoming.at(Id);
     FrameTransfer Transfer(State.Frame, 0);
+    FrameTransfer BorrowTransfer(State.Borrow, 0);
     for (const auto &Op : Blocks.at(Id)->Ops) {
       size_t RegisterBytes = Op.Output.Size;
       for (unsigned Index = 0; Index != Op.NumInputs; ++Index)
@@ -96,69 +112,107 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
           Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         return false;
       Transfer.beginInstruction(Op.Addr);
+      BorrowTransfer.beginInstruction(Op.Addr);
+      auto BorrowValue = BorrowTransfer.evaluate(Op, false);
       const auto Memory = lowMemoryOperands(Op);
       if (Memory.Address) {
         if (!Memory.Complete ||
-            !Charge(State.Frame.Cells.size() + Memory.AccessSize))
+            !Charge(State.Frame.Cells.size() + State.Borrow.Cells.size() +
+                    State.BorrowSpills.Cells.size() + Memory.AccessSize))
           return false;
         const auto Address = Transfer.read(*Memory.Address);
-        // An unknown address can point into the caller frame. Stack arguments
-        // also require a separate extent/initialization proof, not a guessed
-        // parameter list from an arbitrary positive EBP displacement.
-        if ((!Address.Offset && !Address.Constant) ||
-            (Address.MayBeFrame && !Address.Offset) ||
-            (Address.Offset &&
-             int64_t(*Address.Offset) + Memory.AccessSize > 8))
+        const auto Object = BorrowTransfer.read(*Memory.Address);
+        if (Object.MayBeFrame && !Object.Offset)
           return false;
-        if (Address.Constant && *Address.Constant != 0) {
-          const auto *Owner = Image.getSegmentFor(*Address.Constant);
-          if (!Owner || *Address.Constant < Owner->VA ||
-              uint64_t(*Address.Constant) - Owner->VA > Owner->Size ||
-              Memory.AccessSize >
-                  Owner->Size - (uint64_t(*Address.Constant) - Owner->VA))
+        if (BorrowECX && Object.Offset) {
+          const int64_t End = int64_t(*Object.Offset) + Memory.AccessSize;
+          if (Address.Offset || Address.Constant || Address.MayBeFrame ||
+              *Object.Offset < 0 || End > INT32_MAX ||
+              End > limits::kMaxRegistrationEHStateWork)
             return false;
-        }
-        if (Address.Constant && Op.Opcode != NdOp::STORE)
-          Effects.Reads.emplace(*Address.Constant,
-                                va_t(*Address.Constant) + Memory.AccessSize);
-        if (Address.Constant && Memory.StoredValue)
-          Effects.Writes.emplace(*Address.Constant,
-                                 va_t(*Address.Constant) + Memory.AccessSize);
-        if (Address.Offset) {
-          const int64_t End = int64_t(*Address.Offset) + Memory.AccessSize;
-          if (End > INT32_MAX)
-            return false;
-          const bool Reads = Op.Opcode != NdOp::STORE;
-          // The real caller PC intentionally identifies the regenerated call
-          // site. Other bytes need a store by this invocation on every path.
-          const bool CallerPC = *Address.Offset == 4 && Memory.AccessSize == 4;
-          const auto SP =
-              State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
-                  .Offset;
-          if (!CallerPC && (!SP || *Address.Offset < *SP))
-            return false;
-          if (Reads && !CallerPC)
-            for (int64_t Byte = *Address.Offset; Byte < End; ++Byte)
-              if (!State.Initialized.count(int32_t(Byte)))
-                return false;
+          if (Op.Opcode != NdOp::STORE)
+            Effects.ECXReads.emplace(*Object.Offset, int32_t(End));
           if (Memory.StoredValue) {
-            if (End > 4 || Op.Opcode != NdOp::STORE)
+            const auto Stored = Transfer.read(*Memory.StoredValue);
+            const auto Borrowed = BorrowTransfer.read(*Memory.StoredValue);
+            if (Op.Opcode != NdOp::STORE || Stored.MayBeFrame ||
+                Borrowed.MayBeFrame)
               return false;
-            const auto Value = Transfer.read(*Memory.StoredValue);
-            State.Frame.store(*Address.Offset, Memory.AccessSize, Value);
-            for (int64_t Byte = *Address.Offset; Byte < End; ++Byte)
-              State.Initialized.insert(int32_t(Byte));
+            Effects.ECXWrites.emplace(*Object.Offset, int32_t(End));
+            State.Borrow.store(*Object.Offset, Memory.AccessSize, Borrowed);
           }
-        } else if (Memory.StoredValue &&
-                   Transfer.read(*Memory.StoredValue).MayBeFrame) {
-          if (!Transfer.read(*Memory.StoredValue).ReturnPC)
+        } else {
+          // An unknown address can point into the caller frame. Stack arguments
+          // also require a separate extent/initialization proof, not a guessed
+          // parameter list from an arbitrary positive EBP displacement.
+          if ((!Address.Offset && !Address.Constant) ||
+              (Address.MayBeFrame && !Address.Offset) ||
+              (Address.Offset &&
+               int64_t(*Address.Offset) + Memory.AccessSize > 8))
             return false;
-          Effects.CallerPCWrites.emplace(
-              *Address.Constant, va_t(*Address.Constant) + Memory.AccessSize);
+          if (Address.Constant && *Address.Constant != 0) {
+            const auto *Owner = Image.getSegmentFor(*Address.Constant);
+            if (!Owner || *Address.Constant < Owner->VA ||
+                uint64_t(*Address.Constant) - Owner->VA > Owner->Size ||
+                Memory.AccessSize >
+                    Owner->Size - (uint64_t(*Address.Constant) - Owner->VA))
+              return false;
+          }
+          if (Address.Constant && Op.Opcode != NdOp::STORE)
+            Effects.Reads.emplace(*Address.Constant,
+                                  va_t(*Address.Constant) + Memory.AccessSize);
+          if (Address.Constant && Memory.StoredValue)
+            Effects.Writes.emplace(*Address.Constant,
+                                   va_t(*Address.Constant) + Memory.AccessSize);
+          if (Address.Offset) {
+            const int64_t End = int64_t(*Address.Offset) + Memory.AccessSize;
+            if (End > INT32_MAX)
+              return false;
+            const bool Reads = Op.Opcode != NdOp::STORE;
+            // The real caller PC intentionally identifies the regenerated call
+            // site. Other bytes need a store by this invocation on every path.
+            const bool CallerPC =
+                *Address.Offset == 4 && Memory.AccessSize == 4;
+            const auto SP =
+                State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
+                    .Offset;
+            if (!CallerPC && (!SP || *Address.Offset < *SP))
+              return false;
+            if (Reads && !CallerPC)
+              for (int64_t Byte = *Address.Offset; Byte < End; ++Byte)
+                if (!State.Initialized.count(int32_t(Byte)))
+                  return false;
+            if (Memory.StoredValue) {
+              if (End > 4 || Op.Opcode != NdOp::STORE)
+                return false;
+              const auto Value = Transfer.read(*Memory.StoredValue);
+              State.Frame.store(*Address.Offset, Memory.AccessSize, Value);
+              if (BorrowECX)
+                State.BorrowSpills.store(
+                    *Address.Offset, Memory.AccessSize,
+                    BorrowTransfer.read(*Memory.StoredValue));
+              for (int64_t Byte = *Address.Offset; Byte < End; ++Byte)
+                State.Initialized.insert(int32_t(Byte));
+            }
+            if (Op.Opcode == NdOp::LOAD)
+              BorrowValue =
+                  State.BorrowSpills.load(Address.Offset, Memory.AccessSize);
+          } else if (Memory.StoredValue &&
+                     Transfer.read(*Memory.StoredValue).MayBeFrame) {
+            if (!Transfer.read(*Memory.StoredValue).ReturnPC)
+              return false;
+            Effects.CallerPCWrites.emplace(
+                *Address.Constant, va_t(*Address.Constant) + Memory.AccessSize);
+          }
+          if (Memory.StoredValue && !Address.Offset &&
+              BorrowTransfer.read(*Memory.StoredValue).MayBeFrame)
+            return false;
         }
       }
       std::optional<int32_t> AfterCallSP;
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+        if (BorrowECX)
+          return false;
         if (!Charge(State.Frame.Cells.size() + State.Initialized.size()))
           return false;
         for (unsigned Register = 0; Register != State.Frame.Registers.size();
@@ -199,11 +253,19 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
             It = State.Frame.Cells.erase(It);
           else
             ++It;
+        for (auto It = State.BorrowSpills.Cells.begin();
+             It != State.BorrowSpills.Cells.end();)
+          if (It->first < *AfterCallSP)
+            It = State.BorrowSpills.Cells.erase(It);
+          else
+            ++It;
       }
       if (Op.Opcode == NdOp::COND_BR || Op.Opcode == NdOp::INDIR_BR ||
           Op.Opcode == NdOp::RETURN || Op.Opcode == NdOp::INTRINSIC)
         for (unsigned Index = 0; Index != Op.NumInputs; ++Index) {
           const auto Value = Transfer.read(Op.Inputs[Index]);
+          if (BorrowTransfer.read(Op.Inputs[Index]).MayBeFrame)
+            return false;
           if (Value.MayBeFrame &&
               !(Op.Opcode == NdOp::RETURN &&
                 (Value.FrameOnlyFromCall || Value.ReturnPC ||
@@ -220,9 +282,13 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
           const auto Index = Register / x86reg::GeneralRegStride;
           if (State.Frame.Registers[Index] != Initial.Frame.Registers[Index])
             return false;
+          if (State.Borrow.Registers[Index] != Initial.Borrow.Registers[Index])
+            return false;
         }
       }
       Transfer.write(Op, Transfer.evaluate(Op, false));
+      if (BorrowECX)
+        BorrowTransfer.write(Op, BorrowValue);
       if (AfterCallSP)
         State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
             FrameValue::frame(*AfterCallSP);
@@ -231,7 +297,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
       const auto Existing = Incoming.find(Successor);
       const auto StateSize = [](const PrivateFrameState &S) {
         return S.Frame.Cells.size() + S.Frame.OtherRegisterBytes.size() +
-               S.Initialized.size();
+               S.Borrow.Cells.size() + S.BorrowSpills.Cells.size() +
+               S.Borrow.OtherRegisterBytes.size() + S.Initialized.size();
       };
       if (!Charge(
               1 + StateSize(State) +
@@ -245,6 +312,58 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
   return true;
 }
 } // namespace
+
+std::optional<RegistrationLeafCalleeABI>
+getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target) {
+  if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
+      Image.Format != BinaryFormat::COFF || !Image.isCodeAddress(Target) ||
+      Image.ExceptionMetadata.findFunction(Target))
+    return std::nullopt;
+  Decoder Decoder;
+  if (!Decoder.init(Image))
+    return std::nullopt;
+  CFGBuilder Builder;
+  const LowFunc Callee = Builder.build(Image, Decoder, Target, "abi-leaf");
+  if (Callee.CalleePopBytes || !Callee.hasCompleteLiftCoverage() ||
+      Callee.Blocks.empty() || Callee.ExceptionMetadata)
+    return std::nullopt;
+  for (const auto &Block : Callee.Blocks) {
+    if (Block.Succs.empty() &&
+        (Block.Ops.empty() || Block.Ops.back().Opcode != NdOp::RETURN))
+      return std::nullopt;
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+        return std::nullopt;
+  }
+  size_t Work = 0;
+  ImageFrameEffects Effects;
+  if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, true))
+    return std::nullopt;
+  auto Read = Effects.Reads.begin();
+  for (const auto &[Begin, End] : Effects.CallerPCWrites) {
+    while (Read != Effects.Reads.end() && Read->second <= Begin)
+      ++Read;
+    if (Read != Effects.Reads.end() && Read->first < End)
+      return std::nullopt;
+  }
+  RegistrationLeafCalleeABI Result;
+  Result.Target = Target;
+  auto CopyExtents = [](const auto &From, auto &To) {
+    for (const auto &[Begin, End] : From) {
+      if (!To.empty() && Begin <= To.back().End)
+        To.back().End = std::max(To.back().End, End);
+      else
+        To.push_back({Begin, End});
+    }
+  };
+  CopyExtents(Effects.ECXReads, Result.ECXReads);
+  CopyExtents(Effects.ECXWrites, Result.ECXWrites);
+  CopyExtents(Effects.Reads, Result.ImageReads);
+  CopyExtents(Effects.Writes, Result.ImageWrites);
+  CopyExtents(Effects.CallerPCWrites, Result.CallerPCWrites);
+  return Result;
+}
+
 bool hasCallerCleanupRegistrationABI(
     const LowFunc &Function, const BinaryImage &Image,
     std::vector<ExceptionAddressRange> *CallerPCWrites) {

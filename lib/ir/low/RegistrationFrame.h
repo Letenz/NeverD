@@ -142,6 +142,18 @@ struct FrameState {
         Cells[static_cast<int32_t>(uint32_t(Offset) + I)] = {
             {}, {}, false, true};
   }
+
+  FrameValue load(std::optional<int32_t> Offset, uint16_t Width) const {
+    if (Offset && Width == 4)
+      if (auto It = Cells.find(*Offset); It != Cells.end())
+        return It->second;
+    for (const auto &[Cell, Value] : Cells)
+      if (Value.MayBeFrame &&
+          (!Offset || (int64_t(Cell) < int64_t(*Offset) + Width &&
+                       int64_t(*Offset) < int64_t(Cell) + 4)))
+        return {{}, {}, false, true};
+    return {};
+  }
 };
 
 /// One block transfer. Registers and frame cells survive instructions and CFG
@@ -224,18 +236,8 @@ public:
         return Cookie;
       }
       if (Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-          Address.MayBeFrame) {
-        if (Address.Offset && Op.Output.Size == 4)
-          if (auto It = State.Cells.find(*Address.Offset);
-              It != State.Cells.end())
-            return It->second;
-        for (const auto &[Offset, Value] : State.Cells)
-          if (Value.MayBeFrame &&
-              (!Address.Offset ||
-               (int64_t(Offset) < int64_t(*Address.Offset) + Op.Output.Size &&
-                int64_t(*Address.Offset) < int64_t(Offset) + 4)))
-            return {{}, {}, false, true};
-      }
+          Address.MayBeFrame)
+        return State.load(Address.Offset, Op.Output.Size);
       return {};
     }
     if (Op.Opcode == NdOp::INT_XOR && Op.NumInputs == 2 &&
