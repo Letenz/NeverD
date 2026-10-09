@@ -9,6 +9,8 @@
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
+#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/WindowsEHMetadata.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
@@ -207,6 +209,119 @@ TEST(LLVMCVoidAnalysis, FreezeRejectsUnprovedPossiblyPoisonArithmetic) {
   }
 }
 
+TEST(LLVMCVoidAnalysis, FreezeOfLoadedDigitRecurrenceHasTotalBitvectorC) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("freeze-digit-loop", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *I8 = llvm::Type::getInt8Ty(Context);
+  auto *I32 = llvm::Type::getInt32Ty(Context);
+  auto *I64 = llvm::Type::getInt64Ty(Context);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I32, {Pointer, I64}, false),
+      llvm::GlobalValue::ExternalLinkage, "digits", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  auto *Loop = llvm::BasicBlock::Create(Context, "loop", Function);
+  auto *Exit = llvm::BasicBlock::Create(Context, "exit", Function);
+  llvm::IRBuilder<> Builder(Entry);
+  Builder.CreateBr(Loop);
+  Builder.SetInsertPoint(Loop);
+  auto *Index = Builder.CreatePHI(I64, 2);
+  auto *Accumulator = Builder.CreatePHI(I32, 2);
+  Index->addIncoming(Builder.getInt64(0), Entry);
+  Accumulator->addIncoming(Builder.getInt32(0), Entry);
+  auto *Digit = Builder.CreateZExt(
+      Builder.CreateLoad(I8, Builder.CreateGEP(I8, Function->getArg(0), Index)),
+      I64);
+  auto *Product = Builder.CreateShl(
+      Builder.CreateZExt(Builder.CreateMul(Accumulator, Builder.getInt32(5)),
+                         I64),
+      Builder.getInt64(1), "scaled", true, true);
+  auto *Sum = Builder.CreateAdd(Digit, Product, "sum", true, true);
+  auto *Next = Builder.CreateSub(
+      Builder.CreateTrunc(Builder.CreateFreeze(Sum, "chosen"), I32),
+      Builder.getInt32(48));
+  auto *NextIndex = Builder.CreateAdd(Index, Builder.getInt64(1));
+  Index->addIncoming(NextIndex, Loop);
+  Accumulator->addIncoming(Next, Loop);
+  Builder.CreateCondBr(Builder.CreateICmpULT(NextIndex, Function->getArg(1)),
+                       Loop, Exit);
+  Builder.SetInsertPoint(Exit);
+  Builder.CreateRet(Next);
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  compileAndRun(Source + R"(
+int main(void) {
+  const unsigned char text[] = "429496729612345678901234567890123456789";
+  uint32_t expected = 0;
+  for (uint64_t n = 1; n < sizeof(text); ++n) {
+    expected = expected * UINT32_C(10) + (uint32_t)(text[n - 1] - '0');
+    if (digits((void *)text, n) != expected) return 1;
+  }
+  return 0;
+}
+)");
+}
+
+TEST(LLVMCVoidAnalysis,
+     FreezeOfDivisionRecurrenceRequiresDefinedDivisionInputs) {
+  for (bool FreezeInputs : {false, true}) {
+    llvm::LLVMContext Context;
+    llvm::Module Module("freeze-division-loop", Context);
+    Module.setDataLayout("e-p:64:64");
+    auto *I32 = llvm::Type::getInt32Ty(Context);
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(I32, {I32, I32}, false),
+        llvm::GlobalValue::ExternalLinkage, "division_loop", Module);
+    auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+    auto *Loop = llvm::BasicBlock::Create(Context, "loop", Function);
+    auto *Exit = llvm::BasicBlock::Create(Context, "exit", Function);
+    llvm::IRBuilder<> Builder(Entry);
+    Builder.CreateBr(Loop);
+    Builder.SetInsertPoint(Loop);
+    auto *Index = Builder.CreatePHI(I32, 2);
+    auto *Value = Builder.CreatePHI(I32, 2);
+    Index->addIncoming(Builder.getInt32(0), Entry);
+    Value->addIncoming(Function->getArg(0), Entry);
+    llvm::Value *Input =
+        Builder.CreateMul(Value, Builder.getInt32(3), "input", false, true);
+    if (FreezeInputs)
+      Input = Builder.CreateFreeze(Input);
+    auto *Quotient = Builder.CreateSDiv(Input, Builder.getInt32(10));
+    auto *Next = Builder.CreateAdd(Quotient, Builder.getInt32(5));
+    auto *Chosen = Builder.CreateFreeze(Next);
+    auto *NextIndex = Builder.CreateAdd(Index, Builder.getInt32(1));
+    Index->addIncoming(NextIndex, Loop);
+    Value->addIncoming(Chosen, Loop);
+    Builder.CreateCondBr(Builder.CreateICmpULT(NextIndex, Function->getArg(1)),
+                         Loop, Exit);
+    Builder.SetInsertPoint(Exit);
+    Builder.CreateRet(Chosen);
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    if (!FreezeInputs) {
+      EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}),
+                   std::runtime_error);
+      continue;
+    }
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+    compileAndRun(Source + R"(
+int main(void) {
+  const uint32_t values[] = {0, 1, 0x80000000U, 0x7fffffffU, 0xffffffffU};
+  for (unsigned i = 0; i < 5; ++i) {
+    uint32_t value = values[i];
+    for (unsigned n = 1; n < 20; ++n) {
+      value = (uint32_t)((int32_t)(value * 3U) / 10) + 5U;
+      if ((uint32_t)division_loop(values[i], n) != value) return 1;
+    }
+  }
+  return 0;
+}
+)");
+  }
+}
+
 TEST(LLVMCVoidAnalysis, FreezeThroughComparisonKeepsDefinedChoiceAndRejectsPoison) {
   for (bool MayBePoison : {false, true}) {
     SCOPED_TRACE(MayBePoison);
@@ -242,6 +357,48 @@ int main(void) {
 )");
     }
   }
+}
+
+TEST(LLVMCVoidAnalysis, WholeModuleCollectsFPHelpersFromWindowsMetadataBodies) {
+  using namespace neverd;
+  llvm::LLVMContext Context;
+  llvm::Module Module("windows-fp-helpers", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *Double = llvm::Type::getDoubleTy(Context);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  auto *Type =
+      llvm::FunctionType::get(Double, {Double, Double, Pointer}, false);
+  auto *Function = llvm::Function::Create(
+      Type, llvm::GlobalValue::ExternalLinkage, "fp_body", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Assembly = llvm::InlineAsm::get(
+      Type, x86FPStateBinaryAsm(Intrinsic::X86FPAddState, 8),
+      X86FPStateBinaryConstraints, true);
+  auto *Call =
+      Builder.CreateCall(Assembly, {Function->getArg(0), Function->getArg(1),
+                                    Function->getArg(2)});
+  Call->setMetadata(X86FPStateAsmMetadata, llvm::MDNode::get(Context, {}));
+  Builder.CreateRet(Call);
+  Function->setMetadata(
+      windows_eh_md::NativeAttachment,
+      llvm::MDNode::get(Context,
+                        {llvm::ConstantAsMetadata::get(Builder.getInt1(true)),
+                         llvm::MDString::get(Context, "seh-x64-native")}));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, Out, Options));
+  compileAndRun(Source + R"(
+int main(void) {
+  uint32_t initial, state = 0x1f80;
+  __asm__ volatile("stmxcsr %0" : "=m"(initial));
+  double value = fp_body(1.5, 2.25, &state);
+  __asm__ volatile("ldmxcsr %0" :: "m"(initial));
+  return value != 3.75 || state != 0x1f80;
+}
+)");
 }
 
 } // namespace

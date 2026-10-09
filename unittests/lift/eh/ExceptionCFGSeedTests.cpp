@@ -138,6 +138,45 @@ TEST(ExceptionCFGSeed, CxxIpMapDoesNotSplitSameStateCallFromArgSetup) {
       << "first IP at a same-state call must stay with mov rcx, this";
 }
 
+TEST(ExceptionCFGSeed, SynchronousCxxUsesEachCallsReturnPC) {
+  for (unsigned MarkerOffset : {0u, 1u}) {
+    SCOPED_TRACE(MarkerOffset);
+    BinaryImage Img = makeImage(Arch::X64, BinaryFormat::COFF);
+    auto &Text = Img.Segments.front();
+    // call external; mov ecx,1; call external; ret.
+    Text.Data = {0xe8, 0xfb, 0,    0,    0, 0xb9, 1, 0,
+                 0,    0,    0xe8, 0xf1, 0, 0,    0, 0xc3};
+    ExceptionFunction EH = makeRecord(ExceptionEncoding::X64UnwindV1,
+                                      ExceptionPersonality::CxxFrameHandler3);
+    EH.Cxx.emplace();
+    auto &Cxx = *EH.Cxx;
+    Cxx.IsSynchronous = true;
+    Cxx.MaxState = 3;
+    Cxx.UnwindMap = {{-1, 0}, {-1, 0}, {-1, 0}};
+    Cxx.IPMap = {{kEntry + MarkerOffset, 0},
+                 {kEntry + 5 + MarkerOffset, 1},
+                 {kEntry + 16, -1}};
+    // With a boundary exactly at a return PC, the new state is active.
+    for (int32_t State = 0; State < 2; ++State) {
+      CxxTryBlock Try;
+      Try.TryLow = Try.TryHigh = State;
+      Try.CatchHigh = 2;
+      CxxCatchHandler Catch;
+      Catch.HandlerVA = kEntry + 0x200 + State * 0x10;
+      Try.Handlers.push_back(Catch);
+      Cxx.TryBlocks.push_back(Try);
+    }
+    const LowFunc Func = buildWith(Img, std::move(EH), Arch::X64);
+    std::vector<std::pair<va_t, int32_t>> Calls;
+    for (const auto &Block : Func.Blocks)
+      for (const auto &Edge : Block.ExceptionalSuccs)
+        if (Edge.Kind == ExceptionalEdgeKind::CxxCatch)
+          Calls.emplace_back(Edge.SourceVA, Edge.State);
+    EXPECT_EQ(Calls, (std::vector<std::pair<va_t, int32_t>>{
+                         {kEntry, MarkerOffset ? 0 : 1}, {kEntry + 10, 1}}));
+  }
+}
+
 TEST(ExceptionCFGSeed, SkipsAnItaniumCallSiteThatNamesNoLandingPad) {
   BinaryImage Img = makeImage(Arch::X64, BinaryFormat::ELF);
   ExceptionFunction EH = makeRecord(ExceptionEncoding::DwarfFDE,

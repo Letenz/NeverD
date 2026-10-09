@@ -642,18 +642,10 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
                functionIdentifier(*Fn);
       }
       if (auto *GV = llvm::dyn_cast<llvm::GlobalVariable>(Src)) {
-        if (GV->hasInitializer()) {
-          if (auto *CDA = llvm::dyn_cast<llvm::ConstantDataArray>(
-                  GV->getInitializer())) {
-            llvm::StringRef Raw = CDA->getRawDataValues();
-            uint64_t Val = 0;
-            size_t Len = std::min<size_t>(Raw.size(), 8);
-            for (size_t I = 0; I < Len; ++I)
-              Val |= static_cast<uint64_t>(static_cast<uint8_t>(Raw[I]))
-                     << (I * 8);
-            return "0x" + llvm::utohexstr(Val);
-          }
-        }
+        // A global is an address even when its initializer is a byte array.
+        // Reading initializer bytes here would turn ptrtoint into a load.
+        return "(" + typeToCLLVM(CE->getType()) + ")(void*)&(" + constStr(GV) +
+               ")";
       }
       return "(" + typeToCLLVM(CE->getType()) + ")(void*)" + valueStr(Src);
     }
@@ -669,7 +661,26 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       return "(" + typeToCLLVM(CE->getType()) + ")" +
              valueStr(CE->getOperand(0));
     }
-    throw std::runtime_error("LLVM C constant expression is not supported");
+    if ((CE->getOpcode() == llvm::Instruction::Add ||
+         CE->getOpcode() == llvm::Instruction::Sub) &&
+        (CE->getType()->isIntegerTy(8) || CE->getType()->isIntegerTy(16) ||
+         CE->getType()->isIntegerTy(32) || CE->getType()->isIntegerTy(64))) {
+      // Symbol-relative integer addresses remain relocatable in C too. Keep
+      // each operand at the LLVM bit width and normalize the result after C's
+      // integer promotions; do not evaluate a pointer using its old image VA.
+      const std::string Type = typeToCLLVM(CE->getType());
+      const std::string Left =
+          "(" + Type + ")(" + constStr(CE->getOperand(0)) + ")";
+      const std::string Right =
+          "(" + Type + ")(" + constStr(CE->getOperand(1)) + ")";
+      return "(" + Type + ")(" + Left +
+             (CE->getOpcode() == llvm::Instruction::Add ? " + " : " - ") +
+             Right + ")";
+    }
+    std::string Detail;
+    llvm::raw_string_ostream Stream(Detail);
+    Stream << "LLVM C constant expression is not supported: " << *CE;
+    throw std::runtime_error(Stream.str());
   }
 
   if (auto *GV = llvm::dyn_cast<llvm::GlobalValue>(C)) {

@@ -51,6 +51,109 @@ constexpr uint32_t kCxxCatchVolatile = 0x2u;
 constexpr uint32_t kCxxCatchReference = 0x8u;
 constexpr uint32_t kCxxCatchAll = 0x40u;
 
+// LLVM's definedness query deliberately stops at short expression depths and
+// at unconstrained loads. C nevertheless has a total bitvector projection for
+// this small integer sublanguage. Using that value for freeze is a valid
+// refinement: it equals the LLVM value when defined, and chooses one stable
+// value when poison-producing flags would make the LLVM result poison. This
+// does not introduce C undefined behavior on an LLVM-defined execution.
+// Variable shifts, FP conversion and uninitialized PHI cycles remain
+// unsupported.
+bool freezeHasDefinedCProjection(const llvm::Value *Root) {
+  std::vector<const llvm::Value *> Work{Root}, Anchors;
+  std::set<const llvm::Value *> Seen, Defined;
+  std::map<const llvm::Value *, std::vector<const llvm::Value *>> Users;
+  size_t Budget = 65536;
+  while (!Work.empty()) {
+    const auto *Value = Work.back();
+    Work.pop_back();
+    if (!Budget--)
+      return false;
+    if (!Seen.insert(Value).second)
+      continue;
+    auto *Type = llvm::dyn_cast<llvm::IntegerType>(Value->getType());
+    if (!Type || Type->getBitWidth() > 64 ||
+        llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Value))
+      return false;
+    if (llvm::isa<llvm::ConstantInt, llvm::Argument, llvm::FreezeInst>(Value)) {
+      Anchors.push_back(Value);
+      continue;
+    }
+    if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Value)) {
+      if (!Load->isSimple() || Load->getPointerAddressSpace() != 0)
+        return false;
+      // The existing memory projection materializes this access. In C an
+      // integer byte representation contains no LLVM poison bit.
+      Anchors.push_back(Value);
+      continue;
+    }
+    const auto *Inst = llvm::dyn_cast<llvm::Instruction>(Value);
+    if (!Inst)
+      return false;
+    if (Inst->getOpcode() == llvm::Instruction::SDiv ||
+        Inst->getOpcode() == llvm::Instruction::UDiv ||
+        Inst->getOpcode() == llvm::Instruction::SRem ||
+        Inst->getOpcode() == llvm::Instruction::URem) {
+      // Zero divisors and signed overflow are immediate LLVM UB, matching C.
+      // A poison *operand*, however, may yield poison that an enclosing freeze
+      // must define. Require LLVM-defined inputs, rather than reusing a
+      // wrapping C refinement of an upstream poison-producing expression.
+      // Dropping an `exact` flag then merely chooses the ordinary rounded
+      // quotient.
+      if (!llvm::all_of(Inst->operands(), [&](const llvm::Use &Operand) {
+            return llvm::isGuaranteedNotToBeUndefOrPoison(Operand, nullptr,
+                                                          Inst);
+          }))
+        return false;
+      Anchors.push_back(Value);
+      continue;
+    }
+    switch (Inst->getOpcode()) {
+    case llvm::Instruction::PHI:
+      if (!Inst->getNumOperands())
+        return false;
+      break;
+    case llvm::Instruction::Add:
+    case llvm::Instruction::Sub:
+    case llvm::Instruction::Mul:
+    case llvm::Instruction::And:
+    case llvm::Instruction::Or:
+    case llvm::Instruction::Xor:
+    case llvm::Instruction::Trunc:
+    case llvm::Instruction::ZExt:
+    case llvm::Instruction::SExt:
+    case llvm::Instruction::ICmp:
+    case llvm::Instruction::Select:
+      break;
+    case llvm::Instruction::Shl:
+    case llvm::Instruction::LShr:
+    case llvm::Instruction::AShr: {
+      const auto *Count =
+          llvm::dyn_cast<llvm::ConstantInt>(Inst->getOperand(1));
+      if (!Count || Count->getValue().uge(Type->getBitWidth()))
+        return false;
+      break;
+    }
+    default:
+      return false;
+    }
+    for (const auto &Operand : Inst->operands()) {
+      Users[Operand].push_back(Value);
+      Work.push_back(Operand);
+    }
+  }
+  while (!Anchors.empty()) {
+    const auto *Value = Anchors.back();
+    Anchors.pop_back();
+    if (!Budget--)
+      return false;
+    if (Defined.insert(Value).second)
+      if (auto It = Users.find(Value); It != Users.end())
+        Anchors.insert(Anchors.end(), It->second.begin(), It->second.end());
+  }
+  return Defined.size() == Seen.size();
+}
+
 std::optional<std::string> peelWrappedNot(const std::string &S) {
   if (S.size() < 3 || S[0] != '!' || S[1] != '(' || S.back() != ')')
     return std::nullopt;
@@ -1348,8 +1451,10 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       // possibly-poison expression into C could instead introduce undefined
       // behavior before freeze has a chance to define its result.
       bool ChooseZero = llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Value);
-      if (ChooseZero || llvm::isGuaranteedNotToBeUndefOrPoison(
-                            Value, nullptr, Freeze, &Dominators)) {
+      if (ChooseZero ||
+          llvm::isGuaranteedNotToBeUndefOrPoison(Value, nullptr, Freeze,
+                                                 &Dominators) ||
+          freezeHasDefinedCProjection(Value)) {
         emitIndent(Indent);
         OS << Name << " = " << (ChooseZero ? "0" : valueStr(Value)) << ";\n";
         return;

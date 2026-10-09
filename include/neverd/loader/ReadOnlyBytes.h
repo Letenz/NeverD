@@ -51,6 +51,8 @@ bool isImagePointerBitPattern(const BinaryImage &Image, uint64_t Bits,
 
 /// Read a full-width resolved data pointer from uniquely mapped immutable
 /// storage. The relocation must identify the current target's owning range.
+/// Supports linked Mach-O and exact PE DIR64/HIGHLOW data slots; conflicting
+/// or partial relocations, runtime import slots and duplicate fixups refuse.
 /// This proves the loaded value only, not a binding for the slot's address or
 /// permission to copy the target object.
 std::optional<va_t> readImmutableImagePointer(const BinaryImage &Image,

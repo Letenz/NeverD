@@ -473,7 +473,7 @@ llvm::Expected<ImportInventory> imports(RawImage &Raw,
 llvm::Error coff_loader::parseBaseRelocations(const COFFObjectFile &Object,
                                               BinaryImage &Image,
                                               uint64_t ImageBase) {
-  if (!Image.LoadOnlyFunctionEntries.empty() || Image.IsRelocatable)
+  if (Image.IsRelocatable)
     return llvm::Error::success();
   const auto *Directory = Object.getDataDirectory(BASE_RELOCATION_TABLE);
   if (!Directory || (!Directory->RelativeVirtualAddress && !Directory->Size))
@@ -484,7 +484,9 @@ llvm::Error coff_loader::parseBaseRelocations(const COFFObjectFile &Object,
   const auto Scaled = [&](uint64_t Factor) {
     return FileSize > UINT64_MAX / Factor ? UINT64_MAX : FileSize * Factor;
   };
-  RawImage Raw(Object, Image.Raw,
+  // Focused loads borrow the object buffer instead of retaining a second raw
+  // file copy. Relocation identity is still required by every emitted function.
+  RawImage Raw(Object, llvm::arrayRefFromStringRef(Object.getData()),
                {.MaxBytes = Scaled(8), .MaxRecords = Scaled(2)});
   if (ImageBase != Raw.Base)
     return invalid("base relocation mapping differs from its header");

@@ -2212,6 +2212,53 @@ int main(void) {
   }
 }
 
+TEST(LLVMCValues, RelocatableConstantAddressArithmeticUsesTheObjectAddress) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("relocatable_address_arithmetic", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Data =
+      llvm::ConstantDataArray::getString(Context, "0123456789abcdef", false);
+  auto *Global = new llvm::GlobalVariable(Module, Data->getType(), true,
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          Data, "address_bytes");
+  auto *Element = llvm::ConstantExpr::getGetElementPtr(
+      Data->getType(), Global, llvm::ConstantInt::get(Word, 1));
+  auto *Base = llvm::ConstantExpr::getPtrToInt(Element, Word);
+  auto *Address =
+      llvm::ConstantExpr::getAdd(Base, llvm::ConstantInt::getSigned(Word, -8));
+  auto *Function = llvm::Function::Create(llvm::FunctionType::get(Word, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "address_arithmetic", Module);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Function));
+  B.CreateRet(Address);
+  auto *Direct = llvm::Function::Create(llvm::FunctionType::get(Word, false),
+                                        llvm::GlobalValue::ExternalLinkage,
+                                        "direct_object_address", Module);
+  B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Direct));
+  B.CreateRet(llvm::ConstantExpr::getPtrToInt(Global, Word));
+  auto *Subtract = llvm::Function::Create(llvm::FunctionType::get(Word, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "subtract_object_address", Module);
+  B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Subtract));
+  B.CreateRet(llvm::ConstantExpr::getSub(B.getInt64(37), Base));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  const char *Main = R"(
+int main(void) {
+  uintptr_t expected = (uintptr_t)((const unsigned char *)&address_bytes + 8);
+  if (direct_object_address() != (uintptr_t)&address_bytes) return 2;
+  if (subtract_object_address() != UINT64_C(37) - (expected + 8)) return 3;
+  if (address_arithmetic() != expected) return 1;
+  return *(const unsigned char *)(uintptr_t)address_arithmetic() != '8';
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Optimization, {}, true);
+}
+
 TEST(LLVMCValues, UnsupportedConstantExpressionCannotBecomeZero) {
   llvm::LLVMContext Context;
   llvm::Module Module("constant_expression", Context);

@@ -283,7 +283,8 @@ void HighCWriter::prepareFunctionReturns(std::vector<HighFunc> &Funcs) const {
           Self(Self, Case.Body);
         for (auto &Clause : Stmt.EHClauseBodies)
           Self(Self, Clause);
-        if (Stmt.Kind == StmtKind::Return && Stmt.RetVal) {
+        if (Stmt.Kind == StmtKind::Return && Stmt.RetVal &&
+            Stmt.CxxContinuationReturnTargets.empty()) {
           if (highCExpressionHasEffect(*Stmt.RetVal)) {
             HighStmt Evaluate;
             Evaluate.Kind = StmtKind::ExprStmt;

@@ -205,6 +205,9 @@ referencedStatementEntries(const std::vector<HighStmt> &Stmts) {
       if (Clause.Kind == HighEHClauseKind::SEHExcept && Clause.HandlerVA != 0 &&
           Clause.HandlerVA != InvalidVA)
         Entries.insert(Clause.HandlerVA);
+    for (const HighEHClause &Clause : S.EHClauses)
+      Entries.insert(Clause.ContinuationVAs.begin(),
+                     Clause.ContinuationVAs.end());
   });
   return Entries;
 }

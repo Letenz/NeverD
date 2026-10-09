@@ -122,6 +122,12 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     return nullptr;
 
   CurMedFunc = &Func;
+  ensureFeasibleEdgeCache();
+  auto IsDeadBlock = [&](int Id) {
+    return !Func.SkippedSSA &&
+           FeasibleEdgeState == FeasibleEdgeCacheState::Ready &&
+           !FeasibleBlocks.count(Id);
+  };
   MutableReturnValue.reset();
   const MedMutableSourcePlan *MutablePlan = nullptr;
   if (Func.SkippedSSA) {
@@ -170,6 +176,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
       FragmentUses[FragmentVarKey(Input)].push_back(FragmentVarKey(Output));
   };
   for (const MedBlock &Block : Func.Blocks) {
+    if (IsDeadBlock(Block.Id))
+      continue;
     for (const MedOp &Op : Block.Ops) {
       // Track semantic value flow, not mere operand use.  A memory address
       // does not taint the value loaded from it, a call target/argument does
@@ -233,7 +241,9 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   auto RejectFragment = [&](const MedVar &V, const char *Sink) {
     rejectEscapingAddressFragment(V, Sink);
   };
-  for (const MedBlock &Block : Func.Blocks)
+  for (const MedBlock &Block : Func.Blocks) {
+    if (IsDeadBlock(Block.Id))
+      continue;
     for (size_t OpIndex = 0; OpIndex < Block.Ops.size(); ++OpIndex) {
       const MedOp &Op = Block.Ops[OpIndex];
       // Audit only values that actually escape or affect observable control.
@@ -288,6 +298,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
         break;
       }
     }
+  }
   if (FatalDataPointerResolution)
     return nullptr;
 
@@ -649,6 +660,13 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   for (auto &Blk : Func.Blocks) {
     auto *BB = BBMap[Blk.Id];
     llvm::IRBuilder<> Builder(BB);
+    if (IsDeadBlock(Blk.Id)) {
+      // Keep the prepared block identity for module references. No source
+      // operation or pointer-role audit is needed on a proved unreachable
+      // body; every external/exceptional entry was included in the roots.
+      Builder.CreateUnreachable();
+      continue;
+    }
     auto builderHasTerminator = [&]() {
       llvm::BasicBlock *InsertBB = Builder.GetInsertBlock();
       return InsertBB && !InsertBB->empty() && InsertBB->back().isTerminator();
@@ -781,8 +799,13 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
               TakenBB = FallthroughBB = ContBB;
             }
           }
-          if (TakenBB && FallthroughBB)
-            Builder.CreateCondBr(Cond, TakenBB, FallthroughBB);
+          if (TakenBB && FallthroughBB) {
+            if (auto Known = traceControlConst(Op.Inputs[1]);
+                Known && !Func.SkippedSSA)
+              Builder.CreateBr(*Known ? TakenBB : FallthroughBB);
+            else
+              Builder.CreateCondBr(Cond, TakenBB, FallthroughBB);
+          }
         }
         break;
       }

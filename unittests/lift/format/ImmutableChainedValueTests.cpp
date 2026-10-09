@@ -3,6 +3,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Support/Endian.h"
 
 using namespace neverd;
@@ -42,6 +43,79 @@ struct ChainedValueFixture {
   }
 };
 } // namespace
+
+TEST(ImmutablePEPointer, RequiresExactRelocationAndUnambiguousStorage) {
+  for (unsigned Width : {4u, 8u}) {
+    for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Mutation);
+      ChainedValueFixture F;
+      F.Image.Format = BinaryFormat::COFF;
+      F.Image.Arch = Width == 8 ? Arch::X64 : Arch::X86;
+      F.Image.Bits = Width == 8 ? Bitness::Bits64 : Bitness::Bits32;
+      F.Image.MachOHasChainedFixups = false;
+      F.Image.MachOResolvedChainedPointerSlots.clear();
+      for (auto &Seg : F.Image.Segments) {
+        Seg.Flags = SegmentFlags::Readable;
+        Seg.ReadOnlyAfterRelocations = false;
+      }
+      for (auto &Sec : F.Image.Sections)
+        Sec.Flags = SegmentFlags::Readable;
+      llvm::support::endian::write64le(F.Image.Segments[0].Data.data(), 0x3040);
+      const auto Type = static_cast<uint8_t>(
+          Width == 8 ? llvm::COFF::IMAGE_REL_BASED_DIR64
+                     : llvm::COFF::IMAGE_REL_BASED_HIGHLOW);
+      F.Image.BaseRelocations.push_back({F.Slot, Type});
+      F.Image.DataPtrRelocSlots.insert(F.Slot);
+      F.Image.DataPtrRelocTargetOwners[F.Slot] = 0x3000;
+      switch (Mutation) {
+      case 1:
+        F.Image.BaseRelocations.clear();
+        break;
+      case 2:
+        F.Image.BaseRelocations.push_back({F.Slot, Type});
+        break;
+      case 3:
+        F.Image.BaseRelocations.push_back({F.Slot + 1, Type});
+        break;
+      case 4:
+        F.Image.BaseRelocations[0].Type = llvm::COFF::IMAGE_REL_BASED_HIGH;
+        break;
+      case 5:
+        F.Image.Segments[0].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 6:
+        F.Image.Sections[0].FileSz = Width - 1;
+        break;
+      case 7:
+        F.Image.Sections.push_back(F.Image.Sections.front());
+        break;
+      case 8:
+        F.Image.CodePtrRelocSlots.insert(F.Slot);
+        break;
+      case 9:
+        F.Image.DataPtrRelocTargetOwners[F.Slot] = 0x2000;
+        break;
+      case 10:
+        F.Image.ConflictingImportStorageSlots.insert(F.Slot);
+        break;
+      case 11:
+        // Adjacent HIGHLOW slots do not overlap an exact four-byte read.
+        F.Image.BaseRelocations.push_back({F.Slot + Width, Type});
+        F.Image.DataPtrRelocSlots.insert(F.Slot + Width);
+        F.Image.DataPtrRelocTargetOwners[F.Slot + Width] = 0x3000;
+        break;
+      }
+      auto Target = readImmutableImagePointer(F.Image, F.Slot);
+      if (Mutation == 0 || Mutation == 11)
+        EXPECT_EQ(Target, 0x3040u);
+      else
+        EXPECT_FALSE(Target);
+      EXPECT_FALSE(readImmutableImageBytes(F.Image, F.Slot, Width));
+    }
+  }
+}
 
 TEST(ImmutableChainedValue,
      ReturnsRuntimeBitsWithoutPointerOrByteCopyAuthority) {

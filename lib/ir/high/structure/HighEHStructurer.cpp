@@ -612,7 +612,8 @@ void addRegistrationCandidates(const ExceptionFunction &EH,
   }
 }
 
-void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
+void addCxxCandidates(const ExceptionFunction &EH, const MedFunc &Med,
+                      const BinaryImage *Img,
                       std::vector<RegionCandidate> &Candidates,
                       unsigned &Rejected) {
   if (!EH.Cxx)
@@ -642,6 +643,10 @@ void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
       Clause.CatchObjectOffset = Catch.CatchObjectOffset;
       Clause.ParentFrameOffset = Catch.ParentFrameOffset;
       Clause.ContinuationVAs = Catch.ContinuationVAs;
+      for (const auto &Entry : Med.CxxContinuationEntries)
+        if (Entry.SourceEntry == Catch.HandlerVA &&
+            !llvm::is_contained(Clause.ContinuationVAs, Entry.Target))
+          Clause.ContinuationVAs.push_back(Entry.Target);
       fillCxxCatchType(Clause, Img);
       Candidate.Clauses.push_back(std::move(Clause));
     }
@@ -1470,7 +1475,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
   if (EH.ParseStatus == ExceptionParseStatus::Complete) {
     addSEHCandidates(EH, TargetArch, Candidates, Rejected);
     addRegistrationCandidates(EH, Candidates, Rejected);
-    addCxxCandidates(EH, Image, Candidates, Rejected);
+    addCxxCandidates(EH, Med, Image, Candidates, Rejected);
     addCxxCleanupOnlyCandidates(EH, Candidates, Rejected);
     addItaniumCandidates(EH, Candidates, Rejected);
   } else {
