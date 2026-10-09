@@ -3477,6 +3477,8 @@ add_neverd_unittest(NeverDX86FPStateAccuracyTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86FPStateAccuracyTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/X86FPStateTestExecution.cmake")
 
 add_neverd_unittest(NeverDX86SIMDAccuracyTests
   x86_64/X86_64_SIMDAccuracyTests.cpp
