@@ -1573,7 +1573,8 @@ class Checker {
                ? Status::Invalid
                : Status::BudgetExceeded,
            "native control target enumeration is incomplete");
-    for (const auto &Tuple : Values.Tuples) {
+    for (size_t I = 0; I != Values.Tuples.size(); ++I) {
+      const auto &Tuple = Values.Tuples[I];
       if (Tuple.size() != 1)
         fail(Status::Invalid, "invalid native target tuple");
       // Complete singleton enumeration already proves this equality over the
@@ -1585,11 +1586,16 @@ class Checker {
               ? Predicate
               : Ctx.mkAnd(Predicate,
                           Ctx.mkEq(Target, Ctx.mkConst(64, Tuple[0])));
-      scheduleNative(P, Tuple[0], TargetPredicate);
+      // Earlier targets need independent states; the last target consumes the
+      // remaining path, including the common singleton-enumeration case.
+      if (I + 1 == Values.Tuples.size())
+        scheduleNative(std::move(P), Tuple[0], TargetPredicate);
+      else
+        scheduleNative(P, Tuple[0], TargetPredicate);
     }
   }
 
-  LowBlock
+  const LowBlock &
   prepareNative(Path &P,
                 std::vector<LowInstructionUndefinedEffects> &Descriptions) {
     const auto &Insn = NativeInstructions.at(P.NativeAddress);
@@ -1687,8 +1693,10 @@ class Checker {
     if (auto Error = validateLowInstructionBoundaries(
             B, LowInstructionBoundaryRequirement::Required))
       fail(Status::Invalid, llvm::toString(std::move(Error)));
-    NativeTrace.Blocks.push_back(B);
-    return B;
+    NativeTrace.Blocks.push_back(std::move(B));
+    // Only prepareNative appends trace blocks. Successor scheduling queues
+    // paths without executing them, so this reference survives runPath.
+    return NativeTrace.Blocks.back();
   }
 
   int target(const LowBlock &B, SymRef Value) {
@@ -1716,10 +1724,8 @@ class Checker {
     if (++Result.BlockVisits > Limits.MaxBlockVisits)
       fail(Status::BudgetExceeded, "block-visit budget exhausted");
     std::vector<LowInstructionUndefinedEffects> NativeEffects;
-    std::optional<LowBlock> NativeBlock;
-    if (Provider)
-      NativeBlock = prepareNative(P, NativeEffects);
-    const auto &B = NativeBlock ? *NativeBlock : *Blocks.at(P.BlockId);
+    const auto &B =
+        Provider ? prepareNative(P, NativeEffects) : *Blocks.at(P.BlockId);
     Result.BlockId = B.Id;
     // Only static independence uses ancestry to reject a reachable cycle.
     if (!Provider && !Refinement)
