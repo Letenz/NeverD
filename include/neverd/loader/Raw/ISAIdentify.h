@@ -91,9 +91,10 @@ struct ISAIdentification {
 /// Reads a bounded number of windows, spread over a large file.
 ISAIdentification identifyISA(llvm::ArrayRef<uint8_t> Bytes);
 
-/// Of the instructions in \p Code, read from \p Offset on the way \p Family
-/// encodes them, the share only the family's 64-bit set has; none when the
-/// family is not one of a 32-bit and a 64-bit set (RawISA.def).
+/// Of the instructions in \p Code, read from \p Offset (modulo the bytes
+/// they align to) on the way \p Family encodes them, the share only the
+/// family's 64-bit set has; none when the family is not one of a 32-bit and
+/// a 64-bit set (RawISA.def).
 std::optional<double> readWideShare(llvm::StringRef Family,
                                     llvm::ArrayRef<uint8_t> Code,
                                     unsigned Offset = 0);

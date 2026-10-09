@@ -257,17 +257,28 @@ WindowRead readWindow(const Model &M, llvm::ArrayRef<uint8_t> Window) {
 }
 
 /// Where instructions of \p Set start in \p Windows, modulo \p Unit: the
-/// rotation under which the bytes fit the set's position statistics best.
+/// rotation under which the bytes fit the set's position statistics best,
+/// when it fits clearly better than every rotation of another start; the
+/// file's own alignment otherwise.
 unsigned readCodeOffset(const Model &M, size_t Set,
                         llvm::ArrayRef<llvm::ArrayRef<uint8_t>> Windows,
                         unsigned Unit) {
   const auto &Scores = M.PositionScores[Set];
   std::array<double, Positions> Fit{};
-  for (llvm::ArrayRef<uint8_t> Window : Windows)
+  size_t Bytes = 0;
+  for (llvm::ArrayRef<uint8_t> Window : Windows) {
+    Bytes += Window.size();
     for (size_t I = 0; I < Window.size(); ++I)
       for (size_t Rotation = 0; Rotation < Positions; ++Rotation)
         Fit[Rotation] += Scores[(I - Rotation) % Positions * 256 + Window[I]];
+  }
   const size_t Best = std::max_element(Fit.begin(), Fit.end()) - Fit.begin();
+  double Other = -INFINITY;
+  for (size_t Rotation = 0; Rotation < Positions; ++Rotation)
+    if (Rotation % Unit != Best % Unit)
+      Other = std::max(Other, Fit[Rotation]);
+  if (!Bytes || (Fit[Best] - Other) * 1000 < double(kOffsetMilli) * Bytes)
+    return 0;
   return unsigned(Best % Unit);
 }
 
@@ -288,7 +299,7 @@ double readWideShare(const Model &M, const WidthInfo &Width,
   size_t Read = 0, Wide = 0;
   switch (Width.Reader) {
   case WidthReader::Word:
-    for (size_t I = Offset; I + 4 <= Window.size(); I += 4, ++Read)
+    for (size_t I = Offset % 4; I + 4 <= Window.size(); I += 4, ++Read)
       Wide +=
           IsWide(Width.BigEndian ? read32be(&Window[I]) : read32le(&Window[I]));
     break;

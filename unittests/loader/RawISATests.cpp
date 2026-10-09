@@ -168,6 +168,8 @@ TEST(RawISA, SixtyFourBitOnlyInstructionsTellTheWidth) {
   Shifted.insert(Shifted.begin(), {0, 0});
   EXPECT_GT(readWideShare("mips-be", Shifted, 0).value_or(0), 0.0);
   EXPECT_EQ(readWideShare("mips-be", Shifted, 2), 0.0);
+  // An offset past a word reads from where it falls within one.
+  EXPECT_EQ(readWideShare("mips-be", Shifted, 6), 0.0);
   // A family of one width has no such share.
   EXPECT_FALSE(readWideShare("aarch64", words(Mips32, false)));
 }

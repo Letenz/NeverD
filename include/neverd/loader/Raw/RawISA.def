@@ -208,6 +208,10 @@ NEVERD_RAW_ISA_LIMIT(LeastWeightMilli, 500)
 NEVERD_RAW_ISA_LIMIT(VoteWeightMilli, 300)
 // Windows of the family read for its alignment and width, spread evenly.
 NEVERD_RAW_ISA_LIMIT(MostWidthWindows, 128)
+// Thousandths of a nat per byte by which the instructions' likeliest
+// alignment must fit the set's position statistics better than any other
+// for the code to count as starting off the file's alignment.
+NEVERD_RAW_ISA_LIMIT(OffsetMilli, 100)
 // Of a width family's instructions, in hundredths of a percent, the median
 // window's 64-bit-only share at most for the 32-bit set and at least for the
 // 64-bit set; a share between leaves the width unclear.
