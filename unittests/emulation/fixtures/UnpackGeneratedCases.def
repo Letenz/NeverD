@@ -75,6 +75,21 @@ NEVERD_GENERATED_MODE(LateOpaqueCall, 18)
 NEVERD_GENERATED_MODE(HeapState, 19)
 // Startup frees that data and clears its image pointer before transfer.
 NEVERD_GENERATED_MODE(ReleasedHeapState, 20)
+// Both loader and program use a provider-derived direct syscall number.
+NEVERD_GENERATED_MODE(DirectService, 21)
+// The loader stores the number; only the recovered program uses it.
+NEVERD_GENERATED_MODE(LateDirectService, 22)
+// Startup retains an OS-encoded null pointer in image or TLS bytes.
+NEVERD_GENERATED_MODE(EncodedPointer, 23)
+// Startup clears that value before transferring control.
+NEVERD_GENERATED_MODE(ClearedEncodedPointer, 24)
+// Encoding first occurs in the recovered program, after capture.
+NEVERD_GENERATED_MODE(LateEncodedPointer, 25)
+// The same retained state through the native provider aliases.
+NEVERD_GENERATED_MODE(NativeEncodedPointer, 26)
+// A decoder input is observed even when no encoder produced it in this run.
+NEVERD_GENERATED_MODE(DecodedPointer, 27)
+NEVERD_GENERATED_MODE(NativeDecodedPointer, 28)
 #endif
 
 #ifdef NEVERD_GENERATED_ADDRESS_REGISTER
@@ -142,6 +157,8 @@ NEVERD_GENERATED_KERNEL_API(ExitProcess)
 NEVERD_GENERATED_KERNEL_API(GetStdHandle)
 NEVERD_GENERATED_KERNEL_API(GetModuleHandleA)
 NEVERD_GENERATED_KERNEL_API(GetProcAddress)
+NEVERD_GENERATED_KERNEL_API(EncodePointer)
+NEVERD_GENERATED_KERNEL_API(DecodePointer)
 NEVERD_GENERATED_KERNEL_API(LoadLibraryA)
 NEVERD_GENERATED_KERNEL_API(WriteFile)
 NEVERD_GENERATED_KERNEL_API(GetProcessHeap)

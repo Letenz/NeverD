@@ -437,6 +437,11 @@ struct MedFunc {
   /// from the function name or from an unexplained missing return.
   bool DoesNotReturn = false;
 
+  /// The function returns no value a caller could rely on
+  /// (settleReturnContracts), so C shows it as void.  Code generation keeps
+  /// the return register.
+  bool ReturnsNoValue = false;
+
   /// How execution reaches Entry, which fixes the alignment of the stack
   /// pointer there (functionEntryKind).
   StackEntryKind EntryKind = StackEntryKind::Call;

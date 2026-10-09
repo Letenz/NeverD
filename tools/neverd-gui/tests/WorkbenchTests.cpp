@@ -4,6 +4,7 @@
 #include "CodeView.h"
 #include "DisassemblyView.h"
 #include "Docking.h"
+#include "ExtensionsView.h"
 #include "GraphView.h"
 #include "HexView.h"
 #include "ListingView.h"
@@ -11,15 +12,19 @@
 #include "MainWindow.h"
 #include "OutputWindow.h"
 #include "ProjectDatabase.h"
+#include "QuickStartDialog.h"
 #include "Session.h"
+#include "SettingsKeys.h"
 #include "Theme.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
@@ -30,11 +35,14 @@
 #include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QPushButton>
+#include <QScopeGuard>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
@@ -55,6 +63,9 @@ namespace {
 constexpr Address Base = 0xffff800012340000ULL;
 constexpr int OpenTimeoutMs = 7000;
 constexpr int NativeOpenTimeoutMs = 30000;
+// The widest a view may insist on being: a dock's tab bar keeps the dock some
+// 130 pixels wide whatever it shows.
+constexpr int NarrowViewWidth = 160;
 
 QString writeFixture(const QTemporaryDir &directory, const QString &name) {
   const auto path = directory.filePath(name);
@@ -917,6 +928,70 @@ private slots:
     QVERIFY(bench.session.filePath().isEmpty());
   }
 
+  void quickStartShowsRecentFilesAndStartsAsChosen() {
+    // As IDA's Quick start: New, Go and Previous, the recent files and
+    // whether it greets the next start.  Each recent file shows its format,
+    // name, folder and when it was last opened.
+    QTemporaryDir directory;
+    const QString elf = directory.filePath(QStringLiteral("program"));
+    {
+      QFile file(elf);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(QByteArray("\x7F"
+                            "ELF\x02\x01\x01\0",
+                            8));
+    }
+    const QString missing = directory.filePath(QStringLiteral("gone.bin"));
+    QSettings().setValue(settings::RecentFiles, QStringList{elf, missing});
+    QSettings().setValue(settings::RecentOpened,
+                         QVariantMap{{elf, QDateTime::currentDateTime()}});
+    const auto restore = qScopeGuard([] {
+      QSettings().remove(settings::RecentFiles);
+      QSettings().remove(settings::RecentOpened);
+      QSettings().remove(settings::QuickStart);
+    });
+
+    QuickStartDialog dialog;
+    auto *recent =
+        dialog.findChild<QListWidget *>(QStringLiteral("quickStartRecent"));
+    QVERIFY(recent);
+    QCOMPARE(recent->count(), 2);
+    QCOMPARE(recent->item(0)->text(), QStringLiteral("program"));
+    QCOMPARE(recent->item(0)->data(Qt::UserRole + 1).toString(),
+             QStringLiteral("ELF"));
+    QVERIFY(recent->item(0)
+                ->data(Qt::UserRole + 3)
+                .toString()
+                .startsWith(QStringLiteral("Today, ")));
+    QCOMPARE(recent->item(1)->data(Qt::UserRole + 3).toString(),
+             QStringLiteral("Missing"));
+
+    // Delete forgets the selected file.
+    recent->setCurrentRow(1);
+    QTest::keyClick(recent, Qt::Key_Delete);
+    QCOMPARE(recent->count(), 1);
+    QCOMPARE(QSettings().value(settings::RecentFiles).toStringList(),
+             QStringList{elf});
+
+    // Display at startup is the setting the next start reads.
+    auto *atStartup = dialog.findChild<QCheckBox *>();
+    QVERIFY(atStartup && atStartup->isChecked());
+    atStartup->setChecked(false);
+    QVERIFY(!QSettings().value(settings::QuickStart, true).toBool());
+
+    // Previous loads the selected file.
+    QPushButton *previous = nullptr;
+    for (auto *button : dialog.findChildren<QPushButton *>())
+      if (button->text() == QStringLiteral("&Previous"))
+        previous = button;
+    QVERIFY(previous && previous->isEnabled() && previous->isDefault());
+    recent->setCurrentRow(0);
+    previous->click();
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QCOMPARE(dialog.start(), QuickStartDialog::Start::Previous);
+    QCOMPARE(dialog.file(), elf);
+  }
+
   void fileDropOpensFromQuickStart() {
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
@@ -939,6 +1014,109 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(bench.session.filePath(), path, OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QVERIFY(!QApplication::activeModalWidget());
+  }
+
+  void reloadReadsTheInputFileAgainWithItsSavedComments() {
+    // As IDA's File, Load file, Reload the input file: a fresh worker reads
+    // the file again, with the comments that were saved; unsaved ones go
+    // when the user discards them.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.session.setComment(Base, QStringLiteral("saved comment"));
+    QTRY_VERIFY(bench.session.dirty());
+    bench.session.save();
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(path + ".neverd-annotations.json"),
+                             OpenTimeoutMs);
+    QTRY_VERIFY(!bench.session.dirty());
+    bench.session.setComment(Base + 0x140, QStringLiteral("unsaved comment"));
+    QTRY_VERIFY(bench.session.dirty());
+
+    const quint64 epoch = bench.session.epoch();
+    LoadDialogAcceptor loadDialogs;
+    QTimer discard;
+    bool prompted = false;
+    connect(&discard, &QTimer::timeout, this, [&] {
+      if (auto *box =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        prompted = true;
+        box->button(QMessageBox::Discard)->click();
+      }
+    });
+    discard.start(10);
+    bench.action(ActionId::FileReload)->trigger();
+    QTRY_VERIFY(prompted);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded() &&
+                                 bench.session.epoch() != epoch,
+                             OpenTimeoutMs);
+    QCOMPARE(bench.session.filePath(), path);
+    QVERIFY(!bench.session.dirty());
+    const auto saved = readAll(path + ".neverd-annotations.json");
+    QVERIFY(saved.contains("saved comment"));
+    QVERIFY(!saved.contains("unsaved comment"));
+    auto *log = bench.window->findChild<OutputWindow *>()
+                    ->findChild<QPlainTextEdit *>();
+    QVERIFY(log);
+    QTRY_VERIFY(
+        log->toPlainText().contains(QStringLiteral("Reloaded the input file")));
+  }
+
+  void fileInAReadOnlyFolderKeepsItsProjectInTheDataDirectory() {
+    // IDA asks for another place for its database when the input's folder
+    // is read-only.  The workbench opens the file anyway: its database,
+    // sidecars and lock sit in the user's data directory, beside a copy.
+    QTemporaryDir data;
+    const QByteArray dataHome = qgetenv("XDG_DATA_HOME");
+    qputenv("XDG_DATA_HOME", data.path().toUtf8());
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QFile::setPermissions(directory.path(),
+                          QFileDevice::ReadOwner | QFileDevice::ExeOwner);
+    const auto restore = qScopeGuard([&] {
+      QFile::setPermissions(directory.path(), QFileDevice::ReadOwner |
+                                                  QFileDevice::WriteOwner |
+                                                  QFileDevice::ExeOwner);
+      if (dataHome.isNull())
+        qunsetenv("XDG_DATA_HOME");
+      else
+        qputenv("XDG_DATA_HOME", dataHome);
+    });
+    if (QFileInfo(directory.path()).isWritable())
+      QSKIP("This user can write to a read-only folder");
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(bench.session.projectPath(), path);
+    const QString copy = bench.session.filePath();
+    QVERIFY2(copy.startsWith(data.path()), qPrintable(copy));
+    QCOMPARE(readAll(copy), readAll(path));
+    auto *log = bench.window->findChild<OutputWindow *>()
+                    ->findChild<QPlainTextEdit *>();
+    QVERIFY(log);
+    QTRY_VERIFY(log->toPlainText().contains(
+        QStringLiteral("is in a folder you cannot write to")));
+
+    bench.session.setComment(Base, QStringLiteral("kept elsewhere"));
+    QTRY_VERIFY(bench.session.dirty());
+    bench.session.save();
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(copy + ".neverd-annotations.json"),
+                             OpenTimeoutMs);
+    QVERIFY(!QFile::exists(path + ".neverd-annotations.json"));
+    QTRY_VERIFY(!bench.session.dirty());
+
+    // Reloading reads the file the user opened, with what was saved.
+    const quint64 epoch = bench.session.epoch();
+    LoadDialogAcceptor loadDialogs;
+    bench.action(ActionId::FileReload)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded() &&
+                                 bench.session.epoch() != epoch,
+                             OpenTimeoutMs);
+    QCOMPARE(bench.session.projectPath(), path);
+    QCOMPARE(bench.session.filePath(), copy);
+    QVERIFY(
+        readAll(copy + ".neverd-annotations.json").contains("kept elsewhere"));
   }
 
   void fileDropKeepsUnsavedChangesWhenCancelled() {
@@ -987,6 +1165,37 @@ private slots:
     input.show();
     QVERIFY(QTest::qWaitForWindowExposed(&input));
     QVERIFY2(input.width() >= 420, qPrintable(QString::number(input.width())));
+  }
+
+  void viewsNarrowPastTheirRows() {
+    // A status line or a row of buttons is cut at its view's edge.  Kept
+    // whole, the disassembly's status line held its dock over 500 pixels
+    // wide, and the separators beside that dock would not move.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-import.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    bench.action(ActionId::ViewExtensions)->trigger();
+    auto *code = bench.codeView(QStringLiteral("source"));
+    auto *extensions = bench.window->findChild<ExtensionsView *>();
+    QVERIFY(code && extensions && bench.functions());
+    // Every button shows, as the fold button does for library code.
+    for (auto *button : code->findChildren<QToolButton *>())
+      button->show();
+    const QString wide(400, QLatin1Char('x'));
+    const QList<QWidget *> views{bench.window->disassembly(), code,
+                                 bench.functions(), extensions};
+    for (auto *view : views) {
+      for (auto *label : view->findChildren<QLabel *>())
+        label->setText(wide);
+      QVERIFY2(view->minimumSizeHint().width() <= NarrowViewWidth,
+               view->metaObject()->className());
+    }
   }
 
   void graphStopsWaitingWhenTheFileCloses() {

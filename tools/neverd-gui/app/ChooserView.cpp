@@ -3,6 +3,7 @@
 #include "AddressSpace.h"
 #include "Icons.h"
 #include "Session.h"
+#include "ShrinkableRow.h"
 #include "Theme.h"
 
 #include <QApplication>
@@ -457,6 +458,7 @@ ChooserView::ChooserView(Session &session, const AddressSpace &space,
   filter_->installEventFilter(this);
   layout->addWidget(filter_);
   status_->setContentsMargins(6, 2, 6, 2);
+  makeRowShrinkable(*status_);
   layout->addWidget(status_);
   filterTimer_.setSingleShot(true);
   filterTimer_.setInterval(FilterDebounceMs);

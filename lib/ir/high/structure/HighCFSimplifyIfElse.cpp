@@ -1057,7 +1057,7 @@ static bool sameMedVar(const MedVar &A, const MedVar &B) {
 // condition (composeWorkAssigns) shares them heavily.  Both walks below visit
 // each shared node once; a tree walk of that DAG is exponential.
 static bool exprUsesVarShared(const HighExpr *E, const MedVar &V) {
-  std::set<const HighExpr *> Seen;
+  HighExprSet Seen;
   std::vector<const HighExpr *> Work;
   if (E)
     Work.push_back(E);
@@ -3924,9 +3924,51 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                                 const MedFunc *Med,
                                 bool ChildrenStructured = false);
 
+/// \p IsTarget tells whether a goto may enter an address; it is asked only
+/// once a pair of guards could fold, which is rare.
 static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
-                                   const std::set<va_t> &Targets) {
+                                   llvm::function_ref<bool(va_t)> IsTarget) {
   bool Changed = false;
+  // Which statements of the function read each variable, as stmtReadsVar
+  // reads it, for the prefix checks below.  One walk serves every check
+  // until a fold rewrites the body.
+  using VarKey = std::tuple<int, int, int>;
+  std::optional<std::map<VarKey, std::vector<const HighStmt *>>> Readers;
+  const auto readOutside = [&](const MedVar &V,
+                               const std::set<const HighStmt *> &Skip) {
+    if (!Readers) {
+      Readers.emplace();
+      walkStmts(IfElseFunctionBody ? *IfElseFunctionBody : Body,
+                [&](const HighStmt &S) {
+                  std::set<VarKey> Read;
+                  HighExprSet Seen;
+                  llvm::SmallVector<const HighExpr *, 32> Work;
+                  for (const ExprPtr *Slot :
+                       {&S.Val, &S.Cond, &S.CallExpr, &S.RetVal, &S.StoreAddr,
+                        &S.StoreVal, &S.SwitchExpr})
+                    Work.push_back(Slot->get());
+                  if (S.Dst && S.Dst->Kind != ExprKind::Var &&
+                      S.Dst->Kind != ExprKind::Phi)
+                    Work.push_back(S.Dst.get());
+                  while (!Work.empty()) {
+                    const HighExpr *E = Work.pop_back_val();
+                    if (!E || !Seen.insert(E).second)
+                      continue;
+                    if (E->Kind == ExprKind::Var)
+                      Read.emplace(E->Var.Kind, E->Var.Id, E->Var.SSAVer);
+                    E->forEachChildExpr([&](const ExprPtr &Child) {
+                      Work.push_back(Child.get());
+                    });
+                  }
+                  for (const VarKey &Key : Read)
+                    (*Readers)[Key].push_back(&S);
+                });
+    }
+    const auto It = Readers->find({V.Kind, V.Id, V.SSAVer});
+    return It != Readers->end() &&
+           llvm::any_of(It->second,
+                        [&](const HighStmt *S) { return !Skip.count(S); });
+  };
   for (int I = 0; I < static_cast<int>(Body.size()); ++I) {
     HighStmt &Stmt = Body[I];
     if (Stmt.Kind != StmtKind::If || !Stmt.Cond || !bodyIsSkipGoto(Stmt.Body))
@@ -3949,8 +3991,8 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
     // would leave that jump without a target.
     bool Entered = false;
     for (size_t K = static_cast<size_t>(I) + 1; K <= J && !Entered; ++K)
-      walkStmts(std::vector<HighStmt>{Body[K]}, [&](const HighStmt &N) {
-        Entered |= N.Addr && N.Addr != InvalidVA && Targets.count(N.Addr);
+      walkStatementTree(Body[K], [&](const HighStmt &N) {
+        Entered |= N.Addr && N.Addr != InvalidVA && IsTarget(N.Addr);
       });
     if (Entered)
       continue;
@@ -3969,7 +4011,7 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
       if (Prefix.Kind != StmtKind::Assign || !Prefix.Dst ||
           Prefix.Dst->Kind != ExprKind::Var ||
           exprHasObservableEffect(Prefix.Val.get()) ||
-          functionReadsVar(Body, Prefix.Dst->Var, FoldedRange)) {
+          readOutside(Prefix.Dst->Var, FoldedRange)) {
         PrefixSafe = false;
         break;
       }
@@ -3992,6 +4034,7 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
       Body.erase(Body.begin() + static_cast<long>(I) + 1,
                  Body.begin() + static_cast<long>(J) + 1);
       Changed = true;
+      Readers.reset();
       --I;
       continue;
     }
@@ -4002,6 +4045,7 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
     Body.erase(Body.begin() + static_cast<long>(I) + 1,
                Body.begin() + static_cast<long>(J) + 1);
     Changed = true;
+    Readers.reset();
     --I;
   }
   return Changed;
@@ -4018,7 +4062,8 @@ static void dropDuplicateSkipGotosNested(std::vector<HighStmt> &Body,
     for (auto &Clause : S.EHClauseBodies)
       dropDuplicateSkipGotosNested(Clause, Targets);
   }
-  dropDuplicateSkipGotos(Body, Targets);
+  dropDuplicateSkipGotos(Body,
+                         [&](va_t Address) { return Targets.count(Address); });
 }
 
 static void foldJoinValueGotoChainNested(std::vector<HighStmt> &Body) {
@@ -5784,11 +5829,15 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
     NestedChanged |= Changed;
   }
   {
-    std::set<va_t> Targets = gotoTargets(Body);
-    if (IfElseFunctionTargets)
-      Targets.insert(IfElseFunctionTargets->begin(),
-                     IfElseFunctionTargets->end());
-    NestedChanged |= dropDuplicateSkipGotos(Body, Targets);
+    // The list's own targets are collected only when a pair could fold, and
+    // the function's are not copied: this runs for every list on every visit.
+    std::optional<std::set<va_t>> Targets;
+    NestedChanged |= dropDuplicateSkipGotos(Body, [&](va_t Address) {
+      if (!Targets)
+        Targets = gotoTargets(Body);
+      return Targets->count(Address) ||
+             (IfElseFunctionTargets && IfElseFunctionTargets->count(Address));
+    });
   }
   for (size_t I = 0; I < Body.size(); ++I) {
     HighStmt &S = Body[I];

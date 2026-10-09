@@ -857,8 +857,13 @@ Services::setThread(const Service &S, const NativeCallEvent &Event) {
 }
 
 llvm::Expected<std::optional<uint64_t>>
-Services::encodePointer(const Service &, const NativeCallEvent &Event) {
-  return std::optional<uint64_t>(Event.Arguments[0] ^ PointerCookie);
+Services::encodePointer(const Service &S, const NativeCallEvent &Event) {
+  const uint64_t Value = Event.Arguments[0] ^ PointerCookie;
+  EncodedPointers.insert(S.Kind == API::EncodePointer ||
+                                 S.Kind == API::RtlEncodePointer
+                             ? Value
+                             : Event.Arguments[0]);
+  return std::optional<uint64_t>(Value);
 }
 
 llvm::Expected<std::optional<uint64_t>>

@@ -2,6 +2,7 @@
 
 #include "Icons.h"
 #include "Session.h"
+#include "ShrinkableRow.h"
 #include "Theme.h"
 
 #include <QApplication>
@@ -1210,8 +1211,10 @@ CodeView::CodeView(Session &session, const QString &representation,
   auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
-  auto *bar = new QHBoxLayout;
+  auto *barRow = new QWidget(this);
+  auto *bar = new QHBoxLayout(barRow);
   bar->setContentsMargins(4, 2, 4, 2);
+  bar->setSpacing(0);
   selector_->addItem(QString(), representation);
   updateRepresentations();
   bar->addWidget(selector_);
@@ -1230,9 +1233,11 @@ CodeView::CodeView(Session &session, const QString &representation,
   lock_->setToolTip(tr("Keep this function while the disassembly moves on"));
   bar->addWidget(lock_);
   bar->addStretch(1);
-  layout->addLayout(bar);
+  makeRowShrinkable(*barRow);
+  layout->addWidget(barRow);
   layout->addWidget(text_, 1);
   status_->setContentsMargins(6, 2, 6, 2);
+  makeRowShrinkable(*status_);
   layout->addWidget(status_);
   connect(selector_, &QComboBox::currentIndexChanged, this, [this] {
     const auto name = selector_->currentData().toString();

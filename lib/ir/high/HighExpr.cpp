@@ -258,7 +258,7 @@ static bool hasMemoryBoundary(const HighExpr &Expr) {
 }
 
 bool HighExpr::hasOrderedMemoryAccess() const {
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   std::vector<const HighExpr *> Work{this};
   while (!Work.empty()) {
     const HighExpr *Expr = Work.back();
@@ -273,8 +273,7 @@ bool HighExpr::hasOrderedMemoryAccess() const {
   return false;
 }
 
-std::unordered_set<const HighExpr *>
-findOrderedMemoryAncestors(const std::vector<ExprPtr> &Roots) {
+HighExprSet findOrderedMemoryAncestors(const std::vector<ExprPtr> &Roots) {
   llvm::DenseMap<const HighExpr *, llvm::SmallVector<const HighExpr *, 2>>
       Parents;
   std::vector<const HighExpr *> Nodes, Ordered;
@@ -294,7 +293,7 @@ findOrderedMemoryAncestors(const std::vector<ExprPtr> &Roots) {
         Nodes.push_back(Child.get());
     });
   }
-  std::unordered_set<const HighExpr *> Result(Ordered.begin(), Ordered.end());
+  HighExprSet Result(Ordered.begin(), Ordered.end());
   for (size_t I = 0; I < Ordered.size(); ++I)
     for (const HighExpr *Parent : Parents.find(Ordered[I])->second)
       if (Result.insert(Parent).second)

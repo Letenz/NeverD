@@ -19,6 +19,8 @@ __declspec(dllimport) int WriteFile(void *, const void *, U32, U32 *, void *);
 __declspec(dllimport) U32 GetLastError(void);
 __declspec(dllimport) void SetLastError(U32);
 __declspec(dllimport) void *GetProcessHeap(void);
+__declspec(dllimport) void *HeapCreate(U32, U64, U64);
+__declspec(dllimport) int HeapDestroy(void *);
 __declspec(dllimport) void *HeapAlloc(void *, U32, U64);
 __declspec(dllimport) void *HeapReAlloc(void *, U32, void *, U64);
 __declspec(dllimport) int HeapFree(void *, U32, void *);
@@ -127,12 +129,16 @@ static void runReclaim(void *Heap) {
     require(HeapFree(Heap, 0, P) && HeapFree(Heap, 0, Neighbor), 22);
   }
 }
+#include "WindowsPrivateHeapFixture.inc"
 void entry(void) {
   U16 *Command = GetCommandLineW();
   while (*Command && *Command != ModePrefix)
     ++Command;
   void *Heap = GetProcessHeap();
   switch (Command[1]) {
+  case PrivateMode:
+    runPrivateHeaps();
+    break;
   case ResizeMode:
     runResize(Heap);
     break;

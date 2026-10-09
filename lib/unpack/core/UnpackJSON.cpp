@@ -115,6 +115,17 @@ std::string unpackResultJSON(const UnpackResult &Result,
         {field::Address, bits(R.Address)},
         {field::AllocationAddress, bits(R.AllocationAddress)},
         {field::AllocationSize, R.AllocationSize}});
+  llvm::json::Array EncodedPointers;
+  for (const auto &R : Result.RuntimeState.EncodedPointerReferences)
+    EncodedPointers.push_back(llvm::json::Object{
+        {field::Storage, R.Location == UnpackHeapReference::Storage::Image
+                             ? text::HeapImageStorage
+                             : text::HeapTLSStorage},
+        {field::Offset, bits(R.Offset)},
+        {field::RVA, R.Location == UnpackHeapReference::Storage::Image
+                         ? llvm::json::Value(bits(R.Offset))
+                         : llvm::json::Value(nullptr)},
+        {field::EncodedPointerValue, bits(R.Value)}});
   llvm::json::Value Output = nullptr;
   if (!Result.Image.empty()) {
     const auto Digest = llvm::SHA256::hash(Result.Image);
@@ -146,7 +157,13 @@ std::string unpackResultJSON(const UnpackResult &Result,
            {field::HeapKnown, Result.RuntimeState.HeapInventoryKnown},
            {field::HeapReferenceCount,
             Result.RuntimeState.PossibleHeapReferences},
-           {field::HeapReferences, std::move(HeapReferences)}}},
+           {field::HeapReferences, std::move(HeapReferences)},
+           {field::DirectServiceCalls, Result.RuntimeState.DirectServiceCalls},
+           {field::EncodedPointerKnown,
+            Result.RuntimeState.EncodedPointerInventoryKnown},
+           {field::EncodedPointerCount,
+            Result.RuntimeState.PossibleEncodedPointers},
+           {field::EncodedPointerReferences, std::move(EncodedPointers)}}},
       {field::MaterializedTLSCallbacks,
        int64_t(Result.MaterializedTLSCallbacks)},
       {field::Sections, std::move(Sections)},

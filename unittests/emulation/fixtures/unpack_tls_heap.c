@@ -13,6 +13,7 @@ typedef unsigned long long U64;
 #undef NEVERD_GENERATED_TEXT
 #undef NEVERD_GENERATED_MODE
 #undef NEVERD_GENERATED_VALUE
+#include "unpack_pointer_state.h"
 __declspec(dllimport) void ExitProcess(U32);
 __declspec(dllimport) void *GetStdHandle(U32);
 __declspec(dllimport) int WriteFile(void *, const void *, U32, U32 *, void *);
@@ -67,6 +68,13 @@ __attribute__((section(".prog$a"), noinline)) U32 program(void) {
   if (Pack.Mode == HeapStateMode &&
       *(volatile U32 *)heapRoot() != InitializeResult)
     Status = FailureStatus;
+  if (Pack.Mode == LateEncodedPointerMode)
+    setHeapRoot(encodeNull(Pack.Mode));
+  if ((Pack.Mode == EncodedPointerMode ||
+       Pack.Mode == NativeEncodedPointerMode ||
+       Pack.Mode == LateEncodedPointerMode) &&
+      !decodesToNull(Pack.Mode, heapRoot()))
+    Status = FailureStatus;
   if (!WriteFile(GetStdHandle(StdoutSelector), Message, sizeof(Message) - 1,
                  &Written, 0) ||
       Written != sizeof(Message) - 1)
@@ -76,15 +84,29 @@ __attribute__((section(".prog$a"), noinline)) U32 program(void) {
 }
 
 __declspec(dllexport) U32 loader(void) {
-  volatile U32 *State = (U32 *)HeapAlloc(GetProcessHeap(), 0, sizeof(*State));
-  if (!State)
-    ExitProcess(FailureStatus);
-  *State = InitializeResult;
-  setHeapRoot((U64)State);
-  if (Pack.Mode == ReleasedHeapStateMode) {
-    if (!HeapFree(GetProcessHeap(), 0, (void *)State))
+  if (Pack.Mode == DecodedPointerMode ||
+      Pack.Mode == NativeDecodedPointerMode) {
+    setHeapRoot(0x12345678);
+    decodesToNull(Pack.Mode, heapRoot());
+  }
+  if (Pack.Mode == HeapStateMode || Pack.Mode == ReleasedHeapStateMode) {
+    volatile U32 *State = (U32 *)HeapAlloc(GetProcessHeap(), 0, sizeof(*State));
+    if (!State)
       ExitProcess(FailureStatus);
-    setHeapRoot(0);
+    *State = InitializeResult;
+    setHeapRoot((U64)State);
+    if (Pack.Mode == ReleasedHeapStateMode) {
+      if (!HeapFree(GetProcessHeap(), 0, (void *)State))
+        ExitProcess(FailureStatus);
+      setHeapRoot(0);
+    }
+  }
+  if (Pack.Mode == EncodedPointerMode ||
+      Pack.Mode == NativeEncodedPointerMode ||
+      Pack.Mode == ClearedEncodedPointerMode) {
+    setHeapRoot(encodeNull(Pack.Mode));
+    if (Pack.Mode == ClearedEncodedPointerMode)
+      setHeapRoot(0);
   }
   U8 *Out = (U8 *)program;
   for (U32 I = 0; I < Pack.ProgramBytes; ++I)

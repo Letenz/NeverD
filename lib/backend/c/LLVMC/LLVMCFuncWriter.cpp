@@ -8466,7 +8466,15 @@ void LLVMCWriter::writeFunction(llvm::Function &Fn) {
         !Import.empty()) {
       std::string Text;
       llvm::raw_string_ostream Stub(Text);
-      c_stub::writeVariadicImportStub(Stub, functionIdentifier(Fn), Import, {});
+      // The stub is named for its import where it is called; its definition
+      // keeps the function's own name, as HighC prints it.
+      std::string Name = functionIdentifier(Fn);
+      if (Name == Import)
+        Name = canonicalizeCProjectionIdentifier(
+            cNameOfGlobal(Fn.getName(), /*Declaration=*/false), "nd_function");
+      c_stub::writeVariadicImportStub(
+          Stub, c_stub::variadicStubName(Name, Import, *Entry), Import, {},
+          libc::libcVariadicForward(Import));
       OS << Text;
       return;
     }

@@ -60,8 +60,11 @@ qt_add_resources(neverd_gui_app "workbench_assets" PREFIX /neverd
   FILES ${NEVERD_GUI_ICONS} "${CMAKE_CURRENT_SOURCE_DIR}/resources/theme.qss")
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/../../docs/assets/neverd-logo-dark.svg"
   PROPERTIES QT_RESOURCE_ALIAS "icons/app.svg")
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/../../docs/assets/neverd-logo-light.svg"
+  PROPERTIES QT_RESOURCE_ALIAS "brand/logo-light.svg")
 qt_add_resources(neverd_gui_app "brand_assets" PREFIX /neverd
-  FILES "${CMAKE_CURRENT_SOURCE_DIR}/../../docs/assets/neverd-logo-dark.svg")
+  FILES "${CMAKE_CURRENT_SOURCE_DIR}/../../docs/assets/neverd-logo-dark.svg"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../docs/assets/neverd-logo-light.svg")
 
 qt_add_executable(neverd-gui WIN32 MACOSX_BUNDLE main.cpp)
 target_link_libraries(neverd-gui PRIVATE neverd_gui_app)

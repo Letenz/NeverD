@@ -101,8 +101,16 @@ public:
     return capabilities_.contains(QStringLiteral("identify"));
   }
   void closeFile();
-  void reload();
+  /// Read the input file again through a fresh worker, as IDA's "Reload the
+  /// input file": its bytes as they are now, with the saved names, comments
+  /// and other annotations.  \p options reads a binary file another way.
+  void reload(std::optional<LoadOptions> options = std::nullopt);
   void restart();
+  /// How the engine loaded the open file (its load_options): the loader, and
+  /// for a binary file the processor, base, offset, size, entry and platform.
+  QJsonObject loadOptionsJson() const {
+    return metadata_.value(QStringLiteral("load_options")).toObject();
+  }
   /// Returns true when quitting may proceed immediately; otherwise a
   /// transition was requested and quitApproved() follows a decision.
   bool requestQuit();
@@ -248,6 +256,10 @@ private:
   /// How the pending file loads, and how the open file loaded, which a
   /// restart repeats.
   LoadOptions pendingOptions_, loadOptions_;
+  /// How a reload waiting for a Save/Discard decision reads the file.
+  std::optional<LoadOptions> reloadOptions_;
+  /// The open in flight reads the open file again.
+  bool reloading_ = false;
   QString projectPath_, databasePath_;
   QHash<QString, QByteArray> databaseState_;
   std::function<QHash<QString, QByteArray>()> stateProvider_;

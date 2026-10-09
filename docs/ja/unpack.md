@@ -33,6 +33,10 @@ neverd unpack packed.exe -o unpacked.exe \
 
 `runtime_state.heap_inventory_known` は既知の空一覧と出所不明を区別します。`possible_heap_references` は全一致数、`heap_references` は最大で最初の 64 件です。イメージ、TLS の順で、各々 `offset` 順に記録します。各記録には `storage`（`image` または `thread_local`）、アドレスと割り当て範囲があります。`rva` はイメージでは十六進値、TLS では null です。アドレスとオフセットは十六進文字列です。
 
+`runtime_state.direct_service_calls` は入口観測とインポート探索中に実行された直接モデルサービス呼び出しを数えます。ネイティブ Windows 用の番号束縛を復元していないため、取得した入口の後で初めて実行される場合も `unsupported_state` を返します。明示的な `snapshot_only` は件数と診断を保持します。コピーされたシステムコールは修復可能なインポート関数呼び出しとは扱いません。 `no_entry` のレポートでもこの件数は保持されます。入口を取得できなかった場合、ヒープ一覧は不明のままです。
+
+`runtime_state.encoded_pointer_inventory_known` は、プロセスプロファイルが観測済みのポインター符号化値を提供するかを示します。`possible_encoded_pointers` は、取得したイメージとメインスレッド TLS 内のポインター幅の完全一致を、非整列の格納も含めて数えます。`encoded_pointer_references` は最初の 64 件の `storage`、`offset`、`rva`、`value` を保持します。Windows は完了した `EncodePointer`/`RtlEncodePointer` の戻り値と `DecodePointer`/`RtlDecodePointer` の入力を提供します。一覧が不明または一致があれば `unsupported_state` となり、明示的なスナップショットも診断を保持します。一致は整数や未使用データの場合もあり、再符号化の根拠にはなりません。取得前に消去された値や取得後に初めて生成した符号化はこの拒否を起こしません。独自符号化、部分値や変換済みの値、レジスター、スタック状態、未到達経路は対象外です。
+
 `--options='{"snapshot_only":true}'` は解析用バイトを明示的に要求します。入口が受理され再構築に成功すると結果は常に `snapshot` で、実行時状態の診断は残ります。ヒープの復元、再配置の推定、ネイティブ実行の保証、仮想化解除は行いません。参照数ゼロも他の OS 状態や未実行経路を保証しません。
 
 ## エントリの確定方法

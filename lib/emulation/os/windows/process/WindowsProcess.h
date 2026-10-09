@@ -18,6 +18,7 @@
 
 #include <bitset>
 #include <map>
+#include <set>
 
 namespace neverd::emulation::windows_process {
 namespace value {
@@ -72,6 +73,19 @@ struct Service {
   APIProvider Provider;
   bool Returns;
 };
+struct NativeService {
+  const char *Name;
+  uint32_t Number;
+};
+llvm::ArrayRef<NativeService> nativeServices();
+std::optional<uint32_t> nativeServiceNumber(llvm::StringRef Name);
+const NativeService *findNativeService(uint64_t Number);
+/// The model's x64 native boundary uses the Win64 stub stack layout, with
+/// argument zero in R10. Unknown numbers never select a named API.
+llvm::Expected<uint64_t> readNativeServiceArgument(ExecutionBackend &CPU,
+                                                   uint64_t SP, unsigned Index);
+llvm::Error returnNativeService(ExecutionBackend &CPU,
+                                const ServiceRequest &Request, uint64_t Result);
 llvm::ArrayRef<Service> services();
 std::optional<APIProvider> findProvider(llvm::StringRef Module);
 const Service *findService(llvm::StringRef Module, llvm::StringRef Name);
@@ -138,7 +152,8 @@ llvm::Expected<Image> loadProgramImage(const std::filesystem::path &Path,
                                        std::optional<bool> DLL,
                                        bool DeferUnmodeled = false);
 llvm::Error relocateImage(Image &Image, uint64_t Base, ImageReadBudget &Budget);
-/// A null observer runs unobserved, without execution watches.
+/// A null observer runs without caller observation. The model may still
+/// watch native entry prologues to establish export-call provenance.
 llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
                                          const ProcessOptions &Options,
                                          ProcessObserver *Observer = nullptr);
@@ -178,6 +193,9 @@ public:
   llvm::Expected<ServiceOutcome> invoke(const Service &Service,
                                         const NativeCallEvent &Event);
   std::vector<ProcessHeapAllocationView> heapAllocations() const;
+  std::vector<uint64_t> encodedPointers() const {
+    return {EncodedPointers.begin(), EncodedPointers.end()};
+  }
 
 private:
   std::optional<uint64_t> unsupported(const Service &Service);
@@ -243,12 +261,18 @@ private:
   struct Allocation {
     uint64_t Size, MappedSize;
     bool EnvironmentSnapshot = false;
+    uint64_t Heap = value::HeapHandle;
   };
-  llvm::Expected<uint64_t> allocateHeap(uint64_t Size, bool Snapshot = false);
+  llvm::Expected<uint64_t> allocateHeap(uint64_t Size, bool Snapshot = false,
+                                        uint64_t Heap = value::HeapHandle);
   llvm::Expected<bool> mapHeapPages(uint64_t Address, uint64_t Size);
   llvm::Expected<uint64_t> reallocateHeap(uint64_t Address, uint64_t Size,
                                           uint32_t Flags);
   std::map<uint64_t, Allocation> Allocations;
+  std::set<uint64_t> CreatedHeaps;
+  // At most one distinct value per completed service, bounded by the process
+  // event budget. Clearing guest storage does not erase the observed value.
+  std::set<uint64_t> EncodedPointers;
   uint64_t NextCreatedHeap = value::CreatedHeapBase;
   uint64_t CommandLineA = 0;
   std::map<uint64_t, bool> ThreadSnapshots;
@@ -261,8 +285,7 @@ private:
   bool knownHeap(uint64_t Handle) const {
     if (Handle == value::HeapHandle)
       return true;
-    return Handle >= value::CreatedHeapBase && Handle < NextCreatedHeap &&
-           (Handle - value::CreatedHeapBase) % value::CreatedHeapStride == 0;
+    return CreatedHeaps.contains(Handle);
   }
   struct OpenedFile {
     std::filesystem::path Path;

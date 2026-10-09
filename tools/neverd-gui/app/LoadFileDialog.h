@@ -4,6 +4,7 @@
 
 #include <QDialog>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <optional>
 
 class QCheckBox;
@@ -35,6 +36,10 @@ public:
   /// The processor a binary file is read as until the user picks another,
   /// such as the one picked last time; none at first.
   void setBinaryProcessor(const QString &processor);
+  /// Start from the way the open file was loaded, its load_options: the
+  /// loader, and a binary file's processor, placement and platform where
+  /// they were chosen rather than read from the bytes.
+  void setOptions(const QJsonObject &load);
 
 protected:
   void resizeEvent(QResizeEvent *event) override;

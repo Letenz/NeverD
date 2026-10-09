@@ -14,14 +14,6 @@ constexpr char DisabledWaylandInterfaces[] = "QT_WAYLAND_DISABLED_INTERFACES";
 constexpr char DialogInterface[] = "xdg_wm_dialog_v1";
 constexpr char X11Platform[] = "xcb";
 
-/// XDG_CURRENT_DESKTOP lists the desktop's names, such as "ubuntu:GNOME".
-bool onGnome() {
-  for (const QByteArray &name : qgetenv(DesktopVariable).split(':'))
-    if (name.trimmed().toLower() == DesktopName)
-      return true;
-  return false;
-}
-
 class UtilityModalDialogs final : public QObject {
 public:
   using QObject::QObject;
@@ -42,9 +34,21 @@ protected:
 };
 } // namespace
 
+/// XDG_CURRENT_DESKTOP lists the desktop's names, such as "ubuntu:GNOME".
+bool onGnome() {
+  for (const QByteArray &name : qgetenv(DesktopVariable).split(':'))
+    if (name.trimmed().toLower() == DesktopName)
+      return true;
+  return false;
+}
+
 void prepareModalDialogs() {
   if (!onGnome())
     return;
+  // GTK's file chooser, which Qt's GTK platform theme shows for a file
+  // dialog, is a modal dialog of another toolkit: GNOME attaches it, so
+  // moving it moved the workbench.  Qt's own dialogs are kept free-standing.
+  QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
   QByteArray disabled = qgetenv(DisabledWaylandInterfaces);
   if (disabled.split(',').contains(DialogInterface))
     return;

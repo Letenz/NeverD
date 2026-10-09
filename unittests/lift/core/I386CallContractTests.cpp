@@ -312,9 +312,10 @@ TEST(I386CallContract, ARuntimeDoubleWordRoutineReturnsThePairAlone) {
   EXPECT_EQ(Wrap.find("64_t wrap("), std::string::npos) << Wrap;
 }
 
-TEST(I386CallContract, AStubOfAVariadicImportIsTheImport) {
+TEST(I386CallContract, AStubOfAVariadicImportPassesItsArgumentsOn) {
   // `jmp dword ptr [__imp__fprintf]` passes every argument on, the variadic
-  // ones too, which no C body can: the stub prints as the import.
+  // ones too.  C passes no `...` on, so the stub hands them to vfprintf, which
+  // takes them as fprintf does.
   const std::vector<uint8_t> Code = {0xFF,
                                      0x25, // jmp dword ptr [slot]
                                      static_cast<uint8_t>(slot(0)),
@@ -337,7 +338,13 @@ TEST(I386CallContract, AStubOfAVariadicImportIsTheImport) {
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
   EXPECT_NE(Source.find("wrap jumps to the import fprintf"), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find(" wrap("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("#include <stdarg.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int wrap(FILE *arg0, const char *format, ...) {"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("vfprintf(arg0, format, arguments);"),
+            std::string::npos)
+      << Source;
 }
 
 } // namespace
