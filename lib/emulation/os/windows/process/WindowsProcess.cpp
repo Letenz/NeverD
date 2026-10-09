@@ -147,6 +147,9 @@ public:
   heapAllocations() const override {
     return OS.heapAllocations();
   }
+  std::optional<std::vector<uint64_t>> encodedPointers() const override {
+    return OS.encodedPointers();
+  }
   std::optional<uint64_t> nativeCallCount() const override {
     return Result.NativeCalls.size();
   }

@@ -129,6 +129,15 @@ struct UnpackRuntimeState {
   /// At most the first 64 matches, image first and then TLS, in offset order.
   /// The count covers all matches.
   std::vector<UnpackHeapReference> HeapReferences;
+  bool EncodedPointerInventoryKnown = false;
+  uint64_t PossibleEncodedPointers = 0;
+  /// Exact value matches, not pointer provenance or permission to re-encode.
+  struct EncodedPointerReference {
+    uint64_t Offset, Value;
+    UnpackHeapReference::Storage Location;
+  };
+  /// At most 64 locations, image first and then TLS, in offset order.
+  std::vector<EncodedPointerReference> EncodedPointerReferences;
 };
 
 /// One transfer into code newer than the code that was running.

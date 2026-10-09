@@ -116,6 +116,12 @@ NEVERD_UNPACK_REPORT_FIELD(HeapKnown, "heap_inventory_known")
 NEVERD_UNPACK_REPORT_FIELD(HeapReferenceCount, "possible_heap_references")
 NEVERD_UNPACK_REPORT_FIELD(DirectServiceCalls, "direct_service_calls")
 NEVERD_UNPACK_REPORT_FIELD(HeapReferences, "heap_references")
+NEVERD_UNPACK_REPORT_FIELD(EncodedPointerKnown,
+                           "encoded_pointer_inventory_known")
+NEVERD_UNPACK_REPORT_FIELD(EncodedPointerCount, "possible_encoded_pointers")
+NEVERD_UNPACK_REPORT_FIELD(EncodedPointerReferences,
+                           "encoded_pointer_references")
+NEVERD_UNPACK_REPORT_FIELD(EncodedPointerValue, "value")
 NEVERD_UNPACK_REPORT_FIELD(Storage, "storage")
 NEVERD_UNPACK_REPORT_FIELD(Offset, "offset")
 NEVERD_UNPACK_REPORT_FIELD(Address, "address")
