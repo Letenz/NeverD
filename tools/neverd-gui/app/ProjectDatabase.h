@@ -16,13 +16,23 @@ namespace neverd::gui {
 ///
 /// Every write is one SQLite transaction, so a database is never left half
 /// written.  The input is stored in independently compressed chunks that are
-/// compressed and expanded in parallel.
+/// compressed and expanded in parallel.  A file that is not a NeverD database
+/// is never written to.
 class ProjectDatabase final {
 public:
   static constexpr char Extension[] = ".nddb";
+  /// The SQLite application id in every database header: "NDDB" in ASCII,
+  /// so NeverD and tools such as file(1) tell a database from other SQLite
+  /// files whatever its name.
+  static constexpr qint32 ApplicationId = 0x4E444442;
   /// The database of \p binary: the binary's file name plus `.nddb`.
   static QString pathFor(const QString &binary);
+  /// Whether \p path is opened as a database: it has the `.nddb` suffix or
+  /// its header carries the application id.
   static bool isDatabase(const QString &path);
+  /// Whether NeverD keeps a project for \p path: \p path is a database, or
+  /// the binary has a database or a sidecar beside it.
+  static bool hasState(const QString &path);
 
   struct Contents {
     QString inputName, inputSha256;
@@ -52,6 +62,14 @@ public:
                         QString *error = nullptr);
   /// Where a database without its original input is unpacked.
   static QString workingDirectory(const QString &database);
+  /// Whether the database, sidecars and lock of \p binary can sit beside
+  /// it: its folder is writable.
+  static bool canKeepBeside(const QString &binary);
+  /// A copy of \p binary in the user's data directory, beside which its
+  /// database, sidecars and lock can sit; made, or refreshed when the
+  /// original's size or time changed.  Empty, with \p error set, when it
+  /// cannot be made.
+  static QString workingCopy(const QString &binary, QString *error = nullptr);
 
   /// Sidecar suffixes the worker keeps beside an input.
   static const QStringList &sidecarSuffixes();

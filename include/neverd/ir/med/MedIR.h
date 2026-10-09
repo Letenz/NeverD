@@ -233,6 +233,41 @@ struct MedOp {
   /// Win64 register arguments the direct callee reads (RCX, RDX, R8, R9 in
   /// order), published as Inputs[1..N]; -1 when the callee is unsummarized.
   int8_t CalleeRegisterArgs = -1;
+  /// The vector argument registers the summarized callee reads, published
+  /// after the register arguments as Inputs[1 + CalleeRegisterArgs..]; -1
+  /// when the convention publishes none.
+  int8_t CalleeVectorArgs = -1;
+  /// Where a positional convention passes a floating argument in its slot's
+  /// vector register instead: bit K for register argument K, Inputs[1 + K].
+  uint8_t CalleeVectorSlots = 0;
+  /// The inputs after the target are every argument the call passes, in the
+  /// source's order (a FormattedCall).  Bit K of ExactFloatInputs marks
+  /// Inputs[1 + K] as the bits of a floating one, of ExactPointerInputs as an
+  /// address.
+  bool ExactArguments = false;
+  uint64_t ExactFloatInputs = 0;
+  uint64_t ExactPointerInputs = 0;
+  /// The bytes of each of those whole vector registers the callee reads:
+  /// four bits per argument, or per slot, in four-byte units (1 float, 2
+  /// double, 4 all).
+  uint32_t CalleeVectorArgWidths = 0;
+  /// The bytes the callee reads of input \p Input, a vector argument, or 0.
+  uint16_t vectorArgumentWidth(unsigned Input) const {
+    if (CalleeVectorSlots) {
+      const unsigned Slot = Input - 1;
+      if (Input == 0 || Slot >= 8 || !((CalleeVectorSlots >> Slot) & 1))
+        return 0;
+      return static_cast<uint16_t>(
+          ((CalleeVectorArgWidths >> (4 * Slot)) & 0xF) * 4);
+    }
+    if (CalleeVectorArgs <= 0 || CalleeRegisterArgs < 0 ||
+        Input < 1u + CalleeRegisterArgs ||
+        Input >= 1u + CalleeRegisterArgs + CalleeVectorArgs)
+      return 0;
+    const unsigned K = Input - 1 - CalleeRegisterArgs;
+    return static_cast<uint16_t>(((CalleeVectorArgWidths >> (4 * K)) & 0xF) *
+                                 4);
+  }
   /// Positional arguments implied by the incoming stack slots that same
   /// summarized callee reads (0 when it reads none); -1 when unbounded.
   int8_t CalleeStackArgs = -1;
@@ -345,6 +380,9 @@ struct MedCallInfo {
   /// Darwin AArch64 indirect variadic call: number of fixed (register-prefix)
   /// arguments before the stack-passed variadic tail.  -1 = not variadic.
   int VarArgFixedCount = -1;
+  /// Args passes the register arguments in the callee's own register order
+  /// (MedFunc::IntegerArgumentRegisters), not the convention's.
+  bool ArgumentsInCalleeRegisterOrder = false;
 };
 
 struct MedFunc {
@@ -394,6 +432,10 @@ struct MedFunc {
   std::vector<MedReturnReg> MultiReturn;
 
   std::vector<MedTypedParam> TypedParams;
+  /// The width (4 or 8 bytes) of the scalar each floating-point argument
+  /// register parameter carries in its low lane, by register offset, when
+  /// the function reads no other byte of it: a float or double, no vector.
+  std::map<uint64_t, uint16_t> FPParamScalarBytes;
   std::vector<MedTypedLocal> TypedLocals;
   std::vector<MedCallInfo> CallInfos;
 
@@ -411,6 +453,11 @@ struct MedFunc {
   /// derived from explicit architectural traps and no-return callees, never
   /// from the function name or from an unexplained missing return.
   bool DoesNotReturn = false;
+
+  /// The function returns no value a caller could rely on
+  /// (settleReturnContracts), so C shows it as void.  Code generation keeps
+  /// the return register.
+  bool ReturnsNoValue = false;
 
   /// How execution reaches Entry, which fixes the alignment of the stack
   /// pointer there (functionEntryKind).
@@ -430,6 +477,18 @@ struct MedFunc {
   /// overflow area starts — the first incoming stack argument the va_arg walk
   /// reads (8 on x86-64 past the return address, 0 on AArch64/ARM).
   int64_t VariadicOverflowBase = 0;
+
+  /// The position of the first integer argument register a variadic
+  /// function's register save area spills (AAPCS64): the registers before it
+  /// carry its named parameters, the rest only what each caller passes.  -1
+  /// where unknown.
+  int VariadicFirstRegister = -1;
+
+  /// The registers this function takes its integer register arguments in,
+  /// in argument order, where they are not its convention's
+  /// (TargetRegInfo::integerArgumentLayout): a local i386 function GCC
+  /// compiled takes them in EAX, EDX, ECX.  Empty otherwise.
+  std::vector<uint64_t> IntegerArgumentRegisters;
 
   /// Number of NAMED stack parameters that precede the variadic overflow area
   /// (the fixed prefix passed on the stack rather than in registers).  Nonzero

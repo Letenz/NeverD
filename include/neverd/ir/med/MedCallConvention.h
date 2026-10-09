@@ -26,6 +26,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <cstddef>
@@ -41,6 +42,15 @@ struct CallArgumentConvention {
   /// A call to a summarized direct callee passes the argument registers the
   /// callee reads at entry (LowToMed publishes them as the CALL's inputs).
   bool RegisterArgumentsFromCalleeSummary = false;
+  /// So does it the vector argument registers the callee reads: each
+  /// floating argument takes the next vector register after the integer
+  /// ones, or with PositionalArgumentSlots its own slot's vector register.
+  bool VectorArgumentsFromCalleeSummary = false;
+  /// An import whose libc prototype is fixed reads exactly its argument
+  /// registers, and with StackArgumentSummary its stack arguments, so its
+  /// stub and the slot the loader binds have that summary, and an indirect
+  /// call through the slot passes them as a call to the stub does.
+  bool ImportArgumentsFromPrototype = false;
   /// The callee's entry-read summary is not its parameter list, so the call
   /// passes no summarized arguments (a System V variadic prologue spills
   /// every argument register to its save area).  Null when every summary is.
@@ -55,6 +65,11 @@ struct CallArgumentConvention {
   bool VariadicFromSummary = false;
   /// The incoming stack-argument summary counts this convention's positions.
   bool StackArgumentSummary = false;
+  /// An integer register that carries no argument and that a call need not
+  /// preserve holds no defined value at entry (RAX beyond a variadic
+  /// callee's AL, R10, R11), so a store of that incoming value before a call
+  /// passes nothing: an alignment `push rax` is no stack argument.
+  bool UndefinedIncomingScratchRegisters = false;
   /// An indirect call whose own block sets no argument register takes the
   /// consecutive setup writes of the block before it, as IDA does.
   bool IndirectCallsTakePrecedingSetup = false;
@@ -73,6 +88,11 @@ struct CallArgumentConvention {
   /// imported or indirectly called function takes every argument on the
   /// stack, so a parameter register live at such a call is scratch.
   bool RegparmOnlyForInternalCalls = false;
+  /// Whether an import of \p Img may still take register arguments where
+  /// RegparmOnlyForInternalCalls holds (a Windows __fastcall routine takes
+  /// ECX and EDX).  Null where none may: a parameter register live at a call
+  /// to an import is then scratch, whatever the import's signature.
+  bool (*ImportsMayTakeRegisterArguments)(const BinaryImage &Img) = nullptr;
   /// The first stack argument directly follows the last register argument
   /// the call uses, rather than every register position.
   bool StackArgumentsFollowUsedRegisters = false;
@@ -94,9 +114,36 @@ struct CallArgumentConvention {
   /// Register arguments fill the argument registers in order with no gap
   /// (regparm), so a live register after an unread one is not an argument.
   bool RegisterArgumentsFillInOrder = false;
+  /// Another order of integer argument registers, beside the format's, an
+  /// image's internal functions may take their arguments in: GCC gives a
+  /// local i386 function regparm (EAX, EDX, ECX), where Clang gives it
+  /// fastcall (ECX, EDX).  A function that reads at entry a register of this
+  /// order alone takes its arguments in this order, and its callers pass
+  /// them so.
+  llvm::ArrayRef<uint64_t> AlternateRegisterOrder;
+  /// Whether an external routine of \p Img takes its floating-point
+  /// arguments in the integer argument registers, as the base AAPCS (ARM
+  /// softfp) passes them, rather than in the floating-point registers the
+  /// image's own functions may use.  Null where it never does.
+  bool (*ExternalFloatsInCoreRegisters)(const BinaryImage &Img) = nullptr;
   /// The argument count a platform prototype gives a named function (the
   /// WDK's, for Windows kernel routines), or nullopt.
   std::optional<size_t> (*PrototypeArgCount)(llvm::StringRef Name) = nullptr;
+  /// No callee summary gives a call its arguments: the HighIR route
+  /// recovers them, and the parameters a forwarder passes straight through,
+  /// from the setup each caller writes before its calls, as the LLVM route
+  /// does for every convention (recoverModuleCallAbi).
+  bool ArgumentsFromCallSetup = false;
+  /// A function-pointer value spilled to the caller's frame is still there
+  /// after a call to a leaf function whose writes all stay below its own
+  /// entry stack pointer, so an indirect call's target can be followed
+  /// through that spill (findFrameLocalLeafCallees).
+  bool TargetSpillsSurviveLeafCalls = false;
+  /// A printf-family call whose format is a constant string passes the
+  /// arguments its conversions name in registers, each class in its own
+  /// bank as for any other call: the call reads exactly those, in the
+  /// source's order (FormattedCall).
+  bool FormattedCallArguments = false;
 };
 
 /// The calling convention MedIR records for code of \p A in a \p F image, or

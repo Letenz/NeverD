@@ -151,6 +151,10 @@ bool liftLegacySSEInt(X86Lifter &L, X86Lifter::LiftState &S,
                       InsnId == X86_INS_PADDD || InsnId == X86_INS_PADDQ)
                          ? NdOp::INT_ADD
                          : NdOp::INT_SUB;
+      if (Dst.Size == LaneSz) {
+        S.emit(LaneOpc, Dst, {Dst, Src});
+        break;
+      }
       // Split into low/high halves to avoid non-power-of-2 intermediate types.
       unsigned HalfSz = Dst.Size / 2;
       unsigned LanesPerHalf = HalfSz / LaneSz;
@@ -396,8 +400,7 @@ bool liftLegacySSEInt(X86Lifter &L, X86Lifter::LiftState &S,
     // Capstone leaves MMX memory operands at size 0; load the destination
     // width so unpack of `mm, m64` matches `mm, mm`.
     if (X86.operands[1].type == X86_OP_MEM &&
-        (X86.operands[1].size == 0 ||
-         X86.operands[1].size != Dst.Size) &&
+        (X86.operands[1].size == 0 || X86.operands[1].size != Dst.Size) &&
         Dst.Size != 0) {
       const NdVar Address = S.computeEA(X86.operands[1]);
       Src = S.makeTemp(Dst.Size);

@@ -10,6 +10,7 @@ add_neverd_component_library(NeverDIRHigh
   lower/CallArgCollectionAArch64.cpp
   lower/CallArgCollectionWin64.cpp
   lower/CompareTreeSwitch.cpp
+  lower/I386PicAddresses.cpp
   lower/MedOpToExpr.cpp
   lower/MedToHigh.cpp
   lower/NdOpCallIndLowering.cpp
@@ -25,6 +26,7 @@ add_neverd_component_library(NeverDIRHigh
   pass/HighFrameStoreForwarding.cpp
   pass/HighIntegerSignedness.cpp
   pass/HighPrivateFrameCopies.cpp
+  pass/HighNarrowLocals.cpp
   pass/HighSharedExpressions.cpp
   pass/HighSymSimplify.cpp
   pass/HighTypeInference.cpp

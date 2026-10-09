@@ -1180,7 +1180,8 @@ ExploreHit exploreSink(const AnalysisInput &In, const SinkCatalog &Cat,
   std::vector<SymRegisterRange> Preserved;
   if (In.Img) {
     const TargetRegInfo &TRI = getTargetRegInfo(In.Img->Arch);
-    for (const TargetRegisterRange &R : TRI.callPreservedRanges(In.Img->Format))
+    for (const TargetRegisterRange &R :
+         TRI.callPreservedRanges(In.Img->abiFormat()))
       Preserved.push_back({R.Offset, R.Bytes});
   }
 
@@ -1542,13 +1543,13 @@ ExploreHit exploreSink(const AnalysisInput &In, const SinkCatalog &Cat,
         const CountedSourceReturn CountedReturn =
             HasInputBufferSummary
                 ? countedSourceReturn(CalleeName, In.Img
-                                                      ? In.Img->Format
+                                                      ? In.Img->abiFormat()
                                                       : BinaryFormat::Unknown)
                 : CountedSourceReturn{};
         const CountedSourceOutput CountedOutput =
             HasInputBufferSummary
                 ? countedSourceOutput(CalleeName, In.Img
-                                                      ? In.Img->Format
+                                                      ? In.Img->abiFormat()
                                                       : BinaryFormat::Unknown)
                 : CountedSourceOutput{};
         const BoundedStringOutput BoundedString =
@@ -1557,7 +1558,7 @@ ExploreHit exploreSink(const AnalysisInput &In, const SinkCatalog &Cat,
         const ReturnedStringOutput ReturnedString =
             HasInputBufferSummary
                 ? returnedStringOutput(CalleeName, In.Img
-                                                       ? In.Img->Format
+                                                       ? In.Img->abiFormat()
                                                        : BinaryFormat::Unknown)
                 : ReturnedStringOutput{};
         const bool CountedReturnRecognized =
@@ -1976,7 +1977,7 @@ ExploreHit exploreSink(const AnalysisInput &In, const SinkCatalog &Cat,
             CalleeSource->returnCarriesInput()) {
           const SymRef Ret = captureReturn(Op, Cur.State, In);
           const uint32_t ReturnBits = outputSourceReturnBits(
-              CalleeName, In.Img ? In.Img->Format : BinaryFormat::Unknown);
+              CalleeName, In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown);
           if (!Ret.isValid() ||
               (ReturnBits != 0 &&
                !returnHasSemanticWidth(In, Ctx, Ret, ReturnBits))) {
@@ -2788,7 +2789,7 @@ std::optional<Finding> neverd::safety::huntSink(const AnalysisInput &In,
 
   const std::optional<uint64_t> WideElementBytes =
       safety::detail::countedWideElementBytes(
-          Site.Sink, In.Img ? In.Img->Format : BinaryFormat::Unknown);
+          Site.Sink, In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown);
   if (!RequiresPathValidation && WideElementBytes && Dst.Capacity &&
       Dst.CapacityExact && Arg.UpperBound &&
       *Arg.UpperBound <= *Dst.Capacity / *WideElementBytes) {
@@ -2802,7 +2803,7 @@ std::optional<Finding> neverd::safety::huntSink(const AnalysisInput &In,
   std::optional<uint64_t> FixedExploreLength;
   if (WideElements && WideElementBytes && Arg.ConstValue)
     FixedExploreLength = safety::detail::exactCountedMemoryBytes(
-        Site.Sink, In.Img ? In.Img->Format : BinaryFormat::Unknown,
+        Site.Sink, In.Img ? In.Img->abiFormat() : BinaryFormat::Unknown,
         *Arg.ConstValue);
   if (!FixedExploreLength && !WideElements && !NeedsStringExtents &&
       E->LenArg < 0 && E->SrcArg >= 0 &&

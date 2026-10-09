@@ -413,10 +413,17 @@ int runDecompile(neverd_session_t Sess) {
 
   const neverd_output_language_t Language = OutputLanguage.getValue();
   const bool DedicatedLanguage = Language != NEVERD_OUTPUT_C;
+  // Rust, Go and the program's own language spell a native function's HighC
+  // source, one function as well as the whole program.
+  const char *SourceStage = Language == NEVERD_OUTPUT_RUST     ? "rust"
+                            : Language == NEVERD_OUTPUT_GO     ? "go"
+                            : Language == NEVERD_OUTPUT_SOURCE ? "source"
+                                                               : nullptr;
   if (JsonOutput &&
-      (ExportFunc.empty() || DedicatedLanguage || Devirtualize || NoOpt)) {
-    WithColor::error() << "--json requires --func with the default HighC or "
-                          "--llvm source view\n";
+      (ExportFunc.empty() || (DedicatedLanguage && !SourceStage) ||
+       Devirtualize || NoOpt)) {
+    WithColor::error() << "--json requires --func with the default HighC, "
+                          "--llvm, Rust, Go or program-language source view\n";
     return 1;
   }
   if (DedicatedLanguage && LlvmRoute) {
@@ -424,8 +431,9 @@ int runDecompile(neverd_session_t Sess) {
         << "--llvm cannot be combined with a dedicated source language\n";
     return 1;
   }
-  if (!ExportFunc.empty() && DedicatedLanguage) {
-    WithColor::error() << "--func is supported only for C output\n";
+  if (!ExportFunc.empty() && DedicatedLanguage && !SourceStage) {
+    WithColor::error() << "--func is supported only for C, Rust, Go and "
+                          "program-language output\n";
     return 1;
   }
   if (!ExportFunc.empty() && MaxFunc > 0) {
@@ -562,12 +570,13 @@ int runDecompile(neverd_session_t Sess) {
     }
     const uint64_t Entry =
         FuncIdx >= 0 ? neverd_func_entry(Sess, FuncIdx) : DirectAddr;
-    if (JsonOutput) {
+    if (JsonOutput || (SourceStage && !Devirtualize)) {
+      const char *Stage = SourceStage ? SourceStage : LlvmRoute ? "llvmc" : "c";
       json::Array Pages;
+      std::string Text;
       size_t Offset = 0, Bytes = 0;
       for (;;) {
-        const char *Raw = neverd_ir_view_json(
-            Sess, Entry, LlvmRoute ? "llvmc" : "c", Offset, 2048);
+        const char *Raw = neverd_ir_view_json(Sess, Entry, Stage, Offset, 2048);
         if (!Raw) {
           WithColor::error()
               << "source view failed: " << takeLastError(Sess) << "\n";
@@ -590,6 +599,20 @@ int runDecompile(neverd_session_t Sess) {
           return 1;
         }
         auto *Page = Value->getAsObject();
+        if (Page->getString("mapping_status") == "unsupported_architecture") {
+          WithColor::error() << "--func spells only native code in Rust or "
+                                "Go; use the whole-program output\n";
+          return 1;
+        }
+        // Rust and Go are offered for programs written in them.
+        if (Page->getString("mapping_status") == "unsupported_representation") {
+          WithColor::error() << Page->getString("reason").value_or(
+                                    "this view is not offered for this program")
+                             << '\n';
+          return 1;
+        }
+        if (auto PageText = Page->getString("text"))
+          Text += *PageText;
         const bool Complete = Page->getBoolean("complete").value_or(false);
         auto Next = Page->getInteger("next_offset");
         if (!Complete &&
@@ -604,17 +627,20 @@ int runDecompile(neverd_session_t Sess) {
       }
       json::Value Output(
           json::Object{{"schema_version", 1}, {"pages", std::move(Pages)}});
-      if (OutputFile.empty())
-        outs() << Output << '\n';
-      else {
-        std::error_code EC;
-        raw_fd_ostream OS(OutputFile, EC);
+      std::error_code EC;
+      std::optional<raw_fd_ostream> File;
+      if (!OutputFile.empty()) {
+        File.emplace(OutputFile, EC);
         if (EC) {
           WithColor::error() << "cannot open: " << EC.message() << '\n';
           return 1;
         }
-        OS << Output << '\n';
       }
+      raw_ostream &OS = File ? *File : outs();
+      if (JsonOutput)
+        OS << Output << '\n';
+      else
+        OS << Text;
       return 0;
     }
     if (Devirtualize) {

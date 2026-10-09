@@ -8,6 +8,7 @@
 
 #include "neverd/evm/bytecode/EVMMetadata.h"
 #include "neverd/evm/bytecode/EVMOpcodes.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -34,15 +35,46 @@ llvm::Error inputError(llvm::StringRef SourceName, llvm::Twine Message) {
 } // namespace detail
 namespace {
 
-inline constexpr llvm::StringLiteral kRawExtensions[] = {".raw", ".evmraw"};
-inline constexpr llvm::StringLiteral kEVMExtensions[] = {
-    ".evm", ".hex", ".bin", ".bytecode", ".json", ".raw", ".evmraw"};
+struct EVMFileName {
+  llvm::StringLiteral Extension;
+  bool Raw;
+  bool Shared;
+};
+
+inline constexpr EVMFileName kEVMFileNames[] = {
+#define NEVERD_EVM_FILE_NAME(Extension, Raw, Shared) {Extension, Raw, Shared},
+#include "neverd/evm/bytecode/EVMFileNames.def"
+};
 
 bool hasRawSuffix(llvm::StringRef SourceName) {
   std::string Lower = SourceName.lower();
-  return llvm::any_of(kRawExtensions, [&](llvm::StringRef Extension) {
-    return llvm::StringRef(Lower).ends_with(Extension);
+  return llvm::any_of(kEVMFileNames, [&](const EVMFileName &Name) {
+    return Name.Raw && llvm::StringRef(Lower).ends_with(Name.Extension);
   });
+}
+
+/// The EVM file name \p Path goes by, if any.
+const EVMFileName *findEVMFileName(const std::filesystem::path &Path) {
+  const std::string Extension =
+      llvm::StringRef(pathToUTF8(Path.extension())).lower();
+  const auto *Found = llvm::find_if(kEVMFileNames, [&](const auto &Name) {
+    return Name.Extension == Extension;
+  });
+  return Found == std::end(kEVMFileNames) ? nullptr : Found;
+}
+
+/// Whether \p Content decodes as EVM bytecode text or an artifact.
+bool decodesAsEVMText(llvm::StringRef Content, llvm::StringRef SourceName) {
+  BytecodeLoadOptions Options;
+  Options.Format = Content.trim().starts_with("{")
+                       ? BytecodeInputFormat::Artifact
+                       : BytecodeInputFormat::Hex;
+  auto Loaded = decodeBytecodeInput(Content, SourceName, Options);
+  if (!Loaded) {
+    llvm::consumeError(Loaded.takeError());
+    return false;
+  }
+  return true;
 }
 
 bool looksBinary(llvm::StringRef Content) {
@@ -154,40 +186,40 @@ normalizeBytecode(llvm::ArrayRef<uint8_t> Original, BytecodeSourceKind Source,
 llvm::Expected<LoadedBytecode>
 loadBytecodeFile(const std::filesystem::path &Path,
                  const BytecodeLoadOptions &Options) {
-  auto Buffer = llvm::MemoryBuffer::getFile(Path.string(), /*IsText=*/false,
+  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path), /*IsText=*/false,
                                             /*RequiresNullTerminator=*/false);
   if (!Buffer)
-    return detail::inputError(Path.string(), "cannot open input file");
-  return decodeBytecodeInput((*Buffer)->getBuffer(), Path.string(), Options);
-}
-
-bool hasEVMFileExtension(const std::filesystem::path &Path) {
-  std::string Extension = Path.extension().string();
-  std::transform(Extension.begin(), Extension.end(), Extension.begin(),
-                 [](char C) { return llvm::toLower(C); });
-  return llvm::any_of(kEVMExtensions, [&](llvm::StringRef Known) {
-    return llvm::StringRef(Extension) == Known;
-  });
+    return detail::inputError(pathToUTF8(Path), "cannot open input file");
+  return decodeBytecodeInput((*Buffer)->getBuffer(), pathToUTF8(Path), Options);
 }
 
 bool looksLikeEVMInput(const std::filesystem::path &Path) {
-  auto Buffer = llvm::MemoryBuffer::getFile(Path.string(), /*IsText=*/false,
+  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path), /*IsText=*/false,
                                             /*RequiresNullTerminator=*/false);
   if (!Buffer || looksBinary((*Buffer)->getBuffer()))
     return false;
   // Extension-free auto-detection is intentionally limited to validated text;
   // otherwise every non-empty native data blob would look like raw EVM code.
-  BytecodeLoadOptions Options;
-  Options.Format = (*Buffer)->getBuffer().trim().starts_with("{")
-                       ? BytecodeInputFormat::Artifact
-                       : BytecodeInputFormat::Hex;
-  auto Loaded =
-      decodeBytecodeInput((*Buffer)->getBuffer(), Path.string(), Options);
-  if (!Loaded) {
-    llvm::consumeError(Loaded.takeError());
-    return false;
-  }
-  return true;
+  return decodesAsEVMText((*Buffer)->getBuffer(), pathToUTF8(Path));
+}
+
+EVMInputMatch matchEVMInput(const std::filesystem::path &Path) {
+  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path), /*IsText=*/false,
+                                            /*RequiresNullTerminator=*/false);
+  if (!Buffer)
+    return EVMInputMatch::None;
+  const llvm::StringRef Content = (*Buffer)->getBuffer();
+  const EVMFileName *Name = findEVMFileName(Path);
+  // Text under an EVM name is bytecode the EVM loader explains when it
+  // cannot decode it; without one, only text that decodes is.
+  if (!looksBinary(Content))
+    return Name || decodesAsEVMText(Content, pathToUTF8(Path))
+               ? EVMInputMatch::Bytecode
+               : EVMInputMatch::None;
+  // Bytes are raw bytecode only under a name no other tool gives its files.
+  if (!Name)
+    return EVMInputMatch::None;
+  return Name->Shared ? EVMInputMatch::Name : EVMInputMatch::Bytecode;
 }
 
 } // namespace neverd::evm

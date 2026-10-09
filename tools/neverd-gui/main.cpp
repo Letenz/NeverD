@@ -1,10 +1,13 @@
 #include "app/DisassemblyView.h"
+#include "app/Docking.h"
 #include "app/GnomeModalDialogs.h"
+#include "app/GnomeWindowEdges.h"
 #include "app/InteractionMetrics.h"
 #include "app/Language.h"
 #include "app/ListingView.h"
 #include "app/MainWindow.h"
 #include "app/Session.h"
+#include "app/SettingsKeys.h"
 #include "app/StartupMetrics.h"
 #include "app/Theme.h"
 #include "mcp/GuiSessionBroker.h"
@@ -21,8 +24,6 @@
 #include <QTimer>
 #include <QWindow>
 #include <functional>
-#include <kddockwidgets/Config.h>
-#include <kddockwidgets/KDDockWidgets.h>
 #include <memory>
 #include <utility>
 
@@ -33,25 +34,18 @@
 using namespace neverd::gui;
 
 namespace {
-constexpr char QuickStartKey[] = "ui/quickStart";
-constexpr char GeometryKey[] = "ui/geometry";
+// The second version: the first remembered windows that GNOME maximized
+// because they opened at nearly the size of the screen.
+constexpr char GeometryKey[] = "ui/geometry2";
 constexpr int CaptureDelayMs = 6000;
 constexpr int SmokeDelayMs = 1500;
 constexpr int DefaultWidth = 1600;
 constexpr int DefaultHeight = 1000;
-
-void configureDocking() {
-  KDDockWidgets::initFrontend(KDDockWidgets::FrontendType::QtWidgets);
-  auto &config = KDDockWidgets::Config::self();
-  // Every docked window carries a closable tab, as in classic disassemblers.
-  config.setFlags(KDDockWidgets::Config::Flag_AlwaysShowTabs |
-                  KDDockWidgets::Config::Flag_HideTitleBarWhenTabsVisible |
-                  KDDockWidgets::Config::Flag_TabsHaveCloseButton |
-                  KDDockWidgets::Config::Flag_AllowReorderTabs |
-                  KDDockWidgets::Config::Flag_TitleBarIsFocusable |
-                  KDDockWidgets::Config::Flag_DoubleClickMaximizes);
-  config.setSeparatorThickness(4);
-}
+/// The share of the screen a window opens at without a remembered geometry:
+/// below the 80% of its area at which GNOME maximizes a new window, whose
+/// edges then no longer resize it.
+constexpr int DefaultWidthPercent = 75;
+constexpr int DefaultHeightPercent = 80;
 
 /// Runs an action once a window is first exposed, after the window manager
 /// has placed it: a dialog shown before then centers on where the window was
@@ -82,8 +76,11 @@ void restoreGeometry(MainWindow &window) {
   if (!geometry.isEmpty() && window.restoreGeometry(geometry))
     return;
   const QRect available = window.screen()->availableGeometry();
-  window.resize(std::min(DefaultWidth, available.width()),
-                std::min(DefaultHeight, available.height()));
+  const QSize size(
+      std::min(DefaultWidth, available.width() * DefaultWidthPercent / 100),
+      std::min(DefaultHeight, available.height() * DefaultHeightPercent / 100));
+  window.resize(size);
+  window.move(available.center() - QPoint(size.width() / 2, size.height() / 2));
 }
 } // namespace
 
@@ -245,6 +242,7 @@ int main(int argc, char **argv) {
         timeout, &app);
   }
   window.show();
+  gnome::widenResizeEdges(window);
   QObject::connect(&app, &QApplication::aboutToQuit, &window, [&window] {
     QSettings().setValue(GeometryKey, window.saveGeometry());
   });
@@ -263,7 +261,7 @@ int main(int argc, char **argv) {
     window.openFile(
         QFileInfo(parser.positionalArguments().first()).absoluteFilePath());
   else if (!automated && !parser.isSet(QStringLiteral("capture")) &&
-           QSettings().value(QuickStartKey, true).toBool())
+           QSettings().value(settings::QuickStart, true).toBool())
     new OnFirstExpose(*window.windowHandle(),
                       [&window] { window.showQuickStart(); });
 

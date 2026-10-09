@@ -2729,8 +2729,9 @@ TEST(COFFExceptionIR,
     Builder.CreateRetVoid();
     Function->setMetadata(windows_eh_md::FunctionAttachment, Payload);
   };
+  // `-` separates words, so both names read `collision_name`.
   AddAttachedEmptyFunction("collision-name");
-  AddAttachedEmptyFunction("collision_x2D_name");
+  AddAttachedEmptyFunction("collision_name");
 
   llvm::FunctionType *VarArgType = llvm::FunctionType::get(
       llvm::Type::getVoidTy(Context), /*isVarArg=*/true);
@@ -2745,8 +2746,8 @@ TEST(COFFExceptionIR,
   EXPECT_NE(Source.find("llvmc_varargs()"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("llvmc_varargs(...)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("nd_for"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("collision_x2D_name()"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("collision_x2D_name_2()"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("collision_name()"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("collision_name_2()"), std::string::npos) << Source;
 
   EXPECT_NE(Source.find("nd_for"), std::string::npos) << Source;
 }
@@ -3069,7 +3070,7 @@ TEST(COFFExceptionIR, CleanupOnlyCxxStateInsideIfBecomesCxxTry) {
   Br.Opcode = NdOp::COND_BR;
   Br.Addr = FunctionVA + 0x8;
   Br.addInput(MedVar::makeConst(ThenVA, 8));
-  Br.addInput(MedVar::makeConst(1, 1));
+  Br.addInput(Arg0);
   Entry.Ops.push_back(std::move(Br));
 
   MedBlock Then;
@@ -3280,7 +3281,7 @@ TEST(COFFExceptionIR, CleanupOnlyLiveRangeWrapsIfWhoseCondIsPreviousIp) {
   Br.Opcode = NdOp::COND_BR;
   Br.Addr = FunctionVA + 8;
   Br.addInput(MedVar::makeConst(FunctionVA + 0x20, 8));
-  Br.addInput(MedVar::makeConst(1, 1));
+  Br.addInput(Arg0);
   Entry.Ops.push_back(std::move(Br));
 
   MedBlock Then;
@@ -3409,7 +3410,7 @@ TEST(COFFExceptionIR, CleanupOnlySplitFragmentsWrapsIfElseDiamond) {
   Br.Opcode = NdOp::COND_BR;
   Br.Addr = FunctionVA + 8;
   Br.addInput(MedVar::makeConst(FunctionVA + 0x20, 8));
-  Br.addInput(MedVar::makeConst(1, 1));
+  Br.addInput(Arg0);
   Entry.Ops.push_back(std::move(Br));
 
   MedBlock Then;
@@ -3546,7 +3547,7 @@ TEST(COFFExceptionIR, CleanupOnlySplitFragmentsDoNotWrapLoneIfGoto) {
   Br.Opcode = NdOp::COND_BR;
   Br.Addr = FunctionVA + 0x44;
   Br.addInput(MedVar::makeConst(FunctionVA + 0x50, 8));
-  Br.addInput(MedVar::makeConst(1, 1));
+  Br.addInput(Arg0);
   Work.Ops.push_back(std::move(Br));
   MedOp Ret;
   Ret.Opcode = NdOp::RETURN;
@@ -3820,6 +3821,14 @@ MedFunc makeNestedSEHFixture(llvm::StringRef Name,
   Func.Entry = Specs.front().Start;
   Func.Name = Name.str();
   Func.ReturnType = NdType::makeVoid();
+  // Conditional branches test a value the caller passes, which no pass can
+  // decide.
+  MedVar Flag;
+  Flag.Kind = MedVar::Param;
+  Flag.TheArch = Arch::X64;
+  Flag.Size = 8;
+  if (llvm::any_of(Specs, [](const NestedSEHBlockSpec &S) { return S.CondTo; }))
+    Func.Params.push_back(Flag);
   auto IndexAt = [&](va_t Start) {
     for (size_t I = 0; I < Specs.size(); ++I)
       if (Specs[I].Start == Start)
@@ -3849,7 +3858,7 @@ MedFunc makeNestedSEHFixture(llvm::StringRef Name,
       Branch.Opcode = NdOp::COND_BR;
       Branch.Addr = Specs[I].End - 2;
       Branch.addInput(MedVar::makeConst(Specs[I].CondTo, 8));
-      Branch.addInput(MedVar::makeConst(1, 1));
+      Branch.addInput(Flag);
       Block.Ops.push_back(std::move(Branch));
       Block.Succs = {IndexAt(Specs[I].CondTo), static_cast<int>(I + 1)};
     } else if (Specs[I].BranchTo) {

@@ -14,6 +14,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/llvm/LLVMX86StackEffects.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 
@@ -752,7 +753,7 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
     auto *IA = llvm::InlineAsm::get(
         FnTy, Wide ? "pushq $0\n\tpopfq" : "pushl $0\n\tpopfl",
         "r,~{memory},~{cc},~{dirflag},~{flags}", /*hasSideEffects=*/true);
-    Builder.CreateCall(IA, {Flags});
+    markX86StackTemporary(*Builder.CreateCall(IA, {Flags}));
     return true;
   }
 
@@ -905,9 +906,7 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
 
 bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
                                        llvm::IRBuilder<> &Builder) {
-  if (IC == Intrinsic::X87Wait || IC == Intrinsic::X87Fnclex ||
-      IC == Intrinsic::X87Ffree || IC == Intrinsic::X87Fincstp ||
-      IC == Intrinsic::X87Fninit) {
+  if (const auto Effect = x87StateEffectOfIntrinsic(IC)) {
     if (Op.Output.Size != 0 ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       llvm::report_fatal_error(
@@ -927,15 +926,11 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
     }
     // Emptying a register or moving TOP invalidates every x87 value LLVM
     // might keep in the register stack; the constraints say so.
-    const X87StateEffect Effect =
-        IC == Intrinsic::X87Fninit ? X87StateEffect::Reset
-        : IC == Intrinsic::X87Ffree || IC == Intrinsic::X87Fincstp
-            ? X87StateEffect::Stack
-            : X87StateEffect::Status;
     auto *FnTy =
         llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx), {}, false);
-    auto *IA = llvm::InlineAsm::get(FnTy, Mnemonic, x87StateConstraints(Effect),
-                                    /*hasSideEffects=*/true);
+    auto *IA =
+        llvm::InlineAsm::get(FnTy, Mnemonic, x87StateConstraints(*Effect),
+                             /*hasSideEffects=*/true);
     Builder.CreateCall(IA, {});
     return true;
   }

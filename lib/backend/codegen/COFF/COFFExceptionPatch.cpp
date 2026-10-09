@@ -331,13 +331,13 @@ validateCanonicalWindowsEHIdentity(const llvm::Module &Mod,
       // may not silently omit its exception contract.  Retain the historical
       // auto-name check for manually supplied modules without source identity.
       if (!F.isDeclaration() && *SourceIdentity) {
-        const size_t PrimaryMatches = static_cast<size_t>(std::count_if(
-            Image.ExceptionMetadata.Functions.begin(),
-            Image.ExceptionMetadata.Functions.end(),
-            [&](const ExceptionFunction &EH) {
-              return EH.Kind == RuntimeFunctionKind::Primary &&
-                     EH.CodeRange.Begin == **SourceIdentity;
-            }));
+        const size_t PrimaryMatches = static_cast<size_t>(
+            std::count_if(Image.ExceptionMetadata.Functions.begin(),
+                          Image.ExceptionMetadata.Functions.end(),
+                          [&](const ExceptionFunction &EH) {
+                            return EH.Kind == RuntimeFunctionKind::Primary &&
+                                   EH.CodeRange.Begin == **SourceIdentity;
+                          }));
         if (PrimaryMatches != 0)
           return patchError("function " + F.getName() +
                             " omits its Windows EH metadata");
@@ -393,8 +393,8 @@ validateCanonicalWindowsEHIdentity(const llvm::Module &Mod,
   for (const llvm::MDNode *Row : Table->operands()) {
     if (!Row || Row->getNumOperands() != 2)
       return patchError("malformed Windows EH function-table row");
-    const auto *FunctionValue = llvm::dyn_cast_or_null<llvm::ValueAsMetadata>(
-        Row->getOperand(0).get());
+    const auto *FunctionValue =
+        llvm::dyn_cast_or_null<llvm::ValueAsMetadata>(Row->getOperand(0).get());
     const auto *Function =
         FunctionValue
             ? llvm::dyn_cast<llvm::Function>(FunctionValue->getValue())
@@ -417,11 +417,13 @@ validateCanonicalWindowsEHIdentity(const llvm::Module &Mod,
                         "function attachment for function " +
                         Function->getName());
     if (Function->isDeclaration())
-      return patchError("Windows EH function-table row references declaration " +
-                        Function->getName());
+      return patchError(
+          "Windows EH function-table row references declaration " +
+          Function->getName());
     if (!Rows.emplace(Function, Payload).second)
-      return patchError("duplicate Windows EH function-table row for function " +
-                        Function->getName());
+      return patchError(
+          "duplicate Windows EH function-table row for function " +
+          Function->getName());
   }
 
   for (const CanonicalWindowsEHFunction &Entry : Functions)
@@ -547,12 +549,11 @@ bool hasExactCxxTypeDescriptor(const llvm::Function &Function,
                                va_t TypeDescriptorVA) {
   if (TypeDescriptorVA == 0)
     return llvm::isa<llvm::ConstantPointerNull>(Argument);
-  const auto *Descriptor = llvm::dyn_cast<llvm::GlobalVariable>(
-      Argument.stripPointerCasts());
+  const auto *Descriptor =
+      llvm::dyn_cast<llvm::GlobalVariable>(Argument.stripPointerCasts());
   if (!Descriptor ||
-      Descriptor !=
-          Function.getParent()->getNamedGlobal(
-              makeNdDataSymbol(TypeDescriptorVA)) ||
+      Descriptor != Function.getParent()->getNamedGlobal(
+                        makeNdDataSymbol(TypeDescriptorVA)) ||
       !Descriptor->isDeclaration() || !Descriptor->hasExternalLinkage() ||
       Descriptor->getVisibility() != llvm::GlobalValue::DefaultVisibility ||
       !Descriptor->isConstant() ||
@@ -963,17 +964,14 @@ llvm::Error validateNativeLanguageIRGraph(const llvm::Function &F,
                           "input scope table for function " +
                           F.getName());
 
-      const llvm::BasicBlock *ParentDestination =
-          ExpectedParentDestination(I);
+      const llvm::BasicBlock *ParentDestination = ExpectedParentDestination(I);
       if (Scope.Kind != SEHScopeKind::Finally) {
         ++ExpectedHandlerTargets;
-        const std::pair<uint32_t, uint32_t> Key{
-            static_cast<uint32_t>(I), 0};
+        const std::pair<uint32_t, uint32_t> Key{static_cast<uint32_t>(I), 0};
         auto HandlerTarget = HandlerTargets.find(Key);
         auto Continuation = Dispatch->second.Continuations.find(0);
-        const va_t ExpectedFilter = Scope.Kind == SEHScopeKind::Filter
-                                        ? Scope.FilterOrFinallyVA
-                                        : 0;
+        const va_t ExpectedFilter =
+            Scope.Kind == SEHScopeKind::Filter ? Scope.FilterOrFinallyVA : 0;
         if (!Semantics->second.CatchPad || Semantics->second.CleanupPad ||
             Semantics->second.SourceVA != Scope.HandlerVA ||
             Semantics->second.AuxVA != ExpectedFilter ||
@@ -1580,8 +1578,7 @@ llvm::Expected<RuntimeEntry> decodeRuntimeEntry(const uint8_t *Record,
       if (StructuralBytes > std::numeric_limits<uint32_t>::max() ||
           XDataRVA > std::numeric_limits<uint32_t>::max() - StructuralBytes)
         return patchError("ARM handler-data location overflows");
-      Entry.HandlerData =
-          XDataRVA + static_cast<uint32_t>(StructuralBytes);
+      Entry.HandlerData = XDataRVA + static_cast<uint32_t>(StructuralBytes);
       Entry.HasLanguageHandler = true;
     }
   }
@@ -1593,17 +1590,15 @@ llvm::Expected<RuntimeEntry> decodeRuntimeEntry(const uint8_t *Record,
 }
 
 template <typename ReadRVA>
-llvm::Error validateGeneratedARMCatchAllTable(const RuntimeEntry &Entry,
-                                              Arch TargetArch,
-                                              uint32_t XDataEndRVA,
-                                              ReadRVA &&ReadAtRVA) {
+llvm::Error
+validateGeneratedARMCatchAllTable(const RuntimeEntry &Entry, Arch TargetArch,
+                                  uint32_t XDataEndRVA, ReadRVA &&ReadAtRVA) {
   const llvm::StringRef Architecture =
       TargetArch == Arch::ARM ? "ARM32" : "ARM64";
   if (!Entry.HasLanguageHandler || Entry.HandlerData == 0)
     return patchError("generated " + Architecture +
                       " SEH owner has no language-handler data");
-  const uint8_t *CountBytes =
-      ReadAtRVA(Entry.HandlerData, sizeof(uint32_t));
+  const uint8_t *CountBytes = ReadAtRVA(Entry.HandlerData, sizeof(uint32_t));
   if (!CountBytes)
     return patchError("generated " + Architecture +
                       " SEH scope count is truncated");
@@ -1636,8 +1631,7 @@ llvm::Error validateGeneratedARMCatchAllTable(const RuntimeEntry &Entry,
     const uint32_t RawEnd = readLE<uint32_t>(Scope + sizeof(uint32_t));
     const uint32_t FilterOrFinally =
         readLE<uint32_t>(Scope + 2 * sizeof(uint32_t));
-    const uint32_t RawHandler =
-        readLE<uint32_t>(Scope + 3 * sizeof(uint32_t));
+    const uint32_t RawHandler = readLE<uint32_t>(Scope + 3 * sizeof(uint32_t));
     uint32_t Begin = RawBegin;
     uint32_t End = RawEnd;
     uint32_t Handler = RawHandler;
@@ -1950,8 +1944,9 @@ llvm::Error validateRuntimeEntries(llvm::ArrayRef<RuntimeEntry> Entries,
 
 } // namespace
 
-llvm::Error validateCOFFExceptionSourceIdentityClosure(
-    const llvm::Module &Mod, const BinaryImage &Image) {
+llvm::Error
+validateCOFFExceptionSourceIdentityClosure(const llvm::Module &Mod,
+                                           const BinaryImage &Image) {
   auto Functions = validateCanonicalWindowsEHIdentity(Mod, Image);
   if (!Functions)
     return Functions.takeError();
@@ -2727,9 +2722,9 @@ llvm::Expected<COFFExceptionDirectoryUpdate> prepareCOFFExceptionDirectory(
     const size_t HandlerDataSize = GeneratedLanguagePlans[I].GSWrapped
                                        ? 2 * sizeof(uint32_t)
                                        : sizeof(uint32_t);
-    auto HandlerDataOwner = FindGeneratedSection(
-        Entry.HandlerData, HandlerDataSize,
-        /*RequireXData=*/true, "language handler data");
+    auto HandlerDataOwner =
+        FindGeneratedSection(Entry.HandlerData, HandlerDataSize,
+                             /*RequireXData=*/true, "language handler data");
     if (!HandlerDataOwner)
       return HandlerDataOwner.takeError();
     if ((*UnwindOwner)->Kind !=
@@ -2957,8 +2952,7 @@ llvm::Expected<COFFExceptionDirectoryUpdate> prepareCOFFExceptionDirectory(
     if (Plan.Model != COFFGeneratedLanguageModel::CxxFH3)
       return patchError("generated C++ owner has an unknown language model");
 
-    const uint8_t *FuncInfo =
-        ReadAtRVA(Plan.LanguageGroupRVA, FH3FuncInfoSize);
+    const uint8_t *FuncInfo = ReadAtRVA(Plan.LanguageGroupRVA, FH3FuncInfoSize);
     if (!FuncInfo)
       return patchError("generated C++ FuncInfo is truncated");
     const int32_t MaxState = readLE<int32_t>(FuncInfo + sizeof(uint32_t));
@@ -2997,8 +2991,8 @@ llvm::Expected<COFFExceptionDirectoryUpdate> prepareCOFFExceptionDirectory(
     if (llvm::Error Err = ValidateStateMap(TryMapRVA, NumTryBlocks,
                                            FH3TryBlockSize, "C++ try map"))
       return std::move(Err);
-    if (llvm::Error Err = ValidateStateMap(
-            IPMapRVA, NumIPStates, FH3StateMapEntrySize, "C++ IP map"))
+    if (llvm::Error Err = ValidateStateMap(IPMapRVA, NumIPStates,
+                                           FH3StateMapEntrySize, "C++ IP map"))
       return std::move(Err);
     for (uint32_t TryIndex = 0; TryIndex < NumTryBlocks; ++TryIndex) {
       const uint32_t TryRVA = static_cast<uint32_t>(
@@ -3011,9 +3005,8 @@ llvm::Expected<COFFExceptionDirectoryUpdate> prepareCOFFExceptionDirectory(
           readLE<uint32_t>(Try + 4 * sizeof(uint32_t));
       if (NumCatches == 0 || NumCatches > MaxGeneratedLanguageRecords)
         return patchError("generated C++ handler map has an invalid row count");
-      if (llvm::Error Err =
-              ValidateStateMap(HandlerMapRVA, NumCatches, FH3HandlerTypeSize,
-                               "C++ handler map"))
+      if (llvm::Error Err = ValidateStateMap(
+              HandlerMapRVA, NumCatches, FH3HandlerTypeSize, "C++ handler map"))
         return std::move(Err);
       if (llvm::Error Err = AddPhysicalRows(
               COFFGeneratedEHSemanticKind::CxxCatch, Entry.Begin, TryRVA,
@@ -3372,8 +3365,8 @@ llvm::Expected<COFFExceptionDirectoryUpdate> prepareCOFFExceptionDirectory(
         Section.VA < Image.Base || Section.Size > InvalidVA - Section.VA ||
         SectionRVA > std::numeric_limits<uint32_t>::max() ||
         Section.Size > std::numeric_limits<uint32_t>::max() ||
-        Section.Size > uint64_t(std::numeric_limits<uint32_t>::max()) + 1 -
-                           SectionRVA ||
+        Section.Size >
+            uint64_t(std::numeric_limits<uint32_t>::max()) + 1 - SectionRVA ||
         !rangeInBounds(Section.Offset, Section.Size, Compiled.Bytes.size()))
       return patchError(
           "generated section receipt has an invalid placement or extent");
@@ -3409,9 +3402,9 @@ llvm::Expected<COFFExceptionDirectoryUpdate> prepareCOFFExceptionDirectory(
   for (const COFFGeneratedLanguageOwnerReceipt &Receipt :
        Update.GeneratedLanguageOwners) {
     if (!IsCoveredByGeneratedReceipt(Receipt.UnwindRVA, sizeof(uint32_t)) ||
-        !IsCoveredByGeneratedReceipt(
-            Receipt.HandlerDataRVA,
-            Receipt.GSWrapped ? 2 * sizeof(uint32_t) : sizeof(uint32_t)) ||
+        !IsCoveredByGeneratedReceipt(Receipt.HandlerDataRVA,
+                                     Receipt.GSWrapped ? 2 * sizeof(uint32_t)
+                                                       : sizeof(uint32_t)) ||
         (Receipt.LanguageGroupRVA != 0 &&
          !IsCoveredByGeneratedReceipt(Receipt.LanguageGroupRVA,
                                       Receipt.Model ==
@@ -3898,6 +3891,12 @@ static llvm::Error validatePatchedCOFFImageImpl(
     ValidationImage.Segments.push_back(std::move(Mapped));
   });
 
+  coff_loader::parseImports(*COFF, ValidationImage);
+  coff_loader::parseDelayImports(*COFF, ValidationImage);
+  if (!ValidationImage.LoadDiagnostics.empty())
+    return patchError("final PE import metadata is incomplete: " +
+                      ValidationImage.LoadDiagnostics.front().Message);
+
   auto ReadAtRVA = [&](uint32_t RVA, size_t Size) -> const uint8_t * {
     auto Offset = rvaToFileOffset(PE, Binary, RVA, Size);
     return Offset ? Binary.data() + *Offset : nullptr;
@@ -4193,9 +4192,9 @@ static llvm::Error validatePatchedCOFFImageImpl(
               "final generated language owner does not match the prepared "
               "receipt");
         if (ExpectedReceipt->LanguageGroupRVA != 0) {
-          const size_t HandlerDataSize =
-              ExpectedReceipt->GSWrapped ? 2 * sizeof(uint32_t)
-                                         : sizeof(uint32_t);
+          const size_t HandlerDataSize = ExpectedReceipt->GSWrapped
+                                             ? 2 * sizeof(uint32_t)
+                                             : sizeof(uint32_t);
           const uint8_t *LanguageGroup =
               ReadAtRVA(EntryOrErr->HandlerData, HandlerDataSize);
           if (!LanguageGroup || readLE<uint32_t>(LanguageGroup) !=
@@ -4362,9 +4361,9 @@ static llvm::Error validatePatchedCOFFImageImpl(
       if (!IsCoveredByExpectedSection(Receipt.BeginRVA,
                                       Receipt.EndRVA - Receipt.BeginRVA) ||
           !IsCoveredByExpectedSection(Receipt.UnwindRVA, sizeof(uint32_t)) ||
-          !IsCoveredByExpectedSection(
-              Receipt.HandlerDataRVA,
-              Receipt.GSWrapped ? 2 * sizeof(uint32_t) : sizeof(uint32_t)) ||
+          !IsCoveredByExpectedSection(Receipt.HandlerDataRVA,
+                                      Receipt.GSWrapped ? 2 * sizeof(uint32_t)
+                                                        : sizeof(uint32_t)) ||
           (Receipt.LanguageGroupRVA != 0 &&
            !IsCoveredByExpectedSection(
                Receipt.LanguageGroupRVA,
@@ -4510,8 +4509,8 @@ static llvm::Error validatePatchedCOFFImageImpl(
 
       const uint8_t *FuncInfo =
           ReadAtRVA(Owner.LanguageGroupRVA, FH3FuncInfoSize);
-      if (!FuncInfo || !IsCoveredByExpectedSection(Owner.LanguageGroupRVA,
-                                                   FH3FuncInfoSize))
+      if (!FuncInfo ||
+          !IsCoveredByExpectedSection(Owner.LanguageGroupRVA, FH3FuncInfoSize))
         return patchError("final generated C++ FuncInfo is truncated");
       const int32_t MaxState = readLE<int32_t>(FuncInfo + sizeof(uint32_t));
       const uint32_t UnwindMapRVA =
@@ -4527,8 +4526,8 @@ static llvm::Error validatePatchedCOFFImageImpl(
       if (MaxState < 0 ||
           static_cast<uint32_t>(MaxState) >
               SizeOfImage / FH3StateMapEntrySize ||
-          NumTryBlocks == 0 ||
-          NumTryBlocks > SizeOfImage / FH3TryBlockSize || NumIPStates == 0 ||
+          NumTryBlocks == 0 || NumTryBlocks > SizeOfImage / FH3TryBlockSize ||
+          NumIPStates == 0 ||
           NumIPStates > SizeOfImage / FH3StateMapEntrySize ||
           uint64_t(TryMapRVA) + uint64_t(NumTryBlocks) * FH3TryBlockSize >
               SizeOfImage)
@@ -4554,16 +4553,14 @@ static llvm::Error validatePatchedCOFFImageImpl(
             readLE<uint32_t>(Try + 3 * sizeof(uint32_t));
         const uint32_t HandlerMapRVA =
             readLE<uint32_t>(Try + 4 * sizeof(uint32_t));
-        if (NumCatches == 0 ||
-            NumCatches > SizeOfImage / FH3HandlerTypeSize ||
-            !IsStateMapCovered(HandlerMapRVA, NumCatches,
-                               FH3HandlerTypeSize))
+        if (NumCatches == 0 || NumCatches > SizeOfImage / FH3HandlerTypeSize ||
+            !IsStateMapCovered(HandlerMapRVA, NumCatches, FH3HandlerTypeSize))
           return patchError(
               "final generated C++ handler map is not section-authenticated");
-        if (llvm::Error Err = AddPhysicalRows(
-                COFFGeneratedEHSemanticKind::CxxCatch, Owner.BeginRVA,
-                static_cast<uint32_t>(TryRVA), HandlerMapRVA, NumCatches,
-                FH3HandlerTypeSize))
+        if (llvm::Error Err =
+                AddPhysicalRows(COFFGeneratedEHSemanticKind::CxxCatch,
+                                Owner.BeginRVA, static_cast<uint32_t>(TryRVA),
+                                HandlerMapRVA, NumCatches, FH3HandlerTypeSize))
           return Err;
       }
     }
@@ -4573,30 +4570,6 @@ static llvm::Error validatePatchedCOFFImageImpl(
           "language tables");
 
     const uint32_t PointerSize = PE.Is64 ? 8 : 4;
-    for (auto I = COFF->import_directory_begin(),
-              E = COFF->import_directory_end();
-         I != E; ++I) {
-      llvm::StringRef DLLName;
-      if (llvm::Error Err = I->getName(DLLName)) {
-        llvm::consumeError(std::move(Err));
-        continue;
-      }
-      uint32_t IATRVA = 0;
-      if (llvm::Error Err = I->getImportAddressTableRVA(IATRVA)) {
-        llvm::consumeError(std::move(Err));
-        continue;
-      }
-      uint32_t Index = 0;
-      for (auto SI = I->imported_symbol_begin(), SE = I->imported_symbol_end();
-           SI != SE; ++SI, ++Index) {
-        const uint64_t SlotRVA =
-            uint64_t(IATRVA) + uint64_t(Index) * PointerSize;
-        if (SlotRVA > InvalidVA - ImageBase)
-          break;
-        coff_loader::addImportedSymbol(SI, DLLName, ImageBase + SlotRVA,
-                                       ValidationImage);
-      }
-    }
     for (auto I = COFF->export_directory_begin(),
               E = COFF->export_directory_end();
          I != E; ++I) {
@@ -4628,7 +4601,6 @@ static llvm::Error validatePatchedCOFFImageImpl(
       Exp.Addr = Address;
       ValidationImage.Exports.push_back(std::move(Exp));
     }
-    coff_loader::parseDelayImports(*COFF, ValidationImage);
     coff_loader::parseExceptions(*COFF, ValidationImage, ImageBase);
     coff_loader::parseSymbolTable(*COFF, ValidationImage, ImageBase);
     coff_loader::resolveExceptionHandlers(ValidationImage);

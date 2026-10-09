@@ -50,13 +50,22 @@ static int equal(const char *a, const char *b) {
   return *a == *b;
 }
 static u64 little_integer(const unsigned char *p, unsigned width) {
+  /* Fixed ABI widths avoid byte-at-a-time guest loops without requiring
+   * aligned pointers or native byte order. Other widths keep the same decoder.
+   */
+  if (width == 2)
+    return (u64)p[0] | ((u64)p[1] << 8);
+  if (width == 4)
+    return (u64)p[0] | ((u64)p[1] << 8) | ((u64)p[2] << 16) | ((u64)p[3] << 24);
+  if (width == 8)
+    return (u64)p[0] | ((u64)p[1] << 8) | ((u64)p[2] << 16) |
+           ((u64)p[3] << 24) | ((u64)p[4] << 32) | ((u64)p[5] << 40) |
+           ((u64)p[6] << 48) | ((u64)p[7] << 56);
   u64 value = 0;
   for (unsigned i = 0; i != width; ++i)
     value |= (u64)p[i] << (i * 8);
   return value;
 }
-/* One read-only native workload. Its captured value is stable during these
- * calls; explicit guest nice values use the identical raw instruction path. */
 static int priority_result(u64 which, u64 who, u64 expected, unsigned failure) {
   unsigned error;
   const u64 sentinel = 0x1122334455667788UL;
@@ -71,6 +80,579 @@ static int priority_result(u64 which, u64 who, u64 expected, unsigned failure) {
     return 212;
   return 0;
 }
+static int pathconf_result(u64 number, u64 object, u64 selector, u64 expected,
+                           unsigned failure) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+  u64 value =
+      call(number, object, selector, sentinel, -1UL, -1UL, -1UL, &error);
+  if (value != expected || error != failure)
+    return 230;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (failure ? sentinel : 0))
+#endif
+    return 231;
+  return 0;
+}
+/* Kernel-owned scalar queries: the harness supplies data, empty/, alias,
+ * dangling and cycle in one isolated catalogue. No filesystem limit oracle. */
+static int kernel_pathconf(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 232;
+  parent[last ? last : 1] = 0;
+  u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 233;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 234;
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || call(199, file, 37, 0, 0, 0, 0, &error) != 37 ||
+      error || secondary || call(13, root, 0, 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 235;
+  const unsigned selectors[] = {15, 16, 17, 19, 20, 21, 22, 23, 24, 25};
+  const u64 expected[] = {1, 1, 1, 0, 4096, 65536, 4096, 4096, 255, 0};
+  const u64 carriers[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const char names[4][8] = {"data", "empty", "alias", "."};
+  u64 observed[10];
+  for (unsigned i = 0; i != 10; ++i) {
+    observed[i] = call(192, file, selectors[i], -1UL, -1UL, -1UL, -1UL, &error);
+    if (error || secondary || observed[i] != expected[i])
+      return 236;
+    for (unsigned c = 0; c != 3; ++c) {
+      u64 selector = carriers[c] | selectors[i];
+      for (unsigned n = 0; n != 4; ++n)
+        if (pathconf_result(191, (u64)names[n], selector, expected[i], 0))
+          return 237;
+      for (unsigned n = 0; n != 3; ++n) {
+        u64 fd = n == 0 ? file : n == 1 ? root : copy;
+        if (pathconf_result(192, carriers[c] | fd, selector, expected[i], 0))
+          return 238;
+      }
+    }
+  }
+  if (pathconf_result(191, -1UL, -1UL, 14, 1) ||
+      pathconf_result(191, (u64) "missing", -1UL, 2, 1) ||
+      pathconf_result(191, (u64) "", -1UL, 2, 1) ||
+      pathconf_result(191, (u64) "data/child", -1UL, 20, 1) ||
+      pathconf_result(191, (u64) "data/", 15, 20, 1) ||
+      pathconf_result(191, (u64) "alias/", 15, 1, 0) ||
+      pathconf_result(191, (u64) "alias//", 15, 1, 0) ||
+      pathconf_result(191, (u64) "alias/.", 15, 20, 1) ||
+      pathconf_result(191, (u64) "alias/child", 15, 20, 1) ||
+      pathconf_result(191, (u64) "dangling", 15, 2, 1) ||
+      pathconf_result(191, (u64) "cycle", 15, 62, 1) ||
+      pathconf_result(192, -1UL, -1UL, 9, 1) ||
+      call(199, copy, 0, 1, 0, 0, 0, &error) != 37 || error || secondary)
+    return 239;
+  if (call(6, file, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      pathconf_result(192, file, -1UL, 9, 1) ||
+      pathconf_result(192, copy, 15, 1, 0) ||
+      call(6, copy, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(6, root, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 240;
+  const char marker = 'C';
+  if (call(4, 1, mode == 1 ? (u64)observed : (u64)&marker,
+           mode == 1 ? sizeof(observed) : 1, 0, 0, 0,
+           &error) != (mode == 1 ? sizeof(observed) : 1) ||
+      error || secondary)
+    return 241;
+  if (mode == 2) {
+    call(191, (u64) "data", 4, 0, 0, 0, 0, &error);
+    return 242; // Any result means the bounded unknown-selector stop failed.
+  }
+  return 37;
+}
+
+/* Fixed common fields only. The separate SDK probe established their packing;
+ * this original workload compares each atom with a raw stat64 observation. */
+static int attribute_result(u64 number, u64 a0, u64 a1, u64 a2, u64 a3, u64 a4,
+                            u64 a5, u64 expected, unsigned failure) {
+  unsigned error;
+  u64 value = call(number, a0, a1, a2, a3, a4, a5, &error);
+  if (value != expected || error != failure)
+    return 243;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (failure ? a2 : 0))
+#endif
+    return 244;
+  return 0;
+}
+static int common_record(const unsigned char *record,
+                         const unsigned char *status) {
+  const unsigned offsets[] = {24, 32, 40, 48,  56,  64,  72,
+                              80, 88, 96, 100, 104, 108, 112};
+  const unsigned sources[] = {0,  80, 88, 48, 56, 64,  72,
+                              32, 40, 16, 20, 4,  116, 8};
+  const unsigned widths[] = {4, 8, 8, 8, 8, 8, 8, 8, 8, 4, 4, 4, 4, 8};
+  if (little_integer(record, 4) != 120 ||
+      little_integer(record + 4, 4) != 0x82079e0aUL ||
+      little_integer(record + 8, 8) || little_integer(record + 16, 8))
+    return 245;
+  u64 mode = little_integer(status + 4, 2);
+  unsigned kind = (mode & 0170000) == 0100000   ? 1
+                  : (mode & 0170000) == 0040000 ? 2
+                  : (mode & 0170000) == 0120000 ? 5
+                                                : 0;
+  if (!kind || little_integer(record + 28, 4) != kind)
+    return 246;
+  for (unsigned i = 0; i != 14; ++i)
+    if (little_integer(record + offsets[i], widths[i]) !=
+        little_integer(status + sources[i], i == 11 ? 2 : widths[i]))
+      return 247;
+  return 0;
+}
+/* Original ordinary-xattr controls. The native provider may list additional
+ * automatic attributes; derive name boundaries from its actual complete list.
+ * Model-only literal/unknown observations never enter the native inventory. */
+static int xattr_result(u64 n, u64 a0, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5,
+                        u64 expected, unsigned failure) {
+  unsigned error;
+  if (call(n, a0, a1, a2, a3, a4, a5, &error) != expected || error != failure)
+    return 221;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (failure ? a2 : 0))
+#endif
+    return 222;
+  return 0;
+}
+static void xattr_canary(u64 *words) {
+  for (unsigned i = 0; i != 36; i += 4)
+    words[i] = words[i + 1] = words[i + 2] = words[i + 3] =
+        0xa5a5a5a5a5a5a5a5UL;
+}
+static int xattr_bytes(const u64 *words, const unsigned char *expected,
+                       unsigned count) {
+  unsigned whole = count / 8, partial = count % 8;
+  for (unsigned i = 0; i != 36; ++i) {
+    u64 value = 0xa5a5a5a5a5a5a5a5UL;
+    if (i >= 2 && i < 2 + whole)
+      value = little_integer(expected + (i - 2) * 8, 8);
+    else if (i == 2 + whole && partial) {
+      u64 mask = (1UL << (partial * 8)) - 1;
+      /* Assemble only the partial bytes: no read past the proved record. */
+      value = little_integer(expected + whole * 8, partial) | (value & ~mask);
+    }
+    if (words[i] != value)
+      return 223;
+  }
+  return 0;
+}
+static int extended_attributes(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 224;
+  parent[last ? last : 1] = 0;
+  u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 225;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary || xattr_result(13, root, 0, 0, 0, 0, 0, 0, 0))
+    return 226;
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || xattr_result(199, file, 37, 0, 0, 0, 0, 37, 0))
+    return 227;
+  const char *beta = "user.neverd.beta", *empty = "user.neverd.empty";
+  const unsigned char value[7] = {0, 255, 'A', 0, 128, 'B', '\n'};
+  u64 words[36];
+  unsigned char *out = (unsigned char *)words + 16;
+  xattr_canary(words);
+  if (xattr_result(234, (u64) "data", (u64)beta, (u64)out, 7, 0, 0, 7, 0) ||
+      xattr_bytes(words, value, 7))
+    return 228;
+  unsigned char names[256];
+  u64 total = call(240, (u64) "data", 0, 0, 0, -1UL, -1UL, &error);
+  if (error || secondary || !total || total > 256 ||
+      xattr_result(241, file, (u64)names, 256, 0, -1UL, -1UL, total, 0))
+    return 229;
+  unsigned start = 0, found = 0;
+  while (start < total) {
+    unsigned end = start;
+    while (end < total && names[end])
+      ++end;
+    if (end == total || end == start)
+      return 230;
+    if (equal((const char *)names + start, beta))
+      found |= 1;
+    if (equal((const char *)names + start, "user.neverd.alpha"))
+      found |= 2;
+    if (equal((const char *)names + start, empty))
+      found |= 4;
+    start = end + 1;
+  }
+  if (found != 7)
+    return 231;
+  if (mode == 1) {
+    /* An explicit virtual known-empty file, not an inferred native default. */
+    if (xattr_result(240, (u64) "known-empty", -1UL, 128, 0, 0, 0, 0, 0) ||
+        xattr_result(4, 1, (u64)value, 7, 0, 0, 0, 7, 0) ||
+        xattr_result(4, 1, (u64)names, total, 0, 0, 0, total, 0))
+      return 232;
+    return 37;
+  }
+  if (mode == 2) {
+    if (xattr_result(4, 1, (u64) "X", 1, 0, 0, 0, 1, 0))
+      return 233;
+    call(234, (u64) "unknown", (u64)beta, 0, 0, 0, 0, &error);
+    return 234;
+  }
+  /* Check one complete-name boundary before, at and beyond its ending NUL.
+   * Every full buffer byte/guard is compared; the provider's order is retained.
+   */
+  unsigned end = 0;
+  while (end < total && names[end])
+    ++end;
+  ++end;
+  for (unsigned route = 0; route != 2; ++route)
+    for (unsigned delta = 0; delta != 3; ++delta) {
+      u64 size = end + delta - 1;
+      unsigned prefix = 0;
+      for (unsigned i = 0; i < total && i < size; ++i)
+        if (!names[i])
+          prefix = i + 1;
+      xattr_canary(words);
+      if (xattr_result(route ? 241 : 240, route ? copy : (u64) "data", (u64)out,
+                       size, 0, -1UL, -1UL, size < total ? 34 : total,
+                       size < total) ||
+          xattr_bytes(words, names, prefix))
+        return 235;
+    }
+  for (unsigned route = 0; route != 2; ++route) {
+    u64 object = route ? copy | 0xabcdef1200000000UL : (u64) "data";
+    u64 get = route ? 235 : 234, list = route ? 241 : 240;
+    xattr_canary(words);
+    if (xattr_result(get, object, (u64)beta, 0, -1UL, -1UL, 0, 7, 0) ||
+        xattr_result(get, object, (u64)beta, (u64)out, 6, 0, 0, 34, 1) ||
+        xattr_bytes(words, value, 0) ||
+        xattr_result(get, object, (u64)beta, (u64)out, 0, 0, 0, route ? 7 : 34,
+                     !route) ||
+        xattr_bytes(words, value, 0) ||
+        xattr_result(get, object, (u64)empty, -1UL, 7, 0, 0, 0, 0) ||
+        xattr_result(get, object, (u64) "missing", 0, 0, 0, 0, 93, 1) ||
+        xattr_result(get, object, (u64) "missing", (u64)out, 7, 1, 0, 22, 1) ||
+        xattr_result(list, object, 0, -1UL, 0, -1UL, -1UL, total, 0) ||
+        xattr_result(list, object, (u64)out, -1UL, 0, -1UL, -1UL, 34, 1) ||
+        xattr_result(199, copy, 0, 1, 0, 0, 0, 37, 0))
+      return 236;
+  }
+  if (xattr_result(234, (u64) "alias", (u64)beta, 0, 0, 0, 64, 62, 1) ||
+      xattr_result(234, (u64) "alias", (u64)beta, 0, 0, 0, 65, 93, 1) ||
+      xattr_result(234, (u64) "dangling", 0, 0, 0, 0, 0, 2, 1) ||
+      xattr_result(234, (u64) "cycle", 0, 0, 0, 0, 0, 62, 1) ||
+      xattr_result(234, 0, 0, 0, 0, 0, 8, 22, 1) ||
+      xattr_result(235, -1UL, 0, 0, 0, 0, 64, 22, 1) ||
+      xattr_result(241, -1UL, 0, 0, 0, 0, 0, 9, 1))
+    return 237;
+  if (xattr_result(128, (u64) "data", (u64) "moved", 0, 0, 0, 0, 0, 0) ||
+      xattr_result(234, (u64) "moved", (u64)beta, 0, 0, 0, 0, 7, 0) ||
+      xattr_result(10, (u64) "moved", 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(235, copy, (u64)beta, 0, 0, 0, 0, 7, 0) ||
+      xattr_result(241, copy, 0, 0, 0, 0, 0, total, 0) ||
+      xattr_result(199, file, 0, 1, 0, 0, 0, 37, 0) ||
+      xattr_result(6, copy, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, file, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, root, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(4, 1, (u64) "X", 1, 0, 0, 0, 1, 0))
+    return 238;
+  return 37;
+}
+
+static int attribute_name_record(const unsigned char *bytes, const char *name,
+                                 unsigned type) {
+  unsigned length = 0;
+  while (name[length])
+    ++length;
+  const unsigned total = 36 + ((length + 4) & ~3u);
+  if (little_integer(bytes, 4) != total ||
+      little_integer(bytes + 4, 4) != 0x80000009 ||
+      little_integer(bytes + 8, 8) || little_integer(bytes + 16, 8) ||
+      little_integer(bytes + 24, 4) != 12 ||
+      little_integer(bytes + 28, 4) != length + 1 ||
+      little_integer(bytes + 32, 4) != type)
+    return 1;
+  for (unsigned i = 36; i != total; ++i)
+    if (bytes[i] != (i < 36 + length ? (unsigned char)name[i - 36] : 0))
+      return 1;
+  return 0;
+}
+
+static int attribute_names(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 225;
+  parent[last ? last : 1] = 0;
+  u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 226;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary || attribute_result(13, root, 0, 0, 0, 0, 0, 0, 0))
+    return 227;
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || attribute_result(199, file, 37, 0, 0, 0, 0, 37, 0))
+    return 228;
+  unsigned request[6] = {0xffff0005, 0x80000009, 0, 0, 0, 0};
+  // Independent literal, rather than using one route to predict the others.
+  const unsigned char expected[44] = {
+      44, 0, 0, 0, 9, 0, 0,   128, 0,   0,   0, 0, 0, 0, 0,
+      0,  0, 0, 0, 0, 0, 0,   0,   0,   12,  0, 0, 0, 5, 0,
+      0,  0, 1, 0, 0, 0, 'd', 'a', 't', 'a', 0, 0, 0, 0};
+  u64 words[10];
+  unsigned char *bytes = (unsigned char *)words, observed[44];
+  if (attribute_result(228, copy, (u64)request, (u64)observed, 44, 0, 0, 0, 0))
+    return 229;
+  for (unsigned i = 0; i != 5; ++i)
+    if (little_integer(observed + i * 8, 8) !=
+        little_integer(expected + i * 8, 8))
+      return 230;
+  if (little_integer(observed + 40, 4) != little_integer(expected + 40, 4))
+    return 230;
+  const u64 sizes[] = {4, 7, 24, 27, 31, 35, 36, 40, 41, 43, 44, 512};
+  for (unsigned i = 0; i != 12; ++i)
+    for (unsigned route = 0; route != 3; ++route) {
+      for (unsigned j = 0; j != 10; ++j)
+        words[j] = 0xa5a5a5a5a5a5a5a5UL;
+      const u64 flags = i % 3 == 0 ? 0 : i % 3 == 1 ? 4 : 8;
+      const int failed =
+          route == 0
+              ? attribute_result(220, (u64) "alias", (u64)request,
+                                 (u64)(bytes + 8), sizes[i], flags, -1UL, 0, 0)
+          : route == 1
+              ? attribute_result(228, copy | 0x1234567800000000UL, (u64)request,
+                                 (u64)(bytes + 8), sizes[i], flags, -1UL, 0, 0)
+              : attribute_result(476, root, (u64) "data", (u64)request,
+                                 (u64)(bytes + 8), sizes[i], flags, 0, 0);
+      if (failed)
+        return 231;
+      const unsigned count = sizes[i] < 44 ? (unsigned)sizes[i] : 44;
+      // Compare all 80 bytes in ten words. A partial final word keeps its
+      // exact output prefix and every unwritten canary byte, as above.
+      const unsigned whole = count / 8, partial = count % 8;
+      for (unsigned j = 0; j != 10; ++j) {
+        u64 wanted = 0xa5a5a5a5a5a5a5a5UL;
+        if (j >= 1 && j < 1 + whole)
+          wanted = little_integer(expected + (j - 1) * 8, 8);
+        else if (j == 1 + whole && partial) {
+          const u64 mask = (1UL << (partial * 8)) - 1;
+          wanted =
+              little_integer(expected + whole * 8, partial) | (wanted & ~mask);
+        }
+        if (words[j] != wanted)
+          return 232;
+      }
+    }
+  if (attribute_result(220, (u64) "alias", (u64)request, (u64)bytes, 80, 1, 0,
+                       0, 0) ||
+      attribute_name_record(bytes, "alias", 5) ||
+      attribute_result(220, (u64) "alias", (u64)request, (u64)bytes, 80, 0x800,
+                       0, 0, 0) ||
+      attribute_name_record(bytes, "alias", 5) ||
+      attribute_result(220, (u64) "dangling", (u64)request, -1UL, 0, 0, 0, 2,
+                       1) ||
+      attribute_result(220, (u64) "cycle", (u64)request, -1UL, 0, 0, 0, 62,
+                       1) ||
+      attribute_result(128, (u64) "data", (u64) "moved", 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, copy, (u64)request, (u64)bytes, 80, 0, 0, 0, 0) ||
+      attribute_name_record(bytes, "moved", 1) ||
+      attribute_result(10, (u64) "moved", 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, file, (u64)request, (u64)bytes, 80, 0, 0, 0, 0) ||
+      attribute_name_record(bytes, "moved", 1))
+    return 233;
+  u64 directory = call(5, (u64) "empty", 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      attribute_result(13, directory, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, directory, (u64)request, (u64)bytes, 80, 0, 0, 0,
+                       0) ||
+      attribute_name_record(bytes, "empty", 2) ||
+      attribute_result(128, (u64) "../empty", (u64) "../moved-dir", 0, 0, 0, 0,
+                       0, 0) ||
+      attribute_result(220, (u64) ".", (u64)request, (u64)bytes, 80, 0, 0, 0,
+                       0) ||
+      attribute_name_record(bytes, "moved-dir", 2) ||
+      attribute_result(137, (u64) "../moved-dir", 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, directory, (u64)request, (u64)bytes, 80, 0, 0, 0,
+                       0) ||
+      attribute_name_record(bytes, "moved-dir", 2) ||
+      attribute_result(13, root, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(199, copy, 0, 1, 0, 0, 0, 37, 0) ||
+      attribute_result(6, directory, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(6, file, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(6, copy, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(6, root, 0, 0, 0, 0, 0, 0, 0))
+    return 234;
+  if (attribute_result(4, 1, mode == 1 ? (u64)observed : (u64) "N",
+                       mode == 1 ? 44 : 1, 0, 0, 0, mode == 1 ? 44 : 1, 0))
+    return 235;
+  if (mode == 2) {
+    call(220, (u64) "/", (u64)request, (u64)bytes, 80, 0, 0, &error);
+    return 236;
+  }
+  return 37;
+}
+
+static int common_attributes(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 248;
+  parent[last ? last : 1] = 0;
+  u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 249;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 250;
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || call(199, file, 37, 0, 0, 0, 0, &error) != 37 ||
+      error || secondary || call(13, root, 0, 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 251;
+  unsigned request[6] = {0xffff0005, 0x82079e0a, 0, 0, 0, 0};
+  unsigned char status[144], observed[120];
+  u64 guarded_words[20];
+  unsigned char *guarded = (unsigned char *)guarded_words;
+  const u64 canary = 0xa5a5a5a5a5a5a5a5UL;
+  if (attribute_result(339, file, (u64)status, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, file, (u64)request, (u64)observed, 120, 0, -1UL, 0,
+                       0) ||
+      common_record(observed, status))
+    return 252;
+  const u64 sizes[] = {4, 7, 24, 27, 100, 119, 120, 512};
+  for (unsigned i = 0; i != 8; ++i) {
+    for (unsigned j = 0; j != 20; j += 4)
+      guarded_words[j] = guarded_words[j + 1] = guarded_words[j + 2] =
+          guarded_words[j + 3] = canary;
+    u64 flags = i % 3 == 0 ? 0 : i % 3 == 1 ? 4 : 8;
+    int failed =
+        i % 3 == 0
+            ? attribute_result(220, (u64) "alias", (u64)request,
+                               (u64)(guarded + 16), sizes[i], flags, -1UL, 0, 0)
+        : i % 3 == 1
+            ? attribute_result(228, copy | 0x1234567800000000UL, (u64)request,
+                               (u64)(guarded + 16), sizes[i], flags, -1UL, 0, 0)
+            : attribute_result(476, root, (u64) "data", (u64)request,
+                               (u64)(guarded + 16), sizes[i], flags, 0, 0);
+    if (failed)
+      return 253;
+    unsigned count = sizes[i] < 120 ? (unsigned)sizes[i] : 120;
+    // Compare every output and guard byte in bounded words. A partial final
+    // word combines exactly its written prefix with the untouched canary.
+    const unsigned whole = count / 8, partial = count % 8;
+    for (unsigned j = 0; j != 20; ++j) {
+      u64 expected = canary;
+      if (j >= 2 && j < 2 + whole)
+        expected = little_integer(observed + (j - 2) * 8, 8);
+      else if (j == 2 + whole && partial) {
+        const u64 mask = (1UL << (partial * 8)) - 1;
+        expected =
+            (little_integer(observed + whole * 8, 8) & mask) | (canary & ~mask);
+      }
+      if (guarded_words[j] != expected)
+        return 254;
+    }
+  }
+  if (attribute_result(476, -1UL, (u64)path, (u64)request, (u64)guarded, 120, 0,
+                       0, 0) ||
+      common_record(guarded, status) ||
+      attribute_result(339, root, (u64)status, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(228, root, (u64)request, (u64)guarded, 120, 0, 0, 0,
+                       0) ||
+      common_record(guarded, status) ||
+      attribute_result(340, (u64) "alias", (u64)status, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(220, (u64) "alias", (u64)request, (u64)guarded, 120, 1,
+                       0, 0, 0) ||
+      common_record(guarded, status))
+    return 255;
+  // These failures precede any output and preserve native carry/secondary ABI.
+  request[0] = 4;
+  if (attribute_result(220, (u64) "missing", (u64)request, -1UL, 0, 0, 0, 2,
+                       1) ||
+      attribute_result(220, (u64) "data", (u64)request, -1UL, 0, 0, 0, 34, 1) ||
+      attribute_result(220, (u64) "data", (u64)request, -1UL, 120, 0, 0, 22,
+                       1) ||
+      attribute_result(220, -1UL, -1UL, -1UL, 0, 0, 0, 14, 1) ||
+      attribute_result(476, -1UL, (u64) "data", -1UL, -1UL, 0, 0, 14, 1) ||
+      attribute_result(228, -1UL, -1UL, -1UL, 0, 0, 0, 9, 1))
+    return 201;
+  request[0] = 5;
+  if (attribute_result(220, (u64) "dangling", (u64)request, -1UL, 0, 0, 0, 2,
+                       1) ||
+      attribute_result(220, (u64) "cycle", (u64)request, -1UL, 0, 0, 0, 62,
+                       1) ||
+      attribute_result(476, file, (u64) "data", (u64)request, -1UL, 0, 0, 20,
+                       1) ||
+      attribute_result(220, (u64) "data", (u64)request, -1UL, 120, 0, 0, 14,
+                       1) ||
+      attribute_result(228, file, (u64)request, (u64)guarded, -1UL, 0, 0, 22,
+                       1))
+    return 202;
+  request[1] = 8;
+  if (attribute_result(220, (u64) "alias", (u64)request, (u64)guarded, 8, 0x800,
+                       0, 0, 0) ||
+      little_integer(guarded, 4) != 8 || little_integer(guarded + 4, 4) != 5 ||
+      attribute_result(220, (u64) "data", (u64)request, -1UL, 8, 8, 0, 22, 1) ||
+      call(199, copy, 0, 1, 0, 0, 0, &error) != 37 || error || secondary ||
+      call(6, file, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      attribute_result(228, file, -1UL, -1UL, 0, 0, 0, 9, 1) ||
+      attribute_result(228, copy, (u64)request, (u64)guarded, 8, 0, 0, 0, 0) ||
+      little_integer(guarded + 4, 4) != 1 ||
+      call(6, copy, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(6, root, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 203;
+  const char marker = 'A';
+  if (call(4, 1, mode == 1 ? (u64)observed : (u64)&marker,
+           mode == 1 ? sizeof(observed) : 1, 0, 0, 0,
+           &error) != (mode == 1 ? sizeof(observed) : 1) ||
+      error || secondary)
+    return 204;
+  if (mode == 2) {
+    request[1] = 0x400000; // Extended security remains outside this contract.
+    call(220, (u64) "data", (u64)request, (u64)guarded, 120, 0, 0, &error);
+    return 205;
+  }
+  return 37;
+}
+
+/* One read-only native workload. Its captured value is stable during these
+ * calls; explicit guest nice values use the identical raw instruction path. */
 static int process_priority(int emit_values) {
   unsigned error;
   const u64 sentinel = 0x1122334455667788UL;
@@ -1042,6 +1624,679 @@ static unsigned directory_names(const unsigned char *bytes, u64 size,
   }
   return seen;
 }
+/* Common native identity checks and a separate literal virtual stat view. */
+static int initial_directory_identity(u64 fd, const unsigned char *before,
+                                      unsigned char *after) {
+  unsigned error = 0;
+  if (call(339, fd, (u64)after, 0, 0, 0, 0, &error) || error)
+    return 0;
+  return little_integer(before, 4) == little_integer(after, 4) &&
+         little_integer(before + 4, 2) == little_integer(after + 4, 2) &&
+         little_integer(before + 8, 8) == little_integer(after + 8, 8) &&
+         little_integer(before + 16, 4) == little_integer(after + 16, 4) &&
+         little_integer(before + 20, 4) == little_integer(after + 20, 4);
+}
+static int initial_directory_metadata(const char *path, int virtual_bytes) {
+  unsigned error = 0;
+  int check = 150;
+#define INITIAL_EXPECT(expression)                                             \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024];
+  unsigned last = 0, length = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  INITIAL_EXPECT(path[0] == '/' && !path[length] && length > last + 1);
+  parent[last ? last : 1] = 0;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  INITIAL_EXPECT(!error);
+  unsigned char before[144], after[144], captured[144], refused[144];
+  INITIAL_EXPECT(call(339, root, (u64)before, 0, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(call(475, root, (u64) "s", 0700, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(initial_directory_identity(root, before, captured));
+  u64 copy = call(41, root, 0, 0, 0, 0, 0, &error);
+  INITIAL_EXPECT(!error);
+  INITIAL_EXPECT(initial_directory_identity(copy, before, refused));
+  INITIAL_EXPECT(call(475, root, (u64) "s", 0700, 0, 0, 0, &error) == 17 &&
+                 error);
+  INITIAL_EXPECT(initial_directory_identity(copy, before, after));
+  ++check;
+  for (unsigned i = 0; i != sizeof(after); ++i)
+    if (after[i] != refused[i])
+      return check;
+  u64 s = call(463, root, (u64) "s", 0x100000, 0, 0, 0, &error);
+  INITIAL_EXPECT(!error);
+  u64 f = call(463, s, (u64) "f", 0xa02, 0600, 0, 0, &error);
+  INITIAL_EXPECT(!error);
+  INITIAL_EXPECT(initial_directory_identity(root, before, after));
+  if (virtual_bytes) {
+    ++check;
+    for (unsigned i = 0; i != sizeof(after); ++i)
+      if (after[i] != captured[i])
+        return check;
+  }
+  INITIAL_EXPECT(
+      call(488, root, (u64) "s", root, (u64) "t", 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(initial_directory_identity(root, before, after));
+  INITIAL_EXPECT(call(472, s, (u64) "f", 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(472, root, (u64) "t", 0x80, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(initial_directory_identity(copy, before, after));
+  INITIAL_EXPECT(call(475, root, (u64) "s", 0700, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(initial_directory_identity(root, before, after));
+  INITIAL_EXPECT(call(339, s, (u64)refused, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(470, root, (u64) "s", (u64)after, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(little_integer(refused + 8, 8) !=
+                 little_integer(after + 8, 8));
+  INITIAL_EXPECT(call(472, root, (u64) "s", 0x80, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(initial_directory_identity(root, before, after));
+  INITIAL_EXPECT(call(6, s, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(6, f, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(6, copy, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(6, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(4, 1, virtual_bytes ? (u64)captured : (u64) "I",
+                      virtual_bytes ? sizeof(captured) : 1, 0, 0, 0,
+                      &error) == (virtual_bytes ? sizeof(captured) : 1) &&
+                 !error);
+#undef INITIAL_EXPECT
+  return 37;
+}
+
+/* Independent guarded stat views of an initial link. Native comparisons use
+ * only stable identity fields; the separate virtual mode checks every field.
+ */
+static int mutable_initial_link_status(u64 dir, const char *name, u64 *record) {
+  unsigned error = 0;
+  u64 guarded[20];
+  guarded[0] = guarded[19] = 0xa5a5a5a5a5a5a5a5UL;
+  if (call(470, dir, (u64)name, (u64)(guarded + 1), 0x20, 0, 0, &error) ||
+      error || guarded[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      guarded[19] != 0xa5a5a5a5a5a5a5a5UL)
+    return 0;
+  for (unsigned i = 0; i != 16; i += 4) {
+    record[i] = guarded[i + 1];
+    record[i + 1] = guarded[i + 2];
+    record[i + 2] = guarded[i + 3];
+    record[i + 3] = guarded[i + 4];
+  }
+  record[16] = guarded[17];
+  record[17] = guarded[18];
+  return 1;
+}
+static int mutable_initial_link_identity(const u64 *before, const u64 *after,
+                                         int virtual_bytes) {
+  if (before[0] != after[0] || before[1] != after[1] || before[2] != after[2] ||
+      before[12] != after[12])
+    return 0;
+  if (virtual_bytes) {
+    for (unsigned i = 0; i != 18; ++i)
+      if (i != 8 && i != 9 && before[i] != after[i])
+        return 0;
+    if (after[8] != (u64)-13 || after[9] != 456)
+      return 0;
+  }
+  return 1;
+}
+static int mutable_initial_link_target(u64 dir, const char *name) {
+  unsigned error = 0;
+  u64 guarded[3] = {0xa5a5a5a5a5a5a5a5UL, 0xa5a5a5a5a5a5a5a5UL,
+                    0xa5a5a5a5a5a5a5a5UL};
+  return call(473, dir, (u64)name, (u64)(guarded + 1), 4, 0, 0, &error) == 4 &&
+         !error && guarded[0] == 0xa5a5a5a5a5a5a5a5UL &&
+         guarded[1] == 0xa5a5a5a561746164UL &&
+         guarded[2] == 0xa5a5a5a5a5a5a5a5UL;
+}
+static int mutable_initial_links(const char *path, int virtual_bytes) {
+  unsigned error = 0;
+  int check = 100;
+#define LINK_EXPECT(expression)                                                \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024];
+  unsigned last = 0, length = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  LINK_EXPECT(path[0] == '/' && !path[length] && length > last + 1);
+  parent[last ? last : 1] = 0;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  u64 before[18], after[18], captured[18];
+  LINK_EXPECT(mutable_initial_link_status(root, "initial", before));
+  u64 held = call(463, root, (u64) "initial", 0, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  u64 mapped = call(197, 0, PAGE, 1, 2, held, 0, &error);
+  LINK_EXPECT(!error && *(const unsigned char *)mapped == '0');
+  LINK_EXPECT(call(488, root, (u64) "initial", root, (u64) "initial", 0, 0,
+                   &error) == 0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(root, "initial", after));
+  if (virtual_bytes)
+    for (unsigned i = 0; i != 18; ++i)
+      LINK_EXPECT(after[i] == before[i]);
+  LINK_EXPECT(call(488, root, (u64) "initial", root, (u64) "data", 4, 0,
+                   &error) == 17 &&
+              error);
+  LINK_EXPECT(mutable_initial_link_status(root, "initial", after));
+  if (virtual_bytes)
+    for (unsigned i = 0; i != 18; ++i)
+      LINK_EXPECT(after[i] == before[i]);
+  LINK_EXPECT(call(488, root, (u64) "initial", root, (u64) "first", 0, 0,
+                   &error) == 0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(root, "first", captured));
+  LINK_EXPECT(mutable_initial_link_identity(before, captured, virtual_bytes));
+  LINK_EXPECT(mutable_initial_link_target(root, "first"));
+  LINK_EXPECT(call(475, root, (u64) "s", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 s = call(463, root, (u64) "s", 0x100000, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  u64 data = call(463, s, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  LINK_EXPECT(!error);
+  LINK_EXPECT(call(4, data, (u64) "Z", 1, 0, 0, 0, &error) == 1 && !error);
+  LINK_EXPECT(call(488, root, (u64) "first", s, (u64) "l", 0, 0, &error) == 0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(s, "l", after));
+  LINK_EXPECT(mutable_initial_link_identity(before, after, virtual_bytes));
+  u64 rebound = call(463, s, (u64) "l", 0, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  unsigned char byte;
+  LINK_EXPECT(call(153, rebound, (u64)&byte, 1, 0, 0, 0, &error) == 1 &&
+              !error && byte == 'Z');
+  LINK_EXPECT(call(153, held, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error &&
+              byte == '0');
+  u64 file = call(463, s, (u64) "f", 0xa02, 0600, 0, 0, &error);
+  LINK_EXPECT(!error);
+  LINK_EXPECT(call(4, file, (u64) "F", 1, 0, 0, 0, &error) == 1 && !error);
+  LINK_EXPECT(call(488, s, (u64) "l", s, (u64) "f", 2, 0, &error) == 0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(s, "f", after));
+  LINK_EXPECT(mutable_initial_link_identity(before, after, virtual_bytes));
+  LINK_EXPECT(mutable_initial_link_target(s, "f"));
+  LINK_EXPECT(call(488, s, (u64) "f", s, (u64) "l", 0, 0, &error) == 0 &&
+              !error);
+  LINK_EXPECT(call(153, file, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error &&
+              byte == 'F');
+  LINK_EXPECT(call(488, root, (u64) "s", root, (u64) "t", 0, 0, &error) == 0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(s, "l", after));
+  LINK_EXPECT(mutable_initial_link_identity(before, after, virtual_bytes));
+  if (virtual_bytes)
+    for (unsigned i = 0; i != 18; ++i)
+      LINK_EXPECT(after[i] == captured[i]);
+  LINK_EXPECT(call(472, s, (u64) "l", 0, 0, 0, 0, &error) == 0 && !error);
+  LINK_EXPECT(call(153, held, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error &&
+              byte == '0' && *(const unsigned char *)mapped == '0');
+  LINK_EXPECT(call(474, (u64) "data", root, (u64) "initial", 0, 0, 0, &error) ==
+                  0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(root, "initial", after));
+  if (virtual_bytes)
+    LINK_EXPECT(after[1] != before[1] && after[8] == (u64)-19 &&
+                after[9] == 987654321);
+  u64 dir = call(463, root, (u64) "initial-dir", 0x100000, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  LINK_EXPECT(call(13, dir, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  LINK_EXPECT(call(472, root, (u64) "initial-dir", 0, 0, 0, 0, &error) == 0 &&
+              !error);
+  u64 here = call(5, (u64) ".", 0x100000, 0, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  unsigned char directory[144], cwd[144];
+  LINK_EXPECT(call(339, dir, (u64)directory, 0, 0, 0, 0, &error) == 0 &&
+              !error);
+  LINK_EXPECT(initial_directory_identity(here, directory, cwd));
+  LINK_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  LINK_EXPECT(call(73, mapped, PAGE, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 descriptors[] = {held, rebound, data, file, s, dir, here, root};
+  for (unsigned i = 0; i != 8; ++i)
+    LINK_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
+  LINK_EXPECT(call(4, 1, virtual_bytes ? (u64)captured : (u64) "M",
+                   virtual_bytes ? sizeof(captured) : 1, 0, 0, 0,
+                   &error) == (virtual_bytes ? sizeof(captured) : 1) &&
+              !error);
+#undef LINK_EXPECT
+  return 37;
+}
+
+/* Fixed stat words retain every comparison; grouping only removes loop and
+ * per-word branch overhead from the original bounded workload. */
+static int directory_link_root_record(const u64 *before, const u64 *after,
+                                      int virtual_bytes, u64 seconds,
+                                      unsigned nanoseconds) {
+  if (before[0] != after[0] || before[1] != after[1] || before[2] != after[2] ||
+      before[12] != after[12])
+    return 0;
+  if (virtual_bytes) {
+    u64 different = 0;
+    for (unsigned i = 0; i != 8; i += 4)
+      different |= (before[i] ^ after[i]) | (before[i + 1] ^ after[i + 1]) |
+                   (before[i + 2] ^ after[i + 2]) |
+                   (before[i + 3] ^ after[i + 3]);
+    for (unsigned i = 10; i != 18; i += 4)
+      different |= (before[i] ^ after[i]) | (before[i + 1] ^ after[i + 1]) |
+                   (before[i + 2] ^ after[i + 2]) |
+                   (before[i + 3] ^ after[i + 3]);
+    return !different && after[8] == seconds && after[9] == nanoseconds;
+  }
+  return 1;
+}
+static int directory_link_root_unchanged(const u64 *before, const u64 *after,
+                                         int virtual_bytes) {
+  if (!virtual_bytes)
+    return before[0] == after[0] && before[1] == after[1] &&
+           before[2] == after[2] && before[12] == after[12];
+  u64 different = (before[16] ^ after[16]) | (before[17] ^ after[17]);
+  for (unsigned i = 0; i != 16; i += 4)
+    different |= (before[i] ^ after[i]) | (before[i + 1] ^ after[i + 1]) |
+                 (before[i + 2] ^ after[i + 2]) |
+                 (before[i + 3] ^ after[i + 3]);
+  return !different;
+}
+static int directory_link_root_target(u64 dir, const char *name,
+                                      const char *expected) {
+  unsigned error = 0, length = 0;
+  const u64 canary = 0xa5a5a5a5a5a5a5a5UL;
+  u64 guarded_words[5] = {canary, canary, canary, canary, canary};
+  u64 expected_words[5] = {canary, canary, canary, canary, canary};
+  unsigned char *guarded = (unsigned char *)guarded_words;
+  unsigned char *expected_bytes = (unsigned char *)expected_words;
+  while (expected[length])
+    ++length;
+  if (call(473, dir, (u64)name, (u64)(guarded + 4), 32, 0, 0, &error) !=
+          length ||
+      error || length > 32)
+    return 0;
+  for (unsigned i = 0; i != length; ++i)
+    expected_bytes[4 + i] = (unsigned char)expected[i];
+  // All 40 output/guard bytes remain compared, including the unwritten suffix.
+  for (unsigned i = 0; i != 5; ++i)
+    if (guarded_words[i] != expected_words[i])
+      return 0;
+  return 1;
+}
+/* The same original root-exchange workload executes under the host kernel and
+ * model. Common mode compares same-run identities; virtual mode additionally
+ * checks all stat bytes against explicit object-owned mutation policies.
+ */
+static int directory_link_roots(const char *path, int virtual_bytes) {
+  unsigned error = 0, check = 0;
+#define ROOT_EXPECT(expression)                                                \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return 100 + check % 150;                                                \
+  } while (0)
+  char parent[1024];
+  unsigned last = 0, length = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  ROOT_EXPECT(path[0] == '/' && !path[length] && length > last + 1);
+  parent[last ? last : 1] = 0;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 a = call(463, root, (u64) "a", 0x100000, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 b = call(463, root, (u64) "b", 0x100000, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 d = call(463, a, (u64) "d", 0x100000, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 copy = call(41, d, 0, 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  ROOT_EXPECT(call(13, d, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 child = call(463, d, (u64) "c", 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 child_copy = call(41, child, 0, 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 mapped = call(197, 0, PAGE, 1, 2, child, 0, &error);
+  ROOT_EXPECT(!error && *(const unsigned char *)mapped == 31);
+  u64 held = call(463, b, (u64) "l", 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 held_dir = call(463, b, (u64) "dirlink", 0x100000, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 directory[18], inside[18], before[18], after[18], captured[18];
+  ROOT_EXPECT(mutable_initial_link_status(a, "d", directory));
+  ROOT_EXPECT(mutable_initial_link_status(d, "inside", inside));
+  for (unsigned reverse = 0; reverse != 2; ++reverse) {
+    ROOT_EXPECT(call(488, reverse ? b : a, (u64)(reverse ? "l" : "d"),
+                     reverse ? a : b, (u64)(reverse ? "d" : "l"), 0, 0,
+                     &error) == (reverse ? 21 : 20) &&
+                error);
+    ROOT_EXPECT(call(488, reverse ? b : a, (u64)(reverse ? "l" : "d"),
+                     reverse ? a : b, (u64)(reverse ? "d" : "l"), 4, 0,
+                     &error) == 17 &&
+                error);
+    ROOT_EXPECT(call(488, reverse ? d : a, (u64)(reverse ? "inside" : "d"),
+                     reverse ? a : d, (u64)(reverse ? "d" : "inside"), 2, 0,
+                     &error) == 22 &&
+                error);
+  }
+  ROOT_EXPECT(mutable_initial_link_status(a, "d", after));
+  ROOT_EXPECT(directory_link_root_unchanged(directory, after, virtual_bytes));
+  static const char names[4][8] = {"l", "dang", "dirlink", "self"};
+  static const char targets[4][16] = {"target", "missing", "other", "../a/d"};
+  unsigned char byte;
+  for (unsigned i = 0; i != 4; ++i) {
+    ROOT_EXPECT(mutable_initial_link_status(b, names[i], before));
+    ROOT_EXPECT(call(488, a, (u64) "d", b, (u64)names[i], 18, 0, &error) == 0 &&
+                !error);
+    ROOT_EXPECT(mutable_initial_link_status(a, "d", after));
+    ROOT_EXPECT(directory_link_root_record(before, after, virtual_bytes,
+                                           (u64)-13, 456));
+    if (i == 0) {
+      for (unsigned word = 0; word != 16; word += 4) {
+        captured[word] = after[word];
+        captured[word + 1] = after[word + 1];
+        captured[word + 2] = after[word + 2];
+        captured[word + 3] = after[word + 3];
+      }
+      captured[16] = after[16];
+      captured[17] = after[17];
+    }
+    ROOT_EXPECT(directory_link_root_target(a, "d", targets[i]));
+    ROOT_EXPECT(mutable_initial_link_status(b, names[i], after));
+    ROOT_EXPECT(directory_link_root_record(directory, after, virtual_bytes,
+                                           (u64)-11, 321));
+    ROOT_EXPECT(mutable_initial_link_status(d, "inside", after));
+    ROOT_EXPECT(directory_link_root_unchanged(inside, after, virtual_bytes));
+    u64 here = call(5, (u64) ".", 0x100000, 0, 0, 0, 0, &error);
+    ROOT_EXPECT(!error);
+    ROOT_EXPECT(initial_directory_identity(copy, (unsigned char *)directory,
+                                           (unsigned char *)after));
+    ROOT_EXPECT(initial_directory_identity(here, (unsigned char *)directory,
+                                           (unsigned char *)after));
+    ROOT_EXPECT(call(6, here, 0, 0, 0, 0, 0, &error) == 0 && !error);
+    u64 rebound =
+        call(463, a, (u64) "d", i == 2 ? 0x100000 : 0, 0, 0, 0, &error);
+    if (i == 1 || i == 3)
+      ROOT_EXPECT(error && rebound == (i == 1 ? 2 : 62));
+    else {
+      ROOT_EXPECT(!error);
+      u64 file = rebound;
+      if (i == 2) {
+        file = call(463, rebound, (u64) "mark", 0, 0, 0, 0, &error);
+        ROOT_EXPECT(!error);
+      }
+      ROOT_EXPECT(call(153, file, (u64)&byte, 1, 0, 0, 0, &error) == 1 &&
+                  !error && byte == (i == 2 ? 41 : 11));
+      ROOT_EXPECT(call(6, file, 0, 0, 0, 0, 0, &error) == 0 && !error);
+      if (i == 2)
+        ROOT_EXPECT(call(6, rebound, 0, 0, 0, 0, 0, &error) == 0 && !error);
+    }
+    ROOT_EXPECT(call(153, held, (u64)&byte, 1, 0, 0, 0, &error) == 1 &&
+                !error && byte == 22);
+    ROOT_EXPECT(call(488, a, (u64) "d", b, (u64)names[i], 2, 0, &error) == 0 &&
+                !error);
+    ROOT_EXPECT(mutable_initial_link_status(b, names[i], after));
+    ROOT_EXPECT(directory_link_root_record(before, after, virtual_bytes,
+                                           (u64)-13, 456));
+  }
+  u64 mark = call(463, held_dir, (u64) "mark", 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  ROOT_EXPECT(call(153, mark, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error &&
+              byte == 42);
+  ROOT_EXPECT(call(472, d, (u64) "c", 0, 0, 0, 0, &error) == 0 && !error);
+  ROOT_EXPECT(call(3, child, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error &&
+              byte == 31);
+  ROOT_EXPECT(call(199, child_copy, 0, 1, 0, 0, 0, &error) == 1 && !error);
+  ROOT_EXPECT(*(const unsigned char *)mapped == 31);
+  ROOT_EXPECT(call(488, root, (u64) "a", root, (u64) "x", 0, 0, &error) == 0 &&
+              !error);
+  ROOT_EXPECT(mutable_initial_link_status(d, "inside", after));
+  ROOT_EXPECT(directory_link_root_unchanged(inside, after, virtual_bytes));
+  ROOT_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ROOT_EXPECT(call(73, mapped, PAGE, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 descriptors[] = {root,  a,          b,    d,        copy,
+                             child, child_copy, held, held_dir, mark};
+  for (unsigned i = 0; i != 10; ++i)
+    ROOT_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ROOT_EXPECT(call(4, 1, virtual_bytes ? (u64)captured : (u64) "R",
+                   virtual_bytes ? sizeof(captured) : 1, 0, 0, 0,
+                   &error) == (virtual_bytes ? sizeof(captured) : 1) &&
+              !error);
+#undef ROOT_EXPECT
+  return 37;
+}
+
+/* Original live-namespace workload. Native order and cookies are not predicted;
+ * every record is checked against independently observed retained identities.
+ */
+struct enumeration_member {
+  char name[8];
+  u64 inode;
+  unsigned type;
+};
+static int enumeration_records(const unsigned char *bytes, u64 size,
+                               const struct enumeration_member *members,
+                               unsigned count) {
+  unsigned seen = 0;
+  for (u64 offset = 0; offset != size;) {
+    if (size - offset < 32)
+      return 0;
+    const unsigned char *record = bytes + offset;
+    u64 length = little_integer(record + 16, 2);
+    u64 name_length = little_integer(record + 18, 2);
+    if (length != 32 || name_length > 7 || record[21 + name_length] ||
+        little_integer(record + 8, 8))
+      return 0;
+    const unsigned terminator = 21 + (unsigned)name_length;
+    // Every byte from the terminator through byte 31 must still be zero.
+    // Both shifts are below 64, and both fixed words stay inside this record.
+    if ((terminator < 24 &&
+         (little_integer(record + 16, 8) >> ((terminator - 16) * 8))) ||
+        (little_integer(record + 24, 8) >>
+         ((terminator < 24 ? 0 : terminator - 24) * 8)))
+      return 0;
+    unsigned matched = count;
+    const u64 name_word = little_integer(record + 21, 8);
+    // Each expected Name[8] is a zero-filled original scalar array. Compare
+    // its complete bytes, including NUL/padding, without per-candidate scans.
+    for (unsigned i = 0; i != count; ++i)
+      if (name_word ==
+          little_integer((const unsigned char *)members[i].name, 8))
+        matched = i;
+    if (matched == count || (seen & (1U << matched)) ||
+        little_integer(record, 8) != members[matched].inode ||
+        record[20] != members[matched].type)
+      return 0;
+    seen |= 1U << matched;
+    offset += length;
+  }
+  return seen == (1U << count) - 1;
+}
+static int enumeration_view(u64 fd, const struct enumeration_member *members,
+                            unsigned count, u64 *capture) {
+  unsigned error = 0;
+  u64 guarded_words[130];
+  unsigned char *guarded = (unsigned char *)guarded_words;
+  const u64 canary = 0xa5a5a5a5a5a5a5a5UL;
+  for (unsigned i = 0; i != 128; i += 8) {
+    guarded_words[i] = guarded_words[i + 1] = guarded_words[i + 2] =
+        guarded_words[i + 3] = guarded_words[i + 4] = guarded_words[i + 5] =
+            guarded_words[i + 6] = guarded_words[i + 7] = canary;
+  }
+  guarded_words[128] = guarded_words[129] = canary;
+  u64 position = (u64)-1;
+  if (call(199, fd, 0, 0, 0, 0, 0, &error) || error)
+    return 0;
+  u64 size =
+      call(344, fd, (u64)(guarded + 8), 1024, (u64)&position, 0, 0, &error);
+  if (error || size != 32 * count || position ||
+      !enumeration_records(guarded + 8, size, members, count) ||
+      little_integer(guarded + 1028, 4) != 1)
+    return 0;
+  if (guarded_words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      guarded_words[129] != 0xa5a5a5a5a5a5a5a5UL ||
+      guarded_words[128] != 0x00000001a5a5a5a5UL)
+    return 0;
+  /* Check every untouched byte; batching only reduces guest loop overhead. */
+  u64 i = 1 + size / 8;
+  for (; i + 8 <= 128; i += 8)
+    if (guarded_words[i] != canary || guarded_words[i + 1] != canary ||
+        guarded_words[i + 2] != canary || guarded_words[i + 3] != canary ||
+        guarded_words[i + 4] != canary || guarded_words[i + 5] != canary ||
+        guarded_words[i + 6] != canary || guarded_words[i + 7] != canary)
+      return 0;
+  for (; i != 128; ++i)
+    if (guarded_words[i] != canary)
+      return 0;
+  if (capture)
+    for (u64 i = 0; i != size / 8; ++i)
+      capture[i] = guarded_words[1 + i];
+  return 1;
+}
+static int directory_enumeration_mutations(const char *path,
+                                           int virtual_bytes) {
+  unsigned error = 0;
+  int check = 80;
+#define ENUM_EXPECT(expression)                                                \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024];
+  unsigned last = 0, length = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  ENUM_EXPECT(path[0] == '/' && !path[length] && length > last + 1);
+  parent[last ? last : 1] = 0;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  unsigned char status[144];
+  u64 captured[20];
+  ENUM_EXPECT(call(339, root, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 root_inode = little_integer(status + 8, 8);
+  call(60, 0027, 0, 0, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(475, root, (u64) "a", 0700, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(475, root, (u64) "b", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 a = call(463, root, (u64) "a", 0x100000, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  u64 b = call(463, root, (u64) "b", 0x100000, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(339, a, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 a_inode = little_integer(status + 8, 8);
+  ENUM_EXPECT(call(339, b, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 b_inode = little_integer(status + 8, 8);
+  ENUM_EXPECT(call(475, a, (u64) "d", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 d = call(463, a, (u64) "d", 0x100000, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(339, d, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 d_inode = little_integer(status + 8, 8);
+  u64 f = call(463, a, (u64) "f", 0xa02, 0600, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(339, f, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 f_inode = little_integer(status + 8, 8);
+  ENUM_EXPECT(call(474, (u64) "f", a, (u64) "l", 0, 0, 0, &error) == 0 &&
+              !error);
+  ENUM_EXPECT(call(470, a, (u64) "l", (u64)status, 0x20, 0, 0, &error) == 0 &&
+              !error);
+  const u64 l_inode = little_integer(status + 8, 8);
+  struct enumeration_member a_members[5] = {{".", a_inode, 4},
+                                            {"..", root_inode, 4},
+                                            {"d", d_inode, 4},
+                                            {"f", f_inode, 8},
+                                            {"l", l_inode, 10}};
+  ENUM_EXPECT(enumeration_view(a, a_members, 5, virtual_bytes ? captured : 0));
+  u64 copy = call(41, a, 0, 0, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  u64 terminal = call(199, copy, 0, 1, 0, 0, 0, &error);
+  ENUM_EXPECT(!error && terminal);
+  ENUM_EXPECT(call(199, a, 0, 1, 0, 0, 0, &error) == terminal && !error);
+  ENUM_EXPECT(call(475, a, (u64) "d", 0700, 0, 0, 0, &error) == 17 && error);
+  u64 position = 0;
+  ENUM_EXPECT(call(344, copy, 0, 1, (u64)&position, 0, 0, &error) == 0 &&
+              !error && position == terminal);
+  ENUM_EXPECT(call(199, copy, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(199, a, 0, 1, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(488, a, (u64) "f", a, (u64) "z", 0, 0, &error) == 0 &&
+              !error);
+  a_members[3].name[0] = 'z';
+  ENUM_EXPECT(enumeration_view(copy, a_members, 5, 0));
+  u64 g = call(463, b, (u64) "g", 0xa02, 0600, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(339, g, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 g_inode = little_integer(status + 8, 8);
+  ENUM_EXPECT(call(488, a, (u64) "d", b, (u64) "g", 2, 0, &error) == 0 &&
+              !error);
+  a_members[2].inode = g_inode;
+  a_members[2].type = 8;
+  ENUM_EXPECT(enumeration_view(a, a_members, 5, 0));
+  struct enumeration_member b_members[3] = {
+      {".", b_inode, 4}, {"..", root_inode, 4}, {"g", d_inode, 4}};
+  ENUM_EXPECT(enumeration_view(b, b_members, 3, 0));
+  struct enumeration_member d_members[2] = {{".", d_inode, 4},
+                                            {"..", b_inode, 4}};
+  ENUM_EXPECT(enumeration_view(d, d_members, 2, 0));
+  ENUM_EXPECT(call(488, b, (u64) "g", root, (u64) "t", 0, 0, &error) == 0 &&
+              !error);
+  d_members[1].inode = root_inode;
+  ENUM_EXPECT(enumeration_view(d, d_members, 2, 0));
+  ENUM_EXPECT(enumeration_view(b, b_members, 2, 0));
+  ENUM_EXPECT(call(488, root, (u64) "a", root, (u64) "x", 0, 0, &error) == 0 &&
+              !error);
+  ENUM_EXPECT(enumeration_view(a, a_members, 5, 0));
+  ENUM_EXPECT(call(472, a, (u64) "d", 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, a, (u64) "z", 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, a, (u64) "l", 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(enumeration_view(a, a_members, 2, 0));
+  ENUM_EXPECT(call(13, d, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, root, (u64) "t", 0x80, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(enumeration_view(d, d_members, 0, 0));
+  ENUM_EXPECT(call(475, d, (u64) "fail", 0700, 0, 0, 0, &error) == 2 && error);
+  ENUM_EXPECT(call(475, root, (u64) "t", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 fresh = call(463, root, (u64) "t", 0x100000, 0, 0, 0, &error);
+  ENUM_EXPECT(!error);
+  ENUM_EXPECT(call(339, fresh, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  d_members[0].inode = little_integer(status + 8, 8);
+  ENUM_EXPECT(d_members[0].inode != d_inode && d_members[0].inode);
+  ENUM_EXPECT(enumeration_view(fresh, d_members, 2, 0));
+  ENUM_EXPECT(enumeration_view(d, d_members, 0, 0));
+  ENUM_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, root, (u64) "x", 0x80, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, root, (u64) "b", 0x80, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(472, root, (u64) "t", 0x80, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, fresh, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, d, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, a, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, copy, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, b, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, f, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, g, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(6, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENUM_EXPECT(call(4, 1, virtual_bytes ? (u64)captured : (u64) "E",
+                   virtual_bytes ? sizeof(captured) : 1, 0, 0, 0,
+                   &error) == (virtual_bytes ? sizeof(captured) : 1) &&
+              !error);
+#undef ENUM_EXPECT
+  return 37;
+}
+
 static int directory_entries(const char *path) {
   unsigned error = 0;
   int check = 40;
@@ -3739,7 +4994,1181 @@ static int symbolic_links(const char *input) {
              : 250;
 }
 
+/* One closed catalogue has fixed /static links and mutable /work names. */
+static int symbolic_link_mutations(const char *input) {
+  unsigned error, length = 0;
+  char root[1024];
+  while (length < sizeof(root) - 1 && input[length]) {
+    root[length] = input[length];
+    ++length;
+  }
+  if (input[length] || length < 10 || !equal(input + length - 10, "/work/data"))
+    return 201;
+  if (length == 10) {
+    root[0] = '/';
+    root[1] = 0;
+  } else {
+    root[length - 10] = 0;
+  }
+  u64 dir = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 202;
+  u64 old = call(463, dir, (u64) "static/data-link", 2, 0, 0, 0, &error);
+  if (error || secondary)
+    return 203;
+  unsigned char target[144], own[144], after[144], bytes[32];
+  if (call(339, old, (u64)target, 0, 0, 0, 0, &error) || error || secondary ||
+      call(470, dir, (u64) "static/data-link", (u64)own, 0x20, 0, 0, &error) ||
+      error || secondary)
+    return 204;
+  u64 mapped = call(197, 0, 10, 1, 2, old, 0, &error);
+  if (error || secondary ||
+      !login_equal_bytes((const unsigned char *)mapped,
+                         (const unsigned char *)"0123456789", 10))
+    return 205;
+  if (call(463, dir, (u64) "static/missing-link", 0, 0, 0, 0, &error) != 2 ||
+      !error ||
+      call(463, dir, (u64) "static/missing-link", 0x20000a02, 0600, 0, 0,
+           &error) != 17 ||
+      !error ||
+      call(463, dir, (u64) "static/alias/new", 0x20000a02, 0600, 0, 0,
+           &error) != 62 ||
+      !error)
+    return 206;
+  u64 created =
+      call(463, dir, (u64) "static/alias/new", 0xa02, 0600, 0, 0, &error);
+  if (error || secondary ||
+      call(4, created, (u64) "UV", 2, 0, 0, 0, &error) != 2 || error ||
+      secondary)
+    return 207;
+  u64 alias = call(463, dir, (u64) "static/missing-link", 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 208;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, alias, (u64)(bytes + 8), 2, 0, 0, 0, &error) != 2 || error ||
+      secondary || bytes[8] != 'U' || bytes[9] != 'V' ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22))
+    return 209;
+  if (call(465, dir, (u64) "static/alias/new", dir, (u64) "static/alias/moved",
+           0, 0, &error) ||
+      error || secondary ||
+      call(463, dir, (u64) "static/missing-link", 0, 0, 0, 0, &error) != 2 ||
+      !error ||
+      call(472, dir, (u64) "static/alias/moved", 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 210;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, alias, (u64)(bytes + 8), 2, 0, 0, 0, &error) != 2 || error ||
+      secondary || bytes[8] != 'U' || bytes[9] != 'V' ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22))
+    return 211;
+  if (call(465, dir, (u64) "static/data-link/", dir, (u64) "work/renamed", 0, 0,
+           &error) ||
+      error || secondary ||
+      call(463, dir, (u64) "static/data-link", 0, 0, 0, 0, &error) != 2 ||
+      !error ||
+      call(472, dir, (u64) "static/alias/renamed", 0, 0, 0, 0, &error) ||
+      error || secondary)
+    return 212;
+  u64 replacement =
+      call(463, dir, (u64) "static/alias/data", 0xa02, 0600, 0, 0, &error);
+  if (error || secondary ||
+      call(4, replacement, (u64) "XY", 2, 0, 0, 0, &error) != 2 || error ||
+      secondary)
+    return 213;
+  u64 current = call(463, dir, (u64) "static/data-link", 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(339, current, (u64)after, 0, 0, 0, 0, &error) || error ||
+      secondary ||
+      little_integer(after + 8, 8) == little_integer(target + 8, 8) ||
+      little_integer(after + 96, 8) != 2)
+    return 214;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, current, (u64)(bytes + 8), 2, 0, 0, 0, &error) != 2 || error ||
+      secondary || bytes[8] != 'X' || bytes[9] != 'Y' ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22))
+    return 215;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, old, (u64)(bytes + 8), 10, 0, 0, 0, &error) != 10 || error ||
+      secondary ||
+      !login_equal_bytes(bytes + 8, (const unsigned char *)"0123456789", 10) ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 18, 14) ||
+      !login_equal_bytes((const unsigned char *)mapped,
+                         (const unsigned char *)"0123456789", 10))
+    return 216;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(473, dir, (u64) "static/data-link", (u64)(bytes + 8),
+           sizeof(bytes) - 8, 0, 0, &error) != 12 ||
+      error || secondary ||
+      !login_equal_bytes(bytes + 8, (const unsigned char *)"../work/data",
+                         12) ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 20, 12) ||
+      call(470, dir, (u64) "static/data-link", (u64)after, 0x820, 0, 0,
+           &error) ||
+      error || secondary ||
+      little_integer(after, 4) != little_integer(own, 4) ||
+      little_integer(after + 4, 2) != little_integer(own + 4, 2) ||
+      little_integer(after + 8, 8) != little_integer(own + 8, 8) ||
+      little_integer(after + 96, 8) != little_integer(own + 96, 8))
+    return 217;
+  if (call(475, dir, (u64) "static/alias/box", 0700, 0, 0, 0, &error) ||
+      error || secondary)
+    return 218;
+  u64 box = call(463, dir, (u64) "static/alias/box", 0x100000, 0, 0, 0, &error);
+  if (error || secondary || call(13, box, 0, 0, 0, 0, 0, &error) || error ||
+      secondary ||
+      call(465, dir, (u64) "static/alias/box", dir, (u64) "static/alias/shift",
+           0, 0, &error) ||
+      error || secondary ||
+      call(472, dir, (u64) "static/alias/shift", 0x80, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(475, dir, (u64) "static/alias/box", 0700, 0, 0, 0, &error) ||
+      error || secondary)
+    return 219;
+  if (call(463, (u64)-2, (u64) "lost", 0xa02, 0600, 0, 0, &error) != 2 ||
+      !error)
+    return 220;
+  u64 parent_file = call(463, (u64)-2, (u64) "../data", 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 221;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, parent_file, (u64)(bytes + 8), 2, 0, 0, 0, &error) != 2 ||
+      error || secondary || bytes[8] != 'X' || bytes[9] != 'Y' ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22) ||
+      call(13, dir, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 222;
+  const u64 descriptors[] = {old,     created, alias,       replacement,
+                             current, box,     parent_file, dir};
+  for (unsigned i = 0; i != 8; ++i)
+    if (call(6, descriptors[i], 0, 0, 0, 0, 0, &error) || error || secondary)
+      return 223;
+  if (!login_equal_bytes((const unsigned char *)mapped,
+                         (const unsigned char *)"0123456789", 10) ||
+      call(73, mapped, PAGE, 0, 0, 0, 0, &error) || error || secondary)
+    return 224;
+  const char marker = 'z';
+  return call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error &&
+                 !secondary
+             ? 37
+             : 225;
+}
+
+/* Runtime-created links share the current namespace and retain target objects.
+ */
+static int symbolic_link_creation(const char *input) {
+  unsigned error, length = 0;
+  char root[1024];
+  while (length < sizeof(root) - 1 && input[length]) {
+    root[length] = input[length];
+    ++length;
+  }
+  if (input[length] || length < 10 || !equal(input + length - 10, "/work/data"))
+    return 201;
+  if (length == 10) {
+    root[0] = '/';
+    root[1] = 0;
+  } else
+    root[length - 10] = 0;
+  u64 dir = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 202;
+  u64 work = call(463, dir, (u64) "work", 0x100000, 0, 0, 0, &error);
+  if (error || secondary || call(13, work, 0, 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 203;
+  u64 old = call(463, work, (u64) "data", 2, 0, 0, 0, &error);
+  if (error || secondary)
+    return 204;
+  unsigned char original[144], current_stat[144], bytes[32];
+  if (call(339, old, (u64)original, 0, 0, 0, 0, &error) || error || secondary)
+    return 205;
+  u64 mapped = call(197, 0, 10, 1, 2, old, 0, &error);
+  if (error || secondary ||
+      !login_equal_bytes((const unsigned char *)mapped,
+                         (const unsigned char *)"0123456789", 10))
+    return 206;
+  const unsigned char target[] = {'d', 'a', 't', 'a', 0, 0xff, 0xff};
+  if (call(57, (u64)target, (u64) "link", 0, 0, 0, 0, &error) || error ||
+      secondary ||
+      call(474, (u64) "data", work | 0x1234567800000000ULL, (u64) "alias", 0, 0,
+           0, &error) ||
+      error || secondary)
+    return 207;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(473, work, (u64) "alias", (u64)(bytes + 8), 24, 0, 0, &error) != 4 ||
+      error || secondary ||
+      !login_equal_bytes(bytes + 8, (const unsigned char *)"data", 4) ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 12, 20))
+    return 208;
+  u64 held = call(463, work, (u64) "link", 0, 0, 0, 0, &error);
+  if (error || secondary || held != old + 1)
+    return 209;
+  if (call(474, 1, 999, 1, 0, 0, 0, &error) != 14 || !error ||
+      call(474, (u64) "data", 999, (u64) "new", 0, 0, 0, &error) != 9 ||
+      !error ||
+      call(57, (u64) "data", (u64) "link", 0, 0, 0, 0, &error) != 17 || !error)
+    return 210;
+  if (call(57, (u64) "", (u64) "empty", 0, 0, 0, 0, &error) || error ||
+      secondary ||
+      call(474, (u64) "", work, (u64) "empty-at", 0, 0, 0, &error) || error ||
+      secondary || call(58, (u64) "empty", (u64)-1, 16, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(473, work, (u64) "empty-at", 1, 16, 0, 0, &error) || error ||
+      secondary || call(58, (u64) "empty", (u64)-1, 0, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(463, work, (u64) "empty", 0, 0, 0, 0, &error) != 2 || !error)
+    return 211;
+  const unsigned char raw[] = {'p', 0xff, 0};
+  if (call(474, (u64)raw, work, (u64) "raw", 0, 0, 0, &error) || error ||
+      secondary)
+    return 212;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(58, (u64) "raw", (u64)(bytes + 8), 1, 0, 0, 0, &error) != 1 ||
+      error || secondary || bytes[8] != 'p' || !login_canary_bytes(bytes, 8) ||
+      !login_canary_bytes(bytes + 9, 23))
+    return 213;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(473, work, (u64) "raw", (u64)(bytes + 8), 24, 0, 0, &error) != 2 ||
+      error || secondary || bytes[8] != 'p' || bytes[9] != 0xff ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22))
+    return 214;
+  if (call(57, (u64) "missing", (u64) "dangling", 0, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(474, (u64) "data", work, (u64) "dangling////", 0, 0, 0, &error) ||
+      error || secondary)
+    return 215;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(473, work, (u64) "dangling", (u64)(bytes + 8), 24, 0, 0, &error) !=
+          7 ||
+      error || secondary ||
+      !login_equal_bytes(bytes + 8, (const unsigned char *)"missing", 7) ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 15, 17))
+    return 216;
+  if (call(472, work, (u64) "data", 0, 0, 0, 0, &error) || error || secondary ||
+      call(463, work, (u64) "link", 0, 0, 0, 0, &error) != 2 || !error)
+    return 217;
+  if (call(463, work, (u64) "link", 0xa02, 0600, 0, 0, &error) != 17 || !error)
+    return 228;
+  u64 replacement = call(463, work, (u64) "link", 0x202, 0600, 0, 0, &error);
+  if (error || secondary ||
+      call(4, replacement, (u64) "XY", 2, 0, 0, 0, &error) != 2 || error ||
+      secondary)
+    return 218;
+  u64 current = call(463, work, (u64) "dangling", 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(339, current, (u64)current_stat, 0, 0, 0, 0, &error) || error ||
+      secondary ||
+      little_integer(current_stat + 8, 8) == little_integer(original + 8, 8) ||
+      little_integer(current_stat + 96, 8) != 2)
+    return 219;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, current, (u64)(bytes + 8), 2, 0, 0, 0, &error) != 2 || error ||
+      secondary || bytes[8] != 'X' || bytes[9] != 'Y' ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 10, 22))
+    return 220;
+  login_fill_canary(bytes, sizeof(bytes));
+  if (call(153, held, (u64)(bytes + 8), 10, 0, 0, 0, &error) != 10 || error ||
+      secondary ||
+      !login_equal_bytes(bytes + 8, (const unsigned char *)"0123456789", 10) ||
+      !login_canary_bytes(bytes, 8) || !login_canary_bytes(bytes + 18, 14))
+    return 221;
+  if (call(475, work, (u64) "box", 0700, 0, 0, 0, &error) || error || secondary)
+    return 222;
+  u64 box = call(463, work, (u64) "box", 0x100000, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(465, work, (u64) "box", work, (u64) "shift", 0, 0, &error) ||
+      error || secondary ||
+      call(474, (u64) "../data", box, (u64) "relative", 0, 0, 0, &error) ||
+      error || secondary || call(13, box, 0, 0, 0, 0, 0, &error) || error ||
+      secondary || call(57, (u64) "../data", (u64) "cwd", 0, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(472, work, (u64) "shift", 0x80, 0, 0, 0, &error) != 66 || !error)
+    return 223;
+  u64 moved = call(463, box, (u64) "cwd", 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(339, moved, (u64)current_stat, 0, 0, 0, 0, &error) || error ||
+      secondary || little_integer(current_stat + 96, 8) != 2 ||
+      call(13, dir, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 224;
+  const u64 descriptors[] = {old,   held, replacement, current,
+                             moved, box,  work,        dir};
+  for (unsigned i = 0; i != 8; ++i)
+    if (call(6, descriptors[i], 0, 0, 0, 0, 0, &error) || error || secondary)
+      return 225;
+  if (!login_equal_bytes((const unsigned char *)mapped,
+                         (const unsigned char *)"0123456789", 10) ||
+      call(73, mapped, PAGE, 0, 0, 0, 0, &error) || error || secondary)
+    return 226;
+  const char marker = 'b';
+  return call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error &&
+                 !secondary
+             ? 37
+             : 227;
+}
+
+/* Runtime link removal changes the selected namespace entry, not its target.
+ * All NOFOLLOW_ANY paths start at a held directory, avoiding host /tmp links.
+ */
+static int symbolic_link_unlink(const char *input) {
+  unsigned error, length = 0;
+  char root[1024];
+  while (length < sizeof(root) - 1 && input[length]) {
+    root[length] = input[length];
+    ++length;
+  }
+  if (input[length] || length < 10 || !equal(input + length - 10, "/work/data"))
+    return 51;
+  if (length == 10) {
+    root[0] = '/';
+    root[1] = 0;
+  } else
+    root[length - 10] = 0;
+  int check = 51;
+#define UNLINK_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 dir = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && dir >= 3);
+  u64 work = call(463, dir, (u64) "work", 0x100000, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && work >= 3);
+  UNLINK_EXPECT(call(13, work, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  u64 target = call(463, work, (u64) "data", 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && target >= 3);
+  unsigned char original[144], current[144], bytes[32];
+  UNLINK_EXPECT(call(339, target, (u64)original, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(199, target, 2, 0, 0, 0, 0, &error) == 2 && !error);
+  u64 mapped = call(197, 0, 10, 1, 2, target, 0, &error);
+  UNLINK_EXPECT(!error && !secondary &&
+                login_equal_bytes((const unsigned char *)mapped,
+                                  (const unsigned char *)"0123456789", 10));
+  UNLINK_EXPECT(call(57, (u64) "data", (u64) "link", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(474, (u64) "data", work, (u64) "alias", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  u64 held = call(463, work, (u64) "link", 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && held >= 3 && held != target);
+  UNLINK_EXPECT(call(3, held, (u64)bytes, 1, 0, 0, 0, &error) == 1 && !error &&
+                bytes[0] == '0');
+  UNLINK_EXPECT(call(10, (u64) "link", 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  UNLINK_EXPECT(call(10, (u64) "link", 0, 0, 0, 0, 0, &error) == 2 && error);
+  UNLINK_EXPECT(call(472, work, (u64) "alias", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(472, work, (u64) "alias", 0, 0, 0, 0, &error) == 2 &&
+                error);
+
+  UNLINK_EXPECT(call(475, work, (u64) "box", 0700, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  u64 box = call(463, work, (u64) "box", 0x100000, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && box >= 3);
+  // Reuse the removed name for five distinct raw targets. A final symlink is
+  // deleted without following it, even when its target cannot be resolved.
+  const char targets[][8] = {"data", "box", "missing", "link", ""};
+  for (unsigned i = 0; i != 5; ++i) {
+    UNLINK_EXPECT(
+        call(474, (u64)targets[i], work, (u64) "link", 0, 0, 0, &error) == 0 &&
+        !error && !secondary);
+    UNLINK_EXPECT(call(472, work, (u64) "link", 0x800, 0, 0, 0, &error) == 0 &&
+                  !error && !secondary);
+    UNLINK_EXPECT(call(472, work, (u64) "link", 0x800, 0, 0, 0, &error) == 2 &&
+                  error);
+  }
+  // NOFOLLOW_ANY refuses an intermediate link and leaves the child intact.
+  UNLINK_EXPECT(call(474, (u64) "box", work, (u64) "into", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(
+      call(474, (u64) "../data", box, (u64) "child", 0, 0, 0, &error) == 0 &&
+      !error && !secondary);
+  UNLINK_EXPECT(call(472, work, (u64) "into/child", 0x800, 0, 0, 0, &error) ==
+                    62 &&
+                error);
+  login_fill_canary(bytes, sizeof(bytes));
+  UNLINK_EXPECT(
+      call(473, box, (u64) "child", (u64)(bytes + 8), 24, 0, 0, &error) == 7 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"../data", 7) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 15, 17));
+  UNLINK_EXPECT(call(472, box, (u64) "child", 0x800, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(472, work, (u64) "into", 0x800, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+
+  // The observed slash restart in a -> b -> box removes b, retaining a and
+  // the target directory. A held FD and CWD keep referring to that same box.
+  // New-directory complete stat observations remain unknown in the model.
+  // F_GETPATH plus CWD-relative access checks the retained path and parent.
+  unsigned char box_before[1040], box_after[1040];
+  login_fill_canary(box_before, sizeof(box_before));
+  UNLINK_EXPECT(call(92, box, 50, (u64)(box_before + 8), 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary && login_canary_bytes(box_before, 8) &&
+                login_canary_bytes(box_before + 1032, 8));
+  unsigned box_before_length = 0;
+  while (box_before_length < 1024 && box_before[8 + box_before_length])
+    ++box_before_length;
+  UNLINK_EXPECT(box_before_length > 0 && box_before_length < 1024);
+  UNLINK_EXPECT(call(474, (u64) "b", work, (u64) "a", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(474, (u64) "box", work, (u64) "b", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(13, box, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  UNLINK_EXPECT(call(472, work, (u64) "a////", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  login_fill_canary(bytes, sizeof(bytes));
+  UNLINK_EXPECT(
+      call(473, work, (u64) "a", (u64)(bytes + 8), 24, 0, 0, &error) == 1 &&
+      !error && !secondary && bytes[8] == 'b' && login_canary_bytes(bytes, 8) &&
+      login_canary_bytes(bytes + 9, 23));
+  UNLINK_EXPECT(
+      call(473, work, (u64) "b", (u64)(bytes + 8), 24, 0, 0, &error) == 2 &&
+      error && login_canary_bytes(bytes, 8) && bytes[8] == 'b' &&
+      login_canary_bytes(bytes + 9, 23));
+  UNLINK_EXPECT(call(466, work, (u64) "box", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  u64 cwd = call(5, (u64) ".", 0x100000, 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && cwd >= 3);
+  login_fill_canary(box_after, sizeof(box_after));
+  UNLINK_EXPECT(call(92, cwd, 50, (u64)(box_after + 8), 0, 0, 0, &error) == 0 &&
+                !error && !secondary && login_canary_bytes(box_after, 8) &&
+                login_canary_bytes(box_after + 1032, 8));
+  unsigned box_after_length = 0;
+  while (box_after_length < 1024 && box_after[8 + box_after_length])
+    ++box_after_length;
+  UNLINK_EXPECT(box_after_length > 0 && box_after_length < 1024);
+  UNLINK_EXPECT(
+      box_before_length == box_after_length &&
+      login_equal_bytes(box_before + 8, box_after + 8, box_before_length + 1));
+  u64 from_cwd = call(5, (u64) "../data", 0, 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && from_cwd >= 3);
+  UNLINK_EXPECT(call(339, from_cwd, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) ==
+                    little_integer(original + 8, 8));
+  login_fill_canary(bytes, sizeof(bytes));
+  UNLINK_EXPECT(
+      call(153, from_cwd, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"0123456789", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  UNLINK_EXPECT(call(6, from_cwd, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  UNLINK_EXPECT(call(472, work, (u64) "a", 0x800, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  UNLINK_EXPECT(call(13, work, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+
+  // Neither successful removal nor failed repetition advances file cursors,
+  // alters the target's identity/content, or releases its private mapping.
+  UNLINK_EXPECT(call(199, target, 0, 1, 0, 0, 0, &error) == 2 && !error);
+  UNLINK_EXPECT(call(199, held, 0, 1, 0, 0, 0, &error) == 1 && !error);
+  UNLINK_EXPECT(call(3, held, (u64)bytes, 1, 0, 0, 0, &error) == 1 && !error &&
+                bytes[0] == '1');
+  UNLINK_EXPECT(
+      call(339, held, (u64)current, 0, 0, 0, 0, &error) == 0 && !error &&
+      !secondary &&
+      little_integer(current + 8, 8) == little_integer(original + 8, 8) &&
+      little_integer(current + 6, 2) == little_integer(original + 6, 2) &&
+      little_integer(current + 96, 8) == 10);
+  u64 named = call(463, work, (u64) "data", 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error && !secondary && named >= 3);
+  UNLINK_EXPECT(call(339, named, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) ==
+                    little_integer(original + 8, 8));
+  login_fill_canary(bytes, sizeof(bytes));
+  UNLINK_EXPECT(
+      call(153, target, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"0123456789", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  UNLINK_EXPECT(login_equal_bytes((const unsigned char *)mapped,
+                                  (const unsigned char *)"0123456789", 10));
+  const u64 descriptors[] = {named, held, target, cwd, box, work, dir};
+  for (unsigned i = 0; i != 7; ++i)
+    UNLINK_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 &&
+                  !error && !secondary);
+  UNLINK_EXPECT(login_equal_bytes((const unsigned char *)mapped,
+                                  (const unsigned char *)"0123456789", 10) &&
+                call(73, mapped, PAGE, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  const char marker = 'U';
+  UNLINK_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error &&
+                !secondary);
+#undef UNLINK_EXPECT
+  return 37;
+}
+
+static int renamed_link_bytes(u64 directory, const char *name,
+                              const unsigned char *target, unsigned size) {
+  unsigned error;
+  unsigned char bytes[32];
+  login_fill_canary(bytes, sizeof(bytes));
+  return call(473, directory, (u64)name, (u64)(bytes + 8), 24, 0, 0, &error) ==
+             size &&
+         !error && !secondary && login_equal_bytes(bytes + 8, target, size) &&
+         login_canary_bytes(bytes, 8) &&
+         login_canary_bytes(bytes + 8 + size, 24 - size);
+}
+
+/* Terminal links move as opaque nodes. Relative targets bind at the new
+ * parent; old descriptions, shared cursors and private mappings retain their
+ * original file objects. NOFOLLOW_ANY uses held directory FDs throughout.
+ */
+static int symbolic_link_rename(const char *input) {
+  unsigned error, length = 0;
+  char root[1024];
+  while (length < sizeof(root) - 1 && input[length]) {
+    root[length] = input[length];
+    ++length;
+  }
+  if (input[length] || length < 10 || !equal(input + length - 10, "/work/data"))
+    return 51;
+  if (length == 10) {
+    root[0] = '/';
+    root[1] = 0;
+  } else
+    root[length - 10] = 0;
+  int check = 51;
+#define RENAME_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 dir = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && dir >= 3);
+  // F_GETPATH supplies the actual root spelling (e.g. /private/var on macOS).
+  RENAME_EXPECT(call(92, dir, 50, (u64)root, 0, 0, 0, &error) == 0 && !error);
+  u64 work = call(463, dir, (u64) "work", 0x100000, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && work >= 3);
+  RENAME_EXPECT(call(13, work, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  u64 old = call(463, work, (u64) "data", 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && old >= 3);
+  u64 duplicate = call(41, old, 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && duplicate >= 3 && duplicate != old);
+  unsigned char original[144], current[144], victim_before[144], bytes[32];
+  RENAME_EXPECT(call(339, old, (u64)original, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(199, old, 3, 0, 0, 0, 0, &error) == 3 && !error);
+  u64 mapped = call(197, 0, 10, 1, 2, old, 0, &error);
+  RENAME_EXPECT(!error && !secondary);
+  RENAME_EXPECT(call(57, (u64) "data", (u64) "a", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) "missing", work, (u64) "b", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(128, (u64) "a", (u64) "b", 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "b", (const unsigned char *)"data", 4));
+  RENAME_EXPECT(call(473, work, (u64) "a", (u64)bytes, 24, 0, 0, &error) == 2 &&
+                error);
+  RENAME_EXPECT(call(474, (u64) "missing", work, (u64) "c", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(
+      call(488, work, (u64) "b", work, (u64) "c", 4, 0, &error) == 17 && error);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "b", (const unsigned char *)"data", 4) &&
+      renamed_link_bytes(work, "c", (const unsigned char *)"missing", 7));
+  RENAME_EXPECT(call(488, work, (u64) "b", work, (u64) "c", 16, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) ".", work, (u64) "dot", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(
+      call(488, work, (u64) "dot/c", work, (u64) "d", 16, 0, &error) == 62 &&
+      error);
+  RENAME_EXPECT(
+      call(488, work, (u64) "c", work, (u64) "dot/d", 16, 0, &error) == 62 &&
+      error);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "c", (const unsigned char *)"data", 4));
+
+  u64 victim = call(463, work, (u64) "victim", 0xa02, 0600, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && victim >= 3);
+  RENAME_EXPECT(call(4, victim, (u64) "klmnopqrst", 10, 0, 0, 0, &error) ==
+                    10 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(339, victim, (u64)victim_before, 0, 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(199, victim, 5, 0, 0, 0, 0, &error) == 5 && !error);
+  u64 victim_map = call(197, 0, 10, 1, 2, victim, 0, &error);
+  RENAME_EXPECT(!error && !secondary);
+  RENAME_EXPECT(
+      call(465, work, (u64) "c", work, (u64) "victim", 0, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "victim", (const unsigned char *)"data", 4));
+  RENAME_EXPECT(call(339, victim, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary && little_integer(current + 6, 2) == 0 &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8));
+  RENAME_EXPECT(call(199, victim, 0, 1, 0, 0, 0, &error) == 5 && !error);
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, victim, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"klmnopqrst", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(call(6, victim, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  u64 regular = call(463, work, (u64) "regular", 0xa02, 0600, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && regular >= 3);
+  RENAME_EXPECT(call(4, regular, (u64) "abcdefghij", 10, 0, 0, 0, &error) ==
+                    10 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(339, regular, (u64)victim_before, 0, 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(488, work, (u64) "regular", work, (u64) "victim", 0, 0,
+                     &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(339, regular, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary && little_integer(current + 6, 2) == 1 &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8));
+  RENAME_EXPECT(call(473, work, (u64) "victim", (u64)bytes, 24, 0, 0, &error) ==
+                    22 &&
+                error);
+  u64 named = call(463, work, (u64) "victim", 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && named >= 3);
+  RENAME_EXPECT(call(339, named, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8));
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, named, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 && !error &&
+      !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"abcdefghij", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(call(6, named, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  RENAME_EXPECT(call(6, regular, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+
+  const unsigned char opaque[][4] = {{0}, {'a', 0}, {0xff, 'x', 0}};
+  const unsigned sizes[] = {0, 1, 2};
+  for (unsigned i = 0; i != 3; ++i) {
+    RENAME_EXPECT(call(474, (u64)opaque[i], work, (u64) "a", 0, 0, 0, &error) ==
+                      0 &&
+                  !error && !secondary);
+    RENAME_EXPECT(
+        call(474, (u64) "data", work, (u64) "peer", 0, 0, 0, &error) == 0 &&
+        !error && !secondary);
+    RENAME_EXPECT(
+        call(488, work, (u64) "a", work, (u64) "peer", 2, 0, &error) == 0 &&
+        !error && !secondary);
+    RENAME_EXPECT(
+        renamed_link_bytes(work, "peer", opaque[i], sizes[i]) &&
+        renamed_link_bytes(work, "a", (const unsigned char *)"data", 4));
+    RENAME_EXPECT(
+        call(488, work, (u64) "peer", work, (u64) "a", 18, 0, &error) == 0 &&
+        !error && !secondary);
+    RENAME_EXPECT(
+        renamed_link_bytes(work, "a", opaque[i], sizes[i]) &&
+        renamed_link_bytes(work, "peer", (const unsigned char *)"data", 4));
+    RENAME_EXPECT(call(472, work, (u64) "peer", 0, 0, 0, 0, &error) == 0 &&
+                  !error && !secondary);
+    RENAME_EXPECT(
+        call(488, work, (u64) "a", work, (u64) "opaque", 4, 0, &error) == 0 &&
+        !error && !secondary);
+    RENAME_EXPECT(renamed_link_bytes(work, "opaque", opaque[i], sizes[i]));
+    RENAME_EXPECT(call(472, work, (u64) "opaque", 0x800, 0, 0, 0, &error) ==
+                      0 &&
+                  !error && !secondary);
+  }
+  RENAME_EXPECT(call(474, (u64) "data", work, (u64) "a", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) "missing", work, (u64) "b", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  u64 exchanged = call(463, work, (u64) "victim", 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && exchanged >= 3);
+  u64 exchanged_dup = call(41, exchanged, 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && exchanged_dup >= 3);
+  RENAME_EXPECT(call(199, exchanged, 5, 0, 0, 0, 0, &error) == 5 && !error);
+  u64 exchanged_map = call(197, 0, 10, 1, 2, exchanged, 0, &error);
+  RENAME_EXPECT(!error && !secondary);
+  RENAME_EXPECT(call(339, exchanged, (u64)victim_before, 0, 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(488, work, (u64) "a", work, (u64) "b", 2, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "a", (const unsigned char *)"missing", 7) &&
+      renamed_link_bytes(work, "b", (const unsigned char *)"data", 4));
+  RENAME_EXPECT(
+      call(488, work, (u64) "b", work, (u64) "victim", 18, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "victim", (const unsigned char *)"data", 4));
+  RENAME_EXPECT(
+      call(473, work, (u64) "b", (u64)bytes, 24, 0, 0, &error) == 22 && error);
+  RENAME_EXPECT(call(339, exchanged, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary && little_integer(current + 6, 2) == 1 &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8));
+  RENAME_EXPECT(
+      call(488, work, (u64) "b", work, (u64) "victim", 2, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "b", (const unsigned char *)"data", 4));
+  RENAME_EXPECT(
+      call(339, exchanged_dup, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+      !error && !secondary && little_integer(current + 6, 2) == 1 &&
+      little_integer(current + 8, 8) == little_integer(victim_before + 8, 8));
+  RENAME_EXPECT(call(199, exchanged_dup, 0, 1, 0, 0, 0, &error) == 5 && !error);
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, exchanged, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"abcdefghij", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(call(488, work, (u64) "a", work, (u64) "a", 2, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(
+      call(488, work, (u64) "a", work, (u64) "absent", 2, 0, &error) == 2 &&
+      error);
+  RENAME_EXPECT(
+      call(488, work, (u64) "a", work, (u64) "b", 6, 0, &error) == 22 && error);
+  RENAME_EXPECT(
+      call(488, work, (u64) "dot/a", work, (u64) "b", 18, 0, &error) == 62 &&
+      error);
+  RENAME_EXPECT(
+      call(488, work, (u64) "a", work, (u64) "dot/b", 18, 0, &error) == 62 &&
+      error);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "a", (const unsigned char *)"missing", 7) &&
+      renamed_link_bytes(work, "b", (const unsigned char *)"data", 4));
+  RENAME_EXPECT(call(475, work, (u64) "x", 0700, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(475, work, (u64) "y", 0700, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  u64 x = call(463, work, (u64) "x", 0x100000, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && x >= 3);
+  u64 y = call(463, work, (u64) "y", 0x100000, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && y >= 3);
+  u64 xdata = call(463, x, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && xdata >= 3);
+  u64 ydata = call(463, y, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && ydata >= 3);
+  RENAME_EXPECT(call(4, xdata, (u64) "ABCDEFGHIJ", 10, 0, 0, 0, &error) == 10 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(4, ydata, (u64) "klmnopqrst", 10, 0, 0, 0, &error) == 10 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(339, xdata, (u64)victim_before, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) "data", x, (u64) "a", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) "data", y, (u64) "b", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  u64 held = call(463, x, (u64) "a", 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && held >= 3);
+  RENAME_EXPECT(call(199, held, 3, 0, 0, 0, 0, &error) == 3 && !error);
+  u64 held_map = call(197, 0, 10, 1, 2, held, 0, &error);
+  RENAME_EXPECT(!error && !secondary);
+  RENAME_EXPECT(call(13, x, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  RENAME_EXPECT(call(465, x, (u64) "a", y, (u64) "b", 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(renamed_link_bytes(y, "b", (const unsigned char *)"data", 4));
+  u64 rebound = call(463, y, (u64) "b", 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && rebound >= 3);
+  RENAME_EXPECT(call(339, rebound, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) !=
+                    little_integer(victim_before + 8, 8));
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, rebound, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"klmnopqrst", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(call(474, (u64) "./data", x, (u64) "a", 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(488, y, (u64) "b", x, (u64) "a", 18, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(renamed_link_bytes(x, "a", (const unsigned char *)"data", 4) &&
+                renamed_link_bytes(y, "b", (const unsigned char *)"./data", 6));
+  u64 cwd_file = call(5, (u64) "data", 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && cwd_file >= 3);
+  RENAME_EXPECT(call(339, cwd_file, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8));
+  /* Rekey every link descendant with its directory; keep actual CWD/FD owners.
+   */
+  const unsigned char subtree_opaque[] = {0xff, 'x', 0};
+  RENAME_EXPECT(
+      call(474, (u64)subtree_opaque, x, (u64) "opaque", 0, 0, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(call(474, (u64) "../data", x, (u64) "up", 0, 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(465, work, (u64) "x", work, (u64) "moved", 0, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(directory_path(x, root, "/work/moved") &&
+                directory_path(held, root, "/work/moved/data"));
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "moved/a", (const unsigned char *)"data", 4) &&
+      renamed_link_bytes(work, "moved/opaque", subtree_opaque, 2));
+  RENAME_EXPECT(call(465, work, (u64) "moved", work, (u64) "y", 0, 0, &error) ==
+                    66 &&
+                error);
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "moved/a", (const unsigned char *)"data", 4) &&
+      renamed_link_bytes(work, "y/b", (const unsigned char *)"./data", 6));
+  RENAME_EXPECT(call(488, work, (u64) "moved", work, (u64) "y", 2, 0, &error) ==
+                    0 &&
+                !error && !secondary);
+  RENAME_EXPECT(directory_path(x, root, "/work/y") &&
+                directory_path(y, root, "/work/moved") &&
+                directory_path(held, root, "/work/y/data"));
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "y/a", (const unsigned char *)"data", 4) &&
+      renamed_link_bytes(work, "moved/b", (const unsigned char *)"./data", 6));
+  RENAME_EXPECT(
+      call(488, work, (u64) "y", work, (u64) "moved", 18, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(directory_path(x, root, "/work/moved") &&
+                directory_path(y, root, "/work/y"));
+  RENAME_EXPECT(
+      call(465, work, (u64) "moved", y, (u64) "nested", 0, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(directory_path(x, root, "/work/y/nested") &&
+                directory_path(held, root, "/work/y/nested/data"));
+  RENAME_EXPECT(renamed_link_bytes(work, "y/nested/a",
+                                   (const unsigned char *)"data", 4) &&
+                renamed_link_bytes(work, "y/nested/up",
+                                   (const unsigned char *)"../data", 7) &&
+                renamed_link_bytes(work, "y/nested/opaque", subtree_opaque, 2));
+  u64 parent_rebound = call(5, (u64) "up", 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error && !secondary && parent_rebound >= 3);
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, parent_rebound, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 &&
+      !error && !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"klmnopqrst", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(
+      call(488, work, (u64) "y", work, (u64) "victim", 2, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(directory_path(y, root, "/work/victim") &&
+                directory_path(x, root, "/work/victim/nested") &&
+                directory_path(held, root, "/work/victim/nested/data"));
+  RENAME_EXPECT(
+      renamed_link_bytes(work, "victim/nested/a", (const unsigned char *)"data",
+                         4) &&
+      renamed_link_bytes(work, "victim/nested/opaque", subtree_opaque, 2));
+  RENAME_EXPECT(
+      call(488, work, (u64) "y", work, (u64) "victim", 18, 0, &error) == 0 &&
+      !error && !secondary);
+  RENAME_EXPECT(directory_path(y, root, "/work/y") &&
+                directory_path(x, root, "/work/y/nested") &&
+                directory_path(held, root, "/work/y/nested/data"));
+  RENAME_EXPECT(call(339, held, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary &&
+                little_integer(current + 8, 8) ==
+                    little_integer(victim_before + 8, 8) &&
+                little_integer(current + 6, 2) == 1);
+  RENAME_EXPECT(call(199, held, 0, 1, 0, 0, 0, &error) == 3 && !error);
+  RENAME_EXPECT(call(199, duplicate, 0, 1, 0, 0, 0, &error) == 3 && !error);
+  RENAME_EXPECT(
+      call(339, old, (u64)current, 0, 0, 0, 0, &error) == 0 && !error &&
+      !secondary &&
+      little_integer(current + 8, 8) == little_integer(original + 8, 8) &&
+      little_integer(current + 6, 2) == little_integer(original + 6, 2));
+  login_fill_canary(bytes, sizeof(bytes));
+  RENAME_EXPECT(
+      call(153, old, (u64)(bytes + 8), 10, 0, 0, 0, &error) == 10 && !error &&
+      !secondary &&
+      login_equal_bytes(bytes + 8, (const unsigned char *)"0123456789", 10) &&
+      login_canary_bytes(bytes, 8) && login_canary_bytes(bytes + 18, 14));
+  RENAME_EXPECT(call(13, work, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  const u64 descriptors[] = {
+      parent_rebound, exchanged, exchanged_dup, cwd_file, rebound,
+      held,           ydata,     xdata,         y,        x,
+      duplicate,      old,       work,          dir};
+  for (unsigned i = 0; i != sizeof(descriptors) / sizeof(descriptors[0]); ++i)
+    RENAME_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 &&
+                  !error && !secondary);
+  RENAME_EXPECT(login_equal_bytes((const unsigned char *)mapped,
+                                  (const unsigned char *)"0123456789", 10) &&
+                login_equal_bytes((const unsigned char *)victim_map,
+                                  (const unsigned char *)"klmnopqrst", 10) &&
+                login_equal_bytes((const unsigned char *)held_map,
+                                  (const unsigned char *)"ABCDEFGHIJ", 10));
+  RENAME_EXPECT(login_equal_bytes((const unsigned char *)exchanged_map,
+                                  (const unsigned char *)"abcdefghij", 10));
+  RENAME_EXPECT(call(73, exchanged_map, PAGE, 0, 0, 0, 0, &error) == 0 &&
+                !error && !secondary);
+  RENAME_EXPECT(call(73, mapped, PAGE, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  RENAME_EXPECT(call(73, victim_map, PAGE, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  RENAME_EXPECT(call(73, held_map, PAGE, 0, 0, 0, 0, &error) == 0 && !error &&
+                !secondary);
+  const char marker = 'R';
+  RENAME_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error &&
+                !secondary);
+#undef RENAME_EXPECT
+  return 37;
+}
+
+/* Original raw-syscall metadata workload; virtual allocation/times are separate
+ * from the native common identity, mode, ownership and lifecycle observations.
+ */
+static int created_namespace_metadata(const char *input, int virtual_record) {
+  unsigned error, length = 0, slash = 0;
+  char root[1024];
+  while (length < sizeof(root) - 1 && input[length]) {
+    root[length] = input[length];
+    if (input[length] == '/')
+      slash = length;
+    ++length;
+  }
+  if (input[length] || !length || input[0] != '/')
+    return 51;
+  root[slash ? slash : 1] = 0;
+  int check = 51;
+#define NAMESPACE_EXPECT(expression)                                           \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 parent = call(5, (u64)root, 0x100000, 0, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error && parent >= 3);
+  unsigned char parent_stat[144], initial[144], current[144], before[144],
+      link_stat[144], after[144], final_dir[144], child_stat[144];
+  NAMESPACE_EXPECT(
+      call(339, parent, (u64)parent_stat, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 uid = call(25, 0, 0, 0, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  u64 saved_mask = call(60, 0027, 0, 0, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error && saved_mask <= 07777);
+  NAMESPACE_EXPECT(call(475, parent, (u64) "namespace-meta",
+                        0xffffffff00000fffUL, 0, 0, 0, &error) == 0 &&
+                   !error);
+  u64 dir =
+      call(463, parent, (u64) "namespace-meta", 0x100000, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  NAMESPACE_EXPECT(call(339, dir, (u64)initial, 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  u64 inode = little_integer(initial + 8, 8);
+  NAMESPACE_EXPECT(inode && little_integer(initial + 4, 2) == 0040750 &&
+                   little_integer(initial + 6, 2) == 2);
+  NAMESPACE_EXPECT(
+      little_integer(initial, 4) == little_integer(parent_stat, 4) &&
+      little_integer(initial + 20, 4) == little_integer(parent_stat + 20, 4) &&
+      little_integer(initial + 16, 4) == uid);
+  if (virtual_record)
+    NAMESPACE_EXPECT(little_integer(initial + 96, 8) == 64 &&
+                     little_integer(initial + 104, 8) == 7);
+  NAMESPACE_EXPECT(
+      call(474, (u64) "data", dir, (u64) "leaf", 0, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(
+      call(470, dir, (u64) "leaf", (u64)link_stat, 0x20, 0, 0, &error) == 0 &&
+      !error);
+  u64 link_inode = little_integer(link_stat + 8, 8);
+  NAMESPACE_EXPECT(link_inode && link_inode != inode &&
+                   little_integer(link_stat + 4, 2) == 0120750 &&
+                   little_integer(link_stat + 6, 2) == 1 &&
+                   little_integer(link_stat + 96, 8) == 4);
+  NAMESPACE_EXPECT(little_integer(link_stat, 4) == little_integer(initial, 4) &&
+                   little_integer(link_stat + 20, 4) ==
+                       little_integer(initial + 20, 4) &&
+                   little_integer(link_stat + 16, 4) == uid);
+  if (virtual_record)
+    NAMESPACE_EXPECT(little_integer(link_stat + 104, 8) == 1);
+  const char raw[] = {(char)0xff, 'x', 0};
+  NAMESPACE_EXPECT(
+      call(474, (u64) "", dir, (u64) "empty", 0, 0, 0, &error) == 0 && !error);
+  NAMESPACE_EXPECT(
+      call(474, (u64)raw, dir, (u64) "raw", 0, 0, 0, &error) == 0 && !error);
+  NAMESPACE_EXPECT(
+      call(470, dir, (u64) "empty", (u64)current, 0x20, 0, 0, &error) == 0 &&
+      !error && little_integer(current + 96, 8) == 0 &&
+      little_integer(current + 104, 8) == 0);
+  NAMESPACE_EXPECT(
+      call(470, dir, (u64) "raw", (u64)current, 0x20, 0, 0, &error) == 0 &&
+      !error && little_integer(current + 96, 8) == 2);
+  u64 file = call(463, dir, (u64) "data", 0xa02, 0666, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  NAMESPACE_EXPECT(call(4, file, (u64) "abc", 3, 0, 0, 0, &error) == 3 &&
+                   !error);
+  NAMESPACE_EXPECT(call(475, dir, (u64) "child", 0700, 0, 0, 0, &error) == 0 &&
+                   !error);
+  u64 child = call(463, dir, (u64) "child", 0x100000, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  NAMESPACE_EXPECT(call(339, child, (u64)child_stat, 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  u64 duplicate = call(41, dir, 0, 0, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  NAMESPACE_EXPECT(call(339, duplicate, (u64)before, 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  if (virtual_record)
+    NAMESPACE_EXPECT(little_integer(before + 6, 2) == 7 &&
+                     little_integer(before + 96, 8) == 224 &&
+                     little_integer(before + 104, 8) == 7);
+  NAMESPACE_EXPECT(
+      call(474, (u64) "other", dir, (u64) "leaf", 0, 0, 0, &error) == 17 &&
+      error);
+  NAMESPACE_EXPECT(call(339, dir, (u64)after, 0, 0, 0, 0, &error) == 0 &&
+                   !error && login_equal_bytes(before, after, sizeof(before)));
+  NAMESPACE_EXPECT(
+      call(488, dir, (u64) "leaf", dir, (u64) "moved", 4, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(call(13, dir, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  NAMESPACE_EXPECT(call(465, parent, (u64) "namespace-meta", parent,
+                        (u64) "namespace-moved", 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(340, (u64) "moved", (u64)current, 0, 0, 0, 0, &error) ==
+                       0 &&
+                   !error && little_integer(current + 8, 8) == link_inode);
+  NAMESPACE_EXPECT(call(58, (u64) "raw", (u64)after, 2, 0, 0, 0, &error) == 2 &&
+                   !error && after[0] == 0xff && after[1] == 'x');
+  NAMESPACE_EXPECT(
+      call(470, dir, (u64) "moved", (u64)link_stat, 0x20, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(
+      call(475, parent, (u64) "namespace-other", 0700, 0, 0, 0, &error) == 0 &&
+      !error);
+  u64 other =
+      call(463, parent, (u64) "namespace-other", 0x100000, 0, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  u64 victim = call(463, other, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  NAMESPACE_EXPECT(!error);
+  NAMESPACE_EXPECT(call(4, victim, (u64) "xyz", 3, 0, 0, 0, &error) == 3 &&
+                   !error);
+  NAMESPACE_EXPECT(
+      call(488, dir, (u64) "moved", other, (u64) "data", 18, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(
+      call(470, other, (u64) "data", (u64)after, 0x20, 0, 0, &error) == 0 &&
+      !error && little_integer(after + 8, 8) == link_inode);
+  if (virtual_record)
+    NAMESPACE_EXPECT(login_equal_bytes(link_stat, after, sizeof(after)));
+  for (unsigned i = 0; i != sizeof(link_stat); ++i)
+    link_stat[i] = after[i];
+  NAMESPACE_EXPECT(call(472, dir, (u64) "child", 0x80, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(
+      call(339, child, (u64)current, 0, 0, 0, 0, &error) == 0 && !error &&
+      little_integer(current + 8, 8) == little_integer(child_stat + 8, 8) &&
+      little_integer(current + 6, 2) == 2);
+  NAMESPACE_EXPECT(call(60, 0022, 0, 0, 0, 0, 0, &error) == 0027 && !error);
+  NAMESPACE_EXPECT(call(475, dir, (u64) "child", 07777, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(
+      call(470, dir, (u64) "child", (u64)current, 0, 0, 0, &error) == 0 &&
+      !error &&
+      little_integer(current + 8, 8) != little_integer(child_stat + 8, 8) &&
+      little_integer(current + 4, 2) == 0040755);
+  // Keep the freestanding image free of relocatable constant pointer tables.
+  NAMESPACE_EXPECT(call(472, dir, (u64) "data", 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(472, dir, (u64) "moved", 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(472, dir, (u64) "raw", 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(472, dir, (u64) "empty", 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(472, dir, (u64) "child", 0x80, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(472, other, (u64) "data", 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  NAMESPACE_EXPECT(call(339, file, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                   !error && little_integer(current + 6, 2) == 0 &&
+                   little_integer(current + 96, 8) == 3);
+  NAMESPACE_EXPECT(call(339, victim, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                   !error && little_integer(current + 6, 2) == 0 &&
+                   little_integer(current + 96, 8) == 3);
+  NAMESPACE_EXPECT(call(13, parent, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  NAMESPACE_EXPECT(
+      call(472, parent, (u64) "namespace-moved", 0x80, 0, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(
+      call(472, parent, (u64) "namespace-other", 0x80, 0, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(call(339, duplicate, (u64)final_dir, 0, 0, 0, 0, &error) ==
+                       0 &&
+                   !error && little_integer(final_dir + 8, 8) == inode &&
+                   little_integer(final_dir + 6, 2) == 2 &&
+                   little_integer(final_dir + 4, 2) == 0040750);
+  NAMESPACE_EXPECT(
+      call(475, parent, (u64) "namespace-moved", 07777, 0, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(call(470, parent, (u64) "namespace-moved", (u64)current, 0,
+                        0, 0, &error) == 0 &&
+                   !error && little_integer(current + 8, 8) != inode &&
+                   little_integer(current + 4, 2) == 0040755);
+  NAMESPACE_EXPECT(
+      call(472, parent, (u64) "namespace-moved", 0x80, 0, 0, 0, &error) == 0 &&
+      !error);
+  NAMESPACE_EXPECT(call(60, saved_mask, 0, 0, 0, 0, 0, &error) == 0022 &&
+                   !error);
+  const u64 descriptors[] = {child, duplicate, dir,   other,
+                             file,  victim,    parent};
+  for (unsigned i = 0; i != sizeof(descriptors) / sizeof(descriptors[0]); ++i)
+    NAMESPACE_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 &&
+                     !error);
+  if (virtual_record) {
+    NAMESPACE_EXPECT(call(4, 1, (u64)final_dir, sizeof(final_dir), 0, 0, 0,
+                          &error) == sizeof(final_dir) &&
+                     !error);
+    NAMESPACE_EXPECT(call(4, 1, (u64)link_stat, sizeof(link_stat), 0, 0, 0,
+                          &error) == sizeof(link_stat) &&
+                     !error);
+  } else {
+    NAMESPACE_EXPECT(call(4, 1, (u64) "N", 1, 0, 0, 0, &error) == 1 && !error);
+  }
+#undef NAMESPACE_EXPECT
+  return 37;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
+  if (argc >= 2 && equal(argv[1], "symbolic-link-rename")) {
+    int status = argc < 3 ? 51 : symbolic_link_rename(argv[2]);
+    if (status == 37 && argc >= 4 && equal(argv[3], "protected")) {
+      unsigned error;
+      call(128, (u64) "victim", (u64) "/static/data-link", 0, 0, 0, 0, &error);
+      return 50;
+    }
+    return status;
+  }
+  if (argc >= 2 && equal(argv[1], "symbolic-link-unlink")) {
+    int status = argc < 3 ? 51 : symbolic_link_unlink(argv[2]);
+    if (status == 37 && argc >= 4 && equal(argv[3], "protected")) {
+      // This explicit model refusal is excluded from the native inventory.
+      unsigned error;
+      call(10, (u64) "/static/data-link", 0, 0, 0, 0, 0, &error);
+      return 50;
+    }
+    return status;
+  }
+  if (argc >= 2 && equal(argv[1], "symbolic-link-creation"))
+    return argc < 3 ? 201 : symbolic_link_creation(argv[2]);
+  if (argc >= 2 && equal(argv[1], "symbolic-link-mutations"))
+    return argc < 3 ? 201 : symbolic_link_mutations(argv[2]);
   if (argc >= 2 && equal(argv[1], "symbolic-links"))
     return argc < 3 ? 225 : symbolic_links(argv[2]);
   unsigned error = 0;
@@ -3864,6 +6293,12 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return argc < 3 ? 79 : renamed_directory(argv[2]);
   if (equal(argv[1], "swapped-directory"))
     return argc < 3 ? 79 : swapped_directory(argv[2]);
+  if (equal(argv[1], "created-namespace-metadata") ||
+      equal(argv[1], "virtual-created-namespace-metadata"))
+    return argc < 3 ? 79
+                    : created_namespace_metadata(
+                          argv[2],
+                          equal(argv[1], "virtual-created-namespace-metadata"));
   if (equal(argv[1], "created-file-metadata") ||
       equal(argv[1], "virtual-created-metadata"))
     return argc < 3 ? 79
@@ -3885,6 +6320,70 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
     return argc < 3 ? 139
                     : file_calls(argv[2], equal(argv[1], "files-nocancel"));
+  if (equal(argv[1], "mutable-initial-links") ||
+      equal(argv[1], "virtual-mutable-initial-links"))
+    return argc < 3
+               ? 79
+               : mutable_initial_links(
+                     argv[2], equal(argv[1], "virtual-mutable-initial-links"));
+  if (equal(argv[1], "attribute-names") ||
+      equal(argv[1], "attribute-names-values") ||
+      equal(argv[1], "attribute-names-unsupported"))
+    return argc < 3
+               ? 79
+               : attribute_names(argv[2],
+                                 equal(argv[1], "attribute-names-values") ? 1
+                                 : equal(argv[1], "attribute-names-unsupported")
+                                     ? 2
+                                     : 0);
+  if (equal(argv[1], "extended-attributes") ||
+      equal(argv[1], "extended-attributes-values") ||
+      equal(argv[1], "extended-attributes-unsupported"))
+    return argc < 3
+               ? 79
+               : extended_attributes(
+                     argv[2],
+                     equal(argv[1], "extended-attributes-values")        ? 1
+                     : equal(argv[1], "extended-attributes-unsupported") ? 2
+                                                                         : 0);
+  if (equal(argv[1], "common-attributes") ||
+      equal(argv[1], "common-attributes-values") ||
+      equal(argv[1], "common-attributes-unsupported"))
+    return argc < 3
+               ? 79
+               : common_attributes(
+                     argv[2], equal(argv[1], "common-attributes-values") ? 1
+                              : equal(argv[1], "common-attributes-unsupported")
+                                  ? 2
+                                  : 0);
+  if (equal(argv[1], "kernel-pathconf") ||
+      equal(argv[1], "kernel-pathconf-values") ||
+      equal(argv[1], "kernel-pathconf-unsupported"))
+    return argc < 3
+               ? 79
+               : kernel_pathconf(argv[2],
+                                 equal(argv[1], "kernel-pathconf-values") ? 1
+                                 : equal(argv[1], "kernel-pathconf-unsupported")
+                                     ? 2
+                                     : 0);
+  if (equal(argv[1], "directory-link-roots") ||
+      equal(argv[1], "virtual-directory-link-roots"))
+    return argc < 3
+               ? 79
+               : directory_link_roots(
+                     argv[2], equal(argv[1], "virtual-directory-link-roots"));
+  if (equal(argv[1], "initial-directory-metadata") ||
+      equal(argv[1], "virtual-initial-directory-metadata"))
+    return argc < 3 ? 79
+                    : initial_directory_metadata(
+                          argv[2],
+                          equal(argv[1], "virtual-initial-directory-metadata"));
+  if (equal(argv[1], "directory-enumeration-mutations") ||
+      equal(argv[1], "virtual-directory-enumeration"))
+    return argc < 3
+               ? 79
+               : directory_enumeration_mutations(
+                     argv[2], equal(argv[1], "virtual-directory-enumeration"));
   if (equal(argv[1], "directory-entries"))
     return argc < 3 ? 251 : directory_entries(argv[2]);
   if (equal(argv[1], "directories"))

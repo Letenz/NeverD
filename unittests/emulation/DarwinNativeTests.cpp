@@ -43,6 +43,7 @@
 #include <sys/uio.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 // The raw LP64 entry point exported by libsystem_kernel; the public legacy
 // getdirentries declaration is unavailable with the 64-bit-inode SDK ABI.
@@ -1103,6 +1104,26 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
   for (const auto &Test : Cases) {
     SCOPED_TRACE(Test.Mode);
     auto CaseInput = Input;
+    if (llvm::StringRef(Test.Mode) == "common-attributes" ||
+        llvm::StringRef(Test.Mode) == "extended-attributes" ||
+        llvm::StringRef(Test.Mode) == "attribute-names") {
+      const auto Catalogue = Root / Test.Mode;
+      ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
+      for (const auto &[Name, Target] :
+           {std::pair{"alias", "data"}, std::pair{"dangling", "missing"},
+            std::pair{"cycle", "cycle"}})
+        std::filesystem::create_symlink(Target, Catalogue / Name);
+      CaseInput = (Catalogue / "data").string();
+    }
+    if (llvm::StringRef(Test.Mode) == "kernel-pathconf") {
+      const auto Catalogue = Root / Test.Mode;
+      ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
+      for (const auto &[Name, Target] :
+           {std::pair{"alias", "data"}, std::pair{"dangling", "missing"},
+            std::pair{"cycle", "cycle"}})
+        std::filesystem::create_symlink(Target, Catalogue / Name);
+      CaseInput = (Catalogue / "data").string();
+    }
     if (llvm::StringRef(Test.Mode) == "symbolic-links") {
       const auto Catalogue = Root / "symbolic-links";
       ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
@@ -1113,10 +1134,64 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
         std::filesystem::create_symlink(Target, Catalogue / Name);
       CaseInput = (Catalogue / "data").string();
     }
+    if (llvm::StringRef(Test.Mode) == "mutable-initial-links") {
+      const auto Catalogue = Root / Test.Mode;
+      ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
+      std::filesystem::create_symlink("data", Catalogue / "initial");
+      std::filesystem::create_symlink("empty", Catalogue / "initial-dir");
+      CaseInput = (Catalogue / "data").string();
+    }
+    if (llvm::StringRef(Test.Mode) == "directory-link-roots") {
+      const auto Catalogue = Root / Test.Mode;
+      for (const char *Name : {"a/d", "a/other", "b/other"})
+        ASSERT_TRUE(std::filesystem::create_directories(Catalogue / Name));
+      for (const auto &[Name, Byte] :
+           {std::pair{"a/target", 11}, std::pair{"b/target", 22},
+            std::pair{"a/d/c", 31}, std::pair{"a/other/mark", 41},
+            std::pair{"b/other/mark", 42}}) {
+        std::ofstream File(Catalogue / Name, std::ios::binary);
+        File.put(char(Byte));
+        ASSERT_TRUE(File.good());
+      }
+      for (const auto &[Name, Target] :
+           {std::pair{"b/l", "target"}, std::pair{"b/dang", "missing"},
+            std::pair{"b/dirlink", "other"}, std::pair{"b/self", "../a/d"},
+            std::pair{"a/d/inside", "../target"}})
+        std::filesystem::create_symlink(Target, Catalogue / Name);
+      CaseInput = (Catalogue / "data").string();
+    }
+    if (llvm::StringRef(Test.Mode) == "symbolic-link-mutations" ||
+        llvm::StringRef(Test.Mode) == "symbolic-link-creation" ||
+        llvm::StringRef(Test.Mode) == "symbolic-link-unlink" ||
+        llvm::StringRef(Test.Mode) == "symbolic-link-rename") {
+      const auto Catalogue = Root / Test.Mode;
+      ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "static"));
+      ASSERT_TRUE(std::filesystem::create_directory(Catalogue / "work"));
+      for (const auto &[Name, Target] :
+           {std::pair{"alias", "../work"},
+            std::pair{"data-link", "../work/data"},
+            std::pair{"missing-link", "../work/new"}})
+        std::filesystem::create_symlink(Target, Catalogue / "static" / Name);
+      CaseInput = (Catalogue / "work" / "data").string();
+    }
     {
       std::ofstream File(CaseInput, std::ios::binary | std::ios::trunc);
       File << "0123456789";
       ASSERT_TRUE(File.good());
+    }
+    if (llvm::StringRef(Test.Mode) == "extended-attributes") {
+      const uint8_t Beta[] = {0, 255, 'A', 0, 128, 'B', '\n'};
+      ASSERT_EQ(::setxattr(CaseInput.c_str(), "user.neverd.beta", Beta,
+                           sizeof(Beta), 0, 0),
+                0)
+          << std::strerror(errno);
+      ASSERT_EQ(
+          ::setxattr(CaseInput.c_str(), "user.neverd.alpha", "alpha", 5, 0, 0),
+          0)
+          << std::strerror(errno);
+      ASSERT_EQ(::setxattr(CaseInput.c_str(), "user.neverd.empty", "", 0, 0, 0),
+                0)
+          << std::strerror(errno);
     }
     // ExecuteAndWait does not truncate an existing redirection target on
     // every host. Keep each observation separate, including shorter outputs.

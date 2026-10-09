@@ -3,7 +3,9 @@ add_neverd_component_library(NeverDPipeline
   Pipeline.cpp
   NativeSourceHints.cpp
   NativeSourcePreservation.cpp
+  PipelineCallAbi.cpp
   PipelineDump.cpp
+  PipelineFormattedCalls.cpp
   PipelineFuncDetect.cpp
   PipelineHighIR.cpp
   PipelineLLVM.cpp
@@ -15,6 +17,7 @@ add_neverd_component_library(NeverDPipeline
   SemanticConvergence.cpp
   PipelineStructReturn.cpp
   PipelineStructReturnCallSites.cpp
+  PipelineReturnContracts.cpp
   PipelineWideIntReturn.cpp
 
   LINK_COMPONENTS

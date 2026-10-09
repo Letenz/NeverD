@@ -22,6 +22,7 @@
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/object/SectionNames.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 
 #include <algorithm>
@@ -309,6 +310,98 @@ ReachingStackPtrResult findReachingStackPtr(const MedFunc &Func,
 extern const AbiCallPolicy Win64AbiCallPolicy;
 extern const AbiCallPolicy I386AbiCallPolicy;
 
+bool promoteFloatCallResult(MedFunc &Func, MedBlock &Blk, size_t OI,
+                            uint16_t Size, Arch TheArch) {
+  const auto &TRI = getTargetRegInfo(TheArch);
+  MedOp &Op = Blk.Ops[OI];
+  if (Size == 0 || Op.CallSiteId == 0)
+    return false;
+  const bool HasIntegerResult =
+      Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == TRI.IntReturnReg;
+  const MedVar ExistingOutput = Op.Output;
+  // The synthetic split is the call's 64-bit temp followed, at the call's
+  // address, by the SUBBYTES that place its halves in the two integer return
+  // registers.  Register DCE may already have removed a half that nothing
+  // reads, so accept either half or both; the temp must have no other reader,
+  // or the split is a real wide result.
+  size_t SyntheticWideHalves = 0;
+  if (TRI.PointerSize == 4 && TRI.IntReturnReg2 != 0 &&
+      ExistingOutput.Kind == MedVar::Temp &&
+      ExistingOutput.Size == 2 * TRI.PointerSize) {
+    auto isHalf = [&](const MedOp &Half, uint64_t RegOff, uint64_t Offset) {
+      return Half.Opcode == NdOp::SUBBYTES && Half.Addr == Op.Addr &&
+             Half.NumInputs == 2 && Half.Inputs[0] == ExistingOutput &&
+             Half.Inputs[1].isConst() && Half.Inputs[1].ConstVal == Offset &&
+             Half.Output.Kind == MedVar::Reg && Half.Output.RegOff == RegOff &&
+             Half.Output.Size == TRI.PointerSize;
+    };
+    bool SawLow = false, SawHigh = false;
+    while (OI + 1 + SyntheticWideHalves < Blk.Ops.size()) {
+      const MedOp &Half = Blk.Ops[OI + 1 + SyntheticWideHalves];
+      if (!SawLow && isHalf(Half, TRI.IntReturnReg, 0))
+        SawLow = true;
+      else if (!SawHigh && isHalf(Half, TRI.IntReturnReg2, TRI.PointerSize))
+        SawHigh = true;
+      else
+        break;
+      ++SyntheticWideHalves;
+    }
+    size_t Readers = 0;
+    for (const MedBlock &Other : Func.Blocks) {
+      for (const MedOp &User : Other.Ops)
+        for (uint8_t I = 0; I < User.NumInputs; ++I)
+          Readers += User.Inputs[I] == ExistingOutput;
+      for (const PhiNode &Phi : Other.Phis)
+        for (const auto &[Pred, Arg] : Phi.Args)
+          Readers += Arg == ExistingOutput;
+    }
+    if (Readers != SyntheticWideHalves)
+      SyntheticWideHalves = 0;
+  }
+  const bool HasSyntheticWideResult = SyntheticWideHalves != 0;
+  if (!HasIntegerResult && !HasSyntheticWideResult)
+    return false;
+  auto ClobberIt = Func.CallClobbers.end();
+  for (auto It = Func.CallClobbers.begin(); It != Func.CallClobbers.end();
+       ++It) {
+    if (It->CallSiteId != Op.CallSiteId || It->Value.Kind != MedVar::Reg ||
+        It->Value.RegOff != TRI.FPReturnReg || It->Value.Size < Size)
+      continue;
+    if (ClobberIt == Func.CallClobbers.end() ||
+        It->Value.Size < ClobberIt->Value.Size)
+      ClobberIt = It;
+  }
+  if (ClobberIt == Func.CallClobbers.end())
+    return false;
+  Op.Output = ClobberIt->Value;
+  Func.CallClobbers.erase(ClobberIt);
+  // The integer return registers are caller-saved scratch after a
+  // floating-point call.  A remaining reader of either half now observes that
+  // clobber instead of a fabricated result.
+  if (HasSyntheticWideResult) {
+    auto isRead = [&](const MedVar &V) {
+      for (const MedBlock &Other : Func.Blocks) {
+        for (const MedOp &User : Other.Ops)
+          for (uint8_t I = 0; I < User.NumInputs; ++I)
+            if (User.Inputs[I] == V)
+              return true;
+        for (const PhiNode &Phi : Other.Phis)
+          for (const auto &[Pred, Arg] : Phi.Args)
+            if (Arg == V)
+              return true;
+      }
+      return false;
+    };
+    const auto First = Blk.Ops.begin() + OI + 1;
+    const auto Last = First + SyntheticWideHalves;
+    for (auto Half = First; Half != Last; ++Half)
+      if (isRead(Half->Output))
+        Func.CallClobbers.push_back({Half->Output, Op.CallSiteId});
+    Blk.Ops.erase(First, Last);
+  }
+  return true;
+}
+
 const AbiCallPolicy *abiCallPolicy(Arch A, BinaryFormat F) {
   static constexpr const AbiCallPolicy *Policies[] = {&Win64AbiCallPolicy,
                                                       &I386AbiCallPolicy};
@@ -319,27 +412,43 @@ const AbiCallPolicy *abiCallPolicy(Arch A, BinaryFormat F) {
   return nullptr;
 }
 
-void recoverCallAbi(MedFunc &Func, Arch TheArch,
-                    const std::map<va_t, std::string> &FuncNames,
-                    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
-                    std::map<va_t, int> *CalleeTotalArity,
-                    const std::map<va_t, int> *CalleeFPArity,
-                    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
-                    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
-                    const std::map<va_t, bool> *CalleeHasSret,
-                    std::map<va_t, bool> *CalleeIsVariadic,
-                    const std::map<va_t, bool> *CalleeConsumesVaList,
-                    const std::set<va_t> *FrameLocalLeafCallees) {
+IntegerArgumentLayout integerArgumentLayoutOf(const MedFunc &Func,
+                                              const TargetRegInfo &TRI) {
+  IntegerArgumentLayout Layout =
+      TRI.integerArgumentLayout(Func.CC == CallingConv::Win64);
+  if (!Func.IntegerArgumentRegisters.empty())
+    Layout.Registers = Func.IntegerArgumentRegisters;
+  return Layout;
+}
+
+void recoverCallAbi(
+    MedFunc &Func, Arch TheArch, const std::map<va_t, std::string> &FuncNames,
+    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
+    std::map<va_t, int> *CalleeTotalArity,
+    const std::map<va_t, int> *CalleeFPArity,
+    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
+    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
+    const std::map<va_t, bool> *CalleeHasSret,
+    std::map<va_t, bool> *CalleeIsVariadic,
+    const std::map<va_t, bool> *CalleeConsumesVaList,
+    const std::set<va_t> *FrameLocalLeafCallees,
+    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs) {
   Func.CallInfos.clear();
 
   const auto &TRI = getTargetRegInfo(TheArch);
   const AbiSpillContext SpillContext{Func, TRI, FrameLocalLeafCallees};
-  const BinaryFormat Fmt = Img ? Img->Format : BinaryFormat::Unknown;
+  const BinaryFormat Fmt = Img ? Img->abiFormat() : BinaryFormat::Unknown;
   const CallArgumentConvention *Convention =
       callArgumentConvention(TheArch, Fmt);
   const AbiCallPolicy *Policy = abiCallPolicy(TheArch, Fmt);
-  const auto IntegerLayout = TRI.integerArgumentLayout(Fmt);
-  const auto IntParamRegs = IntegerLayout.Registers;
+  const IntegerArgumentLayout DefaultIntegerLayout =
+      TRI.integerArgumentLayout(Fmt);
+  // The integer argument layout of the call being recovered: that of a
+  // direct callee with its own register order (CalleeIntRegs), else the
+  // convention's.  The parameters this function forwards are numbered in
+  // the layout of the call that passes them on.
+  IntegerArgumentLayout IntegerLayout = DefaultIntegerLayout;
+  llvm::ArrayRef<uint64_t> IntParamRegs = IntegerLayout.Registers;
   auto regToIntArgIdx = [&](uint64_t RegOff) {
     return IntegerLayout.registerIndex(RegOff);
   };
@@ -356,8 +465,32 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
 
   // Argument registers a forwarder passes straight through from its incoming
   // value (recovered only via the live-in fallback, never written in the
-  // function): promoted to real parameters after all calls are processed.
-  std::map<int, MedVar> PromoteParams;
+  // function), by register: promoted to real parameters after all calls are
+  // processed.
+  std::map<uint64_t, MedVar> PromoteParams;
+  // The register order of the first call that passes one on, which a
+  // forwarder without an order of its own takes its parameters in.
+  std::vector<uint64_t> PromoteOrder;
+  // Whether an operation of this function defines \p V; an entry self-copy
+  // only names the incoming value.
+  std::set<std::tuple<int, int, int>> DefinedValues;
+  bool DefinedValuesBuilt = false;
+  auto isDefinedValue = [&](const MedVar &V) {
+    if (!DefinedValuesBuilt) {
+      for (const auto &B : Func.Blocks) {
+        for (const auto &Phi : B.Phis)
+          DefinedValues.insert({static_cast<int>(Phi.Output.Kind),
+                                Phi.Output.Id, Phi.Output.SSAVer});
+        for (const auto &O : B.Ops)
+          if (!(O.Opcode == NdOp::COPY && O.NumInputs >= 1 &&
+                O.Inputs[0] == O.Output))
+            DefinedValues.insert({static_cast<int>(O.Output.Kind), O.Output.Id,
+                                  O.Output.SSAVer});
+      }
+      DefinedValuesBuilt = true;
+    }
+    return DefinedValues.count({static_cast<int>(V.Kind), V.Id, V.SSAVer}) != 0;
+  };
 
   // The floating-point analogue of PromoteParams: FP/vector argument registers
   // (v0-7 / d0-7 / xmm0-7) a pure tail-call forwarder passes straight through
@@ -442,6 +575,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       CI.BlockId = Blk.Id;
       CI.OpIdx = static_cast<int>(OI);
       CI.IsIndirect = (Op.Opcode == NdOp::INDIR_CALL);
+      IntegerLayout = DefaultIntegerLayout;
+      IntParamRegs = IntegerLayout.Registers;
 
       // SUBBYTES lane-extraction ops for any wide outgoing store at this call,
       // recorded for deferred insertion before the call.
@@ -514,110 +649,13 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       const bool IsDirectImport =
           !CI.IsIndirect && Img && Img->findImportAt(CI.TargetAddr);
 
-      // LowToMed runs before whole-program return types are known.  It can
-      // therefore leave an intermediate scalar-FP call modeled as defining the
-      // integer return register when the only consumer is the next call's
-      // implicit XMM0/V0 argument.  Once the exact direct callee is known to
-      // return through the vector register, promote this call's authoritative
-      // FP-return clobber definition into the real call output.  Existing SSA
-      // reads already name that definition, and the following call's reverse
-      // argument scan can now see it.  An external placeholder collision,
-      // indirect call, integer-returning callee, aggregate return, or call
-      // already routed by modelCallFPReturn keeps its existing output; the
-      // exact synthetic EDX:EAX/R1:R0 split below is the one false aggregate
-      // representation this scalar-FP certificate can replace.
-      const bool HasIntegerResult =
-          Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == TRI.IntReturnReg;
-      const MedVar ExistingOutput = Op.Output;
-      // The synthetic split is the call's 64-bit temp followed, at the call's
-      // address, by the SUBBYTES that place its halves in the two integer
-      // return registers.  Register DCE may already have removed a half that
-      // nothing reads, so accept either half or both; the temp must have no
-      // other reader, or the split is a real wide result.
-      size_t SyntheticWideHalves = 0;
-      if (TRI.PointerSize == 4 && TRI.IntReturnReg2 != 0 &&
-          ExistingOutput.Kind == MedVar::Temp &&
-          ExistingOutput.Size == 2 * TRI.PointerSize) {
-        auto isHalf = [&](const MedOp &Half, uint64_t RegOff, uint64_t Offset) {
-          return Half.Opcode == NdOp::SUBBYTES && Half.Addr == Op.Addr &&
-                 Half.NumInputs == 2 && Half.Inputs[0] == ExistingOutput &&
-                 Half.Inputs[1].isConst() &&
-                 Half.Inputs[1].ConstVal == Offset &&
-                 Half.Output.Kind == MedVar::Reg &&
-                 Half.Output.RegOff == RegOff &&
-                 Half.Output.Size == TRI.PointerSize;
-        };
-        bool SawLow = false, SawHigh = false;
-        while (OI + 1 + SyntheticWideHalves < Blk.Ops.size()) {
-          const MedOp &Half = Blk.Ops[OI + 1 + SyntheticWideHalves];
-          if (!SawLow && isHalf(Half, TRI.IntReturnReg, 0))
-            SawLow = true;
-          else if (!SawHigh && isHalf(Half, TRI.IntReturnReg2, TRI.PointerSize))
-            SawHigh = true;
-          else
-            break;
-          ++SyntheticWideHalves;
-        }
-        size_t Readers = 0;
-        for (const MedBlock &Other : Func.Blocks) {
-          for (const MedOp &User : Other.Ops)
-            for (uint8_t I = 0; I < User.NumInputs; ++I)
-              Readers += User.Inputs[I] == ExistingOutput;
-          for (const PhiNode &Phi : Other.Phis)
-            for (const auto &[Pred, Arg] : Phi.Args)
-              Readers += Arg == ExistingOutput;
-        }
-        if (Readers != SyntheticWideHalves)
-          SyntheticWideHalves = 0;
-      }
-      const bool HasSyntheticWideResult = SyntheticWideHalves != 0;
+      // An external placeholder collision, indirect call or import keeps its
+      // existing output here (promoteFloatCallResult).
       if (!CI.IsIndirect && !IsRelocExtern && !IsDirectImport &&
-          CalleeFPReturnSize && (HasIntegerResult || HasSyntheticWideResult) &&
-          Op.CallSiteId != 0) {
-        auto SizeIt = CalleeFPReturnSize->find(CI.TargetAddr);
-        if (SizeIt != CalleeFPReturnSize->end() && SizeIt->second != 0) {
-          auto ClobberIt = Func.CallClobbers.end();
-          for (auto It = Func.CallClobbers.begin();
-               It != Func.CallClobbers.end(); ++It) {
-            if (It->CallSiteId != Op.CallSiteId ||
-                It->Value.Kind != MedVar::Reg ||
-                It->Value.RegOff != TRI.FPReturnReg ||
-                It->Value.Size < SizeIt->second)
-              continue;
-            if (ClobberIt == Func.CallClobbers.end() ||
-                It->Value.Size < ClobberIt->Value.Size)
-              ClobberIt = It;
-          }
-          if (ClobberIt != Func.CallClobbers.end()) {
-            Op.Output = ClobberIt->Value;
-            Func.CallClobbers.erase(ClobberIt);
-            // The integer return registers are caller-saved scratch after a
-            // floating-point call.  A remaining reader of either half now
-            // observes that clobber instead of a fabricated result.
-            if (HasSyntheticWideResult) {
-              auto isRead = [&](const MedVar &V) {
-                for (const MedBlock &Other : Func.Blocks) {
-                  for (const MedOp &User : Other.Ops)
-                    for (uint8_t I = 0; I < User.NumInputs; ++I)
-                      if (User.Inputs[I] == V)
-                        return true;
-                  for (const PhiNode &Phi : Other.Phis)
-                    for (const auto &[Pred, Arg] : Phi.Args)
-                      if (Arg == V)
-                        return true;
-                }
-                return false;
-              };
-              const auto First = Blk.Ops.begin() + OI + 1;
-              const auto Last = First + SyntheticWideHalves;
-              for (auto Half = First; Half != Last; ++Half)
-                if (isRead(Half->Output))
-                  Func.CallClobbers.push_back({Half->Output, Op.CallSiteId});
-              Blk.Ops.erase(First, Last);
-            }
-          }
-        }
-      }
+          CalleeFPReturnSize)
+        if (auto SizeIt = CalleeFPReturnSize->find(CI.TargetAddr);
+            SizeIt != CalleeFPReturnSize->end())
+          promoteFloatCallResult(Func, Blk, OI, SizeIt->second, TheArch);
 
       const Section *TargetSection =
           !CI.IsIndirect && Img ? Img->getSectionFor(CI.TargetAddr) : nullptr;
@@ -638,6 +676,15 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         if (AIt != CalleeRegArity->end())
           CalleeRegArgs = AIt->second;
       }
+      // A direct callee with its own register order takes its register
+      // arguments in that order.
+      if (!CI.IsIndirect && !IsRelocExtern && !IsDirectImport && CalleeIntRegs)
+        if (auto RIt = CalleeIntRegs->find(CI.TargetAddr);
+            RIt != CalleeIntRegs->end() && !RIt->second.empty()) {
+          IntegerLayout.Registers = RIt->second;
+          IntParamRegs = IntegerLayout.Registers;
+          CI.ArgumentsInCalleeRegisterOrder = true;
+        }
 
       // The callee's full integer-argument count (register + stack), for
       // bounding a tail-call forwarder's passed-through stack arguments.
@@ -648,6 +695,12 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         if (AIt != CalleeTotalArity->end())
           CalleeArgs = AIt->second;
       }
+      // A prototyped import's argument positions, as its summary counts them
+      // (MedOp::CalleeStackArgs), bound a forwarder's however it reaches the
+      // import: through a stub, or through the slot as a thunk jumps.
+      const bool ImportStackArgs = CalleeArgs < 0 && Op.CalleeStackArgs > 0;
+      if (ImportStackArgs)
+        CalleeArgs = Op.CalleeStackArgs;
 
       // Executable import veneers can also appear in Callee*Arity as tiny
       // discovered functions.  Their apparent live-in set is not the imported
@@ -668,6 +721,19 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                             : std::min(ExternalArity->IntArgs,
                                        static_cast<int>(IntParamRegs.size()));
         CalleeArgs = ExternalArity->IntArgs;
+      }
+      // An external routine whose floats the base AAPCS passes in the
+      // integer registers takes each float in the next one (doubles, which
+      // take an even-odd pair, keep the floating-point model below).
+      const bool CoreRegisterFloats =
+          UseExternalArity && ExternalArity->FpArgs > 0 &&
+          ExternalArity->FpIsFloat && Img && Convention &&
+          Convention->ExternalFloatsInCoreRegisters &&
+          Convention->ExternalFloatsInCoreRegisters(*Img);
+      if (CoreRegisterFloats) {
+        CalleeArgs = ExternalArity->IntArgs + ExternalArity->FpArgs;
+        CalleeRegArgs =
+            std::min(CalleeArgs, static_cast<int>(IntParamRegs.size()));
       }
 
       // Apple/Darwin AArch64 passes EVERY variadic argument on the stack
@@ -741,11 +807,33 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // parameter register live at the call — e.g. the ECX index of `call
       // *tab[ecx*4]` — is not an argument; recover such calls purely from their
       // stack stores.
+      //
+      // A call to a function that takes no register argument is plain cdecl
+      // too: an external routine (a libc `memcpy` named by a branch
+      // relocation), a cdecl function of the image (no register argument but
+      // some on the stack; a forwarder's promoted registers count after the
+      // two-pass recovery), or a linked import (a PLT entry or an IAT slot),
+      // whether or not its signature is known, wherever imports cannot be
+      // __fastcall.  Its live integer argument registers are scratch, which
+      // would shift every stack argument up a slot (`__fprintf_chk(stream, 2,
+      // fmt, ...)` passed the ECX and EDX an earlier block left before its
+      // stream), and a forwarder passes none of its own on to it.
       const bool RegparmOnly =
           Convention && Convention->RegparmOnlyForInternalCalls;
+      const bool StackOnlyImport =
+          IsDirectImport && Img && Convention &&
+          !(Convention->ImportsMayTakeRegisterArguments &&
+            Convention->ImportsMayTakeRegisterArguments(*Img));
+      const bool StackOnlyCall = RegparmOnly && !CI.IsIndirect &&
+                                 ((CalleeRegArgs == 0 && CalleeArgs > 0) ||
+                                  IsRelocExtern || StackOnlyImport);
       const bool RegArgsApply = !(RegparmOnly && CI.IsIndirect);
+      // A stack-only call takes no integer register argument; its floating
+      // arguments are another question (an internal function taking only
+      // XMM arguments has no integer register argument).
+      const bool IntRegArgsApply = RegArgsApply && !StackOnlyCall;
 
-      if (RegArgsApply)
+      if (IntRegArgsApply)
         for (int J = static_cast<int>(OI) - 1; J >= 0; --J) {
           auto &Prev = Blk.Ops[J];
           bool IsCall = Prev.Opcode == NdOp::CALL ||
@@ -903,7 +991,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // becomes a single ESI clobber.
       const bool PositionalSlots =
           Convention && Convention->PositionalArgumentSlots;
-      if (PositionalSlots && HasStackArg && RegArgsApply) {
+      if (PositionalSlots && HasStackArg && IntRegArgsApply) {
         for (int K = 0; K < NumIntParamRegs && K < MaxArgs; ++K) {
           if (FoundMask[K])
             continue;
@@ -946,7 +1034,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                                          IntegerLayout))
           ++RegPhiLimit;
       }
-      for (int K = 0; RegArgsApply && K < MaxArgs; ++K) {
+      for (int K = 0; IntRegArgsApply && K < MaxArgs; ++K) {
         if (FoundMask[K])
           continue;
         if (!CI.IsIndirect && K > RegPhiLimit)
@@ -971,7 +1059,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // consecutive register slots from the value reaching the call across the
       // CFG.
       bool Arg0FromInBlock = FoundMask[0];
-      if (!CI.IsIndirect && RegArgsApply)
+      if (!CI.IsIndirect && IntRegArgsApply)
         for (int K = 0; K < NumIntParamRegs && K < MaxArgs; ++K) {
           if (FoundMask[K])
             continue;
@@ -992,7 +1080,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           Found[K] = *V;
           FoundMask[K] = true;
           if (FromLiveIn) {
-            PromoteParams.emplace(K, *V);
+            PromoteParams.emplace(V->RegOff, *V);
+            if (PromoteOrder.empty())
+              PromoteOrder.assign(IntParamRegs.begin(), IntParamRegs.end());
             // This value is the caller's incoming parameter, not the CALL's
             // result register.  A tail forwarder commonly uses R0 for both;
             // leaving the argument as Reg R0 gives it the same SSA key as the
@@ -1003,6 +1093,38 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
             Found[K].Id = -1;
           }
         }
+
+      // A register's incoming value passed on unchanged, which an entry
+      // self-copy names, is the parameter it carries: a callee with its own
+      // register order may take a register this function's own order lacks
+      // (GCC's EAX where this function read only ECX and EDX, or stored
+      // EAX), which this function then forwards as a live-in; and a
+      // parameter so promoted has no register variable of its own.
+      if (IntRegArgsApply && !Func.SkippedSSA && Convention &&
+          !Convention->AlternateRegisterOrder.empty()) {
+        const IntegerArgumentLayout Own = integerArgumentLayoutOf(Func, TRI);
+        for (int K = 0; K < NumIntParamRegs && K < MaxArgs; ++K) {
+          MedVar &V = Found[K];
+          if (!FoundMask[K] || V.Kind != MedVar::Reg || V.SSAVer != 0 ||
+              V.RegOff != IntParamRegs[K] || isDefinedValue(V))
+            continue;
+          const auto Param = llvm::find_if(Func.Params, [&](const MedVar &P) {
+            return P.RegOff == V.RegOff;
+          });
+          const bool Forwarded =
+              Param == Func.Params.end() && CI.ArgumentsInCalleeRegisterOrder &&
+              K < CalleeRegArgs && Own.registerIndex(V.RegOff) < 0;
+          if (Forwarded) {
+            PromoteParams.emplace(V.RegOff, V);
+            if (PromoteOrder.empty())
+              PromoteOrder.assign(IntParamRegs.begin(), IntParamRegs.end());
+          } else if (Param == Func.Params.end() || Param->Id >= 0) {
+            continue;
+          }
+          V.Kind = MedVar::Param;
+          V.Id = -1;
+        }
+      }
 
       // An earlier call in the block may have clobbered the register of the
       // first argument (a Win64 thiscall helper clobbers rcx).
@@ -1104,23 +1226,11 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           Policy->TakeVirtualCallResultBuffer(Ctx);
       }
 
-      // i386 cdecl: a callee with 0 detected register arguments but >0 stack
-      // arguments uses the cdecl convention (ALL arguments on the stack).  The
-      // register scan may have placed scratch ECX/EDX values at slots 0-1;
-      // clear them so FirstStackSlot is not shifted and the stack scan maps
-      // outgoing stores to the correct argument indices.  Safe after the
-      // two-pass Pipeline promotion: on the second pass, a forwarder whose
-      // register params were promoted has CalleeRegArgs > 0 and is unaffected.
-      //
-      // An EXTERNAL i386 call (a libc `memcpy`/`memmove`/`memset`, named by a
-      // branch relocation with a placeholder-0 target) likewise uses standard
-      // cdecl — the ECX/EDX regparm convention is reserved for directly-called
-      // intra-module static functions, never an imported symbol — so its
-      // register-scan slots are scratch and must be cleared too.  Without this
-      // the surviving scratch shifts every stack argument up one slot
-      // (`memcpy(scratch, dst, src)` drops the size, copying a wild count).
-      if (RegparmOnly && !CI.IsIndirect &&
-          ((CalleeRegArgs == 0 && CalleeArgs > 0) || IsRelocExtern)) {
+      // A stack-only call (StackOnlyCall above) takes no register argument:
+      // drop any register value recovered for it, so FirstStackSlot is not
+      // shifted and the stack scan maps outgoing stores to the correct
+      // argument indices.
+      if (StackOnlyCall) {
         for (int K = 0; K < MaxArgs; ++K)
           if (FoundMask[K] && !FromStackScan[K]) {
             FoundMask[K] = false;
@@ -1604,7 +1714,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           if (Param.RegOff != kNoParamReg)
             ++CallerStackBase;
       }
-      if (IsTailJump && !CI.IsIndirect && CalleeArgs > CalleeStackBase) {
+      if (IsTailJump && (!CI.IsIndirect || ImportStackArgs) &&
+          CalleeArgs > CalleeStackBase) {
         for (int K = CalleeStackBase; K < CalleeArgs && K < MaxArgs; ++K) {
           if (FoundMask[K])
             continue;
@@ -1643,7 +1754,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // the real variadic arguments so the callee reads the wrong slots
       // (printf("p[%d]=%.3f", i, v) then prints "p[0]=0.000").
       std::vector<MedVar> FoundFP;
-      if (RegArgsApply && !TRI.FPParamRegs.empty() && DarwinVarArgBase < 0) {
+      if (RegArgsApply && !TRI.FPParamRegs.empty() && DarwinVarArgBase < 0 &&
+          !CoreRegisterFloats) {
         // The FP-argument registers to probe, in ABI order.  Default to the
         // architecture's FP parameter registers (XMM0-7 / V0-7 / ARM D0-7); for
         // a direct call whose callee's exact FP layout is known, use it instead
@@ -1824,13 +1936,16 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // arity is otherwise unknown, so an intra-module function that happens
       // to share a registered name keeps its recovered signature.
       if (UseExternalArity) {
-        for (int K = std::max(0, ExternalArity->IntArgs); K < MaxArgs; ++K) {
+        const int Integers = ExternalArity->IntArgs +
+                             (CoreRegisterFloats ? ExternalArity->FpArgs : 0);
+        for (int K = std::max(0, Integers); K < MaxArgs; ++K) {
           FoundMask[K] = false;
           Found[K] = MedVar();
           FromStackScan[K] = false;
         }
-        if (static_cast<int>(FoundFP.size()) > ExternalArity->FpArgs)
-          FoundFP.resize(std::max(0, ExternalArity->FpArgs));
+        const int Floats = CoreRegisterFloats ? 0 : ExternalArity->FpArgs;
+        if (static_cast<int>(FoundFP.size()) > Floats)
+          FoundFP.resize(std::max(0, Floats));
       }
 
       // --- Assemble the argument list in callee parameter order ---
@@ -2155,6 +2270,17 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
     }
   }
 
+  // The parameters below are numbered in this function's own register
+  // order, or, for a forwarder without one, in that of the call it forwards
+  // registers to: a forwarder of a function with its own order takes its
+  // parameters in that order.
+  IntegerLayout = DefaultIntegerLayout;
+  if (!Func.IntegerArgumentRegisters.empty())
+    IntegerLayout.Registers = Func.IntegerArgumentRegisters;
+  else if (!PromoteOrder.empty())
+    IntegerLayout.Registers = PromoteOrder;
+  IntParamRegs = IntegerLayout.Registers;
+
   // Surface forwarded incoming registers as parameters.  A pure forwarder
   // `f(a){return g(a);}` never reads its argument register (it flows straight
   // into the call), so detectCc's live-in scan misses it and Func.Params lacks
@@ -2168,7 +2294,10 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       if (P.RegOff != kNoParamReg)
         if (int ArgIdx = regToIntArgIdx(P.RegOff); ArgIdx >= 0)
           ExistingIntArgs.insert(ArgIdx);
-    const int MaxPromoted = PromoteParams.rbegin()->first;
+    // A register outside the order carries no argument of this function.
+    int MaxPromoted = -1;
+    for (const auto &Promoted : PromoteParams)
+      MaxPromoted = std::max(MaxPromoted, regToIntArgIdx(Promoted.first));
     for (int I = 0;
          I <= MaxPromoted && I < static_cast<int>(IntParamRegs.size()); ++I) {
       if (ExistingIntArgs.count(I))
@@ -2177,7 +2306,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       P.Kind = MedVar::Param;
       P.Id = -1;
       P.TheArch = TheArch;
-      if (auto It = PromoteParams.find(I); It != PromoteParams.end()) {
+      if (auto It = PromoteParams.find(IntParamRegs[I]);
+          It != PromoteParams.end()) {
         P.RegOff = It->second.RegOff;
         P.Size = It->second.Size > 0 ? It->second.Size
                                      : static_cast<uint16_t>(TRI.PointerSize);
@@ -2201,6 +2331,22 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         if (Home.first >= InsertIndex)
           ++Home.first;
       ExistingIntArgs.insert(I);
+    }
+    // Its callers pass them in the order of the call they reach, and the
+    // register parameters it already had take their places in that order
+    // (a fastcall-looking ECX, EDX beside a forwarded GCC EAX).
+    if (Func.IntegerArgumentRegisters.empty() && !PromoteOrder.empty() &&
+        !llvm::equal(PromoteOrder, DefaultIntegerLayout.Registers)) {
+      Func.IntegerArgumentRegisters = PromoteOrder;
+      auto RegisterEnd = std::find_if(
+          Func.Params.begin(), Func.Params.end(), [&](const MedVar &P) {
+            return P.RegOff == kNoParamReg || regToIntArgIdx(P.RegOff) < 0;
+          });
+      std::stable_sort(Func.Params.begin(), RegisterEnd,
+                       [&](const MedVar &A, const MedVar &B) {
+                         return regToIntArgIdx(A.RegOff) <
+                                regToIntArgIdx(B.RegOff);
+                       });
     }
   }
 

@@ -537,18 +537,84 @@ class ProcessIntegrationTests(unittest.TestCase):
                     with self.assertRaises(NeverDError):
                         session.emulate_process(path, wrong, options)
                     for mode, expected in (("files", b"f"), ("files-nocancel", b"f"),
+                                           ("extended-attributes", b"X"),
+                                           ("extended-attributes-values", bytes.fromhex("00ff410080420a757365722e6e65766572642e6265746100757365722e6e65766572642e616c70686100757365722e6e65766572642e656d70747900")),
+                                           ("extended-attributes-unsupported", b"X"),
+                                           ("attribute-names", b"N"),
+                                           ("attribute-names-values", bytes.fromhex(
+                                               "2c0000000900008000000000000000000000000000000000"
+                                               "0c00000005000000010000006461746100000000")),
+                                           ("attribute-names-unsupported", b"N"),
+                                           ("common-attributes", b"A"),
+                                           ("common-attributes-values", bytes.fromhex(
+                                               "780000000a9e07820000000000000000000000000000000085ffffff01000000"
+                                               "fbffffffffffffff0600000000000000ffffffffffffff7fffc99a3b00000000"
+                                               "fdffffffffffffff040000000000000001000000000000800100000000000000"
+                                               "efcdab8998badcfea4810000341200001032547698badcfe")),
+                                           ("common-attributes-unsupported", b"A"),
+                                           ("kernel-pathconf", b"C"),
+                                           ("kernel-pathconf-values", bytes.fromhex(
+                                               "0100000000000000010000000000000001000000000000000000000000000000"
+                                               "0010000000000000000001000000000000100000000000000010000000000000"
+                                               "ff000000000000000000000000000000")),
+                                           ("kernel-pathconf-unsupported", b"C"),
                                            ("writable-files", b"00006e"),
                                            ("writable-files-nocancel", b"00006e"),
                                            ("sparse-file-seek", b"s"),
                                            ("unlinked-file", b"u"),
                                            ("created-file", b"c"),
                                            ("created-file-metadata", b"q"),
+                                           ("mutable-initial-links", b"M"),
+                                           ("directory-link-roots", b"R"),
+                                           ("virtual-directory-link-roots", bytes.fromhex(
+                                               "85ffffffffa101003900000000000000efcdab8998badcfe0000000000000000"
+                                               "01000000000000800100000000000000ffffffffffffff7fffc99a3b00000000"
+                                               "f3ffffffffffffffc801000000000000fbffffffffffffff0600000000000000"
+                                               "060000000000000008000000000000000010000000000000efcdab8900000000"
+                                               "00000000000000000000000000000000"
+                                               )),
+                                           ("virtual-mutable-initial-links", bytes.fromhex(
+                                               "85ffffffffa101003900000000000000efcdab8998badcfe0000000000000000"
+                                               "01000000000000800100000000000000ffffffffffffff7fffc99a3b00000000"
+                                               "f3ffffffffffffffc801000000000000fbffffffffffffff0600000000000000"
+                                               "040000000000000008000000000000000010000000000000efcdab8900000000"
+                                               "00000000000000000000000000000000"
+                                               )),
+                                           ("initial-directory-metadata", b"I"),
+                                           ("virtual-initial-directory-metadata", bytes.fromhex(
+                                               "85ffffffed4105002900000000000000efcdab8998badcfe0000000000000000"
+                                               "01000000000000800100000000000000f5ffffffffffffff4101000000000000"
+                                               "f5ffffffffffffff4101000000000000fbffffffffffffff0600000000000000"
+                                               "550000000000000000000000000000000010000000000000efcdab8900000000"
+                                               "00000000000000000000000000000000"
+                                               )),
+                                           ("directory-enumeration-mutations", b"E"),
+                                           ("virtual-directory-enumeration", bytes.fromhex(
+                                               "1132547698badcfe000000000000000020000100042e00000000000000000000"
+                                               "2900000000000000000000000000000020000200042e2e000000000000000000"
+                                               "1332547698badcfe000000000000000020000100046400000000000000000000"
+                                               "1432547698badcfe000000000000000020000100086600000000000000000000"
+                                               "1532547698badcfe0000000000000000200001000a6c00000000000000000000"
+                                               )),
+                                           ("created-namespace-metadata", b"N"),
+                                           ("virtual-created-namespace-metadata", bytes.fromhex(
+                                               "85ffffffe84102001132547698badcfee803000098badcfe0000000000000000"
+                                               "edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000"
+                                               "f9ffffffffffffff15cd5b0700000000edffffffffffffffb168de3a00000000"
+                                               "400000000000000007000000000000000020000000000000efcdab8900000000"
+                                               "0000000000000000000000000000000085ffffffe8a101001232547698badcfe"
+                                               "e803000098badcfe0000000000000000edffffffffffffffb168de3a00000000"
+                                               "edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000"
+                                               "edffffffffffffffb168de3a0000000004000000000000000100000000000000"
+                                               "0020000000000000efcdab890000000000000000000000000000000000000000"
+                                               )),
                                            ("renamed-file", b"r"),
                                            ("renamed-directory", b"d"),
                                            ("swapped-directory", b"s"),
                                            ("vectored-io", b"v!"),
                                            ("file-access", b"a"),
                                            ("symbolic-links", b"y"),
+                                           ("symbolic-link-mutations", b"z"),
                                            ("directory-mutations", b"m"),
                                            ("deleted-directories", b"h"),
                                            ("initial-directory-removal", b"j"),
@@ -612,7 +678,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("mach-time", b"h"),
                                            ("mach-timebase-values", bytes.fromhex("674523f1795634e2")),
                                            ("mach-clock-values", bytes.fromhex(
-                                               "1032547698badcfeffffffffffffffff"))):
+                                               "1032547698badcfeffffffffffffffff")),
+                                           ("symbolic-link-creation", b"b"),
+                                           ("symbolic-link-unlink", b"U"),
+                                           ("symbolic-link-unlink-protected", b"U"),
+                                           ("symbolic-link-rename", b"R"),
+                                           ("symbolic-link-rename-protected", b"R")):
                         if architecture == "x86_64" and mode == "mach-clock-values":
                             continue
                         file_options = json.dumps({
@@ -778,6 +849,78 @@ class ProcessIntegrationTests(unittest.TestCase):
                                 next(d for d in files["directories"]
                                      if d["path"] == "/")["metadata"] = parent
                             file_options = json.dumps(writable_options)
+                        if mode in ("created-namespace-metadata", "virtual-created-namespace-metadata",
+                                    "mutable-initial-links", "virtual-mutable-initial-links",
+                                    "directory-link-roots", "virtual-directory-link-roots",
+                                    "directory-enumeration-mutations", "virtual-directory-enumeration",
+                                    "initial-directory-metadata", "virtual-initial-directory-metadata"):
+                            namespace_options = json.loads(file_options)
+                            namespace_options["instruction_quantum"] = 1024
+                            namespace_options["timeout_microseconds"] = 5_000_000
+                            files = namespace_options["darwin_files"]
+                            files["umask"] = 0o27
+                            files["creation_policy"] = {
+                                "first_inode": "18364758544493064721",
+                                "block_size": 8192, "generation": 2309737967,
+                                "creation_time": {"seconds": -19, "nanoseconds": 987654321},
+                                "mutation_policy": {"allocation_unit": 4096,
+                                                    "mutation_time": {"seconds": -7, "nanoseconds": 123456789}},
+                                "namespace_policy": {"symbolic_link_allocation_unit": 512,
+                                                     "directory_entry_size": 32, "directory_blocks": 7}}
+                            original = files["files"][0]["metadata"]
+                            original["flags"] = 0
+                            original["link_count"] = 1
+                            parent = dict(original, inode=41, mode=0o40755, size=0, blocks=0)
+                            root = next(d for d in files["directories"] if d["path"] == "/")
+                            root.update(mutable=True, swap_rename=True, metadata=parent)
+                            if mode in ("mutable-initial-links", "virtual-mutable-initial-links"):
+                                root.pop("contents", None)
+                                link_metadata = dict(original, inode=57, mode=0o120777, size=4)
+                                files["symbolic_links"] = [
+                                    {"path": "/initial", "target_hex": "64617461", "mutable": True,
+                                     "metadata": link_metadata,
+                                     "mutation_policy": {"mutation_time": {"seconds": -13, "nanoseconds": 456}}},
+                                    {"path": "/initial-dir", "target_hex": "656d707479", "mutable": True}]
+                                next(d for d in files["directories"] if d["path"] == "/empty")["metadata"] = dict(parent, inode=42)
+                            if mode in ("directory-link-roots", "virtual-directory-link-roots"):
+                                files["working_directory"] = "/"
+                                files["directories"] = []
+                                for inode, name in enumerate(("/", "/a", "/a/d", "/a/other", "/b", "/b/other"), 41):
+                                    directory = {"path": name, "metadata": dict(parent, inode=inode)}
+                                    if name in ("/", "/a", "/b", "/a/d"):
+                                        directory["mutable"] = True
+                                    if name in ("/a", "/b", "/a/d"):
+                                        directory.update(movable=True, swap_rename=True)
+                                    if name == "/a/d":
+                                        directory.update(exchangeable=True, mutation_policy={
+                                            "directory_entry_size": 17,
+                                            "mutation_time": {"seconds": -11, "nanoseconds": 321}})
+                                    files["directories"].append(directory)
+                                files["files"] = [
+                                    {"path": name, "bytes_hex": bytes([value]).hex(),
+                                     "metadata": dict(original, inode=inode, size=1, blocks=8)}
+                                    for inode, (name, value) in enumerate((
+                                        ("/a/d/c", 31), ("/a/other/mark", 41), ("/a/target", 11),
+                                        ("/b/other/mark", 42), ("/b/target", 22)), 101)]
+                                files["symbolic_links"] = [
+                                    {"path": name, "target_hex": target.encode().hex(), "mutable": True,
+                                     "metadata": dict(original, inode=inode, mode=0o120777,
+                                                      size=len(target), blocks=8),
+                                     "mutation_policy": {"mutation_time": {"seconds": -13, "nanoseconds": 456}}}
+                                    for inode, (name, target) in enumerate((
+                                        ("/b/l", "target"), ("/b/dang", "missing"),
+                                        ("/b/dirlink", "other"), ("/b/self", "../a/d"),
+                                        ("/a/d/inside", "../target")), 57)]
+                            if mode in ("initial-directory-metadata", "virtual-initial-directory-metadata"):
+                                root["mutation_policy"] = {
+                                    "directory_entry_size": 17,
+                                    "mutation_time": {"seconds": -11, "nanoseconds": 321}}
+                            if mode in ("directory-enumeration-mutations", "virtual-directory-enumeration"):
+                                root.pop("contents", None)
+                                root["enumeration_policy"] = {
+                                    "minimum_buffer_size": 1,
+                                    "initial_minimum_buffer_size": 64, "seek_offset": 0}
+                            file_options = json.dumps(namespace_options)
                         if mode == "symbolic-links":
                             symbolic_options = json.loads(file_options)
                             files = symbolic_options["darwin_files"]
@@ -792,11 +935,367 @@ class ProcessIntegrationTests(unittest.TestCase):
                             for directory in files["directories"]:
                                 directory.pop("contents", None)
                             file_options = json.dumps(symbolic_options)
+                        unlink_links = mode.startswith("symbolic-link-unlink")
+                        rename_links = mode.startswith("symbolic-link-rename")
+                        protected_link = (unlink_links or rename_links) and mode.endswith("-protected")
+                        if (mode in ("symbolic-link-mutations", "symbolic-link-creation")
+                                or unlink_links or rename_links):
+                            mixed_options = json.loads(file_options)
+                            original = mixed_options["darwin_files"]["files"][0]
+                            metadata = dict(original["metadata"], flags=0, link_count=1)
+                            mutation = {"allocation_unit": 4096,
+                                        "mutation_time": {"seconds": -7, "nanoseconds": 123456789}}
+                            links = [{"path": "/static/" + name, "target_hex": target.encode().hex()}
+                                     for name, target in (("alias", "../work"),
+                                                          ("data-link", "../work/data"),
+                                                          ("missing-link", "../work/new"))]
+                            links[1]["metadata"] = dict(metadata, mode=0o120777, inode=123, size=12)
+                            mixed_options["darwin_files"] = {
+                                "files": [{"path": "/work/data", "bytes_hex": original["bytes_hex"],
+                                           "metadata": metadata, "writable": True,
+                                           "mutation_policy": mutation}],
+                                "directories": [{"path": "/static"},
+                                                {"path": "/work", "mutable": True,
+                                                 "metadata": dict(metadata, mode=0o40755, inode=41,
+                                                                  size=0, blocks=0)}],
+                                "symbolic_links": links, "working_directory": "/", "umask": 0o27,
+                                "creation_policy": {
+                                    "first_inode": "18364758544493064721", "block_size": 8192,
+                                    "generation": 2309737967,
+                                    "creation_time": {"seconds": -19, "nanoseconds": 987654321},
+                                    "mutation_policy": mutation}}
+                            if rename_links:
+                                mixed_options["darwin_files"]["directories"][1]["swap_rename"] = True
+                            mixed_options["arguments"][2] = "/work/data"
+                            if protected_link:
+                                mixed_options["arguments"][1] = (
+                                    "symbolic-link-rename" if rename_links else "symbolic-link-unlink")
+                                mixed_options["arguments"].append("protected")
+                            file_options = json.dumps(mixed_options)
+                        unknown_attributes = mode == "common-attributes-unsupported"
+                        if mode.startswith("common-attributes"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = json.loads(r'''
+{
+    "files": [
+        {
+            "path": "/data",
+            "bytes_hex": "30313233343536373839",
+            "metadata": {
+                "device": -123,
+                "inode": "18364758544493064720",
+                "mode": 33188,
+                "link_count": 3,
+                "uid": 2309737967,
+                "gid": 4275878552,
+                "size": 10,
+                "block_size": 4096,
+                "blocks": 8,
+                "flags": 4660,
+                "generation": 2309737967,
+                "access_time": {
+                    "seconds": "-9223372036854775807",
+                    "nanoseconds": 1
+                },
+                "modification_time": {
+                    "seconds": "9223372036854775807",
+                    "nanoseconds": 999999999
+                },
+                "change_time": {
+                    "seconds": -3,
+                    "nanoseconds": 4
+                },
+                "birth_time": {
+                    "seconds": -5,
+                    "nanoseconds": 6
+                }
+            }
+        }
+    ],
+    "directories": [
+        {
+            "path": "/",
+            "metadata": {
+                "device": -123,
+                "inode": 41,
+                "mode": 16877,
+                "link_count": 3,
+                "uid": 2309737967,
+                "gid": 4275878552,
+                "size": 0,
+                "block_size": 4096,
+                "blocks": 8,
+                "flags": 4660,
+                "generation": 2309737967,
+                "access_time": {
+                    "seconds": "-9223372036854775807",
+                    "nanoseconds": 1
+                },
+                "modification_time": {
+                    "seconds": "9223372036854775807",
+                    "nanoseconds": 999999999
+                },
+                "change_time": {
+                    "seconds": -3,
+                    "nanoseconds": 4
+                },
+                "birth_time": {
+                    "seconds": -5,
+                    "nanoseconds": 6
+                }
+            }
+        },
+        {
+            "path": "/empty",
+            "metadata": {
+                "device": -123,
+                "inode": 42,
+                "mode": 16877,
+                "link_count": 3,
+                "uid": 2309737967,
+                "gid": 4275878552,
+                "size": 0,
+                "block_size": 4096,
+                "blocks": 8,
+                "flags": 4660,
+                "generation": 2309737967,
+                "access_time": {
+                    "seconds": "-9223372036854775807",
+                    "nanoseconds": 1
+                },
+                "modification_time": {
+                    "seconds": "9223372036854775807",
+                    "nanoseconds": 999999999
+                },
+                "change_time": {
+                    "seconds": -3,
+                    "nanoseconds": 4
+                },
+                "birth_time": {
+                    "seconds": -5,
+                    "nanoseconds": 6
+                }
+            }
+        }
+    ],
+    "working_directory": "/empty",
+    "symbolic_links": [
+        {
+            "path": "/alias",
+            "target_hex": "64617461",
+            "metadata": {
+                "device": -123,
+                "inode": 123,
+                "mode": 41471,
+                "link_count": 3,
+                "uid": 2309737967,
+                "gid": 4275878552,
+                "size": 4,
+                "block_size": 4096,
+                "blocks": 8,
+                "flags": 4660,
+                "generation": 2309737967,
+                "access_time": {
+                    "seconds": "-9223372036854775807",
+                    "nanoseconds": 1
+                },
+                "modification_time": {
+                    "seconds": "9223372036854775807",
+                    "nanoseconds": 999999999
+                },
+                "change_time": {
+                    "seconds": -3,
+                    "nanoseconds": 4
+                },
+                "birth_time": {
+                    "seconds": -5,
+                    "nanoseconds": 6
+                }
+            }
+        },
+        {
+            "path": "/dangling",
+            "target_hex": "6d697373696e67"
+        },
+        {
+            "path": "/cycle",
+            "target_hex": "6379636c65"
+        }
+    ]
+}
+''')
+                            file_options = json.dumps(query_options)
+                        unknown_pathconf = mode == "kernel-pathconf-unsupported"
+                        if mode.startswith("kernel-pathconf"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = {
+                                "files": [{"path": "/data", "bytes_hex": "30313233343536373839"}],
+                                "directories": [{"path": "/"}, {"path": "/empty"}],
+                                "working_directory": "/empty",
+                                "symbolic_links": [
+                                    {"path": "/" + name, "target_hex": target.encode().hex()}
+                                    for name, target in (("alias", "data"), ("dangling", "missing"),
+                                                         ("cycle", "cycle"))]}
+                            file_options = json.dumps(query_options)
+                        unknown_names = mode == "attribute-names-unsupported"
+                        if mode.startswith("attribute-names"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = {
+                                "files": [{"path": "/data", "bytes_hex": "30313233343536373839"}],
+                                "directories": [{"path": "/", "mutable": True},
+                                                {"path": "/empty", "movable": True, "removable": True}],
+                                "symbolic_links": [{"path": "/alias", "target_hex": "64617461", "mutable": True},
+                                                   {"path": "/dangling", "target_hex": "6d697373696e67", "mutable": True},
+                                                   {"path": "/cycle", "target_hex": "6379636c65", "mutable": True}],
+                                "working_directory": "/"}
+                            file_options = json.dumps(query_options)
+                        unknown_xattrs = mode == "extended-attributes-unsupported"
+                        if mode.startswith("extended-attributes"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = json.loads(r'''
+{
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "30313233343536373839",
+      "extended_attributes": [
+        {
+          "name": "user.neverd.beta",
+          "bytes_hex": "00ff410080420a"
+        },
+        {
+          "name": "user.neverd.alpha",
+          "bytes_hex": "616c706861"
+        },
+        {
+          "name": "user.neverd.empty",
+          "bytes_hex": ""
+        }
+      ]
+    },
+    {
+      "path": "/unknown",
+      "bytes_hex": ""
+    },
+    {
+      "path": "/known-empty",
+      "bytes_hex": "",
+      "extended_attributes": []
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "mutable": true
+    }
+  ],
+  "symbolic_links": [
+    {
+      "path": "/alias",
+      "target_hex": "64617461",
+      "mutable": true,
+      "extended_attributes": []
+    },
+    {
+      "path": "/dangling",
+      "target_hex": "6d697373696e67",
+      "mutable": true,
+      "extended_attributes": []
+    },
+    {
+      "path": "/cycle",
+      "target_hex": "6379636c65",
+      "mutable": true,
+      "extended_attributes": []
+    }
+  ],
+  "working_directory": "/"
+}
+''')
+                            file_options = json.dumps(query_options)
+                        incomplete = protected_link or unknown_pathconf or unknown_attributes or unknown_xattrs or unknown_names
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
-                        self.assertEqual(result["stop_reason"], "exited", f"{mode}: {result['diagnostic']}")
-                        self.assertEqual(result["exit_status"], 37, mode)
+                        self.assertEqual(result["stop_reason"],
+                                         "unsupported_service" if incomplete else "exited",
+                                         f"{mode}: {result['diagnostic']}")
+                        self.assertEqual(result["exit_status"], None if incomplete else 37, mode)
                         self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
                         self.assertEqual(result["stderr_hex"], "")
+                        if unknown_names:
+                            self.assertEqual(result["diagnostic"],
+                                             "Darwin object name is outside the bounded UTF-8 catalogue contract")
+                            self.assertEqual(result["services"][-1]["number"],
+                                             "20000dc" if architecture == "x86_64" else "dc")
+                            self.assertIsNone(result["services"][-1]["result"])
+                            self.assertNotIn("error", result["services"][-1])
+                        if unknown_xattrs:
+                            last = result["services"][-1]
+                            self.assertEqual(last["number"], "20000ea" if architecture == "x86_64" else "ea")
+                            self.assertIsNone(last["result"])
+                            self.assertNotIn("error", last)
+                            self.assertEqual(result["diagnostic"], "Darwin extended-attribute observations are unknown")
+                        if unknown_attributes:
+                            last = result["services"][-1]
+                            self.assertEqual(last["number"], "20000dc" if architecture == "x86_64" else "dc")
+                            self.assertIsNone(last["result"])
+                            self.assertNotIn("error", last)
+                            self.assertEqual(result["diagnostic"],
+                                             "Darwin selected file attributes are not modeled")
+                        if unknown_pathconf:
+                            last = result["services"][-1]
+                            self.assertEqual(last["number"], "20000bf" if architecture == "x86_64" else "bf")
+                            self.assertIsNone(last["result"])
+                            self.assertNotIn("error", last)
+                            self.assertEqual(result["diagnostic"],
+                                             "Darwin filesystem-dependent pathconf selector is not modeled")
+                        if unlink_links:
+                            # U follows the guest's target FD/map identity checks.
+                            services = result["services"]
+                            removal_numbers = (("200000a", "20001d8") if architecture == "x86_64"
+                                               else ("a", "1d8"))
+                            removals = [event for event in services
+                                        if event["number"] in removal_numbers]
+                            self.assertTrue(any(event.get("error") is False and event["result"] == "0"
+                                                for event in removals), mode)
+                            self.assertTrue(any(event.get("error") is True and event["result"] == "2"
+                                                for event in removals), mode)
+                            self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+                            if protected_link:
+                                self.assertEqual(services[-1]["number"],
+                                                 "200000a" if architecture == "x86_64" else "a")
+                                self.assertIsNone(services[-1]["result"])
+                                self.assertNotIn("error", services[-1])
+                        if rename_links:
+                            services = result["services"]
+                            rename_numbers = (("2000080", "20001d1", "20001e8")
+                                              if architecture == "x86_64" else ("80", "1d1", "1e8"))
+                            renames = [event for event in services if event["number"] in rename_numbers]
+                            self.assertTrue(any(event.get("error") is False and event["result"] == "0"
+                                                for event in renames), mode)
+                            self.assertTrue(any(event["number"] == rename_numbers[1]
+                                                and event.get("error") is True and event["result"] == "42"
+                                                for event in renames), mode)
+                            flagged = [event for event in renames if event["number"] == rename_numbers[2]]
+                            for code in ("11", "3e", "2", "16"):
+                                self.assertTrue(any(event.get("error") is True and event["result"] == code
+                                                    for event in flagged), mode)
+                            for flag in ("2", "12"):
+                                self.assertTrue(any(event.get("error") is False and event["result"] == "0"
+                                                    and event["arguments"][4] == flag
+                                                    for event in flagged), mode)
+                            self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+                            if protected_link:
+                                self.assertEqual(services[-1]["number"], rename_numbers[0])
+                                self.assertIsNone(services[-1]["result"])
+                                self.assertNotIn("error", services[-1])
                         if mode.startswith("mach-"):
                             services = result["services"]
                             clocks = mode == "mach-clock-values"

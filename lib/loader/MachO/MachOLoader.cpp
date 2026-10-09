@@ -24,10 +24,13 @@
 #include "neverd/loader/ObjC/ObjCMethods.h"
 #include "neverd/loader/Rust/RustEH.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Object/MachO.h"
+#include "llvm/Object/MachOUniversal.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -62,6 +65,42 @@ Arch cpuTypeToArch(uint32_t CpuType, bool Is64) {
   default:
     return Arch::Unknown;
   }
+}
+
+/// How the load dialog names a cputype value.
+std::string cpuName(uint32_t CpuType) {
+  switch (CpuType) {
+#define NEVERD_MACHO_CPU(Value, Name)                                          \
+  case Value:                                                                  \
+    return Name;
+#include "neverd/loader/MachO/MachONames.def"
+  }
+  return llvm::formatv("CPU {0:x}", CpuType).str();
+}
+
+/// How the load dialog names a filetype value.
+std::string fileTypeName(uint32_t FileType) {
+  switch (FileType) {
+#define NEVERD_MACHO_FILE(Value, Name)                                         \
+  case Value:                                                                  \
+    return Name;
+#include "neverd/loader/MachO/MachONames.def"
+  }
+  return llvm::formatv("type {0}", FileType).str();
+}
+
+/// Whether load() reads \p Obj, as which processor, into \p Row.
+void judge(const llvm::object::MachOObjectFile &Obj, LoadCandidate &Row) {
+  const uint32_t CpuType =
+      Obj.is64Bit() ? Obj.getHeader64().cputype : Obj.getHeader().cputype;
+  Row.TheArch = cpuTypeToArch(CpuType, Obj.is64Bit());
+  Row.Bits = Obj.is64Bit() ? 64 : 32;
+  Row.BigEndian = !Obj.isLittleEndian();
+  Row.Loadable = Row.TheArch != Arch::Unknown;
+  if (!Row.Loadable)
+    Row.Reason = llvm::formatv(getLoadReasonText(LoadReason::Processor).data(),
+                               cpuName(CpuType))
+                     .str();
 }
 
 } // anonymous namespace
@@ -393,6 +432,11 @@ MachOLoader::load(const std::filesystem::path &Path) {
     }
     if (NameOrErr->empty())
       continue;
+    // LLVM's local `ltmp<N>` marks where a section of an object starts, for
+    // the relocations that name it, at the address of whatever begins there:
+    // a function or a datum another symbol names.
+    if ((NType & llvm::MachO::N_EXT) == 0 && NameOrErr->starts_with("ltmp"))
+      continue;
 
     if (Img.Arch == Arch::ARM && IsSect)
       SymAddr = clearThumbBit(SymAddr);
@@ -490,7 +534,7 @@ MachOLoader::load(const std::filesystem::path &Path) {
   if (llvm::Error Err = verifyARMFunctionModeHints(Img, ARMFunctionModes))
     return std::move(Err);
 
-  runPostLoadDiscovery(Img, "macho: loaded " + Path.filename().string());
+  runPostLoadDiscovery(Img, "macho: loaded " + pathToUTF8(Path.filename()));
   // Classified before any table is read: a compact-unwind entry names a
   // personality slot, not a language, so what its LSDA means is settled by the
   // image's symbols and sections rather than by the entry.
@@ -505,6 +549,81 @@ MachOLoader::load(const std::filesystem::path &Path) {
   rust_eh::parseRustExceptions(Img);
   objc_eh::parseObjCExceptions(Img);
   return Img;
+}
+
+void MachOLoader::identify(llvm::MemoryBufferRef Buffer,
+                           std::vector<LoadCandidate> &Rows) {
+  const auto malformed = [&](LoadRow Kind, llvm::Error Error) {
+    LoadCandidate Row;
+    Row.Row = Kind;
+    Row.Format = BinaryFormat::MachO;
+    Row.Description =
+        Kind == LoadRow::MachO
+            ? llvm::formatv(getLoadRowText(Kind).data(), fileTypeName(0),
+                            cpuName(0))
+                  .str()
+            : llvm::formatv(getLoadRowText(Kind).data(), 1, cpuName(0)).str();
+    Row.Reason = llvm::formatv(getLoadReasonText(LoadReason::Malformed).data(),
+                               llvm::toString(std::move(Error)))
+                     .str();
+    Rows.push_back(std::move(Row));
+  };
+  auto Binary = llvm::object::createBinary(Buffer);
+  if (!Binary)
+    return malformed(LoadRow::MachO, Binary.takeError());
+  if (auto *Universal =
+          llvm::dyn_cast<llvm::object::MachOUniversalBinary>(Binary->get())) {
+    // A row for every slice; load() reads the one chooseUniversalSlice picks.
+    const auto Chosen = macho_loader::chooseUniversalSlice(*Universal);
+    std::string ChosenName;
+    size_t Index = 0;
+    for (const auto &Slice : Universal->objects())
+      if (Index++ == Chosen)
+        ChosenName = cpuName(Slice.getCPUType());
+    Index = 0;
+    for (const auto &Slice : Universal->objects()) {
+      LoadCandidate Row;
+      Row.Row = LoadRow::FatMachO;
+      Row.Format = BinaryFormat::MachO;
+      Row.Description = llvm::formatv(getLoadRowText(LoadRow::FatMachO).data(),
+                                      Index + 1, cpuName(Slice.getCPUType()))
+                            .str();
+      if (auto Obj = Slice.getAsObjectFile()) {
+        judge(**Obj, Row);
+      } else {
+        Row.Reason =
+            llvm::formatv(getLoadReasonText(LoadReason::Malformed).data(),
+                          llvm::toString(Obj.takeError()))
+                .str();
+      }
+      if (Row.Loadable && Chosen != Index) {
+        Row.Loadable = false;
+        Row.Reason = llvm::formatv(getLoadReasonText(LoadReason::Slice).data(),
+                                   ChosenName)
+                         .str();
+      }
+      Rows.push_back(std::move(Row));
+      ++Index;
+    }
+    return;
+  }
+  auto *Obj = llvm::dyn_cast<llvm::object::MachOObjectFile>(Binary->get());
+  if (!Obj)
+    return malformed(LoadRow::MachO,
+                     llvm::make_error<llvm::StringError>(
+                         "not a Mach-O file", llvm::inconvertibleErrorCode()));
+  LoadCandidate Row;
+  Row.Row = LoadRow::MachO;
+  Row.Format = BinaryFormat::MachO;
+  const uint32_t FileType =
+      Obj->is64Bit() ? Obj->getHeader64().filetype : Obj->getHeader().filetype;
+  const uint32_t CpuType =
+      Obj->is64Bit() ? Obj->getHeader64().cputype : Obj->getHeader().cputype;
+  Row.Description = llvm::formatv(getLoadRowText(LoadRow::MachO).data(),
+                                  fileTypeName(FileType), cpuName(CpuType))
+                        .str();
+  judge(*Obj, Row);
+  Rows.push_back(std::move(Row));
 }
 
 } // namespace neverd

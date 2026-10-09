@@ -76,6 +76,8 @@ v4 テストはプレフィックスのサイズとパディング、切り詰�
 
 `NeverDLowIRRefinementTests` は実際の復元グラフ、構造の異なる有限ループ、ゼロ回反復、動的生成箇所、条件付き選択、重複入力ビュー、コピーとスピルの相関、両側の不変読み取り証拠、システムフラグと戻りスロット保存を検証します。誤った候補、余分な書き込み、不完全または無限の経路、古い証拠、一時領域の衝突、共有予算超過では証明書を拒否します。既存の独立性テストは観測可能な任意値を引き続き拒否します。
 
+`NeverDLowIRRefinementTests` の `CompleteModel`、`CompletedTargetFacts`、`ConditionalImplication`、`PartitionedCoverage` は小さな入力領域の独立した全探索判定を用い、不正入力、古いキャッシュ、不完全な列挙、ちょうど足りる予算と不足する予算を検証します。実際の LowIR・バイナリ精緻化テストは固定ゲート上限で条件付き積と元のグラフ・復元グラフの全終了分岐を確認し、変更された最終観測、無関係な領域、欠落したターゲットを拒否します。`FiniteValues` は符号化失敗と探索・値数・全体予算による拒否を区別します。
+
 同じターゲットの `LowIRLoopRefinement.*` と `BinaryLowIRLoopRefinement.*` は、任意の64ビット回数、入れ子の辞書式順位、実際のネイティブ残余コード、入口接頭区間のテンプレート、重なるビューと相関した退避を検査します。誤った本体、入口領域の縮小、減少しない順位、符号なし回り込み、過去の書き込みの欠落、切断点の欠落、不正なテンプレート、共有予算の枯渇を負例で拒否します。有限の兄弟経路が成功しても不完全な帰納証明は承認されません。
 
 `LowIRLoopInference.*` と `BinaryLowIRLoopInference.*` は独立に作成したカウンター、スタック保存、早期リターン、ネイティブ呼び出し、パック済みフラグを使用します。狭い幅の算術拡大と、式は異なるが意味が等しいフラグを検証します。不正なグラフ、欠落／偽造した起源、非停止やラップするループ、推論／証明予算の枯渇で証明書を生成してはいけません。
@@ -195,6 +197,13 @@ build-release/bin/NeverDLowIRRefinementTests
 パック済みフラグのテストは、全スカラー入口フラグの組み合わせ、特権マスク、両実行の TF/AC 条件、異なる未定義値の生成、相関するコピー、ネイティブ呼び出し、兄弟経路の状態、最終システム状態の必須観測、不正な証拠、資源上限を検証します。有限ループは全実行可能入力経路が終了する必要があり、安全な分岐で無限経路や打ち切り経路を隠せません。RDSSPD/RDSSPQ は 16 汎用レジスタと両幅、上位ビット保持、`Missing` 証拠の保持、偽造投影の拒否を検証します。機械状態テストは両 C 経路の O0/O2 と未定義動作トラップを用い、独立したユーザーモードのフラグオラクルと比較し、プロファイル違反が後から消えないことも確認します。 INCSSPD/INCSSPQ は両幅と全汎用レジスタ、到達不能境界の保持、安全な兄弟経路完了後の実行可能なトラップ、ゼロオペランド、偽造したトラップ証拠を検証します。
 
 `NeverDX86DecodeDetailTests` は三つのデコード経路、両方の x64 アドレス幅、符号付き変位の境界、必須接頭辞、実際の i386 disp16、moffs、切り詰め入力、詳細情報なしの再利用を検証します。再配置は正確なフィールドだけに結び付き、幅・位置・値が違う場合は結び付きません。ネイティブ独立性と関係証明のテストはフレーム全体の書き込みを保持し、観測される任意フラグと変更されたシフト候補を拒否します。
+
+`NeverDLowUndefinedDigestTests` は独立した SHA-256 ベクトル、全保存フィールド、符号付き連番のビット、順序、パディング除外、入力の不変性を検査します。インラインバッファの拡張、199/200 操作境界、さらに長い逐次入力を扱います。`LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` は両経路で実際の古い証拠の拒否と再結合を検査します。`NeverDLiftTests` の `InputDigest.*` を維持し、独立実装を変更したら影響する呼び出し側を再ビルドしてください。sanitizer、移植可能経路、ホストの実際の検証範囲を記録します。ダイジェストのマイクロベンチマークだけではネイティブ等価性を証明できません。
+
+```bash
+cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
+build-release/bin/NeverDLowUndefinedDigestTests
+```
 
 `NeverDX86UndefinedEffectsTests` は未定義ビットのメタデータ、定義済み／保持されるフラグ、古い証明書の拒否を検査します。`NeverDX86CarryArithmeticFlagTests` は算術オラクルにより、レジスター形式とメモリ形式の ADC/SBB の補助キャリーを検査します。`NeverDX86LogicIdentityTests` は、同一オペランドの AND が 64 ビットモードで 32 ビットの宛先に書き込む際、対応する 64 ビットレジスターのビット 63:32 をゼロにし、狭い書き込みでは未書き込みのビットを保持することを検査します。
 
@@ -411,6 +420,7 @@ V9 の schema テストは 8 種の名前の往復と共有最終状態検証を
 | `unittests/TestProcessTests.cpp` | `NeverDTestProcessTests` | クロスプラットフォーム子プロセス、引用、リダイレクト、終了コード |
 | `unittests/libc` | `NeverDLibCTests` | 既知の libc 名と分類 |
 | `unittests/safety` | `NeverDSafetyTests`、`NeverDSafetyIntegrationTests` | シンクカタログ、識別優先順位、引数事前フィルタ、コピー越境ハント、ヒープ寿命監査、必須の PE/ELF/Mach-O × x86-64/AArch64 6 セル行列 |
+| `unittests/loader` | `NeverDRawISATests` | バイナリファイル：バイト列からの命令セット識別（データ、テスト自身のコード、2 バイトずれたコード、ファミリーごとの 32 ビットと 64 ビットのエンコーディング、ゼロで始まるファイル）と Cortex-M ベクタテーブル。`scripts/validate_isa_model.py --engine build/bin/libneverd.so` はモデルが見たことのない実プログラムとライブラリ 180 件をハッシュ指定でダウンロードして検査します。ネットワークが必要で、CTest には含まれません |
 | `unittests/lift` | `NeverDLiftTests` | Decoder/lifter の LowIR 形状、IR 段階、loader、relocation、形式 fixture、デコンパイル、代表的 patch 経路 |
 | `unittests/semantic` の大半 | `NeverDSemanticTests` | 命令、ABI、制御フロー、C 式、lift/recompile の差分セマンティクス |
 | `unittests/evm` | `NeverDEVMOpcodeTests`、`NeverDEVMBytecodeTests`、`NeverDEVMLoaderTests`、`NeverDEVMABITests`、`NeverDEVMAnalyzerTests`、`NeverDEVMDecoderPropertyTests`、`NeverDEVMProxyTests`、`NeverDEVMCallTests`、`NeverDEVMSemanticTests`、`NeverDEVMEmitterTests`、`NeverDEVMIntegrationTests` | hardfork metadata、input normalization、ABI/signature ambiguity、CFG/SSA/recovery、decoder boundary 全網羅と hostile input、proxy/call fact、interpreter semantics、LLVM/C/Solidity differential execution、public API routing |
@@ -1236,7 +1246,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5003 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5365`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5037 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5399`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1333,6 +1343,8 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 
 `WindowsSystemModules` は両 ISA 向けに `ntdll.dll`、`kernelbase.dll`、`kernel32.dll` の有界な PE64 モデルイメージを構築します。ASCII の `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW`、`GetProcAddress` はそのマップ済みベースを共有し、PEB/LDR と `MEM_IMAGE` も同じイメージを示します。静的インポート、名前検索、ゲスト DLL の転送は同じ API ゲートとエクスポート解決器を使います。提供元は常駐し、ゲスト初期化コールバックを持たず、通常のゲスト DLL をすべて解放すればエントリから復帰できます。ヘッダーやエクスポートメタデータの変更で検索を停止します。未対応のシステムエクスポート名と非ゼロ序数は明示的に停止し、対応名の大小文字違いと空名はエラー 127、NULL 検索は 87 を返します。生成バイトとアドレスはモデル方針であり、Windows DLL の版別配置、実際の序数、提供元間の別名は再構築しません。`WindowsSystemTests.cpp` は独自 x64/ARM64 EXE をネイティブ Windows と比較し、初期スレッドの復帰を独立して 8 回観測します。
 
+`WindowsSectionFixture.inc` は独立した二つのビュー、ハンドル再利用、クローズ後の読み取り、書き込み後の分離、アンマップと常駐イメージの保持を検証します。名前空間、権限、固定アドレス、オフセットの負例もあります。`WindowsThreadFixture.inc` は affinity と隠蔽状態、厳密な長さ、上位ビットを検証します。元の実行ファイルも Windows ネイティブ対照で実行します。`KnownDlls` のない Wine は section シナリオを検証できません。
+
 `WindowsProcessExceptions` は同じ CPU とプロセス予算で `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler`、`RaiseException` を実装します。順序付きハンドラーは登録・削除、入れ子の例外、モデル化 API、DLL 読み込み、プロセス終了を扱えます。x64/ARM64 のデータアクセス違反と x64 の整数除算例外は、ゲストが変更した `CONTEXT` の検証後に再開できます。汎用レジスター、SIMD、対応する FP 状態を保持し、ソフトウェア例外はモデル提供元内の実際の return 命令から再開します。保持する登録は 128 件、入れ子は 16 フレームまでです。不正な処置、例外ポインターの変更、未対応フィールド、上限超過は明示的に失敗します。ARM64 のフレームベースの SEH／アンワインド、デバッガー配送、実行／ガードページ例外は未対応です。`WindowsExceptionTests.cpp` は独自 EXE／DLL をネイティブ Windows と比較します。ARM64 KVM/WHP の実機証拠は未取得です。 ソフトウェア例外レコードには `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`）が付き、呼び出し元の継続不可フラグとは個別に扱います。元の Windows 実行ファイルでソフトウェア例外とハードウェア例外のフラグ値を厳密に照合します。
 
 `WindowsProcessContext` は各ディスパッチフレームの発生元を保持します。対応する x64 データアクセス／除算フォルトでは `CONTEXT.EFlags` に RF（`0x10000`）を示し、アクセス違反コードを含むソフトウェアの `RaiseException` では現在のコンテキストを保持します。発生元は VEH/VCH と SEH の検索／巻き戻しを通じて維持されます。有効な継続では RF を除いた論理 CPU フラグを復元し、ゲストによる RF の変更は状態公開前に拒否します。この限定プロファイルは命令ブレークポイントやゲストによる RF 制御を扱いません。`WindowsExceptionTests.cpp` は保存記録、復元、拒否時の CPU／RAM 不変性を確認します。
@@ -1356,6 +1368,12 @@ Windows ring3 は独立したネイティブ観測に従い、checked x64 の `o
 `WindowsLifetimeTests.cpp` は固定トレースを独立したネイティブ Windows プロセスと KVM/WHP/Unicorn で照合します。通常終了、入口 return、両 DLL の初期化失敗、4 箇所の早期終了、入口なし DLL を含みます。回呼障害、共通予算、再配置 TLS フィールド、TLS 総容量も検証します。ネイティブ入口 return のプローブは初期スレッドのハンドルを保持し、終了コードと正確なスレッド／プロセス通知列を 64 回検証します。残る子スレッドは観測後に終了させ、プロセス終了値を入口の戻り値として扱いません。
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests`、`NeverDUnpackPublicTests` はパックされたイメージの復元を対象とします。[アンパック](unpack.md)を参照してください。`UnpackGeneratedTests.cpp` は、テスト自身がパックしたプログラムを使って、x86-64 と ARM64 でエントリの規則を検査します。`X64ReturnPrefixTests.cpp` は 2 バイトの近リターンをすべてのトランスポートで検査し、それ以外のプレフィックス付きリターンが拒否されたままであることを確認します。`WindowsDeferredTests.cpp` は不透明なエントリと停止したプロセスの観測を、`ExecutionSessionTests.cpp` は実行ウォッチを検査します。 `DirectX64Tests.cpp` は部分ページの監視、ページ境界の命令取得、一度だけの再開、サービス境界、無効命令とタイムアウト時の状態も検証します。
+
+`LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage`、`ExplicitSnapshotsKeepExternalHeapDependenciesVisible`、`ReleasedHeapStateDoesNotBlockRecovery` は利用可能な逐次・直接実行バックエンドで独立コンパイルした起動と入口の動作を比較します。`HeapReferencesInCapturedTLSCannotBeDiscarded` は TLS のみの依存を検査します。公開 API テストは拒否時の既存出力保持と C API・CLI の明示的スナップショット一致を要求します。アドレス一致は保守的な証拠であり、ネイティブ実行の保証ではありません。
+
+`DirectServiceBindingsRequireAnExplicitSnapshot` は取得した入口の前後で初めて使う直接サービス番号を検証します。C API と CLI も拒否時の既存出力の保持を確認します。
+
+`PrivateHeapDestructionReleasesOnlyOwnedBlocks` は移動後の所有権、別ヒープ操作の拒否、無効ハンドル、生存ヒープ枠の再利用を検証します。
 
 `UnpackLibraryTests.cpp` は独立した x64/ARM64 DLL をテスト内でパックし、依存順序、通常・生成 TLS コールバック、アタッチ失敗の後処理、入力とホストの識別、自身のファイルアクセス、名前・序数・データ・転送エクスポート、自己インポートの不在を確認します。ネイティブ Windows は別 EXE で元の DLL と再構築 DLL をロードし、宣言済みエクスポートを呼びます。検査付き・直接 WHP ケースは必須です。`CompletedGeneratedTLSCallsRequireTheAttachABI` は入口・引数の変更を拒否し、`GeneratedCallsNeedTheirReturnedStackAtTheContinuation` は誤った戻りスタックを拒否します。対象はアンパックであり、仮想化解除ではありません。
 

@@ -112,9 +112,9 @@ void NavigationBand::resizeEvent(QResizeEvent *event) {
 }
 
 void NavigationBand::paintEvent(QPaintEvent *) {
+  // The band lies on its toolbar's background.
   QPainter painter(this);
   const auto &theme = Theme::instance();
-  painter.fillRect(rect(), palette().window());
   const QRect band = bandRect();
   painter.fillRect(band, theme.navigationColor(0));
   if (!classes_.isEmpty()) {

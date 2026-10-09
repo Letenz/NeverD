@@ -30,7 +30,7 @@ void renameVars(std::vector<HighStmt> &Stmts) {
   VarKeyMap<int> RenameIdMap;
   int16_t VarCounter = 0;
   int IdBase = limits::kVarRenameIdBase;
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   std::function<void(const ExprPtr &)> CollectVars;
   CollectVars = [&](const ExprPtr &E) {
     if (!E || !Seen.insert(E.get()).second)
@@ -47,7 +47,7 @@ void renameVars(std::vector<HighStmt> &Stmts) {
   };
   walkStmts(Stmts, [&](const HighStmt &S) { forEachExpr(S, CollectVars); });
   if (!RenameMap.empty()) {
-    std::unordered_set<const HighExpr *> RenameSeen;
+    HighExprSet RenameSeen;
     std::function<void(ExprPtr &)> DoRename;
     DoRename = [&](ExprPtr &E) {
       if (!E || !RenameSeen.insert(E.get()).second)
@@ -75,7 +75,7 @@ void renameVars(std::vector<HighStmt> &Stmts) {
 //===----------------------------------------------------------------------===//
 
 static void collectRefExprLocal(const ExprPtr &E, VarKeySet &Refs,
-                                std::unordered_set<const HighExpr *> &Seen) {
+                                HighExprSet &Seen) {
   if (!E || !Seen.insert(E.get()).second)
     return;
   if (E->Kind == ExprKind::Var)
@@ -86,7 +86,7 @@ static void collectRefExprLocal(const ExprPtr &E, VarKeySet &Refs,
 
 static void collectStmtRefsLocal(const std::vector<HighStmt> &Stmts,
                                  VarKeySet &Refs) {
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   walkStmts(Stmts, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Assign && S.Val)
       collectRefExprLocal(S.Val, Refs, Seen);
@@ -185,7 +185,7 @@ static void postRenameCleanupImpl(std::vector<HighStmt> &Stmts,
       if (!Prev.Dst->structuralEq(*Curr.Dst))
         continue;
       bool CurrUsesPrev = false;
-      std::unordered_set<const HighExpr *> CheckSeen;
+      HighExprSet CheckSeen;
       std::function<void(const ExprPtr &)> CheckRef = [&](const ExprPtr &E) {
         if (!E || CurrUsesPrev || !CheckSeen.insert(E.get()).second)
           return;

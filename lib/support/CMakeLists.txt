@@ -1,3 +1,8 @@
+add_neverd_component_library(NeverDDigest
+  SHA256.cpp
+  LLVM_COMPONENTS Support TargetParser
+)
+
 add_neverd_component_library(NeverDSupport
   AtomicOutput.cpp
   BinaryLoading.cpp

@@ -44,21 +44,38 @@ struct BinaryImage;
 
 /// Bit I names the x86-64 GPR whose 8-byte slot starts at register offset
 /// 8 * I (RAX = bit 0 ... R15 = bit 15).  A write to any byte of a slot
-/// (AL, AH, EAX, ...) sets the whole family.
+/// (AL, AH, EAX, ...) sets the whole family.  Bits 16 through 23 name the
+/// vector argument registers XMM0 through XMM7, families as well.
 using GPRFamilyMask = uint32_t;
 
-/// In a may-write mask, a write to the x86-64 floating-point return register
-/// (any view of XMM0).  A callee that leaves RAX alone may still return a
-/// value there.
-constexpr GPRFamilyMask kFPReturnWriteBit = GPRFamilyMask(1) << 16;
+/// The family of XMM0, the first of the eight vector argument registers.
+constexpr unsigned kX64VectorFamilyBase = 16;
+constexpr unsigned kX64VectorArgumentFamilies = 8;
 
-/// Per GPR family, how many low bytes of the slot are read (0 = none, 1 for
-/// CL, 2 for CX or CH, 4 for ECX, 8 for RCX).
-using GPRReadWidths = std::array<uint8_t, 16>;
+/// In a may-write mask, a write to the x86-64 floating-point return register
+/// (any view of XMM0, which is its family).  A callee that leaves RAX alone
+/// may still return a value there.
+constexpr GPRFamilyMask kFPReturnWriteBit = GPRFamilyMask(1)
+                                            << kX64VectorFamilyBase;
+
+/// The mask of the first \p Count vector argument families.
+constexpr GPRFamilyMask vectorArgumentFamilies(unsigned Count) {
+  return ((GPRFamilyMask(1) << Count) - 1) << kX64VectorFamilyBase;
+}
+
+/// Per family, how many low bytes of the register are read (0 = none, 1 for
+/// CL, 2 for CX or CH, 4 for ECX, 8 for RCX; up to 16 for an XMM register).
+using GPRReadWidths =
+    std::array<uint8_t, kX64VectorFamilyBase + kX64VectorArgumentFamilies>;
 
 /// The GPR family of a register slice, or nullopt when \p RegOff is not one
 /// of the sixteen x86-64 GPRs this summary tracks.
 std::optional<unsigned> gprFamilyOf(Arch A, uint64_t RegOff);
+
+/// The family of a register slice, a GPR or a vector argument register, and
+/// the slice's byte offset in its register.
+std::optional<std::pair<unsigned, unsigned>> registerFamilyOf(Arch A,
+                                                              uint64_t RegOff);
 
 /// One straight-line step of a function, for register liveness.
 struct RegisterStep {
@@ -76,10 +93,23 @@ struct RegisterStep {
   /// Control leaves for code that no summary describes: an import tail
   /// call or an indirect tail jump.
   bool UnknownTailCall = false;
+  /// A copy of a whole vector register into another (destination, source
+  /// family): the source is read as wide as the destination is live.
+  std::optional<std::pair<uint8_t, uint8_t>> VectorCopy;
   /// An indirect or import call that returns.
   bool UnknownCall = false;
+  /// The address an import call or tail call names: an executable stub, or
+  /// the slot the loader binds.  An import whose prototype fixes its entry
+  /// reads (solveCallRegisterEffects) reads exactly those.
+  va_t ImportCallee = InvalidVA;
   /// Nothing after this step executes (a call that does not return).
   bool Exits = false;
+  /// A call whose arguments a contract at this site fixes (a printf-family
+  /// call with a constant format, FormattedCall): it reads exactly these and
+  /// may change every volatile register, and a tail call passes nothing else
+  /// on.  No summarized function is called.
+  std::optional<GPRReadWidths> FixedArguments;
+  bool FixedTailCall = false;
 };
 
 struct RegisterBlock {
@@ -99,11 +129,16 @@ struct LocalRegisterEffect {
   /// Some effect escapes the may-write summary (an unknown call, an
   /// incomplete lift).
   bool Unknown = false;
+  /// A call with fixed arguments (RegisterStep::FixedArguments) may change
+  /// every volatile register.
+  bool CallsFixedContract = false;
   /// The body itself is not fully known, so neither summary exists.
   bool Incomplete = false;
-  /// Control leaves for code no summary describes (an import or indirect tail
-  /// call) while this function's argument registers may still be the
-  /// caller's; which of them that code reads is unknown.
+  /// Control leaves for code no summary describes (an indirect tail call)
+  /// while this function's argument registers may still be the caller's;
+  /// which of them that code reads is unknown.  An import tail call leaves
+  /// this to the solver, which knows the prototypes (RegisterStep::
+  /// ImportCallee).
   bool UnknownEntryReads = false;
   /// Liveness skeleton; block 0 is the entry.
   std::vector<RegisterBlock> Blocks;
@@ -115,8 +150,9 @@ struct LocalRegisterEffect {
   /// bound: the stack pointer is lost, a pointer into the incoming arguments
   /// escapes, or control leaves for code no summary describes.
   bool UnknownStackReads = false;
-  /// Callees entered by a tail call at the entry stack pointer; they read
-  /// this function's incoming stack arguments as their own.
+  /// Callees entered by a tail call at the entry stack pointer, imports by
+  /// the stub or slot they are reached through; they read this function's
+  /// incoming stack arguments as their own.
   std::set<va_t> StackTailCallees;
   /// A Win64 variadic function (`f(fmt, ...)`): the register position of its
   /// first variadic argument, else -1.  Its prologue spills that register and
@@ -129,9 +165,12 @@ struct LocalRegisterEffect {
 /// Summarize \p F.  A call into a function \p NoReturnTargets names as
 /// never returning (a flagged call, or a tail call the LowIR contract keeps
 /// unflagged) ends its path: nothing it writes reaches a caller.
-LocalRegisterEffect
-localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
-                    const libc::NoReturnTargetIndex *NoReturnTargets = nullptr);
+/// A call whose instruction address \p FixedCallReads names reads exactly
+/// those bytes (RegisterStep::FixedArguments).
+LocalRegisterEffect localRegisterEffect(
+    const BinaryImage &Img, const LowFunc &F,
+    const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
+    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr);
 
 struct CallRegisterSummaries {
   /// Families a call may change, for functions whose whole call tree is
@@ -143,7 +182,7 @@ struct CallRegisterSummaries {
   std::map<va_t, GPRReadWidths> EntryReads;
   /// Positional arguments implied by the incoming stack slots a function
   /// reads, including through tail calls (0 when none), for functions whose
-  /// stack reads are bounded.
+  /// stack reads are bounded, and for the imports whose counts are fixed.
   std::map<va_t, int> EntryStackArgs;
   /// Register position of the first variadic argument of each variadic
   /// function (LocalRegisterEffect::VariadicFrom).
@@ -163,12 +202,19 @@ struct CallRegisterSummaries {
 /// clobbers \p VolatileFamilies and does not make the caller read its own
 /// incoming argument registers.  The call site's arguments are the registers
 /// the caller itself set.  A function in \p FixedEntryReads (a documented
-/// prototype) reads exactly those bytes.
+/// prototype) reads exactly those bytes.  So does an import whose stub or
+/// bound slot it lists: a call to the import passes them, and a tail call
+/// into it forwards exactly them, while a tail call into any other import
+/// leaves the caller's entry reads unknown.  Likewise an import whose stub
+/// or slot \p FixedEntryStackArgs lists reads that many stack arguments, and
+/// a tail call into it forwards them; a tail call into another import
+/// leaves the caller's stack reads unbounded.
 CallRegisterSummaries solveCallRegisterEffects(
     const std::map<va_t, LocalRegisterEffect> &Funcs,
     GPRFamilyMask VolatileFamilies, GPRFamilyMask ArgumentFamilies,
     const std::set<va_t> &DispatchThunks = {},
-    const std::map<va_t, GPRReadWidths> &FixedEntryReads = {});
+    const std::map<va_t, GPRReadWidths> &FixedEntryReads = {},
+    const std::map<va_t, int> &FixedEntryStackArgs = {});
 
 } // namespace neverd
 

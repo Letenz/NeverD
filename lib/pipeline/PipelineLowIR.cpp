@@ -18,12 +18,15 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/InternalNoReturn.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/loader/PointerRelocation.h"
+#include "neverd/loader/SymbolDecoration.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
@@ -572,7 +575,7 @@ bool collectLowAddressUses(
     const std::set<va_t> *OccurrenceTableAnchors = nullptr) {
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const std::vector<TargetRegisterRange> PreservedRanges =
-      TRI.callPreservedRanges(Img.Format);
+      TRI.callPreservedRanges(Img.abiFormat());
   constexpr size_t kMaxModuleAddressScanOps =
       size_t{limits::kMaxJumpTableEvidenceWork} *
       size_t{limits::kMaxMultiStageRetries};
@@ -1263,7 +1266,7 @@ bool collectLowAddressUses(
             TRI.StackPointer, static_cast<uint16_t>(TRI.PointerSize)));
         if (CurrentSP.isPrivateFrameOnly()) {
           int64_t OutgoingBase = *CurrentSP.FrameOffsets.begin();
-          if (Img.Arch == Arch::X64 && Img.Format == BinaryFormat::COFF) {
+          if (Img.Arch == Arch::X64 && Img.abiFormat() == BinaryFormat::COFF) {
             int64_t WithShadow = 0;
             if (!llvm::AddOverflow(OutgoingBase, int64_t{32}, WithShadow))
               OutgoingBase = WithShadow;
@@ -1556,7 +1559,7 @@ bool collectLowAddressUses(
             for (const auto &[Key, Facts] : State) {
               if (std::get<0>(Key) != VnodeSpace::REG ||
                   TRI.regToArgIdx(std::get<1>(Key),
-                                  Img.Format == BinaryFormat::COFF) < 0)
+                                  Img.abiFormat() == BinaryFormat::COFF) < 0)
                 continue;
               if (!mergeCallArgument(Facts))
                 return false;
@@ -1571,7 +1574,8 @@ bool collectLowAddressUses(
                 TRI.StackPointer, static_cast<uint16_t>(TRI.PointerSize)));
             if (CurrentSP.isPrivateFrameOnly()) {
               int64_t Cursor = *CurrentSP.FrameOffsets.begin();
-              if (Img.Arch == Arch::X64 && Img.Format == BinaryFormat::COFF) {
+              if (Img.Arch == Arch::X64 &&
+                  Img.abiFormat() == BinaryFormat::COFF) {
                 int64_t AfterShadow = 0;
                 if (llvm::AddOverflow(Cursor, int64_t{32}, AfterShadow))
                   return false;
@@ -2757,7 +2761,7 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
         continue;
       if (!Budget.consume())
         return abandonAnalysis();
-      if (Use.UseKind == ModuleAddressUse::Kind::WriteThrough) {
+      if (Use.UseKind == ModuleAddressUse::Kind::WriteThrough && Writable) {
         Result.UnsafeBranches.insert(Owner.BranchAddr);
         protectWholeOwner(Owner);
         continue;
@@ -2842,6 +2846,184 @@ bool forwardsToGuardDispatch(const BinaryImage &Img, const LowFunc &F) {
               Slot.Offset, RuntimeCallablePointerSlotKind::GuardXFGDispatch));
 }
 
+/// The arguments of the libc imports that \p Funcs and the callees
+/// \p Effects summarizes call: the registers each reads, and with \p
+/// StackArguments the argument positions its stack arguments imply.
+struct ImportPrototypeArguments {
+  std::map<va_t, GPRReadWidths> Reads;
+  std::map<va_t, int> StackArgs;
+  /// The bytes of the scalar float each routine returns, where it does.
+  std::map<va_t, uint16_t> FloatReturns;
+};
+
+/// The arguments of the libc imports that \p Funcs and the callees
+/// \p Effects summarizes call, keyed by the address each call names its
+/// import by: an executable stub or a slot the loader binds, listed in the
+/// import directory or not (importCalleeName).  A stub lifted as a function
+/// is keyed too.  A call in a function whose own summary is incomplete still
+/// passes its import's parameters.  Only a routine with a fixed prototype is
+/// listed: one of the image format's own runtime (LibCPrototype, such as the
+/// Windows C runtime's `_initterm`), else one the arity tables give
+/// (LibCNames.h), by the exact name where the import entry is the C name.
+/// Each integer register argument is read pointer-wide.  A floating argument
+/// is listed only under System V, which passes it in the next vector
+/// register at its width, and only when every argument has a register.
+/// The arguments past the registers are on the stack,
+/// which only a convention that summarizes stack arguments (\p
+/// StackArguments) counts; elsewhere such a routine is not listed.  Without
+/// \p RegisterArguments an import takes every argument on the stack.
+ImportPrototypeArguments
+importPrototypeArguments(const BinaryImage &Img,
+                         const std::vector<LowFunc> &Funcs,
+                         const std::map<va_t, LocalRegisterEffect> &Effects,
+                         bool StackArguments, bool RegisterArguments = true) {
+  const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
+  const llvm::ArrayRef<uint64_t> Registers =
+      RegisterArguments
+          ? llvm::ArrayRef<uint64_t>(
+                TRI.integerArgumentLayout(Img.abiFormat()).Registers)
+          : llvm::ArrayRef<uint64_t>();
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(Img.Arch, Img.abiFormat());
+  const bool VectorArguments = RegisterArguments && Img.Arch == Arch::X64 &&
+                               Convention &&
+                               !Convention->PositionalArgumentSlots;
+  // A positional convention passes argument K in slot K's integer or vector
+  // register by its class.
+  const bool SlotVectors = RegisterArguments && Img.Arch == Arch::X64 &&
+                           Convention && Convention->PositionalArgumentSlots &&
+                           Convention->VectorArgumentsFromCalleeSummary;
+  // The integer arguments of a routine, the widths of its floating ones,
+  // which take vector registers, and each argument's floating width in
+  // order (0 for an integer one).
+  struct Arguments {
+    int Integers = 0;
+    std::vector<uint8_t> Floats;
+    std::vector<uint8_t> Order;
+  };
+  // A runtime's own prototype names its routine exactly, where stripping
+  // leading underscores for the arity tables could reach another runtime's.
+  auto RoutineArguments =
+      [&](const std::string &Name) -> std::optional<Arguments> {
+    if (const libc::LibCPrototype *Prototype =
+            libc::libcPrototype(Name, Img.abiFormat())) {
+      if (Prototype->Variadic)
+        return std::nullopt;
+      Arguments Result;
+      for (const std::string_view Type :
+           llvm::ArrayRef(Prototype->Params.data(), Prototype->ParamCount)) {
+        if (!libc::isFloatingType(Type)) {
+          ++Result.Integers;
+          Result.Order.push_back(0);
+          continue;
+        }
+        if (Type != "float" && Type != "double")
+          return std::nullopt;
+        Result.Floats.push_back(Type == "float" ? sizeof(float)
+                                                : sizeof(double));
+        Result.Order.push_back(Result.Floats.back());
+      }
+      return Result;
+    }
+    // A PE import entry is the C name: MSVC's `_pipe(fds, size, mode)` is
+    // not POSIX `pipe(fds)`, which stripping its underscore would reach.
+    const auto Arity = importNamesAreCNames(Img.Format)
+                           ? libc::libcArity(Name)
+                           : libc::libcArityForSymbol(Name);
+    if (!Arity || Arity->IntArgs < 0)
+      return std::nullopt;
+    Arguments Result;
+    Result.Integers = Arity->IntArgs;
+    Result.Floats.assign(Arity->FpArgs,
+                         Arity->FpIsFloat ? sizeof(float) : sizeof(double));
+    // The tables list the integer arguments first unless FpFirst.
+    const std::vector<uint8_t> Integers(Arity->IntArgs, 0);
+    Result.Order = Arity->FpFirst ? Result.Floats : Integers;
+    const std::vector<uint8_t> &Rest =
+        Arity->FpFirst ? Integers : Result.Floats;
+    Result.Order.insert(Result.Order.end(), Rest.begin(), Rest.end());
+    return Result;
+  };
+  // The floating type the routine returns, by the same declarations.
+  auto RoutineFloatReturn = [&](const std::string &Name) -> uint16_t {
+    if (const libc::LibCPrototype *Prototype =
+            libc::libcPrototype(Name, Img.Format))
+      return libc::floatReturnBytes(*Prototype);
+    const auto Arity = importNamesAreCNames(Img.Format)
+                           ? libc::libcArity(Name)
+                           : libc::libcArityForSymbol(Name);
+    return Arity ? libc::floatReturnBytes(*Arity) : 0;
+  };
+  ImportPrototypeArguments Result;
+  std::set<va_t> Seen;
+  auto Classify = [&](va_t Addr) {
+    if (!Seen.insert(Addr).second)
+      return;
+    const std::string Name = importCalleeName(Img, Addr);
+    if (Name.empty())
+      return;
+    if (const uint16_t Bytes = RoutineFloatReturn(Name))
+      Result.FloatReturns[Addr] = Bytes;
+    const std::optional<Arguments> Routine = RoutineArguments(Name);
+    if (Routine && !Routine->Floats.empty() && !SlotVectors &&
+        (!VectorArguments ||
+         Routine->Floats.size() > kX64VectorArgumentFamilies ||
+         Routine->Integers > static_cast<int>(Registers.size())))
+      return;
+    // Positions take every argument in a positional convention, else the
+    // integer ones.
+    const std::optional<int> Count =
+        !Routine      ? std::nullopt
+        : SlotVectors ? std::optional<int>(Routine->Order.size())
+                      : std::optional<int>(Routine->Integers);
+    const int InRegisters =
+        std::min(Count.value_or(0), static_cast<int>(Registers.size()));
+    if (!Count || (*Count > InRegisters && !StackArguments))
+      return;
+    GPRReadWidths Widths{};
+    for (int K = 0; K < InRegisters; ++K) {
+      if (SlotVectors && Routine->Order[K]) {
+        Widths[kX64VectorFamilyBase + K] = Routine->Order[K];
+        continue;
+      }
+      if (const auto Family = gprFamilyOf(Img.Arch, Registers[K]))
+        Widths[*Family] = static_cast<uint8_t>(TRI.PointerSize);
+    }
+    if (!SlotVectors)
+      for (size_t K = 0; K < Routine->Floats.size(); ++K)
+        Widths[kX64VectorFamilyBase + K] = Routine->Floats[K];
+    Result.Reads[Addr] = Widths;
+    // Counted as positions, the registers' included, as the stack summary
+    // counts them (LocalRegisterEffect::StackArgs); 0 for none on the stack.
+    if (StackArguments)
+      Result.StackArgs[Addr] = *Count > InRegisters ? *Count : 0;
+  };
+  for (const LowFunc &F : Funcs)
+    for (const LowBlock &Block : F.Blocks)
+      for (size_t I = 0; I < Block.Ops.size(); ++I) {
+        const LowOp &Op = Block.Ops[I];
+        if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+            Op.NumInputs == 0)
+          continue;
+        if (Op.Inputs[0].isConst())
+          Classify(Op.Inputs[0].Offset);
+        // A register loaded from the slot names the import as the slot does
+        // (LowToMed's RegisterCallSlot).
+        else if (Op.Opcode == NdOp::INDIR_CALL && Op.Inputs[0].isReg())
+          if (const std::optional<va_t> Slot =
+                  loadedCallSlot(F, Block, I, Op.Inputs[0]))
+            Classify(*Slot);
+      }
+  for (const auto &[Entry, Effect] : Effects) {
+    Classify(Entry);
+    for (const RegisterBlock &Block : Effect.Blocks)
+      for (const RegisterStep &Step : Block.Steps)
+        if (Step.ImportCallee != InvalidVA)
+          Classify(Step.ImportCallee);
+  }
+  return Result;
+}
+
 /// Summarize which GPRs each direct callee may write (CallRegisterEffects.h).
 /// Callees outside Result.LowFuncs are lifted here with the same CFG settings,
 /// up to the Limits.h depth and count; beyond those they stay unsummarized.
@@ -2851,14 +3033,47 @@ void computeCallRegisterEffects(
     const NoReturnCalleeProver &NoReturnCallees,
     const detail::AbsoluteRelocationRootIndex &AbsoluteRelocationRoots,
     const ExecutableCodeOwnerIndex *CodeOwnerIndex, PipelineResult &Result) {
-  if (Img.Arch != Arch::X64)
+  if (Img.Arch != Arch::X64) {
+    // Where an import takes every argument on the stack (i386: regparm is
+    // for internal calls only), there are no register summaries, but a
+    // prototyped import still reads its count of stack arguments.
+    if (const CallArgumentConvention *Convention =
+            callArgumentConvention(Img.Arch, Img.abiFormat());
+        Convention && Convention->ImportArgumentsFromPrototype &&
+        Convention->StackArgumentSummary &&
+        Convention->RegparmOnlyForInternalCalls)
+      Result.CallEntryStackArgs =
+          importPrototypeArguments(Img, Result.LowFuncs, {},
+                                   /*StackArguments=*/true,
+                                   /*RegisterArguments=*/false)
+              .StackArgs;
     return;
+  }
   std::map<va_t, LocalRegisterEffect> Effects;
   std::map<va_t, int> Depth;
   std::vector<va_t> Work;
   std::set<va_t> GuardForwarders;
+  // A call a constant format describes reads exactly what it names; the
+  // functions MedIR converts also pass those arguments (FormattedCall).
+  std::map<va_t, GPRReadWidths> FixedCallReads;
+  auto CollectFormattedCalls = [&](const LowFunc &F, bool Converted) {
+    std::map<va_t, FormattedCall> Calls;
+    pipeline_detail::collectFormattedCalls(Img, F, Calls);
+    for (auto &[Address, Call] : Calls) {
+      GPRReadWidths &Reads = FixedCallReads[Address];
+      for (const FormattedCallArgument &Argument : Call.Arguments)
+        if (const auto Family = registerFamilyOf(Img.Arch, Argument.Register))
+          Reads[Family->first] = std::max<uint8_t>(
+              Reads[Family->first],
+              static_cast<uint8_t>(Family->second + Argument.Bytes));
+      if (Converted)
+        Result.FormattedCalls.emplace(Address, std::move(Call));
+    }
+  };
   for (const LowFunc &LF : Result.LowFuncs) {
-    Effects[LF.Entry] = localRegisterEffect(Img, LF, &NoReturnTargets);
+    CollectFormattedCalls(LF, /*Converted=*/true);
+    Effects[LF.Entry] =
+        localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads);
     if (forwardsToGuardDispatch(Img, LF))
       GuardForwarders.insert(LF.Entry);
     Depth[LF.Entry] = 0;
@@ -2893,7 +3108,9 @@ void computeCallRegisterEffects(
       ++ExtraLifts;
       LowFunc Body =
           ExtraCFG.build(Img, ExtraDec, Callee, Img.getFunctionNameAt(Callee));
-      Effects[Callee] = localRegisterEffect(Img, Body, &NoReturnTargets);
+      CollectFormattedCalls(Body, /*Converted=*/false);
+      Effects[Callee] =
+          localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads);
       if (forwardsToGuardDispatch(Img, Body))
         GuardForwarders.insert(Callee);
       Depth[Callee] = CalleeDepth;
@@ -2903,7 +3120,7 @@ void computeCallRegisterEffects(
   auto Family = [](uint64_t RegOff) {
     return GPRFamilyMask(1) << (RegOff / 8);
   };
-  const bool Win64 = Img.Format == BinaryFormat::COFF;
+  const bool Win64 = Img.abiFormat() == BinaryFormat::COFF;
   GPRFamilyMask Volatile = Family(x86reg::RAX) | Family(x86reg::RCX) |
                            Family(x86reg::RDX) | Family(x86reg::R8) |
                            Family(x86reg::R9) | Family(x86reg::R10) |
@@ -2914,6 +3131,10 @@ void computeCallRegisterEffects(
     Volatile |= Family(x86reg::RSI) | Family(x86reg::RDI);
     Arguments |= Family(x86reg::RSI) | Family(x86reg::RDI);
   }
+  // A call clobbers the vector argument registers Win64 does not preserve
+  // (XMM6 and up are callee-saved there).  Code no summary describes takes
+  // no vector argument: an import that does has a prototype.
+  Volatile |= vectorArgumentFamilies(Win64 ? 6 : kX64VectorArgumentFamilies);
   // Documented contracts (WindowsKernelRoutines.inc): a Control Flow Guard
   // dispatcher is an indirect call, and a WDK routine reads exactly its
   // prototype's parameters however its body forwards registers.  A forwarder
@@ -2946,8 +3167,25 @@ void computeCallRegisterEffects(
     for (const Import &Imp : Img.Imports)
       Classify(Imp.IATAddr, Imp.Name);
   }
-  CallRegisterSummaries Summaries = solveCallRegisterEffects(
-      Effects, Volatile, Arguments, DispatchThunks, FixedEntryReads);
+  // A libc import with a fixed prototype reads its parameters however the
+  // code reaches it; a documented contract above decides first.
+  std::map<va_t, int> FixedEntryStackArgs;
+  if (const CallArgumentConvention *Convention =
+          callArgumentConvention(Img.Arch, Img.abiFormat());
+      Convention && Convention->ImportArgumentsFromPrototype) {
+    ImportPrototypeArguments Prototyped = importPrototypeArguments(
+        Img, Result.LowFuncs, Effects, Convention->StackArgumentSummary);
+    for (auto &[Addr, Widths] : Prototyped.Reads)
+      if (!DispatchThunks.count(Addr))
+        FixedEntryReads.try_emplace(Addr, Widths);
+    for (auto &[Addr, Count] : Prototyped.StackArgs)
+      if (!DispatchThunks.count(Addr))
+        FixedEntryStackArgs.try_emplace(Addr, Count);
+    Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
+  }
+  CallRegisterSummaries Summaries =
+      solveCallRegisterEffects(Effects, Volatile, Arguments, DispatchThunks,
+                               FixedEntryReads, FixedEntryStackArgs);
   Result.CallDispatchThunks = std::move(DispatchThunks);
   Result.CallMayWriteGPRs = std::move(Summaries.MayWrite);
   Result.CallEntryReadGPRs = std::move(Summaries.EntryReads);

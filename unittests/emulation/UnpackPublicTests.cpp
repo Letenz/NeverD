@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../TestProcess.h"
+#include "UnpackGeneratedTestSupport.h"
 #include "UnpackLibraryTestSupport.h"
 #include "UnpackTestSupport.h"
 
@@ -122,6 +123,151 @@ TEST_F(UnpackPublic, RunWithoutAnEntryWritesNothingAndIsIncomplete) {
   EXPECT_EQ(Status, unpack_cli::Incomplete);
   EXPECT_FALSE(std::filesystem::exists(Output));
   EXPECT_NE(Text.find(text::NoEntryOutcome), std::string::npos);
+}
+
+TEST_F(UnpackPublic, ExplicitSnapshotsHaveTheSameCAPIAndCLIContract) {
+  const auto Input = fixture(PlainPacked).string();
+  const auto First = (Directory / FirstOutput).string();
+  const auto Second = (Directory / SecondOutput).string();
+  const char *Options = "{\"snapshot_only\":true}";
+  auto Report = api(Input, First, Options);
+  if (!Report) {
+    const std::string Reason = neverd_last_error(Session);
+    if (Reason.find(Unavailable) != std::string::npos ||
+        Reason == text::Disabled)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  EXPECT_EQ(Report->getString(text::OutcomeField), text::SnapshotOutcome);
+  ASSERT_TRUE(std::filesystem::exists(First));
+  const auto [Status, Text] = cli(Input, Second, Options);
+  EXPECT_EQ(Status, unpack_cli::Success) << Text;
+  ASSERT_TRUE(std::filesystem::exists(Second));
+  EXPECT_EQ(readFile(First), readFile(Second));
+  auto Parsed = llvm::json::parse(Text);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  ASSERT_TRUE(Parsed->getAsObject());
+  EXPECT_EQ(Parsed->getAsObject()->getString(text::OutcomeField),
+            text::SnapshotOutcome);
+}
+
+TEST_F(UnpackPublic, UnsupportedRuntimeStateNeverCreatesOrTruncatesOutput) {
+#ifndef NEVERD_UNPACK_GENERATED_FIXTURE_DIR
+  GTEST_SKIP() << generated::MissingTools;
+#else
+  const std::pair<const char *, unsigned> Cases[] = {
+      {generated::ProgramFile, generated::HeapStateMode},
+      {generated::TLSHeapProgramFile, generated::HeapStateMode},
+      {generated::ProgramFile, generated::DirectServiceMode},
+      {generated::ProgramFile, generated::LateDirectServiceMode},
+      {generated::ProgramFile, generated::EncodedPointerMode},
+      {generated::TLSHeapProgramFile, generated::EncodedPointerMode},
+      {generated::ProgramFile, generated::DynamicTLSMode},
+      {generated::ProgramFile, generated::DynamicFLSMode}};
+  for (const auto &[File, Mode] : Cases) {
+    SCOPED_TRACE(File);
+    SCOPED_TRACE(Mode);
+    const bool Dynamic =
+        Mode == generated::DynamicTLSMode || Mode == generated::DynamicFLSMode;
+    const auto Original =
+        readImage(std::filesystem::path(NEVERD_UNPACK_GENERATED_FIXTURE_DIR) /
+                  generated::X64Dir / File);
+    const auto Packed = generated::pack(Original, Original.File, Mode);
+    ASSERT_FALSE(HasFailure());
+    const auto Input =
+        (Directory / (std::string(File) + generated::PackedFile)).string();
+    const auto Output =
+        (Directory / (std::string(File) + std::to_string(Mode) + FirstOutput))
+            .string();
+    writeFile(Input, Packed);
+    auto Report = api(Input, Output, nullptr);
+    if (!Report) {
+      const std::string Reason = neverd_last_error(Session);
+      if (Reason.find(Unavailable) != std::string::npos ||
+          Reason == text::Disabled)
+        GTEST_SKIP() << Reason;
+      FAIL() << Reason;
+    }
+    EXPECT_EQ(Report->getString(text::OutcomeField),
+              text::UnsupportedStateOutcome);
+    ASSERT_NE(Report->get(text::OutputField), nullptr);
+    EXPECT_EQ(Report->get(text::OutputField)->kind(), llvm::json::Value::Null);
+    const auto *State = Report->getObject(text::RuntimeStateField);
+    ASSERT_NE(State, nullptr);
+    EXPECT_EQ(State->getBoolean(text::HeapKnownField), true);
+    ASSERT_TRUE(State->getInteger(text::HeapReferenceCountField));
+    if (Mode == generated::HeapStateMode)
+      EXPECT_GT(*State->getInteger(text::HeapReferenceCountField), 0);
+    else if (Mode == generated::EncodedPointerMode) {
+      EXPECT_EQ(State->getInteger("possible_encoded_pointers"), 1);
+      EXPECT_EQ(State->getBoolean("encoded_pointer_inventory_known"), true);
+      const auto *References = State->getArray("encoded_pointer_references");
+      ASSERT_NE(References, nullptr);
+      ASSERT_EQ(References->size(), 1u);
+      const auto *Reference = References->front().getAsObject();
+      ASSERT_NE(Reference, nullptr);
+      EXPECT_EQ(Reference->getString("storage"),
+                File == generated::TLSHeapProgramFile ? "thread_local"
+                                                      : "image");
+      EXPECT_TRUE(Reference->getString("value"));
+      EXPECT_TRUE(Reference->getString("offset"));
+    } else if (Dynamic) {
+      EXPECT_EQ(State->getBoolean("dynamic_thread_local_inventory_known"),
+                true);
+      EXPECT_EQ(State->getInteger("live_dynamic_tls_slots"),
+                Mode == generated::DynamicTLSMode ? 1 : 0);
+      EXPECT_EQ(State->getInteger("live_dynamic_fls_slots"),
+                Mode == generated::DynamicFLSMode ? 1 : 0);
+    } else {
+      EXPECT_EQ(*State->getInteger(text::HeapReferenceCountField), 0);
+      ASSERT_TRUE(State->getInteger("direct_service_calls"));
+      EXPECT_GT(*State->getInteger("direct_service_calls"), 0);
+    }
+    EXPECT_FALSE(std::filesystem::exists(Output));
+    EXPECT_EQ(cli(Input, Output, text::EmptyOptions).first,
+              unpack_cli::Incomplete);
+    EXPECT_FALSE(std::filesystem::exists(Output));
+
+    const std::vector<uint8_t> Existing{'k', 'e', 'e', 'p'};
+    writeFile(Output, Existing);
+    Report = api(Input, Output, nullptr);
+    ASSERT_TRUE(Report) << neverd_last_error(Session);
+    EXPECT_EQ(Report->getString(text::OutcomeField),
+              text::UnsupportedStateOutcome);
+    EXPECT_EQ(readFile(Output), Existing);
+    const auto [Status, Text] = cli(Input, Output, text::EmptyOptions);
+    EXPECT_EQ(Status, unpack_cli::Incomplete) << Text;
+    EXPECT_EQ(readFile(Output), Existing);
+    if (Mode == generated::EncodedPointerMode || Dynamic) {
+      const char *Snapshot = "{\"snapshot_only\":true}";
+      Report = api(Input, Output, Snapshot);
+      ASSERT_TRUE(Report) << neverd_last_error(Session);
+      EXPECT_EQ(Report->getString(text::OutcomeField), text::SnapshotOutcome);
+      const auto *State = Report->getObject(text::RuntimeStateField);
+      ASSERT_NE(State, nullptr);
+      if (Mode == generated::EncodedPointerMode)
+        EXPECT_EQ(State->getInteger("possible_encoded_pointers"), 1);
+      else {
+        EXPECT_EQ(State->getBoolean("dynamic_thread_local_inventory_known"),
+                  true);
+        EXPECT_EQ(State->getInteger("live_dynamic_tls_slots"),
+                  Mode == generated::DynamicTLSMode ? 1 : 0);
+        EXPECT_EQ(State->getInteger("live_dynamic_fls_slots"),
+                  Mode == generated::DynamicFLSMode ? 1 : 0);
+      }
+      const auto Bytes = readFile(Output);
+      EXPECT_FALSE(Bytes.empty());
+      const auto [SnapshotStatus, SnapshotText] = cli(Input, Output, Snapshot);
+      EXPECT_EQ(SnapshotStatus, unpack_cli::Success) << SnapshotText;
+      EXPECT_EQ(readFile(Output), Bytes);
+      auto Parsed = llvm::json::parse(SnapshotText);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      ASSERT_TRUE(Parsed->getAsObject());
+      EXPECT_EQ(*Parsed->getAsObject()->get(text::RuntimeStateField),
+                *Report->get(text::RuntimeStateField));
+    }
+  }
+#endif
 }
 
 TEST_F(UnpackPublic, CAPIAndCLIPreserveDLLExportsAndTLS) {

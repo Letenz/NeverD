@@ -31,12 +31,15 @@
 #include "neverd/loader/LanguageRuntime.h"
 #include "neverd/loader/ObjC/ObjCEH.h"
 #include "neverd/loader/Rust/RustEH.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/ELF.h"
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/ObjectFile.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
@@ -138,6 +141,24 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
     }
   }
 
+  // The undefined and common symbols of a relocatable object take addresses
+  // past every section, beside the GOT entries its GOT references reach.
+  elf_loader::detail::ObjectExterns Externs;
+  if (IsRelocatable) {
+    va_t ImageEnd = 0;
+    for (uint32_t I = 0; I < SectionsOr->size(); ++I) {
+      const Elf_Shdr &SH = (*SectionsOr)[I];
+      if ((SH.sh_flags & SHF_ALLOC) && SH.sh_size != 0)
+        ImageEnd = std::max<va_t>(ImageEnd,
+                                  SecBase[I] + static_cast<va_t>(SH.sh_size));
+    }
+    auto PlanOr = elf_loader::detail::planObjectExterns<ELFT>(
+        ELF, *SectionsOr, Data, Size, Img.Arch, ImageEnd);
+    if (!PlanOr)
+      return PlanOr.takeError();
+    Externs = std::move(*PlanOr);
+  }
+
   if (llvm::Error E = elf_loader::detail::buildSegments<ELFT>(
           ELF, *SectionsOr, ShStrTab, Data, Size, SecBase, IsRelocatable, Img))
     return E;
@@ -145,8 +166,25 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
   if (llvm::Error E = elf_loader::detail::buildSections<ELFT>(
           *SectionsOr, ShStrTab, Data, Size, SecBase, IsRelocatable, Img))
     return E;
+  if (IsRelocatable)
+    elf_loader::detail::addObjectExterns<ELFT>(ELF, *SectionsOr, SecBase,
+                                               Externs, Img);
 
-  elf_loader::detail::collectRelocations<ELFT>(ELF, *SectionsOr, ShStrTab, Data,
+  // An image whose section header table was stripped still has the tables
+  // its dynamic linker and unwinder read through the program headers; the
+  // parsers below read those.  The image publishes none of them as a
+  // section, since a segment holding sections takes its code from them.
+  elf_loader::detail::DynamicSections<ELFT> Reconstructed;
+  llvm::ArrayRef<Elf_Shdr> Tables = *SectionsOr;
+  llvm::StringRef TableNames = ShStrTab;
+  if (!IsRelocatable && SectionsOr->empty()) {
+    Reconstructed =
+        elf_loader::detail::reconstructDynamicSections<ELFT>(ELF, Img);
+    Tables = Reconstructed.Headers;
+    TableNames = Reconstructed.Names;
+  }
+
+  elf_loader::detail::collectRelocations<ELFT>(ELF, Tables, TableNames, Data,
                                                Size, IsRelocatable, Img);
 
   // --- Apply relocations for relocatable objects (.o files) ---
@@ -154,26 +192,27 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
   // sees correct displacements for constant pool loads.
   if (IsRelocatable) {
     if (llvm::Error E = elf_loader::detail::applyRelocations<ELFT>(
-            ELF, *SectionsOr, Data, Size, SecBase, IsRelocatable, Img))
+            ELF, *SectionsOr, Data, Size, SecBase, IsRelocatable, Externs, Img))
       return E;
   } else
-    elf_loader::detail::applyDynamicRelativeRelocations<ELFT>(ELF, *SectionsOr,
-                                                              Data, Size, Img);
+    elf_loader::detail::applyDynamicRelativeRelocations<ELFT>(ELF, Tables, Data,
+                                                              Size, Img);
 
   if (llvm::Error E = elf_loader::detail::collectSymbols<ELFT>(
-          ELF, *SectionsOr, Size, SecBase, IsRelocatable, Img))
+          ELF, Tables, *SectionsOr, Size, SecBase, IsRelocatable,
+          Externs.CommonSlots, Img))
     return E;
 
   // --- .dynamic ---
-  for (const Elf_Shdr &SH : *SectionsOr) {
+  for (const Elf_Shdr &SH : Tables) {
     if (SH.sh_type == SHT_DYNAMIC) {
-      elf_loader::parseDynamic(ELF, SH, Data, Size, Img);
+      elf_loader::parseDynamic(ELF, Tables, SH, Data, Size, Img);
       break;
     }
   }
 
   // --- .rela.plt / .rel.plt imports ---
-  elf_loader::parsePLTImports(ELF, *SectionsOr, Data, Size, Img);
+  elf_loader::parsePLTImports(ELF, Tables, TableNames, Data, Size, Img);
 
   // --- Loader-invoked lifecycle arrays and legacy constructor sections ---
   elf_loader::parseRuntimeSections(Img);
@@ -199,8 +238,8 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
   elf_loader::parseNotes(ELF, Data, Size, Img);
 
   // --- .eh_frame_hdr ---
-  for (const Elf_Shdr &SH : *SectionsOr) {
-    if (elf_loader::detail::getSectionName<ELFT>(ShStrTab, SH) !=
+  for (const Elf_Shdr &SH : Tables) {
+    if (elf_loader::detail::getSectionName<ELFT>(TableNames, SH) !=
         section_names::elf::EhFrameHdr)
       continue;
     elf_loader::addFunctionsFromEhFrameHdr(Data, Size, SH, Img);
@@ -211,6 +250,32 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
     Img.recordRuntimeFunction(Img.Entry);
 
   return llvm::Error::success();
+}
+
+/// How the load dialog names an e_machine value.
+std::string elfMachineName(uint16_t Machine) {
+  switch (Machine) {
+#define NEVERD_ELF_MACHINE(Value, Name)                                        \
+  case Value:                                                                  \
+    return Name;
+#include "neverd/loader/ELF/ELFNames.def"
+  }
+  if (const llvm::StringRef Name =
+          llvm::ELF::convertEMachineToArchName(Machine);
+      !Name.empty() && Name != "None")
+    return Name.str();
+  return llvm::formatv("machine {0}", Machine).str();
+}
+
+/// How the load dialog names an e_type value.
+std::string elfTypeName(uint16_t Type) {
+  switch (Type) {
+#define NEVERD_ELF_TYPE(Value, Name)                                           \
+  case Value:                                                                  \
+    return Name;
+#include "neverd/loader/ELF/ELFNames.def"
+  }
+  return llvm::formatv("type {0}", Type).str();
 }
 
 } // anonymous namespace
@@ -284,7 +349,7 @@ llvm::Expected<BinaryImage> ELFLoader::load(const std::filesystem::path &Path) {
   // Frame extents are function boundaries the discovery heuristics must not
   // guess inside, as PE .pdata ranges already are when they run.
   dwarf_eh::recordFrameExtents(Img);
-  runPostLoadDiscovery(Img, "elf: loaded " + Path.filename().string());
+  runPostLoadDiscovery(Img, "elf: loaded " + pathToUTF8(Path.filename()));
   // Classified before any table is read: a decoder that finds an Itanium LSDA
   // cannot tell from the table alone whether its cleanup pads are C++
   // destructors or Rust drop glue, and the evidence that settles it is the
@@ -309,6 +374,60 @@ llvm::Expected<BinaryImage> ELFLoader::load(const std::filesystem::path &Path) {
   rust_eh::parseRustExceptions(Img);
   objc_eh::parseObjCExceptions(Img);
   return Img;
+}
+
+void ELFLoader::identify(llvm::MemoryBufferRef Buffer,
+                         std::vector<LoadCandidate> &Rows) {
+  using namespace llvm::ELF;
+  const auto Bytes = llvm::arrayRefFromStringRef(Buffer.getBuffer());
+  if (Bytes.size() < EI_NIDENT + 4 ||
+      !std::equal(Bytes.begin(), Bytes.begin() + 4,
+                  reinterpret_cast<const uint8_t *>(ElfMagic)))
+    return;
+  LoadCandidate Row;
+  Row.Row = LoadRow::ELF;
+  Row.Format = BinaryFormat::ELF;
+  const bool Is64 = Bytes[EI_CLASS] == ELFCLASS64;
+  Row.Bits = Is64 ? 64 : 32;
+  Row.BigEndian = Bytes[EI_DATA] == ELFDATA2MSB;
+  // e_type and e_machine follow e_ident in either class.
+  const auto read16 = [&](size_t Offset) {
+    return Row.BigEndian
+               ? llvm::support::endian::read16be(Bytes.data() + Offset)
+               : llvm::support::endian::read16le(Bytes.data() + Offset);
+  };
+  const uint16_t Type = read16(EI_NIDENT), Machine = read16(EI_NIDENT + 2);
+  const std::string MachineName = elfMachineName(Machine);
+  Row.Description =
+      llvm::formatv(getLoadRowText(LoadRow::ELF).data(), Is64 ? "64" : "",
+                    MachineName, elfTypeName(Type))
+          .str();
+  // The checks load() makes, in its order.
+  bool SupportedSBF = false;
+  if (Bytes[EI_DATA] != ELFDATA2LSB) {
+    Row.Reason = getLoadReasonText(LoadReason::BigEndian).str();
+  } else if (isSBFELF(Bytes, SupportedSBF)) {
+    Row.TheArch = Arch::SBF;
+    Row.Loadable = SupportedSBF;
+    if (!SupportedSBF)
+      Row.Reason = getLoadReasonText(LoadReason::SBFVersion).str();
+  } else if (Bytes[EI_CLASS] != ELFCLASS32 && !Is64) {
+    Row.Reason = getLoadReasonText(LoadReason::Class).str();
+  } else if (auto Obj = llvm::object::ObjectFile::createObjectFile(Buffer);
+             !Obj) {
+    Row.Reason = llvm::formatv(getLoadReasonText(LoadReason::Malformed).data(),
+                               llvm::toString(Obj.takeError()))
+                     .str();
+  } else {
+    Row.TheArch = tripleToArch((*Obj)->getArch());
+    Row.Loadable = Row.TheArch != Arch::Unknown;
+    if (!Row.Loadable)
+      Row.Reason =
+          llvm::formatv(getLoadReasonText(LoadReason::Processor).data(),
+                        MachineName)
+              .str();
+  }
+  Rows.push_back(std::move(Row));
 }
 
 } // namespace neverd

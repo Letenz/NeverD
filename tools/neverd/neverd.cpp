@@ -17,6 +17,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
+#include "neverd/support/FilePath.h"
 #include "neverd/support/StackSizeMain.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -24,13 +25,16 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/InitLLVM.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
 #include <filesystem>
 #include <set>
+#include <utility>
 
 using namespace llvm;
 using namespace neverd;
@@ -81,6 +85,10 @@ static int realMain(int Argc, char *Argv[]) {
   // reads textual LLVM IR.
   if (PluginsCmd)
     return runPlugins(Argv[0]);
+  // identify reads the input's headers only; a file NeverD cannot load still
+  // gets its rows.
+  if (IdentifyCmd)
+    return runIdentify();
   if (DiffCmd)
     return runDiff();
   if (SimplifyCmd)
@@ -116,7 +124,7 @@ static int realMain(int Argc, char *Argv[]) {
   if (Command.empty())
     return 1;
 
-  auto Path = std::filesystem::path(InputFile.getValue());
+  auto Path = std::filesystem::u8path(InputFile.getValue());
   if (!std::filesystem::exists(Path)) {
     WithColor::error() << "file not found: " << InputFile.getValue() << "\n";
     return 1;
@@ -180,7 +188,7 @@ static int realMain(int Argc, char *Argv[]) {
   }
 
   if (!JsonOutput) {
-    errs() << "Loading " << Path.filename().string() << "...\n";
+    errs() << "Loading " << pathToUTF8(Path.filename()) << "...\n";
     neverd_session_set_load_progress(
         Sess,
         [](void *, const char *Phase, unsigned long long Done,
@@ -208,6 +216,26 @@ static int realMain(int Argc, char *Argv[]) {
         },
         nullptr);
   }
+  // A binary file reads as --loader and its placement say.
+  if (!LoadLoader.empty()) {
+    json::Object Options{{"loader", LoadLoader.getValue()}};
+    if (!LoadProcessor.empty())
+      Options["processor"] = LoadProcessor.getValue();
+    if (!LoadPlatform.empty())
+      Options["platform"] = LoadPlatform.getValue();
+    for (const auto &[Key, Flag] :
+         {std::pair{"base", &LoadBase}, std::pair{"offset", &LoadOffset},
+          std::pair{"size", &LoadSize}, std::pair{"entry", &LoadEntry}})
+      if (!Flag->empty())
+        Options[Key] = Flag->getValue();
+    const std::string Text =
+        formatv("{0}", json::Value(std::move(Options))).str();
+    if (neverd_session_set_load_options(Sess, Text.c_str()) != 0) {
+      WithColor::error() << "invalid load options: " << takeLastError(Sess)
+                         << "\n";
+      return 1;
+    }
+  }
   bool Loaded = neverd_session_load(Sess, InputFile.getValue().c_str());
   if (!Loaded && NameHint) {
     // A name hint must never change the success or diagnostic of the normal
@@ -222,6 +250,10 @@ static int realMain(int Argc, char *Argv[]) {
     WithColor::error() << "failed to load: " << takeLastError(Sess) << "\n";
     return 1;
   }
+  // The input is read this way from now on, as the GUI keeps it.
+  if (!LoadLoader.empty() && neverd_load_options_save(Sess) != 0)
+    WithColor::warning() << "load options were not kept: "
+                         << takeLastError(Sess) << "\n";
   if (NameHint) {
     const int Found = neverd_func_find_by_name(Sess, ExportFunc.c_str());
     if (Found < 0 || neverd_func_entry(Sess, Found) != NameHint) {
@@ -255,7 +287,7 @@ static int realMain(int Argc, char *Argv[]) {
     const char *ArchStr = neverd_session_arch_name(Sess);
     outs() << "=== " << ProjectName << " v" << VersionString << " (" << Command
            << ") ===\n";
-    outs() << "File:  " << Path.filename().string() << "\n";
+    outs() << "File:  " << pathToUTF8(Path.filename()) << "\n";
     outs() << "Arch:  " << ArchStr << "\n";
     neverd_free_string(ArchStr);
 
@@ -266,7 +298,8 @@ static int realMain(int Argc, char *Argv[]) {
     const char *DbgPath = neverd_session_debug_info_path(Sess);
     if (DbgPath[0] != '\0')
       outs() << "Debug: " << DbgKind << " ("
-             << std::filesystem::path(DbgPath).filename().string() << ")\n";
+             << pathToUTF8(std::filesystem::u8path(DbgPath).filename())
+             << ")\n";
     neverd_free_string(DbgKind);
     neverd_free_string(DbgPath);
   }
@@ -323,6 +356,10 @@ static int realMain(int Argc, char *Argv[]) {
     return runRename(Sess);
   if (FunctionEditsCmd)
     return runFunctionEdits(Sess);
+  if (ItemsCmd)
+    return runItems(Sess);
+  if (OperandsCmd)
+    return runOperands(Sess);
   if (SearchCmd)
     return runSearch(Sess);
   if (SigsCmd)

@@ -187,6 +187,11 @@ void reportUnprotectedGuardedCode(const HighFunc &Func, const char *Stage);
 /// opens with L becomes `if (!c && b)`.  L must start exactly one statement,
 /// and nothing but the first test may jump to the second if.
 bool mergeJumpsIntoNextIfArms(HighFunc &Func);
+/// Declares a register or temporary local only as wide as its reads take,
+/// when every read takes at most its low N bytes and every definition is an
+/// extension from at most N bytes, a call or a constant.  The upper bytes no
+/// read sees leave the program, and with them a narrowing at every read.
+bool narrowLocals(HighFunc &Func);
 /// Declares each register or temporary local signed or unsigned by what most
 /// of its uses read, so that wrapping arithmetic, logical shifts and
 /// unsigned comparisons print without casts.  Value bits do not change.
@@ -290,9 +295,23 @@ private:
   ExprPtr medOpToExpr(const MedOp &Op);
   ExprPtr medOpToExprImpl(const MedOp &Op);
   ExprPtr medvarToExpr(const MedVar &V);
+  /// i386 ELF PIC (I386PicAddresses.cpp): the values the CFG proved to be the
+  /// GOT base of an unlinked object, at address zero, and the sums of the
+  /// base and terms that are no constants.
+  void collectI386GotBase(const MedFunc &Med);
+  /// The input of \p Op that is the GOT-relative displacement it adds to
+  /// the base, if any.
+  std::optional<unsigned> i386GotDisplacement(const MedOp &Op) const;
+  /// \p Op, which adds its input \p Displacement to the GOT base: the
+  /// address of the data that displacement names.
+  ExprPtr i386GotRelativeAddress(const MedOp &Op, unsigned Displacement);
+  VarKeySet I386GotBase;
+  VarKeySet I386GotRooted;
   /// Recover a target-width memory address from the wider LowIR VA carrier
   /// only when an explicit zero extension proves that no high bits are lost.
   ExprPtr memoryAddressExpr(const MedVar &V, bool InlineDefinition = true);
+  void indexMedDefinitions();
+  const MedOp *uniqueMedDefinition(const MedVar &V);
   ExprPtr sourceBitSlice(const ExprPtr &Value, uint64_t ByteOffset,
                          uint16_t Bytes, unsigned Depth = 0);
   ExprPtr sourceFloatValue(const MedVar &Value, uint16_t Bytes);
@@ -322,8 +341,18 @@ private:
   /// Prefer a non-synthetic FuncNames entry, then an import or image symbol.
   std::string calleeDisplayName(va_t Target) const;
 
-  std::vector<ExprPtr> collectCallArgs(const MedBlock &CurBlock,
-                                       size_t CallIdx);
+  /// How many integer parameters the C library import that call \p CallIdx
+  /// of \p Ops reaches always reads: a variadic one's fixed parameters,
+  /// else all of them; 0 when unknown or when one is floating-point.  The
+  /// call names the import by its stub or slot, or through a register
+  /// loaded from \p ResolvedSlot.
+  unsigned importFixedArgCount(size_t CallIdx, const std::vector<MedOp> &Ops,
+                               va_t ResolvedSlot) const;
+
+  /// \p ResolvedSlot is the import slot an indirect call was resolved to
+  /// through the register it calls, else 0.
+  std::vector<ExprPtr> collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
+                                       va_t ResolvedSlot = 0);
 
   /// Resolve the SSA variable of register \p RegOff reaching the ENTRY of
   /// \p B (its live-in value: a PHI in B, else the single reaching definition
@@ -419,6 +448,11 @@ private:
   /// Unique SSA definition of each (kind, id, version) in EntryOffsetDefsFor;
   /// nullptr marks a value with more than one definition.
   std::map<std::tuple<int, int, int>, const MedOp *> EntryOffsetDefs;
+  /// The PHIs among those definitions, likewise.
+  std::map<std::tuple<int, int, int>, const PhiNode *> EntryOffsetPhis;
+  /// The entry stack offset each PHI of EntryOffsetDefsFor resolved to, or
+  /// nullopt where its incoming values disagree.
+  std::map<const PhiNode *, std::optional<int64_t>> EntryOffsetPhiCache;
   const MedFunc *EntryOffsetDefsFor = nullptr;
   const BinaryImage *Image = nullptr;
   std::function<void(const MedOp &, const ExprPtr &)> ExpressionObserver;

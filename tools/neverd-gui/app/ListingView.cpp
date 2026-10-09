@@ -3,6 +3,7 @@
 #include "AddressSpace.h"
 #include "Session.h"
 #include "Theme.h"
+#include "WorkerCodes.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -30,6 +31,8 @@ constexpr int WheelLines = 3;
 constexpr int MaxArrowLevels = 10;
 constexpr int HintLines = 12;
 constexpr int TextMargin = 6;
+// A line's body runs to about this many characters after its prefix.
+constexpr int BodyChars = 120;
 constexpr const char *ContentKinds[] = {"insn", "data"};
 
 bool contentKind(const QString &kind) {
@@ -308,8 +311,11 @@ void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
   trim();
   updateScrollBar();
   viewport()->update();
-  emitLocation();
+  // The next page goes out before the work of views that follow the
+  // location: decompiling a long function must not hold the listing at the
+  // end of its first page.
   ensureLoaded();
+  emitLocation();
   if (settledJump)
     emit jumpSettled();
 }
@@ -397,14 +403,20 @@ int ListingView::columnAt(const Line &line, int x) const {
 
 void ListingView::resizeEvent(QResizeEvent *event) {
   QAbstractScrollArea::resizeEvent(event);
-  horizontalScrollBar()->setRange(0, int(charWidth_ * 120));
-  horizontalScrollBar()->setPageStep(viewport()->width());
   ensureLoaded();
   updateScrollBar();
 }
 
 void ListingView::updateScrollBar() {
   updatingScrollBar_ = true;
+  // Lines scroll sideways only as far as their bodies outrun the view; with
+  // no file there is nothing to scroll.
+  auto *across = horizontalScrollBar();
+  const int content = space_.empty() ? 0
+                                     : textLeft() + across->value() +
+                                           int(charWidth_ * BodyChars);
+  across->setRange(0, std::max(0, content - viewport()->width()));
+  across->setPageStep(viewport()->width());
   auto *bar = verticalScrollBar();
   if (space_.empty() || lines_.empty()) {
     bar->setRange(0, 0);
@@ -500,6 +512,41 @@ std::optional<Address> ListingView::operandTarget() const {
         span && span->address)
       return span->address;
   return line->target;
+}
+
+std::optional<int> ListingView::currentOperand() const {
+  const auto *line = cursorLine();
+  if (!line)
+    return std::nullopt;
+  // The operands follow the mnemonic; a comma outside brackets starts the
+  // next one.
+  bool operands = false;
+  int depth = 0, index = 0;
+  std::optional<int> under;
+  for (const auto &span : line->styled.spans) {
+    const auto role = static_cast<ListingRole>(span.role);
+    if (role == ListingRole::Mnemonic || role == ListingRole::FlowMnemonic) {
+      operands = true;
+      continue;
+    }
+    if (!operands)
+      continue;
+    if (role == ListingRole::Comment || role == ListingRole::AutoComment ||
+        role == ListingRole::Xref)
+      break;
+    if (cursorColumn_ >= span.start && cursorColumn_ < span.start + span.length)
+      under = index;
+    if (role == ListingRole::Punctuation)
+      for (const QChar c : line->styled.text.mid(span.start, span.length)) {
+        if (c == QLatin1Char('['))
+          ++depth;
+        else if (c == QLatin1Char(']'))
+          --depth;
+        else if (c == QLatin1Char(',') && depth == 0)
+          ++index;
+      }
+  }
+  return under;
 }
 
 QString ListingView::selectedText() const {

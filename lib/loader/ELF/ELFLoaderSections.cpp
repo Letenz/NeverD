@@ -35,6 +35,23 @@ namespace neverd {
 namespace elf_loader {
 namespace detail {
 
+namespace {
+
+/// The ELF ABIs for the Arm architectures mark where the instruction set
+/// changes or data begins with the local untyped symbols `$a`, `$d`, `$t` and
+/// `$x`, each optionally followed by `.` and a suffix.  They are the
+/// toolchain's markers, not names: one sits at the start of practically every
+/// function and data section, at the address of the symbol that names it.
+bool isMappingSymbolName(llvm::StringRef Name) {
+  if (Name.size() < 2 || Name[0] != '$')
+    return false;
+  if (Name[1] != 'a' && Name[1] != 'd' && Name[1] != 't' && Name[1] != 'x')
+    return false;
+  return Name.size() == 2 || Name[2] == '.';
+}
+
+} // namespace
+
 template <typename ELFT>
 llvm::Error buildSections(llvm::ArrayRef<typename ELFT::Shdr> Sections,
                           llvm::StringRef ShStrTab, const uint8_t *Data,
@@ -84,8 +101,11 @@ llvm::Error buildSections(llvm::ArrayRef<typename ELFT::Shdr> Sections,
 template <typename ELFT>
 llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
                            llvm::ArrayRef<typename ELFT::Shdr> Sections,
+                           llvm::ArrayRef<typename ELFT::Shdr> OwnerSections,
                            size_t Size, const std::vector<va_t> &SecBase,
-                           bool IsRelocatable, BinaryImage &Img) {
+                           bool IsRelocatable,
+                           const std::map<std::string, va_t> &CommonSlots,
+                           BinaryImage &Img) {
   using namespace llvm::ELF;
   using Elf_Shdr = typename ELFT::Shdr;
   using Elf_Sym = typename ELFT::Sym;
@@ -128,7 +148,7 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
       llvm::consumeError(SymsOr.takeError());
       return llvm::Error::success();
     }
-    auto StrTabOr = ELF.getStringTableForSymtab(SH);
+    auto StrTabOr = ELF.getStringTableForSymtab(SH, Sections);
     if (!StrTabOr) {
       llvm::consumeError(StrTabOr.takeError());
       return llvm::Error::success();
@@ -162,6 +182,14 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
           continue;
         Value += SecBase[Sym.st_shndx];
       }
+      // A common symbol's value is its alignment; it lives where the loader
+      // allocated its storage, as a linker allocates it in .bss.
+      if (Sym.st_shndx == SHN_COMMON) {
+        auto It = CommonSlots.find(NameOr->str());
+        if (It == CommonSlots.end())
+          continue;
+        Value = It->second;
+      }
       // Relocatable .o symbols at section start have st_value==0; SecBase may
       // also be 0 — do not treat that as "no address".
       if (Value == 0 && Sym.st_value == 0 && !IsRelocatable)
@@ -182,8 +210,9 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
                 ? InstructionMode::Thumb
                 : InstructionMode::ARM;
         if ((IsFunction || IsARMMapping || IsThumbMapping || IsDataMapping) &&
-            Sym.st_shndx < SHN_LORESERVE && Sym.st_shndx < Sections.size()) {
-          const Elf_Shdr &Owner = Sections[Sym.st_shndx];
+            Sym.st_shndx < SHN_LORESERVE &&
+            Sym.st_shndx < OwnerSections.size()) {
+          const Elf_Shdr &Owner = OwnerSections[Sym.st_shndx];
           const va_t OwnerVA =
               sectionVA<ELFT>(IsRelocatable, SecBase, Owner, Sym.st_shndx);
           if ((Owner.sh_flags & (SHF_ALLOC | SHF_EXECINSTR)) ==
@@ -213,8 +242,28 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
               if (auto Error = RecordARMMode(Value, SymbolMode))
                 return Error;
           }
+        } else if (OwnerSections.empty() && !IsRelocatable && IsFunction &&
+                   Sym.st_shndx < SHN_LORESERVE &&
+                   Img.hasExecutableCodeOwnerAt(Value)) {
+          // In a sectionless image st_shndx still names the removed table.
+          // The defined dynamic function value retains its ARM/Thumb bit;
+          // PT_LOAD supplies code ownership, not an invented section index.
+          const unsigned Alignment =
+              SymbolMode == InstructionMode::Thumb ? 2 : 4;
+          if (Value % Alignment != 0)
+            return llvm::make_error<llvm::StringError>(
+                "elf: misaligned ARM/Thumb code-mode symbol",
+                llvm::inconvertibleErrorCode());
+          if (auto Error = RecordARMMode(Value, SymbolMode))
+            return Error;
         }
       }
+
+      // A mapping marker names nothing; ARM read its mode above.
+      if ((Img.Arch == Arch::ARM || Img.Arch == Arch::AArch64) &&
+          Bind == STB_LOCAL && Type == STT_NOTYPE &&
+          isMappingSymbolName(*NameOr))
+        continue;
 
       Symbols.add(*NameOr, Value, Sym.st_size, Type, IsFunction);
 
@@ -223,8 +272,8 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
       // section symbols, TLS, COMMON, and distances to neighbouring symbols
       // are not interchangeable with a C object extent.
       if (Type == STT_OBJECT && Sym.st_size != 0 &&
-          Sym.st_shndx < SHN_LORESERVE && Sym.st_shndx < Sections.size()) {
-        const Elf_Shdr &Owner = Sections[Sym.st_shndx];
+          Sym.st_shndx < SHN_LORESERVE && Sym.st_shndx < OwnerSections.size()) {
+        const Elf_Shdr &Owner = OwnerSections[Sym.st_shndx];
         const va_t OwnerVA =
             sectionVA<ELFT>(IsRelocatable, SecBase, Owner, Sym.st_shndx);
         if ((Owner.sh_flags & SHF_ALLOC) != 0 &&
@@ -257,8 +306,8 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
     if (auto Error = AddSymbolsFrom(SH))
       return Error;
   if (Img.Arch == Arch::ARM) {
-    for (uint32_t Index = 0; Index < Sections.size(); ++Index) {
-      const Elf_Shdr &Owner = Sections[Index];
+    for (uint32_t Index = 0; Index < OwnerSections.size(); ++Index) {
+      const Elf_Shdr &Owner = OwnerSections[Index];
       if ((Owner.sh_flags & (SHF_ALLOC | SHF_EXECINSTR)) !=
               (SHF_ALLOC | SHF_EXECINSTR) ||
           Owner.sh_size == 0)
@@ -317,12 +366,16 @@ template llvm::Error buildSections<llvm::object::ELF64LE>(
 
 template llvm::Error collectSymbols<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,
+    llvm::ArrayRef<llvm::object::ELF32LE::Shdr>,
     llvm::ArrayRef<llvm::object::ELF32LE::Shdr>, size_t,
-    const std::vector<va_t> &, bool, BinaryImage &);
+    const std::vector<va_t> &, bool, const std::map<std::string, va_t> &,
+    BinaryImage &);
 template llvm::Error collectSymbols<llvm::object::ELF64LE>(
     const llvm::object::ELFFile<llvm::object::ELF64LE> &,
+    llvm::ArrayRef<llvm::object::ELF64LE::Shdr>,
     llvm::ArrayRef<llvm::object::ELF64LE::Shdr>, size_t,
-    const std::vector<va_t> &, bool, BinaryImage &);
+    const std::vector<va_t> &, bool, const std::map<std::string, va_t> &,
+    BinaryImage &);
 
 } // namespace detail
 } // namespace elf_loader

@@ -47,20 +47,16 @@ inline constexpr std::array kCtypeFunctions = {
 
 /// Fixed arity of the ctype.h classification/conversion functions (int -> int).
 inline constexpr auto kCtypeArity = std::to_array<LibCArityEntry>({
-    {"isalpha", {1, 0}},
-    {"isdigit", {1, 0}},
-    {"isalnum", {1, 0}},
-    {"isspace", {1, 0}},
-    {"isupper", {1, 0}},
-    {"islower", {1, 0}},
-    {"isprint", {1, 0}},
-    {"ispunct", {1, 0}},
-    {"iscntrl", {1, 0}},
-    {"isxdigit", {1, 0}},
-    {"isgraph", {1, 0}},
-    {"isblank", {1, 0}},
-    {"toupper", {1, 0}},
-    {"tolower", {1, 0}},
+    {"isalpha", {1, 0}},    {"isdigit", {1, 0}},   {"isalnum", {1, 0}},
+    {"isspace", {1, 0}},    {"isupper", {1, 0}},   {"islower", {1, 0}},
+    {"isprint", {1, 0}},    {"ispunct", {1, 0}},   {"iscntrl", {1, 0}},
+    {"isxdigit", {1, 0}},   {"isgraph", {1, 0}},   {"isblank", {1, 0}},
+    {"toupper", {1, 0}},    {"tolower", {1, 0}},   {"isascii", {1, 0}},
+    {"toascii", {1, 0}},    {"isalnum_l", {2, 0}}, {"isalpha_l", {2, 0}},
+    {"isblank_l", {2, 0}},  {"iscntrl_l", {2, 0}}, {"isdigit_l", {2, 0}},
+    {"isgraph_l", {2, 0}},  {"islower_l", {2, 0}}, {"isprint_l", {2, 0}},
+    {"ispunct_l", {2, 0}},  {"isspace_l", {2, 0}}, {"isupper_l", {2, 0}},
+    {"isxdigit_l", {2, 0}}, {"tolower_l", {2, 0}}, {"toupper_l", {2, 0}},
 });
 
 } // namespace neverd::libc

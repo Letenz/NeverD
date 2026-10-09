@@ -76,6 +76,26 @@ NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 /// with neverd_last_error() for malformed options.
 NEVERD_API const char *neverd_strings_ex_json(neverd_session_t Sess,
                                               const char *OptionsJson);
+/// One page of neverd_strings_ex_json(): the strings that start at or after
+/// \p FirstAddr, at most \p MaxRows of them (clamped to 1..65536, but never
+/// splitting the strings that start at one address), as {"strings":[rows as
+/// that function lists them],"next_addr":"0x..."|null}.  The image is scanned
+/// once per options, so reading every page costs about one call of that
+/// function and no result grows with the image.  NULL with
+/// neverd_last_error() for malformed options.
+NEVERD_API const char *neverd_strings_page_json(neverd_session_t Sess,
+                                                const char *OptionsJson,
+                                                neverd_va_t FirstAddr,
+                                                int MaxRows);
+
+/// The string that starts at \p Addr, as neverd_strings_ex_json() reads one
+/// with \p OptionsJson (NULL for the default encodings), except that a single
+/// character is enough when the options name no "min_length".  Returns
+/// {"addr","length","chars","encoding","value"} as that function's rows, and
+/// "unit", the bytes of the encoding's code unit (and so of the terminator),
+/// or NULL with neverd_last_error() when no string starts there.
+NEVERD_API const char *neverd_string_at(neverd_session_t Sess, neverd_va_t Addr,
+                                        const char *OptionsJson);
 /// The encodings neverd_strings_ex_json() can search:
 /// [{"name","spelling","unit","default","legacy"},...], where "spelling" is
 /// how a listing names the encoding (empty for plain ASCII), "unit" the bytes
@@ -107,10 +127,12 @@ NEVERD_API const char *neverd_string_refs_json(neverd_session_t Sess,
 /// folding, so that a filter matches text regardless of case in any script.
 /// Bytes that are not UTF-8 stay as they are.  NULL for NULL.
 NEVERD_API const char *neverd_fold_case(const char *Text);
-/// \p Name as a listing reads it: an Itanium, Microsoft, Rust or D mangled
-/// name demangled the way function identities' "display_name" is, also with
-/// one leading underscore more (a Mach-O symbol or an ELF PLT entry's name),
-/// and any other name as it is.  NULL for NULL.
+/// \p Name as a listing reads it: an Itanium or Microsoft C++, Rust, Swift or
+/// D mangled name as its language spells it, the way function identities'
+/// "display_name" is (C++ template arguments equal to their defaults dropped,
+/// a legacy Rust hash dropped), also with one leading underscore more (a
+/// Mach-O symbol or an ELF PLT entry's name), and any other name as it is.
+/// NULL for NULL.
 NEVERD_API const char *neverd_demangle(const char *Name);
 /// \p Size bytes decoded in \p Encoding (a name or alias of
 /// neverd_string_encodings_json()) for display, one cell per byte:
@@ -136,6 +158,12 @@ NEVERD_API const char *neverd_symbols_json(neverd_session_t Sess);
 /// The symbols of neverd_symbols_json that are not functions.
 NEVERD_API const char *neverd_data_symbols_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_relocs_json(neverd_session_t Sess);
+/// The image's headers.  "language" is the runtime that built the image as
+/// {"runtime","version"?,"secondary":[],"evidence":[],"pseudocode":[]}: "c",
+/// "c++-itanium", "c++-msvc", "rust", "go", "objective-c", "swift", "delphi",
+/// "ada", "d" or "unknown", with the Go release when the image names one;
+/// "pseudocode" lists the languages its pseudocode reads in, "c" and "rust"
+/// or "go" for an image with that language's code.
 NEVERD_API const char *neverd_headers_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_entrypoints_json(neverd_session_t Sess);
 /// An overview of the loaded image: "file" (path, name, format, arch, bits,

@@ -17,18 +17,23 @@
 
 #include "../FloatConversion.h"
 #include "../UnalignedMemory.h"
+#include "../VariadicImportStub.h"
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
+#include "../render/X86FPStateHelpers.h"
 #include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
+#include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/PEImportShadow.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -80,6 +85,9 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
   FunctionIdentifiers.clear();
   FunctionSymbolNames.clear();
+  ExternalDataIdentifiers.clear();
+  const std::set<std::string> ImportCNames =
+      Img ? peImportCNames(*Img) : std::set<std::string>{};
   for (llvm::Function &Fn : Mod) {
     llvm::StringRef Name = Fn.getName();
     std::string IntrinsicHelper;
@@ -128,35 +136,64 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
               Img->getFunctionNameAt(static_cast<va_t>(Addr));
           if (!FromImage.empty() && !isSynthesizedFuncName(FromImage))
             DebugName = std::move(FromImage);
+          if (!DebugName.empty())
+            if (auto Shadow =
+                    peImportShadowName(ImportCNames, *Img, Addr, DebugName))
+              DebugName = std::move(*Shadow);
           if (DebugName.empty())
             if (const Import *Imp = Img->findImportStubAt(Addr);
                 Imp && !Imp->Name.empty())
-              DebugName = Imp->Name;
+              DebugName =
+                  symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch);
         }
       }
     }
     // An image symbol carries the format's decoration; an LLVM name may have
     // lost it already.  A definition steps aside from the C runtime's names.
     llvm::StringRef CName =
-        DebugName.empty()
-            ? llvm_name::cNameOfLLVMName(Name, Opts.Format, Opts.TheArch)
-            : cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch);
+        DebugName.empty() ? cNameOfGlobal(Name, Fn.isDeclaration())
+                          : cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch);
     FunctionSymbolNames.emplace(&Fn, CName.str());
     if (!Fn.isDeclaration())
       CName = cDefinitionName(CName, Opts.Format);
     FunctionIdentifiers.emplace(
         &Fn, GlobalIdentifierAllocator.allocate(CName, "nd_function"));
   }
+  std::set<const llvm::GlobalVariable *> CallableGlobals;
+  for (const auto &Function : Mod)
+    for (const auto &Block : Function)
+      for (const auto &Instruction : Block)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction))
+          if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(
+                  Call->getCalledOperand()->stripPointerCasts()))
+            CallableGlobals.insert(Global);
+  for (const auto &Global : Mod.globals())
+    if (Global.isDeclaration() && !Global.getName().empty() &&
+        Global.getMetadata("neverd.data-symbol") &&
+        !CallableGlobals.count(&Global) &&
+        !parseNdDataSymbol(Global.getName()) &&
+        !parseNdCodePtrSymbol(Global.getName()) &&
+        !Global.getName().starts_with("__imp_") &&
+        !Global.getName().starts_with("_imp_"))
+      ExternalDataIdentifiers.emplace(
+          &Global, GlobalIdentifierAllocator.allocate(
+                       "neverd_data_" + Global.getName().str(), "neverd_data"));
 }
 
 std::string LLVMCWriter::functionIdentifier(const llvm::Function &Fn) const {
   if (auto It = FunctionIdentifiers.find(&Fn); It != FunctionIdentifiers.end())
     return It->second;
-  llvm::StringRef CName =
-      llvm_name::cNameOfLLVMName(Fn.getName(), Opts.Format, Opts.TheArch);
+  llvm::StringRef CName = cNameOfGlobal(Fn.getName(), Fn.isDeclaration());
   if (!Fn.isDeclaration())
     CName = cDefinitionName(CName, Opts.Format);
   return canonicalizeCProjectionIdentifier(CName, "nd_function");
+}
+
+llvm::StringRef LLVMCWriter::cNameOfGlobal(llvm::StringRef Name,
+                                           bool Declaration) const {
+  if (Declaration && ImportEntryCNames.contains(Name))
+    return Name;
+  return llvm_name::cNameOfLLVMName(Name, Opts.Format, Opts.TheArch);
 }
 
 void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
@@ -167,6 +204,17 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   writeIncludes(Mod);
   OS << "\n";
   writeStructDefs(Mod);
+  for (const auto &Global : Mod.globals()) {
+    const auto It = ExternalDataIdentifiers.find(&Global);
+    if (It == ExternalDataIdentifiers.end())
+      continue;
+    const auto &Identifier = It->second;
+    OS << "extern unsigned char " << Identifier << "[] __asm__(\""
+       << escapeCString(cNameOfGlobal(Global.getName(), true)) << "\")";
+    if (Global.hasExternalWeakLinkage())
+      OS << " __attribute__((weak))";
+    OS << ";\n";
+  }
   if (!OnlyFunction) {
     writeGlobals(Mod);
     writeForwardDecls(Mod);
@@ -202,6 +250,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   std::map<std::string, std::pair<unsigned, bool>> FunnelShifts;
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
   std::map<std::string, ScalarUnary> ScalarUnaries;
+  FPStateHelperNames.clear();
 
   for (auto &Fn : Mod) {
     if (OnlyFunction && &Fn != OnlyFunction)
@@ -236,8 +285,28 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
-          if (llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand()))
+          if (auto Shape = classifyX86FPStateAsm(*CI);
+              Shape && (isX86ScalarFPStateIntrinsic(Shape->first) ||
+                        isX86FPConversionStateIntrinsic(Shape->first))) {
+            if (Opts.TheArch == Arch::X86 &&
+                isX86FPConversionStateIntrinsic(Shape->first) &&
+                x86FPStateDestinationBytes(Shape->first, Shape->second) == 8)
+              llvm::report_fatal_error(
+                  "x86-32 FP conversion requires a 32-bit integer result");
+            auto [It, Inserted] = FPStateHelperNames.try_emplace(*Shape);
+            if (Inserted)
+              It->second = GlobalIdentifierAllocator.allocate(
+                  x86FPScalarValueCHelper(Shape->first, Shape->second),
+                  "nd_fp_value");
+          }
+          if (const auto *Asm =
+                  llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand())) {
+            if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+                (Asm->getAsmString() == "ldmxcsr ($0)" ||
+                 Asm->getAsmString() == "stmxcsr ($0)"))
+              HasCIntrinsics = true;
             continue;
+          }
           auto *Callee = CI->getCalledFunction();
           if (!Callee)
             continue;
@@ -285,6 +354,24 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     }
   }
 
+  // A stub of a variadic import passes its arguments on through stdarg.h.
+  if (Img)
+    for (llvm::Function &Fn : Mod) {
+      if (Fn.isDeclaration())
+        continue;
+      auto VA = rewrite_source::getOriginalVA(Fn);
+      if (!VA) {
+        llvm::consumeError(VA.takeError());
+        continue;
+      }
+      if (!*VA)
+        continue;
+      if (const std::string Import = c_stub::variadicImportOfStub(*Img, **VA);
+          !Import.empty())
+        if (const auto *Forward = libc::libcVariadicForward(Import))
+          c_stub::addVariadicStubHeaders(Headers, *Forward);
+    }
+
   if (HasCIntrinsics)
     for (const char *Hdr : getArchIntrinsicHeaders(Opts.TheArch))
       Headers.insert(Hdr);
@@ -320,6 +407,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                               Shape.Kind == llvm::Intrinsic::fptosi_sat,
                               FPToIntegerPolicy::Saturate});
   }
+  writeX86FPScalarValueCHelpers(OS, FPStateHelperNames);
   for (const auto &[Name, Shape] : IntegerMinMax) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
     const std::string Type = CarrierBits == 128
@@ -440,6 +528,34 @@ void LLVMCWriter::writeStructDefs(llvm::Module &Mod) {
   }
 }
 
+void LLVMCWriter::writeImageByteArray(const llvm::GlobalVariable &Global,
+                                      llvm::StringRef Name) {
+  const auto *Array = llvm::cast<llvm::ArrayType>(Global.getValueType());
+  if (Global.hasLocalLinkage())
+    OS << "static ";
+  if (Global.isConstant())
+    OS << "const ";
+  OS << "uint8_t " << Name << "[" << Array->getNumElements() << "] = {";
+  bool Any = false;
+  if (!Global.getInitializer()->isNullValue())
+    for (uint64_t I = 0; I < Array->getNumElements(); ++I) {
+      const auto *Element = llvm::dyn_cast_or_null<llvm::ConstantInt>(
+          Global.getInitializer()->getAggregateElement(
+              static_cast<unsigned>(I)));
+      if (!Element)
+        throw std::invalid_argument(
+            "non-byte initializer in image byte storage");
+      if (!Element->isZero()) {
+        OS << (Any ? ", " : "") << "[" << I
+           << "] = " << Element->getZExtValue();
+        Any = true;
+      }
+    }
+  if (!Any)
+    OS << "0";
+  OS << "};\n";
+}
+
 void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
   // Permission to read a scalar from the image is not permission to remove a
   // volatile/atomic access. Its named object must survive declaration pruning.
@@ -462,6 +578,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
     if (RawName.empty())
       continue;
 
+    if (ExternalDataIdentifiers.count(&GV))
+      continue;
     // IAT/import slots are callable names at call sites, not C objects.
     // Printing `__imp_??1?$CStringT@...` as `extern uint64_t` is not C.
     if (!GV.hasInitializer()) {
@@ -545,13 +663,9 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
     if (const auto *Array = llvm::dyn_cast<llvm::ArrayType>(GV.getValueType());
         parseNdDataSymbol(RawName) && Array &&
         Array->getElementType()->isIntegerTy(8) &&
-        llvm::isa<llvm::ConstantAggregateZero>(Init)) {
-      if (GV.hasLocalLinkage())
-        OS << "static ";
-      if (GV.isConstant())
-        OS << "const ";
-      OS << "uint8_t " << Name << "[" << Array->getNumElements()
-         << "] = {0};\n";
+        (llvm::isa<llvm::ConstantAggregateZero>(Init) ||
+         llvm::isa<llvm::ConstantDataArray>(Init))) {
+      writeImageByteArray(GV, Name);
       continue;
     }
 
@@ -636,15 +750,8 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn) {
   for (const auto &[Name, Ty] : Objs) {
     OS << "extern " << typeToCLLVM(Ty) << " " << Name << ";\n";
   }
-  for (const auto &[Base, GV] : ByteArrays) {
-    const auto *Array = llvm::cast<llvm::ArrayType>(GV->getValueType());
-    if (GV->hasLocalLinkage())
-      OS << "static ";
-    if (GV->isConstant())
-      OS << "const ";
-    OS << "uint8_t " << namedImageObject(Base) << "[" << Array->getNumElements()
-       << "] = {0};\n";
-  }
+  for (const auto &[Base, GV] : ByteArrays)
+    writeImageByteArray(*GV, namedImageObject(Base));
   if (!Objs.empty() || !ByteArrays.empty())
     OS << "\n";
 }
@@ -806,19 +913,20 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
         OS << ", ...";
     }
     OS << ")";
-    // A C++ import reads by its stem but links by its mangled symbol, which
-    // a comment spells demangled.
+    // An import whose identifier is not its symbol links by the symbol, which
+    // a comment spells as its language does.
     std::string Comment;
     if (Fn.isDeclaration()) {
-      const llvm::StringRef CName =
-          llvm_name::cNameOfLLVMName(RawName, Opts.Format, Opts.TheArch);
-      if (CName != Name && !itaniumStem(CName).empty()) {
+      const llvm::StringRef CName = cNameOfGlobal(RawName, true);
+      if (linksByLabel(CName, Name)) {
         std::string Label;
         llvm::raw_string_ostream(Label).write_escaped(
             symbolOfCName(CName, Opts.Format, Opts.TheArch));
         OS << " __asm__(\"" << Label << "\")";
-        if (Opts.EmitComments)
-          Comment = " /* " + demangledComment(CName) + " */";
+        // A name that reads as the label spells it needs no comment.
+        if (const std::string Readable = demangledComment(CName);
+            Opts.EmitComments && !Readable.empty() && Readable != CName)
+          Comment = " /* " + Readable + " */";
       }
     }
     OS << ";" << Comment << "\n";

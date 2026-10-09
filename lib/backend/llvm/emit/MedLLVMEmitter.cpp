@@ -27,6 +27,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
+#include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
@@ -89,8 +90,10 @@ void MedLLVMEmitter::ensureImportStorageSnapshot() const {
   ImportStorageSnapshotImage = Img;
   EffectiveImportStorageSlots.clear();
   ConflictingImportStorageSlots.clear();
+  DataSymbolBindings.clear();
   if (!Img)
     return;
+  DataSymbolBindings = collectDataSymbolBindings(*Img);
   ImportStorageSlotCollection ImportStorage = Img->collectImportStorageSlots();
   EffectiveImportStorageSlots = std::move(ImportStorage.Slots);
   ConflictingImportStorageSlots = std::move(ImportStorage.Conflicts);
@@ -931,6 +934,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   // emit or a smaller domain than the later body phase. Exact emitted names
   // are rebuilt below once native-personality conflicts have been resolved.
   EmittedFuncNames.clear();
+  PEImportCNames.clear();
   FuncNames.clear();
   for (const MedFunc &Func : Funcs)
     FuncNames.try_emplace(Func.Entry, Func.Name);
@@ -1050,6 +1054,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
 
   EmittedFuncNames.clear();
   FuncNames.clear();
+  PEImportCNames = Img ? peImportCNames(*Img) : std::set<std::string>{};
   for (const MedFunc &F : Funcs) {
     std::string EmittedName = F.Name;
     auto Personality = NativePersonalityNames.find(F.Entry);
@@ -1069,6 +1074,22 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       EmittedName = (kAutoFuncPrefix + llvm::utohexstr(F.Entry)).str();
     else if (hasObjectFunctionNameAt(Img, Fmt, F.Entry, F.Name))
       EmittedName = llvm_name::fromObjectSymbol(F.Name, Fmt).str();
+    // A function lifted under an import's name is not that import, which
+    // keeps the name for its external declaration.  An import's stub
+    // (MinGW's `calloc: jmp [__imp_calloc]`, a Mach-O `__stubs` entry) is
+    // not it in any format; a call naming the import still reaches what the
+    // stub calls.  A body named like an import keeps its name.
+    const auto NamedLike = [&](const Import *Imp) {
+      return Imp && llvm_name::fromObjectSymbol(Imp->Name, Fmt) == EmittedName;
+    };
+    const Import *Stub = Img ? Img->findImportAt(F.Entry) : nullptr;
+    if ((NamedLike(Stub) && Stub->IATAddr != F.Entry) ||
+        (Img && NamedLike(Img->findImportStubAt(F.Entry))))
+      EmittedName += "_" + llvm::utohexstr(F.Entry);
+    else if (auto Shadow = Img ? peImportShadowName(PEImportCNames, *Img,
+                                                    F.Entry, EmittedName)
+                               : std::nullopt)
+      EmittedName = std::move(*Shadow);
     EmittedFuncNames[F.Entry] = EmittedName;
     FuncNames[F.Entry] = std::move(EmittedName);
   }

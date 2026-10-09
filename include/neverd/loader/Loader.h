@@ -17,6 +17,8 @@
 #include "neverd/Common.h"
 #include "neverd/loader/BinaryImageModel.h"
 #include "neverd/loader/InputDigest.h"
+#include "neverd/loader/LoadCandidate.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -57,6 +59,10 @@ public:
   /// (cf. llvm::object::ObjectFile::createObjectFile).
   static std::unique_ptr<Loader> create(const std::filesystem::path &Path);
 
+  /// Why create(Path) found no loader for \p Path: no format it reads, or
+  /// only the file's name ties it to one, which the user has to choose.
+  static std::string describeRefusal(const std::filesystem::path &Path);
+
   /// Create a loader for a known format.
   static std::unique_ptr<Loader> create(BinaryFormat Format);
 
@@ -71,10 +77,10 @@ protected:
   static llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>>
   readFileInto(const std::filesystem::path &Path, BinaryImage &Img,
                BinaryFormat Fmt, bool CopyRaw = true) {
-    auto BufOrErr = llvm::MemoryBuffer::getFile(Path.string());
+    auto BufOrErr = llvm::MemoryBuffer::getFile(pathToUTF8(Path));
     if (!BufOrErr)
       return llvm::make_error<llvm::StringError>(
-          std::string(getFormatTag(Fmt)) + ": cannot open " + Path.string(),
+          std::string(getFormatTag(Fmt)) + ": cannot open " + pathToUTF8(Path),
           llvm::inconvertibleErrorCode());
     auto &Buf = *BufOrErr;
     Img.Format = Fmt;
@@ -98,6 +104,8 @@ private:
       return "macho";
     case BinaryFormat::EVM:
       return kEVMArchName.data();
+    case BinaryFormat::Raw:
+      return "binary";
     default:
       return "loader";
     }

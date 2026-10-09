@@ -16,6 +16,7 @@
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/FilePath.h"
 
 #define DEBUG_TYPE "neverd-pdb-loader"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -1002,6 +1003,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
       }
       TypeRef Named =
           NdType::makeNamedRecord(Name, boundedTypeSize(Union.getSize()));
+      Named->Passing = NdRecordPassing::Microsoft;
       noteRecordFields(Named, Union.getFieldList(), UseIpi);
       if (!Union.isForwardRef() && Walk == TpiWalk::Fields) {
         attachDisplayFields(Named, Union.getFieldList(), UseIpi, Depth);
@@ -1033,8 +1035,11 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
       if (Full && *Full != Self)
         return Recurse(*Full);
     }
+    // The program follows the Microsoft C++ ABI, whose class traits PDB
+    // does not record.
     TypeRef Named =
         NdType::makeNamedRecord(Name, boundedTypeSize(Rec.getSize()));
+    Named->Passing = NdRecordPassing::Microsoft;
     noteRecordFields(Named, Rec.getFieldList(), UseIpi);
     if (!Rec.isForwardRef() && Walk == TpiWalk::Fields) {
       attachDisplayFields(Named, Rec.getFieldList(), UseIpi, Depth);
@@ -1508,9 +1513,9 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
   std::unique_ptr<llvm::pdb::IPDBSession> Session;
   auto Err =
       llvm::pdb::loadDataForPDB(llvm::pdb::PDB_ReaderType::Native,
-                                llvm::StringRef(PdbPath.string()), Session);
+                                llvm::StringRef(pathToUTF8(PdbPath)), Session);
   if (Err)
-    return llvm::createFileError(PdbPath.string(), std::move(Err));
+    return llvm::createFileError(pathToUTF8(PdbPath), std::move(Err));
 
   auto *Native = static_cast<llvm::pdb::NativeSession *>(Session.get());
   Session->setLoadAddress(Image.Base);
@@ -1784,7 +1789,7 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
     Ctx->PImpl->startTypePrefetch();
   LLVM_DEBUG(llvm::dbgs() << "pdb: loaded " << Ctx->PImpl->Functions.size()
                           << " function symbols from "
-                          << PdbPath.filename().string() << "\n");
+                          << pathToUTF8(PdbPath.filename()) << "\n");
   return Ctx;
 }
 

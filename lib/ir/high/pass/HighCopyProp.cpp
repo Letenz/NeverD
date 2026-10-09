@@ -47,25 +47,22 @@ bool containsNonMovableEffect(const ExprPtr &E) {
   std::vector<const HighExpr *> Worklist;
   if (E)
     Worklist.push_back(E.get());
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   while (!Worklist.empty()) {
     const HighExpr *Current = Worklist.back();
     Worklist.pop_back();
     if (!Seen.insert(Current).second)
       continue;
-    if (Current->Kind == ExprKind::Load ||
-        Current->Kind == ExprKind::Store ||
+    if (Current->Kind == ExprKind::Load || Current->Kind == ExprKind::Store ||
         Current->Kind == ExprKind::Call ||
         Current->IntrinsicId != Intrinsic::None ||
-        Current->Op == NdOp::ATOMIC_ADD ||
-        Current->Op == NdOp::ATOMIC_XCHG ||
+        Current->Op == NdOp::ATOMIC_ADD || Current->Op == NdOp::ATOMIC_XCHG ||
         Current->Op == NdOp::ATOMIC_CMPXCHG ||
         Current->MemoryOrdering != NdMemoryOrdering::None ||
         Current->MemoryAddressSpace != NdMemoryAddressSpace::Default)
       return true;
-    Current->forEachChildExpr([&](const ExprPtr &Operand) {
-      Worklist.push_back(Operand.get());
-    });
+    Current->forEachChildExpr(
+        [&](const ExprPtr &Operand) { Worklist.push_back(Operand.get()); });
   }
   return false;
 }
@@ -102,7 +99,7 @@ void filterStableCopyCandidates(const std::vector<HighStmt> &Stmts,
     if (++Definitions[Key] > 1 || S.IsPhiCopy)
       Unstable.insert(Key);
     std::vector<ExprPtr> Work{S.Val};
-    std::unordered_set<const HighExpr *> Seen;
+    HighExprSet Seen;
     while (!Work.empty()) {
       auto E = Work.back();
       Work.pop_back();
@@ -119,7 +116,7 @@ void filterStableCopyCandidates(const std::vector<HighStmt> &Stmts,
   });
   auto ReadsUnstable = [&](const ExprPtr &Root) {
     std::vector<ExprPtr> Work{Root};
-    std::unordered_set<const HighExpr *> Seen;
+    HighExprSet Seen;
     while (!Work.empty()) {
       auto E = Work.back();
       Work.pop_back();
@@ -154,7 +151,7 @@ void rewriteRhsVars(std::vector<HighStmt> &Stmts,
                     const VarKeyMap<ExprPtr> &Candidates) {
   auto Map = Candidates;
   filterStableCopyCandidates(Stmts, Map);
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   std::function<void(ExprPtr &)> Rewrite = [&](ExprPtr &E) {
     if (!E)
       return;
@@ -175,7 +172,7 @@ void rewriteRhsVars(std::vector<HighStmt> &Stmts,
 }
 
 void countExprVarUses(const ExprPtr &E, VarKeyMap<int> &Uses,
-                      std::unordered_set<const HighExpr *> &Seen) {
+                      HighExprSet &Seen) {
   if (!E || !Seen.insert(E.get()).second)
     return;
   if (E->Kind == ExprKind::Var)
@@ -212,7 +209,7 @@ void inlineSingleDefs(std::vector<HighStmt> &Stmts,
                       const VarKeyMap<ExprPtr> &Candidates) {
   auto Defs = Candidates;
   filterStableCopyCandidates(Stmts, Defs);
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   std::function<void(ExprPtr &)> DoInline = [&](ExprPtr &E) {
     if (!E)
       return;
@@ -361,7 +358,7 @@ void foldMultiUseCopies(std::vector<HighStmt> &Stmts) {
   VarKeyMap<int> CopyUseCount;
   VarKeyMap<ExprPtr> MultiDefValue;
   VarKeyMap<bool> DefIsCall;
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   walkStmts(Stmts, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Assign && S.Dst && S.Dst->Kind == ExprKind::Var &&
         S.Val) {
@@ -380,8 +377,7 @@ void foldMultiUseCopies(std::vector<HighStmt> &Stmts) {
     if (NumDefs != 1 || DefIsCall[Key])
       continue;
     auto Val = MultiDefValue[Key];
-    if (!Val || Val->hasOrderedMemoryAccess() ||
-        containsNonMovableEffect(Val))
+    if (!Val || Val->hasOrderedMemoryAccess() || containsNonMovableEffect(Val))
       continue;
     auto TotalIt = TotalUseCount.find(Key);
     auto CopyIt = CopyUseCount.find(Key);
@@ -837,7 +833,7 @@ void eliminateLoopAliases(std::vector<HighStmt> &Stmts) {
         }
       }
       VarKeyMap<size_t> FirstUse;
-      std::unordered_set<const HighExpr *> UseSeen;
+      HighExprSet UseSeen;
       for (size_t I = 0; I < S.Body.size(); ++I) {
         auto &BodyStmt = S.Body[I];
         VarKeySet UsedVars;
@@ -886,7 +882,7 @@ void eliminateLoopAliases(std::vector<HighStmt> &Stmts) {
       }
       filterStableCopyCandidates(S.Body, SafeAliases);
       if (!SafeAliases.empty()) {
-        std::unordered_set<const HighExpr *> Seen;
+        HighExprSet Seen;
         std::function<void(ExprPtr &)> RewriteAlias;
         RewriteAlias = [&](ExprPtr &E) {
           if (!E)

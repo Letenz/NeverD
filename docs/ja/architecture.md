@@ -215,6 +215,8 @@ SSA 構築の上限を超える大規模な復元関数は、`--llvm` で有界�
 
 `checkLowIRRefinement` と `checkBinaryLowIRRefinement` は、決定的な LowIR 候補に対する独立した構成的精緻化を検証します。`LiftedBits` は未定義値の生成ごとに元のリフターが計算したビットを選び、`ZeroBits` は監査済みの条件が成立したビットだけをゼロにします。動的な生成箇所を記録し、コピーとスピルでも同じ選択を保持します。両プログラムは既存のスカラー、物理スタック、メモリ、フラグ実行器と入口スナップショットを共有します。すべての実行可能経路が終了し、許可された入口領域全体を覆い、RETURN オペランド、指定レジスタ、必須のネイティブシステムフラグ、両側の書き込み済みフレームバイトの和集合が一致し、入口保存契約も満たす必要があります。実行と関係検証は予算を共有し、`MaxTerminalPairs` も適用します。証明書は候補、原証拠、選択方針、制限を束縛します。選択の失敗は別の選択を排除しません。有限展開はループ不変条件、特定 CPU の一致、C バックエンドの等価性を証明せず、未定義状態の独立性検証を置き換えません。両 API は証明用メモリ一時領域と重なる入力一時値を拒否します。 バイナリ精緻化 API は、オプションと観測契約の両方で一致する `UserX64NoFaultV1` を要求します。
 
+`LowIRUndefinedIndependence` は各任意再試行を元の完全なクエリと入力領域に結び付けます。`CompleteModel` は候補の完全な変数割り当てを検証し、`CompletedTargetFacts` は列挙が完了した単一値のみを保持します。`ConditionalImplication` は同じコンテキスト、領域、完全なソルバーポリシーに属する有界な書き換えと未探索の符号化を管理し、新しい目標ごとに証明を要求します。`DomainCoverage` は因子の含意とすべての等値・論理分割を証明します。再試行は共有クエリ数・ノード数上限と元のソルバー設定を維持し、未知、不正、不完全な結果は証明書を生成しません。
+
 `checkLowIRLoopRefinement` と `checkBinaryLowIRLoopRefinement` は、別の型を持つ帰納的証明書を提供します。対応する切断点と純粋なスカラー LowIR 状態テンプレートは証明候補です。共通の実行器が実際の入口からの成立、区間の完全な網羅、すべての実行可能な後続、不変条件の保存、終端観測を検査します。切断点間の各辺では有限な符号なし辞書式順位が厳密に減少しなければならず、パラメーターの逆投影検査が状態変化のない順位リセットを防ぎます。基底は共通入口状態、または `UseEntryPrefix` (`GeneralizeEntryPrefix = false`) で実際に到達した対応する接頭区間です。後者の述語も保存を証明します。切断点では変更した全レジスターとフレーム全体を検査し、過去の反復の書き込みも終端で観測します。重複アドレスには明示的で証明済みの状態選択条件が必要です。不変条件・順位の自動発見や任意の制御フロー対応付けは対象外です。切断点の欠落、誤った不変条件、回り込み、未証明の終了性、未対応の意味論、共有予算の枯渇は証明を拒否します。計画、全ネイティブ区間、原本の証拠をダイジェストに束縛します。有限精化と厳密な独立性の意味は変わらず、C バックエンドや特定 CPU の未定義ビット選択の証明にもなりません。
 
 以下の前置経路述語を保持する要件は `GeneralizeEntryPrefix = false` の場合に適用します。
@@ -640,12 +642,12 @@ Capstone ライブラリは網羅しません。
 
 | ディレクトリ | 責務 | 主な依存関係 |
 |--------------|------|--------------|
-| `lib/loader` | 形式検出、PE/COFF・ELF・Mach-O 読込み、正規化 `BinaryImage`、関数検出 | LLVM Object API |
-| `lib/lift` | 手書きの x86/i386・AArch64・ARM32 命令セマンティクス | IR データ型 |
+| `lib/loader` | 形式検出、PE/COFF・ELF・Mach-O 読込み、正規化 `BinaryImage`、関数検出 | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | 手書きの x86/i386・AArch64・ARM32 命令セマンティクス | IR データ型, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native デコードと各アーキテクチャ lifter へのディスパッチ | `NeverDIR`、`NeverDLift` |
 | `lib/ir` | 共通型、LowIR・MedIR・HighIR・intrinsic の定義/変換 | 4 つの IR サブコンポーネント |
 | `lib/pipeline` | 関数検出と Low/Med/High/LLVM 経路の調整 | IR、decode、lift、LLVM backend、デバッグ情報、IR pass |
-| `lib/backend/c` | HighIR-to-C および LLVM-IR-to-C のレンダリング | IR |
+| `lib/backend/c` | HighIR-to-C および LLVM-IR-to-C のレンダリング、HighC の Rust・Go 表記 | IR |
 | `lib/backend/llvm` | MedIR から LLVM への lowering | IR |
 | `lib/backend/codegen` | ターゲットコード生成、PE/ELF/Mach-O の patch と in-place 書き換え | IR、loader |
 | `lib/sdk` | 公開 C ABI、session ライフサイクル、クエリ、永続化、プラグイン、lift/decompile/patch/audit/hunt エントリ | エンジンを `libneverd` に集約 |
@@ -654,8 +656,10 @@ Capstone ライブラリは網羅しません。
 | `lib/sigs` | シグネチャ解析、データベース、マッチング | Loader |
 | `lib/libc` | 既知の libc 名と呼出モデルのサポート | 独立コンポーネント |
 | `lib/safety` | リフト済み IR 上のヒープ寿命監査とコピー越境ハント | Symbolic、Solver |
-| `lib/support` | 共通のバイナリ読込み helper | Loader |
+| `lib/support` | 共有バイナリ読み込み補助と独立した SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | version 付き guest state/policy/exit、固定 runtime ABI、検査付き guest memory、生成 IR/object/LinkGraph audit、sealed native linking、experimental x86-64-to-AArch64 C++ dispatcher | IR、LLVM、LLVM Object、JITLink の契約 |
+
+`NeverDDigest` は `lib/support` 内の既存の一括 SHA-256 実装を所有します。実行時機能検査と移植可能なフォールバックを維持し、Loader や IR には依存しません。`loader/InputDigest.h` は転送ヘッダーとして残ります。`NeverDIRLowValidation` が `lowUndefinedOperationDigest` を所有し、Lift は明示的にリンクします。v1 の識別は従来のドメイン、リトルエンディアンのワード、保存された全 6 入力スロット、由来情報とソース座標を維持します。199 操作までは最大 64 KiB の直列化バッファを使い、それ以上は従来の逐次経路を使います。両経路は同じフィールドを列挙し、証拠検査を維持します。
 
 ### 解析と簡約のアーキテクチャ境界
 
@@ -810,6 +814,8 @@ pipeline を続行するためだけに `UnliftedInstruction` を捕捉しない
 `lib/backend/codegen/CodeGen<ISA>.cpp` にあります。
 
 共有パスに追加するターゲット固有の規則は、アーキテクチャやフォーマットのインライン判定ではなく、ターゲットごとの表に置きます。ISA に関する事実は、その ISA の `lib/ir/TargetRegInfo<ISA>.cpp` で設定する `TargetRegInfo` の特性です。呼び出し規約の規則は、専用の `lib/ir/med/abi/MedCallConvention<Name>.cpp` に定義し `MedCallConvention.cpp` に登録する `CallArgumentConvention` エントリです。戻らない関数はランタイムごとに `include/neverd/libc` 以下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）に列挙します。これにより、新しいターゲットの対応は共有パスへの分岐ではなく、ファイルまたは表エントリの追加で済みます。
+
+再配置可能オブジェクトの未定義シンボルは、共有レイヤー `include/neverd/loader/ObjectExterns.h` で解決されます。各フォーマットのローダーは、再配置が参照するシンボル、各シンボルに呼び出しや分岐が到達するかどうか（`<Format>ObjectRelocations.def`）、コモンシンボル、そして一部の参照がシンボルに到達する際に経由するセル（ELF と Mach-O の GOT エントリ、COFF の `__imp_` ポインタ）を収集します。このレイヤーはそれらをオブジェクトのセクションの後ろ、書き込み可能な `extern` セグメントと読み取り専用のセルセグメントに配置します。呼び出される外部シンボルはそこでインポートとなり、データはシンボルとなります。弱参照にはアドレスを与えません。コードが行う null 判定はプログラム自身のものだからです。
 
 <a id="support-and-test-depth"></a>
 
@@ -1171,9 +1177,15 @@ UIButton の `contentEdgeInsets`、`imageEdgeInsets`、`titleEdgeInsets` の get
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` は PEB プロセスパラメーター内の実際のゲスト環境ブロックを共有します。名前は大文字小文字を区別しない ASCII、値は UTF-16 です。変更前に入力、容量、書き込み権限を検証します。スナップショットは後続の変更から独立し、解放時にゲストメモリを回収します。モデルのブロック上限は 64 KiB で、文字列と展開処理には境界と実行期限の検査があります。不明なポインター所有権、不正なブロック、ANSI コードページ、展開バッファーの重複は未対応です。`WindowsEnvironmentTests.cpp` は利用可能なバックエンドで独自の x64/ARM64 フィクスチャを比較し、CI では独立したネイティブ Windows オラクルを必須とします。
 
-`WindowsProcessHeap` はプロセスヒープの割り当て、`HeapReAlloc`、解放、サイズ照会を一元管理します。サイズ変更は保持範囲のデータを維持し、`HEAP_ZERO_MEMORY` は追加領域をゼロ化、`HEAP_REALLOC_IN_PLACE_ONLY` は移動を禁止します。再割り当て失敗時は旧ブロックを保持し、NULL と `ERROR_NOT_ENOUGH_MEMORY`（8）を返すネイティブの観測結果に一致します。独立したページの縮小・解放で容量を返却し、段階的な拡張と有界コピーで実行期限を確認します。独自ヒープ、例外生成フラグ、不明な所有権、アクセス不能なコピー・ゼロ化範囲は明示的に停止します。`WindowsHeapTests.cpp` は両 ISA、強制移動、予算再利用、失敗時の原子性を検証し、CI は同じ独自 EXE をネイティブ Windows でも実行します。
+`WindowsProcessHeap` はプロセスヒープと制限付きプライベートヒープの確保、サイズ変更、解放、サイズ照会を管理します。移動後も確保領域の所有ヒープを保持します。`HeapDestroy` は指定したプライベートヒープの領域だけを解放し、ハンドルを無効化します。他のヒープと環境スナップショットは存続します。不明または破棄済みハンドル、プロセスヒープの破棄、別ヒープの領域への操作は変更前に拒否します。プライベートヒープは初期サイズが1ページ以下の拡張可能な要求に限り、固定上限と大きな初期コミットは未対応です。同時に生存するヒープは4個までで、破棄後は古いハンドルを復活させず再作成できます。ハンドルはモデルの不透明な識別子で、ネイティブアロケータのヘッダーは生成しません。`HeapReAlloc`: サイズ変更は既存バイトを保持し、`HEAP_ZERO_MEMORY` と `HEAP_REALLOC_IN_PLACE_ONLY` に従います。確保失敗は NULL と `ERROR_NOT_ENOUGH_MEMORY`（8）を返します。縮小、解放、破棄でページ容量を戻し、実行期限を守ります。`WindowsHeapTests.cpp` は両 ISA、所有権、ライフサイクル、失敗の原子性と独立した Windows 実行を検証します。
 
 `WindowsSystemModules` は両 ISA 向けに `ntdll.dll`、`kernelbase.dll`、`kernel32.dll` の有界な PE64 モデルイメージを構築します。ASCII の `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW`、`GetProcAddress` はそのマップ済みベースを共有し、PEB/LDR と `MEM_IMAGE` も同じイメージを示します。静的インポート、名前検索、ゲスト DLL の転送は同じ API ゲートとエクスポート解決器を使います。提供元は常駐し、ゲスト初期化コールバックを持たず、通常のゲスト DLL をすべて解放すればエントリから復帰できます。ヘッダーやエクスポートメタデータの変更で検索を停止します。未対応のシステムエクスポート名と非ゼロ序数は明示的に停止し、対応名の大小文字違いと空名はエラー 127、NULL 検索は 87 を返します。生成バイトとアドレスはモデル方針であり、Windows DLL の版別配置、実際の序数、提供元間の別名は再構築しません。`WindowsSystemTests.cpp` は独自 x64/ARM64 EXE をネイティブ Windows と比較し、初期スレッドの復帰を独立して 8 回観測します。
+
+`WindowsNativeServices` は明示的なモデルサービス番号を一元管理します。番号付きの Nt/Zw 別名は入口を共有し、プロローグで宣言した番号順に並びます。x64 のネイティブ境界は第1引数を R10 から読み、RSP + 0x28 のスタック引数と入口アラインメントを含む Win64 スタブのフレームを使用します。戻り時は RSP を維持し、SYSCALL の RCX/R11 更新を適用して次の命令へ進みます。コピーされた入口やインライン入口には `direct_service_number` を記録し、エクスポート呼び出しの証拠にはしません。不明な番号と未実装サービスは明示的に停止します。モデル番号は任意の Windows バージョンの番号表ではありません。 [Nt/Zw](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-nt-and-zw-versions-of-the-native-system-services-routines). 内部の実行監視でプロローグの2命令を確認してからエクスポート呼び出しと判断します。途中へのジャンプは RCX と R10 が等しくても番号への依存として残ります。この監視は呼び出し側のオブザーバーなしでも動作し、要求範囲外のコールバックを発生させません。
+
+`WindowsProcessFiles.cpp` は `KnownDlls` 内の固定常駐かつ非不透明なプロバイダーの `ZwOpenSection` ハンドルを管理します。自動配置・オフセットゼロの全体ビューはローダーの不変なイメージを使い、`VirtualMemory` が `MEM_IMAGE` の所有権を記録し、`AddressSpace` がページ権限を保ちます。ハンドルを閉じてもビューは解放しません。未知の名前空間、書き込みアクセス、部分・固定アドレスのビュー、既存 API ゲートのない実行は未対応です。`IntegerABI` が x64/ARM64 の末尾引数を特定し、ULONG の未定義上位ビットを無視します。現在のスレッドの情報クラス `0x11` は厳密な長さで隠蔽状態を保持し、クラス `4` は要求された affinity とプロセスマスクの共通部分を取り、プロセッサが残らなければ `STATUS_INVALID_PARAMETER` を返します。 読み取り専用の section ハンドルで `PAGE_READWRITE` を要求すると、ビューを公開せず `STATUS_ACCESS_DENIED` を返します。クラス `0x11` は Windows の検査順序を維持します。非空の設定バッファには ULONG アラインメントが必要で、照会バッファには長さが 4 バイト以上の場合に必要です。長さゼロの設定では入力ポインターを無視します。
+
+現在のスレッドのクリティカルセクションは、Kernel32 と ntdll の間で初期化、再帰的な取得、試行取得、対応する解放と削除を共有します。`DeleteCriticalSection` と `RtlDeleteCriticalSection` は初期化済みで所有者のいないオブジェクトを要求し、削除後は再初期化できます。未初期化、重複初期化、破棄済み、破損した状態は書き込み前に拒否します。Rtl 初期化は NTSTATUS のゼロを、BOOL のスピン初期化は真を返します。単一プロセッサのプロファイルではスピン回数はゼロで、スレッド間の競合はモデル化しません。
 
 `WindowsProcessExceptions` は同じ CPU とプロセス予算で `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler`、`RaiseException` を実装します。順序付きハンドラーは登録・削除、入れ子の例外、モデル化 API、DLL 読み込み、プロセス終了を扱えます。x64/ARM64 のデータアクセス違反と x64 の整数除算例外は、ゲストが変更した `CONTEXT` の検証後に再開できます。汎用レジスター、SIMD、対応する FP 状態を保持し、ソフトウェア例外はモデル提供元内の実際の return 命令から再開します。保持する登録は 128 件、入れ子は 16 フレームまでです。不正な処置、例外ポインターの変更、未対応フィールド、上限超過は明示的に失敗します。ARM64 のフレームベースの SEH／アンワインド、デバッガー配送、実行／ガードページ例外は未対応です。`WindowsExceptionTests.cpp` は独自 EXE／DLL をネイティブ Windows と比較します。ARM64 KVM/WHP の実機証拠は未取得です。 ソフトウェア例外レコードには `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`）が付き、呼び出し元の継続不可フラグとは個別に扱います。元の Windows 実行ファイルでソフトウェア例外とハードウェア例外のフラグ値を厳密に照合します。
 
@@ -1198,6 +1210,10 @@ Windows プロセスの時刻ポリシーは `os/windows/process/` の `WindowsP
 `lib/unpack` は 4 層でパックされたイメージを復元します。`core` は実行の調整と形式の登録を担当します。`format/pe` はコンテナを検証し、観測したメモリ、インポート、メタデータを再構築します。`PETLS.cpp` はローダーの割り当てと観測済みコールバックに基づき置換 TLS レコードを検証します。プロテクター登録や静的なスタブ署名で入口を選択しません。`dynamic` は `observeProcess` を通じてゲストプロセスを観測します。`Observation.def` は各コンテナと命令セットをプロセスプロファイルに対応付け、各命令セットのスタックポインタと命令ウィンドウを与えます。新しい対象は表の 1 行とモジュールのディレクトリ 1 つであり、行のない入力は名前を挙げて拒否されます。`ExecutionSession` が実行ウォッチを所有します。`ProcessObserver` は停止したプロセスを読み取り、次の停止位置を選びますが、ゲストの状態を変えることはできません。エミュレーション層が知っているのは `defer_unmodeled` だけです。これは未モデルのインポートを、実行された時点で停止する不透明なエントリに束縛します。[アンパック](unpack.md)を参照してください。 遅延ロードでは、先行する初期化処理がコードを生成するゼロ埋めメモリを、実行可能なコールバックや入口の対象にできます。コールバック配列と TLS 割り当てメタデータには検証済みのファイル内容が必要で、通常の厳格ロードはファイル裏付け検査を維持します。OS モデルは呼び出しの帰属を示し、呼び出しの準備時や中断した呼び出し元の復元時に観察器へ通知します。これらの境界で転送監視を再設定し、コールバックと生成された入口が同じページにある場合も扱います。
 
 `WindowsLibraryHost.cpp` は DLL ホストの構築、Windows ローダーは通常のロード・アンロードを所有します。`ProcessView::inputModule()` は観測入力をホスト EXE と分離し、初期スナップショットの遅延を許可します。`ProcessView::callFrame()` は `IntegerABI` 経由で整数引数と戻り先を読みます。`dynamic/ProcessTransfer` は継続先とスタックの一致を証明し、`PETLS.cpp` だけがプロセスアタッチコールバックの完了を判断します。
+
+`ProcessView::heapAllocations()` は停止境界で Windows の `Services` が所有する生存中のヒープ一覧を公開し、ゲストポインタを読まず状態も変更しません。`dynamic/ProcessTransfer.cpp` が一覧を検証して捕捉したイメージと TLS の保守的なアドレス一致を記録し、`core/Unpack.cpp` だけが `unsupported_state` または明示的な `snapshot` を選びます。PE ライターはヒープ再配置や起動の意味を推測しません。
+
+`PEDelayImports.cpp` は新しいプロセス向けの遅延ロード修復とメタデータ領域の除外を担当します。COFF ローダーは記述子の出所から `Import::IsDelayImport` を記録し、Windows 実行受付は通常のインポートだけを比較します。検証済みの遅延記述子が解決済みセルの再バインド範囲を定め、未解決の内部サンクは必要時の解決を維持します。独立したルックアップ表がバインド数を定め、後続の未解決セルを保持します。不正な状態は明示的に失敗します。
 
 `ExportObserver` は常駐ゲスト依存モジュールの実行可能エクスポートも監視します。モデル化プロバイダーはサービス分配で観測し、入力自身のエクスポートは除外します。モジュール変更で監視を更新し、修復には現在のエクスポート識別を必要とします。記録数は宣言済みインポート上限以内です。DLL テストはシステム API とゲスト依存関数の両ヘルパーを修復し、ネイティブロードでエミュレートされたアドレスが残らないことを検証します。
 
@@ -1250,6 +1266,8 @@ Combine の正確な強いインポートである `Publisher.sink(receiveValue:
 HighIR の末尾複製は、呼び出しを複製する前に `SourceCallTypeHint::requiresUniqueSourceOccurrence` を確認する。真偽値、コールバック引数、不変ターゲット、フレーム内の値証人、仮想ディスパッチ、ネイティブ Swift レシーバーの証拠は、それぞれ元の機械呼び出し一回を指す。return、jump、入れ子の出口の変換では、分岐が排他的でも評価位置を共有したままにする。通常の呼び出し宣言には既存の複製規則を適用する。公開時には現在の機械コード、ABI、オペランド、動的ターゲットを再検証し、ソース上の評価が一回であることを要求する。全証拠種別、入れ子式、通常の呼び出し最適化を検証し、完全な ARM64 の共有ストアとコールバック末尾を生成 C と O0/O2 で比較する。
 
 共有 `SourceABI` は、論理的な値渡しレコードと物理的なアドレス載体を区別する。Darwin ARM64 C の六個または十六個の double を持つ宣言は完全なレコード型を保持し、浮動小数点引数レジスタや x8 結果ポインターと独立した八バイトの整数レジスタまたは自然整列スタックスロットを使う。ABI 比較と投影のグループ化は、この区別、呼び出し規約、引数の役割を保持する。部分値、重複、不整合、古い載体は拒否する。宣言だけでは LowIR 呼び出しの束縛、入口投影、HighC 呼び出しの出力、フレーム借用を許可せず、コピー記憶域の独立した証明が必要である。コンパイラとネイティブ ABI テストはレジスタ枯渇、スタック配置、任意の浮動小数点ビット、副本の書き換え隔離、独立した間接戻り値を検証する。完全な `setTransform:` 復元テストではない。
+
+デバッグシグネチャは、復元したパラメータを順番ではなく到着位置で命名する。`SourceParameterPlacement` は各ターゲットの通常の呼び出し規約に従って各ソースパラメータを配置する。対象は System V x86-64、Microsoft x64、AAPCS64、i386 cdecl/stdcall で、規約ごとに別ファイルにある。各パラメータの断片を保持するレジスタとスタックスロット、および隠れた結果ポインターを返す。HighC は復元したパラメータを、そのレジスタまたは入口時スタックオフセットにある断片に結び付ける。後続の断片はパラメータ名とバイトオフセットで命名し（`p_8`）、宣言型はその位置が値全体をそのバイトとして保持する場合にのみ適用する。規則が位置を確定できない最初のパラメータで配置は止まる。ソースが渡し方を示さないレコード、レジスタより幅の広いスカラー、アラインメント不明のメモリ渡しレコード、Apple arm64 のスタック詰め込みが該当する。それ以降のパラメータはマシン名を保ち、Go のように独自の規約を持つ言語の関数は何も結び付けない。DWARF ローダーが渡し方とスカラー配置を与えるのはパラメータ型と結果型だけである。C のレコードは値渡し、C++ のクラスは `DW_AT_calling_convention` の示すとおり、`_Complex` 値は複素数として渡す。Rust 独自の ABI と `extern "C"` では一部のレコードの渡し方が異なるため、Rust のレコードは不明のままとする。PDB のレコードは Microsoft C++ ABI に従う。i386 はそのバイトとして渡し、x64 は同じ位置にそのバイトまたはアドレスとして渡す。呼び出しのプロトタイプと実引数キャストは引き続き、位置で対応付けられるシグネチャ、つまりパラメータがすべて整数かすべて浮動小数点値のものからのみ生成する。
 
 共有の `SourceFrameAnalysis` は、消費側と完全な間接結果の生成側について独立した効果証明がある場合、元の呼び出し位置で初期化済みのプライベートな値渡しコピーを検証できます。全到達経路とループの後退辺、有効範囲、他の引数との別名関係、後続の使用を確認します。コピーを消費すると初期化情報と保存バイトの同一性は失われ、再読には新たな確定書き込みが必要です。書き込みの可能性やフレーム解放でも初期化情報を無効化し、保持された Swift scratch の寿命義務は維持します。問い合わせはフレーム全体の復元証明後に引数範囲だけを返し、機械コードの同一性、SDK 効果、呼び出し束縛、ソース公開の権限は与えません。分岐、ループ、部分書き込み、別名、保持された scratch をテストします。実際の ObjC/CALayer を使う ARM64 テストは消費済みコピーの読み取りを拒否し、独立に初期化が証明された使い捨てコピーを受け入れます。
 

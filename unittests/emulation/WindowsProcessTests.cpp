@@ -162,6 +162,25 @@ TEST_P(WindowsProcess, UnmodeledDelaysStopWithoutClaimingCompletion) {
     EXPECT_FALSE(R.NativeCalls.back().Result);
   }
 }
+TEST_P(WindowsProcess, ThreadInformationRetainsStateAndChecksExactLengths) {
+  const auto R = run(ThreadInformation);
+  EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+  EXPECT_EQ(R.ExitStatus, ExitStatus) << R.PC;
+  EXPECT_EQ(R.StandardOutput, std::string(Message) + Detached);
+  EXPECT_EQ(R.StandardError, std::string(Binary, sizeof(Binary) - 1));
+}
+TEST_P(WindowsProcess, UnknownThreadInformationIsNotAcknowledged) {
+  const auto R = run(ThreadUnknownInformation);
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+  EXPECT_NE(R.Diagnostic.find("class 7FFFFFFF"), std::string::npos)
+      << R.Diagnostic;
+  EXPECT_FALSE(R.ExitStatus);
+  EXPECT_TRUE(R.StandardOutput.empty());
+  EXPECT_TRUE(R.StandardError.empty());
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "ZwSetInformationThread");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
 TEST_P(WindowsProcess, SharedInstructionBudgetIncludesTLSInitialization) {
   Options.Limits.Instructions = LoopLimit;
   Options.InstructionQuantum = LoopQuantum;
@@ -189,6 +208,10 @@ TEST_P(WindowsProcess, DirectSyscallsDoNotSelectWindowsServices) {
   const auto R = run(Unknown);
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
   EXPECT_FALSE(R.ExitStatus);
+  if (GetParam().ISA == GuestArchitecture::X64) {
+    EXPECT_NE(R.Diagnostic.find("rax=0x"), std::string::npos);
+    EXPECT_NE(R.Diagnostic.find("r10=0x"), std::string::npos);
+  }
 }
 TEST_P(WindowsProcess, PrivilegedInstructionsCannotExecuteAsKernel) {
   const auto R = run(Privileged);
@@ -644,8 +667,9 @@ TEST_F(WindowsProcessImage, NativeWindowsOracleRunsTheSameExecutable) {
   ASSERT_FALSE(EC) << EC.message();
   for (const char *Mode :
        {Normal, Returned, Errors, AliasedOutput, TLSMutation, TailExit,
-        NativeExit, ClockServices, MemoryLifecycle, MemoryAlignment,
-        MemoryQuery, MemoryCode, MemoryAlias, MemoryPlacement, MemoryReclaim}) {
+        NativeExit, ClockServices, ThreadInformation, MemoryLifecycle,
+        MemoryAlignment, MemoryQuery, MemoryCode, MemoryAlias, MemoryPlacement,
+        MemoryReclaim}) {
     SCOPED_TRACE(Mode);
     const auto Output = (Root / StdoutFile).string();
     const auto Error = (Root / StderrFile).string();

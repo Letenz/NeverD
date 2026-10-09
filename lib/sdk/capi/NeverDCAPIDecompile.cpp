@@ -18,6 +18,7 @@
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/evm/analysis/EVMAnalyzer.h"
 #include "neverd/evm/emit/EVMCEmitter.h"
 #include "neverd/evm/emit/EVMSolidityEmitter.h"
@@ -240,6 +241,38 @@ std::string missingHighFunctionReason(const PipelineResult &Result,
 }
 } // namespace
 
+/// The source \p Route emitted for \p Entry under the current pipeline, if it
+/// holds what the caller needs: a map when \p SourceMap asks for one.
+static const char *cachedSource(Session &S, va_t Entry,
+                                Session::SourceRoute Route,
+                                CSourceMap *SourceMap) {
+  const Session::FunctionSource *Source = S.findFunctionSource(Entry, Route);
+  if (!Source || (SourceMap && !Source->Map))
+    return nullptr;
+  if (SourceMap) {
+    *SourceMap = *Source->Map;
+    SourceMap->Recognitions = &S.PipeResult.LibraryRecognitions;
+  }
+  return dupStr(Source->Text);
+}
+
+/// Keep what an emission of \p Entry's source produced and return a copy for
+/// the caller.  Empty output is a refusal and is not kept.
+static const char *keptSource(Session &S, va_t Entry,
+                              Session::SourceRoute Route, std::string Text,
+                              const CSourceMap *SourceMap) {
+  const char *Result = dupStr(Text);
+  if (!Text.empty())
+    S.rememberFunctionSource(Entry, Route, std::move(Text), SourceMap);
+  return Result;
+}
+
+/// Why C emission refused: the C type layer throws for a type C cannot
+/// spell, which ends the decompile with that reason, not the process.
+static std::string emissionFailure(const std::exception &Error) {
+  return std::string("C emission failed: ") + Error.what();
+}
+
 static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
                                   CSourceMap *SourceMap) {
   auto *S = toSession(Sess);
@@ -282,6 +315,10 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     return dupStr(*Output);
   }
 
+  if (const char *Cached =
+          cachedSource(*S, FuncEntry, Session::SourceRoute::HighC, SourceMap))
+    return Cached;
+
   const HighFunc *HF = S->findHighFunc(FuncEntry);
   if (!HF) {
     S->setError(missingHighFunctionReason(S->PipeResult, FuncEntry));
@@ -305,17 +342,24 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
 
   CEmitterOptions Opts;
   Opts.TheArch = S->Img.Arch;
-  Opts.Format = S->Img.Format;
+  Opts.Format = S->Img.abiFormat();
   Opts.Image = &S->Img;
+  Opts.UserNames = &S->Renames;
   if (SourceMap) {
     SourceMap->Recognitions = &S->PipeResult.LibraryRecognitions;
     SourceMap->HighSources = &S->PipeResult.HighSources;
     Opts.SourceMap = SourceMap;
   }
-  HighCEmitter Emitter;
-  Emitter.emit(Single, OS, Opts, S->Dbg.get());
+  try {
+    HighCEmitter Emitter;
+    Emitter.emit(Single, OS, Opts, S->Dbg.get());
+  } catch (const std::exception &Error) {
+    S->setError(emissionFailure(Error));
+    return dupStr(std::string());
+  }
 
-  return dupStr(Out);
+  return keptSource(*S, FuncEntry, Session::SourceRoute::HighC, std::move(Out),
+                    SourceMap);
 }
 
 const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
@@ -362,6 +406,11 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
     return dupStr(std::string());
   }
 
+  const auto Route =
+      NoOpt ? Session::SourceRoute::LLVMCNoOpt : Session::SourceRoute::LLVMC;
+  if (const char *Cached = cachedSource(*S, FuncEntry, Route, SourceMap))
+    return Cached;
+
   const auto *Native = S->ensureFunctionLlvmModule(FuncEntry, NoOpt != 0);
   if (!Native)
     return dupStr(std::string());
@@ -373,15 +422,21 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   llvm::raw_string_ostream OS(Out);
   CEmitterOptions Opts;
   Opts.TheArch = S->Img.Arch;
-  Opts.Format = S->Img.Format;
+  Opts.Format = S->Img.abiFormat();
+  Opts.UserNames = &S->Renames;
   if (SourceMap) {
     SourceMap->Recognitions = &S->PipeResult.LibraryRecognitions;
     SourceMap->LLVMSources = Native->Sources.get();
     Opts.SourceMap = SourceMap;
   }
-  LLVMCEmitter Emitter;
-  Emitter.emit(*Native->Module, OS, Opts, S->Dbg.get(), &S->Img, LF);
-  return dupStr(Out);
+  try {
+    LLVMCEmitter Emitter;
+    Emitter.emit(*Native->Module, OS, Opts, S->Dbg.get(), &S->Img, LF);
+  } catch (const std::exception &Error) {
+    S->setError(emissionFailure(Error));
+    return dupStr(std::string());
+  }
+  return keptSource(*S, FuncEntry, Route, std::move(Out), SourceMap);
 }
 
 const char *neverd_decompile_llvm_ex(neverd_session_t Sess,
@@ -391,20 +446,127 @@ const char *neverd_decompile_llvm_ex(neverd_session_t Sess,
 
 namespace {
 
-llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
-                              llvm::StringRef Stage, size_t Offset,
-                              size_t Limit) {
+/// The symbol naming the function at \p Entry, or empty for a function the
+/// image does not name.
+llvm::StringRef functionSymbol(const BinaryImage &Img, va_t Entry) {
+  for (const Symbol &Sym : Img.Symbols)
+    if (Sym.Addr == Entry && Sym.IsFunc && !Sym.Name.empty() &&
+        !llvm::StringRef(Sym.Name).starts_with(kAutoFuncPrefix))
+      return Sym.Name;
+  return {};
+}
+
+/// The language a source view of \p Entry reads in: the one \p Stage
+/// names, or for `source` the function's own; none for a language the image
+/// is not offered in.
+std::optional<SourceDialect> viewDialect(const Session &S, va_t Entry,
+                                         llvm::StringRef Stage) {
+  const LanguageRuntimeInfo &Language = S.Img.ExceptionMetadata.Runtime;
+  if (Stage == "source") {
+    const llvm::StringRef Symbol = functionSymbol(S.Img, Entry);
+    return sourceDialectOfFunction(Symbol, !Symbol.empty(), Language);
+  }
+  const SourceDialect Dialect =
+      sourceDialectFromKey(Stage).value_or(SourceDialect::C);
+  if (!llvm::is_contained(offeredSourceDialects(Language), Dialect))
+    return std::nullopt;
+  return Dialect;
+}
+
+/// Why \p Dialect is not offered for an image: the languages it reads in.
+std::string unofferedDialectReason(SourceDialect Dialect,
+                                   const LanguageRuntimeInfo &Language) {
+  std::string Offered;
+  const std::vector<SourceDialect> Dialects = offeredSourceDialects(Language);
+  for (size_t I = 0; I < Dialects.size(); ++I)
+    Offered += (I == 0                     ? ""
+                : I + 1 == Dialects.size() ? " and "
+                                           : ", ") +
+               sourceDialectDisplayName(Dialects[I]).str();
+  return (sourceDialectDisplayName(Dialect) + " pseudocode is offered for " +
+          sourceDialectDisplayName(Dialect) +
+          " programs; this program's reads in " + Offered)
+      .str();
+}
+
+/// \p Entry's HighC source spelled in \p Dialect, with its library regions
+/// and definition moved to the spelled text, kept with the C it spells.
+const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
+                                             SourceDialect Dialect) {
   auto &S = *toSession(Sess);
+  const auto Route = Dialect == SourceDialect::Rust ? Session::SourceRoute::Rust
+                                                    : Session::SourceRoute::Go;
+  if (const auto *Cached = S.findFunctionSource(Entry, Route);
+      Cached && Cached->Map)
+    return *Cached;
   CSourceMap Map;
-  const char *Raw = Stage == "c" ? decompileHighC(Sess, Entry, &Map)
-                                 : decompileLlvmC(Sess, Entry, 0, &Map);
+  const char *Raw = decompileHighC(Sess, Entry, &Map);
   std::unique_ptr<const char, decltype(&neverd_free_string)> Owned(
       Raw, neverd_free_string);
   if (!Raw || !S.LastError.empty())
     throw std::runtime_error(S.LastError.empty() ? "source emission failed"
                                                  : S.LastError);
+  SourceDialectOptions Options;
+  Options.Dialect = Dialect;
+  Options.TheArch = S.Img.Arch;
+  Options.Format = S.Img.abiFormat();
+  Options.Names = Map.Names;
+  SourceDialectText Spelled = spellInDialect(Raw, Options);
+  for (CSourceRegion &Region : Map.Regions) {
+    std::vector<CSourceSpan> Spans;
+    for (const CSourceSpan &Span : Region.Spans)
+      if (auto Moved = Spelled.map(Span.Begin, Span.End))
+        Spans.push_back({Moved->first, Moved->second});
+    // A region the spelling does not keep whole is not folded.
+    if (Spans.size() != Region.Spans.size())
+      Region.Mapped = false;
+    Region.Spans = std::move(Spans);
+  }
+  std::vector<CSourceDefinition> Definitions;
+  for (const CSourceDefinition &Definition : Map.Definitions)
+    if (auto Moved = Spelled.mapOffset(Definition.Begin))
+      Definitions.push_back({Definition.Entry, *Moved});
+  Map.Definitions = std::move(Definitions);
+  S.rememberFunctionSource(Entry, Route, std::move(Spelled.Text), &Map);
+  Session::FunctionSource &Kept = *S.findFunctionSource(Entry, Route);
+  Kept.Unread = std::move(Spelled.Unread);
+  Kept.Names = std::move(Spelled.Names);
+  return Kept;
+}
+
+llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
+                              llvm::StringRef Stage, size_t Offset,
+                              size_t Limit) {
+  auto &S = *toSession(Sess);
+  CSourceMap Map;
+  std::optional<SourceDialect> Dialect;
+  if (Stage != "llvmc")
+    Dialect = viewDialect(S, Entry, Stage);
+  assert((Stage == "llvmc" || Dialect) && "an unoffered view reached a page");
+  std::string Spelled;
+  std::vector<std::string> Unread;
+  std::vector<SourceDialectName> Names;
+  std::unique_ptr<const char, decltype(&neverd_free_string)> Owned(
+      nullptr, neverd_free_string);
+  if (Dialect && *Dialect != SourceDialect::C) {
+    const Session::FunctionSource &Source =
+        dialectSource(Sess, Entry, *Dialect);
+    Spelled = Source.Text;
+    Map = *Source.Map;
+    Map.Recognitions = &S.PipeResult.LibraryRecognitions;
+    Unread = Source.Unread;
+    Names = Source.Names;
+  } else {
+    const char *Raw = Stage == "llvmc" ? decompileLlvmC(Sess, Entry, 0, &Map)
+                                       : decompileHighC(Sess, Entry, &Map);
+    Owned.reset(Raw);
+    if (!Raw || !S.LastError.empty())
+      throw std::runtime_error(S.LastError.empty() ? "source emission failed"
+                                                   : S.LastError);
+    Spelled = Raw;
+  }
   (void)S.synchronizeFunctions();
-  llvm::StringRef Full(Raw);
+  llvm::StringRef Full(Spelled);
   if (Full.size() > 32 * 1024 * 1024 || !llvm::json::isUTF8(Full))
     throw std::length_error("source view exceeds the UTF-8/32 MiB budget");
   llvm::json::Array Regions;
@@ -471,6 +633,7 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
     Start = End;
   }
   const size_t End = std::min(Offset, Total) + Rows.size();
+  const size_t PageEnd = ByteOffset + Text.size();
   llvm::json::Object Page{
       {"schema_version", 1},
       {"address", vaHex(Entry)},
@@ -490,6 +653,29 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
   Page["next_offset"] = End == Total
                             ? llvm::json::Value(nullptr)
                             : llvm::json::Value(static_cast<int64_t>(End));
+  if (Dialect) {
+    // What the page reads in, which a `source` request chose; the
+    // declarations it shows as C; and the source names on the page, which
+    // splitting the text into identifiers would not find whole.
+    Page["dialect"] = sourceDialectKey(*Dialect);
+    llvm::json::Array Reasons;
+    for (const std::string &Reason : Unread)
+      Reasons.push_back(Reason);
+    Page["unread"] = std::move(Reasons);
+    llvm::json::Array PageNames;
+    for (const SourceDialectName &Name : Names) {
+      if (Name.End <= ByteOffset || Name.Begin >= PageEnd)
+        continue;
+      llvm::json::Object Item{{"begin_byte", static_cast<int64_t>(Name.Begin)},
+                              {"end_byte", static_cast<int64_t>(Name.End)},
+                              {"identifier", Name.Identifier},
+                              {"symbol", Name.Symbol}};
+      if (Name.Address)
+        Item["address"] = vaHex(*Name.Address);
+      PageNames.push_back(std::move(Item));
+    }
+    Page["source_names"] = std::move(PageNames);
+  }
   // The lines before the function's definition: includes, support types and
   // declarations. Published only where the emitter recorded the definition
   // at the start of a line.
@@ -585,9 +771,18 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
     Result["address"] = vaHex(FuncEntry);
     Result["representation"] = Stage;
     Result["rows"] = llvm::json::Array();
-    if (Stage == "c" || Stage == "llvmc") {
+    if (Stage == "c" || Stage == "llvmc" || Stage == "source" ||
+        sourceDialectFromKey(Stage)) {
       if (S->Img.Arch == Arch::EVM || S->Img.Arch == Arch::SBF) {
         Result["mapping_status"] = "unsupported_architecture";
+        return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
+      }
+      // Rust and Go are offered for programs written in them.
+      if (Stage != "llvmc" && !viewDialect(*S, FuncEntry, Stage)) {
+        Result["mapping_status"] = "unsupported_representation";
+        Result["reason"] = unofferedDialectReason(
+            sourceDialectFromKey(Stage).value_or(SourceDialect::C),
+            S->Img.ExceptionMetadata.Runtime);
         return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
       }
       auto Page = sourcePage(Sess, FuncEntry, Stage, Offset, Limit);
@@ -895,7 +1090,9 @@ static const char *decompileAllImpl(neverd_session_t Sess,
                     "dedicated C backend");
       return nullptr;
     }
-    if (Language == NEVERD_OUTPUT_SOLIDITY) {
+    // A contract's own language is Solidity.
+    if (Language == NEVERD_OUTPUT_SOLIDITY ||
+        Language == NEVERD_OUTPUT_SOURCE) {
       auto Output = evm::emitSolidity(*R.Result.EVM);
       if (!Output) {
         if (S)
@@ -904,9 +1101,11 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       }
       return dupStr(*Output);
     }
-    if (Language == NEVERD_OUTPUT_RUST) {
+    if (Language == NEVERD_OUTPUT_RUST || Language == NEVERD_OUTPUT_GO) {
       if (S)
-        S->setError("Rust output is supported only for Solana SBF programs");
+        S->setError(Language == NEVERD_OUTPUT_RUST
+                        ? "Rust output is not supported for EVM bytecode"
+                        : "Go output is not supported for EVM bytecode");
       return nullptr;
     }
     auto Output = evm::emitC(*R.Result.EVM);
@@ -925,12 +1124,15 @@ static const char *decompileAllImpl(neverd_session_t Sess,
                     "dedicated C or Rust backend");
       return nullptr;
     }
-    if (Language == NEVERD_OUTPUT_SOLIDITY) {
+    if (Language == NEVERD_OUTPUT_SOLIDITY || Language == NEVERD_OUTPUT_GO) {
       if (S)
-        S->setError("Solidity output is supported only for EVM bytecode");
+        S->setError(Language == NEVERD_OUTPUT_SOLIDITY
+                        ? "Solidity output is supported only for EVM bytecode"
+                        : "Go output is not supported for SBF programs");
       return nullptr;
     }
-    if (Language == NEVERD_OUTPUT_RUST) {
+    // A Solana program's own language is Rust.
+    if (Language == NEVERD_OUTPUT_RUST || Language == NEVERD_OUTPUT_SOURCE) {
       auto Output = sbf::emitRust(*R.Result.SBF);
       if (!Output) {
         if (S)
@@ -948,12 +1150,35 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     return dupStr(*Output);
   }
 
-  if (Language == NEVERD_OUTPUT_SOLIDITY || Language == NEVERD_OUTPUT_RUST) {
+  if (Language == NEVERD_OUTPUT_SOLIDITY) {
     if (S)
-      S->setError(
-          Language == NEVERD_OUTPUT_SOLIDITY
-              ? "Solidity output is supported only for EVM bytecode"
-              : "Rust output is supported only for Solana SBF programs");
+      S->setError("Solidity output is supported only for EVM bytecode");
+    return nullptr;
+  }
+  // Native code reads in the language a request names, or its own: the
+  // HighC source, spelled in it.
+  const LanguageRuntimeInfo &ImageLanguage = R.Img.ExceptionMetadata.Runtime;
+  std::optional<SourceDialect> Dialect;
+  if (Language == NEVERD_OUTPUT_RUST)
+    Dialect = SourceDialect::Rust;
+  else if (Language == NEVERD_OUTPUT_GO)
+    Dialect = SourceDialect::Go;
+  else if (Language == NEVERD_OUTPUT_SOURCE)
+    Dialect = dialectOfRuntime(ImageLanguage.Runtime);
+  if (Dialect &&
+      !llvm::is_contained(offeredSourceDialects(ImageLanguage), *Dialect)) {
+    if (Language != NEVERD_OUTPUT_SOURCE) {
+      if (S)
+        S->setError(unofferedDialectReason(*Dialect, ImageLanguage));
+      return nullptr;
+    }
+    Dialect.reset();
+  }
+  if (Dialect == SourceDialect::C)
+    Dialect.reset();
+  if (Dialect && UseLlvmRoute) {
+    if (S)
+      S->setError("Rust and Go output spell the HighC route");
     return nullptr;
   }
 
@@ -962,16 +1187,41 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       return nullptr;
     CEmitterOptions COpts;
     COpts.TheArch = R.Img.Arch;
-    COpts.Format = R.Img.Format;
-    LLVMCEmitter Emitter;
-    Emitter.emit(*R.Result.LlvmModule, OS, COpts, R.Dbg.get(), &R.Img);
+    COpts.Format = R.Img.abiFormat();
+    COpts.UserNames = S ? &S->Renames : nullptr;
+    try {
+      LLVMCEmitter Emitter;
+      Emitter.emit(*R.Result.LlvmModule, OS, COpts, R.Dbg.get(), &R.Img);
+    } catch (const std::exception &Error) {
+      if (S)
+        S->setError(emissionFailure(Error));
+      return nullptr;
+    }
   } else {
     CEmitterOptions COpts;
     COpts.TheArch = R.Img.Arch;
-    COpts.Format = R.Img.Format;
+    COpts.Format = R.Img.abiFormat();
     COpts.Image = &R.Img;
-    HighCEmitter Emitter;
-    Emitter.emit(R.Result.HighFuncs, OS, COpts, R.Dbg.get());
+    COpts.UserNames = S ? &S->Renames : nullptr;
+    std::vector<CSourceName> Names;
+    if (Dialect)
+      COpts.SourceNames = &Names;
+    try {
+      HighCEmitter Emitter;
+      Emitter.emit(R.Result.HighFuncs, OS, COpts, R.Dbg.get());
+    } catch (const std::exception &Error) {
+      if (S)
+        S->setError(emissionFailure(Error));
+      return nullptr;
+    }
+    if (Dialect) {
+      SourceDialectOptions Options;
+      Options.Dialect = *Dialect;
+      Options.TheArch = R.Img.Arch;
+      Options.Format = R.Img.abiFormat();
+      Options.Names = Names;
+      return dupStr(spellInDialect(Buf, Options).Text);
+    }
   }
   return dupStr(Buf);
 }

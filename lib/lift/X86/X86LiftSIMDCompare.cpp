@@ -16,6 +16,7 @@
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86StringCompare.h"
 #include "neverd/lift/X86Lifter.h"
 
 #include <algorithm>
@@ -230,9 +231,8 @@ bool liftEvexFPCompare(X86Lifter &L, X86Lifter::LiftState &S,
 
   if (MemoryForm) {
     if (SecondSourceOperand.size != MemoryTupleSize ||
-        !validateCanonicalEvexMemoryTail(Insn, X86, Encoding,
-                                         SecondSourceOperand, MemoryTupleSize,
-                                         1))
+        !validateCanonicalEvexMemoryTail(
+            Insn, X86, Encoding, SecondSourceOperand, MemoryTupleSize, 1))
       return false;
   } else if (!isVectorRegisterOfSize(SecondSourceOperand, VectorSize) ||
              decodeEvexVectorRMIndex(Encoding.P0, Encoding.ModRM) !=
@@ -279,24 +279,22 @@ bool liftEvexFPCompare(X86Lifter &L, X86Lifter::LiftState &S,
       LaneCount == 64 ? UINT64_MAX : ((UINT64_C(1) << LaneCount) - 1),
       MaskSize);
   if (HasWriteMask) {
-    const RegInfo MaskInfo = mapCapstoneReg(
-        static_cast<x86_reg>(X86.operands[1].reg));
+    const RegInfo MaskInfo =
+        mapCapstoneReg(static_cast<x86_reg>(X86.operands[1].reg));
     ActiveMask = NdVar::reg(MaskInfo.Offset, MaskSize);
   }
   if (Spec.Scalar && HasWriteMask) {
     NdVar LowBit = S.makeTemp(1);
-    S.emit(NdOp::INT_AND, LowBit,
-           {ActiveMask, NdVar::cst(1, ActiveMask.Size)});
+    S.emit(NdOp::INT_AND, LowBit, {ActiveMask, NdVar::cst(1, ActiveMask.Size)});
     ActiveMask = LowBit;
   }
 
   const NdVar FirstSource = L.operandRead(S, FirstSourceOperand);
   const NdVar SecondSource =
-      MemoryForm
-          ? emitEvexMaskedMemoryLoad(S, SecondSourceOperand, ActiveMask,
-                                     VectorSize, Spec.ElementSize,
-                                     MemoryTupleSize, Broadcast)
-          : L.operandRead(S, SecondSourceOperand);
+      MemoryForm ? emitEvexMaskedMemoryLoad(S, SecondSourceOperand, ActiveMask,
+                                            VectorSize, Spec.ElementSize,
+                                            MemoryTupleSize, Broadcast)
+                 : L.operandRead(S, SecondSourceOperand);
   if (FirstSource.Size != VectorSize || SecondSource.Size != VectorSize ||
       ActiveMask.Size != MaskSize)
     return false;
@@ -305,8 +303,8 @@ bool liftEvexFPCompare(X86Lifter &L, X86Lifter::LiftState &S,
       Spec.ElementSize == 8, Spec.Scalar, SuppressExceptions);
   NdVar Compared = S.makeTemp(MaskSize);
   S.emitIntrinsic(Intrinsic::X86FPCompare, Compared,
-                  {NdVar::cst(Control, 1), FirstSource, SecondSource, ActiveMask,
-                   NdVar::cst(RawImmediate, 1)});
+                  {NdVar::cst(Control, 1), FirstSource, SecondSource,
+                   ActiveMask, NdVar::cst(RawImmediate, 1)});
 
   const RegInfo DestinationInfo =
       mapCapstoneReg(static_cast<x86_reg>(DestinationOperand.reg));
@@ -488,17 +486,34 @@ bool liftSIMDCompare(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   case X86_INS_PCMPISTRI:
   case X86_INS_PCMPESTRI:
   case X86_INS_PCMPISTRM:
-  case X86_INS_PCMPESTRM: {
-    if (X86.op_count < 3)
-      break;
+  case X86_INS_PCMPESTRM:
+  case X86_INS_VPCMPISTRI:
+  case X86_INS_VPCMPESTRI:
+  case X86_INS_VPCMPISTRM:
+  case X86_INS_VPCMPESTRM: {
+    if (X86.op_count != 3 || X86.operands[2].type != X86_OP_IMM)
+      return false;
     bool IsExplicit =
-        (InsnId == X86_INS_PCMPESTRI || InsnId == X86_INS_PCMPESTRM);
-    bool IsIndex = (InsnId == X86_INS_PCMPISTRI || InsnId == X86_INS_PCMPESTRI);
-    NdVar A = L.operandRead(S, X86.operands[0]);
-    NdVar B = L.operandRead(S, X86.operands[1]);
+        (InsnId == X86_INS_PCMPESTRI || InsnId == X86_INS_PCMPESTRM ||
+         InsnId == X86_INS_VPCMPESTRI || InsnId == X86_INS_VPCMPESTRM);
+    bool IsIndex =
+        (InsnId == X86_INS_PCMPISTRI || InsnId == X86_INS_PCMPESTRI ||
+         InsnId == X86_INS_VPCMPISTRI || InsnId == X86_INS_VPCMPESTRI);
+    // Results can alias a string or length register. Snapshot all inputs before
+    // emitting the mask/index and reuse those values for the status flags.
+    auto Snapshot = [&](NdVar Source) {
+      NdVar Value = S.makeTemp(Source.Size);
+      S.emit(NdOp::COPY, Value, {Source});
+      return Value;
+    };
+    NdVar A = Snapshot(L.operandRead(S, X86.operands[0]));
+    NdVar B = Snapshot(L.operandRead(S, X86.operands[1]));
     NdVar Imm = NdVar::cst(X86.operands[2].imm & 0xFF, 1);
-    NdVar La = NdVar::reg(x86reg::RAX, 4);
-    NdVar Lb = NdVar::reg(x86reg::RDX, 4);
+    NdVar La, Lb;
+    if (IsExplicit) {
+      La = Snapshot(NdVar::reg(x86reg::RAX, 4));
+      Lb = Snapshot(NdVar::reg(x86reg::RDX, 4));
+    }
     NdVar Out =
         IsIndex ? NdVar::reg(x86reg::RCX, 4) : NdVar::reg(x86reg::XMM0, 16);
     Intrinsic FlagId;
@@ -515,14 +530,18 @@ bool liftSIMDCompare(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       uint64_t Sel;
       uint64_t Reg;
     } StatusFlags[] = {
-        {0, x86reg::CF}, {1, x86reg::ZF}, {2, x86reg::SF}, {3, x86reg::OF}};
+#define X86_STRING_COMPARE_FLAG(SELECTOR, FLAG, SUFFIX)                        \
+  {SELECTOR, x86reg::FLAG},
+#include "neverd/ir/intrinsics/X86StringCompareFlags.def"
+    };
     uint64_t ImmVal = X86.operands[2].imm & 0xFF;
     for (const auto &F : StatusFlags) {
       NdVar Bit = S.makeTemp(1);
       // Pack the control imm (bits 0-7) and the flag selector (bits 8-9) into a
       // single operand so the explicit form stays within the 6-input INTRINSIC
       // limit (A/LA/B/LB/immsel + the intrinsic code).
-      NdVar ImmSel = NdVar::cst(ImmVal | (F.Sel << 8), 2);
+      NdVar ImmSel =
+          NdVar::cst(ImmVal | (F.Sel << kX86StringCompareFlagShift), 2);
       if (IsExplicit)
         S.emitIntrinsic(FlagId, Bit, {A, La, B, Lb, ImmSel});
       else

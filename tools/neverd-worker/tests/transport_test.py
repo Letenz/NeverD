@@ -127,6 +127,31 @@ def run(executable):
         binary.write_bytes(b"mock input")
         client = clients.enter_context(Client(executable))
         assert client.call("metadata")["error"]["code"] == "not_loaded"
+        # The ways a file can be loaded, listed before it is opened: what the
+        # engine reads the file as, then the binary file any file is.
+        assert "identify" in client.hello["capabilities"]
+        rows = client.call("identify", {"path": str(binary)})["payload"]["rows"]
+        assert [(row["loader"], row["loadable"]) for row in rows] == [("fixture", True), ("binary", True)], rows
+        missing = client.call("identify", {"path": str(binary) + ".missing"})
+        assert missing["error"]["code"] == "invalid_request", missing
+        # A binary file opens as the load dialog places it, and the engine
+        # keeps that choice with the input for the next open.
+        firmware = Path(directory) / "firmware.bin"
+        firmware.write_bytes(b"\x90\xc3")
+        placed = clients.enter_context(Client(executable))
+        for wrong, code in (({"loader": "mips"}, "invalid_request"),
+                            ({"loader": "binary", "processor": "mips"}, "invalid_request"),
+                            ({"loader": "binary", "processor": "x86_64", "base": "start"}, "invalid_address")):
+            refused = placed.call("open", {"path": str(firmware), **wrong})
+            assert refused["error"]["code"] == code, (wrong, refused)
+        assert placed.call("open", {"path": str(firmware), "loader": "binary", "processor": "x86_64",
+                                    "base": "0x400000"})["status"] == "ok"
+        kept = json.loads(Path(str(firmware) + ".neverd-load.json").read_text())
+        assert kept == {"loader": "binary", "processor": "x86_64", "base": "0x400000"}, kept
+        assert placed.call("open", {"path": str(firmware), "loader": "evm"})["status"] == "ok"
+        assert json.loads(Path(str(firmware) + ".neverd-load.json").read_text()) == {"loader": "evm"}
+        flag = client.call("open", {"path": str(binary), "analysis": "yes"})
+        assert flag["error"]["code"] == "invalid_request", flag
         open_id = client.send("open", {"path": str(binary)}, fragmented=True)
         opened = client.response(open_id)
         assert opened["status"] == "ok", opened
@@ -298,6 +323,81 @@ def run(executable):
             "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
         assert not any("UTF-16LE" in text for text in rodata), rodata
         assert client.call("string_options", {"encodings": ["ebcdic"]})["error"]["code"] == "unsupported_encoding"
+        # Unwritten data: stderr is as large as its symbol, not a run to the
+        # end of .bss, and data the code reads has a line of its own, named
+        # by the width of the read.
+        assert client.call("xrefs", {"address": "0xffff800012343230"})["status"] == "ok"
+        bss = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343200", "before": 0, "after": 16})["payload"]["lines"]]
+        assert "stderr dq ?" in bss, bss
+        assert "db 28h dup(?)" in bss, bss
+        assert any(line.startswith("qword_FFFF800012343230 dq ? ; DATA XREF: function_7+6") for line in bss), bss
+        # The user's data items: D makes a value and, again, the next size; U
+        # shows the item's bytes as bytes; A the string that starts there.
+        # Each is one step of history, and code is no item's.
+        assert "item_define" in client.hello["capabilities"]
+        item = {"address": "0xffff800012343230", "action": "data"}
+        assert client.call("item_define", item)["payload"]["kind"] == "byte"
+        assert client.call("item_define", item)["payload"]["kind"] == "word"
+        bss = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343230", "before": 0, "after": 2})["payload"]["lines"]]
+        assert any(line.startswith("word_FFFF800012343230 dw ?") for line in bss), bss
+        undefined = client.call("item_define", {"address": "0xffff800012343230", "action": "undefine"})["payload"]
+        assert undefined["kind"] == "undefined" and undefined["size"] == 2, undefined
+        bss = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343230", "before": 0, "after": 2})["payload"]["lines"]]
+        assert any(line.startswith("unk_FFFF800012343230 db ?") for line in bss), bss
+        assert client.call("undo")["status"] == "ok"
+        string = client.call("item_define", {"address": "0xffff800012343108", "action": "string"})["payload"]
+        assert string == {"address": "0xffff800012343108", "kind": "string", "size": 10, "saved": True}, string
+        refused = client.call("item_define", {"address": BASE, "action": "data"})
+        assert refused["error"]["code"] == "invalid_request", refused
+        steps = [(step["kind"], step["address"]) for step in client.call("history")["payload"]["items"]
+                 if step["applied"] and step["kind"] == "item"]
+        assert steps == [("item", "0xffff800012343230")] * 2 + [("item", "0xffff800012343108")], steps
+        # N names any address: data takes the name in its label, and the name
+        # resolves to it; a name used elsewhere or in an automatic form is
+        # refused, and undo takes the name back.
+        assert client.call("rename", {"address": "0xffff800012343230", "name": "program_name"})["status"] == "ok"
+        bss = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343230", "before": 0, "after": 2})["payload"]["lines"]]
+        assert any(line.startswith("program_name dw ?") for line in bss), bss
+        resolved = client.call("resolve", {"query": "program_name"})["payload"]
+        assert resolved["address"] == "0xffff800012343230" and resolved["address_name"] == "program_name", resolved
+        used = client.call("rename", {"address": "0xffff800012343200", "name": "program_name"})
+        assert used["error"]["code"] == "invalid_request", used
+        automatic = client.call("rename", {"address": "0xffff800012343200", "name": "sub_1234"})
+        assert automatic["error"]["code"] == "invalid_request", automatic
+        assert client.call("undo")["status"] == "ok"
+        assert client.call("resolve", {"query": "program_name"})["status"] == "error"
+        # Operand types: an instruction's operand shows its number in the base
+        # the user picks, with its sign changed; each is a step of history.
+        assert "operand_format" in client.hello["capabilities"]
+
+        def operand_line():
+            lines = client.call("listing", {"address": "0xffff800012340051", "before": 0, "after": 1})
+            return next(" ".join(line["text"].split()) for line in lines["payload"]["lines"]
+                        if "sub" in line["text"])
+        assert "sub rsp, 20h" in operand_line(), operand_line()
+        sub = {"address": "0xffff800012340051", "operand": 1}
+        assert client.call("operand_format", {**sub, "action": "decimal"})["status"] == "ok"
+        assert "sub rsp, 32" in operand_line(), operand_line()
+        negated = client.call("operand_format", {**sub, "action": "negate"})["payload"]
+        assert negated["format"] == {"base": "decimal", "negate": True, "invert": False}, negated
+        assert "sub rsp, -18446744073709551584" in operand_line(), operand_line()
+        data = client.call("operand_format", {"address": "0xffff800012343100", "operand": 0, "action": "hex"})
+        assert data["error"]["code"] == "invalid_request", data
+        assert client.call("undo")["status"] == "ok" and client.call("undo")["status"] == "ok"
+        assert "sub rsp, 20h" in operand_line(), operand_line()
+        # An operand that is no number gives the format to the instruction's
+        # last number; an instruction without one is refused.  A format
+        # outlives the session: its sidecar is read back on open.
+        fallback = client.call("operand_format", {**sub, "operand": 0, "action": "binary"})
+        assert fallback["payload"]["operand"] == 1, fallback
+        assert "sub rsp, 100000b" in operand_line(), operand_line()
+        bare = client.call("operand_format", {"address": "0xffff800012340050", "action": "hex"})
+        assert bare["error"]["code"] == "invalid_request", bare
+        assert "no number" in bare["error"]["message"], bare
         client.call("string_options", {"encodings": ["ascii", "utf-8", "utf-16le"]})
         # Hex views ask for bytes as text in an encoding, a cell per byte.
         bytes_ = client.call("bytes", {"address": "0xffff800012343000", "size": 4, "text_encoding": "ascii"})["payload"]
@@ -346,6 +446,14 @@ def run(executable):
         assert reopened.call("open", {"path": str(binary)})["status"] == "ok"
         assert reopened.call("annotations")["payload"]["items"][0]["text"] == note
         assert reopened.call("functions", {"filter": "renamed_function"})["payload"]["total"] == 1
+        # The item is the user's; its label waits for the reference index.
+        assert reopened.call("xrefs", {"address": "0xffff800012343230"})["status"] == "ok"
+        bss = [" ".join(line["text"].split()) for line in reopened.call(
+            "listing", {"address": "0xffff800012343230", "before": 0, "after": 2})["payload"]["lines"]]
+        assert any(line.startswith("word_FFFF800012343230 dw ?") for line in bss), bss
+        code = [" ".join(line["text"].split()) for line in reopened.call(
+            "listing", {"address": "0xffff800012340051", "before": 0, "after": 1})["payload"]["lines"]]
+        assert any("sub rsp, 100000b" in line for line in code), code
         reopened.close()
 
     malformed = Client(executable)

@@ -29,6 +29,14 @@ inline bool archLiftSupported(Arch A) {
 
 inline bool archCodegenSupported(Arch A) { return archLiftSupported(A); }
 
+/// Whether \p A stores a multi-byte value least significant byte first.  The
+/// loaders take no big-endian image of the native ISAs; EVM memory is
+/// big-endian.
+constexpr bool archLittleEndian(Arch A) {
+  return A == Arch::X64 || A == Arch::AArch64 || A == Arch::X86 ||
+         A == Arch::ARM || A == Arch::SBF;
+}
+
 inline bool archMachOPatchSupported(Arch A) { return archLiftSupported(A); }
 
 inline bool archCOFFPatchSupported(Arch A) { return archLiftSupported(A); }
@@ -38,6 +46,9 @@ inline bool archELFPatchSupported(Arch A) { return archLiftSupported(A); }
 constexpr uint64_t kPageSize4K = 0x1000;
 constexpr uint64_t kPageSize16K = 0x4000;
 constexpr uint64_t kSyntheticStackAlignment = 16;
+/// The widest atomic access a target performs, a 16-byte compare-and-swap:
+/// the most alignment an atomically accessed image object needs in C.
+constexpr uint64_t kMaxAtomicAccessBytes = 16;
 
 /// Residue of the ABI entry stack pointer modulo the synthetic stack alignment.
 /// x86-64 includes the pushed return address; Darwin i386 enters at 12 mod 16.

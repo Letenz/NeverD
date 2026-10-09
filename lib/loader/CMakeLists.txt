@@ -1,7 +1,22 @@
+# The binary-file ISA model (scripts/generate_isa_model.py), embedded so a
+# lookup reads no file at run time.
+set(NEVERD_ISA_MODEL "${CMAKE_CURRENT_SOURCE_DIR}/Raw/ISAModel.bin")
+set(NEVERD_ISA_MODEL_INC "${CMAKE_CURRENT_BINARY_DIR}/Raw/ISAModel.inc")
+add_custom_command(
+  OUTPUT "${NEVERD_ISA_MODEL_INC}"
+  COMMAND "${CMAKE_COMMAND}" "-DINPUT=${NEVERD_ISA_MODEL}"
+          "-DOUTPUT=${NEVERD_ISA_MODEL_INC}"
+          -P "${PROJECT_SOURCE_DIR}/cmake/NeverDEmbedBytes.cmake"
+  DEPENDS "${NEVERD_ISA_MODEL}" "${PROJECT_SOURCE_DIR}/cmake/NeverDEmbedBytes.cmake"
+  COMMENT "Embedding the binary-file ISA model"
+  VERBATIM)
+
 add_neverd_component_library(NeverDLoader
   COFF/COFFLoader.cpp
   COFF/COFFLoaderUtils.cpp
+  COFF/COFFObjectExterns.cpp
   COFF/COFFObjectView.cpp
+  COFF/PEImports.cpp
   COFF/PEFixedImage.cpp
   COFF/PEProgramExports.cpp
   COFF/RichHeader.cpp
@@ -31,13 +46,16 @@ add_neverd_component_library(NeverDLoader
   DWARF/EHFrameEncoding.cpp
   DWARF/ItaniumEH.cpp
   DWARF/LSDA.cpp
+  DataSymbolBinding.cpp
   DirectBranch.cpp
   ELF/ARMEHABI.cpp
   ELF/ARMEHABIEntry.cpp
   ELF/ARMEHABIIndex.cpp
   ELF/ARMEHABITypeTable.cpp
   ELF/ARMEHABIUnwind.cpp
+  ELF/ELFDynamicSections.cpp
   ELF/ELFLoader.cpp
+  ELF/ELFLoaderExterns.cpp
   ELF/ELFLoaderRelocations.cpp
   ELF/ELFLoaderSections.cpp
   ELF/ELFLoaderSegments.cpp
@@ -46,6 +64,10 @@ add_neverd_component_library(NeverDLoader
   ELF/ELFProgramLinking.cpp
   ELF/SBFELFLoader.cpp
   EVM/EVMLoader.cpp
+  Raw/ISAIdentify.cpp
+  Raw/RawFingerprints.cpp
+  Raw/RawLoader.cpp
+  ${NEVERD_ISA_MODEL_INC}
   ExecutableCodeOwnerIndex.cpp
   Go/GoDeferInfo.cpp
   Go/GoFuncTable.cpp
@@ -53,8 +75,8 @@ add_neverd_component_library(NeverDLoader
   Go/GoPclntab.cpp
   Go/GoRuntimeEH.cpp
   Go/GoStackMaps.cpp
-  InputDigest.cpp
   Loader.cpp
+  ObjectExterns.cpp
   PointerRelocation.cpp
   MachO/DarwinRuntimeCalls.cpp
   MachO/DarwinSourceDeclarations.cpp
@@ -75,6 +97,7 @@ add_neverd_component_library(NeverDLoader
   MachO/MachOExecutionImage.cpp
   MachO/MachOLoaderUtils.cpp
   MachO/MachOLocalFunction.cpp
+  MachO/MachOObjectExterns.cpp
   MachO/SourceRegisterCopy.cpp
   MachO/SourceLocalCall.cpp
   ObjC/ObjCClassGetterCalls.cpp
@@ -118,8 +141,15 @@ add_neverd_component_library(NeverDLoader
   language/LanguageEH.cpp
   language/LanguagePersonality.cpp
   language/LanguageRuntime.cpp
+  language/SymbolSpelling.cpp
+  language/SymbolSpellingCxx.cpp
+  language/SymbolSpellingD.cpp
+  language/SymbolSpellingObjC.cpp
+  language/SymbolSpellingRust.cpp
+  language/SymbolSpellingSwift.cpp
 
   LINK_COMPONENTS
+  Digest
   EVM
   IR
   SBF
@@ -127,3 +157,5 @@ add_neverd_component_library(NeverDLoader
   LINK_LIBS
   LLVMSwiftDemangle
 )
+
+target_include_directories(NeverDLoader PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Raw")

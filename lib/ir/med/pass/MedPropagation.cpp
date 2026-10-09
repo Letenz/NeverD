@@ -131,10 +131,26 @@ void LowToMedConverter::propagate(MedFunc &Func) {
       for (auto &Op : Blk.Ops) {
         if (Op.NumInputs < 2)
           continue;
-        if (Op.Opcode != NdOp::INT_ADD && Op.Opcode != NdOp::INT_SUB &&
-            Op.Opcode != NdOp::INT_AND && Op.Opcode != NdOp::INT_OR &&
-            Op.Opcode != NdOp::INT_XOR && Op.Opcode != NdOp::INT_MULT)
+        switch (Op.Opcode) {
+        case NdOp::INT_ADD:
+        case NdOp::INT_SUB:
+        case NdOp::INT_AND:
+        case NdOp::INT_OR:
+        case NdOp::INT_XOR:
+        case NdOp::INT_MULT:
+        case NdOp::INT_LEFT:
+        case NdOp::INT_RIGHT:
+        case NdOp::INT_ASHR:
+        case NdOp::INT_EQUAL:
+        case NdOp::INT_NOTEQUAL:
+        case NdOp::INT_LESS:
+        case NdOp::INT_SLESS:
+        case NdOp::INT_LESSEQUAL:
+        case NdOp::INT_SLESSEQUAL:
+          break;
+        default:
           continue;
+        }
 
         struct ConstantInfo {
           uint64_t Value = 0;
@@ -187,8 +203,47 @@ void LowToMedConverter::propagate(MedFunc &Func) {
         if (!A || !B)
           continue;
 
+        // The operands' bytes, unsigned and signed.
+        const uint16_t InSize = Op.Inputs[0].Size;
+        const unsigned InBits = InSize > 0 && InSize < 8 ? InSize * 8u : 64u;
+        const auto Unsigned = [&](uint64_t Value) {
+          return InBits == 64 ? Value : Value & ((1ULL << InBits) - 1);
+        };
+        const auto Signed = [&](uint64_t Value) {
+          return InBits == 64 ? static_cast<int64_t>(Value)
+                              : static_cast<int64_t>(Value << (64 - InBits)) >>
+                                    (64 - InBits);
+        };
         uint64_t Result = 0;
         switch (Op.Opcode) {
+        case NdOp::INT_LEFT:
+          Result = B->Value >= InBits ? 0 : A->Value << B->Value;
+          break;
+        case NdOp::INT_RIGHT:
+          Result = B->Value >= InBits ? 0 : Unsigned(A->Value) >> B->Value;
+          break;
+        case NdOp::INT_ASHR:
+          Result = static_cast<uint64_t>(
+              Signed(A->Value) >> (B->Value >= InBits ? InBits - 1 : B->Value));
+          break;
+        case NdOp::INT_EQUAL:
+          Result = Unsigned(A->Value) == Unsigned(B->Value);
+          break;
+        case NdOp::INT_NOTEQUAL:
+          Result = Unsigned(A->Value) != Unsigned(B->Value);
+          break;
+        case NdOp::INT_LESS:
+          Result = Unsigned(A->Value) < Unsigned(B->Value);
+          break;
+        case NdOp::INT_SLESS:
+          Result = Signed(A->Value) < Signed(B->Value);
+          break;
+        case NdOp::INT_LESSEQUAL:
+          Result = Unsigned(A->Value) <= Unsigned(B->Value);
+          break;
+        case NdOp::INT_SLESSEQUAL:
+          Result = Signed(A->Value) <= Signed(B->Value);
+          break;
         case NdOp::INT_ADD:
           Result = A->Value + B->Value;
           break;
@@ -218,7 +273,13 @@ void LowToMedConverter::propagate(MedFunc &Func) {
         }
 
         bool ResultHasAddressOrigin = false;
-        if (A->MayRelocate || B->MayRelocate) {
+        // An address less itself is 0 however the loader places it: the same
+        // object, at the same offset, on both sides.
+        const bool SameAddress = Op.Opcode == NdOp::INT_SUB &&
+                                 A->Value == B->Value && A->HasAddressOrigin &&
+                                 B->HasAddressOrigin &&
+                                 A->AddressOwnerVA == B->AddressOwnerVA;
+        if ((A->MayRelocate || B->MayRelocate) && !SameAddress) {
           // Preserve expressions whose value depends on two independently
           // rebuilt symbols, or on pointer bit patterns. The one safe fold is
           // canonical address construction: address +/- a numeric displacement
@@ -260,8 +321,9 @@ void LowToMedConverter::propagate(MedFunc &Func) {
             ResultProvenance = ConstantAddressProvenance::CodeAddress;
           else
             ResultProvenance = ConstantAddressProvenance::Address;
-        } else if (A->Provenance == ConstantAddressProvenance::Scalar &&
-                   B->Provenance == ConstantAddressProvenance::Scalar)
+        } else if (SameAddress ||
+                   (A->Provenance == ConstantAddressProvenance::Scalar &&
+                    B->Provenance == ConstantAddressProvenance::Scalar))
           ResultProvenance = ConstantAddressProvenance::Scalar;
         Op.Inputs[0] = MedVar::makeConst(Result, Op.Output.Size,
                                          ResultProvenance, ResultOwnerVA);

@@ -13,12 +13,16 @@
 #include "LibraryPresentation.h"
 #include "SessionImpl.h"
 
+#include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/evm/bytecode/EVMBytecode.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
+#include "neverd/loader/ExceptionCommon.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
+#include "neverd/loader/InputDigest.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
+#include "neverd/support/FilePath.h"
 #include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -28,7 +32,7 @@
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MD5.h"
-#include "llvm/Support/SHA256.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 #include <algorithm>
 #include <fstream>
@@ -354,6 +358,18 @@ const char *neverd_strings_json(neverd_session_t Sess, int MinLength) {
   return dupStr(Buf);
 }
 
+/// One row of neverd_strings_ex_json(), keys in the order a json::Object
+/// prints them.
+static void writeStringRow(llvm::json::OStream &J, const ImageString &String) {
+  J.object([&] {
+    J.attribute("addr", vaHex(String.Address));
+    J.attribute("chars", static_cast<int64_t>(String.Chars));
+    J.attribute("encoding", strings::encodingName(String.Kind));
+    J.attribute("length", static_cast<int64_t>(String.Bytes));
+    J.attribute("value", String.Text);
+  });
+}
+
 const char *neverd_strings_ex_json(neverd_session_t Sess,
                                    const char *OptionsJson) {
   auto *S = toSession(Sess);
@@ -373,16 +389,102 @@ const char *neverd_strings_ex_json(neverd_session_t Sess,
   llvm::json::OStream J(OS);
   J.array([&] {
     for (const ImageString &String : imageStrings(*S, Options))
-      J.object([&] {
-        J.attribute("addr", vaHex(String.Address));
-        J.attribute("chars", static_cast<int64_t>(String.Chars));
-        J.attribute("encoding", strings::encodingName(String.Kind));
-        J.attribute("length", static_cast<int64_t>(String.Bytes));
-        J.attribute("value", String.Text);
-      });
+      writeStringRow(J, String);
   });
   OS.flush();
   return dupStr(Buf);
+}
+
+const char *neverd_strings_page_json(neverd_session_t Sess,
+                                     const char *OptionsJson,
+                                     neverd_va_t FirstAddr, int MaxRows) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  strings::ScanOptions Options;
+  if (const auto Error = parseStringOptions(OptionsJson, Options);
+      !Error.empty()) {
+    S->setError(Error);
+    return nullptr;
+  }
+  constexpr int MaxRowsPerPage = 65536;
+  const size_t Limit =
+      static_cast<size_t>(std::clamp(MaxRows, 1, MaxRowsPerPage));
+  // The scan runs once per options; a page reads it from its cursor.
+  static const std::vector<ImageString> None;
+  const auto &Strings = S->Loaded ? imageStrings(*S, Options) : None;
+  const auto Begin =
+      std::lower_bound(Strings.begin(), Strings.end(), FirstAddr,
+                       [](const ImageString &String, va_t Value) {
+                         return String.Address < Value;
+                       });
+  // A page never splits the strings that start at one address.
+  auto End = Begin;
+  for (size_t Count = 0; End != Strings.end(); ++End, ++Count)
+    if (Count >= Limit && End->Address != std::prev(End)->Address)
+      break;
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  J.object([&] {
+    J.attribute("next_addr", End != Strings.end()
+                                 ? llvm::json::Value(vaHex(End->Address))
+                                 : llvm::json::Value(nullptr));
+    J.attributeArray("strings", [&] {
+      for (auto It = Begin; It != End; ++It)
+        writeStringRow(J, *It);
+    });
+  });
+  OS.flush();
+  return dupStr(Buf);
+}
+
+const char *neverd_string_at(neverd_session_t Sess, neverd_va_t Addr,
+                             const char *OptionsJson) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return nullptr;
+  }
+  strings::ScanOptions Options;
+  Options.MinLength = 1;
+  if (const auto Error = parseStringOptions(OptionsJson, Options);
+      !Error.empty()) {
+    S->setError(Error);
+    return nullptr;
+  }
+  // A string that does not end within this many bytes is not read.
+  constexpr size_t Window = 65536;
+  const Segment *Seg = S->Img.getSegmentFor(Addr);
+  const uint64_t Offset = Seg && Addr >= Seg->VA ? Addr - Seg->VA : 0;
+  if (!Seg || Addr < Seg->VA || Offset >= Seg->Data.size()) {
+    S->setError("no initialized data at " + vaHex(Addr));
+    return nullptr;
+  }
+  const llvm::ArrayRef<uint8_t> Bytes(
+      Seg->Data.data() + Offset,
+      std::min<size_t>(Window, Seg->Data.size() - static_cast<size_t>(Offset)));
+  std::optional<strings::FoundString> First;
+  strings::scan(Bytes, Options, [&](strings::FoundString &&Found) {
+    if (!First)
+      First = std::move(Found);
+  });
+  if (!First || First->Offset != 0) {
+    S->setError("no string starts at " + vaHex(Addr));
+    return nullptr;
+  }
+  llvm::json::Object Row{
+      {"addr", vaHex(Addr)},
+      {"chars", static_cast<int64_t>(First->Chars)},
+      {"encoding", strings::encodingName(First->Kind)},
+      {"length", static_cast<int64_t>(First->Bytes)},
+      {"unit", static_cast<int64_t>(strings::encodingUnitBytes(First->Kind))},
+      {"value", std::move(First->Text)}};
+  return dupStr(jsonToString(llvm::json::Value(std::move(Row))));
 }
 
 const char *neverd_string_encodings_json(void) {
@@ -485,46 +587,59 @@ const char *neverd_sections_json(neverd_session_t Sess) {
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
+/// The symbols as rows, streamed in the sorted key order a json::Object
+/// prints (building an object tree per symbol costs more than reading the
+/// symbols).  The user's names replace the symbols' and name, in a row of
+/// their own, an address no symbol names; \p Data keeps data alone.
+static const char *symbolRows(Session &S, bool Data) {
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  const auto Row = [&](va_t Addr, llvm::StringRef Name, uint64_t Size) {
+    J.object([&] {
+      J.attribute("addr", vaHex(Addr));
+      J.attribute("name", jsonSafeText(Name));
+      J.attribute("size", static_cast<int64_t>(Size));
+    });
+  };
+  std::set<va_t> Renamed;
+  J.array([&] {
+    for (const auto &Sym : S.Img.Symbols) {
+      if (Data && Sym.IsFunc)
+        continue;
+      const auto Rename = S.Renames.find(Sym.Addr);
+      if (Rename == S.Renames.end()) {
+        Row(Sym.Addr, Sym.Name, Sym.Size);
+        continue;
+      }
+      Renamed.insert(Sym.Addr);
+      Row(Sym.Addr, Rename->second, Sym.Size);
+    }
+    for (const auto &[Addr, Name] : S.Renames) {
+      if (Renamed.count(Addr) ||
+          (Data && llvm::any_of(S.Functions, [&](const auto &F) {
+             return F.Entry == Addr;
+           })))
+        continue;
+      Row(Addr, Name, 0);
+    }
+  });
+  OS.flush();
+  return dupStr(Buf);
+}
+
 const char *neverd_symbols_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S->Loaded)
     return dupStr("[]");
-
-  // Streamed in the sorted key order a json::Object prints: building an
-  // object tree per symbol costs more than reading the symbols.
-  std::string Buf;
-  llvm::raw_string_ostream OS(Buf);
-  llvm::json::OStream J(OS);
-  J.array([&] {
-    for (const auto &Sym : S->Img.Symbols)
-      J.object([&] {
-        J.attribute("addr", vaHex(Sym.Addr));
-        J.attribute("name", jsonSafeText(Sym.Name));
-        J.attribute("size", static_cast<int64_t>(Sym.Size));
-      });
-  });
-  OS.flush();
-  return dupStr(Buf);
+  return symbolRows(*S, false);
 }
 
 const char *neverd_data_symbols_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S->Loaded)
     return dupStr("[]");
-  std::string Buf;
-  llvm::raw_string_ostream OS(Buf);
-  llvm::json::OStream J(OS);
-  J.array([&] {
-    for (const auto &Sym : S->Img.Symbols)
-      if (!Sym.IsFunc)
-        J.object([&] {
-          J.attribute("addr", vaHex(Sym.Addr));
-          J.attribute("name", jsonSafeText(Sym.Name));
-          J.attribute("size", static_cast<int64_t>(Sym.Size));
-        });
-  });
-  OS.flush();
-  return dupStr(Buf);
+  return symbolRows(*S, true);
 }
 
 const char *neverd_relocs_json(neverd_session_t Sess) {
@@ -559,7 +674,7 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   Root["instruction_mode"] = getInstructionModeName(S->Img.Mode);
   Root["format"] = S->Img.getFormatName();
   Root["bits"] = S->Img.is64Bit() ? 64 : 32;
-  Root["file_path"] = jsonSafeText(S->FilePath.string());
+  Root["file_path"] = jsonSafeText(pathToUTF8(S->FilePath));
 
   std::error_code EC;
   auto FileSz = std::filesystem::file_size(S->FilePath, EC);
@@ -609,6 +724,29 @@ const char *neverd_headers_json(neverd_session_t Sess) {
 
   if (S->Img.EVM)
     Root["evm"] = describeEVMImage(*S->Img.EVM);
+
+  // The language whose runtime built the image, which decides how its names
+  // read.  Evidence comes from LanguageRuntime.def, the version from the
+  // image's own release string.
+  const LanguageRuntimeInfo &Language = S->Img.ExceptionMetadata.Runtime;
+  llvm::json::Object LanguageInfo;
+  LanguageInfo["runtime"] = getSourceLanguageRuntimeName(Language.Runtime);
+  if (!Language.Version.empty())
+    LanguageInfo["version"] = jsonSafeText(Language.Version);
+  llvm::json::Array Secondary;
+  for (SourceLanguageRuntime Runtime : Language.SecondaryRuntimes)
+    Secondary.push_back(getSourceLanguageRuntimeName(Runtime));
+  LanguageInfo["secondary"] = std::move(Secondary);
+  llvm::json::Array Evidence;
+  for (const std::string &Item : Language.Evidence)
+    Evidence.push_back(jsonSafeText(Item));
+  LanguageInfo["evidence"] = std::move(Evidence);
+  // The languages its pseudocode reads in: C, and the program's own.
+  llvm::json::Array Pseudocode;
+  for (SourceDialect Dialect : offeredSourceDialects(Language))
+    Pseudocode.push_back(sourceDialectKey(Dialect));
+  LanguageInfo["pseudocode"] = std::move(Pseudocode);
+  Root["language"] = std::move(LanguageInfo);
 
   llvm::json::Object Dyn;
   const auto &DI = S->Img.DynInfo;
@@ -701,6 +839,26 @@ const char *neverd_entrypoints_json(neverd_session_t Sess) {
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
+/// The SHA-256 of the input as loaded, in lowercase hexadecimal: the one the
+/// loader took while it read the input, else one hash of the file, kept.
+/// Empty when the file cannot be read.
+static std::string inputSha256(Session &S) {
+  if (!S.Img.InputFileSHA256) {
+    auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(S.FilePath));
+    if (!Buffer)
+      return {};
+    S.Img.InputFileSHA256 = sha256(llvm::ArrayRef<uint8_t>(
+        reinterpret_cast<const uint8_t *>((*Buffer)->getBufferStart()),
+        (*Buffer)->getBufferSize()));
+  }
+  return llvm::toHex(*S.Img.InputFileSHA256, /*LowerCase=*/true);
+}
+
+const char *neverd_session_input_sha256(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  return dupStr(S->Loaded ? inputSha256(*S) : std::string());
+}
+
 const char *neverd_dashboard_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S->Loaded)
@@ -710,8 +868,8 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
   llvm::json::Object Root;
 
   llvm::json::Object File;
-  File["path"] = jsonSafeText(S->FilePath.string());
-  File["name"] = jsonSafeText(S->FilePath.filename().string());
+  File["path"] = jsonSafeText(pathToUTF8(S->FilePath));
+  File["name"] = jsonSafeText(pathToUTF8(S->FilePath.filename()));
   File["format"] = S->Img.getFormatName();
   File["arch"] = getArchName(S->Img.Arch);
   File["instruction_mode"] = getInstructionModeName(S->Img.Mode);
@@ -728,7 +886,6 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
   std::ifstream Ifs(S->FilePath, std::ios::binary);
   if (Ifs.is_open()) {
     llvm::MD5 Md5;
-    llvm::SHA256 Sha;
     uint32_t Crc = 0;
     char Buf[8192];
     while (Ifs.read(Buf, sizeof(Buf)) || Ifs.gcount() > 0) {
@@ -736,20 +893,12 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
       const llvm::ArrayRef<uint8_t> Chunk(
           reinterpret_cast<const uint8_t *>(Buf), Count);
       Md5.update(Chunk);
-      Sha.update(Chunk);
       Crc = llvm::crc32(Crc, Chunk);
     }
     llvm::MD5::MD5Result Md5Res;
     Md5.final(Md5Res);
     Hashes["md5"] = Md5Res.digest().str().lower();
-    auto Sha256Res = Sha.final();
-    std::string Sha256Hex;
-    const char Digits[] = "0123456789abcdef";
-    for (auto B : Sha256Res) {
-      Sha256Hex += Digits[(B >> 4) & 0xF];
-      Sha256Hex += Digits[B & 0xF];
-    }
-    Hashes["sha256"] = Sha256Hex;
+    Hashes["sha256"] = inputSha256(*S);
     Hashes["crc32"] = llvm::utohexstr(Crc, /*LowerCase=*/true, /*Width=*/8);
   }
   Root["hashes"] = std::move(Hashes);

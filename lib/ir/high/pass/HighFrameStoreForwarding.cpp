@@ -140,7 +140,7 @@ bool safeFrameValue(const ExprPtr &Root, std::set<LocalIdentity> &Dependencies,
   };
   std::vector<Item> Work{{Root, false}};
   std::unordered_map<const HighExpr *, size_t> Costs;
-  std::unordered_set<const HighExpr *> Active;
+  HighExprSet Active;
   while (!Work.empty()) {
     const auto [E, Ready] = Work.back();
     Work.pop_back();
@@ -181,7 +181,7 @@ bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
   if (Func.FrameSize <= 0 || Func.StructuredExceptionRegions ||
       Func.UnstructuredExceptionRegions)
     return false;
-  std::unordered_set<const HighExpr *> Seen, Active;
+  HighExprSet Seen, Active;
   for (const HighStmt &Stmt : Func.Body) {
     if (!Budget || !Stmt.Body.empty() || !Stmt.ElseBody.empty() ||
         !Stmt.Cases.empty() || !Stmt.DefaultBody.empty() ||

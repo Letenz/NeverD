@@ -25,6 +25,7 @@
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/Support/raw_ostream.h"
 
@@ -76,6 +77,13 @@ std::string frameStorageAddress(int64_t Displacement);
 /// The bytes of a pointer, and of an integer argument register, on \p A.
 uint16_t pointerBytes(Arch A);
 
+/// The bytes of the integer \p Operand a bit count counts, or 0.
+uint16_t countedBytes(const HighExpr &Operand);
+
+/// The bits C's counting builtins count the integer \p Operand in: 32 for
+/// at most 4 bytes (unsigned int), 64 for 8 bytes, and 0 for any other width.
+unsigned countedBits(const HighExpr &Operand);
+
 /// \p E prints as a C expression whose value is 0 or 1: a comparison, a
 /// logical operation, or a carry or overflow test.  Its zero or sign
 /// extension is that value at any width, with no view of its own byte.
@@ -101,6 +109,9 @@ public:
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
+  /// Records the functions and objects the text names in the source map
+  /// (HighCSourceNames.cpp).
+  void recordSourceNames(const std::vector<HighFunc> &Funcs);
   TypeRef declaredFunctionReturnType(const HighFunc &Func) const;
   void prepareFunctionReturns(std::vector<HighFunc> &Funcs) const;
   void prepareFunctionIdentifiers(const std::vector<HighFunc> &Funcs);
@@ -118,10 +129,11 @@ public:
   bool isImageDataAddress(va_t Addr) const;
   void noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                        bool MemoryAccess = false);
+  /// Notes an object the code reaches only by its address so far.
+  void noteImageAddress(va_t Addr);
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
-  void writeX87FpremHelpers();
   void writeX64SyscallHelper();
   void writeX64WindowsSyscallHelper();
   struct MemoryLoadDestination {
@@ -239,6 +251,25 @@ public:
   std::string resolvedCallTarget(const HighExpr &E) const;
   /// The C identifier a direct call names; see HighCExprWriter.cpp.
   std::string callIdentifier(const HighExpr &E) const;
+  /// The C name of the import slot call \p E goes through, itself or by the
+  /// stub that jumps through it: a function pointer (`__imp_calloc`), or
+  /// empty when it calls no import or the format names no slot.
+  std::string importSlotIdentifier(const HighExpr &E) const;
+  /// The identifier of the import slot at \p Addr when \p Addr is an
+  /// import's own slot in the import address table, not a stub that jumps
+  /// through it; empty otherwise.
+  std::string importDataSlotIdentifier(va_t Addr) const;
+  /// The import slot a read of \p Size bytes at \p Address reads as data, a
+  /// data import's address: the slot at a constant address, or the slot a
+  /// read-only pointer holds (MinGW's `.refptr.__imp__fmode`).
+  std::optional<va_t> importDataSlotRead(const HighExpr &Address,
+                                         uint16_t Size) const;
+  /// The function this file defines that call \p E runs, or null: one named
+  /// like it at another address is a different function.
+  const HighFunc *calledDefinition(const HighExpr &E) const;
+  /// Whether \p Func is the stub of a variadic C library import, which a
+  /// call runs as a call through the import's slot.
+  bool isVariadicImportStub(const HighFunc &Func) const;
   std::string renderCallExpr(const HighExpr &E);
   std::string renderSourceCallExpr(const HighExpr &E);
   const HighFunc *sourceCallDefinition(const SourceCallTypeHint &Hint,
@@ -247,6 +278,33 @@ public:
   std::string debugNameForDisplacement(va_t Entry, int64_t Disp) const;
   TypeRef debugTypeForDisplacement(va_t Entry, int64_t Disp) const;
   TypeRef declaredParamType(const MedVar &V) const;
+  /// The type \p Func's definition declares its HighIR parameter \p Index
+  /// with, which its prototype and every use of the parameter share.
+  TypeRef emittedParamType(const HighFunc &Func, size_t Index) const;
+  /// What a parameter holds of its function's debug signature, matched by
+  /// where the convention passes each (SourceParameterPlacement), never by
+  /// position: System V passes `f(double x, int n)` with n in the first
+  /// integer register.
+  struct DebugParamBinding {
+    /// The debug parameter it holds a piece of, or -1.
+    int Index = -1;
+    /// Where the piece starts in that parameter's value.
+    uint16_t Offset = 0;
+    /// It holds the whole value the debug type describes.
+    bool Whole = false;
+    /// It holds the hidden pointer to the result's storage.
+    bool Result = false;
+  };
+  DebugParamBinding debugParamBinding(const HighFunc &Func, size_t Index) const;
+  /// The name \p Func's parameter \p Index reads as by its debug signature:
+  /// the debug parameter's, `<name>_<offset>` for a later piece of one, or
+  /// empty.
+  std::string debugParamName(const HighFunc &Func, size_t Index) const;
+  /// Whether a call passes \p FS's parameters in signature order: one
+  /// integer or one floating value each, and no hidden result pointer.  A
+  /// call's arguments come in the convention's order, integer registers
+  /// first, so another signature cannot type them by position.
+  bool positionalDebugSignature(const FunctionSym &FS) const;
   TypeRef debugParamType(const MedVar &V) const;
   TypeRef declaredRecordPointee(const HighExpr &Base) const;
   std::optional<std::pair<const HighExpr *, uint64_t>>
@@ -308,7 +366,16 @@ public:
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
+  /// The variable \p E converts between integer or pointer types of one
+  /// width, or null when a step changes the width or converts a float: a
+  /// narrowed or extended view is another value than the variable it reads
+  /// (`(int32_t)(int8_t)v` is not `v`).
+  const HighExpr *sameWidthVariable(const HighExpr &E) const;
   const HighExpr *forwardedExpr(const HighExpr *E) const;
+  /// \p Operand's text as an operand of a floating-point operator.  An
+  /// operation whose type C may compute wider (CFloatTypes.def) is cast to
+  /// that type, which rounds it where the instruction rounded.
+  std::string floatOperandStr(const HighExpr &Operand, int ParentPrec);
   /// True when \p E prints as an unsigned integer of exactly \p Width bytes.
   /// Widening views and untyped add/sub/mul stay wrapped.
   bool isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const;
@@ -336,8 +403,9 @@ public:
   bool isCtorSourceExpr(const HighExpr *Op) const;
   bool isCtorDisplayOperand(const HighExpr *Op) const;
   TypeRef knownCallReturnType(const HighExpr &E) const;
-  /// A call whose prototype returns nothing: TPI says `void`, or the callee
-  /// is a destructor. The result register it leaves holds no defined value.
+  /// A call whose prototype returns nothing: TPI or the C library tables say
+  /// `void`, or the callee is a destructor. The result register it leaves
+  /// holds no defined value.
   bool knownVoidCall(const HighExpr &E) const;
   const HighExpr *typedCallResult(const HighExpr *E) const;
   const HighExpr *peelIntegerViewOps(const HighExpr *E) const;
@@ -346,7 +414,44 @@ public:
   std::string intrinsicOperandStr(const HighExpr &E);
   /// Cast / zext / `SUBBYTES` 0 of a Var/Phi. Not add/sub/mul, Call, or Load.
   bool isIntegerViewOfScalar(const HighExpr &E) const;
+  /// Where \p Bits come from, under views that keep at least the bytes of
+  /// \p Float, reinterpretations and forwarded copies: a value of type
+  /// \p Float, a call, or the first expression that is neither a view nor a
+  /// value; null where a view drops bytes.
+  const HighExpr *floatBitsSource(const HighExpr &Bits,
+                                  const TypeRef &Float) const;
+  /// The call whose result \p Bits are (floatBitsSource), when it returns
+  /// \p Float; else null.
+  const HighExpr *floatCallResult(const HighExpr &Bits,
+                                  const TypeRef &Float) const;
+  /// The value of type \p Float whose bits \p Bits are (floatBitsSource), or
+  /// null.
+  const HighExpr *floatBitsValue(const HighExpr &Bits,
+                                 const TypeRef &Float) const;
+  /// The \p Float literal whose bits \p Bits are (floatBitsSource): a
+  /// constant, or one read from constant data; else nullopt.
+  std::optional<std::string> floatConstantBitsText(const HighExpr &Bits,
+                                                   const TypeRef &Float) const;
+  /// \p Arg passed to a parameter of floating type \p Expected, when its
+  /// integer bits carry the value.
+  std::optional<std::string> floatArgumentText(const HighExpr &Arg,
+                                               const TypeRef &Expected);
+  /// \p E as the argument of a parameter of type \p Expected, which a
+  /// prototype declares: an integer converts to a pointer parameter, and a
+  /// string or an address to an integer one.
   std::string exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected);
+  /// The text \p E passes to a parameter of type \p Expected, before a
+  /// pointer converts to an integer parameter.
+  std::string typedArgumentText(const HighExpr &E, const TypeRef &Expected);
+  /// Whether \p E, printed as \p Text, has an integer type in C that a
+  /// pointer parameter does not take as it is (not a null pointer constant).
+  bool printsAsInteger(const HighExpr &E, llvm::StringRef Text) const;
+  /// Whether \p Text prints a pointer: a string, an address, or a name the
+  /// function declares as a pointer.
+  bool printsAsPointer(llvm::StringRef Text) const;
+  /// The type this function declares for the identifier \p Text: a local,
+  /// a parameter or a named frame slot; null for anything else.
+  TypeRef declaredTypeNamed(llvm::StringRef Text) const;
   bool looksLikeHiddenSretOperand(const HighExpr *Op) const;
   bool debugExternUsesHiddenSret(const FunctionSym &FS,
                                  llvm::StringRef ExternName) const;
@@ -419,6 +524,10 @@ public:
   /// prefers `if (b > a) else-arm else then-arm`.
   std::optional<std::string> preferGreaterIfElseCond(const HighExpr &E);
   std::string copyForwardName(const std::string &Name) const;
+  /// Whether \p E reads \p Name, itself or through the values already
+  /// forwarded into it.  A forward that does stands for itself: printing it
+  /// in place never ends.
+  bool readsThroughForwards(const HighExpr &E, const std::string &Name) const;
   std::optional<std::string>
   forwardedStoreValue(const HighExpr &Addr, const std::string &Printed) const;
   bool isCopyForwardDestination(const MedVar &V) const;
@@ -470,6 +579,7 @@ public:
   void propagateFrameSlotCopyTypes(const HighFunc &Func);
   void hideInteriorRecordFieldSlots();
   void overlayPackedValueHomes(const HighFunc &Func);
+  void collectFieldLoadTypes(const HighFunc &Func);
   void collectFieldLoadForward(const HighFunc &Func);
   void collectEnumConstForward(const HighFunc &Func);
   void collectTypedPointerArgDests(const HighFunc &Func);
@@ -484,8 +594,9 @@ public:
   bool isForwardableValueExpr(const HighExpr &E) const;
   bool isImageObjectLoad(const HighExpr &E) const;
   bool isTypedMemberLoad(const HighExpr &E) const;
-  bool isReloadableLoad(const HighExpr &E) const {
-    return isImageObjectLoad(E) || isTypedMemberLoad(E);
+  bool isTypedIndexLoad(const HighExpr &E);
+  bool isReloadableLoad(const HighExpr &E) {
+    return isImageObjectLoad(E) || isTypedMemberLoad(E) || isTypedIndexLoad(E);
   }
   /// `!(x == 0 || x < 0)` → `!(x <= 0)` so the cond mentions `x` once.
   void foldSignedJleConds(std::vector<HighStmt> &Stmts);
@@ -569,7 +680,18 @@ public:
   /// Callees with a call that never returns (HighExpr::DoesNotReturn); their
   /// declarations say so, as for a routine the name list knows.
   std::set<std::string> NoReturnCallTargets;
+  /// Call identifiers that name an import's slot (importSlotIdentifier):
+  /// declared as function pointers, linked by their own names.
+  std::set<std::string> ImportSlotIdentifiers;
+  /// Import slots the code reads as data (importDataSlotRead), and the
+  /// identifiers that read them once declared: a pointer linked by the
+  /// slot's own name, or the function pointer a call through it declares.
+  std::set<va_t> ImportDataSlotReads;
+  std::map<va_t, std::string> ImportDataSlotNames;
   std::map<std::string, std::string> ExternalSourceIdentifiers;
+  /// The identifiers functionIdentifier() spelled for functions no map
+  /// names, and the symbols they stand for (recordSourceNames()).
+  mutable std::map<std::string, std::string> ReferencedFunctionSymbols;
   std::set<va_t> GotoTargets;
   /// How many gotos target each address in the current function.
   std::map<va_t, unsigned> GotoTargetUses;
@@ -588,7 +710,22 @@ public:
   std::map<va_t, std::string> SEHExceptionCodeNames;
   void writeSEHExceptionCodeCapture(va_t HandlerVA, int Indent);
   std::string sehFilterValueText(const HighExpr &Value);
-  bool NeedsX87FpremHelpers = false;
+  /// The x87 helpers the output calls, and whether it computes with the
+  /// x87 extended `long double`.
+  std::set<X87CHelper> X87Helpers;
+  std::map<std::pair<Intrinsic, unsigned>, std::string> X86FPStateHelpers;
+  bool UsesX87Extended = false;
+  /// The bytes a plain access of the C memory type \p Type copies inline: 0
+  /// for its whole object, the value's bytes for a bit-precise integer
+  /// narrower than its storage on a little-endian target, none when only
+  /// the byte-order-aware helper reads it.
+  std::optional<unsigned> inlineMemoryBytes(llvm::StringRef Type) const;
+  /// An x87 extended value: what `long double` holds.
+  static bool isX87Value(const HighExpr &E);
+  /// The x87 helper \p E prints through, if any.
+  std::optional<X87CHelper> x87HelperFor(const HighExpr &E) const;
+  /// The name of \p Helper, which the output must declare.
+  std::string useX87Helper(X87CHelper Helper) const;
   bool NeedsX64SyscallHelper = false;
   bool NeedsX64WindowsSyscallHelper = false;
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
@@ -630,6 +767,9 @@ public:
   std::set<std::string> MemoryTypes;
   std::map<std::tuple<unsigned, unsigned, bool>, std::string>
       FloatToIntegerHelpers;
+  /// The helper counting a zero's leading zeros as its width, by the bits it
+  /// counts in (32 or 64).
+  std::map<unsigned, std::string> LeadingZeroHelpers;
   std::map<std::string, unsigned> PartialIntegerBytes;
   std::set<std::pair<std::string, NdMemoryAddressSpace>> SegmentedMemoryTypes;
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>
@@ -644,11 +784,33 @@ public:
   bool UnalignedTypesWritten = false;
   bool Has256BitInteger = false;
   bool Has512BitInteger = false;
+  /// A 16-byte integer on a target whose C has no __int128, which the
+  /// prelude then spells as the C23 _BitInt(128).
+  bool Int128AsBitInt = false;
 
   HighCAnalysisState Analysis;
   bool InferredVoid = false;
   TypeRef FuncReturnType;
   const HighFunc *CurrentFunc = nullptr;
+  /// The parameter bindings and emitted types of the function last asked
+  /// about.
+  mutable const HighFunc *ParamCacheOf = nullptr;
+  mutable va_t ParamCacheEntry = 0;
+  mutable std::vector<DebugParamBinding> ParamBindings;
+  mutable std::vector<TypeRef> EmittedParamTypes;
+  mutable std::vector<std::string> ParamDebugNames;
+  /// The convention's rules placed the cached function's debug parameters
+  /// by where they arrive, rather than by position.
+  mutable bool ParamsPlaced = false;
+  /// Fills the cache for \p Func.
+  void bindParams(const HighFunc &Func) const;
+  /// Where a stack parameter of \p Func arrives, from the entry stack
+  /// pointer; none for a register parameter or an unknown location.
+  std::optional<int64_t> stackParamOffset(const HighFunc &Func,
+                                          size_t Index) const;
+  /// emittedParamIndices' answers, which walk the function's body.
+  mutable std::map<std::pair<const HighFunc *, va_t>, std::vector<size_t>>
+      EmittedParamIndices;
   CSourceRecorder *SourceRecorder = nullptr;
   /// Win64 hidden sret parameter name (`result`) when TPI returns a class.
   std::string IndirectReturnName;
@@ -760,12 +922,25 @@ public:
 
   struct ImageObject {
     std::string Name;
+    /// The name the user, debug information or a symbol gives it, which
+    /// \ref Name is spelled from; empty for a name the emitter made.
+    std::string Symbol;
+    /// The symbol its name is spelled from, as its language spells it, for
+    /// the comment that declares it; empty when the name is the symbol.
+    std::string Readable;
     TypeRef Type;
     std::set<uint16_t> MemoryWidths;
     /// The code stores to it.
     bool Written = false;
+    /// The type stands in for one the code never read or wrote it with: any
+    /// access's type replaces it.
+    bool WeakType = false;
     /// The code calls or jumps through the pointer it holds.
     bool CallSlot = false;
+    /// The code uses its address as a value, not only to access it there.
+    bool AddressTaken = false;
+    /// The image relocates pointer slots inside it: each holds an address.
+    bool HoldsPointers = false;
     /// A string referenced by its address alone: declared as its array, with
     /// \ref ArrayBytes elements' bytes, initialized by the string.
     std::optional<ImageCString> String;
@@ -773,13 +948,38 @@ public:
     /// A pointer slot only loaded, holding the address of a read-only string:
     /// declared as that string's pointer, initialized by its literal.
     std::optional<ImageCString> PointsTo;
+    /// The code indexes the object (`table[i]`): its whole extent, as the
+    /// image's symbol sizes it, is declared, as bytes.
+    uint64_t IndexedBytes = 0;
+    /// The widest atomic access (an ordered load or store, or a
+    /// read-modify-write) at its address: C keeps it as aligned as the image.
+    uint16_t AtomicBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
+  std::map<va_t, DataSymbolBinding> DataSymbolBindings;
+  std::set<va_t> UsedDataBindings;
+  std::map<std::string, std::string> ExternalDataNames;
+  std::optional<std::string> dataSymbolAddress(va_t Slot) const;
+
   /// The C initializer of an object's scalar value, as the image holds it;
   /// none for zero, for bytes the image does not hold, and for values C
   /// cannot spell exactly.
   std::optional<std::string> imageObjectInitializer(va_t Addr,
                                                     const ImageObject &Obj);
+  /// The exact C constant for the float with bits \p Value.
+  std::optional<std::string> floatConstantText(uint64_t Value,
+                                               const TypeRef &Type) const;
+  /// The address constant of a sized image object that \p Address indexes
+  /// by a variable byte offset (`i + &table`), or null.  The constant may
+  /// point into the object (`i + &table[2]`).
+  const HighExpr *indexedImageBase(const HighExpr &Address) const;
+  /// The address and size of the outermost data object, sized by its
+  /// symbol, that holds \p Addr.
+  std::optional<std::pair<va_t, uint64_t>> sizedObjectAt(va_t Addr) const;
+  /// The image's sized data objects by address, each as large as the
+  /// largest symbol there, and the furthest end of any object up to each.
+  std::vector<std::pair<va_t, uint64_t>> SizedObjects;
+  std::vector<va_t> SizedObjectReach;
   /// The image object a call argument prints as when it is a string: the
   /// array's address, or a load of a pointer to one.  The expression is the
   /// one that prints the object's name.
@@ -793,12 +993,38 @@ public:
   /// The C library prototype the call \p E's callee is declared with: a
   /// routine no header declares and nothing else gives a signature.
   const libc::LibCPrototype *calleePrototype(const HighExpr &E) const;
+  /// The standard C function the call \p E calls, whose header declares its
+  /// parameters, or empty.
+  llvm::StringRef headerDeclaredCallee(const HighExpr &E) const;
+  /// The C library prototype of the routine \p Symbol links to in this
+  /// image: an import keeps its export's name, an object symbol the format's
+  /// decoration.
+  const libc::LibCPrototype *prototypeForSymbol(llvm::StringRef Symbol) const;
+  /// The prototype of the external function a call target \p Name names
+  /// (writeForwardDecls), by the one symbol its calls link to.
+  const libc::LibCPrototype *externalPrototype(const std::string &Name) const;
+  /// The C type \p Type of a prototype on this target: `WINAPI` is stdcall
+  /// on 32-bit x86 and nothing elsewhere.
+  std::string prototypeType(std::string_view Type) const;
+  /// The call a statement makes for its effect alone, whose result no
+  /// conversion prints.
+  const HighExpr *StatementCall = nullptr;
+  /// \p E printed as a statement for its effect alone.
+  std::string statementCallText(const HighExpr &E) {
+    const HighExpr *Outer = std::exchange(StatementCall, &E);
+    std::string Text = exprStr(E);
+    StatementCall = Outer;
+    return Text;
+  }
   /// Functions the code takes the address of, by entry: the C name the
   /// address prints as.
   std::map<va_t, std::string> FunctionAddressNames;
   /// The symbols of those functions this output does not define, declared as
   /// the functions it calls are.
   std::set<std::string> AddressTakenFunctions;
+  /// Those it defines, declared before any body: a use can precede the
+  /// definition as a call can.
+  std::set<const HighFunc *> AddressTakenDefinitions;
   void noteFunctionAddress(va_t Addr, const std::vector<HighFunc> &Funcs);
   /// A constant known to be an address, which a function entry there makes
   /// that function's.
@@ -811,9 +1037,29 @@ public:
   struct ImageBacking {
     va_t Base;
     va_t End;
+    /// The bytes, as an address names them (`table[8]`).
     std::string Name;
+    /// A backing that holds relocated pointer slots is a union of words and
+    /// bytes: its C object, and the slots, each word-aligned in it.
+    std::string Words;
+    std::vector<va_t> PointerSlots;
+    /// The alignment of the bytes, and the bytes before Base that keep each
+    /// address as aligned modulo it as in the image: an atomic access in them
+    /// needs that.  1 and 0 for a backing without one.
+    unsigned Align = 1;
+    uint64_t Pad = 0;
   };
   std::vector<ImageBacking> ImageBackings;
+  /// The C address a relocated pointer slot holds: the function or data it
+  /// names, or none when no C object names it.
+  std::optional<std::string> relocatedSlotTarget(va_t Slot) const;
+  /// A pointer-sized object at a relocated slot: the address it holds, as
+  /// its initializer.
+  std::optional<std::string>
+  relocatedSlotInitializer(va_t Addr, const ImageObject &Obj) const;
+  /// Declares the objects whose relocated pointer slots name other objects:
+  /// the backings that hold them, as words, and the single slots \p Deferred.
+  void writePointerBackings(const std::vector<va_t> &Deferred);
 
   std::vector<HiLoPair> HiLoPairs;
 };

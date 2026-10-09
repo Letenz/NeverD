@@ -17,6 +17,7 @@
 #include "neverd/Common.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
 
@@ -24,6 +25,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/ConstantFolding.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 
@@ -327,7 +329,10 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
   if (auto It = ImageObjectNames.find(Addr); It != ImageObjectNames.end())
     return It->second;
   std::string Raw;
-  if (Dbg) {
+  if (Opts.UserNames)
+    if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
+      Raw = It->second;
+  if (Raw.empty() && Dbg) {
     if (auto Data = Dbg->resolveDataObject(Addr);
         Data && !Data->Name.empty() &&
         !llvm::StringRef(Data->Name).starts_with("??_C@"))
@@ -336,8 +341,15 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
   if (Raw.empty() && Img) {
     if (const Symbol *Sym = Img->findSymbolAt(Addr);
         Sym && !Sym->IsFunc && !Sym->Name.empty() &&
-        llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0)
-      Raw = stripLeadingUnderscores(Sym->Name).str();
+        llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0) {
+      // A mangled name keeps the underscores its scheme starts with
+      // (`_ZTV8QDomNode` is `QDomNode_vtable`).
+      const llvm::StringRef CName =
+          cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
+      Raw = symbolScheme(CName) != SymbolScheme::None
+                ? CName.str()
+                : stripLeadingUnderscores(Sym->Name).str();
+    }
   }
   if (Raw.empty()) {
     // As the listing names it: a pointer slot, or the size of its accesses.
@@ -457,7 +469,8 @@ LLVMCWriter::imageByteArrayBacking(const llvm::Value *V,
     const auto *Array = llvm::dyn_cast<llvm::ArrayType>(GV.getValueType());
     if (!Base || !Array || !Array->getElementType()->isIntegerTy(8) ||
         !GV.hasInitializer() ||
-        !llvm::isa<llvm::ConstantAggregateZero>(GV.getInitializer()) ||
+        (!llvm::isa<llvm::ConstantAggregateZero>(GV.getInitializer()) &&
+         !llvm::isa<llvm::ConstantDataArray>(GV.getInitializer())) ||
         *Addr < *Base || AccessSize > Array->getNumElements())
       continue;
     const uint64_t Offset = *Addr - *Base;
@@ -498,6 +511,14 @@ std::optional<uint64_t> LLVMCWriter::foldReadonlyScalar(va_t Addr,
 }
 
 std::string LLVMCWriter::imageDataCName(const llvm::Value *V) const {
+  // Full-module output owns these bytes in a pointer mirror. Its interior
+  // fields are offsets into that object, not separate globals at the original
+  // VAs. Single-function output instead declares the referenced image objects.
+  if (!OnlyFunction && V->getType()->isPointerTy())
+    if (const auto *Global =
+            llvm::dyn_cast<llvm::GlobalVariable>(llvm::getUnderlyingObject(V));
+        Global && parseNdCodePtrSymbol(Global->getName()))
+      return {};
   const auto VA = imageDataVA(V);
   if (!VA)
     return {};
@@ -630,20 +651,11 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
         return "(" + typeToCLLVM(CE->getType()) + ")(void*)" +
                functionIdentifier(*Fn);
       }
-      if (auto *GV = llvm::dyn_cast<llvm::GlobalVariable>(Src)) {
-        if (GV->hasInitializer()) {
-          if (auto *CDA = llvm::dyn_cast<llvm::ConstantDataArray>(
-                  GV->getInitializer())) {
-            llvm::StringRef Raw = CDA->getRawDataValues();
-            uint64_t Val = 0;
-            size_t Len = std::min<size_t>(Raw.size(), 8);
-            for (size_t I = 0; I < Len; ++I)
-              Val |= static_cast<uint64_t>(static_cast<uint8_t>(Raw[I]))
-                     << (I * 8);
-            return "0x" + llvm::utohexstr(Val);
-          }
-        }
-      }
+      if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Src);
+          Global && !Global->isDeclaration() &&
+          !Global->getValueType()->isArrayTy() &&
+          !ExternalDataIdentifiers.count(Global))
+        return "(" + typeToCLLVM(CE->getType()) + ")(void*)&" + valueStr(Src);
       return "(" + typeToCLLVM(CE->getType()) + ")(void*)" + valueStr(Src);
     }
     if (CE->getOpcode() == llvm::Instruction::IntToPtr) {
@@ -664,6 +676,10 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
   if (auto *GV = llvm::dyn_cast<llvm::GlobalValue>(C)) {
     if (const auto *Fn = llvm::dyn_cast<llvm::Function>(GV))
       return functionIdentifier(*Fn);
+    if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(GV))
+      if (const auto It = ExternalDataIdentifiers.find(Global);
+          It != ExternalDataIdentifiers.end())
+        return It->second;
     std::string N = GV->getName().str();
     if (N.empty())
       return getName(C);
@@ -671,6 +687,12 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     std::string Resolved = resolveNdDataName(N);
     if (!Resolved.empty())
       return Resolved;
+
+    // A symbol defined elsewhere keeps its C name: `__cxa_atexit` is not
+    // `_cxa_atexit`.
+    if (GV->isDeclaration())
+      return canonicalizeCProjectionIdentifier(cNameOfGlobal(N, true),
+                                               "nd_symbol");
 
     if (N[0] == '_')
       N = N.substr(1);
@@ -702,7 +724,13 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       for (unsigned I = 0; I < Count; ++I) {
         if (I)
           Text += ", ";
-        Text += constStr(C->getAggregateElement(I));
+        const auto *Element = C->getAggregateElement(I);
+        // Aggregate integer elements are literal bits, never image addresses.
+        // Low byte values can coincide with strings in a low-VA ELF header.
+        if (const auto *Integer = llvm::dyn_cast<llvm::ConstantInt>(Element))
+          Text += integerConstantText(Integer->getValue());
+        else
+          Text += constStr(Element);
       }
     }
     return Text + (Array ? "}}" : "}");

@@ -8,7 +8,10 @@
 // The caller reserves a 32-byte home area for them below the stack
 // arguments.  A variadic callee spills its variadic registers to their home
 // slots, and a Control Flow Guard dispatcher (`_guard_dispatch_icall`)
-// jumps to RAX with the caller's argument registers.
+// jumps to RAX with the caller's argument registers.  A C runtime import
+// with a fixed prototype reads exactly its parameters, whether the code
+// calls it through its import address slot (`call [__imp_free]`) or a thunk
+// that jumps there (`jmp [__imp_free]`).
 //
 //===----------------------------------------------------------------------===//
 
@@ -33,6 +36,8 @@ const CallArgumentConvention Win64CallArguments = {
     .TheArch = Arch::X64,
     .Format = BinaryFormat::COFF,
     .RegisterArgumentsFromCalleeSummary = true,
+    .VectorArgumentsFromCalleeSummary = true,
+    .ImportArgumentsFromPrototype = true,
     .DispatcherTargetRegister = x86reg::RAX,
     .VariadicFromSummary = true,
     .StackArgumentSummary = true,

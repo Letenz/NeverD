@@ -12,7 +12,7 @@
 ///
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
-#include "UnpackTestSupport.h"
+#include "UnpackGeneratedTestSupport.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessSession.h"
@@ -21,22 +21,14 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Program.h"
 
 namespace neverd::unpack {
 namespace {
 using namespace emulation;
 using test::differingBytes;
 using test::Image;
-namespace generated {
-#define NEVERD_GENERATED_VALUE(Name, Value) constexpr uint64_t Name = Value;
-#define NEVERD_GENERATED_MODE(Name, Value)                                     \
-  constexpr uint32_t Name##Mode = Value;
-#define NEVERD_GENERATED_TEXT(Name, Text) constexpr char Name[] = Text;
-#include "fixtures/UnpackGeneratedCases.def"
-#undef NEVERD_GENERATED_TEXT
-#undef NEVERD_GENERATED_MODE
-#undef NEVERD_GENERATED_VALUE
-} // namespace generated
+namespace generated = test::generated;
 using namespace generated;
 
 struct Profile {
@@ -104,9 +96,35 @@ protected:
     Options.Process.Limits.TimeoutMicroseconds = TimeoutMicroseconds;
 #endif
   }
+  void useTLSHeapFixture() {
+#ifdef NEVERD_UNPACK_GENERATED_FIXTURE_DIR
+    Original = test::readImage(
+        std::filesystem::path(NEVERD_UNPACK_GENERATED_FIXTURE_DIR) /
+        GetParam().Directory / TLSHeapProgramFile);
+    ASSERT_FALSE(HasFailure());
+#endif
+  }
   void TearDown() override {
     if (!Scratch.empty())
       std::filesystem::remove_all(Scratch);
+  }
+
+  void expectNativeWindows(const std::filesystem::path &Path, int Status) {
+#if defined(_WIN32) && defined(_M_X64)
+    if (GetParam().ISA != GuestArchitecture::X64)
+      return;
+    const auto Native = Path.string();
+    std::string Diagnostic;
+    bool Failed = false;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Native, {Native}, std::nullopt, {}, 30,
+                                        0, &Diagnostic, &Failed),
+              Status)
+        << Diagnostic;
+    EXPECT_FALSE(Failed) << Diagnostic;
+#else
+    (void)Path;
+    (void)Status;
+#endif
   }
 
   /// Replace each import call with an independent helper. The linked file
@@ -180,28 +198,7 @@ protected:
   /// transformed copy and start at the loader that restores it.
   std::filesystem::path pack(uint32_t Mode) {
     using namespace llvm::support::endian;
-    const auto *Pay = Original.section(PackSection);
-    const auto Loader = Original.Exports.find(LoaderExport);
-    if (!Pay || Loader == Original.Exports.end() ||
-        Pay->FileSize < RelayOffset + Capacity) {
-      ADD_FAILURE() << MissingRecord;
-      return {};
-    }
     auto Bytes = Original.File;
-    uint8_t *Record = Bytes.data() + Pay->FileOffset;
-    write32le(Record + ModeOffset, Mode);
-    write32le(Record + KeyOffset, uint32_t(Key));
-    auto Move = [&](const char *Name, uint64_t SizeAt, uint64_t DataAt) {
-      const auto *S = Original.section(Name);
-      if (!S || S->VirtualSize > Capacity || S->VirtualSize > S->FileSize) {
-        ADD_FAILURE() << Name << RecordOverflow;
-        return;
-      }
-      for (uint32_t I = 0; I < S->VirtualSize; ++I)
-        Record[DataAt + I] = uint8_t(Bytes[S->FileOffset + I] ^ Key);
-      std::fill_n(Bytes.begin() + S->FileOffset, S->FileSize, 0);
-      write32le(Record + SizeAt, S->VirtualSize);
-    };
     if ((Mode == MutatedMode || Mode == PaddedCallMode ||
          Mode == ImpureCallMode) &&
         !mutateImportCalls(Bytes, Mode))
@@ -283,10 +280,9 @@ protected:
         Bytes[At + 7] = Mode == CompactAddressMode ? 0x90 : 0xc3;
       }
     }
-    Move(ProgramSection, ProgramBytesOffset, ProgramOffset);
-    if (Mode == StagedMode)
-      Move(RelaySection, RelayBytesOffset, RelayOffset);
-    write32le(Bytes.data() + Original.EntryOffset, Loader->second);
+    Bytes = generated::pack(Original, std::move(Bytes), Mode);
+    if (HasFailure())
+      return {};
     const auto Path = Scratch / PackedFile;
     test::writeFile(Path, Bytes);
     return Path;
@@ -619,6 +615,254 @@ TEST_P(UnpackGenerated, LoaderThatLeavesForTheProgramYieldsTheLinkedImage) {
   EXPECT_EQ(Result.EntryRVA, Original.Entry);
   EXPECT_EQ(Result.Source, EntrySource::Transfer);
   expectOriginalProgram(Result);
+}
+
+TEST_P(UnpackGenerated,
+       LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage) {
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    ASSERT_FALSE(HasFailure());
+    const auto Packed = pack(HeapStateMode);
+    ASSERT_FALSE(HasFailure());
+    const auto OriginalRun = run(Packed);
+    ASSERT_EQ(OriginalRun.Stop, ProcessStopReason::Exited)
+        << OriginalRun.Diagnostic;
+    EXPECT_EQ(OriginalRun.ExitStatus, ExitStatus);
+    EXPECT_EQ(OriginalRun.StandardOutput, Message);
+    const auto Result = unpack(HeapStateMode);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(Result.Outcome, UnpackOutcome::UnsupportedState);
+    EXPECT_EQ(Result.EntryRVA, Original.Entry);
+    EXPECT_TRUE(Result.Image.empty());
+    EXPECT_TRUE(Result.RuntimeState.HeapInventoryKnown);
+    EXPECT_GT(Result.RuntimeState.PossibleHeapReferences, 0u);
+    EXPECT_FALSE(Result.RuntimeState.HeapReferences.empty());
+    EXPECT_NE(Result.Diagnostic.find("heap allocations"), std::string::npos);
+    if (TLSOnly) {
+      unsigned TLSReferences = 0;
+      for (const auto &Reference : Result.RuntimeState.HeapReferences)
+        if (Reference.Location == UnpackHeapReference::Storage::ThreadLocal) {
+          ++TLSReferences;
+          EXPECT_EQ(Reference.Offset, 3u);
+        }
+      EXPECT_EQ(TLSReferences, 1u);
+    }
+  }
+}
+
+TEST_P(UnpackGenerated, ExplicitSnapshotsKeepExternalHeapDependenciesVisible) {
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    ASSERT_FALSE(HasFailure());
+    Options.SnapshotOnly = true;
+    const auto Result = unpack(HeapStateMode);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_EQ(Result.Outcome, UnpackOutcome::Snapshot) << Result.Diagnostic;
+    ASSERT_FALSE(Result.Image.empty());
+    EXPECT_GT(Result.RuntimeState.PossibleHeapReferences, 0u);
+    const auto Path = Scratch / RebuiltFile;
+    test::writeFile(Path, Result.Image);
+    const auto Replay = run(Path);
+    EXPECT_EQ(Replay.Stop, ProcessStopReason::CPUFailure) << Replay.Diagnostic;
+    EXPECT_FALSE(Replay.ExitStatus);
+    EXPECT_TRUE(Replay.StandardOutput.empty());
+  }
+}
+
+TEST_P(UnpackGenerated, DirectServiceBindingsRequireAnExplicitSnapshot) {
+  if (GetParam().ISA != GuestArchitecture::X64)
+    GTEST_SKIP() << "the direct service fixture uses the x64 Windows ABI";
+  for (unsigned Mode : {DirectServiceMode, LateDirectServiceMode}) {
+    SCOPED_TRACE(Mode);
+    auto Packed = pack(Mode);
+    ASSERT_FALSE(HasFailure());
+    auto OriginalRun = run(Packed);
+    ASSERT_EQ(OriginalRun.Stop, ProcessStopReason::Exited)
+        << OriginalRun.Diagnostic;
+    EXPECT_EQ(OriginalRun.ExitStatus, ExitStatus);
+    EXPECT_EQ(OriginalRun.StandardOutput, Message);
+    for (bool Snapshot : {false, true}) {
+      SCOPED_TRACE(Snapshot);
+      Options.SnapshotOnly = Snapshot;
+      auto Result = unpack(Mode);
+      ASSERT_FALSE(HasFailure());
+      EXPECT_EQ(Result.Outcome, Snapshot ? UnpackOutcome::Snapshot
+                                         : UnpackOutcome::UnsupportedState);
+      EXPECT_EQ(Result.Image.empty(), !Snapshot);
+      EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+      EXPECT_GT(Result.RuntimeState.DirectServiceCalls, 0u);
+      EXPECT_NE(Result.Diagnostic.find("native binding"), std::string::npos);
+    }
+    // Not selecting a transfer does not erase calls that actually executed.
+    Options.Transfer = defaults::MaxTransfers;
+    const auto MissingEntry = unpack(Mode);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(MissingEntry.Outcome, UnpackOutcome::NoEntry);
+    EXPECT_EQ(MissingEntry.ProcessStop,
+              processStopReasonName(ProcessStopReason::Exited));
+    EXPECT_FALSE(MissingEntry.EntryRVA);
+    EXPECT_TRUE(MissingEntry.Image.empty());
+    EXPECT_FALSE(MissingEntry.RuntimeState.HeapInventoryKnown);
+    EXPECT_EQ(MissingEntry.RuntimeState.DirectServiceCalls,
+              llvm::count_if(OriginalRun.NativeCalls, [](const auto &Call) {
+                return Call.DirectServiceNumber.has_value();
+              }));
+    EXPECT_GT(MissingEntry.RuntimeState.DirectServiceCalls, 0u);
+    Options.Transfer = 0;
+  }
+}
+
+TEST_P(UnpackGenerated, ReleasedHeapStateDoesNotBlockRecovery) {
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    ASSERT_FALSE(HasFailure());
+    const auto Packed = pack(ReleasedHeapStateMode);
+    ASSERT_FALSE(HasFailure());
+    const auto Expected = run(Packed);
+    ASSERT_EQ(Expected.Stop, ProcessStopReason::Exited) << Expected.Diagnostic;
+    EXPECT_EQ(Expected.ExitStatus, ExitStatus);
+    const auto Result = unpack(ReleasedHeapStateMode);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
+    EXPECT_TRUE(Result.RuntimeState.HeapInventoryKnown);
+    EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+    const auto Path = Scratch / RebuiltFile;
+    test::writeFile(Path, Result.Image);
+    const auto Actual = run(Path);
+    EXPECT_EQ(Actual.Stop, Expected.Stop) << Actual.Diagnostic;
+    EXPECT_EQ(Actual.ExitStatus, Expected.ExitStatus);
+    EXPECT_EQ(Actual.StandardOutput, Expected.StandardOutput);
+  }
+}
+
+TEST_P(UnpackGenerated, CapturedEncodedPointersRequireAnExplicitSnapshot) {
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    for (unsigned Mode : {EncodedPointerMode, NativeEncodedPointerMode,
+                          DecodedPointerMode, NativeDecodedPointerMode}) {
+      SCOPED_TRACE(Mode);
+      const auto Packed = pack(Mode);
+      ASSERT_FALSE(HasFailure());
+      const auto Expected = run(Packed);
+      ASSERT_EQ(Expected.Stop, ProcessStopReason::Exited)
+          << Expected.Diagnostic;
+      ASSERT_EQ(Expected.ExitStatus, ExitStatus);
+      EXPECT_EQ(Expected.StandardOutput, Message);
+      for (bool Snapshot : {false, true}) {
+        SCOPED_TRACE(Snapshot);
+        Options.SnapshotOnly = Snapshot;
+        const auto Result = unpack(Mode);
+        ASSERT_FALSE(HasFailure());
+        EXPECT_EQ(Result.Outcome, Snapshot ? UnpackOutcome::Snapshot
+                                           : UnpackOutcome::UnsupportedState);
+        EXPECT_EQ(Result.Image.empty(), !Snapshot);
+        EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+        EXPECT_EQ(Result.RuntimeState.DirectServiceCalls, 0u);
+        EXPECT_TRUE(Result.RuntimeState.EncodedPointerInventoryKnown);
+        EXPECT_EQ(Result.RuntimeState.PossibleEncodedPointers, 1u);
+        ASSERT_EQ(Result.RuntimeState.EncodedPointerReferences.size(), 1u);
+        EXPECT_EQ(Result.RuntimeState.EncodedPointerReferences[0].Location,
+                  TLSOnly ? UnpackHeapReference::Storage::ThreadLocal
+                          : UnpackHeapReference::Storage::Image);
+        EXPECT_NE(Result.Diagnostic.find("encoded pointer"), std::string::npos);
+      }
+    }
+  }
+}
+
+TEST_P(UnpackGenerated, ClearedAndPostEntryEncodingsDoNotBlockRecovery) {
+  for (bool TLSOnly : {false, true}) {
+    SCOPED_TRACE(TLSOnly);
+    if (TLSOnly)
+      useTLSHeapFixture();
+    for (unsigned Mode : {ClearedEncodedPointerMode, LateEncodedPointerMode}) {
+      SCOPED_TRACE(Mode);
+      const auto Result = unpack(Mode);
+      ASSERT_FALSE(HasFailure());
+      ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
+      EXPECT_TRUE(Result.RuntimeState.EncodedPointerInventoryKnown);
+      EXPECT_EQ(Result.RuntimeState.PossibleEncodedPointers, 0u);
+      const auto Path = Scratch / RebuiltFile;
+      test::writeFile(Path, Result.Image);
+      const auto Actual = run(Path);
+      EXPECT_EQ(Actual.Stop, ProcessStopReason::Exited) << Actual.Diagnostic;
+      EXPECT_EQ(Actual.ExitStatus, ExitStatus);
+      EXPECT_EQ(Actual.StandardOutput, Message);
+    }
+  }
+}
+
+TEST_P(UnpackGenerated, LiveDynamicSlotsRequireAnExplicitSnapshot) {
+  for (unsigned Mode : {DynamicTLSMode, DynamicFLSMode, ZeroDynamicTLSMode,
+                        ZeroDynamicFLSMode, UnallocatedTLSValueMode}) {
+    SCOPED_TRACE(Mode);
+    const auto Packed = pack(Mode);
+    ASSERT_FALSE(HasFailure());
+    const auto Expected = run(Packed);
+    ASSERT_EQ(Expected.Stop, ProcessStopReason::Exited) << Expected.Diagnostic;
+    ASSERT_EQ(Expected.ExitStatus, ExitStatus);
+    EXPECT_EQ(Expected.StandardOutput, Message);
+    expectNativeWindows(Packed, ExitStatus);
+    for (bool Snapshot : {false, true}) {
+      SCOPED_TRACE(Snapshot);
+      Options.SnapshotOnly = Snapshot;
+      const auto Result = unpack(Mode);
+      ASSERT_FALSE(HasFailure());
+      EXPECT_EQ(Result.Outcome, Snapshot ? UnpackOutcome::Snapshot
+                                         : UnpackOutcome::UnsupportedState);
+      EXPECT_EQ(Result.Image.empty(), !Snapshot);
+      EXPECT_EQ(Result.RuntimeState.PossibleHeapReferences, 0u);
+      EXPECT_EQ(Result.RuntimeState.PossibleEncodedPointers, 0u);
+      EXPECT_EQ(Result.RuntimeState.DirectServiceCalls, 0u);
+      EXPECT_TRUE(Result.RuntimeState.DynamicThreadLocalInventoryKnown);
+      const bool Fiber = Mode == DynamicFLSMode || Mode == ZeroDynamicFLSMode;
+      EXPECT_EQ(Result.RuntimeState.LiveDynamicTLSSlots, Fiber ? 0u : 1u);
+      EXPECT_EQ(Result.RuntimeState.LiveDynamicFLSSlots, Fiber ? 1u : 0u);
+      EXPECT_NE(Result.Diagnostic.find("dynamic TLS/FLS"), std::string::npos);
+      if (Snapshot && (Mode == DynamicTLSMode || Mode == DynamicFLSMode ||
+                       Mode == UnallocatedTLSValueMode)) {
+        const auto Path = Scratch / RebuiltFile;
+        test::writeFile(Path, Result.Image);
+        const auto Replay = run(Path);
+        EXPECT_EQ(Replay.Stop, ProcessStopReason::Exited) << Replay.Diagnostic;
+        EXPECT_EQ(Replay.ExitStatus, FailureStatus);
+        EXPECT_EQ(Replay.StandardOutput, Message);
+        expectNativeWindows(Path, FailureStatus);
+      }
+    }
+  }
+}
+
+TEST_P(UnpackGenerated, ReleasedAndPostEntryDynamicSlotsDoNotBlockRecovery) {
+  for (unsigned Mode :
+       {ReleasedDynamicTLSMode, ReleasedDynamicFLSMode, LateDynamicTLSMode,
+        LateDynamicFLSMode, ClearedUnallocatedTLSValueMode}) {
+    SCOPED_TRACE(Mode);
+    const auto Packed = pack(Mode);
+    ASSERT_FALSE(HasFailure());
+    expectNativeWindows(Packed, ExitStatus);
+    const auto Result = unpack(Mode);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
+    EXPECT_TRUE(Result.RuntimeState.DynamicThreadLocalInventoryKnown);
+    EXPECT_EQ(Result.RuntimeState.LiveDynamicTLSSlots, 0u);
+    EXPECT_EQ(Result.RuntimeState.LiveDynamicFLSSlots, 0u);
+    const auto Path = Scratch / RebuiltFile;
+    test::writeFile(Path, Result.Image);
+    const auto Actual = run(Path);
+    EXPECT_EQ(Actual.Stop, ProcessStopReason::Exited) << Actual.Diagnostic;
+    EXPECT_EQ(Actual.ExitStatus, ExitStatus);
+    EXPECT_EQ(Actual.StandardOutput, Message);
+    expectNativeWindows(Path, ExitStatus);
+  }
 }
 
 TEST_P(UnpackGenerated, LoaderGeneratesItsEntryInThePageItIsExecuting) {
@@ -990,6 +1234,97 @@ TEST_P(UnpackGenerated,
   ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
   EXPECT_EQ(Run->Stop, ProcessStopReason::Exited) << Run->Diagnostic;
   EXPECT_EQ(Run->ExitStatus, 37u);
+#endif
+}
+
+TEST_P(UnpackGenerated, DelayImportsRetainLazyLoadingAfterCapture) {
+#ifndef NEVERD_UNPACK_GENERATED_FIXTURE_DIR
+  GTEST_SKIP() << MissingTools;
+#else
+  using namespace llvm::support::endian;
+  const auto Directory =
+      std::filesystem::path(NEVERD_UNPACK_GENERATED_FIXTURE_DIR) /
+      GetParam().Directory;
+  const auto Linked = test::readImage(Directory / "delay.exe");
+  ASSERT_FALSE(HasFailure());
+  const auto *Program = Linked.section(".prog");
+  const auto *Record = Linked.section(".pay");
+  ASSERT_NE(Program, nullptr);
+  ASSERT_NE(Record, nullptr);
+  ASSERT_LE(Program->VirtualSize, 4096u);
+  ASSERT_LE(Program->VirtualSize, Program->FileSize);
+  ASSERT_EQ(Program->RVA, Linked.Entry);
+  Options.Process.Windows->Modules = {
+      {"unpack_delay.dll", Directory / "unpack_delay.dll"}};
+  test::writeFile(Scratch / "unpack_delay.dll",
+                  test::readFile(Directory / "unpack_delay.dll"));
+  for (bool ResolveAll : {false, true}) {
+    SCOPED_TRACE(ResolveAll);
+    auto Bytes = Linked.File;
+    uint8_t *Pay = Bytes.data() + Record->FileOffset;
+    write32le(Pay, Program->VirtualSize);
+    write32le(Pay + 4, ResolveAll);
+    for (uint32_t I = 0; I < Program->VirtualSize; ++I) {
+      Pay[8 + I] = Bytes[Program->FileOffset + I] ^ 0xa5;
+      Bytes[Program->FileOffset + I] = 0;
+    }
+    write32le(Bytes.data() + Linked.EntryOffset, Linked.Exports.at("loader"));
+    const auto Input = Scratch / "delay-packed.exe";
+    const auto Output = Scratch / "delay-rebuilt.exe";
+    test::writeFile(Input, Bytes);
+    auto OriginalRun =
+        emulateProcess(Input, ProcessProfile::WindowsPE64, Options.Process);
+    ASSERT_TRUE(bool(OriginalRun)) << llvm::toString(OriginalRun.takeError());
+    ASSERT_EQ(OriginalRun->Stop, ProcessStopReason::Exited)
+        << OriginalRun->Diagnostic;
+    ASSERT_EQ(OriginalRun->ExitStatus, 43u);
+    auto Result = unpackFile(Input, Options);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Outcome, UnpackOutcome::Unpacked) << Result->Diagnostic;
+    EXPECT_EQ(Result->EntryRVA, Linked.Entry);
+    const auto Rebuilt = test::readImage(Result->Image);
+    ASSERT_FALSE(HasFailure());
+    const auto Delay = Rebuilt.directory(llvm::COFF::DELAY_IMPORT_DESCRIPTOR);
+    ASSERT_NE(Delay.Size, 0u);
+    const auto *D = Rebuilt.Mapped.data() + Delay.RelativeVirtualAddress;
+    const uint64_t Handle = read32le(D + 8), IAT = read32le(D + 12);
+    EXPECT_EQ(read64le(Rebuilt.Mapped.data() + Handle), 0u);
+    EXPECT_EQ(llvm::count_if(
+                  Result->Imports,
+                  [](const auto &I) { return I.Module == "unpack_delay.dll"; }),
+              ResolveAll ? 2 : 1);
+    EXPECT_TRUE(llvm::any_of(Result->Imports, [IAT](const auto &I) {
+      return I.SlotRVA == IAT && I.Module == "unpack_delay.dll" &&
+             I.Name == "first";
+    }));
+    if (!ResolveAll)
+      EXPECT_EQ(read64le(Rebuilt.Mapped.data() + IAT + 8),
+                read64le(Linked.Mapped.data() + IAT + 8));
+    else
+      EXPECT_TRUE(llvm::any_of(Result->Imports, [IAT](const auto &I) {
+        return I.SlotRVA == IAT + 8 && I.Module == "unpack_delay.dll" &&
+               I.Name == "second";
+      }));
+    test::writeFile(Output, Result->Image);
+    auto Run =
+        emulateProcess(Output, ProcessProfile::WindowsPE64, Options.Process);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    EXPECT_EQ(Run->Stop, ProcessStopReason::Exited) << Run->Diagnostic;
+    EXPECT_EQ(Run->ExitStatus, 43u);
+#if defined(_WIN32) && defined(_M_X64)
+    if (GetParam().ISA == GuestArchitecture::X64)
+      for (const auto &Path : {Input, Output}) {
+        const auto Native = Path.string();
+        std::string Diagnostic;
+        bool Failed = false;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(Native, {Native}, std::nullopt, {},
+                                            30, 0, &Diagnostic, &Failed),
+                  43)
+            << Diagnostic;
+        EXPECT_FALSE(Failed) << Diagnostic;
+      }
+#endif
+  }
 #endif
 }
 

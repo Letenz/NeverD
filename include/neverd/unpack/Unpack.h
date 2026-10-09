@@ -105,6 +105,42 @@ struct UnpackOptions {
   /// that unpacks in stages, or that calls the program instead of jumping to
   /// it, needs the explicit position that a previous report lists.
   uint64_t Transfer = 0;
+  /// Write an image snapshot for analysis, even when runtime dependencies
+  /// cannot be reconstructed. This produces Snapshot rather
+  /// than Unpacked and does not claim a runnable native executable.
+  bool SnapshotOnly = false;
+};
+
+/// A pointer-sized value in captured image or thread-local bytes that falls
+/// in a live process heap allocation. The value could be an integer or unused
+/// data. No pointer type or relocation is inferred.
+struct UnpackHeapReference {
+  enum class Storage { Image, ThreadLocal };
+  uint64_t Offset, Address, AllocationAddress, AllocationSize;
+  Storage Location = Storage::Image;
+};
+
+struct UnpackRuntimeState {
+  bool HeapInventoryKnown = false;
+  uint64_t PossibleHeapReferences = 0;
+  /// Direct model service calls witnessed during entry and import discovery.
+  /// Their numeric binding has not been made portable to native Windows.
+  uint64_t DirectServiceCalls = 0;
+  /// At most the first 64 matches, image first and then TLS, in offset order.
+  /// The count covers all matches.
+  std::vector<UnpackHeapReference> HeapReferences;
+  bool EncodedPointerInventoryKnown = false;
+  uint64_t PossibleEncodedPointers = 0;
+  /// Exact value matches, not pointer provenance or permission to re-encode.
+  struct EncodedPointerReference {
+    uint64_t Offset, Value;
+    UnpackHeapReference::Storage Location;
+  };
+  /// At most 64 locations, image first and then TLS, in offset order.
+  std::vector<EncodedPointerReference> EncodedPointerReferences;
+  /// Dynamic slot ownership/values are not reconstructed by static TLS repair.
+  bool DynamicThreadLocalInventoryKnown = false;
+  uint64_t LiveDynamicTLSSlots = 0, LiveDynamicFLSSlots = 0;
 };
 
 /// One transfer into code newer than the code that was running.
@@ -157,8 +193,11 @@ struct UnpackResult {
   std::vector<UnpackTransfer> Transfers;
   std::vector<UnpackedSection> Sections;
   std::vector<UnpackedImport> Imports;
+  /// Possible process-local heap dependencies that the file does not restore.
+  /// An empty inventory does not certify other OS state or unreached code.
+  UnpackRuntimeState RuntimeState;
   /// The rebuilt file, in the container of the input. Empty without an
-  /// accepted entry.
+  /// accepted entry or when runtime state requires refusal.
   std::vector<uint8_t> Image;
   std::string Backend, BackendSelectionReason;
   std::string ProcessStop, ProcessDiagnostic;
@@ -187,8 +226,8 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
                                         const UnpackOptions &Options = {});
 
 /// Strict options decoding. Every guest process option is accepted with its
-/// usual meaning, plus "transfer". Unknown fields, null values, invalid
-/// types and nonpositive limits are errors.
+/// usual meaning, plus "transfer" and "snapshot_only". Unknown fields, null
+/// values, invalid types and nonpositive limits are errors.
 llvm::Expected<UnpackOptions> unpackOptionsFromJSON(llvm::StringRef Text);
 /// The report omits the rebuilt bytes and records their size and digest.
 std::string unpackResultJSON(const UnpackResult &Result,

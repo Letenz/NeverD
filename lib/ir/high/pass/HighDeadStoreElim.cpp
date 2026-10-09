@@ -34,12 +34,94 @@
 
 namespace neverd {
 
+/// Floating-point arithmetic, comparison and conversion: with the default
+/// environment's masked exceptions none traps, and a conversion to an integer
+/// prints through a total helper.
+static bool isTrapFreeFloatOp(NdOp Op) {
+  switch (Op) {
+  case NdOp::FLOAT_ADD:
+  case NdOp::FLOAT_SUB:
+  case NdOp::FLOAT_MULT:
+  case NdOp::FLOAT_DIV:
+  case NdOp::FLOAT_MINNUM:
+  case NdOp::FLOAT_MAXNUM:
+  case NdOp::FLOAT_EQUAL:
+  case NdOp::FLOAT_NOTEQUAL:
+  case NdOp::FLOAT_LESS:
+  case NdOp::FLOAT_LESSEQUAL:
+  case NdOp::FLOAT_NEG:
+  case NdOp::FLOAT_ABS:
+  case NdOp::FLOAT_SQRT:
+  case NdOp::FLOAT_CEIL:
+  case NdOp::FLOAT_FLOOR:
+  case NdOp::FLOAT_ROUND:
+  case NdOp::FLOAT_ROUNDEVEN:
+  case NdOp::FLOAT_ISNAN:
+  case NdOp::FLOAT_INT2FLOAT:
+  case NdOp::FLOAT_UINT2FLOAT:
+  case NdOp::FLOAT_FLOAT2FLOAT:
+  case NdOp::FLOAT_FLOAT2INT:
+  case NdOp::FLOAT_FLOAT2UINT:
+  case NdOp::FLOAT_TRUNC:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// Integer arithmetic, logic and comparison of two operands: none reads
+/// memory or traps.  Division and remainder trap on a zero divisor.
+static bool isTrapFreeIntegerBinOp(NdOp Op) {
+  switch (Op) {
+  case NdOp::INT_ADD:
+  case NdOp::INT_SUB:
+  case NdOp::INT_MULT:
+  case NdOp::INT_AND:
+  case NdOp::INT_OR:
+  case NdOp::INT_XOR:
+  case NdOp::INT_LEFT:
+  case NdOp::INT_RIGHT:
+  case NdOp::INT_ASHR:
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_NOTEQUAL:
+  case NdOp::INT_LESS:
+  case NdOp::INT_LESSEQUAL:
+  case NdOp::INT_SLESS:
+  case NdOp::INT_SLESSEQUAL:
+  case NdOp::BOOL_AND:
+  case NdOp::BOOL_OR:
+  case NdOp::BOOL_XOR:
+  case NdOp::INT_CARRY:
+  case NdOp::INT_SOVF:
+  case NdOp::INT_SBOR:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// The integer operations of one operand that cannot trap.
+static bool isTrapFreeIntegerUnaryOp(NdOp Op) {
+  switch (Op) {
+  case NdOp::INT_ZEXT:
+  case NdOp::INT_SEXT:
+  case NdOp::INT_NEGATE:
+  case NdOp::INT_NOT:
+  case NdOp::INT_NEG2:
+  case NdOp::BOOL_NOT:
+  case NdOp::POPCOUNT:
+    return true;
+  default:
+    return false;
+  }
+}
+
 // Only remove or slice values whose evaluation cannot read memory, trap or
 // call another function. Unknown bits may be discarded only when their exact
 // bytes have no reads; this never supplies a replacement bit value.
 bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
   std::vector<const HighExpr *> Pending{Root.get()};
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   while (!Pending.empty()) {
     const auto *E = Pending.back();
     Pending.pop_back();
@@ -60,18 +142,31 @@ bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
       if (!E->Operands.empty())
         return false;
       break;
+    case ExprKind::BitCast:
+      // A reinterpretation of the same bytes.
+      if (E->Operands.size() != 1 || !E->Operands[0] || !E->Operands[0]->Type ||
+          E->Operands[0]->Type->Size != E->Type->Size)
+        return false;
+      break;
     case ExprKind::Cast:
     case ExprKind::UnaryOp:
+      if (E->Kind == ExprKind::UnaryOp && isTrapFreeFloatOp(E->Op) &&
+          E->Operands.size() == 1 && E->Operands[0])
+        break;
       if (E->Type->Kind != NdTypeKind::Int || E->Operands.size() != 1 ||
           !E->Operands[0] || !E->Operands[0]->Type ||
           E->Operands[0]->Type->Kind != NdTypeKind::Int)
         return false;
       if (E->Kind == ExprKind::UnaryOp &&
-          ((E->Op != NdOp::INT_ZEXT && E->Op != NdOp::INT_SEXT) ||
-           E->Type->Size < E->Operands[0]->Type->Size))
+          (!isTrapFreeIntegerUnaryOp(E->Op) ||
+           ((E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT) &&
+            E->Type->Size < E->Operands[0]->Type->Size)))
         return false;
       break;
     case ExprKind::BinOp:
+      if (isTrapFreeFloatOp(E->Op) && E->Operands.size() == 2 &&
+          E->Operands[0] && E->Operands[1])
+        break;
       if (E->Type->Kind != NdTypeKind::Int || E->Operands.size() != 2 ||
           !E->Operands[0] || !E->Operands[0]->Type ||
           E->Operands[0]->Type->Kind != NdTypeKind::Int || !E->Operands[1] ||
@@ -88,7 +183,7 @@ bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
             E->Type->Size >
                 E->Operands[0]->Type->Size - E->Operands[1]->ConstVal)
           return false;
-      } else {
+      } else if (!isTrapFreeIntegerBinOp(E->Op)) {
         return false;
       }
       break;
@@ -103,7 +198,7 @@ bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
 
 bool harmlessIntegerValue(const ExprPtr &Root, size_t &Budget) {
   std::vector<const HighExpr *> Pending{Root.get()};
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   while (!Pending.empty()) {
     const auto *E = Pending.back();
     Pending.pop_back();
@@ -129,51 +224,16 @@ bool harmlessIntegerValue(const ExprPtr &Root, size_t &Budget) {
     case ExprKind::BitCast:
       break;
     case ExprKind::UnaryOp:
-      switch (E->Op) {
-      case NdOp::INT_ZEXT:
-      case NdOp::INT_SEXT:
-      case NdOp::INT_NEGATE:
-      case NdOp::INT_NOT:
-      case NdOp::INT_NEG2:
-      case NdOp::BOOL_NOT:
-      case NdOp::POPCOUNT:
-        break;
-      default:
+      if (!isTrapFreeIntegerUnaryOp(E->Op))
         return false;
-      }
       break;
     case ExprKind::BinOp:
-      switch (E->Op) {
-      case NdOp::INT_ADD:
-      case NdOp::INT_SUB:
-      case NdOp::INT_MULT:
-      case NdOp::INT_AND:
-      case NdOp::INT_OR:
-      case NdOp::INT_XOR:
-      case NdOp::INT_LEFT:
-      case NdOp::INT_RIGHT:
-      case NdOp::INT_ASHR:
-      case NdOp::INT_EQUAL:
-      case NdOp::INT_NOTEQUAL:
-      case NdOp::INT_LESS:
-      case NdOp::INT_LESSEQUAL:
-      case NdOp::INT_SLESS:
-      case NdOp::INT_SLESSEQUAL:
-      case NdOp::BOOL_AND:
-      case NdOp::BOOL_OR:
-      case NdOp::BOOL_XOR:
-      case NdOp::CONCAT:
-      case NdOp::SELECT:
-      case NdOp::INT_CARRY:
-      case NdOp::INT_SOVF:
-      case NdOp::INT_SBOR:
-        break;
-      case NdOp::SUBBYTES:
+      if (E->Op == NdOp::SUBBYTES) {
         if (E->Operands.size() != 2 || !E->Operands[1] ||
             E->Operands[1]->Kind != ExprKind::Const)
           return false;
-        break;
-      default:
+      } else if (E->Op != NdOp::CONCAT && E->Op != NdOp::SELECT &&
+                 !isTrapFreeIntegerBinOp(E->Op)) {
         return false;
       }
       break;
@@ -239,8 +299,7 @@ void narrowSourceConcatLocals(HighFunc &Func) {
           Value->Operands[1] && Value->Operands[0]->Type &&
           Value->Operands[1]->Type &&
           Value->Operands[1]->Type->Kind == NdTypeKind::Int &&
-          Value->Operands[0]->Type->Size +
-                  Value->Operands[1]->Type->Size ==
+          Value->Operands[0]->Type->Size + Value->Operands[1]->Type->Size ==
               Value->Type->Size &&
           (Value->Operands[1]->Type->Size == 4 ||
            (CarrierBytes == 16 && Value->Operands[1]->Type->Size == 8)) &&
@@ -339,11 +398,11 @@ void narrowSourceConcatLocals(HighFunc &Func) {
     const uint16_t CarrierBytes = DestinationShape ? D->Type->Size : 0;
     C.Valid &= !C.CarrierBytes || C.CarrierBytes == CarrierBytes;
     C.CarrierBytes = CarrierBytes;
-    const auto ConcatLow =
-        DestinationShape && V->Type && V->Type->Kind == NdTypeKind::Int &&
-                V->Type->Size == CarrierBytes
-            ? ConcatLowPrefix(V, CarrierBytes)
-            : ExprPtr{};
+    const auto ConcatLow = DestinationShape && V->Type &&
+                                   V->Type->Kind == NdTypeKind::Int &&
+                                   V->Type->Size == CarrierBytes
+                               ? ConcatLowPrefix(V, CarrierBytes)
+                               : ExprPtr{};
     const bool ConcatShape = bool(ConcatLow);
     const bool ExtensionShape =
         DestinationShape && V->Type && V->Type->Kind == NdTypeKind::Int &&
@@ -1051,7 +1110,7 @@ void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
       ReadBytes.insert(At + I);
     return true;
   };
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   bool Escaped = false;
   walkStmts(Func.Body, [&](HighStmt &S) {
     if (Escaped || !Budget || AliasStatements.count(&S))
@@ -1081,7 +1140,7 @@ void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
         --Budget;
         if (E->IntrinsicId != Intrinsic::None)
           Escaped = true;
-        std::unordered_set<const HighExpr *> BoundedFrameInputs;
+        HighExprSet BoundedFrameInputs;
         if (E->Kind == ExprKind::Load && E->Type && E->Operands.size() == 1 &&
             E->MemoryOrdering == NdMemoryOrdering::None &&
             E->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
@@ -1171,10 +1230,10 @@ void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
 
 void elimConsecutiveDeadStores(std::vector<HighStmt> &Stmts) {
   Stmts.erase(std::remove_if(Stmts.begin(), Stmts.end(),
-                            [](const HighStmt &S) {
-                              return S.Kind == StmtKind::Nop &&
-                                     (!S.Addr || S.Addr == InvalidVA);
-                            }),
+                             [](const HighStmt &S) {
+                               return S.Kind == StmtKind::Nop &&
+                                      (!S.Addr || S.Addr == InvalidVA);
+                             }),
               Stmts.end());
 
   for (size_t I = 0; I + 1 < Stmts.size(); ++I) {
@@ -1204,7 +1263,7 @@ void elimConsecutiveDeadStores(std::vector<HighStmt> &Stmts) {
       continue;
 
     bool NextUsesCurr = false;
-    std::unordered_set<const HighExpr *> Seen;
+    HighExprSet Seen;
     std::function<void(const ExprPtr &)> CheckRef = [&](const ExprPtr &E) {
       if (!E || NextUsesCurr || !Seen.insert(E.get()).second)
         return;
@@ -1221,7 +1280,7 @@ void elimConsecutiveDeadStores(std::vector<HighStmt> &Stmts) {
 
     bool HasEffect = false;
     std::vector<const HighExpr *> Pending{CurrStmt.Val.get()};
-    std::unordered_set<const HighExpr *> EffectSeen;
+    HighExprSet EffectSeen;
     while (!Pending.empty()) {
       const auto *Expression = Pending.back();
       Pending.pop_back();

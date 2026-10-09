@@ -2,6 +2,7 @@
 
 #include "Icons.h"
 #include "Session.h"
+#include "ShrinkableRow.h"
 #include "Theme.h"
 
 #include <QApplication>
@@ -26,13 +27,14 @@
 
 namespace neverd::gui {
 namespace {
-constexpr int PageLines = 2048;
+constexpr int PageLines = 256;
 constexpr int Margin = 6;
 constexpr int WheelLines = 3;
 /// The fold over the lines before a C definition.
 constexpr char PreludeRegion[] = "prelude";
 
-enum class Dialect { C, IR, LLVM };
+/// How a representation is colored; Source takes the language the page names.
+enum class Dialect { C, Rust, Go, IR, LLVM, Source };
 struct Representation {
   const char *name;
   const char *title;
@@ -78,26 +80,78 @@ QColor codeColor(int role) {
       Map[role >= 0 && role < int(std::size(Map)) ? role : 0]);
 }
 
-const QSet<QString> &controlWords() {
-  static const QSet<QString> words = {
+/// A source language's words: control flow, other keywords and types.
+struct Vocabulary {
+  QSet<QString> control, keywords, types;
+};
+
+const Vocabulary &vocabularyOf(Dialect dialect) {
+  static const Vocabulary C = {{
 #define NEVERD_C_CONTROL(Word) QStringLiteral(Word),
 #include "CodeVocabulary.def"
-  };
-  return words;
-}
-const QSet<QString> &keywordWords() {
-  static const QSet<QString> words = {
+                               },
+                               {
 #define NEVERD_C_KEYWORD(Word) QStringLiteral(Word),
 #include "CodeVocabulary.def"
-  };
-  return words;
-}
-const QSet<QString> &typeWords() {
-  static const QSet<QString> words = {
+                               },
+                               {
 #define NEVERD_C_TYPE(Word) QStringLiteral(Word),
 #include "CodeVocabulary.def"
-  };
-  return words;
+                               }};
+  static const Vocabulary Rust = {{
+#define NEVERD_RUST_CONTROL(Word) QStringLiteral(Word),
+#include "CodeVocabulary.def"
+                                  },
+                                  {
+#define NEVERD_RUST_KEYWORD(Word) QStringLiteral(Word),
+#include "CodeVocabulary.def"
+                                  },
+                                  {
+#define NEVERD_RUST_TYPE(Word) QStringLiteral(Word),
+#include "CodeVocabulary.def"
+                                  }};
+  static const Vocabulary Go = {{
+#define NEVERD_GO_CONTROL(Word) QStringLiteral(Word),
+#include "CodeVocabulary.def"
+                                },
+                                {
+#define NEVERD_GO_KEYWORD(Word) QStringLiteral(Word),
+#include "CodeVocabulary.def"
+                                },
+                                {
+#define NEVERD_GO_TYPE(Word) QStringLiteral(Word),
+#include "CodeVocabulary.def"
+                                }};
+  return dialect == Dialect::Rust ? Rust : dialect == Dialect::Go ? Go : C;
+}
+
+/// Whether \p word names one of the integer or floating types the dialect
+/// spells by width: Rust's `u64` and `i96`, Go's `uint64`.
+bool widthType(Dialect dialect, const QString &word) {
+  static const QRegularExpression Rust(QStringLiteral("^[iuf][0-9]+$"));
+  static const QRegularExpression Go(QStringLiteral("^(u?int|float)[0-9]+$"));
+  return (dialect == Dialect::Rust && Rust.match(word).hasMatch()) ||
+         (dialect == Dialect::Go && Go.match(word).hasMatch());
+}
+
+/// The dialect a page reads in: its representation's, or for pseudocode in
+/// the function's own language the one the page names.
+Dialect dialectOf(const QString &representation, const QString &language) {
+  const auto *entry = representationOf(representation);
+  const Dialect dialect = entry ? entry->dialect : Dialect::C;
+  if (dialect != Dialect::Source)
+    return dialect;
+  if (language == QLatin1String("rust"))
+    return Dialect::Rust;
+  if (language == QLatin1String("go"))
+    return Dialect::Go;
+  return Dialect::C;
+}
+
+/// Source languages share C's comments, strings and preprocessor-like lines.
+bool sourceDialect(Dialect dialect) {
+  return dialect == Dialect::C || dialect == Dialect::Rust ||
+         dialect == Dialect::Go;
 }
 const QSet<QString> &llvmWords() {
   static const QSet<QString> words = {
@@ -126,8 +180,12 @@ CodeText::CodeText(Session &session, QWidget *parent)
     viewport()->update();
   });
   connect(&session_, &Session::revisionChanged, this, [this] {
-    if (function_)
+    if (!function_)
+      return;
+    if (isVisible())
       load(*function_, representation_);
+    else
+      interrupted_ = true;
   });
   connect(&session_, &Session::unloaded, this, &CodeText::clear);
 }
@@ -148,12 +206,9 @@ void CodeText::updateRange() {
   verticalScrollBar()->setRange(
       0, std::max(0, int(lines_.size()) - visibleLines() + 1));
   verticalScrollBar()->setPageStep(visibleLines());
-  int widest = 0;
-  for (const auto &line : lines_)
-    widest = std::max(widest, int(line.styled.text.size()));
-  horizontalScrollBar()->setRange(
-      0,
-      std::max(0, int(widest * charWidth_) + textLeft() - viewport()->width()));
+  horizontalScrollBar()->setRange(0, std::max(0, int(widestLine_ * charWidth_) +
+                                                     textLeft() -
+                                                     viewport()->width()));
   horizontalScrollBar()->setPageStep(viewport()->width());
 }
 
@@ -164,10 +219,22 @@ void CodeText::resizeEvent(QResizeEvent *event) {
 
 void CodeText::scrollContentsBy(int, int) { viewport()->update(); }
 
-void CodeText::clear() {
+void CodeText::cancel() {
   ++serial_;
-  loading_ = false;
+  session_.analysisQueries().unsubscribeOwner(this);
+  if (loading_) {
+    interrupted_ = true;
+    loading_ = false;
+    status_ = tr("Cancelled");
+    emit statusChanged();
+  }
+}
+
+void CodeText::clear() {
+  cancel();
   source_.clear();
+  sourceBytes_ = renderedChars_ = renderedRows_ = widestLine_ = 0;
+  interrupted_ = false;
   sourceRows_.clear();
   lineStarts_.clear();
   regions_ = {};
@@ -181,24 +248,34 @@ void CodeText::clear() {
   cursorLine_ = cursorColumn_ = 0;
   anchor_.reset();
   marked_.clear();
+  sourceNames_.clear();
+  sourceNameIndex_.clear();
+  unread_ = 0;
   updateRange();
   viewport()->update();
+  if (!pageLanguage_.isEmpty()) {
+    pageLanguage_.clear();
+    emit languageChanged();
+  }
   emit statusChanged();
 }
 
 void CodeText::load(Address function, const QString &representation) {
+  cancel();
   const bool same = function_ == function && representation_ == representation;
   function_ = function;
   representation_ = representation;
   const quint64 serial = ++serial_;
   if (!same) {
     lines_.clear();
+    widestLine_ = 0;
     cursorLine_ = cursorColumn_ = 0;
     anchor_.reset();
     verticalScrollBar()->setValue(0);
   }
   inComment_ = false;
   loading_ = true;
+  interrupted_ = false;
   // Folding state survives a refresh of the same function as "fold all";
   // a new function opens at its definition, its prelude folded.
   foldAfterLoad_ = same && library_.libraryFolded();
@@ -226,7 +303,7 @@ void CodeText::request(int offset, quint64 serial) {
         appendPage(payload, offset);
         const auto next = payload.value("next_offset");
         if (!next.isNull() && next.toInt() > offset) {
-          rebuildLines();
+          rebuildLines(true);
           request(next.toInt(), serial);
           return;
         }
@@ -239,7 +316,9 @@ void CodeText::request(int offset, quint64 serial) {
           library_.setFolded(true);
         if (foldPreludeAfterLoad_)
           library_.setRegionFolded(PreludeRegion, true);
-        rebuildLines();
+        // Unfolded pages are already colored and mapped. Only a changed
+        // projection requires rebuilding earlier lines.
+        rebuildLines(!library_.anyFolded());
         emit foldingChanged();
         const auto mapping = payload.value("mapping_status").toString();
         status_ = session_.metadata().value("analyzed").toBool()
@@ -248,6 +327,9 @@ void CodeText::request(int offset, quint64 serial) {
         if (mapping == QLatin1String("instruction_anchors"))
           status_ += (status_.isEmpty() ? QString() : QStringLiteral(" · ")) +
                      tr("rows linked to instructions");
+        if (unread_ > 0)
+          status_ += (status_.isEmpty() ? QString() : QStringLiteral(" · ")) +
+                     tr("%n declarations shown as C", nullptr, unread_);
         updateRange();
         viewport()->update();
         emit statusChanged();
@@ -256,11 +338,20 @@ void CodeText::request(int offset, quint64 serial) {
         if (serial != serial_)
           return;
         loading_ = false;
+        // A refused function reads in no language and names nothing.
+        sourceNames_.clear();
+        sourceNameIndex_.clear();
+        unread_ = 0;
+        if (!pageLanguage_.isEmpty()) {
+          pageLanguage_.clear();
+          emit languageChanged();
+        }
         lines_.clear();
         Line line;
         line.styled.text = message;
         line.styled.spans = {{0, int(message.size()), Comment, std::nullopt}};
         lines_.append(std::move(line));
+        widestLine_ = message.size();
         status_ = message;
         updateRange();
         viewport()->update();
@@ -280,16 +371,108 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
     prelude_ = payload.value("prelude").toObject();
     declarations_.reset();
     byteOffset_ = std::max<qint64>(0, pageOffset);
-  } else if (regionsValid_ &&
-             pageOffset != byteOffset_ + source_.toUtf8().size()) {
+    sourceNames_.clear();
+    sourceNameIndex_.clear();
+    unread_ = int(payload.value("unread").toArray().size());
+    const QString language = payload.value("dialect").toString();
+    if (language != pageLanguage_) {
+      pageLanguage_ = language;
+      emit languageChanged();
+    }
+  } else if (regionsValid_ && pageOffset != byteOffset_ + sourceBytes_) {
     // Pages that do not continue each other cannot share byte offsets.
     regionsValid_ = false;
   }
+  if (offset == 0) {
+    sourceBytes_ = renderedChars_ = renderedRows_ = widestLine_ = 0;
+    lines_.clear();
+    lineStarts_.clear();
+  }
   source_ += text;
-  if (!text.isEmpty() && !text.endsWith(QLatin1Char('\n')))
+  sourceBytes_ += text.toUtf8().size();
+  if (!text.isEmpty() && !text.endsWith(QLatin1Char('\n'))) {
     source_ += QLatin1Char('\n');
+    ++sourceBytes_;
+  }
   for (const auto &row : payload.value("rows").toArray())
     sourceRows_.append(row.toObject().toVariantMap());
+  // A source name's bytes are in the page that holds its line.
+  const QByteArray bytes = text.toUtf8();
+  bool namesAdded = false;
+  for (const auto &value : payload.value("source_names").toArray()) {
+    const auto name = value.toObject();
+    const qint64 begin = name.value("begin_byte").toInteger(-1) - pageOffset;
+    const qint64 end = name.value("end_byte").toInteger(-1) - pageOffset;
+    if (pageOffset < 0 || begin < 0 || end <= begin || end > bytes.size())
+      continue;
+    const QString spelled = QString::fromUtf8(bytes.mid(begin, end - begin));
+    if (spelled.isEmpty() || sourceNames_.contains(spelled))
+      continue;
+    sourceNames_.insert(spelled, {name.value("identifier").toString(),
+                                  name.value("symbol").toString(),
+                                  addressValue(name.value("address"))});
+    auto &bucket = sourceNameIndex_[spelled.at(0)];
+    bucket.append(spelled);
+    namesAdded = true;
+  }
+  if (namesAdded)
+    for (auto &bucket : sourceNameIndex_)
+      std::sort(bucket.begin(), bucket.end(),
+                [](const QString &a, const QString &b) {
+                  return a.size() > b.size();
+                });
+}
+
+QString CodeText::language() const {
+  switch (dialectOf(representation_, pageLanguage_)) {
+  case Dialect::C:
+    return QStringLiteral("c");
+  case Dialect::Rust:
+    return QStringLiteral("rust");
+  case Dialect::Go:
+    return QStringLiteral("go");
+  default:
+    return {};
+  }
+}
+
+int CodeText::sourceNameLength(const QString &text, int position) const {
+  const auto bucket = sourceNameIndex_.constFind(text.at(position));
+  if (bucket == sourceNameIndex_.cend())
+    return 0;
+  // A name starts and ends where identifiers do, so `core::fmt::write` is
+  // not found inside `xcore::fmt::writer`.
+  const auto joins = [](QChar c) {
+    return identifierPart(c) || c == QLatin1Char(':') ||
+           c == QLatin1Char('.') || c == QLatin1Char('/');
+  };
+  if (position > 0 && joins(text.at(position - 1)))
+    return 0;
+  for (const QString &name : *bucket) {
+    const int end = position + int(name.size());
+    if (end <= text.size() &&
+        QStringView(text).mid(position, name.size()) == name &&
+        (end == text.size() || !identifierPart(text.at(end))))
+      return int(name.size());
+  }
+  return 0;
+}
+
+std::optional<std::pair<QString, CodeText::SourceName>>
+CodeText::sourceNameAt(int line, int column) const {
+  if (line < 0 || line >= lines_.size() || sourceNames_.isEmpty())
+    return std::nullopt;
+  const auto &styled = lines_[line].styled;
+  for (const auto &span : styled.spans) {
+    if (span.role != Function || column < span.start ||
+        column >= span.start + span.length)
+      continue;
+    const QString spelled = styled.text.mid(span.start, span.length);
+    if (const auto found = sourceNames_.constFind(spelled);
+        found != sourceNames_.cend())
+      return std::pair{spelled, *found};
+  }
+  return std::nullopt;
 }
 
 QJsonArray CodeText::foldRegions() const {
@@ -311,28 +494,32 @@ QJsonArray CodeText::foldRegions() const {
   return regions;
 }
 
-void CodeText::rebuildLines() {
+void CodeText::rebuildLines(bool append) {
   const bool folding = !loading_ && library_.canFold();
   const QString display = folding ? library_.text() : source_;
   const QVariantList &rows = folding ? library_.mappings() : sourceRows_;
   const int previousLine = cursorLine_;
-  lines_.clear();
-  lineStarts_.clear();
-  inComment_ = false;
-  int start = 0;
+  if (!append) {
+    lines_.clear();
+    lineStarts_.clear();
+    inComment_ = false;
+    renderedChars_ = renderedRows_ = widestLine_ = 0;
+  }
+  int start = renderedChars_;
   while (start < display.size()) {
     int end = int(display.indexOf(QLatin1Char('\n'), start));
     if (end < 0)
       end = int(display.size());
     Line line;
     line.styled.text = display.mid(start, end - start);
+    widestLine_ = std::max(widestLine_, int(line.styled.text.size()));
     highlightLine(line, inComment_);
     lines_.append(std::move(line));
     lineStarts_.append(start);
     start = end + 1;
   }
-  for (const auto &value : rows) {
-    const auto row = value.toMap();
+  for (int i = renderedRows_; i < rows.size(); ++i) {
+    const auto row = rows[i].toMap();
     const int index = row.value(QStringLiteral("line"), -1).toInt();
     if (index < 0 || index >= lines_.size())
       continue;
@@ -340,6 +527,8 @@ void CodeText::rebuildLines() {
       if (const auto parsed = parseAddress(address.toString()))
         lines_[index].addresses.append(*parsed);
   }
+  renderedChars_ = display.size();
+  renderedRows_ = rows.size();
   if (folding)
     for (const auto &[begin, end] : library_.foldedRanges()) {
       auto it =
@@ -416,6 +605,16 @@ bool CodeText::event(QEvent *event) {
         return true;
       }
     }
+    // A source name shows the C identifier and the symbol it reads.
+    if (const int line = lineAt(local.y()); line >= 0 && line < lines_.size())
+      if (const auto name = sourceNameAt(line, columnAt(line, local.x()))) {
+        QString text = tr("C: %1").arg(name->second.identifier);
+        if (!name->second.symbol.isEmpty() &&
+            name->second.symbol != name->first)
+          text += QLatin1Char('\n') + name->second.symbol;
+        QToolTip::showText(help->globalPos(), text, this);
+        return true;
+      }
     // A type or macro the code declares shows its declaration.
     if (const int line = lineAt(local.y()); line >= 0 && line < lines_.size())
       if (const QString token =
@@ -451,8 +650,8 @@ bool CodeText::event(QEvent *event) {
 }
 
 void CodeText::highlightLine(Line &line, bool &inComment) const {
-  const auto *entry = representationOf(representation_);
-  const Dialect dialect = entry ? entry->dialect : Dialect::C;
+  const Dialect dialect = dialectOf(representation_, pageLanguage_);
+  const bool source = sourceDialect(dialect);
   const QString &s = line.styled.text;
   auto &spans = line.styled.spans;
   spans.clear();
@@ -462,7 +661,7 @@ void CodeText::highlightLine(Line &line, bool &inComment) const {
   };
   int i = 0;
   const int n = int(s.size());
-  if (dialect == Dialect::C && !inComment) {
+  if (source && !inComment) {
     int first = 0;
     while (first < n && s.at(first).isSpace())
       ++first;
@@ -484,22 +683,42 @@ void CodeText::highlightLine(Line &line, bool &inComment) const {
       inComment = false;
       continue;
     }
-    if (dialect == Dialect::C && c == QLatin1Char('/') && i + 1 < n &&
+    if (source && c == QLatin1Char('/') && i + 1 < n &&
         s.at(i + 1) == QLatin1Char('/')) {
       add(i, n, Comment);
       return;
     }
-    if (dialect == Dialect::C && c == QLatin1Char('/') && i + 1 < n &&
+    if (source && c == QLatin1Char('/') && i + 1 < n &&
         s.at(i + 1) == QLatin1Char('*')) {
       inComment = true;
       continue;
     }
-    if (dialect != Dialect::C && c == QLatin1Char(';')) {
+    if (!source && c == QLatin1Char(';')) {
       add(i, n, Comment);
       return;
     }
-    if (c == QLatin1Char('"') ||
-        (dialect == Dialect::C && c == QLatin1Char('\''))) {
+    // A Rust label, `'switch1`, is not a character literal.
+    if (dialect == Dialect::Rust && c == QLatin1Char('\'') && i + 1 < n &&
+        identifierStart(s.at(i + 1))) {
+      int j = i + 2;
+      while (j < n && identifierPart(s.at(j)))
+        ++j;
+      if (j >= n || s.at(j) != QLatin1Char('\'')) {
+        add(i, j, Constant);
+        i = j;
+        continue;
+      }
+    }
+    // A source name, `core::fmt::write`, is one name.
+    if (!sourceNames_.isEmpty() && source) {
+      if (const int length = sourceNameLength(s, i)) {
+        const auto name = sourceNames_.value(s.mid(i, length));
+        spans.append({i, length, Function, name.address});
+        i += length;
+        continue;
+      }
+    }
+    if (c == QLatin1Char('"') || (source && c == QLatin1Char('\''))) {
       int j = i + 1;
       while (j < n && s.at(j) != c) {
         if (s.at(j) == QLatin1Char('\\'))
@@ -513,7 +732,8 @@ void CodeText::highlightLine(Line &line, bool &inComment) const {
     if (c.isDigit()) {
       int j = i + 1;
       while (j < n &&
-             (s.at(j).isLetterOrNumber() || s.at(j) == QLatin1Char('.')))
+             (s.at(j).isLetterOrNumber() || s.at(j) == QLatin1Char('.') ||
+              s.at(j) == QLatin1Char('_')))
         ++j;
       add(i, j, Number);
       i = j;
@@ -531,13 +751,14 @@ void CodeText::highlightLine(Line &line, bool &inComment) const {
         ++k;
       const bool call = k < n && s.at(k) == QLatin1Char('(');
       int role = Variable;
-      if (dialect == Dialect::C) {
-        if (controlWords().contains(word))
+      if (source) {
+        const auto &words = vocabularyOf(dialect);
+        if (words.control.contains(word))
           role = Control;
-        else if (typeWords().contains(word) ||
-                 word.endsWith(QStringLiteral("_t")))
+        else if (words.types.contains(word) || widthType(dialect, word) ||
+                 (dialect == Dialect::C && word.endsWith(QStringLiteral("_t"))))
           role = Type;
-        else if (keywordWords().contains(word))
+        else if (words.keywords.contains(word))
           role = Keyword;
         else if (call)
           role = Function;
@@ -809,8 +1030,10 @@ void CodeText::mousePressEvent(QMouseEvent *event) {
     return;
   const int column = columnAt(line, int(event->position().x()));
   moveCursor(line, column, event->modifiers() & Qt::ShiftModifier);
-  if (event->button() == Qt::LeftButton)
-    highlight_ = lines_[line].styled.tokenAt(column);
+  if (event->button() == Qt::LeftButton) {
+    const auto name = sourceNameAt(line, column);
+    highlight_ = name ? name->first : lines_[line].styled.tokenAt(column);
+  }
   viewport()->update();
 }
 
@@ -829,12 +1052,19 @@ void CodeText::mouseMoveEvent(QMouseEvent *event) {
 void CodeText::mouseDoubleClickEvent(QMouseEvent *event) {
   if (event->button() != Qt::LeftButton)
     return;
+  // A source name resolves by its symbol, as the C view's linked names do.
+  if (const auto name = sourceNameAt(cursorLine_, cursorColumn_)) {
+    emit nameActivated(name->second.symbol.isEmpty() ? name->second.identifier
+                                                     : name->second.symbol);
+    return;
+  }
   const QString token = currentToken();
-  // A type or macro this code declares opens at its declaration; C's own
-  // words name nothing in the binary.
+  // A type or macro this code declares opens at its declaration; the
+  // language's own words name nothing in the binary.
+  const auto &words = vocabularyOf(dialectOf(representation_, pageLanguage_));
   if (token.isEmpty() || goToDeclaration(token) ||
-      controlWords().contains(token) || keywordWords().contains(token) ||
-      typeWords().contains(token))
+      words.control.contains(token) || words.keywords.contains(token) ||
+      words.types.contains(token))
     return;
   // A global shows at its address, whatever C called it there.
   if (const auto address = objectAddress(token)) {
@@ -984,6 +1214,27 @@ QString CodeView::titleOf(const QString &representation) {
   return representation;
 }
 
+bool CodeView::isSource(const QString &representation) {
+  const auto *entry = representationOf(representation);
+  return entry &&
+         (sourceDialect(entry->dialect) || entry->dialect == Dialect::Source);
+}
+
+QString CodeView::chosenLanguage() const {
+  const auto *entry = representationOf(representation());
+  if (!entry || entry->dialect != Dialect::Source ||
+      text_->representation() != representation())
+    return {};
+  // Language names are the same in every translation; C, the common case,
+  // goes without saying.
+  const QString language = text_->language();
+  if (language == QLatin1String("rust"))
+    return QStringLiteral("Rust");
+  if (language == QLatin1String("go"))
+    return QStringLiteral("Go");
+  return {};
+}
+
 CodeView::CodeView(Session &session, const QString &representation,
                    QWidget *parent)
     : QWidget(parent), session_(session), selector_(new QComboBox(this)),
@@ -992,13 +1243,12 @@ CodeView::CodeView(Session &session, const QString &representation,
   auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
-  auto *bar = new QHBoxLayout;
+  auto *barRow = new QWidget(this);
+  auto *bar = new QHBoxLayout(barRow);
   bar->setContentsMargins(4, 2, 4, 2);
-  for (const auto &entry : Representations)
-    selector_->addItem(
-        QCoreApplication::translate("Representations", entry.title),
-        QString::fromLatin1(entry.name));
-  selector_->setCurrentIndex(selector_->findData(representation));
+  bar->setSpacing(0);
+  selector_->addItem(QString(), representation);
+  updateRepresentations();
   bar->addWidget(selector_);
   fold_->setCheckable(true);
   fold_->setAutoRaise(true);
@@ -1015,9 +1265,11 @@ CodeView::CodeView(Session &session, const QString &representation,
   lock_->setToolTip(tr("Keep this function while the disassembly moves on"));
   bar->addWidget(lock_);
   bar->addStretch(1);
-  layout->addLayout(bar);
+  makeRowShrinkable(*barRow);
+  layout->addWidget(barRow);
   layout->addWidget(text_, 1);
   status_->setContentsMargins(6, 2, 6, 2);
+  makeRowShrinkable(*status_);
   layout->addWidget(status_);
   connect(selector_, &QComboBox::currentIndexChanged, this, [this] {
     const auto name = selector_->currentData().toString();
@@ -1025,13 +1277,49 @@ CodeView::CodeView(Session &session, const QString &representation,
       text_->load(*text_->function(), name);
     emit representationChanged(name);
   });
+  connect(&session_, &Session::opened, this, &CodeView::updateRepresentations);
+  connect(&session_, &Session::unloaded, this,
+          &CodeView::updateRepresentations);
   connect(text_, &CodeText::statusChanged, this, &CodeView::updateStatus);
+  connect(text_, &CodeText::languageChanged, this, &CodeView::languageChanged);
   connect(fold_, &QToolButton::toggled, text_, &CodeText::setFolded);
   connect(text_, &CodeText::foldingChanged, this, [this] {
     fold_->setVisible(text_->foldableCount() > 0);
     const QSignalBlocker blocker(fold_);
     fold_->setChecked(text_->libraryFolded());
   });
+}
+
+void CodeView::updateRepresentations() {
+  // Pseudocode reads each function in its program's languages: C, and the
+  // Rust or Go a function was written in.  C beside it is the one other
+  // choice, for a program with another language; until a program says, it
+  // stays.
+  const auto pseudocode =
+      session_.metadata().value("language").toObject().value("pseudocode");
+  const bool otherLanguage =
+      !pseudocode.isArray() || pseudocode.toArray().size() > 1;
+  const auto offered = [&](const Representation &entry) {
+    return otherLanguage || QLatin1String(entry.name) != QLatin1String("c");
+  };
+  const QString current = selector_->currentData().toString();
+  {
+    const QSignalBlocker blocker(selector_);
+    selector_->clear();
+    for (const auto &entry : Representations)
+      if (offered(entry))
+        selector_->addItem(
+            QCoreApplication::translate("Representations", entry.title),
+            QString::fromLatin1(entry.name));
+  }
+  const int index = selector_->findData(current);
+  {
+    const QSignalBlocker blocker(selector_);
+    selector_->setCurrentIndex(index);
+  }
+  // A view the program does not offer shows Pseudocode instead.
+  if (index < 0)
+    selector_->setCurrentIndex(selector_->findData(pseudocodeRepresentation()));
 }
 
 void CodeView::showFunction(Address function) {

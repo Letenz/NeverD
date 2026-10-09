@@ -30,6 +30,13 @@ llvm::Expected<UnpackOptions> unpackOptionsFromJSON(llvm::StringRef Text) {
   if (!Object)
     return failure(text::ObjectRequired);
   UnpackOptions Options;
+  if (const auto *Snapshot = Object->get(field::SnapshotOnly)) {
+    auto Value = Snapshot->getAsBoolean();
+    if (!Value)
+      return failure(llvm::Twine(text::FieldType) + field::SnapshotOnly);
+    Options.SnapshotOnly = *Value;
+    Object->erase(field::SnapshotOnly);
+  }
   if (const auto *Transfer = Object->get(field::Transfer)) {
     auto Number = Transfer->getAsUINT64();
     if (!Number || !*Number || *Number > defaults::MaxTransfers)
@@ -95,6 +102,30 @@ std::string unpackResultJSON(const UnpackResult &Result,
                            {field::StackBalanced, T.StackBalanced},
                            {field::Generation, int64_t(T.Generation)},
                            {field::ProgramInvocation, T.ProgramInvocation}});
+  llvm::json::Array HeapReferences;
+  for (const auto &R : Result.RuntimeState.HeapReferences)
+    HeapReferences.push_back(llvm::json::Object{
+        {field::Storage, R.Location == UnpackHeapReference::Storage::Image
+                             ? text::HeapImageStorage
+                             : text::HeapTLSStorage},
+        {field::Offset, bits(R.Offset)},
+        {field::RVA, R.Location == UnpackHeapReference::Storage::Image
+                         ? llvm::json::Value(bits(R.Offset))
+                         : llvm::json::Value(nullptr)},
+        {field::Address, bits(R.Address)},
+        {field::AllocationAddress, bits(R.AllocationAddress)},
+        {field::AllocationSize, R.AllocationSize}});
+  llvm::json::Array EncodedPointers;
+  for (const auto &R : Result.RuntimeState.EncodedPointerReferences)
+    EncodedPointers.push_back(llvm::json::Object{
+        {field::Storage, R.Location == UnpackHeapReference::Storage::Image
+                             ? text::HeapImageStorage
+                             : text::HeapTLSStorage},
+        {field::Offset, bits(R.Offset)},
+        {field::RVA, R.Location == UnpackHeapReference::Storage::Image
+                         ? llvm::json::Value(bits(R.Offset))
+                         : llvm::json::Value(nullptr)},
+        {field::EncodedPointerValue, bits(R.Value)}});
   llvm::json::Value Output = nullptr;
   if (!Result.Image.empty()) {
     const auto Digest = llvm::SHA256::hash(Result.Image);
@@ -121,6 +152,22 @@ std::string unpackResultJSON(const UnpackResult &Result,
        Result.EntryRVA ? llvm::json::Value(entrySourceName(Result.Source))
                        : llvm::json::Value(nullptr)},
       {field::Transfers, std::move(Transfers)},
+      {field::RuntimeState,
+       llvm::json::Object{
+           {field::HeapKnown, Result.RuntimeState.HeapInventoryKnown},
+           {field::HeapReferenceCount,
+            Result.RuntimeState.PossibleHeapReferences},
+           {field::HeapReferences, std::move(HeapReferences)},
+           {field::DirectServiceCalls, Result.RuntimeState.DirectServiceCalls},
+           {field::EncodedPointerKnown,
+            Result.RuntimeState.EncodedPointerInventoryKnown},
+           {field::EncodedPointerCount,
+            Result.RuntimeState.PossibleEncodedPointers},
+           {field::EncodedPointerReferences, std::move(EncodedPointers)},
+           {field::DynamicThreadLocalKnown,
+            Result.RuntimeState.DynamicThreadLocalInventoryKnown},
+           {field::DynamicTLSCount, Result.RuntimeState.LiveDynamicTLSSlots},
+           {field::DynamicFLSCount, Result.RuntimeState.LiveDynamicFLSSlots}}},
       {field::MaterializedTLSCallbacks,
        int64_t(Result.MaterializedTLSCallbacks)},
       {field::Sections, std::move(Sections)},

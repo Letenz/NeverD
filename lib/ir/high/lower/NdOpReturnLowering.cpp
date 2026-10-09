@@ -13,8 +13,11 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedReturnValue.h"
 
 #include <algorithm>
+#include <optional>
+#include <set>
 #include <stdexcept>
 
 namespace neverd {
@@ -67,6 +70,20 @@ ExprPtr unchangedDeclaredReturnParameter(const MedFunc &Med,
   return nullptr;
 }
 
+/// A SUBBYTES that re-views the low bytes of the register it writes (`w0`
+/// from `x0` after `add w0`, kept for a loop that reads w0 again) is a view
+/// of the register's value, not its definition: a result wider than the view
+/// is the register it was taken from.
+bool isRegisterLowView(const MedOp &Op) {
+  return Op.Opcode == NdOp::SUBBYTES && Op.NumInputs >= 1 &&
+         Op.Inputs[0].Kind == MedVar::Reg &&
+         isSameRegisterLowSlice(Op.Output.RegOff, Op.Output.Size,
+                                Op.Inputs[0].RegOff, Op.Inputs[0].Size,
+                                Op.NumInputs < 2 || !Op.Inputs[1].isConst()
+                                    ? 0
+                                    : Op.Inputs[1].ConstVal);
+}
+
 const MedBlock *onlyPredecessor(const MedFunc &Med, const MedBlock &Block) {
   if (Block.Preds.size() != 1)
     return nullptr;
@@ -76,6 +93,25 @@ const MedBlock *onlyPredecessor(const MedFunc &Med, const MedBlock &Block) {
       [Id](const MedBlock &Candidate) { return Candidate.Id == Id; });
   return It == Med.Blocks.end() ? nullptr : &*It;
 }
+// Whether \p V is the value a register holds at entry to \p Med: named by
+// the identity copy that begins a function, or defined nowhere.
+bool isEntryIdentity(const MedFunc &Med, const MedVar &V) {
+  auto Same = [&](const MedVar &W) {
+    return W.Kind == V.Kind && W.RegOff == V.RegOff && W.Id == V.Id &&
+           W.SSAVer == V.SSAVer;
+  };
+  for (const auto &Blk : Med.Blocks) {
+    for (const auto &Phi : Blk.Phis)
+      if (Same(Phi.Output))
+        return false;
+    for (const auto &Op : Blk.Ops)
+      if (Same(Op.Output))
+        return Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
+               Same(Op.Inputs[0]);
+  }
+  return true;
+}
+
 } // namespace
 
 void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
@@ -182,6 +218,11 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
       CurOp.Inputs[0].Size == Func.ReturnType->Size)
     RetVal = medvarToExpr(CurOp.Inputs[0]);
 
+  if (!RetVal && !ExplicitABI && !UsesFPReturnReg && !Med.FPReturnViaX87 &&
+      Func.ReturnType && Func.ReturnType->Kind == NdTypeKind::Int &&
+      hasPropagatedIntegerReturnValue(CurOp, TargetArch, Func.ReturnType->Size))
+    RetVal = medvarToExpr(CurOp.Inputs[0]);
+
   if (!RetVal && CurOp.NumInputs >= 1 && CurOp.Inputs[0].Id >= 0 &&
       CurOp.Inputs[0].Kind == MedVar::Reg) {
     uint64_t RO = CurOp.Inputs[0].RegOff;
@@ -197,7 +238,7 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
       if (RIt->Opcode == NdOp::RETURN)
         continue;
       if (RIt->Output.Kind == MedVar::Reg && RIt->Output.Size > 0 &&
-          RIt->Output.RegOff == ReturnReg) {
+          RIt->Output.RegOff == ReturnReg && !isRegisterLowView(*RIt)) {
         // Calls and memory reads materialize once. Other definitions can be
         // followed to their right-hand side so a register-only COPY need not
         // become a source variable with no emitted assignment.
@@ -217,18 +258,71 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
   }
 
   if (!RetVal) {
-    if (const MedBlock *Pred = onlyPredecessor(Med, CurBlock)) {
+    // A bare RET block inherits the value established on its only incoming
+    // edge: the last definition on the chain of single predecessors, or the
+    // join that begins a block of it (a conditional return out of a loop).
+    // Reconstruct the defining expression rather than naming the otherwise
+    // unused register SSA output. Multiple incoming edges need an explicit
+    // PHI; choosing one predecessor would invent semantics.
+    std::set<const MedBlock *> Seen{&CurBlock};
+    for (const MedBlock *Pred = onlyPredecessor(Med, CurBlock);
+         Pred && !RetVal && Seen.insert(Pred).second;
+         Pred = onlyPredecessor(Med, *Pred)) {
       for (auto RIt = Pred->Ops.rbegin(); RIt != Pred->Ops.rend(); ++RIt) {
         if (RIt->Output.Kind != MedVar::Reg || RIt->Output.Size == 0 ||
-            RIt->Output.RegOff != ReturnReg)
+            RIt->Output.RegOff != ReturnReg || isRegisterLowView(*RIt))
           continue;
-        // A bare RET block inherits the value established on its only incoming
-        // edge. Reconstruct the defining expression rather than naming the
-        // otherwise unused register SSA output. Multiple incoming edges need
-        // an explicit PHI; choosing one predecessor would invent semantics.
         RetVal = ValueFromDefinition(*RIt);
         break;
       }
+      for (const auto &Phi : Pred->Phis)
+        if (!RetVal && Phi.Output.Kind == MedVar::Reg &&
+            Phi.Output.RegOff == ReturnReg)
+          RetVal = HighExpr::makeVar(Phi.Output);
+    }
+  }
+
+  if (!RetVal && CurBlock.Preds.size() > 1) {
+    // A join whose predecessors all leave the same version of the register
+    // needs no PHI: the value was established before they parted, as when an
+    // ARM predicated store or a branch around a store sits between the result
+    // and the RETURN.  Predecessors that leave different versions need the
+    // PHI, and the value a register holds at entry is none computed.
+    auto LeftBy = [&](int PredId, MedVar &Out) {
+      const auto Pred = std::find_if(Med.Blocks.begin(), Med.Blocks.end(),
+                                     [PredId](const MedBlock &Candidate) {
+                                       return Candidate.Id == PredId;
+                                     });
+      if (Pred == Med.Blocks.end())
+        return false;
+      for (auto RIt = Pred->Ops.rbegin(); RIt != Pred->Ops.rend(); ++RIt)
+        if (RIt->Output.Kind == MedVar::Reg && RIt->Output.Size > 0 &&
+            RIt->Output.RegOff == ReturnReg && !isRegisterLowView(*RIt)) {
+          Out = RIt->Output;
+          return true;
+        }
+      return reachingRegAtBlockEntry(*Pred, ReturnReg, Out);
+    };
+    std::optional<MedVar> Common;
+    bool Agree = true;
+    for (const int PredId : CurBlock.Preds) {
+      MedVar Left;
+      if (!LeftBy(PredId, Left) ||
+          (Common &&
+           (Common->Id != Left.Id || Common->SSAVer != Left.SSAVer))) {
+        Agree = false;
+        break;
+      }
+      Common = Left;
+    }
+    if (Agree && Common && !isEntryIdentity(Med, *Common)) {
+      for (const auto &Blk : Med.Blocks)
+        for (const auto &Op : Blk.Ops)
+          if (!RetVal && Op.Output.Kind == MedVar::Reg &&
+              Op.Output.Id == Common->Id && Op.Output.SSAVer == Common->SSAVer)
+            RetVal = ValueFromDefinition(Op);
+      if (!RetVal)
+        RetVal = HighExpr::makeVar(*Common);
     }
   }
 
@@ -281,6 +375,16 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
           break;
         }
       }
+    }
+    // A join whose predecessors all carry the same version of the high
+    // register needs no PHI: its value is the one reaching the block.  The
+    // incoming value at entry, named by an identity copy, is none the
+    // function computed.
+    if (!High) {
+      MedVar Reaching;
+      if (reachingRegAtBlockEntry(CurBlock, TRI.IntReturnReg2, Reaching) &&
+          Reaching.Size > 0 && !isEntryIdentity(Med, Reaching))
+        High = medvarToExpr(Reaching);
     }
     if (High) {
       auto Pair = HighExpr::makeBinop(

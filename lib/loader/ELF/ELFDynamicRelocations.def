@@ -35,3 +35,47 @@ NEVERD_ELF_SLOT_BINDING(ARM, R_ARM_JUMP_SLOT)
 NEVERD_ELF_SLOT_BINDING(AArch64, R_AARCH64_GLOB_DAT)
 NEVERD_ELF_SLOT_BINDING(AArch64, R_AARCH64_JUMP_SLOT)
 #undef NEVERD_ELF_SLOT_BINDING
+
+// NEVERD_ELF_TLS_DESCRIPTOR(Arch, Type): TLS descriptor relocations; the
+// dynamic linker writes the descriptor's first word with the resolver that
+// code calls through it (`call *(%rax)`, `blr x1`).
+#ifndef NEVERD_ELF_TLS_DESCRIPTOR
+#define NEVERD_ELF_TLS_DESCRIPTOR(Arch, Type)
+#endif
+NEVERD_ELF_TLS_DESCRIPTOR(X86, R_386_TLS_DESC)
+NEVERD_ELF_TLS_DESCRIPTOR(X64, R_X86_64_TLSDESC)
+NEVERD_ELF_TLS_DESCRIPTOR(ARM, R_ARM_TLS_DESC)
+NEVERD_ELF_TLS_DESCRIPTOR(AArch64, R_AARCH64_TLSDESC)
+#undef NEVERD_ELF_TLS_DESCRIPTOR
+
+// NEVERD_ELF_SYMBOL_VALUE(Arch, Type, Addend): relocations the dynamic linker
+// resolves to their symbol's address, plus the addend when Addend is true.  A
+// slot bound to a function or object the file defines holds that address,
+// unless another module interposes a definition; a GNU indirect function's
+// slot holds what its resolver returns.
+#ifndef NEVERD_ELF_SYMBOL_VALUE
+#define NEVERD_ELF_SYMBOL_VALUE(Arch, Type, Addend)
+#endif
+NEVERD_ELF_SYMBOL_VALUE(X86, R_386_GLOB_DAT, false)
+NEVERD_ELF_SYMBOL_VALUE(X86, R_386_JUMP_SLOT, false)
+NEVERD_ELF_SYMBOL_VALUE(X86, R_386_32, true)
+NEVERD_ELF_SYMBOL_VALUE(X64, R_X86_64_GLOB_DAT, false)
+NEVERD_ELF_SYMBOL_VALUE(X64, R_X86_64_JUMP_SLOT, false)
+NEVERD_ELF_SYMBOL_VALUE(X64, R_X86_64_64, true)
+NEVERD_ELF_SYMBOL_VALUE(ARM, R_ARM_GLOB_DAT, false)
+NEVERD_ELF_SYMBOL_VALUE(ARM, R_ARM_JUMP_SLOT, false)
+NEVERD_ELF_SYMBOL_VALUE(ARM, R_ARM_ABS32, true)
+NEVERD_ELF_SYMBOL_VALUE(AArch64, R_AARCH64_GLOB_DAT, true)
+NEVERD_ELF_SYMBOL_VALUE(AArch64, R_AARCH64_JUMP_SLOT, true)
+NEVERD_ELF_SYMBOL_VALUE(AArch64, R_AARCH64_ABS64, true)
+#undef NEVERD_ELF_SYMBOL_VALUE
+
+// Ordinary symbol-address cells, distinct from PLT calls and TLS descriptors.
+#ifndef NEVERD_ELF_DATA_SLOT
+#define NEVERD_ELF_DATA_SLOT(Arch, Type)
+#endif
+NEVERD_ELF_DATA_SLOT(X86, R_386_GLOB_DAT)
+NEVERD_ELF_DATA_SLOT(X64, R_X86_64_GLOB_DAT)
+NEVERD_ELF_DATA_SLOT(ARM, R_ARM_GLOB_DAT)
+NEVERD_ELF_DATA_SLOT(AArch64, R_AARCH64_GLOB_DAT)
+#undef NEVERD_ELF_DATA_SLOT

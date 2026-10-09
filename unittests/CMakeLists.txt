@@ -63,6 +63,11 @@ add_neverd_unittest(NeverDSupportThreadTests
 target_include_directories(NeverDSupportThreadTests PRIVATE
   "${CMAKE_SOURCE_DIR}/include")
 
+add_neverd_unittest(NeverDLowUndefinedDigestTests
+  LowUndefinedDigestTests.cpp
+  LINK_COMPONENTS IRLowValidation
+)
+
 add_neverd_unittest(NeverDStringScanTests
   StringScanTests.cpp
   LINK_COMPONENTS Support
@@ -80,6 +85,15 @@ add_neverd_unittest(NeverDPipelineOutcomeTests
 )
 target_include_directories(NeverDPipelineOutcomeTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/pipeline")
+
+add_neverd_unittest(NeverDSourceDialectTests
+  backend/SourceDialectTests.cpp
+  LINK_COMPONENTS BackendC
+)
+target_include_directories(NeverDSourceDialectTests PRIVATE
+  "${CMAKE_SOURCE_DIR}/lib/backend/c/dialect")
+target_compile_definitions(NeverDSourceDialectTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
 add_neverd_unittest(NeverDSessionLLVMTests
   SessionLLVMTests.cpp
@@ -214,6 +228,7 @@ if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
 endif()
 add_subdirectory(unpack)
 add_subdirectory(evm)
+add_subdirectory(loader)
 add_subdirectory(sbf)
 add_subdirectory(plugin)
 

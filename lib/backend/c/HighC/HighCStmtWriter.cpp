@@ -14,6 +14,7 @@
 #include "HighCWriter.h"
 
 #include "neverd/Common.h"
+#include "neverd/Limits.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -177,6 +178,26 @@ bool stmtAlwaysExit(const HighCAnalysisState &State, TryExitTest LeftOut,
   default:
     return isNoReturnCallStmt(Stmt);
   }
+}
+
+/// The call \p E returns through casts and integer views, which a function
+/// printed `void` makes as a statement.
+const HighExpr *returnedCall(const HighExpr &E) {
+  const HighExpr *Cur = &E;
+  for (unsigned Depth = 0; Cur && Depth <= limits::kMaxIntegerViewUnwrapDepth;
+       ++Depth) {
+    if (Cur->Kind == ExprKind::Call)
+      return Cur;
+    const bool View =
+        Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast ||
+        (Cur->Kind == ExprKind::UnaryOp &&
+         (Cur->Op == NdOp::INT_ZEXT || Cur->Op == NdOp::INT_SEXT)) ||
+        (Cur->Kind == ExprKind::BinOp && Cur->Op == NdOp::SUBBYTES);
+    if (!View || Cur->Operands.empty())
+      return nullptr;
+    Cur = Cur->Operands[0].get();
+  }
+  return nullptr;
 }
 
 bool stmtsAlwaysExit(const HighCAnalysisState &State, TryExitTest LeftOut,
@@ -408,7 +429,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       if (ResultUsed)
         llvm::report_fatal_error("HighC cannot render a live SVC result");
       emitIndent(Indent);
-      OS << exprStr(*Stmt.Val) << ";\n";
+      OS << statementCallText(*Stmt.Val) << ";\n";
       break;
     }
     // A callee declared to return nothing leaves no value in the result
@@ -417,7 +438,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     if (knownVoidCall(*Stmt.Val) &&
         (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
       emitIndent(Indent);
-      OS << exprStr(*Stmt.Val) << ";\n";
+      OS << statementCallText(*Stmt.Val) << ";\n";
       const std::string Dest = varName(Stmt.Dst->Var);
       const std::string Printed = printedForwardedVar(Dest, 0);
       if (!Analysis.OmittedCallResults.count(&Stmt) &&
@@ -440,7 +461,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
          !DeclaredCNames.count(
              printedForwardedVar(varName(Stmt.Dst->Var), 0)))) {
       emitIndent(Indent);
-      OS << exprStr(*Stmt.Val) << ";\n";
+      OS << statementCallText(*Stmt.Val) << ";\n";
       break;
     }
     bool DeadIntrinsicResult = Stmt.Dst->Kind == ExprKind::Var &&
@@ -463,7 +484,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         (isSideeffectIntrinsic(Stmt.Val->IntrinsicId) ||
          !intrinsicCName(Stmt.Val->IntrinsicId))) {
       emitIndent(Indent);
-      OS << exprStr(*Stmt.Val) << ";\n";
+      OS << statementCallText(*Stmt.Val) << ";\n";
       break;
     }
     if (Stmt.Dst->Kind == ExprKind::Load && !Stmt.Dst->Operands.empty()) {
@@ -660,7 +681,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
            << ")";
       else if (DeclaredType && DeclaredType->Kind == NdTypeKind::Int &&
-               !ValueText.empty() && ValueText.front() == '&')
+               !ValueText.empty() &&
+               (ValueText.front() == '&' || isStringLiteralText(ValueText)))
         OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
            << ")";
       else if (isUnknownCallOperand(Stmt.Val.get()))
@@ -819,6 +841,11 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                  ProjectedDestType->Kind == NdTypeKind::Ptr)
           OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
              << ValueText << ")";
+        else if (ProjectedDestType &&
+                 ProjectedDestType->Kind == NdTypeKind::Int &&
+                 isStringLiteralText(ValueText))
+          OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
+             << ValueText << ")";
         else
           OS << ValueText;
         OS << ";\n";
@@ -829,10 +856,13 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         if (auto Name = imageObjectName(*VA)) {
           emitIndent(Indent);
           OS << *Name << " = ";
+          const std::string ValueText = exprStr(*Stmt.StoreVal);
           if (isUnknownCallOperand(Stmt.StoreVal.get()))
             OS << "0";
+          else if (isStringLiteralText(ValueText))
+            OS << "(uintptr_t)(" << ValueText << ")";
           else
-            OS << exprStr(*Stmt.StoreVal);
+            OS << ValueText;
           OS << ";\n";
           break;
         }
@@ -907,7 +937,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       }
     }
     emitIndent(Indent);
-    OS << exprStr(*Stmt.CallExpr) << ";\n";
+    OS << statementCallText(*Stmt.CallExpr) << ";\n";
     break;
 
   case StmtKind::Return:
@@ -918,12 +948,20 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
           (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody))))
       OS << "return " << IndirectReturnName << ";\n";
-    else if (InferredVoid)
+    else if (InferredVoid) {
+      // A function inferred `void` can return what a callee left in the
+      // result register, as a thunk of a `void` routine does: the call runs
+      // all the same.
+      if (const HighExpr *Call =
+              Stmt.RetVal ? returnedCall(*Stmt.RetVal) : nullptr) {
+        OS << statementCallText(*Call) << ";\n";
+        emitIndent(Indent);
+      }
       OS << "return;\n";
-    else if (!Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
-             (Stmt.RetVal->Kind == ExprKind::Var &&
-              !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
-              (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody)))
+    } else if (!Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
+               (Stmt.RetVal->Kind == ExprKind::Var &&
+                !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
+                (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody)))
       OS << "__builtin_trap(); /* unknown return value */\n";
     else
       OS << "return " << formatReturnExpr(*Stmt.RetVal) << ";\n";
@@ -3263,6 +3301,9 @@ void HighCWriter::hideUnusedFrameSlotWrites(const HighFunc &Func) {
       for (const ExprPtr &Op : N.Operands)
         if (Op)
           Rec(*Op, AsAddress);
+      // An indirect call reads its target as a value.
+      if (N.IndirectTarget)
+        Rec(*N.IndirectTarget, false);
     };
     Rec(E, false);
   };

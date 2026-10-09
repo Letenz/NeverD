@@ -161,6 +161,11 @@ struct TargetRegInfo {
   /// getTargetRegInfo().
   bool ReturnsFPInX87 = false;
 
+  /// A scalar floating-point return wider than eight bytes (long double)
+  /// leaves in x87 st0, even where narrower ones use the vector return
+  /// register (x86-64).  Set by getTargetRegInfo().
+  bool WideFloatsReturnInX87 = false;
+
   /// A RETURN operation's operand is the integer return register's value
   /// (x86 `ret` leaves the result in EAX/RAX), so whatever SSA left there is
   /// the value returned.  Elsewhere the operand can be the return address.
@@ -291,8 +296,8 @@ struct TargetRegInfo {
   uint16_t callPreservedPrefixSize(uint64_t RegOff, uint16_t Size) const;
 
   /// The same queries under the calling convention \p Format selects.
-  /// Win64 (x86-64 COFF) also preserves RSI, RDI and the low 16 bytes of
-  /// XMM6-XMM15; callPreservedRanges(Format) reports the same set.
+  /// Win64 (x86-64 COFF) also preserves RSI, RDI, APX R30/R31 and the low
+  /// 16 bytes of XMM6-XMM15; callPreservedRanges(Format) reports the same set.
   bool isCallPreserved(uint64_t RegOff, uint16_t Size,
                        BinaryFormat Format) const {
     return callPreservedPrefixSize(RegOff, Size, Format) == Size;

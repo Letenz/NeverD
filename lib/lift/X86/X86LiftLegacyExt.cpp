@@ -546,10 +546,10 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       return false;
     const NdMemoryAddressSpace SourceAddressSpace =
         S.memoryAddressSpace(X86.operands[1]);
-    S.emitIntrinsic(
-        InsnId == X86_INS_ENQCMD ? Intrinsic::Enqcmd : Intrinsic::Enqcmds,
-        NdVar::reg(x86reg::ZF, 1), {CommandAddress, PortalAddress},
-        NdMemoryOrdering::None, SourceAddressSpace);
+    S.emitIntrinsic(InsnId == X86_INS_ENQCMD ? Intrinsic::Enqcmd
+                                             : Intrinsic::Enqcmds,
+                    NdVar::reg(x86reg::ZF, 1), {CommandAddress, PortalAddress},
+                    NdMemoryOrdering::None, SourceAddressSpace);
     for (uint64_t Flag :
          {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::SF, x86reg::OF})
       S.emit(NdOp::COPY, NdVar::reg(Flag, 1), {NdVar::scalar(0, 1)});
@@ -759,11 +759,12 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     break;
   }
   case X86_INS_PSHUFW: {
-    if (X86.op_count < 2)
-      break;
+    if (X86.op_count != 3 || X86.operands[2].type != X86_OP_IMM)
+      return false;
     NdVar Dst = L.operandWrite(X86.operands[0]);
     NdVar Src = L.operandRead(S, X86.operands[1]);
-    S.emitIntrinsic(Intrinsic::Pshufw, Dst, {Src});
+    S.emitIntrinsic(Intrinsic::Pshufw, Dst,
+                    {Src, NdVar::cst(X86.operands[2].imm & 0xff, 1)});
     break;
   }
 

@@ -88,6 +88,9 @@ void StartupMetrics::finish(bool success, const QString &reason) {
       {"milestones", milestones_},
       {"error", session_.lastError()},
       {"clock_origin", "main entry, after dynamic loading"},
+      // The origin on the system's monotonic clock, so that a runner can
+      // measure from the launch it timed.
+      {"clock_origin_monotonic_ms", clock_.msecsSinceReference()},
       {"preferences",
        "temporary defaults; user settings are not read or written"},
       {"measurement",

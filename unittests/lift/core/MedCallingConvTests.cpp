@@ -12,6 +12,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallingConvDetail.h"
 #include "neverd/ir/med/MedSwitchNorm.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -446,6 +447,112 @@ TEST(TargetRegInfo, Win64QueriesMatchItsEnumeratedPreservation) {
             0);
   EXPECT_EQ(TRI.callPreservedPrefixSize(x86reg::XMM6, 16, BinaryFormat::ELF),
             0);
+}
+
+TEST(TargetRegInfo, Win64APXPreservationMatchesCompleteByteViews) {
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  for (auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    const auto Ranges = TRI.callPreservedRanges(Format);
+    for (unsigned Index = 0; Index != 16; ++Index) {
+      const auto Reg = x86reg::extendedGeneralReg(Index);
+      const bool Expected = Format == BinaryFormat::COFF && Index >= 14;
+      const auto Count = std::count_if(
+          Ranges.begin(), Ranges.end(), [&](const TargetRegisterRange &Range) {
+            return Range.Offset == Reg && Range.Bytes == 8;
+          });
+      EXPECT_EQ(Count, Expected ? 1 : 0) << Index;
+      for (uint16_t Size = 1; Size <= 8; ++Size)
+        for (unsigned Byte = 0; Byte + Size <= 8; ++Byte) {
+          SCOPED_TRACE(::testing::Message()
+                       << Index << ':' << Byte << ':' << Size);
+          EXPECT_EQ(TRI.callPreservedPrefixSize(Reg + Byte, Size, Format),
+                    Expected ? Size : 0);
+          EXPECT_EQ(TRI.isCallPreserved(Reg + Byte, Size, Format), Expected);
+        }
+    }
+  }
+  const auto &X86 = getTargetRegInfo(Arch::X86);
+  for (auto Reg : {x86reg::R30, x86reg::R31}) {
+    EXPECT_FALSE(X86.isCallPreserved(Reg, 4, BinaryFormat::COFF));
+    EXPECT_FALSE(TRI.isCallPreserved(Reg, 8));
+  }
+}
+
+TEST(TargetRegInfo, Win64ExtraPreservationRejectsCrossSlotAndWrappedViews) {
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  for (auto Reg : {x86reg::RSI, x86reg::RDI, x86reg::R30, x86reg::R31}) {
+    EXPECT_EQ(TRI.callPreservedPrefixSize(Reg, 9, BinaryFormat::COFF), 0);
+    EXPECT_EQ(TRI.callPreservedPrefixSize(Reg + 7, 2, BinaryFormat::COFF), 0);
+    EXPECT_EQ(TRI.callPreservedPrefixSize(Reg + 7, 1, BinaryFormat::COFF), 1);
+  }
+  EXPECT_EQ(TRI.callPreservedPrefixSize(x86reg::R29, 8, BinaryFormat::COFF), 0);
+  EXPECT_EQ(
+      TRI.callPreservedPrefixSize(x86reg::TileBase, 8, BinaryFormat::COFF), 0);
+  for (unsigned Delta = 0; Delta != 16; ++Delta)
+    for (uint16_t Size = 1; Size <= 16; ++Size) {
+      const auto Offset = UINT64_MAX - Delta;
+      SCOPED_TRACE(::testing::Message() << Delta << ':' << Size);
+      EXPECT_EQ(TRI.callPreservedPrefixSize(Offset, Size, BinaryFormat::COFF),
+                0);
+      EXPECT_FALSE(TRI.isCallPreserved(Offset, Size, BinaryFormat::COFF));
+    }
+}
+
+TEST(LowToMedX64CallingConv, APXPreservationTracksTheSelectedCallABI) {
+  for (auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (auto Reg : {x86reg::R29, x86reg::R30, x86reg::R31}) {
+      SCOPED_TRACE(::testing::Message() << unsigned(Format) << ':' << Reg);
+      const bool Preserved = Format == BinaryFormat::COFF && Reg != x86reg::R29;
+      constexpr uint64_t Value = UINT64_C(0x1122334455667788);
+      LowFunc Low;
+      Low.Entry = 0x1000;
+      Low.Name = "apx_call_preservation";
+      Low.Blocks.resize(1);
+      auto &Block = Low.Blocks[0];
+      Block.Id = 0;
+      Block.StartAddr = 0x1000;
+      Block.EndAddr = 0x1010;
+      auto Copy = [&](NdVar Dst, NdVar Src, va_t Address) {
+        LowOp Op;
+        Op.Opcode = NdOp::COPY;
+        Op.Addr = Address;
+        Op.Output = Dst;
+        Op.addInput(Src);
+        Block.Ops.push_back(Op);
+      };
+      Copy(NdVar::reg(Reg, 8), NdVar::cst(Value, 8), 0x1000);
+      LowOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = 0x1004;
+      Call.addInput(NdVar::cst(0x2000, 8));
+      Block.Ops.push_back(Call);
+      Copy(NdVar::reg(x86reg::RAX, 8), NdVar::reg(Reg, 8), 0x1008);
+      LowOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = 0x100C;
+      Return.addInput(NdVar::reg(x86reg::RAX, 8));
+      Block.Ops.push_back(Return);
+      auto Med = LowToMedConverter().convert(Low, Arch::X64, Format);
+      const MedOp *Use = nullptr;
+      for (const auto &B : Med.Blocks)
+        for (const auto &Op : B.Ops)
+          if (Op.Opcode == NdOp::COPY && Op.Output.Kind == MedVar::Reg &&
+              Op.Output.RegOff == x86reg::RAX && Op.NumInputs == 1)
+            Use = &Op;
+      ASSERT_NE(Use, nullptr);
+      EXPECT_EQ(Use->Inputs[0].isConst(), Preserved);
+      if (Preserved)
+        EXPECT_EQ(Use->Inputs[0].ConstVal, Value);
+      const bool Clobbered =
+          std::any_of(Med.CallClobbers.begin(), Med.CallClobbers.end(),
+                      [&](const MedCallClobber &Clobber) {
+                        return Clobber.Value.RegOff == Reg;
+                      });
+      EXPECT_EQ(Clobbered, !Preserved);
+      EXPECT_TRUE(verifyMedFunc(Med, "apx-call-preservation"));
+    }
 }
 
 TEST(TargetRegInfo, SelectsIntegerArgumentRegistersFromImageFormat) {
@@ -3015,6 +3122,151 @@ TEST(MedTypePass, FloatArgumentPassedThroughOnOnePathIsAFloatResult) {
   EXPECT_EQ(Func.ReturnType->Size, 8u);
 }
 
+/// `for (n = 8; n; n--) s = s * a + b;` lowered with the accumulator in
+/// XMM0 and the counter in \p CounterReg: the loop block computes both, and
+/// the exit block holds only the RETURN.  \p StoreSum also stores the sum in
+/// the loop, so the body reads it.
+MedFunc floatLoopWithCounter(uint64_t CounterReg, bool StoreSum) {
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Blocks.resize(3);
+  for (int I = 0; I < 3; ++I)
+    Func.Blocks[I].Id = I;
+  Func.Blocks[0].Succs = {1};
+  Func.Blocks[1].Preds = {0, 1};
+  Func.Blocks[1].Succs = {1, 2};
+  Func.Blocks[2].Preds = {1};
+  const MedVar EntryXMM1 = reg(5, 0, 16, x86reg::XMM1, TheArch);
+  const MedVar EntryRDI = reg(6, 0, 8, x86reg::RDI, TheArch);
+  addLiveIn(Func.Blocks[0], EntryXMM1);
+  addLiveIn(Func.Blocks[0], EntryRDI);
+  const MedVar Sum0 = reg(1, 1, 16, TRI.FPReturnReg, TheArch);
+  Func.Blocks[0].Ops.push_back(
+      unary(NdOp::COPY, Sum0, MedVar::makeConst(0, 16)));
+  const MedVar Count0 = reg(2, 1, 4, CounterReg, TheArch);
+  Func.Blocks[0].Ops.push_back(
+      unary(NdOp::COPY, Count0, MedVar::makeConst(8, 4)));
+
+  MedBlock &Loop = Func.Blocks[1];
+  PhiNode SumPhi;
+  SumPhi.Output = reg(1, 2, 16, TRI.FPReturnReg, TheArch);
+  const MedVar Sum = reg(1, 3, 16, TRI.FPReturnReg, TheArch);
+  SumPhi.Args = {{0, Sum0}, {1, Sum}};
+  PhiNode CountPhi;
+  CountPhi.Output = reg(2, 2, 4, CounterReg, TheArch);
+  const MedVar Count = reg(2, 3, 4, CounterReg, TheArch);
+  CountPhi.Args = {{0, Count0}, {1, Count}};
+  Loop.Phis = {SumPhi, CountPhi};
+  const MedVar Low = temp(10, 0, 8, TheArch);
+  Loop.Ops.push_back(
+      binary(NdOp::SUBBYTES, Low, SumPhi.Output, MedVar::makeConst(0, 4)));
+  const MedVar Addend = temp(11, 0, 8, TheArch);
+  Loop.Ops.push_back(
+      binary(NdOp::SUBBYTES, Addend, EntryXMM1, MedVar::makeConst(0, 4)));
+  const MedVar Added = temp(12, 0, 8, TheArch);
+  Loop.Ops.push_back(binary(NdOp::FLOAT_ADD, Added, Low, Addend));
+  const MedVar High = temp(13, 0, 8, TheArch);
+  Loop.Ops.push_back(
+      binary(NdOp::SUBBYTES, High, SumPhi.Output, MedVar::makeConst(8, 4)));
+  Loop.Ops.push_back(binary(NdOp::CONCAT, Sum, High, Added));
+  if (StoreSum) {
+    MedOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.addInput(EntryRDI);
+    Store.addInput(Sum);
+    Loop.Ops.push_back(Store);
+  }
+  Loop.Ops.push_back(
+      binary(NdOp::INT_SUB, Count, CountPhi.Output, MedVar::makeConst(1, 4)));
+  const MedVar Wide = reg(3, 1, 8, CounterReg, TheArch);
+  Loop.Ops.push_back(unary(NdOp::INT_ZEXT, Wide, Count));
+  const MedVar More = temp(14, 0, 1, TheArch);
+  Loop.Ops.push_back(
+      binary(NdOp::INT_NOTEQUAL, More, Count, MedVar::makeConst(0, 4)));
+  Loop.Ops.push_back(
+      binary(NdOp::COND_BR, MedVar(), MedVar::makeConst(0x1010, 8), More));
+
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(CounterReg == TRI.IntReturnReg
+                      ? Wide
+                      : reg(4, 0, 8, TRI.IntReturnReg, TheArch));
+  Func.Blocks[2].Ops.push_back(Return);
+  return Func;
+}
+
+TEST(MedTypePass, AFloatSummedAcrossALoopExitIsTheResult) {
+  // The exit block holds only `ret`; the sum reaches it from the loop.
+  MedFunc Func = floatLoopWithCounter(x86reg::RCX, /*StoreSum=*/false);
+  inferMedTypes(Func, Arch::X64);
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Func.ReturnType->Size, 8u);
+}
+
+TEST(MedTypePass, ALoopCounterBesideAFloatResultIsNotTheResult) {
+  // `dec eax; jne` is the closest write before `ret`, but the branch tests
+  // it and nothing else reads the sum: the sum is the result.
+  MedFunc Func = floatLoopWithCounter(x86reg::RAX, /*StoreSum=*/false);
+  inferMedTypes(Func, Arch::X64);
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Func.ReturnType->Size, 8u);
+}
+
+TEST(MedTypePass, AFloatTheBodyReadsLeavesABranchTestedIntegerTheResult) {
+  // The loop stores the float it computes: a value read before the return
+  // is no evidence against the integer the branch tests, which an
+  // `int r = g(); if (r) ...; return r;` returns as well.
+  MedFunc Func = floatLoopWithCounter(x86reg::RAX, /*StoreSum=*/true);
+  inferMedTypes(Func, Arch::X64);
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Int);
+}
+
+TEST(MedTypePass, TheMaximumOfTwoFloatsIsAFloatResult) {
+  // `maxsd xmm0, xmm1` selects one of the two operands a float compare
+  // ordered and merges it into XMM0's low lane.
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  Block.Id = 0;
+  const MedVar A = reg(1, 0, 16, x86reg::XMM0, TheArch);
+  const MedVar B = reg(2, 0, 16, x86reg::XMM1, TheArch);
+  addLiveIn(Block, A);
+  addLiveIn(Block, B);
+  const MedVar ALow = temp(10, 0, 8, TheArch), BLow = temp(11, 0, 8, TheArch);
+  Block.Ops.push_back(binary(NdOp::SUBBYTES, ALow, A, MedVar::makeConst(0, 4)));
+  Block.Ops.push_back(binary(NdOp::SUBBYTES, BLow, B, MedVar::makeConst(0, 4)));
+  const MedVar Less = temp(12, 0, 1, TheArch);
+  Block.Ops.push_back(binary(NdOp::FLOAT_LESS, Less, BLow, ALow));
+  MedOp Select;
+  Select.Opcode = NdOp::SELECT;
+  Select.Output = temp(13, 0, 8, TheArch);
+  Select.addInput(Less);
+  Select.addInput(ALow);
+  Select.addInput(BLow);
+  Block.Ops.push_back(Select);
+  const MedVar High = temp(14, 0, 8, TheArch);
+  Block.Ops.push_back(binary(NdOp::SUBBYTES, High, A, MedVar::makeConst(8, 4)));
+  Block.Ops.push_back(binary(NdOp::CONCAT,
+                             reg(1, 1, 16, TRI.FPReturnReg, TheArch), High,
+                             Select.Output));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(reg(3, 0, 8, TRI.IntReturnReg, TheArch));
+  Block.Ops.push_back(Return);
+  inferMedTypes(Func, TheArch);
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Func.ReturnType->Size, 8u);
+}
+
 TEST(MedTypePass, X86X87CleanupDoesNotOverrideExplicitIntegerReturn) {
   constexpr Arch TheArch = Arch::X86;
   const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
@@ -3056,6 +3308,82 @@ TEST(MedTypePass, X86X87CleanupDoesNotOverrideExplicitIntegerReturn) {
   EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Int);
   EXPECT_EQ(Func.ReturnType->Size, TRI.PointerSize);
   EXPECT_FALSE(Func.FPReturnViaX87);
+}
+
+TEST(MedTypePass, AnX87ValueBeforeALoopExitIsNoResult) {
+  constexpr Arch TheArch = Arch::X86;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+
+  // The loop writes EAX, then an x87 value the exit block pops before `ret`:
+  // the x87 write is closer to the RETURN but holds no result.
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "x87_loop_with_integer_return";
+  Func.Blocks.resize(2);
+  MedBlock &Body = Func.Blocks[0];
+  Body.Id = 0;
+  MedBlock &Exit = Func.Blocks[1];
+  Exit.Id = 1;
+  Exit.Preds = {0};
+
+  const MedVar IntResult =
+      reg(30, 1, TRI.PointerSize, TRI.IntReturnReg, TheArch);
+  Body.Ops.push_back(
+      unary(NdOp::COPY, IntResult, MedVar::makeConst(0x1234, 4)));
+  const MedVar Scalar = temp(10, 0, 4, TheArch);
+  Body.Ops.push_back(binary(NdOp::FLOAT_INT2FLOAT, Scalar,
+                            MedVar::makeConst(42, 4), MedVar::makeConst(4, 4)));
+  const MedVar Carrier = temp(11, 0, x86reg::FPURegSize, TheArch);
+  Body.Ops.push_back(unary(NdOp::FLOAT_FLOAT2FLOAT, Carrier, Scalar));
+  Body.Ops.push_back(unary(NdOp::COPY,
+                           reg(20, 0, x86reg::FPURegSize, x86reg::ST7, TheArch),
+                           Carrier));
+
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(IntResult);
+  Exit.Ops.push_back(Return);
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Func.ReturnType->Size, TRI.PointerSize);
+  EXPECT_FALSE(Func.FPReturnViaX87);
+}
+
+TEST(MedTypePass, AZeroExtendingWriteBeforeALoopExitKeepsTheWholeRegister) {
+  constexpr Arch TheArch = Arch::AArch64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+
+  // `add w0, w17, w16` ends the loop and `ret` stands alone: the 32-bit write
+  // zero-extends into x0, which a `long` result returns whole.
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "zero_extended_loop_result";
+  Func.Blocks.resize(2);
+  MedBlock &Body = Func.Blocks[0];
+  Body.Id = 0;
+  MedBlock &Exit = Func.Blocks[1];
+  Exit.Id = 1;
+  Exit.Preds = {0};
+
+  const MedVar Low = reg(30, 1, 4, TRI.IntReturnReg, TheArch);
+  Body.Ops.push_back(binary(NdOp::INT_ADD, Low, MedVar::makeConst(1, 4),
+                            MedVar::makeConst(2, 4)));
+  const MedVar Whole = reg(30, 2, 8, TRI.IntReturnReg, TheArch);
+  Body.Ops.push_back(unary(NdOp::INT_ZEXT, Whole, Low));
+
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(Whole);
+  Exit.Ops.push_back(Return);
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Func.ReturnType->Size, 8u);
 }
 
 TEST(MedTypePass, X86IntermediateX87DoesNotOverrideXMMReturnConvention) {
@@ -5862,12 +6190,15 @@ TEST(LowToMedX86CallingConv, ScalarSSEMergeIsNotAParameterUntilALaneIsRead) {
   EXPECT_TRUE(hasParameterIn(Convert(true), x86reg::XMM2));
 }
 
-TEST(LowToMedCallingConv, LaneInsertIntoXMM0IsReturnedOnlyOnX64) {
-  // `movss xmm0, [p]` into an incoming xmm0 whose upper lanes reach the
-  // return register.  x86-64 returns a vector there, so those lanes may be
-  // returned and xmm0 stays a parameter.  i386 returns floating point in x87
-  // st0 and records in memory, so a merge into xmm0 is not returned.
-  auto Convert = [](Arch TheArch) {
+TEST(LowToMedCallingConv,
+     LaneInsertIntoXMM0IsAParameterOnlyWhenItsLanesAreRead) {
+  // A scalar write into an incoming xmm0 keeps its upper lanes.  i386
+  // returns floating point in x87 st0 and records in memory, so the merge is
+  // not returned.  x86-64 returns a scalar in the low lane, which the write
+  // replaced: the kept lanes reach no result, and like `cvtsi2sd xmm0, edi`
+  // of a `double f(int)` they make no parameter.  A read of the whole
+  // register still observes them.
+  auto Convert = [](Arch TheArch, bool StoreWhole) {
     const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
     const NdVar Pointer = NdVar::reg(
         TRI.IntParamRegs.empty() ? x86reg::RAX : TRI.IntParamRegs.front(),
@@ -5877,11 +6208,57 @@ TEST(LowToMedCallingConv, LaneInsertIntoXMM0IsReturnedOnlyOnX64) {
       Push(NdOp::LOAD, NdVar::tmp(1, 4), {Pointer});
       Push(NdOp::SUBBYTES, NdVar::tmp(2, 12), {XMM0, NdVar::cst(4, 4)});
       Push(NdOp::CONCAT, XMM0, {NdVar::tmp(2, 12), NdVar::tmp(1, 4)});
+      if (StoreWhole)
+        Push(NdOp::STORE, NdVar(), {Pointer, XMM0});
     });
     return LowToMedConverter().convert(Low, TheArch);
   };
-  EXPECT_TRUE(hasParameterIn(Convert(Arch::X64), x86reg::XMM0));
-  EXPECT_FALSE(hasParameterIn(Convert(Arch::X86), x86reg::XMM0));
+  EXPECT_FALSE(hasParameterIn(Convert(Arch::X64, false), x86reg::XMM0));
+  EXPECT_FALSE(hasParameterIn(Convert(Arch::X86, false), x86reg::XMM0));
+  EXPECT_TRUE(hasParameterIn(Convert(Arch::X64, true), x86reg::XMM0));
+}
+
+TEST(LowToMedX86CallingConv, AScalarReadOfAnXMMArgumentIsAFloatOrDouble) {
+  // `mulsd xmm0, xmm1` of `double f(double a, double b)` reads only each
+  // register's low eight bytes: both are double parameters.  `cvtsi2sd xmm1,
+  // edi` first makes xmm1 a scratch merge, which is no parameter at all.
+  auto Convert = [](bool XMM1IsScratch, bool ReadWholeXMM0) {
+    const NdVar XMM0 = NdVar::reg(x86reg::XMM0, 16);
+    const NdVar XMM1 = NdVar::reg(x86reg::XMM1, 16);
+    const NdVar RDI = NdVar::reg(x86reg::RDI, 8);
+    LowFunc Low = makeOneBlockLow(0x1000, "mul", [&](auto Push) {
+      if (XMM1IsScratch) {
+        Push(NdOp::FLOAT_INT2FLOAT, NdVar::tmp(1, 8),
+             {NdVar::reg(x86reg::RDI, 4)});
+        Push(NdOp::SUBBYTES, NdVar::tmp(2, 8), {XMM1, NdVar::cst(8, 4)});
+        Push(NdOp::CONCAT, XMM1, {NdVar::tmp(2, 8), NdVar::tmp(1, 8)});
+      }
+      Push(NdOp::SUBBYTES, NdVar::tmp(3, 8), {XMM0, NdVar::cst(0, 4)});
+      Push(NdOp::SUBBYTES, NdVar::tmp(4, 8), {XMM1, NdVar::cst(0, 4)});
+      Push(NdOp::FLOAT_MULT, NdVar::tmp(5, 8),
+           {NdVar::tmp(3, 8), NdVar::tmp(4, 8)});
+      if (ReadWholeXMM0)
+        Push(NdOp::STORE, NdVar(), {RDI, XMM0});
+      Push(NdOp::SUBBYTES, NdVar::tmp(6, 8), {XMM0, NdVar::cst(8, 4)});
+      Push(NdOp::CONCAT, XMM0, {NdVar::tmp(6, 8), NdVar::tmp(5, 8)});
+    });
+    return LowToMedConverter().convert(Low, Arch::X64);
+  };
+  const MedFunc Both = Convert(false, false);
+  ASSERT_TRUE(hasParameterIn(Both, x86reg::XMM0));
+  ASSERT_TRUE(hasParameterIn(Both, x86reg::XMM1));
+  EXPECT_EQ(Both.FPParamScalarBytes.count(x86reg::XMM0), 1u);
+  EXPECT_EQ(Both.FPParamScalarBytes.at(x86reg::XMM0), 8u);
+  EXPECT_EQ(Both.FPParamScalarBytes.at(x86reg::XMM1), 8u);
+
+  const MedFunc Mixed = Convert(true, false);
+  EXPECT_TRUE(hasParameterIn(Mixed, x86reg::XMM0));
+  EXPECT_FALSE(hasParameterIn(Mixed, x86reg::XMM1));
+
+  // A whole-register store reads the upper lane too: a vector.
+  const MedFunc Whole = Convert(false, true);
+  EXPECT_TRUE(hasParameterIn(Whole, x86reg::XMM0));
+  EXPECT_EQ(Whole.FPParamScalarBytes.count(x86reg::XMM0), 0u);
 }
 
 TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
@@ -5910,6 +6287,52 @@ TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
   EXPECT_EQ(Reads[Family(x86reg::RDX)], 0u);
   EXPECT_EQ(Reads[Family(x86reg::RCX)], 4u);
   EXPECT_EQ(Reads[Family(x86reg::R8)], 1u);
+}
+
+TEST(CallRegisterEffects, AScalarFloatReadIsTheLowLaneOfItsVectorRegister) {
+  // `addsd xmm0, xmm0` reads the low eight bytes of xmm0; the merge that
+  // keeps its upper lane observes nothing. Through `movaps xmm1, xmm0` the
+  // read of xmm1 is one of xmm0. The RETURN's operands are read by nothing.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  const NdVar XMM0 = NdVar::reg(x86reg::XMM0, 16);
+  const NdVar XMM1 = NdVar::reg(x86reg::XMM1, 16);
+  const GPRFamilyMask Args =
+      (1u << (x86reg::RDI / 8)) | vectorArgumentFamilies(8);
+  for (bool ThroughCopy : {false, true}) {
+    SCOPED_TRACE(ThroughCopy);
+    LowFunc Low = makeOneBlockLow(0x1000, "twice", [&](auto Push) {
+      if (ThroughCopy)
+        Push(NdOp::COPY, XMM1, {XMM0});
+      Push(NdOp::SUBBYTES, NdVar::tmp(1, 8),
+           {ThroughCopy ? XMM1 : XMM0, NdVar::cst(0, 4)});
+      Push(NdOp::FLOAT_ADD, NdVar::tmp(2, 8),
+           {NdVar::tmp(1, 8), NdVar::tmp(1, 8)});
+      Push(NdOp::SUBBYTES, NdVar::tmp(3, 8), {XMM0, NdVar::cst(8, 4)});
+      Push(NdOp::CONCAT, XMM0, {NdVar::tmp(3, 8), NdVar::tmp(2, 8)});
+      Push(NdOp::RETURN, NdVar{}, {NdVar::reg(x86reg::RAX, 8)});
+    });
+    const auto Summaries = solveCallRegisterEffects(
+        {{0x1000, localRegisterEffect(Img, Low)}}, Args, Args);
+    const GPRReadWidths &Reads = Summaries.EntryReads.at(0x1000);
+    EXPECT_EQ(Reads[kX64VectorFamilyBase], 8u);
+    EXPECT_EQ(Reads[kX64VectorFamilyBase + 1], 0u);
+    EXPECT_EQ(Reads[x86reg::RAX / 8], 0u);
+  }
+}
+
+TEST(CallRegisterEffects, OnlyAnALReadCountsVariadicVectorArguments) {
+  // A System V variadic prologue tests AL; the alignment `push rax` before
+  // a call reads all of RAX and passes nothing.
+  const CallArgumentConvention *SysV =
+      callArgumentConvention(Arch::X64, BinaryFormat::ELF);
+  ASSERT_TRUE(SysV && SysV->SummaryListsNoParameters);
+  GPRReadWidths Reads{};
+  Reads[x86reg::RAX / 8] = 1;
+  EXPECT_TRUE(SysV->SummaryListsNoParameters(Reads));
+  Reads[x86reg::RAX / 8] = 8;
+  EXPECT_FALSE(SysV->SummaryListsNoParameters(Reads));
 }
 
 namespace {

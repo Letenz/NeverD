@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineCallAbiDetail.h"
 #include "PipelineReturnModelingDetail.h"
 
 #include "neverd/Common.h"
@@ -17,6 +18,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -39,6 +41,56 @@
 
 namespace neverd {
 
+namespace {
+/// A call whose callee returns a scalar float in the vector return register
+/// defines that register, not the integer one (promoteFloatCallResult). The
+/// callees are the imports their C declarations describe and the functions
+/// typed as returning one. Binding a call can make its caller return the
+/// result, so a caller is typed again, and each round that finds another
+/// such function binds the calls to it.
+void bindFloatCallResults(const BinaryImage &Img, PipelineResult &Result) {
+  const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
+  if (TRI.FPReturnReg == 0 || TRI.ReturnsFPInX87 ||
+      !TRI.isVectorReg(TRI.fpReturnModelReg()))
+    return;
+  auto FloatReturn = [](const MedFunc &MF) -> uint16_t {
+    return MF.ReturnType && MF.ReturnType->Kind == NdTypeKind::Float &&
+                   MF.ReturnType->Size <= sizeof(double) &&
+                   MF.MultiReturn.empty() && !MF.FPReturnViaX87
+               ? MF.ReturnType->Size
+               : 0;
+  };
+  std::map<va_t, uint16_t> FloatReturns = Result.CallFloatReturns;
+  for (const MedFunc &MF : Result.MedFuncs)
+    if (const uint16_t Bytes = FloatReturn(MF))
+      FloatReturns.try_emplace(MF.Entry, Bytes);
+  for (size_t Round = 0; Round <= Result.MedFuncs.size(); ++Round) {
+    bool Found = false;
+    for (MedFunc &MF : Result.MedFuncs) {
+      bool Bound = false;
+      for (MedBlock &Blk : MF.Blocks)
+        for (size_t OI = 0; OI < Blk.Ops.size(); ++OI) {
+          const MedOp &Op = Blk.Ops[OI];
+          if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+              Op.NumInputs == 0 || !Op.Inputs[0].isConst() || Op.SourceCallHint)
+            continue;
+          if (const auto Callee = FloatReturns.find(Op.Inputs[0].ConstVal);
+              Callee != FloatReturns.end())
+            Bound |=
+                promoteFloatCallResult(MF, Blk, OI, Callee->second, Img.Arch);
+        }
+      if (!Bound || MF.SourceParametersBound)
+        continue;
+      inferMedTypes(MF, Img.Arch, &FloatReturns);
+      if (const uint16_t Bytes = FloatReturn(MF))
+        Found |= FloatReturns.try_emplace(MF.Entry, Bytes).second;
+    }
+    if (!Found)
+      break;
+  }
+}
+} // namespace
+
 //===----------------------------------------------------------------------===//
 // buildHighIR — Phase 3
 //===----------------------------------------------------------------------===//
@@ -58,9 +110,20 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     if (!MF.SourceParametersBound)
       inferMedTypes(MF, Img.Arch);
   modelWideIntReturns(Img, Result);
+  bindFloatCallResults(Img, Result);
+  settleReturnContracts(Img, Result, Dbg);
 
   auto AllFuncNames = buildFuncNameMap(Img, Result);
-  if (Img.Arch == Arch::ARM) {
+  // Without callee summaries, a convention's call arguments, and the
+  // parameters a forwarder passes straight through, are the setup each caller
+  // writes, as the LLVM route recovers them.
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(Img.Arch, Img.abiFormat());
+  if (Convention && Convention->ArgumentsFromCallSetup) {
+    recoverModuleCallAbi(Img, Result, AllFuncNames);
+    matchCallsToCalleeSignatures(Img, Result);
+    propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
+  } else if (Img.Arch == Arch::ARM) {
     const auto &TRI = getTargetRegInfo(Img.Arch);
     std::map<va_t, int> RegisterArity;
     std::map<va_t, int> TotalArity;
@@ -126,7 +189,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     for (MedFunc &MF : Result.MedFuncs)
       recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &RegisterArity,
                      &TotalArity);
-    propagateARMForwardedPointerParams(Result.MedFuncs);
+    propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
   }
   if (Dbg && Dbg->hasInfo()) {
     for (const MedFunc &MF : Result.MedFuncs) {
@@ -303,6 +366,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
         HF.SourceLine = MF.SourceLine;
         HF.ExceptionMetadata = MF.ExceptionMetadata;
         HF.ReturnType = MF.ReturnType ? MF.ReturnType : NdType::makeInt(4);
+        HF.ReturnsNoValue = MF.ReturnsNoValue;
         HF.SourceTypeHint = MF.SourceTypeHint;
         if (!MF.Blocks.empty()) {
           fillUnstructuredGotoSkeleton(HF, MF);

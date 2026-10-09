@@ -16,8 +16,8 @@
         <translation>入力ファイルを再読み込み(&amp;R)</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>バイナリと保存済みの注釈を再読み込みします</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>入力ファイルを再読み込みし、保存済みの注釈を保持します</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -120,8 +120,8 @@
         <translation>名前の変更(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>現在の関数の名前を変更します</translation>
+        <source>Rename the current address</source>
+        <translation>現在のアドレスの名前を変更します</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,8 +136,8 @@
         <translation>リピータブルコメントを入力(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>位置をマーク(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>位置をマーク(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>
@@ -192,8 +192,8 @@
         <translation>前の関数の先頭へ移動します</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>疑似コードへジャンプ(&amp;E)</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>疑似コードへジャンプ(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>バイナリ内のバイト列を検索します</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>次のバイト列(&amp;U)</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>次のバイト列(&amp;Q)</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>現在の関数の LLVM IR を表示します</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>LLVM C を生成(&amp;C)</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>LLVM C を生成(&amp;L)</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>グラフ概要を表示します</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>MCP 接続(&amp;C)</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>MCP 接続(&amp;O)</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>MCP 接続とセッション共有を管理します</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>拡張機能(&amp;X)</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>拡張機能(&amp;T)</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>全画面表示を切り替えます</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>フォントサイズを拡大(&amp;I)</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>フォントサイズを拡大(&amp;N)</translation>
     </message>
     <message>
         <source>Increase the code font size</source>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>現在の関数を関数として扱わないようにします</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>データ(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>現在のアドレスに値を定義します。もう一度押すと次のサイズになります</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>文字列(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>現在のアドレスから始まる文字列を定義します</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>定義解除(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>現在の項目をバイトとして表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>数値(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>オペランドの数値をリストの既定の形式で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>16 進数(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>オペランドの数値を 16 進数で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>10 進数(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>オペランドの数値を 10 進数で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>2 進数(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>オペランドの数値を 2 進数で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>文字(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>オペランドの数値を文字で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>オフセット(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>オペランドの数値を指すアドレスの名前で表示します</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>符号を反転(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>オペランドの数値を符号を反転して表示します</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>ビット反転(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>オペランドの数値をビット反転して表示します</translation>
     </message>
 </context>
 <context>
@@ -1095,6 +1183,10 @@
         <source>&amp;Functions</source>
         <translation>関数(&amp;F)</translation>
     </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>オペランドの型(&amp;T)</translation>
+    </message>
 </context>
 <context>
     <name>NavigationBand</name>
@@ -1125,6 +1217,10 @@
 </context>
 <context>
     <name>ProjectDatabase</name>
+    <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>%1 を %2 にコピーできません</translation>
+    </message>
     <message>
         <source>Cannot read %1: %2</source>
         <translation>%1 を読み込めません: %2</translation>
@@ -1195,6 +1291,10 @@
     <message>
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
+    </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
     </message>
 </context>
 <context>
@@ -1318,6 +1418,16 @@ Recognized library operation; click to show its code.</source>
 Double-click to go to the declaration.</source>
         <translation>%1
 ダブルクリックで宣言に移動します。</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>C で表示した宣言 %n 個</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1597,6 +1707,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>入力ファイルの再読み込み</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>ナビゲーションバンド</translation>
     </message>
@@ -1705,12 +1819,8 @@ Double-click to go to the declaration.</source>
         <translation> · 読み取り専用</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 は関数の先頭ではありません。名前を変更できるのは関数のみです。</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>関数名の変更</translation>
+        <source>Rename address</source>
+        <translation>アドレスの名前を変更</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -1835,8 +1945,8 @@ Signed: %4</source>
         <translation>コマンドを入力</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>C ファイルを作成</translation>
+        <source>Create source file</source>
+        <translation>ソースファイルを作成</translation>
     </message>
     <message>
         <source>Create LST file</source>
@@ -1857,38 +1967,6 @@ Signed: %4</source>
     <message>
         <source>No saved desktop</source>
         <translation>保存されたデスクトップがありません</translation>
-    </message>
-    <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: クイックスタート</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>新規</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>新しいファイルを逆アセンブルします</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>開始</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>ファイルを開かずに作業を始めます</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>前回</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>選択した最近のファイルを読み込みます</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>最近使ったファイル：</translation>
     </message>
     <message>
         <source>Open binary or database</source>
@@ -1966,6 +2044,10 @@ Signed: %4</source>
         <source>Collapse library operations</source>
         <translation>ライブラリ操作を折りたたむ</translation>
     </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>%1 の読み込み方法が不明です: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2023,7 +2105,94 @@ Signed: %4</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>クイックスタート</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>対話型の逆アセンブラーおよび逆コンパイラー</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>バージョン %1</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>最近使ったファイル</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>新規(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>新しいファイルを逆アセンブルします</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>開始(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>ファイルを開かずに作業を始めます</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>前回(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>選択した最近のファイルを読み込みます</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>起動時に表示(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>ここにファイルをドロップすると開きます</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>見つかりません</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>読み込む(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>パスをコピー(&amp;C)</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>一覧から削除(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>今日 %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>昨日 %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>最近使ったファイルはありません</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>開いたファイルがここに表示されます。[新規] を選ぶか、このウィンドウにファイルをドロップしてください。</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 は書き込みできないフォルダーにあるため、そのデータベースは %2 に保存されます</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>解析プロセスを起動中…</translation>
@@ -2049,8 +2218,8 @@ Signed: %4</source>
         <translation>%1: %2 %3、関数 %4 個</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>注釈を再読み込みしました</translation>
+        <source>Reloaded the input file</source>
+        <translation>入力ファイルを再読み込みしました</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2119,6 +2288,243 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>%1 の関数を削除しました</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>%1 のバイトはすでに未定義です</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>%1 の項目の定義を解除しました</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%2 に %1 を定義しました</translation>
+    </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>プラットフォーム: %1（指定どおり）</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>プラットフォーム: %1（コードから判定: %2）</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>新しいファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>ファイル %1 の読み込み形式(&amp;A)</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>入力ファイルは一覧の形式のいずれかである可能性があります</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>プロセッサの種類(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>プロセッサはファイルのヘッダーで決まります</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>解析</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>有効(&amp;E)</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>オフにすると、NeverD はアイドル時にプログラムを解析しません</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>インジケーターを表示(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>解析の進行状況をステータス行に表示します</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>オプション</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>デバッグ情報を読み込む(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>入力に対応する PDB、DWARF、またはリンカーマップを読み込みます</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>NeverD はこのファイルを読み込めません: %1</translation>
+    </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>ファイル名だけで一覧に挙がっています。内容はこの形式を示していません</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>形式を示しているのはファイル名だけです。その方法で読み込むには行を選んでください</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>プロセッサ: %1</translation>
+    </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 は 16 進数ではありません</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>ファイルを読み込むベースアドレス</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>ファイルのコードが動作するプロセッサを選択します</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>エントリポイント(&amp;N)</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>ファイルオフセット(&amp;O)</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>読み込むバイト数</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>イメージベース(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>読み込みサイズ(&amp;Z)</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>プロセッサの種類（ダブルクリックで設定）(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>イメージベース</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>ファイルの末尾まで</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>実行を開始するアドレス</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>読み込むバイトのファイル内での開始位置</translation>
+    </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>プラットフォーム(&amp;P)</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>コードのビルド対象プラットフォーム。その規約に従います：呼び出しの引数の渡し方、保持されるレジスタ、C の型のサイズ</translation>
+    </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>ファイルのどの部分も NeverD が知っている命令セットのコードに見えません。コードが動作するプロセッサを選択してください</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>コードは %1 または %2 に見えますが、命令からはどちらか判別できません。コードが動作するプロセッサを選択してください</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>バイトから判定: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>バイトから判定: %1、エントリ %2、ベース %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>コードは %1 に見えますが、NeverD はデコードできません。それでも読み込むにはプロセッサを選択してください</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>コードは %1 に最も近いものの明確ではありません。コードが動作するプロセッサを選択してください</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>Intel 80x86 プロセッサ</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>ARM プロセッサ</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>仮想マシン</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 以降（32 ビット）</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 および Intel 64（64 ビット）</translation>
+    </message>
+    <message>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM リトルエンディアン、ARM ステートで開始</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64（AArch64）</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>Ethereum 仮想マシン</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM リトルエンディアン、Thumb ステートで開始</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple（macOS、iOS）</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>コードから判定</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V（Linux、BSD、Android）</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>

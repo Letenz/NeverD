@@ -323,6 +323,282 @@ TEST_P(DarwinProcess, CreationMetadataUsesExplicitIdentityUmaskAndParentGroup) {
   }
 }
 
+TEST_P(DarwinProcess,
+       NamespaceCreationMetadataPreservesObjectIdentityAndVirtualRecords) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options.DarwinFiles->Directories.insert("/");
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.DarwinFiles->SwapRenameDirectories.insert("/");
+  Options.DarwinFiles->InitialUmask = 0027;
+  Options.DarwinFiles->CreationPolicy = darwin_test::NamespaceCreationPolicy;
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode :
+       {"created-namespace-metadata", "virtual-created-namespace-metadata"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "created-namespace-metadata"
+                  ? "4e"
+                  : darwin_test::NamespaceMetadataHex);
+    EXPECT_TRUE(Result->StandardError.empty());
+    EXPECT_TRUE(llvm::any_of(Result->Services, [](const auto &E) {
+      return (uint32_t(E.Number) & 0x00ffffff) == 474 && E.Result == 17 &&
+             E.Error == true;
+    }));
+    EXPECT_TRUE(llvm::any_of(Result->Services, [](const auto &E) {
+      return (uint32_t(E.Number) & 0x00ffffff) == 488 && E.Arguments[4] == 18 &&
+             E.Result == 0 && E.Error == false;
+    }));
+  }
+}
+
+TEST_P(DarwinProcess,
+       VirtualEnumerationTracksNamespaceChangesAndRetainedDirectories) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
+  Options.DarwinFiles->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options.DarwinFiles->Directories.insert("/");
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.DarwinFiles->SwapRenameDirectories.insert("/");
+  Options.DarwinFiles->InitialUmask = 0027;
+  Options.DarwinFiles->CreationPolicy = darwin_test::NamespaceCreationPolicy;
+  Options.DarwinFiles->DirectoryEnumerationPolicies["/"] =
+      darwin_test::EnumerationPolicy;
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode :
+       {"directory-enumeration-mutations", "virtual-directory-enumeration"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "directory-enumeration-mutations"
+                  ? "45"
+                  : darwin_test::EnumerationMetadataHex);
+    EXPECT_TRUE(Result->StandardError.empty());
+    EXPECT_TRUE(llvm::any_of(Result->Services, [](const auto &E) {
+      return (uint32_t(E.Number) & 0x00ffffff) == 344 && E.Result == 0 &&
+             E.Error == false;
+    }));
+    EXPECT_TRUE(llvm::any_of(Result->Services, [](const auto &E) {
+      return (uint32_t(E.Number) & 0x00ffffff) == 488 && E.Arguments[4] == 2 &&
+             E.Result == 0 && E.Error == false;
+    }));
+  }
+}
+
+TEST_P(DarwinProcess,
+       InitialDirectoryMutationKeepsFullStatAndIndependentCreationRules) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
+  Options.DarwinFiles->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options.DarwinFiles->Directories = {"/", "/empty"};
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.DarwinFiles->InitialUmask = 0027;
+  Options.DarwinFiles->CreationPolicy = darwin_test::NamespaceCreationPolicy;
+  Options.DarwinFiles->DirectoryMutationPolicies["/"] =
+      darwin_test::InitialDirectoryMutationPolicy;
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode :
+       {"initial-directory-metadata", "virtual-initial-directory-metadata"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "initial-directory-metadata"
+                  ? "49"
+                  : darwin_test::InitialDirectoryMetadataHex);
+    EXPECT_TRUE(Result->StandardError.empty());
+  }
+}
+
+TEST_P(DarwinProcess, MutableInitialLinksKeepIdentityAndReferentLifetime) {
+  Options.DarwinFiles = darwin_test::mutableInitialSymbolicLinkOptions();
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode :
+       {"mutable-initial-links", "virtual-mutable-initial-links"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "mutable-initial-links"
+                  ? "4d"
+                  : darwin_test::InitialSymbolicLinkMetadataHex);
+    EXPECT_TRUE(Result->StandardError.empty());
+  }
+}
+
+TEST_P(DarwinProcess, DirectoryLinkRootsKeepIdentityAndReferentLifetime) {
+  Options.DarwinFiles = darwin_test::directoryLinkRootOptions();
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode :
+       {"directory-link-roots", "virtual-directory-link-roots"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "directory-link-roots"
+                  ? "52"
+                  : darwin_test::DirectoryLinkRootMetadataHex);
+    EXPECT_TRUE(Result->StandardError.empty());
+  }
+}
+
+TEST_P(DarwinProcess, CommonAttributesPreserveRecordAndDescriptorState) {
+  Options.DarwinFiles = darwin_test::commonAttributesOptions();
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode : {"common-attributes", "common-attributes-values",
+                           "common-attributes-unsupported"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    const bool Unknown = llvm::StringRef(Mode).ends_with("-unsupported");
+    ASSERT_EQ(Result->Stop, Unknown ? ProcessStopReason::UnsupportedService
+                                    : ProcessStopReason::Exited)
+        << Result->Diagnostic;
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "common-attributes-values"
+                  ? darwin_test::CommonAttributesHex
+                  : "41");
+    EXPECT_TRUE(Result->StandardError.empty());
+    ASSERT_FALSE(Result->Services.empty());
+    if (Unknown) {
+      EXPECT_EQ(Result->Diagnostic,
+                "Darwin selected file attributes are not modeled");
+      const auto &Last = Result->Services.back();
+      EXPECT_EQ(uint32_t(Last.Number) & 0x00ffffff, 220u);
+      EXPECT_FALSE(Last.Result);
+      EXPECT_FALSE(Last.Error);
+    } else {
+      EXPECT_EQ(Result->ExitStatus, 37);
+    }
+  }
+}
+TEST_P(DarwinProcess, AttributeNamesPreserveReferencesAndRetainedIdentity) {
+  Options.DarwinFiles = darwin_test::attributeNamesOptions();
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode : {"attribute-names", "attribute-names-values",
+                           "attribute-names-unsupported"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    const bool Unknown = llvm::StringRef(Mode).ends_with("-unsupported");
+    ASSERT_EQ(Result->Stop, Unknown ? ProcessStopReason::UnsupportedService
+                                    : ProcessStopReason::Exited)
+        << Result->Diagnostic << "; instructions=" << Result->Instructions
+        << "; services=" << Result->Services.size();
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "attribute-names-values"
+                  ? darwin_test::AttributeNamesHex
+                  : "4e");
+    EXPECT_TRUE(Result->StandardError.empty());
+    ASSERT_FALSE(Result->Services.empty());
+    if (Unknown) {
+      EXPECT_EQ(
+          Result->Diagnostic,
+          "Darwin object name is outside the bounded UTF-8 catalogue contract");
+      const auto &Last = Result->Services.back();
+      EXPECT_EQ(uint32_t(Last.Number) & 0x00ffffff, 220u);
+      EXPECT_FALSE(Last.Result);
+      EXPECT_FALSE(Last.Error);
+    } else {
+      EXPECT_EQ(Result->ExitStatus, 37);
+    }
+  }
+}
+
+TEST_P(DarwinProcess, ExtendedAttributesPreserveValuesNamesAndObjectLifetime) {
+  Options.DarwinFiles = darwin_test::extendedAttributesOptions();
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode : {"extended-attributes", "extended-attributes-values",
+                           "extended-attributes-unsupported"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    const bool Unknown = llvm::StringRef(Mode).ends_with("-unsupported");
+    ASSERT_EQ(Result->Stop, Unknown ? ProcessStopReason::UnsupportedService
+                                    : ProcessStopReason::Exited)
+        << Result->Diagnostic << "; instructions=" << Result->Instructions
+        << "; services=" << Result->Services.size();
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "extended-attributes-values"
+                  ? darwin_test::ExtendedAttributesHex
+                  : "58");
+    EXPECT_TRUE(Result->StandardError.empty());
+    ASSERT_FALSE(Result->Services.empty());
+    if (Unknown) {
+      EXPECT_EQ(Result->Diagnostic,
+                "Darwin extended-attribute observations are unknown");
+      const auto &Last = Result->Services.back();
+      EXPECT_EQ(uint32_t(Last.Number) & 0x00ffffff, 234u);
+      EXPECT_FALSE(Last.Result);
+      EXPECT_FALSE(Last.Error);
+    } else {
+      EXPECT_EQ(Result->ExitStatus, 37);
+    }
+  }
+}
+
+TEST_P(DarwinProcess, KernelPathConfPreservesLookupAndDescriptorState) {
+  Options.DarwinFiles = darwin_test::kernelPathConfOptions();
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode : {"kernel-pathconf", "kernel-pathconf-values",
+                           "kernel-pathconf-unsupported"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    const bool Unknown = llvm::StringRef(Mode).ends_with("-unsupported");
+    ASSERT_EQ(Result->Stop, Unknown ? ProcessStopReason::UnsupportedService
+                                    : ProcessStopReason::Exited)
+        << Result->Diagnostic;
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "kernel-pathconf-values"
+                  ? darwin_test::KernelPathConfHex
+                  : "43");
+    EXPECT_TRUE(Result->StandardError.empty());
+    ASSERT_FALSE(Result->Services.empty());
+    if (Unknown) {
+      EXPECT_EQ(Result->Diagnostic,
+                "Darwin filesystem-dependent pathconf selector is not modeled");
+      const auto &Last = Result->Services.back();
+      EXPECT_EQ(uint32_t(Last.Number) & 0x00ffffff, 191u);
+      EXPECT_EQ(Last.Arguments[1], 4u);
+      EXPECT_FALSE(Last.Result);
+      EXPECT_FALSE(Last.Error);
+    } else {
+      EXPECT_EQ(Result->ExitStatus, 37);
+    }
+  }
+}
+
 TEST_P(DarwinProcess, CreatePreservesExclusiveChecksAndReusedNameLifetime) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
@@ -483,6 +759,24 @@ TEST_P(DarwinProcess,
   const uint64_t Class =
       GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
   for (auto Number : {58u, 473u, 470u, 466u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Error == false;
+    })) << Number;
+}
+
+TEST_P(DarwinProcess, FixedLinksObserveMutableTargetsAndRetainOldObjects) {
+  Options.DarwinFiles = darwin_test::mixedSymbolicLinkOptions();
+  Options.Arguments[2] = "/work/data";
+  auto Result = run("symbolic-link-mutations");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "z");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {463u, 465u, 472u, 473u, 475u, 197u, 73u, 13u})
     EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
       return Event.Number == Class + Number && Event.Error == false;
     })) << Number;
@@ -1469,6 +1763,80 @@ TEST_P(DarwinProcess, ExplicitProfileCannotBeReplacedByHostPlatform) {
   ASSERT_FALSE(bool(Wrong));
   llvm::consumeError(Wrong.takeError());
 }
+TEST_P(DarwinProcess, RuntimeLinksCreateOpaqueTargetsAndRetainObjects) {
+  Options.DarwinFiles = darwin_test::mixedSymbolicLinkOptions();
+  Options.Arguments[2] = "/work/data";
+  auto Result = run("symbolic-link-creation");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "b");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {57u, 474u, 58u, 473u, 465u, 472u, 475u, 197u, 73u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Error == false;
+    })) << Number;
+}
+
+TEST_P(DarwinProcess, RuntimeCreatedSymbolicLinksCanBeRemoved) {
+  Options.DarwinFiles = darwin_test::mixedSymbolicLinkOptions();
+  Options.Arguments[2] = "/work/data";
+  auto Result = run("symbolic-link-unlink");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "U");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {10u, 57u, 474u, 472u, 473u, 475u, 197u, 73u, 13u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Error == false;
+    })) << Number;
+  for (auto Error : {2u, 62u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + 472 && Event.Error == true &&
+             Event.Result == Error;
+    })) << Error;
+}
+
+TEST_P(DarwinProcess, RuntimeCreatedSymbolicLinksCanBeRenamed) {
+  Options.DarwinFiles = darwin_test::mixedSymbolicLinkOptions();
+  Options.DarwinFiles->SwapRenameDirectories.insert("/work");
+  Options.Arguments[2] = "/work/data";
+  auto Result = run("symbolic-link-rename");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "R");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {57u, 474u, 128u, 465u, 488u, 473u, 472u, 197u, 73u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Error == false;
+    })) << Number;
+  for (auto Error : {17u, 62u, 2u, 22u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + 488 && Event.Error == true &&
+             Event.Result == Error;
+    })) << Error;
+  EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+    return Event.Number == Class + 465 && Event.Error == true &&
+           Event.Result == 66;
+  }));
+  for (auto Flags : {2u, 18u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + 488 && Event.Error == false &&
+             Event.Result == 0 && uint32_t(Event.Arguments[4]) == Flags;
+    })) << Flags;
+}
+
 INSTANTIATE_TEST_SUITE_P(Transports, DarwinProcess,
                          testing::ValuesIn(profiles()),
                          [](const testing::TestParamInfo<Profile> &P) {

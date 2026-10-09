@@ -10,9 +10,9 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/SymbolSpelling.h"
 
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/Demangle/Demangle.h"
 
 #include <algorithm>
 #include <map>
@@ -1043,13 +1043,13 @@ MedLibraryRecognitionResult neverd::recognizeMedLibraryOperations(
     }
   }
   const auto Registers =
-      getTargetRegInfo(Image.Arch).integerParamRegs(Image.Format);
+      getTargetRegInfo(Image.Arch).integerParamRegs(Image.abiFormat());
   std::set<std::tuple<std::string, std::string, VarKey>> Seen;
   for (const auto &[ID, Pack] : Packs) {
     if (Result.BudgetExhausted)
       break;
     (void)ID;
-    if (!Pack.accepts(Image.Arch, Image.Format, Image.Bits))
+    if (!Pack.accepts(Image.Arch, Image.abiFormat(), Image.Bits))
       continue;
     for (const LibraryFeatureRule &Rule : Pack.Rules) {
       if (!Matcher.spend())
@@ -1121,7 +1121,7 @@ MedLibraryRecognitionResult neverd::recognizeMedLibraryOperations(
             Match.IdentityEvidence = std::move(Evidence);
             Match.Scope = LibraryFeatureScope::WholeFunction;
             Match.LinkageName = Symbol;
-            Match.DisplayName = llvm::demangle(Symbol);
+            Match.DisplayName = displaySymbolName(Symbol);
             Match.Isolated = true;
             Collect(Match, *State);
             Result.Matches.push_back(std::move(Match));
@@ -1237,7 +1237,7 @@ MedLibraryRecognitionResult neverd::recognizeMedLibraryOperations(
             if (Image.Format == BinaryFormat::MachO &&
                 Linkage.starts_with("__Z"))
               Linkage = Linkage.drop_front();
-            Match.DisplayName = llvm::demangle(Linkage.str());
+            Match.DisplayName = displaySymbolName(Linkage.str());
           }
           Match.Isolated = Whole || Matcher.isolated(State, Root);
           const MedOp *RootDefinition = Matcher.definition(Root);

@@ -44,7 +44,8 @@ struct NeonLaneInfo {
   bool IsFloat = false;
 };
 
-/// Element info from capstone's \c vector_data.  Defined in ARMLiftSIMDNEON.cpp.
+/// Element info from capstone's \c vector_data.  Defined in
+/// ARMLiftSIMDNEON.cpp.
 NeonLaneInfo getNeonLaneInfo(arm_vectordata_type VD);
 
 /// Element info parsed from the mnemonic suffix (".8"/".i16"/".s32"/".f32").
@@ -55,8 +56,15 @@ NeonLaneInfo getNeonLaneInfoFromMnemonic(const char *Mnem);
 /// capstone did not populate it.  Defined in ARMLiftSIMDNEON.cpp.
 NeonLaneInfo getNeonLaneInfo(arm_vectordata_type VD, const char *Mnem);
 
-/// Whether \p Insn's mnemonic is \p Alias or its ".w" (wide Thumb-2) spelling.
-/// Capstone reports the push/pop aliases this way.  Defined in ARMLiftMem.cpp.
+/// Whether \p ARM carries a real condition (EQ..LE): AL and the "execute
+/// always" sentinel Capstone reports for some unconditional forms do not.
+/// Defined in ARMLifter.cpp.
+bool isPredicated(const cs_arm &ARM);
+
+/// Whether \p Insn's mnemonic spells \p Alias: the alias itself, with the
+/// condition of a predicated instruction after it (`popne`, also inside an IT
+/// block), and with the ".w" of a wide Thumb-2 encoding (`popne.w`).  Capstone
+/// reports the push/pop aliases this way.  Defined in ARMLiftMem.cpp.
 bool isAliasMnemonic(const cs_insn *Insn, const char *Alias);
 
 //===----------------------------------------------------------------------===//
@@ -196,8 +204,8 @@ bool liftSIMDNEONArith(ARMLifter &L, ARMLifter::LiftState &S,
                        const cs_insn *Insn, const cs_arm &ARM);
 
 /// Per-lane NEON multiply and multiply-accumulate.
-bool liftSIMDNEONMul(ARMLifter &L, ARMLifter::LiftState &S,
-                     const cs_insn *Insn, const cs_arm &ARM);
+bool liftSIMDNEONMul(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
+                     const cs_arm &ARM);
 
 /// Per-lane absolute difference and the mask-producing compares.
 bool liftSIMDNEONCompare(ARMLifter &L, ARMLifter::LiftState &S,
@@ -218,8 +226,8 @@ bool liftSIMDNEONShift(ARMLifter &L, ARMLifter::LiftState &S,
                        const cs_insn *Insn, const cs_arm &ARM);
 
 /// Saturating NEON arithmetic and the doubling multiplies.
-bool liftSIMDNEONSat(ARMLifter &L, ARMLifter::LiftState &S,
-                     const cs_insn *Insn, const cs_arm &ARM);
+bool liftSIMDNEONSat(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
+                     const cs_arm &ARM);
 
 /// Pairwise min/max, the across-vector reductions, the MVE predicate ops, the
 /// dot products and the custom-datapath instructions.

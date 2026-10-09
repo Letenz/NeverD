@@ -13,6 +13,7 @@
 
 #include "X86LiftAPXValidation.h"
 #include "X86LiftDetail.h"
+#include "X86ScalarFPConversion.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
@@ -404,6 +405,14 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     NdVar Src = L.operandRead(S, X86.operands[1]);
     NdVar DstV = L.operandWrite(X86.operands[0]);
 
+    // MOVD/MOVQ select a scalar even when both operands name full XMMs.
+    if ((InsnId == X86_INS_MOVD || InsnId == X86_INS_MOVQ) &&
+        Src.Size > (InsnId == X86_INS_MOVD ? 4 : 8)) {
+      NdVar Low = S.makeTemp(InsnId == X86_INS_MOVD ? 4 : 8);
+      S.emit(NdOp::SUBBYTES, Low, {Src, NdVar::cst(0, 4)});
+      Src = Low;
+    }
+
     if (InsnId == X86_INS_MOVZX) {
       NdVar Ext = S.makeTemp(DstV.Size);
       S.emit(NdOp::INT_ZEXT, Ext, {Src});
@@ -532,37 +541,13 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   // --- FP conversions (scalar) ---
   case X86_INS_CVTTSD2SI:
   case X86_INS_CVTTSS2SI: {
-    if (X86.op_count < 2)
-      break;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
-    unsigned FPSz = (Insn->id == X86_INS_CVTTSS2SI) ? 4 : 8;
-    if (Src.Size > FPSz) {
-      NdVar Narrow = S.makeTemp(FPSz);
-      S.emit(NdOp::SUBBYTES, Narrow, {Src, NdVar::cst(0, 4)});
-      Src = Narrow;
-    }
-    S.emit(NdOp::FLOAT_TRUNC, Dst, {Src});
-    break;
+    return liftScalarFPIntegerState(
+        L, S, Insn, X86, Insn->id == X86_INS_CVTTSS2SI ? 4 : 8, true, false);
   }
   case X86_INS_CVTSD2SI:
   case X86_INS_CVTSS2SI: {
-    if (X86.op_count < 2)
-      break;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
-    unsigned FPSz = (Insn->id == X86_INS_CVTSS2SI) ? 4 : 8;
-    if (Src.Size > FPSz) {
-      NdVar Narrow = S.makeTemp(FPSz);
-      S.emit(NdOp::SUBBYTES, Narrow, {Src, NdVar::cst(0, 4)});
-      Src = Narrow;
-    }
-    // CVTSD2SI/CVTSS2SI round using MXCSR (default: nearest, ties to even),
-    // unlike the truncating CVTTSD2SI/CVTTSS2SI.  Round first, then convert.
-    NdVar Rounded = S.makeTemp(FPSz);
-    S.emit(NdOp::FLOAT_ROUNDEVEN, Rounded, {Src});
-    S.emit(NdOp::FLOAT_FLOAT2INT, Dst, {Rounded});
-    break;
+    return liftScalarFPIntegerState(
+        L, S, Insn, X86, Insn->id == X86_INS_CVTSS2SI ? 4 : 8, false, false);
   }
   case X86_INS_CVTSI2SD: {
     if (X86.op_count < 2)

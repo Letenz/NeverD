@@ -24,7 +24,7 @@ struct Conversion {
   void validate() const {
     if ((Bits != 1 && Bits != 8 && Bits != 16 && Bits != 32 && Bits != 64 &&
          Bits != 128) ||
-        (FloatBits != 32 && FloatBits != 64))
+        (FloatBits != 32 && FloatBits != 64 && FloatBits != 80))
       throw std::runtime_error("unsupported C scalar float conversion shape");
   }
 };
@@ -38,10 +38,13 @@ void writeConversion(Stream &OS, const std::string &Name, Conversion Shape) {
   const std::string Type = CarrierBits == 128
                                ? "unsigned __int128"
                                : "uint" + std::to_string(CarrierBits) + "_t";
-  const std::string FloatType = Shape.FloatBits == 32 ? "float" : "double";
-  const std::string Bound =
-      "0x1p" + std::to_string(Shape.Bits - Shape.Signed) +
-      (Shape.FloatBits == 32 && Shape.Bits < 128 ? "f" : "");
+  const std::string FloatType = Shape.FloatBits == 32   ? "float"
+                                : Shape.FloatBits == 80 ? "long double"
+                                                        : "double";
+  const std::string Bound = "0x1p" + std::to_string(Shape.Bits - Shape.Signed) +
+                            (Shape.FloatBits == 32 && Shape.Bits < 128 ? "f"
+                             : Shape.FloatBits == 80                   ? "L"
+                                                                       : "");
   const std::string Maximum =
       "((" + Type + ")~(" + Type + ")0 >> " +
       std::to_string(CarrierBits - Shape.Bits + Shape.Signed) + ")";

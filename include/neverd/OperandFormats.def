@@ -1,0 +1,26 @@
+//===- OperandFormats.def - How an operand shows its number -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// The bases a user can show an instruction operand's number in, which the
+// engine keeps (neverd_operand_format_set) and the listing applies.
+//
+// NEVERD_OPERAND_BASE(Id, Spelling): Number is the listing's own choice; the
+// others name the base the user picked.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_OPERAND_BASE
+#define NEVERD_OPERAND_BASE(Id, Spelling)
+#endif
+NEVERD_OPERAND_BASE(Number, "number")
+NEVERD_OPERAND_BASE(Hex, "hex")
+NEVERD_OPERAND_BASE(Decimal, "decimal")
+NEVERD_OPERAND_BASE(Binary, "binary")
+// The bytes of the number as characters, most significant first.
+NEVERD_OPERAND_BASE(Char, "char")
+// The address the number holds, by name.
+NEVERD_OPERAND_BASE(Offset, "offset")
+#undef NEVERD_OPERAND_BASE

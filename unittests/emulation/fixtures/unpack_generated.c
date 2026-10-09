@@ -14,6 +14,7 @@ typedef unsigned long long U64;
 #define NEVERD_GENERATED_TEXT(Name, Text) static const char Name[] = Text;
 #include "UnpackGeneratedCases.def"
 #undef NEVERD_GENERATED_TEXT
+#include "unpack_pointer_state.h"
 __declspec(dllimport) void ExitProcess(U32);
 __declspec(dllimport) void *GetStdHandle(U32);
 __declspec(dllimport) int WriteFile(void *, const void *, U32, U32 *, void *);
@@ -21,6 +22,12 @@ __declspec(dllimport) void *SetUnhandledExceptionFilter(void *);
 __declspec(dllimport) void *GetModuleHandleA(const char *);
 __declspec(dllimport) void *GetProcAddress(void *, const char *);
 __declspec(dllimport) int GetSystemMetrics(int);
+__declspec(dllimport) void *GetProcessHeap(void);
+__declspec(dllimport) void *HeapAlloc(void *, U32, U64);
+__declspec(dllimport) int HeapFree(void *, U32, void *);
+#include "unpack_dynamic_tls_state.h"
+volatile U32 *HeapState;
+static volatile U64 EncodedState;
 
 // Keep independently linked export lookup cells on both instruction sets.
 // A generated loader may use them to ask a modeled service to write its code.
@@ -291,7 +298,50 @@ PROGRAM_CODE static U32 status(U32 Written) {
   return Sum ? ExitStatus : FailureStatus;
 }
 
+#if defined(__x86_64__)
+static volatile U32 NativeDelayNumber;
+static volatile U64 NativeDelayInterior;
+__attribute__((naked, noinline)) static U32
+directDelay(U64 Alert, const long long *Interval, U32 Number) {
+  __asm__("movq %rcx, %r10\n\t"
+          "movl %r8d, %eax\n\t"
+          "syscall\n\t"
+          "retq\n\t");
+}
+__attribute__((naked, noinline)) static U32
+interiorDelay(U64 Alert, const long long *Interval, U32 Number, U64 Interior) {
+  __asm__("movq %rcx, %r10\n\t"
+          "movl %r8d, %eax\n\t"
+          "jmpq *%r9\n\t");
+}
+// Keep the failure exit outside .prog so the ordinary tail-call oracle still
+// executes every import call that its independent packer transforms.
+__attribute__((noinline)) static void useDirectService(void) {
+  const long long Interval = -1;
+  const U32 Result =
+      Pack.Mode == LateDirectServiceMode
+          ? interiorDelay(0, &Interval, NativeDelayNumber, NativeDelayInterior)
+          : directDelay(0, &Interval, NativeDelayNumber);
+  if (Result != 0)
+    ExitProcess(FailureStatus);
+}
+#endif
+
 PROGRAM_ENTRY U32 program(void) {
+  if (Pack.Mode == LateEncodedPointerMode)
+    EncodedState = encodeNull(Pack.Mode);
+  const int PointerOK = (Pack.Mode != EncodedPointerMode &&
+                         Pack.Mode != NativeEncodedPointerMode &&
+                         Pack.Mode != LateEncodedPointerMode) ||
+                        decodesToNull(Pack.Mode, EncodedState);
+#if defined(__x86_64__)
+  if (Pack.Mode == DirectServiceMode || Pack.Mode == LateDirectServiceMode)
+    useDirectService();
+#endif
+  // Keep one exit call so ordinary import-repair cases reach every import
+  // site that the independent test packer transforms.
+  const U32 HeapResult =
+      Pack.Mode == HeapStateMode ? *HeapState : InitializeResult;
 #if defined(__x86_64__)
   if (Pack.Mode == ReboundOpaqueCallMode || Pack.Mode == LateOpaqueCallMode) {
     resolveLateImport();
@@ -322,7 +372,10 @@ PROGRAM_ENTRY U32 program(void) {
   // impure helper's persistent increment must still change the exit status.
   Written &= 0u - ((Pack.Mode != ImpureCallMode) | (AddressEffects == 1));
 #endif
-  ExitProcess(status(Written));
+  ExitProcess(HeapResult == InitializeResult && PointerOK &&
+                      validDynamicState(Pack.Mode)
+                  ? status(Written)
+                  : FailureStatus);
   return FailureStatus;
 }
 
@@ -341,6 +394,45 @@ RELAY_ENTRY U32 relay(void) {
 // Every path leaves by a jump on the stack the process started with, as a
 // loader does when it hands control to the program it carried.
 __declspec(dllexport) U32 loader(void) {
+  prepareDynamicState(Pack.Mode);
+  if (Pack.Mode == DecodedPointerMode ||
+      Pack.Mode == NativeDecodedPointerMode) {
+    EncodedState = 0x12345678;
+    // The return is deliberately unused. The retained input is still an
+    // observed encoding value, not proof that its storage is a live pointer.
+    decodesToNull(Pack.Mode, EncodedState);
+  }
+  if (Pack.Mode == EncodedPointerMode ||
+      Pack.Mode == NativeEncodedPointerMode ||
+      Pack.Mode == ClearedEncodedPointerMode) {
+    EncodedState = encodeNull(Pack.Mode);
+    if (Pack.Mode == ClearedEncodedPointerMode)
+      EncodedState = 0;
+  }
+#if defined(__x86_64__)
+  if (Pack.Mode == DirectServiceMode || Pack.Mode == LateDirectServiceMode) {
+    const U8 *Gate =
+        GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtDelayExecution");
+    if (!Gate || Gate[0] != 0x4c || Gate[1] != 0x8b || Gate[2] != 0xd1 ||
+        Gate[3] != 0xb8)
+      ExitProcess(FailureStatus);
+    NativeDelayNumber = *(const U32 *)(Gate + 4);
+    NativeDelayInterior = (U64)(Gate + 8);
+    if (Pack.Mode == DirectServiceMode)
+      useDirectService();
+  }
+#endif
+  if (Pack.Mode == HeapStateMode || Pack.Mode == ReleasedHeapStateMode) {
+    HeapState = (U32 *)HeapAlloc(GetProcessHeap(), 0, sizeof(*HeapState));
+    if (!HeapState)
+      ExitProcess(FailureStatus);
+    *HeapState = InitializeResult;
+    if (Pack.Mode == ReleasedHeapStateMode) {
+      if (!HeapFree(GetProcessHeap(), 0, (void *)HeapState))
+        ExitProcess(FailureStatus);
+      HeapState = 0;
+    }
+  }
 #if defined(__x86_64__)
   if (Pack.Mode == ReboundOpaqueCallMode)
     resolveLateImport();

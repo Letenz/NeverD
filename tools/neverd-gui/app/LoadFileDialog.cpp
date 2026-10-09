@@ -1,0 +1,473 @@
+#include "LoadFileDialog.h"
+
+#include <QCheckBox>
+#include <QComboBox>
+#include <QCoreApplication>
+#include <QDialogButtonBox>
+#include <QFontMetrics>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QJsonObject>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QPushButton>
+#include <QSignalBlocker>
+#include <QTreeWidget>
+#include <QVBoxLayout>
+#include <algorithm>
+
+namespace neverd::gui {
+namespace {
+
+// Room for the file's path and the processors' names.
+constexpr int DialogWidth = 560;
+
+struct ProcessorFamily {
+  const char *id, *name;
+};
+constexpr ProcessorFamily Families[] = {
+#define NEVERD_PROCESSOR_FAMILY(Id, Name) {#Id, Name},
+#include "Processors.def"
+};
+
+struct Processor {
+  const char *family, *shortName, *name;
+  bool binary;
+};
+constexpr Processor Processors[] = {
+#define NEVERD_PROCESSOR(Family, ShortName, Name, Binary)                      \
+  {#Family, ShortName, Name, Binary},
+#include "Processors.def"
+};
+
+/// The list shows this many rows before it scrolls.
+constexpr int ListedRows = 5;
+/// Whether a processor list item can read a binary file.
+constexpr int BinaryRole = Qt::UserRole + 1;
+
+} // namespace
+
+LoadFileDialog::LoadFileDialog(const QString &path, const QJsonArray &rows,
+                               QWidget *parent)
+    : QDialog(parent), path_(path), rows_(rows) {
+  setWindowTitle(tr("Load a new file"));
+  setMinimumWidth(DialogWidth);
+  auto *layout = new QVBoxLayout(this);
+
+  // The loaders that read the file, as the engine lists them.
+  auto *heading = heading_ = new QLabel(this);
+  heading->setTextFormat(Qt::PlainText);
+  heading->setToolTip(path);
+  // The heading takes the dialog's width rather than setting it.
+  heading->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+  loaders_ = new QListWidget(this);
+  loaders_->setObjectName(QStringLiteral("loaders"));
+  loaders_->setToolTip(tr("The input file possibly has the listed formats"));
+  heading->setBuddy(loaders_);
+  for (const auto &value : rows_) {
+    const auto row = value.toObject();
+    const auto loader = row.value("loader").toString();
+    QString text = row.value("text").toString();
+    if (loader != QLatin1String("binary"))
+      text += QStringLiteral(" [%1]").arg(loader);
+    auto *item = new QListWidgetItem(text, loaders_);
+    if (!row.value("loadable").toBool()) {
+      item->setFlags(item->flags() &
+                     ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable));
+      item->setToolTip(row.value("reason").toString());
+    } else if (row.value("by_name").toBool()) {
+      item->setToolTip(tr("Listed for the file's name alone; its contents do "
+                          "not show this format"));
+    }
+  }
+  const int shown = std::clamp(loaders_->count(), 1, ListedRows);
+  loaders_->setFixedHeight(loaders_->sizeHintForRow(0) * shown +
+                           2 * loaders_->frameWidth());
+  layout->addWidget(heading);
+  layout->addWidget(loaders_);
+
+  // The processor the chosen loader reads the file as.
+  processorHeading_ = new QLabel(this);
+  processors_ = new QTreeWidget(this);
+  processors_->setObjectName(QStringLiteral("processors"));
+  processors_->setColumnCount(2);
+  processors_->setHeaderHidden(true);
+  processorHeading_->setBuddy(processors_);
+  for (const auto &family : Families) {
+    auto *folder = new QTreeWidgetItem(
+        processors_, {QCoreApplication::translate("Processors", family.name)});
+    folder->setFlags(folder->flags() & ~Qt::ItemIsSelectable);
+    for (const auto &processor : Processors)
+      if (QLatin1String(processor.family) == QLatin1String(family.id)) {
+        auto *item = new QTreeWidgetItem(
+            folder, {QCoreApplication::translate("Processors", processor.name),
+                     QString::fromLatin1(processor.shortName)});
+        item->setData(0, Qt::UserRole,
+                      QString::fromLatin1(processor.shortName));
+        item->setData(0, BinaryRole, processor.binary);
+      }
+  }
+  processors_->expandAll();
+  processors_->resizeColumnToContents(0);
+  layout->addWidget(processorHeading_);
+  layout->addWidget(processors_);
+
+  // Where a binary file's bytes map, as IDA's image base and memory
+  // organization ask.
+  auto *placement = new QFormLayout;
+  const auto field = [this](const char *name, const QString &text,
+                            const QString &placeholder) {
+    auto *edit = new QLineEdit(text, this);
+    edit->setObjectName(QLatin1String(name));
+    edit->setPlaceholderText(placeholder);
+    connect(edit, &QLineEdit::textChanged, this, &LoadFileDialog::update);
+    return edit;
+  };
+  base_ = field("base", QStringLiteral("0x0"), {});
+  offset_ = field("offset", QStringLiteral("0x0"), {});
+  size_ = field("size", {}, tr("To the end of the file"));
+  entry_ = field("entry", {}, tr("The image base"));
+  base_->setToolTip(tr("Base address for loading the file"));
+  offset_->setToolTip(tr("Where in the file the loaded bytes start"));
+  size_->setToolTip(tr("How many bytes to load"));
+  entry_->setToolTip(tr("Where execution starts"));
+  placement->addRow(tr("Image &base"), base_);
+  placement->addRow(tr("File &offset"), offset_);
+  placement->addRow(tr("Loading si&ze"), size_);
+  placement->addRow(tr("E&ntry point"), entry_);
+  // The conventions the code follows, read from the code unless chosen.
+  platform_ = new QComboBox(this);
+  platform_->setObjectName(QStringLiteral("platform"));
+  platform_->setToolTip(
+      tr("The platform the code was built for, whose conventions it "
+         "follows: how calls pass arguments, which registers they keep, and "
+         "the sizes of C types"));
+#define NEVERD_PLATFORM(ShortName, Name)                                       \
+  platform_->addItem(QCoreApplication::translate("Platforms", Name),           \
+                     QStringLiteral(ShortName));
+#include "Processors.def"
+  placement->addRow(tr("&Platform"), platform_);
+  layout->addLayout(placement);
+
+  // What loading does besides reading the image.
+  auto *groups = new QHBoxLayout;
+  auto *analysisGroup = new QGroupBox(tr("Analysis"), this);
+  auto *analysisLayout = new QVBoxLayout(analysisGroup);
+  analysis_ = new QCheckBox(tr("&Enabled"), analysisGroup);
+  analysis_->setObjectName(QStringLiteral("analysis"));
+  analysis_->setChecked(true);
+  analysis_->setToolTip(tr("If turned off, NeverD will not analyze the program "
+                           "in idle time"));
+  indicator_ = new QCheckBox(tr("In&dicator enabled"), analysisGroup);
+  indicator_->setObjectName(QStringLiteral("indicator"));
+  indicator_->setChecked(true);
+  indicator_->setToolTip(
+      tr("Display the analysis progress in the status line"));
+  analysisLayout->addWidget(analysis_);
+  analysisLayout->addWidget(indicator_);
+  auto *optionsGroup = new QGroupBox(tr("Options"), this);
+  auto *optionsLayout = new QVBoxLayout(optionsGroup);
+  debugInfo_ = new QCheckBox(tr("Load debu&g information"), optionsGroup);
+  debugInfo_->setObjectName(QStringLiteral("debugInfo"));
+  debugInfo_->setChecked(true);
+  debugInfo_->setToolTip(tr("Read the PDB, DWARF or linker map that belongs to "
+                            "the input"));
+  optionsLayout->addWidget(debugInfo_);
+  optionsLayout->addStretch();
+  groups->addWidget(analysisGroup);
+  groups->addWidget(optionsGroup);
+  layout->addLayout(groups);
+
+  note_ = new QLabel(this);
+  note_->setObjectName(QStringLiteral("note"));
+  note_->setWordWrap(true);
+  note_->setTextFormat(Qt::PlainText);
+  note_->hide();
+  layout->addWidget(note_);
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+  buttons->setCenterButtons(true);
+  ok_ = buttons->button(QDialogButtonBox::Ok);
+  ok_->setObjectName(QStringLiteral("ok"));
+  connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+  layout->addWidget(buttons);
+
+  connect(loaders_, &QListWidget::currentRowChanged, this,
+          &LoadFileDialog::select);
+  connect(loaders_, &QListWidget::itemDoubleClicked, this,
+          [this](QListWidgetItem *item) {
+            if ((item->flags() & Qt::ItemIsEnabled) && ok_->isEnabled())
+              accept();
+          });
+  connect(processors_, &QTreeWidget::currentItemChanged, this,
+          &LoadFileDialog::update);
+  // The first row loading can read for the file's contents is the default,
+  // as in IDA; a row a loader took for the file's name alone is never chosen
+  // for the user.
+  for (int index = 0; index < loaders_->count(); ++index)
+    if ((loaders_->item(index)->flags() & Qt::ItemIsEnabled) &&
+        !rows_[index].toObject().value("by_name").toBool()) {
+      loaders_->setCurrentRow(index);
+      break;
+    }
+  // The processor the bytes name, where a structure at their start says the
+  // code runs, and where the code's instructions start when not on a word.
+  for (const auto &value : rows_) {
+    const auto binaryRow = value.toObject();
+    if (binaryRow.value("loader").toString() != QLatin1String("binary"))
+      continue;
+    detectedProcessor_ = binaryRow.value("detected").toString();
+    const auto print = binaryRow.value("fingerprint").toObject();
+    if (!print.isEmpty()) {
+      base_->setText(print.value("base").toString());
+      entry_->setText(print.value("entry").toString());
+    } else if (const int start = binaryRow.value("code_offset").toInt();
+               start > 0) {
+      offset_->setText(QStringLiteral("0x%1").arg(start, 0, 16));
+    }
+  }
+  select(loaders_->currentRow());
+}
+
+int LoadFileDialog::row() const {
+  const auto *item = loaders_->currentItem();
+  return item && (item->flags() & Qt::ItemIsEnabled) ? loaders_->currentRow()
+                                                     : -1;
+}
+
+bool LoadFileDialog::binary() const {
+  const int chosen = row();
+  return chosen >= 0 && rows_[chosen].toObject().value("loader").toString() ==
+                            QLatin1String("binary");
+}
+
+QString LoadFileDialog::chosenProcessor() const {
+  const auto *item = processors_->currentItem();
+  return item && item->data(0, BinaryRole).toBool()
+             ? item->data(0, Qt::UserRole).toString()
+             : QString();
+}
+
+std::optional<quint64> LoadFileDialog::number(const QLineEdit *field,
+                                              std::optional<quint64> empty) {
+  QString text = field->text().trimmed();
+  if (text.isEmpty())
+    return empty;
+  if (text.startsWith(QLatin1String("0x"), Qt::CaseInsensitive))
+    text = text.mid(2);
+  bool ok = false;
+  const quint64 value = text.toULongLong(&ok, 16);
+  return ok ? std::optional<quint64>(value) : std::nullopt;
+}
+
+LoadOptions LoadFileDialog::options() const {
+  LoadOptions options;
+  options.debugInfo = debugInfo_->isChecked();
+  options.analysis = analysis_->isChecked();
+  // A row the file's name alone suggests reads the file only when chosen,
+  // as a binary file does.
+  if (const int chosen = row(); chosen >= 0) {
+    const auto picked = rows_[chosen].toObject();
+    if (binary() || picked.value("by_name").toBool())
+      options.loader = picked.value("loader").toString();
+  }
+  if (binary()) {
+    // The detected processor, kept, is the engine's to read again and
+    // record as detected.
+    options.processor =
+        !detectedProcessor_.isEmpty() && chosenProcessor() == detectedProcessor_
+            ? QStringLiteral("auto")
+            : chosenProcessor();
+    options.platform = platform_->currentData().toString();
+    options.base = number(base_, 0).value_or(0);
+    options.offset = number(offset_, 0).value_or(0);
+    options.size = number(size_, 0).value_or(0);
+    options.entry = number(entry_);
+  }
+  return options;
+}
+
+bool LoadFileDialog::indicator() const { return indicator_->isChecked(); }
+
+void LoadFileDialog::setIndicator(bool shown) { indicator_->setChecked(shown); }
+
+void LoadFileDialog::setBinaryProcessor(const QString &processor) {
+  binaryProcessor_ = processor;
+  select(loaders_->currentRow());
+}
+
+void LoadFileDialog::setOptions(const QJsonObject &load) {
+  const auto loader = load.value("loader").toString();
+  for (int index = 0; index < loaders_->count(); ++index)
+    if ((loaders_->item(index)->flags() & Qt::ItemIsEnabled) &&
+        rows_[index].toObject().value("loader").toString() == loader) {
+      loaders_->setCurrentRow(index);
+      break;
+    }
+  const auto chosen = [&](const char *source) {
+    return load.value(QLatin1String(source)).toString() ==
+           QLatin1String("chosen");
+  };
+  // A processor the user chose beats the one the bytes name; a detected
+  // one is read again.
+  if (chosen("processor_source")) {
+    detectedProcessor_.clear();
+    binaryProcessor_ = load.value("processor").toString();
+  }
+  base_->setText(load.value("base").toString(base_->text()));
+  offset_->setText(load.value("offset").toString(offset_->text()));
+  const auto size = load.value("size").toString();
+  size_->setText(size == QLatin1String("0x0") ? QString() : size);
+  entry_->setText(load.value("entry").toString());
+  const int platform = platform_->findData(
+      chosen("platform_source") ? load.value("platform").toString()
+                                : QString());
+  if (platform >= 0)
+    platform_->setCurrentIndex(platform);
+  select(loaders_->currentRow());
+}
+
+void LoadFileDialog::select(int row) {
+  const bool raw = binary();
+  // A header names the processor; a binary file's is the user's to pick.
+  processorHeading_->setText(raw ? tr("Processor t&ype (double-click to set)")
+                                 : tr("Processor t&ype"));
+  processors_->setEnabled(raw);
+  processors_->setToolTip(raw ? tr("Choose the processor the file's code "
+                                   "runs on")
+                              : tr("The file's header states the processor"));
+  for (auto *field : {base_, offset_, size_, entry_})
+    field->setEnabled(raw);
+  platform_->setEnabled(raw);
+  // What the bytes name beats what the user picked for another file.
+  const QString wanted =
+      raw ? (detectedProcessor_.isEmpty() ? binaryProcessor_
+                                          : detectedProcessor_)
+          : (row >= 0 && row < rows_.size()
+                 ? rows_[row].toObject().value("processor").toString()
+                 : QString());
+  // Rewriting the tree moves its current item; the OK state follows once,
+  // from the finished tree.
+  const QSignalBlocker quiet(processors_);
+  processors_->clearSelection();
+  processors_->setCurrentItem(nullptr);
+  for (int family = 0; family < processors_->topLevelItemCount(); ++family) {
+    auto *folder = processors_->topLevelItem(family);
+    for (int child = 0; child < folder->childCount(); ++child) {
+      auto *item = folder->child(child);
+      const bool usable = !raw || item->data(0, BinaryRole).toBool();
+      item->setFlags(usable ? item->flags() | Qt::ItemIsEnabled
+                            : item->flags() & ~Qt::ItemIsEnabled);
+      if (!wanted.isEmpty() &&
+          item->data(0, Qt::UserRole).toString() == wanted) {
+        processors_->setCurrentItem(item);
+        item->setSelected(true);
+      }
+    }
+  }
+  update();
+}
+
+void LoadFileDialog::resizeEvent(QResizeEvent *event) {
+  QDialog::resizeEvent(event);
+  elidePath();
+}
+
+void LoadFileDialog::elidePath() {
+  const QString heading = tr("Load file %1 &as");
+  QString plain = heading;
+  plain.remove(QLatin1Char('&'));
+  const QFontMetrics metrics(heading_->font());
+  const int room = heading_->contentsRect().width() -
+                   metrics.horizontalAdvance(plain.arg(QString()));
+  QString shown = metrics.elidedText(path_, Qt::ElideMiddle, std::max(0, room));
+  // An ampersand in the path is text, not the heading's shortcut.
+  shown.replace(QLatin1Char('&'), QStringLiteral("&&"));
+  heading_->setText(heading.arg(shown));
+}
+
+QString LoadFileDialog::identification() const {
+  const int chosen = row();
+  if (chosen < 0)
+    return {};
+  const auto binaryRow = rows_[chosen].toObject();
+  if (!binaryRow.contains("guesses"))
+    return {};
+  const auto evidence = binaryRow.value("evidence").toString();
+  const auto print = binaryRow.value("fingerprint").toObject();
+  if (!print.isEmpty())
+    return tr("Read from the bytes: %1, entry %2, base %3")
+        .arg(evidence, print.value("entry").toString(),
+             print.value("base").toString());
+  if (!binaryRow.value("detected").toString().isEmpty())
+    return tr("Read from the bytes: %1").arg(evidence);
+  const auto status = binaryRow.value("status").toString();
+  const auto guesses = binaryRow.value("guesses").toArray();
+  const auto name = [&](int index) {
+    return guesses.at(index).toObject().value("name").toString();
+  };
+  if (guesses.isEmpty())
+    return tr("No part of the file looks like code of an instruction set "
+              "NeverD knows; choose the processor its code runs on");
+  if (status == QLatin1String("width_unclear") && guesses.size() > 1)
+    return tr("The code looks like %1 or %2, and its instructions do not "
+              "tell which; choose the processor its code runs on")
+        .arg(name(0), name(1));
+  if (status == QLatin1String("settled"))
+    return tr("The code looks like %1, which NeverD cannot decode; choose a "
+              "processor to read it as one anyway")
+        .arg(name(0));
+  return tr("The code looks most like %1, but not clearly; choose the "
+            "processor its code runs on")
+      .arg(name(0));
+}
+
+void LoadFileDialog::update() {
+  QString note;
+  bool acceptable = false;
+  const int chosen = row();
+  if (chosen < 0) {
+    bool loadable = false;
+    for (int index = 0; index < loaders_->count(); ++index)
+      loadable |= bool(loaders_->item(index)->flags() & Qt::ItemIsEnabled);
+    const auto first = rows_.isEmpty() ? QJsonObject() : rows_[0].toObject();
+    note = loadable ? tr("Only the file's name suggests a format; choose a row "
+                         "to load the file that way")
+                    : tr("NeverD cannot load this file: %1")
+                          .arg(first.value("reason").toString());
+  } else if (binary()) {
+    const QString identified = identification();
+    if (chosenProcessor().isEmpty())
+      note = identified.isEmpty()
+                 ? tr("Choose the processor the file's code runs on")
+                 : identified;
+    else if (!number(base_, 0))
+      note = tr("%1 is not a hexadecimal number").arg(base_->text());
+    else if (!number(offset_, 0))
+      note = tr("%1 is not a hexadecimal number").arg(offset_->text());
+    else if (!number(size_, 0))
+      note = tr("%1 is not a hexadecimal number").arg(size_->text());
+    else if (!entry_->text().trimmed().isEmpty() && !number(entry_))
+      note = tr("%1 is not a hexadecimal number").arg(entry_->text());
+    else {
+      acceptable = true;
+      note = identified;
+    }
+  } else {
+    acceptable = rows_[chosen].toObject().value("loadable").toBool();
+    // A processor the list does not name still shows.
+    const auto processor =
+        rows_[chosen].toObject().value("processor").toString();
+    if (!processor.isEmpty() && !processors_->currentItem())
+      note = tr("Processor: %1").arg(processor);
+  }
+  ok_->setEnabled(acceptable);
+  note_->setText(note);
+  note_->setVisible(!note.isEmpty());
+}
+
+} // namespace neverd::gui

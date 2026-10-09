@@ -25,7 +25,21 @@ neverd unpack packed.exe -o unpacked.exe \
   --options='{"backend":"unicorn","instruction_limit":400000000,"transfer":2}'
 ```
 
-이 명령은 JSON 보고서 하나를 출력합니다. 종료 코드 0은 이미지가 기록되었음을, 3은 진입점이 채택되기 전에 유한 실행이 끝났음을(`outcome`은 `no_entry`이며 아무것도 기록되지 않음), 1은 입력이나 옵션이 잘못되었거나 준비에 실패했음을 뜻합니다. 보고서에는 실제로 실행된 `format`, `architecture`, `profile`이 기재됩니다. C 진입점은 `neverd_unpack_json`이고 Python은 `Session.unpack`을 제공합니다. 옵션은 [프로세스 옵션](process-emulation.md)에 `transfer`를 더한 것입니다. 스텁에 더 많은 자원이 필요한 항목은 기본값이 다릅니다. 명령 100000000개, 600초, 512 MiB이며 `windows.defer_unmodeled`가 켜져 있습니다.
+이 명령은 JSON 보고서 하나를 출력합니다. 종료 코드 0은 `unpacked` 이미지 또는 명시적으로 요청한 `snapshot`을 기록했음을, 3은 `no_entry` 또는 `unsupported_state`로 출력 파일을 만들거나 잘라내지 않았음을, 1은 입력·옵션 오류 또는 준비 실패를 뜻합니다. 보고서에는 실제로 실행된 `format`, `architecture`, `profile`이 기재됩니다. C 진입점은 `neverd_unpack_json`이고 Python은 `Session.unpack`을 제공합니다. 옵션은 [프로세스 옵션](process-emulation.md)에 `transfer`와 `snapshot_only`를 더한 것입니다. 스텁에 더 많은 자원이 필요한 항목은 기본값이 다릅니다. 명령 100000000개, 600초, 512 MiB이며 `windows.defer_unmodeled`가 켜져 있습니다.
+
+## 런타임 상태와 분석 스냅샷
+
+전이가 채택될 때 프로세스 프로필은 살아 있는 힙 할당 목록을 제공합니다. 복구는 캡처한 이미지와 현재 스레드의 TLS 바이트에서 모든 포인터 크기 값을 보수적으로 검사하며, 정렬되지 않은 값과 할당 내부 주소도 포함합니다. 일치한 값은 정수나 사용하지 않는 데이터일 수 있으므로 포인터 타입이나 재배치 근거가 아닙니다. 목록의 출처를 알 수 없거나 참조 가능성이 있으면 채택된 `entry`가 있어도 기본 결과는 `unsupported_state`입니다. CLI와 C API는 출력 파일을 만들거나 잘라내지 않습니다.
+
+`runtime_state.heap_inventory_known`은 알려진 빈 목록과 출처 정보 누락을 구분합니다. `possible_heap_references`는 전체 일치 수이며 `heap_references`는 처음 64개까지 보관합니다. 이미지, TLS 순서로 각각 `offset`순으로 기록합니다. 각 기록에는 `storage`(`image` 또는 `thread_local`), 주소와 할당 범위가 있습니다. `rva`는 이미지에서는 16진수 값, TLS에서는 null입니다. 주소와 오프셋은 16진수 문자열입니다.
+
+`runtime_state.direct_service_calls`는 진입점 관찰과 가져오기 탐색 중 실행한 직접 모델 서비스 호출 수입니다. 네이티브 Windows용 번호 바인딩을 복원하지 않았으므로 캡처한 진입점 이후에 처음 실행한 경우에도 `unsupported_state`를 반환합니다. 명시적인 `snapshot_only`는 수와 진단을 유지합니다. 복사된 시스템 호출은 복구할 수 있는 가져온 함수 호출로 취급하지 않습니다. `no_entry` 보고서에서도 이 수를 유지합니다. 진입점을 캡처하지 못하면 힙 할당 목록은 알 수 없는 상태로 남습니다.
+
+`runtime_state.encoded_pointer_inventory_known`은 프로세스 프로필이 관찰된 포인터 인코딩 값을 제공하는지 나타냅니다. `possible_encoded_pointers`는 캡처한 이미지와 주 스레드 TLS에서 정렬되지 않은 저장 위치를 포함해 포인터 너비로 정확히 일치하는 값을 셉니다. `encoded_pointer_references`는 처음 64개 위치의 `storage`, `offset`, `rva`, `value`를 보존합니다. Windows는 완료된 `EncodePointer`/`RtlEncodePointer` 반환값과 `DecodePointer`/`RtlDecodePointer` 입력을 제공합니다. 목록이 없거나 일치 항목이 있으면 `unsupported_state`이며 명시적 스냅샷에도 진단을 보존합니다. 정수나 사용하지 않는 데이터도 일치할 수 있으므로 재인코딩의 근거가 되지 않습니다. 캡처 전에 지운 값과 캡처 후에 처음 생성한 인코딩은 이 거부를 유발하지 않습니다. 사용자 정의 인코딩, 부분 값이나 변환된 값, 레지스터, 스택 상태 및 도달하지 않은 경로는 포함하지 않습니다.
+
+`runtime_state.dynamic_thread_local_inventory_known`은 캡처 시점의 동적 스레드/파이버 로컬 슬롯 상태를 프로필이 제공하는지 나타냅니다. `live_dynamic_tls_slots`와 `live_dynamic_fls_slots`는 PE 정적 TLS와 별도로 셉니다. 할당된 슬롯은 값이 0이어도 포함하며, 할당 기록이 없는 0이 아닌 TLS 셀도 포함합니다. 목록이 없거나 상태가 남으면 `unsupported_state`를 반환하고 명시적 스냅샷에도 개수와 진단을 보존합니다. 캡처 전에 해제한 슬롯, 0으로 지운 미할당 TLS 셀, 캡처 후 처음 만든 상태는 이 거부를 유발하지 않습니다. 개수는 소유권, 값, 콜백을 복원하지 않으며 다른 스레드나 파이버 상태를 보증하지 않습니다.
+
+`--options='{"snapshot_only":true}'`는 분석 바이트를 명시적으로 요청합니다. 진입점을 채택하고 재구성에 성공하면 결과는 항상 `snapshot`이며 런타임 상태 진단은 유지됩니다. 이 옵션은 힙 데이터를 복원하거나 재배치를 추론하거나 네이티브 실행을 보증하거나 가상화를 해제하지 않습니다. 힙 참조 수가 0이어도 다른 OS 상태나 실행하지 않은 경로를 보증하지 않습니다.
 
 ## 진입점을 정하는 방법
 
@@ -76,6 +90,8 @@ neverd unpack packed.exe -o unpacked.exe \
 ## 제한
 
 검사 실행은 명령 단위입니다. x64 Unicorn/KVM/WHP의 `direct-user-x64-v1`은 시간과 이벤트로 제한하고 명령 수를 세지 않습니다.  세대가 섞이거나 쓰기가 반복되면 추가 프로세서 단계가 필요할 수 있습니다. 복구는 입력 이미지에서 도달한 경로를 대상으로 하며 이미지 밖에서 생성한 코드를 진입점으로 삼지 않습니다. 진입 전 초기화의 외부 상태는 새 프로세스로 옮기지 못할 수 있고 TLS 콜백 재실행에는 부작용이 있을 수 있습니다. 모델링하지 않은 API에서 명시적으로 중단합니다. 복구 범위는 검증된 6~8바이트 x64 호출 구간과 7~8바이트 주소 로드이며 다른 형식과 미실행 경로는 미해결입니다. 가상화 코드는 유지됩니다.
+
+RVA 기반 지연 가져오기는 미해결 이미지 내부 썽크를 유지하고 관측된 내보내기 식별자로 해결된 셀을 다시 바인딩하여 프로그램 도우미가 완료한 작업을 반복하지 않게 합니다. 종료된 독립 조회 테이블이 바인딩 수를 제한하여 다음 미해결 IAT 셀을 보존합니다. 재구성은 프로세스별 DLL 핸들과 바인딩 캐시 참조를 지우고 지연 메타데이터를 일반 IAT 검색에서 제외합니다. 설명자와 포인터 배열의 종료, 이름, 범위, 저장소 소유권을 검증합니다. 알 수 없는 대상, 잘못된 썽크, 기존 VA 설명자, 저장소 충돌은 명시적으로 실패합니다.
 
 ## 검증
 

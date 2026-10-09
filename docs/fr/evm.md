@@ -44,7 +44,7 @@ opération pour binaires natifs.
 
 | Entrée | Reconnaissance et normalisation |
 |--------|---------------------------------|
-| Octets bruts | `.raw`, `.evmraw` ou contenu binaire avec une extension EVM explicite |
+| Octets bruts | Contenu binaire dans `.evm` ou `.evmraw`. Le contenu binaire dans `.bin`, `.hex`, `.bytecode`, `.json` ou `.raw`, extensions que d'autres outils emploient aussi, n'est lu comme bytecode EVM que si le chargeur EVM est choisi (`--loader evm` ou la ligne EVM de la boîte de chargement) ; sinon le chargement le refuse |
 | Texte hexadécimal | Préfixe `0x` facultatif, espaces ASCII arbitraires, extensions `.evm`, `.hex`, `.bin`, `.bytecode` ; l’hexadécimal sans extension est détecté après validation |
 | Artefact de compilateur | `.json` contenant `deployedBytecode`, `runtimeBytecode` ou `bytecode` à la racine ou sous `evm` ; JSON standard solc `contracts → file → contract → evm` inclus |
 

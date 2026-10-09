@@ -42,7 +42,45 @@ NEVERD_API void neverd_session_destroy(neverd_session_t Sess);
 /// Returns 0 when preparation fails; a previously loaded session remains
 /// usable with its existing image, analysis, and edits. See
 /// neverd_last_error().
+/// Path is UTF-8 on every platform, including Windows.
 NEVERD_API int neverd_session_load(neverd_session_t Sess, const char *Path);
+/// List the ways neverd_session_load can read the file at \p Path, as a load
+/// dialog shows them, without loading it:
+/// {"rows":[{"loader","text","processor","bits","endian","loadable",
+/// "by_name","reason"?}]} in list order -- the rows a loader asks to lead,
+/// the others, then "Binary file" -- with "processor" as
+/// neverd_session_arch_name names it ("" when NeverD has none), "by_name" for
+/// a row the loader took for the file's name alone (a dialog should not
+/// choose it by default) and "reason" saying why a row cannot be loaded;
+/// {"rows":[],"error"} when \p Path names no regular file.  Path is UTF-8.
+/// Free with neverd_free_string.
+NEVERD_API const char *neverd_identify_json(const char *Path);
+/// Read the input of the next neverd_session_load() as \p OptionsJson says
+/// instead of by its header: {"loader":"binary","processor":"x86"|"x86_64"|
+/// "arm"|"thumb"|"aarch64","base","offset","size","entry"?,"platform"?}
+/// reads it as a binary file -- the bytes from offset on (size 0 for the
+/// rest of the file) as that processor's code at base, starting at entry
+/// (base when absent); numbers are integers or hexadecimal strings.  The
+/// platform whose conventions the code follows decides how it decompiles:
+/// "sysv" (System V and AAPCS), "windows" or "darwin"; "auto", the default,
+/// reads it from the code -- where calls put their first argument, what
+/// prologues preserve, the thread block and system calls the code reaches --
+/// and assumes System V when the code shows too little.  {"loader":"evm"}
+/// reads a file as EVM bytecode, and {"loader":"auto"} as its header or
+/// contents say, even when the input's `.neverd-load.json` says otherwise;
+/// NULL drops the request, so a load reads that file when there is one.
+/// Returns 0, or -1 with neverd_last_error.
+NEVERD_API int neverd_session_set_load_options(neverd_session_t Sess,
+                                               const char *OptionsJson);
+/// How the loaded image was read, in neverd_session_set_load_options JSON;
+/// "{}" before a load.  A binary file's platform comes with
+/// "platform_source": "detected" or "user", and with "platform_evidence",
+/// what detection read it from.  Free with neverd_free_string.
+NEVERD_API const char *neverd_session_load_options_json(neverd_session_t Sess);
+/// Keep how the image was read in `<input>.neverd-load.json` for later loads,
+/// or remove that file when the header was read.  Returns 0, or -1 with
+/// neverd_last_error.
+NEVERD_API int neverd_load_options_save(neverd_session_t Sess);
 NEVERD_API int neverd_session_is_loaded(neverd_session_t Sess);
 
 /// Add the native function entries the function detector finds in the loaded
@@ -57,7 +95,13 @@ NEVERD_API int neverd_session_discover_functions(neverd_session_t Sess);
 /// Returns 1 on success, 0 on failure.  Thread-safe if called once.
 NEVERD_API int neverd_session_analyze(neverd_session_t Sess);
 
+/// Return the caller's input path encoded as UTF-8.
 NEVERD_API const char *neverd_session_file_path(neverd_session_t Sess);
+/// Return the SHA-256 of the input file's bytes as loaded, as 64 lowercase
+/// hexadecimal digits; empty when nothing is loaded or the file cannot be
+/// read.  The loader's own hash costs nothing; otherwise the file is hashed
+/// once per load.  Free with neverd_free_string.
+NEVERD_API const char *neverd_session_input_sha256(neverd_session_t Sess);
 NEVERD_API const char *neverd_session_arch_name(neverd_session_t Sess);
 NEVERD_API const char *neverd_session_format_name(neverd_session_t Sess);
 NEVERD_API int neverd_session_is_64bit(neverd_session_t Sess);
@@ -78,6 +122,7 @@ NEVERD_API int neverd_session_bitness(neverd_session_t Sess);
 /// Load debug symbols from \p Path instead of searching for a companion file.
 /// The named file is authoritative: neverd_session_load() fails if it cannot be
 /// read or holds no function symbols.  Pass NULL or "" to resume searching.
+/// Path is UTF-8 on every platform.
 NEVERD_API void neverd_session_set_pdb_path(neverd_session_t Sess,
                                             const char *Path);
 
@@ -165,6 +210,11 @@ NEVERD_API void neverd_free_string(const char *Str);
 NEVERD_API unsigned long long neverd_session_file_size(neverd_session_t Sess);
 NEVERD_API neverd_va_t neverd_session_base_addr(neverd_session_t Sess);
 NEVERD_API neverd_va_t neverd_session_entry_addr(neverd_session_t Sess);
+
+/// Non-fatal loader metadata diagnostics as [{code,message}]. No input bytes
+/// are repaired. Returns [] for an unloaded/null session. Caller frees.
+NEVERD_API const char *
+neverd_session_load_diagnostics_json(neverd_session_t Sess);
 NEVERD_API int neverd_session_segment_count(neverd_session_t Sess);
 NEVERD_API int neverd_session_section_count(neverd_session_t Sess);
 NEVERD_API int neverd_session_import_count(neverd_session_t Sess);

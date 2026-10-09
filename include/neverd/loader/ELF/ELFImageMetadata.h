@@ -24,6 +24,8 @@ struct ELFImageMetadata {
   uint64_t ProgramHeaderFileOffset;
   uint16_t ProgramHeaderEntrySize;
   std::vector<ELFProgramHeader> ProgramHeaders;
+  /// e_ehsize: the file header's own size.
+  uint16_t HeaderSize = 0;
 };
 } // namespace neverd
 #endif

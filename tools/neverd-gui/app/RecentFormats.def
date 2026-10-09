@@ -1,0 +1,51 @@
+//===- RecentFormats.def - Formats the quick start names --------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// How the quick start dialog labels a recent file: by the magic bytes its
+/// header starts with, or by the database extension.  The first matching
+/// row wins; a file no row matches is a binary file.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_RECENT_FORMAT(Magic, Label, Badge): the bytes a file starts with,
+// the label its badge shows, and the ChromeColors.def color of the badge.
+// NEVERD_RECENT_DATABASE / NEVERD_RECENT_BINARY / NEVERD_RECENT_MISSING
+// (Label, Badge): a NeverD database, a file no row matches, and a recent
+// file that no longer exists.
+#ifndef NEVERD_RECENT_FORMAT
+#define NEVERD_RECENT_FORMAT(Magic, Label, Badge)
+#endif
+#ifndef NEVERD_RECENT_DATABASE
+#define NEVERD_RECENT_DATABASE(Label, Badge)
+#endif
+#ifndef NEVERD_RECENT_BINARY
+#define NEVERD_RECENT_BINARY(Label, Badge)
+#endif
+#ifndef NEVERD_RECENT_MISSING
+#define NEVERD_RECENT_MISSING(Label, Badge)
+#endif
+
+NEVERD_RECENT_DATABASE("NDDB", RecentBadgeText)
+NEVERD_RECENT_BINARY("BIN", RecentBadgeText)
+NEVERD_RECENT_MISSING("?", DisabledText)
+
+NEVERD_RECENT_FORMAT("\x7F"
+                     "ELF",
+                     "ELF", RecentBadgeText)
+NEVERD_RECENT_FORMAT("MZ", "PE", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\xCF\xFA\xED\xFE", "MACH", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\xCE\xFA\xED\xFE", "MACH", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\xFE\xED\xFA\xCF", "MACH", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\xFE\xED\xFA\xCE", "MACH", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\xCA\xFE\xBA\xBE", "MACH", RecentBadgeText)
+NEVERD_RECENT_FORMAT("dex\n", "DEX", RecentBadgeText)
+NEVERD_RECENT_FORMAT("\0asm", "WASM", RecentBadgeText)
+
+#undef NEVERD_RECENT_FORMAT
+#undef NEVERD_RECENT_DATABASE
+#undef NEVERD_RECENT_BINARY
+#undef NEVERD_RECENT_MISSING

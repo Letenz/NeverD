@@ -73,6 +73,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `NeverDLowIRRefinementTests` 覆盖实际恢复的残余图、不同结构的有限循环、零次迭代、独立动态生产者、条件见证、重叠输入视图、复制与溢出关联、两边不可变读取证据、强制系统标志和返回槽保留。错误候选、额外写入、不完整或无限路径、过期证据、临时区冲突及共享预算耗尽必须拒绝证书；已有独立性测试仍拒绝可观察的任意值。
 
+`NeverDLowIRRefinementTests` 中的 `CompleteModel`、`CompletedTargetFacts`、`ConditionalImplication` 和 `PartitionedCoverage` 用例使用小输入域的独立穷举判定，并检查畸形输入、过期缓存、不完整枚举以及恰好/不足预算。实际 LowIR 和二进制精化用例在固定门数限制下检查条件乘积及原始/恢复图的所有终止分支，拒绝被改动的最终观察、不相关输入域和缺失目标。`FiniteValues` 测试区分编码失败与搜索、值数量及全局预算导致的拒绝。
+
 同一目标中的 `LowIRLoopRefinement.*` 和 `BinaryLowIRLoopRefinement.*` 覆盖任意 64 位计数、嵌套字典序排名、真实原生残余代码、入口前缀模板、重叠视图及相关溢出。负例拒绝错误循环体、缩小入口域、不下降的排名、无符号回绕、遗忘之前的写入、遗漏切点、畸形模板和共享预算耗尽。成功的有限分支不能授权不完整的归纳证明。
 
 `LowIRLoopInference.*` 和 `BinaryLowIRLoopInference.*` 使用独立编写的计数器、栈存储、提前返回、原生调用和打包标志位用例，覆盖窄位宽算术拓宽以及表达式不同但语义相等的标志状态。畸形图、缺失或伪造的来源、不终止／回绕循环，以及推导或证明预算耗尽均不得产生证书。
@@ -192,6 +194,13 @@ build-release/bin/NeverDLowIRRefinementTests
 打包标志测试覆盖全部标量入口标志组合、特权掩码、两次执行的 TF/AC 条件、不同未定义产生点、相关副本、原生调用、兄弟路径状态、强制最终系统状态观察、畸形证据及资源计费。有限循环必须结束每条可行输入路径；安全分支不能掩盖无限或截断路径。RDSSPD/RDSSPQ 检查覆盖 16 个通用寄存器和两种宽度、高位保持、保留 `Missing` 证据及伪造投影拒绝。机器状态测试在两个 C 后端的 O0/O2 下开启未定义行为陷阱，与独立用户态标志位预言机比较，并检查环境失败状态不会被后续操作清除。 INCSSPD/INCSSPQ 测试覆盖两种宽度和全部通用寄存器、不可达边界保留、安全兄弟路径完成后的可行陷阱、零操作数及伪造陷阱证据。
 
 `NeverDX86DecodeDetailTests` 覆盖三种解码入口、两种 x64 地址宽度、有符号位移边界、强制前缀、真正的 i386 disp16、moffs、截断输入及无详细信息的重复使用。仅精确的重定位字段可绑定，错误宽度、偏移或数值均不能绑定。原生独立性及关系证明测试还保留完整帧写入，拒绝可观察的任意标志位及被修改的移位候选。
+
+`NeverDLowUndefinedDigestTests` 检查独立 SHA-256 向量、每个已存储字段、有符号序号位、顺序、填充字节排除及输入不变性，覆盖内联缓冲增长、199/200 操作边界和更长的增量跨度。`LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` 在两条路径上检查真实过期证据的拒绝与重新绑定。保留 `NeverDLiftTests` 中的 `InputDigest.*` 覆盖；修改独立实现时重编译受影响调用者。记录实际 sanitizer、可移植路径及主机覆盖；摘要微基准不能单独证明原生等价。
+
+```bash
+cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
+build-release/bin/NeverDLowUndefinedDigestTests
+```
 
 `NeverDX86UndefinedEffectsTests` 检查未定义位元数据、已定义／保留标志及过期证书拒绝。`NeverDX86CarryArithmeticFlagTests` 用算术参考实现检查寄存器和内存形式 ADC/SBB 的辅助进位。`NeverDX86LogicIdentityTests` 检查相同操作数的 AND 在 64 位模式下写入 32 位目标时，仍清零其所属 64 位寄存器的位 63:32，同时保留窄位宽写入未覆盖的位。
 
@@ -408,6 +417,7 @@ V9 schema 测试往返验证八种次功能名称，并与生命周期完成共�
 | `unittests/TestProcessTests.cpp` | `NeverDTestProcessTests` | 跨平台子进程调用、引号、重定向与退出码 |
 | `unittests/libc` | `NeverDLibCTests` | 已知 libc 名称与分类 |
 | `unittests/safety` | `NeverDSafetyTests`、`NeverDSafetyIntegrationTests` | 汇目录、身份优先序、参数预过滤、拷贝越界猎取、堆生命周期审计，以及强制执行的 PE/ELF/Mach-O × x86-64/AArch64 六单元矩阵 |
+| `unittests/loader` | `NeverDRawISATests` | 二进制文件：从字节识别指令集（数据、测试程序自身代码、偏移两字节的代码、各家族 32 位与 64 位编码、以零开头的文件）以及 Cortex-M 向量表。`scripts/validate_isa_model.py --engine build/bin/libneverd.so` 按哈希下载模型从未见过的 180 个真实程序和库进行检查；它需要网络，不属于 CTest |
 | `unittests/lift` | `NeverDLiftTests` | Decoder/lifter LowIR 形状、IR 阶段、loader、重定位、格式 fixture、反编译与代表性 patch 流程 |
 | `unittests/semantic` 中的大多数文件 | `NeverDSemanticTests` | 指令、ABI、控制流、C 表达式和 lift/recompile 差分语义 |
 | `unittests/evm` | `NeverDEVMOpcodeTests`、`NeverDEVMBytecodeTests`、`NeverDEVMLoaderTests`、`NeverDEVMABITests`、`NeverDEVMAnalyzerTests`、`NeverDEVMDecoderPropertyTests`、`NeverDEVMProxyTests`、`NeverDEVMCallTests`、`NeverDEVMSemanticTests`、`NeverDEVMEmitterTests`、`NeverDEVMIntegrationTests` | 硬分叉元数据、输入规范化、ABI/签名歧义、CFG/SSA/恢复、穷举 decoder 边界与恶意输入、proxy/call 事实、解释器语义、LLVM/C/Solidity 差分执行及公共 API 路由 |
@@ -1144,7 +1154,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5003 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5365`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5037 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5399`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1241,6 +1251,8 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 
 `WindowsSystemModules` 为两种 ISA 构造有界的 `ntdll.dll`、`kernelbase.dll` 和 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 与 `GetProcAddress` 共用其映射基址；PEB/LDR 和 `MEM_IMAGE` 描述同一批映像。静态导入、按名称查询和客户 DLL 转发使用相同 API 跳板与导出解析器。提供方固定驻留，不执行客户初始化回调，普通客户 DLL 全部卸载后不会阻止入口返回。头部或导出元数据改变会停止查询。未知系统导出名称和非零系统序号查询明确停止；已建模名称的大小写不匹配和空名称返回错误 127，空指针查询返回 87。生成的字节和地址属于模型策略，不复刻特定 Windows DLL 布局、原生序号或跨提供方别名。`WindowsSystemTests.cpp` 对照原始 x64/ARM64 EXE 与原生 Windows，并独立观察八次初始线程返回。
 
+`WindowsSectionFixture.inc` 检查两个独立映像视图、句柄复用、关闭句柄后的读取、写入后的视图隔离、解除映射及原驻留模块的保留。负例覆盖命名空间、访问权限、固定地址和偏移。`WindowsThreadFixture.inc` 分别检查亲和性与隐藏状态、精确长度和带杂值的参数高位。原始样本也纳入 Windows 原生对照；缺少 `KnownDlls` 命名空间的 Wine 无法验证 section 场景。
+
 `WindowsProcessExceptions` 在同一 CPU 和进程预算内实现 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序处理器可注册或移除处理器、触发嵌套异常、调用已建模 API、加载 DLL 以及退出进程。x64/ARM64 数据访问异常和 x64 整数除法异常可在校验客户对 `CONTEXT` 的修改后恢复；通用寄存器、SIMD 和受支持的浮点状态会保留。软件异常经模型提供方中的真实返回指令继续执行。模型限制为最多保留 128 个注册项、嵌套 16 层。非法处置值、被修改的异常指针、不支持的上下文字段和超限均明确失败。ARM64 基于栈帧的 SEH／展开、调试器派发及执行／保护页异常仍不支持。`WindowsExceptionTests.cpp` 将原创 EXE／DLL 场景与原生 Windows 对照；原生 ARM64 KVM/WHP 证据仍待补齐。 软件异常记录带有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），与调用者传入的不可继续标志分别处理；原始 Windows 可执行文件精确核对软件异常和硬件异常的标志值。
 
 `WindowsProcessContext` 保留每个派发帧的来源。已支持的 x64 数据访问和除法故障在 `CONTEXT.EFlags` 中呈现 RF（`0x10000`）；`RaiseException`（包括软件抛出的访问违规码）保留当前上下文。来源信息贯穿 VEH/VCH 和 SEH 搜索／展开。合法继续执行时恢复不含 RF 的逻辑 CPU 标志；客户修改 RF 会在发布状态前被拒绝。此受限配置不模拟指令断点或客户控制的 RF。`WindowsExceptionTests.cpp` 检查保存记录、恢复，以及拒绝时 CPU／RAM 不变。
@@ -1264,6 +1276,12 @@ Windows ring3 按独立原生观测，将 checked x64 的 `operand_alignment` �
 `WindowsLifetimeTests.cpp` 将冻结的通知序列与独立原生 Windows 进程及 KVM/WHP/Unicorn 执行对比，覆盖正常退出、入口返回、两个 DLL 初始化失败、四处提前退出及无入口 DLL。另行验证回调故障、共享预算、重定位 TLS 字段和 TLS 总容量。原生入口返回探针保留初始线程句柄，重复64 次核对线程退出码及精确线程／进程通知序列。观察完成后终止剩余子进程线程，不将其进程退出码当作入口返回值。
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests` 和 `NeverDUnpackPublicTests` 覆盖加壳镜像的恢复；参见[脱壳](unpack.md)。`UnpackGeneratedTests.cpp` 用测试自己加壳的程序，在 x86-64 和 ARM64 上检查入口规则。`X64ReturnPrefixTests.cpp` 在每种传输上检查双字节近返回，并确认其它带前缀的返回仍被拒绝。`WindowsDeferredTests.cpp` 检查不透明入口与已停止进程的观察；`ExecutionSessionTests.cpp` 检查执行监视。 `DirectX64Tests.cpp` 还验证直接执行的部分页监视、跨页取指、恢复后只执行一次、服务边界、非法指令和超时状态。
+
+`LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage`、`ExplicitSnapshotsKeepExternalHeapDependenciesVisible` 和 `ReleasedHeapStateDoesNotBlockRecovery` 在可用的逐指令与直接执行后端上比较独立编译的启动及入口行为。`HeapReferencesInCapturedTLSCannotBeDiscarded` 覆盖仅存在于 TLS 中的依赖。公开接口测试要求拒绝时保留已有输出文件，并验证 C API 与 CLI 的显式快照一致。地址匹配是保守证据，不是原生运行证明。
+
+`DirectServiceBindingsRequireAnExplicitSnapshot` 覆盖首次在捕获入口前后使用直接服务编号的情况；C API 和 CLI 也验证拒绝时保留已有输出。
+
+`PrivateHeapDestructionReleasesOnlyOwnedBlocks` 验证移动后的分配所有权、跨堆拒绝、失效句柄及存活堆容量的复用。
 
 `UnpackLibraryTests.cpp` 在测试内给独立 x64/ARM64 DLL 加壳，检查依赖顺序、普通及生成 TLS 回调、附加失败清理、输入/宿主身份、自身文件访问、导出名称/序号/数据/转发器及无自身导入。原生 Windows 通过独立 EXE 加载原始和重建 DLL，并调用声明的导出；受检与直接 WHP 用例均为必测。`CompletedGeneratedTLSCallsRequireTheAttachABI` 拒绝变更入口或参数；`GeneratedCallsNeedTheirReturnedStackAtTheContinuation` 拒绝错误返回栈。这些验证覆盖脱壳行为，不涉及去虚拟化。
 

@@ -370,13 +370,16 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
   }
 
   if (E.Op == NdOp::FLOAT_FMA) {
+    const char *Builtin = nullptr;
+#define NEVERD_C_FLOAT_TYPE(Bytes, Spelling, FusedMultiplyAdd, ComputesWider)  \
+  if (E.Type && E.Type->Size == Bytes)                                         \
+    Builtin = FusedMultiplyAdd;
+#include "neverd/backend/c/render/CFloatTypes.def"
     if (E.Operands.size() != 3 || !E.Type ||
-        E.Type->Kind != NdTypeKind::Float ||
-        (E.Type->Size != 4 && E.Type->Size != 8))
+        E.Type->Kind != NdTypeKind::Float || !Builtin)
       llvm::report_fatal_error(
           "HighC cannot render an invalid fused multiply-add");
-    std::string Result =
-        E.Type->Size == 4 ? "__builtin_fmaf(" : "__builtin_fma(";
+    std::string Result = std::string(Builtin) + "(";
     for (unsigned I = 0; I < 3; ++I) {
       const auto &Operand = E.Operands[I];
       if (!Operand || !Operand->Type ||
@@ -391,6 +394,16 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     return Result + ")";
   }
   if (E.Op == NdOp::SELECT && E.Operands.size() == 3) {
+    // C converts both arms to the type their printed types share, which an
+    // unsigned local would make unsigned under a signed select: each integer
+    // arm takes the select's own type.
+    if (E.Type && E.Type->Kind == NdTypeKind::Int && !E.Type->IsEnum &&
+        E.Operands[1] && E.Operands[2])
+      return typedText(E,
+                       "(" + exprStr(*E.Operands[0]) + " ? " +
+                           integerView(*E.Operands[1], E.Type, 3) + " : " +
+                           integerView(*E.Operands[2], E.Type, 3) + ")",
+                       E.Type->Size, E.Type->IsSigned);
     return "(" + exprStr(*E.Operands[0]) + " ? " + exprStr(*E.Operands[1]) +
            " : " + exprStr(*E.Operands[2]) + ")";
   }
@@ -755,6 +768,11 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                        E.Type->Size, E.Type->IsSigned);
     if (ByteOff == 0)
       return "(" + Ty + ")" + Src;
+    // Literals retain their C spelling width, which can be much narrower than
+    // their IR carrier. Shift the unsigned source bits at their declared width.
+    if (E.Operands[0]->Type && E.Operands[0]->Type->Kind == NdTypeKind::Int)
+      Src = "(" + typeToC(NdType::makeInt(E.Operands[0]->Type->Size, false)) +
+            ")" + Src;
     return "(" + Ty + ")(" + Src + " >> " + std::to_string(ByteOff * 8) + ")";
   }
   case NdOp::CONCAT: {
@@ -763,11 +781,20 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     // odd-width carrier for the upper part.
     const HighExpr &HiE = *E.Operands[0];
     const HighExpr &LoE = *E.Operands[1];
+    // A constant the code holds as an address prints as the object it
+    // names, never as its number: `{a, b}` stored as one 64-bit pair.
+    auto Number = [&](const HighExpr &C) {
+      return C.Kind == ExprKind::Const &&
+             (C.ConstProvenance == ConstantAddressProvenance::Scalar ||
+              C.ConstProvenance == ConstantAddressProvenance::AddressFragment ||
+              (C.ConstProvenance == ConstantAddressProvenance::Unknown &&
+               !ImageObjects.count(C.ConstVal)));
+    };
     // The low part zero-extended to the carrier: a constant is its value, and
     // a value already printed at its width converts once.
     auto ZeroExtendedLow = [&](const TypeRef &Carrier) -> std::string {
       const uint16_t LoSize = LoE.Type->Size;
-      if (LoE.Kind == ExprKind::Const)
+      if (Number(LoE))
         return constStr(LoSize >= 8 ? LoE.ConstVal
                                     : LoE.ConstVal &
                                           ((uint64_t{1} << (8 * LoSize)) - 1),
@@ -795,8 +822,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       return "(" + Text + ")";
     }
     // A constant upper part already fits its width: shift it in the carrier.
-    if (HiE.Kind == ExprKind::Const && HiE.Type && E.Type &&
-        E.Type->Size <= 8 && LoE.Type && LoE.Type->Size < E.Type->Size) {
+    if (Number(HiE) && HiE.Type && E.Type && E.Type->Size <= 8 && LoE.Type &&
+        LoE.Type->Size < E.Type->Size) {
       const uint64_t HiMask = (uint64_t{1} << (8 * HiE.Type->Size)) - 1;
       const TypeRef Carrier = NdType::makeInt(E.Type->Size, false);
       const std::string Ty = typeToC(Carrier);
@@ -972,8 +999,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
   const bool Bitwise = E.Op == NdOp::INT_AND || E.Op == NdOp::INT_OR ||
                        E.Op == NdOp::INT_XOR || E.Op == NdOp::BOOL_XOR;
   const int OperandPrec = Bitwise ? getOpPrecedence(NdOp::INT_LESS) : MyPrec;
-  std::string LHS = exprStr(*E.Operands[0], OperandPrec);
-  std::string RHS = exprStr(*E.Operands[1], OperandPrec);
+  std::string LHS = floatOperandStr(*E.Operands[0], OperandPrec);
+  std::string RHS = floatOperandStr(*E.Operands[1], OperandPrec);
   if (E.Op == NdOp::INT_EQUAL || E.Op == NdOp::INT_NOTEQUAL) {
     const HighExpr *A = unwrapIntegerView(E.Operands[0].get());
     const HighExpr *B = unwrapIntegerView(E.Operands[1].get());
@@ -1104,6 +1131,24 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                ")" + exprStr(*Op, 99);
       if (Op->Kind == ExprKind::Const && Op->ConstVal == 0)
         return std::string("0");
+      // What the text certainly prints as decides over the IR's type: a
+      // declared local or parameter can read in the other signedness.
+      if (Op->Kind == ExprKind::Var || Op->Kind == ExprKind::Phi) {
+        std::string Text = exprStr(*Op, 99);
+        if (const auto Printed = printedIntegerType(*Op))
+          return Printed->first == CmpSize && Printed->second == NeedsSignedCast
+                     ? Text
+                     : "(" + UTy + ")" + Text;
+      }
+      // So does an operation's text: a shift happens in an unsigned carrier
+      // whatever its type says, and `x << 24 < y << 24` compares unsigned.
+      if (Op->Kind != ExprKind::Call && !typedCallResult(Op)) {
+        std::string Text = exprStr(*Op, 99);
+        if (const auto Printed = printedIntegerType(*Op))
+          return Printed->first == CmpSize && Printed->second == NeedsSignedCast
+                     ? Text
+                     : "(" + UTy + ")" + Text;
+      }
       if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&
           Op->Type->Size == CmpSize && Op->Type->IsSigned == NeedsSignedCast)
         return exprStr(*Op, 99);

@@ -63,12 +63,66 @@ foreach(_arch X64 AArch64)
       "/merge:${_generated_CacheMerge}"
       "${_dir}/program.obj" "${_dir}/kernel.lib" "${_dir}/user.lib"
       "/out:${_dir}/${_generated_ProgramFile}"
-    DEPENDS fixtures/unpack_generated.c "${_generated_cases}"
+    DEPENDS fixtures/unpack_generated.c fixtures/unpack_pointer_state.h
+      fixtures/unpack_dynamic_tls_state.h
+      "${_generated_cases}"
       "${_generated_dir}/KERNEL.def" "${_generated_dir}/USER.def"
     VERBATIM)
   list(APPEND _generated_outputs "${_dir}/${_generated_ProgramFile}")
+  add_custom_command(OUTPUT "${_dir}/${_generated_TLSHeapProgramFile}"
+      "${_dir}/tls-heap.obj"
+    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+      "--target=${_generated_${_arch}Target}"
+      -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
+      -fno-vectorize -fno-slp-vectorize -O1 -c
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/unpack_tls_heap.c"
+      -o "${_dir}/tls-heap.obj"
+    COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib /noimplib
+      "/entry:${_generated_ProgramEntry}" /subsystem:console /include:_tls_used
+      "/machine:${_generated_${_arch}Machine}"
+      "/base:${_generated_ProgramBase}" /timestamp:0
+      "/section:${_generated_ProgramAccess}"
+      "${_dir}/tls-heap.obj" "${_dir}/kernel.lib"
+      "/out:${_dir}/${_generated_TLSHeapProgramFile}"
+    DEPENDS fixtures/unpack_tls_heap.c fixtures/unpack_pointer_state.h
+      "${_generated_cases}"
+      "${_dir}/${_generated_ProgramFile}"
+    VERBATIM)
+  list(APPEND _generated_outputs "${_dir}/${_generated_TLSHeapProgramFile}")
+
+  add_custom_command(OUTPUT "${_dir}/delay.exe" "${_dir}/unpack_delay.dll"
+      "${_dir}/delay-provider.obj" "${_dir}/delay-program.obj"
+      "${_dir}/delay.lib"
+    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+      "--target=${_generated_${_arch}Target}" -ffreestanding
+      -fno-builtin -fno-stack-protector -O1 -DDELAY_PROVIDER -c
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/unpack_delay.c"
+      -o "${_dir}/delay-provider.obj"
+    COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib /dll
+      /entry:dll_entry /base:0x190000000 /timestamp:0
+      "/machine:${_generated_${_arch}Machine}"
+      "${_dir}/delay-provider.obj" "/out:${_dir}/unpack_delay.dll"
+      "/implib:${_dir}/delay.lib"
+    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+      "--target=${_generated_${_arch}Target}" -ffreestanding
+      -fno-builtin -fno-stack-protector -fno-vectorize -fno-slp-vectorize
+      -O1 -c "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/unpack_delay.c"
+      -o "${_dir}/delay-program.obj"
+    COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib /noimplib
+      /entry:program /subsystem:console /base:0x180000000 /timestamp:0
+      /section:.prog,rwe /delayload:unpack_delay.dll
+      "/machine:${_generated_${_arch}Machine}"
+      "${_dir}/delay-program.obj" "${_dir}/delay.lib" "${_dir}/kernel.lib"
+      "/out:${_dir}/delay.exe"
+    DEPENDS fixtures/unpack_delay.c "${_dir}/${_generated_ProgramFile}"
+    VERBATIM)
+  list(APPEND _generated_outputs "${_dir}/delay.exe" "${_dir}/unpack_delay.dll")
 endforeach()
 add_custom_target(NeverDUnpackGeneratedFixtures DEPENDS ${_generated_outputs})
-add_dependencies(NeverDUnpackExecutionTests NeverDUnpackGeneratedFixtures)
-target_compile_definitions(NeverDUnpackExecutionTests PRIVATE
-  NEVERD_UNPACK_GENERATED_FIXTURE_DIR="${_generated_dir}")
+foreach(_test NeverDUnpackExecutionTests NeverDUnpackPublicTests)
+  if(TARGET ${_test})
+    add_dependencies(${_test} NeverDUnpackGeneratedFixtures)
+    target_compile_definitions(${_test} PRIVATE
+      NEVERD_UNPACK_GENERATED_FIXTURE_DIR="${_generated_dir}")
+  endif()
+endforeach()

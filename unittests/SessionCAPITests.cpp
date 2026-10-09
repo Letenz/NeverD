@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "NativeMobileSession.h"
+#include "SessionImpl.h"
 #include "gtest/gtest.h"
 
 #include "neverd/loader/BinaryImage.h"
@@ -15,9 +16,12 @@
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Object/ELFTypes.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -34,6 +38,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -1806,23 +1811,25 @@ TEST_F(SessionCAPITest, DisassemblyStatesHowEachInstructionMovesTheStack) {
 
 TEST_F(SessionCAPITest, DisassemblyStatesTheMemoryEachInstructionReaches) {
   // Each row: its bytes and the reference it states, as an offset from the
-  // next instruction or an absolute address, with its kind.
+  // next instruction or an absolute address, with its kind and, for a read
+  // or write, the bytes it accesses.
   struct Row {
     std::string_view Bytes;
     std::optional<int64_t> Relative;
     std::optional<uint64_t> Absolute;
     std::string_view Kind;
+    int64_t Size = 0;
   };
   using namespace std::string_view_literals;
   const Row Rows[] = {
       // mov rdi, qword ptr [rip + 0x100]
-      {"\x48\x8b\x3d\x00\x01\x00\x00"sv, 0x100, {}, "read"},
+      {"\x48\x8b\x3d\x00\x01\x00\x00"sv, 0x100, {}, "read", 8},
       // mov dword ptr [rip + 0x200], eax
-      {"\x89\x05\x00\x02\x00\x00"sv, 0x200, {}, "write"},
+      {"\x89\x05\x00\x02\x00\x00"sv, 0x200, {}, "write", 4},
       // mov rax, qword ptr fs:[0x28]: an offset in a segment, not an address
       {"\x64\x48\x8b\x04\x25\x28\x00\x00\x00"sv, {}, {}, {}},
       // mov eax, dword ptr [0x404000]
-      {"\x8b\x04\x25\x00\x40\x40\x00"sv, {}, 0x404000, "read"},
+      {"\x8b\x04\x25\x00\x40\x40\x00"sv, {}, 0x404000, "read", 4},
       // lea rax, [rip + 0x10]
       {"\x48\x8d\x05\x10\x00\x00\x00"sv, 0x10, {}, "offset"},
       // mov rax, qword ptr [rbx + 8]
@@ -1864,7 +1871,38 @@ TEST_F(SessionCAPITest, DisassemblyStatesTheMemoryEachInstructionReaches) {
         << I << ": " << Text;
     EXPECT_EQ(Ref->getString("kind").value_or("").str(), Rows[I].Kind)
         << I << ": " << Text;
+    EXPECT_EQ(Ref->getInteger("size").value_or(0), Rows[I].Size)
+        << I << ": " << Text;
   }
+  // The function's direct references carry the same widths, as a fourth
+  // element of a read or write.
+  ASSERT_GE(neverd_session_discover_functions(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Page = takeString(neverd_code_refs_json(Session, Entry, 1));
+  auto PageJson = llvm::json::parse(Page);
+  ASSERT_TRUE(static_cast<bool>(PageJson)) << Page;
+  const auto *PageRefs = PageJson->getAsObject()->getArray("refs");
+  ASSERT_TRUE(PageRefs) << Page;
+  size_t Accesses = 0;
+  for (const auto &Value : *PageRefs) {
+    const auto &Fields = *Value.getAsArray();
+    const auto Kind = Fields[2].getAsString().value_or("");
+    if (Kind != "read" && Kind != "write") {
+      EXPECT_EQ(Fields.size(), 3u) << Page;
+      continue;
+    }
+    ASSERT_EQ(Fields.size(), 4u) << Page;
+    const uint64_t From =
+        std::stoull(Fields[0].getAsString().value_or("0").str(), nullptr, 16);
+    uint64_t At = Entry;
+    for (const Row &R : Rows) {
+      if (At == From)
+        EXPECT_EQ(Fields[3].getAsInteger().value_or(0), R.Size) << Page;
+      At += R.Bytes.size();
+    }
+    ++Accesses;
+  }
+  EXPECT_EQ(Accesses, 3u) << Page;
 }
 
 // The code a data executable's entry runs, and where it and the data start.
@@ -2194,6 +2232,33 @@ TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
             "error: preferred must name a legacy code page");
   EXPECT_EQ(Scan("[]"), "error: string options must be a JSON object");
 
+  // Pages of one string read the same rows from a cursor, ending with none.
+  std::string Paged = "[";
+  for (std::optional<uint64_t> Cursor = 0; Cursor;) {
+    const auto Page =
+        takeString(neverd_strings_page_json(Session, nullptr, *Cursor, 1));
+    auto PageJson = llvm::json::parse(Page);
+    ASSERT_TRUE(static_cast<bool>(PageJson)) << Page;
+    const auto *Object = PageJson->getAsObject();
+    const auto *Strings = Object->getArray("strings");
+    ASSERT_TRUE(Strings && Strings->size() == 1) << Page;
+    if (Paged.size() > 1)
+      Paged += ",";
+    Paged += llvm::formatv("{0}", (*Strings)[0]).str();
+    Cursor.reset();
+    if (const auto Next = Object->getString("next_addr")) {
+      uint64_t Value = 0;
+      ASSERT_FALSE(Next->getAsInteger(0, Value)) << Page;
+      Cursor = Value;
+    }
+  }
+  EXPECT_EQ(Paged + "]", Defaults);
+  EXPECT_EQ(takeString(neverd_strings_page_json(Session, nullptr,
+                                                0x401000 + 0x1000, 8)),
+            "{\"next_addr\":null,\"strings\":[]}");
+  EXPECT_EQ(neverd_strings_page_json(Session, R"({"min_length":0})", 0, 8),
+            nullptr);
+
   const auto Encodings = takeString(neverd_string_encodings_json());
   EXPECT_NE(Encodings.find(R"("name":"utf-16le","spelling":"UTF-16LE")"),
             std::string::npos)
@@ -2277,6 +2342,12 @@ TEST(SessionNames, DemanglesAsIdentitiesDo) {
   EXPECT_EQ(takeString(neverd_demangle("__ZNK14QMessageLogger7warningEPKcz")),
             "QMessageLogger::warning(char const*, ...) const");
   EXPECT_EQ(takeString(neverd_demangle("?f@@YAXXZ")), "void __cdecl f(void)");
+  // Rust reads without the legacy hash, Swift as a declaration path.
+  EXPECT_EQ(
+      takeString(neverd_demangle("_ZN4core3fmt5write17h0123456789abcdefE")),
+      "core::fmt::write");
+  EXPECT_EQ(takeString(neverd_demangle("_$s4Demo3BoxC5countSivg")),
+            "Demo.Box.count.getter");
   EXPECT_EQ(takeString(neverd_demangle("main")), "main");
   EXPECT_EQ(neverd_demangle(nullptr), nullptr);
 }
@@ -2432,6 +2503,495 @@ TEST_F(SessionCAPITest, SidecarWritesRespectWorkerOwnership) {
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "saved_name");
   EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-annotations.json"));
   EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-renames.json"));
+}
+
+TEST_F(SessionCAPITest, OperandFormatsPersistByInstructionAndOperand) {
+  const auto Input = write("operands.elf", makeNativeELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Entry = neverd_session_entry_addr(Session);
+  const std::string EntryHex = "0x" + llvm::utohexstr(Entry);
+  ASSERT_EQ(
+      neverd_operand_format_set(Session, Entry, 1, R"({"base":"decimal"})"), 0)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_operand_format_set(Session, Entry, 0,
+                                      R"({"base":"hex","negate":true})"),
+            0);
+  const std::string Rows =
+      "[{\"addr\":\"" + EntryHex +
+      "\",\"operands\":[{\"base\":\"hex\",\"invert\":false,\"negate\":true,"
+      "\"operand\":0},{\"base\":\"decimal\",\"invert\":false,\"negate\":"
+      "false,\"operand\":1}]}]";
+  EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), Rows);
+  // A base the table does not name, an operand past the eighth and a flag
+  // that is no boolean are refused.
+  EXPECT_EQ(neverd_operand_format_set(Session, Entry, 1, R"({"base":"octal"})"),
+            -1);
+  EXPECT_EQ(neverd_operand_format_set(Session, Entry, 8, R"({"base":"hex"})"),
+            -1);
+  EXPECT_EQ(neverd_operand_format_set(Session, Entry, 1,
+                                      R"({"base":"hex","negate":1})"),
+            -1);
+  EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), Rows);
+  // Saved, the formats come back with the input.
+  ASSERT_EQ(neverd_operand_formats_save(Session), 0)
+      << takeString(neverd_last_error(Session));
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_operand_formats_json(Reopened)), Rows);
+    neverd_session_destroy(Reopened);
+  }
+  // The listing's own spelling, or none, forgets an operand's format.
+  ASSERT_EQ(
+      neverd_operand_format_set(Session, Entry, 0, R"({"base":"number"})"), 0);
+  ASSERT_EQ(neverd_operand_format_set(Session, Entry, 1, nullptr), 0);
+  EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), "[]");
+  // Formats belong to code; data takes none.
+  const auto Data = write("operands-data.elf",
+                          makeDataELF(std::string_view("\x01\x02\x03\x04", 4)));
+  neverd_session_t DataSession = neverd_session_create();
+  ASSERT_EQ(neverd_session_load(DataSession, Data.c_str()), 1);
+  EXPECT_EQ(neverd_operand_format_set(DataSession, DataELFData, 0,
+                                      R"({"base":"hex"})"),
+            -1);
+  EXPECT_NE(takeString(neverd_last_error(DataSession)).find("executable"),
+            std::string::npos);
+  EXPECT_EQ(neverd_operand_format_set(DataSession, DataELFEntry, 0,
+                                      R"({"base":"hex"})"),
+            0);
+  neverd_session_destroy(DataSession);
+}
+
+TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {
+  // lea rax, [rip + d] to the data, then ret: the code takes the address of
+  // data no symbol names.
+  std::string Code = "\x48\x8d\x05";
+  const auto Displacement =
+      static_cast<uint32_t>(DataELFData - (DataELFEntry + 7));
+  for (unsigned I = 0; I < 4; ++I)
+    Code += static_cast<char>(Displacement >> (8 * I));
+  Code += '\xc3';
+  const auto Input =
+      write("user-names.elf",
+            makeDataELF(std::string_view("\x01\x02\x03\x04", 4), Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const std::string Row = "{\"addr\":\"0x" + llvm::utohexstr(DataELFData) +
+                          "\",\"name\":\"table_base\",\"size\":0}";
+  ASSERT_EQ(neverd_rename_addr(Session, DataELFData, "table_base"), 0)
+      << takeString(neverd_last_error(Session));
+  // The symbols name it, and so does the C.
+  EXPECT_NE(takeString(neverd_data_symbols_json(Session)).find(Row),
+            std::string::npos);
+  ASSERT_GE(neverd_session_discover_functions(Session), 1);
+  EXPECT_NE(
+      takeString(neverd_decompile(Session, DataELFEntry)).find("table_base"),
+      std::string::npos);
+  // The name is saved with the input and comes back with it.
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_NE(takeString(neverd_data_symbols_json(Reopened)).find(Row),
+              std::string::npos);
+    neverd_session_destroy(Reopened);
+  }
+  // A name has no spaces, and names an address in the image.
+  EXPECT_EQ(neverd_rename_addr(Session, DataELFData, "table base"), -1);
+  EXPECT_EQ(neverd_rename_addr(Session, 0x10, "nowhere"), -1);
+  // Taking the name away leaves the data unnamed again.
+  ASSERT_EQ(neverd_rename_addr(Session, DataELFData, nullptr), 0);
+  EXPECT_EQ(takeString(neverd_data_symbols_json(Session)).find("table_base"),
+            std::string::npos);
+  EXPECT_EQ(
+      takeString(neverd_decompile(Session, DataELFEntry)).find("table_base"),
+      std::string::npos);
+}
+
+// A universal Mach-O file of \p Slices, each at a page boundary.
+std::string makeFatMachO(const std::vector<std::string> &Slices) {
+  using namespace llvm::MachO;
+  constexpr uint32_t Alignment = 12;
+  std::string Bytes(sizeof(fat_header) + Slices.size() * sizeof(fat_arch),
+                    '\0');
+  const auto put32 = [&](size_t Offset, uint32_t Value) {
+    llvm::support::endian::write32be(Bytes.data() + Offset, Value);
+  };
+  put32(0, FAT_MAGIC);
+  put32(4, static_cast<uint32_t>(Slices.size()));
+  for (size_t I = 0; I < Slices.size(); ++I) {
+    Bytes.resize(llvm::alignTo(Bytes.size(), uint64_t(1) << Alignment), '\0');
+    const auto &Slice = Slices[I];
+    const auto *Header = reinterpret_cast<const mach_header_64 *>(Slice.data());
+    const size_t Entry = sizeof(fat_header) + I * sizeof(fat_arch);
+    put32(Entry, Header->cputype);
+    put32(Entry + 4, Header->cpusubtype);
+    put32(Entry + 8, static_cast<uint32_t>(Bytes.size()));
+    put32(Entry + 12, static_cast<uint32_t>(Slice.size()));
+    put32(Entry + 16, Alignment);
+    Bytes += Slice;
+  }
+  return Bytes;
+}
+
+TEST_F(SessionCAPITest, IdentifyListsWhatLoadingReads) {
+  const auto rows = [](const std::string &Path) {
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_identify_json(Path.c_str())));
+    std::vector<llvm::json::Object> Result;
+    if (!Parsed) {
+      llvm::consumeError(Parsed.takeError());
+      return Result;
+    }
+    if (const auto *Rows = Parsed->getAsObject()->getArray("rows"))
+      for (const auto &Row : *Rows)
+        Result.push_back(*Row.getAsObject());
+    return Result;
+  };
+  const auto text = [](const llvm::json::Object &Row) {
+    return Row.getString("text").value_or("").str();
+  };
+  const auto loadable = [](const llvm::json::Object &Row) {
+    return Row.getBoolean("loadable").value_or(false);
+  };
+  // An ELF executable has its row, and any file is a binary file last.
+  const std::string Native = makeNativeELF(false);
+  const auto NativePath = write("identify.elf", Native);
+  auto Rows = rows(NativePath);
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "ELF64 for x86-64 (Executable)");
+  EXPECT_EQ(Rows[0].getString("loader").value_or(""), "elf");
+  EXPECT_EQ(Rows[0].getString("processor").value_or(""), "x86_64");
+  EXPECT_TRUE(loadable(Rows[0]));
+  EXPECT_EQ(text(Rows[1]), "Binary file");
+  EXPECT_EQ(Rows[1].getString("loader").value_or(""), "binary");
+  EXPECT_TRUE(loadable(Rows[1]));
+  ASSERT_EQ(neverd_session_load(Session, NativePath.c_str()), 1);
+  EXPECT_EQ(takeString(neverd_session_arch_name(Session)), "x86_64");
+  // A processor NeverD lacks and a big-endian file are named and refused,
+  // as loading refuses them.
+  std::string Mips = Native;
+  llvm::support::endian::write16le(Mips.data() + llvm::ELF::EI_NIDENT + 2,
+                                   llvm::ELF::EM_MIPS);
+  const auto MipsPath = write("identify-mips.elf", Mips);
+  Rows = rows(MipsPath);
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "ELF64 for MIPS (Executable)");
+  EXPECT_FALSE(loadable(Rows[0]));
+  EXPECT_EQ(Rows[0].getString("reason").value_or(""),
+            "NeverD has no MIPS processor");
+  EXPECT_EQ(neverd_session_load(Session, MipsPath.c_str()), 0);
+  std::string Big = Native;
+  Big[llvm::ELF::EI_DATA] = llvm::ELF::ELFDATA2MSB;
+  Rows = rows(write("identify-big.elf", Big));
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_FALSE(loadable(Rows[0]));
+  // A thin Mach-O file, and a universal one with a row per slice: only the
+  // slice loading reads is loadable.
+  Rows = rows(write("identify.macho", makeObservedMachO(true, "_start")));
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "Mach-O file (EXECUTE). ARM64");
+  EXPECT_TRUE(loadable(Rows[0]));
+  const auto FatPath =
+      write("identify-fat", makeFatMachO({makeObservedMachO(false, "_start"),
+                                          makeObservedMachO(true, "_start")}));
+  Rows = rows(FatPath);
+  ASSERT_EQ(Rows.size(), 3u);
+  EXPECT_EQ(text(Rows[0]), "Fat Mach-O file, 1. X86_64");
+  EXPECT_EQ(text(Rows[1]), "Fat Mach-O file, 2. ARM64");
+  ASSERT_NE(loadable(Rows[0]), loadable(Rows[1]));
+  const auto &Chosen = loadable(Rows[0]) ? Rows[0] : Rows[1];
+  const auto &Other = loadable(Rows[0]) ? Rows[1] : Rows[0];
+  EXPECT_NE(Other.getString("reason").value_or("").find("slice"),
+            llvm::StringRef::npos);
+  ASSERT_EQ(neverd_session_load(Session, FatPath.c_str()), 1);
+  EXPECT_EQ(takeString(neverd_session_arch_name(Session)),
+            Chosen.getString("processor").value_or(""));
+  // Bytecode text is EVM by its contents; other contents named as bytecode
+  // are EVM for the name alone, which a dialog does not choose by default.
+  Rows = rows(write("identify-contract.evm", "6001600055"));
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "EVM bytecode");
+  EXPECT_TRUE(loadable(Rows[0]));
+  EXPECT_FALSE(Rows[0].getBoolean("by_name").value_or(true));
+  Rows = rows(write("identify-firmware.bin", std::string(64, '\x07')));
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "EVM bytecode");
+  EXPECT_TRUE(Rows[0].getBoolean("by_name").value_or(false));
+  // Data no loader reads is a binary file only.
+  Rows = rows(write("identify.dat", std::string(64, '\x07')));
+  ASSERT_EQ(Rows.size(), 1u);
+  EXPECT_EQ(text(Rows[0]), "Binary file");
+}
+
+TEST_F(SessionCAPITest, BinaryFilesReadTheirProcessorFromTheirBytes) {
+  // This program's own code, cut from its ELF file: bytes no header
+  // describes, which still name the processor they were built for.
+#if defined(__x86_64__) || defined(_M_X64)
+  const std::string Host = "x86_64";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+  const std::string Host = "aarch64";
+#else
+  const std::string Host;
+#endif
+  static int Anchor;
+  const std::string Self = llvm::sys::fs::getMainExecutable(nullptr, &Anchor);
+  std::ifstream Input(Self, std::ios::binary);
+  const std::string Image((std::istreambuf_iterator<char>(Input)),
+                          std::istreambuf_iterator<char>());
+  using Ehdr = llvm::object::ELF64LE::Ehdr;
+  using Shdr = llvm::object::ELF64LE::Shdr;
+  if (Host.empty() || Image.size() < sizeof(Ehdr) ||
+      Image.compare(0, 4, llvm::ELF::ElfMagic) != 0 ||
+      Image[llvm::ELF::EI_CLASS] != llvm::ELF::ELFCLASS64 ||
+      Image[llvm::ELF::EI_DATA] != llvm::ELF::ELFDATA2LSB)
+    GTEST_SKIP() << "the test reads code from a little-endian ELF64 host";
+  const auto *Header = reinterpret_cast<const Ehdr *>(Image.data());
+  const auto *Sections =
+      reinterpret_cast<const Shdr *>(Image.data() + Header->e_shoff);
+  const Shdr &Names = Sections[Header->e_shstrndx];
+  std::string Code;
+  for (unsigned I = 0; I < Header->e_shnum; ++I)
+    if (llvm::StringRef(Image.data() + Names.sh_offset + Sections[I].sh_name) ==
+        ".text")
+      Code = Image.substr(Sections[I].sh_offset,
+                          std::min<uint64_t>(Sections[I].sh_size, 1 << 18));
+  ASSERT_GE(Code.size(), 1u << 16);
+  const auto Path = write("dump.bin", Code);
+
+  auto Reply =
+      llvm::json::parse(takeString(neverd_identify_json(Path.c_str())));
+  ASSERT_TRUE(static_cast<bool>(Reply));
+  const auto *Rows = Reply->getAsObject()->getArray("rows");
+  ASSERT_TRUE(Rows && !Rows->empty());
+  const auto &Binary = *Rows->back().getAsObject();
+  EXPECT_EQ(Binary.getString("status"), "settled");
+  EXPECT_EQ(Binary.getString("detected"), Host);
+  EXPECT_EQ(Binary.getInteger("code_offset"), 0);
+
+  // Opened as a binary file with no processor named, it reads as that one,
+  // and the load says what decided it.
+  ASSERT_EQ(neverd_session_set_load_options(Session, R"({"loader":"binary"})"),
+            0);
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_arch_name(Session)), Host);
+  auto Load =
+      llvm::json::parse(takeString(neverd_session_load_options_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Load));
+  EXPECT_EQ(Load->getAsObject()->getString("processor"), Host);
+  EXPECT_EQ(Load->getAsObject()->getString("processor_source"), "detected");
+  EXPECT_NE(Load->getAsObject()
+                ->getString("processor_evidence")
+                .value_or("")
+                .find("of the code"),
+            llvm::StringRef::npos);
+
+  // Bytes that look like no code are refused, and say so.
+  const auto Zeros = write("zeros.bin", std::string(1 << 16, '\0'));
+  ASSERT_EQ(neverd_session_set_load_options(Session, R"({"loader":"binary"})"),
+            0);
+  EXPECT_EQ(neverd_session_load(Session, Zeros.c_str()), 0);
+  EXPECT_NE(takeString(neverd_last_error(Session))
+                .find("no part of the file looks like code"),
+            std::string::npos);
+}
+
+TEST_F(SessionCAPITest, BinaryFilesLoadAsAskedAndDecompile) {
+  // nop; nop; mov eax, 7; ret: x86-64 code no header describes, named as EVM
+  // bytecode often is.
+  const std::string Code("\x90\x90\xb8\x07\x00\x00\x00\xc3", 8);
+  const auto Path = write("firmware.bin", Code);
+  ASSERT_EQ(neverd_session_set_load_options(
+                Session, R"({"loader":"binary","processor":"x86_64",)"
+                         R"("base":"0x400000","entry":"0x400002"})"),
+            0)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_arch_name(Session)), "x86_64");
+  EXPECT_EQ(neverd_session_entry_addr(Session), 0x400002u);
+  EXPECT_NE(takeString(neverd_disasm_json(Session, 0x400002, 1)).find("mov"),
+            std::string::npos);
+  // Three instructions show no platform: System V is assumed, and says so.
+  auto Load =
+      llvm::json::parse(takeString(neverd_session_load_options_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Load));
+  EXPECT_EQ(Load->getAsObject()->getString("platform"), "sysv");
+  EXPECT_EQ(Load->getAsObject()->getString("platform_source"), "detected");
+  EXPECT_NE(Load->getAsObject()
+                ->getString("platform_evidence")
+                .value_or("")
+                .find("assumed"),
+            llvm::StringRef::npos);
+  EXPECT_NE(takeString(neverd_decompile(Session, 0x400002)).find("7"),
+            std::string::npos)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(neverd_session_analyze(Session), 1);
+  // Kept with the input, the choice reads the file the same way unasked.
+  // "auto" refuses it: only its .bin name ties it to EVM bytecode, which
+  // the user reads it as by choosing that loader.
+  ASSERT_EQ(neverd_load_options_save(Session), 0)
+      << takeString(neverd_last_error(Session));
+  {
+    neverd_session_t Again = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Again, Path.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_session_arch_name(Again)), "x86_64");
+    EXPECT_NE(
+        takeString(neverd_session_load_options_json(Again)).find("binary"),
+        std::string::npos);
+    ASSERT_EQ(neverd_session_set_load_options(Again, R"({"loader":"auto"})"),
+              0);
+    EXPECT_EQ(neverd_session_load(Again, Path.c_str()), 0);
+    EXPECT_NE(takeString(neverd_last_error(Again)).find("choose its loader"),
+              std::string::npos);
+    ASSERT_EQ(neverd_session_set_load_options(Again, R"({"loader":"evm"})"), 0);
+    ASSERT_EQ(neverd_session_load(Again, Path.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_session_arch_name(Again)), "evm");
+    EXPECT_EQ(takeString(neverd_session_load_options_json(Again)),
+              R"({"loader":"evm"})");
+    neverd_session_destroy(Again);
+  }
+  // Options the loader cannot follow are refused.
+  EXPECT_EQ(neverd_session_set_load_options(
+                Session, R"({"loader":"binary","processor":"mips"})"),
+            -1);
+  ASSERT_EQ(
+      neverd_session_set_load_options(
+          Session, R"({"loader":"binary","processor":"x86","size":"0x100"})"),
+      0);
+  EXPECT_EQ(neverd_session_load(Session, Path.c_str()), 0);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("end of the file"),
+            std::string::npos);
+  // A 32-bit processor addresses no byte past 4 GiB.
+  ASSERT_EQ(neverd_session_set_load_options(
+                Session, R"({"loader":"binary","processor":"thumb",)"
+                         R"("base":"0xfffffffc"})"),
+            0);
+  EXPECT_EQ(neverd_session_load(Session, Path.c_str()), 0);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("4 GiB"),
+            std::string::npos);
+}
+
+/// Six calls of a two-argument function, and the function, as a System V or
+/// a Windows x86-64 compiler emits them; \p Add is where the function starts.
+std::string twoArgumentProgram(bool Windows, size_t &Add) {
+  constexpr unsigned Calls = 6;
+  constexpr size_t CallBytes = 15, FrameBytes = 4;
+  const auto le32 = [](std::string &Code, uint32_t Value) {
+    for (unsigned Byte = 0; Byte < 4; ++Byte)
+      Code += static_cast<char>(Value >> (8 * Byte));
+  };
+  std::string Code;
+  // Windows reserves the home slots of a callee's arguments.
+  if (Windows)
+    Code.append("\x48\x83\xec\x28", FrameBytes); // sub rsp, 0x28
+  const size_t Returns =
+      Code.size() + Calls * CallBytes + (Windows ? FrameBytes : 0) + 1;
+  Add = (Returns + 15) & ~size_t(15);
+  for (unsigned I = 0; I < Calls; ++I) {
+    // mov second, 2*I+2; mov first, 2*I+1; call add -- edx and ecx under
+    // Windows, esi and edi under System V.
+    Code += static_cast<char>(Windows ? 0xba : 0xbe);
+    le32(Code, 2 * I + 2);
+    Code += static_cast<char>(Windows ? 0xb9 : 0xbf);
+    le32(Code, 2 * I + 1);
+    Code += '\xe8';
+    le32(Code, static_cast<uint32_t>(Add - (Code.size() + 4)));
+  }
+  if (Windows)
+    Code.append("\x48\x83\xc4\x28", FrameBytes); // add rsp, 0x28
+  Code += '\xc3';
+  Code.resize(Add, '\xcc');
+  // lea eax, [first+second]; ret
+  Code.append(Windows ? "\x8d\x04\x11" : "\x8d\x04\x37", 3);
+  Code += '\xc3';
+  return Code;
+}
+
+/// The parameter count of \p Name's definition in decompiled \p Source.
+int parameterCount(const std::string &Source, const std::string &Name) {
+  const size_t At = Source.find(Name + "(");
+  if (At == std::string::npos)
+    return -1;
+  const size_t Open = At + Name.size() + 1, Close = Source.find(')', Open);
+  const llvm::StringRef Inside =
+      llvm::StringRef(Source).slice(Open, Close).trim();
+  return Inside.empty() || Inside == "void"
+             ? 0
+             : static_cast<int>(Inside.count(',')) + 1;
+}
+
+TEST_F(SessionCAPITest, BinaryFilesDecompileUnderThePlatformTheirCodeShows) {
+  for (const bool Windows : {false, true}) {
+    size_t Add = 0;
+    const auto Path = write(Windows ? "windows.bin" : "sysv.bin",
+                            twoArgumentProgram(Windows, Add));
+    neverd_session_t Program = neverd_session_create();
+    ASSERT_EQ(neverd_session_set_load_options(
+                  Program, R"({"loader":"binary","processor":"x86_64",)"
+                           R"("base":"0x400000"})"),
+              0);
+    ASSERT_EQ(neverd_session_load(Program, Path.c_str()), 1)
+        << takeString(neverd_last_error(Program));
+    auto Load = llvm::json::parse(
+        takeString(neverd_session_load_options_json(Program)));
+    ASSERT_TRUE(static_cast<bool>(Load));
+    EXPECT_EQ(Load->getAsObject()->getString("platform"),
+              Windows ? "windows" : "sysv");
+    EXPECT_EQ(Load->getAsObject()->getString("platform_source"), "detected");
+    // Two arguments in rcx and rdx under Windows, not four with phantom rdi
+    // and rsi, as a System V reading gives.
+    const uint64_t AddVA = 0x400000 + Add;
+    const std::string Source = takeString(neverd_decompile(Program, AddVA));
+    EXPECT_EQ(parameterCount(Source, "sub_" + llvm::utohexstr(AddVA)), 2)
+        << Source << takeString(neverd_last_error(Program));
+    neverd_session_destroy(Program);
+  }
+  // A platform the user names is theirs, the code notwithstanding.
+  size_t Add = 0;
+  const auto Path = write("named.bin", twoArgumentProgram(true, Add));
+  ASSERT_EQ(neverd_session_set_load_options(
+                Session, R"({"loader":"binary","processor":"x86_64",)"
+                         R"("base":"0x400000","platform":"sysv"})"),
+            0);
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  auto Load =
+      llvm::json::parse(takeString(neverd_session_load_options_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Load));
+  EXPECT_EQ(Load->getAsObject()->getString("platform"), "sysv");
+  EXPECT_EQ(Load->getAsObject()->getString("platform_source"), "user");
+  EXPECT_EQ(neverd_session_set_load_options(
+                Session, R"({"loader":"binary","processor":"x86_64",)"
+                         R"("platform":"beos"})"),
+            -1);
+}
+
+TEST_F(SessionCAPITest, InputSha256IsTheHashOfTheLoadedFile) {
+  const auto Expected = [](const std::string &Bytes) {
+    return llvm::toHex(llvm::SHA256::hash(llvm::arrayRefFromStringRef(Bytes)),
+                       /*LowerCase=*/true);
+  };
+  EXPECT_EQ(takeString(neverd_session_input_sha256(Session)), "");
+  // The loader's hash for a native image, and the dashboard reports the same.
+  const std::string Native = makeNativeELF(false);
+  const auto NativePath = write("hashed.elf", Native);
+  ASSERT_EQ(neverd_session_load(Session, NativePath.c_str()), 1);
+  EXPECT_EQ(takeString(neverd_session_input_sha256(Session)), Expected(Native));
+  auto Dashboard =
+      llvm::json::parse(takeString(neverd_dashboard_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Dashboard));
+  EXPECT_EQ(Dashboard->getAsObject()
+                ->getObject("hashes")
+                ->getString("sha256")
+                .value_or(""),
+            Expected(Native));
+  // An input its loader does not hash is hashed from its file.
+  const std::string Contract = "6001600055";
+  const auto ContractPath = write("hashed.evm", Contract);
+  ASSERT_EQ(neverd_session_load(Session, ContractPath.c_str()), 1);
+  EXPECT_EQ(takeString(neverd_session_input_sha256(Session)),
+            Expected(Contract));
 }
 
 TEST_F(SessionCAPITest, ReloadingRenamesRestoresNamesRemovedFromTheSidecar) {
@@ -3000,6 +3560,117 @@ TEST_F(SessionCAPITest,
   }
 }
 
+TEST_F(SessionCAPITest, SourceViewsReadInTheProgramsLanguages) {
+  // Pages of two lines reassemble the whole text; the first page says what
+  // the text reads in, and each page the source names on it.
+  std::vector<llvm::json::Object> SourceNames;
+  auto Assemble = [&](neverd_va_t Entry, const char *Stage,
+                      llvm::json::Object &First) {
+    std::string Text;
+    size_t Offset = 0;
+    SourceNames.clear();
+    for (;;) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2));
+      EXPECT_EQ(Page.getString("representation"), Stage);
+      if (Offset == 0)
+        First = Page;
+      if (const auto *Names = Page.getArray("source_names"))
+        for (const auto &Name : *Names)
+          if (const auto *Object = Name.getAsObject())
+            SourceNames.push_back(*Object);
+      if (!Page.getString("text"))
+        return Text;
+      EXPECT_EQ(Page.getInteger("byte_offset"), Text.size());
+      Text += Page.getString("text")->str();
+      if (Page.getBoolean("complete").value_or(false))
+        return Text;
+      const auto Next = Page.getInteger("next_offset");
+      if (!Next || *Next <= static_cast<int64_t>(Offset) || *Next > 10000)
+        return Text;
+      Offset = static_cast<size_t>(*Next);
+    }
+  };
+  auto Languages = [&] {
+    std::vector<std::string> Result;
+    auto Headers = takeView(neverd_headers_json(Session));
+    if (const auto *Language = Headers.getObject("language"))
+      if (const auto *Pseudocode = Language->getArray("pseudocode"))
+        for (const auto &Key : *Pseudocode)
+          Result.push_back(Key.getAsString().value_or("").str());
+    return Result;
+  };
+
+  // A C program's pseudocode is C; Rust and Go are not offered for it.
+  const std::string CPath =
+      write("mapped.elf", makeNativeELF(/*AArch64=*/false, 0x400000));
+  ASSERT_EQ(neverd_session_load(Session, CPath.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(Languages(), std::vector<std::string>({"c"}));
+  const auto CEntry = neverd_session_entry_addr(Session);
+  llvm::json::Object CPage, SourcePage, Refused;
+  const std::string C = Assemble(CEntry, "c", CPage);
+  ASSERT_FALSE(C.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(CPage.getString("dialect"), "c");
+  EXPECT_EQ(Assemble(CEntry, "source", SourcePage), C);
+  EXPECT_EQ(SourcePage.getString("dialect"), "c");
+  for (const char *Stage : {"rust", "go"}) {
+    Assemble(CEntry, Stage, Refused);
+    EXPECT_EQ(Refused.getString("mapping_status"),
+              "unsupported_representation");
+    ASSERT_TRUE(Refused.getString("reason"));
+    EXPECT_NE(Refused.getString("reason")->find("reads in C"),
+              llvm::StringRef::npos);
+  }
+
+  // A Rust program reads its Rust functions as Rust, named as Rust names
+  // them, and offers C beside it but not Go.
+  const std::string RustPath = write(
+      "rust.elf", makeNamedNativeELF("_RNvCs8vGhbR5OvgK_13rust_eh_probe4main"));
+  ASSERT_EQ(neverd_session_load(Session, RustPath.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(Languages(), std::vector<std::string>({"c", "rust"}));
+  const auto RustEntry = neverd_session_entry_addr(Session);
+  llvm::json::Object RustPage, GoPage;
+  const std::string Rust = Assemble(RustEntry, "source", RustPage);
+  EXPECT_EQ(RustPage.getString("dialect"), "rust");
+  EXPECT_NE(Rust.find("unsafe fn rust_eh_probe::main("), std::string::npos)
+      << Rust;
+  ASSERT_NE(RustPage.getArray("unread"), nullptr);
+  ASSERT_NE(RustPage.getArray("source_names"), nullptr);
+  bool Named = false;
+  for (const auto &Name : SourceNames) {
+    const auto Begin = Name.getInteger("begin_byte");
+    const auto End = Name.getInteger("end_byte");
+    ASSERT_TRUE(Begin && End && *Begin < *End &&
+                static_cast<size_t>(*End) <= Rust.size());
+    Named |=
+        Name.getString("symbol") == "_RNvCs8vGhbR5OvgK_13rust_eh_probe4main" &&
+        Rust.substr(*Begin, *End - *Begin) == "rust_eh_probe::main";
+  }
+  EXPECT_TRUE(Named);
+  // The prelude ends where the spelled definition begins, at a line start.
+  if (const auto *Prelude = RustPage.getObject("prelude")) {
+    const auto End = Prelude->getInteger("end_byte");
+    ASSERT_TRUE(End);
+    ASSERT_GT(*End, 0);
+    ASSERT_LT(static_cast<size_t>(*End), Rust.size());
+    EXPECT_EQ(Rust[*End - 1], '\n');
+  }
+  EXPECT_EQ(Assemble(RustEntry, "rust", RustPage), Rust);
+  Assemble(RustEntry, "go", GoPage);
+  EXPECT_EQ(GoPage.getString("mapping_status"), "unsupported_representation");
+
+  // Bytecode has no native source to spell.
+  const std::string Contract = write("mapped.evm", "600160020100");
+  ASSERT_EQ(neverd_session_load(Session, Contract.c_str()), 1);
+  for (const char *Stage : {"source", "rust", "go"}) {
+    auto Unsupported = takeView(neverd_ir_view_json(Session, 0, Stage, 0, 2));
+    EXPECT_EQ(Unsupported.getString("mapping_status"),
+              "unsupported_architecture");
+  }
+}
+
 TEST_F(SessionCAPITest,
        IRViewRejectsInvalidPagesAndReportsUnsupportedMappings) {
   EXPECT_EQ(neverd_ir_view_json(Session, 0, "low", 0, 0), nullptr);
@@ -3100,6 +3771,82 @@ TEST_F(SessionCAPITest, LibrarySourcePagesPreserveTextAndReloadEvidence) {
   ASSERT_NE(Withdrawn.getArray("library_regions"), nullptr);
   EXPECT_TRUE(Withdrawn.getArray("library_regions")->empty());
   EXPECT_EQ(Withdrawn.getString("text"), Before.getString("text"));
+}
+
+TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
+  // A copy: renaming writes its sidecar beside the input.
+  const auto Input = Directory / "kept-emission.o";
+  std::filesystem::copy_file(std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) /
+                                 "accessors-inline.o",
+                             Input);
+  ASSERT_EQ(neverd_session_load(Session, Input.string().c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  int Index = neverd_func_find_by_name(Session, "_nd_vector_u32_data_inline");
+  if (Index < 0)
+    Index = neverd_func_find_by_name(Session, "nd_vector_u32_data_inline");
+  ASSERT_GE(Index, 0);
+  const auto Entry = neverd_func_entry(Session, Index);
+  auto &State = *neverd::sdk::toSession(Session);
+  using Route = neverd::sdk::Session::SourceRoute;
+  const auto Decompile = [&](bool HighC) {
+    return takeString(HighC ? neverd_decompile(Session, Entry)
+                            : neverd_decompile_llvm(Session, Entry));
+  };
+  std::string HighCText;
+  for (const bool HighC : {true, false}) {
+    const char *Stage = HighC ? "c" : "llvmc";
+    SCOPED_TRACE(Stage);
+    const Route Kind = HighC ? Route::HighC : Route::LLVMC;
+    const std::string Original = Decompile(HighC);
+    ASSERT_FALSE(Original.empty()) << takeString(neverd_last_error(Session));
+    if (HighC)
+      HighCText = Original;
+    // A decompile keeps its text; the first page adds the map pages need.
+    auto *Kept = State.findFunctionSource(Entry, Kind);
+    ASSERT_NE(Kept, nullptr);
+    EXPECT_EQ(Kept->Text, Original);
+    EXPECT_FALSE(Kept->Map);
+    std::string Assembled;
+    for (size_t Offset = 0;;) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2));
+      ASSERT_TRUE(Page.getString("text"));
+      Assembled += Page.getString("text")->str();
+      if (Page.getBoolean("complete").value_or(false))
+        break;
+      ASSERT_TRUE(Page.getInteger("next_offset"));
+      Offset = *Page.getInteger("next_offset");
+      ASSERT_LT(Offset, 10000u);
+    }
+    EXPECT_EQ(Assembled, Original);
+    Kept = State.findFunctionSource(Entry, Kind);
+    ASSERT_NE(Kept, nullptr);
+    EXPECT_TRUE(Kept->Map);
+    // Later pages and decompiles read the kept text instead of emitting the
+    // function again.
+    Kept->Text = "/* kept */\n";
+    EXPECT_EQ(takeView(neverd_ir_view_json(Session, Entry, Stage, 0, 2))
+                  .getString("text"),
+              "/* kept */\n");
+    EXPECT_EQ(Decompile(HighC), "/* kept */\n");
+  }
+  // The user's names are the emitters' input too (data and labels take them,
+  // UserNamesNameDataInSymbolsAndC): naming anything emits the source again.
+  const std::string Old = takeString(
+      neverd_func_name(Session, neverd_func_find_by_addr(Session, Entry)));
+  ASSERT_EQ(neverd_rename_func(Session, Old.c_str(), "kept_accessor"), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_TRUE(State.FunctionSources.empty());
+  EXPECT_EQ(Decompile(true).find("/* kept */"), std::string::npos);
+  Decompile(false);
+  ASSERT_EQ(neverd_rename_addr(Session, Entry, nullptr), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_TRUE(State.FunctionSources.empty());
+  // A new pipeline emits the source again.
+  Decompile(true);
+  neverd_session_restrict_function(Session, 0);
+  EXPECT_TRUE(State.FunctionSources.empty());
+  EXPECT_EQ(Decompile(true), HighCText);
 }
 
 TEST_F(SessionCAPITest, IRViewRejectsInvalidUTF8Representation) {
@@ -3283,6 +4030,233 @@ TEST_F(SessionCAPITest, SourcePagesLocateTheFunctionAfterItsPrelude) {
   }
 }
 
+TEST_F(SessionCAPITest, EveryFunctionOfALazilyBoundProgramShowsAsLLVMC) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // printf binds lazily: its PLT entry jumps through a GOT slot the dynamic
+  // linker writes, and the first PLT entry through the slot it fills with its
+  // resolver.  Every function, stubs and all, is C a compiler accepts: no
+  // call goes through a data pointer.
+  const std::string Binary =
+      buildProgram("lazy", "#include <stdio.h>\n"
+                           "int main(int argc, char **argv) {\n"
+                           "  printf(\"%d %s\\n\", argc, argv[0]);\n"
+                           "  return 0;\n"
+                           "}\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Count = neverd_func_count(Session);
+  ASSERT_GT(Count, 0);
+  const std::regex DataPointerCall(R"(\(\(void\s*\*\)[^()]*\)\s*\()");
+  for (int I = 0; I < Count; ++I) {
+    const neverd_va_t Entry = neverd_func_entry(Session, I);
+    const std::string LLVMC = takeString(neverd_decompile_llvm(Session, Entry));
+    EXPECT_FALSE(LLVMC.empty()) << "0x" << llvm::utohexstr(Entry) << ": "
+                                << takeString(neverd_last_error(Session));
+    EXPECT_FALSE(std::regex_search(LLVMC, DataPointerCall)) << LLVMC;
+  }
+#endif
+}
+
+TEST_F(SessionCAPITest, TLSDescriptorCallsShowAsCallsThroughTheDescriptor) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "builds an x86-64 ELF shared object";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // Under the GNU2 dialect, code reaches a thread-local variable by calling
+  // the resolver the dynamic linker writes into its TLS descriptor.
+  const auto Source = write("tls.c", "__thread int counter;\n"
+                                     "int bump(int by) {\n"
+                                     "  counter += by;\n"
+                                     "  return counter;\n"
+                                     "}\n");
+  const std::string Library = (Directory / "libtls.so").string();
+  std::string Message;
+  if (llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                {NEVERD_RUNTIME_FIXTURE_COMPILER, "-O1",
+                                 "-fPIC", "-shared", "-mtls-dialect=gnu2",
+                                 Source, "-o", Library},
+                                std::nullopt, {}, 60, 0, &Message) != 0)
+    GTEST_SKIP() << "the compiler has no GNU2 TLS dialect: " << Message;
+  ASSERT_EQ(neverd_session_load(Session, Library.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Bump = neverd_func_find_by_name(Session, "bump");
+  ASSERT_GE(Bump, 0);
+  const std::string LLVMC = takeString(
+      neverd_decompile_llvm(Session, neverd_func_entry(Session, Bump)));
+  ASSERT_FALSE(LLVMC.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(LLVMC.find("(*)("), std::string::npos) << LLVMC;
+#endif
+}
+
+TEST_F(SessionCAPITest, DebugParametersNameTheRegistersTheyArriveIn) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "builds an x86-64 System V program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // a and b arrive in xmm0 and xmm1 and c, an x87 long double, on the
+  // stack: the reads of xmm0 and xmm1 are a and b, as the debug
+  // declaration names them, whatever numbering the lift gave them.
+  const auto Source =
+      write("mix.c", "__attribute__((noinline))\n"
+                     "double mix(double a, float b, long double c) {\n"
+                     "  return a * 1.5 + b / 3.0 + (double)(c + c);\n"
+                     "}\n"
+                     "int main(int argc, char **argv) {\n"
+                     "  return (int)mix(argc, 2.0f, 3.0L);\n"
+                     "}\n");
+  const std::string Binary = (Directory / "mix").string();
+  std::string Message;
+  ASSERT_EQ(
+      llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                {NEVERD_RUNTIME_FIXTURE_COMPILER, "-O2", "-g",
+                                 "-fPIE", "-pie", Source, "-o", Binary},
+                                std::nullopt, {}, 60, 0, &Message),
+      0)
+      << Message;
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Mix = neverd_func_find_by_name(Session, "mix");
+  ASSERT_GE(Mix, 0);
+  const std::string HighC =
+      takeString(neverd_decompile(Session, neverd_func_entry(Session, Mix)));
+  ASSERT_FALSE(HighC.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(HighC.find("double mix(double a, float b"), std::string::npos)
+      << HighC;
+  EXPECT_EQ(HighC.find("arg6"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("arg7"), std::string::npos) << HighC;
+  // The x87 value converts where it is used: no helper function.
+  EXPECT_EQ(HighC.find("neverd_x87_value"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("neverd_mem_"), std::string::npos) << HighC;
+#endif
+}
+
+TEST_F(SessionCAPITest, StubsOfVariadicImportsPassTheirArgumentsOn) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // Each call reaches its import through a PLT stub, which passes every
+  // argument on.  C passes no `...` on, so the stub shows as a function that
+  // hands printf's variadic arguments to vprintf, reads open's mode, and
+  // collects execl's pointers for execv, in both C backends.
+  const std::string Binary =
+      buildProgram("variadic", "#include <fcntl.h>\n"
+                               "#include <stdio.h>\n"
+                               "#include <unistd.h>\n"
+                               "int main(int argc, char **argv) {\n"
+                               "  printf(\"%d %s\\n\", argc, argv[0]);\n"
+                               "  int fd = open(argv[0], O_RDONLY);\n"
+                               "  if (argc > 100)\n"
+                               "    execl(argv[0], argv[0], (char *)0);\n"
+                               "  return fd < 0;\n"
+                               "}\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const std::map<std::string, std::string> Forms = {
+      {"printf", "vprintf(format, arguments)"},
+      {"open", "va_arg(arguments, int)"},
+      {"execl", "execv(arg0, (char *const *)vector)"}};
+  std::set<std::string> Shown;
+  for (int I = 0; I < neverd_func_count(Session); ++I) {
+    const neverd_va_t Entry = neverd_func_entry(Session, I);
+    for (const bool LLVM : {false, true}) {
+      const std::string Page =
+          takeString(LLVM ? neverd_decompile_llvm(Session, Entry)
+                          : neverd_decompile(Session, Entry));
+      for (const auto &[Import, Form] : Forms) {
+        if (Page.find("jumps to the import " + Import + ",") ==
+            std::string::npos)
+          continue;
+        Shown.insert(Import + (LLVM ? " in LLVM-C" : " in HighC"));
+        EXPECT_NE(Page.find(Form), std::string::npos) << Page;
+        const auto Source = write("stub.c", Page);
+        std::string Message;
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(
+                      NEVERD_RUNTIME_FIXTURE_COMPILER,
+                      {NEVERD_RUNTIME_FIXTURE_COMPILER, "-std=gnu11", "-w",
+                       "-fno-strict-aliasing", "-c", Source, "-o",
+                       (Directory / "stub.o").string()},
+                      std::nullopt, {}, 60, 0, &Message),
+                  0)
+            << Message << Page;
+      }
+    }
+  }
+  EXPECT_EQ(Shown.size(), 2 * Forms.size()) << llvm::join(Shown, ", ");
+#endif
+}
+
+TEST_F(SessionCAPITest, BothCBackendsAgreeWhichFunctionsReturnAValue) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // Whether a function returns a value is settled once, on MedIR.  LLVM-C
+  // once showed a function that hands back its callee's result as void while
+  // its callers used the result, and register_tm_clones, which returns 0,
+  // too; HighC showed register_tm_clones' branch on a link-time 0.
+  const std::string Binary = buildProgram(
+      "returns",
+      "int g;\n"
+      "__attribute__((noinline)) void sink(int x) { g = x; }\n"
+      "__attribute__((noinline)) int value(int x) { return x * 3; }\n"
+      "__attribute__((noinline)) void tail_void(int x) {\n"
+      "  sink(x + 1);\n"
+      "}\n"
+      "__attribute__((noinline)) int tail_value(int x) {\n"
+      "  return value(x + 1);\n"
+      "}\n"
+      "int main(int argc, char **argv) {\n"
+      "  (void)argv;\n"
+      "  tail_void(argc);\n"
+      "  return tail_value(argc) + g;\n"
+      "}\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_session_analyze(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const auto ReturnType = [&](const std::string &Page,
+                              const std::string &Name) -> std::string {
+    std::smatch Match;
+    const std::regex Definition("(^|\n)([^ \n][^\n]*?)\\b" + Name +
+                                "\\([^\n]*\\) \\{");
+    return std::regex_search(Page, Match, Definition)
+               ? llvm::StringRef(Match[2].str()).trim().str()
+               : "";
+  };
+  const std::map<std::string, bool> Void = {{"sink", true},
+                                            {"tail_void", true},
+                                            {"value", false},
+                                            {"tail_value", false},
+                                            {"register_tm_clones", false}};
+  for (const auto &[Name, IsVoid] : Void) {
+    SCOPED_TRACE(Name);
+    const int Index = neverd_func_find_by_name(Session, Name.c_str());
+    ASSERT_GE(Index, 0);
+    const neverd_va_t Entry = neverd_func_entry(Session, Index);
+    const std::string HighC = takeString(neverd_decompile(Session, Entry));
+    const std::string LLVMC = takeString(neverd_decompile_llvm(Session, Entry));
+    EXPECT_EQ(ReturnType(HighC, Name) == "void", IsVoid) << HighC;
+    EXPECT_EQ(ReturnType(LLVMC, Name) == "void", IsVoid) << LLVMC;
+    if (Name == "register_tm_clones") {
+      EXPECT_EQ(HighC.find("if ("), std::string::npos) << HighC;
+      EXPECT_NE(LLVMC.find("return 0;"), std::string::npos) << LLVMC;
+    }
+  }
+#endif
+}
+
 TEST_F(SessionCAPITest, StartAloneCallsTheBoundStartupImportWithMain) {
 #if !defined(__linux__)
   GTEST_SKIP() << "builds a glibc program";
@@ -3412,6 +4386,82 @@ TEST_F(SessionCAPITest, UserFunctionEditsShapeTheListAnalysisAndSidecar) {
   ASSERT_GE(Restored, 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, Restored)), EntryName);
   EXPECT_LT(neverd_func_find_by_addr(Session, Second), 0);
+}
+
+TEST_F(SessionCAPITest, UserDataItemsDefineBytesAndPersist) {
+  // After the entry routine: "hello", then a word, in the image's one
+  // segment.
+  const auto Input = write(
+      "items.elf", makeNativeELF(false, 0x400000,
+                                 std::string_view("hello\0\x34\x12\0\0", 10)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  const auto Text = Entry + 6, Word = Entry + 12;
+  const std::string TextHex = "0x" + llvm::utohexstr(Text);
+  const std::string WordHex = "0x" + llvm::utohexstr(Word);
+
+  // The string reads where it starts, however short.
+  EXPECT_EQ(takeString(neverd_string_at(Session, Text, nullptr)),
+            "{\"addr\":\"" + TextHex +
+                "\",\"chars\":5,\"encoding\":\"ascii\",\"length\":5,"
+                "\"unit\":1,\"value\":\"hello\"}");
+  EXPECT_EQ(neverd_string_at(Session, Text + 5, nullptr), nullptr);
+
+  // Values of a size, strings in an encoding and undefined bytes.
+  ASSERT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"word\"}"), 0)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_item_set(Session, Text,
+                            "{\"kind\":\"string\",\"encoding\":\"utf-8\","
+                            "\"size\":6}"),
+            0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_items_json(Session)),
+            "[{\"addr\":\"" + TextHex +
+                "\",\"encoding\":\"utf-8\",\"kind\":\"string\","
+                "\"size\":6},{\"addr\":\"" +
+                WordHex + "\",\"kind\":\"word\",\"size\":2}]");
+  // An item may not share bytes with another, a string ends in its
+  // terminator, and a kind is one the tables name.
+  EXPECT_EQ(neverd_item_set(Session, Text + 2, "{\"kind\":\"byte\"}"), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("overlaps"),
+            std::string::npos);
+  EXPECT_EQ(neverd_item_set(Session, Text,
+                            "{\"kind\":\"string\",\"encoding\":\"utf-8\","
+                            "\"size\":5}"),
+            -1);
+  EXPECT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"oword\"}"), -1);
+  // Four bytes remain in the segment: a dword fits, a qword does not.
+  EXPECT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"qword\"}"), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("segment"),
+            std::string::npos);
+  EXPECT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"dword\"}"), 0);
+  ASSERT_EQ(
+      neverd_item_set(Session, Word, "{\"kind\":\"undefined\",\"size\":4}"), 0);
+  // Undefined bytes give way to an item and stay undefined around it.
+  ASSERT_EQ(neverd_item_set(Session, Word + 1, "{\"kind\":\"byte\"}"), 0)
+      << takeString(neverd_last_error(Session));
+  const std::string ByteHex = "0x" + llvm::utohexstr(Word + 1);
+  const std::string RestHex = "0x" + llvm::utohexstr(Word + 2);
+  EXPECT_EQ(takeString(neverd_items_json(Session)),
+            "[{\"addr\":\"" + TextHex +
+                "\",\"encoding\":\"utf-8\",\"kind\":\"string\","
+                "\"size\":6},{\"addr\":\"" +
+                WordHex + "\",\"kind\":\"undefined\",\"size\":1},{\"addr\":\"" +
+                ByteHex + "\",\"kind\":\"byte\",\"size\":1},{\"addr\":\"" +
+                RestHex + "\",\"kind\":\"undefined\",\"size\":2}]");
+
+  // Saved, the items come back with the input.
+  ASSERT_EQ(neverd_items_save(Session), 0)
+      << takeString(neverd_last_error(Session));
+  const std::string Saved = takeString(neverd_items_json(Session));
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_items_json(Reopened)), Saved);
+    neverd_session_destroy(Reopened);
+  }
+  ASSERT_EQ(neverd_item_clear(Session, Word), 0);
+  EXPECT_EQ(neverd_item_clear(Session, Word), -1);
 }
 
 TEST_F(SessionCAPITest, SignatureJSONPreservesASCIINameAndMatchFields) {

@@ -25,7 +25,21 @@ neverd unpack packed.exe -o unpacked.exe \
   --options='{"backend":"unicorn","instruction_limit":400000000,"transfer":2}'
 ```
 
-该命令输出一份 JSON 报告。退出码 0 表示镜像已写出；3 表示有界运行在接受入口之前结束（`outcome` 为 `no_entry`，不写任何文件）；1 表示输入、选项无效或准备失败。报告会给出实际运行的 `format`、`architecture` 和 `profile`。C 入口是 `neverd_unpack_json`；Python 提供 `Session.unpack`。选项为[进程选项](process-emulation.md)加上 `transfer`。外壳需要更多资源的地方默认值不同：100000000 条指令、600 秒、512 MiB，并且 `windows.defer_unmodeled` 默认开启。
+该命令输出一份 JSON 报告。退出码 0 表示已写出 `unpacked` 镜像或显式请求的 `snapshot`；3 表示 `no_entry` 或 `unsupported_state`，不会创建或截断输出文件；1 表示输入、选项无效或准备失败。报告会给出实际运行的 `format`、`architecture` 和 `profile`。C 入口是 `neverd_unpack_json`；Python 提供 `Session.unpack`。选项为[进程选项](process-emulation.md)加上 `transfer` 和 `snapshot_only`。外壳需要更多资源的地方默认值不同：100000000 条指令、600 秒、512 MiB，并且 `windows.defer_unmodeled` 默认开启。
+
+## 运行时状态与分析快照
+
+在接受转移时，进程配置提供仍存活的堆分配清单。恢复流程保守地扫描捕获的镜像和当前线程 TLS 字节中的所有指针宽度值，包括未对齐值和分配内部的地址。匹配值可能只是整数或未使用数据，不代表已确认的指针，也不能据此重定位。清单来源未知或存在可能的引用时，默认报告 `unsupported_state`，即使已经接受 `entry`；CLI 和 C API 都不会创建或截断输出文件。
+
+`runtime_state.heap_inventory_known` 区分已知空清单与缺少来源证据。`possible_heap_references` 统计全部匹配；`heap_references` 最多保留前 64 条，先镜像后 TLS，各自按 `offset` 排序。记录给出 `storage`（`image` 或 `thread_local`）、地址及分配范围。镜像记录的 `rva` 为十六进制值，TLS 记录为 null；地址和偏移采用十六进制字符串。
+
+`runtime_state.direct_service_calls` 统计入口观察和导入发现期间实际执行的直接模型服务调用。其编号尚未重建为原生 Windows 绑定，因此默认返回 `unsupported_state`，包括首次调用出现在捕获入口之后的情况。显式 `snapshot_only` 保留计数和诊断。复制的系统调用不会被当作可修复的导入函数调用。 `no_entry` 报告也保留此计数；未捕获入口时，堆清单仍为未知。
+
+`runtime_state.encoded_pointer_inventory_known` 表示进程配置是否提供已观察到的指针编码值。`possible_encoded_pointers` 统计捕获映像和主线程 TLS 中完全相等的指针宽度值，包括未对齐存储；`encoded_pointer_references` 保留前 64 个位置的 `storage`、`offset`、`rva` 和 `value`。Windows 从已完成的 `EncodePointer`/`RtlEncodePointer` 返回值和 `DecodePointer`/`RtlDecodePointer` 输入收集编码值。缺少清单或存在匹配时返回 `unsupported_state`；显式快照保留诊断。匹配也可能是整数或未使用数据，不能据此授权重新编码。捕获前已清除的值、仅在捕获后生成的编码不会触发该拒绝。清单不覆盖自定义编码、部分或变换后的值、寄存器、栈状态及未到达路径。
+
+`runtime_state.dynamic_thread_local_inventory_known` 表示进程配置是否提供捕获时的动态线程／纤程局部槽位状态。`live_dynamic_tls_slots` 和 `live_dynamic_fls_slots` 与 PE 静态 TLS 分开计数：已分配槽位即使值为零也计入；没有分配记录的非零 TLS 单元也计入。清单未知或仍有槽位状态时返回 `unsupported_state`，显式快照保留计数与诊断。捕获前已释放的槽位、已清零且未分配的 TLS 单元，以及捕获后才创建的状态不会触发该拒绝。计数不重建槽位所有权、值或回调，也不证明其他线程或纤程的状态。
+
+`--options='{"snapshot_only":true}'` 显式请求分析字节。接受入口且重建成功后，结果始终为 `snapshot`，运行时状态诊断仍会保留。该选项不会恢复堆数据、推断重定位、证明原生运行成功或反虚拟化。堆引用数量为零也不能证明其他 OS 状态或未执行路径正确。
 
 ## 入口如何确定
 
@@ -76,6 +90,8 @@ neverd unpack packed.exe -o unpacked.exe \
 ## 限制
 
 受检执行逐条放行指令，量级约为每秒 10^5 条。x64 Unicorn、KVM 和 WHP 均支持按时间和事件限额运行、不统计指令数的 `direct-user-x64-v1`。混合代码代际和重复写入可能需要额外的处理器单步。恢复范围是输入镜像中实际到达的路径；不会把镜像外生成的代码提升为该镜像的入口。入口前的初始化可能改变镜像数据或创建外部进程状态；这些状态未必能移植到新进程，重新执行 TLS 回调也可能产生额外副作用。未建模 API 会明确停止执行。IAT 修复覆盖经过验证的六至八字节 x64 调用窗口和七或八字节地址加载；未执行路径及其他保护调用形式仍未解决。虚拟化代码保持原样。
+
+基于 RVA 的延迟导入保留尚未解析的映像内跳板，并根据已观测的导出身份重新绑定已解析单元，避免程序辅助函数重复已完成的工作。独立且完整终止的查找表限定每段绑定的数量，不会占用下一个待解析 IAT 单元。重建清除进程私有 DLL 句柄和绑定缓存引用，并将延迟导入元数据排除在普通 IAT 搜索之外。描述符和指针数组必须完整终止，名称、范围及存储归属必须有效。未知目标、无效跳板、旧式 VA 描述符及存储冲突均明确报错。
 
 ## 验证
 

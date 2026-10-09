@@ -25,6 +25,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighFlowOracle.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -349,6 +350,9 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
     return HighExpr::makeConst(V.ConstVal, V.Size, V.Provenance,
                                V.AddressOwnerVA);
   }
+  // The proven GOT base of an unlinked i386 object is address zero.
+  if (I386GotBase.count(varKey(V)))
+    return HighExpr::makeConst(0, V.Size, ConstantAddressProvenance::Scalar);
 
   auto SourceParameter = [&](MedVar Parameter, size_t Index) -> ExprPtr {
     const auto &Bindings = SourceParameters;
@@ -397,6 +401,27 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   if (CurMed && CurMed->SourceTypeHint && V.Kind == MedVar::Param &&
       V.Id >= 0 && static_cast<size_t>(V.Id) < CurMed->TypedParams.size())
     return SourceParameter(V, static_cast<size_t>(V.Id));
+  // A float or double parameter fills the low lane of its vector register;
+  // the register's other bytes, which the function does not read, are zero.
+  auto ScalarParameter = [&](MedVar Param, size_t Index) -> ExprPtr {
+    if (!CurMed || CurMed->SourceTypeHint ||
+        Index >= CurMed->TypedParams.size())
+      return nullptr;
+    const TypeRef &Scalar = CurMed->TypedParams[Index].Type;
+    if (!Scalar || Scalar->Kind != NdTypeKind::Float || !V.Size)
+      return nullptr;
+    Param.Size = Scalar->Size;
+    auto Bits = HighExpr::makeBitCast(HighExpr::makeVar(Param, Scalar),
+                                      NdType::makeInt(Scalar->Size, false));
+    if (V.Size == Scalar->Size)
+      return Bits;
+    ExprPtr Carrier = V.Size > Scalar->Size
+                          ? HighExpr::makeUnary(NdOp::INT_ZEXT, Bits)
+                          : HighExpr::makeBinop(NdOp::SUBBYTES, Bits,
+                                                HighExpr::makeConst(0, 4));
+    Carrier->Type = NdType::makeInt(V.Size, false);
+    return Carrier;
+  };
   if (CurMed && V.Kind == MedVar::Param) {
     const int Slot = abiParamIndex(V);
     if (Slot >= 0) {
@@ -409,6 +434,8 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
       TypeRef Type;
       if (static_cast<size_t>(Slot) < CurMed->Params.size())
         Param.RegOff = CurMed->Params[static_cast<size_t>(Slot)].RegOff;
+      if (auto Scalar = ScalarParameter(Param, static_cast<size_t>(Slot)))
+        return Scalar;
       return HighExpr::makeVar(Param, Type);
     }
   }
@@ -425,6 +452,8 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
       TypeRef Type;
       if (CurMed->SourceTypeHint && I < CurMed->TypedParams.size())
         return SourceParameter(Param, I);
+      if (auto Scalar = ScalarParameter(Param, I))
+        return Scalar;
       return HighExpr::makeVar(Param, Type);
     }
   }
@@ -443,7 +472,8 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   // GS_HANDLER_DATA bit-2 align edge; mapping every later r10 SSA to arg0
   // deletes that edge.
   if (CurMed && V.Kind == MedVar::Reg && TargetArch == Arch::X64 && Image &&
-      Image->Format == BinaryFormat::COFF && !PhiOutputVars.count(varKey(V))) {
+      Image->abiFormat() == BinaryFormat::COFF &&
+      !PhiOutputVars.count(varKey(V))) {
     if (ParamCopyIndexFunc != CurMed) {
       // One pass over the function instead of one per variable reference.
       ParamCopyIndexFunc = CurMed;
@@ -547,16 +577,59 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
 
   auto Key = varKey(V);
 
+  // A single counted use takes its definition inline.  So does a use no
+  // count saw, such as a register argument the call-site scan finds after
+  // counting: lowerGenericAssign emitted no assignment for that definition.
   auto UIt = UseCount.find(Key);
-  if (UIt != UseCount.end() && UIt->second == 1)
+  const int Uses = UIt == UseCount.end() ? 0 : UIt->second;
+  if (Uses == 1 || (Uses == 0 && !CallOutputs.count(Key)))
     if (auto Definition = inlineableDefinition(Key))
       return Definition;
 
   return HighExpr::makeVar(V);
 }
 
+void MedToHighConverter::indexMedDefinitions() {
+  if (!CurMed || EntryOffsetDefsFor == CurMed)
+    return;
+  EntryOffsetDefs.clear();
+  EntryOffsetPhis.clear();
+  EntryOffsetPhiCache.clear();
+  auto Key = [](const MedVar &V) {
+    return std::make_tuple(static_cast<int>(V.Kind), V.Id, V.SSAVer);
+  };
+  for (const auto &Blk : CurMed->Blocks) {
+    for (const auto &Phi : Blk.Phis)
+      if (auto [It, Inserted] =
+              EntryOffsetPhis.try_emplace(Key(Phi.Output), &Phi);
+          !Inserted)
+        It->second = nullptr;
+    for (const auto &Op : Blk.Ops)
+      if (auto [It, Inserted] =
+              EntryOffsetDefs.try_emplace(Key(Op.Output), &Op);
+          !Inserted)
+        It->second = nullptr;
+  }
+  EntryOffsetDefsFor = CurMed;
+}
+
+const MedOp *MedToHighConverter::uniqueMedDefinition(const MedVar &V) {
+  if (!CurMed)
+    return nullptr;
+  indexMedDefinitions();
+  auto DefIt = EntryOffsetDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
+  return DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
+}
+
 ExprPtr MedToHighConverter::memoryAddressExpr(const MedVar &V,
                                               bool InlineDefinition) {
+  if (CurMed && TargetArch == Arch::X86 && Image &&
+      (!Image->isELF() || !Image->IsRelocatable))
+    if (auto Address = foldI386PicAddress(*CurMed, V, [&](const MedVar &Value) {
+          return uniqueMedDefinition(Value);
+        }))
+      return HighExpr::makeConst(*Address, V.Size,
+                                 ConstantAddressProvenance::DataAddress);
   ExprPtr Address;
   if (InlineDefinition && V.Id >= 0)
     Address = inlineableDefinition(varKey(V));
@@ -804,6 +877,7 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   UseCount.clear();
   DefExpr.clear();
   SourceRecordValues.clear();
+  collectI386GotBase(Med);
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops)
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
@@ -867,10 +941,29 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   // ABI recovery binds call operands after SSA, outside the MedOp input
   // array. They are real uses of their reaching definitions: omitting them
   // makes a computed outgoing register look dead before HighIR builds calls.
-  for (const MedCallInfo &Call : Med.CallInfos)
+  // An operand the call's block also stores before the call (an i386 push)
+  // is read once: that store is the argument itself, which dead-store
+  // elimination drops, so a single-use definition still prints inline.
+  std::map<int, const MedBlock *> BlockById;
+  for (const auto &Blk : Med.Blocks)
+    BlockById.emplace(Blk.Id, &Blk);
+  for (const MedCallInfo &Call : Med.CallInfos) {
+    VarKeySet Stored;
+    if (auto It = BlockById.find(Call.BlockId); It != BlockById.end())
+      for (int J = Call.OpIdx - 1;
+           J >= 0 && J < static_cast<int>(It->second->Ops.size()); --J) {
+        const MedOp &Op = It->second->Ops[static_cast<size_t>(J)];
+        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+            Op.Opcode == NdOp::INTRINSIC)
+          break;
+        if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
+            Op.Inputs[1].Id >= 0)
+          Stored.insert(varKey(Op.Inputs[1]));
+      }
     for (const MedVar &Arg : Call.Args)
-      if (Arg.Id >= 0)
+      if (Arg.Id >= 0 && !Stored.count(varKey(Arg)))
         UseCount[varKey(Arg)]++;
+  }
 
   // Build each definition before its uses: a use builds its single-use
   // definition inline, and a definition that is not yet built leaves a name
@@ -1109,6 +1202,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.FrameHeadroom = Med.FrameHeadroom;
   Func.Name = Med.Name;
   Func.DoesNotReturn = Med.DoesNotReturn;
+  Func.ReturnsNoValue = Med.ReturnsNoValue;
   Func.EntryKind = Med.EntryKind;
   Func.ExceptionMetadata = Med.ExceptionMetadata;
   Func.ReturnType =
@@ -1200,11 +1294,14 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
       auto &MP = Med.Params[PI];
       HighParam HP;
       HP.Name = "arg" + std::to_string(PI);
+      HP.RegOff = MP.RegOff;
+      HP.MedIndex = MP.Id;
       if (Med.SourceTypeHint && PI < Med.TypedParams.size()) {
         HP.Name = Med.TypedParams[PI].Name;
         HP.Type = Med.TypedParams[PI].Type;
       } else if (PI < Med.TypedParams.size() && Med.TypedParams[PI].Type &&
-                 Med.TypedParams[PI].Type->Kind == NdTypeKind::Ptr) {
+                 (Med.TypedParams[PI].Type->Kind == NdTypeKind::Ptr ||
+                  Med.TypedParams[PI].Type->Kind == NdTypeKind::Float)) {
         // Direct memory uses and exact forwarded call roles share the MedIR
         // parameter certificate with the LLVM backend.
         HP.Type = Med.TypedParams[PI].Type;
@@ -1312,7 +1409,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   // from a temporary joins its definition, once names merged.
   inlineAdjacentLoads(Func);
   foldCopiesIntoDefinitions(Func);
-  // Signedness follows the merged names: one declaration, one type.
+  // Width and signedness follow the merged names: one declaration, one type.
+  narrowLocals(Func);
   chooseIntegerSignedness(Func);
   nameRepeatedValues(Func);
   Trace.high(Func, "after-exceptions");

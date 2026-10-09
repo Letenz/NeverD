@@ -38,6 +38,9 @@ public:
 
   void load(Address function, const QString &representation);
   void clear();
+  /// Stop obsolete requests/pages, including an in-flight analysis process
+  /// when no other view still subscribes to its result.
+  void cancel();
   std::optional<Address> function() const { return function_; }
   QString representation() const { return representation_; }
   /// First instruction address mapped to the cursor line.
@@ -76,6 +79,21 @@ public:
   const QString &status() const { return status_; }
   /// Pages of the current function are still arriving.
   bool loading() const { return loading_; }
+  bool interrupted() const { return interrupted_; }
+  /// The language the loaded code reads in, "c", "rust" or "go"; empty for
+  /// an IR or before the first page.
+  QString language() const;
+  /// A source language's name such as `core::fmt::write`, which splitting
+  /// the text into identifiers would not find whole.
+  struct SourceName {
+    /// The C identifier the C view spells for it.
+    QString identifier;
+    QString symbol;
+    std::optional<Address> address;
+  };
+  /// The source name at a line and column, and how the text spells it.
+  std::optional<std::pair<QString, SourceName>> sourceNameAt(int line,
+                                                             int column) const;
 
 signals:
   void locationChanged(neverd::gui::Address address);
@@ -86,6 +104,8 @@ signals:
   void statusChanged();
   void foldingChanged();
   void contextMenuRequested(const QPoint &globalPosition);
+  /// The language the code reads in changed with a new function.
+  void languageChanged();
 
 protected:
   void paintEvent(QPaintEvent *event) override;
@@ -105,7 +125,7 @@ private:
   /// The library regions of the loaded function and its prelude.
   QJsonArray foldRegions() const;
   /// Display lines from the source, folded where the user asked.
-  void rebuildLines();
+  void rebuildLines(bool append = false);
   /// Position in the displayed text of a line and column.
   int displayPosition(int line, int column) const;
   QString regionAt(const QPoint &position) const;
@@ -127,15 +147,28 @@ private:
   QVariantList sourceRows_;
   QJsonArray regions_;
   qint64 byteOffset_ = 0;
+  qint64 sourceBytes_ = 0;
+  int renderedChars_ = 0, renderedRows_ = 0, widestLine_ = 0;
   bool regionsValid_ = false;
   LibraryCodeView library_;
   std::optional<Address> function_;
   QString representation_, status_, highlight_;
   quint64 serial_ = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;
+  bool interrupted_ = false;
   bool foldPreludeAfterLoad_ = true;
   /// The first page's prelude: lines and end_byte.
   QJsonObject prelude_;
+  /// The language the first page names, and how many declarations it shows
+  /// as C because that language could not spell them.
+  QString pageLanguage_;
+  int unread_ = 0;
+  /// The source names of every page by their spelling, and those spellings
+  /// by their first character, longest first.
+  QHash<QString, SourceName> sourceNames_;
+  QHash<QChar, QVector<QString>> sourceNameIndex_;
+  /// The length of a source name at \p position of \p text, or 0.
+  int sourceNameLength(const QString &text, int position) const;
   /// What the code declares, indexed on first use.
   struct Declarations {
     /// Types and macros, by their source lines.
@@ -170,12 +203,28 @@ public:
   bool locked() const;
   /// Window title of a representation, such as "Pseudocode".
   static QString titleOf(const QString &representation);
+  /// The representation that shows a function in its own language, which
+  /// F5 and Tab open.
+  static QString pseudocodeRepresentation() { return QStringLiteral("source"); }
+  /// Whether a representation shows source code rather than an IR: the
+  /// pseudocode window holds it.
+  static bool isSource(const QString &representation);
+  /// The language other than C that pseudocode in the function's own
+  /// language chose for the loaded function, such as "Rust"; empty for C and
+  /// for any other representation.
+  QString chosenLanguage() const;
 
 signals:
   void representationChanged(const QString &representation);
+  /// chosenLanguage() changed.
+  void languageChanged();
 
 private:
   void updateStatus();
+  /// The representations the loaded program offers: C beside Pseudocode
+  /// only for a program with Rust or Go code, whose Pseudocode reads those
+  /// functions in their own language.
+  void updateRepresentations();
   Session &session_;
   QComboBox *selector_;
   QToolButton *fold_, *lock_;

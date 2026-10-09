@@ -634,5 +634,5 @@ neverd::sigs::readLibraryFeaturePack(const std::filesystem::path &Path) {
 }
 
 bool LibraryFeaturePack::accepts(const BinaryImage &Image) const {
-  return accepts(Image.Arch, Image.Format, Image.Bits);
+  return accepts(Image.Arch, Image.abiFormat(), Image.Bits);
 }

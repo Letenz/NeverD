@@ -12,6 +12,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../VariadicImportStub.h"
+#include "../X86GetPcThunk.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -34,6 +36,7 @@
 #include "llvm/IR/EHPersonalities.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/GlobalIFunc.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Metadata.h"
@@ -3047,7 +3050,8 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
           }
         } else if (auto VA = imageDataVA(LI->getPointerOperand());
                    VA && Size == PtrWidth && !StoredImageAddrs.count(*VA) &&
-                   !foldReadonlyScalar(*VA, Size)) {
+                   !foldReadonlyScalar(*VA, Size) &&
+                   !imageByteArrayBacking(LI->getPointerOperand(), Size)) {
           if (std::string Image = imageDataCName(LI->getPointerOperand());
               !Image.empty() && !synthesizedImageObject(*VA))
             ValueTexts[LI] = std::move(Image);
@@ -8508,6 +8512,58 @@ dropUnreferencedFallthroughEHLabels(std::string Text,
 } // namespace
 
 void LLVMCWriter::writeFunction(llvm::Function &Fn) {
+  if (Fn.hasFnAttribute("neverd.x86_get_pc_thunk") && EmitFunctionWrapper) {
+    unsigned Reg = 0;
+    if (Fn.getFnAttribute("neverd.x86_get_pc_thunk")
+            .getValueAsString()
+            .getAsInteger(10, Reg) ||
+        Reg >= 8 || Reg == 4 || !Fn.hasFnAttribute(llvm::Attribute::Naked))
+      throw std::invalid_argument("invalid i386 get-PC helper metadata");
+    const auto *Call = Fn.size() == 1 && Fn.front().size() == 2
+                           ? llvm::dyn_cast<llvm::CallInst>(&Fn.front().front())
+                           : nullptr;
+    const auto *Assembly =
+        Call ? llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand())
+             : nullptr;
+    if (!Assembly || !Call->arg_empty() || !Call->getType()->isVoidTy() ||
+        !Assembly->hasSideEffects() ||
+        Assembly->getAsmString() != x86GetPcThunkAssembly(Reg) ||
+        Assembly->getConstraintString() != "~{memory}" ||
+        !llvm::isa<llvm::UnreachableInst>(Fn.front().back()))
+      throw std::invalid_argument(
+          "i386 get-PC helper body no longer matches its metadata");
+    std::string Text;
+    llvm::raw_string_ostream Stream(Text);
+    c_stub::writeGetPcThunk(Stream, functionIdentifier(Fn),
+                            typeToCLLVM(Fn.getReturnType()), Reg);
+    OS << Text;
+    return;
+  }
+
+  if (Img && !Fn.isDeclaration()) {
+    std::optional<uint64_t> Entry;
+    if (auto VA = rewrite_source::getOriginalVA(Fn))
+      Entry = *VA;
+    else
+      llvm::consumeError(VA.takeError());
+    if (const std::string Import =
+            Entry ? c_stub::variadicImportOfStub(*Img, *Entry) : std::string();
+        !Import.empty()) {
+      std::string Text;
+      llvm::raw_string_ostream Stub(Text);
+      // The stub is named for its import where it is called; its definition
+      // keeps the function's own name, as HighC prints it.
+      std::string Name = functionIdentifier(Fn);
+      if (Name == Import)
+        Name = canonicalizeCProjectionIdentifier(
+            cNameOfGlobal(Fn.getName(), /*Declaration=*/false), "nd_function");
+      c_stub::writeVariadicImportStub(
+          Stub, c_stub::variadicStubName(Name, Import, *Entry), Import, {},
+          libc::libcVariadicForward(Import));
+      OS << Text;
+      return;
+    }
+  }
   if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Fn) &&
       (functionHasWindowsEHPads(Fn) || functionNeedsAnalysisOnlyEHWrap(Fn))) {
     writeAnalysisOnlyFunction(Fn);

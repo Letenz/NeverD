@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "WindowsNativeServices.h"
 #include "WindowsProcessModules.h"
 
 #include "llvm/BinaryFormat/COFF.h"
@@ -18,19 +19,7 @@ namespace neverd::emulation::windows_process {
 namespace {
 using namespace value;
 using namespace llvm::object;
-#include "WindowsSyscallNumbers.inc"
 #include "WindowsWineExports.inc"
-std::optional<uint32_t> nativeSyscall(llvm::StringRef Name) {
-  const auto *First = std::begin(WineSyscalls);
-  const auto *Last = std::end(WineSyscalls);
-  const auto *Found = std::lower_bound(
-      First, Last, Name, [](const auto &Entry, llvm::StringRef Key) {
-        return llvm::StringRef(Entry.Name) < Key;
-      });
-  if (Found == Last || llvm::StringRef(Found->Name) != Name)
-    return std::nullopt;
-  return Found->Id;
-}
 constexpr SystemProvider Providers[] = {
 #define NEVERD_WINDOWS_SYSTEM_MODULE(Name, Family, Base)                       \
   {text::Name, APIProvider::Family, Base},
@@ -45,7 +34,21 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
   // Names the loader resolves by walking this image, including exports the
   // model does not implement. Calling one of those stops with its name; a
   // missing directory entry would instead be a null pointer in the guest.
+  const bool Native = Provider.Family == APIProvider::Native && !Opaque;
   std::vector<llvm::StringRef> Names;
+  // Keep aliases in owned storage before forming views. Every numbered Nt
+  // entry has a Zw alias, even when that service is explicitly unimplemented.
+  std::vector<std::string> NativeNames;
+  if (Native) {
+    NativeNames.reserve(nativeServices().size() * 2);
+    for (const auto &Service : nativeServices()) {
+      NativeNames.emplace_back(Service.Name);
+      NativeNames.push_back(
+          ("Zw" + llvm::StringRef(Service.Name).drop_front(2)).str());
+    }
+    for (const auto &Name : NativeNames)
+      Names.push_back(Name);
+  }
   for (const auto &S : services())
     if (!Opaque && findService(Provider.Name, S.Name) == &S)
       Names.push_back(S.Name);
@@ -64,11 +67,14 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
   llvm::sort(Names);
   Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
   const uint64_t Count = Names.size();
-  const bool Native = Provider.Family == APIProvider::Native && !Opaque;
   const uint32_t Stride = Native ? NativeGateStride : GateStride;
   // Only an opaque module has no modeled export; its directory is empty.
-  // The code span has to hold one gate per export.
-  if ((!Count && !Opaque) || Count * Stride > SystemImageSize - SystemCodeRVA ||
+  // Numbered Nt/Zw pairs share gates in service-number order. Other exports
+  // follow them and must not shift any numbered entry's address rank.
+  uint64_t NextGate = Native ? nativeServices().size() : 0;
+  const uint64_t MaxGates = Count + NextGate;
+  if ((!Count && !Opaque) ||
+      MaxGates * Stride > SystemImageSize - SystemCodeRVA ||
       SystemImageSize > Budget.MappedBytes)
     return failure(text::SystemImage);
   // Raw offsets equal RVAs. Decode the completed bytes with the same loader
@@ -104,7 +110,9 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
     auto Name = String(Names[I]);
     if (!Name)
       return Name.takeError();
-    const uint32_t RVA = SystemCodeRVA + I * Stride;
+    const auto Syscall = Native ? nativeServiceNumber(Names[I]) : std::nullopt;
+    const uint64_t GateIndex = Syscall ? *Syscall : NextGate++;
+    const uint32_t RVA = SystemCodeRVA + GateIndex * Stride;
     llvm::support::endian::write32le(
         File.data() + Directory.ExportAddressTableRVA + I * DWordSize, RVA);
     llvm::support::endian::write32le(
@@ -113,15 +121,13 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
         File.data() + Directory.OrdinalTableRVA + I * WideSize, I);
     const Service *Exported = findService(Provider.Name, Names[I]);
     if (Architecture == GuestArchitecture::X64) {
-      auto Syscall = Native ? nativeSyscall(Names[I]) : std::nullopt;
       if (Syscall) {
         // mov r10, rcx; mov eax, imm32; syscall; ret; int3 padding.
-        // The hook reads 32 bytes and copies whole instructions up to syscall.
+        // Whole-instruction prologue reads stay within this service gate.
         std::array<uint8_t, NativeGateStride> Stub{};
         Stub.fill(0xcc);
-        const uint8_t Prefix[] = {0x4c, 0x8b, 0xd1, 0xb8};
-        std::copy(std::begin(Prefix), std::end(Prefix), Stub.begin());
-        llvm::support::endian::write32le(Stub.data() + 4, *Syscall);
+        const auto Prologue = nativeServicePrologue(*Syscall);
+        std::copy(Prologue.begin(), Prologue.end(), Stub.begin());
         Stub[NativeSyscallOffset] = 0x0f;
         Stub[NativeSyscallOffset + 1] = 0x05;
         Stub[NativeSyscallOffset + 2] = 0xc3;

@@ -11,6 +11,7 @@
 ///   HighCIntrinsicRender.cpp      — dispatch: MultiOutputRender,
 ///                                   renderIntrinsicCall
 ///   HighCIntrinsicRenderX86.cpp   — x86 multi-output & intrinsic rendering,
+///                                   vector intrinsics by element kind,
 ///                                   `__fastfail`, GS/FS reads,
 ///                                   hiloCollapseExpr
 ///   HighCIntrinsicRenderARM.cpp   — ARM/AArch64 intrinsic rendering
@@ -23,9 +24,17 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <functional>
+#include <optional>
+#include <set>
 #include <string>
 #include <vector>
+
+namespace llvm {
+class raw_ostream;
+} // namespace llvm
 
 namespace neverd {
 
@@ -43,13 +52,37 @@ struct MultiOutputRender {
 
 //--- Dispatchers (HighCIntrinsicRender.cpp) ---
 /// \p GnuToolchain: the output is compiled by GCC or Clang rather than MSVC,
-/// so an MSVC-only intrinsic name has no declaration.
+/// so an MSVC-only intrinsic name has no declaration.  \p OperandBytes, when
+/// given, is the width of each operand in \p Ops.
 std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
                                 const std::vector<std::string> &Ops,
                                 uint16_t ResultBytes, bool &HasCIntrinsics,
-                                bool GnuToolchain = false);
+                                bool GnuToolchain = false,
+                                llvm::ArrayRef<uint16_t> OperandBytes = {});
 
 //--- Arch-specific (HighCIntrinsicRenderX86.cpp) ---
+/// The C helpers an x87 value prints through.
+enum class X87CHelper : uint8_t {
+  Frndint,     ///< frndint, rounding to an integer by the x87 control word
+  Fsqrt,       ///< fsqrt, the correctly rounded square root
+  ControlWord, ///< fnstcw, the unit's control word
+  Fprem,       ///< fprem, fprem1 and the status word they leave
+#define NEVERD_X87_VALUE_HELPER(Intrinsic, Name, Asm, Operands, PopsST1)       \
+  Intrinsic,
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+};
+const char *x87CHelperName(X87CHelper Helper);
+/// The helper that runs the x87 value intrinsic \p Id, if it is one.
+std::optional<X87CHelper> x87ValueHelper(Intrinsic Id);
+/// Whether \p V is the x87 control word of an \p TheArch function.
+bool isX87ControlWord(Arch TheArch, const MedVar &V);
+/// Write what the x87 values of a unit need: when \p UsesExtended, the
+/// assertions that the compiler's `long double` is the x87 extended format
+/// with the size of the `unsigned _BitInt(80)` its bits travel in, then each
+/// helper in \p Used.
+void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
+                      const std::set<X87CHelper> &Used);
+
 std::string
 renderX86MultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
                      const std::vector<ExprPtr> &Operands,
@@ -65,10 +98,11 @@ std::string renderX86IntrinsicCall(Intrinsic Id,
 /// Render x86 intrinsics whose C spelling depends on the complete HighIR
 /// result and operand types. Returns an empty string when \p Call is not one
 /// of those intrinsics; recognized malformed calls fail closed.
-std::string
-renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
-                            std::function<std::string(const HighExpr &)> ExprFn,
-                            bool &HasCIntrinsics);
+std::string renderX86TypedIntrinsicCall(
+    Arch TheArch, const HighExpr &Call,
+    std::function<std::string(const HighExpr &)> ExprFn, bool &HasCIntrinsics,
+    bool GnuToolchain,
+    std::function<std::string(Intrinsic, unsigned)> FPHelperName = {});
 
 /// Return the fail-closed diagnostic for an x86 intrinsic that cannot be
 /// represented faithfully as standalone C, or nullptr when normal rendering
@@ -137,6 +171,16 @@ renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
 std::string renderARMIntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
                                    uint16_t ResultBytes, bool &HasCIntrinsics);
+
+/// An ACLE vector intrinsic whose C name ends in its element kind
+/// (`vaeseq_u8`, `vmul_p8`) and whose result is that vector: each operand
+/// \p OperandBytes gives as wide as the vector converts to the vector type,
+/// and the result back.  Empty for any other intrinsic.
+std::string renderNeonVectorIntrinsic(Intrinsic Id,
+                                      const std::vector<std::string> &Ops,
+                                      llvm::ArrayRef<uint16_t> OperandBytes,
+                                      uint16_t ResultBytes,
+                                      bool &HasCIntrinsics);
 
 /// Format a raw mnemonic + operands as a GCC-style `__asm__ volatile(...)`
 /// statement with register input constraints and a memory clobber.

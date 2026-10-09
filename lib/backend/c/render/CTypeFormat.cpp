@@ -24,6 +24,7 @@
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/MathExtras.h"
 
+#include <algorithm>
 #include <cctype>
 #include <functional>
 #include <stdexcept>
@@ -73,14 +74,35 @@ std::string escapeCString(llvm::StringRef Str) {
   return Result;
 }
 
+bool isStringLiteralText(llvm::StringRef Text) {
+  for (llvm::StringRef Prefix : {"\"", "L\"", "u8\"", "u\"", "U\""})
+    if (Text.starts_with(Prefix))
+      return true;
+  return false;
+}
+
+namespace {
+/// Whether the image's strings end with a NUL.  Go keeps a string as a
+/// pointer and a length and its linker packs their bytes without
+/// terminators, so a NUL-terminated read of a Go image's data is text by
+/// coincidence, or the start of another object such as a type descriptor.
+bool terminatesStrings(const BinaryImage &Img) {
+  return Img.ExceptionMetadata.Runtime.Runtime != SourceLanguageRuntime::Go;
+}
+} // namespace
+
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
                                               bool AllowEmpty) {
   if (!Img || Addr == 0 || Addr == InvalidVA)
     return std::nullopt;
-  if (Img->findImportAt(Addr))
+  if (Img->findImportAt(Addr) || !terminatesStrings(*Img))
     return std::nullopt;
   const Segment *Seg = Img->getSegmentFor(Addr);
   if (!Seg || !Seg->isReadable() || Seg->isWritable() || Seg->isExecutable())
+    return std::nullopt;
+  // A file header or an alignment gap is mapped but holds no program data: a
+  // small integer in an image loaded at zero lands there.
+  if (!Img->hasObjectDataProvenance(Addr))
     return std::nullopt;
   constexpr unsigned kMaxLit = 64;
   auto Escape = [](uint32_t Ch, std::string &Out) {
@@ -112,8 +134,25 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
     return std::nullopt;
   const uint8_t *Base = Seg->Data.data() + Off;
   const size_t Remain = Seg->Data.size() - static_cast<size_t>(Off);
+  // A sized data object that holds the bytes must be the string itself,
+  // padded with zeros at most.  Bytes past the segment's data are zeros.
+  auto IsOwnObject = [&](size_t Extent) {
+    for (const Symbol &Sym : Img->Symbols) {
+      if (Sym.IsFunc || !Sym.Size || Addr < Sym.Addr ||
+          Addr - Sym.Addr >= Sym.Size)
+        continue;
+      if (Sym.Addr != Addr || Sym.Size < Extent)
+        return false;
+      const size_t End =
+          static_cast<size_t>(std::min<uint64_t>(Sym.Size, Remain));
+      if (End > Extent && !std::all_of(Base + Extent, Base + End,
+                                       [](uint8_t Byte) { return !Byte; }))
+        return false;
+    }
+    return true;
+  };
   auto HasStableBytes = [&](size_t Extent) {
-    if (Extent > InvalidVA - Addr)
+    if (Extent > InvalidVA - Addr || !IsOwnObject(Extent))
       return false;
     // Pointer tables can look like short ASCII/UTF-16 strings at one load
     // address. A fixup, including one beginning before this candidate, makes
@@ -241,6 +280,10 @@ readableDataBytes(const BinaryImage *Img, va_t Addr, size_t Window) {
   const Segment *Seg = Img->getSegmentFor(Addr);
   if (!Seg || !Seg->isReadable() || Seg->isExecutable() || Addr < Seg->VA)
     return std::nullopt;
+  // A file header or an alignment gap is mapped but holds no program data: a
+  // small integer in an image loaded at zero lands there.
+  if (!Img->hasObjectDataProvenance(Addr))
+    return std::nullopt;
   const uint64_t Off = Addr - Seg->VA;
   if (Off >= Seg->Data.size())
     return std::nullopt;
@@ -328,7 +371,7 @@ std::optional<std::string> imageStringComment(const BinaryImage *Img,
 }
 
 std::optional<ImageCString> imageCString(const BinaryImage *Img, va_t Addr) {
-  if (Img && Img->findImportAt(Addr))
+  if (Img && (Img->findImportAt(Addr) || !terminatesStrings(*Img)))
     return std::nullopt;
   const auto Bytes = readableDataBytes(Img, Addr, StringWindow);
   if (!Bytes)
@@ -507,7 +550,11 @@ std::string typeToC(const TypeRef &Ty) {
   case NdTypeKind::Float:
     if (!Ty->SourceName.empty())
       return Ty->SourceName;
-    return Ty->Size == 4 ? "float" : "double";
+#define NEVERD_C_FLOAT_TYPE(Bytes, Spelling, FusedMultiplyAdd, ComputesWider)  \
+  if (Ty->Size == Bytes)                                                       \
+    return Spelling;
+#include "neverd/backend/c/render/CFloatTypes.def"
+    return "double";
   case NdTypeKind::Ptr:
     if (!Ty->Pointee || Ty->Pointee->Kind == NdTypeKind::Void)
       return "void*";
@@ -566,6 +613,17 @@ std::string typeToC(const TypeRef &Ty) {
     return "uint32_t";
   default:
     return "uint32_t";
+  }
+}
+
+bool hasCSpelling(const TypeRef &Ty) {
+  // typeToC is the authority on what C spells; ask it rather than restate
+  // its rules.
+  try {
+    (void)typeToC(Ty);
+    return true;
+  } catch (const std::invalid_argument &) {
+    return false;
   }
 }
 

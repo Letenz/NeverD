@@ -16,8 +16,8 @@
         <translation>&amp;Перезагрузить входной файл</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>Перезагрузить двоичный файл и его сохранённые аннотации</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>Перечитать входной файл с сохранёнными аннотациями</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -120,8 +120,8 @@
         <translation>Пере&amp;именовать...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>Переименовать текущую функцию</translation>
+        <source>Rename the current address</source>
+        <translation>Переименовать текущий адрес</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,7 +136,7 @@
         <translation>Ввести &amp;повторяемый комментарий...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Отметить по&amp;зицию...</translation>
     </message>
     <message>
@@ -192,7 +192,7 @@
         <translation>Перейти к началу предыдущей функции</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
+        <source>Jump to pseudo&amp;code</source>
         <translation>Перейти к пс&amp;евдокоду</translation>
     </message>
     <message>
@@ -296,7 +296,7 @@
         <translation>Искать последовательность байтов в двоичном файле</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
+        <source>Next se&amp;quence of bytes</source>
         <translation>&amp;Следующая последовательность байтов</translation>
     </message>
     <message>
@@ -392,7 +392,7 @@
         <translation>Показать LLVM IR текущей функции</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
+        <source>Generate &amp;LLVM C</source>
         <translation>С&amp;генерировать LLVM C</translation>
     </message>
     <message>
@@ -488,7 +488,7 @@
         <translation>Показать обзор графа</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
+        <source>MCP c&amp;onnections</source>
         <translation>Под&amp;ключения MCP</translation>
     </message>
     <message>
@@ -496,7 +496,7 @@
         <translation>Управление подключениями MCP и общим доступом к сеансу</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
+        <source>Ex&amp;tensions</source>
         <translation>&amp;Расширения</translation>
     </message>
     <message>
@@ -528,7 +528,7 @@
         <translation>Включить или выключить полноэкранный режим</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
+        <source>I&amp;ncrease font size</source>
         <translation>&amp;Увеличить размер шрифта</translation>
     </message>
     <message>
@@ -705,7 +705,7 @@
     </message>
     <message>
         <source>String &amp;references</source>
-        <translation>&amp;Ссылки на строки</translation>
+        <translation>Ссы&amp;лки на строки</translation>
     </message>
     <message>
         <source>List the instructions that refer to strings</source>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>Перестать считать текущую функцию функцией</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>&amp;Данные</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>Определить значение по текущему адресу; повторно — следующий размер</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>&amp;Строка</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>Определить строку, начинающуюся по текущему адресу</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>Отменить опр&amp;еделение</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>Показать байты текущего элемента как байты</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>&amp;Число</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>Показать число операнда так, как выбирает листинг</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>&amp;Шестнадцатеричное</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>Показать число операнда в шестнадцатеричном виде</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>&amp;Десятичное</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>Показать число операнда в десятичном виде</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>Д&amp;воичное</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>Показать число операнда в двоичном виде</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>&amp;Символ</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>Показать число операнда как символы</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>С&amp;мещение</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>Показать число операнда как адрес, на который оно указывает</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>Сменить &amp;знак</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>Показать число операнда со сменённым знаком</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>Побитовое отрицани&amp;е</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>Показать число операнда с инвертированными битами</translation>
     </message>
 </context>
 <context>
@@ -1095,6 +1183,10 @@
         <source>&amp;Functions</source>
         <translation>&amp;Функции</translation>
     </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>&amp;Тип операнда</translation>
+    </message>
 </context>
 <context>
     <name>NavigationBand</name>
@@ -1125,6 +1217,10 @@
 </context>
 <context>
     <name>ProjectDatabase</name>
+    <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>Не удаётся скопировать %1 в %2</translation>
+    </message>
     <message>
         <source>Cannot read %1: %2</source>
         <translation>Не удаётся прочитать %1: %2</translation>
@@ -1195,6 +1291,10 @@
     <message>
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
+    </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
     </message>
 </context>
 <context>
@@ -1322,6 +1422,18 @@ Recognized library operation; click to show its code.</source>
 Double-click to go to the declaration.</source>
         <translation>%1
 Дважды щёлкните, чтобы перейти к объявлению.</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>%n объявление показано на C</numerusform>
+            <numerusform>%n объявления показаны на C</numerusform>
+            <numerusform>%n объявлений показано на C</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1603,6 +1715,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>Перезагрузить входной файл</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>Полоса навигации</translation>
     </message>
@@ -1711,12 +1827,8 @@ Double-click to go to the declaration.</source>
         <translation> · только чтение</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 не является началом функции; переименовывать можно только функции.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>Переименовать функцию</translation>
+        <source>Rename address</source>
+        <translation>Переименовать адрес</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -1841,8 +1953,8 @@ Signed: %4</source>
         <translation>Введите команду</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>Создать файл C</translation>
+        <source>Create source file</source>
+        <translation>Создать файл исходного кода</translation>
     </message>
     <message>
         <source>Create LST file</source>
@@ -1863,38 +1975,6 @@ Signed: %4</source>
     <message>
         <source>No saved desktop</source>
         <translation>Нет сохранённого рабочего стола</translation>
-    </message>
-    <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: быстрый старт</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>Новый</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>Дизассемблировать новый файл</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Начать</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>Работать самостоятельно</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>Предыдущий</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>Загрузить выбранный недавний файл</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>Недавние файлы:</translation>
     </message>
     <message>
         <source>Open binary or database</source>
@@ -1972,6 +2052,10 @@ Signed: %4</source>
         <source>Collapse library operations</source>
         <translation>Свернуть библиотечные операции</translation>
     </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>Неизвестно, как загрузить %1: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2029,7 +2113,94 @@ Signed: %4</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>Быстрый старт</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>Интерактивный дизассемблер и декомпилятор</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>Версия %1</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>Недавние файлы</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;Новый</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>Дизассемблировать новый файл</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>Н&amp;ачать</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>Работать самостоятельно</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>&amp;Предыдущий</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>Загрузить выбранный недавний файл</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>&amp;Показывать при запуске</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>Перетащите файл сюда, чтобы открыть его</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>Отсутствует</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>&amp;Загрузить</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>&amp;Копировать путь</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>&amp;Удалить из списка</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>Сегодня, %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>Вчера, %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>Нет недавних файлов</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>Здесь появляются открытые вами файлы. Выберите «Новый» или перетащите файл в это окно.</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 находится в папке, недоступной для записи; его база данных хранится в %2</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>Запуск процесса анализа…</translation>
@@ -2055,8 +2226,8 @@ Signed: %4</source>
         <translation>%1: %2 %3, функций: %4</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>Аннотации перезагружены</translation>
+        <source>Reloaded the input file</source>
+        <translation>Входной файл перезагружен</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2125,6 +2296,243 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>Удалена функция по адресу %1</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>Байты по адресу %1 уже не определены</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>Определение элемента по адресу %1 отменено</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%1 определено по адресу %2</translation>
+    </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>Платформа: %1, выбрана вручную</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>Платформа: %1, определена по коду: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>Загрузить новый файл</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>Загрузить файл %1 &amp;как</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>Входной файл, возможно, имеет один из перечисленных форматов</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>&amp;Тип процессора</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>Процессор определяется заголовком файла</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>Анализ</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>&amp;Включён</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>Если выключено, NeverD не анализирует программу в простое</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>&amp;Индикатор включён</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>Показывать ход анализа в строке состояния</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Параметры</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>Загрузить &amp;отладочную информацию</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>Читать PDB, DWARF или карту компоновщика, относящиеся к входному файлу</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>NeverD не может загрузить этот файл: %1</translation>
+    </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>Указан только из-за имени файла; содержимое не соответствует этому формату</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>Формат подсказывает только имя файла; выберите строку, чтобы загрузить файл так</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>Процессор: %1</translation>
+    </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 — не шестнадцатеричное число</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>Базовый адрес загрузки файла</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>Выберите процессор, на котором выполняется код файла</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>Точка вхо&amp;да</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>&amp;Смещение в файле</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>Сколько байт загрузить</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>&amp;Базовый адрес образа</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>&amp;Размер загрузки</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>&amp;Тип процессора (двойной щелчок, чтобы задать)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>Базовый адрес образа</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>До конца файла</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>Где начинается выполнение</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>С какого места файла начинаются загружаемые байты</translation>
+    </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>П&amp;латформа</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>Платформа, для которой собран код и чьим соглашениям он следует: как вызовы передают аргументы, какие регистры сохраняются и каковы размеры типов C</translation>
+    </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>Ни одна часть файла не похожа на код известного NeverD набора команд; выберите процессор, на котором выполняется его код</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>Код похож на %1 или %2, и по его командам не понять, на какой; выберите процессор, на котором выполняется его код</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>Определено по байтам: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>Определено по байтам: %1, точка входа %2, база %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>Код похож на %1, который NeverD не умеет декодировать; выберите процессор, чтобы всё равно прочитать его так</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>Код больше всего похож на %1, но неотчётливо; выберите процессор, на котором выполняется его код</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>Процессоры Intel 80x86</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>Процессоры ARM</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>Виртуальные машины</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 и новее (32 бита)</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 и Intel 64 (64 бита)</translation>
+    </message>
+    <message>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM little-endian, запуск в состоянии ARM</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64 (AArch64)</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>Виртуальная машина Ethereum</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM little-endian, запуск в состоянии Thumb</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple (macOS, iOS)</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>Определить по коду</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V (Linux, BSD, Android)</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>

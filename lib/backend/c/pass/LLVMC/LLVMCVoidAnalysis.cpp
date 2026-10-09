@@ -21,75 +21,13 @@
 namespace neverd {
 
 bool analyzeVoidReturn(const LLVMCAnalysisState &State, llvm::Function &Fn) {
-  auto *RetTy = Fn.getReturnType();
-  if (RetTy->isVoidTy())
-    return true;
-  if (!RetTy->isIntegerTy())
-    return false;
-
-  bool AllRetResidual = true;
-  bool HasComputation = false;
-  for (auto &BB : Fn) {
-    for (auto &Inst : BB) {
-      if (auto *RI = llvm::dyn_cast<llvm::ReturnInst>(&Inst)) {
-        auto *RV = RI->getReturnValue();
-        if (!RV)
-          continue;
-        if (llvm_value_provenance::isExplicitMemoryReturn(*RI) ||
-            llvm_value_provenance::isExplicitSourceReturn(*RI)) {
-          AllRetResidual = false;
-          continue;
-        }
-        if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(RV)) {
-          if (CI->isZero())
-            continue;
-        }
-        if (State.ForwardedLoads.count(RV)) {
-          AllRetResidual = false;
-          continue;
-        }
-        const llvm::Value *Source = RV;
-        while (auto *Cast = llvm::dyn_cast<llvm::CastInst>(Source))
-          Source = Cast->getOperand(0);
-        const auto *CallProducer = llvm::dyn_cast<llvm::CallInst>(Source);
-        if (!CallProducer)
-          if (const auto *Extract =
-                  llvm::dyn_cast<llvm::ExtractValueInst>(Source))
-            CallProducer =
-                llvm::dyn_cast<llvm::CallInst>(Extract->getAggregateOperand());
-        if (CallProducer) {
-          // These intrinsics have exact arithmetic results, not residual
-          // native call registers eligible for void inference.
-          if (const auto *Intrinsic =
-                  llvm::dyn_cast<llvm::IntrinsicInst>(CallProducer))
-            if (Intrinsic->getIntrinsicID() == llvm::Intrinsic::fptosi_sat ||
-                Intrinsic->getIntrinsicID() == llvm::Intrinsic::fptoui_sat ||
-                Intrinsic->getIntrinsicID() == llvm::Intrinsic::bitreverse ||
-                Intrinsic->getIntrinsicID() == llvm::Intrinsic::ctpop ||
-                Intrinsic->getIntrinsicID() == llvm::Intrinsic::ctlz ||
-                Intrinsic->getIntrinsicID() == llvm::Intrinsic::cttz ||
-                Intrinsic->getIntrinsicID() == llvm::Intrinsic::umin ||
-                Intrinsic->getIntrinsicID() == llvm::Intrinsic::umax ||
-                Intrinsic->getIntrinsicID() == llvm::Intrinsic::smin ||
-                Intrinsic->getIntrinsicID() == llvm::Intrinsic::smax)
-              AllRetResidual = false;
-          if (llvm_value_provenance::isSemanticProducer(*CallProducer) ||
-              isLinuxX64SyscallInlineAsm(*CallProducer) ||
-              isWindowsX64SyscallInlineAsm(*CallProducer))
-            AllRetResidual = false;
-          continue;
-        }
-        AllRetResidual = false;
-      }
-      if (Inst.isBinaryOp() || llvm::isa<llvm::ICmpInst>(&Inst) ||
-          llvm::isa<llvm::FCmpInst>(&Inst) ||
-          llvm::isa<llvm::SelectInst>(&Inst))
-        if (!State.DeadFrameStores.count(&Inst) &&
-            !State.Inlinable.count(&Inst))
-          HasComputation = true;
-    }
-  }
-  return AllRetResidual && !HasComputation;
+  // Whether the function returns a value is settled on MedIR, for both C
+  // backends (settleReturnContracts): this IR folds the undefined register a
+  // function hands back to the same constant as a deliberate zero, and a
+  // callee's result handed back is a value unless that callee returns none.
+  (void)State;
+  return Fn.getReturnType()->isVoidTy() ||
+         llvm_value_provenance::returnsNoValue(Fn);
 }
 
 void analyzeVoidDeadChain(LLVMCAnalysisState &State, llvm::Function &Fn) {

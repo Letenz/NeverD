@@ -51,6 +51,7 @@ foreach(_arch X64 AArch64)
             fixtures/aarch64_exclusive.inc AArch64ExclusiveCases.def
       fixtures/WindowsMemoryCases.def fixtures/WindowsMemoryFixture.inc
       fixtures/WindowsTimeFixture.inc
+      fixtures/WindowsThreadFixture.inc
       "${_windows_fixture_dir}/kernel32.def" "${_windows_fixture_dir}/ntdll.def"
     VERBATIM)
   list(APPEND _windows_outputs "${_base}.exe")

@@ -8,6 +8,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
+#include "neverd/loader/SymbolSpelling.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
@@ -21,6 +22,27 @@
 
 namespace neverd {
 namespace {
+
+/// The name a method implementation with no symbol takes: clang's
+/// `-[Class(Category) selector:]` (ObjCMethodSpellings.def), or
+/// `objc_imp_<address>` when the metadata spells a class, category or
+/// selector that is not an Objective-C name.
+std::string implementationName(const ObjCClass &Class, llvm::StringRef Category,
+                               bool ClassMethod, llvm::StringRef Selector,
+                               va_t IMP) {
+  llvm::StringRef Marker;
+#define NEVERD_OBJC_METHOD_KIND(Spelling, CPrefix, IsClassMethod)              \
+  if (IsClassMethod == ClassMethod)                                            \
+    Marker = Spelling;
+#include "neverd/loader/ObjCMethodSpellings.def"
+  std::string Name = (Marker + "[" + Class.Name).str();
+  if (!Category.empty())
+    Name += ("(" + Category + ")").str();
+  Name += (" " + Selector + "]").str();
+  if (symbolScheme(Name) == SymbolScheme::ObjCMethod)
+    return Name;
+  return "objc_imp_" + llvm::utohexstr(IMP);
+}
 constexpr size_t MaxRecords = 65536;
 constexpr size_t MaxString = 4096;
 
@@ -132,7 +154,8 @@ class RuntimeReader {
                                  "parameters only, variadic tail unknown");
   }
 
-  void methodList(const ObjCClass &Class, va_t List, bool ClassMethod) {
+  void methodList(const ObjCClass &Class, va_t List, bool ClassMethod,
+                  llvm::StringRef Category = {}) {
     if (!List)
       return;
     std::string Diagnostic;
@@ -164,7 +187,9 @@ class RuntimeReader {
       } else {
         hint(Method);
         if (!Img.hasFunctionSymbolAt(*IMP))
-          Img.addSymbol("objc_imp_" + llvm::utohexstr(*IMP), *IMP, 0, true);
+          Img.addSymbol(implementationName(Class, Category, ClassMethod,
+                                           Method.Selector, *IMP),
+                        *IMP, 0, true);
       }
       Img.ObjCMethods.push_back(std::move(Method));
     }
@@ -302,7 +327,7 @@ class RuntimeReader {
         diagnostic("Objective-C category method-list pointer is unavailable");
         continue;
       }
-      methodList(Owner, *List, IsClassMethod);
+      methodList(Owner, *List, IsClassMethod, *Name);
     }
     for (size_t I = FirstMethod; I < Img.ObjCMethods.size(); ++I) {
       Img.ObjCMethods[I].CategoryName = *Name;

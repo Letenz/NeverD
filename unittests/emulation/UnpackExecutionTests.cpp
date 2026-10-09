@@ -495,26 +495,33 @@ INSTANTIATE_TEST_SUITE_P(Backends, Unpack, testing::ValuesIn(Backends),
                            return std::string(Info.param.Name);
                          });
 
-TEST(UnpackBackends, ProduceIdenticalImages) {
-  for (const auto &F : Fixtures) {
-    SCOPED_TRACE(F.Name);
-    std::map<std::string, std::vector<uint8_t>> Images;
-    for (const auto &B : Backends)
-      if (auto Result = unpackOn(B.Kind, F.Packed)) {
-        ASSERT_EQ(Result->Outcome, UnpackOutcome::Unpacked);
-        Images[B.Name] = std::move(Result->Image);
-      }
-    if (Images.size() < 2)
-      GTEST_SKIP() << SingleBackend;
-    for (const auto &[Name, Bytes] : Images)
-      EXPECT_EQ(Bytes, Images.begin()->second)
-          << Name << " differs from " << Images.begin()->first;
-  }
+// Keep one finite comparison allowance per fixture, as for recovery tests.
+class UnpackBackends : public testing::TestWithParam<Fixture> {};
+
+TEST_P(UnpackBackends, ProduceIdenticalImages) {
+  const auto &F = GetParam();
+  std::map<std::string, std::vector<uint8_t>> Images;
+  for (const auto &B : Backends)
+    if (auto Result = unpackOn(B.Kind, F.Packed)) {
+      ASSERT_EQ(Result->Outcome, UnpackOutcome::Unpacked);
+      Images[B.Name] = std::move(Result->Image);
+    }
+  if (HasFailure())
+    return;
+  if (Images.size() < 2)
+    GTEST_SKIP() << SingleBackend;
+  for (const auto &[Name, Bytes] : Images)
+    EXPECT_EQ(Bytes, Images.begin()->second)
+        << Name << " differs from " << Images.begin()->first;
 }
+
+INSTANTIATE_TEST_SUITE_P(Fixtures, UnpackBackends, testing::ValuesIn(Fixtures),
+                         [](const auto &Info) { return Info.param.Name; });
 
 TEST(UnpackOptions, DefaultsDeferUnmodeledLoaderFacts) {
   const UnpackOptions Options;
   EXPECT_EQ(Options.Transfer, 0u);
+  EXPECT_FALSE(Options.SnapshotOnly);
   EXPECT_EQ(Options.Process.Limits.Instructions, defaults::Instructions);
   EXPECT_EQ(Options.Process.MemoryLimit, defaults::Memory);
   ASSERT_TRUE(Options.Process.Windows);
@@ -539,6 +546,17 @@ TEST(UnpackOptions, DecodingIsStrictAndKeepsUnpackingDefaults) {
   ASSERT_TRUE(bool(Strict)) << llvm::toString(Strict.takeError());
   ASSERT_TRUE(Strict->Process.Windows);
   EXPECT_FALSE(Strict->Process.Windows->DeferUnmodeled);
+
+  auto Snapshot = unpackOptionsFromJSON("{\"snapshot_only\":true}");
+  ASSERT_TRUE(bool(Snapshot)) << llvm::toString(Snapshot.takeError());
+  EXPECT_TRUE(Snapshot->SnapshotOnly);
+  for (const char *Invalid :
+       {"{\"snapshot_only\":null}", "{\"snapshot_only\":1}",
+        "{\"snapshot_only\":\"true\"}"}) {
+    auto Rejected = unpackOptionsFromJSON(Invalid);
+    EXPECT_FALSE(bool(Rejected)) << Invalid;
+    llvm::consumeError(Rejected.takeError());
+  }
 
   for (const char *Invalid : {UnknownOption, ZeroTransfer, "[]", ""}) {
     auto Rejected = unpackOptionsFromJSON(Invalid);

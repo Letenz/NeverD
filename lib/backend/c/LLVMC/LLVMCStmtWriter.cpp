@@ -12,12 +12,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "../UnalignedMemory.h"
+#include "../render/X86FPStateHelpers.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/LLVMName.h"
+#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
@@ -30,6 +34,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <cctype>
@@ -1512,6 +1517,19 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       AddressText = "&" + valueStr(Address->stripPointerCasts());
     else
       AddressText = valueStr(Address);
+    if (!OnlyFunction && !Load->isAtomic())
+      if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(
+              llvm::getUnderlyingObject(Address));
+          Global && parseNdCodePtrSymbol(Global->getName())) {
+        // Relocated pointer mirrors have a packed byte layout. Keep one
+        // volatile scalar access without claiming its original alignment or
+        // a separate scalar object's C effective type.
+        emitIndent(Indent);
+        OS << getName(Load)
+           << " = ((const volatile struct __attribute__((packed, may_alias)) { "
+           << Type << " value; } *)(" << AddressText << "))->value;\n";
+        return;
+      }
     const std::string Pointer = "(" + Type +
                                 (Load->isVolatile() ? " volatile" : "") +
                                 "*)(" + AddressText + ")";
@@ -1528,6 +1546,27 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
     } else {
       OS << getName(Load) << " = *(" << Pointer << ");\n";
     }
+    return;
+  }
+  if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
+      Load && !Load->isSimple() &&
+      isLLVMX86SegmentedAddressSpace(Load->getPointerAddressSpace())) {
+    if (Load->isAtomic())
+      throw std::runtime_error("unsupported atomic segmented C load");
+    auto Segment = renderX86SegmentedLoad(
+        Opts.TheArch, *Load,
+        [this](const llvm::Value *Value) { return valueStr(Value); });
+    if (Segment.empty())
+      throw std::runtime_error(
+          "unsupported segmented C load width or architecture");
+    if (Load->getType()->isPointerTy())
+      Segment =
+          "(" + typeToCLLVM(Load->getType()) + ")(uintptr_t)(" + Segment + ")";
+    // Ordered loads receive a materialized ValueTexts name. That name is
+    // their future use, not a replacement for the effect defining it.
+    emitIndent(Indent);
+    OS << getName(Load) << " = " << Segment << ";\n";
+    HasCIntrinsics = true;
     return;
   }
   if (Analysis.Inlinable.count(&Inst))
@@ -3411,7 +3450,8 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
   else if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Address)) {
     // Named globals denote C objects, not addresses. An exact type match
     // permits direct access; differently typed views still copy object bytes.
-    if (Global->getValueType() == Type) {
+    if (Global->getValueType() == Type &&
+        !ExternalDataIdentifiers.count(Global)) {
       emitIndent(Indent);
       if (Load)
         OS << getName(Load) << " = " << Pointer << ";\n";
@@ -3688,6 +3728,47 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   if (!IA)
     return false;
 
+  if (auto Shape = classifyX86FPStateAsm(Call)) {
+    if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
+      llvm::report_fatal_error("x86 FP state C projection requires x86");
+    const auto [Id, Bytes] = *Shape;
+    emitIndent(Indent);
+    if (!Bytes) {
+      const std::string Pointer = valueStr(Call.getArgOperand(0));
+      OS << "__asm__ volatile(\""
+         << (Id == Intrinsic::X86ReadMXCSR ? "stmxcsr" : "ldmxcsr")
+         << " (%0)\" :: \"r\"(" << Pointer << ") : \"memory\");\n";
+      return true;
+    }
+    const auto BitcastInput = [&](unsigned Index) {
+      return "__builtin_bit_cast(uint" +
+             std::to_string(x86FPStateSourceBytes(Bytes) * 8) + "_t, " +
+             valueStr(Call.getArgOperand(Index)) + ")";
+    };
+    const auto Helper = FPStateHelperNames.find(*Shape);
+    if (Helper == FPStateHelperNames.end())
+      llvm::report_fatal_error("uncollected x86 FP state C helper");
+    if (isX86FPConversionStateIntrinsic(Id)) {
+      const std::string Expression = Helper->second + "(" + BitcastInput(0) +
+                                     ", (void*)" +
+                                     valueStr(Call.getArgOperand(1)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = " << Expression << ";\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
+    std::string Expression = Helper->second + "(" + BitcastInput(0) + ", " +
+                             BitcastInput(1) + ", (void*)" +
+                             valueStr(Call.getArgOperand(2)) + ")";
+    if (!Call.use_empty())
+      OS << Name << " = __builtin_bit_cast("
+         << (Bytes == 4 ? "float" : "double") << ", " << Expression << ");\n";
+    else
+      OS << "(void)" << Expression << ";\n";
+    return true;
+  }
+
   std::string AsmStr = IA->getAsmString().str();
   if (AsmStr.empty())
     return false;
@@ -3914,6 +3995,33 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
         CapturedX87StatusCalls.insert(Status);
       return true;
     }
+    bool KnownBinaryValue = false, PopsSecondInput = false;
+#define NEVERD_X87_VALUE_HELPER(ID, CName, Asm, Operands, PopsST1)             \
+  if (Operands == 2 && AsmStr == Asm) {                                        \
+    KnownBinaryValue = true;                                                   \
+    PopsSecondInput = PopsST1;                                                 \
+  }
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+    const std::string BinaryConstraints =
+        PopsSecondInput
+            ? "=&{st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"
+            : "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}";
+    if (KnownBinaryValue && Call.getType()->isX86_FP80Ty() &&
+        Call.arg_size() == 2 &&
+        Call.getArgOperand(0)->getType()->isX86_FP80Ty() &&
+        Call.getArgOperand(1)->getType()->isX86_FP80Ty() &&
+        Constraints == BinaryConstraints) {
+      const std::string Left = X87Operand(0), Right = X87Operand(1);
+      const std::string Result =
+          ResultLive ? Name : freshVar("x87_unused_value");
+      emitIndent(Indent);
+      if (!ResultLive)
+        OS << "long double " << Result << ";\n";
+      OS << "__asm__ volatile(\"" << AsmStr << "\" : \"=&t\"(" << Result
+         << ") : \"0\"(" << Left << "), \"u\"(" << Right
+         << ") : " << (PopsSecondInput ? "\"st(1)\", " : "") << "\"cc\");\n";
+      return true;
+    }
     if (AsmStr == "fnstsw $0" && Call.getType()->isIntegerTy(16) &&
         Call.arg_size() == 0 &&
         Constraints == "={ax},~{dirflag},~{fpsr},~{flags}") {
@@ -4090,6 +4198,60 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
   AfterCxxThrow = NoReturn;
 }
 
+std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
+                                            bool Strict) {
+  const auto *Type = Call.getFunctionType();
+  std::string Convention;
+  switch (Call.getCallingConv()) {
+  case llvm::CallingConv::C:
+    break;
+  case llvm::CallingConv::Win64:
+    Convention = "__attribute__((ms_abi)) ";
+    break;
+  case llvm::CallingConv::X86_64_SysV:
+    Convention = "__attribute__((sysv_abi)) ";
+    break;
+  case llvm::CallingConv::X86_StdCall:
+    Convention = "__attribute__((stdcall)) ";
+    break;
+  case llvm::CallingConv::X86_FastCall:
+    Convention = "__attribute__((fastcall)) ";
+    break;
+  default:
+    if (Strict)
+      throw std::runtime_error(
+          "unsupported preserved indirect-call convention");
+    break;
+  }
+  std::string Parameters;
+  for (auto *Parameter : Type->params()) {
+    if (!Parameters.empty())
+      Parameters += ", ";
+    Parameters += typeToCLLVM(Parameter);
+  }
+  if (Type->isVarArg()) {
+    // C before C23 names no variadic type without a fixed parameter; shown
+    // C leaves such a callee unprototyped.
+    if (!Parameters.empty())
+      Parameters += ", ...";
+    else if (Strict)
+      throw std::runtime_error(
+          "C variadic indirect call lacks a fixed parameter");
+  } else if (Parameters.empty()) {
+    Parameters = "void";
+  }
+  return typeToCLLVM(Type->getReturnType()) + " (" + Convention + "*)(" +
+         Parameters + ")";
+}
+
+std::string
+LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
+  // Opaque LLVM pointers do not carry a C function-pointer type. The call
+  // instruction owns the exact result, parameter widths and convention.
+  return "((" + indirectCalleeType(Call, /*Strict=*/true) + ")(" +
+         valueStr(Call.getCalledOperand()) + "))";
+}
+
 std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
   for (const llvm::CallBase *Pending : RenderingCalls)
     if (Pending == &Call)
@@ -4155,14 +4317,23 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
       CalleeName = CN;
     else
       CalleeName = functionIdentifier(*Callee);
+  } else if (Opts.PreserveLLVMFunctionTypes) {
+    CalleeName = preservedIndirectCalleeStr(Call);
   } else {
     CalleeName = resolveImportCalleeName(Call.getCalledOperand());
     if (CalleeName.empty()) {
-      if (std::string Slot = indirectCalleeStr(Call.getCalledOperand());
-          !Slot.empty())
-        CalleeName = Slot;
-      else
-        CalleeName = "(" + valueStr(Call.getCalledOperand()) + ")";
+      // C calls no data pointer: the call's own type names the function a
+      // pointer or an address held as an integer reaches.
+      std::string Target = indirectCalleeStr(Call.getCalledOperand());
+      if (Target.empty()) {
+        const llvm::Value *Callee = Call.getCalledOperand();
+        if (const auto *Cast = llvm::dyn_cast<llvm::Operator>(Callee);
+            Cast && Cast->getOpcode() == llvm::Instruction::IntToPtr)
+          Callee = Cast->getOperand(0);
+        Target = "(" + valueStr(Callee) + ")";
+      }
+      CalleeName = "((" + indirectCalleeType(Call, /*Strict=*/false) + ")" +
+                   Target + ")";
     }
   }
   if (Call.getCalledFunction() &&
@@ -4176,7 +4347,14 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
   for (unsigned ArgIdx = 0; ArgIdx < Limit; ++ArgIdx) {
     if (ArgIdx > 0)
       Expr += ", ";
-    Expr += callArgStr(Call.getArgOperand(ArgIdx), Call, ArgIdx);
+    std::string Argument = callArgStr(Call.getArgOperand(ArgIdx), Call, ArgIdx);
+    const auto *Callee = Call.getCalledFunction();
+    if (!Opts.PreserveLLVMFunctionTypes && Callee && Callee->isDeclaration() &&
+        libc::headerFor(CalleeName) &&
+        libc::isObjectPointerParameter(CalleeName, ArgIdx) &&
+        Call.getArgOperand(ArgIdx)->getType()->isIntegerTy())
+      Argument = "(void *)(uintptr_t)(" + Argument + ")";
+    Expr += Argument;
   }
   Expr += ")";
   RenderingCalls.pop_back();
@@ -5715,6 +5893,12 @@ LLVMCWriter::resolveImportCalleeName(const llvm::Value *Callee) const {
   if (!Callee)
     return {};
   const llvm::Value *Op = Callee->stripPointerCasts();
+  // A call to a symbol the module declares as data, such as an import its
+  // GOT mirror names, calls that import.
+  if (const auto *GV = llvm::dyn_cast<llvm::GlobalVariable>(Op);
+      GV && GV->isDeclaration() && !GV->getName().empty())
+    return canonicalizeCProjectionIdentifier(cNameOfGlobal(GV->getName(), true),
+                                             "nd_import");
   for (unsigned Depth = 0; Op && Depth < 6; ++Depth) {
     if (const auto *Fn = llvm::dyn_cast<llvm::Function>(Op))
       return functionIdentifier(*Fn);
@@ -5754,15 +5938,16 @@ LLVMCWriter::resolveImportCalleeName(const llvm::Value *Callee) const {
     if (const Import *Imp = Img->findImportAt(Slot); Imp && !Imp->Name.empty())
       return canonicalizeCProjectionIdentifier(Imp->Name, "nd_import");
     // A slot the loader binds to one import, such as an ELF GOT entry, names
-    // it while the call still loads the slot.  A C++ stem could merge two
-    // overloads, so a mangled import stays unnamed here.
+    // it while the call still loads the slot.  An identifier spelled from
+    // the symbol could merge two symbols, such as C++ overloads, so such an
+    // import stays unnamed here.
     if (const auto Bound = Img->ImportStorageSlots.find(Slot);
         Bound != Img->ImportStorageSlots.end() &&
         !Img->ConflictingImportStorageSlots.count(Slot) &&
         Bound->second.Addend == 0 && !Bound->second.Name.empty()) {
       const llvm::StringRef Name =
           cNameOfSymbol(Bound->second.Name, Opts.Format, Opts.TheArch);
-      if (itaniumStem(Name).empty() && msvcDecorationStem(Name).empty())
+      if (!identifierSpelledFromSymbol(Name) && !hasMsvcStem(Name))
         return canonicalizeCProjectionIdentifier(Name, "nd_import");
     }
     return {};

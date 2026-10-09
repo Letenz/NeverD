@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""A disposable analysis replica must preserve current edits without saving them."""
+import copy
+from contextlib import ExitStack
+from pathlib import Path
+import sys
+import tempfile
+
+from transport_test import BASE, Client
+
+
+def ok(client, operation, payload=None):
+    result = client.call(operation, payload)
+    assert result["status"] == "ok", result
+    return result["payload"]
+
+
+def run(executable):
+    with tempfile.TemporaryDirectory(prefix="neverd-analysis-snapshot-") as directory, ExitStack() as clients:
+        binary = Path(directory) / "fixture.bin"
+        binary.write_bytes(b"snapshot fixture")
+        owner = clients.enter_context(Client(executable))
+        ok(owner, "open", {"path": str(binary), "debug_info": False, "analysis": False})
+        ok(owner, "rename", {"address": BASE, "name": "project_name"})
+        ok(owner, "function_delete", {"address": hex(int(BASE, 16) + 16)})
+        ok(owner, "annotation_set", {"address": BASE, "text": "not saved"})
+        snapshot = ok(owner, "analysis_snapshot")
+        assert snapshot["open"]["read_only"] and not snapshot["open"]["analysis"]
+        assert not snapshot["open"]["debug_info"]
+        before = {p.name: p.read_bytes() for p in Path(directory).iterdir()}
+        replica = clients.enter_context(Client(executable))
+        assert ok(replica, "analysis_restore", snapshot)["read_only"]
+        assert ok(replica, "functions", {"filter": "project_name"})["total"] == 1
+        assert ok(replica, "annotations")["items"][0]["text"] == "not saved"
+        assert replica.call("rename", {"address": BASE, "name": "forbidden"})["error"]["code"] == "read_only"
+        after = {p.name: p.read_bytes() for p in Path(directory).iterdir()}
+        assert before == after, "Restoring analysis changed owner files"
+        assert ok(owner, "metadata")["dirty"]
+        assert owner.call("analysis_restore", snapshot)["error"]["code"] == "invalid_request"
+
+        # A racing committed edit cannot be presented under the old snapshot.
+        ok(owner, "save")
+        ok(owner, "rename", {"address": BASE, "name": "new_project_name"})
+        stale = clients.enter_context(Client(executable))
+        assert stale.call("analysis_restore", snapshot)["error"]["code"] == "stale_snapshot"
+        snapshot = ok(owner, "analysis_snapshot")
+        wrong = copy.deepcopy(snapshot)
+        wrong["input_sha256"] = "wrong input"
+        other = clients.enter_context(Client(executable))
+        assert other.call("analysis_restore", wrong)["error"]["code"] == "input_changed"
+
+        # Signature replay is tied to the source that the owner loaded.
+        signature = Path(directory) / "fixture.pat"
+        signature.write_text("signature fixture")
+        ok(owner, "signatures_load", {"path": str(signature)})
+        snapshot = ok(owner, "analysis_snapshot")
+        signed = clients.enter_context(Client(executable))
+        ok(signed, "analysis_restore", snapshot)
+        signature.write_text("signature fixture changed")
+        changed = clients.enter_context(Client(executable))
+        assert changed.call("analysis_restore", snapshot)["error"]["code"] == "input_changed"
+        assert owner.call("analysis_snapshot")["error"]["code"] == "input_changed"
+
+
+if __name__ == "__main__":
+    run(sys.argv[1])
+    print("Analysis snapshot state, stale-input and read-only checks passed")

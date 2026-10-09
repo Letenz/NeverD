@@ -56,13 +56,42 @@ NEVERD_X86_ENCODING(uint8_t, kJccNearEnd, 0x8F)
 NEVERD_X86_ENCODING(uint8_t, kInt3, 0xCC)
 NEVERD_X86_ENCODING(uint8_t, kIntImm8, 0xCD)
 NEVERD_X86_ENCODING(uint8_t, kNop, 0x90)
+NEVERD_X86_ENCODING(uint8_t, kRetNear, 0xC3)
 NEVERD_X86_ENCODING(uint8_t, kJmpIndirectOp, 0xFF)
 NEVERD_X86_ENCODING(uint8_t, kJmpIndirectModRM, 0x25)
+// `jmp [ebx+disp32]`: a 32-bit position-independent PLT entry jumps through
+// its GOT entry by the GOT address its caller holds in EBX.
+NEVERD_X86_ENCODING(uint8_t, kJmpIndirectGOTModRM, 0xA3)
 NEVERD_X86_ENCODING(uint8_t, kFSSegmentPrefix, 0x64)
 NEVERD_X86_ENCODING(uint8_t, kBndPrefix, 0xF2)
 // endbr64 and endbr32 (F3 0F 1E FA/FB) read as little-endian words.
 NEVERD_X86_ENCODING(uint32_t, kEndbr64Word, 0xFA1E0FF3)
 NEVERD_X86_ENCODING(uint32_t, kEndbr32Word, 0xFB1E0FF3)
+// Alignment no-ops: `nop r/m` is 0F 1F /0, and it and 90 may follow operand-
+// size and CS-segment prefixes.  32-bit code also pads by copying a register
+// onto itself with `mov r, r/m`, `mov r/m, r` or `lea r, m`.
+NEVERD_X86_ENCODING(uint8_t, kNopRmOp, 0x1F)
+NEVERD_X86_ENCODING(uint8_t, kOperandSizePrefix, 0x66)
+NEVERD_X86_ENCODING(uint8_t, kCSSegmentPrefix, 0x2E)
+NEVERD_X86_ENCODING(uint8_t, kMovRmFromRegOp, 0x89)
+NEVERD_X86_ENCODING(uint8_t, kMovRegFromRmOp, 0x8B)
+NEVERD_X86_ENCODING(uint8_t, kLeaOp, 0x8D)
+
+// --- ModRM (mod:2 reg:3 rm:3) and SIB (scale:2 index:3 base:3) fields ---
+NEVERD_X86_ENCODING(unsigned, kModRMModShift, 6)
+NEVERD_X86_ENCODING(unsigned, kModRMRegShift, 3)
+NEVERD_X86_ENCODING(uint8_t, kModRMFieldMask, 0x07)
+NEVERD_X86_ENCODING(uint8_t, kModMemory, 0)
+NEVERD_X86_ENCODING(uint8_t, kModMemoryDisp8, 1)
+NEVERD_X86_ENCODING(uint8_t, kModMemoryDisp32, 2)
+NEVERD_X86_ENCODING(uint8_t, kModRegister, 3)
+// rm 100 means a SIB byte follows; as a SIB index it means no index.
+NEVERD_X86_ENCODING(uint8_t, kRmSIB, 4)
+// rm 101 (or SIB base 101) under mod 00 means a 32-bit displacement and no
+// base register (RIP-relative for rm in 64-bit mode).
+NEVERD_X86_ENCODING(uint8_t, kRmDisp32, 5)
+// SIB 00 100 100: base ESP and no index, the operand [esp].
+NEVERD_X86_ENCODING(uint8_t, kSIBStackTop, 0x24)
 
 // --- EVEX prefix: 62 P0 P1 P2 ---
 NEVERD_X86_ENCODING(uint8_t, kEvexEscape, 0x62)
@@ -84,6 +113,13 @@ NEVERD_X86_ENCODING(size_t, kJmpIndirectLen, 6)
 NEVERD_X86_ENCODING(size_t, kJmpIndirectDispOffset, 2)
 NEVERD_X86_ENCODING(size_t, kEndbrLen, 4)
 NEVERD_X86_ENCODING(size_t, kIntImm8Len, 2)
+NEVERD_X86_ENCODING(size_t, kDisp8Len, 1)
+NEVERD_X86_ENCODING(size_t, kDisp32Len, 4)
+NEVERD_X86_ENCODING(size_t, kMaxInstructionLen, 15)
+// An i386 get-PC thunk's body, `mov r32, [esp]; ret`, and the eight nop GCC
+// pads a short function with when it tunes for in-order Atom.
+NEVERD_X86_ENCODING(size_t, kGetPcThunkBodyLen, 4)
+NEVERD_X86_ENCODING(size_t, kShortFunctionPadding, 8)
 
 // ===--------------------------------------------------------------------===//
 // AArch64 instruction encoding
@@ -159,7 +195,6 @@ NEVERD_AARCH64_ENCODING(uint32_t, kADD_X16_X16_Mask, branch::A64AddX16X16.Mask)
 NEVERD_AARCH64_ENCODING(uint32_t, kADD_X16_X16_Match,
                         branch::A64AddX16X16.Match)
 NEVERD_AARCH64_ENCODING(size_t, kThunkLen, 12)
-NEVERD_AARCH64_ENCODING(size_t, kELFPLTThunkLen, 16)
 
 // --- Miscellaneous ---
 NEVERD_AARCH64_ENCODING(uint32_t, kNop, 0xD503201F)
@@ -169,6 +204,10 @@ NEVERD_AARCH64_ENCODING(uint32_t, kBR_X17, 0xD61F0220)
 // --- Branch target identification: the landing pads of indirect calls ---
 NEVERD_AARCH64_ENCODING(uint32_t, kBTI_C, 0xD503245F)
 NEVERD_AARCH64_ENCODING(uint32_t, kBTI_JC, 0xD50324DF)
+
+// --- Pointer authentication of x17 with x16 as the modifier (PAC PLT) ---
+NEVERD_AARCH64_ENCODING(uint32_t, kAUTIA1716, 0xD503219F)
+NEVERD_AARCH64_ENCODING(uint32_t, kAUTIB1716, 0xD50321DF)
 
 // +/- 128 MB reach of B/BL: a signed 26-bit offset in instructions.
 NEVERD_AARCH64_ENCODING(int64_t, kBranchRange,

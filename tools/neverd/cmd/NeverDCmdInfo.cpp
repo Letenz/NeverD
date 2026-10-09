@@ -16,11 +16,93 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
 namespace neverd::cli {
+
+namespace {
+
+/// The headers' `language` object as one line: `rust`, `go go1.26.5`,
+/// `c++-itanium (also rust)`.
+std::string describeLanguage(const json::Object &Language) {
+  std::string Text = Language.getString("runtime").value_or("").str();
+  if (auto Version = Language.getString("version"))
+    Text += (" " + *Version).str();
+  if (auto *Secondary = Language.getArray("secondary");
+      Secondary && !Secondary->empty()) {
+    Text += " (also";
+    for (const auto &Runtime : *Secondary)
+      Text += (" " + Runtime.getAsString().value_or("")).str();
+    Text += ")";
+  }
+  return Text;
+}
+
+} // namespace
+
+int runIdentify() {
+  const char *Json = neverd_identify_json(InputFile.c_str());
+  const std::string Text = Json ? Json : "";
+  neverd_free_string(Json);
+  if (JsonOutput) {
+    outs() << Text << "\n";
+    return 0;
+  }
+  auto Parsed = json::parse(Text);
+  if (!Parsed) {
+    WithColor::error() << "identify failed: " << toString(Parsed.takeError())
+                       << "\n";
+    return 1;
+  }
+  const json::Object *Root = Parsed->getAsObject();
+  if (auto Error = Root->getString("error")) {
+    WithColor::error() << *Error << "\n";
+    return 1;
+  }
+  // As the load dialog lists them: the first row loadable for the file's
+  // contents is the default.
+  outs() << "Load file " << InputFile << " as:\n";
+  bool Chosen = false;
+  for (const json::Value &Value : *Root->getArray("rows")) {
+    const json::Object &Row = *Value.getAsObject();
+    const bool Loadable = Row.getBoolean("loadable").value_or(false);
+    const bool Default =
+        Loadable && !Row.getBoolean("by_name").value_or(false) && !Chosen;
+    Chosen |= Default;
+    outs() << (Default ? "  * " : "    ") << Row.getString("text").value_or("")
+           << " [" << Row.getString("loader").value_or("") << "]";
+    if (const auto Processor = Row.getString("processor");
+        Processor && !Processor->empty())
+      outs() << "  " << *Processor;
+    if (!Loadable)
+      outs() << "  (" << Row.getString("reason").value_or("") << ")";
+    else if (Row.getBoolean("by_name").value_or(false))
+      outs() << "  (for the file name alone)";
+    outs() << "\n";
+    // What a headerless file's bytes show, and the processor --loader
+    // binary reads them as without --processor.
+    if (Row.get("guesses")) {
+      outs() << "      bytes: " << Row.getString("evidence").value_or("")
+             << "\n";
+      const llvm::StringRef Detected = Row.getString("detected").value_or("");
+      outs() << "      processor: "
+             << (Detected.empty() ? "none read; name one with --processor"
+                                  : Detected)
+             << "\n";
+      if (const json::Object *Print = Row.getObject("fingerprint"))
+        outs() << "      " << Print->getString("name").value_or("")
+               << ": entry " << Print->getString("entry").value_or("")
+               << ", base " << Print->getString("base").value_or("") << "\n";
+      else if (const int64_t Start = Row.getInteger("code_offset").value_or(0))
+        outs() << "      read it with --load-offset "
+               << llvm::format_hex(Start, 0) << "\n";
+    }
+  }
+  return 0;
+}
 
 int runInfo(neverd_session_t Sess) {
   if (JsonOutput) {
@@ -36,16 +118,34 @@ int runInfo(neverd_session_t Sess) {
   neverd_free_string(Fmt);
   outs() << "Base:   0x" << utohexstr(neverd_session_base_addr(Sess)) << "\n";
   outs() << "Entry:  0x" << utohexstr(neverd_session_entry_addr(Sess)) << "\n";
+  // A binary file's platform, and what detection read it from.
+  const char *LoadJson = neverd_session_load_options_json(Sess);
+  if (auto Load = json::parse(LoadJson); Load && Load->getAsObject()) {
+    const json::Object &Options = *Load->getAsObject();
+    if (auto Platform = Options.getString("platform");
+        Platform && *Platform != "auto") {
+      outs() << "Platform: " << *Platform;
+      if (Options.getString("platform_source") == "detected")
+        outs() << " (read from the code: "
+               << Options.getString("platform_evidence").value_or("") << ")";
+      outs() << "\n";
+    }
+  } else if (!Load) {
+    consumeError(Load.takeError());
+  }
+  neverd_free_string(LoadJson);
 
   const char *HeaderJson = neverd_headers_json(Sess);
   auto HeaderParsed = json::parse(HeaderJson ? HeaderJson : "{}");
   neverd_free_string(HeaderJson);
   if (HeaderParsed)
     if (auto *Root = HeaderParsed->getAsObject()) {
+      if (auto *Language = Root->getObject("language"))
+        outs() << "Language: " << describeLanguage(*Language) << "\n";
       if (auto *SBF = Root->getObject("sbf"))
         outs() << "SBF:    " << SBF->getString("version_display").value_or("")
-               << " / " << SBF->getString("machine_name").value_or("")
-               << " / " << SBF->getString("layout").value_or("") << "\n";
+               << " / " << SBF->getString("machine_name").value_or("") << " / "
+               << SBF->getString("layout").value_or("") << "\n";
       if (auto *EVM = Root->getObject("evm")) {
         outs() << "EVM:    " << EVM->getString("container").value_or("")
                << " / " << EVM->getString("hardfork").value_or("") << "\n";
@@ -75,9 +175,9 @@ int runInfo(neverd_session_t Sess) {
         if (!Obj)
           continue;
         outs() << "  "
-               << format("%-20s",
-                         std::string(Obj->getString("name").value_or(""))
-                             .c_str())
+               << format(
+                      "%-20s",
+                      std::string(Obj->getString("name").value_or("")).c_str())
                << " VA=" << Obj->getString("va").value_or("")
                << " Size=" << Obj->getString("size").value_or("") << " "
                << Obj->getString("flags").value_or("") << "\n";
@@ -96,9 +196,9 @@ int runInfo(neverd_session_t Sess) {
         if (!Obj)
           continue;
         outs() << "  "
-               << format("%-20s",
-                         std::string(Obj->getString("name").value_or(""))
-                             .c_str())
+               << format(
+                      "%-20s",
+                      std::string(Obj->getString("name").value_or("")).c_str())
                << " VA=" << Obj->getString("va").value_or("")
                << " Size=" << Obj->getInteger("size").value_or(0) << "\n";
       }
@@ -173,8 +273,11 @@ int runHeaders(neverd_session_t Sess) {
       outs() << format(
           "  %-20s %s\n", "Base Address:",
           std::string(Root->getString("base").value_or("")).c_str());
-      outs() << format("  %-20s %lld bytes\n", "File Size:",
-                       Root->getInteger("file_size").value_or(0));
+      outs() << format("  %-20s %lld bytes\n",
+                       "File Size:", Root->getInteger("file_size").value_or(0));
+      if (auto *Language = Root->getObject("language"))
+        outs() << format("  %-20s %s\n",
+                         "Language:", describeLanguage(*Language).c_str());
 
       if (auto *SBF = Root->getObject("sbf")) {
         outs() << "\n  --- Solana SBF ---\n";
@@ -185,22 +288,19 @@ int runHeaders(neverd_session_t Sess) {
             "  %-20s %s (%lld)\n", "ELF Machine:",
             SBF->getString("machine_name").value_or("").str().c_str(),
             SBF->getInteger("machine").value_or(0));
-        outs() << format(
-            "  %-20s %s\n", "Layout:",
-            SBF->getString("layout").value_or("").str().c_str());
+        outs() << format("  %-20s %s\n", "Layout:",
+                         SBF->getString("layout").value_or("").str().c_str());
       }
 
       if (auto *EVM = Root->getObject("evm")) {
         outs() << "\n  --- Ethereum EVM ---\n";
-        outs() << format(
-            "  %-20s %s\n", "Input:",
-            EVM->getString("source").value_or("").str().c_str());
+        outs() << format("  %-20s %s\n", "Input:",
+                         EVM->getString("source").value_or("").str().c_str());
         outs() << format(
             "  %-20s %s\n", "Container:",
             EVM->getString("container").value_or("").str().c_str());
-        outs() << format(
-            "  %-20s %s\n", "Hardfork:",
-            EVM->getString("hardfork").value_or("").str().c_str());
+        outs() << format("  %-20s %s\n", "Hardfork:",
+                         EVM->getString("hardfork").value_or("").str().c_str());
         if (auto Activated = EVM->getString("container_activated_at"))
           outs() << format("  %-20s %s (%s)\n", "Container Active:",
                            EVM->getBoolean("container_active").value_or(false)
@@ -225,12 +325,15 @@ int runHeaders(neverd_session_t Sess) {
           outs() << format(
               "  %-20s %s %s (%s)\n", "Compiler:",
               Trailer->getString("language").value_or("").str().c_str(),
-              Trailer->getString("compiler_version").value_or("?").str().c_str(),
+              Trailer->getString("compiler_version")
+                  .value_or("?")
+                  .str()
+                  .c_str(),
               Trailer->getString("container").value_or("").str().c_str());
           if (auto *Hash = Trailer->getObject("source_hash"))
             outs() << format(
-                "  %-20s %s:%s\n", "Source:",
-                Hash->getString("kind").value_or("").str().c_str(),
+                "  %-20s %s:%s\n",
+                "Source:", Hash->getString("kind").value_or("").str().c_str(),
                 Hash->getString("value").value_or("").str().c_str());
           break;
         }
@@ -319,9 +422,8 @@ int runDashboard(neverd_session_t Sess) {
       auto *Hashes = Root->getObject("hashes");
       if (Hashes) {
         outs() << "\n=== Hashes ===\n";
-        outs() << format(
-            "  %-12s %s\n",
-            "MD5:", Hashes->getString("md5").value_or("").str().c_str());
+        outs() << format("  %-12s %s\n", "MD5:",
+                         Hashes->getString("md5").value_or("").str().c_str());
         outs() << format(
             "  %-12s %s\n",
             "SHA256:", Hashes->getString("sha256").value_or("").str().c_str());

@@ -55,6 +55,7 @@
           "neverd_headers_json",
           "neverd_hex_dump",
           "neverd_hex_dump_ex",
+          "neverd_identify_json",
           "neverd_import_slots_json",
           "neverd_imports_json",
           "neverd_inject_hello",
@@ -62,10 +63,20 @@
           "neverd_ir_llvm",
           "neverd_ir_low",
           "neverd_ir_med",
+          "neverd_item_clear",
+          "neverd_item_set",
+          "neverd_items_json",
+          "neverd_items_load",
+          "neverd_items_save",
           "neverd_last_error",
           "neverd_lift_dump",
           "neverd_lift_module",
           "neverd_lift_to_obj",
+          "neverd_load_options_save",
+          "neverd_operand_format_set",
+          "neverd_operand_formats_json",
+          "neverd_operand_formats_load",
+          "neverd_operand_formats_save",
           "neverd_optimization_stop_name",
           "neverd_optimize_llvm_ir_result_dispose",
           "neverd_patch_bit_masking_count",
@@ -100,6 +111,7 @@
           "neverd_proof_status_name",
           "neverd_read_bytes",
           "neverd_relocs_json",
+          "neverd_rename_addr",
           "neverd_rename_func",
           "neverd_renames_json",
           "neverd_renames_load",
@@ -141,15 +153,19 @@
           "neverd_session_format_name",
           "neverd_session_hunt_json",
           "neverd_session_import_count",
+          "neverd_session_input_sha256",
           "neverd_session_is_64bit",
           "neverd_session_is_loaded",
           "neverd_session_load",
+          "neverd_session_load_diagnostics_json",
+          "neverd_session_load_options_json",
           "neverd_session_resolve_function_name_before_load",
           "neverd_session_restrict_function",
           "neverd_session_section_count",
           "neverd_session_segment_count",
           "neverd_session_set_arm_function_mode",
           "neverd_session_set_debug_info_enabled",
+          "neverd_session_set_load_options",
           "neverd_session_set_load_progress",
           "neverd_session_set_map_path",
           "neverd_session_set_pdb_path",
@@ -171,10 +187,12 @@
           "neverd_sig_match_count",
           "neverd_sig_matches_json",
           "neverd_simplify_result_dispose",
+          "neverd_string_at",
           "neverd_string_encodings_json",
           "neverd_string_refs_json",
           "neverd_strings_ex_json",
           "neverd_strings_json",
+          "neverd_strings_page_json",
           "neverd_switches_json",
           "neverd_symbols_json",
           "neverd_synthesis_outcome_name",
@@ -200,9 +218,16 @@
           "neverd annotate --arm-function-mode",
           "neverd annotate --json",
           "neverd annotate --list",
+          "neverd annotate --load-base",
+          "neverd annotate --load-entry",
+          "neverd annotate --load-offset",
+          "neverd annotate --load-size",
+          "neverd annotate --loader",
           "neverd annotate --map",
           "neverd annotate --no-debug",
           "neverd annotate --pdb",
+          "neverd annotate --platform",
+          "neverd annotate --processor",
           "neverd annotate --remove",
           "neverd annotate --text",
           "neverd annotate --v",
@@ -210,6 +235,11 @@
           "neverd audit --arm-function-mode",
           "neverd audit --auto",
           "neverd audit --json",
+          "neverd audit --load-base",
+          "neverd audit --load-entry",
+          "neverd audit --load-offset",
+          "neverd audit --load-size",
+          "neverd audit --loader",
           "neverd audit --map",
           "neverd audit --max-call-depth",
           "neverd audit --max-loop",
@@ -219,6 +249,8 @@
           "neverd audit --no-debug",
           "neverd audit --o",
           "neverd audit --pdb",
+          "neverd audit --platform",
+          "neverd audit --processor",
           "neverd audit --sig-base",
           "neverd audit --sig-dir",
           "neverd audit --sig-file",
@@ -230,19 +262,33 @@
           "neverd bookmarks --arm-function-mode",
           "neverd bookmarks --json",
           "neverd bookmarks --list",
+          "neverd bookmarks --load-base",
+          "neverd bookmarks --load-entry",
+          "neverd bookmarks --load-offset",
+          "neverd bookmarks --load-size",
+          "neverd bookmarks --loader",
           "neverd bookmarks --map",
           "neverd bookmarks --name",
           "neverd bookmarks --no-debug",
           "neverd bookmarks --pdb",
+          "neverd bookmarks --platform",
+          "neverd bookmarks --processor",
           "neverd bookmarks --remove",
           "neverd bookmarks --v",
           "neverd callgraph",
           "neverd callgraph --arm-function-mode",
           "neverd callgraph --dot",
           "neverd callgraph --json",
+          "neverd callgraph --load-base",
+          "neverd callgraph --load-entry",
+          "neverd callgraph --load-offset",
+          "neverd callgraph --load-size",
+          "neverd callgraph --loader",
           "neverd callgraph --map",
           "neverd callgraph --no-debug",
           "neverd callgraph --pdb",
+          "neverd callgraph --platform",
+          "neverd callgraph --processor",
           "neverd callgraph --svg",
           "neverd callgraph --v",
           "neverd cfg",
@@ -252,18 +298,32 @@
           "neverd cfg --evm-relaxed",
           "neverd cfg --func",
           "neverd cfg --json",
+          "neverd cfg --load-base",
+          "neverd cfg --load-entry",
+          "neverd cfg --load-offset",
+          "neverd cfg --load-size",
+          "neverd cfg --loader",
           "neverd cfg --map",
           "neverd cfg --no-debug",
           "neverd cfg --no-opt",
           "neverd cfg --pdb",
+          "neverd cfg --platform",
+          "neverd cfg --processor",
           "neverd cfg --svg",
           "neverd cfg --v",
           "neverd dashboard",
           "neverd dashboard --arm-function-mode",
           "neverd dashboard --json",
+          "neverd dashboard --load-base",
+          "neverd dashboard --load-entry",
+          "neverd dashboard --load-offset",
+          "neverd dashboard --load-size",
+          "neverd dashboard --loader",
           "neverd dashboard --map",
           "neverd dashboard --no-debug",
           "neverd dashboard --pdb",
+          "neverd dashboard --platform",
+          "neverd dashboard --processor",
           "neverd dashboard --v",
           "neverd decompile",
           "neverd decompile --arm-function-mode",
@@ -275,12 +335,19 @@
           "neverd decompile --json",
           "neverd decompile --language",
           "neverd decompile --llvm",
+          "neverd decompile --load-base",
+          "neverd decompile --load-entry",
+          "neverd decompile --load-offset",
+          "neverd decompile --load-size",
+          "neverd decompile --loader",
           "neverd decompile --map",
           "neverd decompile --max-func",
           "neverd decompile --no-debug",
           "neverd decompile --no-opt",
           "neverd decompile --o",
           "neverd decompile --pdb",
+          "neverd decompile --platform",
+          "neverd decompile --processor",
           "neverd decompile --sbf-cluster",
           "neverd decompile --sbf-idl",
           "neverd decompile --sbf-loader",
@@ -303,41 +370,76 @@
           "neverd disasm --evm-relaxed",
           "neverd disasm --func",
           "neverd disasm --json",
+          "neverd disasm --load-base",
+          "neverd disasm --load-entry",
+          "neverd disasm --load-offset",
+          "neverd disasm --load-size",
+          "neverd disasm --loader",
           "neverd disasm --map",
           "neverd disasm --no-debug",
           "neverd disasm --pdb",
+          "neverd disasm --platform",
+          "neverd disasm --processor",
           "neverd disasm --v",
           "neverd entrypoints",
           "neverd entrypoints --arm-function-mode",
           "neverd entrypoints --json",
+          "neverd entrypoints --load-base",
+          "neverd entrypoints --load-entry",
+          "neverd entrypoints --load-offset",
+          "neverd entrypoints --load-size",
+          "neverd entrypoints --loader",
           "neverd entrypoints --map",
           "neverd entrypoints --no-debug",
           "neverd entrypoints --pdb",
+          "neverd entrypoints --platform",
+          "neverd entrypoints --processor",
           "neverd entrypoints --v",
           "neverd export",
           "neverd export --arm-function-mode",
           "neverd export --format",
           "neverd export --func",
           "neverd export --llvm",
+          "neverd export --load-base",
+          "neverd export --load-entry",
+          "neverd export --load-offset",
+          "neverd export --load-size",
+          "neverd export --loader",
           "neverd export --map",
           "neverd export --no-debug",
           "neverd export --o",
           "neverd export --pdb",
+          "neverd export --platform",
+          "neverd export --processor",
           "neverd export --v",
           "neverd exports",
           "neverd exports --arm-function-mode",
           "neverd exports --json",
+          "neverd exports --load-base",
+          "neverd exports --load-entry",
+          "neverd exports --load-offset",
+          "neverd exports --load-size",
+          "neverd exports --loader",
           "neverd exports --map",
           "neverd exports --no-debug",
           "neverd exports --pdb",
+          "neverd exports --platform",
+          "neverd exports --processor",
           "neverd exports --v",
           "neverd funcs",
           "neverd funcs --arm-function-mode",
           "neverd funcs --auto",
           "neverd funcs --json",
+          "neverd funcs --load-base",
+          "neverd funcs --load-entry",
+          "neverd funcs --load-offset",
+          "neverd funcs --load-size",
+          "neverd funcs --loader",
           "neverd funcs --map",
           "neverd funcs --no-debug",
           "neverd funcs --pdb",
+          "neverd funcs --platform",
+          "neverd funcs --processor",
           "neverd funcs --sig-base",
           "neverd funcs --sig-file",
           "neverd funcs --v",
@@ -347,24 +449,45 @@
           "neverd function-edits --delete",
           "neverd function-edits --json",
           "neverd function-edits --list",
+          "neverd function-edits --load-base",
+          "neverd function-edits --load-entry",
+          "neverd function-edits --load-offset",
+          "neverd function-edits --load-size",
+          "neverd function-edits --loader",
           "neverd function-edits --map",
           "neverd function-edits --no-debug",
           "neverd function-edits --pdb",
+          "neverd function-edits --platform",
+          "neverd function-edits --processor",
           "neverd function-edits --v",
           "neverd headers",
           "neverd headers --arm-function-mode",
           "neverd headers --json",
+          "neverd headers --load-base",
+          "neverd headers --load-entry",
+          "neverd headers --load-offset",
+          "neverd headers --load-size",
+          "neverd headers --loader",
           "neverd headers --map",
           "neverd headers --no-debug",
           "neverd headers --pdb",
+          "neverd headers --platform",
+          "neverd headers --processor",
           "neverd headers --v",
           "neverd hex",
           "neverd hex --addr",
           "neverd hex --arm-function-mode",
           "neverd hex --json",
+          "neverd hex --load-base",
+          "neverd hex --load-entry",
+          "neverd hex --load-offset",
+          "neverd hex --load-size",
+          "neverd hex --loader",
           "neverd hex --map",
           "neverd hex --no-debug",
           "neverd hex --pdb",
+          "neverd hex --platform",
+          "neverd hex --processor",
           "neverd hex --size",
           "neverd hex --text-encoding",
           "neverd hex --v",
@@ -372,6 +495,11 @@
           "neverd hunt --arm-function-mode",
           "neverd hunt --auto",
           "neverd hunt --json",
+          "neverd hunt --load-base",
+          "neverd hunt --load-entry",
+          "neverd hunt --load-offset",
+          "neverd hunt --load-size",
+          "neverd hunt --loader",
           "neverd hunt --map",
           "neverd hunt --max-call-depth",
           "neverd hunt --max-loop",
@@ -381,26 +509,64 @@
           "neverd hunt --no-debug",
           "neverd hunt --o",
           "neverd hunt --pdb",
+          "neverd hunt --platform",
+          "neverd hunt --processor",
           "neverd hunt --sig-base",
           "neverd hunt --sig-dir",
           "neverd hunt --sig-file",
           "neverd hunt --sinks",
           "neverd hunt --solver-conflicts",
           "neverd hunt --sources",
+          "neverd identify",
+          "neverd identify --json",
           "neverd imports",
           "neverd imports --arm-function-mode",
           "neverd imports --json",
+          "neverd imports --load-base",
+          "neverd imports --load-entry",
+          "neverd imports --load-offset",
+          "neverd imports --load-size",
+          "neverd imports --loader",
           "neverd imports --map",
           "neverd imports --no-debug",
           "neverd imports --pdb",
+          "neverd imports --platform",
+          "neverd imports --processor",
           "neverd imports --v",
           "neverd info",
           "neverd info --arm-function-mode",
           "neverd info --json",
+          "neverd info --load-base",
+          "neverd info --load-entry",
+          "neverd info --load-offset",
+          "neverd info --load-size",
+          "neverd info --loader",
           "neverd info --map",
           "neverd info --no-debug",
           "neverd info --pdb",
+          "neverd info --platform",
+          "neverd info --processor",
           "neverd info --v",
+          "neverd items",
+          "neverd items --arm-function-mode",
+          "neverd items --clear",
+          "neverd items --data",
+          "neverd items --encoding",
+          "neverd items --json",
+          "neverd items --load-base",
+          "neverd items --load-entry",
+          "neverd items --load-offset",
+          "neverd items --load-size",
+          "neverd items --loader",
+          "neverd items --map",
+          "neverd items --no-debug",
+          "neverd items --pdb",
+          "neverd items --platform",
+          "neverd items --processor",
+          "neverd items --size",
+          "neverd items --string",
+          "neverd items --undefine",
+          "neverd items --v",
           "neverd lift",
           "neverd lift --arm-function-mode",
           "neverd lift --dump-high",
@@ -409,12 +575,19 @@
           "neverd lift --evm-hardfork",
           "neverd lift --evm-relaxed",
           "neverd lift --hello",
+          "neverd lift --load-base",
+          "neverd lift --load-entry",
+          "neverd lift --load-offset",
+          "neverd lift --load-size",
+          "neverd lift --loader",
           "neverd lift --map",
           "neverd lift --max-func",
           "neverd lift --no-debug",
           "neverd lift --no-opt",
           "neverd lift --o",
           "neverd lift --pdb",
+          "neverd lift --platform",
+          "neverd lift --processor",
           "neverd lift --sbf-cluster",
           "neverd lift --sbf-idl",
           "neverd lift --sbf-loader",
@@ -423,6 +596,26 @@
           "neverd lift --sbf-slot",
           "neverd lift --sbf-version",
           "neverd lift --v",
+          "neverd operands",
+          "neverd operands --addr",
+          "neverd operands --arm-function-mode",
+          "neverd operands --base",
+          "neverd operands --clear",
+          "neverd operands --invert",
+          "neverd operands --json",
+          "neverd operands --load-base",
+          "neverd operands --load-entry",
+          "neverd operands --load-offset",
+          "neverd operands --load-size",
+          "neverd operands --loader",
+          "neverd operands --map",
+          "neverd operands --negate",
+          "neverd operands --no-debug",
+          "neverd operands --operand",
+          "neverd operands --pdb",
+          "neverd operands --platform",
+          "neverd operands --processor",
+          "neverd operands --v",
           "neverd optimize-ir --exhaustive",
           "neverd optimize-ir --json",
           "neverd optimize-ir --llvm-level",
@@ -457,6 +650,11 @@
           "neverd patch --ind-gv",
           "neverd patch --indirect",
           "neverd patch --launder",
+          "neverd patch --load-base",
+          "neverd patch --load-entry",
+          "neverd patch --load-offset",
+          "neverd patch --load-size",
+          "neverd patch --loader",
           "neverd patch --map",
           "neverd patch --max-func",
           "neverd patch --mba",
@@ -467,6 +665,8 @@
           "neverd patch --o",
           "neverd patch --opaque",
           "neverd patch --pdb",
+          "neverd patch --platform",
+          "neverd patch --processor",
           "neverd patch --subst",
           "neverd patch --subst-rounds",
           "neverd patch --text-section",
@@ -480,18 +680,34 @@
           "neverd relocs",
           "neverd relocs --arm-function-mode",
           "neverd relocs --json",
+          "neverd relocs --load-base",
+          "neverd relocs --load-entry",
+          "neverd relocs --load-offset",
+          "neverd relocs --load-size",
+          "neverd relocs --loader",
           "neverd relocs --map",
           "neverd relocs --no-debug",
           "neverd relocs --pdb",
+          "neverd relocs --platform",
+          "neverd relocs --processor",
           "neverd relocs --v",
           "neverd rename",
+          "neverd rename --addr",
           "neverd rename --arm-function-mode",
+          "neverd rename --clear",
           "neverd rename --func",
           "neverd rename --json",
           "neverd rename --list",
+          "neverd rename --load-base",
+          "neverd rename --load-entry",
+          "neverd rename --load-offset",
+          "neverd rename --load-size",
+          "neverd rename --loader",
           "neverd rename --map",
           "neverd rename --no-debug",
           "neverd rename --pdb",
+          "neverd rename --platform",
+          "neverd rename --processor",
           "neverd rename --to",
           "neverd rename --v",
           "neverd search",
@@ -499,33 +715,61 @@
           "neverd search --case-sensitive",
           "neverd search --hex",
           "neverd search --json",
+          "neverd search --load-base",
+          "neverd search --load-entry",
+          "neverd search --load-offset",
+          "neverd search --load-size",
+          "neverd search --loader",
           "neverd search --map",
           "neverd search --max-results",
           "neverd search --no-debug",
           "neverd search --pdb",
+          "neverd search --platform",
+          "neverd search --processor",
           "neverd search --text",
           "neverd search --v",
           "neverd sections",
           "neverd sections --arm-function-mode",
           "neverd sections --json",
+          "neverd sections --load-base",
+          "neverd sections --load-entry",
+          "neverd sections --load-offset",
+          "neverd sections --load-size",
+          "neverd sections --loader",
           "neverd sections --map",
           "neverd sections --no-debug",
           "neverd sections --pdb",
+          "neverd sections --platform",
+          "neverd sections --processor",
           "neverd sections --v",
           "neverd segments",
           "neverd segments --arm-function-mode",
           "neverd segments --json",
+          "neverd segments --load-base",
+          "neverd segments --load-entry",
+          "neverd segments --load-offset",
+          "neverd segments --load-size",
+          "neverd segments --loader",
           "neverd segments --map",
           "neverd segments --no-debug",
           "neverd segments --pdb",
+          "neverd segments --platform",
+          "neverd segments --processor",
           "neverd segments --v",
           "neverd sigs",
           "neverd sigs --arm-function-mode",
           "neverd sigs --auto",
           "neverd sigs --json",
+          "neverd sigs --load-base",
+          "neverd sigs --load-entry",
+          "neverd sigs --load-offset",
+          "neverd sigs --load-size",
+          "neverd sigs --loader",
           "neverd sigs --map",
           "neverd sigs --no-debug",
           "neverd sigs --pdb",
+          "neverd sigs --platform",
+          "neverd sigs --processor",
           "neverd sigs --sig-base",
           "neverd sigs --sig-dir",
           "neverd sigs --sig-file",
@@ -556,35 +800,63 @@
           "neverd strings --encodings",
           "neverd strings --filter",
           "neverd strings --json",
+          "neverd strings --load-base",
+          "neverd strings --load-entry",
+          "neverd strings --load-offset",
+          "neverd strings --load-size",
+          "neverd strings --loader",
           "neverd strings --map",
           "neverd strings --min-len",
           "neverd strings --no-debug",
           "neverd strings --pdb",
+          "neverd strings --platform",
+          "neverd strings --processor",
           "neverd strings --refs",
           "neverd strings --v",
           "neverd switches",
           "neverd switches --arm-function-mode",
           "neverd switches --json",
+          "neverd switches --load-base",
+          "neverd switches --load-entry",
+          "neverd switches --load-offset",
+          "neverd switches --load-size",
+          "neverd switches --loader",
           "neverd switches --map",
           "neverd switches --no-debug",
           "neverd switches --pdb",
+          "neverd switches --platform",
+          "neverd switches --processor",
           "neverd switches --v",
           "neverd sym-explore --arm-function-mode",
           "neverd sym-explore --expressions",
           "neverd sym-explore --func",
+          "neverd sym-explore --load-base",
+          "neverd sym-explore --load-entry",
+          "neverd sym-explore --load-offset",
+          "neverd sym-explore --load-size",
+          "neverd sym-explore --loader",
           "neverd sym-explore --map",
           "neverd sym-explore --max-block-visits",
           "neverd sym-explore --max-paths",
           "neverd sym-explore --max-steps",
           "neverd sym-explore --no-debug",
           "neverd sym-explore --pdb",
+          "neverd sym-explore --platform",
+          "neverd sym-explore --processor",
           "neverd sym-explore --v",
           "neverd symbols",
           "neverd symbols --arm-function-mode",
           "neverd symbols --json",
+          "neverd symbols --load-base",
+          "neverd symbols --load-entry",
+          "neverd symbols --load-offset",
+          "neverd symbols --load-size",
+          "neverd symbols --loader",
           "neverd symbols --map",
           "neverd symbols --no-debug",
           "neverd symbols --pdb",
+          "neverd symbols --platform",
+          "neverd symbols --processor",
           "neverd symbols --v",
           "neverd translate-object --entry",
           "neverd translate-object --format",
@@ -594,9 +866,16 @@
           "neverd xrefs --addr",
           "neverd xrefs --arm-function-mode",
           "neverd xrefs --json",
+          "neverd xrefs --load-base",
+          "neverd xrefs --load-entry",
+          "neverd xrefs --load-offset",
+          "neverd xrefs --load-size",
+          "neverd xrefs --loader",
           "neverd xrefs --map",
           "neverd xrefs --no-debug",
           "neverd xrefs --pdb",
+          "neverd xrefs --platform",
+          "neverd xrefs --processor",
           "neverd xrefs --source"
         ]
       },
@@ -626,8 +905,11 @@
           "neverd_exports_json",
           "neverd_functions_json",
           "neverd_headers_json",
+          "neverd_identify_json",
           "neverd_import_slots_json",
           "neverd_imports_json",
+          "neverd_items_json",
+          "neverd_operand_formats_json",
           "neverd_plugins_list_json",
           "neverd_pointer_refs_json",
           "neverd_relocs_json",
@@ -636,11 +918,14 @@
           "neverd_segments_json",
           "neverd_session_audit_json",
           "neverd_session_hunt_json",
+          "neverd_session_load_diagnostics_json",
+          "neverd_session_load_options_json",
           "neverd_sig_matches_json",
           "neverd_string_encodings_json",
           "neverd_string_refs_json",
           "neverd_strings_ex_json",
           "neverd_strings_json",
+          "neverd_strings_page_json",
           "neverd_switches_json",
           "neverd_symbols_json",
           "neverd_unwind_frame_json",
@@ -12781,7 +13066,11 @@
         "External libraries, fixups, initialization/TLS, encrypted payloads, arm64e/PAC and unmodeled image contracts fail explicitly. No dyld linking, Objective-C/Swift runtime, Foundation/UIKit, AMFI, full application compatibility or native iOS-host HVF support is claimed.",
         "The complete regular input file, including unmapped metadata and trailing bytes, must fit memory_limit before parsing or copying. Reads use a bounded private snapshot; embedded-NUL paths, short reads and file-size changes are rejected. Host filesystem I/O has no hard wall-clock guarantee.",
         "Each available matching native backend is tested separately. Cross-ISA software execution and compilation cannot establish Intel HVF, Linux KVM or Windows WHP runtime coverage.",
-        "Fixed initial symbolic_links with raw target_hex share bounded guest namei, readlink/readlinkat and own metadata/snapshot admission.32 expansions and terminator-inclusive1024-byte paths are enforced. Nonempty links exclude namespace mutation grants; fixed-name writable regular targets retain file-object ownership. Dynamic/hard links, ACL enforcement and mutable link namespaces remain unsupported. Native ARM64 macOS observations do not establish physical iOS acceptance."
+        "Fixed initial symbolic_links with raw target_hex share bounded guest namei, readlink/readlinkat and own metadata/snapshot admission.32 expansions and terminator-inclusive1024-byte paths are enforced. Without per-link mutable grants, mutable directory names cannot contain protected initial link names; separate mutable domains may contain targets created, moved, deleted or replaced at runtime. Existing grants and metadata policy apply; resolved FDs/CWD/mapping leases retain object ownership. Raw symlink57/symlinkat474 create bounded process-local links in admitted mutable parents with target-first import, empty-target readlink/follow boundaries and shared budgets. Without creation_policy.namespace_policy, created-link complete metadata stays unknown and link/directory creation does not consume regular-file inodes. With the strict explicit namespace policy, regular files/links/directories share one successful-creation inode allocator and permanent exhaustion. New links use umask, actual-parent Device/GID and effective UID with exact raw-target size and declared allocation; created-directory counts/sizes/blocks and namespace timestamps follow the declared virtual contract. Object-owned complete stat64 metadata survives held FDs/CWD, mixed SWAP, ancestor moves, removal and name reuse; refusals consume no inode. Without per-directory mutation_policy, initial-parent stat still invalidates; fixed snapshots always invalidate. Explicit per-directory enumeration_policy admits live getdirentries64 views with observed/created nonzero inodes, actual parents, unsigned-byte name order, ordinal cookies and declared constant d_seekoff. Initial directories retain own declarations; mkdir inherits the actual-parent policy. Dup shares cursor/version; committed changes and direct directory moves require zero rewind, while refusals/no-ops and ancestor moves preserve the relevant cursors. Version saturation refuses explicitly. Held removed empty directories emit zero records across name reuse. Missing identity stops before output; when full stat is invalidated, only inode is reused. The existing encoder, bounds, EOF suffix and ordered copies are shared. Snapshot/policy conflicts and strict three-field lossless JSON are rejected, and each policy reference has a fixed path/NUL cost. Omission retains legacy refusal. APFS generations remain unsupported. Strict per-initial-directory mutation_policy declares directory_entry_size and mutation_time with own complete nonzero-inode metadata, a fixed path/NUL reference charge and no namespace grant. The first committed change copies the observed record without allocation. Child-name changes project nlink as two plus all linked immediate names, size as nlink times entry size and mtime/ctime as the declared time. Direct moves/SWAP/removal change only ctime; refusals, same-object no-ops and ancestor moves preserve the relevant records. Blocks and all other observed fields stay object-owned across held FD/dup/CWD/removal/name reuse. New mkdir objects use the separate creation policy and do not inherit initial stat policies. Immutable snapshots still invalidate; stat and live enumeration declarations are independent. Omitting the stat policy retains unknown mutated initial metadata. Native observations do not infer general APFS allocation or timestamp rules. Resolved object ownership is preserved. Rmdir/replacement detect link children; moving/SWAP subtrees containing protected initial links remain explicit unsupported. Runtime link descendants participate in ordinary/EXCL directory moves and directory/directory or directory/file SWAP. All directory/file/link paths and keys are preflighted and all three maps extracted before publication. Current link name/NUL charges are replaced once; raw target charges persist, with no SWAP replacement credit. Actual parent objects, relative rebinding, held descriptions/cursors/CWD/orphan nodes/mapping leases are retained. No additional entry, FD or inode is consumed. Unlink/unlinkat remove runtime-created links under actual-parent authority and refund the actual name/NUL/target charge once. Bare NOFOLLOW_ANY retains a final link; required intermediate/trailing expansion returns ELOOP. Protected initial links remain immutable; target descriptors, CWD and mappings retain their objects. Ordinary/EXCL leaf rename admits runtime link/missing, link/link, link/file and file/link pairs under both actual-parent grants in one established mount. Relative raw targets rebind at the new parent; replaced links refund their current name/target once while regular-file descriptor/mapping leases retain their bytes. Rename consumes no additional entry/FD/file inode. Leaf link/link, link/file and file/link SWAP is admitted with actual-parent mutation/SWAP authority in one established mount. Both nodes stay linked; both name/NUL charges are reserved without replacement credit, preserving raw targets, relative rebinding, nlink, descriptions, cursors, CWD and mapping leases. Same-name SWAP succeeds; missing targets give ENOENT, intermediate NOFOLLOW_ANY gives ELOOP, SWAP|EXCL gives EINVAL before path input. Same-object EXCL remains unsupported; ordinary admitted directory/link pairs retain ENOTDIR/EISDIR and EXCL existence errors. Initial symbolic_links[].mutable grants admit ordinary unique initial links with separately mutable actual parents; known flags/special mode/alias/link-count/device contradictions refuse. Each grant fixes one path/NUL reference and consumes no created entry/inode. Initial raw-target/name/reference costs remain reserved after unlink/replacement; rekey owns a separate dynamic name and refunds only dynamically owned name/created-target costs. Only created links count as dynamic entries. Existing parent/mount/SWAP/lookup transactions admit granted initial leaves and subtree descendants. Strict optional initial-link mutation_policy has exactly mutation_time with complete nonzero-inode metadata and the grant; first direct move/SWAP copies scalar observations without allocation and changes only ctime. All other stat fields stay observed; failures/no-ops and ancestor moves retain the record. Without policy, complete moved-link stat is unknown while enumeration inode and known device contradictions remain authoritative. Initial policies follow objects; reused names/new symlinks never inherit old metadata or policies. Actual directory/link root SWAP is admitted in both orders, including nonempty trees, under existing object grants and actual-parent mutation/SWAP authority in one established mount. Direct root links join the same three-map preflight/extraction/publication as directory descendants. Both canonical paths and all linked/held descendants are checked atomically; only dynamic name costs are replaced, with no fixed-input/content/target/lease credit or new entry/FD/inode. Actual-object parents decide membership across reused names and retained orphans. Raw targets rebind relatively; FD/dup/CWD/referents/mappings retain their objects. Direct roots apply their own existing ctime policies, while ancestor descendants retain full records. Unknown full stat and known enumeration identities remain independent. Both directory/descendant-link cycle orders return EINVAL; self-referent-link creation by successful exchange remains allowed and later follow returns ELOOP. Hard links and ACL enforcement remain unsupported. Native ARM64 macOS observations do not establish physical iOS acceptance.",
+        "Raw pathconf191/fpathconf192 use one fixed XNU vnode query owner for selectors15/16/17/19..25, preserving lookup-before-selector, low32 FD/int carriers and BSD return conventions. Known regular-file/directory objects retain query identity over dup/rename/removal/name reuse without stat. No output/cursor/metadata/enumeration or entry/FD/inode changes. Native stream kinds and all filesystem-dependent/unknown selectors remain explicitly unsupported after lookup; catalogue bounds, host filesystem and guessed EINVAL do not supply values. These observations do not implement asynchronous execution or authorization.",
+        "Raw getattrlist220/fgetattrlist228/getattrlistat476 share one 24-byte import/common-field codec and complete-stat validity with stat64. Eleven common fields plus RETURNED_ATTRS preserve full st_mode, signed times, native lookup/import/range/bitmap order, full required length in short user buffers, low32 FD, full-width options and BSD return ABI. Known flags0/1/4/8/0x800 are bounded; PACK_INVAL requires RETURNED_ATTRS. Type/empty selections need no stat. Partial copies, missing/invalidated metadata and root names/mounts/volume/ACL/masks/options/native stream kind stop explicitly. No host observations, setters or cursor/namespace/metadata/entry-FD-inode budget changes. Native ARM64 private controls retain5s; SDK15.5 raw476 has no typed at declaration. Native Intel and physical iOS remain unverified.",
+        "Raw getxattr234/fgetxattr235/listxattr240/flistxattr241 read explicit complete ordered ordinary extended_attributes observations, with absent versus known-empty distinction, strict UTF8/name/count/16MiB admission, independent object lifetime/stat validity and content-mutation invalidation. BSD Wide returns, low32 carriers, NULL/path/FD/legacy-size distinctions and complete-name ERANGE prefixes are bounded by original native observations. Unknown/special/compression/permission/setter semantics and negative full64 nonNULL declared-empty lists remain unsupported; automatic host provenance never supplies virtual defaults.",
+        "ATTR_CMN_NAME adds an 8-byte relative reference and a NUL-terminated four-byte-aligned legal UTF8 leaf1..255 from the actual uniquely named non-root catalogue object. NAME/type are independent of stat validity, retain FD/dup/CWD through moves/SWAP/removal/reuse, and preserve exact partial UTF8 prefixes/full required lengths without cursor or budget effects. Root/mount labels, malformed names, hard-link/case-fold aliases, normalization and full-path attributes remain unknown. ARM64 private controls:601 raw queries/453 complete guarded SDK comparisons/384 prefixes; native Intel and physical iOS remain unverified."
       ],
       "tests": [
         {
@@ -12853,6 +13142,1535 @@
           "target": "NeverDDarwinProcessTests",
           "source": "unittests/emulation/DarwinProcessTests.cpp",
           "filter": "*/DarwinProcess.SymbolicLinksPreserveRawTargetsMetadataAndNoFollowPolicies/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.RuntimeLinksCreateOpaqueTargetsAndRetainObjects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.RuntimeCreatedSymbolicLinksCanBeRemoved/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.RuntimeCreatedSymbolicLinksCanBeRenamed/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkRenameMovesOpaqueNodesAcrossEntryPoints/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkRenameReplacementsPreserveReferentsAndOrphanLeases/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkRenameRelativeTargetsUseTheNewHeldParent/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkRenameKeepsProtectedAndUnsupportedKinds/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkRenameUsesActualParentGrantsAndNoExpansion/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkRenameChargesTheCurrentPathAndRefundsOnce/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkRenameCreditsRegularReplacementOnlyAfterAllLeasesRelease/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkRenameNeedsNoFreeDescriptorOrExtraEntry/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkRenameAdmits1024PathBytesIncludingNUL/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkRenamePropagatesBothOperandTransportFailures/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSwapExchangesOpaqueLeavesAndMixedOrders/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSwapRebindsBothParentsAndRetainsCWD/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSwapReservesBothNamesWithoutReplacementCredit/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSwapNeedsNoFreeEntryDescriptorOrInode/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSwapKeepsFlagsProtectedLinksAndDirectoryBoundaries/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSwapChecksActualGrantsAndEstablishedMounts/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSwapPropagatesBothOperandTransportFailures/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSubtreesExchangeOpaqueAndMixedDescendants/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSubtreesRebindRelativeTargetsAcrossParents/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSubtreesReserveNamesAndRefundExactlyOnce/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSubtreesPreflightUnopenedLinkPaths/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSubtreesNeedNoFreeEntryDescriptorOrInode/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinkSubtreesKeepActualGrantsAndMountsProtected/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinksPreserveOpaqueTargetsAndEmptyCopyBoundaries/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinksImportTargetBeforeDestinationAndOnlyThroughNUL/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinksRetainTerminalEntriesAndExpandConsumedSlashes/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinksDoNotReuseOldMetadataOrConsumeFileInodes/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinksUseHeldParentsAcrossTwoSidedSubtreeMoves/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinksCannotTransferProtectedNamespaceGrants/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.RuntimeLinksShareExactEntryAndStorageLimitsWithoutEffects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.FixedLinksObserveMutableTargetsAndRetainOldObjects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.FixedLinksObserveCreatedMovedAndReplacedTargets/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinMemoryTests.cpp",
+          "filter": "*/DarwinMemoryTest.FixedLinkReplacementSeparatesOldAndNewMappingLeases/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.NamespaceCreationMetadataUsesActualOwnerAndRawTargets/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.NamespaceCreationSharesInodesAndPermanentExhaustion/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.NamespaceMetadataCommitsAcrossMixedAndSubtreeMoves/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.NamespaceDirectoryCountsExcludeHeldAndReusedOrphans/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.NamespaceRefusalsDoNotConsumeNamesMetadataOrInodes/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "DarwinFileOptions.NamespaceCreationPolicyRequiresExplicitVirtualFields",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.NamespaceCreationMetadataPreservesObjectIdentityAndVirtualRecords/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/ProcessReportTests.cpp",
+          "filter": "ProcessReport.DarwinNamespaceCreationPolicyIsStrictAndLossless",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+          {
+            "runner": "gtest",
+            "target": "NeverDDarwinProcessTests",
+            "source": "unittests/emulation/DarwinFileTests.cpp",
+            "filter": "*/DarwinFileTest.VirtualEnumerationUsesExactIdentityAndUnsignedOrder/*",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+          {
+            "runner": "gtest",
+            "target": "NeverDDarwinProcessTests",
+            "source": "unittests/emulation/DarwinFileTests.cpp",
+            "filter": "*/DarwinFileTest.VirtualEnumerationRequiresRewindOnlyAfterCommittedChanges/*",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+          {
+            "runner": "gtest",
+            "target": "NeverDDarwinProcessTests",
+            "source": "unittests/emulation/DarwinFileTests.cpp",
+            "filter": "*/DarwinFileTest.VirtualEnumerationRetainsPoliciesAndActualParentsInSwaps/*",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+          {
+            "runner": "gtest",
+            "target": "NeverDDarwinProcessTests",
+            "source": "unittests/emulation/DarwinFileTests.cpp",
+            "filter": "*/DarwinFileTest.VirtualEnumerationRetainsRemovedObjectsAcrossNameReuse/*",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+          {
+            "runner": "gtest",
+            "target": "NeverDDarwinProcessTests",
+            "source": "unittests/emulation/DarwinFileTests.cpp",
+            "filter": "*/DarwinFileTest.VirtualEnumerationKeepsUnknownAndStableInodesSeparate/*",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+          {
+            "runner": "gtest",
+            "target": "NeverDDarwinProcessTests",
+            "source": "unittests/emulation/DarwinFileTests.cpp",
+            "filter": "*/DarwinFileTest.VirtualEnumerationCopiesRetainOrderedCursorEffects/*",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+          {
+            "runner": "gtest",
+            "target": "NeverDDarwinProcessTests",
+            "source": "unittests/emulation/DarwinFileTests.cpp",
+            "filter": "*/DarwinFileTest.VirtualEnumerationBoundsLongRecordsAndFullNamespaces/*",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+          {
+            "runner": "gtest",
+            "target": "NeverDDarwinProcessTests",
+            "source": "unittests/emulation/DarwinFileTests.cpp",
+            "filter": "DarwinFileOptions.VirtualEnumerationRequiresExplicitIdentityAndLimits",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+          {
+            "runner": "gtest",
+            "target": "NeverDDarwinProcessTests",
+            "source": "unittests/emulation/DarwinFileTests.cpp",
+            "filter": "DarwinFileOptions.VirtualEnumerationChargesOneFixedReference",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+          {
+            "runner": "gtest",
+            "target": "NeverDDarwinProcessTests",
+            "source": "unittests/emulation/DarwinProcessTests.cpp",
+            "filter": "*/DarwinProcess.VirtualEnumerationTracksNamespaceChangesAndRetainedDirectories/*",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+          {
+            "runner": "gtest",
+            "target": "NeverDLinuxProcessTests",
+            "source": "unittests/emulation/ProcessReportTests.cpp",
+            "filter": "ProcessReport.DarwinVirtualEnumerationPolicyIsStrictAndLossless",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.InitialDirectoryMetadataProjectsCommittedMembership/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.InitialDirectoryMetadataFollowsMovedObjectsAndPolicies/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.InitialDirectoryMetadataRetainsRemovedAndReusedNames/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.InitialDirectoryMetadataAndEnumerationStayIndependent/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.InitialDirectoryMetadataWithoutCreationInvalidatesOnlySnapshot/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.InitialDirectoryMetadataDoesNotGrantMutationOrFollowReusedNames/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "DarwinFileOptions.InitialDirectoryMetadataRequiresExplicitIdentityAndLimits",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "DarwinFileOptions.InitialDirectoryMetadataChargesOneFixedReference",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.InitialDirectoryMutationKeepsFullStatAndIndependentCreationRules/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/ProcessReportTests.cpp",
+          "filter": "ProcessReport.DarwinInitialDirectoryMutationPolicyIsStrictAndLossless",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.MutableInitialLinkMovesRetainStatAndRebindTargets/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.MutableInitialLinkSwapAndReuseKeepObjectPolicies/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.MutableInitialLinkUnknownStatKeepsEnumerationIdentity/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.MutableInitialLinkRemovalRetainsDirectoryReferents/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.MutableInitialLinkChargesOnlyOwnedDynamicStorage/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.MutableInitialLinksNeverBecomeCreatedEntriesOrInodes/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.MutableInitialLinksInSwappedTreesKeepOwnPolicies/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.MutableInitialLinkSubtreeRekeysReserveNamesAtomically/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "DarwinFileOptions.MutableInitialLinksRequireExplicitOrdinaryIdentity",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "DarwinFileOptions.MutableInitialLinkReferencesRetainFixedCosts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/ProcessReportTests.cpp",
+          "filter": "ProcessReport.DarwinInitialLinkMutationIsExplicitStrictAndLossless",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.MutableInitialLinksKeepIdentityAndReferentLifetime/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+          {
+            "runner": "gtest",
+            "target": "NeverDProcessPublicTests",
+            "source": "unittests/emulation/ProcessPublicTests.cpp",
+            "filter": "*/DarwinInputsPublic.InputsAndMachReturnsAgreeAcrossSDKAndCLI/*",
+            "platforms": [
+              "darwin",
+              "linux",
+              "windows"
+            ]
+          },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.DirectoryLinkRootExchangeRetainsObjectsAndReferents/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.DirectoryLinkRootRefusalsLeaveBothTreesUntouched/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.DirectoryLinkRootExchangeNeedsObjectAndParentGrants/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.DirectoryLinkRootUnknownStatKeepsLiveEntryIdentity/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.DirectoryLinkRootFirstAndRepeatedRekeysUseExactCharges/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.DirectoryLinkRootPathOverflowPreflightsUnopenedDescendants/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.DirectoryLinkRootReusedNamesDoNotMoveUnrelatedOrphans/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.DirectoryLinkRootExchangeNeedsNoFreeDescriptorEntryOrInode/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.DirectoryLinkRootsKeepIdentityAndReferentLifetime/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.PathConfKernelResultsUseLowCarriersWithoutStat/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.PathConfResolvesBeforeUnknownSelector/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.PathConfUnknownSelectorsAndStreamKindsStayUnknown/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.PathConfUsesSharedLinkWalkerAndActualCWD/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.PathConfRetainsRemovedObjectsAndReusedNames/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.PathConfNeedsNoFreeDescriptorOrEntry/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.PathConfMissingCatalogueNeverInventsRoot/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.KernelPathConfPreservesLookupAndDescriptorState/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListCompleteRecordsMatchAllEntrypoints/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListPrefixesReportCompleteFixedWidthSize/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListNativeImportLookupAndRangeOrder/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListReservedWordAndOutputAliasesAreOrdered/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListUnknownSelectionFlagsAndKindNeverInventValues/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListUsesActualCWDAndSharedLinkPolicies/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListUnknownAndInvalidatedStatMatchStat64/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListRetainsRemovedObjectsAndNameReuse/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListDoesNotConsumeFullDescriptorOrEntryBudgets/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListCopyAccessibilityAndSignedSizeHaveNoPrefixEffects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListTransportErrorsKeepScratchAndOutputPrivate/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeListKindAndEmptyMasksNeedNoStatButNeedCatalogue/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.CommonAttributesPreserveRecordAndDescriptorState/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrReadsOpaqueBytesWithLowCarriersAndStableCursor/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrZeroAndLegacySizesKeepDistinctPathAndFDContracts/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrPositionAndMissingNameOrderMatchesNativeControls/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrListPublishesOnlyCompleteOrderedNamePrefixes/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrKnownEmptyAndUnknownAreDifferentObservations/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrLookupAndOptionErrorsPrecedeAttributeImports/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrPathsUseIndependentLinkPoliciesAndActualCWD/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrObservationsFollowMovedRemovedAndReusedObjects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrNamespaceChangesDoNotDependOnCompleteStatValidity/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrContentChangesAndAmbiguousCopyinInvalidateFacts/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrOutputPreflightKeepsAliasesAndInaccessibleTailsSafe/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.XattrTransportFailuresPreserveOutputCursorAndObservations/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "DarwinFileOptions.XattrAdmissionValidatesShapeAndOrdinaryScope",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "DarwinFileOptions.XattrAdmissionChargesBytesAndImplicitDirectoriesOnce",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/ProcessReportTests.cpp",
+          "filter": "ProcessReport.DarwinXattrInputKeepsOpaqueBytesOrderAndKnownEmpty",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/ProcessReportTests.cpp",
+          "filter": "ProcessReport.DarwinXattrInputRejectsMalformedAndUnknownFields",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.ExtendedAttributesPreserveValuesNamesAndObjectLifetime/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameGoldenRecordsMatchAllEntrypoints/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNamePrefixesPreserveReferencesAndSplitUTF8/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameMaximumAndOpaqueSpellingKeepExactBytes/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameRemainsKnownWhenStatIsInvalidated/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameUsesHeldObjectsOverDescriptionAndNameReuse/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameUsesActualCWDAfterDirectoryMoveAndRemoval/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameAncestorsAndSwapsKeepSeparateIdentities/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameLinkPoliciesSelectActualObjectSpelling/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameRootAndMalformedSpellingNeverPublishGuesses/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameOutputAliasesAndAccessibilityKeepBoundaries/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameTransportFailuresKeepCallerStatePrivate/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameNeedsNoFreeDescriptorsOrCatalogueEntries/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFileTests.cpp",
+          "filter": "*/DarwinFileTest.AttributeNameDoesNotAdvanceInodesOrDirectoryEnumeration/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.AttributeNamesPreserveReferencesAndRetainedIdentity/*",
           "platforms": [
             "darwin",
             "linux",
@@ -12991,7 +14809,7 @@
           "runner": "gtest",
           "target": "NeverDUnpackExecutionTests",
           "source": "unittests/emulation/UnpackExecutionTests.cpp",
-          "filter": "UnpackBackends.ProduceIdenticalImages",
+          "filter": "*/UnpackBackends.ProduceIdenticalImages/*",
           "platforms": [
             "darwin",
             "linux",

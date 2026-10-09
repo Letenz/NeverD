@@ -1,9 +1,12 @@
 #include "Session.h"
 
 #include "ProjectDatabase.h"
+#include "SettingsKeys.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -16,7 +19,6 @@
 namespace neverd::gui {
 namespace {
 constexpr int CacheMiB = 256;
-constexpr char RecentFilesKey[] = "files/recent";
 constexpr char StringEncodingsKey[] = "strings/encodings";
 constexpr char StringPreferredKey[] = "strings/preferred";
 constexpr char StringMinLengthKey[] = "strings/minLength";
@@ -27,6 +29,8 @@ bool isEdit(const QString &operation) {
                                    QStringLiteral("rename"),
                                    QStringLiteral("function_create"),
                                    QStringLiteral("function_delete"),
+                                   QStringLiteral("item_define"),
+                                   QStringLiteral("operand_format"),
                                    QStringLiteral("undo"),
                                    QStringLiteral("redo"),
                                    QStringLiteral("save")};
@@ -41,9 +45,12 @@ bool silentFailure(const QString &status, const QString &code) {
 } // namespace
 
 Session::Session(QString workerPath, QObject *parent)
-    : QObject(parent), queries_(&client_), workerPath_(std::move(workerPath)),
+    : QObject(parent), queries_(&client_), analysis_(queries_, workerPath),
+      workerPath_(std::move(workerPath)),
       sessionEpoch_(queries_.sessionEpoch()) {
   queries_.setCacheBudgetMiB(CacheMiB);
+  connect(&analysis_, &AnalysisService::diagnostic, this,
+          [this](const QString &text) { emit message(text, 0); });
   connect(&client_, &EngineClient::message, this, &Session::receive);
   connect(&client_, &EngineClient::diagnostic, this,
           [this](const QString &text) {
@@ -165,12 +172,13 @@ void Session::receive(const QJsonObject &incoming) {
       const auto generation = background.value("generation").toString();
       const bool newGeneration = generation != generation_;
       generation_ = generation;
-      // The first count only states what the opened file already listed.
       const auto functions =
           background.value("functions").toInteger(functionCount_);
       const bool moreFunctions =
           functionCount_ >= 0 && functions != functionCount_;
       functionCount_ = functions;
+      if (newGeneration || moreFunctions)
+        queries_.listingChanged();
       emit backgroundChanged();
       if (newGeneration)
         emit generationChanged();
@@ -184,11 +192,23 @@ void Session::receive(const QJsonObject &incoming) {
   }
 }
 
+QString Session::platformName() const {
+  const auto platform =
+      metadata_.value("load_options").toObject().value("platform").toString();
+#define NEVERD_PLATFORM(ShortName, Name)                                       \
+  if (!platform.isEmpty() && platform == QLatin1String(ShortName))             \
+    return QCoreApplication::translate("Platforms", Name);
+#include "Processors.def"
+  return {};
+}
+
 QueryService::SubscriptionId Session::read(const QString &operation,
                                            const QJsonObject &payload,
                                            QObject *owner, Reply done,
                                            Failure failed) {
-  return queries_.subscribe(
+  auto &service =
+      AnalysisService::handles(operation) ? analysis_.queries() : queries_;
+  return service.subscribe(
       {operation, payload}, owner ? owner : &reads_,
       [this, done = std::move(done),
        failed = std::move(failed)](const QJsonObject &response) {
@@ -262,13 +282,14 @@ void Session::resetState() {
   functionCount_ = -1;
 }
 
-void Session::open(const QString &path) {
+void Session::open(const QString &path, LoadOptions options) {
   const QFileInfo file(path);
   if (!file.isFile()) {
     setError(tr("Select an existing binary file."));
     return;
   }
   pendingFile_ = file.absoluteFilePath();
+  pendingOptions_ = options;
   if (dirty()) {
     requestTransition(QStringLiteral("open"));
     return;
@@ -286,7 +307,7 @@ namespace {
 /// What opening a path needs once databases are unpacked or consulted.
 struct PreparedOpen {
   QString input, database, error;
-  QStringList warnings;
+  QStringList notes, warnings;
   QHash<QString, QByteArray> state;
 };
 
@@ -306,7 +327,24 @@ PreparedOpen prepareOpen(const QString &requested) {
     return prepared;
   }
   prepared.input = requested;
-  prepared.database = ProjectDatabase::pathFor(requested);
+  if (!ProjectDatabase::canKeepBeside(requested)) {
+    // A file in a folder this user cannot write to, such as a system
+    // directory or a read-only mount, keeps its database, sidecars and lock
+    // in the user's data directory, beside a copy of it.  IDA asks for
+    // another place for its database instead.
+    prepared.input = ProjectDatabase::workingCopy(requested, &prepared.error);
+    if (!prepared.error.isEmpty())
+      return prepared;
+    prepared.notes.append(
+        QCoreApplication::translate(
+            "neverd::gui::Session",
+            "%1 is in a folder you cannot write to; its database is kept in "
+            "%2")
+            .arg(QDir::toNativeSeparators(requested),
+                 QDir::toNativeSeparators(
+                     QFileInfo(prepared.input).absolutePath())));
+  }
+  prepared.database = ProjectDatabase::pathFor(prepared.input);
   if (!QFileInfo::exists(prepared.database))
     return prepared;
   QString error;
@@ -315,7 +353,7 @@ PreparedOpen prepareOpen(const QString &requested) {
     prepared.warnings.append(error);
     return prepared;
   }
-  QFile input(requested);
+  QFile input(prepared.input);
   QCryptographicHash hash(QCryptographicHash::Sha256);
   if (!input.open(QIODevice::ReadOnly) || !hash.addData(&input) ||
       QString::fromLatin1(hash.result().toHex()) != contents->inputSha256) {
@@ -330,11 +368,12 @@ PreparedOpen prepareOpen(const QString &requested) {
   prepared.state = contents->state;
   bool sidecarsPresent = false;
   for (const auto &suffix : ProjectDatabase::sidecarSuffixes())
-    sidecarsPresent = sidecarsPresent || QFileInfo::exists(requested + suffix);
+    sidecarsPresent =
+        sidecarsPresent || QFileInfo::exists(prepared.input + suffix);
   if (!sidecarsPresent)
     for (auto it = contents->sidecars.cbegin(); it != contents->sidecars.cend();
          ++it) {
-      QSaveFile sidecar(requested + it.key());
+      QSaveFile sidecar(prepared.input + it.key());
       if (!sidecar.open(QIODevice::WriteOnly) ||
           sidecar.write(it.value()) != it.value().size() || !sidecar.commit())
         prepared.warnings.append(QCoreApplication::translate(
@@ -350,52 +389,85 @@ void Session::openPending() {
   if (pendingFile_.isEmpty() || opening_ || !connected_)
     return;
   const auto requested = std::exchange(pendingFile_, {});
+  const auto options = std::exchange(pendingOptions_, {});
   opening_ = true;
   error_.clear();
   emit message(tr("Loading %1…").arg(QFileInfo(requested).fileName()), 0);
   emit stateChanged();
   auto *watcher = new QFutureWatcher<PreparedOpen>(this);
-  connect(
-      watcher, &QFutureWatcherBase::finished, this, [this, watcher, requested] {
-        const PreparedOpen prepared = watcher->result();
-        watcher->deleteLater();
-        for (const auto &warning : prepared.warnings)
-          emit message(warning, 1);
-        if (!prepared.error.isEmpty()) {
-          opening_ = false;
-          setError(prepared.error);
-          emit stateChanged();
-          if (!pendingFile_.isEmpty())
-            openPending();
-          return;
-        }
-        sendOpen(requested, prepared.input, prepared.database, prepared.state);
-      });
+  connect(watcher, &QFutureWatcherBase::finished, this,
+          [this, watcher, requested, options] {
+            const PreparedOpen prepared = watcher->result();
+            watcher->deleteLater();
+            for (const auto &note : prepared.notes)
+              emit message(note, 0);
+            for (const auto &warning : prepared.warnings)
+              emit message(warning, 1);
+            if (!prepared.error.isEmpty()) {
+              opening_ = false;
+              setError(prepared.error);
+              emit stateChanged();
+              if (!pendingFile_.isEmpty())
+                openPending();
+              return;
+            }
+            sendOpen(requested, prepared.input, prepared.database,
+                     prepared.state, options);
+          });
   watcher->setFuture(
       QtConcurrent::run([requested] { return prepareOpen(requested); }));
 }
 
 void Session::sendOpen(const QString &requested, const QString &path,
                        const QString &database,
-                       const QHash<QString, QByteArray> &state) {
+                       const QHash<QString, QByteArray> &state,
+                       LoadOptions options) {
+  QJsonObject payload{{"path", path},
+                      {"debug_info", options.debugInfo},
+                      {"analysis", options.analysis}};
+  if (!options.loader.isEmpty())
+    payload.insert(QStringLiteral("loader"), options.loader);
+  if (options.loader == QLatin1String("binary")) {
+    payload.insert(QStringLiteral("processor"), options.processor);
+    payload.insert(QStringLiteral("base"), hexAddress(options.base));
+    payload.insert(QStringLiteral("offset"), hexAddress(options.offset));
+    payload.insert(QStringLiteral("size"), hexAddress(options.size));
+    if (options.entry)
+      payload.insert(QStringLiteral("entry"), hexAddress(*options.entry));
+    if (!options.platform.isEmpty())
+      payload.insert(QStringLiteral("platform"), options.platform);
+  }
   command(
-      QStringLiteral("open"), {{"path", path}},
-      [this, requested, path, database, state](const QJsonObject &payload) {
+      QStringLiteral("open"), payload,
+      [this, requested, path, database, state,
+       options](const QJsonObject &payload) {
         opening_ = false;
         resetState();
+        loadOptions_ = options;
         metadata_ = payload;
+        // The functions the opened file lists; idle-time discovery can add
+        // to them before the first heartbeat reports a count.
+        functionCount_ = payload.value("function_count").toInteger(-1);
         filePath_ = path;
         projectPath_ = requested;
         databasePath_ = database;
         databaseState_ = state;
         loaded_ = true;
-        QSettings settings;
-        auto recent = settings.value(RecentFilesKey).toStringList();
+        QSettings store;
+        auto recent = store.value(settings::RecentFiles).toStringList();
         recent.removeAll(requested);
         recent.prepend(requested);
         while (recent.size() > MaxRecentFiles)
           recent.removeLast();
-        settings.setValue(RecentFilesKey, recent);
+        store.setValue(settings::RecentFiles, recent);
+        // When each was last opened, for the quick start.
+        QVariantMap openedAt;
+        const QVariantMap known = store.value(settings::RecentOpened).toMap();
+        for (const QString &file : recent)
+          if (known.contains(file))
+            openedAt.insert(file, known.value(file));
+        openedAt.insert(requested, QDateTime::currentDateTime());
+        store.setValue(settings::RecentOpened, openedAt);
         for (const auto &warning : payload.value("warnings").toArray())
           emit message(warning.toString(), 1);
         emit message(
@@ -403,6 +475,20 @@ void Session::sendOpen(const QString &requested, const QString &path,
                 .arg(QFileInfo(requested).fileName(), format(), architecture())
                 .arg(payload.value("function_count").toInt()),
             0);
+        // A binary file's platform, and what detection read it from.
+        if (const auto platform = platformName(); !platform.isEmpty()) {
+          const auto load = payload.value("load_options").toObject();
+          emit message(
+              load.value("platform_source").toString() ==
+                      QLatin1String("detected")
+                  ? tr("Platform: %1, read from the code: %2")
+                        .arg(platform,
+                             load.value("platform_evidence").toString())
+                  : tr("Platform: %1, as chosen").arg(platform),
+              0);
+        }
+        if (std::exchange(reloading_, false))
+          emit message(tr("Reloaded the input file"), 0);
         emit opened();
         emit stateChanged();
         refreshHistory();
@@ -412,6 +498,7 @@ void Session::sendOpen(const QString &requested, const QString &path,
       },
       [this](const QString &, const QString &) {
         opening_ = false;
+        reloading_ = false;
         emit stateChanged();
         if (!pendingFile_.isEmpty())
           openPending();
@@ -429,24 +516,30 @@ void Session::closeFile() {
   pendingFile_.clear();
   resetState();
   filePath_.clear();
+  loadOptions_ = {};
   emit unloaded();
   restartPending_ = true;
   client_.stop();
 }
 
-void Session::reload() {
+void Session::reload(std::optional<LoadOptions> options) {
   if (!loaded_)
     return;
+  reloadOptions_ = std::move(options);
   if (dirty()) {
     requestTransition(QStringLiteral("reload"));
     return;
   }
-  command(QStringLiteral("reload"), {}, [this](const QJsonObject &payload) {
-    metadata_ = payload;
-    dirty_ = false;
-    refreshHistory();
-    emit message(tr("Annotations reloaded"), 0);
-  });
+  // A fresh worker reads the file's bytes as they are now; the annotations
+  // come from what was saved.  The file opened is the one the user named:
+  // a working copy is refreshed from it.
+  pendingFile_ = projectPath_.isEmpty() ? filePath_ : projectPath_;
+  pendingOptions_ = std::exchange(reloadOptions_, {}).value_or(loadOptions_);
+  reloading_ = true;
+  resetState();
+  emit unloaded();
+  restartPending_ = true;
+  client_.stop();
 }
 
 void Session::restart() {
@@ -455,6 +548,7 @@ void Session::restart() {
     return;
   }
   pendingFile_ = filePath_;
+  pendingOptions_ = loadOptions_;
   resetState();
   emit unloaded();
   restartPending_ = true;
@@ -481,6 +575,7 @@ void Session::resolveTransition(const QString &choice) {
     transition_.clear();
     transitionReady_ = false;
     pendingFile_.clear();
+    reloadOptions_.reset();
     return;
   }
   if (choice == QLatin1String("save")) {
@@ -517,7 +612,7 @@ void Session::finishTransition() {
   } else if (action == QLatin1String("close")) {
     closeFile();
   } else if (action == QLatin1String("reload")) {
-    reload();
+    reload(std::exchange(reloadOptions_, {}));
   } else if (action == QLatin1String("restart")) {
     restart();
   }
@@ -605,6 +700,47 @@ bool Session::acceptsEdit(std::optional<quint64> epoch) {
     return false;
   }
   return true;
+}
+
+void Session::defineItem(Address address, const QString &action,
+                         std::optional<quint64> epoch) {
+  if (!acceptsEdit(epoch))
+    return;
+  // Like a rename, a data item commits at once over saved comments.
+  if (dirty_)
+    save();
+  command(
+      QStringLiteral("item_define"),
+      {{"address", hexAddress(address)}, {"action", action}},
+      [this, address, action](const QJsonObject &result) {
+        refreshHistory();
+        // The item the cursor was in starts at the address answered.
+        const auto at = displayAddress(
+            addressValue(result.value("address")).value_or(address));
+        if (!result.value("saved").toBool())
+          emit message(tr("The bytes at %1 are already undefined").arg(at), 0);
+        else if (action == QLatin1String("undefine"))
+          emit message(tr("Undefined the item at %1").arg(at), 0);
+        else
+          emit message(
+              tr("Defined %1 at %2").arg(result.value("kind").toString(), at),
+              0);
+      });
+}
+
+void Session::formatOperand(Address address, std::optional<int> operand,
+                            const QString &action,
+                            std::optional<quint64> epoch) {
+  if (!acceptsEdit(epoch))
+    return;
+  // Like a rename, an operand format commits at once over saved comments.
+  if (dirty_)
+    save();
+  QJsonObject payload{{"address", hexAddress(address)}, {"action", action}};
+  if (operand)
+    payload.insert(QStringLiteral("operand"), *operand);
+  command(QStringLiteral("operand_format"), payload,
+          [this](const QJsonObject &) { refreshHistory(); });
 }
 
 void Session::createFunction(Address address, std::optional<quint64> epoch) {
@@ -776,6 +912,7 @@ void Session::analyzeWholeProgram() {
 
 void Session::cancelReads() {
   // Session bookkeeping and external (MCP) callers keep their replies.
+  analysis_.queries().cancelReads({&reads_, &external_});
   queries_.cancelReads({&reads_, &external_});
   emit message(tr("Queued requests cancelled; a running engine call finishes "
                   "unless the worker is restarted."),
@@ -797,10 +934,12 @@ void Session::externalQuery(const QString &id, const QString &operation,
     spec.policy = QueryService::QuerySpec::Exact;
     spec.expectedRevision = revision;
   }
-  queries_.subscribe(std::move(spec), &external_,
-                     [this, id](const QJsonObject &response) {
-                       emit externalResponse(id, response);
-                     });
+  auto &service =
+      AnalysisService::handles(operation) ? analysis_.queries() : queries_;
+  service.subscribe(std::move(spec), &external_,
+                    [this, id](const QJsonObject &response) {
+                      emit externalResponse(id, response);
+                    });
 }
 
 void Session::publishSelection(Address address, std::optional<Address> function,

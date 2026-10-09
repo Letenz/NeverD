@@ -52,6 +52,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string_view>
 #include <system_error>
@@ -293,6 +294,10 @@ private:
   /// original and recompiled images (see compileMemHelper / linkAndExtract).
   std::string MemHelperObj;
 
+  /// The function the link places first in the text, or "" for the inputs'
+  /// own order.
+  std::string LinkFirst;
+
   /// Removes the per-test working directory on every exit path of roundTripImpl
   /// (including GTEST_SKIP / ASSERT early returns).
   struct WorkGuard {
@@ -371,6 +376,8 @@ private:
         "clang -target " + EffTarget + " -nostdlib -nostdlibinc -c " + OptFlag +
         " -fno-stack-protector -fno-exceptions"
         " -fno-unwind-tables -fno-asynchronous-unwind-tables";
+    // The target options the decompiled C builds with too.
+    std::string ArchFlags;
     // Use Clang's target intrinsic headers without falling through to the
     // host libc. Keep hosted builtin optimization semantics unchanged.
     // Normalize cross-target defaults across Clang distributions.  Apple Clang
@@ -380,13 +387,13 @@ private:
     // generated input stable instead of testing host-driver policy.  Explicit
     // per-case flags follow these defaults and can still override them.
     if (IsARM32 && TC.ClangTargetOverride.empty())
-      CompileCmd += " -mcpu=cortex-a15 -mfloat-abi=softfp";
+      ArchFlags += " -mcpu=cortex-a15 -mfloat-abi=softfp";
     else if (UcArch == UC_ARCH_X86 && UcMode == UC_MODE_32 &&
              TC.ClangTargetOverride.empty())
-      CompileCmd += " -march=pentium4";
+      ArchFlags += " -march=pentium4";
     if (!TC.ExtraFlags.empty())
-      CompileCmd += " " + TC.ExtraFlags;
-    CompileCmd += " -o " + neverd::test::shellQuote(ObjPath) + " " +
+      ArchFlags += " " + TC.ExtraFlags;
+    CompileCmd += ArchFlags + " -o " + neverd::test::shellQuote(ObjPath) + " " +
                   neverd::test::shellQuote(CPath);
     auto CR = runCmd(CompileCmd);
     if (!CR.ok()) {
@@ -454,6 +461,16 @@ private:
     ASSERT_TRUE(OrigState.OK)
         << "Original emulation failed: " << OrigState.Error
         << "\n  Test: " << TC.Name;
+
+    // ---- Step 5 (NEVERD_SEMANTIC_HIGHC): decompile to C and build it ----
+    // The same comparison then checks the HighC output by execution: the
+    // decompiled module is compiled for the original target, linked and run.
+    if (const char *HighC = std::getenv("NEVERD_SEMANTIC_HIGHC");
+        HighC && *HighC) {
+      highCRoundTrip(TC, ObjPath, EffTarget, ArchFlags, UcArch, UcMode, SPReg,
+                     ParamRegs, RetReg, IsARM32, OrigState.RetVal);
+      return;
+    }
 
     // ---- Step 5: Lift and recompile with NeverD ----
     const bool ExpectFailClosedSwitch =
@@ -537,6 +554,90 @@ private:
         << "\n  Test: " << TC.Name << "\n  Original:   0x" << std::hex
         << OrigState.RetVal << "\n  Recompiled: 0x" << RecompState.RetVal
         << std::dec;
+  }
+
+  /// Decompiles \p ObjPath to C with the HighC route, compiles it for the
+  /// original target, and compares its result with \p Expected.
+  void highCRoundTrip(const RoundTripTC &TC, const std::string &ObjPath,
+                      const std::string &EffTarget,
+                      const std::string &ArchFlags, uc_arch UcArch,
+                      uc_mode UcMode, int SPReg,
+                      const std::vector<int> &ParamRegs, int RetReg,
+                      bool IsARM32, uint64_t Expected) {
+    const char *Raw = neverd_decompile_all(Sess, ObjPath.c_str(),
+                                           /*UseLlvmRoute=*/0, TC.NoOpt ? 1 : 0,
+                                           /*MaxFunctions=*/0);
+    std::string Source = Raw ? Raw : "";
+    neverd_free_string(Raw);
+    if (Source.empty()) {
+      const char *Err = neverd_last_error(Sess);
+      const std::string Diagnostic = Err ? Err : "unknown";
+      neverd_free_string(Err);
+      FAIL() << "HighC decompile failed: " << Diagnostic
+             << "\n  Test: " << TC.Name;
+    }
+    const auto CPath = (Work / (TC.Name + "_highc.c")).string();
+    const auto HighCObj = (Work / (TC.Name + "_highc.o")).string();
+    {
+      std::ofstream F(CPath);
+      F << Source;
+      F.close();
+      ASSERT_TRUE(static_cast<bool>(F)) << "could not write " << CPath;
+    }
+    // The output's build contract: plain pointer casts at any address.
+    const std::string CompileCmd =
+        "clang -target " + EffTarget + " -nostdlib -c -O2 -w" +
+        " -ffunction-sections" +
+        " -fno-strict-aliasing -fno-stack-protector -fno-exceptions"
+        " -fno-unwind-tables -fno-asynchronous-unwind-tables" +
+        ArchFlags + " -o " + neverd::test::shellQuote(HighCObj) + " " +
+        neverd::test::shellQuote(CPath);
+    const auto CR = runCmd(CompileCmd);
+    ASSERT_TRUE(CR.ok()) << "HighC compilation failed: " << CR.Err
+                         << "\n  Test: " << TC.Name << "\n"
+                         << Source;
+    // A library routine the C calls (a rounding instruction printed as
+    // nearbyint) has no code to link in this freestanding image, and
+    // emulation starts at the first code of the section.
+    const ObjectLinkage Linkage = objectLinkage(HighCObj);
+    if (!Linkage.Externals.empty())
+      GTEST_SKIP() << "HighC output calls " << Linkage.Externals.front()
+                   << ", which the test does not link\n  Test: " << TC.Name;
+    // Each function has its own section; the link puts the tested one
+    // first, where emulation starts.
+    const std::string Entry = objectLinkage(ObjPath).Entry;
+    if (Entry.empty() || !Linkage.Functions.count(Entry))
+      GTEST_SKIP() << "HighC output does not define " << Entry
+                   << "\n  Test: " << TC.Name;
+    LinkFirst = Entry;
+    if (MemHelperObj.empty() && objReferencesMemBuiltins(HighCObj))
+      MemHelperObj =
+          compileMemHelper(EffTarget, IsARM32, TC.ClangTargetOverride);
+    auto Buffer = llvm::MemoryBuffer::getFile(HighCObj);
+    ASSERT_TRUE(static_cast<bool>(Buffer)) << "could not read " << HighCObj;
+    auto Recompiled = extractSectionsWithLink(
+        reinterpret_cast<const unsigned char *>((*Buffer)->getBufferStart()),
+        (*Buffer)->getBufferSize(), TC.Name + "_highc");
+    if (Recompiled.State == LinkState::Unavailable)
+      GTEST_SKIP() << "HighC link unavailable: " << Recompiled.diagnostic()
+                   << "\n  Test: " << TC.Name;
+    ASSERT_EQ(Recompiled.State, LinkState::Ready)
+        << "HighC object preparation failed: " << Recompiled.diagnostic()
+        << "\n  Test: " << TC.Name << "\n"
+        << Source;
+    auto Sections = std::move(Recompiled.Sections);
+    packSections(Sections);
+    auto State = emulateFunction(UcArch, UcMode, Sections.Text, TC.Args,
+                                 ParamRegs, SPReg, RetReg, IsARM32, {}, 0,
+                                 TC.UcCpuModel, TC.InitialAArch64FPCR);
+    ASSERT_TRUE(State.OK) << "HighC emulation failed: " << State.Error
+                          << "\n  Test: " << TC.Name << "\n"
+                          << Source;
+    EXPECT_EQ(Expected, State.RetVal)
+        << "Return value mismatch after HighC roundtrip"
+        << "\n  Test: " << TC.Name << "\n  Original: 0x" << std::hex << Expected
+        << "\n  HighC:    0x" << State.RetVal << std::dec << "\n"
+        << Source;
   }
 
   // --- Unicorn emulation of a C function ---
@@ -851,6 +952,55 @@ private:
     return false;
   }
 
+  /// The functions \p Path calls without defining them, besides the mem*
+  /// routines the test can link, and the function at the start of its first
+  /// executable section, where emulation starts.
+  struct ObjectLinkage {
+    std::vector<std::string> Externals;
+    std::string Entry;
+    std::set<std::string> Functions;
+  };
+  static ObjectLinkage objectLinkage(const std::string &Path) {
+    ObjectLinkage Result;
+    auto BufOrErr = llvm::MemoryBuffer::getFile(Path);
+    if (!BufOrErr)
+      return Result;
+    auto ObjOrErr = llvm::object::ObjectFile::createObjectFile(
+        (*BufOrErr)->getMemBufferRef());
+    if (!ObjOrErr)
+      return Result;
+    std::optional<llvm::object::SectionRef> FirstText;
+    for (const auto &Section : (*ObjOrErr)->sections())
+      if (Section.isText() && Section.getSize()) {
+        FirstText = Section;
+        break;
+      }
+    for (const auto &Sym : (*ObjOrErr)->symbols()) {
+      auto FlagsOrErr = Sym.getFlags();
+      auto NameOrErr = Sym.getName();
+      if (!FlagsOrErr || !NameOrErr || NameOrErr->empty())
+        continue;
+      const llvm::StringRef N = *NameOrErr;
+      if (*FlagsOrErr & llvm::object::SymbolRef::SF_Undefined) {
+        // The linker defines the GOT position-independent i386 code names.
+        if (!neverd::libc::isMemCopyName(N) && !neverd::libc::isMemSetName(N) &&
+            N != "_GLOBAL_OFFSET_TABLE_")
+          Result.Externals.push_back(N.str());
+        continue;
+      }
+      auto Type = Sym.getType();
+      auto Value = Sym.getValue();
+      auto Section = Sym.getSection();
+      if (Type && *Type == llvm::object::SymbolRef::ST_Function)
+        Result.Functions.insert(N.str());
+      if (FirstText && Type && *Type == llvm::object::SymbolRef::ST_Function &&
+          Value && *Value == 0 && Section &&
+          *Section != (*ObjOrErr)->section_end() && **Section == *FirstText)
+        Result.Entry = N.str();
+    }
+    return Result;
+  }
+
   // Compile a freestanding memcpy/memset/memmove (plain byte loops;
   // -fno-builtin so clang does not lower the loop back into a mem* call) for
   // the test target. Returns the object path, or "" on failure (the caller
@@ -956,6 +1106,11 @@ private:
                           neverd::test::shellQuote(ObjPath);
     if (!MemHelperObj.empty())
       LinkCmd += " " + neverd::test::shellQuote(MemHelperObj);
+    if (!LinkFirst.empty()) {
+      const auto Order = (Work / (Tag + "_order.txt")).string();
+      std::ofstream(Order) << LinkFirst << "\n";
+      LinkCmd += " --symbol-ordering-file=" + neverd::test::shellQuote(Order);
+    }
     Result.Command = LinkCmd;
     // Preserve bounded recovery from temporary process disruption, but retain
     // the final command result rather than assuming any failure is transient.

@@ -25,7 +25,21 @@ neverd unpack packed.exe -o unpacked.exe \
   --options='{"backend":"unicorn","instruction_limit":400000000,"transfer":2}'
 ```
 
-該命令輸出一份 JSON 報告。結束碼 0 表示映像已寫出；3 表示有界執行在接受入口之前結束（`outcome` 為 `no_entry`，不寫入任何檔案）；1 表示輸入、選項無效或準備失敗。報告會給出實際執行的 `format`、`architecture` 和 `profile`。C 入口是 `neverd_unpack_json`；Python 提供 `Session.unpack`。選項為[行程選項](process-emulation.md)加上 `transfer`。外殼需要更多資源之處預設值不同：100000000 條指令、600 秒、512 MiB，並且 `windows.defer_unmodeled` 預設開啟。
+該命令輸出一份 JSON 報告。結束碼 0 表示已寫出 `unpacked` 映像或明確要求的 `snapshot`；3 表示 `no_entry` 或 `unsupported_state`，不會建立或截斷輸出檔案；1 表示輸入、選項無效或準備失敗。報告會給出實際執行的 `format`、`architecture` 和 `profile`。C 入口是 `neverd_unpack_json`；Python 提供 `Session.unpack`。選項為[行程選項](process-emulation.md)加上 `transfer` 和 `snapshot_only`。外殼需要更多資源之處預設值不同：100000000 條指令、600 秒、512 MiB，並且 `windows.defer_unmodeled` 預設開啟。
+
+## 執行階段狀態與分析快照
+
+在接受轉移時，行程設定提供仍存活的堆積配置清單。恢復流程保守地掃描擷取的映像與目前執行緒 TLS 位元組中的所有指標寬度值，包括未對齊值及配置內部的位址。匹配值可能只是整數或未使用資料，不代表已確認的指標，也不能據此重定位。清單來源未知或存在可能的參照時，預設回報 `unsupported_state`，即使已接受 `entry`；CLI 與 C API 都不會建立或截斷輸出檔案。
+
+`runtime_state.heap_inventory_known` 區分已知空清單與缺少來源證據。`possible_heap_references` 統計全部匹配；`heap_references` 最多保留前 64 筆，先映像後 TLS，各自依 `offset` 排序。記錄包含 `storage`（`image` 或 `thread_local`）、位址及配置範圍。映像記錄的 `rva` 為十六進位值，TLS 記錄為 null；位址與偏移採十六進位字串。
+
+`runtime_state.direct_service_calls` 統計入口觀察及匯入探索期間實際執行的直接模型服務呼叫。其編號尚未重建為原生 Windows 繫結，因此預設傳回 `unsupported_state`，包括首次呼叫出現在擷取入口之後的情況。明確指定 `snapshot_only` 會保留計數與診斷。複製的系統呼叫不會被視為可修復的匯入函式呼叫。 `no_entry` 報告也保留此計數；未擷取入口時，堆清單仍為未知。
+
+`runtime_state.encoded_pointer_inventory_known` 表示程序設定是否提供已觀察的指標編碼值。`possible_encoded_pointers` 統計擷取映像與主執行緒 TLS 中完全相等的指標寬度值，包括未對齊儲存；`encoded_pointer_references` 保留前 64 個位置的 `storage`、`offset`、`rva` 和 `value`。Windows 從已完成的 `EncodePointer`/`RtlEncodePointer` 傳回值和 `DecodePointer`/`RtlDecodePointer` 輸入收集編碼值。缺少清單或存在符合值時傳回 `unsupported_state`；明確要求的快照保留診斷。符合值也可能是整數或未使用資料，不能據此授權重新編碼。擷取前已清除的值、僅在擷取後產生的編碼不會觸發此拒絕。清單不涵蓋自訂編碼、部分或轉換後的值、暫存器、堆疊狀態及未到達路徑。
+
+`runtime_state.dynamic_thread_local_inventory_known` 表示程序設定是否提供擷取時的動態執行緒／纖程區域槽位狀態。`live_dynamic_tls_slots` 與 `live_dynamic_fls_slots` 和 PE 靜態 TLS 分開計數：已配置槽位即使值為零也計入；沒有配置紀錄的非零 TLS 單元也計入。清單未知或仍有槽位狀態時傳回 `unsupported_state`，明確要求的快照保留計數與診斷。擷取前已釋放的槽位、已清零且未配置的 TLS 單元，以及擷取後才建立的狀態不會觸發此拒絕。計數不重建槽位所有權、值或回呼，也不證明其他執行緒或纖程的狀態。
+
+`--options='{"snapshot_only":true}'` 明確要求分析位元組。接受入口且重建成功後，結果一律為 `snapshot`，並保留執行階段狀態診斷。此選項不會恢復堆積資料、推斷重定位、證明原生執行成功或反虛擬化。堆積參照數量為零也不能證明其他 OS 狀態或未執行路徑正確。
 
 ## 入口如何確定
 
@@ -76,6 +90,8 @@ neverd unpack packed.exe -o unpacked.exe \
 ## 限制
 
 受檢執行逐條放行指令。x64 Unicorn/KVM/WHP 支援以時間和事件限額執行的 `direct-user-x64-v1`，不計算指令數。混合程式碼世代和重複寫入可能需要額外的處理器單步。復原範圍是輸入映像中實際到達的路徑；不會把映像外產生的程式碼提升為該映像的入口。入口前的初始化可能產生無法移植的外部狀態，重新執行 TLS 回呼也可能產生副作用。未建模 API 明確停止。導入修復涵蓋通過驗證的六至八位元組 x64 呼叫視窗及七或八位元組位址載入；其他形式和未執行路徑仍未解決。虛擬化程式碼保持原樣。
+
+基於 RVA 的延遲匯入保留尚未解析的映像內跳板，並依據已觀測的匯出身分重新繫結已解析單元，避免程式輔助函式重複已完成的工作。獨立且完整終止的查找表限定每段繫結的數量，不會占用下一個待解析 IAT 單元。重建清除處理程序私有 DLL 控制代碼和繫結快取參照，並將延遲匯入中繼資料排除在一般 IAT 搜尋之外。描述符和指標陣列必須完整終止，名稱、範圍及儲存歸屬必須有效。未知目標、無效跳板、舊式 VA 描述符及儲存衝突均明確報錯。
 
 ## 驗證
 

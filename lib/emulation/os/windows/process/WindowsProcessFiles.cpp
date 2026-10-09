@@ -7,6 +7,7 @@
 
 #include "neverd/emulation/CPU.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
@@ -284,11 +285,96 @@ Services::createSection(const Service &S, const NativeCallEvent &Event) {
     return Writable.takeError();
   if (!*Writable)
     return failure(text::Access);
-  const uint64_t Handle =
-      SectionHandleBase + Sections.size() * SectionHandleStride;
+  uint64_t Handle = SectionHandleBase;
+  while (Sections.contains(Handle))
+    Handle += SectionHandleStride;
   if (auto E = CPU.writeInteger(A[0], Handle, PointerSize))
     return std::move(E);
-  Sections.insert({Handle, SectionObject{File->second.Path, Size}});
+  Sections.insert(
+      {Handle, SectionObject{File->second.Path, Size, std::nullopt}});
+  return std::optional<uint64_t>(0);
+}
+
+llvm::Expected<std::optional<uint64_t>>
+Services::openSection(const Service &S, const NativeCallEvent &Event) {
+  const auto &A = Event.Arguments;
+  auto Refuse =
+      [&](const llvm::Twine &Why) -> llvm::Expected<std::optional<uint64_t>> {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic =
+        std::string(text::ServiceArguments) + S.Name + ": " + Why.str();
+    return std::nullopt;
+  };
+  auto Word = [&](uint64_t Address, unsigned Size) -> llvm::Expected<uint64_t> {
+    auto Readable = access(Address, Size, Read);
+    if (!Readable)
+      return Readable.takeError();
+    if (!*Readable)
+      return failure(text::Access);
+    return CPU.readInteger(Address, Size);
+  };
+  const uint32_t Desired = uint32_t(A[1]);
+  if (!A[0] || !A[2] || !(Desired & SectionMapRead) ||
+      (Desired & ~(SectionMapRead | SectionQuery)))
+    return Refuse("access");
+  auto Length = Word(A[2], DWordSize);
+  auto Root = Word(A[2] + ObjectRootDirectory, PointerSize);
+  auto Name = Word(A[2] + ObjectName, PointerSize);
+  auto Flags = Word(A[2] + ObjectAttributeFlags, DWordSize);
+  if (!Length || !Root || !Name || !Flags)
+    return llvm::joinErrors(
+        llvm::joinErrors(Length.takeError(), Root.takeError()),
+        llvm::joinErrors(Name.takeError(), Flags.takeError()));
+  if (*Length != ObjectAttributesLength || *Root || !*Name ||
+      (*Flags & ~ObjectCaseInsensitive))
+    return Refuse("attributes");
+  auto NameLength = Word(*Name + UnicodeLength, WideSize);
+  auto Maximum = Word(*Name + UnicodeLength + WideSize, WideSize);
+  auto Buffer = Word(*Name + UnicodeBuffer, PointerSize);
+  if (!NameLength || !Maximum || !Buffer)
+    return llvm::joinErrors(
+        llvm::joinErrors(NameLength.takeError(), Maximum.takeError()),
+        Buffer.takeError());
+  if (!*Buffer || !*NameLength || (*NameLength & 1) || *NameLength > *Maximum ||
+      *NameLength > MaxName * WideSize)
+    return Refuse("name");
+  std::string Path;
+  for (uint64_t I = 0; I < *NameLength; I += WideSize) {
+    auto Unit = Word(*Buffer + I, WideSize);
+    if (!Unit)
+      return Unit.takeError();
+    if (!*Unit || *Unit > 0x7f)
+      return Refuse("name");
+    Path.push_back(char(*Unit));
+  }
+  constexpr llvm::StringLiteral Prefix("\\KnownDlls\\");
+  const bool Insensitive = *Flags & ObjectCaseInsensitive;
+  const llvm::StringRef Full(Path);
+  if (!(Insensitive ? Full.starts_with_insensitive(Prefix)
+                    : Full.starts_with(Prefix)))
+    return Refuse("namespace");
+  const llvm::StringRef Base = Full.drop_front(Prefix.size());
+  auto Index = findModule(Modules, Base);
+  if (!Index ||
+      !(Insensitive ? Base.equals_insensitive(Modules.Identities[*Index].Name)
+                    : Base == Modules.Identities[*Index].Name))
+    return Refuse("section name");
+  const auto &Module = Modules.Modules[*Index];
+  if (!Module.System || Module.Opaque || !Module.Pinned || !resident(Module))
+    return Refuse("provider");
+  if (Sections.size() >= MaxImageSections)
+    return Refuse("section limit");
+  auto Writable = access(A[0], PointerSize, Write);
+  if (!Writable)
+    return Writable.takeError();
+  if (!*Writable)
+    return failure(text::Access);
+  uint64_t Handle = SectionHandleBase;
+  while (Sections.contains(Handle))
+    Handle += SectionHandleStride;
+  if (auto E = CPU.writeInteger(A[0], Handle, PointerSize))
+    return std::move(E);
+  Sections.emplace(Handle, SectionObject{{}, Module.Loaded.Size, *Index});
   return std::optional<uint64_t>(0);
 }
 
@@ -310,30 +396,105 @@ Services::mapSection(const Service &S, const NativeCallEvent &Event) {
       return failure(text::Access);
     return CPU.readInteger(Address, Size);
   };
-  if (CPU.architecture() != GuestArchitecture::X64)
-    return Refuse("isa");
   const auto Section = Sections.find(A[0]);
+  const uint32_t Inherit = uint32_t(A[7]);
   if (Section == Sections.end() || A[1] != CurrentProcess || A[3] || A[4] ||
-      A[5] || (A[7] != SectionViewShare && A[7] != SectionViewUnmap))
+      (Inherit != SectionViewShare && Inherit != SectionViewUnmap))
     return Refuse("flags");
-  auto SP = CPU.readRegister(CPURegister::X64SP);
+  if (A[5]) {
+    auto Offset = Word(A[5], PointerSize);
+    if (!Offset)
+      return Offset.takeError();
+    if (*Offset)
+      return Refuse("section offset");
+    auto Writable = access(A[5], PointerSize, Write);
+    if (!Writable)
+      return Writable.takeError();
+    if (!*Writable)
+      return failure(text::Access);
+  }
+  auto ABI = IntegerABI::get(CPU.architecture() == GuestArchitecture::X64
+                                 ? IntegerCallingConvention::Win64
+                                 : IntegerCallingConvention::AAPCS64);
+  if (!ABI)
+    return ABI.takeError();
+  auto SP = CPU.readRegister(ABI->info().StackPointer);
   if (!SP)
     return SP.takeError();
-  auto Allocation = Word((*SP)[0] + 0x48, PointerSize);
+  for (unsigned I : {8, 9}) {
+    auto Location = ABI->argumentLocation((*SP)[0], I);
+    if (!Location)
+      return Location.takeError();
+    if (Location->Register == CPURegister::Invalid) {
+      auto Readable = access(Location->Address, PointerSize, Read);
+      if (!Readable)
+        return Readable.takeError();
+      if (!*Readable)
+        return failure(text::Access);
+    }
+  }
+  auto Allocation = ABI->readArgument(CPU, (*SP)[0], 8);
   if (!Allocation)
     return Allocation.takeError();
-  auto Protect = Word((*SP)[0] + 0x50, PointerSize);
+  auto Protect = ABI->readArgument(CPU, (*SP)[0], 9);
   if (!Protect)
     return Protect.takeError();
-  if (*Allocation || *Protect != PageReadOnly)
+  const bool ImageView = Section->second.SystemModule.has_value();
+  if (uint32_t(*Allocation) ||
+      (uint32_t(*Protect) != PageReadOnly &&
+       !(ImageView && uint32_t(*Protect) == PageReadWrite)))
     return Refuse(std::string("tail ") + llvm::utohexstr(*Allocation) + " " +
                   llvm::utohexstr(*Protect));
+  // OpenSection currently grants only query/read access. SEC_IMAGE determines
+  // page protections, but does not bypass the section handle's access check.
+  if (ImageView && uint32_t(*Protect) == PageReadWrite)
+    return std::optional<uint64_t>(
+        uint64_t(int64_t(int32_t(StatusAccessDenied))));
   auto Preferred = Word(A[2], PointerSize);
   if (!Preferred)
     return Preferred.takeError();
   auto Requested = Word(A[6], PointerSize);
   if (!Requested)
     return Requested.takeError();
+  if (ImageView) {
+    const auto &Source = Modules.Modules[*Section->second.SystemModule].Loaded;
+    if (*Preferred || (*Requested && *Requested != Source.Size))
+      return Refuse("partial or fixed image view");
+    if (Views.size() >= MaxImageSections)
+      return Refuse("view limit");
+    for (uint64_t At : {A[2], A[6]}) {
+      auto Writable = access(At, PointerSize, Write);
+      if (!Writable)
+        return Writable.takeError();
+      if (!*Writable)
+        return failure(text::Access);
+    }
+    auto Base = Virtual.reserveImage(Source.Base, Source.Size, true);
+    if (!Base)
+      return Base.takeError();
+    auto Rollback = llvm::scope_exit(
+        [&] { llvm::consumeError(Virtual.releaseImage(*Base)); });
+    // Section contents come from the loader's immutable provider image,
+    // independently of guest writes to its resident mapping.
+    for (const auto &Region : Source.Regions) {
+      const uint64_t At = *Base + (Region.Address - Source.Base);
+      if (auto E = Memory.map(At, Region.Bytes.size(),
+                              Read | Write | UserAccessible))
+        return std::move(E);
+      if (auto E = CPU.write(At, Region.Bytes))
+        return std::move(E);
+      if (auto E = Memory.protect(At, Region.Bytes.size(), Region.Permissions))
+        return std::move(E);
+    }
+    if (auto E = CPU.writeInteger(A[2], *Base, PointerSize))
+      return std::move(E);
+    if (auto E = CPU.writeInteger(A[6], Source.Size, PointerSize))
+      return std::move(E);
+    Views.emplace(*Base, MappedView{Source.Size, true});
+    Rollback.release();
+    return std::optional<uint64_t>(*Base == Source.Base ? 0
+                                                        : StatusImageNotAtBase);
+  }
   if (*Requested > Section->second.Size)
     return Refuse("size");
   uint64_t Bytes = *Requested ? *Requested : Section->second.Size;
@@ -383,6 +544,12 @@ Services::unmapSection(const Service &S, const NativeCallEvent &Event) {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = std::string(text::ServiceArguments) + S.Name;
     return std::nullopt;
+  }
+  if (View->second.Image) {
+    if (auto E = Virtual.releaseImage(A[1]))
+      return std::move(E);
+    Views.erase(View);
+    return std::optional<uint64_t>(0);
   }
   auto Freed = Virtual.free(A[1], 0, MemRelease);
   if (!Freed)
@@ -508,7 +675,7 @@ Services::querySystem(const Service &S, const NativeCallEvent &Event) {
   write64le(Bytes.data() + 0x18, ImageAlignment);
   write64le(Bytes.data() + 0x20, ImageAlignment);
   write64le(Bytes.data() + 0x28, UserLimit - 1);
-  write64le(Bytes.data() + 0x30, ProcessorCount);
+  write64le(Bytes.data() + 0x30, ProcessorMask);
   Bytes[0x38] = ProcessorCount;
   if (auto E = CPU.write(A[1], Bytes))
     return std::move(E);
@@ -558,7 +725,7 @@ Services::queryProcess(const Service &S, const NativeCallEvent &Event) {
   using namespace llvm::support::endian;
   write32le(Bytes.data() + 0x00, StatusPending);
   write64le(Bytes.data() + 0x08, PEB);
-  write64le(Bytes.data() + 0x10, ProcessorCount);
+  write64le(Bytes.data() + 0x10, ProcessorMask);
   write32le(Bytes.data() + 0x18, BasePriorityNormal);
   write64le(Bytes.data() + 0x20, ProcessID);
   if (auto E = CPU.write(A[2], Bytes))
@@ -579,10 +746,19 @@ Services::queryThread(const Service &S, const NativeCallEvent &Event) {
         std::string(text::ServiceArguments) + S.Name + ": " + Why.str();
     return std::nullopt;
   };
-  if (A[1] != ThreadBasicInformation)
+  const uint32_t Class = uint32_t(A[1]);
+  const uint32_t Length = uint32_t(A[3]);
+  if (Class != ThreadBasicInformation && Class != ThreadHideFromDebugger)
     return Refuse(std::string("class ") + llvm::utohexstr(A[1]));
   if (A[0] != CurrentThread)
     return Refuse("thread");
+  if (Class == ThreadHideFromDebugger && Length >= DWordSize &&
+      (A[2] & (DWordSize - 1)))
+    return std::optional<uint64_t>(
+        uint64_t(int64_t(int32_t(StatusDatatypeMisalignment))));
+  if (Class == ThreadHideFromDebugger && Length != 1)
+    return std::optional<uint64_t>(
+        uint64_t(int64_t(int32_t(StatusInfoLengthMismatch))));
   if (A[4]) {
     auto Writable = access(A[4], DWordSize, Write);
     if (!Writable)
@@ -590,7 +766,20 @@ Services::queryThread(const Service &S, const NativeCallEvent &Event) {
     if (!*Writable)
       return failure(text::Access);
   }
-  if (A[3] < ThreadBasicInformationSize) {
+  if (Class == ThreadHideFromDebugger) {
+    auto Writable = access(A[2], 1, Write);
+    if (!Writable)
+      return Writable.takeError();
+    if (!*Writable)
+      return failure(text::Access);
+    if (auto E = CPU.writeInteger(A[2], ThreadHiddenFromDebugger, 1))
+      return std::move(E);
+    if (A[4])
+      if (auto E = CPU.writeInteger(A[4], 1, DWordSize))
+        return std::move(E);
+    return std::optional<uint64_t>(0);
+  }
+  if (Length < ThreadBasicInformationSize) {
     if (A[4])
       if (auto E =
               CPU.writeInteger(A[4], ThreadBasicInformationSize, DWordSize))
@@ -611,7 +800,7 @@ Services::queryThread(const Service &S, const NativeCallEvent &Event) {
   write64le(Bytes.data() + 0x08, TEB);
   write64le(Bytes.data() + 0x10, ProcessID);
   write64le(Bytes.data() + 0x18, ThreadID);
-  write64le(Bytes.data() + 0x20, ProcessorCount);
+  write64le(Bytes.data() + 0x20, ProcessorMask);
   write32le(Bytes.data() + 0x28, BasePriorityNormal);
   write32le(Bytes.data() + 0x2c, BasePriorityNormal);
   if (auto E = CPU.write(A[2], Bytes))
@@ -632,28 +821,49 @@ Services::setThread(const Service &S, const NativeCallEvent &Event) {
         std::string(text::ServiceArguments) + S.Name + ": " + Why.str();
     return std::nullopt;
   };
-  if (A[1] != ThreadHideFromDebugger)
+  const uint32_t Class = uint32_t(A[1]);
+  if (Class != ThreadHideFromDebugger && Class != ThreadAffinityMask)
     return Refuse(std::string("class ") + llvm::utohexstr(A[1]));
   if (A[0] != CurrentThread)
     return Refuse("thread");
-  if (A[3] > PointerSize)
-    return std::optional<uint64_t>(
-        uint64_t(int64_t(int32_t(StatusInfoLengthMismatch))));
-  if (A[3]) {
-    if (!A[2])
-      return Refuse("buffer");
-    auto Readable = access(A[2], A[3], Read);
+  if (Class == ThreadAffinityMask) {
+    if (uint32_t(A[3]) != PointerSize)
+      return Refuse("affinity length");
+    auto Readable = access(A[2], PointerSize, Read);
     if (!Readable)
       return Readable.takeError();
     if (!*Readable)
       return failure(text::Access);
+    auto Mask = CPU.readInteger(A[2], PointerSize);
+    if (!Mask)
+      return Mask.takeError();
+    // Native affinity intersects the request with the process mask. In this
+    // one-processor model every nonempty intersection retains that processor.
+    if (!(*Mask & ProcessorMask))
+      return std::optional<uint64_t>(
+          uint64_t(int64_t(int32_t(StatusInvalidParameter))));
+    return std::optional<uint64_t>(0);
   }
+  // Native setters probe nonempty input with ULONG alignment before checking
+  // this information class's required zero length.
+  if (uint32_t(A[3]) && (A[2] & (DWordSize - 1)))
+    return std::optional<uint64_t>(
+        uint64_t(int64_t(int32_t(StatusDatatypeMisalignment))));
+  if (uint32_t(A[3]) != 0)
+    return std::optional<uint64_t>(
+        uint64_t(int64_t(int32_t(StatusInfoLengthMismatch))));
+  ThreadHiddenFromDebugger = true;
   return std::optional<uint64_t>(0);
 }
 
 llvm::Expected<std::optional<uint64_t>>
-Services::encodePointer(const Service &, const NativeCallEvent &Event) {
-  return std::optional<uint64_t>(Event.Arguments[0] ^ PointerCookie);
+Services::encodePointer(const Service &S, const NativeCallEvent &Event) {
+  const uint64_t Value = Event.Arguments[0] ^ PointerCookie;
+  EncodedPointers.insert(S.Kind == API::EncodePointer ||
+                                 S.Kind == API::RtlEncodePointer
+                             ? Value
+                             : Event.Arguments[0]);
+  return std::optional<uint64_t>(Value);
 }
 
 llvm::Expected<std::optional<uint64_t>>
@@ -667,61 +877,63 @@ Services::criticalSection(const Service &S, const NativeCallEvent &Event) {
                      S.Kind == API::RtlLeaveCriticalSection;
   const bool Try = S.Kind == API::TryEnterCriticalSection ||
                    S.Kind == API::RtlTryEnterCriticalSection;
+  const bool Delete = S.Kind == API::DeleteCriticalSection ||
+                      S.Kind == API::RtlDeleteCriticalSection;
   if (!A[0])
     return failure(text::Access);
+  auto Existing = CriticalSections.find(A[0]);
+  if (Init ? Existing != CriticalSections.end()
+           : Existing == CriticalSections.end())
+    return unsupported(S);
+  auto Accessible = access(A[0], CriticalSectionSize, Read | Write);
+  if (!Accessible)
+    return Accessible.takeError();
+  if (!*Accessible)
+    return failure(text::Access);
+  std::array<uint8_t, CriticalSectionSize> Bytes{};
+  using namespace llvm::support::endian;
   if (Init) {
-    auto Writable = access(A[0], CriticalSectionSize, Write);
-    if (!Writable)
-      return Writable.takeError();
-    if (!*Writable)
-      return failure(text::Access);
-    std::array<uint8_t, CriticalSectionSize> Bytes{};
-    using namespace llvm::support::endian;
-    write32le(Bytes.data() + CriticalSectionLock, 0xffffffffu);
-    const bool WithSpin =
-        S.Kind == API::InitializeCriticalSectionAndSpinCount ||
-        S.Kind == API::RtlInitializeCriticalSectionAndSpinCount;
-    write64le(Bytes.data() + CriticalSectionSpin, WithSpin ? A[1] : 0);
+    write32le(Bytes.data() + CriticalSectionLock, UINT32_MAX);
+    // Windows ignores the requested spin count on a single-processor system.
+    // The process profile advertises that same one-processor mask.
     if (auto E = CPU.write(A[0], Bytes))
       return std::move(E);
-    return std::optional<uint64_t>(1);
+    CriticalSections.emplace(A[0], 0);
+    return std::optional<uint64_t>(
+        S.Kind == API::InitializeCriticalSectionAndSpinCount ? 1 : 0);
   }
-  auto Readable = access(A[0] + CriticalSectionLock, DWordSize, Read | Write);
-  if (!Readable)
-    return Readable.takeError();
-  if (!*Readable)
-    return failure(text::Access);
-  auto Lock = CPU.readInteger(A[0] + CriticalSectionLock, DWordSize);
-  if (!Lock)
-    return Lock.takeError();
-  auto Depth = CPU.readInteger(A[0] + CriticalSectionRecursion, DWordSize);
-  if (!Depth)
-    return Depth.takeError();
-  if (Leave) {
-    const uint32_t Next = *Depth > 1 ? uint32_t(*Lock) - 1 : 0xffffffffu;
-    const uint32_t Recursion = *Depth > 1 ? uint32_t(*Depth) - 1 : 0;
-    if (auto E = CPU.writeInteger(A[0] + CriticalSectionLock, Next, DWordSize))
+  if (auto E = CPU.read(A[0], Bytes))
+    return std::move(E);
+  const uint32_t Depth = Existing->second;
+  const uint32_t Lock = Depth ? UINT32_MAX - 1 : UINT32_MAX;
+  const uint64_t Owner = Depth ? ThreadID : 0;
+  std::array<uint8_t, CriticalSectionSize> Expected{};
+  write32le(Expected.data() + CriticalSectionLock, Lock);
+  write32le(Expected.data() + CriticalSectionRecursion, Depth);
+  write64le(Expected.data() + CriticalSectionOwner, Owner);
+  if (Bytes != Expected)
+    return unsupported(S);
+  // Invalid lifecycle, contention and corrupted state have no supported
+  // single-thread transition. Refuse before changing memory or ownership.
+  if (Delete) {
+    if (Depth)
+      return unsupported(S);
+    Bytes.fill(0);
+    if (auto E = CPU.write(A[0], Bytes))
       return std::move(E);
-    if (auto E = CPU.writeInteger(A[0] + CriticalSectionRecursion, Recursion,
-                                  DWordSize))
-      return std::move(E);
-    if (!Recursion)
-      if (auto E =
-              CPU.writeInteger(A[0] + CriticalSectionOwner, 0, PointerSize))
-        return std::move(E);
+    CriticalSections.erase(Existing);
     return std::optional<uint64_t>(0);
   }
-  const bool Free = uint32_t(*Lock) == 0xffffffffu;
-  if (auto E = CPU.writeInteger(A[0] + CriticalSectionLock,
-                                Free ? 0 : uint32_t(*Lock) + 1, DWordSize))
+  if ((Leave && !Depth) || (!Leave && Depth == INT32_MAX))
+    return unsupported(S);
+  const uint32_t Next = Leave ? Depth - 1 : Depth + 1;
+  write32le(Bytes.data() + CriticalSectionLock,
+            Next ? UINT32_MAX - 1 : UINT32_MAX);
+  write32le(Bytes.data() + CriticalSectionRecursion, Next);
+  write64le(Bytes.data() + CriticalSectionOwner, Next ? ThreadID : 0);
+  if (auto E = CPU.write(A[0], Bytes))
     return std::move(E);
-  if (auto E = CPU.writeInteger(A[0] + CriticalSectionRecursion,
-                                Free ? 1 : uint32_t(*Depth) + 1, DWordSize))
-    return std::move(E);
-  if (Free)
-    if (auto E = CPU.writeInteger(A[0] + CriticalSectionOwner, ThreadID,
-                                  PointerSize))
-      return std::move(E);
+  Existing->second = Next;
   return std::optional<uint64_t>(Try ? 1 : 0);
 }
 

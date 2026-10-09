@@ -94,10 +94,22 @@ struct CallArgScan {
   /// Whether argument register \p Index is one of this function's own
   /// parameters, which a forwarder passes through untouched.
   llvm::function_ref<bool(int)> IsOwnParameter;
+  /// This function's own stack parameter at argument position \p Index,
+  /// which a tail jump passes on unless it stores another value there
+  /// (nullptr when it has none).
+  llvm::function_ref<ExprPtr(int)> OwnStackParam;
+  /// Whether a store to \p Address can be no outgoing argument: it is
+  /// below the stack pointer it is made from, through another pointer, or
+  /// at a fixed address.
+  llvm::function_ref<bool(const MedVar &)> IsNoArgumentStore;
   /// Offset of an address from the stack pointer at function entry, when it
   /// resolves through copies and constant adjustments (an `r11 = rsp`
   /// frame); nullopt otherwise.
   llvm::function_ref<std::optional<int64_t>(const MedVar &)> EntryOffsetOf;
+  /// The entry offset of the stack pointer the call is made with, where it
+  /// is known (i386): a store EntryOffsetOf places at or above it is in the
+  /// slot at that distance.
+  std::optional<int64_t> CallStackEntryOffset;
   /// Bytes the prologue moved the stack pointer below its entry value.
   int64_t FrameSize = 0;
   /// Entry-relative stack slots the function loads; see MedToHigh.h.

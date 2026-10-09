@@ -13,6 +13,7 @@
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <optional>
 
+class QDialog;
 class QLabel;
 class McpConnectionManager;
 class GuiSessionBroker;
@@ -98,6 +99,8 @@ private:
   /// The pseudocode or IR window holding the keyboard focus, if one does.
   CodeView *focusedCodeView() const;
   std::optional<Address> currentFunction() const;
+  /// Open a function in the code window used before the chooser took focus.
+  void activateFunction(Address address);
   void navigate(Address address);
   /// Jump in the active address view: the hex view when it was the last
   /// analysis view used, otherwise the disassembly.
@@ -105,13 +108,29 @@ private:
   void navigateExpression(const QString &text);
   /// Follow a name double-clicked in the code view \p view.
   void activateCodeName(CodeView *view, const QString &name);
+  void navigateCodeFunction(CodeView *view, Address address, Address function,
+                            std::optional<Address> from);
+  void navigateHistory(bool forward);
   void synchronize(Address address, QObject *source);
+  /// Show the current function in the code view \p view if it can be seen.
+  void followFunction(CodeView *view);
+  /// Whether \p object is a code view that follows the disassembly.
+  bool followsDisassembly(const QObject *object) const;
   void updateActions();
   void updateStatusBar();
   void updateTitle();
 
   // Commands.
   void openDialog();
+  /// Open \p path, first asking how to load it when NeverD keeps no project
+  /// for it, as IDA's "Load a new file" dialog does.
+  void chooseLoader(const QString &path);
+  /// File, Load file, Reload the input file: read the file again, asking
+  /// again how to read a binary file.
+  void reloadInput();
+  /// Show or hide the status line's analysis indicator, as the load dialog
+  /// last chose.
+  void applyIndicator();
   void rename();
   void comment();
   void jumpAnywhere();
@@ -147,6 +166,7 @@ private:
   // Project state packed into the database.
   QHash<QString, QByteArray> projectState() const;
   void restoreProjectState();
+  void navigateInitialAddress();
   QJsonArray bookmarks() const;
   void setBookmarks(const QJsonArray &rows);
   QString bookmarksKey() const;
@@ -166,6 +186,12 @@ private:
   QHash<QString, Dock *> docks_;
   QHash<int, ChooserView *> choosers_;
   QPointer<CodeView> pseudocode_;
+  bool pseudocodeEnabled_ = false;
+  QTimer followTimer_;
+  QPointer<CodeView> lastCodeView_;
+  std::optional<Address> initialAddress_;
+  bool restoreGraph_ = false;
+  QPointer<QDialog> quickStart_;
   QLabel *analysisLabel_ = nullptr, *directionLabel_ = nullptr,
          *diskLabel_ = nullptr, *fileLabel_ = nullptr;
   QMenu *recentMenu_ = nullptr;
@@ -175,11 +201,15 @@ private:
   QString lastPaletteCommand_;
   bool searchDown_ = true;
   bool synchronizing_ = false;
+  quint64 codeNavigationSerial_ = 0;
+  bool codeHistoryNavigation_ = false;
   bool hexActive_ = false;
   bool quitting_ = false;
   bool defaultSizesPending_ = false;
   QTimer statusTimer_;
   QStringList pendingCommands_;
+  /// The code view asked for while a jump was still loading.
+  std::optional<QString> pseudocodeAfterJump_;
   QHash<QString, const char *> dockTitles_;
   static inline MainWindow *instance_ = nullptr;
 };

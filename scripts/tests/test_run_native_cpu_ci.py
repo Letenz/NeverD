@@ -527,8 +527,69 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 with self.subTest(backend=backend, host=host):
                     owners, required = native.darwin_inventory(native.ROOT, backend, host)
                     self.assertEqual(owners, ["NeverDDarwinProcessTests"])
-                    self.assertEqual(len(required), 49 * len(platforms))
+                    self.assertEqual(len(required), 62 * len(platforms))
                     for platform in platforms:
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "AttributeNamesPreserveReferencesAndRetainedIdentity/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "ExtendedAttributesPreserveValuesNamesAndObjectLifetime/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "CommonAttributesPreserveRecordAndDescriptorState/"
+                            f"{platform}_{backend}", required,
+                        )
+                    for platform in platforms:
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "RuntimeLinksCreateOpaqueTargetsAndRetainObjects/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "RuntimeCreatedSymbolicLinksCanBeRemoved/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "RuntimeCreatedSymbolicLinksCanBeRenamed/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "InitialDirectoryMutationKeepsFullStatAndIndependentCreationRules/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "MutableInitialLinksKeepIdentityAndReferentLifetime/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "DirectoryLinkRootsKeepIdentityAndReferentLifetime/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "VirtualEnumerationTracksNamespaceChangesAndRetainedDirectories/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "NamespaceCreationMetadataPreservesObjectIdentityAndVirtualRecords/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "FixedLinksObserveMutableTargetsAndRetainOldObjects/"
+                            f"{platform}_{backend}", required,
+                        )
                         self.assertIn(
                             "Transports/DarwinProcess."
                             "SymbolicLinksPreserveRawTargetsMetadataAndNoFollowPolicies/"

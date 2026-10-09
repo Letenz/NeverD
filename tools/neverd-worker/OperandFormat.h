@@ -78,6 +78,22 @@ struct FrameSlot {
 
 /// Names the frame variable at an offset from the frame register.
 using FrameNamer = std::function<std::optional<FrameSlot>(std::int64_t)>;
+/// The base the user shows an operand's number in (neverd/OperandFormats.def).
+enum class NumberBase : std::uint8_t {
+#define NEVERD_OPERAND_BASE(Id, Spelling) Id,
+#include "neverd/OperandFormats.def"
+};
+std::optional<NumberBase> parseNumberBase(std::string_view spelling);
+std::string_view numberBaseName(NumberBase base);
+/// How the user shows an operand's number: its base, with its sign changed
+/// (`-1` for 0FFFFFFFFh) or its bits inverted (`~0Fh` for 0FFFFFFF0h).
+struct NumberFormat {
+  NumberBase base = NumberBase::Number;
+  bool negate = false, invert = false;
+  bool isDefault() const {
+    return base == NumberBase::Number && !negate && !invert;
+  }
+};
 
 struct OperandFacts {
   OperandDialect dialect = OperandDialect::Generic;
@@ -100,6 +116,8 @@ struct OperandFacts {
   /// instruction, when known: operands through it name frame variables too.
   std::string_view stackRegister;
   std::optional<std::int64_t> stackDepth;
+  /// The user's formats of the operands' numbers, by operand index.
+  const std::vector<NumberFormat> *numberFormats = nullptr;
 };
 
 /// A memory operand relative to a frame register.
@@ -137,12 +155,25 @@ std::string x86Number(std::uint64_t value);
 /// PC-relative or absolute memory locations with their names.
 StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
                           const LocationNamer &namer);
+/// Whether formatted operands of \p dialect show the user's number formats.
+bool showsNumberFormats(OperandDialect dialect);
+/// Which operands of \p operands, an instruction's operand text, a number
+/// format changes: the plain numbers, by operand index.
+std::vector<bool> formattableOperands(std::string_view operands,
+                                      OperandDialect dialect);
 
 /// Classify one identifier of operand text for \p dialect.
 bool isRegisterName(OperandDialect dialect, std::string_view name);
 bool isOperandKeyword(std::string_view name);
+/// The kinds of data item a user defines besides a value of a size keyword.
+#define NEVERD_DATA_ITEM_KIND(Id, Spelling)                                    \
+  inline constexpr std::string_view Id = Spelling;
+#include "neverd/DataNames.def"
+
 /// Automatic data-name prefix for a size keyword, or empty.
 std::string_view dataNamePrefix(std::string_view sizeKeyword);
+/// The size keyword of an access \p bytes wide (`qword`), or empty.
+std::string_view sizeKeywordOf(std::uint64_t bytes);
 /// Parse an automatic name such as `loc_F2329` back to its address.
 std::optional<std::uint64_t> parseDummyName(std::string_view name);
 bool isPaddingMnemonic(std::string_view mnemonic);

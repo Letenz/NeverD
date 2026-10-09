@@ -35,6 +35,38 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.ResolvedCellsRebindWithoutRepeatingHelpers")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.PendingCellsAndMetadataRemainByteExact")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.UnloadTablesRemainSeparateFromResolvedBindings")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.BoundCachesCannotBecomeOrdinaryImports")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.PendingThunksUseTheObservedImageBase")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.ZeroTerminatorsKeepTheirCompleteFileBacking")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.InvalidCellsFailInsteadOfKeepingGuestPointers")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.UnknownResolvedTargetsCannotAuthorizeRestoration")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.GeneratedDescriptorsKeepTheirObservedPendingThunks")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.IncompleteTablesAndNamesFailExplicitly")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.BothTheDescriptorAndThunkArraysNeedTerminators")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.OverlappingOwnersCannotResetEachOthersStorage")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PEDelayImports.UnloadTablesCannotAliasTheLiveIAT")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.DelayImportsRetainLazyLoadingAfterCapture/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.DelayImportsRetainLazyLoadingAfterCapture/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "PEMapping.NativeSectionRangesAgreeWithUnpackAndRuntime")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "PEMapping.RebuildingPreservesNativeRangesAndFileAlignment")
@@ -65,6 +97,68 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProcessTransfer.SelectedTransfersCaptureInitializerAndThreadState")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProcessTransfer.SelectedTransfersRejectFailedThreadStateCapture")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.UnchangedVisitedPagesKeepOnlyUnvisitedPageWatches")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.AnInvocationRetainsChangesFromEverySavedImage")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.RestoredPageBytesRetainTheirNewerGeneration")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.CapturesUnalignedAndInteriorHeapReferences")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.MissingHeapInventoryRemainsUnknown")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.HeapReferencesInCapturedTLSCannotBeDiscarded")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.HeapReferenceReportingRemainsBoundedWithoutLosingCount")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.InvalidHeapInventoryCannotAuthorizeCapture")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.DynamicSlotInventoryComesFromTheStoppedProcess")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.MissingDynamicSlotInventoryRemainsUnknown")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProcessTransfer.DynamicSlotReadFailureCannotBecomeAnEmptyInventory")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.LiveDynamicSlotsRequireAnExplicitSnapshot/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.LiveDynamicSlotsRequireAnExplicitSnapshot/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ReleasedAndPostEntryDynamicSlotsDoNotBlockRecovery/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ReleasedAndPostEntryDynamicSlotsDoNotBlockRecovery/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ExplicitSnapshotsKeepExternalHeapDependenciesVisible/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ExplicitSnapshotsKeepExternalHeapDependenciesVisible/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.DirectServiceBindingsRequireAnExplicitSnapshot/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.DirectServiceBindingsRequireAnExplicitSnapshot/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ReleasedHeapStateDoesNotBlockRecovery/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ReleasedHeapStateDoesNotBlockRecovery/"
+    "{backend_title}DirectX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackLibrary."
     "WrappedEntriesRequireExplicitTransferEvidence/{backend_title}X64")
@@ -2120,6 +2214,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ClockServicesUseConsistentUnitsAndPreserveLastError/{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/WindowsProcess."
+    "ThreadInformationRetainsStateAndChecksExactLengths/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess."
+    "UnknownThreadInformationIsNotAcknowledged/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess."
     "UnmodeledDelaysStopWithoutClaimingCompletion/{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/"
@@ -2285,6 +2385,9 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsEnvironment.ValidatesUpdatesBeforePublishingGuestBytes/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsHeap.PrivateHeapDestructionReleasesOnlyOwnedBlocks/"
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsHeap.ExecutesOriginalHeapScenarios/{backend_title}X64")

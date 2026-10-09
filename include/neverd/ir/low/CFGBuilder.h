@@ -50,6 +50,13 @@ public:
   /// True when the function at \p Target is proved never to return, asked
   /// by a CFG build that itself runs \p Depth proofs deep.
   virtual bool neverReturns(va_t Target, unsigned Depth) const = 0;
+  /// True when a check that does not lift the function at \p Target finds
+  /// nothing in it that returns, so a call to it that no padding follows is
+  /// still worth a proof.
+  virtual bool mayNeverReturn(va_t Target) const {
+    (void)Target;
+    return false;
+  }
 };
 
 namespace detail {
@@ -681,9 +688,10 @@ public:
     NoReturnTargets = Index;
   }
   /// Ask \p Prover about a direct call to an internal function that the name
-  /// list does not know, when padding follows the call.  \p Depth is how
-  /// many proofs deep this build runs.  The prover must outlive the builds;
-  /// null leaves the name list alone.
+  /// list does not know, when padding follows the call or the prover's cheap
+  /// check finds nothing in the callee that returns.  \p Depth is how many
+  /// proofs deep this build runs.  The prover must outlive the builds; null
+  /// leaves the name list alone.
   void setNoReturnCalleeProver(const NoReturnCalleeProver *Prover,
                                unsigned Depth = 0) {
     NoReturnCallees = Prover;
@@ -1049,15 +1057,22 @@ private:
   /// unconditional direct branch to it is a tail call, not intra-function flow.
   bool isTailCallTarget(va_t Target) const;
 
-  /// Whether the direct CALL in \p Rec targets a known no-return libc function
-  /// (longjmp/abort/exit/...).  The target is resolved through the image's
-  /// imports (Mach-O __stubs / ELF PLT stub VA == the call target) and symbols
+  /// Whether the call in \p Rec never returns: it ends its function's own
+  /// code range, it targets a known no-return libc function
+  /// (longjmp/abort/exit/...), or it targets an internal function proved
+  /// never to return.  The target is resolved through the image's imports
+  /// (Mach-O __stubs / ELF PLT stub VA == the call target) and symbols
   /// (statically linked).  A true result makes explore() stop: the bytes after
   /// the call belong to the next function at -O2, not this one.
   bool isNoReturnCall(const InsnRecord &Rec) const;
   /// True when padding follows the call \p Rec, as a compiler leaves after a
-  /// call it knows never returns: an x86 `int3`, or another function's entry.
+  /// call it knows never returns: an x86 `int3`, alignment no-ops up to
+  /// another function, or another function's entry.
   bool callIsFollowedByPadding(const InsnRecord &Rec) const;
+  /// True when the call \p Rec is the last instruction of the code range
+  /// that its function's own unwind record or sized symbol gives, and no
+  /// fragment of the function follows, so the call cannot return.
+  bool callEndsItsCodeRange(const InsnRecord &Rec) const;
 
   /// Rewrite an unconditional-branch instruction record into an explicit
   /// CALL + RETURN pair (tail call to another function).
@@ -1067,6 +1082,11 @@ private:
   /// the instruction does: push the return address and jump.
   void rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
                               va_t Next);
+  /// A direct i386 call to a get-PC thunk, a function whose body is `mov r32,
+  /// [esp]; ret`, is lifted as what it does: copy the return address into
+  /// that register (CFGBuilderX86GetPc.cpp).
+  void rewriteGetPcThunkCall(const BinaryImage &Img, InsnRecord &Rec,
+                             va_t Next);
   struct OwnInteriorCallVerdict {
     /// Targets a return pops the call's own return address for.
     std::set<va_t> Subroutines;

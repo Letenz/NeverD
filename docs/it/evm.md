@@ -43,7 +43,7 @@ binary rewriting EVM è rifiutato esplicitamente; `patch` resta un’operazione 
 
 | Input | Riconoscimento e normalizzazione |
 |-------|----------------------------------|
-| Byte grezzi | `.raw`, `.evmraw` o contenuto binario con estensione EVM esplicita |
+| Byte grezzi | Contenuto binario in `.evm` o `.evmraw`. Il contenuto binario in `.bin`, `.hex`, `.bytecode`, `.json` o `.raw`, estensioni usate anche da altri strumenti, viene letto come bytecode EVM solo se si sceglie il loader EVM (`--loader evm` o la riga EVM della finestra di caricamento); altrimenti il caricamento lo rifiuta |
 | Testo esadecimale | `0x` opzionale, whitespace ASCII arbitrario, `.evm`, `.hex`, `.bin`, `.bytecode`; viene rilevato anche hex senza estensione dopo la validazione |
 | Artefatto del compilatore | `.json` con `deployedBytecode`, `runtimeBytecode` o `bytecode` alla radice o sotto `evm`; supportato anche JSON standard solc `contracts → file → contract → evm` |
 

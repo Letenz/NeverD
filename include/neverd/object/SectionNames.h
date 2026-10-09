@@ -24,6 +24,10 @@
 namespace neverd {
 namespace section_names {
 
+// The segment the loader synthesizes past a relocatable object's sections for
+// the symbols it does not define; no object format names a section so.
+constexpr const char *SynthesizedExtern = "extern";
+
 namespace elf {
 constexpr const char *Text = ".text";
 // Function/section split produced by -ffunction-sections and hot/cold
@@ -37,6 +41,9 @@ constexpr const char *BssSplitPrefix = ".bss.";
 constexpr const char *Rodata = ".rodata";
 constexpr const char *RelaPlt = ".rela.plt";
 constexpr const char *RelPlt = ".rel.plt";
+constexpr const char *RelaDyn = ".rela.dyn";
+constexpr const char *RelDyn = ".rel.dyn";
+constexpr const char *RelrDyn = ".relr.dyn";
 constexpr const char *Plt = ".plt";
 constexpr const char *PltPrefix = ".plt.";
 constexpr const char *PltGot = ".plt.got";
@@ -60,6 +67,8 @@ constexpr const char *Got = ".got";
 constexpr const char *GotPlt = ".got.plt";
 constexpr const char *Dynsym = ".dynsym";
 constexpr const char *Dynstr = ".dynstr";
+constexpr const char *Hash = ".hash";
+constexpr const char *GnuHash = ".gnu.hash";
 constexpr const char *Init = ".init";
 constexpr const char *Fini = ".fini";
 constexpr const char *PreinitArray = ".preinit_array";

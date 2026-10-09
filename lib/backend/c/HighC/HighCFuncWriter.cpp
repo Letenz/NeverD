@@ -11,13 +11,16 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../VariadicImportStub.h"
+#include "../X86GetPcThunk.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
-#include "neverd/ir/SourceABI.h"
+#include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -35,6 +38,7 @@
 #include <set>
 #include <string_view>
 #include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -74,22 +78,6 @@ std::optional<FunctionSym> debugFunction(DebugContext *Dbg, va_t Entry) {
   if (!Dbg)
     return std::nullopt;
   return Dbg->resolveFunction(Entry);
-}
-
-// A debug record's byte size alone does not describe a C type. Keep the
-// recovered machine parameter when its pointer target has no printable name
-// or validated fields; receiver identity evidence is independent of this
-// presentation choice.
-bool hasUnsupportedAnonymousPointee(TypeRef Type) {
-  if (!Type || Type->Kind != NdTypeKind::Ptr)
-    return false;
-  for (unsigned Depth = 0; Type && Depth < 64; ++Depth) {
-    if (Type->Kind != NdTypeKind::Ptr)
-      return Type->Kind == NdTypeKind::Struct && Type->SourceName.empty() &&
-             sourceAggregateMembers(Type).empty();
-    Type = Type->Pointee;
-  }
-  return true;
 }
 
 bool isWindowsLanguagePersonality(ExceptionPersonality Personality) {
@@ -230,6 +218,27 @@ uint16_t pointerBytes(Arch A) {
   return (A == Arch::X86 || A == Arch::ARM) ? 4 : 8;
 }
 
+uint16_t countedBytes(const HighExpr &Operand) {
+  if (Operand.Type)
+    return Operand.Type->Kind == NdTypeKind::Int ? Operand.Type->Size : 0;
+  return Operand.Kind == ExprKind::Var || Operand.Kind == ExprKind::Phi
+             ? Operand.Var.Size
+             : 0;
+}
+
+unsigned countedBits(const HighExpr &Operand) {
+  switch (countedBytes(Operand)) {
+  case 1:
+  case 2:
+  case 4:
+    return 32;
+  case 8:
+    return 64;
+  default:
+    return 0;
+  }
+}
+
 TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
   // A bound source ABI is authoritative even when optional debug information
   // disagrees. Debug-only projections still use one type for their declaration,
@@ -250,6 +259,10 @@ TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
         NdType::makeNamedRecord(cNamedTypeSpelling(Record->SourceName),
                                 Record->Size ? Record->Size : 8));
   }
+  // A return type C cannot spell keeps the recovered machine type, as a
+  // parameter's does.
+  if (!hasCSpelling(cDisplayType(DebugFn->ReturnType)))
+    return {};
   return DebugFn->ReturnType;
 }
 
@@ -403,9 +416,8 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
     Analysis.AssignedVars.insert(VarFn(S.Dst->Var));
   });
   const TypeRef DeclaredReturn = declaredFunctionReturnType(Func);
-  InferredVoid = DeclaredReturn
-                     ? DeclaredReturn->Kind == NdTypeKind::Void
-                     : analyzeVoidReturn(Analysis, Func, VarFn, ExprFn);
+  InferredVoid = DeclaredReturn ? DeclaredReturn->Kind == NdTypeKind::Void
+                                : analyzeVoidReturn(Func);
 
   HiLoPairs.clear();
   auto RegisterHiLo = [this](const HighStmt &S, const HighExpr &CE) {
@@ -715,8 +727,10 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     emitIndent(1);
     TypeRef Ty = Local.Type;
     if (Dbg && CurrentFunc) {
+      // A debug type C cannot spell leaves the local its recovered type, as
+      // debugTypeForDisplacement does.
       if (auto Var = Dbg->resolveVariable(CurrentFunc->Entry, Local.StackOff);
-          Var && Var->Type)
+          Var && Var->Type && hasCSpelling(cDisplayType(Var->Type)))
         Ty = cDisplayType(Var->Type);
     }
     auto ExplicitTy = ExplicitDeclarations.find(Name);
@@ -949,6 +963,29 @@ void HighCWriter::writeExceptionAnnotation(const HighFunc &Func) {
 }
 
 void HighCWriter::writeFunction(const HighFunc &Func) {
+  if (Opts.Image && EmitFunctionWrapper)
+    if (auto Reg = x86GetPcThunkRegister(*Opts.Image, Func.Entry)) {
+      c_stub::writeGetPcThunk(OS, functionIdentifier(Func),
+                              typeToC(Func.ReturnType), *Reg);
+      return;
+    }
+
+  if (Opts.Image)
+    if (const std::string Import =
+            c_stub::variadicImportOfStub(*Opts.Image, Func.Entry);
+        !Import.empty()) {
+      if (EmitFunctionWrapper)
+        OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
+      HighExpr Slot;
+      Slot.CallAddr = Func.Entry;
+      c_stub::writeVariadicImportStub(
+          OS,
+          c_stub::variadicStubName(functionIdentifier(Func), Import,
+                                   Func.Entry),
+          Import, importSlotIdentifier(Slot),
+          libc::libcVariadicForward(Import));
+      return;
+    }
   if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Func)) {
     writeAnalysisOnlyFunction(Func);
     return;
@@ -1096,6 +1133,10 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
     for (const ExprPtr &Op : E.Operands)
       if (Op)
         Walk(*Op, AsAddress);
+    // An indirect call's target is read like an operand: a function pointer
+    // kept in a frame slot is that slot.
+    if (E.IndirectTarget)
+      Walk(*E.IndirectTarget, false);
   };
   std::function<void(const std::vector<HighStmt> &, bool)> WalkNotes;
   WalkNotes = [&](const std::vector<HighStmt> &Stmts, bool InHandler) {
@@ -1733,10 +1774,73 @@ void HighCWriter::overlayPackedValueHomes(const HighFunc &Func) {
   }
 }
 
+namespace {
+// FieldForward prints only the projected member/index. Keep any narrowing in
+// the original assignment, including narrowing followed by a later widening.
+bool fieldProjectionDoesNotNarrow(const HighExpr *Expr,
+                                  const HighExpr *Source) {
+  unsigned Depth = 0;
+  while (Expr && Expr != Source &&
+         Depth++ < limits::kMaxIntegerViewUnwrapDepth) {
+    if (Expr->Operands.empty() || !Expr->Operands[0])
+      return false;
+    const HighExpr *Inner = Expr->Operands[0].get();
+    const TypeRef &ViewType = Expr->Kind == ExprKind::Cast && Expr->CastTo
+                                  ? Expr->CastTo
+                                  : Expr->Type;
+    if (!ViewType || !ViewType->Size || !Inner->Type || !Inner->Type->Size ||
+        ViewType->Size < Inner->Type->Size)
+      return false;
+    Expr = Inner;
+  }
+  return Expr == Source;
+}
+} // namespace
+
+void HighCWriter::collectFieldLoadTypes(const HighFunc &Func) {
+  FieldForwardTypes.clear();
+  // A cursor can acquire its pointer type through bins[i] and a copy before
+  // its fields become recognizable. Discover those types without replacing
+  // any value: the forwarding proof below must see the original definitions.
+  bool Changed = true;
+  unsigned Iteration = 0;
+  while (Changed && Iteration++ < limits::kMaxIntegerViewUnwrapDepth) {
+    Changed = false;
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
+          (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi))
+        return;
+      const std::string Name = varName(S.Dst->Var);
+      if (JoinPhiNames.count(Name) || FieldForwardTypes.count(Name))
+        return;
+      const HighExpr *Val = peelIntegerViewOps(S.Val.get());
+      if (!Val || !fieldProjectionDoesNotNarrow(S.Val.get(), Val))
+        return;
+      TypeRef Type;
+      if (Val->Kind == ExprKind::Load && !Val->Operands.empty() &&
+          Val->Operands[0] && Val->MemoryOrdering == NdMemoryOrdering::None &&
+          Val->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+        const uint16_t Size = Val->Type ? Val->Type->Size : 0;
+        Type = typedMemberType(*Val->Operands[0], Size);
+        if (!Type)
+          if (auto Index = typedIndexAccess(*Val->Operands[0]))
+            Type = Index->ElemType;
+      } else if (Val->Kind == ExprKind::Var || Val->Kind == ExprKind::Phi) {
+        if (auto It = FieldForwardTypes.find(varName(Val->Var));
+            It != FieldForwardTypes.end())
+          Type = It->second;
+      }
+      if (Type) {
+        FieldForwardTypes.emplace(Name, std::move(Type));
+        Changed = true;
+      }
+    });
+  }
+}
+
 void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
   FieldForward.clear();
   FieldForwardSources.clear();
-  FieldForwardTypes.clear();
   std::map<std::string, unsigned> AssignCount;
   walkStmts(Func.Body, [&](const HighStmt &S) {
     if (S.Kind != StmtKind::Assign || !S.Dst)
@@ -1762,12 +1866,18 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
     if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
       return;
     const HighExpr *Val = peelIntegerViewOps(S.Val.get());
-    if (!Val)
+    if (!Val || !fieldProjectionDoesNotNarrow(S.Val.get(), Val))
       return;
     const std::string DestName = varName(S.Dst->Var);
     if (JoinPhiNames.count(DestName))
       return;
-    const bool ForwardName = AssignCount[DestName] <= 1;
+    // Live definitions may move to their uses only after the common proof
+    // checks address dependencies, intervening writes and all use regions.
+    // Dead loads retain display metadata for the legacy undefined-register
+    // recovery below; they do not authorize replacing a live definition.
+    const bool ForwardName =
+        AssignCount[DestName] <= 1 &&
+        (ValueForward.count(DestName) || Analysis.DeadStmts.count(&S));
     if (Val->Kind == ExprKind::Load && !Val->Operands.empty() &&
         Val->Operands[0] && Val->MemoryOrdering == NdMemoryOrdering::None) {
       const uint16_t AccessSize = Val->Type ? Val->Type->Size : 0;
@@ -1812,10 +1922,12 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
       return;
     const std::string DestName = varName(S.Dst->Var);
     if (JoinPhiNames.count(DestName) || FieldForward.count(DestName) ||
-        AssignCount[DestName] > 1)
+        AssignCount[DestName] > 1 ||
+        (!ValueForward.count(DestName) && !Analysis.DeadStmts.count(&S)))
       return;
     const HighExpr *Val = peelIntegerViewOps(S.Val.get());
-    if (!Val || Val->Kind != ExprKind::Load || Val->Operands.empty() ||
+    if (!Val || !fieldProjectionDoesNotNarrow(S.Val.get(), Val) ||
+        Val->Kind != ExprKind::Load || Val->Operands.empty() ||
         !Val->Operands[0] || Val->MemoryOrdering != NdMemoryOrdering::None)
       return;
     const uint16_t AccessSize = Val->Type ? Val->Type->Size : 0;
@@ -1919,10 +2031,12 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
         const std::string Dest = varName(S.Dst->Var);
         if (Dest.empty() || FieldForward.count(Dest))
           return;
-        if (AssignCount[Dest] > 1)
+        if (AssignCount[Dest] > 1 ||
+            (!ValueForward.count(Dest) && !Analysis.DeadStmts.count(&S)))
           return;
         const HighExpr *Val = peelIntegerViewOps(S.Val.get());
-        if (!Val || (Val->Kind != ExprKind::Var && Val->Kind != ExprKind::Phi))
+        if (!Val || !fieldProjectionDoesNotNarrow(S.Val.get(), Val) ||
+            (Val->Kind != ExprKind::Var && Val->Kind != ExprKind::Phi))
           return;
         auto It = FieldForward.find(varName(Val->Var));
         if (It == FieldForward.end())
@@ -2218,6 +2332,10 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
 
 void HighCWriter::noteDebugExtern(const std::string &Name,
                                   const FunctionSym &FS) {
+  // A prototype in signature order would not take a call's arguments, which
+  // come in the convention's order; the callee is declared without it.
+  if (!positionalDebugSignature(FS))
+    return;
   auto [It, Added] = DebugExternSigs.emplace(Name, FS);
   if (Added)
     return;
@@ -2547,6 +2665,15 @@ bool HighCWriter::isTypedMemberLoad(const HighExpr &E) const {
       Cur->MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   return typedMemberAccess(*Cur->Operands[0]).has_value();
+}
+
+bool HighCWriter::isTypedIndexLoad(const HighExpr &E) {
+  const HighExpr *Cur = peelIntegerViewOps(&E);
+  if (!Cur || Cur->Kind != ExprKind::Load || Cur->Operands.empty() ||
+      !Cur->Operands[0] || Cur->MemoryOrdering != NdMemoryOrdering::None ||
+      Cur->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  return typedIndexAccess(*Cur->Operands[0]).has_value();
 }
 
 bool HighCWriter::isCxxCatchObjectName(llvm::StringRef Name) const {
@@ -2893,6 +3020,32 @@ void HighCWriter::foldSignedJleConds(std::vector<HighStmt> &Stmts) {
   Walk(Stmts);
 }
 
+bool HighCWriter::readsThroughForwards(const HighExpr &E,
+                                       const std::string &Name) const {
+  std::set<std::string> Followed;
+  // Expressions share subexpressions: one explored without finding the name
+  // does not read it from anywhere else either.
+  std::set<const HighExpr *> Explored;
+  std::function<bool(const HighExpr &)> Reads = [&](const HighExpr &Cur) {
+    if (!Explored.insert(&Cur).second)
+      return false;
+    if (Cur.Kind == ExprKind::Var || Cur.Kind == ExprKind::Phi) {
+      const std::string Read = varName(Cur.Var);
+      const std::string Printed = copyForwardName(Read);
+      if (Read == Name || Printed == Name)
+        return true;
+      const auto Fwd = ValueForward.find(Printed);
+      return Fwd != ValueForward.end() && Fwd->second &&
+             Followed.insert(Printed).second && Reads(*Fwd->second);
+    }
+    bool Found = false;
+    Cur.forEachChildExpr(
+        [&](const ExprPtr &Child) { Found = Found || Reads(*Child); });
+    return Found;
+  };
+  return Reads(E);
+}
+
 void HighCWriter::collectValueForward(const HighFunc &Func) {
   ValueForward.clear();
   auto containsName = [&](const HighExpr &E, const std::string &Name,
@@ -2904,26 +3057,6 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       if (Op && Self(*Op, Name, Self))
         return true;
     return false;
-  };
-  auto countUses = [&](const HighExpr &E, const std::string &Name,
-                       auto &&Self) -> unsigned {
-    unsigned Uses = 0;
-    if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
-        varName(E.Var) == Name)
-      ++Uses;
-    if (E.Kind == ExprKind::Call) {
-      const size_t Limit = debugCallArgLimit(E);
-      for (size_t I = 0; I < E.Operands.size() && I < Limit; ++I)
-        if (E.Operands[I])
-          Uses += Self(*E.Operands[I], Name, Self);
-      if (E.IndirectTarget)
-        Uses += Self(*E.IndirectTarget, Name, Self);
-      return Uses;
-    }
-    for (const ExprPtr &Op : E.Operands)
-      if (Op)
-        Uses += Self(*Op, Name, Self);
-    return Uses;
   };
   struct Site {
     const HighStmt *Stmt = nullptr;
@@ -3208,14 +3341,21 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     if (Info.Handler)
       InEHClauseBody = true;
     const bool Fwdable = isForwardableValueExpr(*Stmt->Val) ||
+                         isTypedIndexLoad(*Stmt->Val) ||
                          callResultReturnedNext(*Stmt, Info) ||
                          callResultTestedNext(*Stmt, Info);
     const HighExpr *Src = peelIntegerViewOps(Stmt->Val.get());
+    const bool LosesFieldNarrowing =
+        Src && !fieldProjectionDoesNotNarrow(Stmt->Val.get(), Src) &&
+        (Src->Kind == ExprKind::Load ||
+         ((Src->Kind == ExprKind::Var || Src->Kind == ExprKind::Phi) &&
+          FieldForwardTypes.count(varName(Src->Var))));
     const bool NamedSlotLoad = Src && Src->Kind == ExprKind::Load &&
                                !Src->Operands.empty() && Src->Operands[0] &&
                                namedFrameSlot(*Src->Operands[0]);
     InEHClauseBody = SavedEH;
-    if (Analysis.OmittedCallResults.count(Stmt) || !Fwdable)
+    if (Analysis.OmittedCallResults.count(Stmt) || !Fwdable ||
+        LosesFieldNarrowing)
       continue;
     if (Info.Cleanup) {
       if (!Src || (Src->Kind != ExprKind::Var && Src->Kind != ExprKind::Phi &&
@@ -3254,6 +3394,69 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
   std::map<std::string, const HighStmt *> CandidateDefs;
   for (const Candidate &C : Candidates)
     CandidateDefs.emplace(C.Name, C.Stmt);
+  // Which sites define each name, which name it, and how often each site
+  // reads it, in site order: a candidate then looks only at the sites that
+  // name it rather than rescanning every site.  A read in an assignment's
+  // destination is counted apart, since it is skipped for the name the
+  // destination writes.
+  struct SiteNames {
+    std::unordered_map<std::string, unsigned> Reads, DestReads;
+    std::string DestName;
+  };
+  std::unordered_map<const HighStmt *, SiteNames> NamesAt;
+  std::unordered_map<std::string, std::vector<const HighStmt *>> DefsOf;
+  std::unordered_map<std::string, std::vector<const HighStmt *>> SitesNaming;
+  std::function<void(const HighExpr &,
+                     std::unordered_map<std::string, unsigned> &)>
+      CountReads = [&](const HighExpr &E,
+                       std::unordered_map<std::string, unsigned> &Into) {
+        // A call's reads stop at its debug argument limit.
+        if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi)
+          ++Into[varName(E.Var)];
+        if (E.Kind == ExprKind::Call) {
+          const size_t Limit = debugCallArgLimit(E);
+          for (size_t I = 0; I < E.Operands.size() && I < Limit; ++I)
+            if (E.Operands[I])
+              CountReads(*E.Operands[I], Into);
+          if (E.IndirectTarget)
+            CountReads(*E.IndirectTarget, Into);
+          return;
+        }
+        for (const ExprPtr &Op : E.Operands)
+          if (Op)
+            CountReads(*Op, Into);
+      };
+  for (const auto &[Stmt, Info] : Sites) {
+    (void)Info;
+    SiteNames &Names = NamesAt[Stmt];
+    const bool Assign = Stmt->Kind == StmtKind::Assign && Stmt->Dst;
+    if (Assign)
+      Names.DestName = varName(Stmt->Dst->Var);
+    forEachExpr(*Stmt, [&](const ExprPtr &E) {
+      if (E)
+        CountReads(*E,
+                   Assign && E == Stmt->Dst ? Names.DestReads : Names.Reads);
+    });
+    std::set<std::string> Named;
+    for (const auto &Entry : Names.Reads)
+      Named.insert(Entry.first);
+    for (const auto &Entry : Names.DestReads)
+      Named.insert(Entry.first);
+    if (Assign && (Stmt->Dst->Kind == ExprKind::Var ||
+                   Stmt->Dst->Kind == ExprKind::Phi)) {
+      DefsOf[Names.DestName].push_back(Stmt);
+      Named.insert(Names.DestName);
+    }
+    for (const std::string &Name : Named)
+      SitesNaming[Name].push_back(Stmt);
+  }
+  static const std::vector<const HighStmt *> NoSites;
+  auto sitesIn =
+      [](const auto &Index,
+         const std::string &Name) -> const std::vector<const HighStmt *> & {
+    const auto It = Index.find(Name);
+    return It == Index.end() ? NoSites : It->second;
+  };
   auto scalarSourceRedefined = [&](const Candidate &C) {
     if (!C.Stmt->Val)
       return true;
@@ -3261,16 +3464,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     if (!Src || (Src->Kind != ExprKind::Var && Src->Kind != ExprKind::Phi))
       return true;
     const std::string SrcName = varName(Src->Var);
-    for (const auto &[DefStmt, DefInfo] : Sites) {
-      if (DefStmt == C.Stmt || !DefStmt->Dst)
+    for (const HighStmt *DefStmt : sitesIn(DefsOf, SrcName)) {
+      if (DefStmt == C.Stmt)
         continue;
-      if (DefStmt->Kind != StmtKind::Assign)
-        continue;
-      if (DefStmt->Dst->Kind != ExprKind::Var &&
-          DefStmt->Dst->Kind != ExprKind::Phi)
-        continue;
-      if (varName(DefStmt->Dst->Var) != SrcName)
-        continue;
+      const Site &DefInfo = Sites.at(DefStmt);
       if (DefInfo.Region == C.Region && DefInfo.Index < C.Index)
         continue;
       if (DefInfo.Region != C.Region &&
@@ -3293,35 +3490,22 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       if (!Cur || (Cur->Kind != ExprKind::Var && Cur->Kind != ExprKind::Phi))
         return false;
       const std::string Src = varName(Cur->Var);
-      for (const auto &[Stmt, Info] : Sites) {
-        (void)Info;
-        if (!Stmt->Val || Stmt->Kind != StmtKind::Assign || !Stmt->Dst)
-          continue;
-        if (Stmt->Dst->Kind != ExprKind::Var &&
-            Stmt->Dst->Kind != ExprKind::Phi)
-          continue;
-        if (varName(Stmt->Dst->Var) != Src)
-          continue;
-        if (isReloadableLoad(*Stmt->Val))
+      for (const HighStmt *Stmt : sitesIn(DefsOf, Src))
+        if (Stmt->Val && isReloadableLoad(*Stmt->Val))
           return true;
-      }
       return false;
     };
     const bool ReloadableLoad = C.Stmt->Val && valIsReloadable(*C.Stmt->Val);
     std::vector<const HighStmt *> UseStmts;
     std::set<uint64_t> DefiningRegions;
-    for (const auto &[Stmt, Info] : Sites) {
-      if (Stmt == C.Stmt)
-        continue;
-      if (Stmt->Kind == StmtKind::Assign && Stmt->Dst &&
-          (Stmt->Dst->Kind == ExprKind::Var ||
-           Stmt->Dst->Kind == ExprKind::Phi) &&
-          varName(Stmt->Dst->Var) == C.Name)
-        DefiningRegions.insert(Info.Region);
-    }
+    for (const HighStmt *Stmt : sitesIn(DefsOf, C.Name))
+      if (Stmt != C.Stmt)
+        DefiningRegions.insert(Sites.at(Stmt).Region);
     if (!DefiningRegions.empty())
       continue;
-    for (const auto &[Stmt, Info] : Sites) {
+    // A site that neither reads nor writes the name changes nothing below.
+    for (const HighStmt *Stmt : sitesIn(SitesNaming, C.Name)) {
+      const Site &Info = Sites.at(Stmt);
       if (Stmt == C.Stmt || Analysis.DeadStmts.count(Stmt))
         continue;
       if (stmtHiddenFromC(*Stmt)) {
@@ -3345,15 +3529,14 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
         Redefined = true;
         continue;
       }
-      unsigned Local = 0;
-      forEachExpr(*Stmt, [&](const ExprPtr &E) {
-        if (!E)
-          return;
-        if (Stmt->Kind == StmtKind::Assign && E == Stmt->Dst &&
-            varName(Stmt->Dst->Var) == C.Name)
-          return;
-        Local += countUses(*E, C.Name, countUses);
-      });
+      const SiteNames &Names = NamesAt.at(Stmt);
+      const auto ReadsOf = [&](const auto &Reads) {
+        const auto It = Reads.find(C.Name);
+        return It == Reads.end() ? 0u : It->second;
+      };
+      const unsigned Local =
+          ReadsOf(Names.Reads) +
+          (Names.DestName == C.Name ? 0u : ReadsOf(Names.DestReads));
       if (!Local)
         continue;
       Uses += Local;
@@ -3415,12 +3598,27 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     {
       std::set<std::string> Reads;
       bool ReadsMemory = false;
+      bool EffectfulLoadAddress = false;
+      auto ExprWrites = [&](const HighExpr &E, const auto &Self) -> bool {
+        if (E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
+            E.MemoryOrdering != NdMemoryOrdering::None)
+          return true;
+        bool Hit = false;
+        E.forEachChildExpr(
+            [&](const ExprPtr &Child) { Hit = Hit || Self(*Child, Self); });
+        return Hit;
+      };
       std::function<void(const HighExpr &, unsigned)> Collect =
           [&](const HighExpr &E, unsigned Depth) {
             if (Depth > 64) {
               ReadsMemory = true;
+              EffectfulLoadAddress = true;
               return;
             }
+            if (E.Kind == ExprKind::Load)
+              E.forEachChildExpr([&](const ExprPtr &Address) {
+                EffectfulLoadAddress |= ExprWrites(*Address, ExprWrites);
+              });
             if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
               const std::string Read = varName(E.Var);
               if (!Reads.insert(Read).second)
@@ -3439,6 +3637,11 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
                 [&](const ExprPtr &Child) { Collect(*Child, Depth + 1); });
           };
       Collect(*C.Stmt->Val, 0);
+      // A snapshot cannot replay calls, stores or ordered loads embedded in
+      // its address, even when no statement between the definition and use
+      // changes memory. This also checks loads reached through candidates.
+      if (EffectfulLoadAddress)
+        continue;
       const HighExpr *Load = peelIntegerViewOps(C.Stmt->Val.get());
       if (!Load || Load->Kind != ExprKind::Load || Load->Operands.empty() ||
           !Load->Operands[0])
@@ -3454,15 +3657,6 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       const int64_t Width = Load && Load->Type ? Load->Type->Size : 8;
       auto Overlaps = [&](int64_t Disp, int64_t Size) {
         return Disp < *Slot + Width && *Slot < Disp + Size;
-      };
-      auto ExprWrites = [&](const HighExpr &E, const auto &Self) -> bool {
-        if (E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
-            E.MemoryOrdering != NdMemoryOrdering::None)
-          return true;
-        bool Hit = false;
-        E.forEachChildExpr(
-            [&](const ExprPtr &Child) { Hit = Hit || Self(*Child, Self); });
-        return Hit;
       };
       std::function<bool(const HighStmt &)> Changes =
           [&](const HighStmt &S) -> bool {
@@ -3811,11 +4005,19 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       if (ReadsState || Assigns(UseStmt->Body) || Assigns(UseStmt->ElseBody))
         continue;
     }
+    // A reinterpretation of one variable at its own width reads as that
+    // variable; a narrowed or extended view keeps its conversion.
     const HighExpr *Fwd = C.Stmt->Val.get();
     if (Fwd && (isParamCopy(*Fwd) || isIntegerViewOfScalar(*Fwd)))
-      if (const HighExpr *Inner = peelIntegerViewOps(Fwd); Inner)
+      if (const HighExpr *Inner = sameWidthVariable(*Fwd))
         Fwd = Inner;
+    if (!Fwd || readsThroughForwards(*Fwd, C.Name))
+      continue;
     ValueForward[C.Name] = Fwd;
+    // A field value is not a frame-address alias, but that alone must not
+    // force its definition to print after this proof has folded every use.
+    // Otherwise the forwarded member would become the assignment's lvalue.
+    AmbiguousFrameAliases.erase(C.Name);
   }
 }
 
@@ -3884,9 +4086,12 @@ void HighCWriter::collectUnusedCallStoreAlias(const HighFunc &Func) {
         const bool SizeOk = Cur->Var.Size == Size ||
                             (Size == 4 && Cur->Var.Size == 8) ||
                             (Size == 8 && Cur->Var.Size == 4);
+        // The entry stack pointer is never assigned either, but the frame
+        // storage defines it: it is no call's result.
         if (Name.empty() || Cur->Var.Kind == MedVar::Param ||
             isReservedParamDisplayName(Name) || Assigned.count(Name) ||
-            ValueForward.count(Name) || FieldForward.count(Name) || !SizeOk)
+            ValueForward.count(Name) || FieldForward.count(Name) || !SizeOk ||
+            isSyntheticEntryStackPointer(Cur->Var, Func, Opts.TheArch))
           return;
         if (Found.empty())
           Found = Name;
@@ -3949,7 +4154,7 @@ void HighCWriter::collectUnusedCallStoreAlias(const HighFunc &Func) {
           if (!Val)
             continue;
           auto Name = UniqueUndeclared(Val, S.Dst->Var.Size);
-          if (!Name)
+          if (!Name || readsThroughForwards(*S.Val, *Name))
             continue;
           ValueForward[*Name] = S.Val.get();
           Analysis.DeadStmts.insert(&S);
@@ -4038,6 +4243,9 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
     } else if (const MsvcCallee *Msvc =
                    msvcCallee(callIdentifier(*S.Val), Opts.Format))
       ReturnType = msvcSyntheticReturn(Msvc->ReturnKind);
+    // A result whose type C cannot spell keeps the destination's type.
+    if (ReturnType && !hasCSpelling(ReturnType))
+      ReturnType = nullptr;
     if (ReturnType)
       CallResultTypes[Name] = ReturnType;
     std::string Stem = callResultStem(callIdentifier(*S.Val));
@@ -4103,6 +4311,244 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
   });
 }
 
+std::optional<int64_t> HighCWriter::stackParamOffset(const HighFunc &Func,
+                                                     size_t Index) const {
+  const HighParam &Param = Func.Params[Index];
+  if (Param.RegOff != kNoParamReg || Param.MedIndex < 0)
+    return std::nullopt;
+  const auto Layout =
+      getTargetRegInfo(Opts.TheArch).integerArgumentLayout(Opts.Format);
+  if (!Layout.SlotBytes)
+    return std::nullopt;
+  // Stack arguments are numbered after every register position, or after the
+  // registers the function uses where they follow those (i386 regparm).
+  int First = static_cast<int>(Layout.Registers.size());
+  if (const CallArgumentConvention *Convention =
+          callArgumentConvention(Opts.TheArch, Opts.Format);
+      Convention && Convention->StackArgumentsFollowUsedRegisters)
+    First =
+        static_cast<int>(llvm::count_if(Func.Params, [](const HighParam &P) {
+          return P.RegOff != kNoParamReg;
+        }));
+  if (Param.MedIndex < First)
+    return std::nullopt;
+  return Layout.EntryStackBase +
+         static_cast<int64_t>(Param.MedIndex - First) * Layout.SlotBytes;
+}
+
+void HighCWriter::bindParams(const HighFunc &Func) const {
+  if (ParamCacheOf == &Func && ParamCacheEntry == Func.Entry &&
+      ParamBindings.size() == Func.Params.size())
+    return;
+  ParamCacheOf = &Func;
+  ParamCacheEntry = Func.Entry;
+  ParamBindings.assign(Func.Params.size(), {});
+  ParamDebugNames.assign(Func.Params.size(), {});
+  ParamsPlaced = false;
+  EmittedParamTypes.clear();
+  for (const HighParam &Param : Func.Params)
+    EmittedParamTypes.push_back(Param.Type);
+  // A bound source ABI spells its own parameters (sourceParameterType).  A
+  // function of a language with conventions of its own, such as Go, has no
+  // rules that say where its parameters arrive.
+  const auto DebugFn = debugFunction(Dbg, Func.Entry);
+  if (!DebugFn || Func.SourceTypeHint || !DebugFn->PlatformConvention)
+    return;
+  const size_t Count = DebugFn->Params.size();
+  auto Bind = [&](size_t PI, size_t DI) {
+    ParamBindings[PI] = {static_cast<int>(DI), 0, true, false};
+  };
+  if (isMsvcIndirectReturn(DebugFn->ReturnType)) {
+    // MSVC's hidden result pointer keeps its own positions.
+    const bool HighIRIncludesSret =
+        highIRIncludesIndirectReturn(Func, *DebugFn);
+    const int SretId = indirectReturnParamId(*DebugFn);
+    for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
+      if (HighIRIncludesSret && static_cast<int>(PI) == SretId) {
+        ParamBindings[PI].Result = true;
+        // The definition's `result`, a pointer to the record it returns.
+        if (const TypeRef Result = declaredFunctionReturnType(Func);
+            Result && Result->Kind == NdTypeKind::Ptr)
+          EmittedParamTypes[PI] = Result;
+        continue;
+      }
+      const size_t DI =
+          HighIRIncludesSret && static_cast<int>(PI) > SretId ? PI - 1 : PI;
+      if (DI < Count)
+        Bind(PI, DI);
+    }
+  } else {
+    std::vector<TypeRef> Types;
+    for (const auto &[Name, Type] : DebugFn->Params) {
+      (void)Name;
+      if (Type)
+        Dbg->completeType(Type);
+      Types.push_back(Type);
+    }
+    if (DebugFn->ReturnType)
+      Dbg->completeType(DebugFn->ReturnType);
+    // fastcall and thiscall pass leading values in registers that the
+    // ordinary i386 rules do not describe, and a function built without
+    // lowering does not say where its parameters arrive.
+    const bool OrdinaryConvention =
+        Opts.TheArch != Arch::X86 ||
+        DebugFn->CallConv == DebugCallConv::Unknown ||
+        DebugFn->CallConv == DebugCallConv::Cdecl ||
+        DebugFn->CallConv == DebugCallConv::Stdcall;
+    const bool Located = llvm::any_of(Func.Params, [](const HighParam &P) {
+      return P.RegOff != kNoParamReg || P.MedIndex >= 0;
+    });
+    const auto Placement =
+        OrdinaryConvention && Located
+            ? placeSourceParameters(Opts.TheArch, Opts.Format,
+                                    DebugFn->ReturnType, Types)
+            : std::nullopt;
+    if (Placement) {
+      ParamsPlaced = true;
+      for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
+        const HighParam &Param = Func.Params[PI];
+        const std::optional<int64_t> Stack = stackParamOffset(Func, PI);
+        auto At = [&](const SourceABIValueLocation &Where, int64_t &Delta) {
+          Delta = 0;
+          if (Where.Kind == SourceABICarrierKind::Stack) {
+            if (!Stack || *Stack < Where.EntryStackOffset ||
+                *Stack >= Where.EntryStackOffset +
+                              std::max<int64_t>(Where.ValueBytes, 1))
+              return false;
+            Delta = *Stack - Where.EntryStackOffset;
+            return true;
+          }
+          return Param.RegOff != kNoParamReg &&
+                 Where.RegisterOffset == Param.RegOff;
+        };
+        int64_t Delta = 0;
+        if (Placement->ResultPointer && At(*Placement->ResultPointer, Delta)) {
+          ParamBindings[PI].Result = true;
+          continue;
+        }
+        for (size_t DI = 0; DI < Placement->Parameters.size(); ++DI)
+          for (const SourceParameterPiece &Piece : Placement->Parameters[DI]) {
+            if (!At(Piece.Location, Delta))
+              continue;
+            const TypeRef &Declared = Types[DI];
+            const uint16_t Size = Declared ? Declared->Size : 0;
+            const uint16_t Held = Param.Type ? Param.Type->Size : 0;
+            // A record is the location's value only where the source says
+            // the call passes its bytes: a C++ class can arrive as the
+            // address of a copy at the same place.
+            const bool Bytes = !Declared ||
+                               Declared->Kind != NdTypeKind::Struct ||
+                               Declared->IsEnum ||
+                               Declared->Passing == NdRecordPassing::ByValue;
+            DebugParamBinding &B = ParamBindings[PI];
+            B.Index = static_cast<int>(DI);
+            B.Offset = static_cast<uint16_t>(Piece.Offset + Delta);
+            B.Whole = Bytes && !Piece.Indirect && Piece.Offset == 0 &&
+                      Delta == 0 && Piece.Location.ValueBytes >= Size &&
+                      (Piece.Location.Kind != SourceABICarrierKind::Stack ||
+                       Held >= Size);
+          }
+      }
+    } else {
+      // Without rules or locations, a debug parameter is the one at its
+      // position only while each before it fills one integer slot, as in
+      // every convention.
+      const uint16_t Word = pointerBytes(Opts.TheArch);
+      for (size_t PI = 0; PI < std::min(Func.Params.size(), Count); ++PI) {
+        const TypeRef &Type = DebugFn->Params[PI].second;
+        if (!Type || Type->Size > Word ||
+            !(Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr ||
+              (Type->Kind == NdTypeKind::Struct && Type->IsEnum)))
+          break;
+        Bind(PI, PI);
+      }
+    }
+  }
+  for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
+    const DebugParamBinding &B = ParamBindings[PI];
+    if (B.Result)
+      ParamDebugNames[PI] = "result";
+    if (B.Index < 0 || static_cast<size_t>(B.Index) >= Count)
+      continue;
+    // A later piece of a value, such as a record's second register, is named
+    // after the value and where the piece starts in it.
+    const std::string &Name = DebugFn->Params[B.Index].first;
+    ParamDebugNames[PI] = Name.empty() || B.Whole || B.Offset == 0
+                              ? Name
+                              : Name + "_" + std::to_string(B.Offset);
+    if (!B.Whole)
+      continue;
+    // A debug record's byte size alone does not describe a C type: a type C
+    // cannot spell, such as a pointer to a record without a printable name or
+    // validated fields, keeps the recovered machine parameter.
+    if (const TypeRef DebugType = cDisplayType(DebugFn->Params[B.Index].second);
+        DebugType && hasCSpelling(DebugType))
+      EmittedParamTypes[PI] = DebugType;
+  }
+  // A piece's name, `result` or a source name such as `arg1` can meet another
+  // parameter's name; every parameter keeps its machine name then.
+  std::set<std::string> Spelled;
+  for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
+    const std::string &Machine = Func.Params[PI].Name;
+    const std::string Name = !ParamDebugNames[PI].empty() ? ParamDebugNames[PI]
+                             : !Machine.empty() ? Machine
+                                                : "arg" + std::to_string(PI);
+    if (!Spelled.insert(Name).second) {
+      ParamDebugNames.assign(Func.Params.size(), {});
+      break;
+    }
+  }
+}
+
+HighCWriter::DebugParamBinding
+HighCWriter::debugParamBinding(const HighFunc &Func, size_t Index) const {
+  if (Index >= Func.Params.size())
+    return {};
+  bindParams(Func);
+  return ParamBindings[Index];
+}
+
+std::string HighCWriter::debugParamName(const HighFunc &Func,
+                                        size_t Index) const {
+  if (Index >= Func.Params.size())
+    return {};
+  bindParams(Func);
+  return ParamDebugNames[Index];
+}
+
+bool HighCWriter::positionalDebugSignature(const FunctionSym &FS) const {
+  if (!FS.PlatformConvention)
+    return false;
+  if (isMsvcIndirectReturn(FS.ReturnType))
+    return true;
+  const uint16_t Word = pointerBytes(Opts.TheArch);
+  // A record result in memory takes the first argument.
+  if (FS.ReturnType && FS.ReturnType->Kind == NdTypeKind::Struct &&
+      !FS.ReturnType->IsEnum && FS.ReturnType->Size > 2 * Word)
+    return false;
+  // i386 passes a double in two stack slots, which a call lists apart.
+  bool Integers = true, Floats = Opts.TheArch != Arch::X86;
+  for (const auto &[Name, Type] : FS.Params) {
+    (void)Name;
+    if (!Type)
+      return false;
+    Integers &=
+        Type->Size <= Word &&
+        (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr ||
+         (Type->Kind == NdTypeKind::Struct && Type->IsEnum));
+    Floats &= Type->Kind == NdTypeKind::Float && Type->Size <= sizeof(double);
+  }
+  return Integers || Floats;
+}
+
+TypeRef HighCWriter::emittedParamType(const HighFunc &Func,
+                                      size_t Index) const {
+  if (Index >= Func.Params.size())
+    return nullptr;
+  bindParams(Func);
+  return EmittedParamTypes[Index];
+}
+
 size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
   return emittedParamIndices(Func).size();
 }
@@ -4118,19 +4564,10 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
       All[I] = I;
     return All;
   }
-  if (DebugFn && !DebugFn->Params.empty()) {
-    const size_t Count = std::min(N, DebugFn->Params.size());
-    All.resize(Count);
-    for (size_t I = 0; I < Count; ++I)
-      All[I] = I;
-    return All;
-  }
-  if (Func.SourceTypeHint) {
-    All.resize(N);
-    for (size_t I = 0; I < N; ++I)
-      All[I] = I;
-    return All;
-  }
+  const auto Key = std::make_pair(&Func, Func.Entry);
+  if (auto It = EmittedParamIndices.find(Key);
+      It != EmittedParamIndices.end() && It->second.size() <= N)
+    return It->second;
   std::set<int> Used;
   // An indirect call's target is a use too.
   std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
@@ -4145,6 +4582,37 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
         Walk(*E);
     });
   });
+  if (DebugFn && !DebugFn->Params.empty()) {
+    bindParams(Func);
+    if (ParamsPlaced) {
+      // Placed by location, a parameter is one the signature describes or
+      // the code reads; the lift's other registers are none, as they are
+      // without a signature.
+      std::set<int> Kept = Used;
+      for (size_t I = 0; I < N; ++I)
+        if (ParamBindings[I].Index >= 0 || ParamBindings[I].Result)
+          Kept.insert(static_cast<int>(I));
+      Used = std::move(Kept);
+    } else {
+      // As many parameters as the debug signature lists (a stdcall
+      // definition pops what they fill), and every one up to the last the
+      // code reads.
+      size_t Count = std::min(N, DebugFn->Params.size());
+      for (size_t I = 0; I < N; ++I)
+        if (ParamBindings[I].Index >= 0 || Used.count(static_cast<int>(I)))
+          Count = std::max(Count, I + 1);
+      All.resize(Count);
+      for (size_t I = 0; I < Count; ++I)
+        All[I] = I;
+      EmittedParamIndices[Key] = All;
+      return All;
+    }
+  } else if (Func.SourceTypeHint) {
+    All.resize(N);
+    for (size_t I = 0; I < N; ++I)
+      All[I] = I;
+    return All;
+  }
   size_t Unused = 0;
   for (size_t I = 0; I < N; ++I)
     if (!Used.count(static_cast<int>(I)))
@@ -5003,6 +5471,10 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   propagateFrameSlotCopyTypes(Func);
   hideInteriorRecordFieldSlots();
   overlayPackedValueHomes(Func);
+  // Reviving a merged definition after proving a fold would omit a write
+  // that the generated C still executes. Settle visibility before the proof.
+  collectFieldLoadTypes(Func);
+  invalidateJoinPhiFrameAliases(Func);
   // Display-only: one mention of `x` so ValueForward can compose GetLength.
   foldSignedJleConds(const_cast<std::vector<HighStmt> &>(Func.Body));
   collectValueForward(Func);
@@ -5012,7 +5484,6 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   collectFieldLoadForward(Func);
   collectEnumConstForward(Func);
   collectTypedPointerArgDests(Func);
-  invalidateJoinPhiFrameAliases(Func);
   foldCxxThrowConstructors(Func);
   nameCxxCatchObjects(Func);
   simulateCatchReaching(Func);
@@ -5254,20 +5725,23 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
 
   if (EmitFunctionWrapper && Func.Entry)
     OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
-  // A C++ definition names its demangled signature: the C identifier keeps
-  // only its scopes and name.
+  // A definition whose identifier is spelled from its symbol names the symbol
+  // as its language does (`QDomNode::nodeType() const`, `main.main`), unless
+  // the debug name's comment below says the same.
+  const bool DebugNameComment =
+      !Func.DebugName.empty() && Func.DebugName != Func.Name;
   if (Opts.EmitComments)
     if (auto Symbol = FunctionSymbolNames.find(&Func);
         Symbol != FunctionSymbolNames.end())
       if (const std::string Demangled = demangledComment(Symbol->second);
-          !Demangled.empty() && Demangled != Func.DebugName) {
+          !Demangled.empty() &&
+          !(DebugNameComment && Demangled == Func.DebugName)) {
         if (!EmitFunctionWrapper)
           emitIndent(1);
         OS << "/* " << Demangled << " */\n";
       }
 
-  if (Opts.EmitComments && !Func.DebugName.empty() &&
-      Func.DebugName != Func.Name) {
+  if (Opts.EmitComments && DebugNameComment) {
     if (!EmitFunctionWrapper)
       emitIndent(1);
     OS << "/* " << Func.DebugName;
@@ -5279,10 +5753,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   writeExceptionAnnotation(Func);
   if (Opts.EmitComments && DebugFn) {
     OS << "/* neverd.debug: return=";
-    if (DebugFn->ReturnType)
-      OS << typeToC(cDisplayType(DebugFn->ReturnType));
-    else
+    if (const TypeRef Return = cDisplayType(DebugFn->ReturnType); !Return)
       OS << "(none)";
+    else if (hasCSpelling(Return))
+      OS << typeToC(Return);
+    else
+      OS << "(no C type)";
     OS << " params=" << DebugFn->Params.size() << " */\n";
   }
 
@@ -5319,8 +5795,13 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     auto emitParam = [&](TypeRef Ty, std::string Name) {
       if (Emitted > 0)
         Declarator += ", ";
-      Declarator +=
-          declarationToC(Ty, ParameterIdentifiers.allocate(Name, "nd_arg"));
+      const std::string Identifier =
+          ParameterIdentifiers.allocate(Name, "nd_arg");
+      Declarator += declarationToC(Ty, Identifier);
+      // A parameter's name has its declared type, as a local's has.
+      if (const TypeRef Display = cDisplayType(Ty);
+          Display && Display->Kind == NdTypeKind::Int && !Display->IsEnum)
+        DeclaredCTypes.emplace(Identifier, Display);
       ++Emitted;
     };
     const bool HighIRIncludesSret =
@@ -5329,23 +5810,14 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         Indirect && DebugFn && isWin64MemberIndirectReturn(*DebugFn);
     const int SretId = DebugFn ? indirectReturnParamId(*DebugFn) : 0;
     auto emitHighIRParam = [&](size_t PI) {
-      TypeRef Ty = Func.Params[PI].Type;
+      TypeRef Ty = emittedParamType(Func, PI);
       std::string Name = Func.Params[PI].Name;
       if (auto It = ParamDisplayNames.find(static_cast<int>(PI));
           It != ParamDisplayNames.end())
         Name = It->second;
-      if (DebugFn && !Func.SourceTypeHint) {
-        size_t DI = PI;
-        if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
-          DI = PI - 1;
-        if (DI < DebugFn->Params.size()) {
-          if (const TypeRef &DebugType = DebugFn->Params[DI].second;
-              DebugType && !hasUnsupportedAnonymousPointee(DebugType))
-            Ty = cDisplayType(DebugType);
-          if (!DebugFn->Params[DI].first.empty())
-            Name = DebugFn->Params[DI].first;
-        }
-      }
+      if (DebugFn && !Func.SourceTypeHint)
+        if (std::string Debug = debugParamName(Func, PI); !Debug.empty())
+          Name = std::move(Debug);
       if (Func.SourceTypeHint && PI < Func.SourceTypeHint->Parameters.size()) {
         if (Emitted)
           Declarator += ", ";
@@ -5405,6 +5877,11 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     for (const auto &Param : DebugFn->Params)
       if (!Param.first.empty())
         ParamNames.insert(Param.first);
+    // What the parameters print as, such as `p_8` for a record's second
+    // register.
+    for (size_t PI = 0; PI < Func.Params.size(); ++PI)
+      if (std::string Name = debugParamName(Func, PI); !Name.empty())
+        ParamNames.insert(std::move(Name));
   }
   for (const auto &[_, Name] : ParamDisplayNames)
     if (!Name.empty())
@@ -5492,6 +5969,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       for (const ExprPtr &Op : N.Operands)
         if (Op)
           Walk(*Op, AsAddress);
+      // An indirect call reads its target as a value.
+      if (N.IndirectTarget)
+        Walk(*N.IndirectTarget, false);
     };
     Walk(Root, AsAddress);
   };

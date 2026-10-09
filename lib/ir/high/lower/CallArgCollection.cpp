@@ -21,10 +21,13 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/SymbolDecoration.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 
@@ -90,7 +93,7 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
   const TargetRegInfo &TRI = *Scan.TRI;
   const int64_t SlotBytes = static_cast<int64_t>(TRI.PointerSize);
   const BinaryFormat Format =
-      Scan.Image ? Scan.Image->Format : BinaryFormat::Unknown;
+      Scan.Image ? Scan.Image->abiFormat() : BinaryFormat::Unknown;
   const bool Reserved =
       Scan.Convention && Scan.Convention->ReservedOutgoingArea;
   const auto Layout = TRI.integerArgumentLayout(Format);
@@ -132,6 +135,18 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
         break;
       }
     }
+
+    // The incoming value of a scratch register that carries no argument is
+    // undefined: storing it, as an alignment `push rax` does, passes nothing.
+    if (Scan.Convention && Scan.Convention->UndefinedIncomingScratchRegisters &&
+        Stored.Kind == MedVar::Reg && Stored.SSAVer == 0 &&
+        Stored.RegOff != Scan.SpRegOff && !preserved(Stored) &&
+        gprFamilyOf(Scan.TheArch, Stored.RegOff) &&
+        llvm::none_of(Layout.Registers, [&](uint64_t Reg) {
+          return gprFamilyOf(Scan.TheArch, Reg) ==
+                 gprFamilyOf(Scan.TheArch, Stored.RegOff);
+        }))
+      return;
 
     const MedVar &AddrVar = Prev.Inputs[0];
     int64_t StackOff = -1;
@@ -324,9 +339,73 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
 
 } // namespace call_args_detail
 
+unsigned MedToHighConverter::importFixedArgCount(size_t CallIdx,
+                                                 const std::vector<MedOp> &Ops,
+                                                 va_t ResolvedSlot) const {
+  if (!Image || CallIdx >= Ops.size())
+    return 0;
+  const MedOp &Call = Ops[CallIdx];
+  if ((Call.Opcode != NdOp::CALL && Call.Opcode != NdOp::INDIR_CALL) ||
+      Call.SourceCallHint || Call.NumInputs < 1)
+    return 0;
+  const va_t Key =
+      Call.Inputs[0].isConst() ? Call.Inputs[0].ConstVal : ResolvedSlot;
+  const std::string Import = Key ? importCalleeName(*Image, Key) : "";
+  if (Import.empty())
+    return 0;
+  // A Mach-O bind names the symbol; a PE import entry is the C name.
+  const std::string Name =
+      importNamesAreCNames(Image->Format)
+          ? Import
+          : cNameOfSymbol(Import, Image->Format, Image->Arch).str();
+  if (const libc::LibCPrototype *Prototype =
+          libc::libcPrototype(Name, Image->abiFormat()))
+    return llvm::any_of(
+               llvm::ArrayRef(Prototype->Params.data(), Prototype->ParamCount),
+               libc::isFloatingType)
+               ? 0
+               : Prototype->ParamCount;
+  // The name rules fit the C library's own routines, not another library's
+  // `g_printf(fmt, ...)`.
+  if (!libc::isKnownFunction(Name))
+    return 0;
+  if (const unsigned Fixed = libc::varArgFixedCount(Name))
+    return Fixed;
+  const auto Arity = importNamesAreCNames(Image->Format)
+                         ? libc::libcArity(Name)
+                         : libc::libcArityForSymbol(Name);
+  return Arity && Arity->FpArgs == 0 && Arity->IntArgs > 0
+             ? static_cast<unsigned>(Arity->IntArgs)
+             : 0;
+}
+
 std::vector<ExprPtr>
-MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
+MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
+                                    va_t ResolvedSlot) {
   const auto &Ops = CurBlock.Ops;
+  // A call whose inputs are every argument it passes (a formatted call)
+  // passes exactly those: a floating one as its bits' value, an integer one
+  // that carries an address as that address.
+  if (CallIdx < Ops.size() && Ops[CallIdx].ExactArguments) {
+    const MedOp &Call = Ops[CallIdx];
+    std::vector<ExprPtr> Exact;
+    for (unsigned I = 1; I < Call.NumInputs; ++I) {
+      ExprPtr Value = medvarToExpr(Call.Inputs[I]);
+      if (Value && Value->Type && ((Call.ExactFloatInputs >> (I - 1)) & 1)) {
+        Value =
+            HighExpr::makeBitCast(Value, NdType::makeFloat(Value->Type->Size));
+      } else if (Value && Value->Type && Value->Type->Kind == NdTypeKind::Int &&
+                 ((Call.ExactPointerInputs >> (I - 1)) & 1)) {
+        auto Address = std::make_shared<HighExpr>();
+        Address->Kind = ExprKind::Cast;
+        Address->Type = Address->CastTo = NdType::makePtr(NdType::makeVoid());
+        Address->Operands.push_back(std::move(Value));
+        Value = std::move(Address);
+      }
+      Exact.push_back(std::move(Value));
+    }
+    return Exact;
+  }
   std::vector<ExprPtr> Hinted;
   if (CallIdx < Ops.size() && Ops[CallIdx].SourceCallHint) {
     const auto &Call = Ops[CallIdx];
@@ -366,7 +445,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   std::vector<ExprPtr> Found(MaxArgs);
 
   const auto &TRI = getTargetRegInfo(TargetArch);
-  const BinaryFormat Format = Image ? Image->Format : BinaryFormat::Unknown;
+  const BinaryFormat Format =
+      Image ? Image->abiFormat() : BinaryFormat::Unknown;
   const auto ParamRegs = TRI.integerParamRegs(Format);
   const CallArgumentConvention *Convention =
       callArgumentConvention(TargetArch, Format);
@@ -422,7 +502,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   // Walk the trailing window for the last write of that register.
   auto exprFromWindowValue = [&](MedVar V, const std::vector<MedOp> &Ops,
                                  int Before) -> ExprPtr {
-    const BinaryFormat Format = Image ? Image->Format : BinaryFormat::Unknown;
+    const BinaryFormat Format =
+        Image ? Image->abiFormat() : BinaryFormat::Unknown;
     auto preserved = [&](const MedVar &Reg) {
       return Reg.Kind == MedVar::Reg && call_args_detail::isCallPreservedReg(
                                             TRI, Format, Reg.RegOff, Reg.Size);
@@ -649,6 +730,19 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     }
     if (Policy && Policy->ExtendWrittenArgs && MaxRegArg >= 0)
       Policy->ExtendWrittenArgs(Ctx, MaxRegArg, FillLast);
+    // A C library import reads its fixed parameters however the call is
+    // reached: one set before this block, on each path into it, is the
+    // value reaching the call (`fprintf(stderr, fmt)` after a join; a
+    // `jmp rax` alone in its block in register_tm_clones).  Where an import
+    // takes every argument on the stack (i386), none is in a register.
+    if (const unsigned Fixed =
+            Convention && Convention->RegparmOnlyForInternalCalls
+                ? 0
+                : importFixedArgCount(CallIdx, Ops, ResolvedSlot))
+      FillLast =
+          std::max(FillLast, std::min(static_cast<int>(Fixed),
+                                      static_cast<int>(ParamRegs.size())) -
+                                 1);
     for (int K = 0; K <= FillLast && K < static_cast<int>(ParamRegs.size());
          ++K) {
       if (Found[K])
@@ -662,6 +756,19 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   if (Policy && Policy->ResolvePassThroughParams && CurMed)
     Policy->ResolvePassThroughParams(Ctx);
 
+  // A floating argument is the low bytes of its vector register the callee
+  // reads; the register's other lanes, perhaps never defined, are no part
+  // of it.
+  auto CallInput = [&](const MedOp &Call, unsigned Input) {
+    ExprPtr Value = medvarToExpr(Call.Inputs[Input]);
+    const uint16_t Width = Call.vectorArgumentWidth(Input);
+    if (Width && Value->Type && Width < Value->Type->Size) {
+      Value =
+          HighExpr::makeBinop(NdOp::SUBBYTES, Value, HighExpr::makeConst(0, 4));
+      Value->Type = NdType::makeInt(Width, false);
+    }
+    return Value;
+  };
   // A summarized callee published exactly the register arguments it reads
   // as the CALL's inputs (LowToMed); SSA already renamed them to the values
   // reaching the call, including a caller's pass-through argument.
@@ -671,8 +778,16 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     const int RegisterSlots = static_cast<int>(ParamRegs.size());
     for (int I = 0; I < RegisterSlots && I < MaxArgs; ++I)
       Found[I] = I < Call.CalleeRegisterArgs && 1 + I < Call.NumInputs
-                     ? medvarToExpr(Call.Inputs[1 + I])
+                     ? CallInput(Call, static_cast<unsigned>(1 + I))
                      : nullptr;
+    // So did its floating arguments, which follow the register arguments
+    // below: a vector register the scan above saw written is none, nor the
+    // stack argument its slot index would otherwise read as.
+    if (Call.CalleeVectorArgs >= 0)
+      for (uint64_t Vector : TRI.FPParamRegs)
+        if (const int K = integerSlot(Vector);
+            K >= RegisterSlots && K < MaxArgs)
+          Found[K] = nullptr;
   }
 
   // `mov r8d, [p+field]; call` is often `LOAD t; ZEXT r8, t`. The zext is the
@@ -850,28 +965,72 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
                [&](const MedVar &P) { return P.RegOff == ParamRegs[Index]; });
   };
   Scan.IsOwnParameter = IsOwnParameter;
+  auto OwnStackParam = [&](int Index) -> ExprPtr {
+    if (CurMed)
+      for (const MedVar &P : CurMed->Params)
+        if (P.Kind == MedVar::Param && P.Id == Index && P.RegOff == kNoParamReg)
+          return medvarToExpr(P);
+    return nullptr;
+  };
+  Scan.OwnStackParam = OwnStackParam;
+  // The single definition of \p V in this function, or null.
+  auto UniqueDef = [&](const MedVar &V) { return uniqueMedDefinition(V); };
+  // The single PHI defining \p V in this function, or null.
+  auto UniquePhi = [&](const MedVar &V) -> const PhiNode * {
+    if (!CurMed)
+      return nullptr;
+    indexMedDefinitions();
+    auto PhiIt =
+        EntryOffsetPhis.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
+    return PhiIt == EntryOffsetPhis.end() ? nullptr : PhiIt->second;
+  };
+  // The offset each PHI being resolved is assumed to have: none while its
+  // incoming values are collected, then the one they agree on.
+  std::map<const PhiNode *, std::optional<int64_t>> AssumedPhiOffsets;
   std::function<std::optional<int64_t>(const MedVar &, int)> EntryOffset =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
-    if (!CurMed || Depth > 8)
+    if (!CurMed || Depth > limits::kCallArgStoreAddressDepth)
       return std::nullopt;
     if (V.Kind == MedVar::Reg && V.RegOff == SpRegOff && V.SSAVer == 0)
       return 0;
-    if (EntryOffsetDefsFor != CurMed) {
-      EntryOffsetDefs.clear();
-      for (const auto &Blk : CurMed->Blocks)
-        for (const auto &Op : Blk.Ops) {
-          auto [It, Inserted] =
-              EntryOffsetDefs.try_emplace({static_cast<int>(Op.Output.Kind),
-                                           Op.Output.Id, Op.Output.SSAVer},
-                                          &Op);
-          if (!Inserted)
-            It->second = nullptr;
+    // A loop head's stack pointer is a PHI of the one the loop is entered
+    // with and of those its back edges carry, which equal it where the body
+    // pops what it pushes.  Assume the offset the values that do not depend
+    // on the PHI agree on, then require every incoming value to have it.
+    if (const PhiNode *Phi = UniquePhi(V)) {
+      if (auto It = AssumedPhiOffsets.find(Phi); It != AssumedPhiOffsets.end())
+        return It->second;
+      if (auto It = EntryOffsetPhiCache.find(Phi);
+          It != EntryOffsetPhiCache.end())
+        return It->second;
+      if (Phi->ExceptionalEntry || Phi->Args.empty())
+        return std::nullopt;
+      AssumedPhiOffsets.emplace(Phi, std::nullopt);
+      std::optional<int64_t> Offset;
+      bool Agree = true;
+      for (const auto &[Pred, In] : Phi->Args)
+        if (const auto InOffset = EntryOffset(In, Depth + 1)) {
+          Agree = Agree && (!Offset || *Offset == *InOffset);
+          Offset = InOffset;
         }
-      EntryOffsetDefsFor = CurMed;
+      if (!Agree)
+        Offset.reset();
+      if (Offset) {
+        AssumedPhiOffsets[Phi] = Offset;
+        for (const auto &[Pred, In] : Phi->Args)
+          if (EntryOffset(In, Depth + 1) != Offset) {
+            Offset.reset();
+            break;
+          }
+      }
+      AssumedPhiOffsets.erase(Phi);
+      // An offset found while an enclosing PHI is assumed holds only under
+      // that assumption.
+      if (AssumedPhiOffsets.empty())
+        EntryOffsetPhiCache.emplace(Phi, Offset);
+      return Offset;
     }
-    auto DefIt =
-        EntryOffsetDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
-    const MedOp *Def = DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
+    const MedOp *Def = UniqueDef(V);
     if (!Def || Def->NumInputs < 1)
       return std::nullopt;
     // i386 addresses reach memory zero-extended to the 8-byte VA model; a
@@ -890,6 +1049,63 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   };
   auto EntryOffsetOf = [&](const MedVar &V) { return EntryOffset(V, 0); };
   Scan.EntryOffsetOf = EntryOffsetOf;
+  // An outgoing stack argument is placed by the stack pointer the call is
+  // made with (CallArgCollectionX86.cpp): the last one its block defines, or
+  // else the one reaching the block.
+  {
+    MedVar CallStack;
+    bool Known = false;
+    for (size_t J = CallIdx; J-- > 0;)
+      if (const MedOp &Op = Ops[J]; Op.Output.Kind == MedVar::Reg &&
+                                    Op.Output.RegOff == SpRegOff &&
+                                    Op.Output.Size) {
+        CallStack = Op.Output;
+        Known = true;
+        break;
+      }
+    if (!Known)
+      Known = reachingRegAtBlockEntry(CurBlock, SpRegOff, CallStack);
+    if (Known)
+      Scan.CallStackEntryOffset = EntryOffsetOf(CallStack);
+  }
+  // A stack slot below the stack pointer an address is made from, another
+  // pointer (read from memory, or a register this function received), or a
+  // fixed address holds no outgoing argument.  An address this cannot
+  // follow may.
+  auto IsNoArgumentStore = [&](const MedVar &Address) {
+    MedVar Cur = Address;
+    int64_t Addend = 0;
+    for (int Depth = 0; Depth <= limits::kCallArgStoreAddressDepth; ++Depth) {
+      if (Cur.isConst())
+        return true;
+      if (Cur.Kind == MedVar::Reg && Cur.RegOff == SpRegOff)
+        return Addend < 0;
+      const MedOp *Def = UniqueDef(Cur);
+      if (!Def)
+        return Cur.Kind == MedVar::Reg && Cur.SSAVer == 0;
+      if (Def->Opcode == NdOp::LOAD)
+        return true;
+      if ((Def->Opcode == NdOp::COPY || Def->Opcode == NdOp::INT_ZEXT) &&
+          Def->NumInputs >= 1) {
+        const MedVar &In = Def->Inputs[0];
+        // The identity copy that names a register's entry value: a pointer
+        // this function received.
+        if (In.Kind == Cur.Kind && In.RegOff == Cur.RegOff && In.Id == Cur.Id &&
+            In.SSAVer == Cur.SSAVer)
+          return Cur.Kind == MedVar::Reg;
+        Cur = In;
+        continue;
+      }
+      if ((Def->Opcode != NdOp::INT_ADD && Def->Opcode != NdOp::INT_SUB) ||
+          Def->NumInputs != 2 || !Def->Inputs[1].isConst())
+        return false;
+      const int64_t C = static_cast<int64_t>(Def->Inputs[1].ConstVal);
+      Addend += Def->Opcode == NdOp::INT_ADD ? C : -C;
+      Cur = Def->Inputs[0];
+    }
+    return false;
+  };
+  Scan.IsNoArgumentStore = IsNoArgumentStore;
   Scan.FrameSize = CurMed ? CurMed->FrameSize : 0;
   if (CurMed && LoadedEntrySlotsFor != CurMed) {
     LoadedEntrySlots.clear();
@@ -1028,20 +1244,30 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   if (Hinted.empty() && CurMed) {
     if (const MedCallInfo *CI =
             CurMed->findCall(CurBlock.Id, static_cast<int>(CallIdx))) {
-      if (!CI->Args.empty()) {
+      // Where call-setup recovery gives a call its arguments, it gives a
+      // direct call all of them, none included.  The scan below bounds an
+      // indirect call's by the setup its own block writes, since nothing
+      // bounds them by the callee's signature.
+      const bool SetupConvention =
+          Convention && Convention->ArgumentsFromCallSetup;
+      const bool CompleteSetup = SetupConvention && !CI->IsIndirect;
+      if (SetupConvention ? CompleteSetup : !CI->Args.empty()) {
         std::vector<ExprPtr> FromABI;
         FromABI.reserve(CI->Args.size());
         for (const MedVar &A : CI->Args)
           FromABI.push_back(medvarToExpr(A));
         size_t End = FromABI.size();
-        while (End < static_cast<size_t>(MaxArgs) && Found[End] &&
-               Found[End]->Kind != ExprKind::Undef)
+        while (!CompleteSetup && End < static_cast<size_t>(MaxArgs) &&
+               Found[End] && Found[End]->Kind != ExprKind::Undef)
           ++End;
         for (size_t I = FromABI.size(); I < End; ++I)
           FromABI.push_back(Found[I]);
+        // The scan numbers registers in the convention's order, which does
+        // not index arguments passed in the callee's own.
         for (size_t I = 0; I < FromABI.size(); ++I)
           if ((!FromABI[I] || FromABI[I]->Kind == ExprKind::Undef) &&
-              Found[I] && Found[I]->Kind != ExprKind::Undef)
+              !CI->ArgumentsInCalleeRegisterOrder && Found[I] &&
+              Found[I]->Kind != ExprKind::Undef)
             FromABI[I] = Found[I];
         return BoundKnownCalleeArity(std::move(FromABI));
       }
@@ -1062,14 +1288,40 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   // Preserve its unknown slots, including trailing ones. Only arguments
   // beyond that required prefix may end at the first unrecovered value.
   const int ReadSlots = SummarizedCallee ? Ops[CallIdx].CalleeRegisterArgs : 0;
+  // With floating arguments, which follow the register arguments, the
+  // summary fixes the whole register prefix: a slot it does not read
+  // carries none.
+  const bool ExactRegisters =
+      SummarizedCallee && Ops[CallIdx].CalleeVectorArgs > 0;
   size_t End = 0;
   for (int K = 0; K < MaxArgs; ++K) {
+    if (ExactRegisters && K >= ReadSlots &&
+        K < static_cast<int>(ParamRegs.size()))
+      continue;
     if (K >= ReadSlots && (!Found[K] || Found[K]->Kind == ExprKind::Undef))
       break;
     End = static_cast<size_t>(K) + 1;
   }
-  for (size_t K = 0; K < End; ++K)
+  for (size_t K = 0; K < End; ++K) {
+    if (ExactRegisters && K >= static_cast<size_t>(ReadSlots) &&
+        K < ParamRegs.size())
+      continue;
     Args.push_back(Found[K] ? Found[K] : HighExpr::makeUndef(8));
+  }
+  // A summarized callee's floating arguments follow its register arguments,
+  // before any on the stack, as its parameters do.
+  if (ExactRegisters) {
+    const MedOp &Call = Ops[CallIdx];
+    const size_t First = 1 + static_cast<size_t>(Call.CalleeRegisterArgs);
+    const size_t At =
+        std::min(Args.size(), static_cast<size_t>(std::max(0, ReadSlots)));
+    std::vector<ExprPtr> Vectors;
+    for (int K = 0; K < Call.CalleeVectorArgs && First + K < Call.NumInputs;
+         ++K)
+      Vectors.push_back(CallInput(Call, static_cast<unsigned>(First + K)));
+    Args.insert(Args.begin() + static_cast<std::ptrdiff_t>(At), Vectors.begin(),
+                Vectors.end());
+  }
   return BoundKnownCalleeArity(std::move(Args));
 }
 
@@ -1213,7 +1465,7 @@ bool MedToHighConverter::isCallArgSetupDef(const MedBlock &CallBlk,
 
 int MedToHighConverter::regToArgIdx(uint64_t RegOff) const {
   return getTargetRegInfo(TargetArch)
-      .regToArgIdx(RegOff, Image ? Image->Format : BinaryFormat::Unknown);
+      .regToArgIdx(RegOff, Image ? Image->abiFormat() : BinaryFormat::Unknown);
 }
 
 std::string MedToHighConverter::calleeDisplayName(va_t Target) const {
@@ -1245,8 +1497,7 @@ std::string MedToHighConverter::calleeDisplayName(va_t Target) const {
 }
 
 void MedToHighConverter::resolveCalleeNames(
-    const std::set<va_t> &Targets,
-    std::map<va_t, std::string> &Names) const {
+    const std::set<va_t> &Targets, std::map<va_t, std::string> &Names) const {
   if (!Image) {
     for (va_t Target : Targets)
       Names[Target] = calleeDisplayName(Target);
@@ -1255,17 +1506,26 @@ void MedToHighConverter::resolveCalleeNames(
 
   // BinaryImage keeps publicly editable metadata vectors, so build these
   // exact-address indexes for this immutable pipeline stage rather than
-  // caching them on the image. Preserve the *first* matching entry, including
-  // an empty name, just as findImportAt/findExportAt/findSymbolAt do.
+  // caching them on the image.  They choose what calleeDisplayName does: the
+  // *first* import or export at an address, including an empty name, as
+  // findImportAt and findExportAt do, and the symbol getFunctionNameAt
+  // chooses.  The first symbol at a MinGW function's start is often its
+  // object's `.text` section symbol.
   std::map<va_t, const Import *> ImportsByIAT;
   for (const Import &Imp : Image->Imports)
     ImportsByIAT.try_emplace(Imp.IATAddr, &Imp);
   std::map<va_t, std::string> ExportsByAddr;
   for (const Export &Exp : Image->Exports)
     ExportsByAddr.try_emplace(Exp.Addr, Exp.Name);
-  std::map<va_t, std::string> SymbolsByAddr;
-  for (const Symbol &Sym : Image->Symbols)
-    SymbolsByAddr.try_emplace(Sym.Addr, Sym.Name);
+  std::map<va_t, const Symbol *> SymbolsByAddr;
+  for (const Symbol &Sym : Image->Symbols) {
+    if (Sym.Name.empty())
+      continue;
+    auto [It, Inserted] = SymbolsByAddr.try_emplace(Sym.Addr, &Sym);
+    if (!Inserted && BinaryImage::functionNameRank(Sym) >
+                         BinaryImage::functionNameRank(*It->second))
+      It->second = &Sym;
+  }
 
   auto Usable = [](llvm::StringRef Name) {
     return !Name.empty() && !Name.starts_with(kAutoFuncPrefix);
@@ -1299,8 +1559,8 @@ void MedToHighConverter::resolveCalleeNames(
     llvm::StringRef FromImage;
     if (Exp != ExportsByAddr.end() && !Exp->second.empty())
       FromImage = Exp->second;
-    else if (Sym != SymbolsByAddr.end() && !Sym->second.empty())
-      FromImage = Sym->second;
+    else if (Sym != SymbolsByAddr.end())
+      FromImage = Sym->second->Name;
     Names[Target] = Usable(FromImage)
                         ? FromImage.str()
                         : (kAutoFuncPrefix + llvm::utohexstr(Target)).str();
@@ -1324,18 +1584,25 @@ int MedToHighConverter::abiParamIndex(const MedVar &V) const {
   };
 
   if (V.Kind == MedVar::Param) {
-    int IdMatch = -1;
+    // Register and stack parameters number their ids apart: ARM32's r0 can
+    // carry id 8, the same as the ninth argument's stack slot.  An id of the
+    // same kind decides first.
+    int IdMatch = -1, AnyIdMatch = -1;
     for (size_t I = 0; I < CurMed->Params.size(); ++I) {
       const MedVar &P = CurMed->Params[I];
       if (P.Id < 0 || P.Id != V.Id)
         continue;
       if (V.RegOff != kNoParamReg && P.RegOff == V.RegOff)
         return static_cast<int>(I);
-      if (IdMatch < 0)
+      if (AnyIdMatch < 0)
+        AnyIdMatch = static_cast<int>(I);
+      if (IdMatch < 0 && (V.RegOff == kNoParamReg) == (P.RegOff == kNoParamReg))
         IdMatch = static_cast<int>(I);
     }
     if (IdMatch >= 0)
       return IdMatch;
+    if (AnyIdMatch >= 0)
+      return AnyIdMatch;
     const int ByReg = SlotByReg(V.RegOff);
     if (ByReg >= 0)
       return ByReg;

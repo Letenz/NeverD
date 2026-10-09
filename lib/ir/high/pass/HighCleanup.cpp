@@ -176,10 +176,10 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
   CollectVarRefs = [&](const ExprPtr &E) {
     if (!E)
       return;
-    if (E->Kind == ExprKind::Var && (IsFPReg(E->Var) || IsSPReg(E->Var)))
+    if (E->Kind == ExprKind::Var &&
+        (IsFPReg(E->Var) || IsSPReg(E->Var) || IsLRReg(E->Var)))
       UsedFrameVars.insert(E->str());
-    for (auto &Op : E->Operands)
-      CollectVarRefs(Op);
+    E->forEachChildExpr(CollectVarRefs);
   };
   std::function<void(const HighStmt &)> CollectStmtRefsPE;
   CollectStmtRefsPE = [&](const HighStmt &S) {
@@ -247,9 +247,10 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
       return false;
     if (S.Val->hasOrderedMemoryAccess())
       return false;
-    if (IsLRReg(S.Dst->Var))
-      return true;
-    if (IsFPReg(S.Dst->Var))
+    // Once the prologue saved them, the link and frame registers are general
+    // registers too (`mla lr, r12, r2, r1`): only a value no statement reads
+    // is the epilogue's.
+    if (IsLRReg(S.Dst->Var) || IsFPReg(S.Dst->Var))
       return UsedFrameVars.count(S.Dst->str()) == 0 && valueIsDisposable(S.Val);
     return false;
   };

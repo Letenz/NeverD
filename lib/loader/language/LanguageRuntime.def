@@ -202,6 +202,7 @@ NEVERD_LANGUAGE_PROBE(ObjCMessageSend, Symbol, "objc_msg_lookup")
 NEVERD_LANGUAGE_PROBE(ObjCMessageSend, Symbol, "objc_msgSend")
 NEVERD_LANGUAGE_EVIDENCE(SwiftMetadata, Swift, Chain, "swift metadata")
 NEVERD_LANGUAGE_PROBE(SwiftMetadata, SymbolPrefix, "$s")
+NEVERD_LANGUAGE_PROBE(SwiftMetadata, SymbolPrefix, "_$s")
 NEVERD_LANGUAGE_PROBE(SwiftMetadata, Section, "__swift5_types")
 
 //===----------------------------------------------------------------------===//

@@ -10,13 +10,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/WindowsCRT.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <string_view>
+#include <unordered_map>
 
 namespace neverd::libc {
 namespace {
@@ -45,9 +49,25 @@ unsigned irregularVarArgFixedCount(std::string_view Name) {
       .Default(0);
 }
 
+/// The standard routine whose arguments a C library's variant \p Name takes
+/// or implements, without leading underscores: glibc's ISO C conforming
+/// alias `__isoc99_scanf` takes scanf's, and the Universal CRT's
+/// `__stdio_common_vfprintf` implements vfprintf.  Otherwise \p Name itself.
+std::string_view isoAliasTarget(std::string_view Name) {
+  const std::string_view Bare = stripLeadingUnderscores(Name);
+  for (const std::string_view Prefix : kIsoAliasPrefixes)
+    if (Bare.starts_with(Prefix))
+      return Bare.substr(Prefix.size());
+  if (Bare.starts_with(kUCRTStdioPrefix))
+    return Bare.substr(kUCRTStdioPrefix.size());
+  return Name;
+}
+
 } // anonymous namespace
 
 unsigned varArgFixedCount(std::string_view Name) {
+  if (const std::string_view Standard = isoAliasTarget(Name); Standard != Name)
+    return varArgFixedCount(Standard);
   // Modern Darwin linkers specialize Objective-C dispatch through local
   // `_objc_msgSend$<selector>` stubs.  The stub materializes `_cmd` in x1,
   // while the caller supplies the receiver in x0 and one argument per colon
@@ -113,7 +133,7 @@ unsigned varArgFixedCount(std::string_view Name) {
 
 VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
                                           unsigned Index) {
-  Name = stripLeadingUnderscores(Name);
+  Name = isoAliasTarget(stripLeadingUnderscores(Name));
   const unsigned FixedCount = varArgFixedCount(Name);
   if (Index >= FixedCount)
     return VarArgFixedParamKind::Unknown;
@@ -183,6 +203,7 @@ VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
 }
 
 bool isVaListConsumer(std::string_view Name) {
+  Name = isoAliasTarget(Name);
   // Fortified __v*_chk forms (e.g. __vsnprintf_chk) take a va_list just like
   // their plain v* base; strip the suffix and fall through to the v* check.
   if (Name.ends_with("_chk"))
@@ -217,6 +238,41 @@ bool isCStringParameter(std::string_view Name, unsigned Index) {
   return false;
 }
 
+std::optional<std::string_view> functionPointerParameter(std::string_view Name,
+                                                         unsigned Index) {
+  struct FunctionPointerParam {
+    std::string_view Name;
+    unsigned Index;
+    std::string_view Type;
+  };
+  static constexpr FunctionPointerParam FunctionPointerParams[] = {
+#define LIBC_FUNCTION_POINTER_PARAM(Name, Index, Type) {Name, Index, Type},
+#include "neverd/libc/LibCFunctionPointerParams.inc"
+#undef LIBC_FUNCTION_POINTER_PARAM
+  };
+  const std::string_view Bare = stripLeadingUnderscores(Name);
+  for (const FunctionPointerParam &Param : FunctionPointerParams)
+    if (Param.Index == Index && Param.Name == Bare)
+      return Param.Type;
+  return std::nullopt;
+}
+
+bool isObjectPointerParameter(std::string_view Name, unsigned Index) {
+  // Each function's object pointer parameters, as a mask of positions.
+  static const std::unordered_map<std::string_view, uint64_t> Masks = [] {
+    std::unordered_map<std::string_view, uint64_t> Map;
+#define LIBC_OBJECT_POINTER_PARAM(Name, Index)                                 \
+  Map[Name] |= uint64_t(1) << (Index);
+#include "neverd/libc/LibCObjectPointerParams.inc"
+#undef LIBC_OBJECT_POINTER_PARAM
+    return Map;
+  }();
+  if (Index >= 64)
+    return false;
+  const auto It = Masks.find(stripLeadingUnderscores(Name));
+  return It != Masks.end() && (It->second >> Index & 1);
+}
+
 std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
                                                  va_t Target) {
   struct Routine {
@@ -231,7 +287,7 @@ std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
 #include "neverd/libc/StackProbeRoutines.inc"
   };
   const auto Applies = [&](const Routine &R) {
-    return R.Format == Img.Format && R.Architecture == Img.Arch;
+    return R.Format == Img.abiFormat() && R.Architecture == Img.Arch;
   };
   if (std::none_of(std::begin(Routines), std::end(Routines), Applies))
     return std::nullopt;
@@ -407,6 +463,65 @@ bool isMemSetName(std::string_view Name) {
 #include "neverd/libc/LibCMemSetNames.inc"
 #undef LIBC_MEM_SET_SYMBOL
       .Default(false);
+}
+
+const LibCPrintfFormat *libcPrintfFormat(std::string_view Name) {
+  static constexpr LibCPrintfFormat Formats[] = {
+#define LIBC_PRINTF_FORMAT(Routine, ReturnType, ...)                           \
+  {Routine,                                                                    \
+   ReturnType,                                                                 \
+   {__VA_ARGS__},                                                              \
+   static_cast<uint8_t>(                                                       \
+       std::initializer_list<std::string_view>{__VA_ARGS__}.size())},
+#include "neverd/libc/LibCPrintfFormats.inc"
+#undef LIBC_PRINTF_FORMAT
+  };
+  for (const LibCPrintfFormat &Format : Formats)
+    if (Format.Name == Name)
+      return &Format;
+  return nullptr;
+}
+
+const LibCVariadicForward *libcVariadicForward(std::string_view Name) {
+  using Kind = LibCVariadicForward::Kind;
+#define NEVERD_FIXED_PARAMETERS(...)                                           \
+  {__VA_ARGS__},                                                               \
+      static_cast<uint8_t>(                                                    \
+          std::initializer_list<std::string_view>{__VA_ARGS__}.size())
+  static constexpr LibCVariadicForward Forwards[] = {
+#define LIBC_VA_LIST_FORM(Routine, ReturnType, TypeHeader, Form, ...)          \
+  {Kind::VaList,                                                               \
+   Routine,                                                                    \
+   ReturnType,                                                                 \
+   TypeHeader,                                                                 \
+   Form,                                                                       \
+   NEVERD_FIXED_PARAMETERS(__VA_ARGS__),                                       \
+   0,                                                                          \
+   {},                                                                         \
+   false},
+#define LIBC_BOUNDED_VARARGS(Routine, ReturnType, TypeHeader, Read, ReadType,  \
+                             ...)                                              \
+  {Kind::Bounded, Routine,  ReturnType,                                        \
+   TypeHeader,    Routine,  NEVERD_FIXED_PARAMETERS(__VA_ARGS__),              \
+   Read,          ReadType, false},
+#define LIBC_SENTINEL_VARARGS(Routine, ReturnType, TypeHeader, Vector,         \
+                              WithEnvironment, ...)                            \
+  {Kind::Sentinel,                                                             \
+   Routine,                                                                    \
+   ReturnType,                                                                 \
+   TypeHeader,                                                                 \
+   Vector,                                                                     \
+   NEVERD_FIXED_PARAMETERS(__VA_ARGS__),                                       \
+   0,                                                                          \
+   {},                                                                         \
+   WithEnvironment},
+#include "neverd/libc/LibCVariadicForwards.inc"
+  };
+#undef NEVERD_FIXED_PARAMETERS
+  for (const LibCVariadicForward &Forward : Forwards)
+    if (Forward.Name == Name)
+      return &Forward;
+  return nullptr;
 }
 
 } // namespace neverd::libc

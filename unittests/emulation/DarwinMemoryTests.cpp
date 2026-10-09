@@ -3,9 +3,12 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinFileTestData.h"
 #include "gtest/gtest.h"
 #include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
+
+#include <cstring>
 
 namespace neverd::emulation::darwin_model {
 namespace {
@@ -507,6 +510,100 @@ TEST_P(DarwinMemoryTest, SymbolicLinkOpensRetainTheActualTargetMappingLease) {
   EXPECT_EQ(fileCall(ServiceKind::ReadLink, {Scratch, Scratch + 64, 4}).Value,
             4u);
   EXPECT_EQ(llvm::cantFail(Space->readInteger(Scratch + 64, 4)), 0x61746164u);
+}
+
+TEST_P(DarwinMemoryTest, FixedLinkReplacementSeparatesOldAndNewMappingLeases) {
+  Options.DarwinFiles = darwin_test::mixedSymbolicLinkOptions();
+  auto &O = *Options.DarwinFiles;
+  O.Files["/work/data"] = std::vector<uint8_t>(Page, 'x');
+  O.Metadata["/work/data"].Size = Page;
+  O.Metadata["/work/data"].Blocks = Page / 512;
+  ASSERT_FALSE(bool(validateFileOptions(O)));
+  const auto Scratch = allocate(Page);
+  auto Path = [&](const char *Text, uint64_t Offset = 0) {
+    llvm::cantFail(Space->write(
+        Scratch + Offset,
+        llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(Text),
+                                std::strlen(Text) + 1)));
+  };
+  Path("/static/data-link");
+  const auto Old = fileCall(ServiceKind::Open, {Scratch, 2});
+  ASSERT_FALSE(Old.Error);
+  const auto OldMap = call(ServiceKind::Mmap, {0, Page, 1, 2, Old.Value, 0});
+  ASSERT_FALSE(OldMap.Error);
+  Path("/static/data-link/");
+  Path("/work/renamed", 128);
+  EXPECT_FALSE(fileCall(ServiceKind::Rename, {Scratch, Scratch + 128}).Error);
+  Path("/static/alias/renamed");
+  EXPECT_FALSE(fileCall(ServiceKind::Unlink, {Scratch}).Error);
+  Path("/static/data-link");
+  const auto Replacement = fileCall(ServiceKind::Open, {Scratch, 0x202, 0600});
+  ASSERT_FALSE(Replacement.Error) << Replacement.Value << Result.Diagnostic;
+  // The old mapping's lease cannot inhibit mutations of the replacement.
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {Replacement.Value, 0}).Error);
+  llvm::cantFail(Space->write(Scratch, std::vector<uint8_t>(Page, 'z')));
+  EXPECT_EQ(
+      fileCall(ServiceKind::Write, {Replacement.Value, Scratch, Page}).Value,
+      Page);
+  const auto NewMap =
+      call(ServiceKind::Mmap, {0, Page, 1, 2, Replacement.Value, 0});
+  ASSERT_FALSE(NewMap.Error);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(OldMap.Value, 1)), 'x');
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(NewMap.Value, 1)), 'z');
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {Old.Value, 0}).Value, UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationMapping);
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {Old.Value}).Error);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {OldMap.Value, Page}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {Replacement.Value, 0}).Value,
+            UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationMapping);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {NewMap.Value, Page}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {Replacement.Value, 0}).Error);
+}
+
+TEST_P(DarwinMemoryTest, FixedLinkTargetBudgetWaitsForTheLastOldMappedRange) {
+  Options.DarwinFiles = darwin_test::mixedSymbolicLinkOptions();
+  auto &O = *Options.DarwinFiles;
+  // Actual catalogue charges: file name; directory names; link names+targets;
+  // CWD; writable and mutation references; mutable directory reference.
+  constexpr uint64_t Fixed = 11 + 8 + 6 + 21 + 30 + 32 + 2 + 11 + 11 + 6;
+  const auto Size = darwin_file_limits::Bytes - Fixed;
+  O.Files["/work/data"] = std::vector<uint8_t>(Size, 'x');
+  O.Metadata["/work/data"].Size = Size;
+  O.Metadata["/work/data"].Blocks = ((Size + 4095) / 4096) * 8;
+  ASSERT_FALSE(bool(validateFileOptions(O)));
+  const auto Scratch = allocate(Page);
+  const char Path[] = "/static/data-link/";
+  llvm::cantFail(Space->write(
+      Scratch, llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(Path),
+                                       sizeof(Path))));
+  const auto Old = fileCall(ServiceKind::Open, {Scratch});
+  ASSERT_FALSE(Old.Error);
+  const auto Mapping =
+      call(ServiceKind::Mmap, {0, Page * 2, 1, 2, Old.Value, 0});
+  ASSERT_FALSE(Mapping.Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Unlink, {Scratch}).Error);
+  // Remove only the slash: O_CREAT follows the fixed link to its missing
+  // target.
+  llvm::cantFail(Space->writeInteger(Scratch + sizeof(Path) - 2, 0, 1));
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {Old.Value}).Error);
+  for (unsigned Part = 0; Part != 2; ++Part) {
+    EXPECT_EQ(fileCall(ServiceKind::Open, {Scratch, 0x202, 0600}).Value,
+              UINT64_MAX);
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+    EXPECT_EQ(
+        llvm::cantFail(Space->readInteger(Mapping.Value + Page * Part, 1)),
+        'x');
+    EXPECT_FALSE(
+        call(ServiceKind::Munmap, {Mapping.Value + Page * Part, Page}).Error);
+  }
+  const auto New = fileCall(ServiceKind::Open, {Scratch, 0x202, 0600});
+  ASSERT_FALSE(New.Error);
+  EXPECT_EQ(New.Value, Old.Value);
+  EXPECT_FALSE(
+      fileCall(ServiceKind::Fstat64, {New.Value, Scratch + 256}).Error);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Scratch + 256 + 8, 8)),
+            darwin_test::CreationPolicy.FirstInode);
 }
 
 INSTANTIATE_TEST_SUITE_P(Pages, DarwinMemoryTest, testing::Values(4096, 16384));

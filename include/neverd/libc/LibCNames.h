@@ -16,6 +16,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -69,6 +70,18 @@ struct LibCArity {
              ///< and the imaginary part is 0.
 };
 
+/// The bytes of the scalar float a routine of \p Arity returns: the tables
+/// list a routine with only floating arguments, or its floating arguments
+/// first, by its floating return, and mark one without (FpRet); a long
+/// double or complex return is no scalar in the vector register.
+constexpr uint16_t floatReturnBytes(const LibCArity &Arity) {
+  if (Arity.FpRetLongDouble || Arity.FpRetComplex ||
+      !(Arity.FpRet || Arity.FpFirst ||
+        (Arity.FpArgs > 0 && Arity.IntArgs == 0)))
+    return 0;
+  return Arity.FpIsFloat ? sizeof(float) : sizeof(double);
+}
+
 /// A single (name, arity) row of a per-header arity table (kStdioArity,
 /// kStringArity, ...).  These tables live beside the function-name lists in the
 /// libc_*.h headers; libcArity assembles them into one lookup map.
@@ -77,27 +90,97 @@ struct LibCArityEntry {
   LibCArity Arity;
 };
 
-/// The C declaration of a routine no standard header declares, such as the one
-/// the start files enter a program through (LibCStartup.h): its return type
-/// and each parameter's C type.  Its arity is derived from it.
+/// The C declaration of a routine no standard header declares: one the start
+/// files enter a program through (LibCStartup.h), a C++ runtime entry point
+/// (LibCExceptionRuntime.h), a fortified or ISO-alias C library routine
+/// (LibCFortify.h) or a Windows C runtime one (WindowsCRT.h).  A
+/// non-variadic one's arity is derived from it.
 struct LibCPrototype {
-  /// The name without leading underscores, as the arity tables key it.
+  /// The C name the routine links by.
   std::string_view Name;
   std::string_view Return;
+  /// Each parameter's C type.  kWinapiMarker in one names the Windows API
+  /// calling convention of the function pointer it spells.
   std::array<std::string_view, 8> Params{};
   uint8_t ParamCount = 0;
+  /// Further arguments follow the parameters (`...`).
+  bool Variadic = false;
+  /// The header declaring a type the declaration names (`FILE`, `size_t`),
+  /// or empty.
+  std::string_view Header{};
+  /// The object format whose C runtime provides the routine, or Unknown for
+  /// every format's.
+  BinaryFormat Format = BinaryFormat::Unknown;
+  /// The routine uses the Windows API calling convention: stdcall on 32-bit
+  /// x86.
+  bool Winapi = false;
 };
 
-/// Whether a parameter of C type \p Type takes a pointer: an object or a
-/// function pointer.
-constexpr bool isPointerParameter(std::string_view Type) {
-  return !Type.empty() &&
-         (Type.back() == '*' || Type.find("(*)") != std::string_view::npos);
+/// The prototype `Return Name(Params)`, whose types \p Header declares where
+/// C does not; a last parameter `...` makes it variadic.
+constexpr LibCPrototype
+makeLibCPrototype(std::string_view Name, std::string_view Return,
+                  std::initializer_list<std::string_view> Params,
+                  std::string_view Header = {}) {
+  LibCPrototype Prototype{Name, Return};
+  for (std::string_view Param : Params) {
+    if (Param == "...") {
+      Prototype.Variadic = true;
+      break;
+    }
+    Prototype.Params[Prototype.ParamCount++] = Param;
+  }
+  Prototype.Header = Header;
+  return Prototype;
 }
 
-/// The prototype of the routine a symbol \p Name links to, leading
-/// underscores ignored, or null.
-const LibCPrototype *libcPrototypeForSymbol(std::string_view Name);
+/// Whether C type \p Type is a pointer: to an object or to a function, or to
+/// a pointer to one.
+constexpr bool isPointerType(std::string_view Type) {
+  return !Type.empty() &&
+         (Type.back() == '*' || Type.find("*)") != std::string_view::npos);
+}
+
+/// Whether C type \p Type is a real floating type, which the calling
+/// conventions pass in a vector register.
+constexpr bool isFloatingType(std::string_view Type) {
+  return Type == "float" || Type == "double" || Type == "long double";
+}
+
+/// The bytes of the scalar float a routine \p Prototype declares returns in
+/// the vector return register: 4 for `float`, 8 for `double`, else 0.
+constexpr uint16_t floatReturnBytes(const LibCPrototype &Prototype) {
+  return Prototype.Return == "double"  ? sizeof(double)
+         : Prototype.Return == "float" ? sizeof(float)
+                                       : 0;
+}
+
+/// Whether a parameter of C type \p Type takes a narrow string literal as it
+/// is: C converts its `char *` to a character or untyped pointer.
+constexpr bool takesStringLiteral(std::string_view Type) {
+  return Type == "char *" || Type == "const char *" || Type == "void *" ||
+         Type == "const void *";
+}
+
+/// The marker a prototype's function-pointer type carries for the Windows
+/// API calling convention, which is stdcall on 32-bit x86.
+inline constexpr std::string_view kWinapiMarker = "WINAPI ";
+
+/// The prototype of the routine C name \p Name links to in an image of object
+/// format \p Format, or null.
+const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format);
+
+/// Whether the routine C name \p Name links to in an image of object format
+/// \p Format returns a value, as its C declaration says: the prototype above
+/// or, for a routine a C library header declares, the declared result
+/// (LibCReturnKinds.inc).  Unknown for a routine neither declares.
+std::optional<bool> libcReturnsValue(std::string_view Name,
+                                     BinaryFormat Format);
+
+/// Whether the compiler runtime routine C name \p Name returns a double-word
+/// integer in a register pair (CompilerRuntimeDoubleWord.def): `__udivdi3`
+/// on a 32-bit target.
+bool returnsDoubleWord(std::string_view Name);
 
 /// The fixed argument arity of a known NON-variadic libc function (e.g. fputs
 /// -> {2,0}, sqrt -> {0,1}), used to bound the heuristic argument recovery for
@@ -139,6 +222,52 @@ const char *headerFor(std::string_view Name);
 /// if the function is not variadic.
 unsigned varArgFixedCount(std::string_view Name);
 
+/// A printf-family routine (LibCPrintfFormats.inc): its return type and the
+/// C types of its fixed parameters, the last of which is the format whose
+/// conversions name the further arguments.
+struct LibCPrintfFormat {
+  std::string_view Name;
+  std::string_view Return;
+  std::array<std::string_view, 6> Params{};
+  uint8_t ParamCount = 0;
+};
+
+/// The printf-family routine C name \p Name links to, or null.  Its format is
+/// its last fixed parameter.
+const LibCPrintfFormat *libcPrintfFormat(std::string_view Name);
+
+/// How C passes every argument a function receives on to a variadic routine
+/// (LibCVariadicForwards.inc), as a stub that jumps to the routine does.
+struct LibCVariadicForward {
+  enum class Kind : uint8_t {
+    /// Target takes the variadic arguments as a va_list after the fixed
+    /// parameters, the last of which is the format.
+    VaList,
+    /// The routine, Target, reads at most Count variadic arguments of Type.
+    Bounded,
+    /// The variadic arguments are pointers up to a null one, which Target
+    /// takes as an array after the first fixed parameter, followed by an
+    /// environment array when Environment.
+    Sentinel,
+  };
+  Kind TheKind = Kind::VaList;
+  std::string_view Name;
+  std::string_view Return;
+  /// The header declaring the types the fixed parameters name, or empty.
+  std::string_view Header;
+  std::string_view Target;
+  /// The C types of the fixed parameters.
+  std::array<std::string_view, 6> Fixed{};
+  uint8_t FixedCount = 0;
+  uint8_t Count = 0;
+  std::string_view Type;
+  bool Environment = false;
+};
+
+/// How a function passes its arguments on to the variadic routine C name
+/// \p Name links to, or null when C cannot.
+const LibCVariadicForward *libcVariadicForward(std::string_view Name);
+
 /// ABI category of one fixed parameter in a known variadic function.  Pointer
 /// parameters must be symbolized before code generation; integer parameters
 /// must remain scalar values even when a small constant happens to overlap a
@@ -168,6 +297,17 @@ bool isVaListConsumer(std::string_view Name);
 /// True if parameter \p Index of the standard C or POSIX function \p Name is
 /// a narrow, NUL-terminated `char` string.  Leading underscores are ignored.
 bool isCStringParameter(std::string_view Name, unsigned Index);
+
+/// The C type of parameter \p Index of the standard C or POSIX function
+/// \p Name when it takes a function (`qsort`'s comparison), or nullopt.
+/// Leading underscores are ignored.
+std::optional<std::string_view> functionPointerParameter(std::string_view Name,
+                                                         unsigned Index);
+
+/// Whether parameter \p Index of the standard C or POSIX function \p Name
+/// takes an object pointer (`memcpy`'s destination, `fputs`'s stream), which
+/// C does not convert an integer to.  Leading underscores are ignored.
+bool isObjectPointerParameter(std::string_view Name, unsigned Index);
 
 /// What a compiler stack-probe helper does (StackProbeRoutines.inc).
 enum class StackProbeEffect : uint8_t {

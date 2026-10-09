@@ -29,6 +29,7 @@ bool cacheable(const QString &operation) {
 
 bool readable(const QString &operation) {
   static const QSet<QString> operations{"metadata",
+                                        "analysis_snapshot",
                                         "history",
                                         "annotations",
                                         "contributions",
@@ -42,6 +43,7 @@ bool readable(const QString &operation) {
                                         "string_references",
                                         "string_encodings",
                                         "string_options",
+                                        "identify",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
 }
@@ -54,6 +56,8 @@ bool command(const QString &operation) {
                                         "rename",
                                         "function_create",
                                         "function_delete",
+                                        "item_define",
+                                        "operand_format",
                                         "save",
                                         "reload",
                                         "undo",
@@ -133,7 +137,7 @@ struct QueryService::State {
   enum Kind { Read, Graph, Command };
   enum Phase { Queued, Reading, Summary, Viewport, Delivering };
   struct Job {
-    quint64 id = 0, epoch = 0, fence = 0;
+    quint64 id = 0, epoch = 0, fence = 0, listing = 0;
     Kind kind = Read;
     Phase phase = Queued;
     Spec spec;
@@ -160,6 +164,9 @@ struct QueryService::State {
   Limits limits;
   bool available = false, pumpScheduled = false, analysisComplete = false;
   quint64 epoch = 1, fence = 0, nextJob = 0;
+  /// Advances when background analysis changes what reads list without a
+  /// new revision; a read made before answers no read made after.
+  quint64 listing = 0;
   Id nextSubscription = 0;
   QString project, revision = "0";
   qsizetype queuedBytes = 0;
@@ -199,9 +206,12 @@ struct QueryService::State {
   }
 
   QByteArray key(const Job &job, bool forCache) const {
-    QJsonArray parts{QString::number(epoch), project,
+    QJsonArray parts{QString::number(epoch),
+                     project,
                      forCache ? revision : QString::number(job.fence),
-                     job.spec.operation, job.spec.payload};
+                     QString::number(job.listing),
+                     job.spec.operation,
+                     job.spec.payload};
     if (!forCache) {
       parts.append(int(job.kind));
       parts.append(int(job.spec.policy));
@@ -293,6 +303,7 @@ struct QueryService::State {
     auto candidate = std::make_shared<Job>();
     candidate->epoch = epoch;
     candidate->fence = fence;
+    candidate->listing = listing;
     candidate->kind = kind;
     candidate->spec = std::move(spec);
     candidate->coalescingKey = key(*candidate, false);
@@ -724,6 +735,13 @@ void QueryService::setAvailable(bool available) {
   state_->schedulePump();
   state_->notify();
 }
+void QueryService::resetReadContext(const QString &project,
+                                    const QString &revision) {
+  resetSession();
+  state_->project = project;
+  state_->revision = revision;
+  setAvailable(!project.isEmpty());
+}
 bool QueryService::available() const { return state_->available; }
 QString QueryService::projectId() const { return state_->project; }
 QString QueryService::revision() const { return state_->revision; }
@@ -735,6 +753,10 @@ bool QueryService::hasCommands() const {
     if (job->kind == State::Command)
       return true;
   return false;
+}
+void QueryService::listingChanged() {
+  ++state_->listing;
+  state_->cache.clear();
 }
 void QueryService::setCacheBudgetMiB(int mebibytes) {
   state_->cache.setMaxCost(std::clamp(mebibytes, 16, 1024) * 1024 * 1024);

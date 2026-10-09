@@ -137,7 +137,7 @@ void Decoder::configureFor(const BinaryImage &Img) {
   // A PE image runs on Windows, whose system service convention an x64
   // SYSCALL follows.
   if (X86)
-    X86->setSyscallConvention(Img.Format == BinaryFormat::COFF
+    X86->setSyscallConvention(Img.abiFormat() == BinaryFormat::COFF
                                   ? X86Lifter::SyscallConvention::WindowsNT
                                   : X86Lifter::SyscallConvention::Linux);
 }
@@ -259,8 +259,6 @@ int Decoder::decodeOneLight(const uint8_t *Bytes, size_t Len, va_t Addr,
       !decodeUnprefixedX86MpxRegisterNop(Bytes, Len, Addr))
     return 0;
 
-  // Detail-independent profile normalization must agree with the full decode
-  // path.  Operand-aware id fixups remain exclusive to decodeOne.
   fixupDecodedInsnId(InsnBuf);
   fixupX86DisplacementDetail(InsnBuf);
   Out.Addr = InsnBuf->address;
@@ -506,6 +504,18 @@ bool Decoder::isFunctionTerminator(const DecodedInsn &Insn) const {
   if (ARM)
     return ARMLifter::isFunctionTerminator(Insn.Raw);
   return false;
+}
+
+std::optional<bool> Decoder::returnsToCaller(const DecodedInsn &Insn) const {
+  if (!Insn.Raw)
+    return std::nullopt;
+  if (X86)
+    return X86Lifter::isReturn(Insn.Raw);
+  if (AArch64)
+    return AArch64Lifter::isReturn(Insn.Raw);
+  if (ARM)
+    return ARMLifter::isReturn(Insn.Raw);
+  return std::nullopt;
 }
 
 bool Decoder::isResumableTrap(const DecodedInsn &Insn) const {

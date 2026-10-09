@@ -59,6 +59,7 @@ add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64ExclusiveTests.cpp
   AArch64AtomicTests.cpp
   TIMEOUT 15
+  NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU)
 
 add_neverd_unittest(NeverDX64FPTests
@@ -446,7 +447,12 @@ endif()
 if(NEVERD_EMULATION_BACKEND_UNICORN)
   add_executable(NeverDUnicornDecodeTests
     ${CMAKE_SOURCE_DIR}/third_party/unicorn/tests/unit/test_x86_decode_boundaries.c)
-  target_include_directories(NeverDUnicornDecodeTests PRIVATE ${CMAKE_BINARY_DIR})
+  if(MSVC)
+    target_include_directories(NeverDUnicornDecodeTests PRIVATE
+      ${CMAKE_SOURCE_DIR}/third_party/unicorn/msvc)
+  else()
+    target_include_directories(NeverDUnicornDecodeTests PRIVATE ${CMAKE_BINARY_DIR})
+  endif()
   target_link_libraries(NeverDUnicornDecodeTests PRIVATE unicorn)
   add_dependencies(NeverDUnitTests NeverDUnicornDecodeTests)
   add_test(NAME UnicornDecode.RegisterU COMMAND NeverDUnicornDecodeTests

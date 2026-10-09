@@ -37,7 +37,7 @@ add_library(neverd_worker_graph STATIC GraphSnapshot.cpp GraphLayout.cpp)
 add_library(neverd_worker_format STATIC OperandFormat.cpp)
 target_link_libraries(neverd_worker_format PUBLIC neverd_worker_protocol)
 # Header-only tables shared with the engine, such as the wide characters.
-target_include_directories(neverd_worker_format PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
+target_include_directories(neverd_worker_format PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 target_link_libraries(neverd_worker_graph PUBLIC neverd_worker_protocol)
 add_executable(neverd-worker main.cpp Engine.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp)
 target_compile_features(neverd-worker PRIVATE cxx_std_20)
@@ -68,7 +68,11 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
     target_link_libraries(neverd-worker-test-server PRIVATE neverd_worker_graph neverd_worker_format Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME NeverDWorkerTransport
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transport_test.py"
+                "$<TARGET_FILE:neverd-worker-test-server>")
+    add_test(NAME NeverDWorkerAnalysisSnapshot
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/analysis_snapshot_test.py"
               "$<TARGET_FILE:neverd-worker-test-server>")
+    set_tests_properties(NeverDWorkerAnalysisSnapshot PROPERTIES TIMEOUT 30)
     set_tests_properties(NeverDWorkerTransport PROPERTIES TIMEOUT 40)
     add_test(NAME NeverDWorkerGraphTransport
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/graph_transport_test.py"
@@ -84,6 +88,14 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/real_engine_test.py"
                 "$<TARGET_FILE:neverd-worker>")
       set_tests_properties(NeverDWorkerRealEngine PROPERTIES TIMEOUT 60)
+      add_test(NAME NeverDWorkerUnicodePaths
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/unicode_path_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerUnicodePaths PROPERTIES TIMEOUT 90)
+      add_test(NAME NeverDWorkerPEBrowse
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/pe_browse_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerPEBrowse PROPERTIES TIMEOUT 60)
       add_test(NAME NeverDWorkerNativeMapping
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_mapping_test.py"
                 "$<TARGET_FILE:neverd-worker>")
@@ -92,6 +104,26 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/import_names_test.py"
                 "$<TARGET_FILE:neverd-worker>")
       set_tests_properties(NeverDWorkerImportNames PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+      add_test(NAME NeverDWorkerListingData
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/listing_data_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerListingData PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+      add_test(NAME NeverDWorkerNamesRebuild
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/names_rebuild_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerNamesRebuild PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+      add_test(NAME NeverDWorkerBinaryFile
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/binary_file_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerBinaryFile PROPERTIES TIMEOUT 60)
+      add_test(NAME NeverDWorkerBinaryPlatform
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/binary_platform_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerBinaryPlatform PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+      add_test(NAME NeverDWorkerBinaryISA
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/binary_isa_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerBinaryISA PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
       add_test(NAME NeverDWorkerFunctionEdits
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/function_edits_test.py"
                 "$<TARGET_FILE:neverd-worker>")

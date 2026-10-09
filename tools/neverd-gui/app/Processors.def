@@ -1,0 +1,64 @@
+//===- Processors.def - The load dialog's processor list ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// NEVERD_PROCESSOR_FAMILY(Id, Name): a folder of the processor list.
+// NEVERD_PROCESSOR(Family, ShortName, Name, Binary): a processor the engine
+// loads.  The short name is the engine's processor name, as
+// neverd_identify_json and neverd_session_arch_name spell it, or the binary
+// file processor "thumb"; Binary says whether a binary file can be read as
+// it.
+// NEVERD_PLATFORM(ShortName, Name): a platform whose conventions a binary
+// file's code can follow, by the engine's load option name; the empty name
+// reads the platform from the code.
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_PROCESSOR_FAMILY
+NEVERD_PROCESSOR_FAMILY(X86, QT_TRANSLATE_NOOP("Processors",
+                                               "Intel 80x86 processors"))
+NEVERD_PROCESSOR_FAMILY(ARM, QT_TRANSLATE_NOOP("Processors", "ARM processors"))
+NEVERD_PROCESSOR_FAMILY(VirtualMachine,
+                        QT_TRANSLATE_NOOP("Processors", "Virtual machines"))
+#undef NEVERD_PROCESSOR_FAMILY
+#endif
+
+#ifdef NEVERD_PROCESSOR
+NEVERD_PROCESSOR(X86, "x86",
+                 QT_TRANSLATE_NOOP("Processors",
+                                   "Intel 80386 and later (32-bit)"),
+                 true)
+NEVERD_PROCESSOR(X86, "x86_64",
+                 QT_TRANSLATE_NOOP("Processors", "AMD64 and Intel 64 (64-bit)"),
+                 true)
+// Both read ARM and Thumb code (AArch32), IDA's "ARM Little-endian"; a
+// binary file's code starts in the state each names.
+NEVERD_PROCESSOR(ARM, "arm",
+                 QT_TRANSLATE_NOOP("Processors",
+                                   "ARM Little-endian, starting in ARM state"),
+                 true)
+NEVERD_PROCESSOR(
+    ARM, "thumb",
+    QT_TRANSLATE_NOOP("Processors",
+                      "ARM Little-endian, starting in Thumb state"),
+    true)
+NEVERD_PROCESSOR(ARM, "aarch64",
+                 QT_TRANSLATE_NOOP("Processors", "ARM64 (AArch64)"), true)
+NEVERD_PROCESSOR(VirtualMachine, "evm",
+                 QT_TRANSLATE_NOOP("Processors", "Ethereum Virtual Machine"),
+                 false)
+NEVERD_PROCESSOR(VirtualMachine, "sbf",
+                 QT_TRANSLATE_NOOP("Processors", "Solana BPF"), false)
+#undef NEVERD_PROCESSOR
+#endif
+
+#ifdef NEVERD_PLATFORM
+NEVERD_PLATFORM("", QT_TRANSLATE_NOOP("Platforms", "Detect from the code"))
+NEVERD_PLATFORM("sysv", QT_TRANSLATE_NOOP("Platforms",
+                                          "System V (Linux, BSD, Android)"))
+NEVERD_PLATFORM("windows", QT_TRANSLATE_NOOP("Platforms", "Windows"))
+NEVERD_PLATFORM("darwin", QT_TRANSLATE_NOOP("Platforms", "Apple (macOS, iOS)"))
+#undef NEVERD_PLATFORM
+#endif

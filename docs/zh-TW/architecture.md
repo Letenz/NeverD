@@ -212,6 +212,8 @@ LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，
 
 `checkLowIRRefinement` 與 `checkBinaryLowIRRefinement` 提供針對確定性 LowIR 候選的獨立建構式精化證明。`LiftedBits` 在每次未定義值產生時選擇原提升器計算的位元；`ZeroBits` 僅在已審核的條件生效時選擇零。證書記錄每個動態出現，複製與溢出保留同一選擇。兩邊共用純量、實體堆疊、記憶體及旗標執行器與入口快照；所有可行路徑必須終止並涵蓋完整允許入口域，比較 RETURN 運算元、指定暫存器、原生系統旗標及兩邊已寫堆疊位元組的聯集，並維持入口位置保留約束。執行與關係檢查共用預算，另設 `MaxTerminalPairs` 上限。證書分別綁定候選、原始證據、見證策略及預算。見證失敗不排除其他見證；有限展開不證明迴圈不變量、特定 CPU 相等性或 C 後端等價性，也不取代未定義狀態獨立性證明。兩類關係介面皆拒絕與證明器記憶體暫存區重疊的輸入暫存值。 二進位精化 API 要求選項與觀察契約同時使用 `UserX64NoFaultV1`。
 
+`LowIRUndefinedIndependence` 將每次可選重試綁定至完整的原始查詢及其輸入域。`CompleteModel` 驗證完整候選賦值；`CompletedTargetFacts` 僅保留完成窮舉的單值結果。`ConditionalImplication` 管理有界重寫，以及屬於同一符號上下文、輸入域與完整求解器策略的未搜尋編碼，每個新目標仍須證明。`DomainCoverage` 證明因子蘊含關係與每個等值或布林分區。重試保留共用查詢/節點上限和原始求解器設定；未知、格式錯誤或不完整結果不能授予憑證。
+
 `checkLowIRLoopRefinement` 和 `checkBinaryLowIRLoopRefinement` 提供獨立型別的歸納憑證。配對切點和純量 LowIR 狀態範本只是證明候選；共用執行器檢查真實入口初始化、片段完整覆蓋、所有可行後繼、不變量保持及最終觀察項。每條切點間邊都必須讓有限無號字典序排名嚴格下降，參數反向投影檢查防止範本在機器狀態沒有進展時重設排名。範本以共同入口狀態為基底，或透過 `UseEntryPrefix` (`GeneralizeEntryPrefix = false`) 使用實際到達的配對前綴，並同時證明該前綴述詞保持。切點檢查所有修改的暫存器和整個堆疊框架，最終觀察保留先前迭代的記憶體影響。重複位址要求明確且經過證明的狀態選擇條件；自動發現不變量、排名及任意控制流程對齊不在此 API 範圍內。遺漏切點、錯誤不變量、回繞、未證明的終止性、不支援的語義或共用預算耗盡均拒絕核發憑證。摘要綁定計畫、所有原生片段及原始證據。有限精化和嚴格獨立性的語義不變；歸納精化仍不證明 C 後端或特定 CPU 的未定義位元選擇。
 
 以下前綴述詞保持要求適用於 `GeneralizeEntryPrefix = false`。
@@ -575,12 +577,12 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 
 | 目錄 | 職責 | 重要相依 |
 |------|------|----------|
-| `lib/loader` | 格式偵測、PE/COFF、ELF、Mach-O 載入；正規化 `BinaryImage`；函式發現 | LLVM Object API |
-| `lib/lift` | 手寫 x86/i386、AArch64、ARM32 指令語意 | IR 資料型別 |
+| `lib/loader` | 格式偵測、PE/COFF、ELF、Mach-O 載入；正規化 `BinaryImage`；函式發現 | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | 手寫 x86/i386、AArch64、ARM32 指令語意 | IR 資料型別, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native 解碼並分派到架構 lifter | `NeverDIR`、`NeverDLift` |
 | `lib/ir` | 共用型別以及 LowIR、MedIR、HighIR、intrinsic 定義/轉換 | 四個 IR 子元件 |
 | `lib/pipeline` | 函式偵測與 Low/Med/High/LLVM 路徑編排 | IR、decode、lift、LLVM backend、除錯資訊、IR pass |
-| `lib/backend/c` | HighIR 到 C 與 LLVM IR 到 C 的呈現 | IR |
+| `lib/backend/c` | HighIR 到 C 與 LLVM IR 到 C 的呈現，以及 HighC 的 Rust、Go 寫法 | IR |
 | `lib/backend/llvm` | MedIR 到 LLVM 的 lowering | IR |
 | `lib/backend/codegen` | 目標程式碼產生及 PE/ELF/Mach-O patch 與原地重寫 | IR、loader |
 | `lib/sdk` | 公開 C ABI、session 生命週期、查詢、持久化、外掛、lift/decompile/patch/audit/hunt 進入點 | 將引擎元件聚合為 `libneverd` |
@@ -589,8 +591,10 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 | `lib/sigs` | 簽章解析、資料庫與比對 | Loader |
 | `lib/libc` | 已知 libc 名稱與呼叫模型支援 | 獨立元件 |
 | `lib/safety` | 提升 IR 上的堆積生命週期稽核與拷貝越界獵取 | Symbolic、Solver |
-| `lib/support` | 共用二進位載入 helper | Loader |
+| `lib/support` | 共用二進位載入輔助函式及獨立 SHA-256 | Support：Loader；Digest：LLVM Support/TargetParser |
 | `lib/translate` | 帶版本的 guest state/策略/退出、固定 runtime ABI、受檢 guest memory、產生 IR/目標檔/LinkGraph 稽核、sealed 原生連結，以及實驗性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 與 JITLink 契約 |
+
+`NeverDDigest` 在 `lib/support` 中負責既有的一次性 SHA-256 實作，保留執行時特性檢查與可攜回退，不依賴 Loader 或 IR。`loader/InputDigest.h` 保留為轉送標頭。`NeverDIRLowValidation` 負責 `lowUndefinedOperationDigest`，Lift 明確連結此元件。v1 身分保留原有域、小端序字、全部六個已儲存輸入槽、來源資訊及原始碼座標。最多 199 個操作使用不超過 64 KiB 的序列化緩衝；更長範圍使用原增量路徑。兩條路徑列舉相同欄位並保留證據檢查。
 
 ### 分析與化簡的架構歸屬
 
@@ -743,6 +747,8 @@ KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::Paralle
 `lib/backend/codegen/CodeGen<ISA>.cpp`。
 
 共用 pass 中新增的目標專屬規則應放在依目標劃分的表中，而不是內聯判斷架構或格式。ISA 的事實是一個 `TargetRegInfo` 特性，在該 ISA 的 `lib/ir/TargetRegInfo<ISA>.cpp` 中設定。呼叫慣例規則是一個 `CallArgumentConvention` 條目，定義在獨立的 `lib/ir/med/abi/MedCallConvention<Name>.cpp` 中，並在 `MedCallConvention.cpp` 中登記。永不返回的函式依執行環境分別列在 `include/neverd/libc` 下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）。如此支援新目標只需新增檔案或表項，而無需在共用 pass 中加分支。
+
+可重定位目的檔中未定義符號的解析由一個共用層負責：`include/neverd/loader/ObjectExterns.h`。各格式的載入器收集重定位所引用的符號、是否有呼叫或分支到達每個符號（`<Format>ObjectRelocations.def`）、其 common 符號，以及某些參照經由其到達符號的單元（ELF 與 Mach-O 的 GOT 項、COFF 的 `__imp_` 指標）。該層把它們放在目的檔各節之後：一個可寫的 `extern` 區段和一個唯讀的單元區段。被呼叫的外部符號在那裡是匯入，資料則是符號；弱參照不配置位址，因為程式碼對它所做的空值判斷屬於程式本身。
 
 <a id="support-and-test-depth"></a>
 
@@ -1099,9 +1105,15 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` 共用 PEB 程序參數中的即時客體環境區塊。名稱限 ASCII 且忽略大小寫，值為 UTF-16。修改前驗證輸入、容量及可寫記憶體。快照不受後續修改影響，釋放時回收客體記憶體。模型的環境區塊上限為 64 KiB；字串與展開操作有明確邊界並檢查工作負載期限。未知指標歸屬、格式錯誤的環境區塊、ANSI 字碼頁及展開緩衝區重疊仍不支援。`WindowsEnvironmentTests.cpp` 在可用後端比較原創 x64/ARM64 範例，CI 必須執行獨立的原生 Windows 對照。
 
-`WindowsProcessHeap` 統一管理程序堆積的配置、`HeapReAlloc`、釋放和大小查詢。調整大小保留原有有效資料；`HEAP_ZERO_MEMORY` 清零新增位元組，`HEAP_REALLOC_IN_PLACE_ONLY` 禁止搬移。重新配置失敗時保留舊區塊，傳回 NULL 並設定 `ERROR_NOT_ENOUGH_MEMORY`（8），與原生觀測一致。獨立頁記憶體使縮減和釋放能歸還容量，分階段擴充及有界複製檢查工作負載期限。自訂堆積、例外產生旗標、未知歸屬及無法存取的複製或清零範圍均明確停止。`WindowsHeapTests.cpp` 涵蓋兩種 ISA、強制搬移、預算重用及失敗原子性；CI 也在原生 Windows 上執行同一原創 EXE。
+`WindowsProcessHeap` 統一管理程序堆積與有界私有堆積的配置、調整大小、釋放及大小查詢。配置移動後仍保留所屬堆積。`HeapDestroy` 只釋放對應私有堆積的物件並使控制代碼失效，其他堆積與環境快照繼續有效。未知或已銷毀的控制代碼、銷毀程序堆積及跨堆積操作均在修改前拒絕。私有堆積僅接受初始大小不超過一頁的可成長請求；固定上限及更大的初始認可量仍不支援。四個堆積的限制依存活數量計算，銷毀後可繼續建立，但舊控制代碼不會重新有效。控制代碼是模型中的不透明識別，不產生原生配置器標頭。`HeapReAlloc`: 調整大小保留原有位元組，遵守 `HEAP_ZERO_MEMORY` 與 `HEAP_REALLOC_IN_PLACE_ONLY`，配置失敗傳回 NULL 並設定 `ERROR_NOT_ENOUGH_MEMORY`（8）。獨立頁後備在縮小、釋放與銷毀時歸還容量，操作受執行期限約束。`WindowsHeapTests.cpp` 涵蓋兩種 ISA、所有權、生命週期周轉、失敗原子性與獨立原生 Windows 對照。
 
 `WindowsSystemModules` 為兩種 ISA 建立有界的 `ntdll.dll`、`kernelbase.dll` 與 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 和 `GetProcAddress` 共用映射基址；PEB/LDR 與 `MEM_IMAGE` 描述相同映像。靜態匯入、名稱查詢與客體 DLL 轉送使用相同 API 跳板及匯出解析器。提供者固定駐留，不執行客體初始化回呼，普通客體 DLL 全部卸載後不會阻止進入點傳回。標頭或匯出中繼資料改變會停止查詢。未知系統匯出名稱與非零系統序號查詢明確停止；已建模名稱的大小寫不符及空名稱傳回錯誤 127，空指標查詢傳回 87。產生的位元組與位址屬於模型策略，不重建特定 Windows DLL 配置、原生序號或跨提供者別名。`WindowsSystemTests.cpp` 對照原始 x64/ARM64 EXE 與原生 Windows，並獨立觀察八次初始執行緒傳回。
+
+`WindowsNativeServices` 統一管理明確的模型服務編號。帶編號的 Nt/Zw 別名共用入口，並依序言中宣告的編號排列。x64 原生服務邊界從 R10 讀取首參，保留 Win64 樁函式的堆疊配置，包括 RSP + 0x28 的堆疊參數及入口對齊要求。返回時繼續執行下一條指令，維持 RSP，並套用 SYSCALL 的 RCX/R11 覆寫語意。複製或行內入口記錄 `direct_service_number`，不構成匯出函式呼叫證據。未知編號與未實作服務會明確停止；模型編號不能代表任意 Windows 版本。 [Nt/Zw](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-nt-and-zw-versions-of-the-native-system-services-routines). 內部執行觀察必須見證兩條入口序言指令，才認定匯出函式呼叫。跳入入口中部即使 RCX 等於 R10，仍保留編號依賴。此觀察在沒有呼叫端觀察器時也生效，且不會向呼叫端要求範圍之外發送觀察回呼。
+
+`WindowsProcessFiles.cpp` 為 `KnownDlls` 中固定駐留、非不透明的提供者管理 `ZwOpenSection` 控制代碼。僅支援自動位址、零位移的完整檢視，內容來自載入器的不可變映像；`VirtualMemory` 記錄 `MEM_IMAGE` 所有權，`AddressSpace` 保留映像頁面權限。關閉控制代碼不會釋放檢視。不支援未知命名空間、寫入存取、部分或固定位址檢視，以及沒有既有 API 入口身分的執行。`IntegerABI` 統一定位 x64 與 ARM64 映射呼叫的兩個尾端參數，ULONG 欄位忽略未定義的高位元。目前執行緒資訊類別 `0x11` 保存隱藏狀態並嚴格檢查緩衝區長度；類別 `4` 將要求的親和性與模型公布的行程遮罩取交集；沒有可用處理器時傳回 `STATUS_INVALID_PARAMETER`。 唯讀 section 控制代碼要求 `PAGE_READWRITE` 時傳回 `STATUS_ACCESS_DENIED`，且不發布檢視。類別 `0x11` 保留 Windows 的探測順序：非空設定緩衝區要求 ULONG 對齊，查詢緩衝區從四位元組起要求相同對齊；零長度設定忽略輸入指標。
+
+目前執行緒的臨界區在 Kernel32 與 ntdll 呼叫之間共享初始化、遞迴進入、嘗試進入、平衡離開與刪除狀態。`DeleteCriticalSection` 與 `RtlDeleteCriticalSection` 要求物件已初始化且無人持有；刪除後可重新初始化。未初始化、重複初始化、已銷毀或損壞的狀態會在寫入前遭拒絕。Rtl 初始化傳回 NTSTATUS 零，BOOL 自旋初始化傳回真。單處理器設定的自旋計數為零，不模擬執行緒間競爭。
 
 `WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。ARM64 以堆疊框架為基礎的 SEH／展開、偵錯器派送及執行／防護頁例外仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。
 
@@ -1126,6 +1138,10 @@ Windows 行程時間策略由 `os/windows/process/` 的 `WindowsProcessTime.cpp`
 `lib/unpack` 分四層恢復加殼鏡像。`core` 負責編排和格式註冊表。`format/pe` 驗證容器並重建觀察到的記憶體、導入和中繼資料；`PETLS.cpp` 根據載入器分配資訊及觀察到的回呼驗證替換的 TLS 記錄。不使用保護器註冊表或靜態外殼簽章選擇入口。`dynamic` 透過 `observeProcess` 觀察來賓行程：`Observation.def` 把每種容器與指令集對應到一個行程設定檔，並給出每種指令集的堆疊指標和指令視窗。新增一個目標只需一列表項和一個模組目錄，表中沒有對應列的輸入會被依名稱拒絕。`ExecutionSession` 負責執行監視；`ProcessObserver` 讀取已停止的行程並選擇下一個停止點，但不能改變來賓狀態。模擬層只知道 `defer_unmodeled`，它把未建模的匯入繫結到一旦執行就停止的不透明入口。參見[脫殼](unpack.md)。 延遲載入允許可執行回呼或入口目標位於零填充記憶體，由先前的初始化器產生程式碼。回呼陣列與 TLS 配置中繼資料仍須有經驗證的檔案內容；一般嚴格載入保留檔案覆蓋檢查。作業系統模型提供呼叫歸屬，並在準備呼叫或恢復暫停的呼叫者時通知觀察器。轉移監視在這些邊界重新設定，涵蓋回呼與產生的入口位於同一頁的情況。
 
 `WindowsLibraryHost.cpp` 負責 DLL 宿主建構，Windows 載入器負責一般載入與卸載生命週期。`ProcessView::inputModule()` 區分觀察輸入與宿主 EXE，允許延後建立初始快照。`ProcessView::callFrame()` 透過 `IntegerABI` 讀取整數參數與返回事實；`dynamic/ProcessTransfer` 負責匹配返回位址與堆疊的完成證據。僅 `PETLS.cpp` 決定該證據是否完成程序附加回呼。
+
+`ProcessView::heapAllocations()` 在停止邊界提供 Windows `Services` 所擁有的存活堆積清單，不讀取客體指標或修改狀態。`dynamic/ProcessTransfer.cpp` 驗證清單，並記錄擷取的映像與 TLS 位元組中的保守位址匹配；僅由 `core/Unpack.cpp` 決定 `unsupported_state` 或明確要求的 `snapshot`。PE 寫出器不會猜測堆積重定位或啟動語義。
+
+`PEDelayImports.cpp` 負責新處理程序中的延遲載入修復及中繼資料儲存排除。COFF 載入器根據描述符來源記錄 `Import::IsDelayImport`，Windows 執行准入僅比較一般匯入。經過驗證的延遲描述符為已解析單元的重新繫結提供準確範圍，待解析的內部跳板保留按需行為。獨立查找表限定繫結數量，保留後續待解析單元。無效狀態明確報錯。
 
 `ExportObserver` 也觀察駐留來賓相依的可執行匯出；建模提供者仍透過服務分派觀察。輸入映像自身匯出被排除。模組變更會更新觀察點，每次修復仍須由即時匯出身分授權。發現紀錄不超過宣告的匯入上限。DLL 夾具同時要求修復系統 API 與來賓相依的跳板，並透過原生載入驗證不殘留模擬位址。
 
@@ -1178,6 +1194,8 @@ Combine 的精確強匯入 `Publisher.sink(receiveValue:)` 多載在 `Failure ==
 HighIR 在複製尾部呼叫前查詢 `SourceCallTypeHint::requiresUniqueSourceOccurrence`。布林結果、回呼參數、不可變目標、框架中的值見證、虛擬分派和原生 Swift 接收者憑據各自對應一次原始機器呼叫；返回尾部、跳轉尾部和巢狀出口改寫均保留共用求值位置，即使複製後的原始碼路徑互斥也不複製憑據。一般呼叫宣告繼續使用原有複製規則。發布仍重新證明目前的機器、ABI、運算元和動態目標，並要求唯一原始碼求值。測試涵蓋全部憑據類型、巢狀運算式、一般呼叫最佳化，以及完整 ARM64 共用儲存和回呼尾部與產生 C 在 O0/O2 下的對照。
 
 共用 `SourceABI` 所有者區分邏輯上的按值結構體與實體位址載體。Darwin ARM64 C 宣告中的六個或十六個 double 保留完整結構體型別，透過八位元組整數暫存器或自然對齊堆疊槽傳參，獨立於浮點引數暫存器與 x8 返回指標。ABI 相等判斷與投影分組保留此區別、呼叫慣例及引數角色，拒絕部分、重疊、不相容或過時載體。僅有宣告不能繫結 LowIR 呼叫、投影入口、輸出 HighC 呼叫或授權框架借用，仍需獨立副本儲存證明。編譯器與原生 ABI 測試涵蓋暫存器耗盡、堆疊配置、任意浮點位元模式、副本改寫隔離及獨立間接返回；這不是完整 `setTransform:` 恢復測試。
+
+除錯簽名依參數的到達位置而非序號為復原出的參數命名。`SourceParameterPlacement` 依目標的一般呼叫慣例放置每個原始碼參數：System V x86-64、Microsoft x64、AAPCS64 及 i386 cdecl/stdcall，各佔一個檔案。它給出承載各參數片段的暫存器與堆疊槽，以及隱藏的返回指標。HighC 將復原出的參數繫結到其暫存器或入口堆疊偏移處的片段；後續片段以參數名加位元組偏移命名（`p_8`），僅當該位置以原始位元組承載完整值時才採用宣告型別。放置在規則無法確定位置的第一個參數處停止：原始碼未說明傳遞方式的結構體、寬於暫存器的純量、對齊未知的記憶體傳遞結構體，或 Apple arm64 的堆疊緊湊排列。其後的參數保留機器名稱；Go 等擁有自身呼叫慣例的語言中的函式不做任何繫結。DWARF 載入器只為參數與返回型別提供傳遞方式和純量配置：C 結構體按值傳遞，C++ 類別依 `DW_AT_calling_convention` 的說明傳遞，`_Complex` 值按複數傳遞。Rust 結構體維持未知，因為 Rust 自身 ABI 與 `extern "C"` 對部分結構體的傳遞方式不同。PDB 結構體遵循 Microsoft C++ ABI：i386 以原始位元組傳遞，x64 則在同一位置以原始位元組或位址傳遞。呼叫原型與引數轉換仍只來自可依位置對應的簽名，即參數全為整數或全為浮點值。
 
 共享的 `SourceFrameAnalysis` 在獨立效果憑據說明消費方及完整間接結果產生者後，可驗證原始呼叫處已初始化的私有傳值副本。分析涵蓋全部到達路徑和迴圈回邊、精確有效範圍、其他引數別名及後續使用。消費副本會使初始化事實和已儲存位元組身分失效；後續讀取必須先有新的確定寫入。可能寫入和堆疊框架釋放也會清除初始化事實，同時保留 Swift scratch 的有效生命週期義務。查詢只有在完整框架恢復證明通過後才傳回引數範圍，不授予機器身分、SDK 效果、呼叫繫結或原始碼發布權限。測試涵蓋分支、迴圈、部分寫入、別名及保留的 scratch；真實 ObjC/CALayer 的 ARM64 案例拒絕讀取已消費副本，接受獨立證明已初始化且可捨棄的副本。
 

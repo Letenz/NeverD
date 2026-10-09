@@ -6,4 +6,7 @@
 - Installed: 2026-09-09
 - Method: Codex skill-installer, Git sparse checkout
 
-The upstream skill files were installed without modification. This file records local installation provenance.
+The upstream skill files were originally installed without modification. NeverD
+now adds a desktop design profile in `references/neverd-desktop.md` and routes to
+it from `SKILL.md`. The upstream copyright, license, and general guidance are
+retained. This file records installation provenance and those local additions.

@@ -17,19 +17,24 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/ARMLifter.h"
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Debug.h"
-
-#include <cstring>
 
 #define DEBUG_TYPE "neverd-lift-arm"
 
 namespace neverd {
 
 bool isAliasMnemonic(const cs_insn *Insn, const char *Alias) {
-  size_t AliasLen = std::strlen(Alias);
-  return std::strcmp(Insn->mnemonic, Alias) == 0 ||
-         (std::strncmp(Insn->mnemonic, Alias, AliasLen) == 0 &&
-          std::strcmp(Insn->mnemonic + AliasLen, ".w") == 0);
+  llvm::StringRef Mnemonic(Insn->mnemonic);
+  if (!Mnemonic.consume_front(Alias))
+    return false;
+  // Every ARM condition is spelled with two letters.
+  if (Insn->detail && isPredicated(Insn->detail->arm)) {
+    if (Mnemonic.size() < 2 || Mnemonic.front() == '.')
+      return false;
+    Mnemonic = Mnemonic.drop_front(2);
+  }
+  return Mnemonic.empty() || Mnemonic == ".w";
 }
 
 bool ARMLifter::liftMem(LiftState &S, const cs_insn *Insn, const cs_arm &ARM) {

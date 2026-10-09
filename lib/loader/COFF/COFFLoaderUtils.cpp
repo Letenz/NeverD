@@ -375,36 +375,6 @@ void detail::CodeViewIdentityRegistry::observeMalformed() {
   Identity.reset();
 }
 
-void addImportedSymbol(const llvm::object::imported_symbol_iterator &SI,
-                       llvm::StringRef ModuleName, va_t IATAddr,
-                       BinaryImage &Img) {
-  Import Imp;
-  Imp.Module = ModuleName.str();
-  Imp.IATAddr = IATAddr;
-
-  bool ByOrd = false;
-  if (auto Err = SI->isOrdinal(ByOrd))
-    llvm::consumeError(std::move(Err));
-
-  if (ByOrd) {
-    uint16_t Ord = 0;
-    if (auto Err = SI->getOrdinal(Ord))
-      llvm::consumeError(std::move(Err));
-    Imp.Ordinal = Ord;
-    Imp.Name = (kOrdinalPrefix + llvm::Twine(Ord)).str();
-  } else {
-    llvm::StringRef SymName;
-    if (auto Err = SI->getSymbolName(SymName))
-      llvm::consumeError(std::move(Err));
-    else
-      Imp.Name = SymName.str();
-  }
-
-  Img.recordImportStorageSlot(IATAddr, Imp.Name, 0,
-                              ImportStorageEvidence::ImportDirectory);
-  Img.Imports.push_back(std::move(Imp));
-}
-
 size_t
 parseDelayImportDescriptor(const delay_import_directory_table_entry &Desc,
                            BinaryImage &Img) {
@@ -432,6 +402,7 @@ parseDelayImportDescriptor(const delay_import_directory_table_entry &Desc,
     Import Imp;
     Imp.Module = (llvm::Twine(Resolved->Module) + kDelayImportSuffix).str();
     Imp.IATAddr = IATSlot;
+    Imp.IsDelayImport = true;
 
     const uint64_t OrdinalMask =
         Img.is64Bit() ? (uint64_t(1) << 63) : (uint64_t(1) << 31);
@@ -460,6 +431,16 @@ parseDelayImportDescriptor(const delay_import_directory_table_entry &Desc,
 }
 
 void parseDelayImports(const COFFObjectFile &Obj, BinaryImage &Img) {
+  const auto *Directory = Obj.getDataDirectory(DELAY_IMPORT_DESCRIPTOR);
+  if (!Directory || (!Directory->RelativeVirtualAddress && !Directory->Size))
+    return;
+  if (!Directory->RelativeVirtualAddress ||
+      Directory->Size < sizeof(delay_import_directory_table_entry)) {
+    Img.addLoadDiagnostic("pe.delay_import_directory_invalid",
+                          "PE delay-import directory is incomplete; "
+                          "delay imports were ignored.");
+    return;
+  }
   [[maybe_unused]] size_t Added = 0;
   for (auto I = Obj.delay_import_directory_begin(),
             E = Obj.delay_import_directory_end();
@@ -693,7 +674,14 @@ void extractLoadCfgFields(uintptr_t CfgPtr, size_t AvailableSize,
     if (!Has(Offset, Width) || SlotVA < ImageBase ||
         SlotVA > std::numeric_limits<va_t>::max())
       return;
-    Img.recordRuntimeCallablePointerSlot(static_cast<va_t>(SlotVA), Kind);
+    if (!Img.recordRuntimeCallablePointerSlot(static_cast<va_t>(SlotVA), Kind))
+      return;
+    // Until the loader writes the slot, it names a function of this image
+    // the runtime calls instead, such as _guard_check_icall_nop.
+    if (const uint8_t *P =
+            Img.readVA(static_cast<va_t>(SlotVA), Img.getPointerSize()))
+      if (const uint64_t Default = readPtr(P, Img.is64Bit()))
+        Img.recordRuntimeFunction(static_cast<va_t>(Default));
   };
 
   if (Has(offsetof(LoadCfgT, SecurityCookie), sizeof(Cfg.SecurityCookie)) &&

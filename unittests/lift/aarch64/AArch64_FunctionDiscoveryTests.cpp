@@ -609,6 +609,51 @@ TEST(AArch64FunctionDiscovery,
             1u);
 }
 
+TEST(AArch64FunctionDiscovery, SectionlessPLTHeaderIsLoaderMachinery) {
+  for (bool Bti : {false, true})
+    for (bool HasBinding : {false, true}) {
+      SCOPED_TRACE(Bti);
+      SCOPED_TRACE(HasBinding);
+      constexpr va_t Entry = 0x10CC0;
+      constexpr va_t Slot = 0x30EB0;
+      BinaryImage Img;
+      Img.Arch = Arch::AArch64;
+      Img.Bits = Bitness::Bits64;
+      Img.Format = BinaryFormat::ELF;
+      // Padding gives the ordinary discovery scan its false prologue seed.
+      std::vector<uint32_t> Words = {0, 0, 0, 0};
+      if (Bti)
+        Words.push_back(0xD503245Fu);
+      Words.insert(Words.end(), {0xa9bf7bf0u, 0x90000110u, 0xF9475A11u,
+                                 0x913AC210u, 0xD61F0220u});
+      Segment Text;
+      Text.VA = Entry - 16;
+      Text.Size = Words.size() * 4;
+      Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      Text.Data.resize(Text.Size);
+      for (size_t I = 0; I < Words.size(); ++I)
+        writeLE<uint32_t>(Text.Data.data() + I * 4, Words[I]);
+      Img.Segments.push_back(std::move(Text));
+      Segment Data;
+      Data.VA = Slot;
+      Data.Size = 8;
+      Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      Data.Data.resize(8);
+      Img.Segments.push_back(std::move(Data));
+      if (HasBinding)
+        ASSERT_TRUE(Img.recordRuntimeCallablePointerSlot(
+            Slot, RuntimeCallablePointerSlotKind::ELFLazyResolver));
+      scanImportThunks(Img);
+      EXPECT_EQ(Img.isImportStubAt(Entry), HasBinding);
+      EXPECT_EQ(Img.findImportAt(Entry), nullptr);
+      scanPaddingBoundaries(Img);
+      if (HasBinding) {
+        EXPECT_EQ(Img.findSymbolAt(Entry), nullptr);
+        EXPECT_EQ(Img.findSymbolAt(Entry + (Bti ? 4 : 0)), nullptr);
+      }
+    }
+}
+
 TEST(AArch64FunctionDiscovery, RecognizesCanonicalELFPLTVeneer) {
   constexpr va_t StubVA = 0x10CC0;
   constexpr va_t IATAddr = 0x30EB0;
@@ -641,6 +686,55 @@ TEST(AArch64FunctionDiscovery, RecognizesCanonicalELFPLTVeneer) {
   ASSERT_NE(Stub, nullptr);
   EXPECT_TRUE(Stub->IsFunc);
   EXPECT_EQ(Stub->Size, 16u);
+}
+
+// A BTI build (`-z force-bti`) starts each PLT entry with the landing pad its
+// callers branch to, and a PAC one (`-z pac-plt`) authenticates x17 before
+// the branch.  The veneer, and the import a call to it reaches, start at the
+// landing pad.
+TEST(AArch64FunctionDiscovery, RecognizesBTIAndPACELFPLTVeneers) {
+  constexpr va_t StubVA = 0x10CC0;
+  constexpr va_t IATAddr = 0x30EB0;
+  for (const bool Authenticates : {false, true}) {
+    SCOPED_TRACE(Authenticates ? "bti c ... autia1716" : "bti c");
+    std::vector<uint32_t> Words = {
+        0xD503245Fu, // bti c
+        0x90000110u, // adrp x16, 0x30000
+        0xF9475A11u, // ldr x17, [x16, #0xeb0]
+        0x913AC210u, // add x16, x16, #0xeb0
+    };
+    if (Authenticates)
+      Words.push_back(0xD503219Fu); // autia1716
+    Words.push_back(0xD61F0220u);   // br x17
+
+    BinaryImage Img;
+    Img.Arch = Arch::AArch64;
+    Img.Bits = Bitness::Bits64;
+    Img.Format = BinaryFormat::ELF;
+    Segment Text;
+    Text.Name = ".plt";
+    Text.VA = StubVA;
+    Text.Size = Words.size() * sizeof(uint32_t);
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(Text.Size);
+    for (size_t I = 0; I < Words.size(); ++I)
+      writeLE<uint32_t>(Text.Data.data() + I * sizeof(uint32_t), Words[I]);
+    const uint64_t VeneerSize = Text.Size;
+    Img.Segments.push_back(std::move(Text));
+    Img.Imports.push_back({"extern", "getenv", 0, IATAddr});
+
+    scanImportThunks(Img);
+
+    const Import *Resolved = Img.findImportAt(StubVA);
+    ASSERT_NE(Resolved, nullptr);
+    EXPECT_EQ(Resolved->Name, "getenv");
+    EXPECT_EQ(Img.findImportAt(StubVA + sizeof(uint32_t)), nullptr);
+    const Symbol *Stub = Img.findSymbolAt(StubVA);
+    ASSERT_NE(Stub, nullptr);
+    EXPECT_TRUE(Stub->IsFunc);
+    EXPECT_EQ(Stub->Size, VeneerSize);
+    EXPECT_EQ(Img.findSymbolAt(StubVA + sizeof(uint32_t)), nullptr);
+  }
 }
 
 TEST(AArch64FunctionDiscovery,

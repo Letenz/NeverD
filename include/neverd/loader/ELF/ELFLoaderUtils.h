@@ -26,9 +26,10 @@ namespace neverd {
 namespace elf_loader {
 
 /// Parse the .dynamic section and populate DynInfo (NEEDED, SONAME, RPATH,
-/// INIT/FINI).
+/// INIT/FINI).  Its string table is the one of \p Sections its sh_link names.
 template <typename ELFT>
 void parseDynamic(const llvm::object::ELFFile<ELFT> &ELF,
+                  llvm::ArrayRef<typename ELFT::Shdr> Sections,
                   const typename ELFT::Shdr &DynamicSH, const uint8_t *Data,
                   size_t Size, BinaryImage &Img);
 
@@ -59,12 +60,27 @@ bool recordImportSlotBinding(uint32_t RelocType, va_t Slot,
 bool recordIRelativeResolver(uint32_t RelocType, va_t Slot,
                              std::optional<int64_t> Addend, BinaryImage &Img);
 
+/// Record the slot of a dynamic relocation the dynamic linker fills with a
+/// function only it chooses -- a GNU indirect function's implementation
+/// (IRELATIVE) or a TLS descriptor's resolver: a call through it calls what
+/// the slot holds when the call runs.
+bool recordRuntimeCallableRelocation(uint32_t RelocType, va_t Slot,
+                                     BinaryImage &Img);
+
+/// What the dynamic linker writes for relocation \p RelocType bound to a
+/// symbol at \p SymbolVA with \p Addend; none for a type that does not store
+/// its symbol's address.
+std::optional<uint64_t> symbolRelocationValue(Arch Target, uint32_t RelocType,
+                                              uint64_t SymbolVA,
+                                              int64_t Addend);
+
 /// Parse .rela.plt / .rel.plt entries and populate Img.Imports with
-/// PLT-resolved external symbols.
+/// PLT-resolved external symbols.  \p ShStrTab names \p Sections.
 template <typename ELFT>
 void parsePLTImports(const llvm::object::ELFFile<ELFT> &ELF,
                      llvm::ArrayRef<typename ELFT::Shdr> Sections,
-                     const uint8_t *Data, size_t Size, BinaryImage &Img);
+                     llvm::StringRef ShStrTab, const uint8_t *Data, size_t Size,
+                     BinaryImage &Img);
 
 /// Attach each ARM `.plt` veneer to the import it forwards to.
 ///

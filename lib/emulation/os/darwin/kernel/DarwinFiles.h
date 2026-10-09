@@ -9,11 +9,14 @@
 #include "DarwinKernel.h"
 
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 #include <variant>
 
 namespace neverd::emulation::darwin_model {
 llvm::Error validateFileOptions(const DarwinFileOptions &Options);
+bool validExtendedAttributeName(llvm::StringRef Name);
+bool ordinaryExtendedAttributeName(llvm::StringRef Name);
 
 class DarwinFiles {
 public:
@@ -72,7 +75,13 @@ private:
     std::shared_ptr<DirectoryNode> Parent;
     std::optional<DirectoryIdentity> Identity;
     const DarwinFileMetadata *Metadata = nullptr;
+    const std::vector<DarwinExtendedAttribute> *ExtendedAttributes = nullptr;
+    std::optional<DarwinFileMetadata> CurrentMetadata;
+    uint32_t DirectoryEntrySize = 0;
+    const DarwinFileTime *MutationTime = nullptr;
     const DarwinDirectoryContents *Snapshot = nullptr;
+    const DarwinDirectoryEnumerationPolicy *EnumerationPolicy = nullptr;
+    uint64_t EnumerationVersion = 0;
     uint64_t PathCharge = 0;
     bool Created = false;
     bool Linked = true;
@@ -98,6 +107,7 @@ private:
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> Modified;
     const DarwinFileMetadata *InitialMetadata = nullptr;
+    const std::vector<DarwinExtendedAttribute> *ExtendedAttributes = nullptr;
     std::optional<DarwinFileMetadata> CurrentMetadata;
     const DarwinFileMutationPolicy *Policy = nullptr;
     std::optional<llvm::BitVector> Allocated;
@@ -117,6 +127,26 @@ private:
       return CurrentMetadata ? &*CurrentMetadata : InitialMetadata;
     }
   };
+  struct LinkNode {
+    llvm::ArrayRef<uint8_t> Initial;
+    std::optional<std::vector<uint8_t>> CreatedTarget;
+    const DarwinFileMetadata *Metadata = nullptr;
+    const std::vector<DarwinExtendedAttribute> *ExtendedAttributes = nullptr;
+    std::optional<DarwinFileMetadata> CurrentMetadata;
+    const DarwinFileTime *MutationTime = nullptr;
+    std::string Path;
+    std::shared_ptr<DirectoryNode> Parent;
+    bool Protected = false;
+    bool Created = false;
+    bool MetadataInvalidated = false;
+    uint64_t PathCharge = 0;
+    llvm::ArrayRef<uint8_t> bytes() const {
+      return CreatedTarget ? llvm::ArrayRef<uint8_t>(*CreatedTarget) : Initial;
+    }
+    uint64_t dynamicCharge() const {
+      return PathCharge + (CreatedTarget ? CreatedTarget->size() : 0);
+    }
+  };
   struct Description {
     Kind Type;
     llvm::ArrayRef<uint8_t> Input;
@@ -128,8 +158,16 @@ private:
     Terminal FinalComponent = Terminal::Ordinary;
     std::shared_ptr<DirectoryNode> Directory;
     bool FinalParentUnlinked = false;
+    std::shared_ptr<LinkNode> Link;
+    std::optional<uint64_t> DirectoryVersion;
     llvm::ArrayRef<uint8_t> bytes() const {
-      return File ? File->bytes() : Input;
+      return File ? File->bytes() : Link ? Link->bytes() : Input;
+    }
+    llvm::StringRef path() const {
+      return File        ? File->Path
+             : Directory ? Directory->Path
+             : Link      ? Link->Path
+                         : Path;
     }
   };
   struct Descriptor {
@@ -151,6 +189,7 @@ private:
   const uint32_t EffectiveUID;
   std::map<uint32_t, Descriptor> Descriptors;
   std::map<std::string, std::shared_ptr<Contents>> Nodes;
+  std::map<std::string, std::shared_ptr<LinkNode>> Links;
   std::vector<std::shared_ptr<Contents>> Unlinked;
   std::map<std::string, std::shared_ptr<DirectoryNode>> Directories;
   std::vector<std::shared_ptr<DirectoryNode>> UnlinkedDirectories;
@@ -168,7 +207,7 @@ private:
   void reclaimUnlinked();
   std::shared_ptr<DirectoryNode> directoryNode(const std::string &Path);
   std::shared_ptr<DirectoryNode> initialDirectoryNode(const std::string &Path);
-  uint32_t dynamicDirectoryEntries() const;
+  uint32_t dynamicEntries() const;
   bool mutableDirectory(const std::string &Path) const;
   std::optional<DirectoryIdentity> directoryIdentity(const std::string &Path);
   llvm::Expected<Pathname> readPath(uint64_t Address);
@@ -185,21 +224,65 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   access(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
          ProcessResult &Result, LinkPolicy Links = {true, false});
+  std::optional<ServiceResult> pathconf(const Description &File, uint32_t Name,
+                                        ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   status(const Description &File, uint64_t Address, ProcessResult &Result);
+  const DarwinFileMetadata *metadata(const Description &File) const;
+  // Complete records have one validity decision, distinct from retained
+  // identity observations used for namespace consistency.
+  using StatusMetadata = std::variant<const DarwinFileMetadata *, const char *>;
+  StatusMetadata statusMetadata(const Description &File) const;
+  struct AttributeRequest {
+    uint16_t BitmapCount;
+    std::array<uint32_t, 5> Masks;
+  };
+  using AttributeInput = std::variant<AttributeRequest, uint32_t, const char *>;
+  llvm::Expected<AttributeInput> readAttributes(uint64_t Address);
+  llvm::Expected<Pathname> readExtendedAttributeName(uint64_t Address);
+  const std::vector<DarwinExtendedAttribute> *
+  extendedAttributes(const Description &File) const;
+  llvm::Expected<std::optional<ServiceResult>>
+  extendedAttributeRead(ServiceKind Service, const ProcessServiceEvent &Event,
+                        ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  extendedAttributeResult(const Description &File,
+                          std::optional<llvm::StringRef> Name, uint64_t Address,
+                          uint64_t Size, uint32_t Position, uint32_t Flags,
+                          bool Held, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  attributeList(const Description &File, const AttributeRequest &Request,
+                uint64_t Address, uint64_t Size, uint64_t Options,
+                ProcessResult &Result);
+  struct DirectoryEntryIdentity {
+    llvm::StringRef Name;
+    uint8_t Type;
+    std::optional<uint64_t> Inode;
+  };
+  /// Linked membership and inode identity are independent of complete stat
+  /// validity. No allocation occurs while counting committed child names.
+  void forEachDirectoryChild(
+      const DirectoryNode &Node,
+      llvm::function_ref<void(const DirectoryEntryIdentity &)> Visit) const;
+  std::optional<DarwinDirectoryContents>
+  enumerationContents(const DirectoryNode &Node) const;
   llvm::Expected<std::optional<ServiceResult>>
   statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
              ProcessResult &Result, LinkPolicy Links = {true, false});
   llvm::Expected<std::optional<ServiceResult>>
   readLink(uint64_t Path, uint64_t Address, uint64_t Size, uint32_t DirectoryFD,
            ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  makeSymbolicLink(uint64_t Target, uint64_t Path, uint32_t DirectoryFD,
+                   ProcessResult &Result);
   static std::optional<uint32_t> rootRemovalError(const Description &File);
   llvm::Expected<std::optional<ServiceResult>> unlink(uint64_t Path,
                                                       uint32_t DirectoryFD,
                                                       ProcessResult &Result,
                                                       bool NoExpansion = false);
   llvm::Expected<std::optional<ServiceResult>>
-  makeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
+  makeDirectory(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
+                ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   removeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result,
                   bool NoExpansion = false);
@@ -213,6 +296,13 @@ private:
                  const std::shared_ptr<DirectoryNode> &TargetParent, bool Swap,
                  ProcessResult &Result);
   void updateNamespaceMetadata(Contents &Node, bool Removed);
+  void updateNamespaceMetadata(LinkNode &Node);
+  void updateDirectoryMetadata(DirectoryNode &Node, bool ContentsChanged);
+  DarwinFileMetadata createdMetadata(const DirectoryIdentity &Parent,
+                                     uint16_t Mode, uint16_t LinkCount,
+                                     uint64_t Size = 0,
+                                     uint64_t Blocks = 0) const;
+  void consumeCreatedInode();
   llvm::Expected<std::optional<ServiceResult>>
   create(Description &File, uint32_t Mode, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>

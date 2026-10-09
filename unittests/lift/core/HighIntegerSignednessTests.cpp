@@ -287,6 +287,37 @@ int main(void) {
 )");
 }
 
+TEST(HighIntegerSignedness, AShiftCountReadsUnsigned) {
+  // return -1 << ((int32_t)((uint32_t)x + 1) & 63): MedToHigh leaves the
+  // masked count signed, which prints its wrapping sum through a bit_cast.
+  // The count has no signedness of its own to keep.
+  auto Int32 = [](NdOp Op, ExprPtr A, ExprPtr B) {
+    auto E = HighExpr::makeBinop(Op, std::move(A), std::move(B));
+    E->Type = NdType::makeInt(4, true);
+    return E;
+  };
+  auto Low = HighExpr::makeBinop(NdOp::SUBBYTES, input(), constant(0));
+  Low->Type = NdType::makeInt(4, true);
+  auto Count =
+      Int32(NdOp::INT_AND, Int32(NdOp::INT_ADD, Low, HighExpr::makeConst(1, 4)),
+            HighExpr::makeConst(63, 4));
+  HighFunc F = function(
+      "mask", {result(op(NdOp::INT_LEFT, constant(~uint64_t{0}), Count))});
+  chooseIntegerSignedness(F);
+  const std::string Source = emit({F});
+  EXPECT_EQ(Source.find("__builtin_bit_cast"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+int main(void) {
+  const uint64_t xs[] = {0, 1, 62, 63, 64, 0x7FFFFFFFull, 0xFFFFFFFFull,
+                         0x123456789ull};
+  for (unsigned i = 0; i < sizeof xs / sizeof xs[0]; ++i)
+    if (mask(xs[i]) != ~0ull << (((uint32_t)xs[i] + 1) & 63))
+      return 1;
+  return 0;
+}
+)");
+}
+
 TEST(HighIntegerSignedness, NonIntegerLocalsKeepTheirTypes) {
   HighFunc F = function(
       "pointer", {assign(local(1, NdType::makePtr()), input()),

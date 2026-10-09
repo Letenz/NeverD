@@ -32,13 +32,27 @@ namespace neverd {
 
 struct BinaryImage;
 
+/// \p Ty as C.  Throws std::invalid_argument for a type C cannot spell, such
+/// as a record with neither a source name nor a supported layout.
 std::string typeToC(const TypeRef &Ty);
+
+/// Whether typeToC spells \p Ty, for a caller that has another type to use
+/// when it does not, such as the machine type of a debug parameter.
+bool hasCSpelling(const TypeRef &Ty);
 
 /// Readonly printable C/wchar image bytes as `"..."` / `L"..."`.
 /// Non-ASCII or writable/executable bytes stay unnamed. Empty NUL-only
-/// strings stay unnamed unless \p AllowEmpty (MSVC `??_C@` publics).
+/// strings stay unnamed unless \p AllowEmpty (MSVC `??_C@` publics).  Bytes
+/// that belong to a data object the image's symbols size stay unnamed too,
+/// unless the object is the string: an address inside the object points
+/// into it, and an object whose bytes go on past the terminator with more
+/// than zeros holds more than the text.
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
                                               bool AllowEmpty = false);
+
+/// Whether C text starts with a string literal (`"..."`, `L"..."`, `u8"..."`,
+/// `u"..."`, `U"..."`), which C takes as an array, not as an integer.
+bool isStringLiteralText(llvm::StringRef Text);
 
 /// The string that starts at \p Addr in readable, non-executable image bytes,
 /// as a comment beside a reference to it reads it: its text in quotes, after

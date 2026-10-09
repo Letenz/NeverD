@@ -20,8 +20,12 @@
 #include "neverd/Common.h"
 #include "neverd/support/ISAEncoding.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
+#include <optional>
 
 namespace neverd {
 
@@ -40,6 +44,135 @@ inline uint8_t codePaddingByte(Arch A) {
 // ===--------------------------------------------------------------------===//
 // x86 / x86-64 padding and prologue constants
 // ===--------------------------------------------------------------------===//
+
+/// The register-or-memory operand a ModRM byte begins, in 32- and 64-bit
+/// addressing.
+struct X86ModRMOperand {
+  uint8_t Mod = 0;
+  uint8_t Reg = 0;
+  uint8_t Rm = 0;
+  /// Base register of a memory operand; none for an absolute or RIP-relative
+  /// displacement.
+  std::optional<uint8_t> Base;
+  /// The memory operand adds a scaled index register.
+  bool Indexed = false;
+  int32_t Displacement = 0;
+  /// Bytes from the ModRM byte through the displacement.
+  size_t Length = 0;
+};
+
+/// Decode the ModRM operand at \p Data, or nullopt when its SIB byte or
+/// displacement does not fit in \p Size bytes.
+inline std::optional<X86ModRMOperand> decodeX86ModRMOperand(const uint8_t *Data,
+                                                            size_t Size) {
+  if (Size == 0)
+    return std::nullopt;
+  X86ModRMOperand Op;
+  Op.Mod = Data[0] >> x86::kModRMModShift;
+  Op.Reg = (Data[0] >> x86::kModRMRegShift) & x86::kModRMFieldMask;
+  Op.Rm = Data[0] & x86::kModRMFieldMask;
+  Op.Length = 1;
+  if (Op.Mod == x86::kModRegister)
+    return Op;
+  size_t DispLen = Op.Mod == x86::kModMemoryDisp8    ? x86::kDisp8Len
+                   : Op.Mod == x86::kModMemoryDisp32 ? x86::kDisp32Len
+                                                     : 0;
+  Op.Base = Op.Rm;
+  if (Op.Rm == x86::kRmSIB) {
+    if (Size < 2)
+      return std::nullopt;
+    const uint8_t Index =
+        (Data[1] >> x86::kModRMRegShift) & x86::kModRMFieldMask;
+    Op.Indexed = Index != x86::kRmSIB;
+    Op.Base = Data[1] & x86::kModRMFieldMask;
+    Op.Length = 2;
+  }
+  if (Op.Mod == x86::kModMemory && Op.Base == x86::kRmDisp32) {
+    Op.Base.reset();
+    DispLen = x86::kDisp32Len;
+  }
+  if (Size < Op.Length + DispLen)
+    return std::nullopt;
+  if (DispLen == x86::kDisp8Len)
+    Op.Displacement = static_cast<int8_t>(Data[Op.Length]);
+  else if (DispLen == x86::kDisp32Len)
+    Op.Displacement =
+        static_cast<int32_t>(static_cast<uint32_t>(Data[Op.Length]) |
+                             static_cast<uint32_t>(Data[Op.Length + 1]) << 8 |
+                             static_cast<uint32_t>(Data[Op.Length + 2]) << 16 |
+                             static_cast<uint32_t>(Data[Op.Length + 3]) << 24);
+  Op.Length += DispLen;
+  return Op;
+}
+
+/// Length of the no-op at \p Data that an assembler or compiler emits to
+/// align x86 code, or zero for anything else.  `nop` (90) and the multi-byte
+/// `nop r/m` (0F 1F /0) may follow operand-size and CS-segment prefixes, as
+/// in GNU as's and LLVM's `data16 cs nop WORD PTR [rax+rax*1+0x0]`.  32-bit
+/// code also pads by copying a register onto itself (`mov esi, esi`,
+/// `lea esi, [esi+0]`), which in 64-bit code would zero the upper half.
+inline size_t x86AlignmentNopLength(const uint8_t *Data, size_t Size,
+                                    bool Is64Bit) {
+  const size_t Limit = std::min(Size, x86::kMaxInstructionLen);
+  size_t Prefixes = 0;
+  while (Prefixes < Limit && (Data[Prefixes] == x86::kOperandSizePrefix ||
+                              Data[Prefixes] == x86::kCSSegmentPrefix))
+    ++Prefixes;
+  if (Prefixes == Limit)
+    return 0;
+  const uint8_t *Opcode = Data + Prefixes;
+  const size_t Left = Limit - Prefixes;
+  if (Opcode[0] == x86::kNop)
+    return Prefixes + 1;
+  if (Opcode[0] == x86::kTwoByteEscape) {
+    if (Left < 2 || Opcode[1] != x86::kNopRmOp)
+      return 0;
+    const auto Operand = decodeX86ModRMOperand(Opcode + 2, Left - 2);
+    return Operand && Operand->Reg == 0 ? Prefixes + 2 + Operand->Length : 0;
+  }
+  if (Is64Bit || Prefixes != 0)
+    return 0;
+  const auto Operand = decodeX86ModRMOperand(Opcode + 1, Left - 1);
+  if (!Operand)
+    return 0;
+  const bool SelfCopy =
+      ((Opcode[0] == x86::kMovRmFromRegOp ||
+        Opcode[0] == x86::kMovRegFromRmOp) &&
+       Operand->Mod == x86::kModRegister && Operand->Reg == Operand->Rm) ||
+      (Opcode[0] == x86::kLeaOp && Operand->Mod != x86::kModRegister &&
+       !Operand->Indexed && Operand->Base == Operand->Reg &&
+       Operand->Displacement == 0);
+  return SelfCopy ? 1 + Operand->Length : 0;
+}
+
+/// Length of the alignment no-op at \p Data in \p A code, or zero.  Only the
+/// x86 forms are known (x86AlignmentNopLength).
+inline size_t alignmentNopLength(Arch A, const uint8_t *Data, size_t Size) {
+  switch (A) {
+  case Arch::X86:
+    return x86AlignmentNopLength(Data, Size, /*Is64Bit=*/false);
+  case Arch::X64:
+    return x86AlignmentNopLength(Data, Size, /*Is64Bit=*/true);
+  default:
+    return 0;
+  }
+}
+
+/// Length of the indirect-branch-tracking marker (`endbr64`, `endbr32`) a
+/// function whose address the code takes starts with, or zero.
+inline size_t x86BranchTargetMarkerLength(const uint8_t *Data, size_t Size) {
+  // endbr64 is F3 0F 1E FA and endbr32 F3 0F 1E FB.
+  constexpr uint8_t Marker[] = {0xF3, 0x0F, 0x1E};
+  if (Size < 4 || !std::equal(std::begin(Marker), std::end(Marker), Data))
+    return 0;
+  return Data[3] == 0xFA || Data[3] == 0xFB ? 4 : 0;
+}
+
+/// Whether \p Byte is a trap a toolchain pads between \p A functions with, so
+/// that it proves the code before it does not fall through: x86 `int3`.
+inline bool isTrapPaddingByte(Arch A, uint8_t Byte) {
+  return (A == Arch::X86 || A == Arch::X64) && Byte == x86::kInt3;
+}
 
 // ===--------------------------------------------------------------------===//
 // x86 / x86-64 prologue byte patterns

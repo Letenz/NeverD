@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <functional>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -43,9 +44,7 @@ static bool isLocalExpr(const HighExpr &E) {
 // Expression cycle detection and breaking
 //===----------------------------------------------------------------------===//
 
-static void
-breakExprCycles(ExprPtr &Root,
-                std::unordered_set<const HighExpr *> &KnownAcyclic) {
+static void breakExprCycles(ExprPtr &Root, HighExprSet &KnownAcyclic) {
   struct Frame {
     ExprPtr *Slot = nullptr;
     size_t NextOperand = 0;
@@ -53,7 +52,7 @@ breakExprCycles(ExprPtr &Root,
   };
 
   std::vector<Frame> Work{{&Root, 0, false}};
-  std::unordered_set<const HighExpr *> Path;
+  HighExprSet Path;
   while (!Work.empty()) {
     Frame &Current = Work.back();
     if (!*Current.Slot) {
@@ -102,7 +101,7 @@ breakExprCycles(ExprPtr &Root,
 }
 
 static void breakStmtCycles(std::vector<HighStmt> &Stmts) {
-  std::unordered_set<const HighExpr *> Safe;
+  HighExprSet Safe;
   walkStmts(Stmts, [&Safe](HighStmt &S) {
     forEachExpr(S, [&Safe](ExprPtr &EP) { breakExprCycles(EP, Safe); });
   });
@@ -113,7 +112,7 @@ static void breakStmtCycles(std::vector<HighStmt> &Stmts) {
 //===----------------------------------------------------------------------===//
 
 static void collectRefExpr(const ExprPtr &Root, VarKeySet &Refs) {
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   std::vector<const HighExpr *> Work{Root.get()};
   while (!Work.empty()) {
     const auto *E = Work.back();
@@ -132,7 +131,7 @@ static bool removableAssignment(const HighStmt &S) {
       !S.Body.empty() || !S.ElseBody.empty() || !S.Cases.empty() ||
       !S.DefaultBody.empty() || !S.EHClauseBodies.empty())
     return false;
-  std::unordered_set<const HighExpr *> Seen;
+  HighExprSet Seen;
   std::vector<const HighExpr *> Work{S.Val.get()};
   while (!Work.empty()) {
     const auto *E = Work.back();
@@ -434,6 +433,41 @@ static bool followingHasObservableWork(const std::vector<HighStmt> &Stmts,
   return false;
 }
 
+/// Whether a goto enters one of \p Stmts or a statement nested in them.
+static bool entersAny(const std::vector<HighStmt> &Stmts,
+                      const std::unordered_set<va_t> &Entries) {
+  for (const HighStmt &S : Stmts) {
+    if (S.Addr && S.Addr != InvalidVA && Entries.count(S.Addr))
+      return true;
+    if (entersAny(S.Body, Entries) || entersAny(S.ElseBody, Entries) ||
+        entersAny(S.DefaultBody, Entries))
+      return true;
+    for (const auto &C : S.Cases)
+      if (entersAny(C.Body, Entries))
+        return true;
+    for (const auto &Clause : S.EHClauseBodies)
+      if (entersAny(Clause, Entries))
+        return true;
+  }
+  return false;
+}
+
+/// The value a test's condition always has: an integer constant, possibly
+/// under `!`. A cast could truncate a nonzero constant to zero, and C reads
+/// the floating constant -0.0 as false; neither is known here.
+static std::optional<bool> knownCondition(const HighExpr *E) {
+  bool Negated = false;
+  while (E && E->Kind == ExprKind::UnaryOp && E->Op == NdOp::BOOL_NOT &&
+         !E->Operands.empty()) {
+    E = E->Operands[0].get();
+    Negated = !Negated;
+  }
+  if (!E || E->Kind != ExprKind::Const ||
+      (E->Type && E->Type->Kind == NdTypeKind::Float))
+    return std::nullopt;
+  return (E->ConstVal != 0) != Negated;
+}
+
 static void eliminateDeadConditions(std::vector<HighStmt> &Stmts,
                                     const std::unordered_set<va_t> &Entries) {
   // A removed test that a goto enters keeps its position as an empty block,
@@ -462,8 +496,12 @@ static void eliminateDeadConditions(std::vector<HighStmt> &Stmts,
         continue;
       }
     }
-    if ((S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse) && S.Cond &&
-        S.Cond->Kind == ExprKind::Const && S.Cond->ConstVal == 0) {
+    const bool Test = S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse;
+    const std::optional<bool> Known =
+        Test ? knownCondition(S.Cond.get()) : std::nullopt;
+    // A condition that never holds runs the other branch, and its body
+    // never runs, unless a goto enters it.
+    if (Known && !*Known && !entersAny(S.Body, Entries)) {
       std::vector<HighStmt> ElseBody;
       if (S.Kind == StmtKind::IfElse)
         ElseBody = std::move(S.ElseBody);
@@ -473,6 +511,21 @@ static void eliminateDeadConditions(std::vector<HighStmt> &Stmts,
         Stmts.erase(Stmts.begin() + static_cast<long>(I));
       Stmts.insert(Stmts.begin() + static_cast<long>(I), ElseBody.begin(),
                    ElseBody.end());
+      continue;
+    }
+    // A condition that always holds runs its body; the other branch never
+    // runs, unless a goto enters it. An empty test may be a skip-goto that
+    // lost its `goto`, which always skips the work after it; invertSkipGotos
+    // owns that shape.
+    if (Known && *Known && !(S.Body.empty() && S.ElseBody.empty()) &&
+        !entersAny(S.ElseBody, Entries)) {
+      std::vector<HighStmt> Body = std::move(S.Body);
+      if (Anchor(I))
+        ++I;
+      else
+        Stmts.erase(Stmts.begin() + static_cast<long>(I));
+      Stmts.insert(Stmts.begin() + static_cast<long>(I), Body.begin(),
+                   Body.end());
       continue;
     }
     eliminateDeadConditions(S.Body, Entries);

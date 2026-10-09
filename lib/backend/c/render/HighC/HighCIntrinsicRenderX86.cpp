@@ -11,17 +11,26 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../X86FPStateHelpers.h"
+
 #include "neverd/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/c/render/X86SegmentAsm.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/ir/high/X86FPStateShape.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
+#include "neverd/ir/intrinsics/X86StringCompare.h"
+#include "neverd/lift/X86Regs.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <cctype>
 #include <limits>
 #include <string>
@@ -92,6 +101,160 @@ std::string renderX86InterruptAsm(
     Result +=
         "    uint64_t _" + std::string(Reg) + " = (uint64_t)(" + Value + ");\n";
   return Result + Asm + "}\n";
+}
+
+const char *x87CHelperName(X87CHelper Helper) {
+  switch (Helper) {
+  case X87CHelper::Frndint:
+    return "neverd_x87_frndint";
+  case X87CHelper::Fsqrt:
+    return "neverd_x87_fsqrt";
+  case X87CHelper::ControlWord:
+    return "neverd_x87_control_word";
+  case X87CHelper::Fprem:
+    return "neverd_x87_fprem";
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
+  case X87CHelper::ID:                                                         \
+    return Name;
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+  }
+  llvm_unreachable("unknown x87 C helper");
+}
+
+bool isX87ControlWord(Arch TheArch, const MedVar &V) {
+  return (TheArch == Arch::X86 || TheArch == Arch::X64) &&
+         V.Kind == MedVar::Reg && V.RegOff == x86reg::FPU_CW && V.Size == 2;
+}
+
+/// The operands the x87 value instruction of \p Helper reads.
+static unsigned x87ValueHelperOperands(X87CHelper Helper) {
+  switch (Helper) {
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
+  case X87CHelper::ID:                                                         \
+    return Operands;
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+  default:
+    return 0;
+  }
+}
+
+std::optional<X87CHelper> x87ValueHelper(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
+  case Intrinsic::ID:                                                          \
+    return X87CHelper::ID;
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+  default:
+    return std::nullopt;
+  }
+}
+
+void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
+                      const std::set<X87CHelper> &Used) {
+  // An x87 register holds 80 bits; C computes with them as `long double`
+  // only where that is the x87 extended format, which the unit requires.
+  // The bits travel in an `unsigned _BitInt(80)` of the same size, so one
+  // __builtin_bit_cast turns either into the other.
+  if (UsesExtended)
+    OS << "_Static_assert(__LDBL_MANT_DIG__ == 64,\n"
+          "               \"x87 values need the 80-bit extended long "
+          "double\");\n"
+          "_Static_assert(sizeof(long double) == sizeof(unsigned "
+          "_BitInt(80)),\n"
+          "               \"x87 bits travel in a long double's "
+          "storage\");\n\n";
+  // C's rint, nearbyint and sqrtl live in the C library; each instruction
+  // computes in place as the machine did.
+  for (const auto &[Helper, Mnemonic] :
+       {std::pair{X87CHelper::Frndint, "frndint"},
+        std::pair{X87CHelper::Fsqrt, "fsqrt"}})
+    if (Used.count(Helper))
+      OS << "static inline long double " << x87CHelperName(Helper)
+         << "(long double value) {\n"
+         << "    __asm__(\"" << Mnemonic << "\" : \"+t\"(value));\n"
+         << "    return value;\n"
+         << "}\n\n";
+  // Each instruction runs on its operands in st(0) and st(1), as the GCC
+  // manual's x87 operand rules spell it: an instruction that pops st(1)
+  // clobbers it.
+  auto WriteValueHelper = [&](X87CHelper Helper, const char *Asm,
+                              unsigned Operands, bool PopsST1) {
+    if (!Used.count(Helper))
+      return;
+    OS << "static inline unsigned _BitInt(80) " << x87CHelperName(Helper)
+       << "(unsigned _BitInt(80) x"
+       << (Operands == 2 ? ", unsigned _BitInt(80) y" : "") << ") {\n"
+       << "    long double value = 0" << (Operands == 2 ? ", other = 0" : "")
+       << ";\n"
+       << "    __builtin_memcpy(&value, &x, 10);\n";
+    if (Operands == 2)
+      OS << "    __builtin_memcpy(&other, &y, 10);\n";
+    OS << "    __asm__(\"" << Asm << "\" : \"=t\"(value) : \"0\"(value)"
+       << (Operands == 2 ? ", \"u\"(other)" : "")
+       << (PopsST1 ? " : \"st(1)\"" : "") << ");\n"
+       << "    unsigned _BitInt(80) bits = 0;\n"
+       << "    __builtin_memcpy(&bits, &value, 10);\n"
+       << "    return bits;\n"
+       << "}\n\n";
+  };
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
+  WriteValueHelper(X87CHelper::ID, Asm, Operands, PopsST1);
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+  // The program runs with the control word the unit holds.
+  if (Used.count(X87CHelper::ControlWord))
+    OS << "static inline uint16_t neverd_x87_control_word(void) {\n"
+          "    uint16_t word;\n"
+          "    __asm__ volatile(\"fnstcw %0\" : \"=m\"(word));\n"
+          "    return word;\n"
+          "}\n\n";
+  if (!Used.count(X87CHelper::Fprem))
+    return;
+  // The status must be sampled inside the same asm block as FPREM. A separate
+  // C expression could let the compiler spill an x87 value before FNSTSW and
+  // thereby change the condition codes observed by the source program.
+  OS << "static _Thread_local uint16_t neverd_x87_fprem_status;\n"
+        "static _Thread_local unsigned char "
+        "neverd_x87_fprem_status_pending;\n\n"
+        "static inline _BitInt(80) neverd_x87_partial_remainder(\n"
+        "    _BitInt(80) dividend, _BitInt(80) divisor, int nearest) {\n"
+        "    unsigned char lhs[10], rhs[10], result[10];\n"
+        "    uint16_t status;\n"
+        "    __builtin_memcpy(lhs, &dividend, 10);\n"
+        "    __builtin_memcpy(rhs, &divisor, 10);\n"
+        "    if (nearest) {\n"
+        "        __asm__ volatile(\"fldt %[rhs]\\n\\t"
+        "fldt %[lhs]\\n\\tfprem1\\n\\tfnstsw %%ax\\n\\t"
+        "fstpt %[result]\\n\\tfstp %%st(0)\"\n"
+        "            : [result] \"=m\"(result), \"=a\"(status)\n"
+        "            : [lhs] \"m\"(lhs), [rhs] \"m\"(rhs)\n"
+        "            : \"cc\", \"memory\", \"st\", \"st(1)\");\n"
+        "    } else {\n"
+        "        __asm__ volatile(\"fldt %[rhs]\\n\\t"
+        "fldt %[lhs]\\n\\tfprem\\n\\tfnstsw %%ax\\n\\t"
+        "fstpt %[result]\\n\\tfstp %%st(0)\"\n"
+        "            : [result] \"=m\"(result), \"=a\"(status)\n"
+        "            : [lhs] \"m\"(lhs), [rhs] \"m\"(rhs)\n"
+        "            : \"cc\", \"memory\", \"st\", \"st(1)\");\n"
+        "    }\n"
+        "    neverd_x87_fprem_status = status;\n"
+        "    neverd_x87_fprem_status_pending = 1;\n"
+        "    _BitInt(80) bits = 0;\n"
+        "    __builtin_memcpy(&bits, result, 10);\n"
+        "    return bits;\n"
+        "}\n\n"
+        "static inline _BitInt(80) neverd_x87_fprem(\n"
+        "    _BitInt(80) dividend, _BitInt(80) divisor) {\n"
+        "    return neverd_x87_partial_remainder(dividend, divisor, 0);\n"
+        "}\n\n"
+        "static inline _BitInt(80) neverd_x87_fprem1(\n"
+        "    _BitInt(80) dividend, _BitInt(80) divisor) {\n"
+        "    return neverd_x87_partial_remainder(dividend, divisor, 1);\n"
+        "}\n\n"
+        "static inline uint16_t neverd_x87_read_status(void) {\n"
+        "    if (!neverd_x87_fprem_status_pending) __builtin_trap();\n"
+        "    neverd_x87_fprem_status_pending = 0;\n"
+        "    return neverd_x87_fprem_status;\n"
+        "}\n\n";
 }
 
 namespace {
@@ -1108,7 +1271,16 @@ bool x86UsesImplicitRegisterAsm(Intrinsic Id) {
 }
 
 bool x86UsesGnuIntrinsicHeader(Intrinsic Id) {
-  return Id == Intrinsic::PrefetchW;
+  switch (Id) {
+  case Intrinsic::PrefetchW:
+  // __readeflags and __writeeflags (ia32intrin.h), which immintrin.h does
+  // not declare.
+  case Intrinsic::Pushf:
+  case Intrinsic::Popf:
+    return true;
+  default:
+    return false;
+  }
 }
 
 bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id) {
@@ -1228,19 +1400,168 @@ std::string renderX86MsvcSegmentedLoad(Arch TheArch, unsigned SizeBytes,
   return std::string(Name) + "(" + Addr.str() + ")";
 }
 
+namespace {
+/// The C vector type an `_mm` intrinsic takes and returns in a register of
+/// \p Bytes, by the element kind its name gives: integers (`_epi8`,
+/// `_si128`), singles (`_ps`, `_ss`) or doubles (`_pd`, `_sd`).  Empty for
+/// any other name.
+std::string x86VectorCType(llvm::StringRef CName, uint16_t Bytes) {
+  if (!CName.starts_with("_mm") || (Bytes != 16 && Bytes != 32 && Bytes != 64))
+    return {};
+  const bool Integers = CName.contains("_epi") || CName.contains("_epu") ||
+                        CName.ends_with("_si128") ||
+                        CName.ends_with("_si256") || CName.ends_with("_si512");
+  const bool Doubles = CName.ends_with("_pd") || CName.ends_with("_sd");
+  if (!Integers && !Doubles && !CName.ends_with("_ps") &&
+      !CName.ends_with("_ss"))
+    return {};
+  return std::string(Bytes == 16   ? "__m128"
+                     : Bytes == 32 ? "__m256"
+                                   : "__m512") +
+         (Integers  ? "i"
+          : Doubles ? "d"
+                    : "");
+}
+
+/// An SSE4.2 string compare (PCMPISTRI/M, PCMPESTRI/M), or a status flag one
+/// leaves: its strings convert to __m128i and its explicit lengths to int,
+/// its control byte stays the constant it is, and a mask comes back as the
+/// 16 bytes HighC carries.  A flag's intrinsic ends with the letter of the
+/// flag its selector names (X86StringCompare.h).  Empty for any other call.
 std::string
-renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
-                            std::function<std::string(const HighExpr &)> ExprFn,
-                            bool &HasCIntrinsics) {
+renderX86StringCompare(const HighExpr &Call,
+                       std::function<std::string(const HighExpr &)> &ExprFn,
+                       bool &HasCIntrinsics) {
   using I = Intrinsic;
+  const I Id = Call.IntrinsicId;
+  const bool Explicit =
+      Id == I::Pcmpestri || Id == I::Pcmpestrm || Id == I::PcmpestrFlag;
+  const bool Flag = Id == I::PcmpistrFlag || Id == I::PcmpestrFlag;
+  const bool Mask = Id == I::Pcmpistrm || Id == I::Pcmpestrm;
+  const char *CName = intrinsicCName(Id);
+  if ((!Explicit && !Flag && !Mask && Id != I::Pcmpistri) || !CName ||
+      Call.Operands.size() != (Explicit ? 5u : 3u) ||
+      llvm::any_of(Call.Operands, [](const ExprPtr &Op) { return !Op; }) ||
+      Call.Operands.back()->Kind != ExprKind::Const)
+    return {};
+  const uint64_t Immediate = Call.Operands.back()->ConstVal;
+  std::string Name = CName;
+  if (Flag) {
+    const char *Suffix =
+        x86StringCompareFlagSuffix(Immediate >> kX86StringCompareFlagShift);
+    if (!Suffix)
+      return {};
+    Name += Suffix;
+  }
+  auto String = [&](size_t Index) {
+    return "__builtin_bit_cast(__m128i, (unsigned __int128)(" +
+           ExprFn(*Call.Operands[Index]) + "))";
+  };
+  auto Length = [&](size_t Index) {
+    return "(int)(" + ExprFn(*Call.Operands[Index]) + ")";
+  };
+  const std::string Strings = Explicit ? String(0) + ", " + Length(1) + ", " +
+                                             String(2) + ", " + Length(3)
+                                       : String(0) + ", " + String(1);
+  const std::string Text =
+      Name + "(" + Strings + ", " +
+      std::to_string(Immediate & kX86StringCompareControlMask) + ")";
+  HasCIntrinsics = true;
+  return Mask ? "__builtin_bit_cast(unsigned __int128, " + Text + ")" : Text;
+}
+
+/// An x86 vector intrinsic over registers HighC carries as same-width
+/// integers: each register operand converts to the intrinsic's vector type,
+/// and its result back.  Empty when \p Call is no such intrinsic.
+std::string
+renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
+                         std::function<std::string(const HighExpr &)> ExprFn,
+                         bool &HasCIntrinsics) {
+  if ((TheArch != Arch::X86 && TheArch != Arch::X64) || !Call.Type ||
+      Call.Type->Kind != NdTypeKind::Int)
+    return {};
+  const char *CName = intrinsicCName(Call.IntrinsicId);
+  if (!CName)
+    return {};
+  const llvm::StringRef Callee(CName);
+  const uint16_t Width = Call.Type->Size;
+  const std::string Vector = x86VectorCType(Callee, Width);
+  if (Vector.empty())
+    return {};
+  const std::string Raw = typeToC(NdType::makeInt(Width, false));
+  // A VEX/EVEX-widened form shares the SSE intrinsic ID; spell the
+  // intrinsic for the register width.
+  std::string Spelled = CName;
+  if (Width != 16 && Callee.starts_with("_mm_"))
+    Spelled =
+        (Width == 32 ? "_mm256_" : "_mm512_") + Callee.drop_front(4).str();
+  std::string S = "__builtin_bit_cast(" + Raw + ", " + Spelled + "(";
+  for (size_t I = 0; I < Call.Operands.size(); ++I) {
+    const HighExpr *Op = Call.Operands[I].get();
+    if (I > 0)
+      S += ", ";
+    if (!Op) {
+      S += "0";
+      continue;
+    }
+    if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&
+        Op->Type->Size == Width)
+      S += "__builtin_bit_cast(" + Vector + ", (" + Raw + ")(" + ExprFn(*Op) +
+           "))";
+    else
+      S += ExprFn(*Op);
+  }
+  HasCIntrinsics = true;
+  return S + "))";
+}
+} // namespace
+
+std::string renderX86TypedIntrinsicCall(
+    Arch TheArch, const HighExpr &Call,
+    std::function<std::string(const HighExpr &)> ExprFn, bool &HasCIntrinsics,
+    bool GnuToolchain,
+    std::function<std::string(Intrinsic, unsigned)> FPHelperName) {
+  using I = Intrinsic;
+  if (isX86FPStateIntrinsic(Call.IntrinsicId)) {
+    const unsigned ResultBytes = Call.Type ? Call.Type->Size : 0;
+    if (ResultBytes && Call.Type->Kind != NdTypeKind::Int)
+      llvm::report_fatal_error(
+          "x86 FP numerical/state result requires raw bits");
+    const auto Shape = x86FPStateHighShape(Call, TheArch);
+    if (!x86FPStateShapeIsValid(Call.IntrinsicId, Shape))
+      llvm::report_fatal_error("invalid x86 FP state C contract");
+    const unsigned Bytes = x86FPStateHelperLayout(Call.IntrinsicId, Shape);
+    std::string Result =
+        (FPHelperName ? FPHelperName(Call.IntrinsicId, Bytes)
+                      : x86FPStateCHelper(Call.IntrinsicId, Bytes)) +
+        "(";
+    const unsigned Operands = isX86FPConversionStateIntrinsic(Call.IntrinsicId)
+                                  ? 2
+                                  : Call.Operands.size();
+    for (unsigned Index = 0; Index < Operands; ++Index) {
+      if (Index)
+        Result += ", ";
+      const auto &Operand = *Call.Operands[Index];
+      const auto Text = ExprFn(Operand);
+      if (Operand.Type && Operand.Type->Kind == NdTypeKind::Float)
+        Result += "__builtin_bit_cast(uint" +
+                  std::to_string(Operand.Type->Size * 8) + "_t, " + Text + ")";
+      else
+        Result += Text;
+    }
+    return Result + ")";
+  }
   if (Call.IntrinsicId == I::X87Ffree) {
     if ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
         Call.Operands.size() != 2 || !Call.Operands[1] ||
         Call.Operands[1]->Kind != ExprKind::Const ||
         Call.Operands[1]->ConstVal >= 8)
       llvm::report_fatal_error("invalid x87 FFREE HighC operand");
-    return "__asm {{ ffree st(" + std::to_string(Call.Operands[1]->ConstVal) +
-           ") }}";
+    const std::string Register = std::to_string(Call.Operands[1]->ConstVal);
+    if (GnuToolchain)
+      return "__asm__ volatile(\"ffree %%st(" + Register +
+             ")\" ::: " + x87StateCClobbers(X87StateEffect::Stack).str() + ")";
+    return "__asm { ffree st(" + Register + ") }";
   }
   // LLDT/LTR/LMSW with a register operand: an `__asm` block cannot take the
   // computed value, so the asm statement loads it into a register.  The
@@ -1325,12 +1646,17 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
            ExprFn(*Call.Operands[1]) + "), (void *)(uintptr_t)(" +
            ExprFn(*Call.Operands[0]) + "))";
   }
+  if (TheArch == Arch::X86 || TheArch == Arch::X64)
+    if (std::string Compare =
+            renderX86StringCompare(Call, ExprFn, HasCIntrinsics);
+        !Compare.empty())
+      return Compare;
   const bool IsGfni = Call.IntrinsicId == I::Gf2p8MulB ||
                       Call.IntrinsicId == I::Gf2p8AffineQb ||
                       Call.IntrinsicId == I::Gf2p8AffineInvQb;
   const bool IsVdbpsadbw = Call.IntrinsicId == I::Vdbpsadbw;
   if (!IsGfni && !IsVdbpsadbw)
-    return {};
+    return renderX86VectorIntrinsic(TheArch, Call, ExprFn, HasCIntrinsics);
   if (TheArch != Arch::X86 && TheArch != Arch::X64)
     llvm::report_fatal_error(
         "typed x86 vector intrinsic requires an x86 target");
@@ -1523,6 +1849,22 @@ std::string renderX86IntrinsicCall(Intrinsic Id,
                                    bool &HasCIntrinsics, bool GnuToolchain) {
   if (const char *Reason = x86HighCIntrinsicFatalReason(Id))
     llvm::report_fatal_error(Reason);
+  // An x87 value instruction runs in its helper, on its operands' bits.
+  if (const auto Helper = x87ValueHelper(Id)) {
+    if (Ops.size() != x87ValueHelperOperands(*Helper))
+      llvm::report_fatal_error("x87 value intrinsic has an invalid operand "
+                               "count");
+    std::string Call = std::string(x87CHelperName(*Helper)) + "(";
+    for (size_t I = 0; I < Ops.size(); ++I)
+      Call += (I ? ", " : "") + Ops[I];
+    return Call + ")";
+  }
+  // An x87 state instruction runs where the compiler keeps no value of its
+  // own in the register stack it changes: the clobbers say which.
+  if (GnuToolchain && Ops.empty())
+    if (const auto Effect = x87StateEffectOfIntrinsic(Id))
+      return std::string("__asm__ volatile(\"") + intrinsicAsmMnemonic(Id) +
+             "\" ::: " + x87StateCClobbers(*Effect).str() + ")";
   if (GnuToolchain && Ops.empty())
     switch (Id) {
 #define G(ID, MNEMONIC)                                                        \

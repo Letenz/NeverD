@@ -214,6 +214,8 @@ SSA 구성 한도를 넘는 큰 복원 함수는 `--llvm`을 통해 제한된 �
 
 `checkLowIRRefinement`와 `checkBinaryLowIRRefinement`는 결정적 LowIR 후보에 대한 별도의 구성적 정제를 검증합니다. `LiftedBits`는 각 미정의 값 생성 시 원래 리프터가 계산한 비트를 선택하고, `ZeroBits`는 감사된 조건이 활성화된 비트만 0으로 선택합니다. 각 동적 발생을 기록하며 복사와 스필은 같은 선택을 유지합니다. 두 프로그램은 기존 스칼라, 물리 스택, 메모리, 플래그 실행기와 진입 스냅샷을 공유합니다. 모든 실행 가능한 경로가 종료하고 허용된 전체 진입 영역을 덮어야 하며, RETURN 피연산자, 지정 레지스터, 필수 네이티브 시스템 플래그와 양쪽이 쓴 프레임 바이트의 합집합이 일치하고 진입 보존 계약을 만족해야 합니다. 실행 및 관계 검사 예산을 공유하며 `MaxTerminalPairs`도 적용합니다. 인증서는 후보, 원본 증거, 선택 정책과 한도를 결합합니다. 선택 실패가 다른 선택을 배제하지는 않습니다. 유한 전개는 루프 불변식, 특정 CPU 일치 또는 C 백엔드 동등성을 증명하지 않으며 미정의 상태 독립성 검사를 대체하지 않습니다. 두 API 모두 증명용 메모리 임시 영역과 겹치는 입력 임시 값을 거부합니다. 바이너리 정제 API는 옵션과 관찰 계약 양쪽에 일치하는 `UserX64NoFaultV1`을 요구합니다.
 
+`LowIRUndefinedIndependence`는 각 선택적 재시도를 원래의 전체 질의와 입력 영역에 연결합니다. `CompleteModel`은 후보의 전체 변수 할당을 검증하고, `CompletedTargetFacts`는 열거가 완료된 단일 값만 보관합니다. `ConditionalImplication`은 같은 컨텍스트, 영역 및 전체 솔버 정책에 속하는 제한된 재작성과 검색 전 인코딩을 관리하며, 새 목표마다 증명을 요구합니다. `DomainCoverage`는 인자의 함의와 모든 등식 또는 불리언 분할을 증명합니다. 재시도는 공유 질의/노드 한도와 원래 솔버 설정을 유지하며, 알 수 없거나 잘못되거나 불완전한 결과는 인증서를 만들지 못합니다.
+
 `checkLowIRLoopRefinement`와 `checkBinaryLowIRLoopRefinement`는 별도 유형의 귀납 인증서를 제공합니다. 대응하는 절단점과 순수 스칼라 LowIR 상태 템플릿은 증명 후보이며, 공통 실행기가 실제 진입점에서의 성립, 구간 전체 범위, 모든 실행 가능한 후속 상태, 불변식 보존과 최종 관찰을 검사합니다. 절단점 사이의 모든 간선에서 유한한 부호 없는 사전식 순위가 엄격하게 감소해야 합니다. 매개변수 역투영 검사로 실제 상태 변화 없이 순위를 초기화할 수 없게 합니다. 템플릿은 공통 진입 상태 또는 `UseEntryPrefix` (`GeneralizeEntryPrefix = false`)로 실제 도달한 대응 접두 구간을 사용하며, 후자의 조건도 보존을 증명합니다. 절단점에서 변경된 모든 레지스터와 전체 프레임을 검사하고 이전 반복의 쓰기도 최종 관찰에 유지합니다. 중복 주소에는 명시적이고 증명된 상태 선택 조건이 필요합니다. 불변식과 순위의 자동 발견, 임의 제어 흐름 정렬은 지원 범위 밖입니다. 누락된 절단점, 잘못된 불변식, 정수 순환, 미증명 종료성, 미지원 의미론 또는 공유 예산 소진은 인증서를 거부합니다. 계획, 모든 네이티브 구간과 원본 증거를 다이제스트에 결합합니다. 유한 정제와 엄격한 독립성의 의미는 유지되며, C 백엔드나 특정 CPU의 미정의 비트 선택을 인증하지 않습니다.
 
 아래 접두 경로 술어 유지 요구는 `GeneralizeEntryPrefix = false`일 때 적용됩니다。
@@ -621,12 +623,12 @@ personality 인식이나 native lowering에서 추론하면 안 됩니다.
 
 | 디렉터리 | 책임 | 주요 의존성 |
 |----------|------|-------------|
-| `lib/loader` | 포맷 감지, PE/COFF·ELF·Mach-O 로드, 정규화된 `BinaryImage`, 함수 탐지 | LLVM Object API |
-| `lib/lift` | 수작업 x86/i386·AArch64·ARM32 명령어 의미론 | IR 데이터 타입 |
+| `lib/loader` | 포맷 감지, PE/COFF·ELF·Mach-O 로드, 정규화된 `BinaryImage`, 함수 탐지 | LLVM Object API, `NeverDDigest` |
+| `lib/lift` | 수작업 x86/i386·AArch64·ARM32 명령어 의미론 | IR 데이터 타입, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native 디코드 및 아키텍처 lifter로 디스패치 | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | 공통 타입과 LowIR·MedIR·HighIR·intrinsic 정의/변환 | 네 IR 하위 구성 요소 |
 | `lib/pipeline` | 함수 감지와 Low/Med/High/LLVM 경로 조정 | IR, decode, lift, LLVM backend, 디버그 정보, IR pass |
-| `lib/backend/c` | HighIR-to-C 및 LLVM-IR-to-C 렌더링 | IR |
+| `lib/backend/c` | HighIR-to-C 및 LLVM-IR-to-C 렌더링, HighC의 Rust·Go 표기 | IR |
 | `lib/backend/llvm` | MedIR-to-LLVM lowering | IR |
 | `lib/backend/codegen` | 대상 코드 생성과 PE/ELF/Mach-O patch 및 in-place 재작성 | IR, loader |
 | `lib/sdk` | 공개 C ABI, session 수명 주기, query, 지속성, 플러그인, lift/decompile/patch/audit/hunt 진입점 | 엔진 구성 요소를 `libneverd`로 집계 |
@@ -635,8 +637,10 @@ personality 인식이나 native lowering에서 추론하면 안 됩니다.
 | `lib/sigs` | 시그니처 파싱, 데이터베이스, 매칭 | Loader |
 | `lib/libc` | 알려진 libc 이름과 호출 모델 지원 | 독립 구성 요소 |
 | `lib/safety` | 리프트된 IR 위의 힙 수명 감사와 복사 오버플로 헌트 | Symbolic, Solver |
-| `lib/support` | 공유 바이너리 로드 helper | Loader |
+| `lib/support` | 공유 바이너리 로딩 도우미와 독립 SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | version이 있는 guest state/policy/exit, 고정 runtime ABI, 검사된 guest memory, 생성 IR/object/LinkGraph audit, sealed native linking, experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object 및 JITLink 계약 |
+
+`NeverDDigest`는 `lib/support`의 기존 일괄 SHA-256 구현을 소유합니다. 런타임 기능 검사와 이식 가능한 대체 경로를 유지하며 Loader나 IR에 의존하지 않습니다. `loader/InputDigest.h`는 전달 헤더로 유지됩니다. `NeverDIRLowValidation`이 `lowUndefinedOperationDigest`를 소유하고 Lift가 명시적으로 연결합니다. v1 식별은 기존 도메인, 리틀 엔디언 워드, 저장된 입력 슬롯 6개 모두, 출처 정보와 소스 좌표를 유지합니다. 199개 연산까지 최대 64 KiB 직렬화 버퍼를 사용하고 더 큰 범위는 기존 증분 경로를 사용합니다. 두 경로는 같은 필드를 열거하며 증거 검사를 유지합니다.
 
 ### 분석 및 단순화의 아키텍처 경계
 
@@ -791,6 +795,8 @@ pipeline을 계속 진행하려고 `UnliftedInstruction`을 잡지 마세요. �
 있습니다.
 
 공유 패스에 추가하는 대상별 규칙은 아키텍처나 포맷을 인라인으로 검사하지 말고 대상별 테이블에 둡니다. ISA에 관한 사실은 해당 ISA의 `lib/ir/TargetRegInfo<ISA>.cpp`에서 설정하는 `TargetRegInfo` 특성입니다. 호출 규약 규칙은 별도의 `lib/ir/med/abi/MedCallConvention<Name>.cpp`에 정의하고 `MedCallConvention.cpp`에 등록하는 `CallArgumentConvention` 항목입니다. 반환하지 않는 함수는 런타임별로 `include/neverd/libc` 아래(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`)에 나열합니다. 따라서 새 대상을 지원할 때는 공유 패스에 분기를 넣는 대신 파일이나 테이블 항목을 추가합니다.
+
+재배치 가능 오브젝트의 정의되지 않은 심볼은 하나의 공유 계층 `include/neverd/loader/ObjectExterns.h`에서 해석됩니다. 각 포맷의 로더는 재배치가 가리키는 심볼, 각 심볼에 호출이나 분기가 도달하는지 여부(`<Format>ObjectRelocations.def`), common 심볼, 그리고 일부 참조가 심볼에 도달할 때 거치는 셀(ELF와 Mach-O의 GOT 항목, COFF의 `__imp_` 포인터)을 수집합니다. 이 계층은 이들을 오브젝트의 섹션 뒤, 쓰기 가능한 `extern` 세그먼트와 읽기 전용 셀 세그먼트에 배치합니다. 호출되는 외부 심볼은 그곳에서 임포트가 되고 데이터는 심볼이 됩니다. 약한 참조에는 주소를 주지 않습니다. 코드가 수행하는 null 검사는 프로그램 자신의 것이기 때문입니다.
 
 <a id="support-and-test-depth"></a>
 
@@ -1148,9 +1154,15 @@ UIButton의 `contentEdgeInsets`, `imageEdgeInsets`, `titleEdgeInsets` getter/set
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` 는 PEB 프로세스 매개변수의 실제 게스트 환경 블록을 공유합니다. 이름은 대소문자를 구분하지 않는 ASCII이며 값은 UTF-16입니다. 변경 전에 입력, 용량, 쓰기 가능한 메모리를 검증합니다. 스냅샷은 이후 변경과 독립적이며 해제하면 게스트 메모리를 회수합니다. 모델의 블록 한도는 64 KiB이고 문자열과 확장에는 크기 및 실행 기한 검사가 적용됩니다. 알 수 없는 포인터 소유권, 잘못된 블록, ANSI 코드 페이지, 확장 버퍼 중첩은 지원하지 않습니다. `WindowsEnvironmentTests.cpp`는 사용 가능한 백엔드에서 자체 x64/ARM64 픽스처를 비교하며 CI는 독립적인 네이티브 Windows 오라클을 필수로 실행합니다.
 
-`WindowsProcessHeap`은 프로세스 힙의 할당, `HeapReAlloc`, 해제와 크기 조회를 통합 관리합니다. 크기 변경은 유지되는 데이터를 보존하며 `HEAP_ZERO_MEMORY`는 추가 바이트를 0으로 만들고 `HEAP_REALLOC_IN_PLACE_ONLY`는 이동을 금지합니다. 재할당 실패 시 기존 블록을 보존하고 NULL을 반환하며 `ERROR_NOT_ENOUGH_MEMORY`(8)를 설정하여 네이티브 관측과 일치합니다. 독립적인 페이지는 축소와 해제 시 용량을 반환하며 단계별 확장과 제한된 복사는 실행 기한을 확인합니다. 사용자 정의 힙, 예외 생성 플래그, 알 수 없는 소유권, 접근 불가능한 복사 또는 초기화 범위는 명시적으로 중단합니다. `WindowsHeapTests.cpp`는 두 ISA, 강제 이동, 예산 재사용, 실패 원자성을 검증하며 CI는 동일한 자체 EXE를 네이티브 Windows에서도 실행합니다.
+`WindowsProcessHeap`는 프로세스 힙과 제한된 개인 힙의 할당, 크기 변경, 해제 및 크기 조회를 관리합니다. 할당을 이동해도 소유 힙을 유지합니다. `HeapDestroy`는 해당 개인 힙의 블록만 해제하고 핸들을 무효화하며 다른 힙과 환경 스냅샷을 보존합니다. 알 수 없거나 폐기된 핸들, 프로세스 힙 파괴와 다른 힙의 블록에 대한 작업은 변경 전에 거부합니다. 개인 힙은 초기 크기가 한 페이지 이하인 확장 가능한 요청만 지원하며 고정 최대 크기와 더 큰 초기 커밋은 지원하지 않습니다. 네 개 제한은 살아 있는 힙 수에 적용되므로 파괴 후에는 이전 핸들을 다시 유효하게 만들지 않고 새 힙을 만들 수 있습니다. 핸들은 불투명한 모델 식별자이며 네이티브 할당자 헤더를 생성하지 않습니다. `HeapReAlloc`: 크기 변경은 기존 바이트를 보존하고 `HEAP_ZERO_MEMORY`와 `HEAP_REALLOC_IN_PLACE_ONLY`를 따릅니다. 할당 실패 시 NULL과 `ERROR_NOT_ENOUGH_MEMORY`(8)를 반환합니다. 축소, 해제, 파괴로 페이지 용량을 반환하며 실행 기한을 확인합니다. `WindowsHeapTests.cpp`는 두 ISA, 소유권, 수명 순환, 실패 원자성 및 독립적인 네이티브 Windows 결과를 검사합니다.
 
 `WindowsSystemModules`는 두 ISA에 대해 `ntdll.dll`, `kernelbase.dll`, `kernel32.dll`의 제한된 PE64 모델 이미지를 만듭니다. ASCII `GetModuleHandleA` / `GetModuleHandleW`, `LoadLibraryA` / `LoadLibraryW`, `GetProcAddress`는 매핑된 베이스를 공유하며 PEB/LDR과 `MEM_IMAGE`도 같은 이미지를 나타냅니다. 정적 가져오기, 이름 조회와 게스트 DLL 전달은 동일한 API 게이트와 내보내기 해석기를 사용합니다. 제공자는 고정 상주하고 게스트 초기화 콜백이 없으며 일반 게스트 DLL을 모두 해제한 뒤 진입점 반환을 막지 않습니다. 헤더 또는 내보내기 메타데이터가 바뀌면 조회를 중단합니다. 미지원 시스템 내보내기 이름과 0이 아닌 서수 조회는 명시적으로 중단하며 지원 이름의 대소문자 불일치와 빈 이름은 오류 127, NULL 조회는 87을 반환합니다. 생성 바이트와 주소는 모델 정책이며 Windows DLL 버전별 배치, 네이티브 서수와 제공자 간 별칭은 재구성하지 않습니다. `WindowsSystemTests.cpp`는 자체 x64/ARM64 EXE를 네이티브 Windows와 비교하고 초기 스레드 반환을 독립적으로 8회 관측합니다.
+
+`WindowsNativeServices`는 명시적인 모델 서비스 번호를 한 곳에서 관리합니다. 번호가 있는 Nt/Zw 별칭은 진입점을 공유하며 프롤로그에 선언된 번호순으로 배치됩니다. x64 네이티브 경계는 첫 인자를 R10에서 읽고 RSP + 0x28의 스택 인자와 진입 정렬을 포함한 Win64 스텁 프레임을 유지합니다. 반환 시 RSP를 보존하고 SYSCALL의 RCX/R11 변경을 적용한 뒤 다음 명령을 실행합니다. 복사 또는 인라인 진입점은 `direct_service_number`를 기록하며 내보낸 함수 호출의 증거가 되지 않습니다. 알 수 없는 번호와 미구현 서비스는 명시적으로 중단합니다. 모델 번호는 임의의 Windows 버전 번호표가 아닙니다. [Nt/Zw](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-nt-and-zw-versions-of-the-native-system-services-routines). 내부 실행 감시는 프롤로그의 두 명령을 확인한 뒤 내보낸 함수 호출로 판정합니다. 내부로 점프하면 RCX와 R10이 같아도 번호 의존성을 유지합니다. 이 감시는 호출자 관찰자가 없어도 작동하며 요청 범위 밖의 콜백을 발생시키지 않습니다.
+
+`WindowsProcessFiles.cpp`는 `KnownDlls`의 고정된 비불투명 공급자에 대한 `ZwOpenSection` 핸들을 관리합니다. 자동 주소와 오프셋 0의 전체 뷰는 로더의 불변 이미지를 사용하며, `VirtualMemory`는 `MEM_IMAGE` 소유권을 기록하고 `AddressSpace`는 페이지 권한을 유지합니다. 핸들을 닫아도 뷰는 해제되지 않습니다. 알 수 없는 네임스페이스, 쓰기 접근, 부분 또는 고정 주소 뷰, 기존 API 게이트가 없는 실행은 지원하지 않습니다. `IntegerABI`는 x64/ARM64의 뒤쪽 인수를 찾으며 ULONG의 정의되지 않은 상위 비트는 무시합니다. 현재 스레드의 정보 클래스 `0x11`은 정확한 길이를 검사하고 숨김 상태를 유지하며, 클래스 `4`는 요청된 선호도와 프로세스 마스크의 교집합을 취하며, 사용 가능한 프로세서가 없으면 `STATUS_INVALID_PARAMETER`를 반환합니다. 읽기 전용 section 핸들로 `PAGE_READWRITE`를 요청하면 뷰를 게시하지 않고 `STATUS_ACCESS_DENIED`를 반환합니다. 클래스 `0x11`은 Windows의 검사 순서를 유지합니다. 비어 있지 않은 설정 버퍼와 길이가 4바이트 이상인 조회 버퍼에는 ULONG 정렬이 필요합니다. 길이가 0인 설정은 입력 포인터를 무시합니다.
+
+현재 스레드의 임계 영역은 Kernel32와 ntdll 호출에서 초기화, 재귀 진입, 진입 시도, 대응하는 해제와 삭제 상태를 공유합니다. `DeleteCriticalSection`과 `RtlDeleteCriticalSection`은 초기화되었으며 소유자가 없는 객체를 요구하고, 삭제 후에는 다시 초기화할 수 있습니다. 미초기화, 중복 초기화, 삭제되거나 손상된 상태는 쓰기 전에 거부합니다. Rtl 초기화는 NTSTATUS 0을, BOOL 스핀 초기화는 참을 반환합니다. 단일 프로세서 프로필은 스핀 횟수를 0으로 유지하며 스레드 간 경합은 모델링하지 않습니다.
 
 `WindowsProcessExceptions`는 같은 CPU와 프로세스 예산으로 `AddVectoredExceptionHandler`, `RemoveVectoredExceptionHandler`, `RaiseException`을 구현합니다. 순서가 있는 처리기는 등록·삭제, 중첩 예외, 모델 API 호출, DLL 로드와 프로세스 종료를 수행할 수 있습니다. x64/ARM64 데이터 접근 위반과 x64 정수 나눗셈 예외는 게스트의 `CONTEXT` 변경을 검증한 뒤 재개하며 범용 레지스터, SIMD 및 지원 FP 상태를 보존합니다. 소프트웨어 예외는 모델 공급자 내부의 실제 반환 명령으로 재개합니다. 보관된 등록은 128개, 중첩은 16프레임으로 제한합니다. 잘못된 처리 결과, 바뀐 예외 포인터, 미지원 필드와 한도 초과는 명시적으로 실패합니다. ARM64 스택 프레임 기반 SEH/언와인딩, 디버거 전달과 실행/가드 페이지 예외는 미지원입니다. `WindowsExceptionTests.cpp`는 자체 EXE/DLL을 네이티브 Windows와 비교하며 ARM64 KVM/WHP 실기기 증거는 아직 없습니다. 소프트웨어 예외 레코드에는 `EXCEPTION_SOFTWARE_ORIGINATE`(`0x80`)가 포함되며 호출자의 계속 불가 플래그와 별도로 처리됩니다. 원본 Windows 실행 파일은 소프트웨어 및 하드웨어 예외의 정확한 플래그 값을 검증합니다.
 
@@ -1175,6 +1187,10 @@ Windows 프로세스 시간 정책은 `os/windows/process/`의 `WindowsProcessTi
 `lib/unpack`는 네 계층으로 압축 이미지를 복구합니다. `core`는 조정과 형식 레지스트리를 관리합니다. `format/pe`는 컨테이너를 검증하고 관찰한 메모리, 가져오기와 메타데이터를 재구성합니다. `PETLS.cpp`는 로더 할당과 관찰한 콜백을 기준으로 대체 TLS 레코드를 검증합니다. 보호기 레지스트리나 정적 스텁 서명으로 진입점을 선택하지 않습니다. `dynamic`은 `observeProcess`를 통해 게스트 프로세스를 관찰합니다. `Observation.def`는 각 컨테이너와 명령어 집합을 프로세스 프로필에 대응시키고, 각 명령어 집합의 스택 포인터와 명령 창을 제공합니다. 새 대상은 표의 한 행과 모듈 디렉터리 하나이며, 행이 없는 입력은 이름과 함께 거부됩니다. `ExecutionSession`이 실행 감시를 소유합니다. `ProcessObserver`는 멈춘 프로세스를 읽고 다음 정지 지점을 고르지만 게스트 상태를 바꿀 수는 없습니다. 에뮬레이션 계층이 아는 것은 `defer_unmodeled`뿐입니다. 이는 모델링되지 않은 임포트를, 실행되는 순간 멈추는 불투명 진입점에 바인딩합니다. [언패킹](unpack.md)을 참고하십시오. 지연 로딩은 앞선 초기화 함수가 코드를 생성할 0으로 채운 메모리를 실행 가능한 콜백이나 진입 대상으로 허용합니다. 콜백 배열과 TLS 할당 메타데이터는 검증된 파일 내용이 필요하며 일반 엄격 로딩은 파일 뒷받침 검사를 유지합니다. OS 모델은 호출 소속을 제공하고 호출 준비 또는 일시 중단된 호출자 복원 시 관찰자에게 알립니다. 이 경계에서 전이 감시를 다시 설정하여 콜백과 생성된 진입점이 같은 페이지인 경우도 처리합니다.
 
 `WindowsLibraryHost.cpp`는 DLL 호스트 구성, Windows 로더는 일반 로드·언로드 수명주기를 소유합니다. `ProcessView::inputModule()`은 관측 입력과 호스트 EXE를 구분하여 초기 스냅샷을 늦출 수 있습니다. `ProcessView::callFrame()`은 `IntegerABI`로 정수 인수와 반환 사실을 읽습니다. `dynamic/ProcessTransfer`는 연속 실행 주소 및 스택 일치 증거를 소유하며 `PETLS.cpp`만 프로세스 연결 콜백 완료 여부를 결정합니다.
+
+`ProcessView::heapAllocations()`는 중지 경계에서 Windows `Services`가 소유한 살아 있는 힙 목록을 노출하며 게스트 포인터를 읽거나 상태를 바꾸지 않습니다. `dynamic/ProcessTransfer.cpp`가 목록을 검증하고 캡처한 이미지와 TLS의 보수적인 주소 일치를 기록하며, `core/Unpack.cpp`만 `unsupported_state` 또는 명시적인 `snapshot`을 선택합니다. PE 기록기는 힙 재배치나 시작 의미를 추측하지 않습니다.
+
+`PEDelayImports.cpp`는 새 프로세스의 지연 로드 복구와 메타데이터 저장소 제외를 담당합니다. COFF 로더는 설명자 출처에 따라 `Import::IsDelayImport`를 기록하며 Windows 실행 허용은 일반 가져오기만 비교합니다. 검증된 지연 설명자가 해결된 셀의 재바인딩 범위를 정하고 미해결 내부 썽크는 필요 시 해석을 유지합니다. 독립 조회 테이블이 바인딩 수를 제한하여 다음 미해결 셀을 보존합니다. 잘못된 상태는 명시적으로 실패합니다.
 
 `ExportObserver`는 상주 게스트 의존성의 실행 가능한 내보내기도 관측합니다. 모델링된 제공자는 서비스 디스패치로 관측하며 입력 자체 내보내기는 제외합니다. 모듈 변경 시 관측점을 갱신하고 현재 내보내기 식별로만 수정합니다. 기록 수는 선언된 가져오기 한도 이내입니다. DLL 테스트는 시스템 API와 게스트 의존성 헬퍼 모두를 수정하고 네이티브 로드로 에뮬레이션 주소가 남지 않음을 검증합니다.
 
@@ -1227,6 +1243,8 @@ Combine의 정확한 강한 가져오기인 `Publisher.sink(receiveValue:)`의 `
 HighIR은 호출 꼬리를 복제하기 전에 `SourceCallTypeHint::requiresUniqueSourceOccurrence`를 확인한다. 불리언 결과, 콜백 인자, 불변 대상, 프레임 값 증인, 가상 디스패치 및 네이티브 Swift 수신자 증거는 각각 원래 기계 호출 한 번을 가리킨다. 반환 꼬리, 점프 꼬리 및 중첩 출구 변환은 경로가 상호 배타적이어도 평가 위치를 공유한 채 유지한다. 일반 호출 선언은 기존 복제 규칙을 따른다. 게시 단계는 현재 기계 코드, ABI, 피연산자와 동적 대상을 다시 증명하고 소스 평가가 한 번인지 확인한다. 모든 증거 종류, 중첩 표현식, 일반 호출 최적화를 검사하며 완전한 ARM64 공유 저장 및 콜백 꼬리를 O0/O2에서 생성 C와 비교한다.
 
 공유 `SourceABI`는 논리적인 값 전달 레코드와 물리적인 주소 운반자를 구분한다. 6개 또는 16개의 double을 갖는 Darwin ARM64 C 선언은 전체 레코드 타입을 유지하고, 부동소수점 인수 레지스터 및 x8 결과 포인터와 독립적인 8바이트 정수 레지스터나 자연 정렬 스택 슬롯을 사용한다. ABI 비교와 투영 그룹은 이 구분, 호출 규약, 인수 역할을 유지하며 부분 값, 겹침, 불일치, 오래된 운반자를 거부한다. 선언만으로는 LowIR 호출 바인딩, 진입 투영, HighC 호출 출력이나 프레임 대여를 허용하지 않으며 별도의 복사본 저장소 증명이 필요하다. 컴파일러 및 네이티브 ABI 테스트는 레지스터 소진, 스택 배치, 임의의 부동소수점 비트, 복사본 변경 격리, 독립적인 간접 반환을 검증한다. 완전한 `setTransform:` 복원 테스트는 아니다.
+
+디버그 시그니처는 복원한 매개변수를 순서가 아니라 도착 위치로 이름 붙인다. `SourceParameterPlacement`는 대상의 일반 호출 규약에 따라 각 소스 매개변수를 배치한다. 대상은 System V x86-64, Microsoft x64, AAPCS64, i386 cdecl/stdcall이며 규약마다 별도 파일에 있다. 각 매개변수 조각을 담는 레지스터와 스택 슬롯, 그리고 숨은 결과 포인터를 돌려준다. HighC는 복원한 매개변수를 그 레지스터나 진입 시 스택 오프셋에 있는 조각에 연결한다. 뒤따르는 조각은 매개변수 이름과 바이트 오프셋으로 이름 붙이고(`p_8`), 선언 타입은 그 위치가 값 전체를 바이트 그대로 담을 때만 적용한다. 규칙이 위치를 확신할 수 없는 첫 매개변수에서 배치를 멈춘다. 소스가 전달 방식을 밝히지 않은 레코드, 레지스터보다 넓은 스칼라, 정렬을 알 수 없는 메모리 전달 레코드, Apple arm64의 스택 패킹이 이에 해당한다. 그 뒤의 매개변수는 기계 이름을 유지하며, Go처럼 고유한 규약을 가진 언어의 함수는 아무것도 연결하지 않는다. DWARF 로더는 매개변수와 결과 타입에만 전달 방식과 스칼라 배치를 제공한다. C 레코드는 값으로, C++ 클래스는 `DW_AT_calling_convention`이 밝힌 대로, `_Complex` 값은 복소수로 전달한다. Rust 고유 ABI와 `extern "C"`는 일부 레코드를 다르게 전달하므로 Rust 레코드는 알 수 없음으로 둔다. PDB 레코드는 Microsoft C++ ABI를 따른다. i386은 바이트 그대로 전달하고, x64는 같은 위치에 바이트 그대로 또는 주소로 전달한다. 호출의 프로토타입과 인수 캐스트는 여전히 위치로 대응하는 시그니처, 즉 매개변수가 모두 정수이거나 모두 부동소수점 값인 시그니처에서만 나온다.
 
 공유 `SourceFrameAnalysis`는 소비자와 완전한 간접 결과 생산자에 대한 독립적인 효과 증명이 있을 때 원래 호출 위치의 초기화된 비공개 값 복사본을 검증합니다. 모든 도달 경로와 루프 역방향 간선, 정확한 유효 범위, 다른 인수의 별칭과 이후 사용을 확인합니다. 복사본을 소비하면 초기화 사실과 저장된 바이트의 동일성이 무효화되며, 다시 읽으려면 새로운 확정 쓰기가 필요합니다. 쓰기 가능성과 프레임 해제도 초기화 사실을 지우지만, 유지 중인 Swift scratch의 수명 의무는 보존합니다. 질의는 전체 프레임 복원을 증명한 뒤 인수 범위만 반환하며 기계 코드 동일성, SDK 효과, 호출 바인딩이나 소스 공개 권한을 부여하지 않습니다. 분기, 루프, 부분 쓰기, 별칭과 유지 중인 scratch를 테스트합니다. 실제 ObjC/CALayer를 사용하는 ARM64 사례는 소비된 복사본 읽기를 거부하고, 독립적으로 초기화가 증명된 일회용 복사본을 허용합니다.
 

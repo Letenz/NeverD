@@ -16,8 +16,8 @@
         <translation>&amp;Ricarica il file di input</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>Ricarica il binario e le relative annotazioni salvate</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>Rileggere il file di input, con le sue annotazioni salvate</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -120,8 +120,8 @@
         <translation>Ri&amp;nomina...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>Rinomina la funzione corrente</translation>
+        <source>Rename the current address</source>
+        <translation>Rinomina l&apos;indirizzo corrente</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,7 +136,7 @@
         <translation>Inserisci commento ri&amp;petibile...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Segna &amp;posizione...</translation>
     </message>
     <message>
@@ -192,7 +192,7 @@
         <translation>Vai all&apos;inizio della funzione precedente</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
+        <source>Jump to pseudo&amp;code</source>
         <translation>Salta allo ps&amp;eudocodice</translation>
     </message>
     <message>
@@ -296,7 +296,7 @@
         <translation>Cerca una sequenza di byte nel binario</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
+        <source>Next se&amp;quence of bytes</source>
         <translation>Sequenza di byte su&amp;ccessiva</translation>
     </message>
     <message>
@@ -392,7 +392,7 @@
         <translation>Mostra l&apos;LLVM IR della funzione corrente</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
+        <source>Generate &amp;LLVM C</source>
         <translation>Genera LLVM &amp;C</translation>
     </message>
     <message>
@@ -488,7 +488,7 @@
         <translation>Mostra la panoramica del grafo</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
+        <source>MCP c&amp;onnections</source>
         <translation>C&amp;onnessioni MCP</translation>
     </message>
     <message>
@@ -496,7 +496,7 @@
         <translation>Gestisci le connessioni MCP e la condivisione della sessione</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
+        <source>Ex&amp;tensions</source>
         <translation>Es&amp;tensioni</translation>
     </message>
     <message>
@@ -528,7 +528,7 @@
         <translation>Attiva o disattiva lo schermo intero</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
+        <source>I&amp;ncrease font size</source>
         <translation>&amp;Aumenta dimensione carattere</translation>
     </message>
     <message>
@@ -705,7 +705,7 @@
     </message>
     <message>
         <source>String &amp;references</source>
-        <translation>&amp;Riferimenti a stringhe</translation>
+        <translation>Riferi&amp;menti a stringhe</translation>
     </message>
     <message>
         <source>List the instructions that refer to strings</source>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>Non trattare più la funzione corrente come funzione</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>&amp;Dati</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>Definisci un valore all&apos;indirizzo corrente; di nuovo per la dimensione successiva</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>&amp;Stringa</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>Definisci la stringa che inizia all&apos;indirizzo corrente</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>Ann&amp;ulla definizione</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>Mostra i byte dell&apos;elemento corrente come byte</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>&amp;Numero</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>Mostra il numero dell&apos;operando come lo sceglie il listato</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>&amp;Esadecimale</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>Mostra il numero dell&apos;operando in esadecimale</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>&amp;Decimale</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>Mostra il numero dell&apos;operando in decimale</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>&amp;Binario</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>Mostra il numero dell&apos;operando in binario</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>&amp;Carattere</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>Mostra il numero dell&apos;operando come caratteri</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>&amp;Offset</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>Mostra il numero dell&apos;operando come l&apos;indirizzo che indica</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>Cambia &amp;segno</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>Mostra il numero dell&apos;operando con il segno cambiato</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>Ne&amp;gazione bit a bit</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>Mostra il numero dell&apos;operando con i bit invertiti</translation>
     </message>
 </context>
 <context>
@@ -1095,6 +1183,10 @@
         <source>&amp;Functions</source>
         <translation>&amp;Funzioni</translation>
     </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>&amp;Tipo di operando</translation>
+    </message>
 </context>
 <context>
     <name>NavigationBand</name>
@@ -1125,6 +1217,10 @@
 </context>
 <context>
     <name>ProjectDatabase</name>
+    <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>Impossibile copiare %1 in %2</translation>
+    </message>
     <message>
         <source>Cannot read %1: %2</source>
         <translation>Impossibile leggere %1: %2</translation>
@@ -1195,6 +1291,10 @@
     <message>
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
+    </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
     </message>
 </context>
 <context>
@@ -1320,6 +1420,17 @@ Operazione di libreria riconosciuta; fai clic per mostrarne il codice.</translat
 Double-click to go to the declaration.</source>
         <translation>%1
 Fai doppio clic per andare alla dichiarazione.</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>%n dichiarazione mostrata in C</numerusform>
+            <numerusform>%n dichiarazioni mostrate in C</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1600,6 +1711,10 @@ Fai doppio clic per andare alla dichiarazione.</translation>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>Ricarica il file di input</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>Banda di navigazione</translation>
     </message>
@@ -1708,12 +1823,8 @@ Fai doppio clic per andare alla dichiarazione.</translation>
         <translation> · sola lettura</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 non è l&apos;inizio di una funzione; è possibile rinominare solo le funzioni.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>Rinomina funzione</translation>
+        <source>Rename address</source>
+        <translation>Rinomina indirizzo</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -1838,8 +1949,8 @@ Con segno: %4</translation>
         <translation>Digita un comando</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>Crea file C</translation>
+        <source>Create source file</source>
+        <translation>Crea file sorgente</translation>
     </message>
     <message>
         <source>Create LST file</source>
@@ -1860,38 +1971,6 @@ Con segno: %4</translation>
     <message>
         <source>No saved desktop</source>
         <translation>Nessun desktop salvato</translation>
-    </message>
-    <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: Avvio rapido</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>Nuovo</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>Disassembla un nuovo file</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>Vai</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>Lavora in autonomia</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>Precedente</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>Carica il file recente selezionato</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>File recenti:</translation>
     </message>
     <message>
         <source>Open binary or database</source>
@@ -1969,6 +2048,10 @@ Con segno: %4</translation>
         <source>Collapse library operations</source>
         <translation>Comprimi operazioni di libreria</translation>
     </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>Il modo di caricare %1 è sconosciuto: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2026,7 +2109,94 @@ Con segno: %4</translation>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>Avvio rapido</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>Disassemblatore e decompilatore interattivo</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>Versione %1</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>File recenti</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;Nuovo</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>Disassembla un nuovo file</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>&amp;Vai</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>Lavora in autonomia</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>&amp;Precedente</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>Carica il file recente selezionato</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>&amp;Mostra all'avvio</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>Trascina qui un file per aprirlo</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>Mancante</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>C&amp;arica</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>&amp;Copia percorso</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>&amp;Rimuovi dall'elenco</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>Oggi, %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>Ieri, %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>Nessun file recente</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>Qui compaiono i file che apri. Scegli Nuovo o trascina un file su questa finestra.</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 si trova in una cartella in cui non puoi scrivere; il suo database è conservato in %2</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>Avvio del processo di analisi…</translation>
@@ -2052,8 +2222,8 @@ Con segno: %4</translation>
         <translation>%1: %2 %3, %4 funzioni</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>Annotazioni ricaricate</translation>
+        <source>Reloaded the input file</source>
+        <translation>File di input ricaricato</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2122,6 +2292,243 @@ Con segno: %4</translation>
     <message>
         <source>Deleted the function at %1</source>
         <translation>Funzione eliminata in %1</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>I byte in %1 sono già non definiti</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>Definizione dell&apos;elemento in %1 annullata</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%1 definito in %2</translation>
+    </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>Piattaforma: %1, scelta</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>Piattaforma: %1, rilevata dal codice: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>Carica un nuovo file</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>Carica il file %1 &amp;come</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>Il file di input ha forse uno dei formati elencati</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>&amp;Tipo di processore</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>L&apos;intestazione del file stabilisce il processore</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>Analisi</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>&amp;Abilitata</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>Se disattivata, NeverD non analizza il programma nei tempi morti</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>In&amp;dicatore abilitato</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>Mostra l&apos;avanzamento dell&apos;analisi nella riga di stato</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Opzioni</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>Carica informazioni di debu&amp;g</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>Legge il PDB, DWARF o la mappa del linker associati all&apos;input</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>NeverD non può caricare questo file: %1</translation>
+    </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>Elencato solo per il nome del file; il contenuto non mostra questo formato</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>Solo il nome del file suggerisce un formato; scegli una riga per caricarlo così</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>Processore: %1</translation>
+    </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 non è un numero esadecimale</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>Indirizzo base a cui caricare il file</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>Scegli il processore su cui gira il codice del file</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>&amp;Punto di ingresso</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>&amp;Offset nel file</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>Quanti byte caricare</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>&amp;Base dell&apos;immagine</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>Dimensione da ca&amp;ricare</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>&amp;Tipo di processore (doppio clic per impostarlo)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>La base dell&apos;immagine</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>Fino alla fine del file</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>Dove inizia l&apos;esecuzione</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>Dove iniziano nel file i byte caricati</translation>
+    </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>Piatta&amp;forma</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>La piattaforma per cui il codice è stato compilato, di cui segue le convenzioni: come le chiamate passano gli argomenti, quali registri preservano e le dimensioni dei tipi C</translation>
+    </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>Nessuna parte del file sembra codice di un set di istruzioni che NeverD conosce; scegli il processore su cui gira il suo codice</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>Il codice sembra %1 o %2, e le sue istruzioni non dicono quale; scegli il processore su cui gira il suo codice</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>Rilevato dai byte: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>Rilevato dai byte: %1, ingresso %2, base %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>Il codice sembra %1, che NeverD non sa decodificare; scegli un processore per leggerlo comunque così</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>Il codice somiglia di più a %1, ma non chiaramente; scegli il processore su cui gira il suo codice</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>Processori Intel 80x86</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>Processori ARM</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>Macchine virtuali</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 e successivi (32 bit)</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 e Intel 64 (64 bit)</translation>
+    </message>
+    <message>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM little-endian, avvio in stato ARM</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64 (AArch64)</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>Macchina virtuale Ethereum</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM little-endian, avvio in stato Thumb</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple (macOS, iOS)</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>Rileva dal codice</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V (Linux, BSD, Android)</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>

@@ -1,10 +1,10 @@
-//===- InputDigest.cpp - SHA-256 of a loaded input file -------------------===//
+//===- SHA256.cpp - Shared one-shot SHA-256 -------------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 
-#include "neverd/loader/InputDigest.h"
+#include "neverd/support/SHA256.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"

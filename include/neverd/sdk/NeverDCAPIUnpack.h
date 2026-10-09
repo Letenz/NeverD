@@ -28,14 +28,20 @@ enum {
 /// NUL-terminated UTF-8 JSON object of at most
 /// NEVERD_UNPACK_OPTIONS_JSON_LIMIT bytes. It accepts every key of
 /// neverd_emulate_process_json with the same meaning, plus "transfer": the
-/// one-based transfer to accept instead. Unknown fields, invalid values and
+/// one-based transfer to accept instead, and "snapshot_only": an explicit
+/// request for image bytes without reconstructing external runtime state.
+/// Unknown fields, invalid values and
 /// unavailable backends fail before entry.
 ///
 /// The owned JSON report names the identified packer and its evidence, the
 /// outcome, every observed transfer, the recovered entry point, sections,
 /// imports and the bounded run. outcome "unpacked" means OutputPath was
-/// written; "no_entry" means the run ended first, nothing was written and
-/// stop_reason says why. Addresses are hexadecimal strings. Release with
+/// written; "snapshot" means analysis bytes were explicitly requested and
+/// written. "no_entry" means the run ended first. "unsupported_state" means
+/// an accepted image has possible unreconstructed heap dependencies or lacks
+/// heap inventory provenance. Neither writes or truncates OutputPath. The
+/// runtime_state report counts conservative matches; no pointer type or
+/// relocation is inferred. Addresses are hexadecimal strings. Release with
 /// neverd_free_string(). NULL means setup/API failure; inspect
 /// neverd_last_error(Sess).
 NEVERD_API const char *neverd_unpack_json(neverd_session_t Sess,

@@ -25,12 +25,14 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/SymbolDecoration.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
@@ -79,17 +81,28 @@ public:
               CSourceRecorder *Recorder = nullptr)
       : OS(OS), Opts(Opts), Dbg(Dbg), Img(Img),
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
-        SourceRecorder(Recorder) {}
+        SourceRecorder(Recorder) {
+    if (Img && importNamesAreCNames(Opts.Format))
+      for (const Import &Imp : Img->Imports)
+        if (!Imp.Name.empty())
+          ImportEntryCNames.insert(Imp.Name);
+  }
 
   //--- Module-level (LLVMCEmitter.cpp) ---
   void writeModule(llvm::Module &Mod, const llvm::Function *Only = nullptr);
   void prepareFunctionIdentifiers(llvm::Module &Mod);
   std::string functionIdentifier(const llvm::Function &Fn) const;
+  /// The C name of global \p Name: the module names a global by its symbol
+  /// (cNameOfLLVMName), but a declaration of an import by the name its
+  /// import entry lists, which is already the C name on some formats.
+  llvm::StringRef cNameOfGlobal(llvm::StringRef Name, bool Declaration) const;
   void writeIncludes(llvm::Module &Mod);
   void writeStructDefs(llvm::Module &Mod);
   std::string aggregateMemberPath(llvm::Type *Ty,
                                   llvm::ArrayRef<unsigned> Indices);
   void writeGlobals(llvm::Module &Mod);
+  void writeImageByteArray(const llvm::GlobalVariable &Global,
+                           llvm::StringRef Name);
   void writeReferencedImageObjects(const llvm::Function &Fn);
   void writeForwardDecls(llvm::Module &Mod);
 
@@ -639,6 +652,10 @@ public:
   std::string renderInline(const llvm::Instruction &Inst);
   std::string renderInlineImpl(const llvm::Instruction &Inst);
   std::string callExpr(const llvm::CallBase &Call);
+  /// The C function-pointer type of \p Call's callee, from the call's own
+  /// type and convention.  \p Strict refuses what shown C may approximate.
+  std::string indirectCalleeType(const llvm::CallBase &Call, bool Strict);
+  std::string preservedIndirectCalleeStr(const llvm::CallBase &Call);
   std::string atomicRMWText(const llvm::AtomicRMWInst &AI);
   std::string ctorThisAddress(const llvm::CallBase &Call);
 
@@ -655,9 +672,13 @@ public:
   /// functions can nest the listing inside `#if 0` of the trap stub.
   bool EmitFunctionWrapper = true;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
+  std::map<std::pair<Intrinsic, unsigned>, std::string> FPStateHelperNames;
   std::map<const llvm::Function *, std::string> FunctionIdentifiers;
+  std::map<const llvm::GlobalVariable *, std::string> ExternalDataIdentifiers;
   /// The C name each function's symbol spells, for its definition's comment.
   std::map<const llvm::Function *, std::string> FunctionSymbolNames;
+  /// Import entry names that are C names (SymbolDecorations.def).
+  llvm::StringSet<> ImportEntryCNames;
 
   int NextVar = 0;
   std::map<const llvm::Value *, std::string> ValNames;

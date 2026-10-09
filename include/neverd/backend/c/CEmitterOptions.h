@@ -14,10 +14,15 @@
 
 #include "neverd/Common.h"
 
+#include <map>
+#include <string>
+#include <vector>
+
 namespace neverd {
 
 struct BinaryImage;
 struct CSourceMap;
+struct CSourceName;
 
 struct CEmitterOptions {
   bool EmitIncludes = true;
@@ -57,8 +62,14 @@ struct CEmitterOptions {
   /// rdata C/wchar literals, and name image-backed data objects
   /// instead of emitting raw virtual addresses.
   const BinaryImage *Image = nullptr;
+  /// The names the user gave addresses, which name image data ahead of debug
+  /// information and symbols.
+  const std::map<va_t, std::string> *UserNames = nullptr;
   /// Optional source-map sink. Recording never changes the emitted C text.
   CSourceMap *SourceMap = nullptr;
+  /// Receives the names the text spells (CSourceMap::Names) without the
+  /// marked render a source map needs.
+  std::vector<CSourceName> *SourceNames = nullptr;
 };
 
 } // namespace neverd

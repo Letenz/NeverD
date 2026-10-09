@@ -110,12 +110,14 @@ void detectXMMParams(
            llvm::is_contained(TRI.FPReturnRegs, RegOff);
   };
 
-  auto liveInValueUsed = [&](const MedVar &LiveIn) {
-    // The incoming bytes each value carries, one mask bit per byte.
-    constexpr uint16_t MaskBytes = 64;
-    auto byteMask = [](uint16_t Size) {
-      return Size >= MaskBytes ? ~uint64_t{0} : (uint64_t{1} << Size) - 1;
-    };
+  // The incoming bytes each value carries, one mask bit per byte.
+  constexpr uint16_t MaskBytes = 64;
+  auto byteMask = [](uint16_t Size) {
+    return Size >= MaskBytes ? ~uint64_t{0} : (uint64_t{1} << Size) - 1;
+  };
+  // Whether a genuine consumer reads one of the incoming bytes \p Initial
+  // selects of \p LiveIn.
+  auto liveInBytesUsed = [&](const MedVar &LiveIn, uint64_t Initial) {
     llvm::DenseMap<ValueKey, uint64_t> Carried;
     llvm::SmallVector<ValueKey, 16> Work;
     auto carried = [&](const MedVar &V) -> uint64_t {
@@ -153,6 +155,22 @@ void detectXMMParams(
       return Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
              Op.Output.Kind == MedVar::Reg && Op.Inputs[0].Id == Op.Output.Id;
     };
+    // The values whose low lane a scalar operation wrote without incoming
+    // bytes, and its width.  A scalar write into a return register keeps
+    // the incoming upper lanes beside the value it computes; a scalar
+    // return reads only that value.  Only a vector return would read the
+    // kept lanes, and like other decompilers the scalar reading is the one
+    // recovered.
+    llvm::DenseMap<ValueKey, uint16_t> FreshLow;
+    auto keepsLanesOnly = [&](const MedVar &Output, uint64_t Mask,
+                              uint16_t Fresh) {
+      if (!Fresh || (Mask & byteMask(Fresh)) || Output.Kind != MedVar::Reg ||
+          !TRI.isVectorReg(Output.RegOff) || !isFPReturnReg(Output.RegOff))
+        return false;
+      FreshLow[valueKey(Output)] = Fresh;
+      record(Output, Mask & byteMask(Output.Size));
+      return true;
+    };
     // Whether \p Op observes an incoming byte; otherwise carry them on.
     auto observes = [&](const MedOp &Op) {
       llvm::SmallVector<uint64_t, 4> In(Op.NumInputs, 0);
@@ -162,14 +180,19 @@ void detectXMMParams(
       if (Any == 0)
         return false;
       switch (Op.Opcode) {
-      case NdOp::COPY:
+      case NdOp::COPY: {
         if (Op.NumInputs != 1)
           return true;
         if (isSelfCopy(Op)) {
           record(Op.Output, In[0] & byteMask(Op.Output.Size));
           return false;
         }
+        const auto Fresh = FreshLow.find(valueKey(Op.Inputs[0]));
+        if (Fresh != FreshLow.end() &&
+            keepsLanesOnly(Op.Output, In[0], Fresh->second))
+          return false;
         return !carry(Op.Output, In[0]);
+      }
       case NdOp::INT_ZEXT:
         return Op.NumInputs != 1 || !carry(Op.Output, In[0]);
       case NdOp::INT_SEXT: {
@@ -194,18 +217,36 @@ void detectXMMParams(
             (LowSize >= MaskBytes && In[0] != 0))
           return true;
         const uint64_t High = LowSize >= MaskBytes ? 0 : In[0] << LowSize;
+        const uint16_t Fresh = In[1] == 0 ? LowSize : 0;
+        if (Fresh)
+          FreshLow[valueKey(Op.Output)] = Fresh;
+        else
+          FreshLow.erase(valueKey(Op.Output));
+        if (keepsLanesOnly(Op.Output, High, Fresh))
+          return false;
         return !carry(Op.Output, High | In[1]);
       }
       case NdOp::INT_XOR:
       case NdOp::INT_SUB:
         // `x ^ x` / `x - x`: the value is discarded, not consumed.
         return Op.NumInputs != 2 || !(Op.Inputs[0] == Op.Inputs[1]);
+      case NdOp::CALL:
+      case NdOp::INDIR_CALL:
+        // A floating argument passes only the bytes the callee reads.
+        for (uint8_t I = 0; I < Op.NumInputs; ++I) {
+          if (!In[I])
+            continue;
+          const uint16_t Width = Op.vectorArgumentWidth(I);
+          if (!Width || (In[I] & byteMask(Width)))
+            return true;
+        }
+        return false;
       default:
         return true; // a genuine consumer of an incoming byte
       }
     };
 
-    record(LiveIn, byteMask(LiveIn.Size));
+    record(LiveIn, Initial & byteMask(LiveIn.Size));
     while (!Work.empty()) {
       const ValueKey Key = Work.pop_back_val();
       auto It = Uses.find(Key);
@@ -235,6 +276,83 @@ void detectXMMParams(
     }
     return false;
   };
+  auto liveInValueUsed = [&](const MedVar &LiveIn) {
+    return liveInBytesUsed(LiveIn, byteMask(LiveIn.Size));
+  };
+  auto isSelfCopyOf = [](const MedOp &Op) {
+    return Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
+           Op.Output.Kind == MedVar::Reg && Op.Inputs[0].Id == Op.Output.Id;
+  };
+  // The width of the scalar a used parameter register carries: its readers
+  // take only the low 4 or 8 bytes, directly or through whole copies of the
+  // register, and no incoming byte above them reaches a consumer.  A merge
+  // or any other read leaves it a vector.  A live-in that is itself a 4- or
+  // 8-byte view of its register (an AArch64 S or D register) has no other
+  // bytes: whatever reads it, floating-point arithmetic included, reads a
+  // scalar of that width, which only a narrower view at its start narrows.
+  auto scalarLaneBytes = [&](const MedVar &LiveIn) -> uint16_t {
+    const bool ScalarView = LiveIn.Size == 4 || LiveIn.Size == 8;
+    uint16_t Width = 0;
+    llvm::SmallVector<MedVar, 4> Aliases{LiveIn};
+    std::set<ValueKey> Seen{valueKey(LiveIn)};
+    while (!Aliases.empty()) {
+      const MedVar Alias = Aliases.pop_back_val();
+      const auto It = Uses.find(valueKey(Alias));
+      if (It == Uses.end())
+        continue;
+      for (const ValueUse &Use : It->second) {
+        if (!Use.Op) {
+          if (!ScalarView)
+            return 0;
+          continue;
+        }
+        const MedOp &Op = *Use.Op;
+        if (isSelfCopyOf(Op))
+          continue;
+        // A call passes the register on as a floating argument of the
+        // width its callee reads.
+        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+          for (uint8_t I = 0; I < Op.NumInputs; ++I)
+            if (Op.Inputs[I] == Alias) {
+              const uint16_t Read = Op.vectorArgumentWidth(I);
+              if (Read == 4 || Read == 8)
+                Width = std::max(Width, Read);
+              else if (!ScalarView)
+                return 0;
+            }
+          continue;
+        }
+        if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+            Op.Output.Size == LiveIn.Size &&
+            (Op.Output.Kind == MedVar::Temp ||
+             (Op.Output.Kind == MedVar::Reg &&
+              TRI.isVectorReg(Op.Output.RegOff)))) {
+          if (Seen.insert(valueKey(Op.Output)).second)
+            Aliases.push_back(Op.Output);
+          continue;
+        }
+        if (Op.Opcode != NdOp::SUBBYTES || Op.NumInputs != 2 ||
+            !Op.Inputs[1].isConst() || !(Op.Inputs[0] == Alias)) {
+          if (!ScalarView)
+            return 0;
+          continue;
+        }
+        if (Op.Inputs[1].ConstVal == 0) {
+          if (Op.Output.Size != 4 && Op.Output.Size != 8)
+            return 0;
+          Width = std::max(Width, Op.Output.Size);
+        }
+      }
+    }
+    // A live-in read only as a scalar view (the argument a call passes
+    // on) is a scalar of that view's width.
+    if (ScalarView)
+      return Width ? std::min<uint16_t>(Width, LiveIn.Size) : LiveIn.Size;
+    if (!Width || Width >= LiveIn.Size ||
+        liveInBytesUsed(LiveIn, byteMask(LiveIn.Size) & ~byteMask(Width)))
+      return 0;
+    return Width;
+  };
 
   std::set<uint64_t> AlreadyParam;
   for (const auto &P : Func.Params)
@@ -250,10 +368,16 @@ void detectXMMParams(
       continue;
 
     uint64_t ROff = Op.Output.RegOff;
-    if (AlreadyParam.count(ROff))
-      continue;
     if (!TRI.isFPArgReg(ROff))
       continue;
+    // A positional convention (Win64) finds its floating arguments among
+    // the argument slots; each still carries a scalar or a vector.
+    if (AlreadyParam.count(ROff)) {
+      if (!Func.FPParamScalarBytes.count(ROff))
+        if (const uint16_t Scalar = scalarLaneBytes(Op.Output))
+          Func.FPParamScalarBytes[ROff] = Scalar;
+      continue;
+    }
     // Skip a scratch vector register whose incoming value is never read.
     if (!liveInValueUsed(Op.Output))
       continue;
@@ -286,6 +410,8 @@ void detectXMMParams(
       Param.TheArch = TargetArch;
       FPParams.push_back(Param);
       AlreadyParam.insert(ROff);
+      if (const uint16_t Scalar = scalarLaneBytes(Op.Output))
+        Func.FPParamScalarBytes[ROff] = Scalar;
     }
   }
 
@@ -503,6 +629,37 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
           int LastSlot = static_cast<int>((*Off - 4) / 4) + (W + 3) / 4 - 1;
           MaxIdx = std::max(MaxIdx, LastSlot);
         }
+
+  // A tail jump at the entry stack pointer hands its callee this function's
+  // incoming arguments: the slots of the positions the callee is known to
+  // read (MedOp::CalleeStackArgs) are parameters passed through, though the
+  // body never loads them, as in a thunk `jmp [__imp__calloc]`.
+  for (const auto &Blk : Func.Blocks)
+    for (size_t I = 0; I + 1 < Blk.Ops.size(); ++I) {
+      const MedOp &Call = Blk.Ops[I];
+      if ((Call.Opcode != NdOp::CALL && Call.Opcode != NdOp::INDIR_CALL) ||
+          Call.CalleeStackArgs <= 0 || Blk.Ops[I + 1].Opcode != NdOp::RETURN ||
+          Blk.Ops[I + 1].Addr != Call.Addr)
+        continue;
+      // The stack pointer at the call: the block's last write before it, else
+      // the entry block's incoming one.
+      std::optional<int64_t> CallOff;
+      bool Written = false;
+      for (size_t J = I; J-- > 0 && !Written;)
+        if (const MedVar &Out = Blk.Ops[J].Output;
+            Out.Kind == MedVar::Reg && Out.RegOff == SpOff && Out.Size > 0) {
+          CallOff = traceOff(Out, 0);
+          Written = true;
+        }
+      if (!Written && Blk.Preds.empty())
+        CallOff = 0;
+      if (CallOff != 0)
+        continue;
+      for (int K = 0; K < Call.CalleeStackArgs; ++K) {
+        Offsets.insert(4 + 4 * K);
+        MaxIdx = std::max(MaxIdx, K);
+      }
+    }
 
   if (Offsets.empty())
     return;
@@ -928,6 +1085,57 @@ bool liveInOnlyFeedsScratch(const MedFunc &Func, uint64_t ParamRegOff) {
   }
 
   return true; // all surviving incoming lanes feed scratch reconstruction only
+}
+
+bool liveInReachesNonPushUse(const MedFunc &Func, uint64_t RegOff) {
+  if (Func.Blocks.empty())
+    return true;
+  llvm::SmallVector<MedVar, 2> Seeds;
+  for (const MedOp &Op : Func.Blocks.front().Ops) {
+    if (Op.Opcode != NdOp::COPY)
+      break;
+    if (!isEntryLiveInCopy(Op, RegOff))
+      continue;
+    Seeds.push_back(Op.Output);
+    if (isRenamedEntryLiveInCopy(Op, RegOff))
+      Seeds.push_back(Op.Inputs[0]);
+  }
+  if (Seeds.empty())
+    return true;
+  // The operations that carry the value's bytes without reading them.
+  auto Carries = [](const MedOp &Op) {
+    switch (Op.Opcode) {
+    case NdOp::COPY:
+    case NdOp::SUBBYTES:
+    case NdOp::INT_ZEXT:
+    case NdOp::INT_SEXT:
+    case NdOp::CONCAT:
+      return true;
+    default:
+      return false;
+    }
+  };
+  const ValueSet Reached = computeForwardValueClosure(
+      Func, Seeds, [&](const MedOp &Op, unsigned) { return Carries(Op); });
+  for (const MedBlock &Block : Func.Blocks)
+    for (const MedOp &Op : Block.Ops) {
+      if (Carries(Op))
+        continue;
+      // A return reads the integer return register whatever the function
+      // returns (a float in XMM0 leaves EAX untouched).
+      if (Op.Opcode == NdOp::RETURN)
+        continue;
+      // A push stores at the stack pointer itself; a spill to a frame slot,
+      // read back later, is a use.
+      const bool Push = Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
+                        Op.Inputs[0].Kind == MedVar::Reg &&
+                        Op.Inputs[0].RegOff ==
+                            getTargetRegInfo(Op.Inputs[0].TheArch).StackPointer;
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        if (containsValue(Reached, Op.Inputs[I]) && !(Push && I == 1))
+          return true;
+    }
+  return false;
 }
 
 } // namespace med_calling_conv_detail

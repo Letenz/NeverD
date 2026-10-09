@@ -73,11 +73,11 @@ GatePolarity flip(GatePolarity P) {
 /// at any width a caller might hand over.
 constexpr size_t kMaxXorFanIn = 3;
 
-// Table placement is separate from the complete identity hash. Mix high bits
-// into low bits before selecting a power-of-two bucket.
-size_t gateBucket(uint64_t Hash, size_t Mask) {
+// Retain the low placement bits in a compact fingerprint. Equal
+// fingerprints still require the complete gate identity comparison.
+uint32_t gateFingerprint(uint64_t Hash) {
   Hash = (Hash ^ (Hash >> 32)) * 0x9e3779b97f4a7c15ULL;
-  return static_cast<size_t>(Hash ^ (Hash >> 32)) & Mask;
+  return static_cast<uint32_t>(Hash ^ (Hash >> 32));
 }
 
 // Gate operands are usually pairs or triples from adders. Keep their exact
@@ -176,11 +176,37 @@ SatLit CnfEncoder::mkOr(llvm::ArrayRef<SatLit> Ins, GatePolarity P) {
 //===----------------------------------------------------------------------===//
 
 SatLit CnfEncoder::mkXor(SatLit A, SatLit B) {
-  const SatLit Ins[] = {A, B};
-  return mkXor(Ins);
+  if (A == B)
+    return falseLit();
+  if (A == ~B)
+    return trueLit();
+
+  const auto RootValue = [&](SatLit L) {
+    return L.var() == True.var()
+               ? (L == True ? SatValue::True : SatValue::False)
+               : Solver.rootValue(L);
+  };
+  const auto AV = RootValue(A), BV = RootValue(B);
+  if (AV != SatValue::Unknown) {
+    if (BV != SatValue::Unknown)
+      return constant(AV != BV);
+    return B.withPolarity(AV == SatValue::False);
+  }
+  if (BV != SatValue::Unknown)
+    return A.withPolarity(BV == SatValue::False);
+
+  // The canonical pair needs only ordered positive literals and its parity.
+  const bool Complement = A.isNegated() != B.isNegated();
+  SatLit Terms[] = {SatLit::positive(A.var()), SatLit::positive(B.var())};
+  if (Terms[1] < Terms[0])
+    std::swap(Terms[0], Terms[1]);
+  return gate(GateKind::Xor, Terms, GatePolarity::Both)
+      .withPolarity(!Complement);
 }
 
 SatLit CnfEncoder::mkXor(llvm::ArrayRef<SatLit> Ins) {
+  if (Ins.size() == 2)
+    return mkXor(Ins[0], Ins[1]);
   // Complements and true constants only change the parity of the result, so
   // they are counted and stripped.  What is left is a set of positive
   // literals, which is the normal form the gate table keys on.
@@ -348,7 +374,7 @@ void CnfEncoder::growGateTable() {
   for (const auto &Entry : GateTable) {
     if (!Entry.Index)
       continue;
-    auto Slot = gateBucket(Entry.Hash, Mask);
+    auto Slot = Entry.Hash & Mask;
     while (Next[Slot].Index)
       Slot = (Slot + 1) & Mask;
     Next[Slot] = Entry;
@@ -361,14 +387,15 @@ SatLit CnfEncoder::gate(GateKind Kind, llvm::ArrayRef<SatLit> Ins,
   uint64_t H = mixHash(0x51ed270bULL, static_cast<uint64_t>(Kind));
   for (SatLit L : Ins)
     H = mixHash(H, L.index());
+  const uint32_t Fingerprint = gateFingerprint(H);
   if (GateTable.empty())
     growGateTable();
   auto Mask = GateTable.size() - 1;
-  auto Slot = gateBucket(H, Mask);
+  auto Slot = Fingerprint & Mask;
   while (const auto Stored = GateTable[Slot].Index) {
     const uint32_t Index = Stored - 1;
     const Gate &G = Gates[Index];
-    if (GateTable[Slot].Hash == H && G.Kind == Kind &&
+    if (GateTable[Slot].Hash == Fingerprint && G.Kind == Kind &&
         G.NumOperands == Ins.size() &&
         std::equal(Ins.begin(), Ins.end(), operandsOf(G).begin())) {
       emit(Index, P);
@@ -381,7 +408,7 @@ SatLit CnfEncoder::gate(GateKind Kind, llvm::ArrayRef<SatLit> Ins,
   if (Gates.size() >= GateTable.size() - GateTable.size() / 4) {
     growGateTable();
     Mask = GateTable.size() - 1;
-    Slot = gateBucket(H, Mask);
+    Slot = Fingerprint & Mask;
     while (GateTable[Slot].Index)
       Slot = (Slot + 1) & Mask;
   }
@@ -394,7 +421,7 @@ SatLit CnfEncoder::gate(GateKind Kind, llvm::ArrayRef<SatLit> Ins,
   OperandPool.insert(OperandPool.end(), Ins.begin(), Ins.end());
   const auto Index = static_cast<uint32_t>(Gates.size());
   Gates.push_back(G);
-  GateTable[Slot] = {H, Index + 1};
+  GateTable[Slot] = {Fingerprint, Index + 1};
   emit(Index, P);
   return G.Out;
 }

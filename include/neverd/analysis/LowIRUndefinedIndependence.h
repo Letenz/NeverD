@@ -108,7 +108,9 @@ struct LowIRIndependenceLimits {
   /// Bounds both input metadata and dynamically visited instructions, including
   /// instructions whose lifted operation spans are empty and frame exclusions.
   uint64_t MaxInstructions = 65536;
-  /// Total path states scheduled, including straight-line successor visits.
+  /// Total path states scheduled, including straight-line block successors.
+  /// Native traces group up to 32 contiguous instructions per scheduled block;
+  /// instruction, operation and input-metadata budgets remain independent.
   uint32_t MaxPaths = 256;
   uint32_t MaxBlockVisits = 4096;
   uint32_t MaxProducers = 4096;

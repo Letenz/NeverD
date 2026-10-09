@@ -3,29 +3,61 @@
 #include "ChooserView.h"
 #include "CodeView.h"
 #include "DisassemblyView.h"
+#include "Docking.h"
+#include "ExtensionsView.h"
 #include "GraphView.h"
 #include "HexView.h"
+#include "ListingView.h"
+#include "LoadFileDialog.h"
 #include "MainWindow.h"
+#include "OutputWindow.h"
 #include "ProjectDatabase.h"
+#include "QuickStartDialog.h"
 #include "Session.h"
+#include "SettingsKeys.h"
+#include "Theme.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
+#include <QComboBox>
+#include <QDateTime>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontMetricsF>
+#include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QMessageBox>
+#include <QMimeData>
+#include <QMouseEvent>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QScopeGuard>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QSizeGrip>
+#include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
 #include <QTreeView>
+#include <QUrl>
+#include <cmath>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <memory>
 
@@ -34,6 +66,10 @@ using namespace neverd::gui;
 namespace {
 constexpr Address Base = 0xffff800012340000ULL;
 constexpr int OpenTimeoutMs = 7000;
+constexpr int NativeOpenTimeoutMs = 30000;
+// The widest a view may insist on being: a dock's tab bar keeps the dock some
+// 130 pixels wide whatever it shows.
+constexpr int NarrowViewWidth = 160;
 
 QString writeFixture(const QTemporaryDir &directory, const QString &name) {
   const auto path = directory.filePath(name);
@@ -51,7 +87,8 @@ struct Workbench {
   QTemporaryDir layout;
   std::unique_ptr<MainWindow> window;
 
-  Workbench() {
+  explicit Workbench(QString worker = QString::fromLocal8Bit(TEST_WORKER))
+      : session(std::move(worker)) {
     window = std::make_unique<MainWindow>(session, mcp, broker);
     window->setLayoutPath(layout.filePath(QStringLiteral("layout.json")));
     window->resize(1400, 900);
@@ -79,9 +116,57 @@ struct Workbench {
   }
 };
 
+/// The representations a code view's menu offers, in order.
+QStringList representationsOf(CodeView *view) {
+  QStringList names;
+  if (auto *selector = view->findChild<QComboBox *>())
+    for (int i = 0; i < selector->count(); ++i)
+      names << selector->itemData(i).toString();
+  return names;
+}
+
 QByteArray readAll(const QString &path) {
   QFile file(path);
   return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+/// Accepts every "Load a new file" dialog with its defaults while it lives,
+/// as pressing Enter does.
+class LoadDialogAcceptor {
+public:
+  LoadDialogAcceptor() {
+    QObject::connect(&timer_, &QTimer::timeout, [this] {
+      if (auto *dialog = qobject_cast<LoadFileDialog *>(
+              QApplication::activeModalWidget())) {
+        ++accepted_;
+        dialog->accept();
+      }
+    });
+    timer_.start(10);
+  }
+  int accepted() const { return accepted_; }
+
+private:
+  QTimer timer_;
+  int accepted_ = 0;
+};
+
+bool dropFile(QWidget *target, const QString &path) {
+  QMimeData mime;
+  mime.setUrls({QUrl::fromLocalFile(path)});
+  QDragEnterEvent enter(QPoint(10, 10), Qt::CopyAction | Qt::MoveAction, &mime,
+                        Qt::LeftButton, Qt::ShiftModifier);
+  QApplication::sendEvent(target, &enter);
+  if (!enter.isAccepted() || enter.dropAction() != Qt::CopyAction)
+    return false;
+  QDragMoveEvent move(QPoint(10, 10), Qt::CopyAction | Qt::MoveAction, &mime,
+                      Qt::LeftButton, Qt::ShiftModifier);
+  QApplication::sendEvent(target, &move);
+  if (!move.isAccepted() || move.dropAction() != Qt::CopyAction)
+    return false;
+  QDropEvent drop(QPointF(10, 10), Qt::CopyAction | Qt::MoveAction, &mime,
+                  Qt::LeftButton, Qt::ShiftModifier);
+  QApplication::sendEvent(target, &drop);
+  return drop.isAccepted() && drop.dropAction() == Qt::CopyAction;
 }
 } // namespace
 
@@ -89,6 +174,1197 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void slowPseudocodeKeepsBrowsingAndFollowsLatestFunction() {
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto path =
+        writeFixture(directory, QStringLiteral("pseudocode-slow.bin"));
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    QVERIFY(!bench.codeView(QStringLiteral("source")));
+    QTest::qWait(250);
+    QVERIFY(!diagnostics.join('\n').contains("fixture slow decompile started"));
+    bench.session.setComment(Base, QStringLiteral("unsaved comment"));
+    QTRY_VERIFY(bench.session.dirty());
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    QTRY_VERIFY(view->isVisible() && bench.window->disassembly()->isVisible());
+    QVERIFY(view->mapToGlobal(QPoint()).x() >
+            bench.window->disassembly()->mapToGlobal(QPoint()).x());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture slow decompile started"),
+        5000);
+    // An uncached page and listing must finish while the 30-second engine
+    // call is still running, not just leave the Qt event loop responsive.
+    bool functions = false, listing = false;
+    bench.session.read("functions", {{"offset", 512}, {"limit", 32}}, this,
+                       [&](const QJsonObject &p) {
+                         functions = !p.value("items").toArray().isEmpty();
+                       });
+    bench.session.read("listing",
+                       {{"address", hexAddress(Base + 16)}, {"after", 16}},
+                       this, [&](const QJsonObject &) { listing = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(functions && listing, 1500);
+    QVERIFY(view->text()->loading());
+    bench.window->disassembly()->navigate(Base + 16);
+    QTRY_COMPARE_WITH_TIMEOUT(view->text()->function(),
+                              std::optional<Address>(Base + 16), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !view->text()->loading() &&
+            view->text()->allText().contains("code line 699"),
+        5000);
+    QVERIFY(bench.session.dirty());
+    QVERIFY(!QFile::exists(path + ".neverd-annotations.json"));
+    // Tab changes focus without removing either side of the split.
+    view->text()->setFocus();
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    QVERIFY(view->isVisible() && bench.window->disassembly()->isVisible());
+    for (auto *dock :
+         bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->widget() == view)
+        dock->forceClose();
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    QTest::qWait(300);
+    QCOMPARE(diagnostics.join('\n').count("fixture slow decompile started"), 1);
+  }
+
+  void largePseudocodeKeepsProcessingEvents() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-large.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY(bench.window->disassembly()->currentFunction().has_value());
+    QElapsedTimer elapsed;
+    elapsed.start();
+    qint64 longest = 0;
+    int ticks = 0;
+    QTimer heartbeat;
+    connect(&heartbeat, &QTimer::timeout, this, [&] {
+      longest = std::max(longest, elapsed.restart());
+      ++ticks;
+    });
+    heartbeat.start(5);
+    bench.action(ActionId::ViewLLVMC)->trigger();
+    auto *view = bench.codeView(QStringLiteral("llvmc"));
+    QVERIFY(view);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !view->text()->loading() &&
+            view->text()->allText().contains("code line 19999"),
+        15000);
+    QTest::qWait(10);
+    QVERIFY(view->text()->preludeFolded());
+    QVERIFY(view->text()->lineCount() >= 20000);
+    QVERIFY(ticks > 1);
+    QVERIFY2(longest < 500,
+             qPrintable(QStringLiteral("UI event gap: %1 ms").arg(longest)));
+    qInfo() << "Largest event gap while rendering 20,000 source lines:"
+            << longest << "ms";
+  }
+
+  void codeAddressLinksRetainAddressNavigation_data() {
+    QTest::addColumn<bool>("global");
+    QTest::newRow("import-with-function-address") << false;
+    QTest::newRow("global-object") << true;
+  }
+
+  void codeAddressLinksRetainAddressNavigation() {
+    QFETCH(bool, global);
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(
+        directory, global ? QStringLiteral("pseudocode-global.bin")
+                          : QStringLiteral("pseudocode-import.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 1);
+    for (auto *button : view->findChildren<QToolButton *>())
+      if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+        button->setChecked(true);
+    QVERIFY(view->locked());
+    const auto target = global ? Base + 0x3000 : Base + 0x160;
+    // The import intentionally has both address and function_address.
+    if (!global) {
+      QJsonObject resolved;
+      bench.session.read(QStringLiteral("resolve"), {{"query", "function_22"}},
+                         bench.window.get(),
+                         [&](const QJsonObject &p) { resolved = p; });
+      QTRY_VERIFY(!resolved.isEmpty());
+      QVERIFY(resolved.value("import").toBool());
+      QVERIFY(addressValue(resolved.value("function_address")).has_value());
+    }
+    const auto token =
+        global ? QStringLiteral("global_value") : QStringLiteral("function_22");
+    QSignalSpy activation(code, &CodeText::objectActivated);
+    QSignalSpy names(code, &CodeText::nameActivated);
+    // Clicking the use, after a real declaration, exercises object recognition.
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const int row = global ? 2 : 1;
+    const QPoint point(
+        qRound(6 + 17 * metrics.horizontalAdvance(QLatin1Char('M'))),
+        qRound((row - code->verticalScrollBar()->value() + 0.5) *
+               std::ceil(metrics.lineSpacing())));
+    code->setFocus();
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(code->currentToken(), token);
+    QTest::mouseDClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(global ? activation.size() : names.size(), 1);
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(target));
+    QTRY_VERIFY(!code->hasFocus());
+    QCOMPARE(code->function(), std::optional<Address>(Base + 0x140));
+  }
+
+  void lateCodeLookupsDoNotReplaceNewerNavigation_data() {
+    QTest::addColumn<bool>("error");
+    QTest::addColumn<bool>("sessionChange");
+    QTest::newRow("late-success-navigation") << false << false;
+    QTest::newRow("late-error-navigation") << true << false;
+    QTest::newRow("late-success-session") << false << true;
+    QTest::newRow("late-error-session") << true << true;
+  }
+
+  void lateCodeLookupsDoNotReplaceNewerNavigation() {
+    QFETCH(bool, error);
+    QFETCH(bool, sessionChange);
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(
+        directory, error ? QStringLiteral("pseudocode-delayed-error.bin")
+                         : QStringLiteral("pseudocode-delayed.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 1);
+    for (auto *button : view->findChildren<QToolButton *>())
+      if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+        button->setChecked(true);
+    QVERIFY(view->locked());
+    QSignalSpy messages(&bench.session, &Session::message);
+    QSignalSpy names(code, &CodeText::nameActivated);
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const QPoint point(
+        qRound(6 + 17 * metrics.horizontalAdvance(QLatin1Char('M'))),
+        qRound((1 - code->verticalScrollBar()->value() + 0.5) *
+               std::ceil(metrics.lineSpacing())));
+    code->setFocus();
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QTest::mouseDClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(names.size(), 1);
+    const auto started = [&] {
+      for (const auto &row : messages)
+        if (row.first().toString().contains(
+                QStringLiteral("fixture delayed lookup started")))
+          return true;
+      return false;
+    };
+    QTRY_VERIFY(started());
+    if (sessionChange) {
+      const auto epoch = bench.session.epoch();
+      bench.session.closeFile();
+      QTRY_VERIFY(bench.session.epoch() != epoch);
+      QTRY_VERIFY(!bench.session.loaded());
+    } else {
+      // The pinned view remains at its source; the address view moves.
+      bench.window->disassembly()->navigate(Base + 0x180);
+      QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                   std::optional<Address>(Base + 0x180));
+    }
+    QTest::qWait(600);
+    if (!sessionChange) {
+      QCOMPARE(code->function(), std::optional<Address>(Base + 0x140));
+      QCOMPARE(bench.window->disassembly()->currentFunction(),
+               std::optional<Address>(Base + 0x180));
+    } else {
+      QVERIFY(!bench.session.loaded());
+    }
+    for (const auto &row : messages)
+      QVERIFY(
+          !row.first().toString().startsWith(QStringLiteral("Cannot jump to")));
+  }
+
+  void pseudocodeFunctionLinksStayInTheirWindow_data() {
+    QTest::addColumn<QString>("representation");
+    QTest::addColumn<bool>("secondWindow");
+    QTest::addColumn<bool>("locked");
+    for (const auto &representation :
+         {QStringLiteral("source"), QStringLiteral("llvmc")})
+      for (const bool second : {false, true})
+        for (const bool locked : {false, true}) {
+          const auto name = representation + (second ? "-second" : "-primary") +
+                            (locked ? "-locked" : "-following");
+          QTest::newRow(qPrintable(name)) << representation << second << locked;
+        }
+  }
+
+  void pseudocodeFunctionLinksStayInTheirWindow() {
+    QFETCH(QString, representation);
+    QFETCH(bool, secondWindow);
+    QFETCH(bool, locked);
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("pseudocode-navigation.bin"));
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    const Address caller = Base + 0x140;
+    const Address callee =
+        Base + (representation == QLatin1String("source") ? 0x160 : 0x150);
+    disassembly->navigate(caller);
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(caller));
+    bench.action(secondWindow ? ActionId::ViewLowIR : ActionId::ViewPseudocode)
+        ->trigger();
+    auto *view = bench.codeView(secondWindow ? QStringLiteral("low")
+                                             : QStringLiteral("source"));
+    QVERIFY(view);
+    view->setRepresentation(representation);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 1,
+                             OpenTimeoutMs);
+    QCOMPARE(code->function(), std::optional<Address>(caller));
+    if (locked) {
+      QToolButton *lock = nullptr;
+      for (auto *button : view->findChildren<QToolButton *>())
+        if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+          lock = button;
+      QVERIFY(lock);
+      lock->setChecked(true);
+      QVERIFY(view->locked());
+      // A pinned code view can differ from the background assembly location.
+      disassembly->navigate(Base + 0x180);
+      QTRY_COMPARE(disassembly->currentFunction(),
+                   std::optional<Address>(Base + 0x180));
+      QCOMPARE(code->function(), std::optional<Address>(caller));
+    }
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    const QString link = representation == QLatin1String("source")
+                             ? QStringLiteral("function_22")
+                             : QStringLiteral("Bar_ctor");
+    QVERIFY(code->findText(link, true));
+    QCOMPARE(code->currentToken(), link);
+    QSignalSpy activation(code, &CodeText::nameActivated);
+    // The call is row 1 in C, row 3 after LLVM C's folded prelude.
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const int row = representation == QLatin1String("source") ? 1 : 3;
+    const QPoint point(
+        qRound(6 + 17 * metrics.horizontalAdvance(QLatin1Char('M'))),
+        qRound((row - code->verticalScrollBar()->value() + 0.5) *
+               std::ceil(metrics.lineSpacing())));
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(code->currentToken(), link);
+    QTest::mouseDClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(activation.size(), 1);
+    if (representation == QLatin1String("llvmc"))
+      QCOMPARE(activation.first().first().toString(),
+               QStringLiteral("_ZN3BarC1Ev"));
+    QTRY_COMPARE_WITH_TIMEOUT(code->function(), std::optional<Address>(callee),
+                              OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
+    QCOMPARE(view->representation(), representation);
+    QVERIFY(code->isVisible());
+    QTRY_VERIFY(code->hasFocus());
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(callee));
+    QVERIFY(bench.action(ActionId::JumpBack)->isEnabled());
+    bench.action(ActionId::JumpBack)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(code->function(), std::optional<Address>(caller),
+                              OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
+    QVERIFY(code->isVisible());
+    QTRY_VERIFY(code->hasFocus());
+    QCOMPARE(view->representation(), representation);
+    QVERIFY(bench.action(ActionId::JumpForward)->isEnabled());
+    bench.action(ActionId::JumpForward)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(code->function(), std::optional<Address>(callee),
+                              OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
+    QVERIFY(code->isVisible());
+    QTRY_VERIFY(code->hasFocus());
+  }
+
+  void functionsActivationKeepsCodeWindow_data() {
+    pseudocodeFunctionLinksStayInTheirWindow_data();
+    QTest::newRow("low-secondary-following")
+        << QStringLiteral("low") << true << false;
+    QTest::newRow("rust-primary-following")
+        << QStringLiteral("source") << false << false;
+    QTest::newRow("go-secondary-following")
+        << QStringLiteral("source") << true << false;
+    QTest::newRow("c-rust-primary-locked")
+        << QStringLiteral("c") << false << true;
+    QTest::newRow("c-rust-secondary-following")
+        << QStringLiteral("c") << true << false;
+    if (!qEnvironmentVariable("NEVERD_CODE_NAV_WORKER").isEmpty() &&
+        !qEnvironmentVariable("NEVERD_CODE_NAV_FILE").isEmpty()) {
+      QTest::newRow("native-c") << QStringLiteral("source") << false << false;
+      QTest::newRow("native-llvmc") << QStringLiteral("llvmc") << true << false;
+    }
+  }
+
+  void functionsActivationKeepsCodeWindow() {
+    QFETCH(QString, representation);
+    QFETCH(bool, secondWindow);
+    QFETCH(bool, locked);
+    const bool native =
+        QByteArray(QTest::currentDataTag()).startsWith("native-");
+    QTemporaryDir directory;
+    const QByteArray tag = QTest::currentDataTag();
+    const QString fixture = tag.startsWith("rust-") || tag.startsWith("c-rust-")
+                                ? QStringLiteral("pseudocode-rust.bin")
+                            : tag.startsWith("go-")
+                                ? QStringLiteral("pseudocode-go.bin")
+                                : QStringLiteral("fixture.bin");
+    const auto path = native ? qEnvironmentVariable("NEVERD_CODE_NAV_FILE")
+                             : writeFixture(directory, fixture);
+    Workbench bench(native ? qEnvironmentVariable("NEVERD_CODE_NAV_WORKER")
+                           : QString::fromLocal8Bit(TEST_WORKER));
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *functions = bench.functions();
+    QVERIFY(functions);
+    QTRY_VERIFY_WITH_TIMEOUT(!functions->model().rowObject(2).isEmpty(),
+                             OpenTimeoutMs);
+    const Address caller =
+        native ? *functions->model().addressAt(0) : Base + 0x140;
+    auto *disassembly = bench.window->disassembly();
+    disassembly->navigate(caller);
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(caller));
+    bench.action(secondWindow ? ActionId::ViewLowIR : ActionId::ViewPseudocode)
+        ->trigger();
+    auto *view = bench.codeView(secondWindow ? QStringLiteral("low")
+                                             : QStringLiteral("source"));
+    QVERIFY(view);
+    view->setRepresentation(representation);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 0,
+                             OpenTimeoutMs);
+    if (locked) {
+      for (auto *button : view->findChildren<QToolButton *>())
+        if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+          button->setChecked(true);
+      QVERIFY(view->locked());
+      disassembly->navigate(Base + 0x180);
+      QTRY_COMPARE(disassembly->currentFunction(),
+                   std::optional<Address>(Base + 0x180));
+    }
+
+    auto *table = functions->table();
+    Address previous = caller;
+    for (const bool keyboard : {false, true}) {
+      const int row = native ? (keyboard ? 2 : 1) : (keyboard ? 23 : 22);
+      const auto target = functions->model().addressAt(row);
+      QVERIFY(target);
+      code->setFocus();
+      QTRY_VERIFY(code->hasFocus());
+      const auto index = functions->model().index(row, 0);
+      table->scrollTo(index);
+      // A narrow chooser can clip the name column beside a second code view.
+      const QRect cell =
+          table->visualRect(index).intersected(table->viewport()->rect());
+      QVERIFY(!cell.isEmpty());
+      const QPoint point = cell.center();
+      QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
+                        point);
+      QTRY_VERIFY(table->hasFocus());
+      QCOMPARE(table->currentIndex().row(), row);
+      if (keyboard)
+        QTest::keyClick(table, Qt::Key_Return);
+      else
+        QTest::mouseDClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
+                           point);
+      QVERIFY(code->isVisible());
+      QTRY_COMPARE_WITH_TIMEOUT(code->function(), target, OpenTimeoutMs);
+      QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
+      QVERIFY(code->lineCount() > 0);
+      QCOMPARE(view->representation(), representation);
+      QCOMPARE(view->locked(), locked);
+      QTRY_VERIFY(code->hasFocus());
+      QTRY_COMPARE(disassembly->currentFunction(), target);
+
+      bench.action(ActionId::JumpBack)->trigger();
+      QTRY_COMPARE_WITH_TIMEOUT(
+          code->function(), std::optional<Address>(previous), OpenTimeoutMs);
+      QTRY_VERIFY(!code->loading() && code->hasFocus());
+      bench.action(ActionId::JumpForward)->trigger();
+      QTRY_COMPARE_WITH_TIMEOUT(code->function(), target, OpenTimeoutMs);
+      QTRY_VERIFY(!code->loading() && code->hasFocus());
+      previous = *target;
+    }
+    if (native) {
+      const auto capture = qEnvironmentVariable("NEVERD_CODE_NAV_CAPTURE_DIR");
+      if (!capture.isEmpty()) {
+        QDir().mkpath(capture);
+        QVERIFY(bench.window->grab().save(QDir(capture).filePath(
+            QString::fromLatin1(QTest::currentDataTag()) +
+            QStringLiteral(".png"))));
+      }
+    }
+  }
+
+  void functionsActivationUsesDisassemblyWhenCodeIsNotCurrent_data() {
+    QTest::addColumn<bool>("closed");
+    QTest::newRow("disassembly-current") << false;
+    QTest::newRow("code-closed") << true;
+  }
+
+  void functionsActivationUsesDisassemblyWhenCodeIsNotCurrent() {
+    QFETCH(bool, closed);
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    QTRY_VERIFY(disassembly->currentFunction().has_value());
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    QTRY_VERIFY(!view->text()->loading() && view->text()->isVisible());
+    if (closed) {
+      for (auto *dock :
+           bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+        if (dock->widget() == view)
+          dock->forceClose();
+      QTRY_VERIFY(!view->isVisible());
+    } else {
+      // Users can still put the two views in one tab group. Their default
+      // arrangement is now a split, so create that hidden-view case here.
+      KDDockWidgets::QtWidgets::DockWidget *codeDock = nullptr,
+                                           *listingDock = nullptr;
+      for (auto *dock :
+           bench.window
+               ->findChildren<KDDockWidgets::QtWidgets::DockWidget *>()) {
+        if (dock->widget() == view)
+          codeDock = dock;
+        if (dock->widget() == disassembly)
+          listingDock = dock;
+      }
+      QVERIFY(codeDock && listingDock);
+      listingDock->addDockWidgetAsTab(codeDock);
+      bench.action(ActionId::ViewDisassembly)->trigger();
+      disassembly->focusContent();
+      QTRY_VERIFY(disassembly->isVisible());
+      const auto revision = bench.session.revision();
+      bench.session.rename(Base, QStringLiteral("renamed_while_hidden"));
+      QTRY_VERIFY(bench.session.revision() != revision);
+      QVERIFY(view->text()->interrupted());
+    }
+    auto *table = bench.functions()->table();
+    QTRY_VERIFY(!bench.functions()->model().rowObject(22).isEmpty());
+    table->setCurrentIndex(bench.functions()->model().index(22, 0));
+    table->setFocus();
+    QTRY_VERIFY(table->hasFocus());
+    QTest::keyClick(table, Qt::Key_Return);
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(Base + 0x160));
+    QVERIFY(disassembly->isVisible());
+    QVERIFY(!view->isVisible());
+    if (!closed) {
+      // Showing the existing tab catches up to the new owner revision.
+      for (auto *dock :
+           bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+        if (dock->widget() == view)
+          dock->raise();
+      QTRY_COMPARE(view->text()->function(),
+                   std::optional<Address>(Base + 0x160));
+      QTRY_VERIFY(!view->text()->loading() && !view->text()->interrupted());
+    }
+  }
+
+  void changingFiltersRetiresObsoletePages() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto &model = bench.functions()->model();
+    QTRY_COMPARE(model.total(), 600);
+    QTRY_VERIFY(!bench.session.busy());
+    QSignalSpy failures(&model, &ChooserModel::failed);
+
+    // Keep the worker busy while successive filters replace the needed page.
+    QObject blocker;
+    bench.session.read(QStringLiteral("resolve"),
+                       {{"query", "delayed_function"}}, &blocker,
+                       [](const QJsonObject &) {});
+    QTest::qWait(25);
+    for (int i = 0; i < 96; ++i)
+      model.setFilter(QStringLiteral("function_%1").arg(i));
+    model.setFilter(QStringLiteral("function_"));
+    QTest::qWait(50);
+    QCOMPARE(failures.count(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(model.total(), 600, OpenTimeoutMs);
+    QTRY_COMPARE(model.rowObject(0).value("name").toString(),
+                 QStringLiteral("function_0"));
+  }
+
+  void rapidlyScrollingLargeListsKeepsTheLastPageAvailable_data() {
+    QTest::addColumn<QString>("worker");
+    QTest::addColumn<QString>("binary");
+    QTest::newRow("fixture")
+        << QString::fromLocal8Bit(TEST_WORKER) << QString();
+    const auto worker = qEnvironmentVariable("NEVERD_LARGE_PE_WORKER");
+    const auto binary = qEnvironmentVariable("NEVERD_LARGE_PE_FILE");
+    if (!worker.isEmpty() && !binary.isEmpty())
+      QTest::newRow("native-pe") << worker << binary;
+  }
+
+  void rapidlyScrollingLargeListsKeepsTheLastPageAvailable() {
+    QFETCH(QString, worker);
+    QFETCH(QString, binary);
+    QTemporaryDir directory;
+    const bool fixture = binary.isEmpty();
+    const auto path =
+        fixture ? writeFixture(directory, QStringLiteral("many-functions.bin"))
+                : binary;
+    QVERIFY(!path.isEmpty());
+    Workbench bench(worker);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto &model = bench.functions()->model();
+    // The optional native profile includes background discovery over the
+    // entire large image; ordinary fixture deadlines remain unchanged.
+    const int listTimeout = fixture ? OpenTimeoutMs : NativeOpenTimeoutMs;
+    if (!fixture)
+      QTRY_VERIFY_WITH_TIMEOUT(
+          bench.session.background().value("state").toString() == "building" ||
+              bench.session.indexReady(),
+          listTimeout);
+    const int total =
+        fixture ? 20000 : bench.session.background().value("functions").toInt();
+    QVERIFY(total > 48 * 256);
+    QTRY_COMPARE_WITH_TIMEOUT(model.total(), total, listTimeout);
+    if (fixture)
+      QTRY_VERIFY_WITH_TIMEOUT(!bench.session.busy(), OpenTimeoutMs);
+    QSignalSpy failures(&model, &ChooserModel::failed);
+
+    QObject blocker;
+    if (fixture) {
+      bench.session.read(QStringLiteral("resolve"),
+                         {{"query", "delayed_function"}}, &blocker,
+                         [](const QJsonObject &) {});
+      QTest::qWait(25);
+    }
+    // Successive viewport positions span more pages than the shared queue.
+    for (int row = 256; row < model.total(); row += 256)
+      model.data(model.index(row, 0), Qt::DisplayRole);
+    const int last = model.total() - 1;
+    QVERIFY(model.index(last, 0).isValid());
+    model.data(model.index(last, 0), Qt::DisplayRole);
+    QTest::qWait(50);
+    QCOMPARE(failures.count(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!model.rowObject(last).isEmpty(), listTimeout);
+    if (fixture)
+      QCOMPARE(model.rowObject(last).value("name").toString(),
+               QStringLiteral("function_19999"));
+    else {
+      // The real worker must also survive replacing expensive filters.
+      for (int i = 0; i < 96; ++i)
+        model.setFilter(QStringLiteral("sub_%1").arg(i));
+      model.setFilter(QString());
+      QTest::qWait(50);
+      QCOMPARE(failures.count(), 0);
+      QTRY_COMPARE_WITH_TIMEOUT(model.total(), total, listTimeout);
+      QTRY_VERIFY_WITH_TIMEOUT(!model.rowObject(0).isEmpty(), listTimeout);
+      if (const auto capture = qEnvironmentVariable("NEVERD_LARGE_PE_CAPTURE");
+          !capture.isEmpty())
+        QVERIFY(bench.window->grab().save(capture));
+    }
+  }
+
+  void pseudocodeReadsInTheFunctionsLanguage() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-rust.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    // F5 shows a Rust function as Rust, and the window says so.
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 1,
+                             OpenTimeoutMs);
+    QCOMPARE(code->language(), QStringLiteral("rust"));
+    QCOMPARE(view->chosenLanguage(), QStringLiteral("Rust"));
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("Pseudocode-A (Rust)"));
+    // A source name is one name wherever it is clicked, and resolves by the
+    // symbol it reads.
+    const QStringList lines = code->allText().split(QLatin1Char('\n'));
+    int row = -1;
+    for (int i = 0; i < lines.size() && row < 0; ++i)
+      if (lines[i].contains(QStringLiteral("core::fmt::write(")))
+        row = i;
+    QVERIFY(row >= 0);
+    const int column = int(lines[row].indexOf(QStringLiteral("fmt")));
+    const auto name = code->sourceNameAt(row, column);
+    QVERIFY(name);
+    QCOMPARE(name->first, QStringLiteral("core::fmt::write"));
+    QCOMPARE(name->second.identifier, QStringLiteral("core_fmt_write"));
+    QCOMPARE(name->second.address, std::optional<Address>(Base + 0x160));
+    QVERIFY(!code->sourceNameAt(row,
+                                int(lines[row].indexOf(QStringLiteral("v0")))));
+    QSignalSpy names(code, &CodeText::nameActivated);
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const QPoint point(
+        qRound(6 + (6 + column + 0.5) *
+                       metrics.horizontalAdvance(QLatin1Char('M'))),
+        qRound((row - code->verticalScrollBar()->value() + 0.5) *
+               std::ceil(metrics.lineSpacing())));
+    code->setFocus();
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QTest::mouseDClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(names.size(), 1);
+    QCOMPARE(names.first().first().toString(),
+             QStringLiteral("_ZN4core3fmt5write17h0123456789abcdefE"));
+    // A function the engine refuses reads in no language.
+    bench.window->disassembly()->navigate(Base + 0x180);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->status().contains(QStringLiteral("fixture refuses")),
+        OpenTimeoutMs);
+    QCOMPARE(code->language(), QStringLiteral("c"));
+    QCOMPARE(view->chosenLanguage(), QString());
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("Pseudocode-A"));
+    QVERIFY(!code->sourceNameAt(0, 0));
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->language() == QLatin1String("rust"),
+                             OpenTimeoutMs);
+    // Pseudocode reads the Rust; C beside it reads every function as C.
+    const QStringList pseudocodeAndC = {
+        QStringLiteral("source"), QStringLiteral("c"),
+        QStringLiteral("llvmc"),  QStringLiteral("low"),
+        QStringLiteral("med"),    QStringLiteral("high"),
+        QStringLiteral("llvm")};
+    QCOMPARE(representationsOf(view), pseudocodeAndC);
+    view->setRepresentation(QStringLiteral("c"));
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->language() == QLatin1String("c"),
+                             OpenTimeoutMs);
+    QCOMPARE(view->chosenLanguage(), QString());
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("C-A"));
+    // A language the menu does not offer leaves the view as it is.
+    view->setRepresentation(QStringLiteral("go"));
+    QCOMPARE(view->representation(), QStringLiteral("c"));
+    view->setRepresentation(QStringLiteral("source"));
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->language() == QLatin1String("rust"),
+                             OpenTimeoutMs);
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("Pseudocode-A (Rust)"));
+  }
+
+  void pseudocodeOffersOnlyTheProgramsLanguages() {
+    QTemporaryDir directory;
+    const QStringList cOnly = {
+        QStringLiteral("source"), QStringLiteral("llvmc"),
+        QStringLiteral("low"),    QStringLiteral("med"),
+        QStringLiteral("high"),   QStringLiteral("llvm")};
+    {
+      // A C program's pseudocode is C: no other language is offered.
+      Workbench bench;
+      bench.window->openFile(
+          writeFixture(directory, QStringLiteral("pseudocode-import.bin")));
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      bench.window->disassembly()->navigate(Base + 0x140);
+      QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                   std::optional<Address>(Base + 0x140));
+      bench.action(ActionId::ViewPseudocode)->trigger();
+      auto *view = bench.codeView(QStringLiteral("source"));
+      QVERIFY(view);
+      QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                   view->text()->lineCount() > 1,
+                               OpenTimeoutMs);
+      QCOMPARE(representationsOf(view), cOnly);
+      QCOMPARE(view->text()->language(), QStringLiteral("c"));
+      QCOMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+               QStringLiteral("Pseudocode-A"));
+    }
+    // A Go program reads in Go, says so, and counts what it shows as C.
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-go.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->language() == QLatin1String("go"),
+                             OpenTimeoutMs);
+    QCOMPARE(representationsOf(view),
+             QStringList({QStringLiteral("source"), QStringLiteral("c"),
+                          QStringLiteral("llvmc"), QStringLiteral("low"),
+                          QStringLiteral("med"), QStringLiteral("high"),
+                          QStringLiteral("llvm")}));
+    QVERIFY(code->allText().contains(QStringLiteral("func main.main()")));
+    QVERIFY(code->status().contains(QStringLiteral("shown as C")));
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("Pseudocode-A (Go)"));
+  }
+
+  void unknownEntryBrowsesMappedCodeAndShowsDiagnostics() {
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("unknown-entry.bin"));
+    Workbench bench;
+    QSignalSpy messages(&bench.session, &Session::message);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(bench.session.entryAddress(), Address(0));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.window->disassembly()->currentAddress().has_value(),
+        OpenTimeoutMs);
+    QVERIFY(*bench.window->disassembly()->currentAddress() >= Base);
+    QVERIFY(*bench.window->disassembly()->currentAddress() < Base + 0x3000);
+    bool warned = false;
+    for (const auto &message : messages)
+      warned |= message.first().toString() ==
+                QLatin1String("Fixture PE entry is unknown.");
+    QVERIFY(warned);
+    QCOMPARE(bench.session.entryAddress(), Address(0));
+  }
+
+  void fileDropOpensFromWorkbenchViews_data() {
+    QTest::addColumn<QString>("targetName");
+    for (const auto *name : {"window", "listing", "functions", "hex", "code",
+                             "output", "command", "floating"})
+      QTest::newRow(name) << QString::fromLatin1(name);
+  }
+
+  void fileDropOpensFromWorkbenchViews() {
+    QFETCH(QString, targetName);
+    QTemporaryDir directory;
+    const auto path = writeFixture(
+        directory, QString::fromUtf8("\u4e2d\u6587 space #% fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    QWidget *target = bench.window.get();
+    if (targetName == QLatin1String("listing"))
+      target = bench.window->disassembly()->listing()->viewport();
+    else if (targetName == QLatin1String("functions"))
+      target = bench.functions()->table()->viewport();
+    else if (targetName == QLatin1String("hex"))
+      target = bench.window->findChild<HexView *>()->viewport();
+    else if (targetName == QLatin1String("code")) {
+      // Code docks created after startup must accept file drops too.
+      bench.window->openFile(writeFixture(directory, "first.bin"));
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      bench.window->disassembly()->navigate(Base + 0x140);
+      QTRY_VERIFY_WITH_TIMEOUT(
+          bench.window->disassembly()->currentFunction().has_value(),
+          OpenTimeoutMs);
+      bench.action(ActionId::ViewPseudocode)->trigger();
+      auto *view = bench.codeView(QStringLiteral("source"));
+      QVERIFY(view);
+      target = view->text()->viewport();
+    } else if (targetName == QLatin1String("output"))
+      target = bench.window->findChild<OutputWindow *>()
+                   ->findChild<QPlainTextEdit *>()
+                   ->viewport();
+    else if (targetName == QLatin1String("command"))
+      target =
+          bench.window->findChild<OutputWindow *>()->findChild<QLineEdit *>();
+    else if (targetName == QLatin1String("floating")) {
+      auto *dock = qobject_cast<KDDockWidgets::QtWidgets::DockWidget *>(
+          bench.functions()->parentWidget());
+      QVERIFY(dock);
+      dock->setFloating(true);
+      target = bench.functions()->table()->viewport();
+      QVERIFY(target->window() != bench.window.get());
+    }
+    QVERIFY(target);
+    // A new file asks how to load it first.
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.identifiesFiles(), OpenTimeoutMs);
+    LoadDialogAcceptor loadDialogs;
+    QVERIFY(dropFile(target, path));
+    QTRY_COMPARE_WITH_TIMEOUT(bench.session.filePath(), path, OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(loadDialogs.accepted(), 1);
+    QVERIFY(QFileInfo::exists(path));
+    if (targetName == QLatin1String("command"))
+      QVERIFY(static_cast<QLineEdit *>(target)->text().isEmpty());
+  }
+
+  void fileDropRejectsInvalidInputs() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    const QList<QList<QUrl>> rejected{
+        {},
+        {QUrl(QStringLiteral("https://example.com/fixture.bin"))},
+        {QUrl::fromLocalFile(directory.path())},
+        {QUrl::fromLocalFile(directory.filePath("missing.bin"))},
+        {QUrl::fromLocalFile(path), QUrl::fromLocalFile(path)},
+        {QUrl(QStringLiteral("file:relative.bin"))}};
+    for (const auto &urls : rejected) {
+      QMimeData mime;
+      mime.setUrls(urls);
+      QDragEnterEvent enter(QPoint(10, 10), Qt::CopyAction, &mime,
+                            Qt::LeftButton, Qt::NoModifier);
+      QApplication::sendEvent(bench.window.get(), &enter);
+      QVERIFY(!enter.isAccepted());
+    }
+    QMimeData mime;
+    mime.setUrls({QUrl::fromLocalFile(path)});
+    QDragEnterEvent moveOnly(QPoint(10, 10), Qt::MoveAction, &mime,
+                             Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(bench.window.get(), &moveOnly);
+    QVERIFY(!moveOnly.isAccepted());
+    QMimeData text;
+    text.setText(path);
+    QDragEnterEvent plainText(QPoint(10, 10), Qt::CopyAction, &text,
+                              Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(bench.window.get(), &plainText);
+    QVERIFY(!plainText.isAccepted());
+    QVERIFY(bench.session.filePath().isEmpty());
+  }
+
+  void quickStartShowsRecentFilesAndStartsAsChosen() {
+    // As IDA's Quick start: New, Go and Previous, the recent files and
+    // whether it greets the next start.  Each recent file shows its format,
+    // name, folder and when it was last opened.
+    QTemporaryDir directory;
+    const QString elf = directory.filePath(QStringLiteral("program"));
+    {
+      QFile file(elf);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(QByteArray("\x7F"
+                            "ELF\x02\x01\x01\0",
+                            8));
+    }
+    const QString missing = directory.filePath(QStringLiteral("gone.bin"));
+    QSettings().setValue(settings::RecentFiles, QStringList{elf, missing});
+    QSettings().setValue(settings::RecentOpened,
+                         QVariantMap{{elf, QDateTime::currentDateTime()}});
+    const auto restore = qScopeGuard([] {
+      QSettings().remove(settings::RecentFiles);
+      QSettings().remove(settings::RecentOpened);
+      QSettings().remove(settings::QuickStart);
+      QSettings().remove(settings::QuickStartSize);
+    });
+
+    QuickStartDialog dialog;
+    auto *recent =
+        dialog.findChild<QListWidget *>(QStringLiteral("quickStartRecent"));
+    QVERIFY(recent);
+    QCOMPARE(recent->count(), 2);
+    QCOMPARE(recent->item(0)->text(), QStringLiteral("program"));
+    QCOMPARE(recent->item(0)->data(Qt::UserRole + 1).toString(),
+             QStringLiteral("ELF"));
+    QVERIFY(recent->item(0)
+                ->data(Qt::UserRole + 3)
+                .toString()
+                .startsWith(QStringLiteral("Today, ")));
+    QCOMPARE(recent->item(1)->data(Qt::UserRole + 3).toString(),
+             QStringLiteral("Missing"));
+
+    // Delete forgets the selected file.
+    recent->setCurrentRow(1);
+    QTest::keyClick(recent, Qt::Key_Delete);
+    QCOMPARE(recent->count(), 1);
+    QCOMPARE(QSettings().value(settings::RecentFiles).toStringList(),
+             QStringList{elf});
+
+    // Display at startup is the setting the next start reads.
+    auto *atStartup = dialog.findChild<QCheckBox *>();
+    QVERIFY(atStartup && atStartup->isChecked());
+    atStartup->setChecked(false);
+    QVERIFY(!QSettings().value(settings::QuickStart, true).toBool());
+
+    // Previous loads the selected file.
+    QPushButton *previous = nullptr;
+    for (auto *button : dialog.findChildren<QPushButton *>())
+      if (button->text() == QStringLiteral("&Previous"))
+        previous = button;
+    QVERIFY(previous && previous->isEnabled() && previous->isDefault());
+    recent->setCurrentRow(0);
+    previous->click();
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QCOMPARE(dialog.start(), QuickStartDialog::Start::Previous);
+    QCOMPARE(dialog.file(), elf);
+  }
+
+  void quickStartResizesAndRemembersItsSize() {
+    QSettings().remove(settings::QuickStartSize);
+    const auto restore =
+        qScopeGuard([] { QSettings().remove(settings::QuickStartSize); });
+    QuickStartDialog dialog;
+    dialog.resize(dialog.minimumSize());
+    dialog.move(20, 20);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    auto *recent =
+        dialog.findChild<QListWidget *>(QStringLiteral("quickStartRecent"));
+    auto *grip = dialog.findChild<QSizeGrip *>();
+    auto *action =
+        dialog.findChild<QPushButton *>(QStringLiteral("quickStartAction"));
+    QVERIFY(recent && grip && grip->isVisible() && action);
+    const QSize initialSize = dialog.size();
+    const QSize initialListSize = recent->size();
+    const QSize actionSize = action->size();
+
+    // Drag the actual resize control, then check the content gained the space.
+    const QPoint start = grip->rect().center();
+    const QPoint destination = grip->mapToGlobal(start) + QPoint(24, 24);
+    QTest::mousePress(grip, Qt::LeftButton, Qt::NoModifier, start);
+    QMouseEvent move(QEvent::MouseMove, grip->mapFromGlobal(destination),
+                     destination, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(grip, &move);
+    QTest::mouseRelease(grip, Qt::LeftButton, Qt::NoModifier,
+                        grip->mapFromGlobal(destination));
+    QTRY_VERIFY(dialog.width() > initialSize.width());
+    QTRY_VERIFY(dialog.height() > initialSize.height());
+    const QSize chosenSize = dialog.size();
+    QCOMPARE(recent->size() - initialListSize, chosenSize - initialSize);
+    QCOMPARE(action->size(), actionSize);
+
+    dialog.showDropTarget(true);
+    auto *drop =
+        dialog.findChild<QWidget *>(QStringLiteral("quickStartDropTarget"));
+    QVERIFY(drop && drop->isVisible());
+    QCOMPARE(drop->geometry(), dialog.rect());
+    dialog.resize(initialSize);
+    QCOMPARE(drop->geometry(), dialog.rect());
+    dialog.showDropTarget(false);
+    dialog.resize(chosenSize);
+    QTest::keyClick(&dialog, Qt::Key_Escape);
+
+    QuickStartDialog reopened;
+    QCOMPARE(reopened.size(), chosenSize);
+    reopened.resize(1, 1);
+    QCOMPARE(reopened.size(), reopened.minimumSize());
+  }
+
+  void fileDropOpensFromQuickStart() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    QTimer drag;
+    bool accepted = false;
+    connect(&drag, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!dialog || dialog->objectName() != QLatin1String("quickStartDialog"))
+        return;
+      drag.stop();
+      accepted = dropFile(dialog, path);
+      if (!accepted)
+        dialog->reject();
+    });
+    drag.start(10);
+    bench.window->showQuickStart();
+    QVERIFY(accepted);
+    QTRY_COMPARE_WITH_TIMEOUT(bench.session.filePath(), path, OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!QApplication::activeModalWidget());
+  }
+
+  void quickStartShowsWhatADropWouldDo() {
+    // A file dragged over the quick start shows that a drop opens it, until
+    // it leaves; a folder, which cannot open, shows nothing.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    QTimer drag;
+    bool shown = false, hidden = false, folderShown = true;
+    connect(&drag, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!dialog || dialog->objectName() != QLatin1String("quickStartDialog"))
+        return;
+      drag.stop();
+      auto *target =
+          dialog->findChild<QWidget *>(QStringLiteral("quickStartDropTarget"));
+      const auto enter = [dialog](const QString &dragged) {
+        QMimeData mime;
+        mime.setUrls({QUrl::fromLocalFile(dragged)});
+        QDragEnterEvent event(QPoint(10, 10), Qt::CopyAction, &mime,
+                              Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(dialog, &event);
+      };
+      QDragLeaveEvent leave;
+      enter(path);
+      shown = target && target->isVisible();
+      QApplication::sendEvent(dialog, &leave);
+      hidden = target && !target->isVisible();
+      enter(directory.path());
+      folderShown = target && target->isVisible();
+      dialog->reject();
+    });
+    drag.start(10);
+    bench.window->showQuickStart();
+    QVERIFY(shown);
+    QVERIFY(hidden);
+    QVERIFY(!folderShown);
+  }
+
+  void reloadReadsTheInputFileAgainWithItsSavedComments() {
+    // As IDA's File, Load file, Reload the input file: a fresh worker reads
+    // the file again, with the comments that were saved; unsaved ones go
+    // when the user discards them.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.session.setComment(Base, QStringLiteral("saved comment"));
+    QTRY_VERIFY(bench.session.dirty());
+    bench.session.save();
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(path + ".neverd-annotations.json"),
+                             OpenTimeoutMs);
+    QTRY_VERIFY(!bench.session.dirty());
+    bench.session.setComment(Base + 0x140, QStringLiteral("unsaved comment"));
+    QTRY_VERIFY(bench.session.dirty());
+
+    const quint64 epoch = bench.session.epoch();
+    LoadDialogAcceptor loadDialogs;
+    QTimer discard;
+    bool prompted = false;
+    connect(&discard, &QTimer::timeout, this, [&] {
+      if (auto *box =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        prompted = true;
+        box->button(QMessageBox::Discard)->click();
+      }
+    });
+    discard.start(10);
+    bench.action(ActionId::FileReload)->trigger();
+    QTRY_VERIFY(prompted);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded() &&
+                                 bench.session.epoch() != epoch,
+                             OpenTimeoutMs);
+    QCOMPARE(bench.session.filePath(), path);
+    QVERIFY(!bench.session.dirty());
+    const auto saved = readAll(path + ".neverd-annotations.json");
+    QVERIFY(saved.contains("saved comment"));
+    QVERIFY(!saved.contains("unsaved comment"));
+    auto *log = bench.window->findChild<OutputWindow *>()
+                    ->findChild<QPlainTextEdit *>();
+    QVERIFY(log);
+    QTRY_VERIFY(
+        log->toPlainText().contains(QStringLiteral("Reloaded the input file")));
+  }
+
+  void fileInAReadOnlyFolderKeepsItsProjectInTheDataDirectory() {
+    // IDA asks for another place for its database when the input's folder
+    // is read-only.  The workbench opens the file anyway: its database,
+    // sidecars and lock sit in the user's data directory, beside a copy.
+    QTemporaryDir data;
+    const QByteArray dataHome = qgetenv("XDG_DATA_HOME");
+    qputenv("XDG_DATA_HOME", data.path().toUtf8());
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QFile::setPermissions(directory.path(),
+                          QFileDevice::ReadOwner | QFileDevice::ExeOwner);
+    const auto restore = qScopeGuard([&] {
+      QFile::setPermissions(directory.path(), QFileDevice::ReadOwner |
+                                                  QFileDevice::WriteOwner |
+                                                  QFileDevice::ExeOwner);
+      if (dataHome.isNull())
+        qunsetenv("XDG_DATA_HOME");
+      else
+        qputenv("XDG_DATA_HOME", dataHome);
+    });
+    if (QFileInfo(directory.path()).isWritable())
+      QSKIP("This user can write to a read-only folder");
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(bench.session.projectPath(), path);
+    const QString copy = bench.session.filePath();
+    QVERIFY2(copy.startsWith(data.path()), qPrintable(copy));
+    QCOMPARE(readAll(copy), readAll(path));
+    auto *log = bench.window->findChild<OutputWindow *>()
+                    ->findChild<QPlainTextEdit *>();
+    QVERIFY(log);
+    QTRY_VERIFY(log->toPlainText().contains(
+        QStringLiteral("is in a folder you cannot write to")));
+
+    bench.session.setComment(Base, QStringLiteral("kept elsewhere"));
+    QTRY_VERIFY(bench.session.dirty());
+    bench.session.save();
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(copy + ".neverd-annotations.json"),
+                             OpenTimeoutMs);
+    QVERIFY(!QFile::exists(path + ".neverd-annotations.json"));
+    QTRY_VERIFY(!bench.session.dirty());
+
+    // Reloading reads the file the user opened, with what was saved.
+    const quint64 epoch = bench.session.epoch();
+    LoadDialogAcceptor loadDialogs;
+    bench.action(ActionId::FileReload)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded() &&
+                                 bench.session.epoch() != epoch,
+                             OpenTimeoutMs);
+    QCOMPARE(bench.session.projectPath(), path);
+    QCOMPARE(bench.session.filePath(), copy);
+    QVERIFY(
+        readAll(copy + ".neverd-annotations.json").contains("kept elsewhere"));
+  }
+
+  void fileDropKeepsUnsavedChangesWhenCancelled() {
+    QTemporaryDir directory;
+    const auto first = writeFixture(directory, QStringLiteral("first.bin"));
+    const auto second = writeFixture(directory, QStringLiteral("second.bin"));
+    Workbench bench;
+    bench.window->openFile(first);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.session.setComment(Base, QStringLiteral("unsaved comment"));
+    QTRY_VERIFY(bench.session.dirty());
+    LoadDialogAcceptor loadDialogs;
+    QTimer cancel;
+    bool prompted = false;
+    connect(&cancel, &QTimer::timeout, this, [&] {
+      if (auto *box =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        prompted = true;
+        box->reject();
+      }
+    });
+    cancel.start(10);
+    QVERIFY(dropFile(bench.window.get(), second));
+    QTRY_VERIFY(prompted);
+    QCOMPARE(bench.session.filePath(), first);
+    QVERIFY(bench.session.loaded());
+    QVERIFY(bench.session.dirty());
+  }
+
   void initTestCase() {
     QVERIFY(settingsDirectory_.isValid());
     QCoreApplication::setOrganizationName(QStringLiteral("NeverDTests"));
@@ -96,6 +1372,71 @@ private slots:
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        settingsDirectory_.path());
+    configureDocking();
+  }
+
+  void windowChromeLeavesRoomToType() {
+    Workbench bench;
+    // The window manager resizes the window from its edges.
+    QVERIFY(!bench.window->statusBar()->isSizeGripEnabled());
+    // Input dialogs leave room for a full name, comment or expression.
+    QInputDialog input(bench.window.get());
+    input.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&input));
+    QVERIFY2(input.width() >= 420, qPrintable(QString::number(input.width())));
+  }
+
+  void viewsNarrowPastTheirRows() {
+    // A status line or a row of buttons is cut at its view's edge.  Kept
+    // whole, the disassembly's status line held its dock over 500 pixels
+    // wide, and the separators beside that dock would not move.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-import.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    bench.action(ActionId::ViewExtensions)->trigger();
+    auto *code = bench.codeView(QStringLiteral("source"));
+    auto *extensions = bench.window->findChild<ExtensionsView *>();
+    QVERIFY(code && extensions && bench.functions());
+    // Every button shows, as the fold button does for library code.
+    for (auto *button : code->findChildren<QToolButton *>())
+      button->show();
+    const QString wide(400, QLatin1Char('x'));
+    const QList<QWidget *> views{bench.window->disassembly(), code,
+                                 bench.functions(), extensions};
+    for (auto *view : views) {
+      for (auto *label : view->findChildren<QLabel *>())
+        label->setText(wide);
+      QVERIFY2(view->minimumSizeHint().width() <= NarrowViewWidth,
+               view->metaObject()->className());
+    }
+  }
+
+  void graphStopsWaitingWhenTheFileCloses() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->findChild<DisassemblyView *>();
+    QVERIFY(disassembly);
+    disassembly->navigate(Base + 0x140);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x140));
+    // The graph says it is laying out until its layout arrives...
+    bench.action(ActionId::ViewToggleGraph)->trigger();
+    QVERIFY(disassembly->graph()->waiting());
+    // ...and stops when the file closes first.
+    bench.session.closeFile();
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!disassembly->graph()->waiting());
   }
 
   void hexViewShownBeforeOpeningLoadsItsBytes() {
@@ -279,7 +1620,8 @@ private slots:
     // Pseudocode pages every line of the function.
     bench.action(ActionId::ViewPseudocode)->trigger();
     CodeView *pseudocode = nullptr;
-    QTRY_VERIFY((pseudocode = bench.codeView(QStringLiteral("c"))) != nullptr);
+    QTRY_VERIFY((pseudocode = bench.codeView(QStringLiteral("source"))) !=
+                nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(
         pseudocode->text()->allText().contains(QStringLiteral("code line 699")),
         OpenTimeoutMs);
@@ -300,7 +1642,7 @@ private slots:
     // window; it used to copy the disassembly.
     bench.window->activateWindow();
     QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
-    ir->setRepresentation(QStringLiteral("c"));
+    ir->setRepresentation(QStringLiteral("source"));
     QTRY_VERIFY_WITH_TIMEOUT(
         !ir->text()->loading() && ir->text()->lineCount() > 3, OpenTimeoutMs);
     // Two windows showing pseudocode are lettered apart.
@@ -460,7 +1802,74 @@ private slots:
         functions->model().rowObject(21).value("name").toString(), looseName,
         OpenTimeoutMs);
 
-    // A restarted worker reopens the file where its database left it.
+    // D makes the data under the cursor a value, the next size each time
+    // (stderr's qword gives way to a byte, then a word); U shows its bytes as
+    // bytes, and undo takes U back.  Each commits at once.
+    const Address object = Base + 0x3200;
+    const auto items = [&] {
+      return QString::fromUtf8(readAll(path + ".neverd-items.json"));
+    };
+    disassembly->navigate(object);
+    disassembly->focusContent();
+    QTRY_COMPARE(disassembly->currentItem(), std::optional<Address>(object));
+    QTRY_VERIFY(bench.action(ActionId::EditDefineData)->isEnabled());
+    bench.action(ActionId::EditDefineData)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"byte\"")),
+                             OpenTimeoutMs);
+    bench.action(ActionId::EditDefineData)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"word\"")),
+                             OpenTimeoutMs);
+    bench.action(ActionId::EditUndefine)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"undefined\"")),
+                             OpenTimeoutMs);
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"word\"")),
+                             OpenTimeoutMs);
+
+    // H shows the number of the operand under the cursor, or else the
+    // line's last number, in decimal at once; _ changes its sign and # goes
+    // back to the listing's number.  Each commits at once.
+    const Address instruction = Base + 0x51;
+    const auto operandFormat = [&] {
+      const auto rows =
+          QJsonDocument::fromJson(readAll(path + ".neverd-operands.json"))
+              .array();
+      for (const auto &row : rows)
+        for (const auto &entry : row.toObject().value("operands").toArray())
+          return entry.toObject();
+      return QJsonObject();
+    };
+    const auto shown = [&](const char *operands) {
+      return disassembly->listing()->currentLineText().contains(
+          QLatin1String(operands));
+    };
+    disassembly->navigate(instruction);
+    disassembly->focusContent();
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(instruction));
+    QTRY_VERIFY(shown("rsp, 20h"));
+    QTRY_VERIFY(bench.action(ActionId::EditOperandDecimal)->isEnabled());
+    bench.action(ActionId::EditOperandDecimal)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(operandFormat().value("base").toString(),
+                              QStringLiteral("decimal"), OpenTimeoutMs);
+    QCOMPARE(operandFormat().value("operand").toInt(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(shown("rsp, 32"), OpenTimeoutMs);
+    bench.action(ActionId::EditOperandNegate)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(operandFormat().value("negate").toBool(),
+                             OpenTimeoutMs);
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(!operandFormat().value("negate").toBool(),
+                             OpenTimeoutMs);
+    QCOMPARE(operandFormat().value("base").toString(),
+             QStringLiteral("decimal"));
+    bench.action(ActionId::EditOperandNumber)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(operandFormat().isEmpty(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(shown("rsp, 20h"), OpenTimeoutMs);
+
+    // A restarted worker reopens the file where its database left it.  The
+    // worker writes the sidecar before it answers, and an edit in flight asks
+    // to be saved first.
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.dirty(), OpenTimeoutMs);
     bench.session.restart();
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
@@ -624,6 +2033,10 @@ private slots:
       bench.window->disassembly()->navigate(Base + 0x140);
       QTRY_COMPARE(bench.window->disassembly()->currentItem(),
                    std::optional<Address>(Base + 0x140));
+      bench.action(ActionId::ViewPseudocode)->trigger();
+      auto *view = bench.codeView(QStringLiteral("source"));
+      QVERIFY(view);
+      QTRY_VERIFY(view->isVisible() && !view->text()->loading());
       bench.session.setComment(Base + 0x140, QStringLiteral("packed comment"));
       QTRY_VERIFY(bench.session.dirty());
       QSignalSpy saved(&bench.session, &Session::databaseSaved);
@@ -634,25 +2047,34 @@ private slots:
       QTRY_VERIFY(!bench.session.dirty());
     }
     // The database alone reopens the project: input, comment and location.
-    QTemporaryDir moved;
-    const auto copy = moved.filePath(QStringLiteral("moved.nddb"));
-    QVERIFY(QFile::copy(database, copy));
-    Workbench bench;
-    bench.window->openFile(copy);
-    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
-    QCOMPARE(bench.session.projectPath(), copy);
-    QCOMPARE(bench.session.databasePath(), copy);
-    QVERIFY(bench.session.filePath() != path);
-    QTRY_COMPARE_WITH_TIMEOUT(bench.window->disassembly()->currentItem(),
-                              std::optional<Address>(Base + 0x140),
-                              OpenTimeoutMs);
-    QString comment;
-    bench.session.read(QStringLiteral("resolve"),
-                       {{"query", hexAddress(Base + 0x140)}}, &bench.session,
-                       [&](const QJsonObject &payload) {
-                         comment = payload.value("comment").toString();
-                       });
-    QTRY_COMPARE(comment, QStringLiteral("packed comment"));
+    // Its header identifies it, so a copy without the suffix opens too.
+    for (const auto &name :
+         {QStringLiteral("moved.nddb"), QStringLiteral("moved.db")}) {
+      QTemporaryDir moved;
+      const auto copy = moved.filePath(name);
+      QVERIFY(QFile::copy(database, copy));
+      Workbench bench;
+      QVERIFY(dropFile(bench.window.get(), copy));
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      QCOMPARE(bench.session.projectPath(), copy);
+      QCOMPARE(bench.session.databasePath(), copy);
+      QVERIFY(bench.session.filePath() != path);
+      QTRY_COMPARE_WITH_TIMEOUT(bench.window->disassembly()->currentItem(),
+                                std::optional<Address>(Base + 0x140),
+                                OpenTimeoutMs);
+      QTest::qWait(250);
+      if (auto *view = bench.codeView(QStringLiteral("source"))) {
+        QVERIFY(!view->isVisible());
+        QVERIFY(!view->text()->function());
+      }
+      QString comment;
+      bench.session.read(QStringLiteral("resolve"),
+                         {{"query", hexAddress(Base + 0x140)}}, &bench.session,
+                         [&](const QJsonObject &payload) {
+                           comment = payload.value("comment").toString();
+                         });
+      QTRY_COMPARE(comment, QStringLiteral("packed comment"));
+    }
   }
 
   void contributionsRegisterRunAndUnload() {

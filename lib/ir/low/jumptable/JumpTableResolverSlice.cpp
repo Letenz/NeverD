@@ -4486,9 +4486,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   };
   const TargetRegInfo &TRI = getTargetRegInfo(CurrentImg->Arch);
   const llvm::ArrayRef<uint64_t> IntParamRegs =
-      TRI.integerParamRegs(CurrentImg->Format);
+      TRI.integerParamRegs(CurrentImg->abiFormat());
   const std::vector<TargetRegisterRange> CallPreservedRanges =
-      TRI.callPreservedRanges(CurrentImg->Format);
+      TRI.callPreservedRanges(CurrentImg->abiFormat());
   struct LaneView {
     VnodeSpace Space = VnodeSpace::CONST;
     uint64_t Container = InvalidVA;
@@ -6413,9 +6413,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         // candidate's evidence budget before reaching its dominating spill.
         const bool HasFrameSlot =
             canonicalFrameSlotKey(Block, I - 1, Address, SlotBase, SlotOffset);
+        ResolverResult AddressValue = resolverInvalid();
         if (!HasFrameSlot) {
-          ResolverResult AddressValue =
-              resolveOperand(Block, I, Address, Depth + 1);
+          AddressValue = resolveOperand(Block, I, Address, Depth + 1);
           if (AddressValue.Kind == ResolverResultKind::Value &&
               AddressValue.Value &&
               AddressValue.Value->K == ResolverValueExpr::Kind::Constant &&
@@ -6439,10 +6439,80 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                       static_cast<unsigned>(Def.Output.Space),
                                       Def.Output.Offset, Def.Output.Size});
         } else if (!Full) {
-          Full = namedResolverRoot(Def.Output.Size, "D",
-                                   {Def.Addr, static_cast<uint64_t>(Def.Seq),
-                                    static_cast<unsigned>(Def.Output.Space),
-                                    Def.Output.Offset, Def.Output.Size});
+          // A load of the address an earlier load read, of the same width and
+          // with nothing between them that may write memory, reads the value
+          // the earlier load read: `cmp dword [rcx], 6; ja default` bounds the
+          // index `mov eax, [rcx]` loads next.  Only a straight path back
+          // through single predecessors, stopping at a root of the graph, is
+          // searched, so the earlier load runs before this one on every path.
+          const auto MayWriteMemory = [](const LowOp &Op) {
+            return Op.Opcode == NdOp::STORE || Op.Opcode == NdOp::ATOMIC_XCHG ||
+                   Op.Opcode == NdOp::ATOMIC_ADD ||
+                   Op.Opcode == NdOp::ATOMIC_CMPXCHG ||
+                   Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+                   Op.Opcode == NdOp::INTRINSIC ||
+                   Op.MemoryOrdering != NdMemoryOrdering::None;
+          };
+          const auto SameLoad = [&](const LowOp &Op) {
+            return Op.Opcode == NdOp::LOAD && Op.NumInputs == Def.NumInputs &&
+                   Op.Output.Size == Def.Output.Size &&
+                   Op.MemoryAddressSpace == Def.MemoryAddressSpace;
+          };
+          if (AddressValue.Kind == ResolverResultKind::Value &&
+              Def.MemoryOrdering == NdMemoryOrdering::None) {
+            int SearchBlock = Block;
+            int SearchEnd = I;
+            std::set<int> Searched{Block};
+            bool Stop = false;
+            for (uint32_t Hop = 0;
+                 !Stop && Hop < limits::kMaxJumpTableReloadSearchBlocks;
+                 ++Hop) {
+              const ResolverFlowBlock &Searching = Graph.Blocks[SearchBlock];
+              for (int J = SearchEnd - 1; J >= 0 && !Stop; --J) {
+                const LowOp &Op = Searching.Ops[J];
+                if (!consumeEvidence() || MayWriteMemory(Op)) {
+                  Stop = true;
+                  break;
+                }
+                if (!SameLoad(Op))
+                  continue;
+                const NdVar &EarlierAddress =
+                    Op.NumInputs >= 2 ? Op.Inputs[1] : Op.Inputs[0];
+                const std::array<ResolverResult, 2> Addresses = {
+                    AddressValue,
+                    resolveOperand(SearchBlock, J, EarlierAddress, Depth + 1)};
+                if (Addresses[1].Kind != ResolverResultKind::Value ||
+                    mergeResolverResults(Addresses, /*MergeRoot=*/{},
+                                         /*IgnoreTransparentCycles=*/false,
+                                         consumeEvidence,
+                                         &EvidenceBudgetExhausted)
+                            .Kind != ResolverResultKind::Value)
+                  continue;
+                const ResolverResult Earlier =
+                    resolveValue(SearchBlock, J + 1, Op.Output, Depth + 1);
+                if (Earlier.Kind == ResolverResultKind::Value &&
+                    Earlier.Value && Earlier.Value->Size == Def.Output.Size)
+                  Full = Earlier.Value;
+                Stop = true;
+              }
+              // A root of this pruned graph has entries outside it.
+              if (Stop || Searching.Preds.size() != 1 ||
+                  IsRootBlock[static_cast<size_t>(SearchBlock)])
+                break;
+              SearchBlock = Searching.Preds.front();
+              if (SearchBlock < 0 ||
+                  SearchBlock >= static_cast<int>(Graph.Blocks.size()) ||
+                  !Searched.insert(SearchBlock).second)
+                break;
+              SearchEnd =
+                  static_cast<int>(Graph.Blocks[SearchBlock].Ops.size());
+            }
+          }
+          if (!Full)
+            Full = namedResolverRoot(Def.Output.Size, "D",
+                                     {Def.Addr, static_cast<uint64_t>(Def.Seq),
+                                      static_cast<unsigned>(Def.Output.Space),
+                                      Def.Output.Offset, Def.Output.Size});
         }
       }
 
@@ -10550,7 +10620,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
 
       const TargetRegInfo &TRI = getTargetRegInfo(CurrentImg->Arch);
       const llvm::ArrayRef<uint64_t> IntParamRegs =
-          TRI.integerParamRegs(CurrentImg->Format);
+          TRI.integerParamRegs(CurrentImg->abiFormat());
       const uint16_t PointerSize = CurrentImg->getPointerSize();
       std::vector<JumpTableValueOccurrence> StoreWriters;
       std::vector<JumpTableValueOccurrence> MemcpyWriters;

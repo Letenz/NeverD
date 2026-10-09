@@ -1,0 +1,212 @@
+//===- CHeaderNames.def - What emitted C takes from its headers -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The names emitted C uses without declaring them: types and macros of the
+/// headers it includes, and the compiler builtins and intrinsics it calls.  A
+/// reader of the text needs their types; a name not listed here and not
+/// declared in the text is refused, or read as an intrinsic whose signature
+/// the text leaves to its header.
+///
+///   NEVERD_C_HEADER_INTEGER(Name, Bits, Signed)
+///     An integer typedef; Bits 0 is the pointer width.
+///   NEVERD_C_HEADER_NAMED_TYPE(Name, Bits)
+///     A type the reader keeps by name; Bits 0 when its size does not matter.
+///   NEVERD_C_HEADER_CONSTANT(Name, Value)
+///     An `int` macro.
+///   NEVERD_C_HEADER_FUNCTION(Prototype)
+///     A function or builtin, declared as C.
+///   NEVERD_C_HEADER_GENERIC(Name, Result)
+///     A builtin whose types follow its arguments: Result is Bool, Void,
+///     Int, or Pointee (the type its first argument points to).
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_C_HEADER_INTEGER
+#define NEVERD_C_HEADER_INTEGER(Name, Bits, Signed)
+#endif
+#ifndef NEVERD_C_HEADER_NAMED_TYPE
+#define NEVERD_C_HEADER_NAMED_TYPE(Name, Bits)
+#endif
+#ifndef NEVERD_C_HEADER_CONSTANT
+#define NEVERD_C_HEADER_CONSTANT(Name, Value)
+#endif
+#ifndef NEVERD_C_HEADER_FUNCTION
+#define NEVERD_C_HEADER_FUNCTION(Prototype)
+#endif
+#ifndef NEVERD_C_HEADER_GENERIC
+#define NEVERD_C_HEADER_GENERIC(Name, Result)
+#endif
+
+// <stdint.h>, <stddef.h>, <unistd.h>
+NEVERD_C_HEADER_INTEGER("int8_t", 8, true)
+NEVERD_C_HEADER_INTEGER("int16_t", 16, true)
+NEVERD_C_HEADER_INTEGER("int32_t", 32, true)
+NEVERD_C_HEADER_INTEGER("int64_t", 64, true)
+NEVERD_C_HEADER_INTEGER("uint8_t", 8, false)
+NEVERD_C_HEADER_INTEGER("uint16_t", 16, false)
+NEVERD_C_HEADER_INTEGER("uint32_t", 32, false)
+NEVERD_C_HEADER_INTEGER("uint64_t", 64, false)
+NEVERD_C_HEADER_INTEGER("intptr_t", 0, true)
+NEVERD_C_HEADER_INTEGER("uintptr_t", 0, false)
+NEVERD_C_HEADER_INTEGER("size_t", 0, false)
+NEVERD_C_HEADER_INTEGER("ssize_t", 0, true)
+NEVERD_C_HEADER_INTEGER("ptrdiff_t", 0, true)
+// The data model sizes it.
+NEVERD_C_HEADER_INTEGER("wchar_t", 32, true)
+
+// <stdio.h>, <setjmp.h>, <link.h>, intrinsic vectors.
+NEVERD_C_HEADER_NAMED_TYPE("FILE", 0)
+NEVERD_C_HEADER_NAMED_TYPE("jmp_buf", 0)
+NEVERD_C_HEADER_NAMED_TYPE("__m64", 64)
+NEVERD_C_HEADER_NAMED_TYPE("__m128", 128)
+NEVERD_C_HEADER_NAMED_TYPE("__m128d", 128)
+NEVERD_C_HEADER_NAMED_TYPE("__m128i", 128)
+NEVERD_C_HEADER_NAMED_TYPE("__m256", 256)
+NEVERD_C_HEADER_NAMED_TYPE("__m256d", 256)
+NEVERD_C_HEADER_NAMED_TYPE("__m256i", 256)
+NEVERD_C_HEADER_NAMED_TYPE("__m512", 512)
+NEVERD_C_HEADER_NAMED_TYPE("__m512d", 512)
+NEVERD_C_HEADER_NAMED_TYPE("__m512i", 512)
+NEVERD_C_HEADER_NAMED_TYPE("__mmask8", 8)
+NEVERD_C_HEADER_NAMED_TYPE("__mmask16", 16)
+NEVERD_C_HEADER_NAMED_TYPE("__mmask32", 32)
+NEVERD_C_HEADER_NAMED_TYPE("__mmask64", 64)
+
+// <excpt.h> and the atomic memory orders.
+NEVERD_C_HEADER_CONSTANT("EXCEPTION_EXECUTE_HANDLER", 1)
+NEVERD_C_HEADER_CONSTANT("EXCEPTION_CONTINUE_SEARCH", 0)
+NEVERD_C_HEADER_CONSTANT("EXCEPTION_CONTINUE_EXECUTION", -1)
+NEVERD_C_HEADER_CONSTANT("__ATOMIC_RELAXED", 0)
+NEVERD_C_HEADER_CONSTANT("__ATOMIC_CONSUME", 1)
+NEVERD_C_HEADER_CONSTANT("__ATOMIC_ACQUIRE", 2)
+NEVERD_C_HEADER_CONSTANT("__ATOMIC_RELEASE", 3)
+NEVERD_C_HEADER_CONSTANT("__ATOMIC_ACQ_REL", 4)
+NEVERD_C_HEADER_CONSTANT("__ATOMIC_SEQ_CST", 5)
+
+// Builtins and intrinsics HighC calls.
+NEVERD_C_HEADER_FUNCTION("_Noreturn void __builtin_trap(void);")
+NEVERD_C_HEADER_FUNCTION("_Noreturn void __builtin_unreachable(void);")
+NEVERD_C_HEADER_FUNCTION(
+    "void *__builtin_memcpy(void *, const void *, size_t);")
+NEVERD_C_HEADER_FUNCTION(
+    "void *__builtin_memmove(void *, const void *, size_t);")
+NEVERD_C_HEADER_FUNCTION("void *__builtin_memset(void *, int, size_t);")
+NEVERD_C_HEADER_FUNCTION("int __builtin_popcount(unsigned int);")
+NEVERD_C_HEADER_FUNCTION("int __builtin_popcountl(unsigned long);")
+NEVERD_C_HEADER_FUNCTION("int __builtin_popcountll(unsigned long long);")
+NEVERD_C_HEADER_FUNCTION("int __builtin_clz(unsigned int);")
+NEVERD_C_HEADER_FUNCTION("int __builtin_clzl(unsigned long);")
+NEVERD_C_HEADER_FUNCTION("int __builtin_clzll(unsigned long long);")
+NEVERD_C_HEADER_FUNCTION("int __builtin_ctz(unsigned int);")
+NEVERD_C_HEADER_FUNCTION("int __builtin_ctzl(unsigned long);")
+NEVERD_C_HEADER_FUNCTION("int __builtin_ctzll(unsigned long long);")
+NEVERD_C_HEADER_FUNCTION("uint16_t __builtin_bswap16(uint16_t);")
+NEVERD_C_HEADER_FUNCTION("uint32_t __builtin_bswap32(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint64_t __builtin_bswap64(uint64_t);")
+NEVERD_C_HEADER_FUNCTION("uint8_t __builtin_bitreverse8(uint8_t);")
+NEVERD_C_HEADER_FUNCTION("uint16_t __builtin_bitreverse16(uint16_t);")
+NEVERD_C_HEADER_FUNCTION("uint32_t __builtin_bitreverse32(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint64_t __builtin_bitreverse64(uint64_t);")
+NEVERD_C_HEADER_FUNCTION("uint8_t __builtin_rotateleft8(uint8_t, uint8_t);")
+NEVERD_C_HEADER_FUNCTION("uint16_t __builtin_rotateleft16(uint16_t, uint16_t);")
+NEVERD_C_HEADER_FUNCTION("uint32_t __builtin_rotateleft32(uint32_t, uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint64_t __builtin_rotateleft64(uint64_t, uint64_t);")
+NEVERD_C_HEADER_FUNCTION("uint8_t __builtin_rotateright8(uint8_t, uint8_t);")
+NEVERD_C_HEADER_FUNCTION(
+    "uint16_t __builtin_rotateright16(uint16_t, uint16_t);")
+NEVERD_C_HEADER_FUNCTION(
+    "uint32_t __builtin_rotateright32(uint32_t, uint32_t);")
+NEVERD_C_HEADER_FUNCTION(
+    "uint64_t __builtin_rotateright64(uint64_t, uint64_t);")
+NEVERD_C_HEADER_FUNCTION("double __builtin_ceil(double);")
+NEVERD_C_HEADER_FUNCTION("double __builtin_floor(double);")
+NEVERD_C_HEADER_FUNCTION("double __builtin_round(double);")
+NEVERD_C_HEADER_FUNCTION("double __builtin_trunc(double);")
+NEVERD_C_HEADER_FUNCTION("double __builtin_sqrt(double);")
+NEVERD_C_HEADER_FUNCTION("double __builtin_fabs(double);")
+NEVERD_C_HEADER_FUNCTION("double __builtin_nearbyint(double);")
+NEVERD_C_HEADER_FUNCTION("double __builtin_fmin(double, double);")
+NEVERD_C_HEADER_FUNCTION("double __builtin_fmax(double, double);")
+NEVERD_C_HEADER_FUNCTION("double __builtin_fma(double, double, double);")
+NEVERD_C_HEADER_FUNCTION("float __builtin_ceilf(float);")
+NEVERD_C_HEADER_FUNCTION("float __builtin_floorf(float);")
+NEVERD_C_HEADER_FUNCTION("float __builtin_roundf(float);")
+NEVERD_C_HEADER_FUNCTION("float __builtin_truncf(float);")
+NEVERD_C_HEADER_FUNCTION("float __builtin_sqrtf(float);")
+NEVERD_C_HEADER_FUNCTION("float __builtin_fabsf(float);")
+NEVERD_C_HEADER_FUNCTION("float __builtin_nearbyintf(float);")
+NEVERD_C_HEADER_FUNCTION("float __builtin_fminf(float, float);")
+NEVERD_C_HEADER_FUNCTION("float __builtin_fmaxf(float, float);")
+NEVERD_C_HEADER_FUNCTION("float __builtin_fmaf(float, float, float);")
+NEVERD_C_HEADER_FUNCTION("void __debugbreak(void);")
+NEVERD_C_HEADER_FUNCTION("_Noreturn void __fastfail(unsigned int);")
+NEVERD_C_HEADER_FUNCTION("void __ud2(void);")
+NEVERD_C_HEADER_FUNCTION("void __int2c(void);")
+NEVERD_C_HEADER_FUNCTION("uint8_t __readfsbyte(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint16_t __readfsword(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint32_t __readfsdword(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint64_t __readfsqword(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint8_t __readgsbyte(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint16_t __readgsword(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint32_t __readgsdword(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint64_t __readgsqword(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("void __writefsdword(uint32_t, uint32_t);")
+NEVERD_C_HEADER_FUNCTION("void __writegsdword(uint32_t, uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint64_t __rdtsc(void);")
+NEVERD_C_HEADER_FUNCTION("uint64_t __rdtscp(uint32_t *);")
+NEVERD_C_HEADER_FUNCTION("void __cpuid(int *, int);")
+NEVERD_C_HEADER_FUNCTION("void __cpuidex(int *, int, int);")
+NEVERD_C_HEADER_FUNCTION("uint64_t _xgetbv(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("uint32_t _mm_getcsr(void);")
+NEVERD_C_HEADER_FUNCTION("void _mm_setcsr(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("void __dmb(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("void __dsb(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("void __isb(uint32_t);")
+NEVERD_C_HEADER_FUNCTION("void __clrex(void);")
+NEVERD_C_HEADER_FUNCTION("int32_t __jcvt(double);")
+NEVERD_C_HEADER_FUNCTION("_Noreturn void __stack_chk_fail(void);")
+NEVERD_C_HEADER_FUNCTION("_Noreturn void abort(void);")
+NEVERD_C_HEADER_FUNCTION("_Noreturn void exit(int);")
+NEVERD_C_HEADER_FUNCTION("_Noreturn void _exit(int);")
+NEVERD_C_HEADER_FUNCTION("_Noreturn void longjmp(void *, int);")
+NEVERD_C_HEADER_FUNCTION("long syscall(long, ...);")
+NEVERD_C_HEADER_FUNCTION("void *memcpy(void *, const void *, size_t);")
+NEVERD_C_HEADER_FUNCTION("void *memmove(void *, const void *, size_t);")
+NEVERD_C_HEADER_FUNCTION("void *memset(void *, int, size_t);")
+NEVERD_C_HEADER_FUNCTION("size_t strlen(const char *);")
+NEVERD_C_HEADER_FUNCTION("void *GetExceptionInformation(void);")
+NEVERD_C_HEADER_FUNCTION("uint32_t GetExceptionCode(void);")
+
+NEVERD_C_HEADER_GENERIC("__builtin_add_overflow", Bool)
+NEVERD_C_HEADER_GENERIC("__builtin_sub_overflow", Bool)
+NEVERD_C_HEADER_GENERIC("__builtin_mul_overflow", Bool)
+NEVERD_C_HEADER_GENERIC("__builtin_isnan", Int)
+NEVERD_C_HEADER_GENERIC("__builtin_isinf", Int)
+NEVERD_C_HEADER_GENERIC("__atomic_load_n", Pointee)
+NEVERD_C_HEADER_GENERIC("__atomic_store_n", Void)
+NEVERD_C_HEADER_GENERIC("__atomic_exchange_n", Pointee)
+NEVERD_C_HEADER_GENERIC("__atomic_compare_exchange_n", Bool)
+NEVERD_C_HEADER_GENERIC("__atomic_fetch_add", Pointee)
+NEVERD_C_HEADER_GENERIC("__atomic_fetch_sub", Pointee)
+NEVERD_C_HEADER_GENERIC("__atomic_fetch_and", Pointee)
+NEVERD_C_HEADER_GENERIC("__atomic_fetch_or", Pointee)
+NEVERD_C_HEADER_GENERIC("__atomic_fetch_xor", Pointee)
+NEVERD_C_HEADER_GENERIC("__atomic_add_fetch", Pointee)
+NEVERD_C_HEADER_GENERIC("__atomic_sub_fetch", Pointee)
+NEVERD_C_HEADER_GENERIC("__atomic_and_fetch", Pointee)
+NEVERD_C_HEADER_GENERIC("__atomic_or_fetch", Pointee)
+NEVERD_C_HEADER_GENERIC("__atomic_xor_fetch", Pointee)
+NEVERD_C_HEADER_GENERIC("__builtin_arm_ldrex", Pointee)
+NEVERD_C_HEADER_GENERIC("__builtin_arm_ldaex", Pointee)
+NEVERD_C_HEADER_GENERIC("__builtin_arm_strex", Int)
+NEVERD_C_HEADER_GENERIC("__builtin_arm_stlex", Int)
+
+#undef NEVERD_C_HEADER_INTEGER
+#undef NEVERD_C_HEADER_NAMED_TYPE
+#undef NEVERD_C_HEADER_CONSTANT
+#undef NEVERD_C_HEADER_FUNCTION
+#undef NEVERD_C_HEADER_GENERIC

@@ -10,6 +10,7 @@
 #include "neverd/emulation/CPU.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Endian.h"
 
 #include <algorithm>
 
@@ -36,6 +37,12 @@ static_assert([] {
 const Service *findDeclaredService(llvm::StringRef Module,
                                    llvm::StringRef Name) {
   const auto Provider = findProvider(Module);
+  std::string Alias;
+  if (Provider == APIProvider::Native && Name.starts_with("Nt") &&
+      nativeServiceNumber(Name)) {
+    Alias = ("Zw" + Name.drop_front(2)).str();
+    Name = Alias;
+  }
   for (const auto &S : Registry)
     if (Name == S.Name && Provider == S.Provider)
       return &S;
@@ -54,6 +61,19 @@ bool permitsModule(const Service &S, llvm::StringRef Module) {
   }
 }
 } // namespace
+llvm::Expected<ProcessDynamicThreadLocalState>
+Services::dynamicThreadLocalState() const {
+  uint8_t Bytes[DynamicTLSCount * PointerSize];
+  if (auto E = Memory.snapshotBacking(TEB + TebTLSSlots, Bytes))
+    return std::move(E);
+  ProcessDynamicThreadLocalState State;
+  State.FiberSlots = FLSSlots.count();
+  for (uint64_t I = 0; I < DynamicTLSCount; ++I)
+    if (TLSSlots[I] || llvm::support::endian::read64le(Bytes + I * PointerSize))
+      ++State.ThreadSlots;
+  return State;
+}
+
 llvm::ArrayRef<Service> services() { return Registry; }
 std::optional<APIProvider> findProvider(llvm::StringRef Module) {
   const auto Lower = Module.lower();
@@ -208,12 +228,15 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
   case API::HeapSize:
   case API::RtlSizeHeap:
   case API::HeapCreate:
+  case API::HeapDestroy:
   case API::HeapSetInformation:
     return Wrap(heap(S, Event));
   case API::ZwOpenFile:
     return Wrap(openImage(S, Event));
   case API::ZwCreateSection:
     return Wrap(createSection(S, Event));
+  case API::ZwOpenSection:
+    return Wrap(openSection(S, Event));
   case API::ZwMapViewOfSection:
     return Wrap(mapSection(S, Event));
   case API::ZwUnmapViewOfSection:
@@ -252,6 +275,8 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
   case API::RtlEnterCriticalSection:
   case API::RtlLeaveCriticalSection:
   case API::RtlTryEnterCriticalSection:
+  case API::DeleteCriticalSection:
+  case API::RtlDeleteCriticalSection:
     return Wrap(criticalSection(S, Event));
   case API::GetCommandLineA:
   case API::GetStartupInfoA:

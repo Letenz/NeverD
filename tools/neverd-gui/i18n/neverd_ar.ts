@@ -16,8 +16,8 @@
         <translation>إعادة تحميل ملف الإدخال(&amp;R)</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>إعادة تحميل الملف الثنائي وتعليقاته التوضيحية المحفوظة</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>قراءة ملف الإدخال مرة أخرى مع التعليقات التوضيحية المحفوظة</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -120,8 +120,8 @@
         <translation>إعادة تسمية(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>إعادة تسمية الدالة الحالية</translation>
+        <source>Rename the current address</source>
+        <translation>إعادة تسمية العنوان الحالي</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,8 +136,8 @@
         <translation>إدخال تعليق متكرر(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>وضع علامة على الموضع(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>وضع علامة على الموضع(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>
@@ -192,8 +192,8 @@
         <translation>الانتقال إلى بداية الدالة السابقة</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>الانتقال إلى الشيفرة الزائفة(&amp;E)</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>الانتقال إلى الشيفرة الزائفة(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>البحث عن تسلسل بايتات في الملف الثنائي</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>تسلسل البايتات التالي(&amp;U)</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>تسلسل البايتات التالي(&amp;Q)</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>إظهار LLVM IR للدالة الحالية</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>توليد LLVM C(&amp;C)</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>توليد LLVM C(&amp;L)</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>إظهار النظرة العامة على الرسم البياني</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>اتصالات MCP(&amp;C)</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>اتصالات MCP(&amp;O)</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>إدارة اتصالات MCP ومشاركة الجلسة</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>الإضافات(&amp;X)</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>الإضافات(&amp;T)</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>تبديل وضع ملء الشاشة</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>تكبير حجم الخط(&amp;I)</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>تكبير حجم الخط(&amp;N)</translation>
     </message>
     <message>
         <source>Increase the code font size</source>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>التوقف عن معاملة الدالة الحالية كدالة</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>بيانات(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>تعريف قيمة عند العنوان الحالي؛ مرة أخرى للحجم التالي</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>سلسلة نصية(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>تعريف السلسلة النصية التي تبدأ عند العنوان الحالي</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>إلغاء التعريف(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>عرض بايتات العنصر الحالي كبايتات</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>رقم(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>عرض رقم المعامل كما تختاره القائمة</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>ست عشري(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>عرض رقم المعامل بالنظام الست عشري</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>عشري(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>عرض رقم المعامل بالنظام العشري</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>ثنائي(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>عرض رقم المعامل بالنظام الثنائي</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>حرف(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>عرض رقم المعامل كأحرف</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>إزاحة(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>عرض رقم المعامل كالعنوان الذي يشير إليه</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>تغيير الإشارة(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>عرض رقم المعامل بإشارة معكوسة</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>النفي على مستوى البت(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>عرض رقم المعامل مع عكس البتات</translation>
     </message>
 </context>
 <context>
@@ -1095,6 +1183,10 @@
         <source>&amp;Functions</source>
         <translation>الدوال(&amp;F)</translation>
     </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>نوع المعامل(&amp;T)</translation>
+    </message>
 </context>
 <context>
     <name>NavigationBand</name>
@@ -1125,6 +1217,10 @@
 </context>
 <context>
     <name>ProjectDatabase</name>
+    <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>تعذّر نسخ %1 إلى %2</translation>
+    </message>
     <message>
         <source>Cannot read %1: %2</source>
         <translation>تعذّرت قراءة %1: %2</translation>
@@ -1195,6 +1291,10 @@
     <message>
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
+    </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
     </message>
 </context>
 <context>
@@ -1328,6 +1428,21 @@ Recognized library operation; click to show its code.</source>
 Double-click to go to the declaration.</source>
         <translation>%1
 انقر نقرًا مزدوجًا للانتقال إلى التصريح.</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>%n تصريح معروض بلغة C</numerusform>
+            <numerusform>%n تصريح معروض بلغة C</numerusform>
+            <numerusform>%n تصريحان معروضان بلغة C</numerusform>
+            <numerusform>%n تصريحات معروضة بلغة C</numerusform>
+            <numerusform>%n تصريحًا معروضًا بلغة C</numerusform>
+            <numerusform>%n تصريح معروض بلغة C</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1612,6 +1727,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>إعادة تحميل ملف الإدخال</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>شريط التنقل</translation>
     </message>
@@ -1720,12 +1839,8 @@ Double-click to go to the declaration.</source>
         <translation> · للقراءة فقط</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 ليس بداية دالة؛ يمكن إعادة تسمية الدوال فقط.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>إعادة تسمية الدالة</translation>
+        <source>Rename address</source>
+        <translation>إعادة تسمية العنوان</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -1850,8 +1965,8 @@ Signed: %4</source>
         <translation>اكتب أمراً</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>إنشاء ملف C</translation>
+        <source>Create source file</source>
+        <translation>إنشاء ملف مصدري</translation>
     </message>
     <message>
         <source>Create LST file</source>
@@ -1872,38 +1987,6 @@ Signed: %4</source>
     <message>
         <source>No saved desktop</source>
         <translation>لا يوجد سطح مكتب محفوظ</translation>
-    </message>
-    <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD: البدء السريع</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>جديد</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>تفكيك ملف جديد</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>ابدأ</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>العمل بمفردك</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>السابق</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>تحميل الملف المحدد من الملفات الأخيرة</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>الملفات الأخيرة:</translation>
     </message>
     <message>
         <source>Open binary or database</source>
@@ -1981,6 +2064,10 @@ Signed: %4</source>
         <source>Collapse library operations</source>
         <translation>طي عمليات المكتبات</translation>
     </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>طريقة تحميل %1 غير معروفة: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2038,7 +2125,94 @@ Signed: %4</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>بدء سريع</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>أداة تفاعلية لفك التجميع وفك الترجمة</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>الإصدار %1</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>الملفات الأخيرة</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;جديد</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>تفكيك ملف جديد</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>اب&amp;دأ</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>العمل بمفردك</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>ال&amp;سابق</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>تحميل الملف المحدد من الملفات الأخيرة</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>&amp;عرض عند بدء التشغيل</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>أفلِت ملفًا هنا لفتحه</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>مفقود</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>&amp;تحميل</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>&amp;نسخ المسار</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>إ&amp;زالة من القائمة</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>اليوم، %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>أمس، %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>لا توجد ملفات حديثة</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>تظهر هنا الملفات التي تفتحها. اختر «جديد» أو أفلِت ملفًا على هذه النافذة.</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>يقع %1 في مجلد لا يمكنك الكتابة فيه؛ تُحفظ قاعدة بياناته في %2</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>جارٍ بدء عملية التحليل…</translation>
@@ -2064,8 +2238,8 @@ Signed: %4</source>
         <translation>%1: %2 %3، عدد الدوال: %4</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>تمت إعادة تحميل التعليقات التوضيحية</translation>
+        <source>Reloaded the input file</source>
+        <translation>أُعيد تحميل ملف الإدخال</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2134,6 +2308,243 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>حُذفت الدالة عند %1</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>البايتات عند %1 غير معرّفة بالفعل</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>أُلغي تعريف العنصر عند %1</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>عُرِّف %1 عند %2</translation>
+    </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>المنصة: %1، كما اختيرت</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>المنصة: %1، مكتشفة من الشيفرة: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>تحميل ملف جديد</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>تحميل الملف %1 بصيغة(&amp;A)</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>قد يكون للملف المُدخل أحد التنسيقات المدرجة</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>نوع المعالج(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>يحدد رأس الملف المعالج</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>التحليل</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>مُفعّل(&amp;E)</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>عند إيقافه، لن يحلل NeverD البرنامج في وقت الخمول</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>تفعيل المؤشر(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>عرض تقدم التحليل في سطر الحالة</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>الخيارات</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>تحميل معلومات التصحيح(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>قراءة ملف PDB أو DWARF أو خريطة الرابط الخاصة بالمُدخل</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>لا يستطيع NeverD تحميل هذا الملف: %1</translation>
+    </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>مُدرج بسبب اسم الملف فقط؛ محتواه لا يدل على هذا التنسيق</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>اسم الملف وحده يوحي بتنسيق؛ اختر صفًا لتحميل الملف بهذه الطريقة</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>المعالج: %1</translation>
+    </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 ليس رقمًا ست عشريًا</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>العنوان الأساسي لتحميل الملف</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>اختر المعالج الذي تعمل عليه شيفرة الملف</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>نقطة الدخول(&amp;N)</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>إزاحة الملف(&amp;O)</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>عدد البايتات المراد تحميلها</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>أساس الصورة(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>حجم التحميل(&amp;Z)</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>نوع المعالج (انقر نقرًا مزدوجًا للتعيين)(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>أساس الصورة</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>حتى نهاية الملف</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>حيث يبدأ التنفيذ</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>موضع بدء البايتات المحمّلة في الملف</translation>
+    </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>المنصة(&amp;P)</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>المنصة التي بُنيت لها الشيفرة والتي تتبع اصطلاحاتها: كيف تمرر الاستدعاءات الوسائط، وأي المسجلات تحفظها، وأحجام أنواع C</translation>
+    </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>لا يبدو أي جزء من الملف شيفرةً لمجموعة تعليمات يعرفها NeverD؛ اختر المعالج الذي تعمل عليه شيفرته</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>تبدو الشيفرة مثل %1 أو %2، ولا تكشف تعليماتها أيهما؛ اختر المعالج الذي تعمل عليه شيفرته</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>مكتشف من البايتات: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>مكتشف من البايتات: %1، الدخول %2، الأساس %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>تبدو الشيفرة مثل %1، الذي لا يستطيع NeverD فكّه؛ اختر معالجًا لقراءتها كذلك على أي حال</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>أقرب ما تشبهه الشيفرة هو %1، لكن ليس بوضوح؛ اختر المعالج الذي تعمل عليه شيفرته</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>معالجات Intel 80x86</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>معالجات ARM</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>الأجهزة الافتراضية</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 وما بعده (32 بت)</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 وIntel 64 (64 بت)</translation>
+    </message>
+    <message>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM بترتيب البايتات الصغير، يبدأ في حالة ARM</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64 (AArch64)</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>آلة إيثريوم الافتراضية</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM بترتيب البايتات الصغير، يبدأ في حالة Thumb</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple (macOS، iOS)</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>الكشف من الشيفرة</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V (Linux، BSD، Android)</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>

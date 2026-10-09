@@ -42,8 +42,19 @@ const Import *BinaryImage::decodeImportThunkAt(va_t Addr) const {
 
   if (Arch == Arch::X64 || Arch == Arch::X86) {
     const uint8_t *Bytes = readVA(Addr, x86::kJmpIndirectLen);
-    if (!Bytes || Bytes[0] != x86::kJmpIndirectOp ||
-        Bytes[1] != x86::kJmpIndirectModRM)
+    if (!Bytes || Bytes[0] != x86::kJmpIndirectOp)
+      return nullptr;
+    // An i386 PIC PLT entry jumps through its GOT entry by the base the
+    // dynamic section names, DT_PLTGOT, which its caller holds in EBX.
+    if (Arch == Arch::X86 && Bytes[1] == x86::kJmpIndirectGOTModRM) {
+      if (!DynInfo.PltGotAddr)
+        return nullptr;
+      int32_t Disp = 0;
+      std::memcpy(&Disp, Bytes + x86::kJmpIndirectDispOffset, sizeof(Disp));
+      return ByIAT(static_cast<va_t>(static_cast<uint32_t>(
+          DynInfo.PltGotAddr + static_cast<int64_t>(Disp))));
+    }
+    if (Bytes[1] != x86::kJmpIndirectModRM)
       return nullptr;
     va_t Slot = 0;
     if (Arch == Arch::X64) {
@@ -96,7 +107,7 @@ void scanImportThunks(BinaryImage &Img) {
   for (size_t I = 0; I < Img.Imports.size(); ++I)
     if (Img.Imports[I].IATAddr != 0)
       TargetImports.try_emplace(Img.Imports[I].IATAddr, I);
-  if (TargetImports.empty())
+  if (TargetImports.empty() && Img.RuntimeCallablePointerSlots.empty())
     return;
 
   auto Existing = Img.getSymbolAddresses();
@@ -185,6 +196,8 @@ static bool hasDisjointOwners(const BinaryImage &Img) {
 static std::vector<std::pair<va_t, va_t>>
 collectClaimedCodeRanges(const BinaryImage &Img) {
   std::vector<std::pair<va_t, va_t>> Known = Img.KnownCodeRanges, Sized;
+  Known.insert(Known.end(), Img.ImportStubRanges.begin(),
+               Img.ImportStubRanges.end());
   for (const Symbol &Sym : Img.Symbols) {
     if (!Sym.IsFunc || Sym.Size == 0 || Sym.Size > InvalidVA - Sym.Addr)
       continue;

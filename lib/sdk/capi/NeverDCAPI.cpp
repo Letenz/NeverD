@@ -24,6 +24,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "JSONText.h"
+#include "LoadOptions.h"
 #include "NativeMobileSession.h"
 #include "NativePhaseTrace.h"
 #include "SessionImpl.h"
@@ -38,6 +40,7 @@
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
 #include "neverd/sdk/NeverDPlugin.h"
 #include "neverd/support/BinaryLoading.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/Format.h"
@@ -150,9 +153,9 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
     Err = "input path is empty";
     return false;
   }
-  auto Path = std::filesystem::path(InputPath);
+  auto Path = std::filesystem::u8path(InputPath);
   if (!std::filesystem::exists(Path)) {
-    Err = "file not found: " + Path.string();
+    Err = "file not found: " + pathToUTF8(Path);
     return false;
   }
   BinaryLoadOptions LoadOpts;
@@ -160,6 +163,20 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
     LoadOpts.OnlyFunctionEntries = Policy->OnlyFunctionEntries;
     LoadOpts.ARMFunctionModes = Policy->ARMFunctionModes;
     DbgRequest = Policy->DbgRequest;
+  }
+  // The file reads with the loader its project keeps, as a session load
+  // reads it; the pipeline refuses a binary file.
+  if (Policy && Policy->RequestedLoad) {
+    LoadOpts.Choice = *Policy->RequestedLoad;
+  } else if (auto Kept = readLoadOptionsSidecar(Path); !Kept) {
+    Err = llvm::toString(Kept.takeError());
+    return false;
+  } else {
+    LoadOpts.Choice = *Kept;
+  }
+  if (auto Unsettled = settleBinaryFileProcessor(Path, LoadOpts.Choice)) {
+    Err = llvm::toString(std::move(Unsettled));
+    return false;
   }
   auto ImgOrErr = loadBinary(Path, LoadOpts);
   if (!ImgOrErr) {
@@ -169,6 +186,7 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
     return false;
   }
   Img = std::move(*ImgOrErr);
+  settleBinaryFilePlatform(Img, LoadOpts.Choice);
 
   auto Found = loadDebugInfo(Path, Img, DbgRequest);
   if (!Found.Error.empty()) {
@@ -244,6 +262,8 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.Annotations.clear();
   S.Renames.clear();
   S.FunctionEdits.clear();
+  S.DataItems.clear();
+  S.OperandFormats.clear();
   S.SigDB.clear();
   S.DiscoveredFunctions.reset();
   S.ImageStrings.reset();
@@ -252,10 +272,66 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   neverd_annotations_load(Sess);
   neverd_renames_load(Sess);
   neverd_functions_load(Sess);
+  neverd_items_load(Sess);
+  neverd_operand_formats_load(Sess);
 
   return 1;
 }
 } // namespace
+
+const char *neverd_identify_json(const char *Path) {
+  llvm::json::Array Rows;
+  llvm::json::Object Root;
+  std::error_code EC;
+  const auto Input = std::filesystem::u8path(Path ? Path : "");
+  if (!Path || !std::filesystem::is_regular_file(Input, EC)) {
+    Root["rows"] = std::move(Rows);
+    Root["error"] =
+        jsonSafeText(std::string("not a regular file: ") + (Path ? Path : ""));
+    return dupStr(jsonToString(llvm::json::Value(std::move(Root))));
+  }
+  for (const LoadCandidate &Row : identifyFile(Input)) {
+    llvm::json::Object Entry{{"loader", getLoadRowLoader(Row.Row)},
+                             {"text", jsonSafeText(Row.Description)},
+                             {"processor", Row.TheArch == Arch::Unknown
+                                               ? std::string()
+                                               : getArchName(Row.TheArch)},
+                             {"bits", Row.Bits},
+                             {"endian", Row.BigEndian ? "big" : "little"},
+                             {"loadable", Row.Loadable},
+                             {"by_name", Row.ByName}};
+    if (!Row.Reason.empty())
+      Entry["reason"] = jsonSafeText(Row.Reason);
+    // What a headerless file's bytes show of the processor they hold code
+    // for, and the processor a load reads them as unasked.
+    if (Row.ISA) {
+      llvm::json::Array Guesses;
+      for (const ISAGuess &Guess : Row.ISA->Guesses)
+        Guesses.push_back(llvm::json::Object{{"isa", Guess.ISA},
+                                             {"name", Guess.Name},
+                                             {"processor", Guess.Processor},
+                                             {"share", Guess.Share}});
+      Entry["guesses"] = std::move(Guesses);
+      Entry["code_share"] = Row.ISA->CodeShare;
+      Entry["status"] = Row.ISA->outcomeName();
+      Entry["code_unit"] = Row.ISA->CodeUnit;
+      Entry["code_offset"] = Row.ISA->CodeOffset;
+      if (Row.ISA->WideShare)
+        Entry["wide_share"] = *Row.ISA->WideShare;
+      Entry["detected"] = Row.ISA->detectedProcessor();
+      Entry["evidence"] = Row.ISA->describe();
+      if (const auto &Print = Row.ISA->Fingerprint)
+        Entry["fingerprint"] =
+            llvm::json::Object{{"name", Print->Name},
+                               {"processor", Print->Processor},
+                               {"entry", vaHex(Print->Entry)},
+                               {"base", vaHex(Print->Base)}};
+    }
+    Rows.push_back(std::move(Entry));
+  }
+  Root["rows"] = std::move(Rows);
+  return dupStr(jsonToString(llvm::json::Value(std::move(Root))));
+}
 
 int neverd_session_load(neverd_session_t Sess, const char *Path) {
   auto *S = toSession(Sess);
@@ -269,7 +345,7 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
     Trace.finish(false);
     return 0;
   }
-  auto P = std::filesystem::path(Path);
+  auto P = std::filesystem::u8path(Path);
   if (!std::filesystem::exists(P)) {
     S->setError(std::string("file not found: ") + Path);
     Trace.finish(false);
@@ -292,6 +368,22 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
   BinaryLoadOptions LoadOpts;
   LoadOpts.OnlyFunctionEntries = S->OnlyFunctionEntries;
   LoadOpts.ARMFunctionModes = S->ARMFunctionModes;
+  // The file reads with the loader the caller chose, else the one its
+  // project keeps.
+  if (S->RequestedLoad) {
+    LoadOpts.Choice = *S->RequestedLoad;
+  } else if (auto Kept = readLoadOptionsSidecar(P); !Kept) {
+    S->setError(llvm::toString(Kept.takeError()));
+    Trace.finish(false);
+    return 0;
+  } else {
+    LoadOpts.Choice = *Kept;
+  }
+  if (auto Unsettled = settleBinaryFileProcessor(P, LoadOpts.Choice)) {
+    S->setError(llvm::toString(std::move(Unsettled)));
+    Trace.finish(false);
+    return 0;
+  }
   auto ImgOrErr = loadBinary(P, LoadOpts);
   if (!ImgOrErr) {
     std::string Err;
@@ -301,9 +393,12 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
     Trace.finish(false);
     return 0;
   }
+  settleBinaryFilePlatform(*ImgOrErr, LoadOpts.Choice);
   const int Result =
       finishSessionLoad(Sess, *S, std::move(*ImgOrErr), std::move(P),
                         std::move(SanitizeSourcePath));
+  if (Result)
+    S->LoadedChoice = LoadOpts.Choice;
   Trace.finish(Result != 0);
   return Result;
 }
@@ -363,12 +458,12 @@ int neverd_session_is_loaded(neverd_session_t Sess) {
 
 void neverd_session_set_pdb_path(neverd_session_t Sess, const char *Path) {
   if (auto *S = toSession(Sess))
-    S->DbgRequest.PDBPath = Path ? std::filesystem::path(Path) : "";
+    S->DbgRequest.PDBPath = Path ? std::filesystem::u8path(Path) : "";
 }
 
 void neverd_session_set_map_path(neverd_session_t Sess, const char *Path) {
   if (auto *S = toSession(Sess))
-    S->DbgRequest.MapPath = Path ? std::filesystem::path(Path) : "";
+    S->DbgRequest.MapPath = Path ? std::filesystem::u8path(Path) : "";
 }
 
 void neverd_session_set_debug_info_enabled(neverd_session_t Sess, int Enabled) {
@@ -445,7 +540,7 @@ const char *neverd_session_debug_info_kind(neverd_session_t Sess) {
 
 const char *neverd_session_debug_info_path(neverd_session_t Sess) {
   auto *S = toSession(Sess);
-  return dupStr(S ? S->DbgPath.string() : std::string());
+  return dupStr(S ? pathToUTF8(S->DbgPath) : std::string());
 }
 
 int neverd_session_discover_functions(neverd_session_t Sess) {
@@ -480,7 +575,7 @@ int neverd_session_analyze(neverd_session_t Sess) {
 
 const char *neverd_session_file_path(neverd_session_t Sess) {
   auto *S = toSession(Sess);
-  return S->Loaded ? dupStr(S->FilePath.string()) : dupStr(std::string());
+  return S->Loaded ? dupStr(pathToUTF8(S->FilePath)) : dupStr(std::string());
 }
 
 const char *neverd_session_arch_name(neverd_session_t Sess) {
@@ -635,6 +730,16 @@ neverd_va_t neverd_session_base_addr(neverd_session_t Sess) {
 neverd_va_t neverd_session_entry_addr(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   return S->Loaded ? S->Img.Entry : 0;
+}
+
+const char *neverd_session_load_diagnostics_json(neverd_session_t Sess) {
+  llvm::json::Array Diagnostics;
+  const auto *S = toSession(Sess);
+  if (S && S->Loaded)
+    for (const auto &D : S->Img.LoadDiagnostics)
+      Diagnostics.push_back(
+          llvm::json::Object{{"code", D.Code}, {"message", D.Message}});
+  return dupStr(jsonToString(llvm::json::Value(std::move(Diagnostics))));
 }
 
 int neverd_session_segment_count(neverd_session_t Sess) {

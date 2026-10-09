@@ -12,6 +12,7 @@
 #include "neverd/debug/DWARFLoader.h"
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/support/FilePath.h"
 
 #define DEBUG_TYPE "neverd-dwarf-loader"
 #include "llvm/DebugInfo/DWARF/DWARFAbbreviationDeclaration.h"
@@ -26,6 +27,7 @@
 #include "llvm/Object/MachOUniversal.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/LEB128.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/WithColor.h"
@@ -318,12 +320,12 @@ static std::filesystem::path findDSYM(const std::filesystem::path &BinPath) {
   auto Parent = BinPath.parent_path();
   if (Parent.empty())
     Parent = ".";
-  auto Stem = BinPath.stem().string();
+  auto Stem = BinPath.stem();
   if (!std::filesystem::exists(Parent))
     return {};
   for (auto &Entry : std::filesystem::directory_iterator(Parent)) {
     if (Entry.path().extension() == ".dSYM" && Entry.is_directory()) {
-      auto DSYMStem = Entry.path().stem().string();
+      auto DSYMStem = Entry.path().stem();
       if (DSYMStem != Stem)
         continue;
       auto Inner = Entry.path() / "Contents" / "Resources" / "DWARF";
@@ -452,10 +454,10 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   auto Ctx = std::unique_ptr<DWARFDebugContext>(new DWARFDebugContext());
   Ctx->PImpl = std::make_unique<Impl>();
 
-  auto BufOr = llvm::MemoryBuffer::getFile(BinaryPath.string());
+  auto BufOr = llvm::MemoryBuffer::getFile(pathToUTF8(BinaryPath));
   if (!BufOr) {
     llvm::WithColor::warning()
-        << "debug: cannot open " << BinaryPath.string() << "\n";
+        << "debug: cannot open " << pathToUTF8(BinaryPath) << "\n";
     return Ctx;
   }
   Ctx->PImpl->BinaryBuf = std::move(*BufOr);
@@ -464,7 +466,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
                                  ExpectedImageBytes);
   if (!Obj) {
     llvm::WithColor::warning()
-        << "debug: cannot parse object file " << BinaryPath.string() << "\n";
+        << "debug: cannot parse object file " << pathToUTF8(BinaryPath) << "\n";
     return Ctx;
   }
 
@@ -478,7 +480,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   Ctx->PImpl->DwarfCtx = llvm::DWARFContext::create(*Obj);
   if (!Ctx->PImpl->DwarfCtx) {
     llvm::WithColor::warning() << "debug: cannot create DWARFContext for "
-                               << BinaryPath.string() << "\n";
+                               << pathToUTF8(BinaryPath) << "\n";
     return Ctx;
   }
 
@@ -489,9 +491,9 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   if (!HasDwarf && Format == BinaryFormat::MachO) {
     auto DSYMPath = findDSYM(BinaryPath);
     if (!DSYMPath.empty()) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "debug: loading dSYM from " << DSYMPath.string() << "\n");
-      auto DSYMBufOr = llvm::MemoryBuffer::getFile(DSYMPath.string());
+      LLVM_DEBUG(llvm::dbgs() << "debug: loading dSYM from "
+                              << pathToUTF8(DSYMPath) << "\n");
+      auto DSYMBufOr = llvm::MemoryBuffer::getFile(pathToUTF8(DSYMPath));
       if (DSYMBufOr) {
         Ctx->PImpl->DSYMBuf = std::move(*DSYMBufOr);
         auto DSYMObj = getObjectFromBuffer(*Ctx->PImpl->DSYMBuf, MainArch);
@@ -515,7 +517,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
 
   if (!HasDwarf) {
     LLVM_DEBUG(llvm::dbgs() << "debug: no DWARF info found for "
-                            << BinaryPath.string() << "\n");
+                            << pathToUTF8(BinaryPath) << "\n");
     return Ctx;
   }
 
@@ -627,6 +629,398 @@ DWARFDebugContext::Impl::recordParameter(llvm::DWARFDie Die, va_t Entry) const {
                                       static_cast<uint32_t>(*Bytes)};
 }
 
+namespace {
+/// Records and arrays nested deeper than this are not laid out.
+constexpr int kMaxLayoutDepth = 16;
+/// More scalars than a layout lists: no convention passes a value with more
+/// in registers, nor reads its scalars to place it.
+constexpr size_t kMaxLayoutLeaves = 64;
+/// More elements than an array's layout is computed for.
+constexpr uint64_t kMaxLayoutElements = uint64_t(1) << 32;
+/// No scalar's size implies a larger alignment.
+constexpr uint64_t kMaxScalarAlignment = 16;
+
+/// The size and alignment of a value the debug information describes; the
+/// alignment is 0 where the layout does not say it.
+struct ValueShape {
+  uint64_t Bytes = 0;
+  uint64_t Align = 0;
+};
+
+/// The scalars of a value, as the debug information lays it out.
+struct ValueLayout {
+  std::vector<NdScalarLeaf> Leaves;
+  /// False once a part's scalars are not described, or there are more than
+  /// kMaxLayoutLeaves; the value's alignment may still be known.
+  bool LeavesKnown = true;
+
+  void add(uint64_t Offset, uint64_t Size, bool Floating) {
+    if (!LeavesKnown || Leaves.size() >= kMaxLayoutLeaves || !Size ||
+        Offset + Size > UINT16_MAX) {
+      LeavesKnown = false;
+      return;
+    }
+    Leaves.push_back(
+        {static_cast<uint16_t>(Offset), static_cast<uint16_t>(Size), Floating});
+  }
+};
+
+/// The alignment a scalar of \p Bytes has, or 0 when its size does not say
+/// (the 12 bytes of an i386 long double).
+uint64_t scalarAlignment(uint64_t Bytes) {
+  return Bytes && Bytes <= kMaxScalarAlignment && llvm::isPowerOf2_64(Bytes)
+             ? Bytes
+             : 0;
+}
+
+std::optional<uint64_t> constantAttribute(llvm::DWARFDie Die,
+                                          llvm::dwarf::Attribute Attr) {
+  if (auto Value = Die.find(Attr))
+    return Value->getAsUnsignedConstant();
+  return std::nullopt;
+}
+
+/// A subrange bound or count.  DW_FORM_sdata is signed and the other
+/// constant forms are not, except that an all-ones upper bound, which
+/// producers write for a zero-length array, is -1.
+std::optional<int64_t> boundValue(const llvm::DWARFFormValue &Value) {
+  if (Value.getForm() == llvm::dwarf::DW_FORM_sdata)
+    return Value.getAsSignedConstant();
+  const std::optional<uint64_t> Unsigned = Value.getAsUnsignedConstant();
+  if (!Unsigned)
+    return std::nullopt;
+  if (*Unsigned == UINT64_MAX)
+    return -1;
+  if (*Unsigned > static_cast<uint64_t>(INT64_MAX))
+    return std::nullopt;
+  return static_cast<int64_t>(*Unsigned);
+}
+
+/// The elements of \p Array through all its dimensions; none when a bound is
+/// not a constant or the elements are not contiguous.  A dimension without
+/// bounds, a flexible array member, has none.
+std::optional<uint64_t> arrayElements(llvm::DWARFDie Array) {
+  if (Array.find(llvm::dwarf::DW_AT_byte_stride) ||
+      Array.find(llvm::dwarf::DW_AT_bit_stride))
+    return std::nullopt;
+  uint64_t Count = 1;
+  for (llvm::DWARFDie Child : Array.children()) {
+    if (Child.getTag() != llvm::dwarf::DW_TAG_subrange_type)
+      return std::nullopt;
+    if (Child.find(llvm::dwarf::DW_AT_byte_stride) ||
+        Child.find(llvm::dwarf::DW_AT_bit_stride))
+      return std::nullopt;
+    int64_t Extent = 0;
+    if (auto Value = Child.find(llvm::dwarf::DW_AT_count)) {
+      const std::optional<int64_t> Elements = boundValue(*Value);
+      if (!Elements || *Elements < 0)
+        return std::nullopt;
+      Extent = *Elements;
+    } else if (auto Upper = Child.find(llvm::dwarf::DW_AT_upper_bound)) {
+      const std::optional<int64_t> Last = boundValue(*Upper);
+      std::optional<int64_t> First = 0;
+      if (auto Lower = Child.find(llvm::dwarf::DW_AT_lower_bound))
+        First = boundValue(*Lower);
+      if (!Last || !First || *Last < *First - 1)
+        return std::nullopt;
+      Extent = *Last - *First + 1;
+    }
+    if (static_cast<uint64_t>(Extent) > kMaxLayoutElements)
+      return std::nullopt;
+    Count *= static_cast<uint64_t>(Extent);
+    if (Count > kMaxLayoutElements)
+      return std::nullopt;
+  }
+  return Count;
+}
+
+/// The byte offset a DW_AT_data_member_location gives: a constant, or the
+/// lone DW_OP_plus_uconst of older producers.  A virtual base's location is
+/// an expression that depends on the object.
+std::optional<uint64_t> memberLocation(const llvm::DWARFFormValue &Value) {
+  if (auto Constant = Value.getAsUnsignedConstant())
+    return *Constant;
+  if (auto Block = Value.getAsBlock();
+      Block && !Block->empty() &&
+      (*Block)[0] == llvm::dwarf::DW_OP_plus_uconst) {
+    unsigned Length = 0;
+    const char *Error = nullptr;
+    const uint64_t Offset = llvm::decodeULEB128(
+        Block->data() + 1, &Length, Block->data() + Block->size(), &Error);
+    if (!Error && 1 + Length == Block->size())
+      return Offset;
+  }
+  return std::nullopt;
+}
+
+std::optional<ValueShape> layOut(llvm::DWARFDie Type, uint64_t Base, int Depth,
+                                 ValueLayout &Layout);
+
+/// Lays out the members and bases of \p Record at \p Base.
+std::optional<ValueShape> layOutRecord(llvm::DWARFDie Record, uint64_t Base,
+                                       int Depth, ValueLayout &Layout) {
+  const std::optional<uint64_t> Bytes =
+      constantAttribute(Record, llvm::dwarf::DW_AT_byte_size);
+  if (!Bytes || Record.find(llvm::dwarf::DW_AT_declaration))
+    return std::nullopt;
+  uint64_t Align = 1;
+  bool AlignKnown = true;
+  for (llvm::DWARFDie Child : Record.children()) {
+    const auto Tag = Child.getTag();
+    // A variant part (a Rust enum's) overlays storage the members do not
+    // list.
+    if (Tag == llvm::dwarf::DW_TAG_variant_part) {
+      Layout.LeavesKnown = AlignKnown = false;
+      continue;
+    }
+    if ((Tag != llvm::dwarf::DW_TAG_member &&
+         Tag != llvm::dwarf::DW_TAG_inheritance) ||
+        Child.find(llvm::dwarf::DW_AT_external) ||
+        Child.find(llvm::dwarf::DW_AT_declaration))
+      continue;
+    std::optional<uint64_t> Offset = 0;
+    if (auto Location = Child.find(llvm::dwarf::DW_AT_data_member_location))
+      Offset = memberLocation(*Location);
+    const llvm::DWARFDie Type =
+        Child.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
+    if (auto Width = constantAttribute(Child, llvm::dwarf::DW_AT_bit_size)) {
+      if (!*Width)
+        continue;
+      // A bit field is an integer of the bytes that hold its bits; its
+      // declared type aligns the record.
+      ValueLayout Declared;
+      const std::optional<ValueShape> Shape =
+          layOut(Type, 0, Depth + 1, Declared);
+      std::optional<uint64_t> First, Last;
+      if (auto Bit =
+              constantAttribute(Child, llvm::dwarf::DW_AT_data_bit_offset)) {
+        First = *Bit / 8;
+        Last = (*Bit + *Width - 1) / 8;
+      } else if (Offset && Shape) {
+        // DW_AT_bit_offset counts within the storage unit at the member's
+        // location.
+        First = *Offset;
+        Last = *Offset +
+               constantAttribute(Child, llvm::dwarf::DW_AT_byte_size)
+                   .value_or(Shape->Bytes) -
+               1;
+      }
+      if (!Shape || !First || !Last || *Last >= *Bytes) {
+        Layout.LeavesKnown = AlignKnown = false;
+        continue;
+      }
+      Layout.add(Base + *First, *Last - *First + 1, /*Floating=*/false);
+      AlignKnown &= Shape->Align != 0;
+      Align = std::max(Align, Shape->Align);
+      continue;
+    }
+    if (!Offset) {
+      Layout.LeavesKnown = AlignKnown = false;
+      continue;
+    }
+    const std::optional<ValueShape> Shape =
+        layOut(Type, Base + *Offset, Depth + 1, Layout);
+    if (!Shape || *Offset + Shape->Bytes > *Bytes) {
+      Layout.LeavesKnown = AlignKnown = false;
+      continue;
+    }
+    // A member off its alignment is packed; the record's own alignment is
+    // then not the largest of its members'.
+    AlignKnown &= Shape->Align != 0 && *Offset % Shape->Align == 0;
+    Align = std::max(Align, Shape->Align);
+  }
+  if (auto Explicit = constantAttribute(Record, llvm::dwarf::DW_AT_alignment))
+    return ValueShape{*Bytes, *Explicit};
+  return ValueShape{*Bytes, AlignKnown && *Bytes % Align == 0 ? Align : 0};
+}
+
+/// Lays out the value \p Type describes at \p Base: adds its scalars to
+/// \p Layout and returns its size and alignment; none when its size is not
+/// described.
+std::optional<ValueShape> layOut(llvm::DWARFDie Type, uint64_t Base, int Depth,
+                                 ValueLayout &Layout) {
+  if (!Type.isValid() || Depth > kMaxLayoutDepth) {
+    Layout.LeavesKnown = false;
+    return std::nullopt;
+  }
+  const std::optional<uint64_t> Bytes =
+      constantAttribute(Type, llvm::dwarf::DW_AT_byte_size);
+  switch (Type.getTag()) {
+  case llvm::dwarf::DW_TAG_typedef:
+  case llvm::dwarf::DW_TAG_const_type:
+  case llvm::dwarf::DW_TAG_volatile_type:
+  case llvm::dwarf::DW_TAG_restrict_type:
+    return layOut(
+        Type.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type), Base,
+        Depth + 1, Layout);
+  case llvm::dwarf::DW_TAG_base_type: {
+    const std::optional<uint64_t> Encoding =
+        constantAttribute(Type, llvm::dwarf::DW_AT_encoding);
+    if (!Bytes || !Encoding)
+      break;
+    switch (*Encoding) {
+    case llvm::dwarf::DW_ATE_float:
+      Layout.add(Base, *Bytes, /*Floating=*/true);
+      return ValueShape{*Bytes, scalarAlignment(*Bytes)};
+    case llvm::dwarf::DW_ATE_complex_float:
+      // The real part, then the imaginary part.
+      if (*Bytes % 2)
+        break;
+      Layout.add(Base, *Bytes / 2, /*Floating=*/true);
+      Layout.add(Base + *Bytes / 2, *Bytes / 2, /*Floating=*/true);
+      return ValueShape{*Bytes, scalarAlignment(*Bytes / 2)};
+    case llvm::dwarf::DW_ATE_address:
+    case llvm::dwarf::DW_ATE_boolean:
+    case llvm::dwarf::DW_ATE_signed:
+    case llvm::dwarf::DW_ATE_signed_char:
+    case llvm::dwarf::DW_ATE_unsigned:
+    case llvm::dwarf::DW_ATE_unsigned_char:
+    case llvm::dwarf::DW_ATE_signed_fixed:
+    case llvm::dwarf::DW_ATE_unsigned_fixed:
+    case llvm::dwarf::DW_ATE_UTF:
+    case llvm::dwarf::DW_ATE_UCS:
+    case llvm::dwarf::DW_ATE_ASCII:
+      Layout.add(Base, *Bytes, /*Floating=*/false);
+      return ValueShape{*Bytes, scalarAlignment(*Bytes)};
+    default:
+      // Decimal floating point and vendor encodings have no class here.
+      break;
+    }
+    break;
+  }
+  case llvm::dwarf::DW_TAG_enumeration_type:
+    if (!Bytes)
+      break;
+    Layout.add(Base, *Bytes, /*Floating=*/false);
+    return ValueShape{*Bytes, scalarAlignment(*Bytes)};
+  case llvm::dwarf::DW_TAG_pointer_type:
+  case llvm::dwarf::DW_TAG_reference_type:
+  case llvm::dwarf::DW_TAG_rvalue_reference_type: {
+    const uint64_t Size =
+        Bytes.value_or(Type.getDwarfUnit()->getAddressByteSize());
+    Layout.add(Base, Size, /*Floating=*/false);
+    return ValueShape{Size, scalarAlignment(Size)};
+  }
+  case llvm::dwarf::DW_TAG_structure_type:
+  case llvm::dwarf::DW_TAG_class_type:
+  case llvm::dwarf::DW_TAG_union_type:
+    return layOutRecord(Type, Base, Depth, Layout);
+  case llvm::dwarf::DW_TAG_array_type: {
+    const std::optional<uint64_t> Count = arrayElements(Type);
+    ValueLayout Element;
+    const std::optional<ValueShape> Shape =
+        layOut(Type.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type),
+               0, Depth + 1, Element);
+    if (!Count || !Shape || !Shape->Bytes ||
+        *Count > UINT64_MAX / Shape->Bytes ||
+        (Bytes && *Bytes != *Count * Shape->Bytes))
+      break;
+    if (!Element.LeavesKnown ||
+        *Count * Element.Leaves.size() > kMaxLayoutLeaves)
+      Layout.LeavesKnown = false;
+    for (uint64_t I = 0; Layout.LeavesKnown && I < *Count; ++I)
+      for (const NdScalarLeaf &Leaf : Element.Leaves)
+        Layout.add(Base + I * Shape->Bytes + Leaf.Offset, Leaf.Size,
+                   Leaf.Floating);
+    return ValueShape{*Count * Shape->Bytes, Shape->Align};
+  }
+  default:
+    break;
+  }
+  // A value whose layout is not described here keeps its size alone.
+  Layout.LeavesKnown = false;
+  if (Bytes)
+    return ValueShape{*Bytes, 0};
+  return std::nullopt;
+}
+
+/// The DIE \p Type names through its typedefs and qualifiers.
+llvm::DWARFDie unqualifiedType(llvm::DWARFDie Type) {
+  for (int Depth = 0; Type.isValid() && Depth <= kMaxLayoutDepth; ++Depth) {
+    switch (Type.getTag()) {
+    case llvm::dwarf::DW_TAG_typedef:
+    case llvm::dwarf::DW_TAG_const_type:
+    case llvm::dwarf::DW_TAG_volatile_type:
+    case llvm::dwarf::DW_TAG_restrict_type:
+      Type = Type.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
+      continue;
+    default:
+      return Type;
+    }
+  }
+  return {};
+}
+
+/// How a call passes the record \p Type describes, which is a record or a
+/// complex number: C passes its records as their bytes; C++ says so for
+/// each class (DW_AT_calling_convention), by reference for one with a
+/// non-trivial copy constructor or destructor.  Rust's own ABI passes some
+/// records as separate scalars where `extern "C"` passes their bytes, and
+/// the debug information does not say which a function uses.
+NdRecordPassing recordPassing(llvm::DWARFDie Type) {
+  const std::optional<uint64_t> Language = Type.getLanguage();
+  if (!Language)
+    return NdRecordPassing::Unknown;
+  const auto Source = static_cast<llvm::dwarf::SourceLanguage>(*Language);
+  const bool CFamily = llvm::dwarf::isC(Source) ||
+                       llvm::dwarf::isCPlusPlus(Source) ||
+                       Source == llvm::dwarf::DW_LANG_ObjC_plus_plus;
+  if (!CFamily)
+    return NdRecordPassing::Unknown;
+  if (Type.getTag() == llvm::dwarf::DW_TAG_base_type)
+    return constantAttribute(Type, llvm::dwarf::DW_AT_encoding) ==
+                   llvm::dwarf::DW_ATE_complex_float
+               ? NdRecordPassing::Complex
+               : NdRecordPassing::Unknown;
+  if (llvm::dwarf::isC(Source))
+    return NdRecordPassing::ByValue;
+  const std::optional<uint64_t> Convention =
+      constantAttribute(Type, llvm::dwarf::DW_AT_calling_convention);
+  if (Convention == llvm::dwarf::DW_CC_pass_by_value)
+    return NdRecordPassing::ByValue;
+  if (Convention == llvm::dwarf::DW_CC_pass_by_reference)
+    return NdRecordPassing::ByReference;
+  return NdRecordPassing::Unknown;
+}
+
+/// Describes how a call passes the record argument or result \p Type, whose
+/// type \p Die names: its scalars, alignment and passing.
+void describeRecordPassing(llvm::DWARFDie Die, NdType &Type) {
+  if (Type.Kind != NdTypeKind::Struct || Type.IsEnum)
+    return;
+  const llvm::DWARFDie Record = unqualifiedType(Die);
+  if (!Record.isValid())
+    return;
+  ValueLayout Layout;
+  const std::optional<ValueShape> Shape = layOut(Record, 0, 0, Layout);
+  if (!Shape || Shape->Bytes != Type.Size)
+    return;
+  if (Layout.LeavesKnown && !Layout.Leaves.empty()) {
+    std::stable_sort(Layout.Leaves.begin(), Layout.Leaves.end(),
+                     [](const NdScalarLeaf &L, const NdScalarLeaf &R) {
+                       return L.Offset < R.Offset;
+                     });
+    Type.ScalarLeaves = std::move(Layout.Leaves);
+  }
+  if (Shape->Align <= UINT16_MAX)
+    Type.Alignment = static_cast<uint16_t>(Shape->Align);
+  Type.Passing = recordPassing(Record);
+}
+
+/// Whether code in the language of \p Die's unit follows the platform's C
+/// calling convention: C, C++ and Objective-C do, and Rust does for the
+/// scalars it passes.
+bool platformConvention(llvm::DWARFDie Die) {
+  const std::optional<uint64_t> Language = Die.getLanguage();
+  if (!Language)
+    return false;
+  const auto Source = static_cast<llvm::dwarf::SourceLanguage>(*Language);
+  return llvm::dwarf::isC(Source) || llvm::dwarf::isCPlusPlus(Source) ||
+         Source == llvm::dwarf::DW_LANG_ObjC_plus_plus ||
+         Source == llvm::dwarf::DW_LANG_Rust;
+}
+} // namespace
+
 TypeRef DWARFDebugContext::Impl::convertDwarfType(llvm::DWARFDie Die,
                                                   int Depth) {
   if (!Die.isValid() || Depth > 16)
@@ -644,6 +1038,18 @@ TypeRef DWARFDebugContext::Impl::convertDwarfType(llvm::DWARFDie Die,
       auto Enc = Encoding->getAsUnsignedConstant().value_or(0);
       if (Enc == llvm::dwarf::DW_ATE_float)
         return NdType::makeFloat(Sz);
+      // A complex number, decimal floating point and vendor encodings are
+      // neither integers nor binary floating point: a record of their size,
+      // which C cannot spell from it and conventions place by its parts.
+      if (Enc == llvm::dwarf::DW_ATE_complex_float ||
+          Enc == llvm::dwarf::DW_ATE_imaginary_float ||
+          Enc == llvm::dwarf::DW_ATE_decimal_float ||
+          Enc >= llvm::dwarf::DW_ATE_lo_user) {
+        auto T = std::make_shared<NdType>();
+        T->Kind = NdTypeKind::Struct;
+        T->Size = Sz;
+        return T;
+      }
       bool IsSigned = (Enc == llvm::dwarf::DW_ATE_signed ||
                        Enc == llvm::dwarf::DW_ATE_signed_char);
       return NdType::makeInt(Sz, IsSigned);
@@ -1119,6 +1525,8 @@ void DWARFDebugContext::Impl::parseFunction(llvm::DWARFDie Die,
     Sym.ReturnType = convertDwarfType(ReturnType.TypeDie);
     if (!Sym.ReturnType || Sym.ReturnType->Kind == NdTypeKind::Unknown)
       ReturnState = {};
+    else
+      describeRecordPassing(ReturnType.TypeDie, *Sym.ReturnType);
   } else {
     // A present but malformed reference is not evidence of void.
     Sym.ReturnType = std::make_shared<NdType>();
@@ -1134,10 +1542,13 @@ void DWARFDebugContext::Impl::parseFunction(llvm::DWARFDie Die,
       Name = RawName;
     auto ParamDie =
         Child.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
-    Sym.Params.emplace_back(std::move(Name), ParamDie.isValid()
-                                                 ? convertDwarfType(ParamDie)
-                                                 : NdType::makeInt(4));
+    TypeRef Type =
+        ParamDie.isValid() ? convertDwarfType(ParamDie) : NdType::makeInt(4);
+    if (ParamDie.isValid() && Type)
+      describeRecordPassing(ParamDie, *Type);
+    Sym.Params.emplace_back(std::move(Name), std::move(Type));
   }
+  Sym.PlatformConvention = platformConvention(Die);
 
   RecordParameters[Addr] = std::move(EntryRecords);
   FunctionInfo &Info = Functions[Addr];

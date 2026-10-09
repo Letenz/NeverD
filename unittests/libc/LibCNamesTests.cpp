@@ -4,10 +4,15 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "neverd/libc/LibCExceptionRuntime.h"
+#include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCStartup.h"
+#include "neverd/libc/WindowsCRT.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include <gtest/gtest.h>
+#include <utility>
 
 using namespace neverd;
 using namespace neverd::libc;
@@ -285,9 +290,50 @@ TEST(LibCArity, VaListConsumersHaveFixedPrototypes) {
   EXPECT_EQ(VPrintf->IntArgs, 2);
   EXPECT_EQ(VPrintf->FpArgs, 0);
 
-  auto Vsnprintf = libcArity("vsnprintf");
-  ASSERT_TRUE(Vsnprintf.has_value());
-  EXPECT_EQ(Vsnprintf->IntArgs, 3);
+  // The va_list is one more pointer argument, after every fixed one.
+  const std::pair<const char *, int> Consumers[] = {
+      {"vfprintf", 3}, {"vsnprintf", 4}, {"vsprintf", 3}, {"vdprintf", 3},
+      {"vscanf", 2},   {"vfscanf", 3},   {"vsscanf", 3},  {"vasprintf", 3}};
+  for (const auto &[Name, IntArgs] : Consumers) {
+    const auto Arity = libcArity(Name);
+    ASSERT_TRUE(Arity.has_value()) << Name;
+    EXPECT_EQ(Arity->IntArgs, IntArgs) << Name;
+  }
+}
+
+TEST(LibCArity, PosixRoutinesTakeTheirPrototypesArguments) {
+  // Without a table entry the call-argument scan decides the count: gzip
+  // printed fstat(fd, &st) with five arguments, and each PLT stub of these
+  // routines printed its call with none.
+  const std::pair<const char *, int> Expected[] = {
+      {"fstat", 2},         {"stat", 2},        {"mmap", 6},
+      {"sigaction", 3},     {"sigprocmask", 3}, {"setlocale", 2},
+      {"readdir", 1},       {"strftime", 4},    {"getopt_long", 5},
+      {"nl_langinfo", 1},   {"fnmatch", 3},     {"mbrtowc", 4},
+      {"regexec", 5},       {"re_search", 6},   {"pthread_create", 4},
+      {"socket", 3},        {"waitpid", 3},     {"reallocarray", 3},
+      {"__assert_fail", 4}, {"__overflow", 2},  {"__uflow", 1},
+      {"__fpending", 1},    {"mbrtoc32", 4},    {"fwrite_unlocked", 4}};
+  for (const auto &[Name, IntArgs] : Expected) {
+    const auto Arity = libcArityForSymbol(Name);
+    ASSERT_TRUE(Arity.has_value()) << Name;
+    EXPECT_EQ(Arity->IntArgs, IntArgs) << Name;
+    EXPECT_EQ(Arity->FpArgs, 0) << Name;
+  }
+}
+
+TEST(LibCArity, NoArityWhereACountCannotSayIt) {
+  // A variadic routine, a floating-point result, an aggregate result (a
+  // hidden pointer argument on i386) or an argument two 32-bit slots wide
+  // keeps the call-argument scan's count.
+  for (const char *Name : {"printf", "open", "fcntl", "strtod_l", "div", "ldiv",
+                           "lldiv", "imaxdiv", "ffsll", "imaxabs"})
+    EXPECT_FALSE(libcArityForSymbol(Name).has_value()) << Name;
+  // So does a routine the Windows C runtimes declare otherwise, since the
+  // tables apply to every format by name: _mkdir(dir), Win64's
+  // _setjmp(env, frame), msvcrt's wcstok(str, delim).
+  for (const char *Name : {"mkdir", "setjmp", "_setjmp", "wcstok"})
+    EXPECT_FALSE(libcArityForSymbol(Name).has_value()) << Name;
 }
 
 TEST(LibCArity, PreservesDarwinErrorSymbolSpelling) {
@@ -298,6 +344,22 @@ TEST(LibCArity, PreservesDarwinErrorSymbolSpelling) {
 
   EXPECT_FALSE(libcArityForSymbol("error").has_value());
   EXPECT_FALSE(libcArityForSymbol("__error").has_value());
+}
+
+TEST(LibCArity, TranslationRoutines) {
+  // sed's `_("unmatched `{'")` is dcgettext(NULL, msgid, LC_MESSAGES).  An
+  // unbounded scan took two more live registers as arguments.
+  const std::pair<const char *, int> Expected[] = {
+      {"gettext", 1},     {"dgettext", 2},       {"dcgettext", 3},
+      {"__dcgettext", 3}, {"ngettext", 3},       {"dngettext", 4},
+      {"dcngettext", 5},  {"bindtextdomain", 2}, {"textdomain", 1}};
+  for (const auto &[Name, IntArgs] : Expected) {
+    const auto Arity = libcArityForSymbol(Name);
+    ASSERT_TRUE(Arity.has_value()) << Name;
+    EXPECT_EQ(Arity->IntArgs, IntArgs) << Name;
+    EXPECT_EQ(Arity->FpArgs, 0) << Name;
+  }
+  EXPECT_STREQ(headerFor("dcgettext"), "libintl.h");
 }
 
 // =====================================================================
@@ -323,15 +385,200 @@ TEST(IsKnownFunction, NotLibC) {
 // headerFor
 // =====================================================================
 
+TEST(HeaderFor, GnuAndPosixHeadersOfTheArityTables) {
+  EXPECT_STREQ(headerFor("getopt_long"), "getopt.h");
+  EXPECT_STREQ(headerFor("nl_langinfo"), "langinfo.h");
+  EXPECT_STREQ(headerFor("fnmatch"), "fnmatch.h");
+  EXPECT_STREQ(headerFor("__fpending"), "stdio_ext.h");
+  EXPECT_STREQ(headerFor("mbrtoc32"), "uchar.h");
+  EXPECT_STREQ(headerFor("renameat"), "stdio.h");
+  EXPECT_STREQ(headerFor("futimens"), "sys/stat.h");
+  EXPECT_STREQ(headerFor("re_search"), "regex.h");
+}
+
 TEST(HeaderFor, StdioFunctions) {
   EXPECT_STREQ(headerFor("printf"), "stdio.h");
   EXPECT_STREQ(headerFor("fprintf"), "stdio.h");
   EXPECT_STREQ(headerFor("snprintf"), "stdio.h");
 }
 
+TEST(HeaderFor, PosixAndBsdRoutinesTheArityTablesName) {
+  // Absent from the header lists, each was declared `extern int` and lost
+  // its result: popen's FILE *, random's long, drand48's double.
+  for (const char *Name :
+       {"ctermid", "fmemopen", "getdelim", "getline", "getw", "open_memstream",
+        "pclose", "popen", "putw", "tempnam"})
+    EXPECT_STREQ(headerFor(Name), "stdio.h") << Name;
+  for (const char *Name :
+       {"arc4random", "drand48", "erand48", "getprogname", "initstate",
+        "jrand48", "lrand48", "mkdtemp", "mrand48", "nrand48", "random",
+        "reallocf", "seed48", "setprogname", "setstate", "srand48", "srandom"})
+    EXPECT_STREQ(headerFor(Name), "stdlib.h") << Name;
+}
+
 TEST(HeaderFor, UnknownReturnsNull) {
   EXPECT_EQ(headerFor("not_a_real_function"), nullptr);
   EXPECT_EQ(headerFor(""), nullptr);
+}
+
+// =====================================================================
+// LibCPrototype — routines no standard header declares
+// =====================================================================
+
+namespace {
+template <size_t N>
+void expectWellFormed(const std::array<LibCPrototype, N> &Prototypes) {
+  for (const LibCPrototype &Prototype : Prototypes) {
+    SCOPED_TRACE(std::string(Prototype.Name));
+    EXPECT_FALSE(Prototype.Name.empty());
+    EXPECT_FALSE(Prototype.Return.empty());
+    for (size_t I = 0; I < Prototype.Params.size(); ++I)
+      EXPECT_EQ(Prototype.Params[I].empty(), I >= Prototype.ParamCount);
+    // A header declaring the routine would conflict with the prototype.
+    EXPECT_FALSE(isKnownFunction(Prototype.Name));
+    EXPECT_FALSE(isKnownFunction(stripLeadingUnderscores(Prototype.Name)));
+    EXPECT_EQ(libcPrototype(Prototype.Name, BinaryFormat::COFF), &Prototype);
+    // The vararg traits read the same fixed parameters.
+    EXPECT_EQ(varArgFixedCount(Prototype.Name),
+              Prototype.Variadic ? Prototype.ParamCount : 0u);
+  }
+}
+
+/// A table whose arities the registry derives.
+template <size_t N>
+void expectDerivedArity(const std::array<LibCPrototype, N> &Prototypes) {
+  for (const LibCPrototype &Prototype : Prototypes) {
+    SCOPED_TRACE(std::string(Prototype.Name));
+    const auto Arity = libcArityForSymbol(Prototype.Name);
+    if (Prototype.Variadic) {
+      EXPECT_FALSE(Arity.has_value());
+      continue;
+    }
+    ASSERT_TRUE(Arity.has_value());
+    EXPECT_EQ(Arity->IntArgs, Prototype.ParamCount);
+    EXPECT_EQ(Arity->FpArgs, 0);
+    EXPECT_EQ(libcPrototype(Prototype.Name, BinaryFormat::ELF), &Prototype);
+  }
+}
+} // namespace
+
+TEST(LibCPrototype, TablesAreWellFormed) {
+  expectWellFormed(kStartupPrototypes);
+  expectWellFormed(kItaniumRuntimePrototypes);
+  expectWellFormed(kFortifyPrototypes);
+  expectWellFormed(kWindowsCRTPrototypes);
+}
+
+TEST(LibCPrototype, ArityDerivesFromThePortablePrototypes) {
+  expectDerivedArity(kStartupPrototypes);
+  expectDerivedArity(kItaniumRuntimePrototypes);
+  expectDerivedArity(kFortifyPrototypes);
+  // The arities the exception runtime table gave before.
+  EXPECT_EQ(libcArity("cxa_throw")->IntArgs, 3);
+  EXPECT_EQ(libcArity("cxa_begin_catch")->IntArgs, 1);
+  EXPECT_EQ(libcArity("Unwind_ForcedUnwind")->IntArgs, 3);
+  EXPECT_EQ(libcArity("libc_start_main")->IntArgs, 7);
+}
+
+TEST(LibCPrototype, WindowsRuntimeNamesStayInPE) {
+  for (const LibCPrototype &Prototype : kWindowsCRTPrototypes) {
+    SCOPED_TRACE(std::string(Prototype.Name));
+    EXPECT_EQ(libcPrototype(Prototype.Name, BinaryFormat::ELF), nullptr);
+    EXPECT_EQ(libcPrototype(Prototype.Name, BinaryFormat::MachO), nullptr);
+    // Without underscores _lock is any other runtime's lock: only the
+    // Windows API routines the exception tables already name have a
+    // portable arity, and it is theirs.
+    if (const auto Arity = libcArityForSymbol(Prototype.Name))
+      EXPECT_EQ(Arity->IntArgs, Prototype.ParamCount);
+  }
+  EXPECT_FALSE(libcArityForSymbol("_lock").has_value());
+  EXPECT_FALSE(libcArityForSymbol("terminate").has_value());
+}
+
+TEST(LibCPrototype, PointerTypes) {
+  EXPECT_TRUE(isPointerType("void *"));
+  EXPECT_TRUE(isPointerType("const unsigned short **"));
+  EXPECT_TRUE(isPointerType("int (*)(int, char **, char **)"));
+  EXPECT_TRUE(isPointerType("void (**)(void)"));
+  EXPECT_TRUE(isPointerType("int32_t (WINAPI *)(void *)"));
+  EXPECT_FALSE(isPointerType("int"));
+  EXPECT_FALSE(isPointerType("uintptr_t"));
+  EXPECT_FALSE(isPointerType("size_t"));
+}
+
+TEST(LibCReturnsValue, ReadsTheDeclaredResult) {
+  // A header's declaration.
+  EXPECT_EQ(libcReturnsValue("calloc", BinaryFormat::ELF), true);
+  EXPECT_EQ(libcReturnsValue("atexit", BinaryFormat::COFF), true);
+  EXPECT_EQ(libcReturnsValue("free", BinaryFormat::COFF), false);
+  EXPECT_EQ(libcReturnsValue("qsort", BinaryFormat::MachO), false);
+  // A function returning a pointer to a function returns a value.
+  EXPECT_EQ(libcReturnsValue("signal", BinaryFormat::ELF), true);
+  // A prototype's result, in the image format it applies to.
+  EXPECT_EQ(libcReturnsValue("_strtoi64", BinaryFormat::COFF), true);
+  EXPECT_EQ(libcReturnsValue("_initterm", BinaryFormat::COFF), false);
+  EXPECT_FALSE(libcReturnsValue("_strtoi64", BinaryFormat::ELF).has_value());
+  EXPECT_EQ(libcReturnsValue("__libc_start_main", BinaryFormat::ELF), true);
+  // Neither declares it.
+  EXPECT_FALSE(libcReturnsValue("neverd_unknown_routine", BinaryFormat::ELF)
+                   .has_value());
+}
+
+TEST(LibCReturnsValue, TheGeneratedTableNamesOnlyKnownRoutines) {
+#define NEVERD_LIBC_RETURN_KIND(NAME, KIND) EXPECT_TRUE(isKnownFunction(NAME));
+#include "neverd/libc/LibCReturnKinds.inc"
+#undef NEVERD_LIBC_RETURN_KIND
+}
+
+TEST(VarArgFixedCount, IsoAliasesTakeTheStandardRoutinesArguments) {
+  EXPECT_EQ(varArgFixedCount("__isoc99_scanf"), 1u);
+  EXPECT_EQ(varArgFixedCount("__isoc99_sscanf"), 2u);
+  EXPECT_EQ(varArgFixedCount("__isoc23_fscanf"), 2u);
+  EXPECT_EQ(varArgFixedCount("__isoc99_vscanf"), 0u);
+  EXPECT_EQ(varArgFixedCount("__syslog_chk"), 3u);
+  EXPECT_TRUE(isVaListConsumer("isoc99_vsscanf"));
+  EXPECT_TRUE(isVaListConsumer("__isoc23_vfscanf"));
+  EXPECT_FALSE(isVaListConsumer("isoc99_sscanf"));
+  EXPECT_EQ(varArgFixedParamKind("__isoc99_fscanf", 0),
+            VarArgFixedParamKind::Pointer);
+  // The Universal CRT's printf implementation takes a va_list.
+  EXPECT_EQ(varArgFixedCount("__stdio_common_vfprintf"), 0u);
+  EXPECT_EQ(varArgFixedCount("__stdio_common_vsscanf"), 0u);
+  EXPECT_TRUE(isVaListConsumer("stdio_common_vfprintf"));
+}
+
+TEST(ObjectPointerParameter, HeadersSayWhichParametersTakePointers) {
+  EXPECT_TRUE(isObjectPointerParameter("memcpy", 0));
+  EXPECT_TRUE(isObjectPointerParameter("memcpy", 1));
+  EXPECT_FALSE(isObjectPointerParameter("memcpy", 2));
+  EXPECT_TRUE(isObjectPointerParameter("__memcpy", 1));
+  EXPECT_TRUE(isObjectPointerParameter("fputs", 1));
+  EXPECT_TRUE(isObjectPointerParameter("strtol", 1));
+  EXPECT_TRUE(isObjectPointerParameter("pthread_create", 3));
+  // A function pointer and a va_list have their own rules.
+  EXPECT_FALSE(isObjectPointerParameter("qsort", 3));
+  EXPECT_FALSE(isObjectPointerParameter("pthread_create", 2));
+  EXPECT_FALSE(isObjectPointerParameter("signal", 1));
+  EXPECT_TRUE(isObjectPointerParameter("vprintf", 0));
+  EXPECT_FALSE(isObjectPointerParameter("vprintf", 1));
+  EXPECT_FALSE(isObjectPointerParameter("not_a_libc_function", 0));
+}
+
+TEST(FunctionPointerParameter, StandardCallbacks) {
+  EXPECT_EQ(functionPointerParameter("qsort", 3),
+            "int (*)(const void *, const void *)");
+  EXPECT_EQ(functionPointerParameter("_qsort", 3),
+            "int (*)(const void *, const void *)");
+  EXPECT_EQ(functionPointerParameter("signal", 1), "void (*)(int)");
+  EXPECT_EQ(functionPointerParameter("pthread_create", 2), "void *(*)(void *)");
+  EXPECT_FALSE(functionPointerParameter("qsort", 0).has_value());
+  EXPECT_FALSE(functionPointerParameter("printf", 0).has_value());
+  // Each names a function its header declares.
+  for (const char *Name :
+       {"atexit", "on_exit", "qsort", "bsearch", "signal", "pthread_create",
+        "pthread_once", "thrd_create", "tsearch", "scandir", "dl_iterate_phdr",
+        "makecontext"})
+    EXPECT_TRUE(isKnownFunction(Name)) << Name;
 }
 
 // =====================================================================
@@ -391,6 +638,15 @@ TEST(IsNoReturnFunction, MsvcGsHelpers) {
   EXPECT_TRUE(isNoReturnFunction("raise_securityfailure"));
   EXPECT_TRUE(isNoReturnFunction("_raise_securityfailure"));
   EXPECT_TRUE(isNoReturnFunction("TerminateProcess"));
+}
+
+TEST(IsNoReturnFunction, MicrosoftRuntimeTerminators) {
+  EXPECT_TRUE(isNoReturnFunction("_amsg_exit"));
+  EXPECT_TRUE(isNoReturnFunction("_invoke_watson"));
+  EXPECT_TRUE(isNoReturnFunction("_invalid_parameter_noinfo_noreturn"));
+  EXPECT_TRUE(isNoReturnFunction("__std_terminate"));
+  // A program's own function may take the name terminate.
+  EXPECT_FALSE(isNoReturnFunction("terminate"));
 }
 
 TEST(IsNoReturnFunction, SometimesReturningExcluded) {

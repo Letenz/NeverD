@@ -41,6 +41,12 @@ public:
   static std::string version();
   /// Whether the engine keeps function edits (function_create/_delete).
   static bool keepsFunctionEdits();
+  /// Whether the engine keeps the user's data items.
+  static bool keepsDataItems();
+  /// Whether the engine keeps how the user shows operands' numbers.
+  static bool keepsOperandFormats();
+  /// Whether the engine lists the ways it can load a file (identify).
+  static bool identifiesFiles();
 
 private:
   neverd_session_t session_ = nullptr;
@@ -61,12 +67,21 @@ private:
   std::optional<std::uint64_t> preparedFunction_;
   std::uint64_t revision_ = 0;
   std::string projectId_;
+  Json openOptions_, signatureInputs_ = Json::array();
+  /// A read-only replica is checked against the owner's loaded input and
+  /// committed sidecars before any expensive operation is admitted.
+  Json analysisSnapshot();
+  Json restoreAnalysis(const Json &snapshot);
+  Json userState() const;
+  std::string inputHash() const;
   bool analyzed_ = false;
   bool dirty_ = false;
   bool readOnly_ = false;
+  /// Whether idle time analyzes the open file: function discovery and the
+  /// reference index.  A cross-reference request still builds the index.
+  bool backgroundAnalysis_ = true;
   std::uintmax_t loadedSize_ = 0;
   std::filesystem::file_time_type loadedTime_;
-  Json stringsCache_;
   /// neverd_strings_ex_json options as JSON text, empty for the defaults; a
   /// workbench preference that outlives the open file.
   std::string stringOptions_;
@@ -93,6 +108,28 @@ private:
   bool reloadFunctionEdits();
   /// The engine's function edits as rows; none from an older engine.
   Json functionEditRows() const;
+  /// Read the data items sidecar: true when it loaded or the engine keeps no
+  /// data items.  Changed items show in the listing.
+  bool reloadDataItems();
+  /// The user's data items as rows; none from an older engine.
+  Json dataItemRows() const;
+  /// Read the operand formats sidecar: true when it loaded or the engine
+  /// keeps no operand formats.  Changed formats show in the listing.
+  bool reloadOperandFormats();
+  /// The user's operand formats as rows; none from an older engine.
+  Json operandFormatRows() const;
+  /// The user's operand formats changed: instruction text shows them at
+  /// once, without building the listing again.
+  void operandFormatsChanged();
+  /// Names or the user's data items changed: drop what shows them, and let
+  /// the listing read them again without its string scan.
+  void namesChanged();
+  /// A comment changed.  The listing reads comments as it formats lines, so
+  /// only views that keep formatted text drop it.
+  void commentsChanged();
+  /// The control flow graph of the function at \p address, in the engine's
+  /// cfg JSON shape.
+  Json functionGraph(std::uint64_t address);
   /// The function list changed: analysis restarts function by function and
   /// the reference index is built again.
   void functionsChanged();

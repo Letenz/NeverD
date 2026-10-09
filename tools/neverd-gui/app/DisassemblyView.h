@@ -29,7 +29,9 @@ public:
   bool graphMode() const;
   void setGraphMode(bool graph);
   /// Navigate, recording the previous location for Jump to previous position.
-  void navigate(Address address, bool record = true);
+  /// A code window can supply its own origin when it is pinned elsewhere.
+  void navigate(Address address, bool record = true,
+                std::optional<Address> from = {});
   void goBack();
   void goForward();
   bool canGoBack() const { return historyIndex_ > 0; }
@@ -40,6 +42,9 @@ public:
   std::optional<Address> currentFunction() const;
   QString currentFunctionName() const;
   std::optional<Address> operandTarget() const;
+  /// The instruction operand the cursor is on (ListingView::currentOperand);
+  /// none in the graph.
+  std::optional<int> currentOperand() const;
   QString currentToken() const;
   QString selectedText() const;
   void setSyncName(const QString &name) {

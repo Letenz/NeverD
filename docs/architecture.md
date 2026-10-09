@@ -10,6 +10,17 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 
 ## System boundary
 
+The Qt workbench keeps project writes and browsing in one `neverd-worker` and
+runs source/IR and graph reads in a disposable read-only worker. The owner
+exports loader choices, loaded-input identity, user edits, staged comments,
+signature inputs and string options. The replica verifies the input and
+committed edits before applying the remaining in-memory state; a mismatch
+fails explicitly. Owner revision changes invalidate the replica and its cache.
+Cancelling its final subscriber retires the process, since a synchronous C API
+analysis call cannot be interrupted safely. Replica revisions and analysis
+discovery never advance the writable project's state. Both workers use the
+same public C API; this split does not duplicate engine semantics.
+
 ```mermaid
 flowchart LR
   CLI["tools/neverd CLI"] --> CAPI["libneverd C API"]
@@ -332,6 +343,23 @@ observable calls and ordered memory accesses without modifying the cached IR.
 Generic LLVM arithmetic and control builtins do not request target ISA headers.
 Both C routes reject string-literal replacement when loader fixup provenance
 overlaps any candidate byte, including its terminator.
+
+ELF GOT data identities come from the exact relocation symbol snapshot through
+`collectDataSymbolBindings`, shared by HighC and LLVM emission. The loader's
+relocation inventory owns addend rules; complete PT_GNU_RELRO coverage owns
+whether a slot load can become a symbolic address. Writable slots retain
+addressable storage and a symbolic initializer. Undefined data uses an opaque
+assembly-name alias in C, avoiding invented types and system-header conflicts.
+Defined data uses its existing image backing. TLS and IFUNC records are excluded.
+This contract also works without section headers. In sectionless ARM ELF,
+immutable executable bytes can supply scalar literal reads without classifying
+unreached bytes as instructions; overlapping relocations prevent folding.
+
+The shared i386 get-PC recognizer requires the complete `mov r32,[esp]; ret`
+encoding, with bounded NOP padding. Its own HighC, LLVM and LLVM C bodies retain
+that instruction sequence in a naked helper, preserving the selected register,
+stack and flags. Caller rewriting continues to require CFG-authenticated
+occurrences; helper names alone prove nothing.
 
 For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
 `N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct
@@ -1075,6 +1103,22 @@ both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
 
+`ir/X86FPState.h` owns scalar SSE numerical/state contracts. Legacy
+ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate
+containing raw result bits and outgoing MXCSR, and commit that state. SUBBYTES
+defines both transports through ordinary SSA; auxiliary-output discovery and
+caller-clobbered pseudo-registers are not used. Imports occur at instruction
+boundaries, so a changed caller or callee environment is observed again.
+Native LLVM and both C routes lower the same operation-specific completion
+scope, retaining rounding, DAZ/FTZ, NaN source priority, sticky exceptions and
+unmasked traps. A discarded numerical result does not discard its state
+effect. The concrete emulator reuses its existing packed evaluator with one
+active lane, and an unknown stepped-over call invalidates imported MXCSR
+evidence. Its configured reset environment remains the concrete starting
+profile. Generic external FLOAT operations, packed FP, VEX arithmetic and
+remaining x87 control/TOP/tag semantics retain their separate contracts;
+this scalar state surface does not certify them.
+
 The experimental [interpreter recovery stage](interpreter-recovery.md)
 specializes strictly lifted LowIR before the common MedIR boundary. Its
 provider owns immutable image evidence, `SymExec` owns instruction semantics,
@@ -1233,6 +1277,8 @@ The explicit `RetainUnauditedNativeBoundaries` option adds refusal boundaries to
 Native packed-flags proof requires matching `X64FlagsProfile = UserX64NoFaultV1` in the options and contract; the existing execution booleans do not enable it. Canonical shared entry flags and persistent system flags use the same scalar PUSHFQ/POPFQ transition as the machine-state source wrapper, including CPL3/IOPL0 masks. Both executions must prove every POPFQ image keeps TF/AC clear; the checker never assumes this guard. Final system flags are always compared, even without register or written-frame observations. Certificates bind the profile version and exact transition digests. Under this explicit CET-disabled profile, independently checked canonical RDSSPD/RDSSPQ bytes may project to an exact NOP with a typed receipt; the original `Missing` sidecar remains unchanged and even a 32-bit destination preserves its whole register. Canonical INCSSPD/INCSSPQ is retained as a profile-dependent #UD boundary, with a receipt for the original unreachable instruction; any feasible visit violates the nonfaulting contract, even with a zero operand. Other CET instructions, CET-enabled execution and profile use through the static LowIR API remain unsupported. Finite loop unrolling preserves state and fresh undefined choices on every visit; it does not prove an invariant.
 
 `checkLowIRRefinement` and `checkBinaryLowIRRefinement` provide a separate constructive relation against a deterministic LowIR candidate. `LiftedBits` chooses the original lifter’s computed bits at each undefined producer; `ZeroBits` chooses zero only where its audited guard activates. Each dynamic occurrence is recorded, and copies and spills retain that choice. Both programs share the existing scalar, physical-stack, memory and flags executor and one entry snapshot. They must terminate on every feasible path, cover the entire admitted entry domain, and agree on RETURN operands, requested registers, mandatory native system flags and the union of written frame bytes. Both preserve the declared entry locations. Execution and relation checks share budgets, with an additional `MaxTerminalPairs` limit. Certificates separately bind the candidate, original evidence, witness policy and limits. A failed witness does not exclude other witnesses. Finite unrolling does not prove a loop invariant; this relation establishes neither CPU-specific equality nor C-backend equivalence and never replaces undefined-state independence. Input temporaries overlapping the proof-memory scratch range are rejected by both relation APIs. The binary refinement API requires matching `UserX64NoFaultV1` profiles in its options and observation contract.
+
+`LowIRUndefinedIndependence` binds each optional retry to its complete original query and domain. `CompleteModel` validates whole candidate assignments; `CompletedTargetFacts` retains only fully enumerated singleton values. `ConditionalImplication` owns bounded rewriting and pristine encodings for one context, domain and complete solver policy; every new goal needs proof. `DomainCoverage` proves factor implications and every equality or Boolean partition. Retries retain shared query/node limits and original solver settings; unknown, malformed or incomplete answers cannot certify a result.
 
 `checkLowIRLoopRefinement` and `checkBinaryLowIRLoopRefinement` add separately typed inductive certificates. Explicit paired cutpoints and pure scalar LowIR state templates are proof candidates: the shared executor checks real-entry initiation, complete segment coverage, every feasible successor, invariant preservation and terminal observations. All cut-to-cut edges must strictly decrease a finite unsigned lexicographic rank; parameter projections prevent a template from resetting that rank without machine progress. Templates start from the common entry state or, with `UseEntryPrefix` (`GeneralizeEntryPrefix = false`), an actually reached paired prefix whose predicate must also be preserved. They check every modified register and the entire frame at cuts, and retain earlier-iteration memory effects in final observations. Repeated addresses require explicit, proved state selectors; automatic invariant/rank discovery and arbitrary control alignment are outside this API. Missing cuts, false invariants, wraparound, unproved termination, unsupported semantics or any exhausted shared budget refuse a certificate. The plan, every native segment and original evidence are digest-bound. Finite refinement and strict independence keep their existing meanings; inductive refinement still does not certify a C backend or a physical CPU's undefined-bit choices.
 
@@ -2952,12 +2998,12 @@ libraries supplied by the CMake helper.
 
 | Directory | Responsibility | Important dependencies |
 |-----------|----------------|------------------------|
-| `lib/loader` | Format detection, PE/COFF, ELF, and Mach-O loading; normalized `BinaryImage`; function discovery | LLVM Object APIs |
-| `lib/lift` | Hand-written x86/i386, AArch64, and ARM32 instruction semantics | IR data types |
+| `lib/loader` | Format detection, PE/COFF, ELF, and Mach-O loading; normalized `BinaryImage`; function discovery | LLVM Object APIs, `NeverDDigest` |
+| `lib/lift` | Hand-written x86/i386, AArch64, and ARM32 instruction semantics | IR data types, `NeverDIRLowValidation` |
 | `lib/decode` | Capstone/native decode and dispatch into the architecture lifters | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | Common types plus LowIR, MedIR, HighIR, and intrinsic definitions/transforms | Its four IR subcomponents |
 | `lib/pipeline` | Function detection and Low/Med/High/LLVM route orchestration | IR, decode, lift, LLVM backend, debug info, IR passes |
-| `lib/backend/c` | HighIR-to-C and LLVM-IR-to-C rendering | IR |
+| `lib/backend/c` | HighIR-to-C and LLVM-IR-to-C rendering, and HighC spelled in Rust and Go | IR |
 | `lib/backend/llvm` | MedIR-to-LLVM lowering | IR |
 | `lib/backend/codegen` | Target code generation plus PE/ELF/Mach-O patch and in-place rewrite | IR, loader |
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |
@@ -2969,8 +3015,10 @@ libraries supplied by the CMake helper.
 | `lib/solver` | Bounded bit-vector encoding, incremental SAT solving, models, and typed unknown/invalid outcomes | Symbolic |
 | `lib/concolic` | Exact-prefix conditional branch flips with register-model projection and fresh replay receipts | Symbolic, Solver |
 | `lib/safety` | Heap-lifetime audit and copy-overflow hunt on lifted IR | Symbolic, Solver |
-| `lib/support` | Shared binary-loading helpers | Loader |
+| `lib/support` | Shared binary-loading helpers and independent SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | Versioned guest state/policy/exits, fixed runtime ABI, checked guest memory, generated-IR/object/LinkGraph audits, sealed native linking, and the experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object, and JITLink contracts |
+
+`NeverDDigest` owns the existing one-shot SHA-256 implementation in `lib/support`, with unchanged runtime feature checks and portable fallback, and no Loader or IR dependency. `loader/InputDigest.h` remains a forwarding header. `NeverDIRLowValidation` owns `lowUndefinedOperationDigest`; Lift links that owner explicitly. The v1 identity retains the same domain, little-endian words, all six stored input slots, provenance and source coordinates. Serialization uses at most 64 KiB for up to 199 operations; larger spans use the original incremental path. Both paths enumerate the same fields and preserve evidence checks.
 
 ### Analysis and simplification ownership
 
@@ -3004,6 +3052,13 @@ belong in the pure C header and one of the focused `lib/sdk/NeverDCAPI*.cpp`
 files.
 
 ## Strict lifting contract
+
+The pinned Capstone x86 decoder owns LOCK/MOV-to-CS encoding validity and UD1
+instruction extent and operand details. NeverD's detailed, lightweight and
+lifting decode routes consume that result, including REX2 forms. Illegal
+encodings fail decoding even when strict lifting is disabled. UD1 remains an
+explicit invalid-opcode intrinsic; its encoded operands do not imply an
+ordinary memory access.
 
 `Decoder` and every architecture lifter start in strict mode. If Capstone can
 decode an instruction but the selected lifter has no implementation, the
@@ -3049,6 +3104,16 @@ Functions that never return are listed per runtime under `include/neverd/libc`
 (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`).
 Supporting another target then adds a file or a table entry instead of a branch
 in the shared pass.
+
+A relocatable object's undefined symbols resolve in one shared layer,
+`include/neverd/loader/ObjectExterns.h`. Each format's loader collects the
+symbols its relocations name, whether a call or branch reaches each
+(`<Format>ObjectRelocations.def`), its common symbols, and the cells some
+references reach a symbol through (ELF and Mach-O GOT entries, COFF `__imp_`
+pointers). The layer places them past the object's sections in a writable
+`extern` segment and a read-only cell segment. A called extern is an import
+there and data a symbol; a weak reference takes no address, since the null test
+its code makes is the program's.
 
 <a id="support-and-test-depth"></a>
 
@@ -3431,9 +3496,15 @@ UIButton's `contentEdgeInsets`, `imageEdgeInsets` and `titleEdgeInsets` getters 
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` share the live guest environment block in PEB process parameters. Names are ASCII and case insensitive; values are UTF-16. Updates validate inputs, capacity and writable memory before publication. Snapshots remain independent after changes and release their guest backing on free. The block has a 64 KiB model limit; strings and expansions are bounded and check the workload deadline. Unknown pointer ownership, malformed blocks, ANSI code pages and overlapping expansion buffers remain unsupported. `WindowsEnvironmentTests.cpp` compares original x64/ARM64 fixtures across available backends and requires an independent native Windows oracle in CI.
 
-`WindowsProcessHeap` now owns allocation, `HeapReAlloc`, free and size queries in one process heap. Resizing preserves the retained bytes; `HEAP_ZERO_MEMORY` clears newly exposed bytes, and `HEAP_REALLOC_IN_PLACE_ONLY` forbids movement. Failed resizing preserves the old block and returns NULL with `ERROR_NOT_ENOUGH_MEMORY` (8), matching the native observations. Separate page backing lets shrink/free return capacity, while staged growth and bounded copies observe the workload deadline. Custom heaps, exception-generating flags, unknown ownership and inaccessible copy/zero spans stop explicitly. `WindowsHeapTests.cpp` covers both ISAs, forced movement, budget reuse and failure atomicity; CI also runs the original EXE against native Windows.
+`WindowsProcessHeap` owns allocation, resize, free and size queries for the process heap and bounded private heaps. Each allocation retains its owning heap when moved. `HeapDestroy` releases only that private heap’s blocks and retires its handle; other heaps and environment snapshots survive. Unknown, retired, process-heap destruction and cross-heap operations are refused before mutation. Private heaps accept growing requests with an initial size of at most one page; fixed maxima and larger initial commitments remain unsupported. The four-heap limit counts live heaps, so destruction permits further creation without revalidating stale handles. Handles are opaque model identities; native allocator headers are not materialized. `HeapReAlloc` preserves retained bytes, honors `HEAP_ZERO_MEMORY` and `HEAP_REALLOC_IN_PLACE_ONLY`, and returns NULL with `ERROR_NOT_ENOUGH_MEMORY` (8) on allocation failure. Separate page backing returns capacity on shrink, free and destruction; work observes the execution deadline. `WindowsHeapTests.cpp` checks both ISAs, ownership, lifetime turnover, failure atomicity and an independent native Windows oracle.
 
 `WindowsSystemModules` builds bounded PE64 model images for `ntdll.dll`, `kernelbase.dll` and `kernel32.dll` on both ISAs. Their mapped bases are shared by ASCII `GetModuleHandleA` / `GetModuleHandleW`, `LoadLibraryA` / `LoadLibraryW` and `GetProcAddress`; PEB/LDR and `MEM_IMAGE` describe those same images. Static imports, named queries and guest forwarders use the same API gates and export resolver. Providers stay pinned, have no guest initialization callbacks and do not prevent entry return after ordinary guest DLLs unload. Changed headers or export metadata stop lookup. Unknown system export names and nonzero system ordinal queries stop explicitly; case-only mismatches of modeled names and empty names return error 127, while a null query returns 87. Generated bytes and addresses are model policy; Windows DLL version layouts, native ordinals and cross-provider aliases are not reconstructed. `WindowsSystemTests.cpp` compares original x64/ARM64 executables with native Windows, including eight independent initial-thread returns.
+
+`WindowsNativeServices` owns one explicit model service catalogue. Numbered Nt/Zw aliases share a gate, ordered by the number advertised in its prologue. The x64 native boundary reads argument zero from R10 and retains the Win64 stub frame, including stack arguments at RSP + 0x28 and entry alignment. Returning services resume the next instruction with unchanged RSP and the SYSCALL RCX/R11 clobbers. Copied or inline gates carry `direct_service_number` and do not create export-call evidence. Unknown numbers and unimplemented services stop explicitly; these model numbers are not a mapping for an arbitrary Windows version. [Nt/Zw](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-nt-and-zw-versions-of-the-native-system-services-routines). Internal execution watches witness both native prologue instructions before identifying an export call. Interior jumps remain numeric bindings even when RCX equals R10. These watches also run without a caller observer and never generate callbacks outside the caller’s requested ranges.
+
+`WindowsProcessFiles.cpp` owns `ZwOpenSection` handles for pinned, nonopaque providers in `KnownDlls`. Whole views at automatic addresses and offset zero use the loader’s immutable image bytes; `VirtualMemory` records `MEM_IMAGE` ownership and `AddressSpace` retains the image page permissions. Closing a section handle does not release its views. Unknown namespaces, write access, partial/fixed views and execution without an existing API gate remain unsupported. `IntegerABI` locates the two trailing map arguments on x64 and ARM64; ULONG fields ignore undefined upper bits. Current-thread information class `0x11` retains hiding state with exact buffer lengths; class `4` intersects the requested affinity with the reported process mask and returns `STATUS_INVALID_PARAMETER` when no processor remains. Read-only section handles return `STATUS_ACCESS_DENIED` for `PAGE_READWRITE` without publishing a view. Class `0x11` preserves Windows probe ordering: a nonempty setter requires ULONG alignment; queries require it from four bytes onward. A zero-length setter ignores its input pointer.
+
+Current-thread critical sections share initialization, recursive entry, try-entry, balanced leave and deletion across Kernel32 and ntdll. `DeleteCriticalSection` and `RtlDeleteCriticalSection` require an initialized, unowned object; deletion permits reinitialization. Uninitialized, already initialized, destroyed or corrupted state is refused before writes. Rtl initialization returns NTSTATUS zero; the BOOL spin initializer returns true. The single-processor profile keeps the spin count zero and does not model contention between threads.
 
 `WindowsProcessExceptions` implements `AddVectoredExceptionHandler`, `RemoveVectoredExceptionHandler` and `RaiseException` on one CPU with the process budget. Ordered handlers may register or remove handlers, raise nested exceptions, call modeled APIs, load DLLs and exit the process. x64/ARM64 data-access violations and x64 integer divide faults can resume after validated guest edits to `CONTEXT`; general registers, SIMD and supported FP state are preserved. Software exceptions resume through a real return instruction in the modeled provider. The model bounds registrations to 128 retained entries and nesting to 16 frames. Invalid dispositions, changed exception pointers, unsupported context fields and exhausted bounds fail explicitly. ARM64 frame-based SEH/unwinding, debugger delivery and execute/guard faults remain unsupported. `WindowsExceptionTests.cpp` compares original EXE/DLL scenarios against native Windows; native ARM64 KVM/WHP evidence remains pending. Software exception records carry `EXCEPTION_SOFTWARE_ORIGINATE` (`0x80`), independently of the caller’s noncontinuable flag; the original Windows executable checks the exact software and hardware flag values.
 
@@ -3456,6 +3527,10 @@ Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 `lib/unpack` recovers packed images in four layers. `core` owns orchestration and the format registry. `format/pe` validates the container and rebuilds observed memory, imports and metadata; `PETLS.cpp` validates replacement TLS records against the loader allocation and observed callbacks. No protector registry or static stub signature selects an entry. `dynamic` observes a guest process through `observeProcess`: `Observation.def` maps each container and instruction set to a process profile and gives each instruction set its stack pointer and instruction window. A new target is a table row and a module directory, and an input without a row is rejected by name. `ExecutionSession` owns execution watches; a `ProcessObserver` reads a stopped process and chooses the next stop, but cannot change guest state. The emulation layer knows only `defer_unmodeled`, which binds unmodeled imports to opaque entries that stop when executed. See [unpacking](unpack.md). Deferred loading permits executable callback and entry targets that earlier initializers materialize in zero-filled memory. Callback arrays and TLS allocation metadata still require validated backing; ordinary strict loading retains its file-backing checks. The OS model supplies invocation provenance and notifies observers when it prepares an invocation or restores a suspended caller. Transfer watches are rearmed at those boundaries, including when a callback and the generated entry share a page.
 
 `WindowsLibraryHost.cpp` owns DLL host construction; the Windows loader owns its ordinary load/unload lifecycle. `ProcessView::inputModule()` separates the observed input from the host EXE and permits a late initial snapshot. `ProcessView::callFrame()` reads integer argument and return facts through `IntegerABI`; `dynamic/ProcessTransfer` owns matching continuation and stack evidence. `PETLS.cpp` alone decides whether that evidence completes a process-attach callback.
+
+`ProcessView::heapAllocations()` exposes the Windows `Services` owner’s live heap inventory at the stopped boundary, without reading guest pointers or changing state. `dynamic/ProcessTransfer.cpp` validates the inventory and records conservative address matches in captured image and TLS bytes; `core/Unpack.cpp` alone chooses `unsupported_state` or an explicitly requested `snapshot`. The PE writer never guesses heap relocation or bootstrap semantics.
+
+`PEDelayImports.cpp` owns fresh-process delay-load repair and metadata storage exclusion. The COFF loader records `Import::IsDelayImport` from descriptor provenance; Windows execution admission compares ordinary imports only. Validated delay descriptors authorize exact resolved cells for rebinding while pending internal thunks retain lazy resolution. Independent lookup tables own binding counts, preserving following pending cells. Invalid state fails explicitly.
 
 `ExportObserver` also watches executable exports of resident guest dependencies, while modeled providers keep their service-dispatch observation. Input-image exports are excluded. Module changes refresh the watches, and live export identity still authorizes each repair. Discovery retains at most the declared import limit. DLL fixtures require repair of both a system API helper and a guest dependency helper; native loading verifies that neither retains an emulated address.
 
@@ -3516,6 +3591,8 @@ Finite multi-target indirect dispatch also retains deferred guard dependencies: 
 HighIR tail copying consults `SourceCallTypeHint::requiresUniqueSourceOccurrence` before duplicating a call. Boolean, callback-parameter, immutable-target, frame-witness, virtual-dispatch and native-Swift-receiver receipts each name one original machine occurrence; return tails, jump tails and nested exit rewrites keep that evaluation shared, even when source copies would execute on mutually exclusive paths. Ordinary call declarations retain the existing copying rules. Publication still rebuilds the current machine, ABI, operands and dynamic target proof and requires one source evaluation. Tests cover all receipt kinds, nested expressions, unchanged plain-call optimization, and a complete ARM64 shared-store/callback tail against generated C at O0/O2.
 
 The shared `SourceABI` owner distinguishes a logical by-value record from its physical address carrier. Darwin ARM64 C declarations for six or sixteen doubles keep the complete record type and use an eight-byte integer-register or naturally aligned stack carrier, independently of floating argument registers and the x8 result pointer. ABI equality and projection batching retain this distinction, calling convention and parameter roles. Partial, overlapping, incompatible or stale carriers are rejected. This declaration alone does not bind LowIR calls, project entries, emit HighC calls or authorize frame borrows: those require a separate copy-storage proof. Compiler and native ABI tests cover register exhaustion, stack packing, arbitrary floating bits, copy mutation isolation and independent indirect results; they are not a complete `setTransform:` recovery test.
+
+Debug signatures name recovered parameters by where they arrive, never by position. `SourceParameterPlacement` places each source parameter under the ordinary convention of its target: System V x86-64, Microsoft x64, AAPCS64 and i386 cdecl/stdcall, each in its own file. It returns the registers and stack slots that hold each parameter's pieces, and the hidden result pointer. HighC binds a recovered parameter to the piece at its register or entry stack offset. A later piece is named after its parameter and byte offset (`p_8`), and the declared type applies only where the location holds the whole value as its bytes. Placement stops at the first parameter whose place the rules cannot be sure of: a record whose passing the source does not state, a scalar wider than a register, a memory record of unknown alignment, or Apple arm64 stack packing. Later parameters keep their machine names, and functions of languages with their own conventions, such as Go, bind nothing. The DWARF loader gives parameter and result types alone a passing mode and scalar layout: C records pass by value, C++ classes as `DW_AT_calling_convention` states, and `_Complex` values as complex numbers. Rust records stay unknown, because Rust's own ABI and `extern "C"` pass some records differently. PDB records follow the Microsoft C++ ABI: i386 passes them as their bytes, while x64 passes them as their bytes or as an address in the same position. Call prototypes and argument casts still come only from signatures that map by position, whose parameters are all integers or all floating values.
 
 The shared `SourceFrameAnalysis` can check initialized private by-value copies at an original call when independent effect certificates describe the consumer and any complete indirect-result producer. It checks all reaching paths and loop backedges, exact active ranges, other argument aliases and later uses. Consuming a copy invalidates its initialization and saved-byte identities; a later read requires a new definite write. Initialization facts also expire on possible writes and frame release, while retained Swift scratch obligations remain intact. The query returns parameter extents only after complete frame restoration; it grants no machine identity, SDK effect, call binding or source-publication permission. Tests include branches, loops, partial writes, aliases and retained scratch; native ARM64 fixtures with real ObjC/CALayer reject reads of consumed copies and accept independently initialized disposable copies.
 

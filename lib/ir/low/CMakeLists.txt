@@ -1,7 +1,11 @@
 add_neverd_component_library(NeverDIRLowValidation
   LowIR.cpp
   LowNoReturn.cpp
+  LowUndefinedEffects.cpp
   X87PartialRemainder.cpp
+
+  LINK_COMPONENTS
+  Digest
 )
 
 add_neverd_component_library(NeverDIRRegistrationState
@@ -14,6 +18,7 @@ add_neverd_component_library(NeverDIRLow
   CFGBuilderException.cpp
   CFGBuilderInsn.cpp
   CFGBuilderX86Fpu.cpp
+  CFGBuilderX86GetPc.cpp
   CallRegisterEffects.cpp
   CircleRange.cpp
   FuncDetector.cpp
@@ -34,6 +39,7 @@ add_neverd_component_library(NeverDIRLow
   NdOpEmulatorX86FPScale.cpp
   NdOpEmulatorX86FPCompare.cpp
   NdOpEmulatorX87.cpp
+  PlatformEvidence.cpp
   X86ApproxReference.c
   X86ApproxReference28.c
   jumptable/JumpTableResolver.cpp

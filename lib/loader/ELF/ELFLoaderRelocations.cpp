@@ -159,7 +159,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
     const Elf_Shdr *SymSH = getShdr<ELFT>(Sections, SH.sh_link);
     llvm::StringRef StrTab;
     if (SymSH) {
-      auto TabOr = ELF.getStringTableForSymtab(*SymSH);
+      auto TabOr = ELF.getStringTableForSymtab(*SymSH, Sections);
       if (TabOr)
         StrTab = *TabOr;
       else
@@ -167,7 +167,18 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
     }
 
     llvm::StringRef SecName = getSectionName<ELFT>(ShStrTab, SH);
-    auto Record = [&](RelocationEntry RE, uint32_t SymIdx) {
+    uint64_t Ordinal = 0;
+    auto Record = [&](RelocationEntry RE, uint32_t SymIdx, uint64_t RawInfo) {
+      RE.ELF =
+          ELFRelocationProvenance{!IsRelocatable && Img.Sections.empty()
+                                      ? ELFRelocationSource::ProgramDynamicTable
+                                      : ELFRelocationSource::SectionTable,
+                                  SH.sh_addr,
+                                  SH.sh_offset,
+                                  Ordinal++,
+                                  RE.Address,
+                                  RawInfo,
+                                  std::nullopt};
       RE.SymbolIndex = SymIdx;
       if (!SecName.empty())
         RE.SectionName = SecName.str();
@@ -178,12 +189,26 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
         if (!SymsOr) {
           llvm::consumeError(SymsOr.takeError());
         } else if (SymIdx < SymsOr->size()) {
-          auto SymNameOr = (*SymsOr)[SymIdx].getName(StrTab);
+          const auto &Sym = (*SymsOr)[SymIdx];
+          RE.ELF->Symbol = ELFRelocationSymbol{
+              !IsRelocatable && Img.Sections.empty() ? 0u
+                                                     : uint32_t(SH.sh_link),
+              Sym.st_name,
+              Sym.st_shndx,
+              Sym.st_info,
+              Sym.getBinding(),
+              Sym.getType(),
+              Sym.st_other,
+              Sym.st_value,
+              Sym.st_size,
+              std::nullopt};
+          auto SymNameOr = Sym.getName(StrTab);
           if (SymNameOr)
             RE.SymbolName = SymNameOr->str();
           else
             llvm::consumeError(SymNameOr.takeError());
-          Undefined = (*SymsOr)[SymIdx].st_shndx == SHN_UNDEF;
+          RE.ELF->Symbol->Name = RE.SymbolName;
+          Undefined = Sym.st_shndx == SHN_UNDEF;
         }
       }
 
@@ -193,6 +218,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
             RE.HasExplicitAddend ? std::optional<int64_t>(RE.Addend)
                                  : std::nullopt,
             Img);
+        elf_loader::recordRuntimeCallableRelocation(RE.Type, RE.Address, Img);
         // The dynamic linker writes the symbol's address; a REL slot's
         // implicit addend is not added.
         elf_loader::recordImportSlotBinding(
@@ -214,7 +240,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
         RE.Addend = R.r_addend;
         RE.HasExplicitAddend = IsAndroidRela;
         RE.Type = R.getType(false);
-        Record(std::move(RE), R.getSymbol(false));
+        Record(std::move(RE), R.getSymbol(false), R.r_info);
       }
       continue;
     }
@@ -224,6 +250,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
       uint64_t ROff64 = SH.sh_offset + static_cast<uint64_t>(I) * SH.sh_entsize;
       RelocationEntry RE;
       uint32_t SymIdx = 0;
+      uint64_t RawInfo = 0;
       if (IsRela) {
         if (!rangeInBounds(ROff64, sizeof(Elf_Rela), Size))
           break;
@@ -234,6 +261,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
         RE.HasExplicitAddend = true;
         RE.Type = R.getType(false);
         SymIdx = R.getSymbol(false);
+        RawInfo = R.r_info;
       } else {
         if (!rangeInBounds(ROff64, sizeof(Elf_Rel), Size))
           break;
@@ -242,8 +270,9 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
         RE.Address = R.r_offset;
         RE.Type = R.getType(false);
         SymIdx = R.getSymbol(false);
+        RawInfo = R.r_info;
       }
-      Record(std::move(RE), SymIdx);
+      Record(std::move(RE), SymIdx, RawInfo);
     }
   }
 }
@@ -389,6 +418,15 @@ void applyDynamicRelativeRelocations(
         !rangeInBounds(SH.sh_offset, SH.sh_size, Size))
       continue;
 
+    // The symbols the section's relocations name, for slots bound to a
+    // definition in this file.
+    llvm::ArrayRef<typename ELFT::Sym> Symbols;
+    if (SH.sh_link < Sections.size()) {
+      if (auto SymsOr = ELF.symbols(&Sections[SH.sh_link]))
+        Symbols = *SymsOr;
+      else
+        llvm::consumeError(SymsOr.takeError());
+    }
     const size_t Count = static_cast<size_t>(SH.sh_size / SH.sh_entsize);
     for (size_t I = 0; I < Count; ++I) {
       const uint64_t EntryOff =
@@ -419,9 +457,30 @@ void applyDynamicRelativeRelocations(
           continue;
         TargetVA = readPtr(Existing, ELFT::Is64Bits);
       }
-      if (Symbol != 0 || !IsRelative(Type))
+      if (Symbol == 0) {
+        if (IsRelative(Type))
+          ApplyPointerSlot(SlotVA, TargetVA);
         continue;
-      ApplyPointerSlot(SlotVA, TargetVA);
+      }
+      // A slot bound to a symbol this file defines: the dynamic linker
+      // writes its address -- or, for a GNU indirect function, what its
+      // resolver returns -- unless another module interposes a definition.
+      // TargetVA holds the explicit or the implicit addend.
+      if (Symbol >= Symbols.size())
+        continue;
+      const typename ELFT::Sym &Sym = Symbols[Symbol];
+      if (Sym.st_shndx == llvm::ELF::SHN_UNDEF ||
+          Sym.st_shndx >= llvm::ELF::SHN_LORESERVE || Sym.st_value == 0 ||
+          Sym.getType() == llvm::ELF::STT_TLS)
+        continue;
+      const std::optional<uint64_t> Value = elf_loader::symbolRelocationValue(
+          Img.Arch, Type, Sym.st_value, static_cast<int64_t>(TargetVA));
+      if (!Value)
+        continue;
+      if (Sym.getType() == llvm::ELF::STT_GNU_IFUNC)
+        Img.IndirectFunctionSlots.insert(SlotVA);
+      else
+        ApplyPointerSlot(SlotVA, *Value);
     }
   }
 }
@@ -431,7 +490,8 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
                              llvm::ArrayRef<typename ELFT::Shdr> Sections,
                              const uint8_t *Data, size_t Size,
                              const std::vector<va_t> &SecBase,
-                             bool IsRelocatable, BinaryImage &Img) {
+                             bool IsRelocatable, const ObjectExterns &Externs,
+                             BinaryImage &Img) {
   using namespace llvm::ELF;
   using Elf_Shdr = typename ELFT::Shdr;
   using Elf_Sym = typename ELFT::Sym;
@@ -626,6 +686,14 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
       continue;
 
     const Elf_Shdr *SymSH2 = getShdr<ELFT>(Sections, SH.sh_link);
+    llvm::StringRef SymStrTab;
+    if (SymSH2 &&
+        (!Externs.SymbolSlots.empty() || !Externs.CommonSlots.empty())) {
+      if (auto TabOr = ELF.getStringTableForSymtab(*SymSH2))
+        SymStrTab = *TabOr;
+      else
+        llvm::consumeError(TabOr.takeError());
+    }
     size_t Count = static_cast<size_t>(SH.sh_size / SH.sh_entsize);
     for (size_t I = 0; I < Count; ++I) {
       uint64_t ROff64 = SH.sh_offset + static_cast<uint64_t>(I) * SH.sh_entsize;
@@ -664,6 +732,23 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
           SymVal = Sym.st_value;
           SymIsFunction =
               Sym.getType() == STT_FUNC || Sym.getType() == STT_GNU_IFUNC;
+          // An undefined or common symbol resolves to its extern address.  A
+          // call reaches the import there; any other reference reaches
+          // storage the extern segment owns.
+          if ((Sym.st_shndx == SHN_UNDEF || Sym.st_shndx == SHN_COMMON) &&
+              !SymStrTab.empty()) {
+            const auto &Slots = Sym.st_shndx == SHN_UNDEF ? Externs.SymbolSlots
+                                                          : Externs.CommonSlots;
+            if (auto NameOr = Sym.getName(SymStrTab)) {
+              if (auto It = Slots.find(NameOr->str()); It != Slots.end()) {
+                SymVal = It->second;
+                if (!isBranchReference(Img.Arch, RType))
+                  SymOwnerVA = Externs.ExternBase;
+              }
+            } else {
+              llvm::consumeError(NameOr.takeError());
+            }
+          }
           if (Sym.st_shndx != SHN_UNDEF && Sym.st_shndx < SHN_LORESERVE) {
             if (const Elf_Shdr *TSH = getShdr<ELFT>(Sections, Sym.st_shndx)) {
               SymOwnerVA =
@@ -678,6 +763,16 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
 
       va_t P = ApplyVA + RAddr;
       va_t S = SymVal;
+      // A GOT reference applies its direct form against the GOT entry, which
+      // holds the symbol's address.
+      if (auto Direct = directTypeOfGOTReference(Img.Arch, RType))
+        if (auto It = Externs.GOTEntries.find({SH.sh_link, RSym});
+            It != Externs.GOTEntries.end()) {
+          S = It->second;
+          SymOwnerVA = Externs.CellBase;
+          SymIsFunction = false;
+          RType = *Direct;
+        }
 
       if (RAddr >= ApplySeg->Data.size())
         continue;
@@ -1385,11 +1480,11 @@ template void collectRelocations<llvm::object::ELF64LE>(
 template llvm::Error applyRelocations<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,
     llvm::ArrayRef<llvm::object::ELF32LE::Shdr>, const uint8_t *, size_t,
-    const std::vector<va_t> &, bool, BinaryImage &);
+    const std::vector<va_t> &, bool, const ObjectExterns &, BinaryImage &);
 template llvm::Error applyRelocations<llvm::object::ELF64LE>(
     const llvm::object::ELFFile<llvm::object::ELF64LE> &,
     llvm::ArrayRef<llvm::object::ELF64LE::Shdr>, const uint8_t *, size_t,
-    const std::vector<va_t> &, bool, BinaryImage &);
+    const std::vector<va_t> &, bool, const ObjectExterns &, BinaryImage &);
 
 template void applyDynamicRelativeRelocations<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,

@@ -16,8 +16,8 @@
         <translation>重新載入輸入檔案(&amp;R)</translation>
     </message>
     <message>
-        <source>Reload the binary and its saved annotations</source>
-        <translation>重新載入二進位檔案及其已儲存的註解</translation>
+        <source>Read the input file again, with its saved annotations</source>
+        <translation>重新讀取輸入檔案，保留已儲存的註解</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -120,8 +120,8 @@
         <translation>重新命名(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>重新命名目前函式</translation>
+        <source>Rename the current address</source>
+        <translation>重新命名目前位址</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -136,8 +136,8 @@
         <translation>輸入可重複註解(&amp;P)...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
-        <translation>標記位置(&amp;M)...</translation>
+        <source>Mar&amp;k position...</source>
+        <translation>標記位置(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>
@@ -192,8 +192,8 @@
         <translation>移至上一個函式的起始處</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
-        <translation>跳至偽代碼(&amp;E)</translation>
+        <source>Jump to pseudo&amp;code</source>
+        <translation>跳至偽代碼(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
@@ -296,8 +296,8 @@
         <translation>在二進位檔案中搜尋位元組序列</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
-        <translation>下一個位元組序列(&amp;U)</translation>
+        <source>Next se&amp;quence of bytes</source>
+        <translation>下一個位元組序列(&amp;Q)</translation>
     </message>
     <message>
         <source>Repeat the last byte search</source>
@@ -392,8 +392,8 @@
         <translation>顯示目前函式的 LLVM IR</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
-        <translation>產生 LLVM C(&amp;C)</translation>
+        <source>Generate &amp;LLVM C</source>
+        <translation>產生 LLVM C(&amp;L)</translation>
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
@@ -488,16 +488,16 @@
         <translation>顯示圖形概覽</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
-        <translation>MCP 連線(&amp;C)</translation>
+        <source>MCP c&amp;onnections</source>
+        <translation>MCP 連線(&amp;O)</translation>
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
         <translation>管理 MCP 連線與工作階段共用</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
-        <translation>擴充功能(&amp;X)</translation>
+        <source>Ex&amp;tensions</source>
+        <translation>擴充功能(&amp;T)</translation>
     </message>
     <message>
         <source>Manage declarative extensions</source>
@@ -528,8 +528,8 @@
         <translation>切換全螢幕</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
-        <translation>放大字型(&amp;I)</translation>
+        <source>I&amp;ncrease font size</source>
+        <translation>放大字型(&amp;N)</translation>
     </message>
     <message>
         <source>Increase the code font size</source>
@@ -726,6 +726,94 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>不再將目前函式視為函式</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>資料(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>在目前位址定義一個數值；再按一次換成下一個大小</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>字串(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>定義從目前位址開始的字串</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>取消定義(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>將目前項目顯示為原始位元組</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>數字(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>依清單的預設方式顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>十六進位(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>以十六進位顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>十進位(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>以十進位顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>二進位(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>以二進位顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>字元(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>以字元顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>位移(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>以其指向位址的名稱顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>變更正負號(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>以相反的正負號顯示運算元的數字</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>位元反相(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>以位元反相的形式顯示運算元的數字</translation>
     </message>
 </context>
 <context>
@@ -1095,6 +1183,10 @@
         <source>&amp;Functions</source>
         <translation>函式(&amp;F)</translation>
     </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>運算元類型(&amp;T)</translation>
+    </message>
 </context>
 <context>
     <name>NavigationBand</name>
@@ -1125,6 +1217,10 @@
 </context>
 <context>
     <name>ProjectDatabase</name>
+    <message>
+        <source>Cannot copy %1 to %2</source>
+        <translation>無法將 %1 複製到 %2</translation>
+    </message>
     <message>
         <source>Cannot read %1: %2</source>
         <translation>無法讀取 %1：%2</translation>
@@ -1195,6 +1291,10 @@
     <message>
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
+    </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
     </message>
 </context>
 <context>
@@ -1318,6 +1418,16 @@ Recognized library operation; click to show its code.</source>
 Double-click to go to the declaration.</source>
         <translation>%1
 按兩下前往宣告。</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>%n 個宣告以 C 顯示</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1597,6 +1707,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Reload the input file</source>
+        <translation>重新載入輸入檔案</translation>
+    </message>
+    <message>
         <source>Navigation band</source>
         <translation>導覽列</translation>
     </message>
@@ -1705,12 +1819,8 @@ Double-click to go to the declaration.</source>
         <translation> · 唯讀</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 不是函式進入點；只能重新命名函式。</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>重新命名函式</translation>
+        <source>Rename address</source>
+        <translation>重新命名位址</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -1835,8 +1945,8 @@ Signed: %4</source>
         <translation>輸入命令</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>建立 C 檔案</translation>
+        <source>Create source file</source>
+        <translation>建立原始碼檔案</translation>
     </message>
     <message>
         <source>Create LST file</source>
@@ -1857,38 +1967,6 @@ Signed: %4</source>
     <message>
         <source>No saved desktop</source>
         <translation>沒有已儲存的桌面配置</translation>
-    </message>
-    <message>
-        <source>NeverD: Quick start</source>
-        <translation>NeverD：快速開始</translation>
-    </message>
-    <message>
-        <source>New</source>
-        <translation>新增</translation>
-    </message>
-    <message>
-        <source>Disassemble a new file</source>
-        <translation>反組譯新的檔案</translation>
-    </message>
-    <message>
-        <source>Go</source>
-        <translation>直接開始</translation>
-    </message>
-    <message>
-        <source>Work on your own</source>
-        <translation>自行開始工作</translation>
-    </message>
-    <message>
-        <source>Previous</source>
-        <translation>最近</translation>
-    </message>
-    <message>
-        <source>Load the selected recent file</source>
-        <translation>載入所選的最近檔案</translation>
-    </message>
-    <message>
-        <source>Recent files:</source>
-        <translation>最近的檔案：</translation>
     </message>
     <message>
         <source>Open binary or database</source>
@@ -1966,6 +2044,10 @@ Signed: %4</source>
         <source>Collapse library operations</source>
         <translation>摺疊函式庫操作</translation>
     </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>無法確定 %1 的載入方式：%2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2023,7 +2105,94 @@ Signed: %4</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::QuickStartDialog</name>
+    <message>
+        <source>Quick start</source>
+        <translation>快速開始</translation>
+    </message>
+    <message>
+        <source>Interactive disassembler and decompiler</source>
+        <translation>互動式反組譯器與反編譯器</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>版本 %1</translation>
+    </message>
+    <message>
+        <source>Recent files</source>
+        <translation>最近的檔案</translation>
+    </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>新增(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>反組譯新的檔案</translation>
+    </message>
+    <message>
+        <source>&amp;Go</source>
+        <translation>直接開始(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>自行開始工作</translation>
+    </message>
+    <message>
+        <source>&amp;Previous</source>
+        <translation>最近(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>載入所選的最近檔案</translation>
+    </message>
+    <message>
+        <source>&amp;Display at startup</source>
+        <translation>啟動時顯示(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Drop a file here to open it</source>
+        <translation>將檔案拖放到此處即可開啟</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>已遺失</translation>
+    </message>
+    <message>
+        <source>&amp;Load</source>
+        <translation>載入(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy path</source>
+        <translation>複製路徑(&amp;C)</translation>
+    </message>
+    <message>
+        <source>&amp;Remove from list</source>
+        <translation>從清單中移除(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Today, %1</source>
+        <translation>今天 %1</translation>
+    </message>
+    <message>
+        <source>Yesterday, %1</source>
+        <translation>昨天 %1</translation>
+    </message>
+    <message>
+        <source>No recent files</source>
+        <translation>沒有最近的檔案</translation>
+    </message>
+    <message>
+        <source>The files you open appear here. Choose New, or drop a file on this window.</source>
+        <translation>你開啟過的檔案會顯示在這裡。選擇「新增」，或將檔案拖放到此視窗。</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::Session</name>
+    <message>
+        <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
+        <translation>%1 所在的資料夾無法寫入；其資料庫儲存在 %2</translation>
+    </message>
     <message>
         <source>Starting analysis worker…</source>
         <translation>正在啟動分析程序…</translation>
@@ -2049,8 +2218,8 @@ Signed: %4</source>
         <translation>%1：%2 %3，%4 個函式</translation>
     </message>
     <message>
-        <source>Annotations reloaded</source>
-        <translation>註解已重新載入</translation>
+        <source>Reloaded the input file</source>
+        <translation>已重新載入輸入檔案</translation>
     </message>
     <message>
         <source>Comments and history saved</source>
@@ -2119,6 +2288,243 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>已刪除 %1 處的函式</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>%1 處的位元組已經是未定義的</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>已取消 %1 處的定義</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>已在 %2 定義 %1</translation>
+    </message>
+    <message>
+        <source>Platform: %1, as chosen</source>
+        <translation>平台：%1（手動選擇）</translation>
+    </message>
+    <message>
+        <source>Platform: %1, read from the code: %2</source>
+        <translation>平台：%1，從程式碼識別：%2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>載入新檔案</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>將檔案 %1 載入為(&amp;A)</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>輸入檔案可能屬於列出的這些格式</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>處理器類型(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>處理器由檔案標頭決定</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>分析</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>啟用(&amp;E)</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>關閉後，NeverD 不會在閒置時分析程式</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>顯示指示器(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>在狀態列顯示分析進度</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>選項</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>載入除錯資訊(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>讀取屬於輸入檔案的 PDB、DWARF 或連結器對應檔</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>NeverD 無法載入此檔案：%1</translation>
+    </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>僅因檔名而列出；檔案內容並不符合此格式</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>只有檔名提示了格式；如需以該方式載入，請選擇對應的列</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>處理器：%1</translation>
+    </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 不是十六進位數</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>載入檔案所用的基底位址</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>選擇檔案程式碼執行的處理器</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>進入點(&amp;N)</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>檔案位移(&amp;O)</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>要載入的位元組數</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>映像基底位址(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>載入大小(&amp;Z)</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>處理器類型（按兩下設定）(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>映像基底位址</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>到檔案結尾</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>開始執行的位址</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>載入的位元組在檔案中的起始位置</translation>
+    </message>
+    <message>
+        <source>&amp;Platform</source>
+        <translation>平台(&amp;P)</translation>
+    </message>
+    <message>
+        <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
+        <translation>程式碼所針對的平台，決定其遵循的慣例：呼叫如何傳遞參數、哪些暫存器被保留，以及 C 型別的大小</translation>
+    </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>檔案中沒有任何部分像 NeverD 認得的指令集的程式碼；請選擇其程式碼執行的處理器</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>程式碼看起來像 %1 或 %2，但其指令無法區分是哪一個；請選擇其程式碼執行的處理器</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>從位元組識別：%1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>從位元組識別：%1，進入點 %2，基底位址 %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>程式碼看起來像 %1，NeverD 無法解碼；如仍要按某個處理器讀取，請選擇處理器</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>程式碼最像 %1，但不夠明確；請選擇其程式碼執行的處理器</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>Intel 80x86 處理器</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>ARM 處理器</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>虛擬機器</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 及更新版本（32 位元）</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 與 Intel 64（64 位元）</translation>
+    </message>
+    <message>
+        <source>ARM Little-endian, starting in ARM state</source>
+        <translation>ARM 小端序，從 ARM 狀態開始</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64（AArch64）</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>以太坊虛擬機</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>ARM Little-endian, starting in Thumb state</source>
+        <translation>ARM 小端序，從 Thumb 狀態開始</translation>
+    </message>
+</context>
+<context>
+    <name>Platforms</name>
+    <message>
+        <source>Apple (macOS, iOS)</source>
+        <translation>Apple（macOS、iOS）</translation>
+    </message>
+    <message>
+        <source>Detect from the code</source>
+        <translation>從程式碼識別</translation>
+    </message>
+    <message>
+        <source>System V (Linux, BSD, Android)</source>
+        <translation>System V（Linux、BSD、Android）</translation>
+    </message>
+    <message>
+        <source>Windows</source>
+        <translation>Windows</translation>
     </message>
 </context>
 </TS>

@@ -2711,6 +2711,146 @@ TEST(HighControlFlowSemantics, ThreadedFallthroughJumpsPastTheNextBlock) {
   }
 }
 
+namespace {
+// A function of blocks at 0x1000 + 0x100 * I that returns its result
+// register; the interpreter's input is its first parameter.
+MedFunc blockFunction(const char *Name, int Blocks) {
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = Name;
+  M.ReturnType = NdType::makeInt(8, false);
+  auto Input = machineValue(0, Arch::X64);
+  Input.Kind = MedVar::Param;
+  Input.RegOff = getTargetRegInfo(Arch::X64).IntParamRegs[0];
+  M.Params = {Input};
+  M.Blocks.resize(Blocks);
+  for (int I = 0; I < Blocks; ++I) {
+    M.Blocks[I].Id = I;
+    M.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+    M.Blocks[I].EndAddr = M.Blocks[I].StartAddr + 0x20;
+  }
+  return M;
+}
+MedVar resultValue(int Version) {
+  auto V = machineValue(2, Arch::X64);
+  V.Kind = MedVar::Reg;
+  V.RegOff = getTargetRegInfo(Arch::X64).IntReturnReg;
+  V.SSAVer = Version;
+  return V;
+}
+size_t countTests(const HighFunc &F) {
+  size_t Tests = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Tests += S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse;
+  });
+  return Tests;
+}
+} // namespace
+
+TEST(HighControlFlowSemantics, ConstantBranchKeepsOnlyTheArmThatRuns) {
+  // deregister_tm_clones compares two addresses of one object, so its branch
+  // always goes one way, and `if (1) { ... } else { ... }` printed both
+  // arms. Whichever way a constant branch goes and however its arms are
+  // laid out, only the arm that runs remains, without a test.
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  for (uint64_t Condition : {0u, 1u}) {
+    for (va_t Target : {va_t{0x1100}, va_t{0x1200}}) {
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << Condition << " " << Target << " " << Reverse);
+        MedFunc M = blockFunction("constant_branch", 4);
+        M.Blocks[0].Succs = {Target == 0x1100 ? 1 : 2,
+                             Target == 0x1100 ? 2 : 1};
+        if (Reverse)
+          std::swap(M.Blocks[0].Succs[0], M.Blocks[0].Succs[1]);
+        M.Blocks[0].Ops = {
+            operation(NdOp::COND_BR, 0x1004, {},
+                      {C(Target), MedVar::makeConst(Condition, 1)})};
+        M.Blocks[1].Preds = {0};
+        M.Blocks[1].Succs = {3};
+        M.Blocks[1].Ops = {
+            operation(NdOp::COPY, 0x1100, resultValue(1), {C(5)}),
+            operation(NdOp::BRANCH, 0x1104, {}, {C(0x1300)})};
+        M.Blocks[2].Preds = {0};
+        M.Blocks[2].Succs = {3};
+        M.Blocks[2].Ops = {
+            operation(NdOp::COPY, 0x1200, resultValue(2), {C(7)})};
+        M.Blocks[3].Preds = {1, 2};
+        M.Blocks[3].Phis = {
+            {resultValue(3), {{1, resultValue(1)}, {2, resultValue(2)}}}};
+        M.Blocks[3].Ops = {
+            operation(NdOp::RETURN, 0x1300, {}, {resultValue(3)})};
+        const auto F = MedToHighConverter().convert(M, Arch::X64);
+        EXPECT_EQ(countTests(F), 0u);
+        const bool RunsBlock1 = (Target == 0x1100) == (Condition != 0);
+        for (uint64_t Input : {0u, 1u})
+          EXPECT_NO_THROW(
+              EXPECT_EQ(execute(F, Input, true), RunsBlock1 ? 5u : 7u));
+      }
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, AlwaysTakenBranchKeepsAnArmAJumpEnters) {
+  // The arm the constant branch never takes is also the target of a later
+  // test, so it still runs.
+  MedFunc M = blockFunction("entered_arm", 5);
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  auto IsZero = machineValue(1, Arch::X64);
+  IsZero.Size = 1;
+  M.Blocks[0].Succs = {1, 2};
+  M.Blocks[0].Ops = {operation(NdOp::COND_BR, 0x1004, {},
+                               {C(0x1100), MedVar::makeConst(1, 1)})};
+  M.Blocks[1].Preds = {0};
+  M.Blocks[1].Succs = {3};
+  M.Blocks[1].Ops = {operation(NdOp::COPY, 0x1100, resultValue(1), {C(5)}),
+                     operation(NdOp::BRANCH, 0x1104, {}, {C(0x1300)})};
+  M.Blocks[2].Preds = {0, 3};
+  M.Blocks[2].Ops = {operation(NdOp::COPY, 0x1200, resultValue(2), {C(7)}),
+                     operation(NdOp::RETURN, 0x1204, {}, {resultValue(2)})};
+  M.Blocks[3].Preds = {1};
+  M.Blocks[3].Succs = {2, 4};
+  M.Blocks[3].Ops = {
+      operation(NdOp::INT_EQUAL, 0x1300, IsZero, {M.Params.front(), C(0)}),
+      operation(NdOp::COND_BR, 0x1304, {}, {C(0x1200), IsZero})};
+  M.Blocks[4].Preds = {3};
+  M.Blocks[4].Ops = {operation(NdOp::RETURN, 0x1400, {}, {resultValue(1)})};
+  const auto F = MedToHighConverter().convert(M, Arch::X64);
+  EXPECT_NO_THROW(EXPECT_EQ(execute(F, 0, true), 7u));
+  EXPECT_NO_THROW(EXPECT_EQ(execute(F, 1, true), 5u));
+}
+
+TEST(HighControlFlowSemantics, AlwaysTakenSkipNeverRunsTheSkippedCall) {
+  // A branch that always skips a call: the call never runs. The oracle's
+  // `observe` reads memory nothing wrote, so running it throws.
+  MedFunc M = blockFunction("always_skipped", 3);
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  M.Blocks[0].Succs = {2, 1};
+  M.Blocks[0].Ops = {operation(NdOp::COPY, 0x1000, resultValue(1), {C(7)}),
+                     operation(NdOp::COND_BR, 0x1004, {},
+                               {C(0x1200), MedVar::makeConst(1, 1)})};
+  M.Blocks[1].Preds = {0};
+  M.Blocks[1].Succs = {2};
+  auto Call = operation(NdOp::CALL, 0x1100, machineValue(3, Arch::X64),
+                        {C(0x2000), C(0), C(0x9000)});
+  auto Hint = std::make_shared<SourceCallTypeHint>();
+  Hint->Signature.ReturnType = M.ReturnType;
+  Hint->Signature.Parameters = {{"unused", M.ReturnType, {}},
+                                {"address", NdType::makePtr(M.ReturnType), {}}};
+  Call.SourceCallHint = Hint;
+  M.Blocks[1].Ops = {Call};
+  M.Blocks[2].Preds = {0, 1};
+  M.Blocks[2].Ops = {operation(NdOp::RETURN, 0x1200, {}, {resultValue(1)})};
+  const std::map<va_t, std::string> Names{{0x2000, "observe"}};
+  MedToHighConverter Converter;
+  Converter.setFuncNames(&Names);
+  const auto F = Converter.convert(M, Arch::X64);
+  for (uint64_t Input : {0u, 1u}) {
+    SCOPED_TRACE(Input);
+    EXPECT_NO_THROW(EXPECT_EQ(execute(F, Input, true), 7u));
+  }
+}
+
 TEST(HighControlFlowSemantics,
      IncomingRegisterBehindAVersionedSeedIsTheParameter) {
   // PiCMCaptureRegistryPropertyInputData: SSA versions a parameter

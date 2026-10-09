@@ -17,6 +17,7 @@
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/ir/med/MedIntrinsicOutputs.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/libc/LibCNames.h"
@@ -875,6 +876,33 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       if (VA)
         if (auto Value = Img->readImmutableARMLiteral(*VA, Op.Output.Size)) {
           Result = llvm::ConstantInt::get(ValTy, *Value);
+          break;
+        }
+    }
+    if (!IsSegmentRelative && Op.MemoryOrdering == NdMemoryOrdering::None &&
+        Img && Op.Output.Size == Img->getPointerSize()) {
+      ensureImportStorageSnapshot();
+      auto Slot = AddrVar.isConst() ? std::optional<uint64_t>(AddrVar.ConstVal)
+                                    : traceSSAConst(AddrVar);
+      if (!Slot)
+        if (const auto *Value = llvm::dyn_cast<llvm::ConstantInt>(GetInput(0));
+            Value && Value->getBitWidth() <= 64)
+          Slot = Value->getZExtValue();
+      if (!Slot && CurMedFunc && TargetArch == Arch::X86 &&
+          (!Img->isELF() || !Img->IsRelocatable))
+        Slot =
+            foldI386PicAddress(*CurMedFunc, AddrVar, [&](const MedVar &Value) {
+              return lookupDef(Value);
+            });
+      // ARM PIC forms the slot address from PC plus an immutable literal.
+      // Use the same width-aware literal/address evaluator as table access;
+      // SSA COPY tracing alone does not see that addition.
+      if (!Slot)
+        Slot = traceTableBaseConst(AddrVar);
+      if (Slot)
+        if (auto It = DataSymbolBindings.find(*Slot);
+            It != DataSymbolBindings.end() && It->second.Immutable) {
+          Result = resolveDataSymbolAddress(It->second);
           break;
         }
     }

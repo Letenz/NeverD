@@ -104,6 +104,9 @@ cl::SubCommand DecompileCmd("decompile",
                             "Decompile binary to C, Rust, or Solidity");
 cl::SubCommand PatchCmd("patch", "Patch binary with modified IR");
 cl::SubCommand InfoCmd("info", "Show binary metadata summary");
+cl::SubCommand IdentifyCmd("identify",
+                           "List the ways NeverD can load a file, as the load "
+                           "dialog does");
 cl::SubCommand StringsCmd("strings", "Scan binary for strings");
 cl::SubCommand XrefsCmd("xrefs", "Show cross-references for address");
 cl::SubCommand FuncsCmd("funcs", "List discovered functions");
@@ -123,6 +126,10 @@ cl::SubCommand RenameCmd("rename", "Rename a function symbol");
 cl::SubCommand FunctionEditsCmd("function-edits",
                                 "Create or delete functions, or list those "
                                 "edits");
+cl::SubCommand ItemsCmd("items", "Define data items, or list them");
+cl::SubCommand OperandsCmd("operands",
+                           "Show instruction operands' numbers in a base, or "
+                           "list those formats");
 cl::SubCommand SearchCmd("search", "Search bytes/strings in binary");
 cl::SubCommand SectionsCmd("sections", "List binary sections");
 cl::SubCommand SymbolsCmd("symbols", "List all symbols");
@@ -183,11 +190,12 @@ cl::SubCommand TranslateObjectCmd(
 cl::opt<std::string> InputFile(
     cl::Positional, cl::desc("<binary>"), cl::Required, cl::sub(LiftCmd),
     cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
-    cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
-    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
-    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
-    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
-    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(SearchCmd),
+    cl::sub(IdentifyCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd),
+    cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
+    cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
+    cl::sub(ExportCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
+    cl::sub(CallGraphCmd), cl::sub(RenameCmd), cl::sub(FunctionEditsCmd),
+    cl::sub(ItemsCmd), cl::sub(OperandsCmd), cl::sub(SearchCmd),
     cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
     cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
     cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
@@ -205,9 +213,10 @@ cl::opt<bool>
             cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
             cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
             cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
-            cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(SearchCmd),
-            cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
-            cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
+            cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+            cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+            cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+            cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
             cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd));
 
 cl::opt<bool> InjectHello("hello",
@@ -312,11 +321,127 @@ cl::opt<bool> NoDebug(
     cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
     cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
     cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
-    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(SearchCmd),
-    cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
-    cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
-    cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
-    cl::sub(AuditCmd), cl::sub(HuntCmd));
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+
+cl::opt<std::string> LoadLoader(
+    "loader",
+    cl::desc("How to read an input that names no format itself: \"binary\" "
+             "as code of --processor at --load-base, \"evm\" as EVM "
+             "bytecode, \"auto\" as its header or contents say.  The choice "
+             "is kept with the input"),
+    cl::init(""), cl::value_desc("loader"), cl::sub(LiftCmd),
+    cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
+    cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+cl::opt<std::string> LoadProcessor(
+    "processor",
+    cl::desc("Processor a binary file's code runs on: x86, x86_64, arm, "
+             "thumb or aarch64; auto, the default, reads it from the bytes"),
+    cl::init(""), cl::value_desc("processor"), cl::sub(LiftCmd),
+    cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
+    cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+cl::opt<std::string> LoadPlatform(
+    "platform",
+    cl::desc("Platform whose conventions a binary file's code follows: "
+             "\"auto\" reads it from the code, or \"sysv\", \"windows\" or "
+             "\"darwin\""),
+    cl::init(""), cl::value_desc("platform"), cl::sub(LiftCmd),
+    cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
+    cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+cl::opt<std::string>
+    LoadBase("load-base", cl::desc("Address a binary file maps at (hex)"),
+             cl::init(""), cl::value_desc("address"), cl::sub(LiftCmd),
+             cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
+             cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+             cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
+             cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
+             cl::sub(ExportCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
+             cl::sub(CallGraphCmd), cl::sub(RenameCmd),
+             cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd), cl::sub(OperandsCmd),
+             cl::sub(SearchCmd), cl::sub(SectionsCmd), cl::sub(SymbolsCmd),
+             cl::sub(RelocsCmd), cl::sub(HeadersCmd), cl::sub(EntryPointsCmd),
+             cl::sub(SwitchesCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
+             cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
+cl::opt<std::string>
+    LoadOffset("load-offset",
+               cl::desc("Where in a binary file the mapped bytes start (hex)"),
+               cl::init(""), cl::value_desc("offset"), cl::sub(LiftCmd),
+               cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
+               cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+               cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
+               cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
+               cl::sub(ExportCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
+               cl::sub(CallGraphCmd), cl::sub(RenameCmd),
+               cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+               cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+               cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+               cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
+               cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
+               cl::sub(AuditCmd), cl::sub(HuntCmd));
+cl::opt<std::string>
+    LoadSize("load-size",
+             cl::desc("How many bytes of a binary file to map (hex; the rest "
+                      "of the file when absent)"),
+             cl::init(""), cl::value_desc("size"), cl::sub(LiftCmd),
+             cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
+             cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+             cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
+             cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
+             cl::sub(ExportCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
+             cl::sub(CallGraphCmd), cl::sub(RenameCmd),
+             cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd), cl::sub(OperandsCmd),
+             cl::sub(SearchCmd), cl::sub(SectionsCmd), cl::sub(SymbolsCmd),
+             cl::sub(RelocsCmd), cl::sub(HeadersCmd), cl::sub(EntryPointsCmd),
+             cl::sub(SwitchesCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
+             cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
+cl::opt<std::string>
+    LoadEntry("load-entry",
+              cl::desc("Where a binary file's execution starts (hex; the base "
+                       "when absent)"),
+              cl::init(""), cl::value_desc("address"), cl::sub(LiftCmd),
+              cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
+              cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+              cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
+              cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
+              cl::sub(ExportCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
+              cl::sub(CallGraphCmd), cl::sub(RenameCmd),
+              cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+              cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+              cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+              cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
+              cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
+              cl::sub(AuditCmd), cl::sub(HuntCmd));
 
 cl::list<std::string> ARMFunctionModeHints(
     arm_mode_cli::Option, cl::desc(arm_mode_cli::Description),
@@ -326,11 +451,12 @@ cl::list<std::string> ARMFunctionModeHints(
     cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
     cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
     cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
-    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(SearchCmd),
-    cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
-    cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
-    cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
-    cl::sub(AuditCmd), cl::sub(HuntCmd));
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
 
 cl::opt<std::string> PdbFile(
     "pdb",
@@ -342,11 +468,12 @@ cl::opt<std::string> PdbFile(
     cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
     cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
     cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
-    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(SearchCmd),
-    cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
-    cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
-    cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
-    cl::sub(AuditCmd), cl::sub(HuntCmd));
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
 
 cl::opt<std::string> MapFile(
     "map",
@@ -358,11 +485,12 @@ cl::opt<std::string> MapFile(
     cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
     cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
     cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
-    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(SearchCmd),
-    cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
-    cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
-    cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
-    cl::sub(AuditCmd), cl::sub(HuntCmd));
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
 
 cl::opt<bool> NoOpt("no-opt", cl::desc("Skip LLVM optimization passes"),
                     cl::sub(LiftCmd), cl::sub(DecompileCmd), cl::sub(PatchCmd),
@@ -784,17 +912,19 @@ ConcolicStringList ConcolicSolverGates(
 // JSON output option (shared)
 //===----------------------------------------------------------------------===//
 
-cl::opt<bool> JsonOutput(
-    "json", cl::desc("Output as JSON"), cl::sub(InfoCmd), cl::sub(FuncsCmd),
-    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(StringsCmd),
-    cl::sub(XrefsCmd), cl::sub(ImportsCmd), cl::sub(ExportsCmd),
-    cl::sub(SegmentsCmd), cl::sub(PluginsCmd), cl::sub(BookmarksCmd),
-    cl::sub(AnnotateCmd), cl::sub(CallGraphCmd), cl::sub(RenameCmd),
-    cl::sub(FunctionEditsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
-    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
-    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
-    cl::sub(SigsCmd), cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd),
-    cl::sub(DecompileCmd));
+cl::opt<bool>
+    JsonOutput("json", cl::desc("Output as JSON"), cl::sub(InfoCmd),
+               cl::sub(IdentifyCmd), cl::sub(FuncsCmd), cl::sub(DisasmCmd),
+               cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(StringsCmd),
+               cl::sub(XrefsCmd), cl::sub(ImportsCmd), cl::sub(ExportsCmd),
+               cl::sub(SegmentsCmd), cl::sub(PluginsCmd), cl::sub(BookmarksCmd),
+               cl::sub(AnnotateCmd), cl::sub(CallGraphCmd), cl::sub(RenameCmd),
+               cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+               cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+               cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+               cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
+               cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(AuditCmd),
+               cl::sub(HuntCmd), cl::sub(MobileCmd), cl::sub(DecompileCmd));
 
 //===----------------------------------------------------------------------===//
 // Plugins-specific options
@@ -908,8 +1038,17 @@ cl::opt<std::string>
 cl::opt<std::string> RenameFrom("func", cl::desc("Function name to rename"),
                                 cl::init(""), cl::sub(RenameCmd));
 
-cl::opt<std::string> RenameTo("to", cl::desc("New function name"), cl::init(""),
+cl::opt<std::string> RenameTo("to", cl::desc("New name"), cl::init(""),
                               cl::sub(RenameCmd));
+
+cl::opt<std::string>
+    RenameAddr("addr",
+               cl::desc("Address (hex) to name: a function, data or a label"),
+               cl::init(""), cl::value_desc("address"), cl::sub(RenameCmd));
+
+cl::opt<bool> RenameClear("clear",
+                          cl::desc("Take the user's name away from --addr"),
+                          cl::sub(RenameCmd));
 
 cl::opt<bool> RenameList("list", cl::desc("List all renames"),
                          cl::sub(RenameCmd));
@@ -935,6 +1074,53 @@ cl::opt<std::string>
 cl::opt<bool> FunctionEditsList("list",
                                 cl::desc("List the function edits (default)"),
                                 cl::sub(FunctionEditsCmd));
+
+//===----------------------------------------------------------------------===//
+// Data item options
+//===----------------------------------------------------------------------===//
+
+cl::opt<std::string>
+    ItemData("data",
+             cl::desc("Make the bytes at this address (hex) a value of "
+                      "--size bytes: 1, 2, 4 or 8"),
+             cl::init(""), cl::value_desc("address"), cl::sub(ItemsCmd));
+cl::opt<std::string>
+    ItemString("string",
+               cl::desc("Make the string that starts at this address (hex) "
+                        "an item"),
+               cl::init(""), cl::value_desc("address"), cl::sub(ItemsCmd));
+cl::opt<std::string>
+    ItemUndefine("undefine",
+                 cl::desc("Show --size bytes at this address (hex) as bytes"),
+                 cl::init(""), cl::value_desc("address"), cl::sub(ItemsCmd));
+cl::opt<std::string>
+    ItemClear("clear", cl::desc("Forget the user's item at this address (hex)"),
+              cl::init(""), cl::value_desc("address"), cl::sub(ItemsCmd));
+cl::opt<unsigned> ItemSize("size",
+                           cl::desc("Bytes of a value or of undefined bytes"),
+                           cl::init(1), cl::sub(ItemsCmd));
+cl::opt<std::string> OperandAddr("addr",
+                                 cl::desc("Address (hex) of the instruction"),
+                                 cl::init(""), cl::value_desc("address"),
+                                 cl::sub(OperandsCmd));
+cl::opt<unsigned> OperandIndex("operand",
+                               cl::desc("Operand of the instruction, from 0"),
+                               cl::init(0), cl::sub(OperandsCmd));
+cl::opt<std::string>
+    OperandBase("base",
+                cl::desc("number, hex, decimal, binary, char or offset"),
+                cl::init("number"), cl::sub(OperandsCmd));
+cl::opt<bool> OperandNegate("negate", cl::desc("Change the number's sign"),
+                            cl::sub(OperandsCmd));
+cl::opt<bool> OperandInvert("invert", cl::desc("Invert the number's bits"),
+                            cl::sub(OperandsCmd));
+cl::opt<bool> OperandClear("clear", cl::desc("Forget the operand's format"),
+                           cl::sub(OperandsCmd));
+cl::opt<std::string>
+    ItemEncoding("encoding",
+                 cl::desc("The encoding --string reads, as `neverd strings` "
+                          "names encodings"),
+                 cl::init(""), cl::sub(ItemsCmd));
 
 //===----------------------------------------------------------------------===//
 // Search-specific options

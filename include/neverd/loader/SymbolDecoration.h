@@ -45,11 +45,80 @@ inline llvm::StringRef cNameOfSymbol(llvm::StringRef Symbol,
   return Symbol;
 }
 
+/// Whether \p Name is already the symbol on \p Format and \p Target, which a
+/// format's underscore does not decorate (SymbolDecorations.def).
+inline bool isUndecoratedSymbol(llvm::StringRef Name, BinaryFormat Format,
+                                Arch Target) {
+#define NEVERD_ABI_UNDECORATED_PREFIX(FormatId, ArchId, Prefix)                \
+  if (Format == BinaryFormat::FormatId && Target == Arch::ArchId &&            \
+      Name.starts_with(Prefix))                                                \
+    return true;
+#include "neverd/loader/SymbolDecorations.def"
+  return false;
+}
+
 /// The symbol C name \p Name links as, which an assembler label must spell.
 inline std::string symbolOfCName(llvm::StringRef Name, BinaryFormat Format,
                                  Arch Target) {
-  return (llvm::StringRef(hasABIUnderscore(Format, Target) ? "_" : "") + Name)
-      .str();
+  const bool Underscore = hasABIUnderscore(Format, Target) &&
+                          !isUndecoratedSymbol(Name, Format, Target);
+  return (llvm::StringRef(Underscore ? "_" : "") + Name).str();
+}
+
+/// The prefix the linker of \p Format gives the symbol of an import's
+/// address slot (SymbolDecorations.def), or empty when it names none.
+inline llvm::StringRef importSlotPrefix(BinaryFormat Format) {
+#define NEVERD_IMPORT_SLOT_PREFIX(FormatId, Prefix)                            \
+  if (Format == BinaryFormat::FormatId)                                        \
+    return Prefix;
+#include "neverd/loader/SymbolDecorations.def"
+  return {};
+}
+
+/// Whether an import entry of \p Format names its function by the C name
+/// rather than by its symbol (SymbolDecorations.def).
+inline bool importNamesAreCNames(BinaryFormat Format) {
+#define NEVERD_IMPORT_C_NAMES(FormatId)                                        \
+  if (Format == BinaryFormat::FormatId)                                        \
+    return true;
+#include "neverd/loader/SymbolDecorations.def"
+  return false;
+}
+
+/// The symbol the import its import entry names \p Name links as, so that
+/// cNameOfSymbol gives that name back: 32-bit Windows' `_initterm` is the
+/// symbol `__initterm`, not the C name `initterm`.
+inline std::string symbolOfImportName(llvm::StringRef Name, BinaryFormat Format,
+                                      Arch Target) {
+  return importNamesAreCNames(Format) ? symbolOfCName(Name, Format, Target)
+                                      : Name.str();
+}
+
+/// The name an import entry gives the function symbol \p Symbol links: on a
+/// format whose import entries name C names, the C name without the argument
+/// bytes a stdcall or fastcall name carries (SymbolDecorations.def), so that
+/// `__imp__Sleep@4` imports `Sleep`.
+inline llvm::StringRef importNameOfSymbol(llvm::StringRef Symbol,
+                                          BinaryFormat Format, Arch Target) {
+  if (!importNamesAreCNames(Format))
+    return Symbol;
+  llvm::StringRef Name = cNameOfSymbol(Symbol, Format, Target);
+  bool ArgumentBytes = false;
+#define NEVERD_ABI_ARGUMENT_BYTES_SUFFIX(FormatId, ArchId)                     \
+  if (Format == BinaryFormat::FormatId && Target == Arch::ArchId)              \
+    ArgumentBytes = true;
+#include "neverd/loader/SymbolDecorations.def"
+  // A Microsoft C++ name spells its own `@`s.
+  if (!ArgumentBytes || Name.starts_with("?"))
+    return Name;
+  const size_t At = Name.rfind('@');
+  if (At == llvm::StringRef::npos || At + 1 == Name.size() ||
+      Name.drop_front(At + 1).find_first_not_of("0123456789") !=
+          llvm::StringRef::npos)
+    return Name;
+  Name = Name.take_front(At);
+  Name.consume_front("@");
+  return Name;
 }
 
 } // namespace neverd

@@ -1,0 +1,34 @@
+//===- LoadRows.def - How the load dialog names a file's loaders --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// NEVERD_LOAD_ROW(Id, Loader, Text): a row of the load dialog.  Loader is the
+// loader's short name, which also follows the row text in brackets; Text is
+// an llvm::formatv pattern whose arguments the loader names in its identify
+// function.
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_LOAD_ROW
+NEVERD_LOAD_ROW(ELF, "elf", "ELF{0} for {1} ({2})")
+NEVERD_LOAD_ROW(PE, "pe", "Portable executable for {0} (PE)")
+NEVERD_LOAD_ROW(COFF, "coff", "COFF ({0})")
+NEVERD_LOAD_ROW(MachO, "macho", "Mach-O file ({0}). {1}")
+NEVERD_LOAD_ROW(FatMachO, "macho", "Fat Mach-O file, {0}. {1}")
+NEVERD_LOAD_ROW(EVM, "evm", "EVM bytecode")
+NEVERD_LOAD_ROW(Binary, "binary", "Binary file")
+#undef NEVERD_LOAD_ROW
+#endif
+
+// NEVERD_LOAD_REASON(Id, Text): why a row cannot be loaded.
+#ifdef NEVERD_LOAD_REASON
+NEVERD_LOAD_REASON(Processor, "NeverD has no {0} processor")
+NEVERD_LOAD_REASON(BigEndian, "Big-endian ELF files are not supported")
+NEVERD_LOAD_REASON(Class, "This ELF class is not supported")
+NEVERD_LOAD_REASON(Malformed, "The header cannot be read: {0}")
+NEVERD_LOAD_REASON(SBFVersion, "Unsupported SBF version in the ELF flags")
+NEVERD_LOAD_REASON(Slice, "NeverD loads the {0} slice of this file")
+#undef NEVERD_LOAD_REASON
+#endif
