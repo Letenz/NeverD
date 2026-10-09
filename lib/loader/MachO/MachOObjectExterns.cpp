@@ -127,9 +127,11 @@ llvm::Expected<ObjectExterns> planObjectExterns(const MachOObjectFile &Obj,
       const std::optional<std::string> Name = nameOf(Obj, DRI);
       if (!Name)
         continue;
+      // A weak reference's address is the null test the code makes of it,
+      // which any address the loader gave it would decide.
       if (isCommon(N))
         Requests.noteCommon(*Name, N.Value, commonAlignment(N));
-      else if (N.Value == 0)
+      else if (N.Value == 0 && (N.Desc & llvm::MachO::N_WEAK_REF) == 0)
         Requests.noteUndefined(*Name, isBranchReference(Img.Arch, Type), 0);
     }
   }

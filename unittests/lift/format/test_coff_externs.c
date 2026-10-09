@@ -24,3 +24,11 @@ void bump(void) { counter += 5; }
 int call_api(int x) { return ImportedApi(x) + 1; }
 
 int read_tentative(void) { return tentative; }
+
+// A weak external's default is the linker's to take.
+extern void maybe(void) __attribute__((weak));
+
+void call_maybe(void) {
+  if (maybe)
+    maybe();
+}

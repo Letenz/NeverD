@@ -70,8 +70,11 @@ planObjectExterns(const llvm::object::COFFObjectFile &Obj,
       auto SymIt = Reloc.getSymbol();
       if (SymIt == Obj.symbol_end())
         continue;
+      // A weak external's address is the null test the code makes of it,
+      // which any address the loader gave it would decide; its default
+      // stays the linker's.
       const llvm::object::COFFSymbolRef Sym = Obj.getCOFFSymbol(*SymIt);
-      if (Sym.getSectionNumber() != IMAGE_SYM_UNDEFINED)
+      if (Sym.getSectionNumber() != IMAGE_SYM_UNDEFINED || Sym.isWeakExternal())
         continue;
       auto NameOr = SymIt->getName();
       if (!NameOr) {

@@ -26,3 +26,12 @@ void bump(void) { counter += 5; }
 int read_defined(void) { return defined_global; }
 
 int read_tentative(void) { return tentative; }
+
+// A weak reference is null unless another module defines it; the test the
+// code makes is the program's, not the loader's to decide.
+extern void maybe(void) __attribute__((weak));
+
+void call_maybe(void) {
+  if (maybe)
+    maybe();
+}

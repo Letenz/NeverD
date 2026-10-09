@@ -151,9 +151,12 @@ planObjectExterns(const llvm::object::ELFFile<ELFT> &ELF,
         if (directTypeOfGOTReference(A, Rel.Type) &&
             SeenReferenced.insert({Rel.SymbolTable, Rel.SymbolIndex}).second)
           Referenced.push_back({Rel.SymbolTable, Rel.SymbolIndex});
+        // A weak undefined symbol's address is the null test the code makes
+        // of it, which any address the loader gave it would decide.
         if (Sym.st_shndx == SHN_COMMON)
           NoteCommon(Sym, Name);
-        else if (Sym.st_shndx == SHN_UNDEF && Name != kGlobalOffsetTable)
+        else if (Sym.st_shndx == SHN_UNDEF && Name != kGlobalOffsetTable &&
+                 Sym.getBinding() != STB_WEAK)
           Requests.noteUndefined(
               Name, Rel.InCode && isBranchReference(A, Rel.Type), Rel.Addend);
       });

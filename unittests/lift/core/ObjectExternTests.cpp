@@ -109,6 +109,9 @@ TEST(ObjectExterns, UndefinedAndCommonSymbolsResolveOnEveryArchitecture) {
       Imports.insert(Imp.Name);
     for (const char *Called : {"perror", "exit", "fputs"})
       EXPECT_TRUE(Imports.count(Called)) << Called;
+    // A weak reference keeps the null test the code makes of it.
+    EXPECT_FALSE(Imports.count("maybe"));
+    EXPECT_EQ(Img.findSymbol("maybe"), nullptr);
     const Symbol *Counter = dataSymbol(Img, "counter");
     const Symbol *Stdout = dataSymbol(Img, "stdout");
     const Symbol *Tentative = dataSymbol(Img, "tentative");
@@ -196,6 +199,8 @@ TEST(ObjectExterns, COFFObjectsOnEveryMachine) {
       Imports.insert(Imp.Name);
     for (const char *Called : {"perror", "exit", "fputs", "ImportedApi"})
       EXPECT_TRUE(Imports.count(Called)) << Called;
+    EXPECT_FALSE(Imports.count("maybe"));
+    EXPECT_EQ(Img.findSymbol("maybe"), nullptr);
 
     std::vector<va_t> Entries;
     for (const char *Name :
@@ -250,6 +255,8 @@ TEST(ObjectExterns, MachOObjectsOnEveryArchitecture) {
       Imports.insert(Imp.Name);
     for (const char *Called : {"_perror", "_exit", "_fputs"})
       EXPECT_TRUE(Imports.count(Called)) << Called;
+    EXPECT_FALSE(Imports.count("_maybe"));
+    EXPECT_EQ(Img.findSymbol("_maybe"), nullptr);
 
     std::vector<va_t> Entries;
     for (const char *Name : {"_die", "_put", "_bump", "_read_tentative"}) {
