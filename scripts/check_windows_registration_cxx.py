@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
             image = case / "original.exe"
             record = {"case": name, "passed": False, "observations": []}
             report["cases"].append(record)
-            command = [args.compiler, "/nologo", "/std:c++17", "/EHsc",
+            command = [args.compiler, "/nologo", "/WX", "/std:c++17", "/EHsc",
                        "/GS-", "/Od", "/Oy-", "/Z7", "/MD",
                        "/D_CRT_SECURE_NO_WARNINGS",
                        f"/DREGISTRATION_CXX_REFERENCE={int(reference)}",

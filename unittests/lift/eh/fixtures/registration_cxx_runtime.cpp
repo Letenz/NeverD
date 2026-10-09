@@ -21,7 +21,7 @@ RegistrationGuard::~RegistrationGuard() {
 }
 
 extern "C" __declspec(dllexport) __declspec(noinline) void
-registration_cxx_throw() {
+registration_cxx_throw() noexcept(false) {
   registration_cxx_caller = (unsigned)_ReturnAddress();
   throw 7;
 }
