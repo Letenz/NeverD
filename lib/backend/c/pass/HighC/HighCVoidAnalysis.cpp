@@ -101,7 +101,8 @@ bool highCExpressionHasEffect(const HighExpr &E) {
 }
 
 bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
-                       VarNameFn VarFn, ExprStrFn ExprFn) {
+                       VarNameFn VarFn, ExprStrFn ExprFn,
+                       KnownVoidCallFn KnownVoidCall) {
   if (Func.SourceTypeHint && Func.SourceTypeHint->ReturnType)
     return Func.SourceTypeHint->ReturnType->Kind == NdTypeKind::Void;
   if (Func.ReturnType && Func.ReturnType->Kind == NdTypeKind::Void)
@@ -174,7 +175,8 @@ bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
     if (It != VarSources.end()) {
       auto *Src = It->second;
       if (Src->Kind == ExprKind::Call) {
-        if (isMsvcCxxThrowCallName(Src->CallTarget) || isNoreturnCallExpr(*Src))
+        if (isMsvcCxxThrowCallName(Src->CallTarget) ||
+            isNoreturnCallExpr(*Src) || KnownVoidCall(*Src))
           return true;
         // The x64 debug service returns its status in RAX.
         if (Src->IntrinsicId == Intrinsic::DebugService)
@@ -235,25 +237,33 @@ bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
       return true;
     }
     if (E.Kind == ExprKind::Call)
-      return isMsvcCxxThrowCallName(E.CallTarget) || isNoreturnCallExpr(E);
+      return isMsvcCxxThrowCallName(E.CallTarget) || isNoreturnCallExpr(E) ||
+             KnownVoidCall(E);
     return false;
   };
 
-  // A return of the return register's incoming value, or of no value at
-  // all, leaves the caller nothing it could rely on, so it cannot belong to
-  // a value-returning contract.  Without a declared type such a path makes a
-  // function void unless another path returns a value it evidently means
-  // (below); what the other paths leave in the register is incidental.  An
-  // unreachable return after a call that does not return proves nothing
-  // either way.
+  // A return of the return register's incoming value, of what a routine
+  // declared `void` left there (a wrapper that tail-jumps to
+  // InitializeSListHead), or of no value at all, leaves the caller nothing
+  // it could rely on, so it cannot belong to a value-returning contract.
+  // Without a declared type such a path makes a function void unless another
+  // path returns a value it evidently means (below); what the other paths leave
+  // in the register is incidental.  An unreachable return after a call that
+  // does not return proves nothing either way.
   std::function<bool(const HighExpr &)> IsUndefinedValue =
       [&](const HighExpr &E) -> bool {
     if (E.Kind == ExprKind::Undef)
       return true;
+    if (E.Kind == ExprKind::Call)
+      return KnownVoidCall(E);
     if (E.Kind == ExprKind::Var) {
       const std::string VName = VarFn(E.Var);
-      if (ParamNames.count(VName) || VarSources.count(VName))
+      if (ParamNames.count(VName))
         return false;
+      if (const auto Source = VarSources.find(VName);
+          Source != VarSources.end())
+        return Source->second->Kind == ExprKind::Call &&
+               KnownVoidCall(*Source->second);
       const auto SeenIt = SeenVars.find(VName);
       return SeenIt != SeenVars.end() && SeenIt->second.Kind == MedVar::Reg &&
              SeenIt->second.SSAVer == 0;

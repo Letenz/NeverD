@@ -1595,6 +1595,11 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
 bool HighCWriter::knownVoidCall(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
     return false;
+  // A function this unit defines returns what its definition declares: a
+  // bound source signature decides over debug information.
+  if (const HighFunc *Definition = calledDefinition(E))
+    if (const TypeRef Declared = declaredFunctionReturnType(*Definition))
+      return Declared->Kind == NdTypeKind::Void;
   // Other special-member rows are declared `void` too, but an MSVC
   // constructor or assignment returns `this`, and so does an ARM32 Itanium
   // destructor: a read of their result is real.
