@@ -118,7 +118,8 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
               Signature && !Signature->FpRetLongDouble &&
               !Signature->FpRetComplex &&
               (Signature->FpRet ||
-               (Signature->IntArgs == 0 && Signature->FpArgs > 0)))
+               (Signature->FpArgs > 0 &&
+                (Signature->IntArgs == 0 || Signature->FpFirst))))
             continue;
 
       // Which candidate return registers does the caller read straight-line
