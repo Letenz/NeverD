@@ -495,10 +495,14 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         Failed(std::move(E));
         break;
       }
-      if (!Observer ||
-          !llvm::any_of(ObserverWatches, [&](const ExecutionWatch &W) {
-            return Result.PC >= W.Address && Result.PC - W.Address < W.Size;
-          }))
+      const auto ContainsPC = [&](const ExecutionWatch &W) {
+        return Result.PC >= W.Address && Result.PC - W.Address < W.Size;
+      };
+      // The installed set is exactly the union of both owners. Outside the
+      // small native range, the observer necessarily requested this stop;
+      // scanning its entire image-watch list again would be quadratic work.
+      if (!Observer || (llvm::any_of(NativeWatches, ContainsPC) &&
+                        !llvm::any_of(ObserverWatches, ContainsPC)))
         continue;
       auto Next = Observer->watched(Stopped, Result.PC);
       if (!Next) {
