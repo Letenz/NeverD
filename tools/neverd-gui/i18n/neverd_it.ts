@@ -2381,6 +2381,30 @@ Con segno: %4</translation>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
         <translation>La piattaforma per cui il codice è stato compilato, di cui segue le convenzioni: come le chiamate passano gli argomenti, quali registri preservano e le dimensioni dei tipi C</translation>
     </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>Nessuna parte del file sembra codice di un set di istruzioni che NeverD conosce; scegli il processore su cui gira il suo codice</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>Il codice sembra %1 o %2, e le sue istruzioni non dicono quale; scegli il processore su cui gira il suo codice</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>Rilevato dai byte: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>Rilevato dai byte: %1, ingresso %2, base %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>Il codice sembra %1, che NeverD non sa decodificare; scegli un processore per leggerlo comunque così</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>Il codice somiglia di più a %1, ma non chiaramente; scegli il processore su cui gira il suo codice</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

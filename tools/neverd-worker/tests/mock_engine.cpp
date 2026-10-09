@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -208,8 +209,13 @@ int neverd_session_set_load_options(neverd_session_t s, const char *json) {
   const Json options = Json::parse(json, nullptr, false);
   const std::string loader =
       options.is_object() ? options.value("loader", "auto") : "";
+  // A binary file's processor is named, or read from the bytes when absent
+  // or auto.
+  static const std::set<std::string> processors{
+      "", "auto", "x86", "x86_64", "arm", "thumb", "aarch64"};
   if ((loader != "auto" && loader != "evm" && loader != "binary") ||
-      (loader == "binary" && options.value("processor", "").empty())) {
+      (loader == "binary" &&
+       !processors.count(options.value("processor", "")))) {
     session(s)->error = "mock: unusable load options";
     return -1;
   }

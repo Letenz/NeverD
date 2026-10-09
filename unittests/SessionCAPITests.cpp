@@ -18,6 +18,7 @@
 #include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/SHA256.h"
@@ -2720,6 +2721,79 @@ TEST_F(SessionCAPITest, IdentifyListsWhatLoadingReads) {
   Rows = rows(write("identify.dat", std::string(64, '\x07')));
   ASSERT_EQ(Rows.size(), 1u);
   EXPECT_EQ(text(Rows[0]), "Binary file");
+}
+
+TEST_F(SessionCAPITest, BinaryFilesReadTheirProcessorFromTheirBytes) {
+  // This program's own code, cut from its ELF file: bytes no header
+  // describes, which still name the processor they were built for.
+#if defined(__x86_64__) || defined(_M_X64)
+  const std::string Host = "x86_64";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+  const std::string Host = "aarch64";
+#else
+  const std::string Host;
+#endif
+  static int Anchor;
+  const std::string Self = llvm::sys::fs::getMainExecutable(nullptr, &Anchor);
+  std::ifstream Input(Self, std::ios::binary);
+  const std::string Image((std::istreambuf_iterator<char>(Input)),
+                          std::istreambuf_iterator<char>());
+  using Ehdr = llvm::object::ELF64LE::Ehdr;
+  using Shdr = llvm::object::ELF64LE::Shdr;
+  if (Host.empty() || Image.size() < sizeof(Ehdr) ||
+      Image.compare(0, 4, llvm::ELF::ElfMagic) != 0 ||
+      Image[llvm::ELF::EI_CLASS] != llvm::ELF::ELFCLASS64 ||
+      Image[llvm::ELF::EI_DATA] != llvm::ELF::ELFDATA2LSB)
+    GTEST_SKIP() << "the test reads code from a little-endian ELF64 host";
+  const auto *Header = reinterpret_cast<const Ehdr *>(Image.data());
+  const auto *Sections =
+      reinterpret_cast<const Shdr *>(Image.data() + Header->e_shoff);
+  const Shdr &Names = Sections[Header->e_shstrndx];
+  std::string Code;
+  for (unsigned I = 0; I < Header->e_shnum; ++I)
+    if (llvm::StringRef(Image.data() + Names.sh_offset + Sections[I].sh_name) ==
+        ".text")
+      Code = Image.substr(Sections[I].sh_offset,
+                          std::min<uint64_t>(Sections[I].sh_size, 1 << 18));
+  ASSERT_GE(Code.size(), 1u << 16);
+  const auto Path = write("dump.bin", Code);
+
+  auto Reply =
+      llvm::json::parse(takeString(neverd_identify_json(Path.c_str())));
+  ASSERT_TRUE(static_cast<bool>(Reply));
+  const auto *Rows = Reply->getAsObject()->getArray("rows");
+  ASSERT_TRUE(Rows && !Rows->empty());
+  const auto &Binary = *Rows->back().getAsObject();
+  EXPECT_EQ(Binary.getString("status"), "settled");
+  EXPECT_EQ(Binary.getString("detected"), Host);
+  EXPECT_EQ(Binary.getInteger("code_offset"), 0);
+
+  // Opened as a binary file with no processor named, it reads as that one,
+  // and the load says what decided it.
+  ASSERT_EQ(neverd_session_set_load_options(Session, R"({"loader":"binary"})"),
+            0);
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_arch_name(Session)), Host);
+  auto Load =
+      llvm::json::parse(takeString(neverd_session_load_options_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Load));
+  EXPECT_EQ(Load->getAsObject()->getString("processor"), Host);
+  EXPECT_EQ(Load->getAsObject()->getString("processor_source"), "detected");
+  EXPECT_NE(Load->getAsObject()
+                ->getString("processor_evidence")
+                .value_or("")
+                .find("of the code"),
+            llvm::StringRef::npos);
+
+  // Bytes that look like no code are refused, and say so.
+  const auto Zeros = write("zeros.bin", std::string(1 << 16, '\0'));
+  ASSERT_EQ(neverd_session_set_load_options(Session, R"({"loader":"binary"})"),
+            0);
+  EXPECT_EQ(neverd_session_load(Session, Zeros.c_str()), 0);
+  EXPECT_NE(takeString(neverd_last_error(Session))
+                .find("no part of the file looks like code"),
+            std::string::npos);
 }
 
 TEST_F(SessionCAPITest, BinaryFilesLoadAsAskedAndDecompile) {

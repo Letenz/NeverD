@@ -2381,6 +2381,30 @@ Mit Vorzeichen: %4</translation>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
         <translation>Die Plattform, für die der Code gebaut wurde und deren Konventionen er folgt: wie Aufrufe Argumente übergeben, welche Register sie erhalten und wie groß C-Typen sind</translation>
     </message>
+    <message>
+        <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
+        <translation>Kein Teil der Datei sieht wie Code eines Befehlssatzes aus, den NeverD kennt; wählen Sie den Prozessor, auf dem ihr Code läuft</translation>
+    </message>
+    <message>
+        <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
+        <translation>Der Code sieht aus wie %1 oder %2, und seine Befehle verraten nicht, welches; wählen Sie den Prozessor, auf dem ihr Code läuft</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1</source>
+        <translation>Aus den Bytes erkannt: %1</translation>
+    </message>
+    <message>
+        <source>Read from the bytes: %1, entry %2, base %3</source>
+        <translation>Aus den Bytes erkannt: %1, Einsprung %2, Basis %3</translation>
+    </message>
+    <message>
+        <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
+        <translation>Der Code sieht aus wie %1, den NeverD nicht dekodieren kann; wählen Sie einen Prozessor, um ihn trotzdem so zu lesen</translation>
+    </message>
+    <message>
+        <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
+        <translation>Der Code ähnelt am meisten %1, aber nicht eindeutig; wählen Sie den Prozessor, auf dem er läuft</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>

@@ -1,0 +1,3073 @@
+{
+ "compiler": "Ubuntu clang version 23.1.2 (++20260910044155+069ef0e7cb36-1~exp1~20260910044205.69)",
+ "corpus": {
+  "held_out": {
+   "third_party/capstone/Mapping.c": "f10f360a17da3534800a50d850a2de1f72004842b3c1d6b476dbfa3247d8f490",
+   "third_party/capstone/SStream.c": "684ea9cbdb69858f92e36be32405ad2b992a177335dab5849fd451d54cd0c5ab",
+   "third_party/capstone/arch/LoongArch/LoongArchInstPrinter.c": "1df47d2fc681a47d4a3b54d66599f99bb931719c5030e1284eb092d4fae6bd5c",
+   "third_party/capstone/arch/PowerPC/PPCMapping.c": "6f19a54e948a44d1324073479816b85ac5c1391cb676ecbba3e6d985334fbf80",
+   "third_party/capstone/arch/SystemZ/SystemZDisassembler.c": "f7a51ae804230a424f1b8da2abb0993d660947868f96258c17f95d2c730c90ab",
+   "third_party/capstone/cs.c": "8e49d34dd8ec0f4dcc290d5dfd588590502aeb9f5c2c7f89d39dc09ec3416a7c",
+   "unittests/emulation/fixtures/darwin_process.c": "dc23e3fef0403f93b63f27751f98d283d754c2427005e06b0760267362c2c96a",
+   "unittests/emulation/fixtures/driver_context_limits.c": "cbe15389c0cc0e2007d3234341ee21542fd3f1bc6d5c8e857724c2d11d4017dc",
+   "unittests/emulation/fixtures/driver_direct.c": "c629f2cab93b8edfd97fcbe566b873464e9c4d2f898710bdf17f7c1826ebf98c",
+   "unittests/emulation/fixtures/driver_loader.c": "f3746bc79801a68cc5cb34550950bd71217ecd8ed300df6c0ad8517f713d8ba3",
+   "unittests/emulation/fixtures/driver_wdm_multiple_wait.c": "4e5d78a157caa1695d2d83283eed670e6f522206706645becfef796891c3e5ca",
+   "unittests/emulation/fixtures/linux_output.c": "f2b30a107014e67ea046546bd5f28cb587610d8a971e23c3fd45d5219f9cc3dc",
+   "unittests/emulation/fixtures/linux_pie.c": "c663f8688673fcfacf895482ac47b111457ffa9e9621e443a8512cc159c59ad2",
+   "unittests/emulation/fixtures/windows_context.c": "72f7234fbd0e3cc0c48898d76acff865e465c2f038e641329e96ff2dca2d0182",
+   "unittests/lift/aarch64/test_atomic_a64.c": "0f64667dbdbbf203c2f165afb94feae8fc99912cf4213b8633530c552d749839",
+   "unittests/lift/aarch64/test_intrinsics_a64.c": "1e141711584c36d4829e644674fbcd6add05e1840f84b40f5e9f8fbe7ccc59cf",
+   "unittests/lift/aarch64/test_mte_a64.c": "9ff635b446e434608663f9580cea730d6aeb894cc9ea1626c5eebbcd396d32d2",
+   "unittests/lift/aarch64/test_muldiv_a64.c": "6a748f93c310ae0d11e6cef895e2106ca93ae4b5d6c4dc6966263cd86801b7dd",
+   "unittests/lift/aarch64/test_roundtrip_a64.c": "4505a75114028bfd7f5e2309799b3ea0c14f938ff3757fe37bcc294116c97463",
+   "unittests/lift/aarch64/test_switch_a64.c": "8dee6cd4cd5b63821af646504dabf22394ed905f062a8253ce06dde29f7eb0c5",
+   "unittests/lift/arm32/test_carry_arm.c": "fe77d8c85520fe05189aa8abb18d7f1b7b6678b0244c436fec22442b84ed68d3",
+   "unittests/lift/arm32/test_logic_arm.c": "6220fa832acda64c3d5ef0a87609bfb979c4c7a7a7be18b8470306c735eb2c5f",
+   "unittests/lift/arm32/test_muldiv_arm.c": "a2f7fd2b1b220f3c1b8db820d01fc852222d1bd661651126de69f83f3c05f42e",
+   "unittests/lift/arm32/test_switch_arm.c": "5815aec89151b1920c9fc9086adb3967b1cdf4464d372873b7069017c34a8e4b",
+   "unittests/lift/format/test_pe_arm.c": "468cc8095973e7f3e7ce29cf88d88d9b5cb18a3cd481fc053305e1618fca9a97",
+   "unittests/lift/x86_32/test_cmpxchg32.c": "327b76e93153af21f8d611511d067d4c492ae2f7a0d2d586afe3c25f20ff49d3",
+   "unittests/lift/x86_32/test_dshift32.c": "e32d4f73c337bc7b8e312458260bc9ae555ae2db9056d6b1a397036813259baf",
+   "unittests/lift/x86_64/test_adx_misc.c": "d5377e5dad2f76013d9165de807d01ce512be4555791b443977503b60cf643e8",
+   "unittests/lift/x86_64/test_arith.c": "5bded1eda631dfffc4fde086d7cc29e53640268133188cb9f2f24229e96311de",
+   "unittests/lift/x86_64/test_flag_ops.c": "9c6e83e158dba0c2ba84d7b1def0cd5f70b42293288a5b4e09570e194182ee0a",
+   "unittests/lift/x86_64/test_global_volatile.c": "84382c4916cdf310bd5f5f9a45f19ce38e0b8e676985efcf739ff12b5badf0dd",
+   "unittests/lift/x86_64/test_jumptable_worldclass.c": "02a1808038be6bcad32e6e091e9ff8fb1ebd8ebe07fdcc41b565994b4afc0755",
+   "unittests/lift/x86_64/test_loop.c": "9c957030d82d1afd5b7b19dc6f84170bd8cce88d252059b9d69b860ea045584c",
+   "unittests/lift/x86_64/test_muldiv.c": "e229f400247dadfadad227d9c94be02dd5f4fc65a2caad51c39b19f6d9e2b4b0",
+   "unittests/lift/x86_64/test_roundtrip.c": "cffb7ad3ae33198b9230a25843d6c532ae73db11c5607f560b4d9b07979318fc",
+   "unittests/lift/x86_64/test_setcc_cmov.c": "91ca5dd05e1f225fdb239122327fd38fb3582b1f2c0de7ce451ecec0886f465c",
+   "unittests/lift/x86_64/test_string_ops.c": "2d9a160217e5186e843c107af1445787f20ab23bed7777e2bb5b9549ff05858a",
+   "unittests/plugin/Inputs/native_fixture_plugin.c": "fb6c1d03bbe22dd45db4cf6cbd8da88254613a44ece5e616cbacd31aa4d60791",
+   "unittests/translate/StagedCSDKFlatHeader.c": "c91db1d230879138d7c2827449aa573884691308b9b7ab8ad14b5f6ebc3f6904",
+   "unittests/translate/TranslationCAPIHeaderC.c": "c84300ede6209ede14584f0d129d9c17a5892ee10bd72c327db285255765acd7"
+  },
+  "train": {
+   "third_party/capstone/MCInst.c": "3b1b31bf0fcf2834c0df86f4a959d5c38cb99161deb653ce0dfd333ed22a3b1a",
+   "third_party/capstone/MCInstPrinter.c": "66cca7eeb8a75eafa9cc9b9e021738d0dc2bb87230d7e9cf1b03fa6fc682d620",
+   "third_party/capstone/MCInstrDesc.c": "dc5b886820f34e5aeaf58bfc22fa061302832797d9f15e52a566cab31d2f9489",
+   "third_party/capstone/arch/AArch64/AArch64DisassemblerExtension.c": "b780c138437a3a4d83fd7387ae18d609326e4c3f88fd283b76b6a51c10af6eaf",
+   "third_party/capstone/arch/AArch64/AArch64Mapping.c": "bc26607a1c9fc0d1a85c22537bda8295ac3505dbfb6292144be9da5bb5b0bdd8",
+   "third_party/capstone/arch/ARM/ARMDisassemblerExtension.c": "bb69d78ceea00dc1d42abf843ced0774902a955d985657a4e98ec6900091c2ea",
+   "third_party/capstone/arch/ARM/ARMMapping.c": "17ab141afc0f5dc8f321c62a8398ef0454665b68f1c3af92f171845afefa9866",
+   "third_party/capstone/arch/LoongArch/LoongArchDisassembler.c": "673ff0dfab58bf220932c053a2f1b23323b6b901bc44b8508fda13231a9f2f1e",
+   "third_party/capstone/arch/Mips/MipsDisassembler.c": "bea8a7d38ff2dbc5a15e5f2ddc86359a920f7392acbe81f3961f9f244d92d86c",
+   "third_party/capstone/arch/Mips/MipsInstPrinter.c": "8c7f40bc9eb393a2ef1f37a183ef68881b712c3e30ae4e33182299a75add1452",
+   "third_party/capstone/arch/Mips/MipsMapping.c": "89910d66bc17c96dc9e1bdd30c19359d8a6635abe6b37110438c6b8f822972e0",
+   "third_party/capstone/arch/RISCV/RISCVModule.c": "35677000e8a8290c551f38dfba1361f947e227563625556ae6d874f2c553f54e",
+   "third_party/capstone/arch/SystemZ/SystemZDisassemblerExtension.c": "0ba6b83c2588c4091bc56636de32784db5047f78aee872f56db8369c44fa8c54",
+   "third_party/capstone/arch/SystemZ/SystemZInstPrinter.c": "0989caa5bdff8206223b2d64e7f796e08bc9d36226be685b736697c8feb59cbe",
+   "third_party/capstone/arch/X86/X86ATTInstPrinter.c": "fb1c45b1b1005b61eb1147af6ed5591773aaf120e94a423b0c96a3049f511b79",
+   "third_party/capstone/arch/X86/X86Module.c": "cc95ff96cb043955246e636723e5d2ec120967232724f59a852101004ecded60",
+   "third_party/capstone/arch/Xtensa/XtensaDisassembler.c": "bdb5e3b937ce15fd2a2d80267ef8b49af80fbe2cca859ef7d2677f2678c15254",
+   "unittests/concolic/ConcolicCAPIHeaderC.c": "645b32d9dc34ccda8f6f7bdda89eaddbd662b10ed93e4ae656bb06cd9a698550",
+   "unittests/devirtualization/fixtures/generic_machine_control_reference.c": "69951dc01e2093dcb5609018e3e82dc4fb125d4b1a54d7016d94cbecea759367",
+   "unittests/devirtualization/fixtures/generic_vm_reference.c": "585fa5e9f45785cbf88e77e4a6f35ff54f43416e9cb5be334a6a9174c4923474",
+   "unittests/emulation/fixtures/android_finalizers.c": "3cdba1854536af4c62f6d247f8c035ae6969f5821c77b2f31e17ca23ddc0fc98",
+   "unittests/emulation/fixtures/android_format.c": "c8d5b50f4b5c3da28c3f90d168237bbf6ed13e4d3a1943a2f3cf3d686b422eaf",
+   "unittests/emulation/fixtures/android_mutex.c": "440b98fefa541cfe2774ebbdb5cca4ec9bf934964c7f2e5dc23f353009a24dda",
+   "unittests/emulation/fixtures/android_once.c": "99705da9f348e27ed99008589997ecca819ad8a0bd6aeef5bed8c8848c28bdbd",
+   "unittests/emulation/fixtures/android_sleep.c": "8eeb61ceb5b5e5b6492ac4937c24c01a93348be50aa93e35d917218a54328746",
+   "unittests/emulation/fixtures/android_token.c": "b431cab6eb4b2e0b9ec550b144a6abc32c55cea641bdca198a3ed20a9d3b05dd",
+   "unittests/emulation/fixtures/driver_async.c": "0a39351e6a4f9eb40ed95d28964039bb0d994211c1bac42699bd8657a5be9438",
+   "unittests/emulation/fixtures/driver_dispatcher.c": "6b70950dc61fe85b14e4c3d9306369e9d91b50fc19bb080efb3d5a8a830fca8f",
+   "unittests/emulation/fixtures/driver_preemptive.c": "f646412b3135a27cd4f9b39a80db7778fe3415d0e59b6a00ae6a974e4e7e4a5e",
+   "unittests/emulation/fixtures/driver_wdm_pnp.c": "30d125021895c776d5ba801a887f8728a830c5863224b597215e719e04243643",
+   "unittests/emulation/fixtures/linux_files.c": "d1131b6bf01930050aa7b0e0e08c02c223f55c814176e6cc5a21b3f0f3a655bc",
+   "unittests/emulation/fixtures/linux_priority.c": "8b571e88314e7c7f7f07ed027c3b8ea2195721b913f0ec206048f1064c1a9c70",
+   "unittests/emulation/fixtures/linux_signals.c": "dc6d619ef73a6bcf28c51cff1dcf3a050feb7d5ff227d21585910b6270bbe953",
+   "unittests/emulation/fixtures/windows_alignment_process.c": "a7d334a0058d828a177dde8a17455bf9ae90a7578897c5ea0c8c34a6e4fbc60b",
+   "unittests/emulation/fixtures/windows_environment.c": "fc19a1a26c09040587055998ed578076103b7c6071ab503161c41a33c38e0153",
+   "unittests/emulation/fixtures/windows_heap.c": "2cfde92651d6b6ba1fd4e96094470d55f8fc27228d1a16c3b41af41e2ba56b51",
+   "unittests/emulation/fixtures/windows_module_middle.c": "458005c4770f7fb76b7909895498a55b6c23f66481518ff5254f9e59acb022c8",
+   "unittests/emulation/fixtures/windows_process.c": "3b6c34fc69c43e4443735b5333b1f1536104519091db63e6e7f52e5a4f46d88e",
+   "unittests/emulation/fixtures/windows_system.c": "e700559916520a60282629237c09ba9398544594d99ee8f407bbc6ef16fd6367",
+   "unittests/lift/aarch64/test_call_abi_provider_a64_macho.c": "a1318cfa9c48f0c40e7aabc3c4f107ee65d38abb9be93f3bd53e16f0b8c65fd1",
+   "unittests/lift/aarch64/test_fp_a64.c": "06c59f0134102f9be26dea52d6c4cb287c28347a46b9dfdd9a73cc9b9d0bf53a",
+   "unittests/lift/aarch64/test_jumptable_worldclass_a64.c": "02a1808038be6bcad32e6e091e9ff8fb1ebd8ebe07fdcc41b565994b4afc0755",
+   "unittests/lift/aarch64/test_mem_a64.c": "8bab9d5a803c7a3eae20d687d020935327293fed583c220012507d81f4939b7f",
+   "unittests/lift/aarch64/test_sve_state_a64.c": "3f8580cde4d0d1ee4dd6e2c0be17713f83c6e3967ed0a9353109bb834499bfc5",
+   "unittests/lift/arm32/test_mem_arm.c": "ac9cbdfa0007630863a899464530fcd23e8fb8782f89828f57d064a5bcbee6aa",
+   "unittests/lift/arm32/test_roundtrip_arm.c": "9c92953593658a2370db31b3a97258999f823685b54db6cfe7ab3012eec5eb8b",
+   "unittests/lift/arm32/test_shift_arm.c": "b97b37b39f0a3c9d2c0dc9e63c5709362078fd01e2367b6739bf20920616bfda",
+   "unittests/lift/core/test_mba_macho_mixed.c": "b77ccb12a12b925f1d1048c3916656cbdf6e52608f798579647efbf3d7107a63",
+   "unittests/lift/x86_32/test_control32.c": "5c60854faf79c3592d104431819048f34040d7d46a3583fdeeeddd1cb46826f4",
+   "unittests/lift/x86_64/test_bitops.c": "c8d8fab68c7a74c03da46fbad15a8f62b8de83941756b18fa029c9c45e7cb6f5",
+   "unittests/lift/x86_64/test_bmi.c": "d572cee5cfba6bf944c6150842517be23497d316037475b85161f7f92d53d87a",
+   "unittests/lift/x86_64/test_fma_misc.c": "410eafdef40dfca9be61279fb468aad5f3198b6acbf1d2db52d2eef20a2e41e2",
+   "unittests/lift/x86_64/test_fp_convert.c": "0b0d411521473df0a2733fe6c8daa88fbe820a85a5b784eab7d39cd7ebdfdc13",
+   "unittests/lift/x86_64/test_intrinsics_system.c": "6758dc7a8a7026885da14b04b03c627c7c849f1822d98adeb3431020b13bf101",
+   "unittests/lift/x86_64/test_jumptable_enhanced.c": "1fdc2e752c1122f341ae2414ec056c315390409d174ea276a1c4b771e4ba2744",
+   "unittests/lift/x86_64/test_lods_misc.c": "935fdfe2e0671e56bcad314f9e1680614719eb13341fa444d13f4811568aa518",
+   "unittests/lift/x86_64/test_patch_coff.c": "4273a409a7dde32afb9b5842eaee3ec7532fcb3e0b7c3e3d920d7aa8f96c6f00",
+   "unittests/lift/x86_64/test_sign_conv.c": "84aa4ae1b3ffd9224a1bd496609cee29cedbca47bfa21e8822e4572776227fff",
+   "unittests/lift/x86_64/test_x87_fpu.c": "e613044de8ab2f5013cd8a39110182686a6a29f6cb6b9b7dc9da7ef0b5a9633e",
+   "unittests/safety/fixtures/runtime_sanitizer_cli.c": "75287c6d44dfb8c2f5743db426a4125835d60f3f693ee978be9831097f03b15a"
+  }
+ },
+ "generator": "scripts/generate_isa_model.py",
+ "held_out_window_accuracy": {
+  "clang aarch64": {
+   "family": 42,
+   "isa": 42,
+   "windows": 42
+  },
+  "clang arm": {
+   "family": 13,
+   "isa": 13,
+   "windows": 13
+  },
+  "clang armeb": {
+   "family": 13,
+   "isa": 13,
+   "windows": 13
+  },
+  "clang avr": {
+   "family": 22,
+   "isa": 22,
+   "windows": 22
+  },
+  "clang bpf": {
+   "family": 35,
+   "isa": 35,
+   "windows": 35
+  },
+  "clang hexagon": {
+   "family": 10,
+   "isa": 10,
+   "windows": 12
+  },
+  "clang loongarch64": {
+   "family": 13,
+   "isa": 13,
+   "windows": 13
+  },
+  "clang m68k": {
+   "family": 14,
+   "isa": 14,
+   "windows": 14
+  },
+  "clang mips": {
+   "family": 21,
+   "isa": 21,
+   "windows": 21
+  },
+  "clang mips64": {
+   "family": 21,
+   "isa": 21,
+   "windows": 21
+  },
+  "clang mips64el": {
+   "family": 21,
+   "isa": 21,
+   "windows": 21
+  },
+  "clang mipsel": {
+   "family": 21,
+   "isa": 21,
+   "windows": 21
+  },
+  "clang msp430": {
+   "family": 15,
+   "isa": 15,
+   "windows": 15
+  },
+  "clang ppc": {
+   "family": 14,
+   "isa": 7,
+   "windows": 14
+  },
+  "clang ppc64": {
+   "family": 13,
+   "isa": 13,
+   "windows": 13
+  },
+  "clang ppc64le": {
+   "family": 16,
+   "isa": 16,
+   "windows": 16
+  },
+  "clang riscv32": {
+   "family": 9,
+   "isa": 6,
+   "windows": 9
+  },
+  "clang riscv64": {
+   "family": 9,
+   "isa": 4,
+   "windows": 9
+  },
+  "clang s390x": {
+   "family": 17,
+   "isa": 17,
+   "windows": 17
+  },
+  "clang sparc": {
+   "family": 17,
+   "isa": 13,
+   "windows": 17
+  },
+  "clang sparcv9": {
+   "family": 18,
+   "isa": 18,
+   "windows": 18
+  },
+  "clang thumb": {
+   "family": 21,
+   "isa": 21,
+   "windows": 21
+  },
+  "clang x86": {
+   "family": 14,
+   "isa": 14,
+   "windows": 14
+  },
+  "clang x86_64": {
+   "family": 46,
+   "isa": 46,
+   "windows": 46
+  },
+  "clang xtensa": {
+   "family": 23,
+   "isa": 23,
+   "windows": 23
+  },
+  "debian alpha busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian alpha liblzma5": {
+   "family": 37,
+   "isa": 37,
+   "windows": 37
+  },
+  "debian alpha libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian amd64 busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian amd64 liblzma5": {
+   "family": 32,
+   "isa": 32,
+   "windows": 32
+  },
+  "debian amd64 libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian arm64 busybox-static": {
+   "family": 63,
+   "isa": 63,
+   "windows": 64
+  },
+  "debian arm64 liblzma5": {
+   "family": 28,
+   "isa": 28,
+   "windows": 28
+  },
+  "debian arm64 libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian armel busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian armel liblzma5": {
+   "family": 30,
+   "isa": 30,
+   "windows": 30
+  },
+  "debian armel libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian armhf busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian armhf liblzma5": {
+   "family": 21,
+   "isa": 21,
+   "windows": 21
+  },
+  "debian armhf libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian hppa busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian hppa liblzma5": {
+   "family": 37,
+   "isa": 37,
+   "windows": 37
+  },
+  "debian hppa libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian i386 busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian i386 liblzma5": {
+   "family": 35,
+   "isa": 35,
+   "windows": 35
+  },
+  "debian i386 libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian loong64 busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian loong64 liblzma5": {
+   "family": 34,
+   "isa": 34,
+   "windows": 34
+  },
+  "debian loong64 libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian m68k busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian m68k liblzma5": {
+   "family": 31,
+   "isa": 31,
+   "windows": 31
+  },
+  "debian m68k libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian mips busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian mips liblzma5": {
+   "family": 28,
+   "isa": 28,
+   "windows": 28
+  },
+  "debian mips libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian mips64el busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian mips64el liblzma5": {
+   "family": 34,
+   "isa": 33,
+   "windows": 34
+  },
+  "debian mips64el libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian mipsel busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian mipsel liblzma5": {
+   "family": 35,
+   "isa": 35,
+   "windows": 35
+  },
+  "debian mipsel libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian powerpc busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian powerpc liblzma5": {
+   "family": 40,
+   "isa": 40,
+   "windows": 40
+  },
+  "debian powerpc libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian ppc64 busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian ppc64 liblzma5": {
+   "family": 39,
+   "isa": 39,
+   "windows": 39
+  },
+  "debian ppc64 libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian ppc64el busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian ppc64el liblzma5": {
+   "family": 40,
+   "isa": 40,
+   "windows": 40
+  },
+  "debian ppc64el libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian riscv64 busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian riscv64 liblzma5": {
+   "family": 22,
+   "isa": 22,
+   "windows": 22
+  },
+  "debian riscv64 libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian s390x busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian s390x liblzma5": {
+   "family": 32,
+   "isa": 32,
+   "windows": 32
+  },
+  "debian s390x libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian sh4 busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian sh4 liblzma5": {
+   "family": 28,
+   "isa": 28,
+   "windows": 28
+  },
+  "debian sh4 libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian sparc64 busybox-static": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  },
+  "debian sparc64 liblzma5": {
+   "family": 31,
+   "isa": 31,
+   "windows": 31
+  },
+  "debian sparc64 libzstd1": {
+   "family": 64,
+   "isa": 64,
+   "windows": 64
+  }
+ },
+ "isas": {
+  "aarch64": [
+   "aarch64-linux-gnu"
+  ],
+  "alpha": [],
+  "arm": [
+   "armv7a-linux-gnueabihf"
+  ],
+  "armeb": [
+   "armebv7a-linux-gnueabi"
+  ],
+  "avr": [
+   "avr-unknown-unknown"
+  ],
+  "bpf": [
+   "bpfel-unknown-none"
+  ],
+  "hexagon": [
+   "hexagon-unknown-elf"
+  ],
+  "hppa": [],
+  "loongarch64": [
+   "loongarch64-linux-gnu"
+  ],
+  "m68k": [
+   "m68k-linux-gnu"
+  ],
+  "mips": [
+   "mips-linux-gnu"
+  ],
+  "mips64": [
+   "mips64-linux-gnuabi64"
+  ],
+  "mips64el": [
+   "mips64el-linux-gnuabi64"
+  ],
+  "mipsel": [
+   "mipsel-linux-gnu"
+  ],
+  "msp430": [
+   "msp430-unknown-elf"
+  ],
+  "ppc": [
+   "powerpc-linux-gnu"
+  ],
+  "ppc64": [
+   "powerpc64-linux-gnu"
+  ],
+  "ppc64le": [
+   "powerpc64le-linux-gnu"
+  ],
+  "riscv32": [
+   "riscv32-unknown-elf"
+  ],
+  "riscv64": [
+   "riscv64-linux-gnu"
+  ],
+  "s390x": [
+   "s390x-linux-gnu"
+  ],
+  "sh4": [],
+  "sparc": [
+   "sparc-linux-gnu"
+  ],
+  "sparcv9": [
+   "sparcv9-linux-gnu"
+  ],
+  "thumb": [
+   "armv7a-linux-gnueabihf",
+   "thumbv7m-none-eabi"
+  ],
+  "x86": [
+   "i386-linux-gnu"
+  ],
+  "x86_64": [
+   "x86_64-linux-gnu"
+  ],
+  "xtensa": [
+   "xtensa-unknown-elf"
+  ]
+ },
+ "optimizations": [
+  "-O0",
+  "-O2",
+  "-Os"
+ ],
+ "packages": {
+  "list": "scripts/isa_model_corpus.json",
+  "sha256": "3dd1717523fe246c04c4758331c1c9531e86a4beae8e53e9a5e4a9a03aa9a5ed"
+ },
+ "training_bytes": {
+  "aarch64": {
+   "compiled": 1092964,
+   "debian": 12975340
+  },
+  "alpha": {
+   "compiled": 0,
+   "debian": 14525400
+  },
+  "arm": {
+   "compiled": 1276196,
+   "debian": 14273148
+  },
+  "armeb": {
+   "compiled": 1276348,
+   "debian": 0
+  },
+  "avr": {
+   "compiled": 1880884,
+   "debian": 0
+  },
+  "bpf": {
+   "compiled": 2028680,
+   "debian": 0
+  },
+  "hexagon": {
+   "compiled": 1100332,
+   "debian": 0
+  },
+  "hppa": {
+   "compiled": 0,
+   "debian": 13858916
+  },
+  "loongarch64": {
+   "compiled": 1079964,
+   "debian": 12657044
+  },
+  "m68k": {
+   "compiled": 1718186,
+   "debian": 11024718
+  },
+  "mips": {
+   "compiled": 1648016,
+   "debian": 12385788
+  },
+  "mips64": {
+   "compiled": 1882384,
+   "debian": 0
+  },
+  "mips64el": {
+   "compiled": 1882576,
+   "debian": 15538016
+  },
+  "mipsel": {
+   "compiled": 1647600,
+   "debian": 15840084
+  },
+  "msp430": {
+   "compiled": 1054750,
+   "debian": 0
+  },
+  "ppc": {
+   "compiled": 1228632,
+   "debian": 15197476
+  },
+  "ppc64": {
+   "compiled": 1195876,
+   "debian": 15912396
+  },
+  "ppc64le": {
+   "compiled": 1210416,
+   "debian": 19704812
+  },
+  "riscv32": {
+   "compiled": 895586,
+   "debian": 0
+  },
+  "riscv64": {
+   "compiled": 780052,
+   "debian": 9085378
+  },
+  "s390x": {
+   "compiled": 1306456,
+   "debian": 13807614
+  },
+  "sh4": {
+   "compiled": 0,
+   "debian": 10519260
+  },
+  "sparc": {
+   "compiled": 1571612,
+   "debian": 0
+  },
+  "sparcv9": {
+   "compiled": 1411264,
+   "debian": 12898204
+  },
+  "thumb": {
+   "compiled": 1731092,
+   "debian": 6617714
+  },
+  "x86": {
+   "compiled": 1451996,
+   "debian": 14276627
+  },
+  "x86_64": {
+   "compiled": 1112916,
+   "debian": 14424969
+  },
+  "xtensa": {
+   "compiled": 1552932,
+   "debian": 0
+  }
+ },
+ "validation": {
+  "inputs": [
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "usr/bin/busybox",
+    "isa": "x86_64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_amd64.deb",
+    "right": true,
+    "sha256": "26801f17e6c88e813be104effc0ea3b43d912bd59ca6295fcd1260528ebb4d41",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.06471306471306472
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "usr/bin/busybox",
+    "isa": "x86_64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_amd64.deb",
+    "right": true,
+    "sha256": "26801f17e6c88e813be104effc0ea3b43d912bd59ca6295fcd1260528ebb4d41",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.06471306471306472
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "usr/lib/x86_64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "x86_64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_amd64.deb",
+    "right": true,
+    "sha256": "2dd166f61cb2a32c50f1a4dd3cd34f5f18a4ff97a6ff23665b9a57537fd60625",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.05567765567765568
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "usr/lib/x86_64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "x86_64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_amd64.deb",
+    "right": true,
+    "sha256": "2dd166f61cb2a32c50f1a4dd3cd34f5f18a4ff97a6ff23665b9a57537fd60625",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.05567765567765568
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "usr/lib/x86_64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "x86_64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_amd64.deb",
+    "right": true,
+    "sha256": "93e7930e4c25b918f1dd980cc1c6d4487654a248f5fa71eacb976ed7bbe954bd",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.056654456654456654
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "usr/lib/x86_64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "x86_64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_amd64.deb",
+    "right": true,
+    "sha256": "93e7930e4c25b918f1dd980cc1c6d4487654a248f5fa71eacb976ed7bbe954bd",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.056654456654456654
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "usr/bin/busybox",
+    "isa": "x86",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_i386.deb",
+    "right": true,
+    "sha256": "0097f1b112a7f8d39c0d60e65aecd557de98a0e27f770c13fdb5d4877847565e",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.0007326007326007326
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "usr/bin/busybox",
+    "isa": "x86",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_i386.deb",
+    "right": true,
+    "sha256": "0097f1b112a7f8d39c0d60e65aecd557de98a0e27f770c13fdb5d4877847565e",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.0007326007326007326
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "usr/lib/i386-linux-gnu/liblzma.so.5.8.4",
+    "isa": "x86",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_i386.deb",
+    "right": true,
+    "sha256": "67b168f007762969d452505d45912fe294bff0e8060a2e309ea1e5efe0b856b0",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.001221001221001221
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "usr/lib/i386-linux-gnu/liblzma.so.5.8.4",
+    "isa": "x86",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_i386.deb",
+    "right": true,
+    "sha256": "67b168f007762969d452505d45912fe294bff0e8060a2e309ea1e5efe0b856b0",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.001221001221001221
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "usr/lib/i386-linux-gnu/libzstd.so.1.5.7",
+    "isa": "x86",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_i386.deb",
+    "right": true,
+    "sha256": "20d59974ad1be409151519b6d40f399a05e96b767aa72706b98fc1f95325b841",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.0014652014652014652
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "usr/lib/i386-linux-gnu/libzstd.so.1.5.7",
+    "isa": "x86",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_i386.deb",
+    "right": true,
+    "sha256": "20d59974ad1be409151519b6d40f399a05e96b767aa72706b98fc1f95325b841",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.0014652014652014652
+   },
+   {
+    "code_offset": 0,
+    "expected": "aarch64",
+    "file": "usr/bin/busybox",
+    "isa": "aarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_arm64.deb",
+    "right": true,
+    "sha256": "968d1aa8f579fa1ac59c26afa365454369e13cf29848e6400b50028fed0ffda0",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "aarch64",
+    "file": "usr/bin/busybox",
+    "isa": "aarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_arm64.deb",
+    "right": true,
+    "sha256": "968d1aa8f579fa1ac59c26afa365454369e13cf29848e6400b50028fed0ffda0",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "aarch64",
+    "file": "usr/lib/aarch64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "aarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_arm64.deb",
+    "right": true,
+    "sha256": "7f154b61a6dbeb833e8dcc8e0bce2fb3ba0e30a61e4c46179ee5fdbee05a9c41",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "aarch64",
+    "file": "usr/lib/aarch64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "aarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_arm64.deb",
+    "right": true,
+    "sha256": "7f154b61a6dbeb833e8dcc8e0bce2fb3ba0e30a61e4c46179ee5fdbee05a9c41",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "aarch64",
+    "file": "usr/lib/aarch64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "aarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_arm64.deb",
+    "right": true,
+    "sha256": "e99e6e244d6c80f1c8e96cb68bb04bffc6848b12e3dcc5a35f6a775e4332e936",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "aarch64",
+    "file": "usr/lib/aarch64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "aarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_arm64.deb",
+    "right": true,
+    "sha256": "e99e6e244d6c80f1c8e96cb68bb04bffc6848b12e3dcc5a35f6a775e4332e936",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "arm",
+    "file": "usr/bin/busybox",
+    "isa": "arm",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.37.0-6+b9_armel.deb",
+    "right": true,
+    "sha256": "f1fe993c6f6e36bef6e8bee505d04681661635c4c917e9d33b56984ebd9f9d31",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "arm",
+    "file": "usr/bin/busybox",
+    "isa": "arm",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.37.0-6+b9_armel.deb",
+    "right": true,
+    "sha256": "f1fe993c6f6e36bef6e8bee505d04681661635c4c917e9d33b56984ebd9f9d31",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "arm",
+    "file": "usr/lib/arm-linux-gnueabi/liblzma.so.5.8.1",
+    "isa": "arm",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.1-1+deb13u1_armel.deb",
+    "right": true,
+    "sha256": "0ee203d58a60767148e6024310709ec63e0889d40ee69319fd4130d324c9b94e",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "arm",
+    "file": "usr/lib/arm-linux-gnueabi/liblzma.so.5.8.1",
+    "isa": "arm",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.1-1+deb13u1_armel.deb",
+    "right": true,
+    "sha256": "0ee203d58a60767148e6024310709ec63e0889d40ee69319fd4130d324c9b94e",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "arm",
+    "file": "usr/lib/arm-linux-gnueabi/libzstd.so.1.5.7",
+    "isa": "arm",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-1_armel.deb",
+    "right": true,
+    "sha256": "30307c39366d0e21a166407a20069354549baf874cbb9b4ef1ec7023398f4398",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "arm",
+    "file": "usr/lib/arm-linux-gnueabi/libzstd.so.1.5.7",
+    "isa": "arm",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-1_armel.deb",
+    "right": true,
+    "sha256": "30307c39366d0e21a166407a20069354549baf874cbb9b4ef1ec7023398f4398",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "thumb",
+    "file": "usr/bin/busybox",
+    "isa": "thumb",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_armhf.deb",
+    "right": true,
+    "sha256": "2579b47034cb784e0b8bda852d7ef320cb3925003ea4392edc6efe162890583c",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "thumb",
+    "file": "usr/bin/busybox",
+    "isa": "thumb",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_armhf.deb",
+    "right": true,
+    "sha256": "2579b47034cb784e0b8bda852d7ef320cb3925003ea4392edc6efe162890583c",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "thumb",
+    "file": "usr/lib/arm-linux-gnueabihf/liblzma.so.5.8.4",
+    "isa": "thumb",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_armhf.deb",
+    "right": true,
+    "sha256": "324d2fb39b62b975c3d16a126fd5f0d13b54272d065816a4b6674ab785e2a228",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "thumb",
+    "file": "usr/lib/arm-linux-gnueabihf/liblzma.so.5.8.4",
+    "isa": "thumb",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_armhf.deb",
+    "right": true,
+    "sha256": "324d2fb39b62b975c3d16a126fd5f0d13b54272d065816a4b6674ab785e2a228",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "thumb",
+    "file": "usr/lib/arm-linux-gnueabihf/libzstd.so.1.5.7",
+    "isa": "thumb",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_armhf.deb",
+    "right": true,
+    "sha256": "3b854c205a750a873f05213365d1547b03e55b0e564250798934671953bfeed5",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "thumb",
+    "file": "usr/lib/arm-linux-gnueabihf/libzstd.so.1.5.7",
+    "isa": "thumb",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_armhf.deb",
+    "right": true,
+    "sha256": "3b854c205a750a873f05213365d1547b03e55b0e564250798934671953bfeed5",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "mipsel",
+    "file": "bin/busybox",
+    "isa": "mipsel",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.35.0-4+deb12u1+b1_mipsel.deb",
+    "right": true,
+    "sha256": "3d154a0681a75938b7c27f2bd40625852d37471fb768c98ea3c98019111d1352",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "mipsel",
+    "file": "bin/busybox",
+    "isa": "mipsel",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.35.0-4+deb12u1+b1_mipsel.deb",
+    "right": true,
+    "sha256": "3d154a0681a75938b7c27f2bd40625852d37471fb768c98ea3c98019111d1352",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "mipsel",
+    "file": "lib/mipsel-linux-gnu/liblzma.so.5.4.1",
+    "isa": "mipsel",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.4.1-1+deb12u1_mipsel.deb",
+    "right": true,
+    "sha256": "def8eaf600e41c7051076a2099b89964644e49fbc615d13433501b7fa1076f2f",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "mipsel",
+    "file": "lib/mipsel-linux-gnu/liblzma.so.5.4.1",
+    "isa": "mipsel",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.4.1-1+deb12u1_mipsel.deb",
+    "right": true,
+    "sha256": "def8eaf600e41c7051076a2099b89964644e49fbc615d13433501b7fa1076f2f",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "mipsel",
+    "file": "usr/lib/mipsel-linux-gnu/libzstd.so.1.5.4",
+    "isa": "mipsel",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.4+dfsg2-5_mipsel.deb",
+    "right": true,
+    "sha256": "a6a0c2cf65181eb7195bfa4b6a61c3d807a6b7a62703bb9d2086003b3903ea61",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "mipsel",
+    "file": "usr/lib/mipsel-linux-gnu/libzstd.so.1.5.4",
+    "isa": "mipsel",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.4+dfsg2-5_mipsel.deb",
+    "right": true,
+    "sha256": "a6a0c2cf65181eb7195bfa4b6a61c3d807a6b7a62703bb9d2086003b3903ea61",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "mips64el",
+    "file": "bin/busybox",
+    "isa": "mips64el",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.35.0-4+deb12u1+b1_mips64el.deb",
+    "right": true,
+    "sha256": "dccccdabb87cf616c950b72987116c0c5a4f3781e95dac4759899126ac7a285b",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.4462890625
+   },
+   {
+    "code_offset": 2,
+    "expected": "mips64el",
+    "file": "bin/busybox",
+    "isa": "mips64el",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.35.0-4+deb12u1+b1_mips64el.deb",
+    "right": true,
+    "sha256": "dccccdabb87cf616c950b72987116c0c5a4f3781e95dac4759899126ac7a285b",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.44574780058651026
+   },
+   {
+    "code_offset": 0,
+    "expected": "mips64el",
+    "file": "lib/mips64el-linux-gnuabi64/liblzma.so.5.4.1",
+    "isa": "mips64el",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.4.1-1+deb12u1_mips64el.deb",
+    "right": true,
+    "sha256": "caee71ace023af4c7348c0b7ca4ab3f7380cef3cdb35a63da3923fdba5d21819",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.4716796875
+   },
+   {
+    "code_offset": 2,
+    "expected": "mips64el",
+    "file": "lib/mips64el-linux-gnuabi64/liblzma.so.5.4.1",
+    "isa": "mips64el",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.4.1-1+deb12u1_mips64el.deb",
+    "right": true,
+    "sha256": "caee71ace023af4c7348c0b7ca4ab3f7380cef3cdb35a63da3923fdba5d21819",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.47116324535679377
+   },
+   {
+    "code_offset": 0,
+    "expected": "mips64el",
+    "file": "usr/lib/mips64el-linux-gnuabi64/libzstd.so.1.5.4",
+    "isa": "mips64el",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.4+dfsg2-5_mips64el.deb",
+    "right": true,
+    "sha256": "3de73663a4ea984d155a252240dbe0dbc7b30f11c10bd3973d85a83c40a4da80",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.43359375
+   },
+   {
+    "code_offset": 2,
+    "expected": "mips64el",
+    "file": "usr/lib/mips64el-linux-gnuabi64/libzstd.so.1.5.4",
+    "isa": "mips64el",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.4+dfsg2-5_mips64el.deb",
+    "right": true,
+    "sha256": "3de73663a4ea984d155a252240dbe0dbc7b30f11c10bd3973d85a83c40a4da80",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.4340175953079179
+   },
+   {
+    "code_offset": 0,
+    "expected": "mips",
+    "file": "bin/busybox",
+    "isa": "mips",
+    "note": null,
+    "package": "http://archive.debian.org/debian/pool/main/b/busybox/busybox-static_1.30.1-4_mips.deb",
+    "right": true,
+    "sha256": "7dcb0c063198fe3e2651f3bf72a6cd9c3668317b913b65fbdc4702deac0c354f",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "mips",
+    "file": "bin/busybox",
+    "isa": "mips",
+    "note": null,
+    "package": "http://archive.debian.org/debian/pool/main/b/busybox/busybox-static_1.30.1-4_mips.deb",
+    "right": true,
+    "sha256": "7dcb0c063198fe3e2651f3bf72a6cd9c3668317b913b65fbdc4702deac0c354f",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "mips",
+    "file": "lib/mips-linux-gnu/liblzma.so.5.2.4",
+    "isa": "mips",
+    "note": null,
+    "package": "http://archive.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.2.4-1+deb10u1_mips.deb",
+    "right": true,
+    "sha256": "90418a14031e5f8cba0e1d607581cdb4819d4a4243ce8b2d3c9e48dede054b64",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "mips",
+    "file": "lib/mips-linux-gnu/liblzma.so.5.2.4",
+    "isa": "mips",
+    "note": null,
+    "package": "http://archive.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.2.4-1+deb10u1_mips.deb",
+    "right": true,
+    "sha256": "90418a14031e5f8cba0e1d607581cdb4819d4a4243ce8b2d3c9e48dede054b64",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "mips",
+    "file": "usr/lib/mips-linux-gnu/libzstd.so.1.4.4",
+    "isa": "mips",
+    "note": null,
+    "package": "http://archive.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.4.4+dfsg-3~bpo10+1_mips.deb",
+    "right": true,
+    "sha256": "b6e5b2af9a02d95a980bf000f977509690c2911001588f080f3e069c0b4ae2e7",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "mips",
+    "file": "usr/lib/mips-linux-gnu/libzstd.so.1.4.4",
+    "isa": "mips",
+    "note": null,
+    "package": "http://archive.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.4.4+dfsg-3~bpo10+1_mips.deb",
+    "right": true,
+    "sha256": "b6e5b2af9a02d95a980bf000f977509690c2911001588f080f3e069c0b4ae2e7",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc64le",
+    "file": "usr/bin/busybox",
+    "isa": "ppc64le",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_ppc64el.deb",
+    "right": true,
+    "sha256": "08b4b835f5b09c5093d7cd76e4bf4561b3ae7c253cdf3a345e281de75bc8dca9",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc64le",
+    "file": "usr/bin/busybox",
+    "isa": "ppc64le",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_ppc64el.deb",
+    "right": true,
+    "sha256": "08b4b835f5b09c5093d7cd76e4bf4561b3ae7c253cdf3a345e281de75bc8dca9",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc64le",
+    "file": "usr/lib/powerpc64le-linux-gnu/liblzma.so.5.8.4",
+    "isa": "ppc64le",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_ppc64el.deb",
+    "right": true,
+    "sha256": "68709359d590964dea932c07eb07d71f9dcf5792026ff4dfbaa64653cb42aacf",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc64le",
+    "file": "usr/lib/powerpc64le-linux-gnu/liblzma.so.5.8.4",
+    "isa": "ppc64le",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_ppc64el.deb",
+    "right": true,
+    "sha256": "68709359d590964dea932c07eb07d71f9dcf5792026ff4dfbaa64653cb42aacf",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc64le",
+    "file": "usr/lib/powerpc64le-linux-gnu/libzstd.so.1.5.7",
+    "isa": "ppc64le",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_ppc64el.deb",
+    "right": true,
+    "sha256": "bd92f05ae72233868c35e35e40cae241a3d7235b48844976d69708afb8f4f03e",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc64le",
+    "file": "usr/lib/powerpc64le-linux-gnu/libzstd.so.1.5.7",
+    "isa": "ppc64le",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_ppc64el.deb",
+    "right": true,
+    "sha256": "bd92f05ae72233868c35e35e40cae241a3d7235b48844976d69708afb8f4f03e",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc",
+    "file": "usr/bin/busybox",
+    "isa": "ppc",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-powerpc/main/b/busybox/busybox-static_1.38.0-3_powerpc.deb",
+    "right": true,
+    "sha256": "a0326ff75b3aaa94b0a5e3edec8a7160230a622dab9723ec41cc4c49b6c60d3f",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc",
+    "file": "usr/bin/busybox",
+    "isa": "ppc",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-powerpc/main/b/busybox/busybox-static_1.38.0-3_powerpc.deb",
+    "right": true,
+    "sha256": "a0326ff75b3aaa94b0a5e3edec8a7160230a622dab9723ec41cc4c49b6c60d3f",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc",
+    "file": "usr/lib/powerpc-linux-gnu/liblzma.so.5.8.4",
+    "isa": "ppc",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-powerpc/main/x/xz-utils/liblzma5_5.8.4-1_powerpc.deb",
+    "right": true,
+    "sha256": "85df358763fb6496d8fd9dccf9ff9165e57c04a2d44e86da8e5711e096afffad",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc",
+    "file": "usr/lib/powerpc-linux-gnu/liblzma.so.5.8.4",
+    "isa": "ppc",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-powerpc/main/x/xz-utils/liblzma5_5.8.4-1_powerpc.deb",
+    "right": true,
+    "sha256": "85df358763fb6496d8fd9dccf9ff9165e57c04a2d44e86da8e5711e096afffad",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc",
+    "file": "usr/lib/powerpc-linux-gnu/libzstd.so.1.5.7",
+    "isa": "ppc",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-powerpc/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_powerpc.deb",
+    "right": true,
+    "sha256": "82b3e76eee358d4d9e31868e01e900ec00169715c1ffb8d133ebbb31a5d589a2",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc",
+    "file": "usr/lib/powerpc-linux-gnu/libzstd.so.1.5.7",
+    "isa": "ppc",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-powerpc/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_powerpc.deb",
+    "right": true,
+    "sha256": "82b3e76eee358d4d9e31868e01e900ec00169715c1ffb8d133ebbb31a5d589a2",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc64",
+    "file": "usr/bin/busybox",
+    "isa": "ppc64",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-ppc64/main/b/busybox/busybox-static_1.38.0-3_ppc64.deb",
+    "right": true,
+    "sha256": "cd762eee99372ac2bfa0d0c32cc981a76d35cf3debb6b7c66a3b53b5f7d8cc30",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.1767578125
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc64",
+    "file": "usr/bin/busybox",
+    "isa": "ppc64",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-ppc64/main/b/busybox/busybox-static_1.38.0-3_ppc64.deb",
+    "right": true,
+    "sha256": "cd762eee99372ac2bfa0d0c32cc981a76d35cf3debb6b7c66a3b53b5f7d8cc30",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.176930596285435
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc64",
+    "file": "usr/lib/powerpc64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "ppc64",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-ppc64/main/x/xz-utils/liblzma5_5.8.4-1_ppc64.deb",
+    "right": true,
+    "sha256": "501942b41221ec2d21a22be9c035eb8043cd00b856de535ade0ec817ae98e87d",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.3017578125
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc64",
+    "file": "usr/lib/powerpc64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "ppc64",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-ppc64/main/x/xz-utils/liblzma5_5.8.4-1_ppc64.deb",
+    "right": true,
+    "sha256": "501942b41221ec2d21a22be9c035eb8043cd00b856de535ade0ec817ae98e87d",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.3010752688172043
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc64",
+    "file": "usr/lib/powerpc64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "ppc64",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-ppc64/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_ppc64.deb",
+    "right": true,
+    "sha256": "c268b0b5ff5d446fcbd982831fbe6032ef0525f12e7204d0dedf8b12beaf73a1",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.2353515625
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc64",
+    "file": "usr/lib/powerpc64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "ppc64",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-ppc64/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_ppc64.deb",
+    "right": true,
+    "sha256": "c268b0b5ff5d446fcbd982831fbe6032ef0525f12e7204d0dedf8b12beaf73a1",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.23558162267839688
+   },
+   {
+    "code_offset": 0,
+    "expected": "riscv64",
+    "file": "usr/bin/busybox",
+    "isa": "riscv64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_riscv64.deb",
+    "right": true,
+    "sha256": "f71edd27e341ff80b297f3a60d718e1a69c33f2266a51381ac2a48e9b7ee1a30",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.0780559646539028
+   },
+   {
+    "code_offset": 0,
+    "expected": "riscv64",
+    "file": "usr/bin/busybox",
+    "isa": "riscv64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_riscv64.deb",
+    "right": true,
+    "sha256": "f71edd27e341ff80b297f3a60d718e1a69c33f2266a51381ac2a48e9b7ee1a30",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.07811348563006633
+   },
+   {
+    "code_offset": 0,
+    "expected": "riscv64",
+    "file": "usr/lib/riscv64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "riscv64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_riscv64.deb",
+    "right": true,
+    "sha256": "36d2795d7b96215a0ad9ce20d82ae88a9383d6546e8e783ef8764c2c876e29a8",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.10690909090909091
+   },
+   {
+    "code_offset": 0,
+    "expected": "riscv64",
+    "file": "usr/lib/riscv64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "riscv64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_riscv64.deb",
+    "right": true,
+    "sha256": "36d2795d7b96215a0ad9ce20d82ae88a9383d6546e8e783ef8764c2c876e29a8",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.10698689956331878
+   },
+   {
+    "code_offset": 0,
+    "expected": "riscv64",
+    "file": "usr/lib/riscv64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "riscv64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_riscv64.deb",
+    "right": true,
+    "sha256": "07c29376b63d416f0f838bbe9ec4e070254356c1b0d01ffa3af0279b49196973",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.05453257790368272
+   },
+   {
+    "code_offset": 0,
+    "expected": "riscv64",
+    "file": "usr/lib/riscv64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "riscv64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_riscv64.deb",
+    "right": true,
+    "sha256": "07c29376b63d416f0f838bbe9ec4e070254356c1b0d01ffa3af0279b49196973",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.05453257790368272
+   },
+   {
+    "code_offset": 0,
+    "expected": "s390x",
+    "file": "usr/bin/busybox",
+    "isa": "s390x",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_s390x.deb",
+    "right": true,
+    "sha256": "234fe02796c42a7b2656b9873e8f6906d98fb852e0864dbd33868b26a1a0d081",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "s390x",
+    "file": "usr/bin/busybox",
+    "isa": "s390x",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_s390x.deb",
+    "right": true,
+    "sha256": "234fe02796c42a7b2656b9873e8f6906d98fb852e0864dbd33868b26a1a0d081",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "s390x",
+    "file": "usr/lib/s390x-linux-gnu/liblzma.so.5.8.4",
+    "isa": "s390x",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_s390x.deb",
+    "right": true,
+    "sha256": "1737c5ca982e45063f8e1ae814ea8f74b75af69a4d2a75909c4747297965d5a8",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "s390x",
+    "file": "usr/lib/s390x-linux-gnu/liblzma.so.5.8.4",
+    "isa": "s390x",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_s390x.deb",
+    "right": true,
+    "sha256": "1737c5ca982e45063f8e1ae814ea8f74b75af69a4d2a75909c4747297965d5a8",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "s390x",
+    "file": "usr/lib/s390x-linux-gnu/libzstd.so.1.5.7",
+    "isa": "s390x",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_s390x.deb",
+    "right": true,
+    "sha256": "ba504c463714b5b0b8cc8d9d2b629e3f93ccfd7848e49fa7bffb80401bfe8079",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "s390x",
+    "file": "usr/lib/s390x-linux-gnu/libzstd.so.1.5.7",
+    "isa": "s390x",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_s390x.deb",
+    "right": true,
+    "sha256": "ba504c463714b5b0b8cc8d9d2b629e3f93ccfd7848e49fa7bffb80401bfe8079",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "loongarch64",
+    "file": "usr/bin/busybox",
+    "isa": "loongarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_loong64.deb",
+    "right": true,
+    "sha256": "d5dc29174cd393bd100b958e2965fa18a63be5581177d076fa1e599a1703a957",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "loongarch64",
+    "file": "usr/bin/busybox",
+    "isa": "loongarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_loong64.deb",
+    "right": true,
+    "sha256": "d5dc29174cd393bd100b958e2965fa18a63be5581177d076fa1e599a1703a957",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "loongarch64",
+    "file": "usr/lib/loongarch64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "loongarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_loong64.deb",
+    "right": true,
+    "sha256": "bf8ab6239eaded94c2aa577631862ee70c6411604c8ec47dd0b7306c96fe5610",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "loongarch64",
+    "file": "usr/lib/loongarch64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "loongarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/x/xz-utils/liblzma5_5.8.4-1_loong64.deb",
+    "right": true,
+    "sha256": "bf8ab6239eaded94c2aa577631862ee70c6411604c8ec47dd0b7306c96fe5610",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "loongarch64",
+    "file": "usr/lib/loongarch64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "loongarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_loong64.deb",
+    "right": true,
+    "sha256": "0a6ceb17c2a05c02c30d7bba35dd469f78a4e5c8edee6820ff13ba2784194434",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "loongarch64",
+    "file": "usr/lib/loongarch64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "loongarch64",
+    "note": null,
+    "package": "http://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_loong64.deb",
+    "right": true,
+    "sha256": "0a6ceb17c2a05c02c30d7bba35dd469f78a4e5c8edee6820ff13ba2784194434",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "sparcv9",
+    "file": "usr/bin/busybox",
+    "isa": "sparcv9",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sparc64/main/b/busybox/busybox-static_1.38.0-3_sparc64.deb",
+    "right": true,
+    "sha256": "715c6f8a883dc573ea0b319c1197ff48f69a7e930f01f100c673159c43836599",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.1279296875
+   },
+   {
+    "code_offset": 2,
+    "expected": "sparcv9",
+    "file": "usr/bin/busybox",
+    "isa": "sparcv9",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sparc64/main/b/busybox/busybox-static_1.38.0-3_sparc64.deb",
+    "right": true,
+    "sha256": "715c6f8a883dc573ea0b319c1197ff48f69a7e930f01f100c673159c43836599",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.1270772238514174
+   },
+   {
+    "code_offset": 0,
+    "expected": "sparcv9",
+    "file": "usr/lib/sparc64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "sparcv9",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sparc64/main/x/xz-utils/liblzma5_5.8.4-1_sparc64.deb",
+    "right": true,
+    "sha256": "58642abcf0fc70bfdd92b2e214e8c3e96850cc570a3303f2d11e350845be0ce1",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.1435546875
+   },
+   {
+    "code_offset": 2,
+    "expected": "sparcv9",
+    "file": "usr/lib/sparc64-linux-gnu/liblzma.so.5.8.4",
+    "isa": "sparcv9",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sparc64/main/x/xz-utils/liblzma5_5.8.4-1_sparc64.deb",
+    "right": true,
+    "sha256": "58642abcf0fc70bfdd92b2e214e8c3e96850cc570a3303f2d11e350845be0ce1",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.1436950146627566
+   },
+   {
+    "code_offset": 0,
+    "expected": "sparcv9",
+    "file": "usr/lib/sparc64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "sparcv9",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sparc64/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_sparc64.deb",
+    "right": true,
+    "sha256": "1b5a1493e889d71f6dbc6ab42cea2f91a83831ba44fd5a96ee479ed7b685f31f",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.212890625
+   },
+   {
+    "code_offset": 2,
+    "expected": "sparcv9",
+    "file": "usr/lib/sparc64-linux-gnu/libzstd.so.1.5.7",
+    "isa": "sparcv9",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sparc64/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_sparc64.deb",
+    "right": true,
+    "sha256": "1b5a1493e889d71f6dbc6ab42cea2f91a83831ba44fd5a96ee479ed7b685f31f",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.21212121212121213
+   },
+   {
+    "code_offset": 0,
+    "expected": "m68k",
+    "file": "usr/bin/busybox",
+    "isa": "m68k",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-m68k/main/b/busybox/busybox-static_1.38.0-3_m68k.deb",
+    "right": true,
+    "sha256": "4fb7f78eb996019f2a484ec6b4ec5b5ccf2103961c18d678eb1091ff85ed9bc5",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "m68k",
+    "file": "usr/bin/busybox",
+    "isa": "m68k",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-m68k/main/b/busybox/busybox-static_1.38.0-3_m68k.deb",
+    "right": true,
+    "sha256": "4fb7f78eb996019f2a484ec6b4ec5b5ccf2103961c18d678eb1091ff85ed9bc5",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "m68k",
+    "file": "usr/lib/m68k-linux-gnu/liblzma.so.5.8.4",
+    "isa": "m68k",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-m68k/main/x/xz-utils/liblzma5_5.8.4-1_m68k.deb",
+    "right": true,
+    "sha256": "37ff5a83ad9534117218155239cca14d140dec88f6fdffee77b1ddfdc89a16f5",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "m68k",
+    "file": "usr/lib/m68k-linux-gnu/liblzma.so.5.8.4",
+    "isa": "m68k",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-m68k/main/x/xz-utils/liblzma5_5.8.4-1_m68k.deb",
+    "right": true,
+    "sha256": "37ff5a83ad9534117218155239cca14d140dec88f6fdffee77b1ddfdc89a16f5",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "m68k",
+    "file": "usr/lib/m68k-linux-gnu/libzstd.so.1.5.7",
+    "isa": "m68k",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-m68k/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_m68k.deb",
+    "right": true,
+    "sha256": "3a9715d2752c7e7735a78c984525fc9470ef5f4b21aff1abd37a5a52cba1b59a",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "m68k",
+    "file": "usr/lib/m68k-linux-gnu/libzstd.so.1.5.7",
+    "isa": "m68k",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-m68k/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_m68k.deb",
+    "right": true,
+    "sha256": "3a9715d2752c7e7735a78c984525fc9470ef5f4b21aff1abd37a5a52cba1b59a",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "alpha",
+    "file": "usr/bin/busybox",
+    "isa": "alpha",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-alpha/main/b/busybox/busybox-static_1.38.0-3_alpha.deb",
+    "right": true,
+    "sha256": "8f8a4f49d2bead4b7f9551db8619d11203b867165f6f7396c233f5ed9a48a177",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "alpha",
+    "file": "usr/bin/busybox",
+    "isa": "alpha",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-alpha/main/b/busybox/busybox-static_1.38.0-3_alpha.deb",
+    "right": true,
+    "sha256": "8f8a4f49d2bead4b7f9551db8619d11203b867165f6f7396c233f5ed9a48a177",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "alpha",
+    "file": "usr/lib/alpha-linux-gnu/liblzma.so.5.8.4",
+    "isa": "alpha",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-alpha/main/x/xz-utils/liblzma5_5.8.4-1_alpha.deb",
+    "right": true,
+    "sha256": "b95fb9b37e1a8e853430be7971ba142b7beae0ab5feb6f9c99d543b10e3f4880",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "alpha",
+    "file": "usr/lib/alpha-linux-gnu/liblzma.so.5.8.4",
+    "isa": "alpha",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-alpha/main/x/xz-utils/liblzma5_5.8.4-1_alpha.deb",
+    "right": true,
+    "sha256": "b95fb9b37e1a8e853430be7971ba142b7beae0ab5feb6f9c99d543b10e3f4880",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "alpha",
+    "file": "usr/lib/alpha-linux-gnu/libzstd.so.1.5.7",
+    "isa": "alpha",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-alpha/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_alpha.deb",
+    "right": true,
+    "sha256": "4d424d7ca32923d3a07c564d94fef91d6af411000c35996d2d8cb42048ef6d3f",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "alpha",
+    "file": "usr/lib/alpha-linux-gnu/libzstd.so.1.5.7",
+    "isa": "alpha",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-alpha/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_alpha.deb",
+    "right": true,
+    "sha256": "4d424d7ca32923d3a07c564d94fef91d6af411000c35996d2d8cb42048ef6d3f",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "hppa",
+    "file": "usr/bin/busybox",
+    "isa": "hppa",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-hppa/main/b/busybox/busybox-static_1.38.0-3_hppa.deb",
+    "right": true,
+    "sha256": "71346ffce8e827b61065c9f65867cb06b136ff6e45b84385e217f0ddbb8d0237",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "hppa",
+    "file": "usr/bin/busybox",
+    "isa": "hppa",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-hppa/main/b/busybox/busybox-static_1.38.0-3_hppa.deb",
+    "right": true,
+    "sha256": "71346ffce8e827b61065c9f65867cb06b136ff6e45b84385e217f0ddbb8d0237",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "hppa",
+    "file": "usr/lib/hppa-linux-gnu/liblzma.so.5.8.3",
+    "isa": "hppa",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-hppa/main/x/xz-utils/liblzma5_5.8.3-1_hppa.deb",
+    "right": true,
+    "sha256": "7c63411964c0b5025ea9749f6367adba95b701405f208d191306e4a7203e2bd7",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "hppa",
+    "file": "usr/lib/hppa-linux-gnu/liblzma.so.5.8.3",
+    "isa": "hppa",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-hppa/main/x/xz-utils/liblzma5_5.8.3-1_hppa.deb",
+    "right": true,
+    "sha256": "7c63411964c0b5025ea9749f6367adba95b701405f208d191306e4a7203e2bd7",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "hppa",
+    "file": "usr/lib/hppa-linux-gnu/libzstd.so.1.5.7",
+    "isa": "hppa",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-hppa/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_hppa.deb",
+    "right": true,
+    "sha256": "19fe88965d45866f86ea8b9fa1d69bfb008a5ad85baa30fd4898fceefea3b7bc",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "hppa",
+    "file": "usr/lib/hppa-linux-gnu/libzstd.so.1.5.7",
+    "isa": "hppa",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-hppa/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_hppa.deb",
+    "right": true,
+    "sha256": "19fe88965d45866f86ea8b9fa1d69bfb008a5ad85baa30fd4898fceefea3b7bc",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "sh4",
+    "file": "usr/bin/busybox",
+    "isa": "sh4",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sh4/main/b/busybox/busybox-static_1.38.0-3_sh4.deb",
+    "right": true,
+    "sha256": "5ece2e489cd2d9f9b7fc29987c549fda1c8d319b0ce0203635d565df19ac45f5",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "sh4",
+    "file": "usr/bin/busybox",
+    "isa": "sh4",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sh4/main/b/busybox/busybox-static_1.38.0-3_sh4.deb",
+    "right": true,
+    "sha256": "5ece2e489cd2d9f9b7fc29987c549fda1c8d319b0ce0203635d565df19ac45f5",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "sh4",
+    "file": "usr/lib/sh4-linux-gnu/liblzma.so.5.8.4",
+    "isa": "sh4",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sh4/main/x/xz-utils/liblzma5_5.8.4-1_sh4.deb",
+    "right": true,
+    "sha256": "d65df8ac12d3a7911dd04b47f949d863d2377f17829669ca9818949d5a0cbea9",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "sh4",
+    "file": "usr/lib/sh4-linux-gnu/liblzma.so.5.8.4",
+    "isa": "sh4",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sh4/main/x/xz-utils/liblzma5_5.8.4-1_sh4.deb",
+    "right": true,
+    "sha256": "d65df8ac12d3a7911dd04b47f949d863d2377f17829669ca9818949d5a0cbea9",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "sh4",
+    "file": "usr/lib/sh4-linux-gnu/libzstd.so.1.5.7",
+    "isa": "sh4",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sh4/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_sh4.deb",
+    "right": true,
+    "sha256": "8ce34dde08035a189a50438aad7d14a2b7e8de73a89dc218898fd51822cae6e5",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "sh4",
+    "file": "usr/lib/sh4-linux-gnu/libzstd.so.1.5.7",
+    "isa": "sh4",
+    "note": null,
+    "package": "http://deb.debian.org/debian-ports/pool-sh4/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_sh4.deb",
+    "right": true,
+    "sha256": "8ce34dde08035a189a50438aad7d14a2b7e8de73a89dc218898fd51822cae6e5",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "bin/busybox",
+    "isa": null,
+    "note": "MIPS16e (EF_MIPS_ARCH_ASE_M16), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips_24kc/base/busybox_1.30.1-6_mips_24kc.ipk",
+    "right": true,
+    "sha256": "0a235651ad9be5934d446c82e1bb7061b80432d9309b03d4ab199d1aec88ccb2",
+    "shift": 0,
+    "status": "no_code",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "bin/busybox",
+    "isa": null,
+    "note": "MIPS16e (EF_MIPS_ARCH_ASE_M16), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips_24kc/base/busybox_1.30.1-6_mips_24kc.ipk",
+    "right": true,
+    "sha256": "0a235651ad9be5934d446c82e1bb7061b80432d9309b03d4ab199d1aec88ccb2",
+    "shift": 2,
+    "status": "no_code",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "mips",
+    "file": "usr/sbin/dropbear",
+    "isa": "mips",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips_24kc/base/dropbear_2019.78-2_mips_24kc.ipk",
+    "right": true,
+    "sha256": "40dc95d91673850f5c76c4608bd9f2b948c2295284b33ee84a6e133976fa41be",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "mips",
+    "file": "usr/sbin/dropbear",
+    "isa": "mips",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips_24kc/base/dropbear_2019.78-2_mips_24kc.ipk",
+    "right": true,
+    "sha256": "40dc95d91673850f5c76c4608bd9f2b948c2295284b33ee84a6e133976fa41be",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "mips",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "mips",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips_24kc/base/libopenssl1.1_1.1.1n-1_mips_24kc.ipk",
+    "right": true,
+    "sha256": "074f82203a2f8c54bbe71d3b3e6a91f1124e50890a1afc35fbfdd85f1196a8c6",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "mips",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "mips",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips_24kc/base/libopenssl1.1_1.1.1n-1_mips_24kc.ipk",
+    "right": true,
+    "sha256": "074f82203a2f8c54bbe71d3b3e6a91f1124e50890a1afc35fbfdd85f1196a8c6",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "bin/busybox",
+    "isa": null,
+    "note": "MIPS16e (EF_MIPS_ARCH_ASE_M16), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mipsel_24kc/base/busybox_1.30.1-6_mipsel_24kc.ipk",
+    "right": true,
+    "sha256": "6cfe419cd4ea9ba88129649bd28eaa092f67aa64dab3b12624cc2c356ad1a0a4",
+    "shift": 0,
+    "status": "no_code",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "bin/busybox",
+    "isa": null,
+    "note": "MIPS16e (EF_MIPS_ARCH_ASE_M16), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mipsel_24kc/base/busybox_1.30.1-6_mipsel_24kc.ipk",
+    "right": true,
+    "sha256": "6cfe419cd4ea9ba88129649bd28eaa092f67aa64dab3b12624cc2c356ad1a0a4",
+    "shift": 2,
+    "status": "no_code",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "mipsel",
+    "file": "usr/sbin/dropbear",
+    "isa": "mipsel",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mipsel_24kc/base/dropbear_2019.78-2_mipsel_24kc.ipk",
+    "right": true,
+    "sha256": "69fa2d1b4e420271debac4cd31dd342c4b17b10ce64655ed7ae48acea4c87539",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "mipsel",
+    "file": "usr/sbin/dropbear",
+    "isa": "mipsel",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mipsel_24kc/base/dropbear_2019.78-2_mipsel_24kc.ipk",
+    "right": true,
+    "sha256": "69fa2d1b4e420271debac4cd31dd342c4b17b10ce64655ed7ae48acea4c87539",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "mipsel",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "mipsel",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mipsel_24kc/base/libopenssl1.1_1.1.1n-1_mipsel_24kc.ipk",
+    "right": true,
+    "sha256": "60e4ab9385a6bcaf8699d37adfc197dc98e5c1235051af5c7b149d28fad09b00",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "mipsel",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "mipsel",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mipsel_24kc/base/libopenssl1.1_1.1.1n-1_mipsel_24kc.ipk",
+    "right": true,
+    "sha256": "60e4ab9385a6bcaf8699d37adfc197dc98e5c1235051af5c7b149d28fad09b00",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "mips64",
+    "file": "bin/busybox",
+    "isa": "mips64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips64_octeonplus/base/busybox_1.30.1-6_mips64_octeonplus.ipk",
+    "right": true,
+    "sha256": "da56362144b506c1c1dccd7e17370d8014268918a94895fe1ed2d24374c649c2",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.4423828125
+   },
+   {
+    "code_offset": 2,
+    "expected": "mips64",
+    "file": "bin/busybox",
+    "isa": "mips64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips64_octeonplus/base/busybox_1.30.1-6_mips64_octeonplus.ipk",
+    "right": true,
+    "sha256": "da56362144b506c1c1dccd7e17370d8014268918a94895fe1ed2d24374c649c2",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.44281524926686217
+   },
+   {
+    "code_offset": 0,
+    "expected": "mips64",
+    "file": "usr/sbin/dropbear",
+    "isa": "mips64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips64_octeonplus/base/dropbear_2019.78-2_mips64_octeonplus.ipk",
+    "right": true,
+    "sha256": "75bb96c78d5299571d98b81e6bca107374be3b9a5686e381d37f9d63c7518af2",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.4560546875
+   },
+   {
+    "code_offset": 2,
+    "expected": "mips64",
+    "file": "usr/sbin/dropbear",
+    "isa": "mips64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips64_octeonplus/base/dropbear_2019.78-2_mips64_octeonplus.ipk",
+    "right": true,
+    "sha256": "75bb96c78d5299571d98b81e6bca107374be3b9a5686e381d37f9d63c7518af2",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.4555229716520039
+   },
+   {
+    "code_offset": 0,
+    "expected": "mips64",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "mips64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips64_octeonplus/base/libopenssl1.1_1.1.1n-1_mips64_octeonplus.ipk",
+    "right": true,
+    "sha256": "76b112cabda3c36016c45287fd95c18e202820906518d0dc3992874f752908fc",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.4453125
+   },
+   {
+    "code_offset": 2,
+    "expected": "mips64",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "mips64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/mips64_octeonplus/base/libopenssl1.1_1.1.1n-1_mips64_octeonplus.ipk",
+    "right": true,
+    "sha256": "76b112cabda3c36016c45287fd95c18e202820906518d0dc3992874f752908fc",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.44574780058651026
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc",
+    "file": "bin/busybox",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_8540/base/busybox_1.30.1-6_powerpc_8540.ipk",
+    "right": true,
+    "sha256": "ec13437bfb76a2f9e382ce530f1e0a33a143ec73a50509b50685cbf172b3f424",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc",
+    "file": "bin/busybox",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_8540/base/busybox_1.30.1-6_powerpc_8540.ipk",
+    "right": true,
+    "sha256": "ec13437bfb76a2f9e382ce530f1e0a33a143ec73a50509b50685cbf172b3f424",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc",
+    "file": "usr/sbin/dropbear",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_8540/base/dropbear_2019.78-2_powerpc_8540.ipk",
+    "right": true,
+    "sha256": "48f56b7805307d434c651f906ce7fd27c5ab3daa5ca96f056b0ebb4acf5160eb",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc",
+    "file": "usr/sbin/dropbear",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_8540/base/dropbear_2019.78-2_powerpc_8540.ipk",
+    "right": true,
+    "sha256": "48f56b7805307d434c651f906ce7fd27c5ab3daa5ca96f056b0ebb4acf5160eb",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_8540/base/libopenssl1.1_1.1.1n-1_powerpc_8540.ipk",
+    "right": true,
+    "sha256": "e6a8f2d4286f981162f4757db6993fe127442b12f2965378b1ff036a52f40084",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_8540/base/libopenssl1.1_1.1.1n-1_powerpc_8540.ipk",
+    "right": true,
+    "sha256": "e6a8f2d4286f981162f4757db6993fe127442b12f2965378b1ff036a52f40084",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc",
+    "file": "bin/busybox",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_464fp/base/busybox_1.30.1-6_powerpc_464fp.ipk",
+    "right": true,
+    "sha256": "dc2e33a06c78e13c714491e91ad6a0b3a395eb15dd066981256f0a84080c4f18",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc",
+    "file": "bin/busybox",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_464fp/base/busybox_1.30.1-6_powerpc_464fp.ipk",
+    "right": true,
+    "sha256": "dc2e33a06c78e13c714491e91ad6a0b3a395eb15dd066981256f0a84080c4f18",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc",
+    "file": "usr/sbin/dropbear",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_464fp/base/dropbear_2019.78-2_powerpc_464fp.ipk",
+    "right": true,
+    "sha256": "81e64caa1c4473c62ff812891c93873084ee765cb8f4d999f47a0d9aecbb6fd7",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc",
+    "file": "usr/sbin/dropbear",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_464fp/base/dropbear_2019.78-2_powerpc_464fp.ipk",
+    "right": true,
+    "sha256": "81e64caa1c4473c62ff812891c93873084ee765cb8f4d999f47a0d9aecbb6fd7",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "ppc",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_464fp/base/libopenssl1.1_1.1.1n-1_powerpc_464fp.ipk",
+    "right": true,
+    "sha256": "87ebb12b6e6b4af16eac93603fb616929b96fa3fef40c862f42e82194b34121d",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 2,
+    "expected": "ppc",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "ppc",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/powerpc_464fp/base/libopenssl1.1_1.1.1n-1_powerpc_464fp.ipk",
+    "right": true,
+    "sha256": "87ebb12b6e6b4af16eac93603fb616929b96fa3fef40c862f42e82194b34121d",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0
+   },
+   {
+    "code_offset": 0,
+    "expected": "aarch64",
+    "file": "bin/busybox",
+    "isa": "aarch64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/aarch64_cortex-a53/base/busybox_1.30.1-6_aarch64_cortex-a53.ipk",
+    "right": true,
+    "sha256": "52fb324aac266aef461b9bcae6a8d5009b0f82cc93985ddc738a4d5a66d0c79f",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "aarch64",
+    "file": "bin/busybox",
+    "isa": "aarch64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/aarch64_cortex-a53/base/busybox_1.30.1-6_aarch64_cortex-a53.ipk",
+    "right": true,
+    "sha256": "52fb324aac266aef461b9bcae6a8d5009b0f82cc93985ddc738a4d5a66d0c79f",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "aarch64",
+    "file": "usr/sbin/dropbear",
+    "isa": "aarch64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/aarch64_cortex-a53/base/dropbear_2019.78-2_aarch64_cortex-a53.ipk",
+    "right": true,
+    "sha256": "d4166b061e452c05a9fb816610e85099773ac123e4643a8bcc8a948183e39db6",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "aarch64",
+    "file": "usr/sbin/dropbear",
+    "isa": "aarch64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/aarch64_cortex-a53/base/dropbear_2019.78-2_aarch64_cortex-a53.ipk",
+    "right": true,
+    "sha256": "d4166b061e452c05a9fb816610e85099773ac123e4643a8bcc8a948183e39db6",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "aarch64",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "aarch64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/aarch64_cortex-a53/base/libopenssl1.1_1.1.1n-1_aarch64_cortex-a53.ipk",
+    "right": true,
+    "sha256": "d1968db6d9e20f9a0f4efc913609cd11f2a808b8cae03ea51cd0745979a129c0",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "aarch64",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "aarch64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/aarch64_cortex-a53/base/libopenssl1.1_1.1.1n-1_aarch64_cortex-a53.ipk",
+    "right": true,
+    "sha256": "d1968db6d9e20f9a0f4efc913609cd11f2a808b8cae03ea51cd0745979a129c0",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "arm",
+    "file": "bin/busybox",
+    "isa": "arm",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arm_cortex-a9/base/busybox_1.30.1-6_arm_cortex-a9.ipk",
+    "right": true,
+    "sha256": "d94926a5ab43e1c13233ae4ba01391cfe29031de3e630fd941e5bb9ece39520d",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "arm",
+    "file": "bin/busybox",
+    "isa": "arm",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arm_cortex-a9/base/busybox_1.30.1-6_arm_cortex-a9.ipk",
+    "right": true,
+    "sha256": "d94926a5ab43e1c13233ae4ba01391cfe29031de3e630fd941e5bb9ece39520d",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "arm",
+    "file": "usr/sbin/dropbear",
+    "isa": "arm",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arm_cortex-a9/base/dropbear_2019.78-2_arm_cortex-a9.ipk",
+    "right": true,
+    "sha256": "4adfdf9a54d480e67f0144d87f2145a97b477843366de2b2974b388ce59dd41e",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "arm",
+    "file": "usr/sbin/dropbear",
+    "isa": "arm",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arm_cortex-a9/base/dropbear_2019.78-2_arm_cortex-a9.ipk",
+    "right": true,
+    "sha256": "4adfdf9a54d480e67f0144d87f2145a97b477843366de2b2974b388ce59dd41e",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "arm",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "arm",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arm_cortex-a9/base/libopenssl1.1_1.1.1n-1_arm_cortex-a9.ipk",
+    "right": true,
+    "sha256": "4ecce8c7e7883d6043109749f5a01b864037c9d1c6f3fc8df8c4a2fc3360e7a6",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "arm",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "arm",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arm_cortex-a9/base/libopenssl1.1_1.1.1n-1_arm_cortex-a9.ipk",
+    "right": true,
+    "sha256": "4ecce8c7e7883d6043109749f5a01b864037c9d1c6f3fc8df8c4a2fc3360e7a6",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "bin/busybox",
+    "isa": "x86_64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/x86_64/base/busybox_1.30.1-6_x86_64.ipk",
+    "right": true,
+    "sha256": "19fc000079e94f3a32f7487202c070a9fa4c26214b4087f5f13866bf5c3ac2d7",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.059096459096459095
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "bin/busybox",
+    "isa": "x86_64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/x86_64/base/busybox_1.30.1-6_x86_64.ipk",
+    "right": true,
+    "sha256": "19fc000079e94f3a32f7487202c070a9fa4c26214b4087f5f13866bf5c3ac2d7",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.059096459096459095
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "usr/sbin/dropbear",
+    "isa": "x86_64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/x86_64/base/dropbear_2019.78-2_x86_64.ipk",
+    "right": true,
+    "sha256": "77bf45fd5ef0a70500a8c447c90378837269541aa76fa5d1cfde63511f7dbd8a",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.05958485958485959
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "usr/sbin/dropbear",
+    "isa": "x86_64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/x86_64/base/dropbear_2019.78-2_x86_64.ipk",
+    "right": true,
+    "sha256": "77bf45fd5ef0a70500a8c447c90378837269541aa76fa5d1cfde63511f7dbd8a",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.05958485958485959
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "x86_64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/x86_64/base/libopenssl1.1_1.1.1n-1_x86_64.ipk",
+    "right": true,
+    "sha256": "58ed1eb9c0e1c57c2b752e246174f96498ce91a93f434acdeb14b15bd0ced54d",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.0568986568986569
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86_64",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "x86_64",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/x86_64/base/libopenssl1.1_1.1.1n-1_x86_64.ipk",
+    "right": true,
+    "sha256": "58ed1eb9c0e1c57c2b752e246174f96498ce91a93f434acdeb14b15bd0ced54d",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.0568986568986569
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "bin/busybox",
+    "isa": "x86",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/i386_pentium4/base/busybox_1.30.1-6_i386_pentium4.ipk",
+    "right": true,
+    "sha256": "f8015ab7b92c2482a36844ab291675c254d452e37862fe02a4d7d6078283d68e",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.0009768009768009768
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "bin/busybox",
+    "isa": "x86",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/i386_pentium4/base/busybox_1.30.1-6_i386_pentium4.ipk",
+    "right": true,
+    "sha256": "f8015ab7b92c2482a36844ab291675c254d452e37862fe02a4d7d6078283d68e",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.0009768009768009768
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "usr/sbin/dropbear",
+    "isa": "x86",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/i386_pentium4/base/dropbear_2019.78-2_i386_pentium4.ipk",
+    "right": true,
+    "sha256": "b6d4aa3399368bb30cc67e0e0b6087cb7f824ec8571091eb22b30f569518f54a",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.0004884004884004884
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "usr/sbin/dropbear",
+    "isa": "x86",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/i386_pentium4/base/dropbear_2019.78-2_i386_pentium4.ipk",
+    "right": true,
+    "sha256": "b6d4aa3399368bb30cc67e0e0b6087cb7f824ec8571091eb22b30f569518f54a",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.0004884004884004884
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "x86",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/i386_pentium4/base/libopenssl1.1_1.1.1n-1_i386_pentium4.ipk",
+    "right": true,
+    "sha256": "5eb1a29202bbd5e34c3ee331e79cb16d9a1a5ddf9886bcfe9a053faeb4188cc6",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": 0.0009768009768009768
+   },
+   {
+    "code_offset": 0,
+    "expected": "x86",
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "x86",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/i386_pentium4/base/libopenssl1.1_1.1.1n-1_i386_pentium4.ipk",
+    "right": true,
+    "sha256": "5eb1a29202bbd5e34c3ee331e79cb16d9a1a5ddf9886bcfe9a053faeb4188cc6",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": 0.0009768009768009768
+   },
+   {
+    "code_offset": 0,
+    "expected": "armeb",
+    "file": "bin/busybox",
+    "isa": "armeb",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/18.06.9/packages/armeb_xscale/base/busybox_1.28.4-3_armeb_xscale.ipk",
+    "right": true,
+    "sha256": "829b434ba5b5c965354a320bfb0c0e13cd347ea033ce02bd41763cffef1c53c3",
+    "shift": 0,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 2,
+    "expected": "armeb",
+    "file": "bin/busybox",
+    "isa": "armeb",
+    "note": null,
+    "package": "https://downloads.openwrt.org/releases/18.06.9/packages/armeb_xscale/base/busybox_1.28.4-3_armeb_xscale.ipk",
+    "right": true,
+    "sha256": "829b434ba5b5c965354a320bfb0c0e13cd347ea033ce02bd41763cffef1c53c3",
+    "shift": 2,
+    "status": "settled",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "bin/busybox",
+    "isa": null,
+    "note": "ARCompact (ARC700), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arc_arc700/base/busybox_1.30.1-6_arc_arc700.ipk",
+    "right": true,
+    "sha256": "0d88922b62cb72a33b56efff3cd09f7d6dc695cd90943a99f87d4bced1bf3a3e",
+    "shift": 0,
+    "status": "no_code",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "bin/busybox",
+    "isa": null,
+    "note": "ARCompact (ARC700), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arc_arc700/base/busybox_1.30.1-6_arc_arc700.ipk",
+    "right": true,
+    "sha256": "0d88922b62cb72a33b56efff3cd09f7d6dc695cd90943a99f87d4bced1bf3a3e",
+    "shift": 2,
+    "status": "no_code",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "usr/sbin/dropbear",
+    "isa": null,
+    "note": "ARCompact (ARC700), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arc_arc700/base/dropbear_2019.78-2_arc_arc700.ipk",
+    "right": true,
+    "sha256": "cd8ed18af8d74eb9c91078de240e2ebe4f64e05cfeca45aca35e19ea6658c33e",
+    "shift": 0,
+    "status": "no_code",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "usr/sbin/dropbear",
+    "isa": null,
+    "note": "ARCompact (ARC700), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arc_arc700/base/dropbear_2019.78-2_arc_arc700.ipk",
+    "right": true,
+    "sha256": "cd8ed18af8d74eb9c91078de240e2ebe4f64e05cfeca45aca35e19ea6658c33e",
+    "shift": 2,
+    "status": "no_code",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "bpf",
+    "note": "ARCompact (ARC700), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arc_arc700/base/libopenssl1.1_1.1.1n-1_arc_arc700.ipk",
+    "right": true,
+    "sha256": "eeac537a173f0098868766e330fe170f6309f94ec3305459d2614fb0b1e924f3",
+    "shift": 0,
+    "status": "unclear",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "usr/lib/libcrypto.so.1.1",
+    "isa": "bpf",
+    "note": "ARCompact (ARC700), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/19.07.10/packages/arc_arc700/base/libopenssl1.1_1.1.1n-1_arc_arc700.ipk",
+    "right": true,
+    "sha256": "eeac537a173f0098868766e330fe170f6309f94ec3305459d2614fb0b1e924f3",
+    "shift": 2,
+    "status": "unclear",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "bin/busybox",
+    "isa": null,
+    "note": "ARCv2 (ARC HS), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/21.02.7/packages/arc_archs/base/busybox_1.33.2-2_arc_archs.ipk",
+    "right": true,
+    "sha256": "1f5aa058bb40cf45d084d7a50385e15b9ef1e2c5d489b3ac21c20beaf2c520aa",
+    "shift": 0,
+    "status": "no_code",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "bin/busybox",
+    "isa": null,
+    "note": "ARCv2 (ARC HS), which the model does not know",
+    "package": "https://downloads.openwrt.org/releases/21.02.7/packages/arc_archs/base/busybox_1.33.2-2_arc_archs.ipk",
+    "right": true,
+    "sha256": "1f5aa058bb40cf45d084d7a50385e15b9ef1e2c5d489b3ac21c20beaf2c520aa",
+    "shift": 2,
+    "status": "no_code",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "bin/busybox",
+    "isa": null,
+    "note": "IA-64, which the model does not know",
+    "package": "http://archive.debian.org/debian/pool/main/b/busybox/busybox-static_1.20.0-7_ia64.deb",
+    "right": true,
+    "sha256": "f95050adf85e014f7619ffe1ad85773f1fed64112464cd1ed142139b36d46d15",
+    "shift": 0,
+    "status": "no_code",
+    "wide_share": null
+   },
+   {
+    "code_offset": 0,
+    "expected": null,
+    "file": "bin/busybox",
+    "isa": null,
+    "note": "IA-64, which the model does not know",
+    "package": "http://archive.debian.org/debian/pool/main/b/busybox/busybox-static_1.20.0-7_ia64.deb",
+    "right": true,
+    "sha256": "f95050adf85e014f7619ffe1ad85773f1fed64112464cd1ed142139b36d46d15",
+    "shift": 2,
+    "status": "no_code",
+    "wide_share": null
+   }
+  ],
+  "right": 180,
+  "script": "scripts/validate_isa_model.py",
+  "total": 180
+ }
+}

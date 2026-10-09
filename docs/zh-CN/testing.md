@@ -417,6 +417,7 @@ V9 schema 测试往返验证八种次功能名称，并与生命周期完成共�
 | `unittests/TestProcessTests.cpp` | `NeverDTestProcessTests` | 跨平台子进程调用、引号、重定向与退出码 |
 | `unittests/libc` | `NeverDLibCTests` | 已知 libc 名称与分类 |
 | `unittests/safety` | `NeverDSafetyTests`、`NeverDSafetyIntegrationTests` | 汇目录、身份优先序、参数预过滤、拷贝越界猎取、堆生命周期审计，以及强制执行的 PE/ELF/Mach-O × x86-64/AArch64 六单元矩阵 |
+| `unittests/loader` | `NeverDRawISATests` | 二进制文件：从字节识别指令集（数据、测试程序自身代码、偏移两字节的代码、各家族 32 位与 64 位编码、以零开头的文件）以及 Cortex-M 向量表。`scripts/validate_isa_model.py --engine build/bin/libneverd.so` 按哈希下载模型从未见过的 180 个真实程序和库进行检查；它需要网络，不属于 CTest |
 | `unittests/lift` | `NeverDLiftTests` | Decoder/lifter LowIR 形状、IR 阶段、loader、重定位、格式 fixture、反编译与代表性 patch 流程 |
 | `unittests/semantic` 中的大多数文件 | `NeverDSemanticTests` | 指令、ABI、控制流、C 表达式和 lift/recompile 差分语义 |
 | `unittests/evm` | `NeverDEVMOpcodeTests`、`NeverDEVMBytecodeTests`、`NeverDEVMLoaderTests`、`NeverDEVMABITests`、`NeverDEVMAnalyzerTests`、`NeverDEVMDecoderPropertyTests`、`NeverDEVMProxyTests`、`NeverDEVMCallTests`、`NeverDEVMSemanticTests`、`NeverDEVMEmitterTests`、`NeverDEVMIntegrationTests` | 硬分叉元数据、输入规范化、ABI/签名歧义、CFG/SSA/恢复、穷举 decoder 边界与恶意输入、proxy/call 事实、解释器语义、LLVM/C/Solidity 差分执行及公共 API 路由 |

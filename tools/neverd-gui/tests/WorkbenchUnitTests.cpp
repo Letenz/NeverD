@@ -540,6 +540,131 @@ private slots:
     QVERIFY(chosen.findChild<QPushButton *>(QStringLiteral("ok"))->isEnabled());
   }
 
+  void loadDialogPreselectsTheProcessorTheBytesName() {
+    const auto binaryRow = [](QJsonObject identified) {
+      identified.insert("loader", "binary");
+      identified.insert("text", "Binary file");
+      identified.insert("processor", "");
+      identified.insert("loadable", true);
+      return QJsonArray{identified};
+    };
+    // The bytes read as ARM64 beat the processor picked for another file,
+    // and keeping it lets the engine record it as read.
+    LoadFileDialog dialog(
+        QStringLiteral("/tmp/firmware.bin"),
+        binaryRow(
+            {{"guesses", QJsonArray{QJsonObject{{"isa", "aarch64"},
+                                                {"name", "ARM64 (AArch64)"},
+                                                {"processor", "aarch64"},
+                                                {"share", 0.97}}}},
+             {"code_share", 0.6},
+             {"status", "settled"},
+             {"detected", "aarch64"},
+             {"evidence", "ARM64 (AArch64) 97% of the code"}}));
+    dialog.setBinaryProcessor(QStringLiteral("thumb"));
+    QCOMPARE(dialog.options().processor, QStringLiteral("auto"));
+    QVERIFY(dialog.findChild<QPushButton *>(QStringLiteral("ok"))->isEnabled());
+    QVERIFY(dialog.findChild<QLabel *>(QStringLiteral("note"))
+                ->text()
+                .contains(QStringLiteral("ARM64")));
+    // Another processor, chosen, is the user's.
+    auto *processors =
+        dialog.findChild<QTreeWidget *>(QStringLiteral("processors"));
+    for (int family = 0; family < processors->topLevelItemCount(); ++family)
+      for (int child = 0;
+           child < processors->topLevelItem(family)->childCount(); ++child) {
+        auto *item = processors->topLevelItem(family)->child(child);
+        if (item->data(0, Qt::UserRole).toString() == QLatin1String("x86_64"))
+          processors->setCurrentItem(item);
+      }
+    QCOMPARE(dialog.options().processor, QStringLiteral("x86_64"));
+
+    // A set NeverD cannot decode preselects nothing and says what it is.
+    LoadFileDialog foreign(
+        QStringLiteral("/tmp/router.bin"),
+        binaryRow({{"guesses",
+                    QJsonArray{QJsonObject{{"isa", "mips"},
+                                           {"name", "MIPS big-endian (32-bit)"},
+                                           {"processor", ""},
+                                           {"share", 0.94}}}},
+                   {"code_share", 0.7},
+                   {"status", "settled"},
+                   {"detected", ""},
+                   {"evidence", "MIPS big-endian (32-bit) 94% of the code"}}));
+    QVERIFY(
+        !foreign.findChild<QPushButton *>(QStringLiteral("ok"))->isEnabled());
+    QVERIFY(foreign.findChild<QLabel *>(QStringLiteral("note"))
+                ->text()
+                .contains(QStringLiteral("NeverD cannot decode")));
+
+    // A family whose instructions do not tell its width names both sets.
+    LoadFileDialog wide(
+        QStringLiteral("/tmp/dump.bin"),
+        binaryRow(
+            {{"guesses", QJsonArray{QJsonObject{{"isa", "x86"},
+                                                {"name", "Intel x86 (32-bit)"},
+                                                {"processor", "x86"},
+                                                {"share", 0.6}},
+                                    QJsonObject{{"isa", "x86_64"},
+                                                {"name", "x86-64"},
+                                                {"processor", "x86_64"},
+                                                {"share", 0.4}}}},
+             {"status", "width_unclear"},
+             {"detected", ""}}));
+    const QString both =
+        wide.findChild<QLabel *>(QStringLiteral("note"))->text();
+    QVERIFY(both.contains(QStringLiteral("Intel x86 (32-bit)")) &&
+            both.contains(QStringLiteral("x86-64")));
+    QVERIFY(!wide.findChild<QPushButton *>(QStringLiteral("ok"))->isEnabled());
+
+    // Code whose instructions start two bytes into its words reads from
+    // there.
+    LoadFileDialog shifted(
+        QStringLiteral("/tmp/carved.bin"),
+        binaryRow(
+            {{"guesses", QJsonArray{QJsonObject{{"isa", "aarch64"},
+                                                {"name", "ARM64 (AArch64)"},
+                                                {"processor", "aarch64"},
+                                                {"share", 1.0}}}},
+             {"status", "settled"},
+             {"code_unit", 4},
+             {"code_offset", 2},
+             {"detected", "aarch64"},
+             {"evidence", "ARM64 (AArch64) 100% of the code"}}));
+    QCOMPARE(shifted.findChild<QLineEdit *>(QStringLiteral("offset"))->text(),
+             QStringLiteral("0x2"));
+    QCOMPARE(shifted.options().offset, quint64(2));
+    QCOMPARE(shifted.options().processor, QStringLiteral("auto"));
+
+    // Bytes that look like no known code say so.
+    LoadFileDialog data(QStringLiteral("/tmp/data.bin"),
+                        binaryRow({{"guesses", QJsonArray()},
+                                   {"status", "no_code"},
+                                   {"detected", ""}}));
+    QVERIFY(data.findChild<QLabel *>(QStringLiteral("note"))
+                ->text()
+                .startsWith(QStringLiteral("No part of the file")));
+
+    // A Cortex-M vector table says where the code runs.
+    LoadFileDialog firmware(
+        QStringLiteral("/tmp/stm32.bin"),
+        binaryRow(
+            {{"guesses", QJsonArray()},
+             {"code_share", 0.0},
+             {"detected", "thumb"},
+             {"evidence", "a Cortex-M vector table at the start"},
+             {"fingerprint", QJsonObject{{"name", "Cortex-M vector table"},
+                                         {"processor", "thumb"},
+                                         {"entry", "0x8000040"},
+                                         {"base", "0x8000000"}}}}));
+    QCOMPARE(firmware.findChild<QLineEdit *>(QStringLiteral("base"))->text(),
+             QStringLiteral("0x8000000"));
+    QCOMPARE(firmware.findChild<QLineEdit *>(QStringLiteral("entry"))->text(),
+             QStringLiteral("0x8000040"));
+    QCOMPARE(firmware.options().processor, QStringLiteral("auto"));
+    QCOMPARE(firmware.options().base, quint64(0x8000000));
+  }
+
   void themesDefineEveryColor() {
     auto &theme = Theme::instance();
     for (const auto mode : {Theme::Mode::Dark, Theme::Mode::Light}) {
