@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// The x86/x86-64 x87 stack-pointer (TOP) fixup for CFGBuilder.  This is the
-/// only architecture-gated routine in CFG construction (it returns immediately
+/// The x86/x86-64 x87 stack-pointer (TOP) fixup for CFGBuilder.  It is an
+/// architecture-gated routine of CFG construction (it returns immediately
 /// unless the image is x86 or x86-64), so it lives here following the
 /// target-dispatch split used by the jump-table detectors
 /// (JumpTableResolverARM.cpp) rather than in the architecture-neutral
@@ -24,7 +24,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/low/CFGBuilder.h"
-
 #include "neverd/lift/X86Regs.h"
 
 #include <map>
