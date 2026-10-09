@@ -52,6 +52,7 @@ using namespace neverd::gui;
 namespace {
 constexpr Address Base = 0xffff800012340000ULL;
 constexpr int OpenTimeoutMs = 7000;
+constexpr int NativeOpenTimeoutMs = 30000;
 
 QString writeFixture(const QTemporaryDir &directory, const QString &name) {
   const auto path = directory.filePath(name);
@@ -69,7 +70,8 @@ struct Workbench {
   QTemporaryDir layout;
   std::unique_ptr<MainWindow> window;
 
-  Workbench() {
+  explicit Workbench(QString worker = QString::fromLocal8Bit(TEST_WORKER))
+      : session(std::move(worker)) {
     window = std::make_unique<MainWindow>(session, mcp, broker);
     window->setLayoutPath(layout.filePath(QStringLiteral("layout.json")));
     window->resize(1400, 900);
@@ -391,6 +393,270 @@ private slots:
     QTRY_VERIFY(code->hasFocus());
   }
 
+  void functionsActivationKeepsCodeWindow_data() {
+    pseudocodeFunctionLinksStayInTheirWindow_data();
+    QTest::newRow("low-secondary-following")
+        << QStringLiteral("low") << true << false;
+    QTest::newRow("rust-primary-following")
+        << QStringLiteral("source") << false << false;
+    QTest::newRow("go-secondary-following")
+        << QStringLiteral("source") << true << false;
+    QTest::newRow("c-rust-primary-locked")
+        << QStringLiteral("c") << false << true;
+    QTest::newRow("c-rust-secondary-following")
+        << QStringLiteral("c") << true << false;
+    if (!qEnvironmentVariable("NEVERD_CODE_NAV_WORKER").isEmpty() &&
+        !qEnvironmentVariable("NEVERD_CODE_NAV_FILE").isEmpty()) {
+      QTest::newRow("native-c") << QStringLiteral("source") << false << false;
+      QTest::newRow("native-llvmc") << QStringLiteral("llvmc") << true << false;
+    }
+  }
+
+  void functionsActivationKeepsCodeWindow() {
+    QFETCH(QString, representation);
+    QFETCH(bool, secondWindow);
+    QFETCH(bool, locked);
+    const bool native =
+        QByteArray(QTest::currentDataTag()).startsWith("native-");
+    QTemporaryDir directory;
+    const QByteArray tag = QTest::currentDataTag();
+    const QString fixture = tag.startsWith("rust-") || tag.startsWith("c-rust-")
+                                ? QStringLiteral("pseudocode-rust.bin")
+                            : tag.startsWith("go-")
+                                ? QStringLiteral("pseudocode-go.bin")
+                                : QStringLiteral("fixture.bin");
+    const auto path = native ? qEnvironmentVariable("NEVERD_CODE_NAV_FILE")
+                             : writeFixture(directory, fixture);
+    Workbench bench(native ? qEnvironmentVariable("NEVERD_CODE_NAV_WORKER")
+                           : QString::fromLocal8Bit(TEST_WORKER));
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *functions = bench.functions();
+    QVERIFY(functions);
+    QTRY_VERIFY_WITH_TIMEOUT(!functions->model().rowObject(2).isEmpty(),
+                             OpenTimeoutMs);
+    const Address caller =
+        native ? *functions->model().addressAt(0) : Base + 0x140;
+    auto *disassembly = bench.window->disassembly();
+    disassembly->navigate(caller);
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(caller));
+    bench.action(secondWindow ? ActionId::ViewLowIR : ActionId::ViewPseudocode)
+        ->trigger();
+    auto *view = bench.codeView(secondWindow ? QStringLiteral("low")
+                                             : QStringLiteral("source"));
+    QVERIFY(view);
+    view->setRepresentation(representation);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 0,
+                             OpenTimeoutMs);
+    if (locked) {
+      for (auto *button : view->findChildren<QToolButton *>())
+        if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+          button->setChecked(true);
+      QVERIFY(view->locked());
+      disassembly->navigate(Base + 0x180);
+      QTRY_COMPARE(disassembly->currentFunction(),
+                   std::optional<Address>(Base + 0x180));
+    }
+
+    auto *table = functions->table();
+    Address previous = caller;
+    for (const bool keyboard : {false, true}) {
+      const int row = native ? (keyboard ? 2 : 1) : (keyboard ? 23 : 22);
+      const auto target = functions->model().addressAt(row);
+      QVERIFY(target);
+      code->setFocus();
+      QTRY_VERIFY(code->hasFocus());
+      const auto index = functions->model().index(row, 0);
+      table->scrollTo(index);
+      // A narrow chooser can clip the name column beside a second code view.
+      const QRect cell =
+          table->visualRect(index).intersected(table->viewport()->rect());
+      QVERIFY(!cell.isEmpty());
+      const QPoint point = cell.center();
+      QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
+                        point);
+      QTRY_VERIFY(table->hasFocus());
+      QCOMPARE(table->currentIndex().row(), row);
+      if (keyboard)
+        QTest::keyClick(table, Qt::Key_Return);
+      else
+        QTest::mouseDClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
+                           point);
+      QVERIFY(code->isVisible());
+      QTRY_COMPARE_WITH_TIMEOUT(code->function(), target, OpenTimeoutMs);
+      QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
+      QVERIFY(code->lineCount() > 0);
+      QCOMPARE(view->representation(), representation);
+      QCOMPARE(view->locked(), locked);
+      QTRY_VERIFY(code->hasFocus());
+      QTRY_COMPARE(disassembly->currentFunction(), target);
+
+      bench.action(ActionId::JumpBack)->trigger();
+      QTRY_COMPARE_WITH_TIMEOUT(
+          code->function(), std::optional<Address>(previous), OpenTimeoutMs);
+      QTRY_VERIFY(!code->loading() && code->hasFocus());
+      bench.action(ActionId::JumpForward)->trigger();
+      QTRY_COMPARE_WITH_TIMEOUT(code->function(), target, OpenTimeoutMs);
+      QTRY_VERIFY(!code->loading() && code->hasFocus());
+      previous = *target;
+    }
+    if (native) {
+      const auto capture = qEnvironmentVariable("NEVERD_CODE_NAV_CAPTURE_DIR");
+      if (!capture.isEmpty()) {
+        QDir().mkpath(capture);
+        QVERIFY(bench.window->grab().save(QDir(capture).filePath(
+            QString::fromLatin1(QTest::currentDataTag()) +
+            QStringLiteral(".png"))));
+      }
+    }
+  }
+
+  void functionsActivationUsesDisassemblyWhenCodeIsNotCurrent_data() {
+    QTest::addColumn<bool>("closed");
+    QTest::newRow("disassembly-current") << false;
+    QTest::newRow("code-closed") << true;
+  }
+
+  void functionsActivationUsesDisassemblyWhenCodeIsNotCurrent() {
+    QFETCH(bool, closed);
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    QTRY_VERIFY(disassembly->currentFunction().has_value());
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    QTRY_VERIFY(!view->text()->loading() && view->text()->isVisible());
+    if (closed) {
+      for (auto *dock :
+           bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+        if (dock->widget() == view)
+          dock->forceClose();
+      QTRY_VERIFY(!view->isVisible());
+    } else {
+      bench.action(ActionId::ViewDisassembly)->trigger();
+      disassembly->focusContent();
+      QTRY_VERIFY(disassembly->isVisible());
+    }
+    auto *table = bench.functions()->table();
+    QTRY_VERIFY(!bench.functions()->model().rowObject(22).isEmpty());
+    table->setCurrentIndex(bench.functions()->model().index(22, 0));
+    table->setFocus();
+    QTRY_VERIFY(table->hasFocus());
+    QTest::keyClick(table, Qt::Key_Return);
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(Base + 0x160));
+    QVERIFY(disassembly->isVisible());
+    QVERIFY(!view->isVisible());
+  }
+
+  void changingFiltersRetiresObsoletePages() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto &model = bench.functions()->model();
+    QTRY_COMPARE(model.total(), 600);
+    QTRY_VERIFY(!bench.session.busy());
+    QSignalSpy failures(&model, &ChooserModel::failed);
+
+    // Keep the worker busy while successive filters replace the needed page.
+    QObject blocker;
+    bench.session.read(QStringLiteral("resolve"),
+                       {{"query", "delayed_function"}}, &blocker,
+                       [](const QJsonObject &) {});
+    QTest::qWait(25);
+    for (int i = 0; i < 96; ++i)
+      model.setFilter(QStringLiteral("function_%1").arg(i));
+    model.setFilter(QStringLiteral("function_"));
+    QTest::qWait(50);
+    QCOMPARE(failures.count(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(model.total(), 600, OpenTimeoutMs);
+    QTRY_COMPARE(model.rowObject(0).value("name").toString(),
+                 QStringLiteral("function_0"));
+  }
+
+  void rapidlyScrollingLargeListsKeepsTheLastPageAvailable_data() {
+    QTest::addColumn<QString>("worker");
+    QTest::addColumn<QString>("binary");
+    QTest::newRow("fixture")
+        << QString::fromLocal8Bit(TEST_WORKER) << QString();
+    const auto worker = qEnvironmentVariable("NEVERD_LARGE_PE_WORKER");
+    const auto binary = qEnvironmentVariable("NEVERD_LARGE_PE_FILE");
+    if (!worker.isEmpty() && !binary.isEmpty())
+      QTest::newRow("native-pe") << worker << binary;
+  }
+
+  void rapidlyScrollingLargeListsKeepsTheLastPageAvailable() {
+    QFETCH(QString, worker);
+    QFETCH(QString, binary);
+    QTemporaryDir directory;
+    const bool fixture = binary.isEmpty();
+    const auto path =
+        fixture ? writeFixture(directory, QStringLiteral("many-functions.bin"))
+                : binary;
+    QVERIFY(!path.isEmpty());
+    Workbench bench(worker);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto &model = bench.functions()->model();
+    // The optional native profile includes background discovery over the
+    // entire large image; ordinary fixture deadlines remain unchanged.
+    const int listTimeout = fixture ? OpenTimeoutMs : NativeOpenTimeoutMs;
+    if (!fixture)
+      QTRY_VERIFY_WITH_TIMEOUT(
+          bench.session.background().value("state").toString() == "building" ||
+              bench.session.indexReady(),
+          listTimeout);
+    const int total =
+        fixture ? 20000 : bench.session.background().value("functions").toInt();
+    QVERIFY(total > 48 * 256);
+    QTRY_COMPARE_WITH_TIMEOUT(model.total(), total, listTimeout);
+    if (fixture)
+      QTRY_VERIFY_WITH_TIMEOUT(!bench.session.busy(), OpenTimeoutMs);
+    QSignalSpy failures(&model, &ChooserModel::failed);
+
+    QObject blocker;
+    if (fixture) {
+      bench.session.read(QStringLiteral("resolve"),
+                         {{"query", "delayed_function"}}, &blocker,
+                         [](const QJsonObject &) {});
+      QTest::qWait(25);
+    }
+    // Successive viewport positions span more pages than the shared queue.
+    for (int row = 256; row < model.total(); row += 256)
+      model.data(model.index(row, 0), Qt::DisplayRole);
+    const int last = model.total() - 1;
+    QVERIFY(model.index(last, 0).isValid());
+    model.data(model.index(last, 0), Qt::DisplayRole);
+    QTest::qWait(50);
+    QCOMPARE(failures.count(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!model.rowObject(last).isEmpty(), listTimeout);
+    if (fixture)
+      QCOMPARE(model.rowObject(last).value("name").toString(),
+               QStringLiteral("function_19999"));
+    else {
+      // The real worker must also survive replacing expensive filters.
+      for (int i = 0; i < 96; ++i)
+        model.setFilter(QStringLiteral("sub_%1").arg(i));
+      model.setFilter(QString());
+      QTest::qWait(50);
+      QCOMPARE(failures.count(), 0);
+      QTRY_COMPARE_WITH_TIMEOUT(model.total(), total, listTimeout);
+      QTRY_VERIFY_WITH_TIMEOUT(!model.rowObject(0).isEmpty(), listTimeout);
+      if (const auto capture = qEnvironmentVariable("NEVERD_LARGE_PE_CAPTURE");
+          !capture.isEmpty())
+        QVERIFY(bench.window->grab().save(capture));
+    }
+  }
+
   void pseudocodeReadsInTheFunctionsLanguage() {
     QTemporaryDir directory;
     Workbench bench;
@@ -604,6 +870,7 @@ private slots:
     }
     QVERIFY(target);
     // A new file asks how to load it first.
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.identifiesFiles(), OpenTimeoutMs);
     LoadDialogAcceptor loadDialogs;
     QVERIFY(dropFile(target, path));
     QTRY_COMPARE_WITH_TIMEOUT(bench.session.filePath(), path, OpenTimeoutMs);
