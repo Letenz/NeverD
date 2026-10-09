@@ -678,7 +678,7 @@ static const char *devirtualizeSource(
             " */\n";
     CEmitterOptions EmitOptions;
     EmitOptions.TheArch = S->Img.Arch;
-    EmitOptions.Format = S->Img.Format;
+    EmitOptions.Format = S->Img.abiFormat();
     // Devirtualized source is compiled to run: its accesses must keep byte
     // semantics under any GCC/Clang build.
     EmitOptions.ScalarPointers =

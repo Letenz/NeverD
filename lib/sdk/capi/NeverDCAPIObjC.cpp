@@ -198,7 +198,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
 
     CEmitterOptions COptions;
     COptions.TheArch = S->Img.Arch;
-    COptions.Format = S->Img.Format;
+    COptions.Format = S->Img.abiFormat();
     COptions.Image = &S->Img;
     COptions.EmitComments = false;
     // The mobile assembler parses complete units and validates shared

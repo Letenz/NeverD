@@ -6,6 +6,10 @@
 //
 // NEVERD_RAW_PROCESSOR(Name, Arch, Mode): a processor a binary file can be
 // read as, by the name the load options and the load dialog use.
+// NEVERD_RAW_PLATFORM(Name, Format, Text): a platform whose conventions a
+// binary file's code can follow -- calling conventions, callee-saved
+// registers, data model -- by its load option name, the format whose images
+// follow the same conventions, and the name the user reads.
 // NEVERD_RAW_TEXT(Id, Text): the names the loader gives what it maps.
 //
 //===----------------------------------------------------------------------===//
@@ -17,6 +21,13 @@ NEVERD_RAW_PROCESSOR("arm", ARM, ARM)
 NEVERD_RAW_PROCESSOR("thumb", ARM, Thumb)
 NEVERD_RAW_PROCESSOR("aarch64", AArch64, Default)
 #undef NEVERD_RAW_PROCESSOR
+#endif
+
+#ifdef NEVERD_RAW_PLATFORM
+NEVERD_RAW_PLATFORM("sysv", ELF, "System V")
+NEVERD_RAW_PLATFORM("windows", COFF, "Windows")
+NEVERD_RAW_PLATFORM("darwin", MachO, "Apple")
+#undef NEVERD_RAW_PLATFORM
 #endif
 
 #ifdef NEVERD_RAW_TEXT

@@ -26,7 +26,7 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
                         std::vector<ExprPtr> &Args) {
   collectSpilledStackArgs(Scan, Found);
   const BinaryFormat Format =
-      Scan.Image ? Scan.Image->Format : BinaryFormat::Unknown;
+      Scan.Image ? Scan.Image->abiFormat() : BinaryFormat::Unknown;
   const size_t RegisterPositions =
       Scan.TRI->integerArgumentLayout(Format).Registers.size();
   // A summarized callee reads no stack slot past the last one its body, or

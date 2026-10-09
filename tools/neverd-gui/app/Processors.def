@@ -10,6 +10,9 @@
 // neverd_identify_json and neverd_session_arch_name spell it, or the binary
 // file processor "thumb"; Binary says whether a binary file can be read as
 // it.
+// NEVERD_PLATFORM(ShortName, Name): a platform whose conventions a binary
+// file's code can follow, by the engine's load option name; the empty name
+// reads the platform from the code.
 //
 //===----------------------------------------------------------------------===//
 
@@ -43,4 +46,13 @@ NEVERD_PROCESSOR(VirtualMachine, "evm",
 NEVERD_PROCESSOR(VirtualMachine, "sbf",
                  QT_TRANSLATE_NOOP("Processors", "Solana BPF"), false)
 #undef NEVERD_PROCESSOR
+#endif
+
+#ifdef NEVERD_PLATFORM
+NEVERD_PLATFORM("", QT_TRANSLATE_NOOP("Platforms", "Detect from the code"))
+NEVERD_PLATFORM("sysv", QT_TRANSLATE_NOOP("Platforms",
+                                          "System V (Linux, BSD, Android)"))
+NEVERD_PLATFORM("windows", QT_TRANSLATE_NOOP("Platforms", "Windows"))
+NEVERD_PLATFORM("darwin", QT_TRANSLATE_NOOP("Platforms", "Apple (macOS, iOS)"))
+#undef NEVERD_PLATFORM
 #endif

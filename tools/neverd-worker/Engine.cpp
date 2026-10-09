@@ -467,14 +467,7 @@ void Engine::namesChanged() {
   functionOrderKey_.clear();
   functionOrder_.clear();
 }
-bool Engine::binaryFile() const {
-  // neverd_session_format_name of a file loaded as a binary file.
-  constexpr std::string_view BinaryFormatName = "Binary";
-  return ownedString(neverd_session_format_name(session_)) == BinaryFormatName;
-}
 Json Engine::functionGraph(std::uint64_t address) {
-  if (binaryFile())
-    return listing().decodedGraph(address);
   prepareFunction(address);
   return backendJson(neverd_cfg_json(session_, address), true);
 }
@@ -831,7 +824,12 @@ Json Engine::metadata() const {
           {"analyzed", analyzed_},
           {"analysis_state", analyzed_ ? "complete" : "not_analyzed"},
           {"read_only", readOnly_},
-          {"dirty", dirty_}};
+          {"dirty", dirty_},
+          // How the file was read: for a binary file, its processor,
+          // placement and platform, and whether detection chose the platform.
+          {"load_options", loadOptions()
+                               ? backendJson(loadOptions().json(session_))
+                               : Json::object()}};
 }
 
 Json Engine::execute(const std::string &operation, const Json &p) {
@@ -965,6 +963,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       Json options{{"loader", loader}};
       if (loader == "binary") {
         options["processor"] = stringField(p, "processor", {}, 32);
+        // The platform whose conventions the code follows; the engine reads
+        // it from the code when absent or "auto".
+        if (p.contains("platform"))
+          options["platform"] = stringField(p, "platform", {}, 16);
         for (const char *field : {"base", "offset", "size", "entry"})
           if (p.contains(field))
             options[field] =

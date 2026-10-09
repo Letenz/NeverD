@@ -62,7 +62,7 @@ callPreservedRanges(const BinaryImage &Image) {
   const TargetRegInfo &TRI = getTargetRegInfo(Image.Arch);
   llvm::SmallVector<symbolic::SymRegisterRange, 16> Ranges;
   for (const TargetRegisterRange &Range :
-       TRI.callPreservedRanges(Image.Format))
+       TRI.callPreservedRanges(Image.abiFormat()))
     Ranges.push_back({Range.Offset, Range.Bytes});
   return Ranges;
 }
