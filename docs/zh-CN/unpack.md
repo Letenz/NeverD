@@ -33,7 +33,7 @@ neverd unpack packed.exe -o unpacked.exe \
 
 `runtime_state.heap_inventory_known` 区分已知空清单与缺少来源证据。`possible_heap_references` 统计全部匹配；`heap_references` 最多保留前 64 条，先镜像后 TLS，各自按 `offset` 排序。记录给出 `storage`（`image` 或 `thread_local`）、地址及分配范围。镜像记录的 `rva` 为十六进制值，TLS 记录为 null；地址和偏移采用十六进制字符串。
 
-`runtime_state.direct_service_calls` 统计入口观察和导入发现期间实际执行的直接模型服务调用。其编号尚未重建为原生 Windows 绑定，因此默认返回 `unsupported_state`，包括首次调用出现在捕获入口之后的情况。显式 `snapshot_only` 保留计数和诊断。复制的系统调用不会被当作可修复的导入函数调用。
+`runtime_state.direct_service_calls` 统计入口观察和导入发现期间实际执行的直接模型服务调用。其编号尚未重建为原生 Windows 绑定，因此默认返回 `unsupported_state`，包括首次调用出现在捕获入口之后的情况。显式 `snapshot_only` 保留计数和诊断。复制的系统调用不会被当作可修复的导入函数调用。 `no_entry` 报告也保留此计数；未捕获入口时，堆清单仍为未知。
 
 `--options='{"snapshot_only":true}'` 显式请求分析字节。接受入口且重建成功后，结果始终为 `snapshot`，运行时状态诊断仍会保留。该选项不会恢复堆数据、推断重定位、证明原生运行成功或反虚拟化。堆引用数量为零也不能证明其他 OS 状态或未执行路径正确。
 

@@ -679,6 +679,22 @@ TEST_P(UnpackGenerated, DirectServiceBindingsRequireAnExplicitSnapshot) {
       EXPECT_GT(Result.RuntimeState.DirectServiceCalls, 0u);
       EXPECT_NE(Result.Diagnostic.find("native binding"), std::string::npos);
     }
+    // Not selecting a transfer does not erase calls that actually executed.
+    Options.Transfer = defaults::MaxTransfers;
+    const auto MissingEntry = unpack(Mode);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(MissingEntry.Outcome, UnpackOutcome::NoEntry);
+    EXPECT_EQ(MissingEntry.ProcessStop,
+              processStopReasonName(ProcessStopReason::Exited));
+    EXPECT_FALSE(MissingEntry.EntryRVA);
+    EXPECT_TRUE(MissingEntry.Image.empty());
+    EXPECT_FALSE(MissingEntry.RuntimeState.HeapInventoryKnown);
+    EXPECT_EQ(MissingEntry.RuntimeState.DirectServiceCalls,
+              llvm::count_if(OriginalRun.NativeCalls, [](const auto &Call) {
+                return Call.DirectServiceNumber.has_value();
+              }));
+    EXPECT_GT(MissingEntry.RuntimeState.DirectServiceCalls, 0u);
+    Options.Transfer = 0;
   }
 }
 

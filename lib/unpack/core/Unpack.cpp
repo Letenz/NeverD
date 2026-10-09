@@ -158,6 +158,9 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
   Result.Instructions = Run->Instructions;
   Result.Events = Run->Events;
   auto Observed = Observer.take();
+  if (Observed)
+    Result.RuntimeState = std::move(Observed->RuntimeState);
+  recordDirectServices(Result.RuntimeState, *Run);
   if (!Observed) {
     Result.Diagnostic = text::NoEntry + Result.ProcessStop;
     return Result;
@@ -165,8 +168,6 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
   Result.ImageBase = Observed->Base;
   Result.EntryRVA = Observed->EntryRVA;
   Result.Source = Observed->Source;
-  Result.RuntimeState = std::move(Observed->RuntimeState);
-  recordDirectServices(Result.RuntimeState, *Run);
   auto UnsupportedState = [&] {
     Result.Diagnostic.clear();
     if (!Result.RuntimeState.HeapInventoryKnown ||
