@@ -24,12 +24,24 @@
 
 class HighCHostExecutionTest : public NeverDLiftTest {
 protected:
-  /// Compile \p Kernel with \p TargetFlags, decompile it to HighC, and
-  /// expect the C of \p Entry, which takes and returns an int, to return
+  /// Compile \p Kernel with Clang and \p TargetFlags, decompile it to HighC,
+  /// and expect the C of \p Entry, which takes and returns an int, to return
   /// what \p Kernel's does for each of \p Values.  \p Names are the kernel's
   /// functions, renamed in the reference copy.  An unknown value in the C
   /// fails.
   void expectHighCRunsLikeSource(const std::vector<std::string> &TargetFlags,
+                                 const std::string &Kernel,
+                                 const std::string &Entry,
+                                 std::initializer_list<const char *> Names,
+                                 std::initializer_list<int> Values) {
+    expectHighCRunsLikeSource(NEVERD_TEST_CLANG, TargetFlags, Kernel, Entry,
+                              Names, Values);
+  }
+
+  /// As above, compiling \p Kernel with \p Compiler.  A compiler other than
+  /// the test's Clang that cannot build the kernel skips the test.
+  void expectHighCRunsLikeSource(const std::string &Compiler,
+                                 const std::vector<std::string> &TargetFlags,
                                  const std::string &Kernel,
                                  const std::string &Entry,
                                  std::initializer_list<const char *> Names,
@@ -43,7 +55,9 @@ protected:
     Args.insert(Args.end(), {"-O2", "-fno-stack-protector",
                              "-fno-asynchronous-unwind-tables", "-c",
                              Source.string(), "-o", Object.string()});
-    const auto Compiled = exec(NEVERD_TEST_CLANG, Args);
+    const auto Compiled = exec(Compiler, Args);
+    if (Compiled.exitCode != 0 && Compiler != NEVERD_TEST_CLANG)
+      GTEST_SKIP() << Compiler << " cannot build the kernel: " << Compiled.err;
     ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
 
     const auto Decompiled = decompileToHighC(Object);

@@ -367,6 +367,9 @@ struct MedCallInfo {
   /// Darwin AArch64 indirect variadic call: number of fixed (register-prefix)
   /// arguments before the stack-passed variadic tail.  -1 = not variadic.
   int VarArgFixedCount = -1;
+  /// Args passes the register arguments in the callee's own register order
+  /// (MedFunc::IntegerArgumentRegisters), not the convention's.
+  bool ArgumentsInCalleeRegisterOrder = false;
 };
 
 struct MedFunc {
@@ -458,6 +461,12 @@ struct MedFunc {
   /// carry its named parameters, the rest only what each caller passes.  -1
   /// where unknown.
   int VariadicFirstRegister = -1;
+
+  /// The registers this function takes its integer register arguments in,
+  /// in argument order, where they are not its convention's
+  /// (TargetRegInfo::integerArgumentLayout): a local i386 function GCC
+  /// compiled takes them in EAX, EDX, ECX.  Empty otherwise.
+  std::vector<uint64_t> IntegerArgumentRegisters;
 
   /// Number of NAMED stack parameters that precede the variadic overflow area
   /// (the fixed prefix passed on the stack rather than in registers).  Nonzero

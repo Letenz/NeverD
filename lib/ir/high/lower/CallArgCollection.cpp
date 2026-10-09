@@ -1290,9 +1290,12 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
           ++End;
         for (size_t I = FromABI.size(); I < End; ++I)
           FromABI.push_back(Found[I]);
+        // The scan numbers registers in the convention's order, which does
+        // not index arguments passed in the callee's own.
         for (size_t I = 0; I < FromABI.size(); ++I)
           if ((!FromABI[I] || FromABI[I]->Kind == ExprKind::Undef) &&
-              Found[I] && Found[I]->Kind != ExprKind::Undef)
+              !CI->ArgumentsInCalleeRegisterOrder && Found[I] &&
+              Found[I]->Kind != ExprKind::Undef)
             FromABI[I] = Found[I];
         return BoundKnownCalleeArity(std::move(FromABI));
       }

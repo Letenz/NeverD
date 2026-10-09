@@ -22,6 +22,7 @@
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/object/SectionNames.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 
 #include <algorithm>
@@ -411,17 +412,27 @@ const AbiCallPolicy *abiCallPolicy(Arch A, BinaryFormat F) {
   return nullptr;
 }
 
-void recoverCallAbi(MedFunc &Func, Arch TheArch,
-                    const std::map<va_t, std::string> &FuncNames,
-                    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
-                    std::map<va_t, int> *CalleeTotalArity,
-                    const std::map<va_t, int> *CalleeFPArity,
-                    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
-                    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
-                    const std::map<va_t, bool> *CalleeHasSret,
-                    std::map<va_t, bool> *CalleeIsVariadic,
-                    const std::map<va_t, bool> *CalleeConsumesVaList,
-                    const std::set<va_t> *FrameLocalLeafCallees) {
+IntegerArgumentLayout integerArgumentLayoutOf(const MedFunc &Func,
+                                              const TargetRegInfo &TRI) {
+  IntegerArgumentLayout Layout =
+      TRI.integerArgumentLayout(Func.CC == CallingConv::Win64);
+  if (!Func.IntegerArgumentRegisters.empty())
+    Layout.Registers = Func.IntegerArgumentRegisters;
+  return Layout;
+}
+
+void recoverCallAbi(
+    MedFunc &Func, Arch TheArch, const std::map<va_t, std::string> &FuncNames,
+    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
+    std::map<va_t, int> *CalleeTotalArity,
+    const std::map<va_t, int> *CalleeFPArity,
+    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
+    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
+    const std::map<va_t, bool> *CalleeHasSret,
+    std::map<va_t, bool> *CalleeIsVariadic,
+    const std::map<va_t, bool> *CalleeConsumesVaList,
+    const std::set<va_t> *FrameLocalLeafCallees,
+    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs) {
   Func.CallInfos.clear();
 
   const auto &TRI = getTargetRegInfo(TheArch);
@@ -430,8 +441,14 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
   const CallArgumentConvention *Convention =
       callArgumentConvention(TheArch, Fmt);
   const AbiCallPolicy *Policy = abiCallPolicy(TheArch, Fmt);
-  const auto IntegerLayout = TRI.integerArgumentLayout(Fmt);
-  const auto IntParamRegs = IntegerLayout.Registers;
+  const IntegerArgumentLayout DefaultIntegerLayout =
+      TRI.integerArgumentLayout(Fmt);
+  // The integer argument layout of the call being recovered: that of a
+  // direct callee with its own register order (CalleeIntRegs), else the
+  // convention's.  The parameters this function forwards are numbered in
+  // the layout of the call that passes them on.
+  IntegerArgumentLayout IntegerLayout = DefaultIntegerLayout;
+  llvm::ArrayRef<uint64_t> IntParamRegs = IntegerLayout.Registers;
   auto regToIntArgIdx = [&](uint64_t RegOff) {
     return IntegerLayout.registerIndex(RegOff);
   };
@@ -448,8 +465,32 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
 
   // Argument registers a forwarder passes straight through from its incoming
   // value (recovered only via the live-in fallback, never written in the
-  // function): promoted to real parameters after all calls are processed.
-  std::map<int, MedVar> PromoteParams;
+  // function), by register: promoted to real parameters after all calls are
+  // processed.
+  std::map<uint64_t, MedVar> PromoteParams;
+  // The register order of the first call that passes one on, which a
+  // forwarder without an order of its own takes its parameters in.
+  std::vector<uint64_t> PromoteOrder;
+  // Whether an operation of this function defines \p V; an entry self-copy
+  // only names the incoming value.
+  std::set<std::tuple<int, int, int>> DefinedValues;
+  bool DefinedValuesBuilt = false;
+  auto isDefinedValue = [&](const MedVar &V) {
+    if (!DefinedValuesBuilt) {
+      for (const auto &B : Func.Blocks) {
+        for (const auto &Phi : B.Phis)
+          DefinedValues.insert({static_cast<int>(Phi.Output.Kind),
+                                Phi.Output.Id, Phi.Output.SSAVer});
+        for (const auto &O : B.Ops)
+          if (!(O.Opcode == NdOp::COPY && O.NumInputs >= 1 &&
+                O.Inputs[0] == O.Output))
+            DefinedValues.insert({static_cast<int>(O.Output.Kind), O.Output.Id,
+                                  O.Output.SSAVer});
+      }
+      DefinedValuesBuilt = true;
+    }
+    return DefinedValues.count({static_cast<int>(V.Kind), V.Id, V.SSAVer}) != 0;
+  };
 
   // The floating-point analogue of PromoteParams: FP/vector argument registers
   // (v0-7 / d0-7 / xmm0-7) a pure tail-call forwarder passes straight through
@@ -534,6 +575,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       CI.BlockId = Blk.Id;
       CI.OpIdx = static_cast<int>(OI);
       CI.IsIndirect = (Op.Opcode == NdOp::INDIR_CALL);
+      IntegerLayout = DefaultIntegerLayout;
+      IntParamRegs = IntegerLayout.Registers;
 
       // SUBBYTES lane-extraction ops for any wide outgoing store at this call,
       // recorded for deferred insertion before the call.
@@ -633,6 +676,15 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         if (AIt != CalleeRegArity->end())
           CalleeRegArgs = AIt->second;
       }
+      // A direct callee with its own register order takes its register
+      // arguments in that order.
+      if (!CI.IsIndirect && !IsRelocExtern && !IsDirectImport && CalleeIntRegs)
+        if (auto RIt = CalleeIntRegs->find(CI.TargetAddr);
+            RIt != CalleeIntRegs->end() && !RIt->second.empty()) {
+          IntegerLayout.Registers = RIt->second;
+          IntParamRegs = IntegerLayout.Registers;
+          CI.ArgumentsInCalleeRegisterOrder = true;
+        }
 
       // The callee's full integer-argument count (register + stack), for
       // bounding a tail-call forwarder's passed-through stack arguments.
@@ -1028,7 +1080,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           Found[K] = *V;
           FoundMask[K] = true;
           if (FromLiveIn) {
-            PromoteParams.emplace(K, *V);
+            PromoteParams.emplace(V->RegOff, *V);
+            if (PromoteOrder.empty())
+              PromoteOrder.assign(IntParamRegs.begin(), IntParamRegs.end());
             // This value is the caller's incoming parameter, not the CALL's
             // result register.  A tail forwarder commonly uses R0 for both;
             // leaving the argument as Reg R0 gives it the same SSA key as the
@@ -1039,6 +1093,38 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
             Found[K].Id = -1;
           }
         }
+
+      // A register's incoming value passed on unchanged, which an entry
+      // self-copy names, is the parameter it carries: a callee with its own
+      // register order may take a register this function's own order lacks
+      // (GCC's EAX where this function read only ECX and EDX, or stored
+      // EAX), which this function then forwards as a live-in; and a
+      // parameter so promoted has no register variable of its own.
+      if (IntRegArgsApply && !Func.SkippedSSA && Convention &&
+          !Convention->AlternateRegisterOrder.empty()) {
+        const IntegerArgumentLayout Own = integerArgumentLayoutOf(Func, TRI);
+        for (int K = 0; K < NumIntParamRegs && K < MaxArgs; ++K) {
+          MedVar &V = Found[K];
+          if (!FoundMask[K] || V.Kind != MedVar::Reg || V.SSAVer != 0 ||
+              V.RegOff != IntParamRegs[K] || isDefinedValue(V))
+            continue;
+          const auto Param = llvm::find_if(Func.Params, [&](const MedVar &P) {
+            return P.RegOff == V.RegOff;
+          });
+          const bool Forwarded =
+              Param == Func.Params.end() && CI.ArgumentsInCalleeRegisterOrder &&
+              K < CalleeRegArgs && Own.registerIndex(V.RegOff) < 0;
+          if (Forwarded) {
+            PromoteParams.emplace(V.RegOff, V);
+            if (PromoteOrder.empty())
+              PromoteOrder.assign(IntParamRegs.begin(), IntParamRegs.end());
+          } else if (Param == Func.Params.end() || Param->Id >= 0) {
+            continue;
+          }
+          V.Kind = MedVar::Param;
+          V.Id = -1;
+        }
+      }
 
       // An earlier call in the block may have clobbered the register of the
       // first argument (a Win64 thiscall helper clobbers rcx).
@@ -2184,6 +2270,17 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
     }
   }
 
+  // The parameters below are numbered in this function's own register
+  // order, or, for a forwarder without one, in that of the call it forwards
+  // registers to: a forwarder of a function with its own order takes its
+  // parameters in that order.
+  IntegerLayout = DefaultIntegerLayout;
+  if (!Func.IntegerArgumentRegisters.empty())
+    IntegerLayout.Registers = Func.IntegerArgumentRegisters;
+  else if (!PromoteOrder.empty())
+    IntegerLayout.Registers = PromoteOrder;
+  IntParamRegs = IntegerLayout.Registers;
+
   // Surface forwarded incoming registers as parameters.  A pure forwarder
   // `f(a){return g(a);}` never reads its argument register (it flows straight
   // into the call), so detectCc's live-in scan misses it and Func.Params lacks
@@ -2197,7 +2294,10 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       if (P.RegOff != kNoParamReg)
         if (int ArgIdx = regToIntArgIdx(P.RegOff); ArgIdx >= 0)
           ExistingIntArgs.insert(ArgIdx);
-    const int MaxPromoted = PromoteParams.rbegin()->first;
+    // A register outside the order carries no argument of this function.
+    int MaxPromoted = -1;
+    for (const auto &Promoted : PromoteParams)
+      MaxPromoted = std::max(MaxPromoted, regToIntArgIdx(Promoted.first));
     for (int I = 0;
          I <= MaxPromoted && I < static_cast<int>(IntParamRegs.size()); ++I) {
       if (ExistingIntArgs.count(I))
@@ -2206,7 +2306,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       P.Kind = MedVar::Param;
       P.Id = -1;
       P.TheArch = TheArch;
-      if (auto It = PromoteParams.find(I); It != PromoteParams.end()) {
+      if (auto It = PromoteParams.find(IntParamRegs[I]);
+          It != PromoteParams.end()) {
         P.RegOff = It->second.RegOff;
         P.Size = It->second.Size > 0 ? It->second.Size
                                      : static_cast<uint16_t>(TRI.PointerSize);
@@ -2230,6 +2331,22 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         if (Home.first >= InsertIndex)
           ++Home.first;
       ExistingIntArgs.insert(I);
+    }
+    // Its callers pass them in the order of the call they reach, and the
+    // register parameters it already had take their places in that order
+    // (a fastcall-looking ECX, EDX beside a forwarded GCC EAX).
+    if (Func.IntegerArgumentRegisters.empty() && !PromoteOrder.empty() &&
+        !llvm::equal(PromoteOrder, DefaultIntegerLayout.Registers)) {
+      Func.IntegerArgumentRegisters = PromoteOrder;
+      auto RegisterEnd = std::find_if(
+          Func.Params.begin(), Func.Params.end(), [&](const MedVar &P) {
+            return P.RegOff == kNoParamReg || regToIntArgIdx(P.RegOff) < 0;
+          });
+      std::stable_sort(Func.Params.begin(), RegisterEnd,
+                       [&](const MedVar &A, const MedVar &B) {
+                         return regToIntArgIdx(A.RegOff) <
+                                regToIntArgIdx(B.RegOff);
+                       });
     }
   }
 
