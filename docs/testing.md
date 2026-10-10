@@ -33,6 +33,14 @@ The SBF source differential suite additionally needs `rustc`; it executes both
 generated C and generated Rust. Treat a missing compiler skip as missing
 backend evidence, not as semantic success.
 
+The native source dialect suite also uses `rustc` and `go` from `PATH`, or
+`NEVERD_TEST_RUSTC` and `NEVERD_TEST_GO`. It executes 32 Rust/C observations and
+12 Go/C observations covering integer promotion, narrowing, signed/unsigned
+comparison, arithmetic shifts and loops. The Go check compiles its generated
+scalar functions unchanged; it does not establish that every Go pseudocode
+construct is directly compilable. Missing compilers remain explicit local
+skips and are failures in the main CI outcome audit.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
@@ -106,6 +114,21 @@ Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
 
 ## Source dialects and DWARF ingestion
+
+The main CI matrix installs Rust 1.93.1 and Go 1.27.2, records their versions,
+and uses its built CLI to emit HighC and LLVMC for small x64/AArch64 ELF inputs.
+This supplies the two optional dialect corpus/file checks without an external
+download. Empty or unreadable corpus directories fail. Reproduce those checks
+locally after building `neverd` and `NeverDSourceDialectTests`:
+
+```sh
+python3 scripts/prepare_source_dialect_corpus.py \
+  --neverd build-release/bin/neverd --output build-release/source-dialects
+NEVERD_SOURCE_DIALECT_CORPUS="$PWD/build-release/source-dialects/corpus" \
+NEVERD_SOURCE_DIALECT_FILE="$PWD/build-release/source-dialects/corpus/x64-c.c" \
+NEVERD_SOURCE_DIALECT=go \
+  ctest --test-dir build-release -L '^NeverDSourceDialectTests$' --output-on-failure
+```
 
 `NeverDSourceDialectTests` checks C++ symbol validation, STL aliases, preserved
 custom template arguments, ATL names, and the C exception projection's native
@@ -473,6 +496,12 @@ cycles, unknown roots, conflicting anchors, intermediate overflow, budget
 exhaustion, incremental graph growth and cache reset. A seeded independent
 backward path-constraint oracle checks cyclic equation results. Repeated
 diamond graphs check linear evidence growth rather than a wall-clock cutoff.
+
+`ResolverLaneViews.*` in the same target checks query-local register metadata
+caching across widths, high-byte registers, architectures, temporary values
+and deliberate cache collisions. Shuffled architectural views must retain
+their cold-query answers after eviction; value and frame proofs remain outside
+this fixed-size cache.
 
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
@@ -2743,6 +2772,10 @@ The required execution policy follows existing CI ownership:
   case fails the CI evidence audit.
 - Linux must also execute the SBF external oracle, upstream conformance, and
   Agave conformance suites because that leg installs their pinned dependencies.
+- Every host must execute `NeverDSourceDialectTests` and
+  `NeverDSourceAnchorTests`. Missing compilers, missing generated corpus inputs,
+  skipped checks, or omitted suites fail the audit. The CTest evidence artifact
+  includes the compiler versions, native ELF inputs, emitted C and CLI logs.
 - The only platform exceptions within these required suites are
   `ObjCEHCorpus.HonorsHostMachORewriteContractForEveryVariant` and
   `CxxItaniumEHCorpus.HonorsHostMachORewriteContractForEveryProbeVariant` on

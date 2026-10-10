@@ -680,6 +680,12 @@ llvm::Expected<std::string> run(llvm::StringRef Program,
   return Text ? (*Text)->getBuffer().str() : std::string();
 }
 
+std::string normalizeLineEndings(std::string Text) {
+  for (size_t At = 0; (At = Text.find("\r\n", At)) != std::string::npos;)
+    Text.erase(At, 1);
+  return Text;
+}
+
 /// Compiles the C functions with clang and their Rust view with rustc, runs
 /// both on the same inputs and compares what they print: the Rust view must
 /// compute what the C computes.  NEVERD_TEST_RUSTC or a `rustc` on PATH runs
@@ -742,12 +748,99 @@ TEST(SourceDialect, RustViewComputesWhatCComputes) {
   EXPECT_EQ(std::count(CResult->begin(), CResult->end(), '\n'), 32);
   // C's Windows text-mode stdout uses CRLF; Rust's stdout writes LF. Keep
   // the scalar results exact while comparing the same logical line endings.
-  auto Lines = [](std::string Text) {
-    for (size_t At = 0; (At = Text.find("\r\n", At)) != std::string::npos;)
-      Text.erase(At, 1);
-    return Text;
+  EXPECT_EQ(normalizeLineEndings(*RustResult), normalizeLineEndings(*CResult))
+      << Rust.Text;
+  llvm::sys::fs::remove_directories(Dir);
+}
+
+/// Execute the Go scalar subset without rewriting its generated functions or
+/// supplying pseudo-intrinsic implementations. CI requires this test to run.
+TEST(SourceDialect, GoViewComputesWhatCComputes) {
+  std::string GoCompiler;
+  if (const char *FromEnv = std::getenv("NEVERD_TEST_GO"))
+    GoCompiler = FromEnv;
+  else if (auto Found = llvm::sys::findProgramByName("go"))
+    GoCompiler = *Found;
+  if (GoCompiler.empty())
+    GTEST_SKIP() << "no go: the Go view's meaning is not executed";
+  const std::string Clang = NEVERD_TEST_CLANG;
+  if (Clang.empty())
+    GTEST_SKIP() << "no clang: the C side is not executed";
+
+  constexpr const char *C = R"C(#include <stdint.h>
+uint32_t promote(uint8_t a, uint8_t b) { return a + b; }
+uint8_t narrow(uint8_t a, uint8_t b) { return (uint8_t)(a + b); }
+int32_t mixed_compare(int32_t s, uint32_t u) {
+    if (s < u) { return 1; }
+    return 0;
+}
+int64_t arithmetic_shift(int64_t v, int32_t n) { return v >> n; }
+int32_t loop_sum(int32_t n) {
+    int32_t s;
+    s = 0;
+    while (n > 0) {
+        s = s + n;
+        n = n - 1;
+    }
+    return s;
+}
+)C";
+  const char *Calls[] = {"promote(200, 100)",
+                         "promote(255, 255)",
+                         "narrow(200, 100)",
+                         "narrow(255, 255)",
+                         "mixed_compare(-1, 5)",
+                         "mixed_compare(3, 5)",
+                         "arithmetic_shift(-1024, 3)",
+                         "arithmetic_shift(1024, 3)",
+                         "loop_sum(0)",
+                         "loop_sum(1)",
+                         "loop_sum(8)",
+                         "loop_sum(100)"};
+  SourceDialectText Go = spell(C, SourceDialect::Go);
+  ASSERT_TRUE(Go.Unread.empty()) << Go.Text;
+  std::string CSource =
+      std::string(C) + "\n#include <stdio.h>\nint main(void) {\n";
+  std::string GoSource =
+      "package main\nimport \"fmt\"\n" + Go.Text + "\nfunc main() {\n";
+  for (const char *Call : Calls) {
+    CSource += "printf(\"%lld\\n\", (long long)" + std::string(Call) + ");\n";
+    GoSource += "fmt.Println(" + std::string(Call) + ")\n";
+  }
+  CSource += "return 0;\n}\n";
+  GoSource += "}\n";
+
+  llvm::SmallString<128> Dir;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-go-dialect", Dir));
+  auto Write = [&](llvm::StringRef Name, llvm::StringRef Text) {
+    llvm::SmallString<128> Path(Dir);
+    llvm::sys::path::append(Path, Name);
+    std::error_code EC;
+    llvm::raw_fd_ostream OS(Path, EC);
+    EXPECT_FALSE(EC) << Path.str().str();
+    OS << Text;
+    return std::string(Path);
   };
-  EXPECT_EQ(Lines(*RustResult), Lines(*CResult)) << Rust.Text;
+  const std::string CFile = Write("program.c", CSource);
+  const std::string GoFile = Write("program.go", GoSource);
+  llvm::SmallString<128> CBinary(Dir), GoBinary(Dir);
+  llvm::sys::path::append(CBinary, "c.out");
+  llvm::sys::path::append(GoBinary, "go.out");
+  auto CBuild = run(
+      Clang,
+      {"-O1", "-fwrapv", "-fno-strict-aliasing", "-o", CBinary.str(), CFile},
+      Dir);
+  ASSERT_TRUE(bool(CBuild)) << llvm::toString(CBuild.takeError());
+  auto GoBuild = run(GoCompiler, {"build", "-o", GoBinary.str(), GoFile}, Dir);
+  ASSERT_TRUE(bool(GoBuild)) << llvm::toString(GoBuild.takeError()) << GoSource;
+  auto CResult = run(CBinary, {}, Dir);
+  auto GoResult = run(GoBinary, {}, Dir);
+  ASSERT_TRUE(bool(CResult)) << llvm::toString(CResult.takeError());
+  ASSERT_TRUE(bool(GoResult)) << llvm::toString(GoResult.takeError());
+  EXPECT_EQ(normalizeLineEndings(*CResult),
+            "300\n510\n44\n254\n0\n1\n-128\n128\n0\n1\n36\n5050\n");
+  EXPECT_EQ(normalizeLineEndings(*GoResult), normalizeLineEndings(*CResult))
+      << Go.Text;
   llvm::sys::fs::remove_directories(Dir);
 }
 
@@ -812,6 +905,8 @@ TEST(SourceDialect, CorpusReadsBackAsTheSameC) {
       }
     }
   }
+  ASSERT_FALSE(EC) << Dir << ": " << EC.message();
+  ASSERT_GT(Files, 0u) << "no emitted C files in " << Dir;
   std::vector<std::pair<unsigned, std::string>> Sorted;
   for (auto &[Reason, Count] : Reasons)
     Sorted.push_back({Count, Reason});

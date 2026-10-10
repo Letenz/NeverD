@@ -34,6 +34,7 @@ COMMON_REQUIRED_LABELS = frozenset(
     + inventory.PLUGIN_LABELS
     + inventory.CONCOLIC_LABELS
     + inventory.INTEGRITY_LABELS
+    + inventory.SOURCE_DIALECT_LABELS
 )
 # The Linux workflow installs these exact source/corpus/oracle dependencies.
 LINUX_REQUIRED_LABELS = frozenset(

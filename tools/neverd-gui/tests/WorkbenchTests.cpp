@@ -305,6 +305,33 @@ private slots:
     QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
   }
 
+  void graphJumpDuringFunctionLoadKeepsLatestAddress() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-edits-mapped.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    const Address first = Base + 0x140;
+    const Address second = Base + 0x180;
+    const Address target = first + 2;
+    assembly->navigate(first);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(first));
+    assembly->setGraphMode(true);
+    QTRY_VERIFY(assembly->graphMode() && assembly->graph()->loaded());
+
+    // Enter the interval after the next function was requested, before its
+    // asynchronous layout arrives. A new jump must not use the old nodes as
+    // though they belonged to the function being loaded.
+    assembly->graph()->showFunction(second, second);
+    assembly->navigate(target);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(first));
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(target));
+    QTest::qWait(100);
+    QCOMPARE(assembly->currentFunction(), std::optional<Address>(first));
+    QCOMPARE(assembly->currentAddress(), std::optional<Address>(target));
+  }
+
   void tabFromAssemblyWaitsForPagesAndUnfoldsTarget() {
     QTemporaryDir directory;
     Workbench bench;

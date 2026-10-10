@@ -29,9 +29,20 @@ are warm, host activity remains uncontrolled, and these worker measurements do
 not include Qt painting. IDA auto-analysis and decompilation are recorded
 separately; NeverD's first page includes IPC and source generation.
 
+Add `--baseline-engine /absolute/path/to/previous/libneverd.so` to compare two
+compatible engines with the same worker. Each engine receives its own fresh
+process and input copy. Successive repetitions alternate the order; the JSON
+records both source hashes, timings and host load before/after each run.
+On hybrid CPUs, run the driver under `taskset -c <cpu-list>` so both engines
+inherit the same set of cores. The report records the inherited CPU affinity;
+pinning does not reserve those cores or eliminate unrelated host activity.
+
 The [2026-10-09 Rust investigation](results/linux-x86_64-20261009-rust-pseudocode.md)
 retains a measured original-engine control, one-/four-thread repetitions,
 complete source hashes and the remaining gap to IDA.
+The [second pass](results/linux-x86_64-20261009-rust-pseudocode-round2.md)
+adds alternating engine comparisons on fixed performance cores, register/index
+allocation improvements, and more parallel callee proof batches.
 
 Generate versioned fixture descriptors:
 
