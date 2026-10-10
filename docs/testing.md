@@ -53,6 +53,10 @@ than the dispatcher admits. Functions activation covers Pseudocode, explicit C,
 LLVM C and IR windows, multiple windows, pinned views and back/forward history.
 The file-drop cases wait for the worker's loader-identification capability and
 check UTF-8 filenames through the Windows fixture boundary.
+Character-selection cases drag address prefixes, assembly text, C and Go
+pseudocode, and ordinary source rows beside a folded prelude in both directions.
+They check Ctrl+C and Edit Copy, selection retention on mouse release and right
+click, Shift-arrow selection and partial first/last rows across a newline.
 
 The controller also starts a controlled 30-second decompile, proves uncached
 function and listing reads complete while it is running, then switches
