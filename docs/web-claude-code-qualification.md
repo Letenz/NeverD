@@ -154,3 +154,10 @@ Broader worker testing also exposed a libc++ fixture signature mismatch
 persists with the signature cache disabled. `NeverDWorkerNativeMapping` failed
 once in parallel and passed on serial retry. These native-analysis checks are
 outside the JS recovery path; full worker/repository success is not claimed.
+
+The implementation and full web qualification are at `cb0a3d5ad`. Integration
+with upstream `dev` (`5f0fb5ebb`) produced `58bdfa7e7`; the web implementation,
+headers, parser integration, worker and web tests are unchanged by that merge.
+The focused source/mock-worker build reports no work needed. This qualification
+does not rerun a full native-backend build for the independently merged x86 EH
+changes. The recovered output remains the qualified C++ export recorded above.
