@@ -12,6 +12,8 @@
 #include "neverd/analysis/LowIRRefinement.h"
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
+
 namespace neverd::analysis::detail {
 
 struct NativeUndefinedIndependenceResult {
@@ -55,6 +57,23 @@ LowIRLoopInferenceResult inferNativeLowIRLoopRefinementPlan(
     const LowIRIndependenceContract &Contract,
     const LowIRLoopInferenceLimits &Limits,
     llvm::ArrayRef<NativeLoopCutpointOrigin> EligibleOrigins);
+
+struct NativeLoopStateProposalFailure {
+  LowIRLoopInferenceStatus Status;
+  std::string Diagnostic;
+};
+
+/// Append untrusted own-prefix selector assignments to generalized cuts whose
+/// guard ranges are disjoint from their existing state assignments. The caller
+/// must validate the complete plan before and after this transformation.
+/// Existing input provenance is retained; candidate inference must rebind its
+/// own prefix inputs before calling. Charge uses the caller's cumulative work
+/// budget and may throw on exhaustion. After any failure, partial modifications
+/// must not be consumed or published. This constructs no proof or assumptions.
+std::optional<NativeLoopStateProposalFailure>
+proposeNativeLoopSelectorStates(LowIRLoopRefinementPlan &Plan,
+                                const LowIRIndependenceLimits &Limits,
+                                llvm::function_ref<void(uint64_t)> Charge);
 
 } // namespace neverd::analysis::detail
 

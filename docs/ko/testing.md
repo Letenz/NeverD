@@ -1530,6 +1530,8 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 
 `BinaryLowIRLoopInference.NativeSelectors*`는 두 레지스터 문맥, 프레임만으로 구분되는 문맥, 세 영역의 논리곱, 구분 불가능한 템플릿, 출처 및 네이티브 본문 변이, 추론과 증명의 독립적인 정확한 예산 및 하나 부족한 예산을 검사한다. 루프 횟수는 임의이며 진입 상수를 추가하지 않는다.
 
+`NativeSelectorsGeneralize*`는 레지스터와 프레임의 교대 단계에 대한 자동 복구와 완전한 네이티브 증명을 검사하며, 상위 비트가 기호적인 바이트 마스크도 포함한다. `NativeSelectorState*`는 잘못된 순위/본문, 마스크 밖 비트 손상, 잘못된 대입 및 작업량/메타데이터의 정확한 예산과 하나 부족한 예산을 검사한다. 명시적인 유효 계획은 실제 빌더와 변환 전후의 완전한 네이티브 검사를 결합하여 겹치는 절단점과 분리된 절단점, 원본 접두 출처 보존, 대체 경로 스캔 비용 및 임시 오프셋 오버플로 거부를 검증한다. 이 명시적 계획 검사는 자동 추론 범위와 구분한다.
+
 `DarwinIndirectRecordCalls`는 현재 MakeScale 계약과 22가지 가져오기/ABI 변경을 검사하고, 공유 값 복사 증명으로 완전한 48바이트 비공개 결과를 소비합니다. 정렬되지 않거나 이동, 겹침 또는 프레임 범위를 벗어난 결과는 거부됩니다. 완전한 반환 ABI를 유지하더라도 확정 쓰기 효과를 제거하면 거부됩니다.
 
 `SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity`는 진입·캐리어·쓰기 변경 열 가지와 진입 ABI 누락을 거부한다. `NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress`는 직접 꼬리 호출을 재리프팅하고 명시적 출력 매개변수, 쓰기 여섯 번과 게시 게이트를 확인한다.

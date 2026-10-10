@@ -1540,6 +1540,8 @@ block とコピーの公開テストでは、独立した二つの 48 バイト�
 
 `BinaryLowIRLoopInference.NativeSelectors*` は二つのレジスタ文脈、フレームのみの文脈、三領域の論理積、区別不能なテンプレート、由来・ネイティブ本体の変更、推論と証明の独立した厳密予算および一不足予算を検査する。ループ回数は任意で入口定数を追加しない。
 
+`NativeSelectorsGeneralize*` はレジスタ／フレームの交互フェーズについて自動復元と完全なネイティブ証明を検査し、上位ビットが記号的なバイトマスクも含む。`NativeSelectorState*` は誤った順位／本体、マスク外ビットの破損、不正代入、作業量とメタデータの厳密予算／一不足予算を検査する。明示的な有効計画では、実際のビルダーと変換前後の完全なネイティブ検査を組み合わせ、重複する切断点と非重複の切断点、元側プレフィックスの由来保持、フォールバック走査の課金、一時オフセットのオーバーフロー拒否を確認する。明示計画の検査と自動推論の範囲は区別する。
+
 `DarwinIndirectRecordCalls` は現在の MakeScale 契約と 22 種類のインポート/ABI 変更を検査し、共有の値渡しコピー証明で 48 バイト全体の私有結果を使用します。非整列、変位、重複、フレーム外の結果範囲は拒否されます。完全な戻り値 ABI が残っていても、確実な書き込み効果を除去すると拒否されます。
 
 `SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity` は入口・キャリア・書き込みの 10 変更と入口 ABI の欠落を拒否する。`NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress` は直接末尾呼び出しを再リフトし、明示的出力引数、6 書き込み、公開ゲートを確認する。

@@ -1448,6 +1448,8 @@ block/副本发布测试还覆盖两个独立的 48 字节范围、描述符重�
 
 `BinaryLowIRLoopInference.NativeSelectors*` 覆盖两个寄存器上下文、仅靠帧区分的上下文、三域合取、无法区分的模板、来源及原生循环体变异，以及推断和证明各自的精确与少一预算。循环次数任意，不引入入口常量。
 
+`NativeSelectorsGeneralize*` 验证交替寄存器／帧阶段的自动恢复与完整原生证明，包括高位仍符号化的字节掩码。`NativeSelectorState*` 检查错误排名／本体、掩码外位损坏、畸形赋值及工作量／元数据的精确和少一预算。显式有效计划还把正式构造器与变换前后的完整原生检查组合，覆盖重叠和不相交切点混合、原始侧前缀来源保留、回退扫描计费及临时偏移溢出拒绝。这些显式计划检查与自动推断覆盖分别记录。
+
 `DarwinIndirectRecordCalls` 检查当前 MakeScale 契约及 22 项导入/ABI 变更拒绝案例，再通过共享按值副本证明消费完整的 48 字节私有结果。未对齐、偏移、重叠或越出栈帧的结果范围均被拒绝。即使保留完整返回 ABI，移除确定写入效果也会被拒绝。
 
 `SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity` 拒绝十种入口、载体或写入修改以及缺失的入口 ABI。`NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress` 重新提升直接尾调用，检查显式输出参数、六次写入和发布门槛。

@@ -5615,6 +5615,31 @@ class LoopPlanInference {
       throw Stop{};
   }
 
+  void prepareNativeSelectorStates() {
+    auto Validation = checker();
+    if (!Validation.validateInput() || !Validation.validateLoopPlan())
+      throw Stop{};
+    for (auto &Cut : Plan.Cutpoints) {
+      // Only candidate inference owns this provenance. Rebind its old inputs
+      // before the proposal builder introduces any new own-side prefixes.
+      chargeCutSelection(Cut.Inputs.size());
+      for (auto &Input : Cut.Inputs)
+        if (Input.Side == LowIRLoopSide::OriginalPrefix)
+          Input.Side = LowIRLoopSide::CandidatePrefix;
+    }
+    if (auto Failure = detail::proposeNativeLoopSelectorStates(
+            Plan, Limits.Execution,
+            [&](uint64_t Count) { chargeCutSelection(Count); }))
+      stop(Failure->Status == LowIRLoopInferenceStatus::BudgetExceeded
+               ? Status::BudgetExceeded
+               : Status::Invalid,
+           Failure->Diagnostic);
+    // These are untrusted total state expressions, not guard assumptions.
+    // The original/candidate checker still owns every proof obligation.
+    if (!Validation.validateLoopPlan())
+      throw Stop{};
+  }
+
   bool inferMultiple(llvm::ArrayRef<va_t> Cuts) {
     Result.CutpointAttempts += Cuts.size();
     Models.assign(Cuts.size(), {});
@@ -5822,6 +5847,8 @@ public:
         if (!NativeOrigins.empty()) {
           Stage = "native cutpoint selectors";
           inferNativeSelectors(NativeOrigins);
+          Stage = "native selector state proposals";
+          prepareNativeSelectorStates();
         }
         Result.Status = LowIRLoopInferenceStatus::Inferred;
         Result.Plan = Plan;
@@ -5875,6 +5902,126 @@ LowIRLoopInferenceResult detail::inferLowIRLoopRefinementPlanFamily(
     llvm::ArrayRef<const LowIRLoopRefinementPlan *> PreviousPlans) {
   return LoopPlanInference(Candidate, Contract, Limits)
       .run({}, Family, PreviousPlans);
+}
+
+std::optional<detail::NativeLoopStateProposalFailure>
+detail::proposeNativeLoopSelectorStates(
+    LowIRLoopRefinementPlan &Plan, const LowIRIndependenceLimits &Limits,
+    llvm::function_ref<void(uint64_t)> Charge) {
+  const auto Budget = [] {
+    return NativeLoopStateProposalFailure{
+        LowIRLoopInferenceStatus::BudgetExceeded,
+        "native selector state metadata budget exhausted"};
+  };
+  const auto Overflow = [] {
+    return NativeLoopStateProposalFailure{
+        LowIRLoopInferenceStatus::Invalid,
+        "native selector temporary offset overflow"};
+  };
+  uint64_t Metadata = 0, Operations = 0;
+  for (const auto &Cut : Plan.Cutpoints) {
+    Charge(1);
+    for (uint64_t Count :
+         {Cut.Inputs.size(), Cut.OriginalState.size(),
+          Cut.CandidateState.size(), Cut.Rank.size(), Cut.OriginalGuards.size(),
+          Cut.CandidateGuards.size()}) {
+      if (Count > Limits.MaxInstructions - Metadata)
+        return Budget();
+      Metadata += Count;
+    }
+    if (Cut.Expressions.size() > Limits.MaxOperations - Operations)
+      return Budget();
+    Operations += Cut.Expressions.size();
+  }
+  for (auto &Cut : Plan.Cutpoints) {
+    if (!Cut.UseEntryPrefix || !Cut.GeneralizeEntryPrefix ||
+        (Cut.OriginalGuards.empty() && Cut.CandidateGuards.empty()))
+      continue;
+
+    // Guard/state overlap is legal, but this proposal cannot replace or
+    // merge an existing assignment. Preflight both sides and retain the
+    // whole cut if either side would overlap, including between guards.
+    bool Overlap = false;
+    for (bool Original : {true, false}) {
+      std::set<std::pair<LowIRLoopSpace, uint64_t>> Bound;
+      const auto &State = Original ? Cut.OriginalState : Cut.CandidateState;
+      const auto &Guards = Original ? Cut.OriginalGuards : Cut.CandidateGuards;
+      for (const auto &A : State) {
+        Charge(1 + A.Location.Bytes);
+        for (unsigned I = 0; I != A.Location.Bytes; ++I)
+          Bound.emplace(A.Location.Space, A.Location.Offset + I);
+      }
+      for (const auto &G : Guards) {
+        Charge(1 + G.Location.Bytes);
+        for (unsigned I = 0; I != G.Location.Bytes; ++I)
+          if (!Bound.emplace(G.Location.Space, G.Location.Offset + I).second)
+            Overlap = true;
+      }
+    }
+    if (Overlap)
+      continue;
+
+    const uint64_t Count =
+        Cut.OriginalGuards.size() + Cut.CandidateGuards.size();
+    if (Count > (Limits.MaxInstructions - Metadata) / 2 ||
+        Count > (Limits.MaxOperations - Operations) / 2)
+      return Budget();
+    uint64_t Next = 0;
+    const auto After = [&](NdVar V) {
+      Charge(1);
+      if (V.Offset > UINT64_MAX - V.Size || V.Offset + V.Size > UINT64_MAX - 7)
+        return false;
+      Next = std::max(Next, (V.Offset + V.Size + 7) & ~uint64_t{7});
+      return true;
+    };
+    for (const auto &I : Cut.Inputs)
+      if (!After(I.Temporary))
+        return Overflow();
+    for (const auto &Op : Cut.Expressions)
+      if (!After(Op.Output))
+        return Overflow();
+    if (Count > (UINT64_MAX - Next) / 24)
+      return Overflow();
+    // Each guard appends one input, two expressions and one assignment.
+    Charge(Count * 4);
+    Metadata += Count * 2;
+    Operations += Count * 2;
+    const auto Temp = [&](uint16_t Bytes) {
+      const auto V = NdVar::tmp(Next, Bytes);
+      Next += 8;
+      return V;
+    };
+    const auto Expr = [&](NdOp Opcode, NdVar A, NdVar B) {
+      LowOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Temp(A.Size);
+      Op.addInput(A);
+      Op.addInput(B);
+      Cut.Expressions.push_back(Op);
+      return Op.Output;
+    };
+    for (bool Original : {true, false}) {
+      auto &State = Original ? Cut.OriginalState : Cut.CandidateState;
+      const auto &Guards = Original ? Cut.OriginalGuards : Cut.CandidateGuards;
+      for (const auto &G : Guards) {
+        const auto Bytes = G.Location.Bytes;
+        const auto Prefix = Temp(Bytes);
+        Cut.Inputs.push_back({Original ? LowIRLoopSide::OriginalPrefix
+                                       : LowIRLoopSide::CandidatePrefix,
+                              G.Location, Prefix});
+        const auto Rest =
+            Expr(NdOp::INT_AND, Prefix,
+                 NdVar::scalar((Bytes == 8 ? UINT64_MAX
+                                           : (uint64_t{1} << (Bytes * 8)) - 1) &
+                                   ~G.Mask,
+                               Bytes));
+        const auto Selected =
+            Expr(NdOp::INT_OR, Rest, NdVar::scalar(G.Value, Bytes));
+        State.push_back({G.Location, Selected});
+      }
+    }
+  }
+  return std::nullopt;
 }
 
 LowIRLoopInferenceResult detail::inferNativeLowIRLoopRefinementPlan(
