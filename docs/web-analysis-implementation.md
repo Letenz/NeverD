@@ -135,6 +135,11 @@ checks run with an unusable external-tool PATH. Review regressions distinguish
 legacy fetch specifications from package versions, optional normalization,
 workspace peer context, hidden-lock bases, unrecorded package boundaries and
 missing manifest coverage. See the [package profile](web-package-profile.md).
+The owning web regression completed 327 cases: 320 passed and seven explicitly
+skipped (six unavailable LLVM Zstd map cases and the inapplicable ASAR-policy
+omission case). This includes complete Claude Code readable-source recovery
+and the six-platform Bun corpus. The enabled-backend capability test passed;
+the backend-omission-only API case was inapplicable and skipped.
 
 The official Claude Code 2.1.296 registry response was separately inspected as
 explicit `package-json` evidence: one root, eight optional platform dependency
