@@ -63,7 +63,7 @@ class RealignedRewriteEvidenceTests(unittest.TestCase):
                        "image_sha256": hashlib.sha256(product).hexdigest()}
             (case / "contract.json").write_text(json.dumps(receipt))
             (case / "source.ll").write_text("test IR")
-            (case / "rewrite.xml").write_text('<testsuites tests="1"/>')
+            (case / "rewrite.xml").write_text('<testsuites tests="3"/>')
             record = {"case": name, "images": [],
                       "contract_sha256": runner.file_digest(case / "contract.json"),
                       "ir_sha256": runner.file_digest(case / "source.ll")}
@@ -123,8 +123,10 @@ class RealignedRewriteEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             capture = self.capture(root)
-            for xml in ('<testsuites tests="0"/>', '<testsuites tests="1" failures="1"/>',
-                        '<testsuites tests="1"><testcase><skipped/></testcase></testsuites>'):
+            for xml in ('<testsuites tests="0"/>', '<testsuites tests="1"/>',
+                        '<testsuites tests="2"/>', '<testsuites tests="4"/>',
+                        '<testsuites tests="3" failures="1"/>',
+                        '<testsuites tests="3"><testcase><skipped/></testcase></testsuites>'):
                 (root / "value/rewrite.xml").write_text(xml)
                 with self.subTest(xml=xml), self.assertRaises(ValueError):
                     replay.validate_capture(root, capture)

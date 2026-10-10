@@ -145,14 +145,17 @@ def main() -> int:
             run([linker, "/entry:mainCRTStartup", "/nodefaultlib", "/machine:x86", "/subsystem:console",
                  "/fixed:no", "/dynamicbase:no", "/out:" + str(original),
                  case / "driver.obj", out / (kind + ".obj"), *libraries])
-            run([test, "--gtest_filter=WindowsRegistrationRealignedNative.InputPE32ReconstructsTheSourceFrame",
+            run([test, "--gtest_filter=WindowsRegistrationRealignedNative.InputPE32ReconstructsTheSourceFrame:"
+                 "WindowsRegistrationHighCallback.InputPE32BindsCurrentCallbackRoots:"
+                 "WindowsRegistrationHighCallback.InputPE32CollectsTheWholeCallbackCFG",
                  "--gtest_output=xml:" + str(case / "rewrite.xml")],
                 {"NEVERD_REGISTRATION_REALIGNED_NATIVE_PE32": str(original),
+                 "NEVERD_REGISTRATION_REALIGNED_PE32": str(original),
                  "NEVERD_REGISTRATION_REALIGNED_OUTPUT_PE32": str(product),
                  "NEVERD_REGISTRATION_REALIGNED_RECEIPT": str(case / "contract.json"),
                  "NEVERD_REGISTRATION_OUTPUT_IR": str(case / "source.ll")})
-            if require_test_result(case / "rewrite.xml") != 1:
-                raise ValueError("realigned reconstruction test missing")
+            if require_test_result(case / "rewrite.xml") != 3:
+                raise ValueError("realigned reconstruction or HighIR callback test missing")
             receipt = json.loads((case / "contract.json").read_text())
             validate_installation(PE32(original.read_bytes()), PE32(product.read_bytes()), receipt)
             for mode in ("section", "inplace"):
