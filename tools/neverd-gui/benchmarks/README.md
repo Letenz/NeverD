@@ -5,6 +5,34 @@ They do not turn the architecture design's proposed P0 targets into accepted
 performance guarantees. The viewport executable is a small independent harness,
 not the production workbench.
 
+## Large-function pseudocode latency
+
+Measure fixed function entries in fresh worker processes, retaining the first
+page latency, complete source latency, full source hash, phase timings and peak
+worker RSS. The Linux profile selects the supplied engine through
+`LD_LIBRARY_PATH`; use matching worker and engine builds. An optional activated
+idalib Python measures the same entries after fresh IDA auto-analysis.
+
+```sh
+python3 tools/neverd-gui/benchmarks/pseudocode_latency_bench.py \
+  --worker build-gui/bin/neverd-worker --engine build/bin/libneverd.so \
+  --entry 0x19b24 --entry 0x34901 --entry 0x309d0 --entry 0x54174 \
+  --threads 4 --samples 3 --timeout 180 \
+  --output build-bench/rust-parallel.json /absolute/path/to/rust-eh-fixture
+```
+
+Use `--ida-python /path/to/activated/python` to include the comparison. Repeat
+with `--threads 1` and compare every complete source hash to check deterministic
+publication. Matching source text is a reproducibility check, not a proof of
+semantic equivalence. Keep builds and tests out of the timing window. OS caches
+are warm, host activity remains uncontrolled, and these worker measurements do
+not include Qt painting. IDA auto-analysis and decompilation are recorded
+separately; NeverD's first page includes IPC and source generation.
+
+The [2026-10-09 Rust investigation](results/linux-x86_64-20261009-rust-pseudocode.md)
+retains a measured original-engine control, one-/four-thread repetitions,
+complete source hashes and the remaining gap to IDA.
+
 Generate versioned fixture descriptors:
 
 ```sh
