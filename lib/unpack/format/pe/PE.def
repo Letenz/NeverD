@@ -43,6 +43,9 @@ NEVERD_UNPACK_PE_STALE_DIRECTORY(IAT)
 #endif
 
 #ifdef NEVERD_UNPACK_PE_TEXT
+NEVERD_UNPACK_PE_TEXT(
+    DLLNotificationEntry,
+    "original DLL entry is unavailable for loader notifications")
 NEVERD_UNPACK_PE_TEXT(NotPE, "input has no PE signature")
 NEVERD_UNPACK_PE_TEXT(Truncated, "PE headers are truncated or overlap")
 NEVERD_UNPACK_PE_TEXT(

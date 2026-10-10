@@ -102,12 +102,39 @@ static void image(void *Module, const char *Symbol) {
     }
   require(Found == 1, 13);
 }
-static void lists(void **Modules) {
+static U8 *peb(void) {
   U8 *TEB;
 #define NEVERD_SYSTEM_ASM(Name, Text) __asm__(Text : "=r"(TEB));
 #include "WindowsSystemCases.def"
 #undef NEVERD_SYSTEM_ASM
-  U8 *PEB = *(U8 **)(TEB + TebPEB);
+  return *(U8 **)(TEB + TebPEB);
+}
+static void version(void *Native, U32 Mode) {
+  U8 *PEB = peb();
+  U32 Values[] = {word(PEB, PebVersionMajor), word(PEB, PebVersionMinor),
+                  *(const U16 *)(PEB + PebVersionBuild),
+                  word(PEB, PebVersionPlatform)};
+  if (Mode == VersionBytesMode) {
+    U32 Written;
+    require(WriteFile(GetStdHandle(StdoutSelector), Values, sizeof(Values),
+                      &Written, 0) &&
+                Written == sizeof(Values),
+            201);
+    ExitProcess(ExitStatus);
+  }
+  // Independently compare the internal layout against the native API; the
+  // model-only version-byte case does not infer a Windows release from it.
+  U32 Information[71];
+  for (U32 I = 0; I < 71; ++I)
+    ((volatile U32 *)Information)[I] = 0;
+  Information[0] = sizeof(Information);
+  U32 (*Query)(void *) = lookup(Native, "RtlGetVersion");
+  require(Query(Information) == 0, 202);
+  for (U32 I = 0; I < 4; ++I)
+    require(Values[I] == Information[I + 1], 203 + I);
+}
+static void lists(void **Modules) {
+  U8 *PEB = peb();
   U8 *Ldr = *(U8 **)(PEB + PebLdr);
   const U32 Heads[] = {LdrLoadList, LdrMemoryList, LdrInitList};
   for (U32 I = 0; I < sizeof(Heads) / sizeof(Heads[0]); ++I) {
@@ -202,6 +229,8 @@ U32 entry(void) {
               GetLastError() == LastErrorSeed,
           27);
   require(GetModuleHandleA(0) == GetModuleHandleW(0), 35);
+  if (Mode == VersionBytesMode || Mode == VersionNativeMode)
+    version(Modules[2], Mode);
   if (Mode == UnknownMode)
     GetProcAddress(Modules[0], UnmodeledName);
   if (Mode == OrdinalMode)

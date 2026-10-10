@@ -473,6 +473,9 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   auto RebuiltTLS = rebuildTLS(In, C, MetadataRVA, Metadata);
   if (!RebuiltTLS)
     return RebuiltTLS.takeError();
+  auto Entry = rebuildEntry(In, C, MetadataRVA, Metadata);
+  if (!Entry)
+    return Entry.takeError();
   const uint64_t NewImageSize =
       MetadataRVA +
       llvm::alignTo(Metadata.size(), uint64_t(H.SectionAlignment));
@@ -596,7 +599,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
       COFF.Characteristics | llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED;
   store(Out.File, H.FileHeaderOffset, COFF);
   auto PE = fetch<pe32plus_header>(Out.File, H.OptionalHeaderOffset);
-  PE.AddressOfEntryPoint = C.EntryRVA;
+  PE.AddressOfEntryPoint = *Entry;
   PE.ImageBase = C.Base;
   PE.SizeOfImage = NewImageSize;
   PE.SizeOfHeaders = HeaderBytes;
@@ -650,7 +653,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
                                llvm::COFF::IMAGE_SCN_MEM_READ;
       if (Repairs->CellBytes)
         Header.Characteristics |= llvm::COFF::IMAGE_SCN_MEM_WRITE;
-      if (RebuiltTLS->HasCode)
+      if (RebuiltTLS->HasCode || *Entry != C.EntryRVA)
         Header.Characteristics |=
             llvm::COFF::IMAGE_SCN_MEM_EXECUTE | llvm::COFF::IMAGE_SCN_CNT_CODE;
       Out.Sections.push_back(
