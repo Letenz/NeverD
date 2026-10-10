@@ -68,9 +68,22 @@ std::string Session::capabilities() {
       {"max_steps", MaxHTMLSteps},
       {"max_link_steps", MaxHTMLLinkSteps},
       {"max_cached", 4},
-      {"record_kinds", llvm::json::Array{"scripts", "bases"}},
+      {"record_kinds", llvm::json::Array{"scripts", "bases", "import_maps"}},
       {"tree_construction_verified", false},
       {"runtime_entries_verified", false},
+      {"executes_input", false},
+      {"resolves_external_references", false}});
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "html_import_map_candidates"},
+      {"profile", std::string(ImportMapProfile)},
+      {"url_parser", "ada-4.0.0-b12a893a45809da8103bb4f1e2f6f5ee13f9100b"},
+      {"max_declarations", MaxHTMLImportMaps},
+      {"max_total_body_bytes", MaxImportMapBytes},
+      {"max_records", MaxImportMapRecords},
+      {"max_url_bytes", MaxImportMapURLBytes},
+      {"max_steps", MaxImportMapSteps},
+      {"activation_verified", false},
+      {"integrity_verified", false},
       {"executes_input", false},
       {"resolves_external_references", false}});
   Analyses.emplace_back(llvm::json::Object{

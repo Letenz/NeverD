@@ -59,6 +59,10 @@ than the dispatcher admits. Functions activation covers Pseudocode, explicit C,
 LLVM C and IR windows, multiple windows, pinned views and back/forward history.
 The file-drop cases wait for the worker's loader-identification capability and
 check UTF-8 filenames through the Windows fixture boundary.
+Character-selection cases drag address prefixes, assembly text, C and Go
+pseudocode, and ordinary source rows beside a folded prelude in both directions.
+They check Ctrl+C and Edit Copy, selection retention on mouse release and right
+click, Shift-arrow selection and partial first/last rows across a newline.
 
 The controller also starts a controlled 30-second decompile, proves uncached
 function and listing reads complete while it is running, then switches
@@ -448,6 +452,17 @@ both HTML operations and inline source/anchor/module results with direct API
 results. All
 new fixture recording and test logic is C++; the [profile](web-html-profile.md)
 records deliberate context and import limitations.
+
+`WebImportMap` checks native URL normalization, exact/prefix/scoped precedence,
+null and invalid-address blocking, prefix backtracking, separate declaration
+and script bases, first-definition composition, percent/query/fragment identity,
+duplicate/normalized-key refusals and independent admission/resolution budgets.
+HTML module cases add timing/origin/root confinement and aggregate map limits.
+SDK/CLI/worker cases compare private map pages and request evidence, preserve
+ASAR member identity and read captured maps after the original files are deleted.
+No JavaScript runtime, browser, URL CLI or external generator is used. HTML map
+inventory must also be checked with the JS parser disabled; backend-omission
+coverage retains its existing ABI cases.
 
 Build the owning target, then run
 `ctest --test-dir build-release/unittests/web --output-on-failure`. Parser tests require
@@ -2443,7 +2458,8 @@ state observations. Changed prologue bytes cannot retain the checked anchor.
 Canonical metadata and source digests retain every coordinate. The realigned
 state proof checks independent callback allocation, initialized spills, exact
 parent-frame recovery, preserved callback calls and balanced runtime returns;
-HighIR and the native classifier retain their separate frame-lowering gates.
+HighIR retains its separate full-clause projection gate; native lowering needs
+the additional physical-layout and callback-stack proofs described below.
 `NeverDWindowsRegistrationRealignedTests` emits a 64-byte-aligned frame with a
 catch that calls a checked thiscall leaf on its parent local. Run
 `check_windows_registration_realigned.py --test-binary <test-binary>
@@ -2472,6 +2488,22 @@ the capture records that library provenance alongside the generated object.
 Use these native libraries for CRT RTTI definitions: a Wine-only import stub
 can admit exports that the native CRT does not provide.
 This is generated-frame analysis/runtime evidence, not source reconstruction.
+`check_windows_registration_realigned_rewrite.py` separately emits typed value
+and reference parents, lifts their real PE32 instructions and reconstructs
+through the public patcher and both CLI modes. Pass `--test-binary`,
+`--patch-binary`, `--runtime-libs` and `--output`. Four caller stack layouts
+check the catch value, reference effect, caller PC and restored FS chain.
+All four source/control profiles and four installation routes execute at two
+forced bases (32 executions). CLI bytes must equal the checked public output;
+the throw caller must lie in that output's recovered generated owner.
+Twelve frame/stack edits plus eight continuation edits reject independently,
+including valid control receipts with uninitialized scratch reads, accesses
+after catch return and callback pointers outside the SavedESP bridge.
+The separate layout tests cover all supported alignments, source residues,
+signed displacement bounds and under-aligned allocations.
+`replay_windows_registration_realigned_rewrite.py` authenticates the source,
+objects, IR, checked installation receipts, executed tests and exact PE matrix
+before native Windows executes those same 32 files. It does not relink them.
 Real MSVC directory-size64/declared-size192 load-configs must remain supported
 with complete section bounds.
 Final generic PE validation also checks valid and invalid CF/EH continuation
@@ -3264,7 +3296,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5058 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5420`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 11 driver UNPACK + 6 clock reads = 5447`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -3974,6 +4006,10 @@ The bulk-attributes workload checks whole groups, name/type membership, guarded 
 ## Darwin ordinary attribute mutations
 
 `XattrMutation*` model tests check both4KiB/16KiB pages, guarded literal values, low carriers, import/existence precedence, permission separation, name/value aliases, transport and budget rollback, reserved initial slots, shared growth and orphan/mapping lifetime. Strict JSON tests cover all three initial object kinds. The original `xattr-mutations`, `xattr-mutations-values` and `xattr-mutations-unsupported` workload modes cover all five thin Mach-O profiles through guest, C, CLI and the complete Python method. Native inventories retain every existing case and require the new workload on each available matching transport. Native Intel/physical iOS and complete Apple frameworks are separate unavailable coverage.
+
+`MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` checks original modeled execution, restoration, section permissions and original/restored native Windows execution. It covers private-heap reallocation/free, encoded interior pointers, FLS callback rearming, recursive locks, LastError and reserved/committed/protected virtual pages. `MaterializationRequiresKnownSupportedState` rejects absent version inputs and dynamic TLS. `RuntimeRestorationHasTheSameCAPIAndCLIContract` compares exact bytes and reports. Linux construction checks and Wine observations do not replace native Windows lifecycle evidence.
+
+`NeverDUnpackDriverTests` covers packed DriverEntry recovery, static/dynamic kernel imports, retained kernel resources, entry ABI/control state, malformed exports, scheduling, request/unload lifecycle, C API/CLI parity and PE checksums. The native driver inventory requires matching KVM/WHP cases; Windows also checks ImageHlp. This does not certify a native kernel load. See [unpacking](unpack.md).
 
 ## Native opaque-state checks
 

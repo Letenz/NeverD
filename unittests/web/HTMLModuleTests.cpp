@@ -34,7 +34,10 @@ struct Fixture {
   }
   SourceModuleLinks links() const {
     return linkHTMLSourceModules(Source, Modules, Document, Entries, Index,
-                                 Input);
+                                 Input, maps());
+  }
+  HTMLImportMaps maps() const {
+    return inspectHTMLImportMaps(Document, Text, Input);
   }
 };
 TEST(WebHTMLModules,
@@ -87,8 +90,8 @@ TEST(WebHTMLModules,
   EXPECT_EQ(L.Requests[2].Status, "unverified_callee");
   auto WrongType = F.Source;
   WrongType.SourceType = "module";
-  const auto Wrong = linkHTMLSourceModules(WrongType, F.Modules, F.Document,
-                                           F.Entries, F.Index, F.Input);
+  const auto Wrong = linkHTMLSourceModules(
+      WrongType, F.Modules, F.Document, F.Entries, F.Index, F.Input, F.maps());
   EXPECT_EQ(Wrong.Context->Status, "html_source_type_mismatch");
   EXPECT_EQ(Wrong.Requests[0].Status, "html_source_type_mismatch");
 }
@@ -124,8 +127,12 @@ TEST(WebHTMLModules, ImportMapsPreventAssumingTheDefaultURLRule) {
     Fixture F(Markup, Index);
     const auto L = F.links();
     ASSERT_EQ(L.Requests.size(), 1u);
-    EXPECT_EQ(L.Context->ImportMapStatus, "not_analyzed");
-    EXPECT_EQ(L.Requests[0].Status, "html_import_map_not_analyzed");
+    EXPECT_EQ(L.Context->ImportMapStatus,
+              Index ? "source_order_import_map_candidate"
+                    : "html_import_map_timing_unverified");
+    EXPECT_EQ(L.Requests[0].Status, Index
+                                        ? "blocked_import_map"
+                                        : "html_import_map_timing_unverified");
     EXPECT_TRUE(L.Requests[0].ArtifactID.empty());
   }
   Fixture Inert(
@@ -139,34 +146,182 @@ TEST(WebHTMLModules, ContextAndSourceMismatchesRefuseBeforePublication) {
   auto Wrong = F.Source;
   Wrong.BlobHash = "wrong";
   EXPECT_THROW(linkHTMLSourceModules(Wrong, F.Modules, F.Document, F.Entries, 0,
-                                     F.Input),
+                                     F.Input, F.maps()),
                Error);
   EXPECT_THROW(linkHTMLSourceModules(F.Source, F.Modules, F.Document, F.Entries,
-                                     1, F.Input),
+                                     1, F.Input, F.maps()),
                Error);
   auto Entries = F.Entries;
   Entries.Scripts[0].Base.Path = "other/path.html";
   EXPECT_THROW(linkHTMLSourceModules(F.Source, F.Modules, F.Document, Entries,
-                                     0, F.Input),
+                                     0, F.Input, F.maps()),
                Error);
   auto Other = F.Input;
   Other.ID = "other-namespace";
   EXPECT_THROW(linkHTMLSourceModules(F.Source, F.Modules, F.Document, F.Entries,
-                                     0, Other),
+                                     0, Other, F.maps()),
                Error);
   Other = F.Input;
   Other.Artifacts.push_back(Other.Artifacts[2]);
   EXPECT_THROW(linkHTMLSourceModules(F.Source, F.Modules, F.Document, F.Entries,
-                                     0, Other),
+                                     0, Other, F.maps()),
                Error);
   Entries = F.Entries;
   Entries.Status = "budget_exceeded";
   Entries.Scripts.clear();
   EXPECT_EQ(linkHTMLSourceModules(F.Source, F.Modules, F.Document, Entries, 0,
-                                  F.Input)
+                                  F.Input, F.maps())
                 .Requests[0]
                 .ArtifactID,
             "document-dep");
+}
+TEST(WebHTMLModules, ImportMapAndModuleDeclarationsKeepTheirOwnBaseCandidates) {
+  Fixture F(R"(<script type=importmap>{"imports":{"p":"./dep.js"},
+        "scopes":{"../assets/":{"scoped":"./dep.js"}}}</script>
+        <base href='../assets/'><script type=module>
+        import 'p'; import 'scoped'; import './dep.js';</script>)",
+            1);
+  const auto L = F.links();
+  ASSERT_EQ(L.Requests.size(), 3u);
+  EXPECT_EQ(L.Context->ImportMapStatus, "source_order_import_map_candidate");
+  EXPECT_EQ(L.Requests[0].ArtifactID, "document-dep");
+  EXPECT_EQ(L.Requests[1].ArtifactID, "document-dep");
+  EXPECT_FALSE(L.Requests[1].ImportMapScopeID.empty());
+  EXPECT_EQ(L.Requests[2].ArtifactID, "base-dep");
+  EXPECT_EQ(L.Requests[2].ImportMapMatch, "default_url");
+}
+TEST(WebHTMLModules, OneFileCanHaveSeveralPrivateURLCandidateIdentities) {
+  Fixture F(R"(<script type=importmap>{"imports":{
+        "a":"./dep.js?x","b":"./dep.js?y","c":"./%64ep.js?x",
+        "same":"./dep.js?x","prefix/":"../assets/","stop":null}}
+        </script><script type=module>import 'a'; import 'b'; import 'c';
+        import 'same'; import 'prefix/中.js#f'; import 'stop';</script>)",
+            1);
+  const auto L = F.links();
+  ASSERT_EQ(L.Requests.size(), 6u);
+  EXPECT_EQ(L.Context->ModuleURLIdentity, "capture_context_url_candidate");
+  for (unsigned I = 0; I < 4; ++I) {
+    EXPECT_EQ(L.Requests[I].ArtifactID, "document-dep");
+    EXPECT_FALSE(L.Requests[I].URLCandidateID.empty());
+    EXPECT_EQ(L.Requests[I].Query, true);
+  }
+  EXPECT_NE(L.Requests[0].URLCandidateID, L.Requests[1].URLCandidateID);
+  EXPECT_NE(L.Requests[0].URLCandidateID, L.Requests[2].URLCandidateID);
+  EXPECT_EQ(L.Requests[0].URLCandidateID, L.Requests[3].URLCandidateID);
+  EXPECT_EQ(L.Requests[4].ArtifactID, "unicode-dep");
+  EXPECT_EQ(L.Requests[4].ImportMapMatch, "prefix");
+  EXPECT_EQ(L.Requests[4].Fragment, true);
+  EXPECT_EQ(L.Requests[5].Status, "blocked_import_map");
+  EXPECT_TRUE(L.Requests[5].URLCandidateID.empty());
+}
+TEST(WebHTMLModules,
+     MultipleEarlyMapsKeepFirstDefinitionsAndExactScopeEvidence) {
+  Fixture F(R"(<script type=importmap>{"imports":{"p":"./dep.js"}}</script>
+        <script type=importmap>{"imports":{"p":"../assets/dep.js","q":"../assets/dep.js"}}
+        </script><script type=module>import 'p';import 'q';</script>)",
+            2);
+  const auto M = F.maps();
+  ASSERT_EQ(M.Declarations.size(), 2u);
+  const auto L = F.links();
+  ASSERT_EQ(L.Requests.size(), 2u);
+  EXPECT_EQ(L.Requests[0].ArtifactID, "document-dep");
+  EXPECT_EQ(L.Requests[1].ArtifactID, "base-dep");
+  EXPECT_EQ(L.Requests[0].ImportMapID, M.Declarations[0].Model.ID);
+  EXPECT_EQ(L.Requests[1].ImportMapID, M.Declarations[1].Model.ID);
+}
+TEST(WebHTMLModules, UnsupportedMapContextsDoNotFallBackToOrdinaryFiles) {
+  for (
+      const auto &[Markup, Index, Status] :
+      {std::tuple{
+           R"(<script type=importmap>{"imports":null}</script><script type=module>import './dep.js';</script>)",
+           1u, "html_import_map_refused"},
+       std::tuple{
+           R"(<script></script><script type=importmap>{}</script><script type=module>import './dep.js';</script>)",
+           2u, "html_import_map_timing_unverified"},
+       std::tuple{
+           R"(<script type=importmap src='./map.json'>{}</script><script type=module>import './dep.js';</script>)",
+           1u, "html_import_map_refused"},
+       std::tuple{
+           R"(<script type=importmap>{"imports":{"https://real.test/app/dep.js":null}}</script><script type=module>import './dep.js';</script>)",
+           1u, "html_import_map_origin_unverified"},
+       std::tuple{
+           R"(<script type=importmap>{"scopes":{"/app/":{}}}</script><script type=module>import './dep.js';</script>)",
+           1u, "html_import_map_origin_unverified"},
+       std::tuple{
+           R"(<script type=importmap>{"imports":{"../../dep.js":"./dep.js"}}</script><script type=module>import './dep.js';</script>)",
+           1u, "html_import_map_key_context_unsupported"}}) {
+    Fixture F(Markup, Index);
+    const auto L = F.links();
+    ASSERT_EQ(L.Requests.size(), 1u);
+    EXPECT_EQ(L.Requests[0].Status, Status);
+    EXPECT_TRUE(L.Requests[0].ArtifactID.empty());
+  }
+}
+TEST(WebHTMLModules, MapTargetsStayConfinedAndDoNotInventAnOrigin) {
+  Fixture F(R"(<script type=importmap>{"imports":{
+        "remote":"https://neverd-capture.invalid/app/dep.js",
+        "root":"/app/dep.js","escape":"../../app/dep.js","dir":"../assets/dir/"}}
+        </script><script type=module>import 'remote';import 'root';import 'escape';import 'dir';</script>)",
+            1);
+  const auto L = F.links();
+  ASSERT_EQ(L.Requests.size(), 4u);
+  EXPECT_EQ(L.Requests[0].Status, "import_map_nonlocal_target");
+  EXPECT_EQ(L.Requests[1].Status, "import_map_nonlocal_target");
+  EXPECT_EQ(L.Requests[2].Status, "outside_snapshot_root");
+  EXPECT_EQ(L.Requests[3].Status, "directory_target");
+  for (const auto &R : L.Requests)
+    EXPECT_TRUE(R.ArtifactID.empty());
+}
+TEST(WebHTMLModules, MapInventoryBudgetCannotMasqueradeAsAbsentDeclarations) {
+  std::string Text;
+  for (unsigned I = 0; I < 65; ++I)
+    Text += "<script type=importmap>{}</script>";
+  Text += "<script type=module>import './dep.js';</script>";
+  Fixture F(Text, 65);
+  const auto Maps = F.maps();
+  EXPECT_EQ(Maps.Status, "budget_exceeded");
+  EXPECT_TRUE(Maps.Declarations.empty());
+  const auto L = F.links();
+  EXPECT_EQ(L.Status, "budget_exceeded");
+  EXPECT_TRUE(L.Requests.empty());
+  EXPECT_EQ(L.Context->ImportMapStatus, "html_import_map_budget_exceeded");
+}
+TEST(WebHTMLModules, SyntheticOriginCannotAliasAbsoluteOrEscapingRequests) {
+  Fixture F(
+      R"(<script type=importmap>{"imports":{"../":"../assets/","./dep.js":"../assets/dep.js"}}</script>
+      <script type=module>import '/app/dep.js';
+      import 'https://neverd-capture.invalid/app/dep.js';
+      import '../../app/dep.js'; import './dep.js';</script>)",
+      1);
+  const auto L = F.links();
+  ASSERT_EQ(L.Requests.size(), 4u);
+  EXPECT_EQ(L.Requests[0].Status, "html_module_request_origin_unverified");
+  EXPECT_EQ(L.Requests[1].Status, "html_module_request_origin_unverified");
+  EXPECT_EQ(L.Requests[2].Status, "outside_snapshot_root");
+  EXPECT_EQ(L.Requests[3].ArtifactID, "base-dep");
+  for (unsigned I = 0; I < 3; ++I) {
+    EXPECT_TRUE(L.Requests[I].ArtifactID.empty());
+    EXPECT_TRUE(L.Requests[I].URLCandidateID.empty());
+  }
+}
+TEST(WebHTMLModules, RepeatedMapComparisonsExhaustTheModuleWorkBudget) {
+  std::string Text = "<script type=importmap>{\"imports\":{\"p\":\"./dep.js\"";
+  for (unsigned I = 0; I < 1000; ++I)
+    Text += ",\"p" + std::to_string(I) + "\":\"./dep.js\"";
+  Text += "}}</script><script type=module>";
+  for (unsigned I = 0; I < 2000; ++I)
+    Text += "import 'p';";
+  Text += "</script>";
+  Fixture F(Text, 1);
+  ASSERT_EQ(F.Modules.Status, "ok");
+  ASSERT_EQ(F.Modules.Requests.size(), 2000u);
+  const auto Maps = F.maps();
+  ASSERT_EQ(Maps.Status, "partial");
+  ASSERT_EQ(Maps.Declarations[0].Model.Status, "ok");
+  const auto L = F.links();
+  EXPECT_EQ(L.Status, "budget_exceeded");
+  EXPECT_TRUE(L.Requests.empty());
+  EXPECT_LE(L.Steps, MaxHTMLModuleLinkSteps);
 }
 TEST(WebHTMLModules, UnavailableInventoryDoesNotClaimImportMapAbsence) {
   Fixture F("<script type=importmap>{}</script><script "

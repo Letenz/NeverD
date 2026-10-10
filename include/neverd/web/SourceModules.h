@@ -81,11 +81,15 @@ struct SourceModuleLink {
   // An exact admitted-file candidate is NOT a resolved runtime module.
   std::string Status;
   std::string ArtifactID;
+  std::string URLCandidateID, ImportMapID, ImportMapEntryID, ImportMapScopeID;
+  std::string ImportMapMatch;
   std::optional<bool> Query, Fragment;
 };
 
 struct SourceModuleLinkContext {
   std::string ID, Kind, HTMLID, ScriptID, BaseID, Status, ImportMapStatus;
+  std::string ImportMapAnalysisID;
+  std::string ModuleURLIdentity = "not_modeled";
 };
 
 struct SourceModuleLinks {
@@ -113,18 +117,18 @@ SourceModuleLinks linkSourceModules(const SourceAnalysis &Source,
 
 struct HTMLDocument;
 struct HTMLLinks;
+struct HTMLImportMaps;
 inline constexpr std::string_view HTMLModuleLinkProfile =
-    "html-inline-module-file-candidates-v1";
+    "html-inline-module-file-candidates-v2";
 inline constexpr uint64_t MaxHTMLModuleLinkSteps = 4 * 1024 * 1024;
 inline constexpr uint64_t MaxHTMLModuleRequests = 10000;
 /// Explicit inline occurrence context, never a fabricated captured member.
 /// Literal ESM imports/reexports and dynamic import expressions use the HTML
-/// local-URL owner. Captured import maps remain an unresolved boundary.
-SourceModuleLinks linkHTMLSourceModules(const SourceAnalysis &Source,
-                                        const SourceModuleAnalysis &Modules,
-                                        const HTMLDocument &Document,
-                                        const HTMLLinks &Links,
-                                        uint32_t ScriptIndex,
-                                        const Snapshot &Input);
+/// URL owners. Import-map composition requires the source-order candidate
+/// profile and never establishes browser activation or runtime identity.
+SourceModuleLinks linkHTMLSourceModules(
+    const SourceAnalysis &Source, const SourceModuleAnalysis &Modules,
+    const HTMLDocument &Document, const HTMLLinks &Links, uint32_t ScriptIndex,
+    const Snapshot &Input, const HTMLImportMaps &ImportMaps);
 
 } // namespace neverd::web

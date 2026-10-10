@@ -3,6 +3,7 @@ add_neverd_unittest(NeverDWebArtifactTests
   AsarTests.cpp
   ElectronManifestTests.cpp
   HTMLTests.cpp
+  ImportMapTests.cpp
   BlobStoreTests.cpp
   BunTests.cpp
   JsonReaderTests.cpp

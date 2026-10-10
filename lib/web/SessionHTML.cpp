@@ -6,7 +6,7 @@ llvm::json::Value idOrNull(const std::string &ID) {
   return ID.empty() ? llvm::json::Value(nullptr) : llvm::json::Value(ID);
 }
 llvm::json::Object summary(const HTMLDocument &H, const HTMLLinks &L,
-                           uint64_t Revision) {
+                           const HTMLImportMaps &M, uint64_t Revision) {
   return llvm::json::Object{
       {"schema_version", 1},
       {"status", "ok"},
@@ -29,7 +29,13 @@ llvm::json::Object summary(const HTMLDocument &H, const HTMLLinks &L,
       {"scripting_context", "enabled_candidate"},
       {"encoding_evidence", "caller_selected_utf8_profile"},
       {"byte_preprocessing", "none_raw_source_candidates"},
-      {"import_map_analysis", "not_analyzed"},
+      {"import_map_analysis", M.Status},
+      {"import_map_analysis_id", M.ID},
+      {"import_map_profile", std::string(ImportMapProfile)},
+      {"import_map_count", M.Declarations.size()},
+      {"import_map_steps", M.Steps},
+      {"import_map_reason", M.Reason},
+      {"import_map_activation_verified", false},
       {"executes_input", false},
       {"resolves_external_references", false},
       {"redaction_policy", "metadata-only-v1"}};
@@ -42,7 +48,8 @@ std::string Session::analyzeHTML(std::string_view Revision,
   State->requireRevision(Revision);
   if (const auto I = State->HTMLDocuments.find(std::string(ArtifactID));
       I != State->HTMLDocuments.end())
-    return json(summary(I->second.Document, I->second.Links, State->Revision));
+    return json(summary(I->second.Document, I->second.Links,
+                        I->second.ImportMaps, State->Revision));
   if (State->HTMLDocuments.size() >= 4)
     throw Error("html_cache_budget_exceeded");
   const auto View = State->artifactView(ArtifactID);
@@ -52,15 +59,18 @@ std::string Session::analyzeHTML(std::string_view Revision,
     throw Error("nested_html_analysis_unsupported");
   if (View->Content.size() > MaxHTMLBytes)
     throw Error("html_byte_budget_exceeded");
-  auto H = inspectHTML(
-      ArtifactID, View->Content.read(0, View->Content.size(), MaxHTMLBytes));
+  const auto Bytes = View->Content.read(0, View->Content.size(), MaxHTMLBytes);
+  auto H = inspectHTML(ArtifactID, Bytes);
   if (H.BlobHash != View->BlobHash)
     throw Error("html_artifact_mismatch");
   const auto Members = State->memberNamespace(ArtifactID);
   auto L = linkHTMLScripts(H, Members ? *Members : State->Published);
-  auto Reply = json(summary(H, L, State->Revision));
-  State->HTMLDocuments.emplace(std::string(ArtifactID),
-                               Impl::HTMLResults{std::move(H), std::move(L)});
+  auto M =
+      inspectHTMLImportMaps(H, Bytes, Members ? *Members : State->Published);
+  auto Reply = json(summary(H, L, M, State->Revision));
+  State->HTMLDocuments.emplace(
+      std::string(ArtifactID),
+      Impl::HTMLResults{std::move(H), std::move(L), std::move(M)});
   return Reply;
 }
 
@@ -76,14 +86,42 @@ std::string Session::htmlRecords(std::string_view Revision,
     throw Error("unknown_html_analysis");
   const auto &H = Found->second.Document;
   const auto &L = Found->second.Links;
+  const auto &M = Found->second.ImportMaps;
   const auto Count = Kind == "scripts" ? H.Scripts.size()
                      : Kind == "bases" ? H.Bases.size()
-                                       : throw Error("invalid_record_kind");
+                     : Kind == "import_maps"
+                         ? M.Declarations.size()
+                         : throw Error("invalid_record_kind");
   if (!Limit || Limit > 512 || Offset > Count)
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Count, Offset + Limit);
   llvm::json::Array Items;
   for (auto I = Offset; I < End; ++I) {
+    if (Kind == "import_maps") {
+      const auto &D = M.Declarations[I];
+      const auto &S = H.Scripts.at(D.Script);
+      const auto &Map = D.Model;
+      Items.emplace_back(llvm::json::Object{
+          {"import_map_id", Map.ID},
+          {"script_id", S.ID},
+          {"body_byte_offset", std::to_string(S.BodyStart)},
+          {"body_byte_length", std::to_string(S.BodyEnd - S.BodyStart)},
+          {"analysis_status", Map.Status},
+          {"reason", Map.Reason},
+          {"base_status", D.BaseStatus},
+          {"record_count", Map.EntryCount},
+          {"import_count", Map.Imports.size()},
+          {"scope_count", Map.Scopes.size()},
+          {"ignored_key_count", Map.IgnoredKeys},
+          {"integrity_present", Map.IntegrityPresent},
+          {"integrity_entry_count", Map.IntegrityCount},
+          {"integrity_verified", false},
+          {"origin_dependent_keys", Map.OriginDependentKeys},
+          {"steps", Map.Steps},
+          {"values_redacted", true},
+          {"activation_verified", false}});
+      continue;
+    }
     if (Kind == "bases") {
       const auto &B = H.Bases[I];
       Items.emplace_back(llvm::json::Object{
@@ -139,7 +177,7 @@ std::string Session::htmlRecords(std::string_view Revision,
         {"reference_redacted", true},
         {"runtime_entry_verified", false}});
   }
-  auto Reply = summary(H, L, State->Revision);
+  auto Reply = summary(H, L, M, State->Revision);
   Reply["record_kind"] = std::string(Kind);
   Reply["items"] = std::move(Items);
   Reply["offset"] = Offset;

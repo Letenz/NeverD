@@ -41,7 +41,7 @@ their existing scope; no Python support for web APIs is claimed.
 | P3 C++ JS parser/scope/query/maps | Nine parser/model, thirteen binding, eleven primitive-value, ten effect, eleven module, eight bundle, nine source-view, five navigation, nine standard coordinate/map and six Bun map tests passed | Full syntax matrix, feature-specific navigation/attribution, runtime dataflow, foreign export linking, broader bundle profiles and verified map association remain |
 | P4A Bun extraction | Fixed Linux x64 extraction, decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff implemented; five full compiler outputs, ten extraction/range and six map cases passed | Other Bun platforms remain; JSC caches stay opaque |
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
-| P4B desktop/VSIX extraction | C++ ASAR packed/unpacked extraction; Electron manifest entries, source-visible boundaries, scoped IPC comparison and captured preload/renderer file candidates implemented; qualification recorded below | HTML/import graph closure, runtime/window routing, distribution detection, safe export, NW.js/VSIX and broader host/release qualification remain |
+| P4B desktop/VSIX extraction | C++ ASAR packed/unpacked extraction; Electron manifest entries, source-visible boundaries, scoped IPC comparison, captured preload/renderer files and HTML/import-map candidates implemented; qualification recorded below | External-source HTML contexts and full import closure, runtime/window routing, distribution detection, safe export, NW.js/VSIX and broader host/release qualification remain |
 | P4C package graph/diff | Pending | npm lock v1/v2/v3, integrity/provenance, dispositions, platform artifacts |
 | P4D passive interfaces/HAR | Pending | Static-only, HAR-only, correlation, uncertainty and redaction tests |
 | P5 reversible source projections | Reviewed display projection and original/projected ranges implemented; semantic transforms pending | Per-pass receipts, local semantic preconditions, undo and refusal tests |
@@ -958,3 +958,92 @@ this final smoke run. Logs are `/tmp/neverd-js-dev-final-build.log`,
 `/tmp/neverd-js-dev-final-web-tests.log` and
 `/tmp/neverd-js-dev-final-session-tests.log`. The newly merged proof suites were
 not part of this web integration profile.
+
+The checkpoint and integration evidence were pushed to GitHub `dev` at
+`44966cccb1cf3faf31df07d4af26aa68c4a75b01`; the remote ref was checked after
+the successful fast-forward push. The original working tree's unrelated changes
+and dirty signature checkout were preserved.
+
+## Captured import maps — 2026-10-10
+
+`ImportMap` now owns bounded JSON/URL normalization and exact, prefix, scoped and
+blocking resolution. It embeds unchanged Ada 4.0.0 C++ sources at
+`b12a893a45809da8103bb4f1e2f6f5ee13f9100b`, with a verified archive hash and
+preserved Ada/IDNA/Unicode notices. Only the library sources are compiled;
+upstream generators, tools, URLPattern and external runtimes are excluded.
+The dependency's symbols use hidden visibility. Its generated notice-install
+rules were exercised under `/tmp/neverd-import-map-license-install`; every
+installed Ada notice matched the preserved source directory byte for byte.
+This checks notice installation, not a complete product distribution.
+
+`HTMLImportMaps` retains each declaration's captured body, preceding base and
+refusal state. Maps preceding all ordinary classic/module declarations compose
+in source order with first definitions retained. Late/interleaved maps, unknown
+absolute key origins, unsupported local key contexts, malformed maps and
+exhausted budgets cannot silently fall back to an ordinary relative file.
+Map and script declarations have independent bases. URL normalization preserves
+query, fragment and percent spelling before a separate confined file projection.
+Private context-bound URL groups distinguish several URLs naming one captured
+file; no isolated URL/string hash is published. Raw references are checked before
+normalization so origin-root clamping cannot erase traversal evidence. Absolute
+requests cannot alias the synthetic capture origin.
+
+The HTML module profile is now `html-inline-module-file-candidates-v2`.
+SDK/CLI/worker use the same owners and publish `import_maps` pages, declaration
+IDs/body ranges, counts, refusal states and private request-mapping identities.
+Integrity declarations are inventoried without validating a fetch or digest.
+No browser execution, activation/history equivalence or per-entry byte span is
+claimed. External-source contexts and full application closure remain pending.
+
+The first focused run passed 45 HTML/import-map cases and all three C++ worker
+checks. Review then added explicit absolute/escaping-request refusal, invalid
+UTF-8 admission and CLI failure for exhausted map comparisons. A compiler warning
+had identified temporary JSON-key string views; they were replaced with owned
+strings before the test runs. All new implementation and test logic is C++.
+
+With JS parsing omitted, 28 of 31 HTML/import-map cases passed; three source-only
+SDK cases explicitly skipped. Map inventory and native URL processing remained
+available. All three worker checks and the compiled-capability check passed;
+the backend-omission-only ABI case skipped. With the complete web backend omitted,
+both ABI cases passed; protocol/graph checks passed and the web worker case
+explicitly skipped. `neverd web html` returned `capability_unavailable` with exit
+status 1 before input lookup. Logs use
+`/tmp/neverd-import-maps-no-parser-{tests,api,worker}.log` and
+`/tmp/neverd-import-maps-no-backend-{api,worker,cli}.log`. The final UTF-8 and
+parser-dependent budget corrections were made after these omission runs.
+
+Both web build options are restored to ON, with the same prebuilt LLVM/ICU
+profile described above. The complete restored web run passed 264 of 271 cases:
+72 artifact, 116 source, 15 map, nine native and 59 SDK registrations, with six
+Zstd-dependent map skips and one ASAR-omission-only skip. The pinned Bun corpus
+was supplied. The compiled-capability case and three C++ worker checks passed;
+the backend-omission ABI case skipped as expected. Logs use
+`/tmp/neverd-import-maps-restored-{build,web,api,worker}.log`.
+
+Final link verification passed all 47 focused cases and three worker checks.
+Two further parsed-fixture tests independently exhaust normalization with long
+bases and repeated module/map comparison work; both clear candidate results and
+pass. The final complete run passed 266 of 273 registrations with the same seven
+skips (73 artifact, 117 source, 15 map, nine native and 59 SDK cases). All three
+worker checks passed. Logs use `/tmp/neverd-import-maps-final-focused.log`,
+`/tmp/neverd-import-maps-budget-tests.log` and
+`/tmp/neverd-import-maps-publication-{build,web,worker}.log`.
+Ada notices are also staged beside the shared library and inside the SDK; both
+staged directories matched `LICENSES/ada` byte for byte. Scoped formatting and
+`git diff --check` passed. Existing duplicate-library linker warnings remain;
+there were no new compiler diagnostics in the final build.
+
+Publication also incorporated `dev` at `aea8fd619`, including GUI text selection
+and realigned x86 native EH work, through a conflict-free merge. The affected
+native libraries rebuilt successfully. All 59 selected HTML/import-map/native
+and ASAR CLI cases passed, including the pinned Bun native handoff. Session C API
+passed 91 of 99 cases with its same eight platform skips; the native-buffer
+loader case and seven web/native worker smoke suites passed. Logs use
+`/tmp/neverd-import-maps-dev-{build,tests,session,loader,worker}.log`.
+The upstream GUI and dedicated realigned-EH suites were not part of this web
+integration profile; their qualification is not inferred from these checks.
+
+The five epics remain open. This increment qualifies captured import-map
+candidates locally; package graphs/diffs, passive observations, other desktop
+and native JS formats, semantic rewrites, C++ MCP and cross-host distribution
+still need their planned implementation and evidence.

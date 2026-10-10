@@ -3,6 +3,8 @@ add_neverd_component_library(NeverDWeb
   HTML.cpp
   HTMLReferences.cpp
   HTMLLinks.cpp
+  HTMLImportMaps.cpp
+  ImportMap.cpp
   SessionHTML.cpp
   ArtifactView.cpp
   Asar.cpp
@@ -32,6 +34,11 @@ add_neverd_component_library(NeverDWeb
   SessionNative.cpp
   LLVM_COMPONENTS Support
 )
+include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebURL.cmake")
+neverd_add_web_url_parser()
+target_link_libraries(NeverDWeb PRIVATE neverd_web_url)
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/LICENSES/ada/"
+        DESTINATION share/neverd/licenses/ada)
 option(NEVERD_ENABLE_WEB_ASAR "Build ASAR extraction with pinned native Unicode policy" ON)
 if(NEVERD_ENABLE_WEB_ASAR)
   find_package(ICU 77.1 EXACT COMPONENTS uc QUIET)
