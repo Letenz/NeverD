@@ -2665,6 +2665,20 @@ IR, installation, decompilation and PE identities before replaying the same
 files on Windows. Its Python admission suite rejects incomplete, stale or
 substituted evidence.
 
+`check_windows_registration_nested_try.py` compiles independent Clang `-O0`
+and `-O1` parents and links the captured CRT libraries. Inner reference catches
+and outer value/catch-all clauses exercise all three continuations under four
+caller stack layouts. The 32-image source/control matrix covers both CLI patch
+modes and forced rebasing. The C++ test rejects changed prologue saves,
+personality argument reads, search edges, handler order, continuation ownership,
+and emitted try/unwind state rows. HighIR must contain both nested tries and
+all three callback bodies; C output also receives a syntax check.
+`RegistrationCxxUnwind` tests nested, disjoint, three-level and cleanup search
+graphs. `replay_windows_registration_nested_try.py` authenticates the source,
+rejection tests, compiler objects, IR, decompilation and installed PE bytes
+before executing the identical images on Windows. Its Python admission tests
+reject missing routes, stale proofs, altered images and lost nested regions.
+
 
 The focused Windows EH workflow first builds and executes genuine MSVC x86
 value/reference source fixtures on Windows, then transfers those exact inputs
