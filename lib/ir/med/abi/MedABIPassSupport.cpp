@@ -16,6 +16,7 @@
 #include "MedABIPassDetail.h"
 
 #include "neverd/Common.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -33,6 +34,18 @@
 #include <vector>
 
 namespace neverd {
+
+bool isAbiRecoveryBarrier(const MedOp &Op) {
+  if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+    return true;
+  if (Op.Opcode != NdOp::INTRINSIC)
+    return false;
+  if (Op.NumInputs == 0 || Op.NumInputs > Op.Inputs.size() ||
+      !Op.Inputs[0].isConst())
+    return true;
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+  return !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));
+}
 
 // Address = Base + Offset modulo the original address width. Offset owns the
 // width; no rewrite may change it or peel a width-changing conversion.
@@ -180,7 +193,7 @@ reachingStore(const MedBlock &Blk, int LoadIndex,
     return std::nullopt;
   for (int I = LoadIndex - 1; I >= 0; --I) {
     const MedOp &Op = Blk.Ops[I];
-    if (Op.Opcode == NdOp::INTRINSIC)
+    if (Op.Opcode == NdOp::INTRINSIC && isAbiRecoveryBarrier(Op))
       return std::nullopt;
     if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
       if (!Context || !preservesSpillAcrossCall(
@@ -518,8 +531,7 @@ std::set<va_t> findFrameLocalLeafCallees(const std::vector<MedFunc> &Funcs,
           (B.Succs.empty() && B.Ops.back().Opcode != NdOp::RETURN))
         Safe = false;
       for (const auto &Op : B.Ops) {
-        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-            Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR ||
+        if (isAbiRecoveryBarrier(Op) || Op.Opcode == NdOp::INDIR_BR ||
             Op.Opcode >= NdOp::_COUNT ||
             safety::detail::isAtomicMemoryAccess(Op.Opcode)) {
           Safe = false;
