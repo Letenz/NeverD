@@ -664,7 +664,14 @@ TEST(SourceDialect, RustViewComputesWhatCComputes) {
   ASSERT_TRUE(bool(CResult)) << llvm::toString(CResult.takeError());
   ASSERT_TRUE(bool(RustResult)) << llvm::toString(RustResult.takeError());
   EXPECT_EQ(std::count(CResult->begin(), CResult->end(), '\n'), 32);
-  EXPECT_EQ(*RustResult, *CResult) << Rust.Text;
+  // C's Windows text-mode stdout uses CRLF; Rust's stdout writes LF. Keep
+  // the scalar results exact while comparing the same logical line endings.
+  auto Lines = [](std::string Text) {
+    for (size_t At = 0; (At = Text.find("\r\n", At)) != std::string::npos;)
+      Text.erase(At, 1);
+    return Text;
+  };
+  EXPECT_EQ(Lines(*RustResult), Lines(*CResult)) << Rust.Text;
   llvm::sys::fs::remove_directories(Dir);
 }
 

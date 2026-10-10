@@ -234,7 +234,13 @@ NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
 /// representations/architectures return an explicit mapping_status with empty
 /// rows and no text. Errors return NULL and set neverd_last_error. C source
 /// pages add library_regions with rule and identity evidence, precise original
-/// occurrences, foldable and spans. Optional function_identity shares
+/// occurrences. Surviving source statements also carry instruction anchors,
+/// checked against canonical LowIR instruction boundaries and sequences. The
+/// first row address belongs to the smallest intersecting statement span;
+/// declarations and synthetic/unbound statements have no guessed address. These
+/// anchors support navigation, not complete expression provenance. Pages retain
+/// provenance_complete:false and ordinary source byte for byte. Library regions add
+/// foldable and spans. Optional function_identity shares
 /// raw/display/linkage names with neverd_resolve_addr; original direct-call
 /// regions add callee and callee_identity. Span begin_byte/end_byte are
 /// half-open UTF-8 byte offsets in the complete source; byte_offset locates

@@ -1004,8 +1004,11 @@ std::optional<QJsonObject> CodeText::commentTarget() const {
     QJsonObject target{{"line", line},
                        {"anchor", row.value("code_anchor").toString()},
                        {"text", row.value("code_comment").toString()}};
-    if (const auto at = currentAddress())
-      target["mapped_address"] = hexAddress(*at);
+    // A note saved before the engine could map this row retains its source
+    // identity; adding an address mapping must not hide subsequent edits.
+    if (!row.value("code_comment_is_source").toBool())
+      if (const auto at = currentAddress())
+        target["mapped_address"] = hexAddress(*at);
     return target;
   }
   return std::nullopt;

@@ -90,6 +90,11 @@ add_neverd_unittest(NeverDSourceDialectTests
   backend/SourceDialectTests.cpp
   LINK_COMPONENTS BackendC
 )
+add_neverd_unittest(NeverDSourceAnchorTests
+  lift/core/CSourceAnchorTests.cpp
+  lift/core/CSourceDefinitionTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
 target_include_directories(NeverDSourceDialectTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/backend/c/dialect")
 target_compile_definitions(NeverDSourceDialectTests PRIVATE
@@ -132,6 +137,9 @@ if(TARGET neverd_shared)
     # The shared engine supplies SDK queries and the private mobile seam. The
     # test also uses LLVM's JSON parser; no GUI/worker links LLVM here.
     target_link_libraries(NeverDSessionCAPITests PRIVATE LLVMSupport)
+    # The private SessionImpl seam constructs NdType owners in this executable.
+    # Its C++ destructor is deliberately outside the SDK's exported C ABI.
+    target_sources(NeverDSessionCAPITests PRIVATE "${CMAKE_SOURCE_DIR}/lib/ir/NdTypes.cpp")
   endif()
 endif()
 

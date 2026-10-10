@@ -13,6 +13,8 @@
 
 #include <map>
 #include <optional>
+#include <set>
+#include <tuple>
 
 namespace llvm {
 class Function;
@@ -29,7 +31,8 @@ struct HighStmt;
 /// are discarded and the ordinary render remains the output.
 class CSourceRecorder {
 public:
-  CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary);
+  CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary,
+                  bool InstructionsOnly = false);
   void prepareHighSources();
   void prepareLLVMSources(const LLVMSourceMap &Sources);
   std::string expression(va_t Function, const HighExpr &Expr, std::string Text);
@@ -46,19 +49,28 @@ public:
   bool finish(llvm::StringRef Annotated, llvm::StringRef Ordinary);
 
 private:
-  size_t event(size_t Region, std::vector<sigs::LibraryOccurrence> Coverage);
+  size_t event(std::optional<size_t> Region,
+               std::vector<sigs::LibraryOccurrence> Coverage,
+               std::optional<va_t> Function = std::nullopt);
   CSourceMap &Map;
+  bool InstructionsOnly;
   std::string Prefix;
   struct Event {
-    size_t Region;
+    std::optional<size_t> Region;
     std::vector<sigs::LibraryOccurrence> Coverage;
+    std::optional<va_t> Function;
   };
   std::vector<Event> Events;
   std::vector<std::optional<va_t>> DefinitionEntries;
   std::map<std::pair<va_t, const HighExpr *>, Event> HighRegions;
   std::map<std::pair<va_t, va_t>, Event> HighStores;
+  std::map<std::tuple<va_t, va_t, StmtKind>, std::set<sigs::LibraryOccurrence>>
+      HighAnchors;
   std::map<const llvm::Function *, va_t> LLVMFunctions;
   std::map<const llvm::Value *, Event> LLVMRegions;
+  std::map<const llvm::Instruction *,
+           std::pair<va_t, std::set<sigs::LibraryOccurrence>>>
+      LLVMAnchors;
 };
 
 } // namespace neverd

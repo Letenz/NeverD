@@ -106,3 +106,5 @@ neverd unpack packed.exe -o unpacked.exe \
 
 
 `WrappedEntriesRequireExplicitTransferEvidence` 涵蓋 DLL 包裝器透過更深的堆疊呼叫復原入口。預設結果仍為 `no_entry`；透過 `transfer` 選取該已觀察呼叫後，可重建可載入 DLL。僅憑深層呼叫無法區分入口與初始化器。
+
+復原的 DLL 入口與原始 PE 入口不同時，寫入器產生載入器通知配接器：程序附加進入選定入口，卸載與執行緒通知進入原始的可執行入口，以保留外層包裝函式的清理。原始入口不可用時重建失敗。報告的 `entry_rva` 仍表示選定的程式入口，PE 標頭可指向配接器。獨立包裝 DLL 測試在兩種模擬架構與原生 Windows 上檢查選定函式之外的清理。
