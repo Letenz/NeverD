@@ -42,10 +42,14 @@ The source recorder publishes statement spans only when its private rendering
 reproduces ordinary source byte for byte. Instruction and library recordings use
 independent renders so navigation cannot weaken library folding evidence. The
 C API checks every occurrence against the same canonical LowIR boundaries and
-sequences used by Low/Med pages. Source dialect projections preserve only spans
-that they can map completely. This supplies navigation evidence rather than
-complete expression provenance. Tab consumes the selected row's primary address;
-an unmapped row explicitly falls back to its own function entry.
+sequences used by Low/Med pages. C++, Rust and Go record individual statement
+spans. Navigation projects only a complete, unambiguous recorded piece, ignoring
+surrounding whitespace; it never expands to an enclosing function or joins
+partial pieces. A function shown as C after a dialect refusal loses its
+statement anchors. Library folding retains its separate region projection.
+This supplies navigation evidence rather than complete expression provenance.
+Tab consumes the selected row's primary address; an unmapped row explicitly
+falls back to its own function entry.
 
 Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
 the fallback. Validated Itanium/MSVC names also identify C++ without an

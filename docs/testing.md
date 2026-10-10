@@ -69,6 +69,11 @@ that read-only replicas load these edits without changing durable owner files.
 
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
+`SourceDialect.Navigation*` checks distinct statement ranges in C++, Rust and
+Go, partial slices, conflicting spans and functions shown as C after a dialect
+refusal. `SessionCAPITest.DialectNavigationMapsOnlyTheReturnRowAcrossPages`
+checks real x64/AArch64 source and explicit dialect pages, unmapped headers and
+single-line paging without spreading return addresses across the function.
 `SessionCAPITest.CSourcePagesRetainCanonicalReturnAnchors` and the real worker's
 native mapping test verify x64 and AArch64 high-VA source rows through small
 pages, including return instruction addresses distinct from the function entry.
