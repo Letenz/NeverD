@@ -167,10 +167,11 @@ std::string emitLLVMC(llvm::Module &Module, bool EmitComments = true) {
 }
 
 MedFunc makeWindowsHandlerFixture(llvm::StringRef Name, va_t HandlerMarkerVA,
-                                  unsigned HandlerBlockCopies = 1) {
-  constexpr va_t FunctionVA = 0x140001000;
-  constexpr va_t HandlerVA = FunctionVA + 0x20;
-  constexpr va_t ContinuationVA = FunctionVA + 0x30;
+                                  unsigned HandlerBlockCopies = 1,
+                                  va_t FunctionVA = 0x140001000) {
+  const va_t HandlerVA = FunctionVA + 0x20;
+  const va_t ContinuationVA = FunctionVA + 0x30;
+  const uint16_t PointerSize = FunctionVA > UINT32_MAX ? 8 : 4;
 
   MedFunc Func;
   Func.Entry = FunctionVA;
@@ -184,7 +185,7 @@ MedFunc makeWindowsHandlerFixture(llvm::StringRef Name, va_t HandlerMarkerVA,
   MedOp ProtectedMarker;
   ProtectedMarker.Opcode = NdOp::CALL;
   ProtectedMarker.Addr = FunctionVA + 4;
-  ProtectedMarker.addInput(MedVar::makeConst(0x140008000, 8));
+  ProtectedMarker.addInput(MedVar::makeConst(FunctionVA + 0x7000, PointerSize));
   Protected.Ops.push_back(std::move(ProtectedMarker));
   Func.Blocks.push_back(std::move(Protected));
 
@@ -196,7 +197,7 @@ MedFunc makeWindowsHandlerFixture(llvm::StringRef Name, va_t HandlerMarkerVA,
     MedOp Marker;
     Marker.Opcode = NdOp::CALL;
     Marker.Addr = HandlerVA;
-    Marker.addInput(MedVar::makeConst(HandlerMarkerVA + I * 0x10, 8));
+    Marker.addInput(MedVar::makeConst(HandlerMarkerVA + I * 0x10, PointerSize));
     Handler.Ops.push_back(std::move(Marker));
     Func.Blocks.push_back(std::move(Handler));
   }
@@ -635,6 +636,34 @@ TEST(COFFExceptionIR, LLVMCExceptionAnnotationReadsCanonicalStringsOnly) {
       << Source;
 }
 
+TEST(COFFExceptionIR, LLVMCRealignedFrameKeepsItsEstablisherCoordinates) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("realigned-cxx-frame", Context);
+  Module.setTargetTriple(llvm::Triple("i686-pc-windows-msvc"));
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+      llvm::GlobalValue::ExternalLinkage, "realigned", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateRetVoid();
+  ExceptionFunction EH;
+  EH.CodeRange = {0x401000, 0x401100};
+  EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
+  EH.Registration.emplace().RealignedFrame =
+      RegistrationRealignedFrame{6, 0x40100f, 16, 0x270, -0x26c, -20};
+  Function->setMetadata(windows_eh_md::FunctionAttachment,
+                        windows_eh_md::getCanonicalFunctionMetadata(
+                            Context, EH, Arch::X86, BinaryFormat::COFF));
+  const auto Source = emitLLVMC(Module);
+  EXPECT_NE(
+      Source.find("registration.frame: base=esi, definition=0x40100F, "
+                  "alignment=16, allocation=624, establisher_offset=-620, "
+                  "saved_parent_offset=-20"),
+      std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("metadata-invalid"), std::string::npos) << Source;
+}
+
 TEST(COFFExceptionIR, LLVMCProjectsCanonicalWindowsEHAsCommentsOnly) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-windows-eh-details", Context);
@@ -803,9 +832,11 @@ TEST(COFFExceptionIR, LLVMCCorruptWindowsEHMetadataIsExplicitAndBounded) {
   const std::string BadVersion =
       EmitCorrupt(EH, [](llvm::LLVMContext &Context, auto &Fields) {
         Fields[windows_eh_md::Version] = llvm::ConstantAsMetadata::get(
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(Context), 9));
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(Context),
+                                   windows_eh_md::SchemaVersion + 1));
       });
-  EXPECT_NE(BadVersion.find("unsupported metadata schema version 9"),
+  EXPECT_NE(BadVersion.find("unsupported metadata schema version " +
+                            std::to_string(windows_eh_md::SchemaVersion + 1)),
             std::string::npos)
       << BadVersion;
   EXPECT_EQ(BadVersion.find("status=complete"), std::string::npos)
@@ -4346,6 +4377,43 @@ TEST(COFFExceptionIR, StructuresSingleBlockSEHFinallyBody) {
   ASSERT_NE(Finally, std::string::npos);
   EXPECT_NE(Source.find("sub_14000E000();", Finally), std::string::npos);
   EXPECT_EQ(Source.find("native finally funclet @"), std::string::npos);
+}
+
+TEST(COFFExceptionIR, StructuresX86RegistrationFinallyAtItsActualBody) {
+  constexpr va_t FunctionVA = 0x401000;
+  constexpr va_t HandlerVA = FunctionVA + 0x20;
+  MedFunc Func = makeWindowsHandlerFixture("x86_registration_finally", 0x40E000,
+                                           1, FunctionVA);
+  ExceptionFunction EH;
+  EH.CodeRange = {FunctionVA, FunctionVA + 0x40};
+  EH.Personality = ExceptionPersonality::ExceptHandler3;
+  EH.Encoding = ExceptionEncoding::X86ScopeTableEH3;
+  RegistrationChainInfo &Chain = EH.Registration.emplace();
+  Chain.SeededTryLevel = -1;
+  Chain.Scopes.push_back({-1, 0, HandlerVA, true});
+  Func.ExceptionMetadata = std::move(EH);
+  auto &States = Func.RegistrationStates.emplace();
+  States.Complete = true;
+  States.Blocks = {
+      {0, {FunctionVA, FunctionVA + 0x10}, {0}, false, false, true},
+      {1, {HandlerVA, FunctionVA + 0x30}, {-1}, false, true, true},
+      {2, {FunctionVA + 0x30, FunctionVA + 0x40}, {-1}, false, false, true}};
+  HighFunc High = MedToHighConverter().convert(Func, Arch::X86);
+  ASSERT_EQ(High.StructuredExceptionRegions, 1u);
+  ASSERT_FALSE(High.Body.empty());
+  const HighStmt &Try = High.Body.front();
+  ASSERT_EQ(Try.Kind, StmtKind::SEHTry);
+  ASSERT_EQ(Try.EHClauses.size(), 1u);
+  EXPECT_EQ(Try.EHClauses.front().FilterOrActionVA, HandlerVA);
+  ASSERT_EQ(Try.EHClauseBodies.size(), 1u);
+  ASSERT_EQ(Try.EHClauseBodies.front().size(), 1u);
+  EXPECT_EQ(Try.EHClauseBodies.front().front().Addr, HandlerVA);
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  ASSERT_TRUE(HighCEmitter().emit({High}, Stream));
+  Stream.flush();
+  EXPECT_NE(Source.find("sub_40E000();"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("handler @ 0x0"), std::string::npos) << Source;
 }
 
 TEST(COFFExceptionIR, StructuresSingleBlockFH3CleanupBody) {

@@ -1205,6 +1205,12 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.ReturnsNoValue = Med.ReturnsNoValue;
   Func.EntryKind = Med.EntryKind;
   Func.ExceptionMetadata = Med.ExceptionMetadata;
+  for (const auto &Entry : Med.CxxContinuationEntries)
+    Func.CxxContinuationTargets.insert(Entry.Target);
+  // Catch returns enter the parent through edges absent from its ordinary
+  // CFG. Publish those edges before control-flow cleanup can discard or move
+  // their target statements; the funclet bodies are attached module-wide.
+  const bool EarlyCxxRegions = !Func.CxxContinuationTargets.empty();
   Func.ReturnType =
       Med.ReturnType ? Med.ReturnType : NdType::makeInt(inferReturnSize(Med));
   Func.SourceTypeHint = Med.SourceTypeHint;
@@ -1333,6 +1339,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
     structureControlFlow(Func, Med);
     CaptureSwiftError();
     SeedMutableStackParamHomes();
+    if (EarlyCxxRegions)
+      structureExceptionRegions(Func, Med);
     Trace.high(Func, "structured");
     inferTypes(Func);
     eraseKeepingBranchEntries(
@@ -1342,7 +1350,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
                  S.Dst->Var == S.Val->Var;
         });
     ensureTrailingReturn(Func, Med);
-    structureExceptionRegions(Func, Med);
+    if (!EarlyCxxRegions)
+      structureExceptionRegions(Func, Med);
     attachSEHHandlerEntryCopies(Func, Med);
     reduceLateGotos(Func);
     Trace.high(Func, "after-exceptions");
@@ -1355,6 +1364,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   structureControlFlow(Func, Med);
   CaptureSwiftError();
   SeedMutableStackParamHomes();
+  if (EarlyCxxRegions)
+    structureExceptionRegions(Func, Med);
   Trace.high(Func, "structured");
   auto TSimp = std::chrono::steady_clock::now();
   simplifyControlFlow(Func, Med);
@@ -1378,7 +1389,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   // Nest handler/filter bodies into try clauses before DCE.  Those blocks are
   // entered by the personality, so ordinary reachability would delete them
   // and leave empty __except/__catch arms.
-  structureExceptionRegions(Func, Med);
+  if (!EarlyCxxRegions)
+    structureExceptionRegions(Func, Med);
   attachSEHHandlerEntryCopies(Func, Med);
   auto TEh = std::chrono::steady_clock::now();
   eliminateDeadStmts(Func);

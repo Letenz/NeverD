@@ -17,6 +17,7 @@
 #define NEVERD_IR_LOW_INTERNALNORETURN_H
 
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowNoReturn.h"
 
 #include <map>
 #include <mutex>
@@ -24,12 +25,6 @@
 #include <utility>
 
 namespace neverd {
-
-/// True when no path of \p Func returns: following normal and exceptional
-/// edges from its entry, each path reaches an architectural trap or a call
-/// whose instruction boundary marks it as not returning.  A path that ends
-/// any other way, or a cycle with no such exit, keeps the function returning.
-bool lowFunctionNeverReturns(const LowFunc &Func, Arch TheArch);
 
 /// Memoized no-return proofs for the internal functions of one unchanged
 /// image, shared by the CFG builds of one pipeline run.  A proof lifts the

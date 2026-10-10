@@ -54,6 +54,8 @@ INTEGRITY_LABELS = (
     "NeverDSessionLLVMTests",
     "NeverDSemanticFixtureTests",
     "NeverDPipelineOutcomeTests",
+    # Portable proof/refusal contracts for all native ISAs and image formats.
+    "NeverDImageAnalysisBoundaryTests",
 )
 PROFILE_EXCLUSIONS = {
     "linux-semantic": r"^NeverDPatchFullTests$",

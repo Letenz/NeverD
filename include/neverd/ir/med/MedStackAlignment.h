@@ -19,6 +19,13 @@ namespace neverd {
 /// or a loader can call an image's entry point as a function.
 StackEntryKind functionEntryKind(const MedFunc &Func, StackEntryKind AtEntry);
 
+/// A synthetic PE32 runtime-entry definition, with its full register carrier.
+bool hasValidRegistrationRootShape(const MedOp &Op);
+
+/// The established source frame and a checked continuation have exact parent
+/// entry-stack coordinates. A callback's private stack deliberately does not.
+std::optional<int64_t> registrationRootEntryStackOffset(const MedOp &Op);
+
 /// In source mode, simplify an alignment mask only when its operand is an
 /// exact offset from an authenticated entry stack pointer and the target ABI
 /// fixes every bit discarded by the mask for a function entered as \p Entry.

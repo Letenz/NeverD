@@ -7,14 +7,17 @@
 #include "COFFRegistrationEHDetail.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <tuple>
 #include <utility>
 
 namespace neverd::coff_loader::registration_detail {
@@ -32,14 +35,47 @@ namespace neverd::coff_loader::registration_detail {
 /// registration record the prologue pushed, so the compiler updates it with a
 /// store instead of describing it in a table.
 bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
-                       va_t FuncInfoVA) {
+                       va_t FuncInfoVA, std::map<va_t, va_t> *CallbackSources,
+                       std::vector<ExceptionAddressRange> *RecordRanges) {
+  if (RecordRanges)
+    RecordRanges->clear();
+  auto ReadRecord = [&](va_t VA, uint64_t Size) -> const uint8_t * {
+    if (!VA || VA > UINT32_MAX || !Size ||
+        Size > uint64_t(UINT32_MAX) + 1 - VA ||
+        Size > std::numeric_limits<size_t>::max())
+      return nullptr;
+    const auto *Bytes = Img.readVA(VA, size_t(Size));
+    if (Bytes && RecordRanges)
+      RecordRanges->push_back({VA, VA + Size});
+    return Bytes;
+  };
+  if (CallbackSources)
+    CallbackSources->clear();
+  auto RecordCallbackSource = [&](va_t Slot, va_t Target) {
+    if (!CallbackSources || !Target)
+      return true;
+    if (Slot > UINT32_MAX - 3) {
+      diagnose(F, ExceptionParseStatus::Malformed,
+               "x86 C++ callback pointer field exceeds PE32 address space");
+      return false;
+    }
+    const auto [It, New] = CallbackSources->emplace(Slot, Target);
+    if (!New && It->second != Target) {
+      diagnose(F, ExceptionParseStatus::Malformed,
+               "overlapping x86 C++ callback pointer fields disagree");
+      return false;
+    }
+    return true;
+  };
   // `magicNumber` occupies 29 bits and shares its word with `bbtFlags`, and
   // the magic fixes the length of the record: the original form ends after the
   // IP map pointer, the second adds the exception-specification list, and the
   // third adds `EHFlags`.  Demanding the longest layout would both reject a
   // legacy record near the end of a section and read trailing fields out of
   // whatever data follows it.
-  const uint8_t *MagicField = Img.readVA(FuncInfoVA, sizeof(uint32_t));
+  const uint8_t *MagicField = FuncInfoVA && FuncInfoVA <= UINT32_MAX - 3
+                                  ? Img.readVA(FuncInfoVA, sizeof(uint32_t))
+                                  : nullptr;
   if (!MagicField) {
     diagnose(F, ExceptionParseStatus::Malformed, "truncated x86 C++ FuncInfo");
     return false;
@@ -67,7 +103,7 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
     return false;
   }
 
-  const uint8_t *FI = Img.readVA(FuncInfoVA, FuncInfoSize);
+  const uint8_t *FI = ReadRecord(FuncInfoVA, FuncInfoSize);
   if (!FI) {
     diagnose(F, ExceptionParseStatus::Malformed, "truncated x86 C++ FuncInfo");
     return false;
@@ -101,6 +137,13 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
     return false;
   }
   Info.MaxState = static_cast<uint32_t>(MaxState);
+  uint32_t TotalRecords = Info.MaxState;
+  if (TryCount > MaxRegistrationRecords - TotalRecords) {
+    diagnose(F, ExceptionParseStatus::Malformed,
+             "x86 C++ FuncInfo graph exceeds aggregate decode budget");
+    return false;
+  }
+  TotalRecords += TryCount;
   // x86 tracks the current state in the frame, not in a table.  A non-empty
   // IP map here means the record is not the x86 form this decoder proved.
   if (IPCount != 0) {
@@ -111,9 +154,7 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
 
   if (Info.MaxState != 0) {
     uint64_t Bytes = uint64_t(Info.MaxState) * 8;
-    const uint8_t *Map = Bytes <= std::numeric_limits<size_t>::max()
-                             ? Img.readVA(UnwindMapVA, size_t(Bytes))
-                             : nullptr;
+    const uint8_t *Map = ReadRecord(UnwindMapVA, Bytes);
     if (!Map) {
       diagnose(F, ExceptionParseStatus::Malformed,
                "truncated x86 C++ unwind map");
@@ -132,15 +173,16 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
                  "x86 C++ unwind action is not executable");
         return false;
       }
+      if (!RecordCallbackSource(uint64_t(UnwindMapVA) + uint64_t(I) * 8 + 4,
+                                Action.ActionVA))
+        return false;
       Info.UnwindMap.push_back(Action);
     }
   }
 
   if (TryCount != 0) {
     uint64_t Bytes = uint64_t(TryCount) * 20;
-    const uint8_t *Map = Bytes <= std::numeric_limits<size_t>::max()
-                             ? Img.readVA(TryMapVA, size_t(Bytes))
-                             : nullptr;
+    const uint8_t *Map = ReadRecord(TryMapVA, Bytes);
     if (!Map) {
       diagnose(F, ExceptionParseStatus::Malformed, "truncated x86 C++ try map");
       return false;
@@ -154,15 +196,15 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
       Try.CatchHigh = readLE<int32_t>(E + 8);
       uint32_t CatchCount = readLE<uint32_t>(E + 12);
       uint32_t HandlerArrayVA = readLE<uint32_t>(E + 16);
-      if (CatchCount > MaxRegistrationRecords) {
+      if (CatchCount > MaxRegistrationRecords - TotalRecords) {
         diagnose(F, ExceptionParseStatus::Malformed,
-                 "x86 C++ catch count exceeds decode budget");
+                 "x86 C++ catch graph exceeds aggregate decode budget");
         return false;
       }
+      TotalRecords += CatchCount;
       uint64_t HandlerBytes = uint64_t(CatchCount) * 16;
       const uint8_t *Handlers =
-          CatchCount == 0 ? nullptr
-                          : Img.readVA(HandlerArrayVA, size_t(HandlerBytes));
+          CatchCount == 0 ? nullptr : ReadRecord(HandlerArrayVA, HandlerBytes);
       if (CatchCount != 0 && !Handlers) {
         diagnose(F, ExceptionParseStatus::Malformed,
                  "truncated x86 C++ handler map");
@@ -188,6 +230,10 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
                    "x86 C++ catch handler is not executable code");
           return false;
         }
+        if (!RecordCallbackSource(uint64_t(HandlerArrayVA) + uint64_t(J) * 16 +
+                                      12,
+                                  Catch.HandlerVA))
+          return false;
         Try.Handlers.push_back(std::move(Catch));
       }
       Info.TryBlocks.push_back(std::move(Try));
@@ -198,7 +244,7 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
   // the rest of the x86 record uses.  Its elements are `HandlerType` records,
   // so they are the shorter x86 form here too.
   if (Info.ESTypeListVA != 0) {
-    const uint8_t *List = Img.readVA(Info.ESTypeListVA, 8);
+    const uint8_t *List = ReadRecord(Info.ESTypeListVA, 8);
     if (!List) {
       diagnose(F, ExceptionParseStatus::Malformed,
                "truncated x86 C++ ESTypeList");
@@ -206,15 +252,14 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
     }
     int32_t SpecCount = readLE<int32_t>(List);
     uint32_t SpecArrayVA = readLE<uint32_t>(List + 4);
-    if (SpecCount < 0 ||
-        static_cast<uint32_t>(SpecCount) > MaxRegistrationRecords) {
+    if (SpecCount < 0 || static_cast<uint32_t>(SpecCount) >
+                             MaxRegistrationRecords - TotalRecords) {
       diagnose(F, ExceptionParseStatus::Malformed,
                "x86 C++ ESTypeList count exceeds decode budget");
       return false;
     }
     if (SpecCount != 0) {
-      const uint8_t *Specs =
-          Img.readVA(SpecArrayVA, static_cast<size_t>(SpecCount) * 16);
+      const uint8_t *Specs = ReadRecord(SpecArrayVA, uint64_t(SpecCount) * 16);
       if (!Specs) {
         diagnose(F, ExceptionParseStatus::Malformed,
                  "truncated x86 C++ ESTypeList type array");
@@ -247,3 +292,132 @@ bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
 }
 
 } // namespace neverd::coff_loader::registration_detail
+
+namespace neverd::coff_loader {
+
+std::optional<X86CxxFuncInfoRecords>
+getCheckedX86CxxFuncInfoRecords(const BinaryImage &Img, va_t FuncInfoVA) {
+  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF)
+    return std::nullopt;
+  ExceptionFunction Decoded;
+  X86CxxFuncInfoRecords Records;
+  if (!registration_detail::decodeX86FuncInfo(Decoded, Img, FuncInfoVA,
+                                              &Records.CallbackPointerSources,
+                                              &Records.Ranges) ||
+      Decoded.ParseStatus != ExceptionParseStatus::Complete || !Decoded.Cxx)
+    return std::nullopt;
+  std::sort(Records.Ranges.begin(), Records.Ranges.end(),
+            [](const auto &A, const auto &B) {
+              return std::tie(A.Begin, A.End) < std::tie(B.Begin, B.End);
+            });
+  Records.Ranges.erase(std::unique(Records.Ranges.begin(), Records.Ranges.end(),
+                                   [](const auto &A, const auto &B) {
+                                     return A.Begin == B.Begin &&
+                                            A.End == B.End;
+                                   }),
+                       Records.Ranges.end());
+  for (size_t I = 1; I < Records.Ranges.size(); ++I)
+    if (Records.Ranges[I - 1].overlaps(Records.Ranges[I]))
+      Records.HasDistinctRanges = false;
+  Records.Cxx = std::move(*Decoded.Cxx);
+  return Records;
+}
+
+namespace {
+bool replayCheckedCxxGraph(const BinaryImage &Img,
+                           const ExceptionFunction &Function,
+                           std::map<va_t, va_t> *Sources,
+                           std::vector<ExceptionAddressRange> *Ranges) {
+  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
+      Function.Encoding != ExceptionEncoding::X86CxxFuncInfo ||
+      Function.ParseStatus != ExceptionParseStatus::Complete ||
+      !Function.Registration || !Function.Cxx ||
+      (Function.Personality != ExceptionPersonality::CxxFrameHandler3 &&
+       Function.Personality != ExceptionPersonality::CxxFrameHandlerX86) ||
+      !Function.Cxx->NativeFuncInfoVA ||
+      Function.Cxx->NativeFuncInfoVA != Function.HandlerDataVA ||
+      Function.Cxx->NativeFuncInfoVA != Function.Registration->ScopeTableVA)
+    return false;
+  auto Replay =
+      getCheckedX86CxxFuncInfoRecords(Img, Function.Cxx->NativeFuncInfoVA);
+  if (!Replay || Replay->Cxx != *Function.Cxx ||
+      (Ranges && !Replay->HasDistinctRanges))
+    return false;
+  if (Sources)
+    *Sources = std::move(Replay->CallbackPointerSources);
+  if (Ranges)
+    *Ranges = std::move(Replay->Ranges);
+  return true;
+}
+} // namespace
+
+std::optional<std::map<va_t, va_t>>
+getCheckedX86CxxCallbackPointerSources(const BinaryImage &Img,
+                                       const ExceptionFunction &Function) {
+  std::map<va_t, va_t> Sources;
+  if (!replayCheckedCxxGraph(Img, Function, &Sources, nullptr))
+    return std::nullopt;
+  return Sources;
+}
+
+std::optional<std::vector<ExceptionAddressRange>>
+getCheckedX86CxxMetadataRanges(const BinaryImage &Img,
+                               const ExceptionFunction &Function) {
+  std::vector<ExceptionAddressRange> Ranges;
+  if (!replayCheckedCxxGraph(Img, Function, nullptr, &Ranges))
+    return std::nullopt;
+  return Ranges;
+}
+
+std::optional<X86CxxCallbackPointerRoles>
+getCheckedX86CxxCallbackPointerRoles(const BinaryImage &Img) {
+  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF)
+    return std::nullopt;
+  size_t Work = Img.ExceptionMetadata.Functions.size();
+  if (Work > limits::kMaxRegistrationEHStateWork)
+    return std::nullopt;
+  X86CxxCallbackPointerRoles Roles;
+  auto Charge = [&](size_t Amount) {
+    if (Amount > limits::kMaxRegistrationEHStateWork - Work)
+      return false;
+    Work += Amount;
+    return true;
+  };
+  for (const auto &Function : Img.ExceptionMetadata.Functions) {
+    if (Function.Cxx && Function.Registration) {
+      const auto &Cxx = *Function.Cxx;
+      if (!Charge(Cxx.UnwindMap.size()) || !Charge(Cxx.TryBlocks.size()) ||
+          !Charge(Cxx.IPMap.size()) || !Charge(Cxx.ExceptionSpecTypes.size()))
+        return std::nullopt;
+      for (const auto &Try : Cxx.TryBlocks)
+        if (!Charge(Try.Handlers.size()))
+          return std::nullopt;
+    }
+    const auto Sources = getCheckedX86CxxCallbackPointerSources(Img, Function);
+    if (!Sources)
+      continue;
+    if (Sources->size() > limits::kMaxRegistrationEHStateWork - Work)
+      return std::nullopt;
+    Work += Sources->size();
+    for (const auto &[Slot, Target] : *Sources) {
+      const auto [It, New] = Roles.Sources.emplace(Slot, Target);
+      if (!New && It->second != Target)
+        return std::nullopt;
+      Roles.RuntimeOnlyPointerTargets.insert(Target);
+    }
+  }
+  if (Img.CodePtrRelocSlots.size() > limits::kMaxRegistrationEHStateWork - Work)
+    return std::nullopt;
+  for (va_t Slot : Img.CodePtrRelocSlots) {
+    const uint8_t *Pointer = Img.readVA(Slot, 4);
+    if (!Pointer)
+      return std::nullopt;
+    const va_t Target = readLE<uint32_t>(Pointer);
+    const auto Source = Roles.Sources.find(Slot);
+    if (Source == Roles.Sources.end() || Source->second != Target)
+      Roles.RuntimeOnlyPointerTargets.erase(Target);
+  }
+  return Roles;
+}
+
+} // namespace neverd::coff_loader

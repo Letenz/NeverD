@@ -4,7 +4,7 @@
 
 [← Documentation Index](README.md)
 
-NeverD carries Windows table-based exception information through loading,
+NeverD carries Windows exception information through loading,
 lifting, decompilation, and binary rewriting. Exception metadata is part of a
 function's executable contract: a rewrite is rejected when NeverD cannot prove
 that the generated code, runtime-function records, language tables, and guard
@@ -34,7 +34,9 @@ Analysis support does not imply native reconstruction support.
 | `__CxxFrameHandler3` | Unwind map, try map, catches, catch-object/frame offsets, continuations, and IP-to-state map | Reducible state intervals become explicit C++ HighIR with C-compatible typed annotations | Native x64 reconstruction for the deliberately narrow, verifier-clean subset described below |
 | `__CxxFrameHandler4` | Bounded variable-length decoding into the common C++ graph, including action kinds and object offsets | Same HighIR graph with FH4 provenance | Analysis only; a touched function is rejected |
 | `__GSHandlerCheck_SEH/EH/EH4` | Wrapped personality plus checked GS cookie provenance | Base-language graph and wrapper annotation | Analysis only; a touched function is rejected rather than downgraded |
-| x86 registration-chain EH | Kept distinct from table-based EH | Unsupported-form annotation | Not reconstructed |
+| x86 registration-chain SEH3 | Checked scope graph, actual FS:[0] administration, callback roots and CFG-derived reaching try levels | Reducible, unambiguous regions become explicit EH nodes; other state flow retains native annotations | Native PE32 reconstruction for the checked fixed-frame, caller-cleanup subset below |
+| x86 registration-chain SEH4 | Checked cookie expressions, encoded scope pointer and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the authenticated direct-frame subset below, including initialized EH/GS cookies |
+| x86 registration-chain C++ EH | Absolute-pointer FuncInfo, cleanup/object contracts and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the checked single-try scalar-catch subset below |
 
 Malformed records are never treated as ordinary complete records. A partially
 decoded record remains useful for inspection, but cannot authorize native
@@ -71,6 +73,133 @@ entries therefore cannot multiply parser work beyond the aggregate budget.
 FH3 records that share one `FuncInfo` and personality are decoded as a bounded
 function group, so the parent's IP-to-state map may legally name its catch
 funclets without admitting addresses from unrelated runtime functions.
+
+### x86 registration state
+
+x86 has no runtime-function directory. The loader follows registration
+prologues to EH3/EH4 scope tables or C++ FuncInfo. SafeSEH tables must be mapped,
+strictly sorted and executable; a malformed table cannot become an absent one.
+C++ map counts share one aggregate decode budget.
+
+`analyzeRegistrationStates` is the shared LowIR owner of reaching try levels.
+It follows CFG predecessors and backedges, unions levels at joins and applies a
+recovered state store only after its exact decoded instruction completes.
+The loader retains byte, word and dword store widths. A narrow immediate
+replaces only those low bits in every reaching whole state; unknown high bytes,
+invalid resulting levels and disagreement with the lifted width fail closed.
+Unreachable stores cannot change a reachable block's state. Runtime-entered
+filters and cleanup callbacks are kept outside the parent's lexical interval;
+catch and except entries use their runtime state transfer. MedIR carries these
+derived facts separately from the authenticated loader descriptor. HighIR
+requires every reaching state to agree about region membership before emitting
+a structured region. Unknown transitions retain annotations rather than
+inventing an IP-to-state map.
+C++ catches have a separate runtime context: nested exception search starts
+above the active try block, and a catch returns a continuation code pointer to
+the runtime. LowIR requires an exact decoded return and saved stack value,
+decodes the target within the same function, and replays the restored context.
+An unproven continuation or conflicting return retains annotations and
+withdraws native authority. These facts remain separate from the source
+FuncInfo and from the parent's scalar return value.
+Only callback-pointer fields authenticated by the FuncInfo parser are excluded
+from ordinary indirect-entry discovery. Another reference to the same target
+retains its independent ordinary-entry role. MedIR gives runtime-only catch and
+cleanup roots the established parent EBP, keeps their private callback ESP
+unknown, and gives a checked continuation its saved parent ESP. Stack-offset
+proofs, HighIR and LLVM use the same coordinates. Malformed root carriers and
+conflicting saved-stack values cannot acquire those guarantees.
+Structured catches keep an explicit transfer to the checked continuation;
+unstructured annotations retain the catch-object offset, parent-frame offset
+and continuation list while leaving the native handler out of line.
+A try whose checked address intervals surround an out-of-line catch can form
+one HighIR region when removing that runtime-only callback leaves a contiguous
+protected body. Ordinary predecessors, intervening unprotected statements and
+ambiguous state flow prevent the move. The transformation commits the body and
+catch together. A separately converted PE32 callback still needs a parent-frame
+projection before its body can be copied into a clause; its native target is
+retained when that proof is absent.
+Direct MSVC prologues must prove the actual FS:[0] write and the registration
+and state-field offsets; matching integer sequences in locals are insufficient.
+
+Native SEH3/EH4 reconstruction additionally proves a fixed private source frame,
+balanced FS:[0] administration and one active state at each ordinary CFG block.
+LLVM owns the new physical registration. Outlined filters and termination
+callbacks recover source EBP/ESP and exception pointers through its escaped
+frame; source chain operations are replaced only at authenticated occurrences.
+Every active interval has explicit asynchronous scope boundaries, including
+nested handler entry into its outer scope. Original functions and preserved
+direct callees must have checked caller-cleanup stack behavior. Indirect or
+unproved cleanup conventions remain rejected.
+
+Incoming cdecl stack slots are projected onto the real caller frame at their
+original memory-operation occurrences, including reads and writes in outlined
+callbacks. Preserved callees need a closed, frame-private call graph: stack
+reads must be initialized, accesses must stay within their live allocation,
+and callee-saved registers and SP must be restored. Frame provenance survives
+flags, vector aliases, spills and calls. A return-address observer may record
+the regenerated call site for an external observer; reloading that value inside
+the source/callee closure is rejected. Opaque imports other than authenticated
+`RaiseException`, and memory intrinsics without a checked access contract, are
+outside this native subset.
+
+The compiler emits indexed scope rows with exact table extent, enclosing state,
+filter/handler targets and source semantic receipts. The PE transaction checks
+their physical bytes and DIR32 fixups, merges SafeSEH and HIGHLOW relocations,
+and reparses the installed image. A new Guard CF/EH continuation table pointer
+also receives its own base relocation. Both `section` and `inplace` patch modes
+use this complete transaction for registration functions.
+
+SEH3 requires an argument-preserving veneer to the known CRT import. EH4
+requires an exact forwarding wrapper: all four dispatcher arguments, the
+load-config cookie address, the executable cookie checker and the CRT common
+handler import must agree. A handler name alone never authorizes rewriting.
+The shared frame domain proves the encoded scope pointer and every cookie
+expression before the registration becomes visible. Source and preserved
+callees cannot change the image cookie or scope table. Synthetic cookie values
+cannot escape the private frame. LLVM derives the generated cookie offsets
+from its physical registration record, including the runtime's virtual frame
+base; the installer compares those offsets with the exact emitted table bytes.
+A directly initialized GS slot gets a compiler-owned stack protector. GS encoding
+and exit checks use that same virtual base, including with stack realignment.
+The checker keeps the exact fastcall ABI and the original wrapper's code identity;
+a similarly named function or import cannot substitute for it.
+Its checked success path compares ECX with the load-config cookie and returns
+without touching stack storage or other registers. An escaped argument copy
+stays in the recovered local frame when LLVM realigns the stack.
+
+An explicit source GS check requires an exact full-width ECX cookie expression
+at the decoded call occurrence and the authenticated checker identity. Native
+lowering replaces only that proved call with an indexed execution event; LLVM
+emits the physical stack-protector check. The public installer independently
+replays the source proof and rejects removed, duplicated, unmarked or reordered
+events. Checks inside outlined callbacks remain outside this subset.
+
+This path needs the LLVM fork's `LLVM_NEVERD_X86_REGISTRATION_EH` contract;
+EH4 also requires `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS initialization
+requires `LLVM_NEVERD_X86_REGISTRATION_GS`. The older published r3 package
+rejects native installation.
+
+Native x86 C++ reconstruction currently supports one synchronous typed try and
+one scalar catch, by value or reference, with at most 128 source unwind states.
+The source uses the checked direct MSVC registration frame and
+`FuncInfo` magic `0x19930522`, without a GS wrapper. Every preserved call,
+throw type and cleanup relay needs an independently checked ABI. Source object
+borrows must be bounded, initialized and separate from registration storage;
+reference accesses retain the CRT-provided object identity through catch return.
+Reads and writes must retain the original image storage identity.
+
+LLVM recreates the physical registration, typed catch home, ordered cleanup
+dispatch, complete FuncInfo and private handler. Public installation requires
+`LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS`,
+`LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS` and
+`LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS`, then independently replays edited IR and
+checks actual emitted code, tables, SafeSEH and all absolute relocations. Entry
+patches may not overwrite preserved helper or CRT instructions. The current
+runtime fixtures prove integer value/reference catches and nested destruction
+under Wine and the Windows CRT, including forced relocation. Other try/catch
+graphs, unproved object types, incoming stack arguments, dynamic frames and GS
+or asynchronous C++ remain available for analysis and are rejected for native
+installation.
 
 ## IR contract
 
@@ -120,7 +249,7 @@ lowering:
 - function attachment: `neverd.windows.eh`;
 - native-lowering marker: `neverd.windows.eh.native`;
 - module table: `neverd.windows.eh.functions`;
-- current schema version: `3`.
+- current schema version: `9`.
 
 The fixed function record carries parse status, encoding, code range, native
 runtime/unwind RVAs, runtime-record kind and chain provenance, packed-unwind
@@ -240,6 +369,48 @@ IP-to-state map after reloading the patched PE.
 
 For parser changes, also run the existing ARM format cases because ARM packed
 and unpacked xdata share the normalized model and final runtime-entry checks.
+
+The focused registration-state suite and PE32 runtime baseline are:
+
+```bash
+cmake --build build-release --target NeverDRegistrationStateTests \
+  NeverDRegistrationEHTests NeverDWindowsRegistrationFrameTests --parallel 4
+build-release/bin/NeverDRegistrationStateTests
+build-release/bin/NeverDRegistrationEHTests
+NEVERD_REGISTRATION_RUNTIME_OBJECT=/tmp/neverd-frame.obj \
+  build-release/bin/NeverDWindowsRegistrationFrameTests
+python3 -m unittest scripts.tests.test_check_windows_registration_eh \
+  scripts.tests.test_check_windows_registration_frame \
+  scripts.tests.test_check_windows_registration_cookie -v
+python3 scripts/check_windows_registration_eh.py --output build-registration/evidence
+python3 scripts/check_windows_registration_frame.py --object /tmp/neverd-frame.obj \
+  --output build-registration/callback-runtime
+```
+
+The runner executes the pinned MSVC x86 SEH and C++ probes with `/GS` on/off and
+at O0/O2, using Wine on Linux or the native loader on Windows. Its default
+report is `original-runtime` evidence. `--patched-root` requires all eight
+rewritten counterparts, rejects byte-identical copies and compares outcomes;
+that mode reports `changed-image-runtime` evidence. This establishes runtime
+equivalence for changed images; native reconstruction additionally needs a bound
+patch receipt and evidence that the replaced EH entries executed. Missing
+runtimes or images fail the run. The callback-frame suite checks PE32 filter
+and finally recovery, existing escape indices, bounded exception-pointer cells,
+private callback stacks, atomic rejection, and actual i386 COFF scope-table
+code generation. The frame runner links the emitted object with SafeSEH checks
+enabled, executes 16 real exceptions, and requires the exact filter count and
+successful outcome. Its report is `generated-x86-callback-abi` evidence. These
+checks alone do not authorize a native patch. The source reconstruction runner
+executes original, manually installed, public COFF, symbol-collision, CLI
+section and CLI inplace variants at preferred and forced relocation bases.
+The strict EH4 oracle additionally requires valid execution and pre-dispatch
+rejection after separately corrupting EH and GS cookies. Wine's common EH4
+dispatcher does not validate cookies, so a small fixture supplies that check
+before forwarding dispatch to the runtime.
+The CI `windows_eh_only` dispatch profile additionally checks
+ARM32 cross-target PE generation and reconstruction. It does not claim execution
+on Windows ARM32. When supplied an exact LLVM artifact build, a dependent
+Windows job replays the same hashed PE32 images with the native Windows CRT.
 
 ## Extending native support
 

@@ -93,11 +93,14 @@ struct ExceptionalEdge {
   ExceptionalEdgeKind Kind = ExceptionalEdgeKind::Unknown;
   uint32_t RegionIndex = 0;
   int32_t State = -1;
+  /// Exact throwing instruction for synchronous edges. InvalidVA denotes a
+  /// protected range, whose register state cannot be sampled at one call.
+  va_t SourceVA = InvalidVA;
 
   bool operator==(const ExceptionalEdge &Other) const {
     return BlockId == Other.BlockId && TargetVA == Other.TargetVA &&
            Kind == Other.Kind && RegionIndex == Other.RegionIndex &&
-           State == Other.State;
+           State == Other.State && SourceVA == Other.SourceVA;
   }
 };
 

@@ -185,6 +185,11 @@ static_assert(uint64_t{kMaxJumpTableProposalStageEvidenceWork} >=
 /// keeps the ordinary relocation mirror instead of suppressing any slot.
 constexpr uint32_t kMaxJumpTableTerminalUseEvidenceWork = 16777216;
 
+/// Cumulative expression visits in one pointer recurrence query, including
+/// initializer and alias proofs. A depth cap alone cannot bound a branching
+/// SSA graph. Exhaustion grants no recurrence evidence.
+constexpr uint32_t kMaxPointerRecurrenceEvidenceWork = 65536;
+
 /// Maximum recursive depth while reconstructing one exact guard expression.
 /// The shared evidence-work budget bounds total graph size; this separate
 /// ceiling prevents a single adversarial linear chain from exhausting the C++
@@ -727,6 +732,13 @@ constexpr int kIfElseNestedArmPasses = 1;
 
 /// x86 registration-chain prologue helper expansion fixed point.
 constexpr unsigned kMaxRegistrationEHFixedPoint = 16;
+
+/// Shared limit on x86 registration language-table records and state domains.
+constexpr uint32_t kMaxRegistrationEHRecords = 4096;
+
+/// Total registration-state propagation work, including state/edge pairs.
+/// Exhaustion invalidates the whole result rather than truncating a domain.
+constexpr size_t kMaxRegistrationEHStateWork = 1048576;
 
 /// Default MXCSR value (x86 SSE control/status register).
 constexpr uint64_t kDefaultMXCSR = 0x1F80;

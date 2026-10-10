@@ -1,0 +1,48 @@
+name: Replay Windows registration evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      evidence_run:
+        description: 'Successful Linux evidence run in this repository'
+        required: true
+        type: string
+      source_profile:
+        description: 'Source checkpoint represented by the artifact'
+        required: true
+        type: choice
+        default: all
+        options: [all, seh3-eh4]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  replay:
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run }}
+          name: windows-eh-x86-runtime-arm32-contracts
+          path: build-windows-eh
+      - name: Collect original-image runtime diagnostics
+        run: python scripts/check_windows_registration_native_diagnostics.py --root build-windows-eh
+      - name: Replay exact source and cookie evidence
+        run: python scripts/replay_windows_registration.py --evidence-root build-windows-eh/evidence --source-profile '${{ inputs.source_profile }}' --output build-windows-eh/native-replay.json
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: windows-registration-replay
+          path: |
+            build-windows-eh/native-replay.json
+            build-windows-eh/runtime-diagnostics.json
+          if-no-files-found: error
+          retention-days: 14

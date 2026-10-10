@@ -27,7 +27,7 @@ namespace neverd {
 /// entry naming its enclosing level rather than by containment of ranges,
 /// which is why this model keeps the level graph instead of address ranges.
 struct RegistrationScopeRecord {
-  /// Enclosing try level, or -1 for a scope directly under the frame.
+  /// Enclosing try level, or -1 (EH3) / -2 (EH4) directly under the frame.
   int32_t EnclosingLevel = -1;
   /// Filter expression address; zero marks a `__finally` (termination) scope.
   va_t FilterVA = 0;
@@ -36,7 +36,9 @@ struct RegistrationScopeRecord {
   bool IsFinally = false;
 };
 
-/// One store of a literal try level into the frame's try-level slot.
+/// One immediate store into the frame's try-level slot. Narrow stores retain
+/// their unsigned literal bits; only the shared state analysis can prove the
+/// complete level after preserving the untouched bytes.
 ///
 /// The scope table says which scope a level names but nothing about where that
 /// level is current: the runtime reads the level out of the frame, so only the
@@ -48,7 +50,24 @@ struct RegistrationTryLevelStore {
   va_t StoreVA = 0;
   /// Address just past the store.
   va_t EndVA = 0;
+  /// Signed full-word level, or the zero-extended immediate of a narrow store.
   int32_t Level = 0;
+  uint8_t Width = 4;
+};
+
+/// A checked realigned local frame, distinct from the entry's EBP frame.
+/// The Windows C++ runtime establishes EBP just beyond the registration node.
+/// BaseOffset expresses ESI in that runtime coordinate, not in entry EBP.
+struct RegistrationRealignedFrame {
+  /// Architectural x86 register encoding; the checked layout currently uses
+  /// ESI.
+  uint8_t BaseRegister = 6;
+  va_t DefinitionVA = 0;
+  uint32_t Alignment = 0;
+  uint32_t AllocationBytes = 0;
+  int32_t BaseOffset = 0;
+  int32_t SavedParentFrameOffset = 0;
+  bool operator==(const RegistrationRealignedFrame &) const = default;
 };
 
 /// The prologue-established registration record for one x86-32 function.
@@ -86,6 +105,33 @@ struct RegistrationChainInfo {
   /// bound the region in which the registration record is live.
   va_t ChainInstallVA = 0;
   va_t ChainRemoveVA = 0;
+  /// Present when the local frame and runtime establisher have different
+  /// coordinates from entry EBP. Existing EBP consumers must not use its
+  /// offsets without an independent transfer proof for this anchor.
+  std::optional<RegistrationRealignedFrame> RealignedFrame;
+
+  uint8_t chainInstallInstructionSize() const { return RealignedFrame ? 6 : 7; }
+
+  /// An absolute code-pointer field owned by this decoded SEH table. These
+  /// references are runtime dispatch entries, not ordinary address-taken CFG
+  /// roots. Independent references to the same code keep their own role.
+  std::optional<va_t> scopePointerTarget(va_t Slot) const {
+    if (!ScopeTableVA || (SeededTryLevel != -1 && SeededTryLevel != -2))
+      return std::nullopt;
+    const uint64_t Header = SeededTryLevel == -2 ? 16 : 0;
+    if (ScopeTableVA > InvalidVA - Header || Slot < ScopeTableVA + Header)
+      return std::nullopt;
+    const uint64_t Offset = Slot - ScopeTableVA - Header;
+    const uint64_t Index = Offset / 12;
+    if (Index >= Scopes.size())
+      return std::nullopt;
+    const auto &Scope = Scopes[Index];
+    if (Offset % 12 == 4 && Scope.FilterVA)
+      return Scope.FilterVA;
+    if (Offset % 12 == 8 && Scope.HandlerVA)
+      return Scope.HandlerVA;
+    return std::nullopt;
+  }
 };
 
 } // namespace neverd

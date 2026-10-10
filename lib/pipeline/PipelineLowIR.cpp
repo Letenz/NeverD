@@ -2080,6 +2080,7 @@ bool collectLowAddressUses(
 
 struct EHContinuationRootDiscovery {
   std::map<va_t, std::set<va_t>> RootsByOwner;
+  std::map<va_t, std::vector<LowCxxContinuationEntryEvidence>> EntriesByOwner;
   std::vector<std::vector<LowCxxContinuationExitEvidence>>
       CxxContinuationExitsByFunction;
   std::vector<bool> CxxContinuationExitAnalysisCompleteByFunction;
@@ -2318,8 +2319,16 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
                                             Img.Mode) == SourceLow.Entry;
                                });
           });
-      if (DeclaresSource)
+      if (DeclaresSource) {
         Result.RootsByOwner[Owner->CodeRange.Begin].insert(Target);
+        if (Owner->Cxx->NativeFuncInfoVA &&
+            Owner->Cxx->NativeFuncInfoVA ==
+                FH3CatchSources[FuncIndex]->Cxx->NativeFuncInfoVA)
+          for (const auto &Exit : Returned.OccurrencesByFunction[FuncIndex])
+            if (Exit.Complete && llvm::is_contained(Exit.Targets, Target))
+              Result.EntriesByOwner[Owner->CodeRange.Begin].push_back(
+                  {Target, SourceLow.Entry, Exit.ReturnAddr, Exit.ReturnSeq});
+      }
     }
   }
   return Result;
@@ -3297,11 +3306,18 @@ void Pipeline::buildLowIR(
   std::set<va_t> UnsafeJumpTableBranches;
   bool PreservePotentialJumpTableBranches = false;
   std::map<va_t, std::set<va_t>> ContinuationRootsByOwner;
+  std::map<va_t, std::set<va_t>> BaselineOrdinaryRoots;
+  for (const auto &Function : AllLow)
+    BaselineOrdinaryRoots[Function.Entry] =
+        Function.OrdinaryModuleAnalysisRoots;
+  std::map<va_t, std::vector<LowCxxContinuationEntryEvidence>>
+      StableCxxContinuationEntriesByOwner;
   std::vector<std::vector<LowCxxContinuationExitEvidence>>
       StableCxxContinuationExitsByFunction;
   std::vector<bool> StableCxxContinuationExitAnalysisCompleteByFunction;
   bool HasStableCxxContinuationExitSnapshot = false;
   auto clearStableCxxContinuationExitSnapshot = [&]() {
+    StableCxxContinuationEntriesByOwner.clear();
     StableCxxContinuationExitsByFunction.clear();
     StableCxxContinuationExitAnalysisCompleteByFunction.clear();
     HasStableCxxContinuationExitSnapshot = false;
@@ -3477,6 +3493,8 @@ void Pipeline::buildLowIR(
         }
         StableCxxContinuationExitsByFunction =
             std::move(Discovered.CxxContinuationExitsByFunction);
+        StableCxxContinuationEntriesByOwner =
+            std::move(Discovered.EntriesByOwner);
         StableCxxContinuationExitAnalysisCompleteByFunction =
             std::move(Discovered.CxxContinuationExitAnalysisCompleteByFunction);
         HasStableCxxContinuationExitSnapshot = true;
@@ -3568,6 +3586,7 @@ void Pipeline::buildLowIR(
   // any failure above leaves every function visibly unanalysed.
   for (LowFunc &Function : AllLow) {
     Function.CxxContinuationExits.clear();
+    Function.CxxContinuationEntries.clear();
     Function.CxxContinuationExitAnalysisComplete = false;
   }
   if (ContinuationAndArbitrationStable &&
@@ -3575,6 +3594,12 @@ void Pipeline::buildLowIR(
       StableCxxContinuationExitsByFunction.size() == Total &&
       StableCxxContinuationExitAnalysisCompleteByFunction.size() == Total) {
     for (size_t I = 0; I < Total; ++I) {
+      if (auto Found =
+              StableCxxContinuationEntriesByOwner.find(AllLow[I].Entry);
+          Found != StableCxxContinuationEntriesByOwner.end())
+        for (const auto &Entry : Found->second)
+          if (!BaselineOrdinaryRoots[AllLow[I].Entry].count(Entry.Target))
+            AllLow[I].CxxContinuationEntries.push_back(Entry);
       if (!StableCxxContinuationExitAnalysisCompleteByFunction[I])
         continue;
       AllLow[I].CxxContinuationExits =

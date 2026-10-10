@@ -6,8 +6,11 @@
 
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 
+#include "neverd/Limits.h"
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/support/BinaryEncoding.h"
+
+#include "llvm/MC/BinaryRewrite.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -82,8 +85,7 @@ WindowsEHNativeSourceReason validateSEH(const ExceptionFunction &EH,
   for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
     const std::optional<ExceptionAddressRange> SemanticRange =
         getSemanticSEHGuardedRange(Scope, TargetArch, EH.CodeRange);
-    if (Scope.ParseStatus != ExceptionParseStatus::Complete ||
-        !SemanticRange)
+    if (Scope.ParseStatus != ExceptionParseStatus::Complete || !SemanticRange)
       return WindowsEHNativeSourceReason::InvalidSEHScope;
 
     switch (Scope.Kind) {
@@ -106,8 +108,7 @@ WindowsEHNativeSourceReason validateSEH(const ExceptionFunction &EH,
       break;
     case SEHScopeKind::Filter:
       if (Scope.NormalizedFilterVA != 0 || Scope.FilterOrFinallyVA == 0 ||
-          Scope.HandlerVA == 0 ||
-          Scope.ContinuationVA != Scope.HandlerVA ||
+          Scope.HandlerVA == 0 || Scope.ContinuationVA != Scope.HandlerVA ||
           EH.CodeRange.contains(Scope.FilterOrFinallyVA) ||
           !EH.CodeRange.contains(Scope.HandlerVA) ||
           SemanticRange->contains(Scope.HandlerVA))
@@ -139,7 +140,8 @@ WindowsEHNativeSourceReason validateSEH(const ExceptionFunction &EH,
   return WindowsEHNativeSourceReason::Eligible;
 }
 
-WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH) {
+WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH,
+                                           bool Registration = false) {
   if (!EH.Cxx)
     return WindowsEHNativeSourceReason::MissingCxxTable;
   const CxxExceptionInfo &Cxx = *EH.Cxx;
@@ -152,8 +154,12 @@ WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH) {
     return WindowsEHNativeSourceReason::InvalidCxxStateGraph;
   if (Cxx.TryBlocks.empty())
     return WindowsEHNativeSourceReason::EmptyCxxTryMap;
-  if (Cxx.IPMap.empty())
+  if (!Registration && Cxx.IPMap.empty())
     return WindowsEHNativeSourceReason::EmptyCxxIPMap;
+  if (Registration &&
+      (!Cxx.IPMap.empty() || Cxx.MaxState > limits::kMaxRegistrationEHRecords ||
+       Cxx.TryBlocks.size() > limits::kMaxRegistrationEHRecords))
+    return WindowsEHNativeSourceReason::InvalidCxxStateGraph;
   if (Cxx.Flags != 1u)
     return WindowsEHNativeSourceReason::UnsupportedCxxFlags;
   if (Cxx.BBTFlags != 0)
@@ -174,9 +180,13 @@ WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH) {
     return WindowsEHNativeSourceReason::UnsupportedCxxHandlerFrameState;
 
   for (const CxxUnwindAction &Action : Cxx.UnwindMap)
-    if (Action.ActionVA != 0 ||
-        Action.Kind != CxxUnwindAction::ActionKind::None ||
-        Action.ObjectOffset != 0)
+    if (Action.ObjectOffset != 0 ||
+        (Action.ActionVA == 0
+             ? Action.Kind != CxxUnwindAction::ActionKind::None
+             : !Registration ||
+                   Action.Kind != CxxUnwindAction::ActionKind::Direct ||
+                   Action.ActionVA > UINT32_MAX ||
+                   EH.CodeRange.contains(Action.ActionVA)))
       return WindowsEHNativeSourceReason::UnsupportedCxxUnwindAction;
 
   for (const CxxIPState &IP : Cxx.IPMap)
@@ -184,6 +194,13 @@ WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH) {
       return WindowsEHNativeSourceReason::InvalidCxxStateGraph;
 
   if (Cxx.TryBlocks.size() > std::numeric_limits<uint32_t>::max())
+    return WindowsEHNativeSourceReason::InvalidCxxTryBlock;
+  // One physical runtime context is currently lowered. Keep this source
+  // projection authoritative for the emitter, IR replay and table consumer.
+  if (Registration &&
+      (Cxx.UnwindMap.size() > 128 || Cxx.TryBlocks.size() != 1 ||
+       Cxx.TryBlocks[0].TryLow != 0 || Cxx.TryBlocks[0].Handlers.size() != 1 ||
+       Cxx.TryBlocks[0].CatchHigh != Cxx.TryBlocks[0].TryHigh + 1))
     return WindowsEHNativeSourceReason::InvalidCxxTryBlock;
   auto StateAt = [&](va_t Address) {
     int32_t State = -1;
@@ -199,13 +216,19 @@ WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH) {
         Try.Handlers.size() > std::numeric_limits<uint32_t>::max())
       return WindowsEHNativeSourceReason::InvalidCxxTryBlock;
     for (const CxxCatchHandler &Catch : Try.Handlers) {
-      if (Catch.CatchObjectOffset != 0 || Catch.ParentFrameOffset != 0)
+      if (Catch.ParentFrameOffset != 0 ||
+          (!Registration && Catch.CatchObjectOffset != 0) ||
+          (Registration &&
+           (Catch.CatchObjectOffset >= 0 || !Catch.TypeDescriptorVA ||
+            Catch.TypeDescriptorVA > UINT32_MAX ||
+            (Catch.Adjectives != 0 && Catch.Adjectives != 8))))
         return WindowsEHNativeSourceReason::UnsupportedCxxHandlerFrameState;
       if (Catch.HandlerVA == 0 || Catch.HandlerVA == EH.CodeRange.Begin ||
           !EH.CodeRange.contains(Catch.HandlerVA))
         return WindowsEHNativeSourceReason::InvalidCxxHandler;
       const int32_t HandlerState = StateAt(Catch.HandlerVA);
-      if (HandlerState <= Try.TryHigh || HandlerState > Try.CatchHigh)
+      if (!Registration &&
+          (HandlerState <= Try.TryHigh || HandlerState > Try.CatchHigh))
         return WindowsEHNativeSourceReason::InvalidCxxHandler;
       if (!Catch.ContinuationVAs.empty())
         return WindowsEHNativeSourceReason::UnsupportedCxxContinuation;
@@ -293,8 +316,7 @@ WindowsEHNativeSourceReason validateCxxFH4(const ExceptionFunction &EH) {
   // reproduces exactly one protected interval bracketed by the empty state.
   if (Cxx.IPMap.size() != 3 || Cxx.IPMap[0].IP != EH.CodeRange.Begin ||
       Cxx.IPMap[0].State != -1 || Cxx.IPMap[1].State != 0 ||
-      Cxx.IPMap[2].State != -1 ||
-      !EH.CodeRange.contains(Cxx.IPMap[1].IP) ||
+      Cxx.IPMap[2].State != -1 || !EH.CodeRange.contains(Cxx.IPMap[1].IP) ||
       (Cxx.IPMap[2].IP != EH.CodeRange.End &&
        !EH.CodeRange.contains(Cxx.IPMap[2].IP)))
     return WindowsEHNativeSourceReason::InvalidCxxStateGraph;
@@ -495,6 +517,142 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
     return reject(WindowsEHNativeSourceModel::None,
                   WindowsEHNativeSourceReason::UnsupportedObjectFormat,
                   Capability);
+  if (TargetArch == Arch::X86 &&
+      (EH.Personality == ExceptionPersonality::ExceptHandler3 ||
+       EH.Personality == ExceptionPersonality::ExceptHandler4)) {
+    const auto Model = WindowsEHNativeSourceModel::X86RegistrationSEH;
+    if (EH.Kind != RuntimeFunctionKind::Primary)
+      return reject(Model,
+                    WindowsEHNativeSourceReason::NonPrimaryRuntimeFunction,
+                    Capability);
+    if (!EH.CodeRange.isValid())
+      return reject(Model, WindowsEHNativeSourceReason::InvalidCodeRange,
+                    Capability);
+    if (EH.ParseStatus != ExceptionParseStatus::Complete)
+      return reject(Model, WindowsEHNativeSourceReason::IncompleteDecode,
+                    Capability);
+    const bool EH4 = EH.Personality == ExceptionPersonality::ExceptHandler4;
+    if (EH.Encoding != (EH4 ? ExceptionEncoding::X86ScopeTableEH4
+                            : ExceptionEncoding::X86ScopeTableEH3))
+      return reject(Model,
+                    WindowsEHNativeSourceReason::UnsupportedUnwindEncoding,
+                    Capability);
+    if (!EH.Registration || EH.SEH || EH.Cxx || EH.GSCookie || EH.Rust ||
+        EH.ObjC || EH.Dwarf || EH.Itanium || EH.ARMEHABI || EH.Compact ||
+        EH.Delphi || EH.DelphiScopes || EH.Go)
+      return reject(Model,
+                    WindowsEHNativeSourceReason::ConflictingLanguageModel,
+                    Capability);
+    const RegistrationChainInfo &Chain = *EH.Registration;
+    if (Chain.RealignedFrame)
+      return reject(Model,
+                    WindowsEHNativeSourceReason::IncompleteRegistrationFrame,
+                    Capability);
+    const int32_t Sentinel = EH4 ? -2 : -1;
+    if (!EH.PersonalityVA || Chain.HandlerVA != EH.PersonalityVA ||
+        !Chain.ScopeTableVA || Chain.ScopeTableVA != EH.HandlerDataVA ||
+        Chain.RegistrationOffset != -16 || Chain.TryLevelOffset != -4 ||
+        Chain.SeededTryLevel != Sentinel ||
+        !EH.CodeRange.contains(Chain.ChainInstallVA) ||
+        Chain.HasSecurityCookies != (EH4 && Chain.GSCookieOffset != -2))
+      return reject(Model,
+                    WindowsEHNativeSourceReason::IncompleteRegistrationFrame,
+                    Capability);
+    if (Chain.Scopes.empty() ||
+        Chain.Scopes.size() > limits::kMaxRegistrationEHRecords ||
+        Chain.TryLevelStores.size() > limits::kMaxRegistrationEHRecords)
+      return reject(Model, WindowsEHNativeSourceReason::EmptySEHScopeTable,
+                    Capability);
+    for (size_t I = 0; I < Chain.Scopes.size(); ++I) {
+      const RegistrationScopeRecord &Scope = Chain.Scopes[I];
+      if ((Scope.EnclosingLevel != Sentinel &&
+           (Scope.EnclosingLevel < 0 || uint32_t(Scope.EnclosingLevel) >= I)) ||
+          !EH.CodeRange.contains(Scope.HandlerVA) ||
+          Scope.IsFinally != (Scope.FilterVA == 0) ||
+          (!Scope.IsFinally && !EH.CodeRange.contains(Scope.FilterVA)))
+        return reject(Model, WindowsEHNativeSourceReason::InvalidSEHScope,
+                      Capability);
+    }
+    // The PE32 writer requires indexed compiler receipts; older prebuilt
+    // LLVMs retain analysis support. EH4 additionally requires the compiler's
+    // physical cookie-frame contract. Source cookie observations and explicit
+    // GS epilogues must independently pass the shared lifetime/ABI proofs.
+    bool OutputAvailable = false;
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+    OutputAvailable = !EH4;
+#endif
+#ifdef LLVM_NEVERD_X86_REGISTRATION_COOKIES
+    OutputAvailable |= EH4 && Chain.GSCookieOffset == -2;
+#endif
+#ifdef LLVM_NEVERD_X86_REGISTRATION_GS
+    OutputAvailable |= EH4;
+#endif
+    if (Capability == WindowsEHNativeCapability::IRLowering || OutputAvailable)
+      return {Model, WindowsEHNativeSourceReason::Eligible, Capability};
+    return reject(Model,
+                  WindowsEHNativeSourceReason::OutputReconstructionUnavailable,
+                  Capability);
+  }
+  if (TargetArch == Arch::X86 &&
+      (EH.Personality == ExceptionPersonality::CxxFrameHandler3 ||
+       EH.Personality == ExceptionPersonality::CxxFrameHandlerX86)) {
+    const auto Model = WindowsEHNativeSourceModel::X86RegistrationCxx;
+    if (EH.Kind != RuntimeFunctionKind::Primary)
+      return reject(Model,
+                    WindowsEHNativeSourceReason::NonPrimaryRuntimeFunction,
+                    Capability);
+    if (!EH.CodeRange.isValid() || EH.CodeRange.End > uint64_t(UINT32_MAX) + 1)
+      return reject(Model, WindowsEHNativeSourceReason::InvalidCodeRange,
+                    Capability);
+    if (EH.ParseStatus != ExceptionParseStatus::Complete)
+      return reject(Model, WindowsEHNativeSourceReason::IncompleteDecode,
+                    Capability);
+    if (EH.Encoding != ExceptionEncoding::X86CxxFuncInfo)
+      return reject(Model,
+                    WindowsEHNativeSourceReason::UnsupportedUnwindEncoding,
+                    Capability);
+    if (!EH.Registration || !EH.Cxx || EH.SEH || EH.GSCookie || EH.Rust ||
+        EH.ObjC || EH.Dwarf || EH.Itanium || EH.ARMEHABI || EH.Compact ||
+        EH.Delphi || EH.DelphiScopes || EH.Go)
+      return reject(Model,
+                    WindowsEHNativeSourceReason::ConflictingLanguageModel,
+                    Capability);
+    const auto &Chain = *EH.Registration;
+    if (Chain.RealignedFrame)
+      return reject(
+          Model,
+          WindowsEHNativeSourceReason::UnsupportedCxxDynamicStackAlignment,
+          Capability);
+    if (!EH.PersonalityVA || Chain.HandlerVA != EH.PersonalityVA ||
+        !Chain.ScopeTableVA || Chain.ScopeTableVA != EH.HandlerDataVA ||
+        Chain.ScopeTableVA != EH.Cxx->NativeFuncInfoVA ||
+        Chain.RegistrationOffset != -12 || Chain.TryLevelOffset != -4 ||
+        Chain.SeededTryLevel != -1 || Chain.HasSecurityCookies ||
+        !Chain.Scopes.empty() ||
+        Chain.TryLevelStores.size() > limits::kMaxRegistrationEHRecords ||
+        !EH.CodeRange.contains(Chain.ChainInstallVA))
+      return reject(Model,
+                    WindowsEHNativeSourceReason::IncompleteRegistrationFrame,
+                    Capability);
+    const auto Reason = validateCxxFH3(EH, true);
+    if (Reason != WindowsEHNativeSourceReason::Eligible)
+      return reject(Model, Reason, Capability);
+    // IR needs the physical catch protocol. Installation additionally needs
+    // complete table/handler receipts; the PE transaction independently
+    // replays edited IR, source helpers, physical frame and final image.
+#ifdef LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS
+    if (Capability == WindowsEHNativeCapability::IRLowering)
+      return {Model, WindowsEHNativeSourceReason::Eligible, Capability};
+#endif
+#if defined(LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS) &&                            \
+    defined(LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS) &&                          \
+    defined(LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS)
+    return {Model, WindowsEHNativeSourceReason::Eligible, Capability};
+#endif
+    return reject(Model,
+                  WindowsEHNativeSourceReason::OutputReconstructionUnavailable,
+                  Capability);
+  }
   if (TargetArch != Arch::X64 && TargetArch != Arch::ARM &&
       TargetArch != Arch::AArch64)
     return reject(WindowsEHNativeSourceModel::None,
@@ -576,8 +734,7 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
                   Capability);
 
   WindowsEHNativeSourceReason Reason =
-      Model == WindowsEHNativeSourceModel::SEH
-          ? validateSEH(EH, TargetArch)
+      Model == WindowsEHNativeSourceModel::SEH ? validateSEH(EH, TargetArch)
       : Model == WindowsEHNativeSourceModel::CxxFH3 ? validateCxxFH3(EH)
                                                     : validateCxxFH4(EH);
   // Output patch stays fail-closed for every unwind action and for an
@@ -596,11 +753,11 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
   if (Reason != WindowsEHNativeSourceReason::Eligible)
     return reject(Model, Reason, Capability);
   if (Model == WindowsEHNativeSourceModel::SEH) {
-    const bool HasNormalizedFilter = std::any_of(
-        EH.SEH->Scopes.begin(), EH.SEH->Scopes.end(),
-        [](const SEHScopeRecord &Scope) {
-          return Scope.NormalizedFilterVA != 0;
-        });
+    const bool HasNormalizedFilter =
+        std::any_of(EH.SEH->Scopes.begin(), EH.SEH->Scopes.end(),
+                    [](const SEHScopeRecord &Scope) {
+                      return Scope.NormalizedFilterVA != 0;
+                    });
     if (TargetArch != Arch::AArch64 && HasNormalizedFilter)
       return reject(Model, WindowsEHNativeSourceReason::InvalidSEHScope,
                     Capability);
@@ -624,9 +781,9 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
                       [](const SEHScopeRecord &Scope) {
                         return Scope.Kind != SEHScopeKind::CatchAll;
                       }))
-        return reject(
-            Model, WindowsEHNativeSourceReason::UnsupportedSEHCallbackABI,
-            Capability);
+        return reject(Model,
+                      WindowsEHNativeSourceReason::UnsupportedSEHCallbackABI,
+                      Capability);
       return {Model, Reason, Capability};
     }
     if (std::any_of(EH.SEH->Scopes.begin(), EH.SEH->Scopes.end(),
@@ -648,9 +805,9 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
                     [](const SEHScopeRecord &Scope) {
                       return Scope.Kind != SEHScopeKind::CatchAll;
                     }))
-      return reject(
-          Model, WindowsEHNativeSourceReason::UnsupportedSEHCallbackABI,
-          Capability);
+      return reject(Model,
+                    WindowsEHNativeSourceReason::UnsupportedSEHCallbackABI,
+                    Capability);
   }
   return {Model, Reason, Capability};
 }
@@ -742,6 +899,8 @@ getWindowsEHNativeSourceReasonName(WindowsEHNativeSourceReason Reason) {
     return "output-reconstruction-unavailable";
   case WindowsEHNativeSourceReason::UnsupportedSEHCallbackABI:
     return "unsupported-seh-callback-abi";
+  case WindowsEHNativeSourceReason::IncompleteRegistrationFrame:
+    return "incomplete-registration-frame";
   }
   return "unknown";
 }

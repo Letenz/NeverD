@@ -41,6 +41,149 @@ va_t findNextTableAddress(const std::vector<va_t> &Sorted, va_t TableVA) {
   return It == Sorted.end() ? 0 : *It;
 }
 
+/// Authenticate LLVM's realigned ESI frame and the complete publication of
+/// its C++ registration node. This proves coordinates, not CFG transfers.
+bool proveRealignedCxxRegistrationLayout(const BinaryImage &Img,
+                                         const InstallSite &Site,
+                                         RegistrationChainInfo &Chain) {
+  const size_t Size = std::min<uint64_t>(Site.Range.size(), 128);
+  const uint8_t *P = Img.readVA(Site.Range.Begin, Size);
+  if (!P || Size < 17 || P[0] != 0x55 || P[1] != 0x89 || P[2] != 0xe5 ||
+      P[3] != 0x53 || P[4] != 0x57 || P[5] != 0x56 || P[6] != 0x83 ||
+      P[7] != 0xe4 || P[9] != 0x81 || P[10] != 0xec || P[15] != 0x89 ||
+      P[16] != 0xe6)
+    return false;
+  const uint32_t Alignment = uint32_t(-int32_t(int8_t(P[8])));
+  const uint32_t Allocation = readLE<uint32_t>(P + 11);
+  if (Alignment < 4 || Alignment > 128 || (Alignment & (Alignment - 1)) ||
+      Allocation < 20 || Allocation > limits::kMaxRegistrationEHStateWork)
+    return false;
+
+  size_t Cursor = 17;
+  auto Operand = [&](uint8_t Opcode,
+                     uint8_t Register) -> std::optional<int32_t> {
+    if (Cursor + 2 > Size || P[Cursor] != Opcode)
+      return std::nullopt;
+    const uint8_t ModRM = P[Cursor + 1];
+    const unsigned Mod = ModRM >> 6;
+    const size_t DispBytes = Mod == 1 ? 1 : Mod == 2 ? 4 : 0;
+    if (!DispBytes || (ModRM & 7) != 6 || ((ModRM >> 3) & 7) != Register ||
+        Cursor + 2 + DispBytes > Size)
+      return std::nullopt;
+    const int32_t Offset = DispBytes == 1 ? int8_t(P[Cursor + 2])
+                                          : readLE<int32_t>(P + Cursor + 2);
+    Cursor += 2 + DispBytes;
+    return Offset;
+  };
+  auto Immediate = [&]() -> std::optional<uint32_t> {
+    if (Cursor + 4 > Size)
+      return std::nullopt;
+    const uint32_t Value = readLE<uint32_t>(P + Cursor);
+    Cursor += 4;
+    return Value;
+  };
+  const auto SavedParent = Operand(0x89, 5);
+  const auto SavedSP = Operand(0x89, 4);
+  const auto State = Operand(0xc7, 0);
+  const auto Seed = Immediate();
+  const auto Link = Operand(0x8d, 0);
+  const auto Handler = Operand(0xc7, 0);
+  const auto HandlerVA = Immediate();
+  if (!SavedParent || !SavedSP || !State || !Seed || !Link || !Handler ||
+      !HandlerVA || *Seed != UINT32_MAX || *HandlerVA != Site.HandlerVA ||
+      *Link < 8 || int64_t(*Link) + 12 > Allocation ||
+      int64_t(*SavedParent) != int64_t(*Link) - 8 ||
+      int64_t(*SavedSP) != int64_t(*Link) - 4 ||
+      int64_t(*Handler) != int64_t(*Link) + 4 ||
+      int64_t(*State) != int64_t(*Link) + 8 || Cursor + 7 > Size ||
+      Site.InstallVA != Site.Range.Begin + Cursor || P[Cursor] != 0x64 ||
+      P[Cursor + 1] != 0x8b || P[Cursor + 2] != 0x15 ||
+      readLE<uint32_t>(P + Cursor + 3) != 0)
+    return false;
+  Cursor += 7;
+  const auto Previous = Operand(0x89, 2);
+  if (!Previous || *Previous != *Link || Cursor + 6 > Size ||
+      P[Cursor] != 0x64 || P[Cursor + 1] != 0xa3 ||
+      readLE<uint32_t>(P + Cursor + 2) != 0)
+    return false;
+
+  Chain.RealignedFrame = RegistrationRealignedFrame{
+      6, Site.Range.Begin + 15, Alignment, Allocation, -(*Link + 12), -20};
+  Chain.RegistrationOffset = -12;
+  Chain.TryLevelOffset = -4;
+  Chain.ChainInstallVA = Site.Range.Begin + Cursor;
+  return true;
+}
+
+/// Authenticate the direct MSVC frame from its exact entry instruction
+/// sequence. A chain-head read alone does not establish a registration, and
+/// locals containing -1/0 are not evidence of the runtime's state field.
+void proveDirectRegistrationLayout(const BinaryImage &Img,
+                                   const InstallSite &Site,
+                                   RegistrationChainInfo &Chain) {
+  const bool IsCxx = Site.Identity.CxxFuncInfoVA != 0;
+  if (IsCxx && proveRealignedCxxRegistrationLayout(Img, Site, Chain))
+    return;
+  const size_t Size = IsCxx ? 24 : 29;
+  const uint8_t *P = Img.readVA(Site.Range.Begin, Size);
+  if (!P || Site.Range.size() < Size || P[0] != 0x55 ||
+      !((P[1] == 0x8B && P[2] == 0xEC) || (P[1] == 0x89 && P[2] == 0xE5)) ||
+      P[3] != 0x6A || !Chain.SeededTryLevel ||
+      static_cast<int8_t>(P[4]) != *Chain.SeededTryLevel)
+    return;
+  size_t Cursor = 5;
+  if (!IsCxx) {
+    if (P[Cursor] != 0x68 || readLE<uint32_t>(P + Cursor + 1) != Site.TableVA)
+      return;
+    Cursor += 5;
+  }
+  if (P[Cursor] != 0x68 || readLE<uint32_t>(P + Cursor + 1) != Site.HandlerVA)
+    return;
+  Cursor += 5;
+  if (Site.InstallVA != Site.Range.Begin + Cursor || P[Cursor] != 0x64 ||
+      P[Cursor + 1] != 0xA1 || readLE<uint32_t>(P + Cursor + 2) != 0 ||
+      P[Cursor + 6] != 0x50)
+    return;
+  size_t Installation = Cursor + 7;
+  if (P[Cursor + 7] != 0x64 || P[Cursor + 8] != 0x89 || P[Cursor + 9] != 0x25 ||
+      readLE<uint32_t>(P + Cursor + 10) != 0) {
+    // Direct EH4 initializes the encoded table and EH cookie before publishing
+    // the record. The state solver independently checks their values/lifetime.
+    P = Img.readVA(Site.Range.Begin, 48);
+    const va_t CookieVA = Img.DynInfo.SecurityCookieRVA
+                              ? Img.Base + Img.DynInfo.SecurityCookieRVA
+                              : 0;
+    if (IsCxx ||
+        Site.Identity.Personality != ExceptionPersonality::ExceptHandler4 ||
+        !P || Site.Range.size() < 48 || !CookieVA || CookieVA > UINT32_MAX ||
+        P[22] != 0x83 || P[23] != 0xec || P[24] != 16 || P[25] != 0xa1 ||
+        readLE<uint32_t>(P + 26) != CookieVA || P[30] != 0x31 ||
+        P[31] != 0x45 || P[32] != 0xf8 || P[33] != 0x31 || P[34] != 0xe8 ||
+        P[35] != 0x89 || P[36] != 0x45 || P[37] != 0xe4)
+      return;
+    size_t FrameAddress = 38;
+    if (Chain.GSCookieOffset != -2) {
+      // The same encoded value initializes a distinct, allocated GS slot.
+      // Header fields and dataflow, rather than a sign heuristic, prove which
+      // cookie each runtime check consumes.
+      P = Img.readVA(Site.Range.Begin, 51);
+      if (!P || Site.Range.size() < 51 || P[38] != 0x89 || P[39] != 0x45 ||
+          P[40] != 0xe0)
+        return;
+      FrameAddress += 3;
+    }
+    Installation = FrameAddress + 3;
+    if (P[FrameAddress] != 0x8d || P[FrameAddress + 1] != 0x45 ||
+        P[FrameAddress + 2] != 0xf0 || P[Installation] != 0x64 ||
+        P[Installation + 1] != 0x89 || P[Installation + 2] != 0x05 ||
+        readLE<uint32_t>(P + Installation + 3) != 0)
+      return;
+  }
+  Chain.RegistrationOffset = IsCxx ? -12 : -16;
+  Chain.TryLevelOffset = -4;
+  Chain.ChainInstallVA = Site.Range.Begin + Installation;
+}
+
 } // namespace
 
 void parseX86RegistrationExceptions(BinaryImage &Img) {
@@ -49,6 +192,12 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
 
   const FunctionRangeMap Functions(Img);
   const SafeSEHTable SafeSEH(Img);
+  if (SafeSEH.isMalformed()) {
+    Img.ExceptionMetadata.ParseStatus = mergeExceptionParseStatus(
+        Img.ExceptionMetadata.ParseStatus, ExceptionParseStatus::Malformed);
+    Img.ExceptionMetadata.Diagnostics.push_back("malformed x86 SafeSEH table");
+    return;
+  }
   std::vector<InstallSite> Sites = findInstallSites(Img, Functions, SafeSEH);
   expandPrologueHelpers(Img, Functions, Sites);
   if (Sites.empty())
@@ -80,6 +229,9 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
     F.PersonalityVA = Site.HandlerVA;
     F.PersonalityName = Identity.Name;
     F.Personality = Identity.Personality;
+    if (F.Personality == ExceptionPersonality::Unknown)
+      diagnose(F, ExceptionParseStatus::Partial,
+               "x86 registration handler identity is not proven");
 
     RegistrationChainInfo Chain;
     Chain.HandlerVA = Site.HandlerVA;
@@ -90,14 +242,14 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
       F.Encoding = ExceptionEncoding::X86CxxFuncInfo;
       F.HandlerDataVA = Identity.CxxFuncInfoVA;
       Chain.ScopeTableVA = Identity.CxxFuncInfoVA;
-      if (F.Personality == ExceptionPersonality::Unknown)
-        F.Personality = ExceptionPersonality::CxxFrameHandlerX86;
       decodeX86FuncInfo(F, Img, Identity.CxxFuncInfoVA);
+      Chain.SeededTryLevel = -1;
     } else if (Site.TableVA != 0 && Img.readVA(Site.TableVA, 12)) {
       // `_except_handler4` seeds -2 as the initial try level and prefixes
       // its table with cookie displacements; `_except_handler3` seeds -1
       // and starts at the entry array.  When the handler kept its name that
-      // is authoritative, otherwise the sentinel decides.
+      // is authoritative. For an unknown handler the sentinel supplies only
+      // an inspectable layout observation, never runtime semantics.
       bool IsEH4 = F.Personality == ExceptionPersonality::ExceptHandler4 ||
                    (F.Personality != ExceptionPersonality::ExceptHandler3 &&
                     Site.TryLevel && *Site.TryLevel == -2);
@@ -111,21 +263,23 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
           ArrayVA = Site.TableVA + 16;
         }
         F.Encoding = ExceptionEncoding::X86ScopeTableEH4;
-        if (F.Personality == ExceptionPersonality::Unknown)
-          F.Personality = ExceptionPersonality::ExceptHandler4;
       } else {
         F.Encoding = ExceptionEncoding::X86ScopeTableEH3;
-        if (F.Personality == ExceptionPersonality::Unknown)
-          F.Personality = ExceptionPersonality::ExceptHandler3;
       }
       // Both sentinels mean "no scope is current"; which one this frame uses
       // follows from the handler it installed.
       Chain.SeededTryLevel = IsEH4 ? -2 : -1;
       const va_t Limit = findNextTableAddress(TableAddresses, Site.TableVA);
-      if (decodeScopeRecords(Img, ArrayVA, Limit, IsEH4, Chain.Scopes) == 0)
+      bool ScopeBudgetExhausted = false;
+      if (decodeScopeRecords(Img, ArrayVA, Limit, IsEH4, Chain.Scopes,
+                             ScopeBudgetExhausted) == 0)
         diagnose(F, ExceptionParseStatus::Partial,
                  "x86 scope table at 0x" + llvm::utohexstr(ArrayVA) +
                      " declares no usable entry");
+      if (ScopeBudgetExhausted)
+        diagnose(
+            F, ExceptionParseStatus::Partial,
+            "x86 scope-table decode budget exhausted before a proven boundary");
     } else {
       F.Encoding = ExceptionEncoding::X86ScopeTableEH3;
       diagnose(F, ExceptionParseStatus::Partial,
@@ -133,11 +287,10 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
                "recoverable table");
     }
 
-    // MSVC plants the filter thunk and except body immediately after the
-    // protected region and often labels them as functions.  Those labels clip
-    // CodeRange at the filter, so the handler is never a CFG root.  Grow the
-    // range through contiguous thunks so it covers the rest of the C function,
-    // stopping at the next function that is not one of this record's thunks.
+    // MSVC labels adjacent SEH callbacks and C++ catches as functions. Grow
+    // the inferred body through those table-owned entries so their runtime
+    // roots are decoded, stopping at the next unrelated function. Out-of-line
+    // cleanup relays retain their independently checked establisher ABI.
     {
       std::set<va_t> Thunks;
       for (const RegistrationScopeRecord &Scope : Chain.Scopes) {
@@ -146,9 +299,14 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
         if (Scope.HandlerVA)
           Thunks.insert(Scope.HandlerVA);
       }
+      if (F.Cxx)
+        for (const CxxTryBlock &Try : F.Cxx->TryBlocks)
+          for (const CxxCatchHandler &Catch : Try.Handlers)
+            if (Catch.HandlerVA)
+              Thunks.insert(Catch.HandlerVA);
       bool Grew = true;
-      for (unsigned Guard = 0; Grew && Guard < limits::kMaxRegistrationEHFixedPoint;
-           ++Guard) {
+      for (unsigned Guard = 0;
+           Grew && Guard < limits::kMaxRegistrationEHFixedPoint; ++Guard) {
         Grew = false;
         for (va_t Addr : Thunks) {
           if (!registration_detail::isExecutableAddress(Img, Addr) ||
@@ -165,11 +323,17 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
       }
     }
 
+    proveDirectRegistrationLayout(Img, Site, Chain);
     if (Chain.SeededTryLevel)
       recoverTryLevelStores(Img, F.CodeRange, *Chain.SeededTryLevel,
-                            Chain.Scopes.size(), Chain);
+                            F.Cxx ? F.Cxx->MaxState : Chain.Scopes.size(),
+                            Chain);
 
     F.Registration = std::move(Chain);
+    // Registration personalities and language tables were resolved together
+    // above. The generic table-driven resolver must not reinterpret this
+    // absolute-pointer FuncInfo as a trailing x64 language-data record.
+    F.LanguageTablesResolved = true;
     if (F.Personality == ExceptionPersonality::Unknown)
       diagnose(F, ExceptionParseStatus::Partial,
                "unknown x86 registration handler");
@@ -178,6 +342,16 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
   }
 
   for (ExceptionFunction &F : Recovered) {
+    // An untyped PE export alone is not a callable entry. The exact decoded
+    // direct registration prologue supplies that missing instruction evidence.
+    if (F.ParseStatus == ExceptionParseStatus::Complete && F.Registration &&
+        F.Registration->RegistrationOffset && F.Registration->TryLevelOffset &&
+        F.CodeRange.contains(F.Registration->ChainInstallVA) &&
+        Img.hasExecutableCodeOwnerRange(
+            F.CodeRange.Begin,
+            F.Registration->ChainInstallVA - F.CodeRange.Begin +
+                F.Registration->chainInstallInstructionSize()))
+      Img.VerifiedFunctionEntries.insert(F.CodeRange.Begin);
     Img.ExceptionMetadata.ParseStatus = mergeExceptionParseStatus(
         Img.ExceptionMetadata.ParseStatus, F.ParseStatus);
     Img.ExceptionMetadata.addModel(F.model());
@@ -190,9 +364,11 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
   // that installed the record, as FuncDetector treats them: a guess goes, and
   // a stated symbol stays as a label.
   const std::set<va_t> Thunks = Img.ExceptionMetadata.registrationScopeThunks();
+  const auto CxxRoles = getCheckedX86CxxCallbackPointerRoles(Img);
   llvm::erase_if(Img.Symbols, [&](const Symbol &Sym) {
     return Sym.IsFunc && Sym.Origin == NameOrigin::Synthesized &&
-           Thunks.count(Sym.Addr);
+           (Thunks.count(Sym.Addr) ||
+            (CxxRoles && CxxRoles->RuntimeOnlyPointerTargets.count(Sym.Addr)));
   });
   for (Symbol &Sym : Img.Symbols)
     if (Sym.IsFunc && Thunks.count(Sym.Addr))

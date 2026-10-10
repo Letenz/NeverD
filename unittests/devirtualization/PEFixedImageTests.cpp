@@ -12,6 +12,7 @@
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/COFF/PEFixedImage.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Endian.h"
@@ -139,6 +140,28 @@ llvm::Expected<BinaryImage> load(llvm::ArrayRef<uint8_t> Bytes,
   if (Restricted)
     Loader.restrictFunctions({Base + 0x1000});
   return Loader.load(std::string(Path));
+}
+
+TEST(PEFocusedRelocations, MatchesCompleteLoadWithoutRetainingRawCopy) {
+  auto Bytes = fixture();
+  put64(Bytes, RData + 0x40, Base + 0x2080);
+  auto Full = load(Bytes);
+  auto Focused = load(Bytes, true);
+  ASSERT_TRUE(static_cast<bool>(Full)) << llvm::toString(Full.takeError());
+  ASSERT_TRUE(static_cast<bool>(Focused))
+      << llvm::toString(Focused.takeError());
+  EXPECT_TRUE(Focused->Raw.empty());
+  ASSERT_EQ(Focused->BaseRelocations.size(), Full->BaseRelocations.size());
+  for (size_t I = 0; I < Full->BaseRelocations.size(); ++I) {
+    EXPECT_EQ(Focused->BaseRelocations[I].Address,
+              Full->BaseRelocations[I].Address);
+    EXPECT_EQ(Focused->BaseRelocations[I].Type, Full->BaseRelocations[I].Type);
+  }
+  EXPECT_EQ(Focused->DataPtrRelocSlots, Full->DataPtrRelocSlots);
+  EXPECT_EQ(Focused->DataPtrRelocTargetOwners, Full->DataPtrRelocTargetOwners);
+  EXPECT_EQ(readImmutableImagePointer(*Focused, Base + 0x2040), Base + 0x2080);
+  EXPECT_EQ(readImmutableImagePointer(*Focused, Base + 0x2040),
+            readImmutableImagePointer(*Full, Base + 0x2040));
 }
 
 class PEFixedImageTest : public testing::Test {
