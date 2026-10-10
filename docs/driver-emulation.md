@@ -577,6 +577,8 @@ The initial API model deliberately has a finite contract:
 | `IofCompleteRequest`, `IoCompleteRequest` | `IO_NO_INCREMENT`; executes completion unwinding, supports stopped/resumed completion and retires IRP/MDL/buffer storage only at its terminal boundary |
 | `memcpy`, `memmove`, `memset`, `memcmp`, `RtlCopyMemory`, `RtlMoveMemory`, `RtlFillMemory`, `RtlZeroMemory`, `RtlCompareMemory` | Bounded guest buffer operations, at most 1 MiB per call; non-overlapping copy APIs reject overlaps |
 
+`MmProbeAndLockPages` also accepts `KernelMode` ranges within one contiguous loader-owned span of the input driver image at IRQL <= APC_LEVEL. The model checks the requested read/write permissions and uses the existing physical-page quota; image holes and unrelated mappings are not image ownership. This ownership also identifies images loaded below the user-address cutoff. System aliases share the original bytes and physical identities without changing the original image protections. Locks must be paired with unlock and descriptor release. MDL calls retain the existing UNPACK recovery dependency; modeled image access alone does not certify portable driver restoration.
+
 `KernelDispatcher` decodes semaphore `Count`, `Limit` and `Adjustment` as signed 32-bit `LONG`, mutex `Level` as 32-bit `ULONG`, and `Wait` as 8-bit `BOOLEAN`, ignoring undefined register bits under the [Windows x64 ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170). Invalid low-width values and semaphore overflow fail before object state changes.
 
 API IRQL ceilings come from `KernelAPIIRQL.def`, with argument-dependent
@@ -710,8 +712,10 @@ modeled read-only except for `MDL.Next`. Process fields, unbuilt PFN access,
 hand-built MDLs and direct access through raw UserBuffer are rejected. User
 mappings follow the process-owned MDL contract below. A zero-length direct buffer has a null MDL.
 
-`IoAllocateMdl` allocates metadata for a nonempty, nonoverflowing buffer of at
-most 1 MiB; it does not probe or lock that buffer. `Irp` may be NULL or a live
+`IoAllocateMdl` allocates metadata for a nonempty, nonoverflowing buffer without
+probing or locking it. The modeled descriptor, including its PFN array, must
+fit its 16-bit size field; page offsets count toward PFN capacity. Descriptor
+storage is independent of the described buffer size. `Irp` may be NULL or a live
 modeled IRP. A primary descriptor replaces the current driver-owned chain head;
 the detached descriptors remain driver-owned. A secondary descriptor appends
 to the current chain, or becomes the head when the chain is empty. The original
@@ -993,7 +997,7 @@ and driver callback addresses. Guest addresses are hexadecimal strings so
 JSON consumers do not lose 64-bit precision.
 The `configuration` object records the run's limits, service name,
 `kernel_exports` overrides and original `registry` input.
-The profile is `wdm-x64-scheduled-v90`. `nt_status` remains the DriverEntry
+The profile is `wdm-x64-scheduled-v92`. `nt_status` remains the DriverEntry
 result, while `scenario_success` describes initialization and completed
 requests together. `phase`, `requests`, and `unload_completed` identify which
 parts of the requested lifecycle ran. Each API call and CPU write also records

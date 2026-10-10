@@ -143,6 +143,26 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
                                     const DriverOptions &Options) {
   if (DriverObject)
     return modelError("kernel model cannot be initialized twice");
+  std::map<uint64_t, uint64_t> ImageRanges;
+  for (const auto &Region : Image.Regions) {
+    const uint64_t Size = Region.Bytes.size();
+    if (!Size || Region.Address < Image.Base ||
+        Region.Address - Image.Base >= Image.Size ||
+        Size > Image.Size - (Region.Address - Image.Base) ||
+        Size > UINT64_MAX - Region.Address)
+      return modelError("invalid driver image RAM ownership range");
+    if (!ImageRanges.empty()) {
+      auto &Last = *ImageRanges.rbegin();
+      if (Region.Address < Last.first + Last.second)
+        return modelError("overlapping driver image RAM ownership ranges");
+      if (Region.Address == Last.first + Last.second) {
+        Last.second += Size;
+        continue;
+      }
+    }
+    ImageRanges.emplace(Region.Address, Size);
+  }
+  ImageRAM = std::move(ImageRanges);
   InstructionClock = Options.Scheduling.has_value();
   Scheduler = KernelScheduler(KernelScheduler::Limits{},
                               Options.Scheduling.has_value());

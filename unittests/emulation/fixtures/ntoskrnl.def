@@ -46,6 +46,8 @@ EXPORTS
   ZwOpenFile
   MmMapLockedPagesSpecifyCache
   MmUnmapLockedPages
+  MmProbeAndLockPages
+  MmUnlockPages
   IoAllocateMdl
   IoFreeMdl
   MmBuildMdlForNonPagedPool
