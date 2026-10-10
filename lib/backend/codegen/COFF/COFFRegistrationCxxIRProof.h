@@ -1,5 +1,4 @@
-//===- COFFRegistrationCxxIRProof.h - Checked PE32 C++ control graph
-//-------===//
+//===- COFFRegistrationCxxIRProof.h - C++ control proof --------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
@@ -37,10 +36,9 @@ struct CxxIRControlProof {
   std::set<const llvm::Instruction *> IncomingAccesses;
   std::vector<ExceptionAddressRange> CallerPCWrites;
 };
-llvm::Expected<const llvm::CatchReturnInst *>
-validateCxxContinuationRestore(const llvm::Instruction &Anchor,
-                               const RegistrationFrame &Frame,
-                               const RegistrationCxxContinuation &Resume);
+llvm::Expected<const llvm::CatchReturnInst *> validateCxxContinuationRestore(
+    const llvm::Instruction &Anchor, const RegistrationFrame &Frame,
+    int32_t SavedStackSlot, const RegistrationCxxContinuation &Resume);
 
 llvm::Error bindCxxCatchStack(CxxIRControlProof &Proof, const MedFunc &Source,
                               const llvm::Function &Function);

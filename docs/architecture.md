@@ -194,6 +194,14 @@ The MedIR call owner binds each retained callee ABI to its current occurrence.
 HighIR reads that call's current ECX SSA value and uses the proved argument
 count; a private EBP spill cannot become an extra stack argument.
 Unproved or ambiguous bodies retain handler/continuation annotations.
+The fixed LLVM C++ prologue has its own COFF decoder. It authenticates the
+saved-register prefix, allocation, all node fields and six-byte FS publication.
+`RegistrationChainInfo` owns translation from runtime EBP to the source frame;
+ordinary fixed-frame accesses remain relative to entry EBP. MedIR represents
+the displaced runtime EBP as a distinct root and validates it against complete
+source state. LowIR, HighIR, native catch/cleanup projection and the independent
+COFF SavedESP check consume the same coordinate. A displaced frame uses the
+same separate callback-stack proof as a realigned frame.
 Native scalar-catch lowering
 projects the source coordinate only into an allocation with proved physical
 alignment. A dedicated catch-stack planner bounds private ESP uses; catch

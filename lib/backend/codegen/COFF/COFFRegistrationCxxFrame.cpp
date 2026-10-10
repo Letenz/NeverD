@@ -30,7 +30,8 @@ llvm::Error validateCOFFRegistrationCxxIR(const llvm::Function &Function,
   }
   Contract.CallbackStack = Proof->CallbackStack;
   Contract.CallbackBlocks = Proof->CallbackBlocks;
-  Contract.SavedStackOffset = int64_t(Proof->Frame.Establisher) - 16;
+  Contract.SavedStackOffset = int64_t(Proof->Frame.Establisher) +
+                              *Source.Registration->RegistrationOffset - 4;
   auto Ranges = coff_loader::getCheckedX86CxxMetadataRanges(Image, Source);
   auto Runtime = coff_loader::getCheckedX86CxxPersonalityABI(Image, Source);
   if (!Ranges || !Runtime)

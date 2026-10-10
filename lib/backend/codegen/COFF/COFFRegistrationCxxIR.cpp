@@ -112,10 +112,7 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
       !States.RuntimeObjectAccessesComplete || !States.ImageReadsComplete ||
       !States.IncomingFrameAccessesComplete)
     return rejectIR("replayed C++ registration effects are incomplete");
-  const auto Coordinate =
-      Source.Registration->RealignedFrame
-          ? realignedRegistrationFrameCoordinate(Source, &States)
-          : std::optional(RegistrationFrameCoordinate{-4, 1, 0});
+  const auto Coordinate = cxxRegistrationFrameCoordinate(Source, &States);
   const auto Size = Frame->Slot->getAllocationSize(Module->getDataLayout());
   const auto Layout = Coordinate && Size && !Size->isScalable()
                           ? projectX86RegistrationFrame(
@@ -320,8 +317,11 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
         !BundleIs(*Anchor, Pad) || !BundleIs(*Borrow, Pad))
       return rejectIR("C++ cleanup changed its action or outer unwind edge");
     ExpectedAnchors.insert(Anchor);
-    Result.Calls.emplace(
-        Borrow, CxxIRCall{Contract.Leaf, Contract.ObjectFrameOffset, true});
+    const auto Offset =
+        Source.Registration->cxxSourceFrameOffset(Contract.ObjectFrameOffset);
+    if (!Offset)
+      return rejectIR("C++ cleanup object has no checked source coordinate");
+    Result.Calls.emplace(Borrow, CxxIRCall{Contract.Leaf, *Offset, true});
   }
   std::map<std::pair<va_t, uint32_t>, const llvm::CallBase *> CallsAt;
   for (const auto *Call : ActualCalls)
@@ -410,8 +410,9 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
         Resume = &Candidate;
     if (!Resume)
       return rejectIR("C++ catch lost its checked runtime continuation");
-    auto Restored =
-        validateCxxContinuationRestore(*Anchor, Result.Frame, *Resume);
+    auto Restored = validateCxxContinuationRestore(
+        *Anchor, Result.Frame, *Source.Registration->RegistrationOffset - 4,
+        *Resume);
     if (!Restored)
       return Restored.takeError();
     const auto *Return = *Restored;

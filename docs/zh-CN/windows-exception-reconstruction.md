@@ -89,6 +89,11 @@ continuation 保留注释，同时撤销原生重建权限。这些推导结果�
 指针写回该单元，再恢复 ESP。LowIR 与 MedIR 将这个隐式内存效果绑定到准确的
 catch RETURN，HighIR 与原生 LLVM 显式生成写回。PE 安装器重新分析原始代码，
 核对写入地址、值和顺序。未知的派发前快照不能靠 catch 写入补造。
+经检查的 LLVM 固定 C++ 序言将注册节点放在源 EBP-24，state 放在 EBP-16；
+运行时 EBP 等于源 EBP-12。普通代码保留入口 EBP 坐标，catch 对象、cleanup 对象
+和回调入口使用经过检查的偏移。catch 入口及 continuation 代码必须显式恢复自己的
+EBP，SavedESP 写回源 EBP-28。回调私有栈和保存寄存器区域的隔离仍需要独立数据流
+证明，只有序言识别不能允许重建。
 对于已经验证的重新对齐帧，LowIR 分别跟踪回调私有栈、已初始化的保存单元和入口 EBP。
 非嵌套 catch 必须平衡自己的 ESP 并恢复运行时 EBP，才能建立 continuation。
 经检查的调用可以借用已初始化的父帧对象，其边界取自派发前的栈快照；保存入口 EBP
@@ -165,8 +170,8 @@ catch-all adjective。没有对象 home 仍要求完整的源证明，且不得�
 入口 ABI 接受连续且已观察到的 32 位栈参数，或已有的单 ECX 参数；混合寄存器与栈参数
 仍被拒绝。SEH 与 C++ 共用可回滚的调用者帧投影，安装器独立检查入口初始化、escape、
 偏移、访问宽度、源操作身份和调用约定；私有帧指针不得写入调用者存储。
-输入必须具有经过证明的 MSVC 直接 registration frame，
-或 LLVM 以 ESI 为锚点的有界对齐帧；采用 magic `0x19930522` 的 FuncInfo，且不带
+输入必须具有经过证明的 MSVC 直接 registration frame、在注册节点上方保存
+EBX/EDI/ESI 的 LLVM 固定帧，或 LLVM 以 ESI 为锚点的有界对齐帧；采用 magic `0x19930522` 的 FuncInfo，且不带
 GS wrapper。保留的每个调用、throw type 和 cleanup relay 都需要独立 ABI 证明。
 源对象借用必须有界、已经初始化且不与注册
 存储重叠；引用访问必须在 catch 返回前保留 CRT 提供的对象身份。所有读写保持原始
@@ -183,7 +188,8 @@ LLVM 重新发射物理 registration、需要时才存在的 catch home、有序
 机器码、语言表、SafeSEH 和全部绝对重定位。入口 patch 不得覆盖保留的 helper 或 CRT
 指令。当前运行样本覆盖整数按值/引用捕获、无绑定对象的 typed catch、捕获有符号与无符号
 抛出值的 catch-all、调用者参数读写、嵌套析构及强制重定位。固定 MSVC 风格帧使用独立汇编样本，
-重新对齐帧使用编译器生成的父函数，均链接捕获的 MSVC CRT 库；CI 在 Windows
+LLVM 固定帧及重新对齐帧使用编译器生成的父函数，固定帧覆盖短立即数及完整宽度的
+栈分配。所有样本均链接捕获的 MSVC CRT 库；CI 在 Windows
 上重放完全相同的 PE 文件。其他 try/catch 图、未经证明的对象类型或入口 ABI、
 未经证明的动态帧，
 以及 GS 或异步 C++ 仍保留分析信息，并拒绝原生安装。

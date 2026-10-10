@@ -2508,6 +2508,10 @@ This is generated-frame analysis/runtime evidence, not source reconstruction.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned
 value/reference, unbound value/reference and catch-all parents. Independent
 assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.
+LLVM fixed-frame parents cover all five forms, unsigned catch-all and a larger
+allocation requiring an imm32 stack adjustment. Their additional proof checks
+exact prologue fields, paired chain registers, displaced runtime roots, callback
+EBP restoration and saved-register separation.
 Catch-all also executes with an unsigned throw. Four additional direct-frame
 profiles cover value/reference/catch-all with parent and catch argument writes,
 and catch-all with read-only arguments. Their assembly caller checks both
@@ -2516,12 +2520,13 @@ layouts. The runner lifts real PE32
 instructions and reconstructs
 through the public patcher and both CLI modes. Pass `--test-binary`,
 `--patch-binary`, `--runtime-libs` and `--output`. Every source and control
-requires source reconstruction; aligned profiles additionally require both
-callback HighIR checks. Runtime probes
+requires source reconstruction; LLVM fixed and aligned profiles additionally
+require both callback HighIR checks. Displaced fixed frames also require the source-coordinate
+and prologue mutation checks. Runtime probes
 use four caller stack layouts to check the catch value, reference effect,
 caller PC and restored FS chain.
-All twenty-eight source/control profiles and four installation routes execute at two
-forced bases (224 executions). CLI bytes must equal the checked public output;
+All forty-two source/control profiles and four installation routes execute at two
+forced bases (336 executions). CLI bytes must equal the checked public output;
 the throw caller must lie in that output's recovered generated owner.
 Incoming-frame tests also verify transactional rollback and reject unobserved
 entry words, register ABI attributes, missing/changed access receipts, wrong
@@ -2539,7 +2544,7 @@ The separate layout tests cover all supported alignments, source residues,
 signed displacement bounds and under-aligned allocations.
 `replay_windows_registration_realigned_rewrite.py` authenticates the source,
 objects, IR, checked installation receipts, executed tests and exact PE matrix
-before native Windows executes those same 224 files. It does not relink them.
+before native Windows executes those same 336 files. It does not relink them.
 Real MSVC directory-size64/declared-size192 load-configs must remain supported
 with complete section bounds.
 Final generic PE validation also checks valid and invalid CF/EH continuation

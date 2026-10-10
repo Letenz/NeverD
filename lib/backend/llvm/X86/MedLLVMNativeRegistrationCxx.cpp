@@ -69,10 +69,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   const auto &Try = Cxx.TryBlocks[0];
   const auto &Catch = Try.Handlers[0];
   const auto FrameBytes = FrameAlloca->getAllocationSize(Mod->getDataLayout());
-  const auto Coordinate =
-      EH.Registration->RealignedFrame
-          ? realignedRegistrationFrameCoordinate(EH, &States)
-          : std::optional(RegistrationFrameCoordinate{-4, 1, 0});
+  const auto Coordinate = cxxRegistrationFrameCoordinate(EH, &States);
   const auto Layout =
       Coordinate && FrameBytes && !FrameBytes->isScalable()
           ? projectX86RegistrationFrame(
@@ -310,6 +307,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         getCheckedX86RegistrationCleanupRelayABI(*Img, Action.ActionVA, &Work);
     if (!Contract || !Relay || Contract->RelayTarget != Action.ActionVA ||
         Contract->ObjectFrameOffset != Relay->ObjectFrameOffset ||
+        !EH.Registration->cxxSourceFrameOffset(Contract->ObjectFrameOffset) ||
         Contract->Leaf.Target != Relay->Leaf.Target ||
         !Relay->Leaf.CallerPCWrites.empty())
       return false;
@@ -388,7 +386,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     }
 
   std::optional<RegistrationCxxStackPlan> Stack;
-  if (EH.Registration->RealignedFrame) {
+  if (EH.Registration->hasCxxCallbackStack()) {
     const auto SourceBlock = llvm::find_if(Func.Blocks, [&](const auto &Block) {
       return Block.StartAddr == Catch.HandlerVA;
     });
@@ -535,9 +533,11 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         Mod->getOrInsertFunction(Plan.Name, CleanupType).getCallee());
     Callee->setCallingConv(llvm::CallingConv::X86_ThisCall);
     rewrite_source::setOriginalVA(*Callee, Plan.Contract->Leaf.Target);
-    auto *Address = B.CreateInBoundsGEP(
-        I8, FrameAlloca,
-        B.getInt32(Layout->Establisher + Plan.Contract->ObjectFrameOffset));
+    auto *Address =
+        B.CreateInBoundsGEP(I8, FrameAlloca,
+                            B.getInt32(Layout->Establisher +
+                                       *EH.Registration->cxxSourceFrameOffset(
+                                           Plan.Contract->ObjectFrameOffset)));
     auto *Call = B.CreateCall(Callee, {Address},
                               {llvm::OperandBundleDef("funclet", Cleanup)});
     Call->setCallingConv(llvm::CallingConv::X86_ThisCall);
@@ -620,6 +620,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   }
   for (const auto &[Return, Resume] : Resumes)
     emitRegistrationCxxContinuation(*Return, *FrameAlloca, Layout->Establisher,
+                                    *EH.Registration->RegistrationOffset - 4,
                                     *Pad, *BlocksAt.at(Resume->TargetVA),
                                     EH.CodeRange.Begin, *Resume);
   for (const auto &Access : States.ChainAccesses) {
@@ -638,8 +639,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         llvm::cast<llvm::LoadInst>(Value)->setAlignment(llvm::Align(1));
       } else {
         Value = B.CreatePtrToInt(
-            B.CreateInBoundsGEP(I8, FrameAlloca,
-                                B.getInt32(Layout->Establisher - 12)),
+            B.CreateInBoundsGEP(
+                I8, FrameAlloca,
+                B.getInt32(Layout->Establisher +
+                           *EH.Registration->RegistrationOffset)),
             I32);
       }
       Load->replaceAllUsesWith(Value);

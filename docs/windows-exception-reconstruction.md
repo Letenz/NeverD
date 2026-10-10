@@ -153,6 +153,14 @@ retained when that proof is absent.
 Direct MSVC prologues must prove the actual FS:[0] write and the registration
 and state-field offsets; matching integer sequences in locals are insufficient.
 
+The checked LLVM fixed C++ prologue places the node at source EBP-24 and state
+at EBP-16. Runtime EBP is source EBP-12. Ordinary source accesses retain their
+entry-EBP coordinate; runtime catch homes, cleanup objects and callback roots
+use the checked displacement. Catch entry and continuation code must restore
+their own EBP explicitly. SavedESP is written back at source EBP-28. Private
+callback stacks and saved-register exclusion require independent dataflow
+proofs; recognizing the prologue alone does not authorize reconstruction.
+
 For the checked LLVM realigned C++ prologue, ordinary LowIR propagation keeps
 entry EBP and runtime-establisher offsets separate. It replays stack alignment,
 allocation, the ESI anchor and all registration fields before accepting the
@@ -226,8 +234,9 @@ typed catch retains its exact RTTI and adjectives; catch-all retains null RTTI
 and its native catch-all adjective. An absent object home requires complete
 source proofs with no runtime-object accesses. It cannot supply an implicit
 initialization write to the recovered parent frame.
-The source uses a checked direct MSVC registration frame or the bounded LLVM
-ESI-anchored aligned frame, with `FuncInfo` magic `0x19930522` and no GS wrapper.
+The source uses a checked direct MSVC registration frame, the LLVM fixed frame
+with saved EBX/EDI/ESI above the node, or the bounded LLVM ESI-anchored aligned
+frame, with `FuncInfo` magic `0x19930522` and no GS wrapper.
 Every preserved call, throw type and cleanup relay needs an independently
 checked ABI. Source object
 borrows must be bounded, initialized and separate from registration storage;
@@ -262,8 +271,9 @@ runtime fixtures cover integer value/reference catches, unbound typed catches,
 catch-all with signed and unsigned throws, caller argument reads and writes,
 and nested destruction, including
 forced relocation. Fixed MSVC-style frames use an independent assembly fixture;
-realigned frames use compiler-generated parents. Both link the captured MSVC
-CRT libraries. The CI replay executes the identical PE files on Windows. Other
+LLVM fixed and realigned frames use compiler-generated parents. Fixed-frame
+coverage includes both short and full-width stack allocations. All fixtures
+link the captured MSVC CRT libraries. The CI replay executes the identical PE files on Windows. Other
 try/catch graphs, unproved object types or entry ABIs, unproved dynamic frames
 and GS or asynchronous C++ remain available for analysis and are rejected for
 native installation.
