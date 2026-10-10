@@ -1295,6 +1295,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     if (Defined && I < Defined->Params.size() && DefinedParam && Op->Type) {
       const TypeRef &Param = DefinedParam;
       const bool ParamPtr = Param->Kind == NdTypeKind::Ptr;
+      if (ParamPtr)
+        if (const auto Pointer = declaredPointerName(*Op, Arg))
+          Arg = *Pointer;
       // A string or another pointer the machine passes as an integer still
       // converts to an integer parameter.
       const bool ArgPtr = Op->Type->Kind == NdTypeKind::Ptr ||
@@ -1626,6 +1629,13 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   const std::string Name = callIdentifier(E);
   if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format))
     return msvcSyntheticReturn(Msvc->ReturnKind);
+  const auto Defined = DefinedFunctionsByIdentifier.find(Name);
+  // A bound source declaration determines the definition's printed return
+  // type, even when optional debug information disagrees.
+  if (Defined != DefinedFunctionsByIdentifier.end() && Defined->second &&
+      Defined->second->SourceTypeHint)
+    if (const auto Return = declaredFunctionReturnType(*Defined->second))
+      return Return;
   if (const auto Callee = debugCallee(E)) {
     // A result whose type C cannot spell is the register it arrives in.
     if (!hasCSpelling(cDisplayType(Callee->ReturnType)))
@@ -1633,8 +1643,7 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
     return Callee->ReturnType;
   }
   // A function this unit defines returns the type its definition prints.
-  if (const auto Defined = DefinedFunctionsByIdentifier.find(Name);
-      Defined != DefinedFunctionsByIdentifier.end() && Defined->second)
+  if (Defined != DefinedFunctionsByIdentifier.end() && Defined->second)
     return Defined->second->ReturnType;
   // A C library routine returns the floating type its declaration names,
   // or a math routine the one its arguments have.
@@ -2248,13 +2257,25 @@ const HighExpr *HighCWriter::floatBitsSource(const HighExpr &Bits,
   return Inner;
 }
 
-const HighExpr *HighCWriter::floatCallResult(const HighExpr &Bits,
-                                             const TypeRef &Float) const {
+std::optional<std::string>
+HighCWriter::floatCallResultText(const HighExpr &Bits, const TypeRef &Float) {
   const HighExpr *Source = floatBitsSource(Bits, Float);
   if (!Source || Source->Kind != ExprKind::Call)
-    return nullptr;
+    return std::nullopt;
   const TypeRef Return = knownCallReturnType(*Source);
-  return Return && equalSourceTypes(Return, Float) ? Source : nullptr;
+  if (!Return || !equalSourceTypes(Return, Float))
+    return std::nullopt;
+  if (!Source->SourceCallHint)
+    return renderCallExpr(*Source);
+  // A source-bound call prints its machine carrier, even when the callee
+  // returns a float. Decode that carrier before using the floating value.
+  // Validate before rendering, which records names and expression types.
+  const TypeRef &Carrier = Source->Type;
+  if (!Carrier || (Float->Size != 4 && Float->Size != 8) ||
+      Carrier->Size != Float->Size ||
+      (Carrier->Kind != NdTypeKind::Int && Carrier->Kind != NdTypeKind::Float))
+    return std::nullopt;
+  return sourceValue(renderCallExpr(*Source), Carrier, Float);
 }
 
 const HighExpr *HighCWriter::floatBitsValue(const HighExpr &Bits,
@@ -2300,8 +2321,8 @@ HighCWriter::floatArgumentText(const HighExpr &Arg, const TypeRef &Expected) {
   // it, pass as that value.
   if (const HighExpr *Value = floatBitsValue(Arg, Expected))
     return exprStr(*Value);
-  if (const HighExpr *Call = floatCallResult(Arg, Expected))
-    return renderCallExpr(*Call);
+  if (const auto Call = floatCallResultText(Arg, Expected))
+    return *Call;
   if (const auto Literal = floatConstantBitsText(Arg, Expected))
     return *Literal;
   // A register's integer bits are the argument's bits: C would convert
@@ -2324,6 +2345,11 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
                                            const TypeRef &Expected) {
   if (const auto Float = floatArgumentText(E, Expected))
     return *Float;
+  // A floating expression retains its conversion or reinterpretation; the
+  // integer-view cleanup below must not strip a floating Cast or BitCast.
+  if (Expected && Expected->Kind == NdTypeKind::Float && E.Type &&
+      E.Type->Kind == NdTypeKind::Float)
+    return exprStr(E);
   // C converts an integer argument by the signedness of its own type, so an
   // extension to a wider parameter cannot pass its narrower source unless
   // that source extends the same way.
@@ -4281,8 +4307,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     }
     // The bits of a call that returns this float are its result, and those
     // of a value of this type are that value.
-    if (const HighExpr *Call = floatCallResult(Src, E.Type))
-      return renderCallExpr(*Call);
+    if (const auto Call = floatCallResultText(Src, E.Type))
+      return *Call;
     if (const HighExpr *Value = floatBitsValue(Src, E.Type)) {
       if (computesWider(E.Type) && isFloatArithmetic(*Value))
         return "(" + typeToC(E.Type) + ")(" + exprStr(*Value) + ")";
@@ -4430,8 +4456,8 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
 
   if (FuncReturnType && FuncReturnType->Kind == NdTypeKind::Float) {
     // A call that returns this float is the value returned.
-    if (const HighExpr *Call = floatCallResult(Expr, FuncReturnType))
-      return renderCallExpr(*Call);
+    if (const auto Call = floatCallResultText(Expr, FuncReturnType))
+      return *Call;
     const HighExpr *Raw = &Expr;
     if (Raw->Kind == ExprKind::UnaryOp && Raw->Op == NdOp::INT_ZEXT &&
         !Raw->Operands.empty() && Raw->Operands[0] && Raw->Operands[0]->Type &&
