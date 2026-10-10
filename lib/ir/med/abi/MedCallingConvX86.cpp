@@ -180,8 +180,10 @@ void detectXMMParams(
       if (Any == 0)
         return false;
       switch (Op.Opcode) {
-      case NdOp::COPY: {
-        if (Op.NumInputs != 1)
+      case NdOp::COPY:
+      case NdOp::INT_ZEXT: {
+        if (Op.NumInputs != 1 ||
+            (Op.Opcode == NdOp::INT_ZEXT && Op.Output.Size < Op.Inputs[0].Size))
           return true;
         if (isSelfCopy(Op)) {
           record(Op.Output, In[0] & byteMask(Op.Output.Size));
@@ -193,8 +195,6 @@ void detectXMMParams(
           return false;
         return !carry(Op.Output, In[0]);
       }
-      case NdOp::INT_ZEXT:
-        return Op.NumInputs != 1 || !carry(Op.Output, In[0]);
       case NdOp::INT_SEXT: {
         const uint16_t InSize = Op.Inputs[0].Size;
         if (Op.NumInputs != 1 || InSize == 0 || InSize > MaskBytes)

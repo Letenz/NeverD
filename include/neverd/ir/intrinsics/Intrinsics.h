@@ -623,6 +623,7 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   case Intrinsic::X86FPRoundMemoryState:
   case Intrinsic::X86FPApprox12MemoryState:
   case Intrinsic::Movsb:
+  case Intrinsic::X86FPArithMemoryState:
   case Intrinsic::Movsw:
   case Intrinsic::Movsd:
   case Intrinsic::Movsq:
@@ -823,6 +824,11 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     Intrinsic Id, uint8_t NumInputs, uint16_t OutputSize, uint16_t AddressSize,
     uint16_t MaskSize, uint16_t DataSize) {
   switch (Id) {
+  case Intrinsic::X86FPArithMemoryState:
+    // [id,address,control,left,MXCSR]; detailed validation is shared with IR.
+    return NumInputs == 5 && AddressSize == 8 && MaskSize == 1 &&
+           DataSize + 4 == OutputSize &&
+           (DataSize == 4 || DataSize == 8 || DataSize == 16 || DataSize == 32);
   case Intrinsic::X86FPApprox12MemoryState:
     // [id, address, control], without a CSR operand or effect.
     return NumInputs == 3 && AddressSize == 8 && MaskSize == 1 &&

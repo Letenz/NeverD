@@ -8,3 +8,6 @@ X86FPRoundMemoryState,
 // Legacy/VEX approximate reciprocal operations preserve MXCSR completely.
 X86FPApprox12State,
 X86FPApprox12MemoryState,
+// Legacy/VEX elementwise arithmetic completes numerical bits and MXCSR.
+X86FPArithState,
+X86FPArithMemoryState,

@@ -10,7 +10,24 @@
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
+#include <string>
+
 namespace neverd {
+
+constexpr bool isX86FPArithStateIntrinsic(Intrinsic Id) {
+  return Id == Intrinsic::X86FPArithState ||
+         Id == Intrinsic::X86FPArithMemoryState;
+}
+
+constexpr bool x86FPArithStateIsScalar(unsigned Control) {
+  return (Control & 16) != 0;
+}
+constexpr unsigned x86FPArithStateElementBytes(unsigned Control) {
+  return (Control & 8) ? 8 : 4;
+}
+constexpr bool x86FPArithStateIsUnary(unsigned Control) {
+  return (Control & 7) == unsigned(X86FPArithKind::SquareRoot);
+}
 
 constexpr bool isX86FPApprox12Intrinsic(Intrinsic Id) {
   return Id == Intrinsic::X86FPApprox12State ||
@@ -19,7 +36,8 @@ constexpr bool isX86FPApprox12Intrinsic(Intrinsic Id) {
 
 constexpr bool isX86FPStateMemoryIntrinsic(Intrinsic Id) {
   return Id == Intrinsic::X86FPRoundMemoryState ||
-         Id == Intrinsic::X86FPApprox12MemoryState;
+         Id == Intrinsic::X86FPApprox12MemoryState ||
+         Id == Intrinsic::X86FPArithMemoryState;
 }
 
 /// APPROX12 has no CSR operand: even unknown MXCSR remains unchanged.
@@ -48,7 +66,7 @@ constexpr bool isX86ScalarFPStateIntrinsic(Intrinsic Id) {
 
 constexpr bool isX86FPStateIntrinsic(Intrinsic Id) {
   return isX86ScalarFPStateIntrinsic(Id) || isX86FPApprox12Intrinsic(Id) ||
-         Id == Intrinsic::X86FPRoundState ||
+         isX86FPArithStateIntrinsic(Id) || Id == Intrinsic::X86FPRoundState ||
          Id == Intrinsic::X86FPRoundMemoryState ||
          Id == Intrinsic::X86FPCvtToIntState ||
          Id == Intrinsic::X86FPTruncToIntState ||
@@ -58,6 +76,11 @@ constexpr bool isX86FPStateIntrinsic(Intrinsic Id) {
 constexpr bool isX86FPConversionStateIntrinsic(Intrinsic Id) {
   return Id == Intrinsic::X86FPCvtToIntState ||
          Id == Intrinsic::X86FPTruncToIntState;
+}
+
+constexpr bool isX86FPNumericalStateIntrinsic(Intrinsic Id) {
+  return isX86FPStateIntrinsic(Id) && Id != Intrinsic::X86ReadMXCSR &&
+         Id != Intrinsic::X86WriteMXCSR;
 }
 
 constexpr bool isX86FPRoundStateIntrinsic(Intrinsic Id) {
@@ -121,6 +144,8 @@ struct X86FPStateShape {
   bool OperandsAreScalar = false;
   unsigned LeftSize = 0;
   unsigned RightSize = 0;
+  unsigned ThirdSize = 0;
+  bool ArithmeticLeftIsZero = false;
   unsigned StateSize = 0;
   bool HasAuxiliaryOutputs = false;
   bool DestinationIsConst = false;
@@ -180,6 +205,26 @@ constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
                          ((!Memory || VexPacked) && Shape.OutputSize == 32)) &&
            (Memory ? Shape.AddressIsScalar && Shape.LeftSize == 8
                    : Shape.RightSize == Shape.OutputSize);
+  }
+  if (isX86FPArithStateIntrinsic(Id)) {
+    const bool Memory = Id == Intrinsic::X86FPArithMemoryState;
+    const bool Scalar = x86FPArithStateIsScalar(Shape.Control);
+    const unsigned Bytes = Shape.OutputSize >= 4 ? Shape.OutputSize - 4 : 0;
+    const bool VexPackedMemory = (Shape.Control & 32) != 0;
+    return Shape.IdValue == unsigned(Id) && Shape.NumInputs == 5 &&
+           Shape.OutputIsWritable && Shape.OperandsAreScalar &&
+           Shape.ControlIsConst && Shape.ControlSize == 1 &&
+           (Shape.Control & ~(Memory ? UINT64_C(63) : UINT64_C(31))) == 0 &&
+           (Shape.Control & 7) != unsigned(X86FPArithKind::FusedMultiplyAdd) &&
+           (!Scalar || !VexPackedMemory) && Shape.StateSize == 4 &&
+           (Scalar ? Bytes == x86FPArithStateElementBytes(Shape.Control)
+                   : Bytes == 16 ||
+                         ((!Memory || VexPackedMemory) && Bytes == 32)) &&
+           (Memory ? Shape.AddressIsScalar && Shape.LeftSize == 8 &&
+                         Shape.ThirdSize == Bytes
+                   : Shape.RightSize == Bytes && Shape.ThirdSize == Bytes) &&
+           (!x86FPArithStateIsUnary(Shape.Control) ||
+            Shape.ArithmeticLeftIsZero);
   }
   if (Id == Intrinsic::X86FPRoundState) {
     const bool Scalar = x86FPRoundStateIsScalar(Shape.Control);
@@ -243,6 +288,33 @@ constexpr unsigned x86FPRoundStateLayout(
 constexpr unsigned x86FPRoundStateControl(unsigned Layout) {
   return (Layout >> 8) & 0xff;
 }
+constexpr const char *x86FPArithStateOperation(unsigned Control) {
+  switch (static_cast<X86FPArithKind>(Control & 7)) {
+  case X86FPArithKind::Add:
+    return "add";
+  case X86FPArithKind::Subtract:
+    return "sub";
+  case X86FPArithKind::Multiply:
+    return "mul";
+  case X86FPArithKind::Divide:
+    return "div";
+  case X86FPArithKind::SquareRoot:
+    return "sqrt";
+  case X86FPArithKind::Minimum:
+    return "min";
+  case X86FPArithKind::Maximum:
+    return "max";
+  default:
+    return nullptr;
+  }
+}
+inline std::string x86FPArithStateMnemonic(unsigned Layout) {
+  const unsigned Control = x86FPRoundStateControl(Layout);
+  const bool Vex = x86FPStateSourceBytes(Layout) == 32 || (Control & 32);
+  return std::string(Vex ? "v" : "") + x86FPArithStateOperation(Control) +
+         (x86FPArithStateIsScalar(Control) ? ((Control & 8) ? "sd" : "ss")
+                                           : ((Control & 8) ? "pd" : "ps"));
+}
 constexpr unsigned x86FPRoundStateImmediate(unsigned Layout) {
   return (Layout >> 16) & 15;
 }
@@ -263,7 +335,10 @@ constexpr unsigned x86FPStateDestinationBytes(Intrinsic Id, unsigned Layout) {
 }
 constexpr unsigned x86FPStateHelperLayout(Intrinsic Id,
                                           const X86FPStateShape &Shape) {
-  return isX86FPApprox12Intrinsic(Id)
+  return isX86FPArithStateIntrinsic(Id)
+             ? x86FPRoundStateLayout(Shape.OutputSize - 4, Shape.Control, 0,
+                                     Shape.MemoryAddressSpace)
+         : isX86FPApprox12Intrinsic(Id)
              ? x86FPRoundStateLayout(Shape.OutputSize, Shape.Control, 0,
                                      Shape.MemoryAddressSpace)
          : isX86FPRoundStateIntrinsic(Id)
@@ -286,13 +361,16 @@ constexpr unsigned x86FPStateNumericalSliceSize(Intrinsic Id,
                                                 uint64_t Offset,
                                                 unsigned Bytes) {
   const unsigned ScalarBytes =
-      isX86FPApprox12Intrinsic(Id) ? Shape.OutputSize
+      isX86FPArithStateIntrinsic(Id) ? Shape.OutputSize - 4
+      : isX86FPApprox12Intrinsic(Id) ? Shape.OutputSize
       : Id == Intrinsic::X86FPRoundMemoryState
           ? (Shape.OutputSize >= 4 ? Shape.OutputSize - 4 : 0)
       : Id == Intrinsic::X86FPRoundState ? Shape.RightSize
                                          : Shape.LeftSize;
   const bool Scalar =
       isX86ScalarFPStateIntrinsic(Id) ||
+      (isX86FPArithStateIntrinsic(Id) &&
+       x86FPArithStateIsScalar(Shape.Control)) ||
       (isX86FPApprox12Intrinsic(Id) && x86FPApprox12IsScalar(Shape.Control)) ||
       (isX86FPRoundStateIntrinsic(Id) &&
        x86FPRoundStateIsScalar(Shape.Control));

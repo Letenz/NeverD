@@ -62,7 +62,9 @@ detectTargetFeaturesX86(const std::set<std::string> &Names) {
   bool Half = Has(kUsesHalfMarker);
   bool AVX2 = Has("avx2"), AVX = Has("avx") || AVX2 || Has("avx512") ||
                                  Has("vround") || Has("vrcp") ||
-                                 Has("vrsqrt") || FMA || Half;
+                                 Has("vrsqrt") || Has("vadd") || Has("vsub") ||
+                                 Has("vmul") || Has("vdiv") || Has("vsqrt") ||
+                                 Has("vmin") || Has("vmax") || FMA || Half;
 
   std::string F = "+sse,+sse2,+cx16";
   if (SSE3)

@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86FPApprox12.h"
+#include "X86FPArithState.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -374,6 +375,11 @@ bool liftSIMDFloatArith(X86Lifter &L, X86Lifter::LiftState &S,
                         const cs_insn *Insn, const cs_x86 &X86) {
   const unsigned InsnId = Insn->id;
   const bool IsEvex = beginsWithCanonicalEvexPrefix(Insn);
+  if (!IsEvex) {
+    FPArithStateSpec StateSpec{};
+    if (getFPArithStateSpec(InsnId, StateSpec))
+      return liftFPArithState(L, S, Insn, X86);
+  }
   EvexFloatArithSpec EvexFloatSpec;
   const bool IsEvexFloatArith =
       IsEvex && getEvexFloatArithSpec(InsnId, EvexFloatSpec);
@@ -565,6 +571,8 @@ bool liftSIMDFloatArith(X86Lifter &L, X86Lifter::LiftState &S,
               InsnId == X86_INS_VRCPSS || InsnId == X86_INS_VRSQRTSS,
           InsnId == X86_INS_VRCPPS || InsnId == X86_INS_VRSQRTPS ||
               InsnId == X86_INS_VRCPSS || InsnId == X86_INS_VRSQRTSS);
+    if (!IsEvexFloatArith)
+      return liftFPArithState(L, S, Insn, X86);
     if (X86.op_count < 2)
       break;
 
@@ -778,6 +786,8 @@ bool liftSIMDFloatArith(X86Lifter &L, X86Lifter::LiftState &S,
   case X86_INS_VMAXSD:
   case X86_INS_VMAXPS:
   case X86_INS_VMAXPD: {
+    if (!IsEvexFloatArith)
+      return liftFPArithState(L, S, Insn, X86);
     if (X86.op_count < 2)
       break;
     bool IsMin = (InsnId == X86_INS_MINSS || InsnId == X86_INS_MINSD ||
@@ -969,6 +979,8 @@ bool liftSIMDFloatArith(X86Lifter &L, X86Lifter::LiftState &S,
   case X86_INS_VDIVSD:
   case X86_INS_VDIVPS:
   case X86_INS_VDIVPD: {
+    if (!IsEvexFloatArith)
+      return liftFPArithState(L, S, Insn, X86);
     if (X86.op_count < 2)
       break;
     NdOp Opc;

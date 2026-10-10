@@ -324,6 +324,22 @@ special values remain exact. Native FS requires Linux and AVX probes require
 native OS-enabled AVX. These tests do not certify x86-32 execution, enabled #AC,
 unavailable-feature faults or EVEX 14/28-bit approximations.
 
+`NeverDX86FPArithStateAccuracyTests` compares original scalar and packed
+ADD/SUB/MUL/DIV/SQRT/MIN/MAX bytes with SDK Codegen default/NoOpt and HighC/LLVMC
+default/NoOpt at O0/O2. Its 140 forms cover legacy scalar/128-bit packed and VEX
+scalar/128/256-bit packed register and memory sources. Directed raw values and
+full MXCSR observations cover rounding, DAZ/FTZ, sticky flags, NaN payloads and
+complete YMM upper state. Additional probes cover distinct source registers,
+destination/RHS aliasing, unaligned scalar/VEX memory, unmasked exceptions,
+instruction-wide exception priority, legacy alignment and protected cross-page
+sources. Discarded numerical results must retain state changes and faults.
+Scalar C return probes separately verify floating type, raw bits and state.
+Low/Med/High and owned assembly tests reject malformed roles, controls, state
+pointers, effects and addressing contracts. Native execution requires x64 and
+OS-enabled AVX; descriptor checks also cover x86-32 without claiming native
+x86-32 execution. These tests do not certify horizontal arithmetic, FMA,
+EVEX/SAE, x87, enabled #AC or unavailable-feature faults.
+
 ## x86 invalid encodings and instruction boundaries
 
 `NeverDX86EncodingAccuracyTests` requires raw illegal LOCK forms (including

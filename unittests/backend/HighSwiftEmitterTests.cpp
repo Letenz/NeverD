@@ -1557,3 +1557,28 @@ for x: Swift.Int64 in [Swift.Int64.min, -7, 0, 1, Swift.Int64.max] {
             0)
       << Error;
 }
+
+TEST(HighSwiftEmitter,
+     InstructionCompletionArithmeticRequiresAnAvailableLowering) {
+  for (bool Memory : {false, true}) {
+    auto F = function();
+    const unsigned Control = 16 | unsigned(X86FPArithKind::SquareRoot);
+    F.Body.front().RetVal = fpStateCall(
+        Memory ? Intrinsic::X86FPArithMemoryState : Intrinsic::X86FPArithState,
+        8,
+        Memory ? std::vector<ExprPtr>{HighExpr::makeConst(0x1000, 8),
+                                      HighExpr::makeConst(Control, 1),
+                                      HighExpr::makeConst(0, 4),
+                                      HighExpr::makeConst(0x1f80, 4)}
+               : std::vector<ExprPtr>{HighExpr::makeConst(Control, 1),
+                                      HighExpr::makeConst(0, 4),
+                                      HighExpr::makeConst(0x40000000, 4),
+                                      HighExpr::makeConst(0x1f80, 4)});
+    auto Result = HighSwiftEmitter().emit(F, signature());
+    EXPECT_FALSE(Result.Recovered);
+    EXPECT_TRUE(Result.Source.empty());
+    EXPECT_NE(Result.Reason.find("floating-point state shape"),
+              std::string::npos)
+        << Result.Reason;
+  }
+}

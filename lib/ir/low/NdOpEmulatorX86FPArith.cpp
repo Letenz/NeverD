@@ -685,6 +685,70 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
     writeOutputBytes(Op.Output, Result);
     return true;
   }
+  if (isX86FPArithStateIntrinsic(Id)) {
+    const bool Memory = Id == Intrinsic::X86FPArithMemoryState;
+    const unsigned Control = Op.Inputs[Memory ? 2 : 1].Offset;
+    const unsigned Bytes = Op.Output.Size - 4;
+    const bool Scalar = x86FPArithStateIsScalar(Control);
+    const bool Unary = x86FPArithStateIsUnary(Control);
+    const auto State = readOperand(Op.Inputs[4]);
+    if ((State & ~UINT64_C(0xffff)) != 0)
+      return false;
+    std::vector<uint8_t> Left = readOperandBytes(Op.Inputs[Memory ? 3 : 2]);
+    std::vector<uint8_t> Right;
+    if (Memory) {
+      if ((Img.Arch == Arch::X64 && !X86LinearAddressBits) ||
+          (Img.Arch != Arch::X86 && Img.Arch != Arch::X64) ||
+          (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+           !MemoryAddressSpaceBases.contains(Op.MemoryAddressSpace)))
+        return false;
+      setMXCSR(static_cast<uint32_t>(State));
+      const auto Source =
+          loadX86FPStateMemory(Op, Bytes, !Scalar && !(Control & 32) ? 16 : 1);
+      if (!Source)
+        return false;
+      Right = *Source;
+    } else
+      Right = readOperandBytes(Op.Inputs[3]);
+    // Adapt roles and control explicitly: the existing SQRT evaluator reads
+    // A, while this instruction-level contract consistently owns RHS access.
+    // New bit5 is VEX memory topology, never the old evaluator's SAE bit.
+    if (Unary)
+      std::swap(Left, Right);
+    const unsigned VectorBytes = std::max(Bytes, 16U);
+    Left.resize(VectorBytes, 0);
+    Right.resize(VectorBytes, 0);
+    NdOpEmulator Evaluation(Img);
+    Evaluation.setStrictMode(true);
+    Evaluation.setMXCSR(static_cast<uint32_t>(State));
+    Evaluation.writeOutputBytes(NdVar::tmp(1, VectorBytes), Left);
+    Evaluation.writeOutputBytes(NdVar::tmp(2, VectorBytes), Right);
+    LowOp Arithmetic;
+    Arithmetic.Opcode = NdOp::INTRINSIC;
+    Arithmetic.Output = NdVar::tmp(0, VectorBytes);
+    Arithmetic.addInput(NdVar::cst(unsigned(Intrinsic::X86FPArith), 2));
+    Arithmetic.addInput(NdVar::cst(
+        makeX86FPArithControl(static_cast<X86FPArithKind>(Control & 7),
+                              (Control & 8) != 0, Scalar, false,
+                              X86FPRounding::MXCSR),
+        2));
+    Arithmetic.addInput(NdVar::tmp(1, VectorBytes));
+    Arithmetic.addInput(NdVar::tmp(2, VectorBytes));
+    Arithmetic.addInput(NdVar::cst(0, VectorBytes));
+    const unsigned Lanes =
+        Scalar ? 1 : Bytes / x86FPArithStateElementBytes(Control);
+    Arithmetic.addInput(NdVar::cst((UINT64_C(1) << Lanes) - 1, 1));
+    const bool Complete = Evaluation.executeX86FPArith(Arithmetic);
+    setMXCSR(Evaluation.getMXCSR());
+    if (!Complete)
+      return false;
+    auto Result = Evaluation.readOperandBytes(Arithmetic.Output);
+    Result.resize(Bytes + 4);
+    for (unsigned Index = 0; Index < 4; ++Index)
+      Result[Bytes + Index] = uint8_t(MXCSR >> (Index * 8));
+    writeOutputBytes(Op.Output, Result);
+    return true;
+  }
   if (isX86FPRoundStateIntrinsic(Id)) {
     const bool Memory = Id == Intrinsic::X86FPRoundMemoryState;
     const unsigned Bytes = Memory ? Op.Output.Size - 4 : Op.Inputs[2].Size;

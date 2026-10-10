@@ -3901,6 +3901,29 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
         OS << "(void)" << Expression << ";\n";
       return true;
     }
+    if (isX86FPArithStateIntrinsic(Id)) {
+      const bool Memory = Id == Intrinsic::X86FPArithMemoryState;
+      const bool Unary = x86FPArithStateIsUnary(x86FPRoundStateControl(Bytes));
+      const std::string Left =
+          Unary ? "(" + x86FPStateRawCType(x86FPStateSourceBytes(Bytes)) + ")0"
+                : BitcastInput(0);
+      const std::string Right =
+          Memory ? "(void*)(uintptr_t)(" +
+                       integerPointerOperandStr(
+                           Call.getArgOperand(Unary ? 0 : 1)) +
+                       ")"
+                 : BitcastInput(Unary ? 0 : 1);
+      const std::string Expression =
+          Helper->second + "(" +
+          (Memory ? Right + ", " + Left : Left + ", " + Right) + ", (void*)" +
+          valueStr(Call.getArgOperand(Unary ? 1 : 2)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
+           << ", " << Expression << ");\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
     if (isX86FPRoundStateIntrinsic(Id)) {
       const std::string Source =
           Id == Intrinsic::X86FPRoundMemoryState

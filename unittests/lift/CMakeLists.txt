@@ -3720,6 +3720,12 @@ add_neverd_unittest(NeverDX86FPMinMaxAccuracyTests
   x86_64/X86_64_FPMinMaxAccuracyTests.cpp
   LINK_COMPONENTS IRLow Loader)
 
+add_neverd_unittest(NeverDX86FPArithStateAccuracyTests
+  x86_64/X86_64_FPArithStateAccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPArithStateAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
 add_neverd_unittest(NeverDX86RdSspAccuracyTests
   x86_64/X86_64_RdSspAccuracyTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)

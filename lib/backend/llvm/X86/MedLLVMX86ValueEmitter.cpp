@@ -672,6 +672,49 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
           Builder.CreateZExt(Bits, OutTy),
           Builder.CreateShl(Builder.CreateZExt(Status, OutTy), Bytes * 8));
     }
+    if (isX86FPArithStateIntrinsic(IC)) {
+      const unsigned Layout = x86FPStateHelperLayout(IC, Shape);
+      const unsigned Control = x86FPRoundStateControl(Layout);
+      const unsigned Bytes = x86FPStateSourceBytes(Layout);
+      const bool Memory = IC == I::X86FPArithMemoryState;
+      const bool Unary = x86FPArithStateIsUnary(Control);
+      auto *Type = x86FPArithStateLLVMType(*Ctx, Layout);
+      llvm::Value *RHS;
+      if (Memory) {
+        auto *Address = getVar(Op.Inputs[1], Builder);
+        auto *I64 = Builder.getInt64Ty();
+        Address = Address->getType()->isPointerTy()
+                      ? Builder.CreatePtrToInt(Address, I64)
+                      : Builder.CreateZExtOrTrunc(Address, I64);
+        RHS = Builder.CreateIntToPtr(
+            Address, llvm::PointerType::get(*Ctx, llvmX86MemoryAddressSpace(
+                                                      Op.MemoryAddressSpace)));
+      } else
+        RHS = Builder.CreateBitCast(Raw(3, Bytes), Type);
+      llvm::SmallVector<llvm::Value *, 3> Args;
+      llvm::SmallVector<llvm::Type *, 3> Types;
+      if (!Unary) {
+        auto *LHS = Builder.CreateBitCast(Raw(Memory ? 3 : 2, Bytes), Type);
+        Args.push_back(LHS);
+        Types.push_back(Type);
+      }
+      Builder.CreateStore(Raw(4, 4), State);
+      Args.append({RHS, State});
+      Types.append({RHS->getType(), Ptr});
+      auto *Fn = llvm::FunctionType::get(Type, Types, false);
+      auto *Asm = llvm::InlineAsm::get(
+          Fn, x86FPArithStateAsm(Layout, Memory),
+          x86FPArithStateConstraints(Layout, Memory), true);
+      auto *Result = Builder.CreateCall(Asm, Args, "fp_arithmetic");
+      Mark(Result);
+      auto *Bits =
+          Builder.CreateBitCast(Result, llvm::Type::getIntNTy(*Ctx, Bytes * 8));
+      auto *OutTy = sizeToType(Op.Output.Size);
+      auto *Status = Builder.CreateLoad(I32, State, "fp_state");
+      return Builder.CreateOr(
+          Builder.CreateZExt(Bits, OutTy),
+          Builder.CreateShl(Builder.CreateZExt(Status, OutTy), Bytes * 8));
+    }
     const unsigned Bytes = Op.Inputs[1].Size;
     auto *Scalar = Bytes == 4 ? llvm::Type::getFloatTy(*Ctx)
                               : llvm::Type::getDoubleTy(*Ctx);

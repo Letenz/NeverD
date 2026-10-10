@@ -10,3 +10,5 @@ C(Intrinsic::X86FPRoundState, "neverd_x86_fp_round_state");
 C(Intrinsic::X86FPRoundMemoryState, "neverd_x86_fp_round_memory_state");
 C(Intrinsic::X86FPApprox12State, "neverd_x86_fp_approx12_bits");
 C(Intrinsic::X86FPApprox12MemoryState, "neverd_x86_fp_approx12_memory_bits");
+C(Intrinsic::X86FPArithState, "neverd_x86_fp_arith_state");
+C(Intrinsic::X86FPArithMemoryState, "neverd_x86_fp_arith_memory_state");
