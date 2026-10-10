@@ -14,8 +14,19 @@ Le conteneur détermine comment un fichier est validé et reconstruit, le jeu d'
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | observation à l’exécution |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | observation à l’exécution |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v86`](driver-emulation.md) | `DriverEntry` |
 
 Les DLL PE32+ sont reconnues par `IMAGE_FILE_DLL`. Un EXE invité modélisé appelle `LoadLibraryA`, puis `FreeLibrary`, avec le cycle ordinaire des dépendances, de TLS et de `DllMain`. L’entrée DLL acceptée est son invocation d’attachement au processus ; aucun argument d’export arbitraire n’est inventé. Les noms, ordinaux, alias, données et exports redirigés sont conservés. Les pointeurs vers ses propres exports restent internes, sans auto-importation. Cette règle couvre aussi les adresses renvoyées par les helpers : un résultat interne retire les preuves antérieures de réparation des imports pour ce site.
+
+## Pilotes Windows x64
+
+Avec `NEVERD_ENABLE_DRIVER_EMULATION=ON`, les images PE x64 du sous-système native (`.sys`) utilisent l’environnement pilote. `DriverEntry` fournit la provenance du point d’entrée ; les rappels de traitement et de déchargement ne deviennent pas l’entrée récupérée par défaut. L’objet facultatif `driver` accepte le [scénario pilote](driver-emulation.md) : service, registre, requêtes et ordonnancement. Le backend, le contrat et les limites communs restent applicables. Les arguments, l’environnement et le PEB d’un processus utilisateur sont rejetés.
+
+La récupération vérifie les arguments entrants, le cadre de retour et son espace réservé, les registres non volatils, le drapeau de direction, les contrôles flottants et la propriété des objets noyau. Les pools conservés, pointeurs noyau empruntés, objets du chargeur modifiés ou effets non comptabilisés donnent `unsupported_state` ; `snapshot_only` conserve le diagnostic. Aucun `restore_runtime` ne matérialise l’état noyau. Les imports utilisent les identités des exports noyau ; les exports originaux sont validés et la somme de contrôle PE recalculée. Le résultat à base fixe ne prouve ni le chargement dans le noyau Windows, ni la validité d’une signature, ni les chemins non exécutés.
+
+```bash
+neverd unpack packed.sys -o unpacked.sys --options='{"backend":"kvm","driver":{"service_name":"Example"}}'
+```
 
 ## Utilisation
 

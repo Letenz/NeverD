@@ -623,6 +623,8 @@ add_custom_command(OUTPUT "${_driver_import_lib}"
   DEPENDS fixtures/ntoskrnl.def
   VERBATIM)
 
+include(UnpackDriverFixtures.cmake)
+
 set(_driver_outputs)
 set(_driver_case 0)
 foreach(_driver_name success failure unknown fault loop devices readonly privileged opaque gs apifault pendingentry opaqueargument)

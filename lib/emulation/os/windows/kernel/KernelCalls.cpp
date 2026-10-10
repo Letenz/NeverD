@@ -49,6 +49,26 @@ llvm::Expected<uint64_t> KernelModel::call(
   if (!API || A.size() != API->Arity)
     return modelError("unknown API or incorrect argument count: " + Name);
   const auto Kind = API->Kind;
+  // Only these contracts have effects entirely accounted for by captured
+  // bytes, pool ownership and the export registry. Every other call retains
+  // an explicit dependency until its kernel lifetime has a recovery contract.
+  switch (Kind) {
+  case KernelAPIKind::MmGetSystemRoutineAddress:
+  case KernelAPIKind::RtlInitUnicodeString:
+  case KernelAPIKind::RtlCopyMemory:
+  case KernelAPIKind::RtlMoveMemory:
+  case KernelAPIKind::RtlZeroMemory:
+  case KernelAPIKind::RtlFillMemory:
+  case KernelAPIKind::RtlCompareMemory:
+  case KernelAPIKind::ExAllocatePoolWithTag:
+  case KernelAPIKind::ExAllocatePool2:
+  case KernelAPIKind::ExFreePool:
+  case KernelAPIKind::ExFreePoolWithTag:
+    break;
+  default:
+    UnpackOpaqueEffects = true;
+    break;
+  }
   if (!DriverObject)
     return modelError("kernel model has not been initialized");
   auto MaximumIRQL = maximumKernelIRQL(Name);

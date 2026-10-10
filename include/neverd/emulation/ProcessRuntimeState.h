@@ -12,7 +12,7 @@ namespace neverd::emulation {
 /// this record without interpreting a guest system's objects or byte layouts.
 class ProcessRuntimeState {
 public:
-  enum class Kind { WindowsPE64 };
+  enum class Kind { WindowsPE64, WindowsDriverX64 };
   explicit ProcessRuntimeState(Kind Profile) : Profile(Profile) {}
   virtual ~ProcessRuntimeState() = default;
   /// Profile-owned resources beyond heap-reference, encoding and dynamic

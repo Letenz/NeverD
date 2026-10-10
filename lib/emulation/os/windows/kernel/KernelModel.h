@@ -66,6 +66,11 @@ public:
   /// End a normally returned DriverEntry, regardless of its NTSTATUS. The
   /// borrowed RegistryPath record and buffer expire before any later callback.
   llvm::Error finishEntry();
+  /// A stopped DriverEntry can be rebuilt only when borrowed loader objects
+  /// retain their initial state and every retained kernel effect is known.
+  llvm::Error captureUnpackBaseline();
+  llvm::Expected<bool> hasUnpackDependencies() const;
+  std::map<uint64_t, uint64_t> unpackAllocations() const;
   uint64_t driverObject() const { return DriverObject; }
   uint64_t registryPath() const { return RegistryPath; }
   /// Fixed kernel argument counts; unknown names have no execution contract.
@@ -791,6 +796,8 @@ private:
   uint64_t RegistryPath = 0;
   uint64_t DriverExtension = 0;
   bool EntryFinished = false;
+  std::optional<std::map<uint64_t, std::vector<uint8_t>>> UnpackBaseline;
+  bool UnpackOpaqueEffects = false;
   uint64_t NextAllocation = 0;
   uint64_t AllocationEnd = 0;
   struct PoolAllocation {

@@ -21,6 +21,7 @@
 #ifndef NEVERD_UNPACK_UNPACK_H
 #define NEVERD_UNPACK_UNPACK_H
 
+#include "neverd/emulation/DriverSession.h"
 #include "neverd/emulation/ProcessSession.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -90,14 +91,18 @@ struct PackerIdentification {
 llvm::Expected<PackerIdentification>
 identifyPacker(llvm::ArrayRef<uint8_t> File);
 
-/// Unpacking runs the input as a guest process, so it takes the same explicit
-/// inputs. Only the resource defaults differ: a stub decompresses a whole
-/// image before the program's first instruction.
+/// Unpacking runs the input in its guest OS environment. Common resource
+/// limits apply to both process and driver execution; each environment owns
+/// its explicit inputs.
 struct UnpackOptions {
   /// Applies the unpacking defaults of Unpack.def, including those of each
   /// guest OS model.
   UnpackOptions();
   emulation::ProcessOptions Process;
+  /// Driver scenario inputs for a native-subsystem x64 PE. The common
+  /// backend, contract and resource limits above apply to this run too.
+  /// User images reject this option rather than ignoring kernel inputs.
+  std::optional<emulation::DriverOptions> Driver;
   /// The one-based transfer into generated code to accept as the entry. Zero
   /// accepts the first transfer in the main program's entry invocation made
   /// on the stack that invocation started with,
@@ -226,17 +231,18 @@ struct UnpackResult {
   uint64_t MaterializedTLSCallbacks = 0;
 };
 
-/// Observe \p Input as a bounded guest process and rebuild its image at the
-/// transfer accepted as its entry. Invalid input, options or an unavailable
+/// Observe \p Input in its bounded guest environment and rebuild its image at
+/// the transfer accepted as its entry. Invalid input, options or an unavailable
 /// backend return Error. A run that ends before such a transfer returns a
 /// result whose outcome, transfers and process stop explain why.
 llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
                                         const UnpackOptions &Options = {});
 
-/// Strict options decoding. Every guest process option is accepted with its
-/// usual meaning, plus "transfer", "snapshot_only" and "restore_runtime".
-/// Unknown fields, null
-/// values, invalid types and nonpositive limits are errors.
+/// Strict options decoding. User images accept guest process options plus
+/// "transfer", "snapshot_only" and "restore_runtime". Native-subsystem x64
+/// images use common limits/backend and an optional "driver" scenario; user
+/// process inputs do not apply. Unknown fields, null values, invalid types
+/// and nonpositive limits are errors.
 llvm::Expected<UnpackOptions> unpackOptionsFromJSON(llvm::StringRef Text);
 /// The report omits the rebuilt bytes and records their size and digest.
 std::string unpackResultJSON(const UnpackResult &Result,

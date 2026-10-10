@@ -73,6 +73,7 @@ public:
   /// Remaining stable identities, excluding the reserved return sentinel.
   size_t availableThunkCount() const;
   const Export *lookup(uint64_t Address) const;
+  const std::map<uint64_t, Export> &entries() const { return Exports; }
 
 private:
   using Identity = std::tuple<std::string, std::string, uint64_t>;

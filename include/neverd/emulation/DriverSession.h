@@ -241,6 +241,14 @@ struct DriverResult {
 llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                                            const DriverOptions &Options = {});
 
+class ProcessObserver;
+/// Observe the stopped driver environment without modifying guest state.
+/// DriverEntry, nested callbacks and later lifecycle invocations retain their
+/// own provenance. Observer failures are API errors, not guest outcomes.
+llvm::Expected<DriverResult> observeDriver(const std::filesystem::path &Path,
+                                           const DriverOptions &Options,
+                                           ProcessObserver &Observer);
+
 #define NEVERD_DRIVER_SCENARIO_LIMIT(Name, CName, Value)                       \
   inline constexpr size_t Name = Value;
 #include "neverd/emulation/DriverScenarioLimits.def"

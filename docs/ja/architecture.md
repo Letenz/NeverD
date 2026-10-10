@@ -1486,3 +1486,5 @@ DarwinFiles が共通属性の読み込み、名前/stat の有効性、レコ�
 復元した DLL 入口が元の PE 入口と異なる場合、ライターはローダー通知アダプターを生成します。プロセスのアタッチは選択した入口へ、デタッチとスレッド通知は元の実行可能な入口へ送られ、外側のラッパーによる後始末を保持します。元の入口が利用できなければ再構築は失敗します。報告の `entry_rva` は選択した入口を示し、PE ヘッダーはアダプターを指す場合があります。独立した DLL テストで、両エミュレーションアーキテクチャとネイティブ Windows の後始末を検証します。
 
 `ProcessView::runtimeState()` は OS が所有する不変状態を運びます。`WindowsProcessState.cpp` は権威ある所有者から資源の識別、コミット済み領域、寿命を捕獲します。`unpack/os/windows` が初期化コードを検証・コンパイルし、`format/pe/PERuntime.cpp` が配置とインポート、TLS、アンワインド情報の結合を担当します。共通観測層は Windows オブジェクトの配置を解釈せず、整数一致から所有権を推測しません。
+
+PE 実行ドメインから `observeImage` がプロセスまたはドライバーを選択します。`observeDriver` の停止時コールバックは `EmulationRuntime` の `ProcessObserver` を共有し、カーネル所有権と DriverEntry ABI はドライバー層が検証します。 [UNPACK](unpack.md).

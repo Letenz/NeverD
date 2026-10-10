@@ -288,6 +288,7 @@ llvm::Expected<uint64_t> KernelModel::call(
   if (Export.Kind == KernelExportRegistry::ExportKind::ModuleExport &&
       Export.Module == KernelProvider)
     return call(Export.Name, Arguments, ReadArgument);
+  UnpackOpaqueEffects = true;
   if (Export.Kind == KernelExportRegistry::ExportKind::DMAFunction)
     return callDMAExport(Export, Arguments);
   if (Export.Kind == KernelExportRegistry::ExportKind::ProviderFunction)

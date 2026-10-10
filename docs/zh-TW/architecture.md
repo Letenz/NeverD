@@ -1414,3 +1414,5 @@ DarwinFiles 負責共通屬性匯入、名稱/stat 有效性與紀錄編碼；Da
 復原的 DLL 入口與原始 PE 入口不同時，寫入器產生載入器通知配接器：程序附加進入選定入口，卸載與執行緒通知進入原始的可執行入口，以保留外層包裝函式的清理。原始入口不可用時重建失敗。報告的 `entry_rva` 仍表示選定的程式入口，PE 標頭可指向配接器。獨立包裝 DLL 測試在兩種模擬架構與原生 Windows 上檢查選定函式之外的清理。
 
 `ProcessView::runtimeState()` 傳遞不可變的 OS 自有狀態。`WindowsProcessState.cpp` 從權威所有者擷取資源識別、已提交記憶體及生命週期。`unpack/os/windows` 驗證並編譯初始化器；`format/pe/PERuntime.cpp` 負責配置與合併匯入、TLS 及展開中繼資料。通用觀察層不解讀 Windows 物件配置，也不以整數比對推測歸屬。
+
+`observeImage` 依 PE 執行域選擇處理程序或驅動環境。`observeDriver` 透過 `EmulationRuntime` 共用停止態 `ProcessObserver` 回呼；核心所有權與 DriverEntry ABI 檢查仍由驅動層負責。排程時間片保留呼叫身分。見[驅動脫殼](unpack.md)。

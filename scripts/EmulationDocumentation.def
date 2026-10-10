@@ -640,9 +640,9 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
-NEVERD_EMULATION_DOC_TOKEN(
-    NativeDriverCI,
-    "5062 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5424")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI,
+                           "5062 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 "
+                           "wait sets + 11 driver UNPACK = 5435")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif

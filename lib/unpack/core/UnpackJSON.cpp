@@ -30,6 +30,19 @@ llvm::Expected<UnpackOptions> unpackOptionsFromJSON(llvm::StringRef Text) {
   if (!Object)
     return failure(text::ObjectRequired);
   UnpackOptions Options;
+  if (const auto *Driver = Object->get("driver")) {
+#ifdef NEVERD_UNPACK_DRIVER_EXECUTION
+    std::string Scenario;
+    llvm::raw_string_ostream(Scenario) << *Driver;
+    auto ParsedDriver = emulation::driverOptionsFromScenarioJSON(Scenario);
+    if (!ParsedDriver)
+      return ParsedDriver.takeError();
+    Options.Driver = std::move(*ParsedDriver);
+    Object->erase("driver");
+#else
+    return failure("driver options require NEVERD_ENABLE_DRIVER_EMULATION");
+#endif
+  }
   if (const auto *Restore = Object->get(field::RestoreRuntime)) {
     auto Value = Restore->getAsBoolean();
     if (!Value)

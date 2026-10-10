@@ -1463,3 +1463,5 @@ DarwinFiles는 공통 속성 가져오기, 이름/stat 유효성과 레코드 �
 복원된 DLL 진입점이 원래 PE 진입점과 다르면 로더 알림 어댑터를 생성합니다. 프로세스 연결은 선택한 진입점으로, 분리 및 스레드 알림은 원래 실행 가능한 진입점으로 전달하여 외부 래퍼의 정리 작업을 유지합니다. 원래 진입점을 사용할 수 없으면 재구성이 실패합니다. 보고서의 `entry_rva`는 선택한 진입점을 나타내며 PE 헤더는 어댑터를 가리킬 수 있습니다. 독립 DLL 테스트는 두 에뮬레이션 아키텍처와 네이티브 Windows에서 외부 정리를 검사합니다.
 
 `ProcessView::runtimeState()`는 OS가 소유한 불변 상태를 전달합니다. `WindowsProcessState.cpp`는 권한 있는 소유자에서 리소스 식별, 커밋된 메모리와 수명을 캡처합니다. `unpack/os/windows`는 초기화 코드를 검증하고 컴파일하며, `format/pe/PERuntime.cpp`는 배치와 가져오기, TLS, 언와인드 메타데이터 병합을 담당합니다. 공통 관찰 계층은 Windows 객체 레이아웃을 해석하거나 정수 일치로 소유권을 추측하지 않습니다.
+
+`observeImage`는 PE 실행 도메인으로 환경을 선택합니다. `observeDriver`는 `EmulationRuntime`의 중지된 `ProcessObserver` 콜백을 공유하며 커널 소유권과 DriverEntry ABI는 드라이버 계층에서 검사합니다. [UNPACK](unpack.md).

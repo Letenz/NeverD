@@ -19,6 +19,8 @@ llvm::Expected<RebuiltImage> restoreRuntime(const InputImage &Input,
   switch (Observed.OwnedState->Profile) {
   case emulation::ProcessRuntimeState::Kind::WindowsPE64:
     return windows::restoreRuntime(Input, Observed, std::move(Rebuilt));
+  case emulation::ProcessRuntimeState::Kind::WindowsDriverX64:
+    return failure("retained kernel state has no native runtime materializer");
   }
   return failure("unsupported runtime-state profile");
 }
