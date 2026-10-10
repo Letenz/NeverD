@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
+<!-- i18n-source: 64aae2ab0c56fa1fc2c0d700d918e774dbbd5df9d14fdaa8fd6647880b29ba3a -->
 
 [← Оглавление документации](README.md)
 
@@ -67,7 +67,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 Строгий Boolean `"writable":true` либо `DarwinFileOptions::WritableFiles` разрешает изменения внутри процесса. Отсутствие/false сохраняет чтение; неизвестное разрешение останавливает службу. Хост и исходные данные не меняются. write(4/397), pwrite(154/415), truncate(200), ftruncate(201) и O_TRUNC разделяют содержимое; open имеет отдельную позицию, dup разделяет позицию и состояние. Содержимое переживает последний close. Рост заполняется нулями, усечение сохраняет позиции, включая O_RDONLY|O_TRUNC.
 
-F_SETFL меняет только O_APPEND, сохраняя доступ, close-on-exec и FWASWRITTEN. F_GETFL показывает 0x10000 после ненулевой передачи, включая pwrite и захваченный вывод. pwrite игнорирует append и сохраняет позицию. INT_MAX проверяется до FD; pwrite с -1 даёт EINVAL ещё раньше. INT64_MAX даёт EFBIG до пустой записи; длина сокращается до выбора EOF.
+F_SETFL после нативного преобразования меняет только O_APPEND|O_NONBLOCK, сохраняя доступ, close-on-exec и FWASWRITTEN. F_GETFL показывает 0x10000 после ненулевой передачи, включая pwrite и захваченный вывод. pwrite игнорирует append и сохраняет позицию. INT_MAX проверяется до FD; pwrite с -1 даёт EINVAL ещё раньше. INT64_MAX даёт EFBIG до пустой записи; длина сокращается до выбора EOF.
 
 Успешный ftruncate, даже с прежним размером, ставит FWASWRITTEN в вызываемом описании и его dup. O_TRUNC ставит его в новом описании, включая O_RDONLY; truncate по пути не меняет существующие флаги.
 
@@ -956,7 +956,7 @@ O_SYMLINK=0x00200000 удерживает последний объект сим
 
 I/O не выдаёт строку цели как содержимое файла. После прежних проверок скалярного/векторного импорта, доступа и количества отрицательное смещение даёт EINVAL. Чтение в INT64_MAX возвращает ноль, запись EFBIG; другие допустимые смещения дают EPERM, включая нулевую длину, до APPEND и обращения к данным. Ранние отрицательные проверки pwrite/pwritev сохраняются. DATA/HOLE даёт ENXIO для неотрицательных позиций, EINVAL для отрицательных, без изменения курсора.
 
-Неотрицательный ftruncate для записываемого описания и допустимый open TRUNC устанавливают только WasWritten. Цель, полный stat, xattrs, курсор, бюджет и inode не меняются. Только чтение или отрицательная длина дают EINVAL. Допустимый F_SETFL меняет APPEND, затем возвращает ENOTTY25; эффект разделяется через dup. Неизвестные аргументы останавливаются до эффектов.
+Неотрицательный ftruncate для записываемого описания и допустимый open TRUNC устанавливают только WasWritten. Цель, полный stat, xattrs, курсор, бюджет и inode не меняются. Только чтение или отрицательная длина дают EINVAL. Допустимый F_SETFL меняет APPEND|NONBLOCK, затем возвращает ENOTTY25; эффект разделяется через dup. Неизвестные аргументы останавливаются до эффектов.
 
 Фиксированный fpathconf, fgetattrlist и отдельно заявленные права обычных FD-xattr действуют на ссылку. Относительный FD каталога и fchdir дают ENOTDIR. truncate не восстанавливает stat после изменения атрибутов. Выровненный неисполняемый старый private/shared mmap достигает отказа EINVAL по типу ссылки без mapping или lease. Обычный shared, неизвестные флаги, исполняемая защита и прочие прежние границы сохраняются.18 нативных проверок mmap охватывают только length16384, offset0, protection1/2/3.
 
@@ -970,7 +970,7 @@ open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
 LinkNode, NameIdentity, HadMultipleNames, DetachedNames
 INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
 SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
-F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+F_SETFL: APPEND|NONBLOCK effect before ENOTTY; dup shares / independent open separate
 symbolic-descriptors
 symbolic-descriptors-values
 symbolic-descriptors-name-unsupported
@@ -979,4 +979,23 @@ native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
 66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## Ограниченное неблокирующее состояние дескрипторов
+
+O_NONBLOCK=4 допускается для обычных файлов, каталогов и O_SYMLINK и сохраняется в F_GETFL. Dup разделяет состояние и курсор; независимые open сохраняют отдельные описания. Действуют прежние правила доступа, close-on-exec, WasWritten, метаданных, байтов и курсора. Явный конечный stdin сохраняет EOF и порядок ошибок указателя; отсутствующий ввод неизвестен. Захват сохраняет ошибки копирования и общий бюджет.
+
+F_SETFL проверяет допустимые low32 до эффектов, добавляет единицу по нативному преобразованию open-флагов и меняет только APPEND|NONBLOCK. High32 игнорируется; входные доступ и WasWritten не дают прав и не создают запись. Независимые нативные значения3/7/11/15 выбирают4/8/12/0. Символическое описание меняет состояние до ENOTTY25. Неизвестные флаги вроде ASYNC0x40 останавливаются до эффектов.
+
+Оригинальная подготовка ARM64 macOS содержит122 наблюдения:16 запросов на допустимую пару объект/доступ, удержанный dup, независимый open, очистку, реальные записи и CLOEXEC каждого FD. Общая программа без SDK при O0/O1/O2 сравнивает байты, состояние, курсор и сырой BSD carry/errno ABI. Guest, C/CLI и Python проверяют неизвестные флаги; три ARM64 HVF-профиля требуют реального запуска. Не добавлены ожидание готовности, pipe, сеть, kqueue, асинхронные сигналы и host I/O. Политика O_EVTONLY не моделируется; Intel HVF, физический iOS и полная среда остаются непроверенными или неполными.
+
+```text
+O_NONBLOCK=4; F_SETFL raw low32 mask=0x1000f
+requests3/7/11/15 -> APPEND|NONBLOCK status4/8/12/0
+nonblocking-descriptors / nonblocking-flags-unsupported
+Nonblocking*, NonblockingDescriptorsKeepNativeControlState
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
+67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```

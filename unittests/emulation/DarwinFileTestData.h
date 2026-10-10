@@ -663,6 +663,20 @@ inline constexpr char MetadataJSON[] = R"({
   "modification_time":{"seconds":"9223372036854775807","nanoseconds":999999999},
   "change_time":{"seconds":-3,"nanoseconds":4},
   "birth_time":{"seconds":-5,"nanoseconds":6}})";
+inline constexpr char NonblockingDescriptorsJSON[] = R"({
+  "files":[{"path":"/data","bytes_hex":"30313233343536373839","writable":true}],
+  "directories":[{"path":"/"}],
+  "symbolic_links":[{"path":"/fd-nonblock","target_hex":"64617461"}],
+  "working_directory":"/"})";
+inline DarwinFileOptions nonblockingDescriptorOptions() {
+  DarwinFileOptions O;
+  O.Files["/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  O.WritableFiles.insert("/data");
+  O.Directories.insert("/");
+  O.SymbolicLinks["/fd-nonblock"] = {'d', 'a', 't', 'a'};
+  O.WorkingDirectory = "/";
+  return O;
+}
 inline DarwinFileOptions symbolicDescriptorOptions() {
   DarwinFileOptions O;
   O.Files["/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};

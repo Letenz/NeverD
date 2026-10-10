@@ -541,6 +541,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("extended-attributes-values", bytes.fromhex("00ff410080420a757365722e6e65766572642e6265746100757365722e6e65766572642e616c70686100757365722e6e65766572642e656d70747900")),
                                            ("extended-attributes-unsupported", b"X"),
                                            ("symbolic-descriptors", b"S"),
+                                           ("nonblocking-descriptors", b"N"),
+                                           ("nonblocking-flags-unsupported", b"N"),
                                            ("symbolic-descriptors-values", bytes.fromhex(
                                                "85ffffffe8a101001132547698badcfee803000098badcfe0000000000000000"
                                                "edffffffffffffffb168de3a00000000edffffffffffffffb168de3a00000000"
@@ -1283,6 +1285,17 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                    {"path": "/cycle", "target_hex": "6379636c65", "mutable": True}],
                                 "working_directory": "/"}
                             file_options = json.dumps(query_options)
+                        unknown_nonblocking = mode == "nonblocking-flags-unsupported"
+                        if mode.startswith("nonblocking-"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = {
+                                "files": [{"path": "/data", "bytes_hex": "30313233343536373839", "writable": True}],
+                                "directories": [{"path": "/"}],
+                                "symbolic_links": [{"path": "/fd-nonblock", "target_hex": "64617461"}],
+                                "working_directory": "/"}
+                            file_options = json.dumps(query_options)
                         if mode.startswith("symbolic-descriptors"):
                             query_options = json.loads(file_options)
                             query_options["instruction_quantum"] = 1024
@@ -1629,7 +1642,7 @@ class ProcessIntegrationTests(unittest.TestCase):
 }
 ''')
                             file_options = json.dumps(query_options)
-                        incomplete = protected_link or unknown_pathconf or unknown_attributes or unknown_xattrs or unknown_names or unknown_bulk or unknown_xattr_mutation or unknown_hard_link_name
+                        incomplete = protected_link or unknown_pathconf or unknown_attributes or unknown_xattrs or unknown_names or unknown_bulk or unknown_xattr_mutation or unknown_hard_link_name or unknown_nonblocking
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"],
                                          "unsupported_service" if incomplete else "exited",
@@ -1637,6 +1650,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                         self.assertEqual(result["exit_status"], None if incomplete else 37, mode)
                         self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
                         self.assertEqual(result["stderr_hex"], "")
+                        if unknown_nonblocking:
+                            self.assertEqual(result["diagnostic"], "unsupported Darwin fcntl command")
+                            self.assertEqual(result["services"][-1]["number"],
+                                             "200005c" if architecture == "x86_64" else "5c")
+                            self.assertIsNone(result["services"][-1]["result"])
+                            self.assertNotIn("error", result["services"][-1])
                         if unknown_hard_link_name:
                             self.assertEqual(result["diagnostic"], "Darwin multiple-name vnode observations are unsupported")
                             last = result["services"][-1]

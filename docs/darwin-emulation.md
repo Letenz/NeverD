@@ -136,7 +136,7 @@ configuration stops `open`; an explicit empty catalogue still contains root, whi
 The file services include `open`, `read`, `pread`, `write`, `pwrite`, `truncate`,
 `ftruncate`, `lseek`, `close`, `dup`, `dup2`, `fcntl`, `rename`, `renameat` and `renameatx_np`. The `read`, `write`,
 `open`, `close`, `fcntl`, `pread` and `pwrite` nocancel entries use the same owners.
-`open` supports O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_TRUNC, O_CREAT, O_EXCL, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW and O_NOFOLLOW_ANY.
+`open` supports O_RDONLY, O_WRONLY, O_RDWR, O_NONBLOCK, O_APPEND, O_TRUNC, O_CREAT, O_EXCL, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW and O_NOFOLLOW_ANY.
 `fcntl` supports F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL, bounded F_SETFL and F_GETPATH.
 Separate opens have independent cursors; duplicated descriptors share a cursor
 but have independent close-on-exec flags. `pread` never changes the cursor.
@@ -177,7 +177,7 @@ No host file is read or changed, and the caller's initial bytes remain unchanged
 O_TRUNC change a shared file node. Separate opens share bytes but retain independent
 cursors; dup shares its open description. Closing the last descriptor does not
 reset the file. Growth zero-fills gaps; truncation preserves every cursor.
-O_RDONLY|O_TRUNC also truncates. F_SETFL changes only O_APPEND, preserves access,
+O_RDONLY|O_TRUNC also truncates. F_SETFL changes only O_APPEND|O_NONBLOCK after native flag conversion, preserves access,
 close-on-exec and the observed FWASWRITTEN bit; unsupported flags stop explicitly.
 F_GETFL exposes FWASWRITTEN=0x10000 after nonzero transferred bytes, including
 positioned writes and captured output. Successful ftruncate also sets the bit,
@@ -1719,7 +1719,7 @@ Descriptions share the actual LinkNode and selected NameIdentity. Dup shares sta
 
 Symbolic I/O never exposes raw target bytes as file contents. After the existing scalar/vector import, access and count checks, negative offsets give EINVAL. Reads at INT64_MAX return zero; other admitted offsets give EPERM, including zero-length requests. Writes at INT64_MAX give EFBIG; other admitted offsets give EPERM before zero-length success, APPEND or payload access. The existing early negative pwrite/pwritev rules remain authoritative. DATA/HOLE seek returns ENXIO for nonnegative positions and EINVAL for negative positions, without advancing the cursor.
 
-Admitted open TRUNC, including read-only symbolic selection, only sets WasWritten. Nonnegative ftruncate does the same for write-only/read/write descriptions. Both leave target bytes, full stat, xattrs, cursor, storage admission and inode allocation untouched. Read-only ftruncate and negative lengths give EINVAL. F_SETFL with admitted arguments changes APPEND before returning ENOTTY25; dup observes the change and independent opens do not. Unknown arguments stop before effects.
+Admitted open TRUNC, including read-only symbolic selection, only sets WasWritten. Nonnegative ftruncate does the same for write-only/read/write descriptions. Both leave target bytes, full stat, xattrs, cursor, storage admission and inode allocation untouched. Read-only ftruncate and negative lengths give EINVAL. F_SETFL with admitted arguments changes APPEND|NONBLOCK before returning ENOTTY25; dup observes the change and independent opens do not. Unknown arguments stop before effects.
 
 Fixed fpathconf, fgetattrlist and independently declared ordinary FD-xattr authority use the symbolic object. Relative directory-FD lookup and fchdir return ENOTDIR. Attribute mutations keep their existing stat invalidation; truncate cannot restore metadata. Legacy aligned, non-executable private/shared mmap selections reach the symbolic-kind EINVAL refusal without a mapping or lease. Ordinary shared mappings, unknown flags, executable protection and other existing unsupported boundaries remain unchanged. The native mapping controls cover length16384, offset0 and protections1/2/3, not every mmap variant.
 
@@ -1733,7 +1733,7 @@ open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
 LinkNode, NameIdentity, HadMultipleNames, DetachedNames
 INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
 SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
-F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+F_SETFL: APPEND|NONBLOCK effect before ENOTTY; dup shares / independent open separate
 symbolic-descriptors
 symbolic-descriptors-values
 symbolic-descriptors-name-unsupported
@@ -1742,4 +1742,23 @@ native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
 66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## Bounded nonblocking descriptor state
+
+O_NONBLOCK=4 is accepted for regular, directory and O_SYMLINK opens and retained by F_GETFL. Dup shares the status and cursor; independent opens retain their own descriptions. Existing access, close-on-exec, WasWritten, metadata, bytes and cursor rules remain authoritative. Finite declared stdin retains EOF and pointer-error behavior; omitted input remains unknown. Captured output retains its copy faults and shared output budget.
+
+F_SETFL validates supported low32 arguments before effects, converts the native open-flag word by adding one, then changes only APPEND|NONBLOCK. High32 bits are ignored; access and input WasWritten bits cannot grant access or fabricate a write. The literal native controls for requests3/7/11/15 select status4/8/12/0. Symbolic descriptions commit these status changes before ENOTTY25. Unknown flags such as ASYNC0x40 stop before effects.
+
+The original ARM64 macOS preparation records122 observations, including16 low-bit requests for each valid object/access combination, held duplicates, independent opens, clearing, real writes and per-FD CLOEXEC. The SDK-free shared program runs at O0/O1/O2 and compares bytes, status, cursor and raw BSD carry/error ABI. Guest, C/CLI and Python routes also require the unknown-flag refusal; all three ARM64 HVF profiles are mandatory. This adds no readiness waits, pipes, networking, kqueue, asynchronous signals or host I/O. O_EVTONLY process policy remains unsupported. Native Intel HVF, physical iOS and the full macOS/iOS environment remain unverified or incomplete.
+
+```text
+O_NONBLOCK=4; F_SETFL raw low32 mask=0x1000f
+requests3/7/11/15 -> APPEND|NONBLOCK status4/8/12/0
+nonblocking-descriptors / nonblocking-flags-unsupported
+Nonblocking*, NonblockingDescriptorsKeepNativeControlState
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
+67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```

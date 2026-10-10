@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
+<!-- i18n-source: 64aae2ab0c56fa1fc2c0d700d918e774dbbd5df9d14fdaa8fd6647880b29ba3a -->
 
 [← 文档索引](README.md)
 
@@ -75,7 +75,7 @@ Python SDK 也通过真实共享库执行五种平台/架构组合。
 
 每个文件可用严格布尔值 `"writable":true` 显式允许进程内修改；C++ 使用 `DarwinFileOptions::WritableFiles`。省略或 false 保持只读，未知写授权明确停止，不访问宿主或修改输入选项。write(4/397)、pwrite(154/415)、truncate(200)、ftruncate(201) 和 O_TRUNC 共用文件节点；独立 open 共享字节但游标独立，dup 共享游标与状态，最后 close 后重开仍保留内容。增长补零，截断不移动游标，O_RDONLY|O_TRUNC 也截断。
 
-F_SETFL 只改变 O_APPEND，保留访问模式、close-on-exec 和 FWASWRITTEN；F_GETFL 在实际传输非零字节后暴露 0x10000，包括 pwrite 和输出捕获。pwrite 忽略 append、不移动游标。超 INT_MAX 的长度在 FD 检查前返回 EINVAL，pwrite 偏移 -1 更早返回 EINVAL；INT64_MAX 偏移在零写前返回 EFBIG，长度先裁剪再选择追加位置。
+F_SETFL 按原生标志转换只改变 O_APPEND|O_NONBLOCK，保留访问模式、close-on-exec 和 FWASWRITTEN；F_GETFL 在实际传输非零字节后暴露 0x10000，包括 pwrite 和输出捕获。pwrite 忽略 append、不移动游标。超 INT_MAX 的长度在 FD 检查前返回 EINVAL，pwrite 偏移 -1 更早返回 EINVAL；INT64_MAX 偏移在零写前返回 EFBIG，长度先裁剪再选择追加位置。
 
 成功的 ftruncate（包括大小不变）也为调用描述及其 dup 设置 FWASWRITTEN；O_TRUNC 为新描述设置，包括 O_RDONLY。按路径 truncate 不改变已有描述的标志。
 
@@ -1062,7 +1062,7 @@ O_SYMLINK=0x00200000 在只读、只写和读写模式下保留最终符号链�
 
 符号描述符 I/O 不把原始目标字符串当作文件内容。现有标量/向量导入、访问模式和数量检查完成后，负偏移返回 EINVAL；INT64_MAX 处读取返回零，其余允许的偏移返回 EPERM，包括零长度请求。INT64_MAX 处写入返回 EFBIG，其余允许偏移在零长度成功、APPEND 或载荷访问前返回 EPERM。已有 pwrite/pwritev 负偏移的早期检查仍是唯一依据。DATA/HOLE seek 对非负位置返回 ENXIO，负位置返回 EINVAL，游标不变。
 
-只写/读写描述对象的非负 ftruncate 以及允许的 open TRUNC 只设置 WasWritten 状态，不改变目标字节、完整 stat、扩展属性、游标、存储准入或 inode 分配。只读 ftruncate 和负长度返回 EINVAL。F_SETFL 的允许参数先改变 APPEND，再返回 ENOTTY25；dup 可观察变化，独立打开不受影响。未知参数在产生效果前停止。
+只写/读写描述对象的非负 ftruncate 以及允许的 open TRUNC 只设置 WasWritten 状态，不改变目标字节、完整 stat、扩展属性、游标、存储准入或 inode 分配。只读 ftruncate 和负长度返回 EINVAL。F_SETFL 的允许参数先改变 APPEND|NONBLOCK，再返回 ENOTTY25；dup 可观察变化，独立打开不受影响。未知参数在产生效果前停止。
 
 固定 fpathconf、fgetattrlist 及独立声明的普通 FD 扩展属性授权作用于符号对象。相对目录 FD 查找和 fchdir 返回 ENOTDIR。属性修改仍使 stat 失效，截断不会恢复元数据。旧式、偏移对齐、非可执行的 private/shared mmap 选择到达符号对象类型的 EINVAL 拒绝，不创建映射或租约。普通 shared 映射、未知标志、执行权限及其他现有不支持边界保持不变。原生映射对照只覆盖 length16384、offset0、protection1/2/3，并未验证所有 mmap 变体。
 
@@ -1076,7 +1076,7 @@ open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
 LinkNode, NameIdentity, HadMultipleNames, DetachedNames
 INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
 SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
-F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+F_SETFL: APPEND|NONBLOCK effect before ENOTTY; dup shares / independent open separate
 symbolic-descriptors
 symbolic-descriptors-values
 symbolic-descriptors-name-unsupported
@@ -1085,4 +1085,23 @@ native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
 66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## 有界的非阻塞描述符状态
+
+普通文件、目录及 O_SYMLINK 打开允许 O_NONBLOCK=4，F_GETFL 保留该状态。dup 共享状态与游标，独立打开保留各自的描述。既有访问模式、close-on-exec、WasWritten、元数据、字节和游标规则继续生效。显式有限标准输入保留 EOF 与指针错误顺序；省略输入仍表示未知。输出捕获保留复制错误及共享输出预算。
+
+F_SETFL 在产生效果前检查低32位允许参数，再按原生打开标志转换加一，只改变 APPEND|NONBLOCK。高32位忽略；访问及输入 WasWritten 位不能授予权限或伪造写入。原生字面控制中，参数3/7/11/15分别选择状态4/8/12/0。符号描述先提交状态变化，再返回 ENOTTY25。ASYNC0x40 等未知标志在效果前明确停止。
+
+原创 ARM64 macOS 准备记录122项观察，包括每个有效对象/访问组合的16项低位请求、保留的 dup、独立打开、清除状态、实际写入及每个 FD 的 CLOEXEC。无 SDK 共用程序以 O0/O1/O2 执行，比较字节、状态、游标和原始 BSD carry/errno ABI。来宾、C/CLI 和 Python 路径也要求未知标志拒绝，三个 ARM64 HVF profile 均必须实际执行。这里不实现就绪等待、管道、网络、kqueue、异步信号或宿主 I/O。O_EVTONLY 进程策略仍未支持；原生 Intel HVF、iOS 真机和完整 macOS/iOS 环境仍未验证或未完成。
+
+```text
+O_NONBLOCK=4; F_SETFL raw low32 mask=0x1000f
+requests3/7/11/15 -> APPEND|NONBLOCK status4/8/12/0
+nonblocking-descriptors / nonblocking-flags-unsupported
+Nonblocking*, NonblockingDescriptorsKeepNativeControlState
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
+67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```

@@ -837,8 +837,8 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
     return returned(InvalidArgument, true);
   if (Flags &
       ~uint32_t(OpenCloseOnExec | OpenDirectory | OpenSymbolic |
-                OpenAccessMask | OpenAppend | OpenTruncate | OpenCreate |
-                OpenExclusive | OpenNoFollow | OpenNoFollowAny))
+                OpenAccessMask | OpenNonBlocking | OpenAppend | OpenTruncate |
+                OpenCreate | OpenExclusive | OpenNoFollow | OpenNoFollowAny))
     return unsupported(Result, diagnostic::FileOpenFlags);
   // XNU reserves the descriptor before resolving the pathname. A failed
   // open does not retain that reservation.
@@ -884,7 +884,7 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
     return returned(IsDirectory, true);
   if (Mutating && File.Type == Kind::File && !File.File->Writable)
     return unsupported(Result, diagnostic::FileNotWritable);
-  File.Flags = Flags & (OpenAccessMask | OpenAppend);
+  File.Flags = Flags & (OpenAccessMask | OpenNonBlocking | OpenAppend);
   if ((Flags & OpenTruncate) && !Created) {
     if (File.Type == Kind::File) {
       auto Truncated = resize(File, 0, Result);
@@ -2835,10 +2835,14 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     case GetFileFlags:
       return returned(File.Flags);
     case SetFileFlags:
-      if (uint32_t(A[2]) &
-          ~uint32_t(OpenAccessMask | OpenAppend | FileWasWritten))
+      if (uint32_t(A[2]) & ~uint32_t(OpenAccessMask | OpenNonBlocking |
+                                     OpenAppend | FileWasWritten))
         return unsupported(Result, diagnostic::FileControl);
-      File.Flags = (File.Flags & ~OpenAppend) | (A[2] & OpenAppend);
+      // XNU converts the low32 open-flag request to file flags first. Access
+      // bits3 carry into NONBLOCK (and through APPEND); the actual access and
+      // write history belong to the existing description, not this request.
+      File.Flags = (File.Flags & ~(OpenAppend | OpenNonBlocking)) |
+                   ((uint32_t(A[2]) + 1) & (OpenAppend | OpenNonBlocking));
       return returned(File.Type == Kind::SymbolicLink ? NotTerminal : 0,
                       File.Type == Kind::SymbolicLink);
     default:

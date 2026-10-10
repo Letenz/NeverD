@@ -92,10 +92,10 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
                                  ("cycle", "cycle")):
                 (catalogue / name).symlink_to(target)
             case_input = catalogue / "data"
-        if mode == "symbolic-descriptors":
+        if mode in ("symbolic-descriptors", "nonblocking-descriptors"):
             catalogue = initial_root / mode
             catalogue.mkdir()
-            (catalogue / "fd-attrs").symlink_to("data")
+            (catalogue / ("fd-attrs" if mode == "symbolic-descriptors" else "fd-nonblock")).symlink_to("data")
             case_input = catalogue / "data"
         if mode == "kernel-pathconf":
             catalogue = initial_root / "pathconf"

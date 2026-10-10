@@ -497,6 +497,34 @@ TEST_P(DarwinProcess, CommonAttributesPreserveRecordAndDescriptorState) {
     }
   }
 }
+TEST_P(DarwinProcess, NonblockingDescriptorsKeepNativeControlState) {
+  Options.DarwinFiles = darwin_test::nonblockingDescriptorOptions();
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode :
+       {"nonblocking-descriptors", "nonblocking-flags-unsupported"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    const bool Unknown = llvm::StringRef(Mode).ends_with("-unsupported");
+    ASSERT_EQ(Result->Stop, Unknown ? ProcessStopReason::UnsupportedService
+                                    : ProcessStopReason::Exited)
+        << Result->Diagnostic;
+    EXPECT_EQ(Result->StandardOutput, "N");
+    EXPECT_TRUE(Result->StandardError.empty());
+    if (Unknown) {
+      EXPECT_EQ(Result->Diagnostic, "unsupported Darwin fcntl command");
+      ASSERT_FALSE(Result->Services.empty());
+      const auto &Last = Result->Services.back();
+      EXPECT_EQ(uint32_t(Last.Number) & 0x00ffffff, 92u);
+      EXPECT_FALSE(Last.Result);
+      EXPECT_FALSE(Last.Error);
+    } else
+      EXPECT_EQ(Result->ExitStatus, 37);
+  }
+}
+
 TEST_P(DarwinProcess, SymbolicDescriptorsRetainObjectsAndNativeErrorOrder) {
   Options.DarwinFiles = darwin_test::symbolicDescriptorOptions();
   Options.Arguments[2] = "/data";

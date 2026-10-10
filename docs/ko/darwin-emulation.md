@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
+<!-- i18n-source: 64aae2ab0c56fa1fc2c0d700d918e774dbbd5df9d14fdaa8fd6647880b29ba3a -->
 
 [← 문서 목록](README.md)
 
@@ -67,7 +67,7 @@ BSD 호출에서 ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD
 
 엄격한 불리언 `"writable":true` 또는 C++ `DarwinFileOptions::WritableFiles`로 프로세스 내 변경을 명시합니다. 생략/false는 읽기 전용이며 알 수 없는 권한은 중지합니다. 호스트나 입력 옵션을 바꾸지 않습니다. write(4/397), pwrite(154/415), truncate(200), ftruncate(201), O_TRUNC는 내용 노드를 공유합니다. 별도 open의 위치는 독립적이고 dup은 위치와 상태를 공유하며 마지막 close 뒤에도 내용이 남습니다. 확장은 0으로 채우고 절단은 위치를 보존하며 O_RDONLY|O_TRUNC도 절단합니다.
 
-F_SETFL은 O_APPEND만 바꾸고 접근 모드, close-on-exec, FWASWRITTEN을 보존합니다. 실제 비영 바이트 전송 뒤 F_GETFL에 0x10000이 나타나며 pwrite와 출력 캡처도 포함합니다. pwrite는 append를 무시하고 위치를 유지합니다. INT_MAX 길이 검사는 FD보다 앞서고 pwrite의 -1은 더 먼저 EINVAL입니다. INT64_MAX는 길이 0보다 먼저 EFBIG이며 길이를 제한한 뒤 EOF를 선택합니다.
+F_SETFL은 원시 플래그 변환 후 O_APPEND|O_NONBLOCK만 바꾸고 접근 모드, close-on-exec, FWASWRITTEN을 보존합니다. 실제 비영 바이트 전송 뒤 F_GETFL에 0x10000이 나타나며 pwrite와 출력 캡처도 포함합니다. pwrite는 append를 무시하고 위치를 유지합니다. INT_MAX 길이 검사는 FD보다 앞서고 pwrite의 -1은 더 먼저 EINVAL입니다. INT64_MAX는 길이 0보다 먼저 EFBIG이며 길이를 제한한 뒤 EOF를 선택합니다.
 
 성공한 ftruncate는 크기가 같아도 호출 open 설명과 dup에 FWASWRITTEN을 설정합니다. O_TRUNC는 O_RDONLY를 포함해 새 설명에 설정하며 경로 truncate는 기존 설명의 플래그를 바꾸지 않습니다.
 
@@ -958,7 +958,7 @@ O_SYMLINK=0x00200000은 읽기 전용, 쓰기 전용, 읽기/쓰기에서 마지
 
 I/O는 대상 문자열을 파일 내용으로 노출하지 않습니다. 기존 스칼라/벡터 가져오기, 접근, 개수 검사 후 음수 오프셋은 EINVAL입니다. INT64_MAX 읽기는 0, 다른 허용 오프셋은 길이 0을 포함해 EPERM입니다. INT64_MAX 쓰기는 EFBIG, 나머지는 길이 0 성공, APPEND, 데이터 접근 전에 EPERM입니다. pwrite/pwritev의 기존 조기 음수 규칙을 유지합니다. DATA/HOLE seek은 음수가 아니면 ENXIO, 음수면 EINVAL이며 커서는 그대로입니다.
 
-쓰기 전용/읽기·쓰기의 음수가 아닌 ftruncate와 허용 open TRUNC는 WasWritten만 설정하며 대상 바이트, 전체 stat, 속성, 커서, 저장 예산, inode를 변경하지 않습니다. 읽기 전용 또는 음수 길이는 EINVAL입니다. 허용 F_SETFL은 APPEND를 변경한 후 ENOTTY25를 반환하고 dup에 반영됩니다. 알 수 없는 인수는 효과 전에 중지합니다.
+쓰기 전용/읽기·쓰기의 음수가 아닌 ftruncate와 허용 open TRUNC는 WasWritten만 설정하며 대상 바이트, 전체 stat, 속성, 커서, 저장 예산, inode를 변경하지 않습니다. 읽기 전용 또는 음수 길이는 EINVAL입니다. 허용 F_SETFL은 APPEND|NONBLOCK를 변경한 후 ENOTTY25를 반환하고 dup에 반영됩니다. 알 수 없는 인수는 효과 전에 중지합니다.
 
 고정 fpathconf, fgetattrlist, 독립 선언된 일반 FD 속성 권한은 심볼릭 객체에 적용됩니다. 상대 디렉터리 FD와 fchdir는 ENOTDIR입니다. 속성 변경으로 무효화된 stat을 truncate가 복구하지 않습니다. 정렬된 비실행 레거시 private/shared mmap은 객체 종류에서 EINVAL로 거부되며 매핑이나 임대를 만들지 않습니다. 일반 shared 매핑, 알 수 없는 플래그, 실행 보호 등 기존 미지원 경계는 유지됩니다. 네이티브 mmap은 length16384, offset0, protection1/2/3의18개 조합만 검증합니다.
 
@@ -972,7 +972,7 @@ open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
 LinkNode, NameIdentity, HadMultipleNames, DetachedNames
 INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
 SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
-F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+F_SETFL: APPEND|NONBLOCK effect before ENOTTY; dup shares / independent open separate
 symbolic-descriptors
 symbolic-descriptors-values
 symbolic-descriptors-name-unsupported
@@ -981,4 +981,23 @@ native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
 66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## 제한된 비차단 설명자 상태
+
+일반 파일, 디렉터리, O_SYMLINK open은 O_NONBLOCK=4를 허용하며 F_GETFL이 이를 보존합니다. dup은 상태와 위치를 공유하고 독립 open은 별도 설명을 유지합니다. 접근, close-on-exec, WasWritten, 메타데이터, 바이트, 위치의 기존 규칙이 적용됩니다. 명시한 유한 stdin은 EOF와 포인터 오류 순서를 유지하고 생략 입력은 미지 상태입니다. 출력 캡처는 복사 오류와 공유 예산을 유지합니다.
+
+F_SETFL은 효과 전에 허용 low32 인수를 검사하고 원시 open 플래그 변환으로 1을 더한 뒤 APPEND|NONBLOCK만 변경합니다. high32는 무시하며 접근 및 입력 WasWritten 비트로 권한이나 쓰기 이력을 만들지 않습니다. 독립 원시 관찰에서 요청3/7/11/15는 상태4/8/12/0을 선택합니다. 심볼릭 설명은 상태 변경 후 ENOTTY25를 반환합니다. ASYNC0x40 등 미지 플래그는 효과 전에 중지합니다.
+
+독자 ARM64 macOS 준비의122개 관찰은 유효 객체/접근 조합별16개 요청, 유지 dup, 독립 open, 상태 해제, 실제 쓰기 및 FD별 CLOEXEC를 포함합니다. SDK 없는 공통 프로그램은 O0/O1/O2에서 바이트, 상태, 위치와 원시 BSD carry/errno ABI를 비교합니다. 게스트, C/CLI, Python도 미지 플래그 거부를 검증하며 ARM64 HVF 세 profile의 실제 실행이 필수입니다. 준비 상태 대기, 파이프, 네트워크, kqueue, 비동기 신호나 호스트 I/O는 추가하지 않습니다. O_EVTONLY 프로세스 정책은 미지원이며 Intel HVF, 실제 iOS, 전체 macOS/iOS 환경은 미검증 또는 미완성입니다.
+
+```text
+O_NONBLOCK=4; F_SETFL raw low32 mask=0x1000f
+requests3/7/11/15 -> APPEND|NONBLOCK status4/8/12/0
+nonblocking-descriptors / nonblocking-flags-unsupported
+Nonblocking*, NonblockingDescriptorsKeepNativeControlState
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
+67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```

@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
+<!-- i18n-source: 64aae2ab0c56fa1fc2c0d700d918e774dbbd5df9d14fdaa8fd6647880b29ba3a -->
 
 [← فهرس الوثائق](README.md)
 
@@ -67,7 +67,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 يسمح الخيار المنطقي الصارم `"writable":true` أو `DarwinFileOptions::WritableFiles` بتعديل داخل العملية. الغياب أو false يبقي القراءة فقط، والصلاحية المجهولة توقف الخدمة. لا تتغير ملفات المضيف أو المدخلات الأصلية. تتشارك write(4/397) وpwrite(154/415) وtruncate(200) وftruncate(201) وO_TRUNC المحتوى؛ لكل open موضع مستقل ويتشارك dup الموضع والحالة، وتبقى البيانات بعد آخر close. يملأ التوسع بالأصفار ويحفظ الاقتطاع المواضع، حتى O_RDONLY|O_TRUNC.
 
-يغير F_SETFL فقط O_APPEND ويحفظ نمط الوصول وclose-on-exec وFWASWRITTEN. يظهر F_GETFL البت 0x10000 بعد نقل بايتات فعلية، بما في ذلك pwrite والإخراج الملتقط. يتجاهل pwrite وضع append ويحفظ الموضع. يُفحص INT_MAX قبل FD؛ يعيد pwrite عند -1 الخطأ EINVAL قبل ذلك. يعيد INT64_MAX الخطأ EFBIG قبل حالة الطول الصفري، ويُختصر الطول قبل اختيار EOF.
+يغير F_SETFL فقط O_APPEND|O_NONBLOCK بعد التحويل الأصلي ويحفظ نمط الوصول وclose-on-exec وFWASWRITTEN. يظهر F_GETFL البت 0x10000 بعد نقل بايتات فعلية، بما في ذلك pwrite والإخراج الملتقط. يتجاهل pwrite وضع append ويحفظ الموضع. يُفحص INT_MAX قبل FD؛ يعيد pwrite عند -1 الخطأ EINVAL قبل ذلك. يعيد INT64_MAX الخطأ EFBIG قبل حالة الطول الصفري، ويُختصر الطول قبل اختيار EOF.
 
 يضع ftruncate الناجح علامة FWASWRITTEN على وصف الفتح المستدعي ونسخ dup حتى مع ثبات الحجم. يضع O_TRUNC العلامة على الوصف الجديد، حتى O_RDONLY؛ ولا يغير truncate بالمسار أعلام الأوصاف الموجودة.
 
@@ -956,7 +956,7 @@ guest/Python5,000,000us / quantum1024 / public10s
 
 لا يعرض I/O نص هدف الرابط كمحتوى ملف. بعد فحوص الاستيراد القياسي/المتجهي والوصول والعدد الحالية، تعيد الإزاحة السالبة EINVAL. تعيد القراءة عند INT64_MAX صفراً والكتابة EFBIG؛ تعيد الإزاحات الأخرى المسموحة EPERM حتى للطول الصفري وقبل APPEND أو الوصول إلى البيانات. تبقى قواعد الإزاحة السالبة المبكرة لـ pwrite/pwritev كما هي. تعيد DATA/HOLE قيمة ENXIO للمواقع غير السالبة وEINVAL للسالبة دون تغيير المؤشر.
 
-لا تضبط ftruncate غير السالبة للوصف القابل للكتابة وopen TRUNC المسموحة إلا WasWritten. تبقى بايتات الهدف وstat الكامل وxattrs والمؤشر والميزانية وinode دون تغيير. تعيد القراءة فقط أو الطول السالب EINVAL. تغير F_SETFL المسموحة APPEND ثم تعيد ENOTTY25؛ يشاهد dup التغيير ولا يشاهده open المستقل. تتوقف الوسائط المجهولة قبل التأثير.
+لا تضبط ftruncate غير السالبة للوصف القابل للكتابة وopen TRUNC المسموحة إلا WasWritten. تبقى بايتات الهدف وstat الكامل وxattrs والمؤشر والميزانية وinode دون تغيير. تعيد القراءة فقط أو الطول السالب EINVAL. تغير F_SETFL المسموحة APPEND|NONBLOCK ثم تعيد ENOTTY25؛ يشاهد dup التغيير ولا يشاهده open المستقل. تتوقف الوسائط المجهولة قبل التأثير.
 
 تعمل fpathconf الثابتة وfgetattrlist وصلاحيات FD-xattr العادية المعلنة بشكل مستقل على كائن الرابط. يعيد FD الدليل النسبي وfchdir قيمة ENOTDIR. لا يعيد truncate صلاحية stat التي أبطلتها تعديلات السمات. يصل mmap القديم private/shared والمحاذى وغير التنفيذي إلى رفض EINVAL حسب نوع الرابط دون mapping أو lease. تبقى حدود shared العادي والأعلام المجهولة والحماية التنفيذية وغيرها دون تغيير. تغطي ضوابط mmap الأصلية18 حالة فقط بطول16384 وإزاحة0 وحماية1/2/3.
 
@@ -970,7 +970,7 @@ open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
 LinkNode, NameIdentity, HadMultipleNames, DetachedNames
 INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
 SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
-F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+F_SETFL: APPEND|NONBLOCK effect before ENOTTY; dup shares / independent open separate
 symbolic-descriptors
 symbolic-descriptors-values
 symbolic-descriptors-name-unsupported
@@ -979,4 +979,23 @@ native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
 66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## حالة محدودة للوصفات غير الحاجبة
+
+تسمح الملفات العادية والمجلدات وفتح O_SYMLINK بـ O_NONBLOCK=4، وتحفظه F_GETFL. يشترك dup في الحالة والمؤشر، وتحتفظ الفتحات المستقلة بأوصافها. تبقى قواعد الوصول وclose-on-exec وWasWritten والبيانات الوصفية والبايتات والمؤشر سارية. يحفظ stdin المحدود المصرح به EOF وترتيب أخطاء المؤشر؛ والمدخل المحذوف مجهول. يحفظ التقاط الإخراج أخطاء النسخ والميزانية المشتركة.
+
+تفحص F_SETFL وسائط low32 المسموحة قبل التأثير، وتضيف واحداً حسب تحويل أعلام open الأصلي، ثم تغير APPEND|NONBLOCK فقط. تُهمل high32؛ ولا تمنح بتات الوصول وWasWritten المدخلة صلاحية أو تختلق كتابة. تختار القيم الأصلية المستقلة3/7/11/15 الحالات4/8/12/0. تغير الأوصاف الرمزية الحالة قبل ENOTTY25. تتوقف الأعلام المجهولة مثل ASYNC0x40 قبل التأثير.
+
+تضم التحضيرات الأصلية ARM64 macOS عدد122 ملاحظة:16 طلباً لكل تركيب صالح للكائن والوصول، وdup محتفظاً به وفتحاً مستقلاً والمسح والكتابة الفعلية وCLOEXEC لكل FD. يقارن البرنامج المشترك بلا SDK عند O0/O1/O2 البايتات والحالة والمؤشر وABI BSD الخام carry/errno. يتحقق الضيف وC/CLI وPython أيضاً من الرفض المجهول؛ ويلزم التنفيذ الفعلي لملفات ARM64 HVF الثلاثة. لا يضيف انتظار الجاهزية أو الأنابيب أو الشبكة أو kqueue أو إشارات غير متزامنة أو I/O المضيف. تبقى سياسة O_EVTONLY غير مدعومة؛ وIntel HVF الأصلي وiOS الفعلي والبيئة الكاملة غير متحققة أو غير مكتملة.
+
+```text
+O_NONBLOCK=4; F_SETFL raw low32 mask=0x1000f
+requests3/7/11/15 -> APPEND|NONBLOCK status4/8/12/0
+nonblocking-descriptors / nonblocking-flags-unsupported
+Nonblocking*, NonblockingDescriptorsKeepNativeControlState
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
+67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```

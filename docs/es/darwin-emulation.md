@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
+<!-- i18n-source: 64aae2ab0c56fa1fc2c0d700d918e774dbbd5df9d14fdaa8fd6647880b29ba3a -->
 
 [← Índice de documentación](README.md)
 
@@ -67,7 +67,7 @@ Verificación Release de 2026-10-05: 381 registros, 177 aprobados, 204 omitidos,
 
 El booleano estricto `"writable":true` o `DarwinFileOptions::WritableFiles` autoriza cambios locales al proceso. Ausente/false conserva solo lectura; un permiso desconocido detiene el servicio. No cambia el host ni los datos iniciales. write(4/397), pwrite(154/415), truncate(200), ftruncate(201) y O_TRUNC comparten contenido; open mantiene posiciones independientes, dup comparte posición y estado, y el contenido sobrevive al último close. El crecimiento rellena ceros y truncar conserva posiciones, incluso O_RDONLY|O_TRUNC.
 
-F_SETFL cambia solo O_APPEND y conserva acceso, close-on-exec y FWASWRITTEN. F_GETFL muestra 0x10000 tras transferir bytes no vacíos, también con pwrite y salida capturada. pwrite ignora append y conserva posición. INT_MAX se comprueba antes de FD; -1 en pwrite devuelve EINVAL antes aún. INT64_MAX devuelve EFBIG antes del caso vacío; se recorta la longitud antes de elegir EOF.
+F_SETFL cambia solo O_APPEND|O_NONBLOCK tras conversión nativa y conserva acceso, close-on-exec y FWASWRITTEN. F_GETFL muestra 0x10000 tras transferir bytes no vacíos, también con pwrite y salida capturada. pwrite ignora append y conserva posición. INT_MAX se comprueba antes de FD; -1 en pwrite devuelve EINVAL antes aún. INT64_MAX devuelve EFBIG antes del caso vacío; se recorta la longitud antes de elegir EOF.
 
 ftruncate exitoso, incluso sin cambiar tamaño, marca FWASWRITTEN en la descripción invocada y sus dup. O_TRUNC marca la nueva descripción, incluso O_RDONLY; truncate por ruta no marca las existentes.
 
@@ -956,7 +956,7 @@ La descripción conserva LinkNode y NameIdentity reales. Dup comparte indicadore
 
 La E/S nunca expone la cadena de destino como contenido. Tras las comprobaciones existentes de importación escalar/vectorial, acceso y cantidad, los desplazamientos negativos dan EINVAL. Leer en INT64_MAX devuelve cero; escribir da EFBIG. Los otros desplazamientos admitidos dan EPERM, incluida longitud cero, antes de APPEND o acceso a datos. Se conservan las reglas negativas tempranas de pwrite/pwritev. DATA/HOLE da ENXIO para posiciones no negativas, EINVAL para negativas, sin mover el cursor.
 
-ftruncate no negativo sobre descripciones escribibles y open TRUNC admitido solo establecen WasWritten, sin cambiar destino, stat completo, xattrs, cursor, presupuesto o inode. Solo lectura o longitud negativa da EINVAL. F_SETFL admitido modifica APPEND antes de devolver ENOTTY25; dup observa el efecto, un open independiente no. Argumentos desconocidos detienen antes de efectos.
+ftruncate no negativo sobre descripciones escribibles y open TRUNC admitido solo establecen WasWritten, sin cambiar destino, stat completo, xattrs, cursor, presupuesto o inode. Solo lectura o longitud negativa da EINVAL. F_SETFL admitido modifica APPEND|NONBLOCK antes de devolver ENOTTY25; dup observa el efecto, un open independiente no. Argumentos desconocidos detienen antes de efectos.
 
 fpathconf fijo, fgetattrlist y permisos ordinarios FD-xattr declarados por separado operan sobre el enlace. FD de directorio relativo y fchdir dan ENOTDIR. truncate no restaura stat invalidado por cambios de atributos. mmap heredado private/shared alineado y no ejecutable llega a EINVAL por tipo simbólico, sin mapping ni concesión. Shared ordinario, indicadores desconocidos, protección ejecutable y demás límites existentes se conservan. Los18 controles nativos mmap cubren solo length16384, offset0 y protection1/2/3.
 
@@ -970,7 +970,7 @@ open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
 LinkNode, NameIdentity, HadMultipleNames, DetachedNames
 INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
 SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
-F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+F_SETFL: APPEND|NONBLOCK effect before ENOTTY; dup shares / independent open separate
 symbolic-descriptors
 symbolic-descriptors-values
 symbolic-descriptors-name-unsupported
@@ -979,4 +979,23 @@ native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
 66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## Estado no bloqueante acotado de descriptores
+
+O_NONBLOCK=4 se admite para archivos ordinarios, directorios y O_SYMLINK y se conserva en F_GETFL. Dup comparte estado y cursor; open independientes conservan sus descripciones. Siguen las reglas de acceso, close-on-exec, WasWritten, metadatos, bytes y cursor. El stdin finito declarado conserva EOF y orden de errores de puntero; la entrada omitida sigue desconocida. La captura conserva fallos de copia y presupuesto compartido.
+
+F_SETFL valida argumentos low32 antes de efectos, suma uno según la conversión nativa de flags open y modifica solo APPEND|NONBLOCK. High32 se ignora; acceso y WasWritten de entrada no conceden permiso ni inventan escritura. Los valores nativos literales3/7/11/15 seleccionan4/8/12/0. Las descripciones simbólicas cambian estado antes de ENOTTY25. Flags desconocidos como ASYNC0x40 detienen antes de efectos.
+
+La preparación ARM64 macOS original contiene122 observaciones:16 solicitudes por combinación válida objeto/acceso, dup retenido, open independiente, limpieza, escrituras reales y CLOEXEC por FD. El programa común sin SDK compara en O0/O1/O2 bytes, estado, cursor y ABI BSD cruda carry/errno. Invitado, C/CLI y Python verifican también rechazo desconocido; los tres perfiles ARM64 HVF requieren ejecución real. No añade esperas de disponibilidad, tuberías, red, kqueue, señales asíncronas ni I/O del host. O_EVTONLY sigue sin modelar; Intel HVF nativo, iOS físico y el entorno completo siguen sin verificar o incompletos.
+
+```text
+O_NONBLOCK=4; F_SETFL raw low32 mask=0x1000f
+requests3/7/11/15 -> APPEND|NONBLOCK status4/8/12/0
+nonblocking-descriptors / nonblocking-flags-unsupported
+Nonblocking*, NonblockingDescriptorsKeepNativeControlState
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
+67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```

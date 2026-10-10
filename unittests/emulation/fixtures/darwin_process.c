@@ -6547,6 +6547,76 @@ static int created_namespace_metadata(const char *input, int virtual_record) {
   return 37;
 }
 
+/* Original SDK-free nonblocking controls; finite data and descriptor status
+ * are observed without adding readiness or asynchronous I/O semantics. */
+static int nonblocking_descriptors(const char *input, unsigned mode) {
+  unsigned error, length = 0, slash = 0;
+  char parent[1024], bytes[12];
+  while (length < sizeof(parent) - 1 && input[length]) {
+    parent[length] = input[length];
+    if (input[length] == '/')
+      slash = length;
+    ++length;
+  }
+  if (!length || input[length] || input[0] != '/')
+    return 201;
+  parent[slash ? slash : 1] = 0;
+#define NONBLOCK_EXPECT(expression)                                            \
+  do {                                                                         \
+    if (!(expression))                                                         \
+      return 50 + (__LINE__ % 200);                                            \
+  } while (0)
+  u64 root = call(5, (u64)parent, 0x100004, 0, 0, 0, 0, &error);
+  NONBLOCK_EXPECT(!error && !secondary && root >= 3);
+  NONBLOCK_EXPECT(!xattr_result(92, root, 3, 0, 0, 0, 0, 4, 0));
+  NONBLOCK_EXPECT(!xattr_result(13, root, 0, 0, 0, 0, 0, 0, 0));
+  u64 file = call(5, (u64) "data", 0x100000e, 0, 0, 0, 0, &error);
+  NONBLOCK_EXPECT(!error && !secondary && file >= 3);
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  NONBLOCK_EXPECT(!error && !secondary && copy >= 3);
+  u64 independent = call(5, (u64) "data", 4, 0, 0, 0, 0, &error);
+  NONBLOCK_EXPECT(!error && !secondary && independent >= 3);
+  NONBLOCK_EXPECT(!xattr_result(4, copy, (u64) "XY", 2, 0, 0, 0, 2, 0));
+  NONBLOCK_EXPECT(!xattr_result(154, file, (u64) "Z", 1, 0, 0, 0, 1, 0));
+  NONBLOCK_EXPECT(
+      !xattr_result(153, independent, (u64)bytes, 12, 0, 0, 0, 12, 0));
+  const char expected[] = "Z123456789XY";
+  for (unsigned i = 0; i != sizeof(bytes); ++i)
+    NONBLOCK_EXPECT(bytes[i] == expected[i]);
+  const unsigned replies[] = {0, 0, 0, 4,  4,  4,  4,  8,
+                              8, 8, 8, 12, 12, 12, 12, 0};
+  for (unsigned request = 0; request != 16; ++request) {
+    u64 word = 0xa5a5000000010000UL | request;
+    NONBLOCK_EXPECT(!xattr_result(92, copy, 4, word, 0, 0, 0, 0, 0));
+    NONBLOCK_EXPECT(
+        !xattr_result(92, file, 3, 0, 0, 0, 0, 0x10002 | replies[request], 0));
+    NONBLOCK_EXPECT(!xattr_result(92, independent, 3, 0, 0, 0, 0, 4, 0));
+    NONBLOCK_EXPECT(!xattr_result(92, file, 1, 0, 0, 0, 0, 1, 0));
+    NONBLOCK_EXPECT(!xattr_result(92, copy, 1, 0, 0, 0, 0, 0, 0));
+    NONBLOCK_EXPECT(!xattr_result(199, copy, 0, 1, 0, 0, 0, 12, 0));
+  }
+  u64 link = call(5, (u64) "fd-nonblock", 0x200004, 0, 0, 0, 0, &error);
+  NONBLOCK_EXPECT(!error && !secondary && link >= 3);
+  u64 link_copy = call(41, link, 0, 0, 0, 0, 0, &error);
+  NONBLOCK_EXPECT(!error && !secondary && link_copy >= 3);
+  for (unsigned request = 0; request != 16; ++request) {
+    NONBLOCK_EXPECT(!xattr_result(92, link_copy, 4, request, 0, 0, 0, 25, 1));
+    NONBLOCK_EXPECT(
+        !xattr_result(92, link, 3, 0, 0, 0, 0, replies[request], 0));
+  }
+  NONBLOCK_EXPECT(!xattr_result(3, root, (u64)bytes, 0, 0, 0, 0, 21, 1));
+  NONBLOCK_EXPECT(!xattr_result(4, independent, (u64)bytes, 0, 0, 0, 0, 9, 1));
+  NONBLOCK_EXPECT(!xattr_result(4, 1, (u64) "N", 1, 0, 0, 0, 1, 0));
+  if (mode)
+    return xattr_result(92, file, 4, 0x40, 0, 0, 0, 0, 0);
+  for (unsigned i = 0; i != 6; ++i) {
+    const u64 fds[] = {root, file, copy, independent, link, link_copy};
+    NONBLOCK_EXPECT(!xattr_result(6, fds[i], 0, 0, 0, 0, 0, 0, 0));
+  }
+#undef NONBLOCK_EXPECT
+  return 37;
+}
+
 /* Original SDK-free O_SYMLINK controls. Complete virtual stat bytes are a
  * separate observation; multi-name vnode queries stop only in mode2. */
 static int symbolic_descriptors(const char *input, unsigned mode) {
@@ -6924,6 +6994,12 @@ int main(int argc, char **argv, char **envp, char **apple) {
                                  : equal(argv[1], "attribute-names-unsupported")
                                      ? 2
                                      : 0);
+  if (equal(argv[1], "nonblocking-descriptors") ||
+      equal(argv[1], "nonblocking-flags-unsupported"))
+    return argc < 3
+               ? 201
+               : nonblocking_descriptors(
+                     argv[2], equal(argv[1], "nonblocking-flags-unsupported"));
   if (equal(argv[1], "symbolic-descriptors") ||
       equal(argv[1], "symbolic-descriptors-values") ||
       equal(argv[1], "symbolic-descriptors-name-unsupported"))

@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
+<!-- i18n-source: 64aae2ab0c56fa1fc2c0d700d918e774dbbd5df9d14fdaa8fd6647880b29ba3a -->
 
 [← 文件索引](README.md)
 
@@ -67,7 +67,7 @@ BSD 呼叫在 ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別
 
 檔案以嚴格布林值 `"writable":true` 明確允許行程內修改；C++ 使用 `DarwinFileOptions::WritableFiles`。省略或 false 維持唯讀，未知授權停止，不存取宿主或改動輸入。write(4/397)、pwrite(154/415)、truncate(200)、ftruncate(201) 與 O_TRUNC 共用內容節點；各次 open 游標獨立，dup 共用游標與狀態，最後 close 後重開仍保留內容。增長補零，截斷保留游標；O_RDONLY|O_TRUNC 也會截斷。
 
-F_SETFL 只改 O_APPEND 並保留存取模式、close-on-exec 與 FWASWRITTEN；實際傳輸非零位元組後 F_GETFL 顯示 0x10000，包含 pwrite 和輸出擷取。pwrite 忽略 append、不移游標。INT_MAX 長度檢查先於 FD，偏移 -1 的 pwrite 更早返回 EINVAL；INT64_MAX 在零寫之前返回 EFBIG，長度先裁剪再選 EOF。
+F_SETFL 依原生旗標轉換只改 O_APPEND|O_NONBLOCK 並保留存取模式、close-on-exec 與 FWASWRITTEN；實際傳輸非零位元組後 F_GETFL 顯示 0x10000，包含 pwrite 和輸出擷取。pwrite 忽略 append、不移游標。INT_MAX 長度檢查先於 FD，偏移 -1 的 pwrite 更早返回 EINVAL；INT64_MAX 在零寫之前返回 EFBIG，長度先裁剪再選 EOF。
 
 成功的 ftruncate（含大小不變）也為呼叫描述及其 dup 設定 FWASWRITTEN；O_TRUNC 為新描述設定，包含 O_RDONLY。路徑 truncate 不改變既有描述的旗標。
 
@@ -958,7 +958,7 @@ O_SYMLINK=0x00200000 在唯讀、唯寫和讀寫模式下保留最後的符號�
 
 符號描述符 I/O 不將原始目標字串視為檔案內容。既有純量/向量匯入、存取及數量檢查後，負位移傳回 EINVAL。INT64_MAX 的讀取傳回零，其他允許位移傳回 EPERM，包含零長度要求。INT64_MAX 的寫入傳回 EFBIG，其餘在零長度成功、APPEND 或資料存取前傳回 EPERM。既有 pwrite/pwritev 負位移的早期規則仍是唯一依據。DATA/HOLE seek 對非負位置傳回 ENXIO，負位置傳回 EINVAL，游標不變。
 
-唯寫/讀寫描述物件的非負 ftruncate 與允許的 open TRUNC 只設定 WasWritten，不改變目標位元組、完整 stat、擴充屬性、游標、儲存准入或 inode 分配。唯讀 ftruncate 及負長度傳回 EINVAL。允許參數的 F_SETFL 先改變 APPEND，再傳回 ENOTTY25；dup 可觀察變化，獨立開啟不受影響。未知參數在產生效果前停止。
+唯寫/讀寫描述物件的非負 ftruncate 與允許的 open TRUNC 只設定 WasWritten，不改變目標位元組、完整 stat、擴充屬性、游標、儲存准入或 inode 分配。唯讀 ftruncate 及負長度傳回 EINVAL。允許參數的 F_SETFL 先改變 APPEND|NONBLOCK，再傳回 ENOTTY25；dup 可觀察變化，獨立開啟不受影響。未知參數在產生效果前停止。
 
 固定 fpathconf、fgetattrlist 及獨立宣告的普通 FD 擴充屬性權限作用於符號物件。相對目錄 FD 查找與 fchdir 傳回 ENOTDIR。屬性修改仍使 stat 失效，截斷不會恢復中繼資料。舊式、位移對齊、不可執行的 private/shared mmap 選擇到達符號物件類型的 EINVAL 拒絕，不建立映射或租約。普通 shared 映射、未知旗標、執行權限及其他現有不支援邊界保持不變。原生映射對照僅涵蓋 length16384、offset0、protection1/2/3，並未驗證所有 mmap 變體。
 
@@ -972,7 +972,7 @@ open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
 LinkNode, NameIdentity, HadMultipleNames, DetachedNames
 INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
 SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
-F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+F_SETFL: APPEND|NONBLOCK effect before ENOTTY; dup shares / independent open separate
 symbolic-descriptors
 symbolic-descriptors-values
 symbolic-descriptors-name-unsupported
@@ -981,4 +981,23 @@ native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
 66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## 有界的非阻塞描述符狀態
+
+一般檔案、目錄及 O_SYMLINK 開啟允許 O_NONBLOCK=4，F_GETFL 保留此狀態。dup 共用狀態與游標，獨立開啟保留各自的描述。既有存取模式、close-on-exec、WasWritten、中繼資料、位元組與游標規則仍適用。明確有限標準輸入保留 EOF 及指標錯誤順序；省略輸入仍屬未知。輸出擷取保留複製錯誤與共用輸出預算。
+
+F_SETFL 在效果前檢查低32位允許參數，再依原生開啟旗標轉換加一，只改變 APPEND|NONBLOCK。高32位忽略；存取及輸入 WasWritten 位不能授權或偽造寫入。原生字面控制的參數3/7/11/15選擇狀態4/8/12/0。符號描述先提交狀態變更，再傳回 ENOTTY25。ASYNC0x40 等未知旗標在效果前停止。
+
+原創 ARM64 macOS 準備記錄122項觀察，包含每個有效物件/存取組合的16項低位請求、保留 dup、獨立開啟、清除狀態、實際寫入及每個 FD 的 CLOEXEC。無 SDK 共用程式於 O0/O1/O2 執行，比較位元組、狀態、游標及原始 BSD carry/errno ABI。來賓、C/CLI 與 Python 路徑也要求未知旗標拒絕，三個 ARM64 HVF profile 均須實際執行。不提供就緒等待、管道、網路、kqueue、非同步訊號或宿主 I/O。O_EVTONLY 程序策略仍不支援；原生 Intel HVF、iOS 實機及完整 macOS/iOS 環境仍未驗證或未完成。
+
+```text
+O_NONBLOCK=4; F_SETFL raw low32 mask=0x1000f
+requests3/7/11/15 -> APPEND|NONBLOCK status4/8/12/0
+nonblocking-descriptors / nonblocking-flags-unsupported
+Nonblocking*, NonblockingDescriptorsKeepNativeControlState
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
+67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```

@@ -5814,8 +5814,166 @@ TEST_P(DarwinFileTest, AppendFlagsAreSharedByDupAndIgnoredByPwrite) {
   EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 4, 8}), 0u);
   EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 10u);
   EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x10002u);
-  EXPECT_FALSE(invoke(ServiceKind::Fcntl, {A, 4, 4}));
+  EXPECT_FALSE(invoke(ServiceKind::Fcntl, {A, 4, 0x40}));
   EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x10002u);
+}
+
+TEST_P(DarwinFileTest,
+       NonblockingFlagsUseNativeConversionAndDescriptionOwnership) {
+  // Independent native replies for every low request nibble, including the
+  // access-bit carry. Request WasWritten is not authority to invent a write.
+  constexpr uint32_t Replies[] = {0, 0, 0, 4,  4,  4,  4,  8,
+                                  8, 8, 8, 12, 12, 12, 12, 0};
+  mutationPolicy();
+  Options->Directories.insert("/");
+  Options->Metadata["/"] = darwin_test::creationParentMetadata();
+  symbolicDescriptorInputs();
+  for (const char *Name : {"/data", "/alias", "/"}) {
+    const bool Link = llvm::StringRef(Name) == "/alias";
+    const bool Directory = llvm::StringRef(Name) == "/";
+    for (uint32_t Access = 0; Access != 3; ++Access) {
+      SCOPED_TRACE(Name);
+      SCOPED_TRACE(Access);
+      path(Name);
+      const uint32_t Selection = Link ? 0x200000 : 0;
+      if (Directory && Access) {
+        error(ServiceKind::Open, {Base, Access | 4}, 21);
+        continue;
+      }
+      const auto A =
+          ok(ServiceKind::Open, {Base, Selection | Access | 4 | 0x1000000});
+      ASSERT_NE(A, UINT64_MAX);
+      const auto Copy = ok(ServiceKind::Dup, {A});
+      const auto Independent =
+          ok(ServiceKind::Open, {Base, Selection | Access});
+      const uint32_t Written = Access ? 0x10000 : 0;
+      if (Access) {
+        if (Link)
+          EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, 2}), 0u);
+        else {
+          path("Z", Base + 128);
+          EXPECT_EQ(ok(ServiceKind::Pwrite, {A, Base + 128, 1, 0}), 1u);
+        }
+      }
+      const auto Before = status(A);
+      EXPECT_EQ(ok(ServiceKind::Lseek, {A, 7, 0}), 7u);
+      EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), Access | Written | 4);
+      for (uint32_t Request = 0; Request != 16; ++Request) {
+        SCOPED_TRACE(Request);
+        const uint64_t Word = 0xa5a5000000000000ULL | 0x10000 | Request;
+        if (Link)
+          error(ServiceKind::Fcntl, {Copy, 4, Word}, 25);
+        else
+          EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 4, Word}), 0u);
+        EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}),
+                  Access | Written | Replies[Request]);
+        EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 3}),
+                  Access | Written | Replies[Request]);
+        EXPECT_EQ(ok(ServiceKind::Fcntl, {Independent, 3}), Access);
+        EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 1}), 1u);
+        EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 1}), 0u);
+        EXPECT_EQ(ok(ServiceKind::Lseek, {Copy, 0, 1}), 7u);
+        EXPECT_EQ(status(A), Before);
+      }
+      for (uint32_t Refused : {16u, 0x40u, 0x8000u, UINT32_MAX}) {
+        EXPECT_FALSE(invoke(ServiceKind::Fcntl, {A, 4, Refused}));
+        EXPECT_EQ(Result.Diagnostic, diagnostic::FileControl);
+        EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 3}), Access | Written);
+        EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 7u);
+        EXPECT_EQ(status(A), Before);
+      }
+      for (auto FD : {A, Copy, Independent})
+        EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+    }
+  }
+}
+
+TEST_P(DarwinFileTest,
+       NonblockingAppendAndPositionedWritesKeepBytesAndCursors) {
+  Options->WritableFiles.insert("/data");
+  const auto Original = Options->Files.at("/data");
+  const auto A = ok(ServiceKind::Open, {Base, 2 | 4 | 8});
+  ASSERT_NE(A, UINT64_MAX);
+  const auto Copy = ok(ServiceKind::Dup, {A});
+  const auto Observer = ok(ServiceKind::Open, {Base, 4});
+  path("QR", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Write, {Copy, Base + 128, 2}), 2u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 8u);
+  path("Z", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Pwrite, {A, Base + 128, 1, 0}), 1u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Copy, 0, 1}), 8u);
+  contents(Observer, {'Z', 'b', 0, 0xff, 'e', 'f', 'Q', 'R'});
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x1000eu);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {Observer, 3}), 4u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 2, 0}), 2u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 4, 15}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x10002u);
+  path("x", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Write, {A, Base + 128, 1}), 1u);
+  contents(Observer, {'Z', 'b', 'x', 0xff, 'e', 'f', 'Q', 'R'});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Copy, 0, 1}), 3u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Observer, 0, 1}), 0u);
+  error(ServiceKind::Write, {Observer, UINT64_MAX, 0}, 9);
+  EXPECT_EQ(Options->Files.at("/data"), Original);
+}
+
+TEST_P(DarwinFileTest, NonblockingStreamsRetainInputFaultAndCaptureBudgets) {
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {0, 4, 4}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {0, 3}), 4u);
+  EXPECT_FALSE(invoke(ServiceKind::Read, {0, Base + Page, 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileInput);
+  Options->StandardInput = std::vector<uint8_t>();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {0, 4, 4}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Read, {0, UINT64_MAX, 1}), 0u);
+  Options->StandardInput = {'A', 'B'};
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {0, 4, 4}), 0u);
+  error(ServiceKind::Read, {0, UINT64_MAX, 1}, 14);
+  EXPECT_EQ(ok(ServiceKind::Read, {0, Base + Page, 2}), 2u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 2)), 0x4241u);
+  EXPECT_EQ(ok(ServiceKind::Read, {0, UINT64_MAX, 1}), 0u);
+  Files = std::make_unique<DarwinFiles>(*Space, Options, 2);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {1, 4, 4}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Write, {1, Base, 3}));
+  EXPECT_EQ(Result.Stop, ProcessStopReason::OutputLimit);
+  EXPECT_TRUE(Result.StandardOutput.empty());
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {1, 3}), 5u);
+  Files = std::make_unique<DarwinFiles>(*Space, Options, 8);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {1, 4, 4}), 0u);
+  const auto End = Base + Page * 2 - 2;
+  llvm::cantFail(Space->writeInteger(End, 0x5150, 2));
+  error(ServiceKind::Write, {1, End, 4}, 14);
+  EXPECT_EQ(Result.StandardOutput, "PQ");
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {1, 3}), 0x10005u);
+  error(ServiceKind::Write, {1, UINT64_MAX, 1}, 14);
+  EXPECT_EQ(Result.StandardOutput, "PQ");
+  EXPECT_TRUE(Result.StandardError.empty());
+}
+
+TEST_P(DarwinFileTest, NonblockingAdmissionPreservesPathAndAccessFailures) {
+  error(ServiceKind::Open, {Base, 7}, 22);
+  error(ServiceKind::Fcntl, {99, 4, UINT32_MAX}, 9);
+  error(ServiceKind::OpenAt, {99, UINT64_MAX, 4}, 14);
+  path("data");
+  error(ServiceKind::OpenAt, {99, Base, 4}, 9);
+  path("/missing");
+  error(ServiceKind::Open, {Base, 4}, 2);
+  path("/data");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 4 | 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileNotWritable);
+  for (uint32_t Refused : {0x40u, 0x8000u}) {
+    EXPECT_FALSE(invoke(ServiceKind::Open, {Base, Refused}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileOpenFlags);
+  }
+  Options->DescriptorLimit = 4;
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto A = ok(ServiceKind::Open, {Base, 4});
+  ASSERT_EQ(A, 3u);
+  error(ServiceKind::Open, {UINT64_MAX, 4}, 24);
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  error(ServiceKind::Open, {UINT64_MAX, 4}, 14);
+  EXPECT_EQ(ok(ServiceKind::Open, {Base, 4}), A);
 }
 
 TEST_P(DarwinFileTest, TruncationChangesSharedBytesWithoutMovingCursors) {
