@@ -109,6 +109,10 @@ struct UnpackOptions {
   /// cannot be reconstructed. This produces Snapshot rather
   /// than Unpacked and does not claim a runnable native executable.
   bool SnapshotOnly = false;
+  /// Materialize supported OS-owned resources in a self-contained image.
+  /// Restored outputs retain an explicit environment contract and fixed
+  /// addresses. This is mutually exclusive with an analysis-only snapshot.
+  bool RestoreRuntime = false;
 };
 
 /// A pointer-sized value in captured image or thread-local bytes that falls
@@ -121,6 +125,9 @@ struct UnpackHeapReference {
 };
 
 struct UnpackRuntimeState {
+  /// Other profile-owned resources cannot be inferred from integer matches.
+  bool AdditionalStateInventoryKnown = false;
+  bool HasAdditionalDependencies = false;
   bool HeapInventoryKnown = false;
   uint64_t PossibleHeapReferences = 0;
   /// Direct model service calls witnessed during entry and import discovery.
@@ -193,7 +200,8 @@ struct UnpackResult {
   std::vector<UnpackTransfer> Transfers;
   std::vector<UnpackedSection> Sections;
   std::vector<UnpackedImport> Imports;
-  /// Possible process-local heap dependencies that the file does not restore.
+  /// Dependencies observed before reconstruction. A Restored outcome retains
+  /// these diagnostics even when its initializer materializes their owners.
   /// An empty inventory does not certify other OS state or unreached code.
   UnpackRuntimeState RuntimeState;
   /// The rebuilt file, in the container of the input. Empty without an
@@ -226,7 +234,8 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
                                         const UnpackOptions &Options = {});
 
 /// Strict options decoding. Every guest process option is accepted with its
-/// usual meaning, plus "transfer" and "snapshot_only". Unknown fields, null
+/// usual meaning, plus "transfer", "snapshot_only" and "restore_runtime".
+/// Unknown fields, null
 /// values, invalid types and nonpositive limits are errors.
 llvm::Expected<UnpackOptions> unpackOptionsFromJSON(llvm::StringRef Text);
 /// The report omits the rebuilt bytes and records their size and digest.

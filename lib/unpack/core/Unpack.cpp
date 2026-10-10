@@ -7,6 +7,7 @@
 #ifdef NEVERD_UNPACK_EXECUTION
 #include "../dynamic/ProcessImports.h"
 #include "../dynamic/ProcessTransfer.h"
+#include "../dynamic/RuntimeState.h"
 
 #include "neverd/emulation/ProcessSession.h"
 
@@ -123,6 +124,8 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
                                         const UnpackOptions &Options) {
   if (Options.Transfer > defaults::MaxTransfers)
     return failure(text::Limits);
+  if (Options.SnapshotOnly && Options.RestoreRuntime)
+    return failure("snapshot_only and restore_runtime are mutually exclusive");
   auto File = readInput(Input);
   if (!File)
     return File.takeError();
@@ -143,7 +146,8 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
   auto Profile = processProfile(Image);
   if (!Profile)
     return Profile.takeError();
-  TransferObserver Observer(Image, *Traits, Options.Transfer);
+  TransferObserver Observer(Image, *Traits, Options.Transfer,
+                            Options.RestoreRuntime);
   auto Run =
       emulation::observeProcess(Input, *Profile, Options.Process, Observer);
   if (!Run)
@@ -197,7 +201,17 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
                                ? text::DynamicThreadLocalState
                                : text::UnknownDynamicThreadLocalState;
     }
-    if (!Result.Diagnostic.empty() && !Options.SnapshotOnly) {
+    if (!Result.RuntimeState.AdditionalStateInventoryKnown ||
+        Result.RuntimeState.HasAdditionalDependencies) {
+      if (!Result.Diagnostic.empty())
+        Result.Diagnostic += "; ";
+      Result.Diagnostic +=
+          Result.RuntimeState.AdditionalStateInventoryKnown
+              ? "additional owned OS resources require runtime restoration"
+              : "the process supplies no additional runtime-state inventory";
+    }
+    if (!Result.Diagnostic.empty() && !Options.SnapshotOnly &&
+        !Options.RestoreRuntime) {
       Result.Outcome = UnpackOutcome::UnsupportedState;
       return true;
     }
@@ -209,6 +223,26 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
   auto Rebuilt = Container->rebuild(Image, *Observed, Plan);
   if (!Rebuilt)
     return Rebuilt.takeError();
+  if (Options.RestoreRuntime) {
+    // Materialized export identities retain calls in their observed form.
+    // Replaying a bare entry in a fresh model would discard the very state
+    // this path restores, so it cannot supply import-rewrite evidence.
+    auto Restored = restoreRuntime(Image, *Observed, std::move(*Rebuilt));
+    if (!Restored) {
+      Result.Outcome = UnpackOutcome::UnsupportedState;
+      Result.Diagnostic = llvm::toString(Restored.takeError());
+      return Result;
+    }
+    Result.Outcome = UnpackOutcome::Restored;
+    Result.Diagnostic = "native runtime state materialized; fixed addresses, "
+                        "matching explicit PEB version and captured inputs "
+                        "are required; unreached paths are not certified";
+    Result.MaterializedTLSCallbacks = Restored->MaterializedTLSCallbacks;
+    Result.Sections = std::move(Restored->Sections);
+    Result.Imports = std::move(Restored->Imports);
+    Result.Image = std::move(Restored->File);
+    return Result;
+  }
   // The entry snapshot still has protector import calls. Running it shows
   // which export each one reaches, and a second rebuild turns those sites
   // into ordinary import calls when the container recognizes them.

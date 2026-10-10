@@ -24,6 +24,10 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Program.h"
 
+#if defined(_WIN32) && defined(_M_X64)
+#include <intrin.h>
+#endif
+
 namespace neverd::unpack {
 namespace {
 using namespace emulation;
@@ -671,6 +675,90 @@ TEST_P(UnpackGenerated, ExplicitSnapshotsKeepExternalHeapDependenciesVisible) {
     EXPECT_EQ(Replay.Stop, ProcessStopReason::CPUFailure) << Replay.Diagnostic;
     EXPECT_FALSE(Replay.ExitStatus);
     EXPECT_TRUE(Replay.StandardOutput.empty());
+  }
+}
+
+TEST_P(UnpackGenerated,
+       MaterializedRuntimePreservesOwnedObjectsOnNativeWindows) {
+  if (GetParam().ISA != GuestArchitecture::X64)
+    GTEST_SKIP() << "the native materializer currently emits x64 PE code";
+  ASSERT_TRUE(bool(llvm::sys::findProgramByName("clang")));
+  ASSERT_TRUE(bool(llvm::sys::findProgramByName("lld-link")));
+  WindowsPEBVersion Version{10, 0, 19043, 2};
+#if defined(_WIN32) && defined(_M_X64)
+  // Independent native environment input; WindowsSystemNative separately
+  // compares these bytes with RtlGetVersion on this same test host.
+  const auto *PEB = reinterpret_cast<const uint8_t *>(__readgsqword(0x60));
+  Version = {llvm::support::endian::read32le(PEB + 0x118),
+             llvm::support::endian::read32le(PEB + 0x11c),
+             llvm::support::endian::read16le(PEB + 0x120),
+             llvm::support::endian::read32le(PEB + 0x124)};
+#endif
+  Options.Process.Windows->PEBVersion = Version;
+  for (unsigned Mode :
+       {HeapStateMode, EncodedPointerMode, NativeEncodedPointerMode,
+        DynamicFLSMode, ZeroDynamicFLSMode, OwnedRuntimeMode,
+        VirtualRuntimeMode}) {
+    SCOPED_TRACE(Mode);
+    const auto Packed = pack(Mode);
+    ASSERT_FALSE(HasFailure());
+    const auto OriginalRun = run(Packed);
+    ASSERT_EQ(OriginalRun.Stop, ProcessStopReason::Exited)
+        << OriginalRun.Diagnostic;
+    ASSERT_EQ(OriginalRun.ExitStatus, ExitStatus);
+    expectNativeWindows(Packed, ExitStatus);
+    ASSERT_FALSE(HasFailure());
+    Options.RestoreRuntime = true;
+    const auto Restored = unpack(Mode);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_EQ(Restored.Outcome, UnpackOutcome::Restored) << Restored.Diagnostic;
+    ASSERT_FALSE(Restored.Image.empty());
+    EXPECT_EQ(Restored.ImportRepair.ObservedCalls, 0u);
+    const auto Output = Scratch / RebuiltFile;
+    test::writeFile(Output, Restored.Image);
+    expectNativeWindows(Output, ExitStatus);
+    ASSERT_FALSE(HasFailure());
+    const auto Image = test::readImage(Restored.Image);
+    ASSERT_FALSE(HasFailure());
+    for (const auto &Section : Image.Sections)
+      if (llvm::StringRef(Section.Name).starts_with(".nd"))
+        EXPECT_FALSE(
+            (Section.Characteristics & llvm::COFF::IMAGE_SCN_MEM_WRITE) &&
+            (Section.Characteristics & llvm::COFF::IMAGE_SCN_MEM_EXECUTE));
+  }
+}
+
+TEST_P(UnpackGenerated, MaterializationRequiresKnownSupportedState) {
+  for (unsigned Mode : {OwnedRuntimeMode, VirtualRuntimeMode}) {
+    SCOPED_TRACE(Mode);
+    const auto Default = unpack(Mode);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(Default.Outcome, UnpackOutcome::UnsupportedState);
+    EXPECT_TRUE(Default.Image.empty());
+    EXPECT_TRUE(Default.RuntimeState.AdditionalStateInventoryKnown);
+    EXPECT_TRUE(Default.RuntimeState.HasAdditionalDependencies);
+    Options.SnapshotOnly = true;
+    const auto Snapshot = unpack(Mode);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(Snapshot.Outcome, UnpackOutcome::Snapshot);
+    EXPECT_TRUE(Snapshot.RuntimeState.HasAdditionalDependencies);
+    EXPECT_FALSE(Snapshot.Image.empty());
+    Options.SnapshotOnly = false;
+  }
+  Options.RestoreRuntime = true;
+  const auto Missing = unpack(HeapStateMode);
+  ASSERT_FALSE(HasFailure());
+  EXPECT_EQ(Missing.Outcome, UnpackOutcome::UnsupportedState);
+  EXPECT_TRUE(Missing.Image.empty());
+  Options.Process.Windows->PEBVersion = WindowsPEBVersion{10, 0, 19043, 2};
+  for (unsigned Mode :
+       {DynamicTLSMode, ZeroDynamicTLSMode, UnallocatedTLSValueMode}) {
+    SCOPED_TRACE(Mode);
+    const auto Refused = unpack(Mode);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(Refused.Outcome, UnpackOutcome::UnsupportedState);
+    EXPECT_FALSE(Refused.Diagnostic.empty());
+    EXPECT_TRUE(Refused.Image.empty());
   }
 }
 

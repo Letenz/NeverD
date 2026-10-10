@@ -25,7 +25,13 @@ neverd unpack packed.exe -o unpacked.exe \
   --options='{"backend":"unicorn","instruction_limit":400000000,"transfer":2}'
 ```
 
-コマンドは JSON レポートを 1 つ出力します。終了コード 0 は `unpacked` イメージまたは明示的に要求した `snapshot` の書き出し、3 は `no_entry` または `unsupported_state`（出力ファイルを作成・切り詰めしない）、1 は入力・オプションの不正または準備の失敗を表します。レポートには、実際に実行された `format`、`architecture`、`profile` が記載されます。C のエントリポイントは `neverd_unpack_json`、Python では `Session.unpack` です。オプションは[プロセスオプション](process-emulation.md)に `transfer` と `snapshot_only` を加えたものです。スタブがより多くの資源を必要とする項目では既定値が異なります。100000000 命令、600 秒、512 MiB で、`windows.defer_unmodeled` は有効です。
+コマンドは JSON レポートを 1 つ出力します。終了コード 0 は `unpacked` イメージまたは明示的に要求した `snapshot` / `restored` の書き出し、3 は `no_entry` または `unsupported_state`（出力ファイルを作成・切り詰めしない）、1 は入力・オプションの不正または準備の失敗を表します。レポートには、実際に実行された `format`、`architecture`、`profile` が記載されます。C のエントリポイントは `neverd_unpack_json`、Python では `Session.unpack` です。オプションは[プロセスオプション](process-emulation.md)に `transfer` と `snapshot_only` / `restore_runtime` を加えたものです。スタブがより多くの資源を必要とする項目では既定値が異なります。100000000 命令、600 秒、512 MiB で、`windows.defer_unmodeled` は有効です。
+
+## 明示的な実行時状態の復元
+
+`restore_runtime:true` は自己完結する Windows x64 初期化コードを生成し、`restored` と終了コード 0 を返します。`snapshot_only` とは排他的です。`PATH` に Clang と `lld-link` が必要で、`windows.peb_version` で対象のネイティブ環境を明示します。初期化コードは PEB を変更せずバージョンを検査し、所有権のあるヒープ領域、ポインターの符号化操作、FLS 値とコールバック、再帰クリティカルセクション、プライベート仮想メモリの予約とページ保護、`LastError` を復元します。エクスポートのゲートは観測した呼び出し形式を保持します。コード、データ、メタデータはそれぞれの権限を持つ `.nd*` セクションに入り、補助 DLL は生成しません。
+
+前述の拒否規則は既定の復元に適用されます。この明示的モードは捕獲時の `runtime_state` 診断を残し、新しいプロセスでのインポート探索を省きます。固定アドレス、選択した DLL 転送、捕獲した引数と環境が引き続き必要です。過去の直接システム呼び出し数は保持しますが、その番号や未到達経路の移植性は認証しません。動的 TLS、開いたハンドル、マップされたセクション、中断中の例外状態、他のゲスト DLL の状態は未対応です。未対応状態や初期化コードの構築失敗では出力しません。`restored` はこの条件での構築を意味し、全ネイティブ経路の正しさの証明ではありません。
 
 ## 実行時状態と解析用スナップショット
 
@@ -108,3 +114,5 @@ RVA 形式の遅延インポートは未解決のイメージ内サンクを保�
 `WrappedEntriesRequireExplicitTransferEvidence` は DLL ラッパーが深いスタックで復元入口を呼ぶ場合を扱います。既定は `no_entry` のままです。観測済み呼び出しを `transfer` で選ぶとロード可能な DLL を再構築できます。深い呼び出しだけでは入口と初期化処理を区別できません。
 
 復元した DLL 入口が元の PE 入口と異なる場合、ライターはローダー通知アダプターを生成します。プロセスのアタッチは選択した入口へ、デタッチとスレッド通知は元の実行可能な入口へ送られ、外側のラッパーによる後始末を保持します。元の入口が利用できなければ再構築は失敗します。報告の `entry_rva` は選択した入口を示し、PE ヘッダーはアダプターを指す場合があります。独立した DLL テストで、両エミュレーションアーキテクチャとネイティブ Windows の後始末を検証します。
+
+`runtime_state.additional_state_inventory_known` と `has_additional_dependencies` は OS 所有者に残るプライベートヒープ、仮想予約、ロック、ハンドル、ビュー、例外状態を報告します。情報欠落や資源の残存は、ヒープポインター一致がなくても既定の復元を拒否します。明示的スナップショットは診断を保持し、実行時復元は対応する所有者を再構築します。

@@ -591,6 +591,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
       ++Out.RepairedTailCalls;
   Out.ConflictingTailCalls = Repairs->Conflicts;
   Out.MaterializedTLSCallbacks = RebuiltTLS->MaterializedCallbacks;
+  Out.LoaderEntryRVA = *Entry;
   Out.File.assign(Cursor + Overlay.size(), 0);
   std::copy_n(File.begin(), H.SizeOfHeaders, Out.File.begin());
   auto COFF = fetch<coff_file_header>(Out.File, H.FileHeaderOffset);

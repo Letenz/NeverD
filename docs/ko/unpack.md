@@ -25,7 +25,13 @@ neverd unpack packed.exe -o unpacked.exe \
   --options='{"backend":"unicorn","instruction_limit":400000000,"transfer":2}'
 ```
 
-이 명령은 JSON 보고서 하나를 출력합니다. 종료 코드 0은 `unpacked` 이미지 또는 명시적으로 요청한 `snapshot`을 기록했음을, 3은 `no_entry` 또는 `unsupported_state`로 출력 파일을 만들거나 잘라내지 않았음을, 1은 입력·옵션 오류 또는 준비 실패를 뜻합니다. 보고서에는 실제로 실행된 `format`, `architecture`, `profile`이 기재됩니다. C 진입점은 `neverd_unpack_json`이고 Python은 `Session.unpack`을 제공합니다. 옵션은 [프로세스 옵션](process-emulation.md)에 `transfer`와 `snapshot_only`를 더한 것입니다. 스텁에 더 많은 자원이 필요한 항목은 기본값이 다릅니다. 명령 100000000개, 600초, 512 MiB이며 `windows.defer_unmodeled`가 켜져 있습니다.
+이 명령은 JSON 보고서 하나를 출력합니다. 종료 코드 0은 `unpacked` 이미지 또는 명시적으로 요청한 `snapshot` / `restored`을 기록했음을, 3은 `no_entry` 또는 `unsupported_state`로 출력 파일을 만들거나 잘라내지 않았음을, 1은 입력·옵션 오류 또는 준비 실패를 뜻합니다. 보고서에는 실제로 실행된 `format`, `architecture`, `profile`이 기재됩니다. C 진입점은 `neverd_unpack_json`이고 Python은 `Session.unpack`을 제공합니다. 옵션은 [프로세스 옵션](process-emulation.md)에 `transfer`와 `snapshot_only` / `restore_runtime`를 더한 것입니다. 스텁에 더 많은 자원이 필요한 항목은 기본값이 다릅니다. 명령 100000000개, 600초, 512 MiB이며 `windows.defer_unmodeled`가 켜져 있습니다.
+
+## 명시적 런타임 상태 복원
+
+`restore_runtime:true`는 자체 포함 Windows x64 초기화 코드를 만들고 `restored`와 종료 코드 0을 반환합니다. `snapshot_only`와 함께 사용할 수 없습니다. `PATH`에 Clang과 `lld-link`가 있어야 하며 `windows.peb_version`으로 대상 네이티브 환경을 명시해야 합니다. 초기화 코드는 네이티브 PEB를 바꾸지 않고 버전을 검사하며, 소유한 힙 메모리, 포인터 인코딩 연산, FLS 값과 콜백, 재귀 임계 구역, 전용 가상 메모리 예약과 페이지 보호, `LastError`를 복원합니다. 내보내기 게이트는 관찰한 호출 형식을 유지합니다. 코드, 데이터, 메타데이터는 각 권한을 가진 `.nd*` 섹션에 배치되며 보조 DLL은 생성하지 않습니다.
+
+앞의 거부 규칙은 기본 복원에 적용됩니다. 이 명시적 모드는 캡처 당시의 `runtime_state` 진단을 유지하고 새 프로세스에서의 가져오기 탐색을 생략합니다. 고정 주소, 선택한 DLL 전환, 캡처한 인수와 환경이 계속 필요합니다. 과거 직접 시스템 호출 수는 남지만 호출 번호와 도달하지 않은 경로의 이식성은 인증하지 않습니다. 동적 TLS, 열린 핸들, 매핑된 섹션, 중단된 예외 상태, 다른 게스트 DLL 상태는 지원하지 않습니다. 지원하지 않는 상태나 초기화 코드 생성 실패는 출력을 게시하지 않습니다. `restored`는 이 조건에서의 구성을 뜻하며 모든 네이티브 경로의 증명이 아닙니다.
 
 ## 런타임 상태와 분석 스냅샷
 
@@ -108,3 +114,5 @@ RVA 기반 지연 가져오기는 미해결 이미지 내부 썽크를 유지하
 `WrappedEntriesRequireExplicitTransferEvidence`는 DLL 래퍼가 깊은 스택으로 복원 진입점을 호출하는 경우를 다룹니다. 기본 결과는 `no_entry`입니다. 관측된 호출을 `transfer`로 선택하면 로드 가능한 DLL을 재구성합니다. 깊은 호출만으로 진입점과 초기화 함수를 구별할 수 없습니다.
 
 복원된 DLL 진입점이 원래 PE 진입점과 다르면 로더 알림 어댑터를 생성합니다. 프로세스 연결은 선택한 진입점으로, 분리 및 스레드 알림은 원래 실행 가능한 진입점으로 전달하여 외부 래퍼의 정리 작업을 유지합니다. 원래 진입점을 사용할 수 없으면 재구성이 실패합니다. 보고서의 `entry_rva`는 선택한 진입점을 나타내며 PE 헤더는 어댑터를 가리킬 수 있습니다. 독립 DLL 테스트는 두 에뮬레이션 아키텍처와 네이티브 Windows에서 외부 정리를 검사합니다.
+
+`runtime_state.additional_state_inventory_known`과 `has_additional_dependencies`는 OS 소유자에게 남은 전용 힙, 가상 예약, 잠금, 핸들, 뷰와 예외 상태를 보고합니다. 목록이 없거나 리소스가 남으면 힙 포인터 일치가 없어도 기본 복원을 거부합니다. 명시적 스냅샷은 진단을 유지하며 런타임 복원은 지원하는 소유자를 재구성해야 합니다.

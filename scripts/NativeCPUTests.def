@@ -175,6 +175,22 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitSnapshotsKeepExternalHeapDependenciesVisible/"
     "{backend_title}DirectX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "MaterializedRuntimePreservesOwnedObjectsOnNativeWindows/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "MaterializedRuntimePreservesOwnedObjectsOnNativeWindows/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "MaterializationRequiresKnownSupportedState/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "MaterializationRequiresKnownSupportedState/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated.DirectServiceBindingsRequireAnExplicitSnapshot/"
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
