@@ -313,6 +313,8 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     const Address function = Base + 0x140, other = Base + 0x180;
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
     assembly->navigate(function + 9);
     assembly->focusContent();
     // Tab during a listing jump also waits for the correct function to land.
@@ -334,7 +336,8 @@ private slots:
     QVERIFY(code->libraryFolded());
     code->setCursorLine(0);
     assembly->focusContent();
-    QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+    QTRY_VERIFY(assembly->listing()->hasFocus());
+    QTest::keyClick(assembly->listing(), Qt::Key_Tab);
     QTRY_VERIFY(code->hasFocus());
     QVERIFY(!code->libraryFolded());
     QVERIFY(code->preludeFolded());
@@ -353,7 +356,8 @@ private slots:
     QCOMPARE(code->function(), std::optional<Address>(function));
     QCOMPARE(code->verticalScrollBar()->value(), oldScroll);
     assembly->focusContent();
-    QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+    QTRY_VERIFY(assembly->listing()->hasFocus());
+    QTest::keyClick(assembly->listing(), Qt::Key_Tab);
     QTRY_VERIFY(!code->loading() && code->function() == other);
     QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
     QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
@@ -364,7 +368,8 @@ private slots:
     QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(other + 5));
     assembly->focusContent();
     QSignalSpy selected(code, &CodeText::addressSelected);
-    QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+    QTRY_VERIFY(assembly->listing()->hasFocus());
+    QTest::keyClick(assembly->listing(), Qt::Key_Tab);
     QTRY_COMPARE(selected.size(), 1);
     QCOMPARE(selected.first().at(1).toBool(), false);
     QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
@@ -382,7 +387,8 @@ private slots:
     QTRY_COMPARE(assembly->currentAddress(),
                  std::optional<Address>(function + 9));
     assembly->focusContent();
-    QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+    QTRY_VERIFY(assembly->listing()->hasFocus());
+    QTest::keyClick(assembly->listing(), Qt::Key_Tab);
     QTRY_VERIFY(second->text()->hasFocus() && !second->text()->loading());
     QCOMPARE(second->text()->function(), std::optional<Address>(function));
     QCOMPARE(second->text()->currentAddress(),
