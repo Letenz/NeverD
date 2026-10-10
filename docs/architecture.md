@@ -1238,6 +1238,20 @@ as emitted by [older LLVM versions](https://github.com/llvm/llvm-project/blob/ll
 HighIR uses only certified catch returns to form continuation jumps, including
 nested catches. Independent ordinary entries cannot borrow this frame proof.
 
+For x64 SEH, whole-module LowIR analysis can narrow an address-taken label to
+a local-unwind continuation when every address use is an exact imported
+`_local_unwind` call in the same owner. Relocation pointers, sibling users,
+selected-function scans and exhausted budgets cannot establish exclusivity.
+An independent call-site proof requires the frame argument to equal current
+SP through full-width copies, constant offsets or private spills untouched by
+an intervening opaque call or write. Generic address may-facts alone cannot
+prove a saved frame value. An operation digest binds that proof to the current
+argument-producing block prefix. Shared SSA then checks the call occurrence, parent
+unwind allocation, decoded prologue, converted SP effects and every relevant
+predecessor path. The initial contract requires an ordinary-reachable target;
+cross-funclet frame borrowing and saved frames surviving opaque calls remain
+unsupported until their memory and activation lifetimes can be proved.
+
 LLVMC preserves relocatable constant address arithmetic, and constant
 `ptrtoint` of a global denotes its address, not initializer bytes. Freeze
 projection requires either LLVM definedness or a bounded integer expression

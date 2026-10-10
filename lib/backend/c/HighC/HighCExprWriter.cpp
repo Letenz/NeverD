@@ -2253,7 +2253,12 @@ const HighExpr *HighCWriter::floatCallResult(const HighExpr &Bits,
   const HighExpr *Source = floatBitsSource(Bits, Float);
   if (!Source || Source->Kind != ExprKind::Call)
     return nullptr;
-  const TypeRef Return = knownCallReturnType(*Source);
+  // A source-bound call is rendered back into its HighIR carrier. Its native
+  // signature may return a float while the rendered expression contains the
+  // integer bits of that float. Only elide the surrounding reinterpretation
+  // when the rendered call itself has the requested floating type.
+  const TypeRef Return =
+      Source->SourceCallHint ? Source->Type : knownCallReturnType(*Source);
   return Return && equalSourceTypes(Return, Float) ? Source : nullptr;
 }
 

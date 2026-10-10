@@ -296,8 +296,9 @@ TEST_P(LinuxPIDFDProcess, ZeroTimeoutPollRetainsReadinessAndOrderedCopies) {
     Options.LinuxTime.emplace().Clocks[1] = {31, 0};
     Options.LinuxTime->AdvanceOnIdle = true;
     for (const char *Opt : {"O0", "O2"}) {
+      SCOPED_TRACE(Opt);
       auto R = run('o', Opt, K.ThreadFlag);
-      ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+      ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << processResultJSON(R);
       EXPECT_EQ(R.ExitStatus, 0u);
     }
   }

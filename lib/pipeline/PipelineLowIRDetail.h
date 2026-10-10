@@ -61,6 +61,7 @@ ReturnedCodeEvidenceTestResult collectReturnedCodeEvidenceForTesting(
 
 struct WindowsEHContinuationRootTestResult {
   std::map<va_t, std::set<va_t>> RootsByOwner;
+  std::map<va_t, std::vector<LowSEHLocalUnwindEvidence>> LocalUnwindsByOwner;
   bool AnalysisComplete = false;
 };
 
@@ -69,7 +70,8 @@ struct WindowsEHContinuationRootTestResult {
 WindowsEHContinuationRootTestResult collectWindowsEHContinuationRootsForTesting(
     const BinaryImage &Img, const std::vector<LowFunc> &Funcs,
     const std::set<va_t> &FunctionEntries,
-    std::optional<size_t> TestBudget = std::nullopt);
+    std::optional<size_t> TestBudget = std::nullopt,
+    bool CompleteModule = true);
 
 /// The calls in \p F to a printf-family routine whose format is a constant
 /// string the image holds, keyed by the call instruction's address, added

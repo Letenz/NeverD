@@ -3425,6 +3425,126 @@ TEST(MedTypePass, X86IntermediateX87DoesNotOverrideXMMReturnConvention) {
   EXPECT_FALSE(Func.FPReturnViaX87);
 }
 
+TEST(MedABIPass, ExplicitFloatingStatePreservesOutgoingArguments) {
+  constexpr va_t Callee = 0x2000;
+  for (Arch A : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool Stack : {false, true})
+        for (Intrinsic Id :
+             {Intrinsic::X86ReadMXCSR, Intrinsic::X86WriteMXCSR,
+              Intrinsic::X86FPAddState, Intrinsic::X86FPTruncToIntState}) {
+          SCOPED_TRACE(static_cast<int>(A));
+          SCOPED_TRACE(static_cast<int>(Format));
+          SCOPED_TRACE(Stack);
+          SCOPED_TRACE(static_cast<int>(Id));
+          const auto &TRI = getTargetRegInfo(A);
+          const auto Layout = TRI.integerArgumentLayout(Format);
+          MedFunc F;
+          F.Entry = 0x1000;
+          F.Blocks.resize(1);
+          auto &B = F.Blocks[0];
+          B.Id = 0;
+          for (size_t I = 0; I < Layout.Registers.size(); ++I)
+            B.Ops.push_back(
+                unary(NdOp::COPY,
+                      reg(100 + I, 1, TRI.PointerSize, Layout.Registers[I], A),
+                      MedVar::makeConst(47 + I, TRI.PointerSize)));
+          const auto SP = reg(200, 0, TRI.PointerSize, TRI.StackPointer, A);
+          addLiveIn(B, SP);
+          const auto Address = temp(201, 0, TRI.PointerSize, A);
+          B.Ops.push_back(
+              binary(NdOp::INT_ADD, Address, SP,
+                     MedVar::makeConst(Layout.CallStackBase, TRI.PointerSize)));
+          if (Stack)
+            B.Ops.push_back(binary(NdOp::STORE, {}, Address,
+                                   MedVar::makeConst(99, TRI.PointerSize)));
+          MedOp State;
+          State.Opcode = NdOp::INTRINSIC;
+          State.addInput(MedVar::makeConst(static_cast<uint16_t>(Id), 2));
+          if (Id == Intrinsic::X86ReadMXCSR) {
+            State.Output = temp(202, 0, 4, A);
+          } else if (Id == Intrinsic::X86WriteMXCSR) {
+            State.addInput(MedVar::makeConst(0x1f80, 4));
+          } else {
+            State.Output = temp(202, 0, 8, A);
+            State.addInput(MedVar::makeConst(0x3f800000, 4));
+            State.addInput(MedVar::makeConst(
+                Id == Intrinsic::X86FPAddState ? 0x40000000 : 0x1f80, 4));
+            State.addInput(MedVar::makeConst(
+                Id == Intrinsic::X86FPAddState ? 0x1f80 : 4, 4));
+          }
+          B.Ops.push_back(State);
+          MedOp Call;
+          Call.Opcode = NdOp::CALL;
+          Call.addInput(MedVar::makeConst(Callee, TRI.PointerSize));
+          B.Ops.push_back(Call);
+          BinaryImage Image;
+          Image.Arch = A;
+          Image.Format = Format;
+          std::map<va_t, int> Registers{
+              {Callee, static_cast<int>(Layout.Registers.size())}};
+          std::map<va_t, int> Total{{Callee, Registers[Callee] + Stack}};
+          recoverCallAbi(F, A, {{Callee, "known_callee"}}, &Image, &Registers,
+                         &Total);
+          ASSERT_EQ(F.CallInfos.size(), 1u);
+          const auto &Args = F.CallInfos.front().Args;
+          ASSERT_EQ(Args.size(), Layout.Registers.size() + Stack);
+          for (size_t I = 0; I < Args.size(); ++I) {
+            ASSERT_TRUE(Args[I].isConst());
+            EXPECT_EQ(Args[I].ConstVal,
+                      I < Layout.Registers.size() ? 47 + I : 99);
+          }
+          EXPECT_TRUE(F.Params.empty())
+              << "instruction state is not a live-in argument";
+        }
+}
+
+TEST(MedABIPass, UnprovenIntrinsicStillSeparatesOutgoingArguments) {
+  constexpr Arch A = Arch::X64;
+  const auto &TRI = getTargetRegInfo(A);
+  const auto Layout = TRI.integerArgumentLayout(BinaryFormat::ELF);
+  constexpr va_t Callee = 0x2000;
+  for (unsigned Variant = 0; Variant != 5; ++Variant) {
+    SCOPED_TRACE(Variant);
+    MedFunc F;
+    F.Entry = 0x1000;
+    F.Blocks.resize(1);
+    auto &B = F.Blocks[0];
+    B.Id = 0;
+    B.Ops.push_back(unary(NdOp::COPY,
+                          reg(100, 1, 8, Layout.Registers.front(), A),
+                          MedVar::makeConst(47, 8)));
+    MedOp State;
+    State.Opcode = NdOp::INTRINSIC;
+    State.Output =
+        temp(202, 0, Variant == 0 ? 8 : 4, Variant == 1 ? Arch::AArch64 : A);
+    State.addInput(
+        Variant == 2
+            ? temp(203, 0, 2, A)
+            : MedVar::makeConst(static_cast<uint16_t>(
+                                    Variant == 3 ? Intrinsic::None
+                                                 : Intrinsic::X86ReadMXCSR) +
+                                    (Variant == 4 ? uint64_t{1} << 32 : 0),
+                                2));
+    B.Ops.push_back(State);
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.addInput(MedVar::makeConst(Callee, 8));
+    B.Ops.push_back(Call);
+    BinaryImage Image;
+    Image.Arch = A;
+    Image.Format = BinaryFormat::ELF;
+    std::map<va_t, int> Registers{{Callee, 1}}, Total{{Callee, 1}};
+    recoverCallAbi(F, A, {{Callee, "known_callee"}}, &Image, &Registers,
+                   &Total);
+    ASSERT_EQ(F.CallInfos.size(), 1u);
+    ASSERT_EQ(F.CallInfos.front().Args.size(), 1u);
+    EXPECT_FALSE(F.CallInfos.front().Args.front().isConst())
+        << "a malformed or foreign instruction cannot preserve the argument";
+  }
+}
+
 TEST(MedABIPass, DirectCallUsesWidestEquallySeededArgumentPhi) {
   constexpr Arch TheArch = Arch::AArch64;
   const TargetRegInfo &TRI = getTargetRegInfo(TheArch);

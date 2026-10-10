@@ -124,6 +124,17 @@ thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
+`NeverDX64MemoryUpdateTests` also checks the SSE2 word transfers that Clang 21
+can emit for scalar structure comparisons. `X64WordLane` uses independent
+`PINSRW` and `PEXTRW` encodings across the available KVM, WHP, HVF and Unicorn
+checked backends. It verifies all eight lanes, masked imm8 indices, extended
+registers, ignored REX.W, two-byte memory reads, page faults and retry,
+observer cancellation, unchanged FLAGS/MXCSR and register preservation.
+The [Intel instruction reference](https://cdrdv2-public.intel.com/825760/325383-sdm-vol-2abcd.pdf)
+specifies these SSE2 forms separately from the SSE4.1 extraction encoding;
+MMX, VEX/EVEX and SSE4.1 neighbors remain negative controls. These instruction
+tests are independent of the compiler version used to build process fixtures.
+
 `NeverDX86FPStateAccuracyTests` compares original scalar SSE byte fixtures
 against actual NeverD Codegen objects and standalone HighC/LLVMC source.
 Default/NoOpt IR and C O0/O2 cover all four rounding modes, DAZ/FTZ, seeded
@@ -498,6 +509,23 @@ build-release/bin/NeverDIndCallXformTests --gtest_filter='*TailVarietyRT*'
 before the owned runtime slots. Missing maps, fixups or ownership, added filler
 slots, unindexed reads, malformed strides, address overflow and exhausted
 evidence must retain the ordinary load path.
+
+`NeverDJumpTableTests` checks repeated field loads at nonzero offsets on x64
+and AArch64. Independently computed addresses may share a switch guard only
+when their full-width pointer, displacement, load width and memory history
+agree. Borrowed RBP fields, negative displacements and both signed and unsigned
+index extensions are covered; changed bases/offsets, partial reloads, stores,
+calls and memory barriers must not recover a table from the earlier guard.
+
+The pointer-boundary target's `LLVMFrameSlotProof` cases exercise shared PHI
+diamonds and loop-carried SELECT DAGs for x86, x64, ARM and AArch64. Deterministic work
+counters bound proof expansion independently of machine speed. Conflicting
+coordinates, nonzero recurrences, unanchored cycles, lossy pointer casts and
+query-local budget exhaustion must fail closed. Exact slots, affine recurrences,
+scalar ranges and frame intervals consume one saturating budget, including
+nested queries. Interval regressions reject independent rootless cycles and
+mutually seeded recurrences that eventually grow into another stack slot;
+reversing PHI-arm order must preserve the result.
 
 `NeverDLLVMCValueTests` additionally checks relocated bytes that resemble
 strings, generic builtins compiled for a different source ISA, and dead image

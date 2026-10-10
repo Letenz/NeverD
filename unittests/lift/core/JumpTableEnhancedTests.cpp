@@ -4640,6 +4640,49 @@ TEST_F(JTE_X86_64, GuardOnAFieldBoundsNoOtherLoad) {
   }
 }
 
+static void verifyFieldOffsetReloads(const fs::path &Object,
+                                     llvm::ArrayRef<const char *> Names,
+                                     bool ExpectedRecovery) {
+  auto ImageOrErr = neverd::loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  for (const char *Name : Names) {
+    SCOPED_TRACE(Name);
+    const neverd::Symbol *Function = Image.findSymbol(Name);
+    ASSERT_NE(Function, nullptr);
+    neverd::CFGBuilder Builder;
+    const neverd::LowFunc Low =
+        Builder.build(Image, Decoder, Function->Addr, Function->Name);
+    if (ExpectedRecovery) {
+      ASSERT_EQ(Low.JumpTables.size(), 1u);
+      EXPECT_EQ(Low.JumpTables.front().Targets.size(), 3u);
+      EXPECT_EQ(Low.JumpTables.front().SlotIndices,
+                (std::vector<uint32_t>{0, 1, 2}));
+    } else {
+      EXPECT_TRUE(Low.JumpTables.empty());
+    }
+  }
+}
+
+TEST_F(JTE_X86_64, FieldOffsetReloadSharesItsGuard) {
+  verifyFieldOffsetReloads(fieldReloadObj(),
+                           {"jt_field_offset_sext", "jt_field_offset_zext",
+                            "jt_field_offset_negative"},
+                           true);
+}
+
+TEST_F(JTE_X86_64, FieldOffsetReloadRejectsChangedAddressAndMemory) {
+  verifyFieldOffsetReloads(
+      fieldReloadObj(),
+      {"jt_field_offset_different", "jt_field_offset_changed_base",
+       "jt_field_offset_store", "jt_field_offset_call", "jt_field_offset_fence",
+       "jt_field_offset_other_base", "jt_field_offset_narrow"},
+      false);
+}
+
 TEST_F(JTE_X86_64, IndexIdentityMergesEqualDiamondDefinitions) {
   auto R = liftToLowIR(identityCfgLaneObj());
   ASSERT_EQ(R.exitCode, 0) << R.err;
@@ -9024,6 +9067,19 @@ TEST_F(JTE_AArch64, NestedSwitchLifts) {
   auto R = liftToHighIR(jteA64Obj());
   ASSERT_EQ(R.exitCode, 0) << R.err;
   EXPECT_FALSE(R.out.empty());
+}
+
+TEST_F(JTE_AArch64, FieldOffsetReloadSharesItsGuard) {
+  verifyFieldOffsetReloads(indexIdentityA64Obj(), {"a64_field_offset_reload"},
+                           true);
+}
+
+TEST_F(JTE_AArch64, FieldOffsetReloadRejectsChangedAddressAndMemory) {
+  verifyFieldOffsetReloads(
+      indexIdentityA64Obj(),
+      {"a64_field_offset_different", "a64_field_offset_store",
+       "a64_field_offset_changed_base", "a64_field_offset_fence"},
+      false);
 }
 
 TEST_F(JTE_AArch64, MaskBoundRejectsConstantSelectorWithUnreachableProducer) {
