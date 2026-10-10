@@ -1652,6 +1652,33 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 ## سمات دليل مجمعة محدودة
 
+تفحص bulk-attributes المجموعات الكاملة ومجموعة الأسماء/الأنواع وحماية البايتات غير المستخدمة وlow32 FD وكلمات bitmap والأخطاء الأصلية وdup وopen المستقلة وEOF وrewind الصفري. النمطان الحرفي/المجهول افتراضيان فقط. تفحص النماذج أيضاً stat الكامل وإبطاله وأسماء NFD/255 بايت وأسماء إدخال/إخراج الذاكرة المتطابقة وأخطاء النقل/الميزانية والنقل/SWAP/الحذف/إعادة الاستخدام والصلاحيات الصريحة. القائمة المطلوبة65 حالة لكل منصة:195 ARM64 و130 Intel. تحقق التنفيذ المحلي من ARM64 HVF المطابق فقط. native5s وguest/Python5,000,000us/quantum1024 وpublic10s ثابتة.
+
+## روابط Darwin الصلبة المحدودة
+
+يتبع link الهدف الرمزي الأخير؛ يختار linkat مع flags=0 كائن الرابط نفسه، ومع AT_SYMLINK_FOLLOW الهدف. يقبل low32 0/0x40 فقط، وتعيد البتات الدنيا الأخرى EINVAL قبل الاستيراد. يسبق بحث المصدر وEPERM للدليل استيراد الوجهة، وتعيد الوجهة الموجودة EEXIST. تلزم صلاحية تعديل الوجهة ونطاق تركيب واحد مثبت صراحة. تبقى الأسماء البديلة الأولية وتعارضات الجهاز أو النمط أو الأعلام غير مدعومة.
+
+يستهلك الاسم البديل مدخلاً ومساراً/NUL فقط دون inode جديد. يمتلك الكائن المشترك البيانات وصلاحيات السمات وصلاحية البيانات الوصفية وعقود الخرائط. تحدّث السياسات الصريحة عدد الروابط وctime؛ دونها يبقى stat الكامل مجهولاً. تعديل السمات يبطل stat وتعديل المحتوى يبطل مشاهدات السمات. تحتفظ الأوصاف وآخر الخرائط بتكلفة الأسماء المحذوفة، ولا تخصم الاستبدالات إلا تكلفة قابلة للتحرير فوراً. تختار الأشجار الفرعية الهوية والأب الدقيقين؛ تبقى الأسماء الخارجية ثابتة وتستخدم الأهداف النسبية الأب المختار.
+
+تبقى F_GETPATH/ATTR_CMN_NAME غير مدعومة بعد تعدد الأسماء حتى عند بقاء اسم واحد أو صفر؛ لا ندّعي نموذجاً عاماً لذاكرة APFS. يستخدم bulk NAME المدخل الحقيقي ويحفظ rename/SWAP للكائن نفسه الاسمين. تبقى EXCL وحالة الأحرف وO_SYMLINK وIntel HVF وiOS الفعلي وACL واتساق الخرائط/إشارات EOF وdyld وMach IPC والخيوط والأطر الكاملة فجوات مستقلة. يوسّع هذا العقد الاستثناءات السابقة داخل حدوده فقط.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```
+
 تفحص bulk-attributes المجموعات الكاملة ومجموعة الأسماء/الأنواع وحماية البايتات غير المستخدمة وlow32 FD وكلمات bitmap والأخطاء الأصلية وdup وopen المستقلة وEOF وrewind الصفري. النمطان الحرفي/المجهول افتراضيان فقط. تفحص النماذج أيضاً stat الكامل وإبطاله وأسماء NFD/255 بايت وأسماء إدخال/إخراج الذاكرة المتطابقة وأخطاء النقل/الميزانية والنقل/SWAP/الحذف/إعادة الاستخدام والصلاحيات الصريحة. القائمة المطلوبة63 حالة لكل منصة:189 ARM64 و126 Intel. تحقق التنفيذ المحلي من ARM64 HVF المطابق فقط. native5s وguest/Python5,000,000us/quantum1024 وpublic10s ثابتة.
 
 يتحقق `MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` من تنفيذ النموذج الأصلي والاستعادة وصلاحيات الأقسام والتنفيذ الأصلي للنسختين في Windows، ويغطي إعادة تخصيص الكومة وتحريرها والمؤشرات الداخلية المرمزة وإعادة تفعيل FLS والأقفال التكرارية وLastError وحجز الصفحات الافتراضية والالتزام بها وحمايتها. يرفض `MaterializationRequiresKnownSupportedState` غياب الإصدار وTLS الديناميكي. يقارن `RuntimeRestorationHasTheSameCAPIAndCLIContract` البايتات والتقارير بدقة. لا تحل فحوص بناء Linux وملاحظات Wine محل أدلة دورة الحياة في Windows الأصلي.

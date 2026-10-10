@@ -1627,6 +1627,33 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 
 ## 有界ディレクトリ一括属性
 
+bulk-attributes は完全なグループ、名前/型の集合、未使用バイトの保護、low32 FD、bitmap ワード、ネイティブエラー、dup、独立 open、EOF、ゼロ rewind を確認する。リテラル/未対応モードは仮想専用。モデルは完全な stat と無効化、NFD/255バイト名、入出力の別名、転送/予算エラー、移動/SWAP/削除/再使用、明示権限も確認する。必須在庫はプラットフォーム当たり65項目、ARM64 は195件、Intel は130件。本機で検証した実行は一致する ARM64 HVF のみ。native5s、guest/Python5,000,000us/quantum1024、public10s は不変。
+
+## 範囲を限定した Darwin ハードリンク
+
+link は末尾のシンボリックリンクを追跡する。linkat の flags=0 はリンク自体、AT_SYMLINK_FOLLOW は対象を選ぶ。low32 の 0/0x40 のみを受け入れ、他の下位ビットは入力前に EINVAL。ソース検索とディレクトリ EPERM は宛先入力に先行し、既存の宛先は EEXIST。宛先の変更権限と明示された同一マウント領域が必要。初期識別の別名や既知のデバイス・モード・フラグの矛盾は未対応。
+
+別名はエントリとパス/NUL の使用量のみを増やし、新しい inode を使わない。バイト、属性権限、メタデータ有効性、マッピングのリースは共有オブジェクトが保持する。明示ポリシーがリンク数と ctime を更新し、欠落時の完全な stat は未知。属性変更は stat を、内容変更は属性観測を無効化する。削除名と最終マッピングの使用量は保持され、置換は直ちに解放できる分だけを差し引く。部分木は正確な識別と親で移動し、外部の別名は動かず、相対ターゲットは選択エントリの親から解決する。
+
+複数名を持った履歴のあるオブジェクトの F_GETPATH/ATTR_CMN_NAME は、残りが一つやゼロでも未対応。APFS キャッシュを一般化しない。bulk NAME は実エントリを使い、同一オブジェクトの通常 rename/SWAP は両名を保持する。EXCL の大小文字、O_SYMLINK、Intel HVF、実機 iOS、ACL、マッピング整合性/EOF シグナル、dyld、Mach IPC、スレッド、完全なフレームワークは別の課題。この契約の範囲内だけで以前の除外を拡張する。
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```
+
 bulk-attributes は完全なグループ、名前/型の集合、未使用バイトの保護、low32 FD、bitmap ワード、ネイティブエラー、dup、独立 open、EOF、ゼロ rewind を確認する。リテラル/未対応モードは仮想専用。モデルは完全な stat と無効化、NFD/255バイト名、入出力の別名、転送/予算エラー、移動/SWAP/削除/再使用、明示権限も確認する。必須在庫はプラットフォーム当たり63項目、ARM64 は189件、Intel は126件。本機で検証した実行は一致する ARM64 HVF のみ。native5s、guest/Python5,000,000us/quantum1024、public10s は不変。
 
 `MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` は元プログラムのモデル実行、復元、セクション権限、元と復元結果の Windows ネイティブ実行を検証します。ヒープ再割り当て・解放、符号化した内部ポインター、FLS コールバックの再設定、再帰ロック、LastError、仮想ページの予約・コミット・保護を含みます。`MaterializationRequiresKnownSupportedState` はバージョン欠落と動的 TLS を拒否し、`RuntimeRestorationHasTheSameCAPIAndCLIContract` は正確なバイト列と報告を比較します。Linux での構築検証や Wine の観測は Windows ネイティブの寿命検証を代替しません。

@@ -1742,6 +1742,33 @@ La fixture MainActor vérifie le flux complet des métadonnées fixes et de la t
 
 ## Attributs de répertoire groupés bornés
 
+bulk-attributes vérifie groupes complets, ensemble noms/types, gardes des octets inutilisés, low32 FD, mots bitmap, erreurs natives, dup, open indépendants, EOF et rewind zéro. Modes littéral/inconnu uniquement virtuels. Les modèles couvrent aussi stat complet, invalidation, noms NFD/255 octets, alias entrée/sortie, erreurs de transport/budget, déplacements/SWAP/suppression/réutilisation et droits explicites. Inventaire requis :65 cas par plateforme,195 ARM64 et130 Intel. Seul ARM64 HVF correspondant est vérifié localement. native5s, guest/Python5,000,000us/quantum1024 et public10s sont inchangés.
+
+## Liens physiques Darwin bornés
+
+link suit la cible symbolique finale ; linkat flags=0 choisit le lien lui-même, AT_SYMLINK_FOLLOW sa cible. Seuls low32 0/0x40 sont admis ; les autres bits bas donnent EINVAL avant import. Recherche source et EPERM des répertoires précèdent la destination ; une destination existante donne EEXIST. La destination exige le droit de mutation et le même domaine de montage explicitement établi. Alias initiaux et conflits connus de périphérique, mode ou flags restent exclus.
+
+Un alias ne consomme que l’entrée et le chemin/NUL, sans nouvel inode. Octets, droits d’attributs, validité des métadonnées et baux de mapping appartiennent à l’objet partagé. Les politiques explicites actualisent compte de liens et ctime ; sans elles, stat complet reste inconnu. Les attributs invalident stat, le contenu invalide les observations d’attributs. Descriptions et derniers mappings conservent les coûts retirés ; seul un coût immédiatement libérable est crédité. Les sous-arbres utilisent identité et parent exacts ; les alias externes restent en place et les cibles relatives utilisent le parent sélectionné.
+
+Après plusieurs noms, F_GETPATH/ATTR_CMN_NAME restent non pris en charge même avec un ou zéro nom ; aucun modèle général de cache APFS. bulk NAME utilise l’entrée réelle, rename/SWAP du même objet conserve les deux noms. Casse EXCL, O_SYMLINK, Intel HVF, iOS physique, ACL, mappings cohérents/signaux EOF, dyld, Mach IPC, threads et frameworks complets restent des lacunes. Seul ce contrat étend les exclusions précédentes.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```
+
 bulk-attributes vérifie groupes complets, ensemble noms/types, gardes des octets inutilisés, low32 FD, mots bitmap, erreurs natives, dup, open indépendants, EOF et rewind zéro. Modes littéral/inconnu uniquement virtuels. Les modèles couvrent aussi stat complet, invalidation, noms NFD/255 octets, alias entrée/sortie, erreurs de transport/budget, déplacements/SWAP/suppression/réutilisation et droits explicites. Inventaire requis :63 cas par plateforme,189 ARM64 et126 Intel. Seul ARM64 HVF correspondant est vérifié localement. native5s, guest/Python5,000,000us/quantum1024 et public10s sont inchangés.
 
 `MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` vérifie exécution modélisée originale, restauration, permissions et exécution native Windows des deux images : réallocation/libération du tas, pointeurs intérieurs encodés, réarmement FLS, verrous récursifs, LastError et pages virtuelles réservées, engagées et protégées. `MaterializationRequiresKnownSupportedState` refuse version absente et TLS dynamique. `RuntimeRestorationHasTheSameCAPIAndCLIContract` compare octets exacts et rapports. Les contrôles de construction Linux et observations Wine ne remplacent pas les preuves de durée de vie sous Windows natif.
