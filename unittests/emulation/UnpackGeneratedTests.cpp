@@ -738,6 +738,23 @@ TEST_P(UnpackGenerated,
                            uint64_t(PE.SectionAlignment));
     }
     EXPECT_EQ(Next, PE.SizeOfImage);
+    // The native loader must be able to bind every import before TLS runs.
+    // Read-only cells need the PE's IAT protection range, even when a second
+    // import provider table is appended by the runtime materializer.
+    const auto IAT = Image.directory(llvm::COFF::IAT);
+    const uint64_t IATBegin = IAT.RelativeVirtualAddress;
+    const uint64_t IATEnd = IATBegin + IAT.Size;
+    for (const auto &Import : Image.Imports) {
+      const auto Section = llvm::find_if(Image.Sections, [&](const auto &S) {
+        return Import.Slot >= S.RVA &&
+               Import.Slot + 8 <= uint64_t(S.RVA) + S.VirtualSize;
+      });
+      ASSERT_NE(Section, Image.Sections.end());
+      if (!(Section->Characteristics & llvm::COFF::IMAGE_SCN_MEM_WRITE)) {
+        EXPECT_GE(Import.Slot, IATBegin) << Import.Name;
+        EXPECT_LE(Import.Slot + 8, IATEnd) << Import.Name;
+      }
+    }
     expectNativeWindows(Output, ExitStatus);
     ASSERT_FALSE(HasFailure());
     for (const auto &Section : Image.Sections)
