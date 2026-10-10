@@ -377,7 +377,6 @@ private slots:
       }
     }
   }
-=======
   void independentAnalysisViewsRunConcurrently() {
     QTemporaryDir directory;
     Workbench bench;
