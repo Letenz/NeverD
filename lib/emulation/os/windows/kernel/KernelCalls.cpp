@@ -60,6 +60,7 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::RtlZeroMemory:
   case KernelAPIKind::RtlFillMemory:
   case KernelAPIKind::RtlCompareMemory:
+  case KernelAPIKind::ExAllocatePool:
   case KernelAPIKind::ExAllocatePoolWithTag:
   case KernelAPIKind::ExAllocatePool2:
   case KernelAPIKind::ExFreePool:
@@ -346,6 +347,7 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::RtlEqualUnicodeString:
     return runtime::unicodeOperation(*this, Memory,
                                      runtime::UnicodeOperation::Equal, A);
+  case KernelAPIKind::ExAllocatePool:
   case KernelAPIKind::ExAllocatePoolWithTag:
     return allocatePool(A, false);
   case KernelAPIKind::ExAllocatePool2:

@@ -374,6 +374,7 @@ Das anfängliche API-Modell besitzt bewusst einen begrenzten Vertrag:
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | Expliziter sitzungslokaler Registry-Baum, Rechte pro Handle, Abfragen mit exakten Ausgabegrößen und Lebensdauer nach dem Löschen; siehe Registry-Szenarien |
 | `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | KernelMode-/UserMode-Sichten derselben Seiten mit geerbtem Cache und getrennten Rechten; nicht auslagerbare MDLs verwenden über den sicheren Helfer ihre ursprüngliche Abbildung |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | Eigenständige oder IRP-zugeordnete Pool-/Benutzerdeskriptoren, veränderbare Kettenverknüpfungen, unabhängige Sperren und Systemaliase; keine Kontingente |
+| `ExAllocatePool` | Historische Datenallokation mit zwei Argumenten für Pooltypen `0`, `1` und `512`; gemeinsame Ausrichtung, Modell uninitialisierter Bytes und Größen-/IRQL-Prüfungen, NULL bei Erschöpfung. Freigabe durch `ExFreePool` oder `ExFreePoolWithTag` mit Tag null; verbleibende Allokationen bleiben Kernelabhängigkeiten. |
 | `ExAllocatePoolWithTag`, `ExFreePoolWithTag`, `ExFreePool` | Datenallokationen für Pooltypen `0`, `1` und `512`; positive Größe/Tag, passende Tags beim Freigeben, keine Wiederverwendung von Adressen |
 | `IoCreateDevice`, `IoDeleteDevice` | Gerätetyp `0x22`, Characteristics `0` oder `0x100`, begrenzte Erweiterungen, ASCII-Namen der Form `\Device\Name` |
 | `IoAttachDeviceToDeviceStack`, `IoDetachDevice` | Anbindung desselben Treibers; gibt vorheriges oberstes Gerät zurück, Trennen erhält gespeichertes unteres Gerät; obige Topologie-/Lebensdauergrenzen gelten |
@@ -672,7 +673,7 @@ einschließlich Geräteobjekten und Callback-Adressen des Treibers. Gastadressen
 sind Hexadezimalzeichenfolgen, damit JSON-Verbraucher keine 64-Bit-Präzision
 verlieren. Das Objekt `configuration` protokolliert Limits, Dienstnamen und
 `kernel_exports`-Überschreibungen sowie die `registry`-Eingabe des Laufs. Das
-Profil lautet `wdm-x64-scheduled-v88`. `nt_status` bleibt das
+Profil lautet `wdm-x64-scheduled-v89`. `nt_status` bleibt das
 DriverEntry-Ergebnis, während `scenario_success` Initialisierung und
 abgeschlossene Anforderungen gemeinsam beschreibt. `phase`, `requests` und
 `unload_completed` kennzeichnen die ausgeführten Teile des angeforderten

@@ -377,6 +377,7 @@ El modelo inicial de API tiene deliberadamente un contrato limitado:
 | `KeSynchronizeExecution`, `KeAcquireInterruptSpinLock`, `KeReleaseInterruptSpinLock` | Callback BOOLEAN real bajo el mismo bloqueo no recursivo, con IRQL de sincronización al menos igual a los DIRQL; restaura el contexto llamador |
 | `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | Vistas KernelMode/UserMode de las mismas páginas, caché heredada y permisos independientes; los MDL no paginados reutilizan el mapping inicial mediante el auxiliar seguro |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | Descriptores de pool no paginado/usuario independientes o asociados a IRP, enlaces de cadena modificables, bloqueos y alias del sistema independientes; sin cuotas |
+| `ExAllocatePool` | Asignación heredada de dos argumentos para tipos `0`, `1` y `512`; comparte alineación, modelo de bytes sin inicializar y controles de tamaño/IRQL, con NULL por agotamiento. Se libera con `ExFreePool` o `ExFreePoolWithTag` con etiqueta cero; las asignaciones retenidas siguen siendo dependencias del núcleo. |
 | `ExAllocatePoolWithTag`, `ExFreePoolWithTag`, `ExFreePool` | Asignaciones de datos para los tipos de pool `0`, `1` y `512`; tamaño/tag positivos, tags coincidentes al liberar con tag y sin reutilización de direcciones |
 | `IoCreateDevice`, `IoDeleteDevice` | Tipo de dispositivo `0x22`, características `0` o `0x100`, extensiones acotadas y nombres ASCII `\Device\Name` |
 | `IoAttachDeviceToDeviceStack`, `IoDetachDevice` | Conexión del mismo controlador; devuelve el extremo superior anterior, desconectar recibe el inferior guardado; límites anteriores |
@@ -679,7 +680,7 @@ Las direcciones del invitado son cadenas hexadecimales para que los consumidores
 de JSON no pierdan precisión de 64 bits. El objeto `configuration` registra los
 límites, el nombre de servicio, las sustituciones de `kernel_exports` y la
 entrada `registry` de la ejecución. El perfil es
-`wdm-x64-scheduled-v88`. `nt_status` sigue siendo el resultado de DriverEntry,
+`wdm-x64-scheduled-v89`. `nt_status` sigue siendo el resultado de DriverEntry,
 mientras que `scenario_success` describe conjuntamente la inicialización y las
 solicitudes completadas. `phase`, `requests` y `unload_completed` identifican
 las partes ejecutadas del ciclo de vida solicitado. Cada llamada de API y

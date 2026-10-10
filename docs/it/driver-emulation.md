@@ -375,6 +375,7 @@ Il modello API iniziale ha intenzionalmente un contratto limitato:
 | `KeSynchronizeExecution`, `KeAcquireInterruptSpinLock`, `KeReleaseInterruptSpinLock` | Vero callback BOOLEAN sotto il lock comune non ricorsivo, con IRQL di sincronizzazione almeno pari ai DIRQL; ripristino del contesto chiamante |
 | `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | Viste KernelMode/UserMode delle stesse pagine, cache ereditata e permessi indipendenti; i MDL non paginati riusano il mapping iniziale tramite la macro sicura |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | Descrittori di pool non paginato/utente autonomi o associati a IRP, collegamenti di catena modificabili, blocchi e alias di sistema indipendenti; senza quote |
+| `ExAllocatePool` | Allocazione storica a due argomenti per i tipi `0`, `1` e `512`; condivide allineamento, modello dei byte non inizializzati e controlli dimensione/IRQL, restituendo NULL all’esaurimento. Liberazione con `ExFreePool` o `ExFreePoolWithTag` con tag zero; le allocazioni conservate restano dipendenze del kernel. |
 | `ExAllocatePoolWithTag`, `ExFreePoolWithTag`, `ExFreePool` | Allocazioni di dati per i tipi di pool `0`, `1` e `512`; dimensione/tag positivi, tag corrispondenti nelle liberazioni con tag, nessun riutilizzo degli indirizzi |
 | `IoCreateDevice`, `IoDeleteDevice` | Tipo di dispositivo `0x22`, caratteristiche `0` o `0x100`, estensioni limitate, nomi ASCII `\Device\Name` |
 | `IoAttachDeviceToDeviceStack`, `IoDetachDevice` | Collegamento dello stesso driver; restituisce la cima precedente, lo scollegamento riceve il dispositivo inferiore salvato; limiti sopra indicati |
@@ -669,7 +670,7 @@ dispositivo e gli indirizzi dei callback del driver. Gli indirizzi guest sono
 stringhe esadecimali, così i consumatori JSON non perdono la precisione a 64 bit.
 L’oggetto `configuration` registra i limiti, il nome del servizio e le
 sostituzioni `kernel_exports` e l’input `registry` dell’esecuzione.
-Il profilo è `wdm-x64-scheduled-v88`. `nt_status` rimane il risultato di DriverEntry,
+Il profilo è `wdm-x64-scheduled-v89`. `nt_status` rimane il risultato di DriverEntry,
 mentre `scenario_success` descrive insieme l’inizializzazione e le richieste
 completate. `phase`, `requests` e `unload_completed` identificano le parti
 eseguite del ciclo di vita richiesto. Ogni chiamata API e scrittura CPU registra

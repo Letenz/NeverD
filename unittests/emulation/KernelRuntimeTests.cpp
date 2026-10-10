@@ -142,6 +142,68 @@ TEST_F(KernelRuntime, Pool2ZeroesAndPreservesTaggedLifetime) {
   invoke("ExFreePool", {Uninitialized});
 }
 
+TEST_F(KernelRuntime, LegacyUntaggedPoolSharesCheckedAllocationLifetime) {
+  for (uint32_t Type : {0u, 1u, 512u})
+    for (uint64_t Size : {1u, 16u, 4095u, 4096u, 4097u}) {
+      SCOPED_TRACE(Type);
+      SCOPED_TRACE(Size);
+      const auto Pointer = invoke("ExAllocatePool", {Type, Size});
+      ASSERT_NE(Pointer, 0u);
+      EXPECT_EQ(Pointer % (Size >= 4096 ? 4096 : 16), 0u);
+      if (Size < 4096)
+        EXPECT_LE((Pointer % 4096) + Size, 4096u);
+      EXPECT_EQ(integer(Pointer, 1), 0xcdu);
+      EXPECT_EQ(integer(Pointer + Size - 1, 1), 0xcdu);
+      check(Model->validateGuestAccess(Pointer, Size, true));
+      EXPECT_NE(failure("ExFreePoolWithTag", {Pointer, Tag}).find("tag"),
+                std::string::npos);
+      check(Model->validateGuestAccess(Pointer, Size, true));
+      if (Size & 1)
+        invoke("ExFreePool", {Pointer});
+      else
+        invoke("ExFreePoolWithTag", {Pointer, 0});
+      auto Error = Model->validateGuestAccess(Pointer, 1, false);
+      ASSERT_TRUE(bool(Error));
+      EXPECT_NE(llvm::toString(std::move(Error)).find("freed"),
+                std::string::npos);
+      EXPECT_NE(failure("ExFreePool", {Pointer}).find("already freed"),
+                std::string::npos);
+    }
+}
+
+TEST_F(KernelRuntime, LegacyUntaggedPoolRetainsArityIRQLAndFailureChecks) {
+  EXPECT_NE(failure("ExAllocatePool", {0, 1, Tag}).find("argument count"),
+            std::string::npos);
+  EXPECT_NE(failure("ExAllocatePool", {0}).find("argument count"),
+            std::string::npos);
+  EXPECT_NE(failure("ExAllocatePool", {0, 0}).find("non-zero"),
+            std::string::npos);
+  EXPECT_NE(failure("ExAllocatePool", {2, 16}).find("pool model"),
+            std::string::npos);
+  EXPECT_EQ(invoke("ExAllocatePool", {0, UINT64_MAX}), 0u);
+  Model->enterExecution(1);
+  invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("ExAllocatePool", {1, 16}).find("APC_LEVEL"),
+            std::string::npos);
+  const auto Pointer = invoke("ExAllocatePool", {512, 16});
+  ASSERT_NE(Pointer, 0u);
+  invoke("ExFreePool", {Pointer});
+  invoke("KeLowerIrql", {0});
+  const auto Paged = invoke("ExAllocatePool", {1, 16});
+  ASSERT_NE(Paged, 0u);
+  invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("ExFreePool", {Paged}).find("APC_LEVEL"),
+            std::string::npos);
+  invoke("KeLowerIrql", {0});
+  invoke("ExFreePool", {Paged});
+  invoke("KfRaiseIrql", {3});
+  EXPECT_NE(failure("ExAllocatePool", {512, 16}).find("IRQL"),
+            std::string::npos);
+  invoke("KeLowerIrql", {0});
+  EXPECT_NE(failure("ExAllocatePoolWithTag", {512, 16, 0}).find("tag"),
+            std::string::npos);
+}
+
 TEST_F(KernelRuntime, Pool2AlignmentOptionalFlagsAndFailureContracts) {
   const uint64_t Cached = invoke("ExAllocatePool2", {0x48, 31, Tag});
   ASSERT_NE(Cached, 0u);
@@ -378,6 +440,7 @@ TEST(KernelRuntimeExecution, CompiledDriverUsesDynamicPoolAndWin64Varargs) {
             "-00042|0x0000ab|18446744073709551615|abc|Copied");
   unsigned DebugCalls = 0;
   unsigned AllocateCalls = 0;
+  unsigned LegacyCalls = 0;
   unsigned CounterCalls = 0;
   for (const auto &Call : Result->Calls) {
     if (Call.Name == "DbgPrint") {
@@ -398,11 +461,17 @@ TEST(KernelRuntimeExecution, CompiledDriverUsesDynamicPoolAndWin64Varargs) {
       ++CounterCalls;
       EXPECT_EQ(Call.Arguments.size(), 1u);
       EXPECT_EQ(Call.Result, 0u);
+    } else if (Call.Name == "ExAllocatePool") {
+      ++LegacyCalls;
+      EXPECT_EQ(Call.Arguments.size(), 2u);
+      ASSERT_TRUE(Call.Result);
+      EXPECT_NE(*Call.Result, 0u);
     } else if (Call.Name == "ExAllocatePool2")
       ++AllocateCalls;
   }
   EXPECT_EQ(DebugCalls, 2u);
   EXPECT_EQ(AllocateCalls, 1u);
+  EXPECT_EQ(LegacyCalls, 2u);
   EXPECT_EQ(CounterCalls, 3u);
 }
 } // namespace
