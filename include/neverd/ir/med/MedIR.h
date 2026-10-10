@@ -516,8 +516,10 @@ struct MedFunc {
   /// Resolved jump tables (carried from LowFunc) so the LLVM emitter can
   /// lower an INDIR_BR into a switch on the table index.
   std::vector<JumpTable> JumpTables;
-  /// Exact Med SSA selector plans keyed by the indirect-branch address.
-  std::map<va_t, MedSwitchSelectorPlan> SwitchSelectorPlans;
+  /// Exact Med SSA selector plans keyed by native branch address and current
+  /// Med block. Cloned blocks can share a machine address but never an SSA
+  /// selector occurrence merely because those addresses compare equal.
+  std::map<std::pair<va_t, int>, MedSwitchSelectorPlan> SwitchSelectorPlans;
   std::vector<MedScalarAddressModel> ScalarAddressModels;
   std::vector<MedI386GetPcModel> I386GetPcModels;
   /// Published machine entry/exception/address-taken/continuation roots.

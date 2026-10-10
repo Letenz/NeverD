@@ -366,6 +366,14 @@ operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
 authority from sharing that origin.
 
+MedIR binds a switch selector to its dispatch block as well as its machine
+address. CFG products can copy one instruction into distinct SSA lifetimes;
+every path back from a dispatch must reach the same exact operand occurrence
+before any independent entry. A missing or changed occurrence cannot borrow
+another copy's value. LLVM and HighIR consume the same block-specific plan.
+Composite target-load authentication requires every dispatch copy to retain
+its recipe, including when the load precedes the branch in a separate block.
+
 The resolver's point-sensitive stack identity uses anchored affine equations.
 Cyclic predecessors share equation nodes instead of recursively expanding the
 same frame state for each query. Every incoming value must agree; unanchored

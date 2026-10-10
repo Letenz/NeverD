@@ -514,7 +514,7 @@ struct AuthenticatedTargetLoadFixture {
     Plan.PlanKind = MedSwitchSelectorPlan::Kind::Direct;
     Plan.Selector = Selector;
     Plan.ResultSize = Selector.Size;
-    Func.SwitchSelectorPlans.emplace(BranchVA, Plan);
+    Func.SwitchSelectorPlans.emplace(std::make_pair(BranchVA, 0), Plan);
   }
 
   MedOp &load() { return Func.Blocks.front().Ops.front(); }
@@ -546,7 +546,7 @@ struct AuthenticatedTargetLoadFixture {
     Select.addInput(Equal.Output);
     Select.addInput(MedVar::makeConst(3, 8));
     Select.addInput(MedVar::makeConst(2, 8));
-    Func.SwitchSelectorPlans.at(JT.InsnAddr).Selector = Select.Output;
+    Func.SwitchSelectorPlans.at({JT.InsnAddr, 0}).Selector = Select.Output;
     MedOp Scale;
     Scale.Opcode = NdOp::INT_LEFT;
     Scale.Output = temp(4);
@@ -589,7 +589,7 @@ struct AuthenticatedTargetLoadFixture {
     Condition.RegOff = getTargetRegInfo(Arch::X64).IntParamRegs[1];
     Func.Params.push_back(Condition);
 
-    MedSwitchSelectorPlan &Plan = Func.SwitchSelectorPlans.at(JT.InsnAddr);
+    MedSwitchSelectorPlan &Plan = Func.SwitchSelectorPlans.at({JT.InsnAddr, 0});
     Plan.PlanKind = MedSwitchSelectorPlan::Kind::SelectOffset;
     Plan.Condition = Condition;
     Plan.TrueOffset = Recipe.TrueOffset;
@@ -905,6 +905,48 @@ TEST(MedLLVMRecoveredTargetLoadBoundary,
     MedLLVMEmitter Emitter;
     EXPECT_FALSE(MedLLVMProvenanceTestPeer::recoveredTargetLoadIsFullyConsumed(
         Emitter, Fixture.Func, Fixture.Image, Fixture.load()));
+  }
+}
+
+TEST(MedLLVMRecoveredTargetLoadBoundary,
+     TwoTableLoadBeforeClonedDispatchRequiresEveryBoundRecipe) {
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    AuthenticatedTargetLoadFixture Fixture;
+    Fixture.makeTwoTable();
+    MedFunc &Func = Fixture.Func;
+    const va_t BranchVA = Func.JumpTables.front().InsnAddr;
+    const MedOp Branch = Func.Blocks[0].Ops.back();
+    const MedSwitchSelectorPlan Plan =
+        Func.SwitchSelectorPlans.at({BranchVA, 0});
+    Func.SwitchSelectorPlans.clear();
+    Func.Blocks[0].Ops.pop_back();
+    Func.Blocks[0].EndAddr = BranchVA;
+    Func.Blocks[0].Succs =
+        Mutation == 0 ? std::vector<int>{3} : std::vector<int>{3, 4};
+    const int Copies = Mutation == 0 ? 1 : 2;
+    for (int I = 0; I < Copies; ++I) {
+      MedBlock Dispatch;
+      Dispatch.Id = 3 + I;
+      Dispatch.StartAddr = BranchVA;
+      Dispatch.EndAddr = BranchVA + 1;
+      Dispatch.Preds = {0};
+      Dispatch.Succs = {1, 2};
+      Dispatch.Ops.push_back(Branch);
+      Func.Blocks.push_back(std::move(Dispatch));
+      if (I == 1 && Mutation == 2)
+        continue;
+      auto Bound = Plan;
+      if (I == 1 && Mutation == 3)
+        ++Bound.TrueOffset;
+      Func.SwitchSelectorPlans.emplace(std::make_pair(BranchVA, 3 + I), Bound);
+    }
+    for (int I : {1, 2})
+      Func.Blocks[I].Preds = Func.Blocks[0].Succs;
+    MedLLVMEmitter Emitter;
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::recoveredTargetLoadIsFullyConsumed(
+                  Emitter, Func, Fixture.Image, Fixture.load()),
+              Mutation < 2);
   }
 }
 

@@ -555,6 +555,13 @@ earlier bound. The fourth physical slot is deliberately outside that bound.
 An unrelated deep return expression exercises incomplete escape auditing:
 the proven table survives only with every relocation root retained.
 
+`LowToMedSelectorOccurrence.*` checks distinct SSA selectors for copied
+instruction addresses on x64 and AArch64 across ELF, Mach-O and COFF. Changing
+one copy's operand role must invalidate only that copy, and the complete
+LLVM module must verify. Pointer-boundary regressions retain composite table
+loads whose dispatch copies lose or change a recipe, while accepting a load
+in their shared predecessor when every recipe survives.
+
 The pointer-boundary target checks closed scalar graph retries on x64 and
 AArch64 across ELF, Mach-O and COFF. Arithmetic deeper than the initial
 recursive walk can succeed; address seeds, forbidden dependencies, mixed code
