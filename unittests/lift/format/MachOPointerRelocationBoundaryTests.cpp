@@ -17,6 +17,7 @@
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
@@ -61,6 +62,12 @@ public:
 
   static void resetAddressProvenanceWork(MedLLVMEmitter &Emitter) {
     Emitter.AddressProvenanceWork = {};
+  }
+
+  static std::pair<uint64_t, uint64_t>
+  recurrenceNodeWork(const MedLLVMEmitter &Emitter) {
+    return {Emitter.AddressProvenanceWork.RecurrenceNodes,
+            Emitter.AddressProvenanceWork.AliasNodes};
   }
 
   static FrameReloadWorkCounts
@@ -9850,6 +9857,45 @@ TEST(MachOLLVMDataPointerBoundary, SymbolizesExecutableCStringPhi) {
   EXPECT_TRUE(valueReferencesConstantGlobal(Argument, Seen));
 }
 
+TEST(LLVMDataPointerInvariantBoundary,
+     RoleNeutralAddressPhiIsNotAScalarOffset) {
+  for (Arch A : {Arch::X64, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(formatTraceName(Format));
+      auto Image = makeSpilledConstTableImage(A, Format);
+      auto Caller = makePhiPointerCaller();
+      Caller.Params.front().TheArch = A;
+      auto &Phi = Caller.Blocks.back().Phis.front();
+      Phi.Output.TheArch = A;
+      Phi.Args = {{1, MedVar::makeConst(SpilledConstTableVA, 8,
+                                        ConstantAddressProvenance::Address)},
+                  {2, MedVar::makeConst(OtherSpilledConstTableVA, 8,
+                                        ConstantAddressProvenance::Address)}};
+      Caller.CallInfos.front().Args = {Phi.Output};
+      for (size_t I : {1u, 2u})
+        Caller.Blocks[I].Ops.erase(Caller.Blocks[I].Ops.begin());
+      MedLLVMEmitter Classifier;
+      MedLLVMProvenanceTestPeer::prepareFreshAnalysis(Classifier, Caller, Image,
+                                                      A, Format);
+      EXPECT_FALSE(MedLLVMProvenanceTestPeer::stableOffset(
+          Classifier, Phi.Output, nullptr));
+      EXPECT_TRUE(MedLLVMProvenanceTestPeer::stableOffset(
+          Classifier, MedVar::makeConst(7, 8), nullptr));
+      llvm::LLVMContext Context;
+      auto Module = MedLLVMEmitter().emit(
+          {Caller}, Context, "role-neutral-pointer-phi", A,
+          {{ImportStubVA + 4, "printf"}}, &Image, Format);
+      ASSERT_NE(Module, nullptr);
+      expectValidModule(*Module);
+      auto Calls = callsIn(*Module->getFunction(Caller.Name));
+      ASSERT_EQ(Calls.size(), 1u);
+      std::set<const llvm::Value *> Seen;
+      EXPECT_TRUE(
+          valueReferencesMaterializedGlobal(Calls[0]->getArgOperand(0), Seen));
+    }
+}
+
 TEST(MachOLLVMDataPointerBoundary, RejectsSelectWithCodeOrScalarArm) {
   for (const auto [CodeArm, ScalarArm] :
        {std::pair{true, false}, std::pair{false, true}}) {
@@ -12414,41 +12460,51 @@ TEST(LLVMDataPointerInvariantBoundary,
   for (BinaryFormat Format :
        {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
     for (bool PointerTable : {false, true})
-      for (Arch TargetArch : {Arch::AArch64, Arch::X64}) {
-        SCOPED_TRACE(formatTraceName(Format));
-        SCOPED_TRACE(PointerTable ? "pointer table" : "plain table");
-        SCOPED_TRACE(TargetArch == Arch::AArch64 ? "arm64" : "x86_64");
-        const uint16_t ElementSize =
-            PointerTable ? getTargetRegInfo(TargetArch).PointerSize : 2;
-        BinaryImage Image =
-            makeSpilledConstTableImage(TargetArch, Format, PointerTable);
-        MedFunc Lookup =
-            makeRematerializedRecurrentTableLookup(TargetArch, ElementSize);
-        llvm::LLVMContext Context;
-        testing::internal::CaptureStderr();
-        auto Module = MedLLVMEmitter().emit({Lookup}, Context,
-                                            "rematerialized-recurrent-table",
-                                            TargetArch, {}, &Image, Format);
-        std::string Diagnostic = testing::internal::GetCapturedStderr();
-        ASSERT_NE(Module, nullptr) << Diagnostic;
-        expectValidModule(*Module);
+      for (Arch TargetArch : {Arch::AArch64, Arch::X64})
+        for (auto Provenance : {ConstantAddressProvenance::Unknown,
+                                ConstantAddressProvenance::Address}) {
+          SCOPED_TRACE(static_cast<unsigned>(Provenance));
+          SCOPED_TRACE(formatTraceName(Format));
+          SCOPED_TRACE(PointerTable ? "pointer table" : "plain table");
+          SCOPED_TRACE(TargetArch == Arch::AArch64 ? "arm64" : "x86_64");
+          const uint16_t ElementSize =
+              PointerTable ? getTargetRegInfo(TargetArch).PointerSize : 2;
+          BinaryImage Image =
+              makeSpilledConstTableImage(TargetArch, Format, PointerTable);
+          MedFunc Lookup =
+              makeRematerializedRecurrentTableLookup(TargetArch, ElementSize);
+          for (auto &B : Lookup.Blocks)
+            for (auto &Op : B.Ops)
+              for (unsigned I = 0; I < Op.NumInputs; ++I)
+                if (Op.Inputs[I].isConst() &&
+                    Op.Inputs[I].ConstVal == SpilledConstTableVA)
+                  Op.Inputs[I].Provenance = Provenance;
+          llvm::LLVMContext Context;
+          testing::internal::CaptureStderr();
+          auto Module = MedLLVMEmitter().emit({Lookup}, Context,
+                                              "rematerialized-recurrent-table",
+                                              TargetArch, {}, &Image, Format);
+          std::string Diagnostic = testing::internal::GetCapturedStderr();
+          ASSERT_NE(Module, nullptr) << Diagnostic;
+          expectValidModule(*Module);
 
-        llvm::Function *Function = Module->getFunction(Lookup.Name);
-        ASSERT_NE(Function, nullptr);
-        unsigned TableLoads = 0;
-        for (const llvm::BasicBlock &Block : *Function)
-          for (const llvm::Instruction &Instruction : Block) {
-            if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Instruction);
-                Load && Load->getType()->isIntegerTy(ElementSize * 8) &&
-                Load->isVolatile()) {
-              ++TableLoads;
-              std::set<const llvm::Value *> Seen;
-              EXPECT_TRUE(valueReferencesMaterializedGlobal(
-                  Load->getPointerOperand(), Seen));
+          llvm::Function *Function = Module->getFunction(Lookup.Name);
+          ASSERT_NE(Function, nullptr);
+          unsigned TableLoads = 0;
+          for (const llvm::BasicBlock &Block : *Function)
+            for (const llvm::Instruction &Instruction : Block) {
+              if (const auto *Load =
+                      llvm::dyn_cast<llvm::LoadInst>(&Instruction);
+                  Load && Load->getType()->isIntegerTy(ElementSize * 8) &&
+                  Load->isVolatile()) {
+                ++TableLoads;
+                std::set<const llvm::Value *> Seen;
+                EXPECT_TRUE(valueReferencesMaterializedGlobal(
+                    Load->getPointerOperand(), Seen));
+              }
             }
-          }
-        EXPECT_EQ(TableLoads, 2U);
-      }
+          EXPECT_EQ(TableLoads, 2U);
+        }
 }
 
 TEST(LLVMDataPointerInvariantBoundary,
@@ -12732,6 +12788,233 @@ TEST(MachOLLVMDataPointerBoundary, ReusesCompletedPhiRecurrenceProof) {
   const auto Work = MedLLVMProvenanceTestPeer::addressProvenanceWork(Emitter);
   EXPECT_LE(std::get<1>(Work), 1U)
       << "a completed recurrence proof must be reused";
+}
+
+TEST(MachOLLVMDataPointerBoundary, RecurrenceQueriesVisitSharedDagsOnce) {
+  for (Arch Target : {Arch::X64, Arch::AArch64}) {
+    for (bool ScalarArm : {false, true}) {
+      for (unsigned Levels : {12u, 24u}) {
+        SCOPED_TRACE(static_cast<unsigned>(Target));
+        SCOPED_TRACE(ScalarArm);
+        SCOPED_TRACE(Levels);
+        BinaryImage Image = makeSpilledConstTableImage(Target);
+        MedFunc Func = makeRecurrentConstTableLookup(Target);
+        auto &Latch = Func.Blocks[2];
+        const PhiNode &Phi = Func.Blocks[1].Phis.front();
+        MedVar Previous = Phi.Output;
+        std::vector<MedOp> Choices;
+        for (unsigned I = 0; I < Levels; ++I) {
+          MedOp Choice;
+          Choice.Opcode = NdOp::SELECT;
+          Choice.Output = Previous;
+          Choice.Output.Id = 100 + I;
+          Choice.addInput(Func.Params.front());
+          Choice.addInput(Previous);
+          Choice.addInput(ScalarArm && I == 0
+                              ? MedVar::makeConst(3, Previous.Size)
+                              : Previous);
+          Previous = Choice.Output;
+          Choices.push_back(std::move(Choice));
+        }
+        Latch.Ops.front().Inputs[0] = Previous;
+        Latch.Ops.insert(Latch.Ops.begin(), Choices.begin(), Choices.end());
+        MedLLVMEmitter Emitter;
+        MedLLVMProvenanceTestPeer::prepareFreshAnalysis(
+            Emitter, Func, Image, Target, BinaryFormat::MachO);
+        EXPECT_EQ(MedLLVMProvenanceTestPeer::incomingIsRecurrent(
+                      Emitter, Phi, 2, Phi.Args[1].second),
+                  !ScalarArm);
+        const auto [Work, Aliases] =
+            MedLLVMProvenanceTestPeer::recurrenceNodeWork(Emitter);
+        EXPECT_LE(Work, 16 * Levels + 128);
+        EXPECT_LE(Aliases, Levels + 8);
+      }
+    }
+  }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
+     NestedRecurrenceUsesItsCompleteImmutableInitializerGraph) {
+  for (Arch Target : {Arch::X64, Arch::AArch64})
+    for (bool UnknownInitializer : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Target));
+      SCOPED_TRACE(UnknownInitializer);
+      auto Image = makeSpilledConstTableImage(Target, BinaryFormat::COFF);
+      const va_t Ref = SpilledConstTableVA + 0x20;
+      const va_t CodeSlot = SpilledConstTableVA + 0x28;
+      writeObject(Image.Segments.back().Data, 0x20, SpilledConstTableVA);
+      writeObject(Image.Segments.back().Data, 0x28, CallerVA);
+      Image.DataPtrRelocSlots.insert(Ref);
+      Image.DataPtrRelocTargetOwners[Ref] = SpilledConstTableVA;
+      Image.CodePtrRelocSlots.insert(CodeSlot);
+      Image.BaseRelocations = {{Ref, llvm::COFF::IMAGE_REL_BASED_DIR64},
+                               {CodeSlot, llvm::COFF::IMAGE_REL_BASED_DIR64}};
+      Image.Symbols.push_back(Symbol::makeFunc(CallerVA, 0x50));
+      auto V = [&](int Id, unsigned Width = 8) {
+        MedVar Result;
+        Result.Kind = MedVar::Temp;
+        Result.TheArch = Target;
+        Result.Id = Id;
+        Result.SSAVer = 1;
+        Result.Size = Width;
+        return Result;
+      };
+      auto Op = [&](NdOp Code, MedVar Out,
+                    std::initializer_list<MedVar> Inputs) {
+        MedOp Result;
+        Result.Opcode = Code;
+        Result.Output = Out;
+        for (auto Input : Inputs)
+          Result.addInput(Input);
+        return Result;
+      };
+      auto C = [](uint64_t Bits) { return MedVar::makeConst(Bits, 8); };
+      MedFunc Func;
+      Func.Entry = CallerVA;
+      Func.Name = "nested_immutable_recurrence";
+      Func.ReturnType = NdType::makeInt(2);
+      MedVar Cond = V(1, 1);
+      Cond.Kind = MedVar::Param;
+      Cond.SSAVer = 0;
+      Cond.RegOff = getTargetRegInfo(Target).IntParamRegs[0];
+      MedVar Unknown = Cond;
+      Unknown.Id = 2;
+      Unknown.Size = 8;
+      Unknown.RegOff = getTargetRegInfo(Target).IntParamRegs[1];
+      Func.Params = {Cond, Unknown};
+      Func.Blocks.resize(5);
+      for (unsigned I = 0; I < 5; ++I) {
+        Func.Blocks[I].Id = I;
+        Func.Blocks[I].StartAddr = CallerVA + I * 16;
+        Func.Blocks[I].EndAddr = CallerVA + I * 16 + 16;
+      }
+      auto &Entry = Func.Blocks[0];
+      Entry.Succs = {1};
+      Entry.Ops = {Op(NdOp::LOAD, V(3), {C(Ref)}),
+                   Op(NdOp::BRANCH, {}, {C(CallerVA + 16)})};
+      auto &Outer = Func.Blocks[1];
+      Outer.Preds = {0, 3};
+      Outer.Succs = {2, 4};
+      Outer.Phis.push_back({V(4), {{0, V(3)}, {3, V(6)}}});
+      Outer.Ops = {Op(NdOp::COND_BR, {}, {C(CallerVA + 64), Cond})};
+      auto &Inner = Func.Blocks[2];
+      Inner.Preds = {1, 3};
+      Inner.Succs = {3};
+      Inner.Phis.push_back({V(5), {{1, V(4)}, {3, V(6)}}});
+      Inner.Ops = {Op(NdOp::LOAD, V(7, 2), {V(5)}),
+                   Op(NdOp::BRANCH, {}, {C(CallerVA + 48)})};
+      auto &Latch = Func.Blocks[3];
+      Latch.Preds = {2};
+      Latch.Succs = {1, 2};
+      Latch.Ops = {Op(NdOp::INT_ADD, V(6), {V(5), C(2)}),
+                   Op(NdOp::COND_BR, {}, {C(CallerVA + 32), Cond})};
+      if (UnknownInitializer) {
+        Latch.Ops.front().Inputs[0] = V(9);
+        Latch.Ops.insert(Latch.Ops.begin(),
+                         Op(NdOp::SELECT, V(9), {Cond, V(5), Unknown}));
+      }
+      auto &Exit = Func.Blocks[4];
+      Exit.Preds = {1};
+      Exit.Ops = {Op(NdOp::LOAD, V(8, 2), {V(4)}),
+                  Op(NdOp::RETURN, {}, {V(8, 2)})};
+      llvm::LLVMContext Context;
+      testing::internal::CaptureStderr();
+      auto Module =
+          MedLLVMEmitter().emit({Func}, Context, "nested-base", Target, {},
+                                &Image, BinaryFormat::COFF);
+      const auto Diagnostic = testing::internal::GetCapturedStderr();
+      if (UnknownInitializer)
+        EXPECT_EQ(Module, nullptr) << Diagnostic;
+      else {
+        ASSERT_NE(Module, nullptr) << Diagnostic;
+        expectValidModule(*Module);
+      }
+    }
+}
+
+TEST(MachOLLVMDataPointerBoundary,
+     EqualOriginalAddressesNeedMatchingObjectOwnersToProveDeadEdges) {
+  for (Arch Target : {Arch::X64, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
+      for (unsigned Case = 0; Case != 4; ++Case) {
+        SCOPED_TRACE(static_cast<unsigned>(Target));
+        SCOPED_TRACE(formatTraceName(Format));
+        SCOPED_TRACE(Case);
+        auto Image = makeAbsoluteSlotOwnerCollisionImage(Target, Format);
+        auto Func = makeConstantGuardedFrameReloadLookup();
+        auto &Compare = Func.Blocks[0].Ops[0];
+        Compare.Inputs[0] = MedVar::makeConst(
+            ReadOnlyOwnerBVA, 8, ConstantAddressProvenance::DataAddress,
+            ReadOnlyOwnerBVA);
+        Compare.Inputs[1] = Compare.Inputs[0];
+        if (Case == 1)
+          // A's one-past address and B's start have equal original bits, but
+          // their rebuilt objects may no longer be adjacent.
+          Compare.Inputs[1].AddressOwnerVA = ReadOnlyOwnerAVA;
+        if (Case >= 2) {
+          Compare.Inputs[1].Provenance =
+              Case == 2 ? ConstantAddressProvenance::Scalar
+                        : ConstantAddressProvenance::AddressFragment;
+          Compare.Inputs[1].AddressOwnerVA = InvalidVA;
+        }
+        MedLLVMEmitter Emitter;
+        MedLLVMProvenanceTestPeer::prepareFreshAnalysis(Emitter, Func, Image,
+                                                        Target, Format);
+        EXPECT_TRUE(
+            MedLLVMProvenanceTestPeer::feasibleEdgeIsPublished(Emitter, 0, 1));
+        EXPECT_EQ(
+            MedLLVMProvenanceTestPeer::feasibleEdgeIsPublished(Emitter, 0, 2),
+            Case != 0);
+      }
+}
+
+TEST(MachOLLVMDataPointerBoundary,
+     DeadTableCallStillRequiresCheckingIndependentEntries) {
+  for (Arch Target : {Arch::X64, Arch::AArch64})
+    for (unsigned RootKind = 0; RootKind != 4; ++RootKind) {
+      SCOPED_TRACE(static_cast<unsigned>(Target));
+      SCOPED_TRACE(RootKind);
+      auto Image = makeSpilledConstTableImage(Target, BinaryFormat::COFF, true);
+      auto Func = makeThreeWayPhiConstTableLookup(Target, true);
+      const unsigned Width = getTargetRegInfo(Target).PointerSize;
+      // This equality compares the same relocated object, not original
+      // numeric addresses of two independently rebuilt objects.
+      Func.Blocks[0].Ops[0].Inputs[0] =
+          MedVar::makeConst(SpilledConstTableVA, Width);
+      Func.Blocks[0].Ops[0].Inputs[1] =
+          MedVar::makeConst(SpilledConstTableVA, Width);
+      auto &Dead = Func.Blocks[2];
+      MedVar TargetValue = Func.Blocks[5].Phis[0].Output;
+      TargetValue.Id = 900;
+      MedOp Load;
+      Load.Opcode = NdOp::LOAD;
+      Load.Output = TargetValue;
+      Load.addInput(MedVar::makeConst(SpilledConstTableVA, Width));
+      MedOp Call;
+      Call.Opcode = NdOp::INDIR_CALL;
+      Call.addInput(TargetValue);
+      Dead.Ops.insert(Dead.Ops.begin(), {Load, Call});
+      if (RootKind == 1)
+        Func.ModuleAnalysisRoots.insert(Dead.StartAddr);
+      if (RootKind == 2)
+        Image.CodeRefTargets.insert(Dead.StartAddr);
+      if (RootKind == 3)
+        Func.Blocks[0].Ops[0].Inputs[1] =
+            MedVar::makeConst(OtherSpilledConstTableVA, Width);
+      llvm::LLVMContext Context;
+      testing::internal::CaptureStderr();
+      auto Module =
+          MedLLVMEmitter().emit({Func}, Context, "dead-table-call", Target, {},
+                                &Image, BinaryFormat::COFF);
+      const auto Diagnostic = testing::internal::GetCapturedStderr();
+      if (RootKind == 0) {
+        ASSERT_NE(Module, nullptr) << Diagnostic;
+        expectValidModule(*Module);
+      } else {
+        EXPECT_EQ(Module, nullptr) << Diagnostic;
+      }
+    }
 }
 
 TEST(MachOLLVMDataPointerBoundary,

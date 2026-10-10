@@ -215,7 +215,9 @@ Swift `coverage_status`는 분류된 호출 가능 항목만 셉니다. 전체 S
 
 복원된 Swift 행의 `source_representation`은 `native-method-body` 또는 `compiler-generated-from-type`입니다. 컴파일러 투영에는 `compiler_projection_kind`와 `compiler_projection_evidence`도 보존합니다. `source_body_method_count`는 복원된 네이티브 메서드 본문 수, `compiler_projection_method_count`는 증명된 컴파일러 투영 수이며 합계는 `recovered_method_count`와 같습니다. 컴파일러 진입점도 `method_count` 분모에 남고 정확한 식별 정보가 대응하는 하나의 `type` 소스 단위에 포함되어야 합니다. 타입 메타데이터나 의존성 이름만으로 복원 수를 늘리지 않습니다. 네이티브 일괄 JSON의 컴파일러 행과 타입 단위에는 `source`가 있지만, mobile의 `source_units`는 `source` 없이 설명만 보존하며 전체 소스는 `sources/swift.swift`에 저장됩니다.
 
-Swift 배치 `source_units`는 `{kind, module, name, source, method_entries, method_identities}`를 기록합니다. kind는 `function` 또는 `type`, identity는 `{entry, mangled_symbol}`입니다. 다른 심볼은 같은 진입점을 공유하면서 별도의 ABI 출력을 유지할 수 있습니다. 각 복원 identity는 정확히 한 번 포함되고 미복원 identity는 포함되지 않아야 합니다. `method_entries`는 `method_identities`의 진입점을 순서대로 투영한 목록과 일치하며 중복 주소를 허용합니다. 완전히 같은 중복 identity를 조용히 합치면 안 됩니다. 배치 `source`는 각 단위 소스와 줄바꿈을 순서대로 연결한 값입니다. Mobile은 전체 소스를 `sources/swift.swift`에, 단위 설명을 범위 JSON에 보관합니다. 개별 메서드 `source`는 검사 용도이며 단순 연결로 클래스 선언을 올바르게 복원할 수 없습니다.
+Swift 배치 `source_units`는 `{kind, module, name, source, module_preamble, method_entries, method_identities}`를 기록합니다. kind는 `function` 또는 `type`, identity는 `{entry, mangled_symbol}`입니다. 다른 심볼은 같은 진입점을 공유하면서 별도의 ABI 출력을 유지할 수 있습니다. 각 복원 identity는 정확히 한 번 포함되고 미복원 identity는 포함되지 않아야 합니다. `method_entries`는 `method_identities`의 진입점을 순서대로 투영한 목록과 일치하며 중복 주소를 허용합니다. 완전히 같은 중복 identity를 조용히 합치면 안 됩니다. 배치 `source`는 아래의 머리 선언 조립 규칙을 사용합니다. Mobile은 전체 소스를 `sources/swift.swift`에, 단위 설명을 범위 JSON에 보관합니다. 개별 메서드 `source`는 검사 용도이며 단순 연결로 클래스 선언을 올바르게 복원할 수 없습니다.
+
+각 네이티브 단위는 독립적인 소스를 유지하며 `source`는 정확한 `module_preamble`로 시작합니다. 조립된 파일은 서로 다른 비어 있지 않은 머리 선언을 사전순으로 연결한 뒤, 각 단위에서 해당 접두사를 정확히 제거한 본문을 원래 단위 순서대로 연결하고 단위마다 줄바꿈 하나를 추가합니다. 잘못된 접두사는 거부됩니다. 머리 선언이 비어 있거나 생략되면 이전 연결 규칙을 따릅니다. 일반 메서드 행도 `module_preamble`를 제공하며, `member_source`를 조립할 때 이 선언들을 파일 범위에 유지해야 합니다. 컴파일 가능한 모듈에는 전체 배치 소스를 사용하세요.
 
 ## 직접 네이티브 내보내기와 SDK
 

@@ -520,10 +520,14 @@ struct MedFunc {
   std::map<va_t, MedSwitchSelectorPlan> SwitchSelectorPlans;
   std::vector<MedScalarAddressModel> ScalarAddressModels;
   std::vector<MedI386GetPcModel> I386GetPcModels;
+  /// Published machine entry/exception/address-taken/continuation roots.
+  /// An ordinary edge becoming infeasible never removes another entry role.
+  std::set<va_t> ModuleAnalysisRoots;
   /// Exact continuation exits rebound after all MedIR rewrites.  Binding is a
   /// transaction: any missing, duplicate, or ABI-width-invalid RETURN leaves
   /// this vector empty and the completion flag false.
   std::vector<MedCxxContinuationExitEvidence> CxxContinuationExits;
+  std::vector<LowCxxContinuationEntryEvidence> CxxContinuationEntries;
   bool CxxContinuationExitAnalysisComplete = false;
   /// LowIR fail-closed identity for mutable/uncertain indirect branches.  Kept
   /// separately from JumpTables so HighIR never turns a rejected table back

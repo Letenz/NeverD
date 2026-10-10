@@ -618,7 +618,8 @@ void addRegistrationCandidates(const ExceptionFunction &EH,
   }
 }
 
-void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
+void addCxxCandidates(const ExceptionFunction &EH, const MedFunc &Med,
+                      const BinaryImage *Img,
                       const RegistrationStateAnalysis *Registration,
                       std::vector<RegionCandidate> &Candidates,
                       unsigned &Rejected) {
@@ -649,9 +650,17 @@ void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
     Candidate.TryHigh = Try.TryHigh;
     Candidate.HasTryStates = true;
     for (uint32_t CatchIndex = 0; CatchIndex < Try.Handlers.size();
-         ++CatchIndex)
-      Candidate.Clauses.push_back(makeCxxCatchClause(
-          Try.Handlers[CatchIndex], Img, Registration, TryIndex, CatchIndex));
+         ++CatchIndex) {
+      const CxxCatchHandler &Catch = Try.Handlers[CatchIndex];
+      HighEHClause Clause =
+          makeCxxCatchClause(Catch, Img, Registration, TryIndex, CatchIndex);
+      if (!EH.Registration)
+        for (const auto &Entry : Med.CxxContinuationEntries)
+          if (Entry.SourceEntry == Catch.HandlerVA &&
+              !llvm::is_contained(Clause.ContinuationVAs, Entry.Target))
+            Clause.ContinuationVAs.push_back(Entry.Target);
+      Candidate.Clauses.push_back(std::move(Clause));
+    }
     for (int32_t State = Try.TryLow; State <= Try.TryHigh; ++State) {
       if (State < 0 || State >= static_cast<int32_t>(Cxx.UnwindMap.size()))
         continue;
@@ -1487,7 +1496,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
         Med.RegistrationStates ? &*Med.RegistrationStates : nullptr;
     addSEHCandidates(EH, TargetArch, Candidates, Rejected);
     addRegistrationCandidates(EH, Registration, Candidates, Rejected);
-    addCxxCandidates(EH, Image, Registration, Candidates, Rejected);
+    addCxxCandidates(EH, Med, Image, Registration, Candidates, Rejected);
     addCxxCleanupOnlyCandidates(EH, Registration, Candidates, Rejected);
     addItaniumCandidates(EH, Candidates, Rejected);
   } else {

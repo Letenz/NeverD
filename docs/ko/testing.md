@@ -1604,3 +1604,7 @@ MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐�
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: 여덟 고정 버전의 원시/Bionic 식별, PROF/VIRT/SCHED, 하위 32비트, 포인터 오류보다 앞선 대상 검증, 표본 누락, 별칭, 음수 CPU 시간 거부와 벽시계/CPU 유휴 분리를 확인합니다. `AndroidTimeTests.cpp`는 출력과 감시값을, 협력 syscall은 현재 비리더 TID를 확인합니다.
 
 `ZeroTimeoutPollRetainsReadinessAndOrderedCopies`는 여덟 버전의 O0／O2 원시 호출에서 생존·음수·닫힌 설명자, 중복 개수, 인수 축소, 시간 제한／마스크 순서, 읽기 전용 0 timespec, 모든 메타데이터의 선행 반입 및 후속 오류에 유지되는 `revents`를 검증합니다. `ZeroTimeoutPollKeepsUnobservedBoundaries`는 미관측 커널, 한도, 마스크, 대기 및 준비 상태 경계를 유지합니다. Android의 `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults`는 여섯 패킹 프로필에서 공유 표와 errno 소유권을 확인합니다.
+
+## 제한된 디렉터리 일괄 속성
+
+bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 보호, low32 FD, bitmap 워드, 네이티브 오류, dup 공유 진행, 독립 open, EOF와 0 rewind를 검사한다. 리터럴/미지원 모드는 가상 전용이다. 모델은 전체 stat와 무효화, NFD/255바이트 이름, 입출력 별칭, 전송/예산 실패, 이동/SWAP/삭제/재사용, 명시 권한도 검사한다. 필수 목록은 플랫폼별63개로 ARM64는189개, Intel은126개다. 로컬에서는 일치하는 ARM64 HVF만 검증했다. native5s, guest/Python5,000,000us/quantum1024, public10s는 그대로다.

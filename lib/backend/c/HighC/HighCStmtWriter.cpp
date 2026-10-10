@@ -2218,7 +2218,8 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
         while (J < End &&
                (stmtHiddenFromC(Stmts[J]) || Stmts[J].Kind == StmtKind::Nop))
           ++J;
-        if (J < End && Stmts[J].Kind == StmtKind::Return) {
+        if (J < End && Stmts[J].Kind == StmtKind::Return &&
+            Stmts[J].CxxContinuationReturnTargets.empty()) {
           if (auto Slot = namedFrameSlot(S.Kind == StmtKind::Store
                                              ? *S.StoreAddr
                                              : *S.Dst->Operands[0]))
@@ -2237,7 +2238,8 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       I = ForLast;
       continue;
     }
-    if (InEHClauseBody && S.Kind == StmtKind::Return && S.RetVal &&
+    if (InEHClauseBody && S.Kind == StmtKind::Return &&
+        S.CxxContinuationReturnTargets.empty() && S.RetVal &&
         S.RetVal->Kind == ExprKind::Var) {
       const std::string Name = varName(S.RetVal->Var);
       bool AssignedHere = false;

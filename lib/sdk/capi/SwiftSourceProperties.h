@@ -97,7 +97,20 @@ inline std::map<size_t, std::string> incompleteProperties(
 struct PropertySourceMember {
   const SwiftSourceSignature *Signature;
   std::string MemberSource;
+  std::string ModulePreamble = {};
 };
+
+inline std::string
+propertyModulePreamble(const std::vector<PropertySourceMember> &Members) {
+  std::set<std::string> Preambles;
+  for (const auto &Member : Members)
+    if (!Member.ModulePreamble.empty())
+      Preambles.insert(Member.ModulePreamble);
+  std::string Result;
+  for (const auto &Preamble : Preambles)
+    Result += Preamble;
+  return Result;
+}
 
 struct PropertyRuntimeSource {
   /// Only canonical, mutually proven modify/resume pairs may populate this.
@@ -182,7 +195,7 @@ assemblePropertyContext(const SwiftSourceSignature &Context,
           "Swift trivial destructor requires an emitted class");
     Source += "    deinit {}\n";
   }
-  return Source + "}\n";
+  return propertyModulePreamble(Members) + Source + "}\n";
 }
 } // namespace neverd::sdk::swift_source
 

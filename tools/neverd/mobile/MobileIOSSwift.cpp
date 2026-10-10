@@ -1,5 +1,7 @@
 #include "MobileIOSInternal.h"
 
+#include "neverd/backend/swift/SwiftSourceAssembly.h"
+
 #include <algorithm>
 
 namespace neverd::mobile::ios {
@@ -184,7 +186,7 @@ Object swiftCoverage(const Object &inventory, const Object *batch,
       exactCount(*batch, "compiler_projection_method_count",
                  compiler_recovered);
     }
-    std::string combined;
+    std::vector<SwiftSourceUnitText> unit_texts;
     std::map<Identity, size_t> unit_ids;
     for (const auto &v : array(*batch, "source_units")) {
       const auto &unit = object(v, "Swift source unit");
@@ -195,6 +197,13 @@ Object swiftCoverage(const Object &inventory, const Object *batch,
       if ((kind != "function" && kind != "type") || module.empty() ||
           name.empty() || !sourceText(text))
         throw Error("invalid Swift source unit");
+      std::string preamble;
+      if (const auto *value = unit.get("module_preamble")) {
+        auto string = value->getAsString();
+        if (!string || (!string->empty() && !sourceText(string->str())))
+          throw Error("invalid Swift module preamble");
+        preamble = string->str();
+      }
       const auto &entries = array(unit, "method_entries"),
                  &identities = array(unit, "method_identities");
       if (entries.size() != identities.size())
@@ -238,14 +247,16 @@ Object swiftCoverage(const Object &inventory, const Object *batch,
           }
         }
       }
-      combined += text + "\n";
+      unit_texts.push_back({std::move(text), std::move(preamble)});
       units.push_back(Object{{"kind", kind},
                              {"module", module},
                              {"name", name},
                              {"method_entries", Array(entries)},
                              {"method_identities", Array(identities)}});
     }
-    if (unit_ids.size() != recovered_ids.size() || combined != source ||
+    const auto combined = assembleSwiftSourceUnits(unit_texts);
+    if (unit_ids.size() != recovered_ids.size() || !combined ||
+        *combined != source ||
         str(*batch, "coverage_status") !=
             callableStatus(rows.size(), recovered))
       throw Error("Swift report disagrees with emitted source or coverage");

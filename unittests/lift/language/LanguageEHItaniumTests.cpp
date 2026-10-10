@@ -668,6 +668,25 @@ TEST(ItaniumEHDriver, KeepsTheStatedSizeOfANamedFunction) {
   EXPECT_EQ(Img.KnownCodeRanges.size(), 1u);
 }
 
+TEST(ItaniumEHDriver, COFFNamedUnsizedFunctionOwnsItsInteriorBeforeDiscovery) {
+  const va_t FuncVA = kTextVA + 0x100;
+  BinaryImage Img = makeX64FrameImage(FuncVA, 0x80);
+  Img.Format = BinaryFormat::COFF;
+  const std::vector<uint8_t> PaddingLookalike = {0xcc, 0x55, 0x48, 0x89, 0xe5};
+  writeData(Img, FuncVA + 0x3f, PaddingLookalike);
+  Symbol Start = Symbol::makeFunc(FuncVA);
+  Start.Name = "named_function";
+  Start.Origin = NameOrigin::Stated;
+  Img.Symbols.push_back(Start);
+  recordFrameExtents(Img);
+  runPostLoadDiscovery(Img, "test-coff-frame-before-discovery");
+  const Symbol *Function = functionAt(Img, FuncVA);
+  ASSERT_NE(Function, nullptr);
+  EXPECT_EQ(Function->Name, "named_function");
+  EXPECT_EQ(Function->Size, 0u);
+  EXPECT_EQ(functionAt(Img, FuncVA + 0x40), nullptr);
+}
+
 // A linker emits one frame for a whole PLT section; its first stub is not a
 // function of that size.
 TEST(ItaniumEHDriver, LeavesAPLTFrameToItsStubs) {

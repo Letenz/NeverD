@@ -1474,3 +1474,7 @@ Swift SDK Published の enclosing-instance アクセサーは四つのポイン�
 ## モバイルソースの組み立て
 
 Objective-C ソースのエクスポーターは、ネイティブ全体と各メソッドの単位で `CEmitterOptions::EmitRecordGuards` と `CEmitterOptions::UseUnalignedPointers` を無効にします。正確な幅のバイトコピーで非整列メモリアクセスの意味を保ち、生成されたマクロがモバイルのパーサーに入ることを防ぎます。条件付き指令とマクロを変更する指令は引き続き拒否されます。
+
+## 有界ディレクトリ一括属性
+
+DarwinFiles が共通属性の読み込み、名前/stat の有効性、レコード符号化を所有する。DarwinDirectory は一括グループ、明示オブジェクト権限、記述オブジェクトの反復/カーソル/EOF を所有し、getdirentries64 と現在の子の投影を共有する。dup は同じ記述を共有し、ゼロ seek が契約をリセットする。JSON は明示入力を渡し、サービス振り分けはファイルシステム観測を推測しない。

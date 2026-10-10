@@ -113,6 +113,26 @@ Native execution requires an x64 host and Clang; the in-process SSE oracle
 additionally requires GCC/Clang. Skips on other hosts are explicit.
 This suite does not establish packed FP, VEX or x87 state coverage.
 
+`HighSwiftEmitter` checks typed scalar SSE transports, malformed shapes,
+definite local assignment, bounded 96-bit slices and module-wide helper names.
+Generated Swift executes at Onone/O with rounding, DAZ/FTZ, sticky status,
+subnormals, signed zeros, NaN payloads and exact numerical/MXCSR observations.
+Execution markers identify startup and each check boundary. Failed runs retain
+generated source, executables, captured output and actual native elapsed time;
+setting
+`NEVERD_KEEP_SWIFT_EXECUTION_ARTIFACTS` also retains successful local controls.
+Compiler and native execution bounds remain 120 seconds and 5 seconds.
+A separate bounded divide-by-zero control requires native x86_64 macOS;
+Rosetta forces exception masks even for raw SSE, so its unmasked-trap coverage
+is unavailable. `SwiftSourceProperties` compiles actual class members with
+file-level compiler declarations. `MobileIOSNative` rejects false source,
+missing or malformed preamble prefixes and mismatched method identities.
+The unchanged `scripts/test_mobile_swift_backend.py` acceptance workflow
+recompiles and executes arm64/x86_64 with classic/default fixups, checks all
+858 original behavior oracles per variant, and verifies the callable inventory.
+Swift execution requires swiftc; other hosts retain explicit skips. Native
+Intel hardware, Intel HVF and physical iOS are separate validation surfaces.
+
 `NeverDX86FPConversionAccuracyTests` separately covers signed scalar
 CVTSS2SI/CVTSD2SI and CVTTSS2SI/CVTTSD2SI, including their VEX forms. Independent
 32/64-bit source and destination widths, register and memory sources, every
@@ -1857,6 +1877,68 @@ capture a developer's absolute workspace path.
 
 ### Windows exception reconstruction
 
+CRT source regressions use synthetic tables and the pinned Windows corpus:
+
+```bash
+cmake --build build-release --target \
+  NeverDImageAnalysisBoundaryTests NeverDMedEntryFrameTests \
+  NeverDMachOPointerRelocationBoundaryTests \
+  NeverDNativePointerRelocationBoundaryTests \
+  NeverDLLVMCValueTests NeverDLLVMCVectorTests NeverDLLVMCVoidAnalysisTests \
+  NeverDWindowsEHCorpusTests NeverDLiftTests --parallel 4
+build-release/bin/NeverDImageAnalysisBoundaryTests
+build-release/bin/NeverDMedEntryFrameTests
+build-release/bin/NeverDMachOPointerRelocationBoundaryTests
+build-release/bin/NeverDNativePointerRelocationBoundaryTests
+build-release/bin/NeverDLLVMCValueTests
+build-release/bin/NeverDLLVMCVectorTests
+build-release/bin/NeverDLLVMCVoidAnalysisTests
+build-release/bin/NeverDWindowsEHCorpusTests
+build-release/bin/NeverDLiftTests --gtest_filter='ExceptionCFGSeed.*:COFFException*'
+```
+
+`MedImmutableTableScanTests` checks exact sentinel exit counts, integer widths,
+mutable/truncated storage, independent roots and budget refusal. Pointer tests
+cover nested recurrences, shared expression DAGs, role-neutral address leaves
+and independently materialized SELECT arms. Both suites retain ambiguous
+relocatable comparisons and distinguish adjacent objects' one-past addresses.
+C value tests compile and execute
+relocated address arithmetic and freeze projections at O0/O2; vector and FP
+helper tests cover indirect calls and emitted Windows analysis bodies.
+
+`NativeImages/MedImmutableTableScanMatrix` runs the same scan, address-width,
+PHI-completeness and refusal contracts across x86, x64, ARM and AArch64 in each
+of PE/COFF, ELF and Mach-O. It rejects narrow address tags, unmarked address
+bits, duplicate/missing predecessor arms, volatile reads and independent
+entries. `DefinitionInventorySharesTheEvaluationBudget` prevents uncharged
+definition indexing from bypassing the bounded evaluator. These are shared
+MedIR/storage checks, not execution of each platform's runtime.
+The matrix also retains graphs owned by source-call certificates; scalar
+equivalence alone does not authorize erasing their original LOAD occurrences.
+`ImmutablePEPointer.ScalarReadsRespectTheTargetPointerWidth` verifies that a
+32-bit relocation cannot claim its adjacent null sentinel. Function discovery
+checks debug storage and FDE extents on all twelve native target/format cells,
+including Thumb-tagged pointers and explicitly named interior entries.
+`ImmutablePEPointer.CodeTargetsNeedImmutableAlignedInstructionStorage` retains
+x86 unaligned entries but rejects unaligned AArch64 targets, writable code,
+truncated instructions and targets lacking function evidence.
+`ImmutableImageBytes.ARMLiteralReadsStayInsideTheirDataIsland` rejects reads
+that cross from an ARM literal island into instructions in all three formats.
+`PreservesPureRematerializedTableBaseRecurrence` exercises both untagged and
+role-neutral address leaves in PE, ELF and Mach-O. Native ELF/PE fixtures also
+require AArch64 ADRP/ADD and x64 LEA recurrences to resolve through the same
+table-address model.
+
+`MedCxxContinuationFrame` verifies that catch and normal paths address the same
+local, rejects inconsistent unwind/stack effects and ordinary roots, and checks
+the public MSVC nested catch's parameter count and resume labels. The broader
+Windows corpus includes Clang FH3 state maps. `ExceptionCFGSeed` covers exact
+return-PC state lookup and an IP boundary inside an instruction. These source
+checks do not establish native execution of regenerated C++ exceptions.
+For MinGW performance comparisons, use Release and time a fresh full EXE load
+as well as `decompile --llvm --func`; retain the binary, command and output
+outside the repository. Successful output alone is not semantic equivalence.
+
 Windows table-based exception changes need both representation tests and a
 linked-PE patch test. The focused lift-suite filter covers the normalized
 unwind/SEH/C++ model, corrupt-input handling, exceptional CFG edges, HighIR,
@@ -2563,6 +2645,9 @@ The required execution policy follows existing CI ownership:
   cover worker exception transport, SDK session state, exact native LLVM
   function identity and verified caching, the semantic fixture, and pipeline
   outcome publication.
+  `NeverDImageAnalysisBoundaryTests` is also mandatory on all three hosts:
+  removing, excluding, skipping or failing a discovered native-image proof
+  case fails the CI evidence audit.
 - Linux must also execute the SBF external oracle, upstream conformance, and
   Agave conformance suites because that leg installs their pinned dependencies.
 - The only platform exceptions within these required suites are
@@ -3510,3 +3595,12 @@ See [released GKI contracts](android-gki-kernels.md).
 `DarwinFileTest.Xattr*` exercises both4096/16384-byte pages, full/short/query buffers, name and carrier bounds, complete ordered list prefixes, aliases and inaccessible tails, transport/budget errors, CWD/link policy, dup/removal/name reuse, independent stat validity and content invalidation. `DarwinFileOptions.Xattr*` bounds names/count/bytes and implicit-directory entry costs; `ProcessReport.DarwinXattr*` rejects malformed records without losing UTF8/order/opaque bytes. `DarwinProcess.ExtendedAttributesPreserveValuesNamesAndObjectLifetime` is required for every available ARM64 HVF profile. The three original modes also run through C/CLI and the unchanged Python SDK integration method across five thin profiles.
 
 `extended-attributes` is the only new native case. The private runner seeds ordinary attributes on its own file after resetting bytes, then the original raw-call workload derives list boundaries from the provider’s actual names, including automatic provenance. Literal and unknown modes are virtual-only. Native5s, newguest/Python5,000,000us/quantum1024 and public10s remain unchanged. Negative buffers on an explicitly empty list are unsupported because the private clear operation never produced a verified native empty list. Native Intel/physical iOS remain unverified. Root-only serial epochs retain source, products, controller inputs, failures, timeout captures and reap evidence.
+
+## Bounded bulk directory attributes
+
+The bulk-attributes workload checks whole groups, name/type membership, guarded unused bytes, low32 FD, bitmap words, native errors, dup/shared progress, independent opens, cached EOF and zero rewind. Literal and unknown modes are virtual-only. Model tests also cover full stat, invalidation, NFD/255-byte names, request/output aliasing, transport/budget failures, held moves/SWAP/removal/reuse and explicit authorization. Required native inventory is 63 workloads per platform: 189 matching ARM64 cases and 126 Intel cases. Only matching ARM64 HVF execution is locally verified. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
+
+
+## Darwin ordinary attribute mutations
+
+`XattrMutation*` model tests check both4KiB/16KiB pages, guarded literal values, low carriers, import/existence precedence, permission separation, name/value aliases, transport and budget rollback, reserved initial slots, shared growth and orphan/mapping lifetime. Strict JSON tests cover all three initial object kinds. The original `xattr-mutations`, `xattr-mutations-values` and `xattr-mutations-unsupported` workload modes cover all five thin Mach-O profiles through guest, C, CLI and the complete Python method. Native inventories retain every existing case and require the new workload on each available matching transport. Native Intel/physical iOS and complete Apple frameworks are separate unavailable coverage.

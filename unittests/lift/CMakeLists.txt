@@ -3,6 +3,16 @@ add_neverd_unittest(NeverDPEProgramExportsTests
   LINK_COMPONENTS Loader
 )
 
+add_neverd_unittest(NeverDMedEntryFrameTests
+  core/MedSSAMultiRootTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDMedEntryFrameTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+if(NEVERD_ENABLE_BINARY_CORPUS_TESTS)
+  target_compile_definitions(NeverDMedEntryFrameTests PRIVATE
+    NEVERD_BINARY_CORPUS_ROOT="${NEVERD_BINARY_CORPUS_ROOT}")
+endif()
+
 add_neverd_unittest(NeverDLiftTests
   core/X64MemoryCallTargetTests.cpp
   aarch64/AArch64_ArithTests.cpp
@@ -135,6 +145,7 @@ add_neverd_unittest(NeverDLiftTests
   core/SourceABITests.cpp
   core/AdjacentCallTests.cpp
   core/MedConstantPropagationTests.cpp
+  core/MedImmutableTableScanTests.cpp
   core/JumpTableTargetOwnerTests.cpp
   core/SourceAggregateTests.cpp
   core/SourceCallReturnTests.cpp
@@ -1325,6 +1336,13 @@ add_neverd_unittest(NeverDLLVMCVoidAnalysisTests
 
   LINK_COMPONENTS
   BackendC
+)
+
+add_neverd_unittest(NeverDImageAnalysisBoundaryTests
+  core/MedConstantPropagationTests.cpp
+  core/MedImmutableTableScanTests.cpp
+  format/FunctionDiscoveryAlignmentTests.cpp
+  LINK_COMPONENTS IR Loader
 )
 
 target_include_directories(NeverDLLVMCVoidAnalysisTests PRIVATE

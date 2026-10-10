@@ -1418,9 +1418,10 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchInsideBlockSplitsContinuation) {
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("after_resume(", CatchAt), std::string::npos) << Source;
-  const auto BodyAt = Source.find("void native_ool_catch_interior(");
-  ASSERT_NE(BodyAt, std::string::npos) << Source;
-  EXPECT_EQ(Source.find("before_resume(", BodyAt), std::string::npos) << Source;
+  // The module may retain an unused declaration; the continuation must skip
+  // the call in the emitted catch body.
+  EXPECT_EQ(Source.find("before_resume(", CatchAt), std::string::npos)
+      << Source;
 }
 
 TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchInteriorStoreStaysBeforeResume) {
@@ -1490,9 +1491,8 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchInteriorStoreStaysBeforeResume) {
   const auto CallAt = Source.find("catch_funclet(", CatchAt);
   ASSERT_NE(CallAt, std::string::npos) << Source;
   EXPECT_NE(Source.find("after_resume(", CatchAt), std::string::npos) << Source;
-  const auto BodyAt = Source.find("void native_ool_catch_interior_store(");
-  ASSERT_NE(BodyAt, std::string::npos) << Source;
-  EXPECT_EQ(Source.find("before_resume(", BodyAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("before_resume(", CatchAt), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("slot_mark", CatchAt), std::string::npos) << Source;
 }
 

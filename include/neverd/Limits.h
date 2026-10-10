@@ -185,6 +185,11 @@ static_assert(uint64_t{kMaxJumpTableProposalStageEvidenceWork} >=
 /// keeps the ordinary relocation mirror instead of suppressing any slot.
 constexpr uint32_t kMaxJumpTableTerminalUseEvidenceWork = 16777216;
 
+/// Cumulative expression visits in one pointer recurrence query, including
+/// initializer and alias proofs. A depth cap alone cannot bound a branching
+/// SSA graph. Exhaustion grants no recurrence evidence.
+constexpr uint32_t kMaxPointerRecurrenceEvidenceWork = 65536;
+
 /// Maximum recursive depth while reconstructing one exact guard expression.
 /// The shared evidence-work budget bounds total graph size; this separate
 /// ceiling prevents a single adversarial linear chain from exhausting the C++

@@ -2,6 +2,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Support/Endian.h"
 
 #include <set>
@@ -9,15 +10,17 @@
 namespace neverd {
 namespace {
 bool supportedImage(const BinaryImage &Image) {
-  return Image.Format == BinaryFormat::MachO && !Image.IsRelocatable &&
-         Image.Bits == Bitness::Bits64 && !Image.MachOChainedFixupsAmbiguous &&
-         (Image.Arch == Arch::AArch64 || Image.Arch == Arch::X64);
+  return Image.Format == BinaryFormat::MachO && Image.Bits == Bitness::Bits64 &&
+         supportsImmutableImageReads(Image);
+}
+
+bool supportedPEImage(const BinaryImage &Image) {
+  return Image.Format == BinaryFormat::COFF &&
+         supportsImmutableImageReads(Image);
 }
 
 bool supportedImmutableCodeImage(const BinaryImage &Image) {
-  return supportedImage(Image) ||
-         (Image.Format == BinaryFormat::COFF && !Image.IsRelocatable &&
-          Image.Arch == Arch::X86 && Image.Bits == Bitness::Bits32) ||
+  return supportedImage(Image) || supportedPEImage(Image) ||
          (Image.Format == BinaryFormat::ELF && !Image.IsRelocatable &&
           Image.Arch == Arch::ARM && Image.Bits == Bitness::Bits32);
 }
@@ -31,6 +34,14 @@ const uint8_t *mappedBytes(const BinaryImage &Image, va_t Address,
                            uint64_t Extent, bool Immutable, bool Code = false) {
   if (!Address || Address > InvalidVA - Extent)
     return nullptr;
+  if (Code) {
+    if (!Image.isCodeRange(Address, Extent))
+      return nullptr;
+  } else {
+    const auto End = Image.mappedObjectOwnerEnd(Address);
+    if (!End || *End < Address || Extent > *End - Address)
+      return nullptr;
+  }
   const auto *Section = Image.getSectionFor(Address);
   const auto *Segment = Image.getSegmentFor(Address);
   if (!Section && Code && Image.Format == BinaryFormat::ELF &&
@@ -79,14 +90,16 @@ const uint8_t *mappedBytes(const BinaryImage &Image, va_t Address,
 // normalized slot kind, with independently checked resolution and target.
 bool hasConflictingFixups(const BinaryImage &Image, va_t Address,
                           uint64_t Extent, bool Pointer, bool Import = false,
-                          bool ObjCReference = false,
-                          bool CodePointer = false) {
+                          bool ObjCReference = false, bool CodePointer = false,
+                          bool ExactPEPointer = false) {
+  const uint64_t PointerWidth = Image.getPointerSize();
   auto Touches = [&](const auto &Slots, auto Key, bool AllowExact = false) {
-    auto It = Slots.lower_bound(Address >= 7 ? Address - 7 : 0);
+    auto It = Slots.lower_bound(
+        Address >= PointerWidth - 1 ? Address - (PointerWidth - 1) : 0);
     for (; It != Slots.end() &&
            (Key(*It) < Address || Key(*It) - Address < Extent);
          ++It)
-      if (overlaps(Address, Extent, Key(*It), 8) &&
+      if (overlaps(Address, Extent, Key(*It), PointerWidth) &&
           !(AllowExact && Key(*It) == Address))
         return true;
     return false;
@@ -111,19 +124,41 @@ bool hasConflictingFixups(const BinaryImage &Image, va_t Address,
   for (const auto &Relocation : Image.Relocations)
     if (overlaps(Address, Extent, Relocation.Address, 8))
       return true;
-  for (const auto &Relocation : Image.BaseRelocations)
-    if (overlaps(Address, Extent, Relocation.Address, 8))
+  for (const auto &Relocation : Image.BaseRelocations) {
+    const uint64_t Width =
+        Relocation.Type == llvm::COFF::IMAGE_REL_BASED_HIGHLOW ? 4 : 8;
+    if (overlaps(Address, Extent, Relocation.Address, Width) &&
+        !(ExactPEPointer && Relocation.Address == Address &&
+          Width == PointerWidth &&
+          (Relocation.Type == llvm::COFF::IMAGE_REL_BASED_HIGHLOW ||
+           Relocation.Type == llvm::COFF::IMAGE_REL_BASED_DIR64)))
       return true;
+  }
   for (const auto &Slot : Image.RuntimeCallablePointerSlots)
-    if (overlaps(Address, Extent, Slot.SlotVA, 8))
+    if (overlaps(Address, Extent, Slot.SlotVA, PointerWidth))
       return true;
   return false;
 }
 } // namespace
 
+bool supportsImmutableImageReads(const BinaryImage &Image) {
+  if (Image.IsRelocatable || (Image.Format != BinaryFormat::COFF &&
+                              Image.Format != BinaryFormat::ELF &&
+                              Image.Format != BinaryFormat::MachO))
+    return false;
+  if (Image.Format == BinaryFormat::MachO &&
+      (Image.MachOChainedFixupsAmbiguous ||
+       (Image.MachOHasChainedFixups && Image.Bits != Bitness::Bits64)))
+    return false;
+  return (Image.Bits == Bitness::Bits32 &&
+          (Image.Arch == Arch::X86 || Image.Arch == Arch::ARM)) ||
+         (Image.Bits == Bitness::Bits64 &&
+          (Image.Arch == Arch::X64 || Image.Arch == Arch::AArch64));
+}
+
 std::optional<std::vector<uint8_t>>
 readImmutableImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
-  if (!supportedImage(Image) || Size > 1024 * 1024)
+  if (!supportsImmutableImageReads(Image) || Size > 1024 * 1024)
     return std::nullopt;
   // A zero-length borrow still requires a valid nonnull object address.
   const uint64_t Extent = Size ? Size : 1;
@@ -244,6 +279,16 @@ bool isFileBackedWritableImageRange(const BinaryImage &Image, va_t Address,
 }
 
 namespace {
+bool immutableLocalCodeTarget(const BinaryImage &Image, va_t Target) {
+  return Image.Arch != Arch::ARM &&
+         (Image.Arch != Arch::AArch64 || Target % 4 == 0) &&
+         Image.hasAuthenticatedFunctionEntryAt(Target) &&
+         !Image.findImportStubAt(Target) &&
+         readImmutableCodeBytes(Image, Target,
+                                Image.Arch == Arch::AArch64 ? 4 : 1)
+             .has_value();
+}
+
 std::optional<va_t> readResolvedPointer(const BinaryImage &Image, va_t Address,
                                         bool Immutable,
                                         bool SelectorReference = false) {
@@ -262,15 +307,53 @@ std::optional<va_t> readResolvedPointer(const BinaryImage &Image, va_t Address,
     return std::nullopt;
   return Target;
 }
+std::optional<va_t> readImmutablePEPointer(const BinaryImage &Image,
+                                           va_t Address, bool Code) {
+  if (supportedPEImage(Image)) {
+    const unsigned Width = Image.getPointerSize();
+    const auto &Slots =
+        Code ? Image.CodePtrRelocSlots : Image.DataPtrRelocSlots;
+    if ((Width != 4 && Width != 8) || !Slots.count(Address))
+      return std::nullopt;
+    const unsigned Type = Width == 8 ? llvm::COFF::IMAGE_REL_BASED_DIR64
+                                     : llvm::COFF::IMAGE_REL_BASED_HIGHLOW;
+    unsigned ExactRelocations = 0;
+    for (const auto &Relocation : Image.BaseRelocations)
+      if (Relocation.Address == Address) {
+        if (Relocation.Type != Type || ++ExactRelocations != 1)
+          return std::nullopt;
+      }
+    if (ExactRelocations != 1)
+      return std::nullopt;
+    const auto *Bytes = mappedBytes(Image, Address, Width, true);
+    const auto Owner = Image.DataPtrRelocTargetOwners.find(Address);
+    if (!Bytes || (!Code && Owner == Image.DataPtrRelocTargetOwners.end()) ||
+        hasConflictingFixups(Image, Address, Width, !Code, false, false, Code,
+                             true))
+      return std::nullopt;
+    const uint64_t Target = Width == 8 ? llvm::support::endian::read64le(Bytes)
+                                       : llvm::support::endian::read32le(Bytes);
+    if (!mappedBytes(Image, Target, 1, false, Code) ||
+        (!Code && Image.getSectionFor(Target)->VA != Owner->second) ||
+        (Code && !immutableLocalCodeTarget(Image, Target)))
+      return std::nullopt;
+    return Target;
+  }
+  return std::nullopt;
+}
 } // namespace
 
 std::optional<va_t> readImmutableImagePointer(const BinaryImage &Image,
                                               va_t Address) {
+  if (supportedPEImage(Image))
+    return readImmutablePEPointer(Image, Address, false);
   return readResolvedPointer(Image, Address, true);
 }
 
 std::optional<va_t> readImmutableImageCodePointer(const BinaryImage &Image,
                                                   va_t Address) {
+  if (supportedPEImage(Image))
+    return readImmutablePEPointer(Image, Address, true);
   if (!supportedImage(Image) || Address % 8 || !Image.MachOHasChainedFixups ||
       !Image.CodePtrRelocSlots.count(Address) ||
       !Image.MachOResolvedChainedPointerSlots.count(Address))
@@ -280,11 +363,7 @@ std::optional<va_t> readImmutableImageCodePointer(const BinaryImage &Image,
       hasConflictingFixups(Image, Address, 8, false, false, false, true))
     return std::nullopt;
   const auto Target = llvm::support::endian::read64le(Bytes);
-  if ((Image.Arch == Arch::AArch64 && Target % 4) ||
-      !Image.hasAuthenticatedFunctionEntryAt(Target) ||
-      Image.findImportStubAt(Target) ||
-      !readImmutableCodeBytes(Image, Target,
-                              Image.Arch == Arch::AArch64 ? 4 : 1))
+  if (!immutableLocalCodeTarget(Image, Target))
     return std::nullopt;
   return Target;
 }

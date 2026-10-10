@@ -160,6 +160,11 @@ struct DarwinDirectoryEnumerationPolicy {
   /// Additional minimum when starting at the first record; at most 128 MiB.
   uint32_t InitialMinimumBufferSize = 0;
   uint64_t SeekOffset = 0;
+  /// Explicit virtual TYPE bulk enumeration: sorted live child names, local
+  /// ordinals and independent iteration/EOF state. Does not infer APFS cookies.
+  /// This initial object grant is not inherited by newly created directories.
+  /// The two buffer minima and SeekOffset above apply only to getdirentries64.
+  bool BulkAttributes = false;
 };
 
 /// Closed initial catalogue, with canonical absolute guest paths. No host
@@ -181,6 +186,12 @@ struct DarwinFileOptions {
   /// excluded. Neither permissions nor host attributes are inferred.
   std::map<std::string, std::vector<DarwinExtendedAttribute>>
       ExtendedAttributes;
+  /// Independent ordinary xattr mutation grants on initial objects with a
+  /// complete observed list. Created objects and reused names do not inherit
+  /// them. Replacement keeps its slot, deletion removes it, creation appends.
+  /// Initial bytes/count remain reserved; runtime excess shares the catalogue
+  /// limits. Success invalidates complete stat, without changing enumeration.
+  std::set<std::string> MutableExtendedAttributes;
   /// Explicit directories, including empty ones; root and ancestors are
   /// implicit.
   std::set<std::string> Directories;

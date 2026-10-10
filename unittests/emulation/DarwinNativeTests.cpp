@@ -1106,7 +1106,9 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
     auto CaseInput = Input;
     if (llvm::StringRef(Test.Mode) == "common-attributes" ||
         llvm::StringRef(Test.Mode) == "extended-attributes" ||
-        llvm::StringRef(Test.Mode) == "attribute-names") {
+        llvm::StringRef(Test.Mode) == "attribute-names" ||
+        llvm::StringRef(Test.Mode) == "bulk-attributes" ||
+        llvm::StringRef(Test.Mode) == "xattr-mutations") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
       for (const auto &[Name, Target] :

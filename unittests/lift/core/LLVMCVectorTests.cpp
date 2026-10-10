@@ -727,6 +727,44 @@ int main(void) {
   compileAndRun(Selected + Runtime);
 }
 
+TEST(LLVMCValues, IndirectIntegerVectorCallPreservesSignatureAndLanes) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("indirect-vector-boundary", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *Vector = llvm::FixedVectorType::get(llvm::Type::getInt64Ty(Context), 2);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  auto *Signature = llvm::FunctionType::get(Vector, {Vector}, false);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Vector, {Pointer, Vector}, false),
+      llvm::GlobalValue::ExternalLinkage, "indirect_vector", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Called =
+      Builder.CreateCall(Signature, Function->getArg(0), {Function->getArg(1)});
+  Builder.CreateRet(Builder.CreateShuffleVector(Called, Called, {1, 0}));
+  ASSERT_FALSE(llvm::verifyModule(Module));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  compileAndRun(Source + R"(
+typedef uint64_t lanes __attribute__((vector_size(16)));
+lanes vector_callback(lanes value) {
+  return (lanes){value[0] + 17, value[1] ^ UINT64_C(0xfedcba9876543210)};
+}
+int main(void) {
+  const uint64_t values[] = {0, 1, UINT64_C(0x123456789abcdef0), UINT64_MAX};
+  for (unsigned i = 0; i < 4; ++i) {
+    lanes input = {values[i], values[3 - i]};
+    lanes result = indirect_vector(vector_callback, input);
+    if (result[0] != (input[1] ^ UINT64_C(0xfedcba9876543210)) ||
+        result[1] != input[0] + 17)
+      return i + 1;
+  }
+  return 0;
+}
+)");
+}
+
 TEST(LLVMCValues, SelectedIntegerVectorFunctionKeepsConstantsAndLaneUpdates) {
   llvm::LLVMContext Context;
   llvm::Module Module("selected-vector-boundary", Context);

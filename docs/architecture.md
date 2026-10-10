@@ -1116,6 +1116,59 @@ The loader validates bounded, acyclic graphs of Darwin constant strings, integer
 
 ## IR representations and routes
 
+COFF loading records validated DWARF FDE extents before heuristic function
+discovery. Those extents also bound named symbols with no size. Debug sections
+do not supply pointer-table or relocation-scan roots, including debug ranges
+inside an otherwise loadable segment. This keeps CRT internal labels owned by
+their containing function without discarding independently proven entries.
+
+Shared MedIR constant propagation evaluates immutable linked-image table scans
+before the source routes diverge. PE/COFF, ELF and Mach-O share the native
+x86, x64, ARM and AArch64 byte-read contract. `ReadOnlyBytes` owns target and
+format admission, mapped storage and relocation
+checks; the evaluator cannot interpret a relocated pointer as raw scalar
+bytes. Pointer slots use the target's width, and unmarked pointer-sized bytes
+that could represent an image address retain their LOAD. Exact pointer
+projection still requires the corresponding format-specific relocation proof.
+PE and Mach-O code-pointer readers share the same authenticated local target,
+instruction alignment and complete immutable instruction-storage checks.
+A single-block scan must terminate within its work/iteration limits,
+have no side effects or independent entry, and produce every exit value before
+replacement. The whole invocation shares one work budget across definition
+indexing, rounds and loops; incomplete indexes are never published. Both
+constant propagation and scan evaluation use `hasCompleteOrdinaryPhiInputs`
+to require every actual predecessor exactly once at the PHI's width.
+Unproved scans retain their original CFG. LLVM pointer recurrence
+proofs separately memoize only path-independent results under a work budget;
+independent roots remain reachable when constant edges are pruned.
+Retained source-call certificates keep their original MedIR value graphs until
+a transformation can rebind their occurrence and frame evidence. A role-neutral
+address in a pointer mirror remains a valid raw recurrence initializer, matching
+the emitter's deferred address materialization rather than requiring an eager
+data-pointer projection.
+Both proofs retain exact object ownership, including one-past addresses at an
+adjacent section boundary. The shared evaluator uses the image's conservative
+relocation predicate for untagged constants; equal original VAs alone cannot
+establish equality between independently rebuilt objects.
+
+FH3 catch-return evidence binds the source funclet, return instruction and
+owning continuation after module discovery converges. Shared SSA verifies the
+parent's unwind, decoded prologue and converted stack effects before restoring
+its frame. Synchronous x64 C++ exceptional edges retain the throwing call's
+address and use its saved return PC for state lookup; SSA samples restored
+registers before that call. This handles IP-map boundaries inside instructions
+as emitted by [older LLVM versions](https://github.com/llvm/llvm-project/blob/llvmorg-18.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L875).
+HighIR uses only certified catch returns to form continuation jumps, including
+nested catches. Independent ordinary entries cannot borrow this frame proof.
+
+LLVMC preserves relocatable constant address arithmetic, and constant
+`ptrtoint` of a global denotes its address, not initializer bytes. Freeze
+projection requires either LLVM definedness or a bounded integer expression
+whose C evaluation refines it without introducing undefined behavior.
+Division additionally requires defined operands. Helper discovery covers all
+emitted bodies, including Windows analysis bodies; supported indirect vector
+calls use the same C vector ABI as direct calls.
+
 `ir/FloatConversion.h` owns the result policy for scalar float-to-integer
 operations: saturation for the non-x86 path and x86 indefinite results for
 invalid conversions. HighC and the LLVM lowering select that same policy;
@@ -1138,6 +1191,17 @@ evidence. Its configured reset environment remains the concrete starting
 profile. Generic external FLOAT operations, packed FP, VEX arithmetic and
 remaining x87 control/TOP/tag semantics retain their separate contracts;
 this scalar state surface does not certify them.
+
+Swift consumes the same typed HighIR state contract for scalar SSE arithmetic.
+Its x86_64-only compiler pointer intrinsics import and commit MXCSR; numerical
+helpers disable optimization so arithmetic stays between those effects. The
+96-bit double-result/state carrier supports defined local copies and bounded
+byte extraction, not general memory or arithmetic. File-level declarations
+belong to the module preamble, separate from member bodies.
+`assembleSwiftSourceUnits` is the shared SDK and mobile-validation owner: each
+unit includes its exact preamble prefix, while the complete file places each
+distinct preamble once before the ordered unit bodies. Module-wide storage
+and declaration names participate in helper allocation before emission.
 
 The experimental [interpreter recovery stage](interpreter-recovery.md)
 specializes strictly lifted LowIR before the common MedIR boundary. Its
@@ -3877,3 +3941,12 @@ Frame-offset proof keys normalize a top-level 64-bit address sum by removing its
 ## Mobile source assembly
 
 The Objective-C source exporter clears `CEmitterOptions::EmitRecordGuards` and `CEmitterOptions::UseUnalignedPointers` for the complete native unit and individual method units. Exact-width byte copies preserve unaligned memory access while keeping generated macros outside the mobile parser; conditional and mutating directives remain rejected.
+
+## Bounded bulk directory attributes
+
+DarwinFiles owns common attribute import, name/stat validity and record encoding. DarwinDirectory owns bulk grouping, explicit object authorization and description-owned iteration/cursor/EOF state, sharing the live child membership projection with getdirentries64. Dup shares one description; zero seek resets its iteration contract. JSON supplies explicit policy inputs, and service dispatch delegates without inventing filesystem observations.
+
+
+## Ordinary Darwin attribute mutations
+
+DarwinFiles owns retained attribute state, initial-object mutation grants, shared name import and complete-stat validity. DarwinExtendedAttributes stages value/list changes before one commit. Fixed initial reservations and runtime attribute excess use the same storage/count owner as content and namespace mutations; unlinked objects and mapping leases retain their dynamic charge until final release. JSON only imports explicit grants. Directory attribute mutation invalidates full metadata independently of membership, snapshots and enumeration versions.

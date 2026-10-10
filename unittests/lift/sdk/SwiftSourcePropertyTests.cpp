@@ -11,6 +11,8 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstdlib>
+
 using namespace neverd;
 using namespace neverd::sdk;
 
@@ -120,7 +122,9 @@ void executeSwift(const std::string &Source) {
   const std::string Path = Directory.str().str() + "/main.swift";
   const std::string Executable = Directory.str().str() + "/verify";
   const std::string Log = Directory.str().str() + "/compiler.log";
-  const std::string Cache = Directory.str().str() + "/cache";
+  const char *ConfiguredCache = std::getenv("NEVERD_SWIFT_MODULE_CACHE");
+  const std::string Cache =
+      ConfiguredCache ? ConfiguredCache : Directory.str().str() + "/cache";
   std::error_code EC;
   {
     llvm::raw_fd_ostream OS(Path, EC);
@@ -145,6 +149,96 @@ void executeSwift(const std::string &Source) {
   llvm::sys::fs::remove_directories(Directory);
 }
 } // namespace
+
+TEST(SwiftSourceProperties, CompilerPreamblesSurviveTypeAssemblyExactlyOnce) {
+  SwiftSourceSignature S;
+  S.Entry = 0x1000;
+  S.MangledSymbol = "$s_native_state_reader";
+  S.Module = "Demo";
+  S.ContextKind = "class";
+  S.ContextName = "StateReader";
+  S.ContextLayoutKnown = true;
+  S.Name = "readState";
+  S.ReturnType = {SwiftSourceType::Kind::Integer, "UInt32", 32, false, nullptr};
+  HighFunc F;
+  F.Entry = S.Entry;
+  F.ReturnType = NdType::makeInt(4, false);
+  F.Params = {{"swift_self", NdType::makePtr(NdType::makeVoid())}};
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeCall("read", 0, {});
+  Return.RetVal->IntrinsicId = Intrinsic::X86ReadMXCSR;
+  Return.RetVal->Type = F.ReturnType;
+  F.Body = {Return};
+  auto A = HighSwiftEmitter().emit(F, S);
+  ASSERT_TRUE(A.Recovered) << A.Reason;
+  const auto First = S;
+  S.Name = "anotherState";
+  auto B = HighSwiftEmitter().emit(F, S);
+  ASSERT_TRUE(B.Recovered) << B.Reason;
+  const auto Text = swift_source::assemblePropertyContext(
+      S, {{&First, A.MemberSource, A.ModulePreamble},
+          {&S, B.MemberSource, B.ModulePreamble}});
+  EXPECT_EQ(Text.find(A.ModulePreamble), 0U);
+  EXPECT_EQ(Text.find(A.ModulePreamble, A.ModulePreamble.size()),
+            std::string::npos);
+  EXPECT_EQ(Text.find("class `StateReader`"), A.ModulePreamble.size());
+  EXPECT_EQ(Text.find("@_silgen_name", A.ModulePreamble.size()),
+            std::string::npos);
+#if defined(__APPLE__)
+  auto Compiler = llvm::sys::findProgramByName("swiftc");
+  if (!Compiler)
+    GTEST_SKIP() << "Swift state source execution requires swiftc";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-swift-state-type",
+                                                    Directory));
+  struct Cleanup {
+    std::string Path;
+    ~Cleanup() { (void)llvm::sys::fs::remove_directories(Path); }
+  } Cleanup{Directory.str().str()};
+  const std::string Path = Directory.str().str() + "/main.swift";
+  const std::string Executable = Directory.str().str() + "/verify";
+  const std::string Log = Directory.str().str() + "/compiler.log";
+  const char *ConfiguredCache = std::getenv("NEVERD_SWIFT_MODULE_CACHE");
+  const std::string Cache =
+      ConfiguredCache ? ConfiguredCache : Directory.str().str() + "/cache";
+  std::error_code EC;
+  {
+    llvm::raw_fd_ostream Output(Path, EC);
+    ASSERT_FALSE(EC);
+    Output << Text << R"swift(
+let reader = StateReader()
+for mode in 0..<32 {
+    let bits = Swift.UInt32(mode)
+    var incoming: Swift.UInt32 = 0x1f80
+    incoming |= (bits >> 3) << 13
+    incoming |= ((bits >> 2) & 1) << 6
+    incoming |= ((bits >> 1) & 1) << 15
+    if bits & 1 != 0 { incoming |= 0x21 }
+    nd_x86_ldmxcsr_0(&incoming)
+    Swift.precondition(reader.readState() == incoming)
+    Swift.precondition(reader.anotherState() == incoming)
+}
+)swift";
+  }
+  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt,
+                                                      std::nullopt, Log};
+  std::string Error;
+  const int Compiled = llvm::sys::ExecuteAndWait(
+      *Compiler,
+      {*Compiler, "-target", "x86_64-apple-macosx13.0", "-O",
+       "-module-cache-path", Cache, Path, "-o", Executable},
+      std::nullopt, Redirects, 120, 0, &Error);
+  auto Errors = llvm::MemoryBuffer::getFile(Log);
+  ASSERT_EQ(Compiled, 0) << Error
+                         << (Errors ? (*Errors)->getBuffer().str() : "") << "\n"
+                         << Text;
+  EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}, std::nullopt,
+                                      Redirects, 5, 0, &Error),
+            0)
+      << Error;
+#endif
+}
 
 TEST(SwiftSourceProperties,
      BackingNamesAreFrozenAcrossInitializerMethodsAndFailedAccessors) {

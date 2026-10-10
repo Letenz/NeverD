@@ -173,7 +173,8 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     }
     return -1;
   };
-  std::set<std::tuple<int, va_t, ExceptionalEdgeKind, uint32_t, int32_t>> Edges;
+  std::set<std::tuple<int, va_t, ExceptionalEdgeKind, uint32_t, int32_t, va_t>>
+      Edges;
   size_t RegistrationEdgeWork = 0;
   bool RegistrationEdgesExhausted = false;
   auto ChargeRegistrationEdge = [&] {
@@ -201,9 +202,11 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     return true;
   };
   auto AddEdge = [&](LowBlock &Source, va_t TargetVA, ExceptionalEdgeKind Kind,
-                     uint32_t Region, int32_t State) {
+                     uint32_t Region, int32_t State,
+                     va_t SourceVA = InvalidVA) {
     if (TargetVA == 0 || !ChargeRegistrationEdge() ||
-        !Edges.emplace(Source.Id, TargetVA, Kind, Region, State).second)
+        !Edges.emplace(Source.Id, TargetVA, Kind, Region, State, SourceVA)
+             .second)
       return;
     ExceptionalEdge Edge;
     Edge.BlockId = TargetBlockId(TargetVA);
@@ -211,6 +214,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     Edge.Kind = Kind;
     Edge.RegionIndex = Region;
     Edge.State = State;
+    Edge.SourceVA = SourceVA;
     Source.ExceptionalSuccs.push_back(Edge);
     if (auto It = BlocksById.find(Edge.BlockId); It != BlocksById.end()) {
       ExceptionalEdge Pred = Edge;
@@ -256,6 +260,30 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
 
   if (Metadata.Cxx) {
     const CxxExceptionInfo &Cxx = *Metadata.Cxx;
+    auto AddCxxEdges = [&](LowBlock &Block, va_t IP, va_t SourceVA) {
+      int32_t State = -1;
+      for (const CxxIPState &IPState : Cxx.IPMap) {
+        if (IPState.IP > IP)
+          break;
+        State = IPState.State;
+      }
+      if (State < 0 || State >= static_cast<int32_t>(Cxx.UnwindMap.size()))
+        return;
+
+      const CxxUnwindAction &Cleanup = Cxx.UnwindMap[State];
+      if (Cleanup.ActionVA != 0)
+        AddEdge(Block, Cleanup.ActionVA, ExceptionalEdgeKind::CxxCleanup,
+                static_cast<uint32_t>(State), State, SourceVA);
+
+      for (size_t I = 0; I < Cxx.TryBlocks.size(); ++I) {
+        const CxxTryBlock &Try = Cxx.TryBlocks[I];
+        if (State < Try.TryLow || State > Try.TryHigh)
+          continue;
+        for (const CxxCatchHandler &Catch : Try.Handlers)
+          AddEdge(Block, Catch.HandlerVA, ExceptionalEdgeKind::CxxCatch,
+                  static_cast<uint32_t>(I), State, SourceVA);
+      }
+    };
     for (LowBlock &Block : Func.Blocks) {
       if (RegistrationEdgesExhausted)
         break;
@@ -300,27 +328,17 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
         }
         continue;
       }
-      int32_t State = -1;
-      for (const CxxIPState &IPState : Cxx.IPMap) {
-        if (IPState.IP > Block.StartAddr)
-          break;
-        State = IPState.State;
-      }
-      if (State < 0 || State >= static_cast<int32_t>(Cxx.UnwindMap.size()))
-        continue;
-
-      const CxxUnwindAction &Cleanup = Cxx.UnwindMap[State];
-      if (Cleanup.ActionVA != 0)
-        AddEdge(Block, Cleanup.ActionVA, ExceptionalEdgeKind::CxxCleanup,
-                static_cast<uint32_t>(State), State);
-
-      for (size_t I = 0; I < Cxx.TryBlocks.size(); ++I) {
-        const CxxTryBlock &Try = Cxx.TryBlocks[I];
-        if (State < Try.TryLow || State > Try.TryHigh)
-          continue;
-        for (const CxxCatchHandler &Catch : Try.Handlers)
-          AddEdge(Block, Catch.HandlerVA, ExceptionalEdgeKind::CxxCatch,
-                  static_cast<uint32_t>(I), State);
+      if (Cxx.IsSynchronous && CurrentImg && CurrentImg->Arch == Arch::X64) {
+        // x64 FH3/FH4 state lookup uses the saved return PC. Clang can put
+        // an IP-map boundary one byte past a label, inside an instruction;
+        // it is not necessarily a basic-block boundary. Preserve each call's
+        // state and source instead of borrowing the state at block entry.
+        for (const LowInstructionBoundary &Insn : Block.InstructionBoundaries)
+          if (Insn.Control == LowInstructionControl::Call && Insn.Size &&
+              Insn.Address <= InvalidVA - Insn.Size)
+            AddCxxEdges(Block, Insn.Address + Insn.Size, Insn.Address);
+      } else {
+        AddCxxEdges(Block, Block.StartAddr, InvalidVA);
       }
     }
   }
