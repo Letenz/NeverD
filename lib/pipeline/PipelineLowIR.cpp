@@ -3114,8 +3114,10 @@ void computeCallRegisterEffects(
       }
     }
     // Keep at most eight completed bodies and four active CFG builders alive.
-    // Small callees stay serial; a pair of large functions can use two cores.
+    // Tiny batches stay serial. Table/stack proofs can dominate bodies only
+    // a few KiB long, so medium batches can also use independent decoders.
     constexpr size_t BatchSize = 8;
+    constexpr uint64_t MinParallelBytes = 4096;
     for (size_t Begin = 0; Begin < Pending.size(); Begin += BatchSize) {
       const size_t Count = std::min(BatchSize, Pending.size() - Begin);
       std::vector<LowFunc> Bodies(Count);
@@ -3148,7 +3150,7 @@ void computeCallRegisterEffects(
               Bodies[I] = ExtraCFG.build(Img, ExtraDec, Entry, Name);
             }
           },
-          Bytes >= 16384 ? 2 : limits::kMinParallelIRWorkItems,
+          Bytes >= MinParallelBytes ? 2 : limits::kMinParallelIRWorkItems,
           /*MaxThreads=*/4);
       if (!Initialized.load(std::memory_order_relaxed))
         return;
