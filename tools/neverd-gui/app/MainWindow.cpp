@@ -1036,7 +1036,8 @@ void MainWindow::connectActions() {
     on(id, [formatOperand, action] { formatOperand(action); });
   // Data items are the disassembly's; a pseudocode window keeps its keys.
   for (const auto &[id, action] :
-       {std::pair{ActionId::EditDefineData, QStringLiteral("data")},
+       {std::pair{ActionId::EditDefineCode, QStringLiteral("code")},
+        std::pair{ActionId::EditDefineData, QStringLiteral("data")},
         std::pair{ActionId::EditDefineString, QStringLiteral("string")},
         std::pair{ActionId::EditUndefine, QStringLiteral("undefine")}})
     on(id, [this, action] {
@@ -1303,9 +1304,11 @@ void MainWindow::updateActions() {
       ->setEnabled(functionEdits && function.has_value());
   const bool dataItems =
       location && !session_.readOnly() && session_.keepsDataItems();
-  for (const auto id : {ActionId::EditDefineData, ActionId::EditDefineString,
-                        ActionId::EditUndefine})
+  for (const auto id : {ActionId::EditDefineCode, ActionId::EditDefineData,
+                        ActionId::EditDefineString, ActionId::EditUndefine})
     actions_.action(id)->setEnabled(dataItems);
+  actions_.action(ActionId::EditDefineCode)
+      ->setEnabled(dataItems && !focusedCodeView());
   const bool operandFormats =
       location && !session_.readOnly() && session_.keepsOperandFormats();
   for (const auto id :
@@ -2209,9 +2212,10 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   for (const auto id :
        {ActionId::EditRename, ActionId::EditComment, ActionId::EditBookmark})
     menu.addAction(actions_.action(id));
-  for (const auto id : {ActionId::EditCreateFunction,
-                        ActionId::EditDeleteFunction, ActionId::EditDefineData,
-                        ActionId::EditDefineString, ActionId::EditUndefine})
+  for (const auto id :
+       {ActionId::EditCreateFunction, ActionId::EditDeleteFunction,
+        ActionId::EditDefineCode, ActionId::EditDefineData,
+        ActionId::EditDefineString, ActionId::EditUndefine})
     if (auto *action = actions_.action(id); action->isEnabled())
       menu.addAction(action);
   menu.addSeparator();
