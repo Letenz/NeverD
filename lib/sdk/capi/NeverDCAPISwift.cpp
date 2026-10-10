@@ -14,6 +14,7 @@
 #include "SwiftSourceSignatures.h"
 
 #include "neverd/backend/swift/HighSwiftEmitter.h"
+#include "neverd/backend/swift/SwiftSourceAssembly.h"
 #include "neverd/loader/Swift/SwiftABI.h"
 #include "neverd/loader/Swift/SwiftMetadata.h"
 
@@ -266,6 +267,18 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
       NominalContexts.erase(Context);
     }
     HighSwiftEmitter Emitter;
+    std::vector<std::string> ReservedNames;
+    for (const auto &Signature : Signatures)
+      if (Signature) {
+        ReservedNames.push_back(Signature->Name);
+        ReservedNames.push_back(Signature->ContextName);
+        for (const auto &Field : Signature->ContextFields) {
+          ReservedNames.push_back(Field.Name);
+          ReservedNames.push_back(Field.BackingName);
+        }
+      }
+    for (const auto &Nominal : Nominals)
+      ReservedNames.push_back(Nominal.Name);
     std::vector<SwiftSourceSignature> Callees;
     for (const auto &Signature : Signatures)
       if (Signature && Signature->UnsupportedReason.empty() &&
@@ -378,7 +391,8 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
           Row["reason"] = std::move(Reason);
           continue;
         }
-        auto Emission = Emitter.emit(*Function, Signature, Callees);
+        auto Emission =
+            Emitter.emit(*Function, Signature, Callees, ReservedNames);
         if (!Emission.Recovered || Emission.Source.empty() ||
             (Signature.ContextKind != "global" &&
              Emission.MemberSource.empty())) {
@@ -475,10 +489,11 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
       return "0x" + llvm::utohexstr(Address, true);
     };
     llvm::json::Array Units;
-    std::string Source;
+    std::vector<SwiftSourceUnitText> UnitTexts;
     auto AddUnit = [&](llvm::StringRef Kind, llvm::StringRef Module,
                        llvm::StringRef Name, std::string Text,
-                       const std::vector<size_t> &Indices) {
+                       const std::vector<size_t> &Indices,
+                       llvm::StringRef Preamble = {}) {
       llvm::json::Array UnitEntries, UnitIdentities;
       for (size_t Index : Indices) {
         const auto &Signature = Signatures[Index]
@@ -490,12 +505,13 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
             llvm::json::Object{{"entry", std::move(Entry)},
                                {"mangled_symbol", Signature.MangledSymbol}});
       }
-      Source += Text + "\n";
+      UnitTexts.push_back({Text, Preamble.str()});
       Units.push_back(
           llvm::json::Object{{"kind", Kind.str()},
                              {"module", Module.str()},
                              {"name", Name.str()},
                              {"source", std::move(Text)},
+                             {"module_preamble", Preamble.str()},
                              {"method_entries", std::move(UnitEntries)},
                              {"method_identities", std::move(UnitIdentities)}});
     };
@@ -512,9 +528,10 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
       Row["source_representation"] = "native-method-body";
       Row["source"] = Emission.Source;
       Row["member_source"] = Emission.MemberSource;
+      Row["module_preamble"] = Emission.ModulePreamble;
       if (Signature.ContextKind == "global")
         AddUnit("function", Signature.Module, Signature.Name, Emission.Source,
-                {Index});
+                {Index}, Emission.ModulePreamble);
       else
         Members[{Signature.Module, Signature.ContextKind,
                  Signature.ContextName}]
@@ -547,6 +564,7 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
           std::find_if(Indices.begin(), Indices.end(),
                        [&](size_t I) { return bool(Signatures[I]); });
       std::string Text;
+      std::string Preamble;
       if (Ordinary == Indices.end()) {
         const auto Nominal = RuntimePlan.NominalContexts.find(Context);
         if (Nominal == RuntimePlan.NominalContexts.end())
@@ -558,8 +576,10 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
         std::vector<swift_source::PropertySourceMember> SourceMembers;
         for (size_t Index : Indices)
           if (Signatures[Index])
-            SourceMembers.push_back(
-                {&*Signatures[Index], Emissions[Index]->MemberSource});
+            SourceMembers.push_back({&*Signatures[Index],
+                                     Emissions[Index]->MemberSource,
+                                     Emissions[Index]->ModulePreamble});
+        Preamble = swift_source::propertyModulePreamble(SourceMembers);
         const auto Runtime = RuntimePlan.ContextSources.find(Context);
         Text = swift_source::assemblePropertyContext(
             Signature, SourceMembers,
@@ -570,7 +590,7 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
       for (size_t Index : Indices)
         if (RuntimeRequests[Index])
           (*Rows[Index].getAsObject())["source"] = Text;
-      AddUnit("type", Module, Name, std::move(Text), Indices);
+      AddUnit("type", Module, Name, std::move(Text), Indices, Preamble);
     }
     llvm::json::Array TypeRows;
     for (const auto &Type : Types) {
@@ -592,10 +612,13 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
           {"fields", std::move(Fields)}});
     }
     const size_t Count = Rows.size();
+    auto Source = assembleSwiftSourceUnits(UnitTexts);
+    if (!Source)
+      throw std::logic_error("Swift source unit lost its module preamble");
     llvm::json::Object Report{
         {"schema_version", 1},
         {"status", "success"},
-        {"source", std::move(Source)},
+        {"source", std::move(*Source)},
         {"source_units", std::move(Units)},
         {"types", std::move(TypeRows)},
         {"method_count", static_cast<int64_t>(Count)},

@@ -1192,7 +1192,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5054 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5416`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5056 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5418`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1486,6 +1486,8 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 
 `BinaryLowIRLoopInference.NativeSelectors*` 涵蓋兩個暫存器上下文、僅靠框架區分的上下文、三域合取、無法區分的範本、來源及原生迴圈本體變異，以及推導與證明各自的精確和少一預算。迴圈次數任意，不引入入口常數。
 
+`NativeSelectorsGeneralize*` 驗證交替暫存器／框架階段的自動恢復與完整原生證明，包括高位元仍符號化的位元組遮罩。`NativeSelectorState*` 檢查錯誤排名／本體、遮罩外位元損壞、畸形賦值及工作量／中繼資料的精確和少一預算。明確有效的計畫另將正式建構器與變換前後的完整原生檢查組合，涵蓋重疊與不相交切點混合、原始側前綴來源保留、回退掃描計費及暫存位移溢位拒絕。這些明確計畫檢查與自動推導涵蓋範圍分別記錄。
+
 `DarwinIndirectRecordCalls` 檢查目前 MakeScale 契約與 22 項匯入/ABI 變更拒絕案例，再透過共用按值副本證明使用完整的 48 位元組私有結果。未對齊、偏移、重疊或超出堆疊框架的結果範圍皆被拒絕。即使保留完整回傳 ABI，移除確定寫入效果也會被拒絕。
 
 `SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity` 拒絕十種入口、載體或寫入修改以及缺少的入口 ABI。`NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress` 重新提升直接尾呼叫，檢查明確輸出參數、六次寫入與發布門檻。
@@ -1560,3 +1562,7 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: `ProcessCPUClocksRetainIdentityAndIdleSeparation`、`ProcessCPUClocksKeepMissingObservationBoundaries` 與 `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` 檢查八種固定版本的 raw／Bionic 身份、PROF／VIRT／SCHED、低 32 位引數、目標校驗先於指標故障、觀察值缺失、別名、CPU 非負值及牆鍾／CPU 空閒分離。`AndroidTimeTests.cpp` 檢查輸出和哨兵；協作式 syscall 樣例檢查當前非首領 TID 的程序組樣本。
 
 `ZeroTimeoutPollRetainsReadinessAndOrderedCopies` 覆蓋八個 GKI 分支的 O0／O2 原始呼叫，檢查存活／負數／已關閉描述符、重複計數、引數收窄、超時／掩碼順序、只讀零 timespec、全部元資料先於就緒，以及後續故障保留較早 `revents`。`ZeroTimeoutPollKeepsUnobservedBoundaries` 保留核心、限額、掩碼、等待和就緒狀態的未知邊界。Android 的 `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` 在六種打包配置中複驗共享表和 errno 所有權。
+
+## 有界目錄批次屬性
+
+bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護區、low32 FD、bitmap 字、原生錯誤、dup 共用進度、獨立 open、快取 EOF 與零 rewind。字面值與未知模式僅用於虛擬環境。模型另涵蓋完整 stat、失效、NFD/255位元組名稱、輸入/輸出別名、傳輸/預算失敗、移動/SWAP/刪除/重用及明確授權。每個平台必需63個工作負載：ARM64 為189例，Intel 為126例；本地僅驗證匹配的 ARM64 HVF。native5s、guest/Python5,000,000us/quantum1024、public10s 不變。

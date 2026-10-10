@@ -7,15 +7,208 @@
 #include "COFFRegistrationEHDetail.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/ISAEncoding.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace neverd::coff_loader {
+
+bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
+  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
+      Img.Base > UINT32_MAX || CheckVA > UINT32_MAX - 14 ||
+      !Img.DynInfo.SecurityCookieRVA)
+    return false;
+  const va_t Cookie = Img.Base + Img.DynInfo.SecurityCookieRVA;
+  const auto *Code = Img.readVA(CheckVA, 9);
+  if (Cookie > UINT32_MAX - 3 || !Img.readVA(Cookie, 4) || !Code ||
+      Code[0] != 0x3b || Code[1] != 0x0d ||
+      readLE<uint32_t>(Code + 2) != Cookie)
+    return false;
+  size_t Success = 0;
+  int64_t Failure = 0;
+  if (Code[6] == 0x75) {
+    Success = 8;
+    Failure = int64_t(CheckVA) + Success + int8_t(Code[7]);
+  } else {
+    Code = Img.readVA(CheckVA, 13);
+    if (!Code || Code[6] != 0x0f || Code[7] != 0x85)
+      return false;
+    Success = 12;
+    Failure = int64_t(CheckVA) + Success + readLE<int32_t>(Code + 8);
+  }
+  size_t Extent = Success + 1;
+  if (Code[Success] == 0xf3) {
+    ++Extent;
+    Code = Img.readVA(CheckVA, Extent);
+    if (!Code || Code[Success + 1] != 0xc3)
+      return false;
+  } else if (Code[Success] != 0xc3)
+    return false;
+  return Img.hasExecutableCodeOwnerRange(CheckVA, Extent) && Failure > 0 &&
+         Failure <= UINT32_MAX && Img.isCodeAddress(va_t(Failure)) &&
+         Img.readVA(va_t(Failure), 1) &&
+         (uint64_t(Failure) < CheckVA || uint64_t(Failure) >= CheckVA + Extent);
+}
+
+bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA) {
+  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF)
+    return false;
+  std::set<va_t> Seen;
+  for (unsigned Hop = 0; Hop != 4; ++Hop) {
+    if (!Seen.insert(HandlerVA).second)
+      return false;
+    const auto *Code = Img.readVA(HandlerVA, 5);
+    if (!Code || !Img.hasExecutableCodeOwnerRange(HandlerVA, 5))
+      return false;
+    if (Code[0] == 0xe9) {
+      const int64_t Target = int64_t(HandlerVA) + 5 + readLE<int32_t>(Code + 1);
+      if (Target <= 0 || Target > UINT32_MAX)
+        return false;
+      HandlerVA = va_t(Target);
+      continue;
+    }
+    Code = Img.readVA(HandlerVA, 6);
+    if (!Code || !Img.hasExecutableCodeOwnerRange(HandlerVA, 6) ||
+        Code[0] != 0xff || Code[1] != 0x25)
+      return false;
+    const auto *Import = Img.findImportAt(readLE<uint32_t>(Code + 2));
+    return Import && Import->Name == "_except_handler3" &&
+           Img.readVA(Import->IATAddr, 4) &&
+           (llvm::StringRef(Import->Module).equals_insensitive("msvcrt.dll") ||
+            llvm::StringRef(Import->Module).equals_insensitive("ucrtbase.dll"));
+  }
+  return false;
+}
+
+std::optional<va_t> getCheckedX86EH4CookieCheck(const BinaryImage &Img,
+                                                va_t HandlerVA) {
+  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
+      Img.Base > UINT32_MAX || !Img.DynInfo.SecurityCookieRVA)
+    return std::nullopt;
+  const va_t CookieVA = Img.Base + Img.DynInfo.SecurityCookieRVA;
+  const auto *Code = Img.readVA(HandlerVA, 36);
+  if (!Code || !Img.hasExecutableCodeOwnerRange(HandlerVA, 36) ||
+      CookieVA > UINT32_MAX - 3 || !Img.readVA(CookieVA, 4) ||
+      Code[0] != 0x55 ||
+      !((Code[1] == 0x89 && Code[2] == 0xe5) ||
+        (Code[1] == 0x8b && Code[2] == 0xec)))
+    return std::nullopt;
+  for (unsigned Arg = 0; Arg != 4; ++Arg)
+    if (Code[3 + Arg * 3] != 0xff || Code[4 + Arg * 3] != 0x75 ||
+        Code[5 + Arg * 3] != 20 - Arg * 4)
+      return std::nullopt;
+  if (Code[15] != 0x68 || Code[20] != 0x68 ||
+      readLE<uint32_t>(Code + 21) != CookieVA || Code[25] != 0xff ||
+      Code[26] != 0x15 || Code[31] != 0x83 || Code[32] != 0xc4 ||
+      Code[33] != 24 || Code[34] != 0x5d || Code[35] != 0xc3)
+    return std::nullopt;
+  const va_t CheckVA = readLE<uint32_t>(Code + 16);
+  const auto *Import = Img.findImportAt(readLE<uint32_t>(Code + 27));
+  if (!Img.isCodeAddress(CheckVA) || !Img.readVA(CheckVA, 1) || !Import ||
+      !Img.readVA(Import->IATAddr, 4) ||
+      Import->Name != "_except_handler4_common" ||
+      (!llvm::StringRef(Import->Module).equals_insensitive("msvcrt.dll") &&
+       !llvm::StringRef(Import->Module).equals_insensitive("ucrtbase.dll") &&
+       !llvm::StringRef(Import->Module)
+            .equals_insensitive("vcruntime140.dll") &&
+       !llvm::StringRef(Import->Module)
+            .equals_insensitive("vcruntime140d.dll")))
+    return std::nullopt;
+  return CheckVA;
+}
+
+std::optional<X86CxxPersonalityABI>
+getCheckedX86CxxPersonalityABI(const BinaryImage &Img,
+                               const ExceptionFunction &Function) {
+  if (Img.Arch != Arch::X86 || Img.Bits != Bitness::Bits32 ||
+      Img.Format != BinaryFormat::COFF || !Function.Registration ||
+      !Function.Cxx ||
+      Function.Personality != ExceptionPersonality::CxxFrameHandler3 ||
+      Function.Registration->HandlerVA != Function.PersonalityVA ||
+      !getCheckedX86CxxMetadataRanges(Img, Function))
+    return std::nullopt;
+  registration_detail::HandlerIdentity Identity;
+  if (!registration_detail::decodeCxxHandlerThunk(Img, Function.PersonalityVA,
+                                                  Identity) ||
+      Identity.CxxFuncInfoVA != Function.Cxx->NativeFuncInfoVA ||
+      Identity.CxxThunkBodyVA < Function.PersonalityVA ||
+      Identity.CxxThunkBodyVA - Function.PersonalityVA > 8 ||
+      Identity.CxxThunkEndVA <= Identity.CxxThunkBodyVA)
+    return std::nullopt;
+  X86CxxPersonalityABI Result;
+  auto ReadCode = [&](va_t VA, uint32_t Size,
+                      const std::vector<va_t> &Operands = {})
+      -> std::optional<std::vector<uint8_t>> {
+    if (!VA || VA > UINT32_MAX || Size > uint64_t(UINT32_MAX) + 1 - VA ||
+        !Img.hasExecutableCodeOwnerRange(VA, Size))
+      return std::nullopt;
+    auto Bytes = readImmutablePE32CodeBytes(Img, VA, Size, Operands);
+    if (!Bytes)
+      return std::nullopt;
+    Result.CodeRanges.push_back({VA, VA + Size});
+    return Bytes;
+  };
+  const uint32_t Prefix = Identity.CxxThunkBodyVA - Function.PersonalityVA;
+  std::vector<va_t> Operands{Identity.CxxThunkBodyVA + 1};
+  if (Identity.CxxDispatchIATVA)
+    Operands.push_back(Identity.CxxThunkBodyVA + 7);
+  const auto Thunk =
+      ReadCode(Function.PersonalityVA,
+               Identity.CxxThunkEndVA - Function.PersonalityVA, Operands);
+  if (!Thunk || !std::all_of(Thunk->begin(), Thunk->begin() + Prefix,
+                             [](uint8_t Byte) { return Byte == 0x90; }))
+    return std::nullopt;
+  Result.RuntimeVA = Identity.CxxDispatchIATVA ? Identity.CxxThunkBodyVA + 5
+                                               : Identity.CxxDispatchVA;
+  va_t Cursor = Result.RuntimeVA;
+  std::set<va_t> Seen;
+  for (unsigned Hop = 0; Hop != 4; ++Hop) {
+    if (!Seen.insert(Cursor).second)
+      return std::nullopt;
+    auto Code = ReadCode(Cursor, 1);
+    if (!Code)
+      return std::nullopt;
+    if ((*Code)[0] == 0xe9) {
+      Code = ReadCode(Cursor, 5);
+      if (!Code)
+        return std::nullopt;
+      Cursor =
+          uint32_t(Cursor + 5 + uint32_t(readLE<int32_t>(Code->data() + 1)));
+      continue;
+    }
+    Code = ReadCode(Cursor, 6, {Cursor + 2});
+    if (!Code || (*Code)[0] != 0xff || (*Code)[1] != 0x25)
+      return std::nullopt;
+    Result.IATVA = readLE<uint32_t>(Code->data() + 2);
+    const Import *Import = nullptr;
+    for (const auto &Candidate : Img.Imports)
+      if (Candidate.IATAddr == Result.IATVA) {
+        if (Import)
+          return std::nullopt;
+        Import = &Candidate;
+      }
+    if (!Import || Import->Name != "__CxxFrameHandler3" ||
+        (!llvm::StringRef(Import->Module)
+              .equals_insensitive("vcruntime140.dll") &&
+         !llvm::StringRef(Import->Module)
+              .equals_insensitive("vcruntime140d.dll")) ||
+        Result.IATVA > UINT32_MAX - 3 || !Img.readVA(Result.IATVA, 4))
+      return std::nullopt;
+    return Result;
+  }
+  return std::nullopt;
+}
+
+} // namespace neverd::coff_loader
 
 namespace neverd::coff_loader::registration_detail {
 namespace {
@@ -91,10 +284,10 @@ bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,
       auto Displacement = readScalar<int32_t>(Img, Cursor + 6);
       if (!Displacement)
         continue;
-      auto Resolved = addSignedOffset(Cursor + 10, *Displacement);
-      if (!Resolved || !isExecutableAddress(Img, *Resolved))
+      const va_t Resolved = uint32_t(Cursor + 10 + uint32_t(*Displacement));
+      if (!isExecutableAddress(Img, Resolved))
         continue;
-      Target = *Resolved;
+      Target = Resolved;
     } else if (*Jump == 0xFF) {
       // `jmp dword ptr [__imp___CxxFrameHandler3]`, which is what an import
       // of the personality looks like when the linker did not build a veneer.
@@ -109,10 +302,12 @@ bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,
         if (auto Bound = readScalar<uint32_t>(Img, *Slot))
           SlotName = resolveRoutineName(Img, *Bound, *Slot);
       Identity.CxxFuncInfoVA = *FuncInfo;
+      Identity.CxxThunkBodyVA = Cursor;
+      Identity.CxxThunkEndVA = Cursor + 11;
+      Identity.CxxDispatchIATVA = *Slot;
       ExceptionPersonality Resolved = classifyPersonalityName(SlotName);
-      Identity.Personality = isCxxPersonality(Resolved)
-                                 ? Resolved
-                                 : ExceptionPersonality::CxxFrameHandlerX86;
+      Identity.Personality =
+          isCxxPersonality(Resolved) ? Resolved : ExceptionPersonality::Unknown;
       Identity.Name = std::move(SlotName);
       return true;
     } else {
@@ -120,6 +315,9 @@ bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,
     }
 
     Identity.CxxFuncInfoVA = *FuncInfo;
+    Identity.CxxThunkBodyVA = Cursor;
+    Identity.CxxThunkEndVA = Cursor + 10;
+    Identity.CxxDispatchVA = Target;
     std::string TargetName = resolveRoutineName(Img, Target);
     if (TargetName.empty())
       TargetName = resolveVeneerTargetName(Img, Target);
@@ -128,10 +326,9 @@ bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,
       Identity.Personality = Resolved;
       Identity.Name = TargetName;
     } else {
-      // A statically linked personality can be stripped of its name.  The
-      // thunk shape plus a `FuncInfo` that validates is still proof of the C++
-      // model, so record the x86 spelling and let the table decode confirm it.
-      Identity.Personality = ExceptionPersonality::CxxFrameHandlerX86;
+      // Table-shaped data passed to an unknown target does not prove what
+      // that target will execute. Retain the observation without promoting it.
+      Identity.Personality = ExceptionPersonality::Unknown;
       Identity.Name = TargetName;
     }
     return true;

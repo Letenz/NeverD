@@ -5,6 +5,11 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFPatch.cpp
   COFF/PESignaturePolicy.cpp
   COFF/COFFReloc.cpp
+  COFF/COFFRegistrationPatch.cpp
+  COFF/COFFRegistrationCxx.cpp
+  COFF/COFFRegistrationCxxIR.cpp
+  COFF/COFFRegistrationCxxFrame.cpp
+  COFF/COFFRegistrationIRProof.cpp
   CodeGen.cpp
   CodeGenAArch64.cpp
   CodeGenARM.cpp
@@ -34,4 +39,5 @@ add_neverd_component_library(NeverDCodeGen
   IR
   Loader
   WindowsEHMetadata
+  WindowsRegistrationFrame
 )

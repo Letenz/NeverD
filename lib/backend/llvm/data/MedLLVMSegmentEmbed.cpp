@@ -427,6 +427,17 @@ MedLLVMEmitter::embedWritableRun(uint64_t SegVA) {
     return {It->second, RunStart};
 
   size_t RunLen = static_cast<size_t>(RunLen64);
+  if (preservesRegistrationImageStorage(RunStart, RunEnd)) {
+    auto *ArrTy = llvm::ArrayType::get(llvm::Type::getInt8Ty(*Ctx), RunLen);
+    auto *GV = new llvm::GlobalVariable(
+        *Mod, ArrTy, /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
+        /*Initializer=*/nullptr,
+        (kNdDataPrefix + llvm::utohexstr(RunStart)).str());
+    GV->setAlignment(llvm::Align(16));
+    GV->setDSOLocal(true);
+    WritableSegmentGlobals[RunStart] = GV;
+    return {GV, RunStart};
+  }
   std::vector<uint8_t> Buf(RunLen, 0);
   // Fill from SECTIONS, not the segment: a relocatable .o's .bss segment
   // carries no reliable file data, but its Section carries none (FileSz 0) so

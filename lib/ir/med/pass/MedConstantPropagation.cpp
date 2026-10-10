@@ -51,6 +51,24 @@ std::optional<MedVar> viewOfConstant(NdOp View, uint64_t ViewOffset,
 }
 } // namespace
 
+bool hasCompleteOrdinaryPhiInputs(const MedBlock &Block, const PhiNode &Phi,
+                                  const std::set<int> &Incoming) {
+  if (Phi.ExceptionalEntry || !Phi.Output.Size || Block.Preds.empty() ||
+      Block.Preds.size() != Incoming.size() ||
+      Phi.Args.size() != Block.Preds.size())
+    return false;
+  const std::set<int> Predecessors(Block.Preds.begin(), Block.Preds.end());
+  if (Predecessors.size() != Block.Preds.size() || Predecessors != Incoming ||
+      Phi.Args.size() != Predecessors.size())
+    return false;
+  std::set<int> Edges;
+  for (const auto &[Pred, Value] : Phi.Args)
+    if (Value.Size != Phi.Output.Size || !Predecessors.count(Pred) ||
+        !Edges.insert(Pred).second)
+      return false;
+  return Edges == Predecessors;
+}
+
 bool propagateInvariantConstants(MedFunc &Func) {
   constexpr size_t MaxDefinitions = 65536;
   if (Func.Blocks.size() > MaxDefinitions)
@@ -92,31 +110,26 @@ bool propagateInvariantConstants(MedFunc &Func) {
       Node.State = Knowledge::Varying;
   };
   for (const auto &Block : Func.Blocks) {
-    const std::set<int> Predecessors(Block.Preds.begin(), Block.Preds.end());
-    const bool Complete = !Predecessors.empty() &&
-                          Predecessors.size() == Block.Preds.size() &&
-                          Predecessors == Incoming[Block.Id];
     for (const auto &Phi : Block.Phis) {
       if (Phi.Args.size() > Budget)
         return false;
       Budget -= Phi.Args.size();
       std::vector<MedVar> Values;
-      std::set<int> Edges;
       for (const auto &[Predecessor, Value] : Phi.Args) {
-        Edges.insert(Predecessor);
         Values.push_back(Value);
       }
       // The dispatcher's entry brings a value no predecessor supplies.
       Add(Phi.Output, std::move(Values),
-          Complete && Edges.size() == Phi.Args.size() &&
-              Edges == Predecessors && !Phi.ExceptionalEntry);
+          hasCompleteOrdinaryPhiInputs(Block, Phi, Incoming[Block.Id]));
     }
     for (const auto &Op : Block.Ops) {
       if (Op.NumInputs > Op.Inputs.size())
         return false;
-      const bool Plain = !Op.Dead && !Op.SourceCallHint &&
-                         Op.MemoryOrdering == NdMemoryOrdering::None &&
-                         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+      const bool Plain =
+          Op.RegistrationRoot == MedOp::RegistrationRootKind::None &&
+          !Op.Dead && !Op.SourceCallHint &&
+          Op.MemoryOrdering == NdMemoryOrdering::None &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
       const bool Copy = Plain && Op.Opcode == NdOp::COPY && Op.NumInputs == 1;
       // A constant holds a word: a view into a wider value (a vector lane, a
       // register pair, a double-word dividend) has none.

@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
+<!-- i18n-source: aa19cf02d09c66c62cfde94ee71c93b210f3d92165151c58778e1e91ec0df607 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -902,3 +902,25 @@ Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distribut
 ATTR_CMN_NAME=1 は getattrlist220/fgetattrlist228/getattrlistat476 で明示カタログ内の名前が一意な非ルートオブジェクトに対応します。葉名は合法 UTF-8 の1..255バイト。F_GETPATH と共通の実際のオブジェクトパスが dup、CWD、移動、SWAP、削除、名前再利用を越えて最後のリンク名を保持し、呼出し側の別名は使いません。名前と型は stat 不要ですが、選択された stat 項目には完全な有効観測が必要です。ルート/マウント名、不正名、ハードリンクや大小文字の別名、正規化、完全パス属性は未知です。
 
 8バイトの attrreference_t は他の共通項目より前にあり、attr_dataoffset は参照自身からの相対値、attr_length は NUL を含み、名前領域は4バイトに整列します。短い出力も完全な必要長と UTF-8 途中を含む正確な前置バイトを保ちます。attribute-names / attribute-names-values / attribute-names-unsupported は guest/C/CLI/Python で原生動作、独立バイト、既存出力を保つルート名停止を検証します。ARM64 準備は601 raw照会、453保護バッファ全体の SDK 比較、384前置チェックに成功。SDK15.5 は raw476 の型付き宣言を持ちません。native5s、guest/Python5,000,000us/quantum1024、既存公開10sは不変。原生 Intel、実機 iOS、完全なランタイム/フレームワークは未検証または未完成です。
+
+## 有界ディレクトリ一括属性
+
+getattrlistbulk(461) は明示的な enumeration_policy.bulk_attributes=true を必要とし、省略や false は権限を与えない。この仮想 TYPE 契約は直接の子の現在の名前を符号なしバイト順で返す。ドット項目を含まず、ネイティブのファイルシステム cookie ではなくローカル序数を使う。初期ディレクトリの権限は dup、移動、SWAP、削除、名前の再使用を通じてオブジェクトに残り、新規ディレクトリには継承されない。minimum_buffer_size、initial_minimum_buffer_size、seek_offset は getdirentries64 専用である。
+
+NAME|OBJTYPE|RETURNED_ATTRS (0x80000009) が必須で、選択した観測が有効なら既存の十一個の共通フィールドを使える。Options0/8 を許可し、bulk は二つの16ビット bitmap/reserved ワードを独立した attrlist 検証とは別に無視する。唯一の属性エンコーダーが attrreference_t と stat64 の有効性を共有する。完全なレコードだけを返し、収まる場合は8バイト、最終グループだけは4バイト単位のサイズも許可する。最初のグループが収まらなければ ERANGE で出力とカーソルは変わらない。必要な出力の一部しか書けない場合はコピー前に明示停止する。実際に返すバイトだけが書き込み可能であればよい。
+
+dup は進行を共有し、別々の open は独立する。非ゼロの完了した走査は名前空間変更後も EOF を保持し、要求検証後にサイズと出力検査を省く。初期の空ディレクトリ offset0 は再確認する。ゼロ lseek が反復をリセットする。EOF 前の構成変更、任意の非ゼロ seek、getdirentries64/bulk の混用は明示停止する。NAME-only フォールバック、ERROR 項目、スナップショット、ACL/権限、ホスト順序、その他の mask/options は未対応。bulk-attributes / bulk-attributes-values / bulk-attributes-unsupported はネイティブ共通動作、仮想リテラル、既存出力を残す未対応選択を確認する。ARM64 の私有準備で728組の保護付き raw/SDK 比較が成功した。native5s、guest/Python5,000,000us/quantum1024、public10s は不変。Intel ネイティブ、実機 iOS、完全なランタイム/フレームワークは未検証または未完成。
+
+Sources: [XNU bulk ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/man/man2/getattrlistbulk.2), [XNU attribute definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h). Original implementation and probes; no Apple implementation copied.
+
+## 明示的に許可された通常の拡張属性の変更
+
+setxattr(236)、fsetxattr(237)、removexattr(238)、fremovexattr(239) は初期オブジェクトへの独立した許可を使います。C++ は `MutableExtendedAttributes`、JSON は厳密な真偽値 `mutable_extended_attributes=true` です。許可されたファイル、ディレクトリ、リンクには、既知の空リストを含む完全な通常の `extended_attributes` リストが必要です。内容の書き込みや名前空間の変更の許可では代用できません。許可と値は dup、移動、削除、マッピングの保持期間を通じて保持されたオブジェクトに属します。新規オブジェクトや再使用された名前の属性は未知です。既知の別名、競合するメタデータフラグ、保護されたシステム属性、ResourceFork、FinderInfo、圧縮の意味論は対象外です。
+
+置換は仮想リスト内の位置を保ち、削除は項目を除き、新規作成は末尾に追加します。この順序はプロセス内で宣言するもので、APFS の順序を推測しません。初期属性のバイト数、件数、許可のパス参照は予約されたままです。実行時の増加分は既存の 16 MiB/4096 上限で一元管理し、削除、内容の無効化、最終解放では増加分だけを回収します。容量、転送、期限の失敗は一時状態を公開しません。必須入力が全く読めなければ EFAULT、部分的にしか読めなければ公開前に未対応として停止します。成功した変更は時刻を推測せず完全な stat を無効化しますが、識別情報、ディレクトリの構成、列挙のバージョン/スナップショット、カーソルを保ちます。
+
+変更 ABI は low32 FD/options/position と full64 size を使います。特権および FD リンクオプションの早期検査は名前の取り込みより先、名前の取り込みはオブジェクト検索より先です。set は巨大な VFS 入力（E2BIG7）を検査する前に、非ゼロ長の NULL を拒否します。検索は通常名、position、競合の検査より先です。set は完全な値を取り込んでから、CREATE の既存項目に EEXIST17、REPLACE の欠落項目に ENOATTR93 を返します。CREATE と REPLACE の同時指定は EINVAL、削除はこの二つのビットを無視します。長さゼロの set は値ポインタを読みません。他のフラグ、未知の権限、観測していないプロバイダ動作は明示的に停止します。
+
+xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported は独自のネイティブ/ゲスト対照、独立した仮想バイト定数、既存出力を保つ許可不足の停止を検査します。ARM64 の非公開準備では726回の raw/SDK 呼び出し、完全な544バイトのガード付き観測、読み取り可能なページ全体を確認しました。native5s/compile120s/drain1s/reap1s、guest/Python5,000,000us/quantum1024、public10s は不変です。ネイティブ Intel、実機 iOS、dyld、Mach IPC、スレッド/シグナル、Objective-C/Swift ランタイム、完全なフレームワークは未検証または未完成です。
+
+主要 ABI 資料：[XNU システムコール宣言](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master)、[xattr 定義](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h)。コードとプローブは独自作成で、Apple の実装はコピーしていません。

@@ -1236,7 +1236,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 48개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5054 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5416`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5056 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5418`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1530,6 +1530,8 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 
 `BinaryLowIRLoopInference.NativeSelectors*`는 두 레지스터 문맥, 프레임만으로 구분되는 문맥, 세 영역의 논리곱, 구분 불가능한 템플릿, 출처 및 네이티브 본문 변이, 추론과 증명의 독립적인 정확한 예산 및 하나 부족한 예산을 검사한다. 루프 횟수는 임의이며 진입 상수를 추가하지 않는다.
 
+`NativeSelectorsGeneralize*`는 레지스터와 프레임의 교대 단계에 대한 자동 복구와 완전한 네이티브 증명을 검사하며, 상위 비트가 기호적인 바이트 마스크도 포함한다. `NativeSelectorState*`는 잘못된 순위/본문, 마스크 밖 비트 손상, 잘못된 대입 및 작업량/메타데이터의 정확한 예산과 하나 부족한 예산을 검사한다. 명시적인 유효 계획은 실제 빌더와 변환 전후의 완전한 네이티브 검사를 결합하여 겹치는 절단점과 분리된 절단점, 원본 접두 출처 보존, 대체 경로 스캔 비용 및 임시 오프셋 오버플로 거부를 검증한다. 이 명시적 계획 검사는 자동 추론 범위와 구분한다.
+
 `DarwinIndirectRecordCalls`는 현재 MakeScale 계약과 22가지 가져오기/ABI 변경을 검사하고, 공유 값 복사 증명으로 완전한 48바이트 비공개 결과를 소비합니다. 정렬되지 않거나 이동, 겹침 또는 프레임 범위를 벗어난 결과는 거부됩니다. 완전한 반환 ABI를 유지하더라도 확정 쓰기 효과를 제거하면 거부됩니다.
 
 `SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity`는 진입·캐리어·쓰기 변경 열 가지와 진입 ABI 누락을 거부한다. `NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress`는 직접 꼬리 호출을 재리프팅하고 명시적 출력 매개변수, 쓰기 여섯 번과 게시 게이트를 확인한다.
@@ -1604,3 +1606,7 @@ MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐�
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: 여덟 고정 버전의 원시/Bionic 식별, PROF/VIRT/SCHED, 하위 32비트, 포인터 오류보다 앞선 대상 검증, 표본 누락, 별칭, 음수 CPU 시간 거부와 벽시계/CPU 유휴 분리를 확인합니다. `AndroidTimeTests.cpp`는 출력과 감시값을, 협력 syscall은 현재 비리더 TID를 확인합니다.
 
 `ZeroTimeoutPollRetainsReadinessAndOrderedCopies`는 여덟 버전의 O0／O2 원시 호출에서 생존·음수·닫힌 설명자, 중복 개수, 인수 축소, 시간 제한／마스크 순서, 읽기 전용 0 timespec, 모든 메타데이터의 선행 반입 및 후속 오류에 유지되는 `revents`를 검증합니다. `ZeroTimeoutPollKeepsUnobservedBoundaries`는 미관측 커널, 한도, 마스크, 대기 및 준비 상태 경계를 유지합니다. Android의 `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults`는 여섯 패킹 프로필에서 공유 표와 errno 소유권을 확인합니다.
+
+## 제한된 디렉터리 일괄 속성
+
+bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 보호, low32 FD, bitmap 워드, 네이티브 오류, dup 공유 진행, 독립 open, EOF와 0 rewind를 검사한다. 리터럴/미지원 모드는 가상 전용이다. 모델은 전체 stat와 무효화, NFD/255바이트 이름, 입출력 별칭, 전송/예산 실패, 이동/SWAP/삭제/재사용, 명시 권한도 검사한다. 필수 목록은 플랫폼별63개로 ARM64는189개, Intel은126개다. 로컬에서는 일치하는 ARM64 HVF만 검증했다. native5s, guest/Python5,000,000us/quantum1024, public10s는 그대로다.

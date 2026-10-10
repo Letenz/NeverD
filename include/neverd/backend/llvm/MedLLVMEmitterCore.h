@@ -115,6 +115,8 @@ private:
   struct AddressProvenanceWorkCounts {
     uint64_t EdgeClassifications = 0;
     uint64_t RecurrenceProofs = 0;
+    uint64_t RecurrenceNodes = 0;
+    uint64_t AliasNodes = 0;
     uint64_t StableOffsetProofs = 0;
     uint64_t IndexedBaseProofs = 0;
   };
@@ -165,6 +167,12 @@ private:
   void emitExceptionMetadata(const MedFunc &Func, llvm::Function &LLVMFunc);
   bool emitNativeSEH(const MedFunc &Func, llvm::Function &LLVMFunc,
                      const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
+  bool emitNativeX86RegistrationSEH(
+      const MedFunc &Func, llvm::Function &LLVMFunc,
+      const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
+  bool emitNativeX86RegistrationCxx(
+      const MedFunc &Func, llvm::Function &LLVMFunc,
+      const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
   bool
   emitNativeCxxEH(const MedFunc &Func, llvm::Function &LLVMFunc,
                   const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
@@ -631,6 +639,11 @@ private:
   /// a stale VA.
   bool segHasPtrRelocSlots(const Segment *S) const;
 
+  /// Preserved registration callees observe the original image. Any
+  /// intersecting data run must keep that storage identity across all module
+  /// functions.
+  bool preservesRegistrationImageStorage(uint64_t Begin, uint64_t End) const;
+
   /// True when segment \p S is read-only after relocation — a true read-only
   /// segment (.rodata) or a `.data.rel.ro` (writable in section flags but a
   /// relocated, read-only-after-reloc pointer table).  A genuinely mutable
@@ -880,13 +893,18 @@ private:
     uint64_t VA = 0;
     uint16_t Width = 0;
     bool Symbolized = false;
+    uint64_t OwnerVA = InvalidVA;
+
+    bool operator==(const PureReadOnlyBaseIdentity &) const = default;
   };
 
   /// Recover the identity of a full-width immutable object-data base carried
   /// only through pointer-preserving forwarders. Direct PHI constants bypass
   /// getVar and therefore retain the raw address model; operation inputs use
-  /// getVar's shared raw-versus-symbolized policy. PHIs, loads, arithmetic,
-  /// truncation, and numeric coincidences are deliberately not identities.
+  /// getVar's shared raw-versus-symbolized policy and exact object ownership.
+  /// An authenticated immutable pointer slot can also establish an identity.
+  /// PHIs, other loads, arithmetic, truncation, and numeric coincidences
+  /// cannot.
   std::optional<PureReadOnlyBaseIdentity>
   pureReadOnlyBaseIdentity(const MedVar &V,
                            bool DirectPhiConstantBypassesGetVar) const;
@@ -1970,6 +1988,11 @@ private:
   /// Itanium call-site range be matched to the calls it protects.  Cleared per
   /// function alongside the other per-function emitter state.
   std::map<const llvm::CallInst *, va_t> CallSiteAddrs;
+  /// Exact surviving FS operation occurrences, consumed only after native
+  /// registration lowering has matched the shared LowIR ownership proof.
+  std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationChainIR;
+  std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationIncomingIR;
+  std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationMemoryIR;
   /// LLVM symbol chosen for each lifted function body. Usually identical to
   /// MedFunc::Name; an address-backed native personality body uses its stable
   /// auto name so the canonical ABI name remains an external declaration.
@@ -2048,6 +2071,7 @@ private:
   // string and a later address-algebra use could create a second identity for
   // the same original VA.
   std::set<uint64_t> IdentityPreservingDataAddrs;
+  std::vector<ExceptionAddressRange> PreservedRegistrationImageStorageRanges;
   // One synthesized code-pointer mirror global per data segment base VA (see
   // buildCodePtrSegmentGlobal); reused across every access into that segment.
   std::map<uint64_t, llvm::Constant *> CodePtrTableGlobals;
@@ -2075,6 +2099,7 @@ private:
 
   llvm::AllocaInst *FrameAlloca = nullptr;
   llvm::Value *FrameBaseInt = nullptr;
+  uint64_t FrameEntrySPOffset = 0;
   /// Shared landing-pad live-in slots.  MedIR models the Itanium ABI's
   /// exception object and selector as implicit values at exceptional roots;
   /// each emitted landingpad stores its pair here before the recovered handler

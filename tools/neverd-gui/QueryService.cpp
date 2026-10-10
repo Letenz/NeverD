@@ -749,6 +749,13 @@ QString QueryService::revision() const { return state_->revision; }
 quint64 QueryService::sessionEpoch() const { return state_->epoch; }
 bool QueryService::analysisComplete() const { return state_->analysisComplete; }
 bool QueryService::hasPending() const { return state_->pending(); }
+qsizetype QueryService::pendingReadCount() const {
+  qsizetype count = 0;
+  for (const auto &job : std::as_const(state_->jobs))
+    if (job->kind != State::Command && !job->subscribers.isEmpty())
+      ++count;
+  return count;
+}
 bool QueryService::hasCommands() const {
   for (const auto &job : std::as_const(state_->jobs))
     if (job->kind == State::Command)

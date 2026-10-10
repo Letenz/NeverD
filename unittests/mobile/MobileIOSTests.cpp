@@ -760,18 +760,18 @@ TEST(MobileIOSNative, RuntimeBlockTypeDoesNotInventInvocationSignature) {
 }
 
 TEST(MobileIOSNative, RuntimeIMPPointerPreservesCarrierWithoutCallSignature) {
-  auto hint = neverd::parseObjCMethodEncoding("methodForSelector:",
-                                               "^?24@0:8:16");
+  auto hint =
+      neverd::parseObjCMethodEncoding("methodForSelector:", "^?24@0:8:16");
   ASSERT_TRUE(hint);
   ASSERT_EQ(hint->ReturnType->Kind, neverd::NdTypeKind::Ptr);
   ASSERT_TRUE(hint->ReturnType->Pointee);
   EXPECT_EQ(hint->ReturnType->Pointee->Kind, neverd::NdTypeKind::Void);
   EXPECT_EQ(objcTypes("^?24@0:8:16"),
             (std::vector<std::string>{"void *", "id", "SEL", "SEL"}));
-  EXPECT_TRUE(neverd::parseObjCMethodEncoding("methodForSelector:",
-                                              "^r?24@0:8:16"));
-  EXPECT_FALSE(neverd::parseObjCMethodEncoding("methodForSelector:",
-                                               "^??24@0:8:16"));
+  EXPECT_TRUE(
+      neverd::parseObjCMethodEncoding("methodForSelector:", "^r?24@0:8:16"));
+  EXPECT_FALSE(
+      neverd::parseObjCMethodEncoding("methodForSelector:", "^??24@0:8:16"));
 }
 
 TEST(MobileIOSNative, OpaquePointeesUseTheLoaderTypeGrammar) {
@@ -1560,6 +1560,59 @@ TEST(MobileIOSNative, RejectsSwiftSourceAndMethodCountFalseSuccess) {
   auto second = swiftFixture();
   second.second["method_count"] = 2;
   EXPECT_THROW(swiftCoverage(second.first, &second.second), Error);
+}
+TEST(MobileIOSNative, SharedSwiftPreamblesPreserveExactSourceAndCoverage) {
+  const std::string preamble = "private func nativeState() -> UInt32\n";
+  for (bool reverse : {false, true}) {
+    auto [inventory, batch] = swiftFixture(true);
+    auto &units = *batch.getArray("source_units");
+    if (reverse)
+      std::reverse(units.begin(), units.end());
+    std::string body;
+    for (auto &value : units) {
+      auto &unit = *value.getAsObject();
+      const auto text = str(unit, "source");
+      unit["source"] = preamble + text;
+      unit["module_preamble"] = preamble;
+      body += text + "\n";
+    }
+    batch["source"] = preamble + body;
+    const auto coverage = swiftCoverage(inventory, &batch);
+    EXPECT_EQ(number(coverage, "recovered_method_count"), 2);
+    EXPECT_EQ(number(coverage, "source_body_method_count"), 2);
+    EXPECT_EQ(array(coverage, "source_units").size(), 2U);
+    for (unsigned mutation = 0; mutation < 7; ++mutation) {
+      SCOPED_TRACE(mutation);
+      auto bad = batch;
+      auto &first = *bad.getArray("source_units")->front().getAsObject();
+      switch (mutation) {
+      case 0:
+        first["source"] = str(first, "source").substr(preamble.size());
+        break;
+      case 1:
+        first["module_preamble"] = 7;
+        break;
+      case 2:
+        first["module_preamble"] = std::string("bad\0prefix", 10);
+        break;
+      case 3:
+        bad["source"] = preamble + preamble + body;
+        break;
+      case 4:
+        bad["source"] = body;
+        break;
+      case 5:
+        first.erase("module_preamble");
+        break;
+      case 6:
+        (*first.getArray("method_identities")
+              ->front()
+              .getAsObject())["mangled_symbol"] = "$sUnknown";
+        break;
+      }
+      EXPECT_THROW(swiftCoverage(inventory, &bad), Error);
+    }
+  }
 }
 TEST(MobileIOSNative, CompilerCoverageRequiresEvidenceAndActualTypeSourceUnit) {
   auto [inventory, batch] = swiftFixture();

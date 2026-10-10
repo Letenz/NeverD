@@ -15,6 +15,7 @@
 #define NEVERD_IR_LOW_LOWIR_H
 
 #include "neverd/ir/NdOps.h"
+#include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -1070,6 +1071,16 @@ struct LowCxxContinuationExitEvidence {
   }
 };
 
+/// A complete catch RETURN routed to a continuation in this parent function.
+/// Published with the exit snapshot after module root closure; a mere code
+/// reference or a caller-supplied root does not establish an exception frame.
+struct LowCxxContinuationEntryEvidence {
+  va_t Target = InvalidVA;
+  va_t SourceEntry = InvalidVA;
+  va_t ReturnAddr = InvalidVA;
+  int ReturnSeq = -1;
+};
+
 struct LowFunctionTemporary {
   uint64_t Offset = 0;
   uint16_t Bytes = 0;
@@ -1119,6 +1130,7 @@ struct LowFunc {
   /// The function-level target union used during root closure is intentionally
   /// not retained here: downstream reconstruction must bind exact exits.
   std::vector<LowCxxContinuationExitEvidence> CxxContinuationExits;
+  std::vector<LowCxxContinuationEntryEvidence> CxxContinuationEntries;
   /// Distinguishes a completed analysis whose exact occurrence set is empty
   /// from a function for which no stable module-level certificate was
   /// published.  False always requires CxxContinuationExits to be empty.
@@ -1145,6 +1157,7 @@ struct LowFunc {
   /// rather than being reinterpreted as a function-pointer tail call.
   std::set<va_t> UnsafeIndirectBranchAddresses;
   std::optional<ExceptionFunction> ExceptionMetadata;
+  std::optional<RegistrationStateAnalysis> RegistrationStates;
 
   /// Coverage accounting for recursive-descent decode and lift.  These values
   /// describe reachable instruction starts, not a linear sweep of the section.

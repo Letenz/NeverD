@@ -80,6 +80,23 @@ struct WinEHSemanticEmissionShape {
   std::string HandlerSymbol;
   uint32_t RecordSize = 0;
   bool HasProtectedRange = false;
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+  std::string ContainerEndSymbol;
+  std::string FilterSymbol;
+  uint32_t GeneratedState = UINT32_MAX;
+  int32_t EnclosingState = -1;
+  std::array<int32_t, 4> RegistrationCookieOffsets{};
+#endif
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+  bool HasX86CxxLayout = false;
+  std::array<std::pair<std::string, std::string>, 4> CxxTableSymbols;
+  std::array<uint64_t, 4> CxxTableSizes{};
+  std::array<int64_t, 4> CxxFrame{};
+#endif
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+  std::string CxxRegistrationHandlerSymbol;
+  std::array<int64_t, 3> CxxRegistrationFrame{};
+#endif
 
   friend bool operator==(const WinEHSemanticEmissionShape &,
                          const WinEHSemanticEmissionShape &) = default;
@@ -96,6 +113,30 @@ std::vector<WinEHSemanticEmissionShape> collectWinEHSemanticEmissionShape(
                      Record.OwnerSymbol, Record.ContainerSymbol,
                      Record.BeginSymbol, Record.EndSymbol, Record.HandlerSymbol,
                      Record.RecordSize, HasProtectedRange});
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+    Shape.back().ContainerEndSymbol = Record.ContainerEndSymbol;
+    Shape.back().FilterSymbol = Record.FilterSymbol;
+    Shape.back().GeneratedState = Record.GeneratedState;
+    Shape.back().EnclosingState = Record.EnclosingState;
+    Shape.back().RegistrationCookieOffsets = Record.RegistrationCookieOffsets;
+#endif
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+    if (Record.X86CxxLayout) {
+      auto &Item = Shape.back();
+      Item.HasX86CxxLayout = true;
+      Item.CxxFrame = Record.X86CxxLayout->Frame;
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+      Item.CxxRegistrationHandlerSymbol =
+          Record.X86CxxLayout->RegistrationHandlerSymbol;
+      Item.CxxRegistrationFrame = Record.X86CxxLayout->RegistrationFrame;
+#endif
+      for (unsigned I = 0; I != 4; ++I) {
+        const auto &Table = Record.X86CxxLayout->Tables[I];
+        Item.CxxTableSymbols[I] = {Table.BeginSymbol, Table.EndSymbol};
+        Item.CxxTableSizes[I] = Table.EndVA - Table.BeginVA;
+      }
+    }
+#endif
   }
   llvm::sort(Shape, [](const WinEHSemanticEmissionShape &Left,
                        const WinEHSemanticEmissionShape &Right) {
@@ -103,12 +144,45 @@ std::vector<WinEHSemanticEmissionShape> collectWinEHSemanticEmissionShape(
                     Left.BeginSymbol, Left.EndSymbol, Left.HandlerSymbol,
                     Left.Token.Kind, Left.Token.Region, Left.Token.Clause,
                     Left.Token.Digest, Left.Encoding, Left.RecordSize,
-                    Left.HasProtectedRange) <
+                    Left.HasProtectedRange
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+                    ,
+                    Left.ContainerEndSymbol, Left.FilterSymbol,
+                    Left.GeneratedState, Left.EnclosingState,
+                    Left.RegistrationCookieOffsets
+#endif
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+                    ,
+                    Left.HasX86CxxLayout, Left.CxxTableSymbols,
+                    Left.CxxTableSizes, Left.CxxFrame
+#endif
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+                    ,
+                    Left.CxxRegistrationHandlerSymbol, Left.CxxRegistrationFrame
+#endif
+                    ) <
            std::tie(Right.SourceFunction, Right.OwnerSymbol,
                     Right.ContainerSymbol, Right.BeginSymbol, Right.EndSymbol,
                     Right.HandlerSymbol, Right.Token.Kind, Right.Token.Region,
                     Right.Token.Clause, Right.Token.Digest, Right.Encoding,
-                    Right.RecordSize, Right.HasProtectedRange);
+                    Right.RecordSize, Right.HasProtectedRange
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+                    ,
+                    Right.ContainerEndSymbol, Right.FilterSymbol,
+                    Right.GeneratedState, Right.EnclosingState,
+                    Right.RegistrationCookieOffsets
+#endif
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+                    ,
+                    Right.HasX86CxxLayout, Right.CxxTableSymbols,
+                    Right.CxxTableSizes, Right.CxxFrame
+#endif
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+                    ,
+                    Right.CxxRegistrationHandlerSymbol,
+                    Right.CxxRegistrationFrame
+#endif
+           );
   });
   return Shape;
 }
@@ -159,6 +233,9 @@ void captureFixupReference(std::vector<CapturedFixupReference> &Captured,
   Item.Reference.IsResolved = Context.IsResolved;
   Item.Reference.BitWidth = Context.BitWidth;
   Item.Reference.ResolvedValue = Value;
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+  Item.Reference.KindName = Context.KindName.str();
+#endif
   if (Context.SectionName == section_names::macho::CompactUnwind) {
     const uint64_t PointerWidth =
         TargetArch == Arch::X86 || TargetArch == Arch::ARM ? 4 : 8;

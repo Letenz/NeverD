@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -45,14 +46,24 @@ namespace {
 /// outside the protected range; its frame is then established from the
 /// frame register, and the handler resumes with the SP the range holds,
 /// which no protected block may write.  That case returns nullopt.
-std::optional<uint64_t>
-proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med, va_t Handler,
-                         const TargetRegInfo &TRI, bool OrdinaryEntry) {
-  auto Fail = [](const char *Why) -> void {
+std::optional<uint64_t> proveSEHEstablisherFrame(
+    const LowFunc &Low, const MedFunc &Med, va_t Handler,
+    const TargetRegInfo &TRI, bool OrdinaryEntry, bool CxxContinuation = false,
+    std::vector<int> *ProtectedSources = nullptr,
+    std::map<int, std::set<va_t>> *ProtectedCalls = nullptr) {
+  auto Fail = [](const std::string &Why) -> void {
     throw LowToMedConversionError(
         std::string("Windows SEH establisher frame: ") + Why);
   };
   const ExceptionFunction &EH = *Low.ExceptionMetadata;
+  auto IsCxxContinuation = [&](va_t VA) {
+    return llvm::any_of(Low.CxxContinuationEntries,
+                        [&](const auto &Entry) { return Entry.Target == VA; });
+  };
+  if (CxxContinuation &&
+      (!EH.Cxx || !EH.Cxx->hasValidStateGraph() ||
+       EH.Cxx->HasDynamicStackAlignment || !IsCxxContinuation(Handler)))
+    Fail("unsupported C++ continuation frame contract");
   const bool UnwindV1 =
       EH.Encoding == ExceptionEncoding::X64UnwindV1 && EH.UnwindVersion == 1;
   const bool UnwindV2 =
@@ -75,6 +86,8 @@ proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med, va_t Handler,
     Fail("nonlinear prologue is not certified");
 
   const size_t N = Low.Blocks.size();
+  const bool SynchronousCxx = CxxContinuation && EH.Cxx->IsSynchronous;
+  std::map<int, std::set<va_t>> Calls;
   std::vector<std::vector<int>> Preds(N);
   int HandlerId = -1;
   for (size_t B = 0; B < N; ++B) {
@@ -89,7 +102,7 @@ proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med, va_t Handler,
   if (!Preds[0].empty())
     Fail("ordinary control flow re-enters the prologue");
   if (HandlerId <= 0 || (!OrdinaryEntry && !Preds[HandlerId].empty()) ||
-      Low.OrdinaryModuleAnalysisRoots.count(Handler))
+      (!CxxContinuation && Low.OrdinaryModuleAnalysisRoots.count(Handler)))
     Fail("handler also has an ordinary entry role");
 
   // Every ordinary predecessor path into a protected block participates. A
@@ -103,6 +116,62 @@ proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med, va_t Handler,
   std::vector<int> Work;
   auto AddProtectedBlocks = [&](va_t ScopeHandler) {
     const size_t Before = Work.size();
+    if (CxxContinuation) {
+      // CFGBuilder owns the state-to-protected-block relation. For a catch
+      // nested inside another catch, follow that catch's containing try to
+      // reach the parent's protected frame, rather than borrowing the nested
+      // funclet's own prologue.
+      const auto &Tries = EH.Cxx->TryBlocks;
+      std::set<size_t> Regions;
+      for (const auto &Entry : Low.CxxContinuationEntries) {
+        if (Entry.Target != ScopeHandler)
+          continue;
+        for (size_t I = 0; I < Tries.size(); ++I)
+          if (llvm::any_of(Tries[I].Handlers, [&](const auto &Catch) {
+                return Catch.HandlerVA == Entry.SourceEntry;
+              }))
+            Regions.insert(I);
+      }
+      bool Changed = true;
+      while (Changed) {
+        Changed = false;
+        const auto Current = Regions;
+        for (size_t I : Current)
+          for (size_t J = 0; J < Tries.size(); ++J)
+            if (Tries[I].TryLow > Tries[J].TryHigh &&
+                Tries[I].CatchHigh <= Tries[J].CatchHigh)
+              Changed |= Regions.insert(J).second;
+      }
+      for (size_t B = 0; B < N; ++B) {
+        bool HasEdge = false;
+        for (const ExceptionalEdge &Edge : Low.Blocks[B].ExceptionalSuccs) {
+          if (Edge.Kind != ExceptionalEdgeKind::CxxCatch ||
+              !Regions.count(Edge.RegionIndex))
+            continue;
+          if (SynchronousCxx) {
+            const auto &Insns = Low.Blocks[B].InstructionBoundaries;
+            const auto Call = llvm::find_if(Insns, [&](const auto &Insn) {
+              return Insn.Address == Edge.SourceVA &&
+                     Insn.Control == LowInstructionControl::Call;
+            });
+            if (Call == Insns.end())
+              Fail("synchronous catch lacks a decoded throwing call");
+            if (Call->Address < PrologueEnd)
+              Fail("protected call overlaps an incomplete prologue");
+            Calls[static_cast<int>(B)].insert(Call->Address);
+          }
+          HasEdge = true;
+        }
+        if (HasEdge) {
+          if (!SynchronousCxx && Low.Blocks[B].StartAddr < PrologueEnd &&
+              Low.Blocks[B].EndAddr > Low.Entry)
+            Fail("protected scope overlaps an incomplete prologue");
+          Work.push_back(static_cast<int>(B));
+          ProtectedBlock[B] = true;
+        }
+      }
+      return Work.size() != Before;
+    }
     for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
       if (Scope.HandlerVA != ScopeHandler)
         continue;
@@ -123,6 +192,8 @@ proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med, va_t Handler,
   };
   auto IsHandlerSource = [&](int B) {
     const va_t Start = Low.Blocks[B].StartAddr;
+    if (CxxContinuation)
+      return B != 0 && Preds[B].empty() && IsCxxContinuation(Start);
     return B != 0 && Preds[B].empty() &&
            !Low.OrdinaryModuleAnalysisRoots.count(Start) &&
            llvm::any_of(EH.SEH->Scopes, [&](const SEHScopeRecord &Scope) {
@@ -161,9 +232,33 @@ proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med, va_t Handler,
   }
   for (size_t B = 0; B < N; ++B)
     if (Relevant[B] &&
-        (!Reachable[B] || (B != 0 && Low.OrdinaryModuleAnalysisRoots.count(
-                                         Low.Blocks[B].StartAddr))))
-      Fail("protected scope has an independent ordinary entry");
+        (!Reachable[B] ||
+         (B != 0 &&
+          Low.OrdinaryModuleAnalysisRoots.count(Low.Blocks[B].StartAddr) &&
+          !(CxxContinuation && IsCxxContinuation(Low.Blocks[B].StartAddr)))))
+      Fail("protected scope has an independent ordinary entry at " +
+           std::to_string(Low.Blocks[B].StartAddr));
+
+  if (ProtectedSources)
+    for (size_t B = 0; B < N; ++B)
+      if (ProtectedBlock[B])
+        ProtectedSources->push_back(static_cast<int>(B));
+  if (ProtectedCalls)
+    *ProtectedCalls = Calls;
+
+  // A synchronous edge leaves at its call, not at the end of the basic
+  // block. Check the entire ordinary prefix, but an epilogue after the last
+  // throwing call cannot invalidate the frame at that earlier call. A block
+  // that leads to another relevant block still contributes all its effects.
+  std::vector<va_t> CheckedEnd(N, InvalidVA);
+  for (const auto &[B, Sites] : Calls) {
+    if (llvm::any_of(Low.Blocks[B].Succs, [&](int S) { return Relevant[S]; }))
+      continue;
+    const va_t Last = *Sites.rbegin();
+    for (const auto &Insn : Low.Blocks[B].InstructionBoundaries)
+      if (Insn.Address == Last)
+        CheckedEnd[B] = Insn.Address + Insn.Size;
+  }
 
   // X64 CodeOffset is the byte offset of the prologue instruction end,
   // not an index in the native unwind slot array.
@@ -277,6 +372,8 @@ proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med, va_t Handler,
       Fail("missing or invalid instruction provenance");
     }
     for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries) {
+      if (Boundary.Address >= CheckedEnd[B])
+        continue;
       for (size_t I = Boundary.FirstOp; I < Boundary.FirstOp + Boundary.OpCount;
            ++I) {
         const LowOp &Op = Block.Ops[I];
@@ -302,7 +399,8 @@ proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med, va_t Handler,
             Op.Output.Offset != TRI.StackPointer || Op.NumInputs != 2 ||
             Op.Inputs[0] != NdVar::reg(TRI.StackPointer, 8) ||
             !Op.Inputs[1].isConst() || Op.Inputs[1].Size != 8)
-          Fail("SP is not stable from prologue through protected scope");
+          Fail("SP is not stable from prologue through protected scope at " +
+               std::to_string(Boundary.Address));
         const uint32_t Offset =
             static_cast<uint32_t>(Boundary.Address + Boundary.Size - Low.Entry);
         if (!ActualAdjustments.emplace(Offset, Op.Inputs[1].Offset).second)
@@ -321,7 +419,8 @@ proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med, va_t Handler,
           Op.Output.RegOff != TRI.StackPointer || !Op.Output.Size)
         continue;
       for (size_t B = 0; B < N; ++B) {
-        if (!Relevant[B] || Op.Addr < Low.Blocks[B].StartAddr ||
+        if (!Relevant[B] || Op.Addr >= CheckedEnd[B] ||
+            Op.Addr < Low.Blocks[B].StartAddr ||
             Op.Addr >= Low.Blocks[B].EndAddr)
           continue;
         if (HasFrameRegister && !ProtectedBlock[B] &&
@@ -720,6 +819,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   // no protected block writes one, that is the value live throughout the
   // protected range, not the value the function was entered with.
   std::map<int, std::vector<int>> SEHProtected;
+  std::map<int, std::map<int, std::set<va_t>>> CxxProtectedCalls;
   std::set<int> SEHTrackedIds;
   std::set<int> SEHHandlerRoots;
   // Handler roots of a frame-register function that moves SP after its
@@ -738,9 +838,46 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       Low.ExceptionMetadata->ParseStatus == ExceptionParseStatus::Complete &&
       (Low.ExceptionMetadata->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||
        Low.ExceptionMetadata->Encoding == ExceptionEncoding::X86ScopeTableEH4);
+  const bool HasX86CxxFrame =
+      TargetArch == Arch::X86 && TargetFormat == BinaryFormat::COFF &&
+      Low.ExceptionMetadata &&
+      Low.ExceptionMetadata->ParseStatus == ExceptionParseStatus::Complete &&
+      Low.ExceptionMetadata->Encoding == ExceptionEncoding::X86CxxFuncInfo &&
+      Low.ExceptionMetadata->Cxx &&
+      Low.ExceptionMetadata->Cxx->hasValidStateGraph() &&
+      (Low.ExceptionMetadata->Personality ==
+           ExceptionPersonality::CxxFrameHandler3 ||
+       Low.ExceptionMetadata->Personality ==
+           ExceptionPersonality::CxxFrameHandlerX86);
+  const bool HasX86RegistrationFrame = HasX86SEHFrame || HasX86CxxFrame;
+  const bool HasDirectX86RegistrationFrame =
+      TargetFormat == BinaryFormat::COFF && HasX86RegistrationFrame &&
+      Low.ExceptionMetadata->Registration &&
+      !Low.ExceptionMetadata->Registration->RealignedFrame &&
+      Low.ExceptionMetadata->Registration->RegistrationOffset ==
+          (HasX86CxxFrame ? -12 : -16) &&
+      Low.ExceptionMetadata->Registration->TryLevelOffset == -4;
+  std::map<va_t, std::optional<int32_t>> RestoredCxxStackOffsets;
+  if (HasDirectX86RegistrationFrame && HasX86CxxFrame &&
+      Low.RegistrationStates &&
+      Low.RegistrationStates->CxxContinuationsComplete &&
+      Low.RegistrationStates->CxxContinuations.size() <=
+          limits::kMaxRegistrationEHRecords)
+    for (const auto &Resume : Low.RegistrationStates->CxxContinuations) {
+      const bool Valid =
+          Low.ExceptionMetadata->CodeRange.contains(Resume.TargetVA) &&
+          Resume.SavedStackOffset <=
+              int64_t(
+                  *Low.ExceptionMetadata->Registration->RegistrationOffset) -
+                  4;
+      auto [It, New] = RestoredCxxStackOffsets.emplace(Resume.TargetVA,
+                                                       Resume.SavedStackOffset);
+      if (!Valid || (!New && It->second != Resume.SavedStackOffset))
+        It->second.reset();
+    }
   auto IsSEHRestored = [&](const MedVar &V) {
     if (TargetArch == Arch::X86)
-      return HasX86SEHFrame && V.Kind == MedVar::Reg &&
+      return HasX86RegistrationFrame && V.Kind == MedVar::Reg &&
              V.RegOff == TRI.FramePointer && V.Size == TRI.PointerSize;
     return IsNonvolatile(V);
   };
@@ -839,6 +976,41 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     }
 
     std::map<int, uint64_t> SEHFrameOffsets;
+    std::set<int> CxxContinuationRoots;
+    if (TargetArch == Arch::X64 && Low.ExceptionMetadata &&
+        Low.ExceptionMetadata->Cxx && !Low.CxxContinuationEntries.empty()) {
+      for (int B = 1; B < N; ++B) {
+        if (!llvm::any_of(Low.CxxContinuationEntries, [&](const auto &Entry) {
+              return Entry.Target == Func.Blocks[B].StartAddr;
+            }))
+          continue;
+        std::vector<int> Protected;
+        std::map<int, std::set<va_t>> Calls;
+        auto FrameBytes = proveSEHEstablisherFrame(
+            Low, Func, Func.Blocks[B].StartAddr, TRI, !IsRoot[B],
+            /*CxxContinuation=*/true, &Protected, &Calls);
+        if (!IsRoot[B])
+          continue;
+        CxxContinuationRoots.insert(B);
+        SEHProtected[B] = std::move(Protected);
+        if (!Calls.empty())
+          CxxProtectedCalls[B] = std::move(Calls);
+        if (FrameBytes)
+          SEHFrameOffsets[B] = *FrameBytes;
+        else
+          SEHProtectedSPRoots.insert(B);
+        for (int Id : LiveIn[B])
+          if (auto V = VarOfId.find(Id); V != VarOfId.end()) {
+            if (TRI.isStackPointer(V->second.RegOff) &&
+                V->second.Kind == MedVar::Reg && !IsFullStackPointer(V->second))
+              throw LowToMedConversionError(
+                  "Windows C++ continuation has a partial stack pointer");
+            if (IsSEHRestored(V->second) ||
+                (SEHProtectedSPRoots.count(B) && IsFullStackPointer(V->second)))
+              SEHTrackedIds.insert(Id);
+          }
+      }
+    }
     if (TargetArch == Arch::X64 && Low.ExceptionMetadata &&
         Low.ExceptionMetadata->SEH) {
       for (int B = 0; B < N; ++B) {
@@ -930,17 +1102,34 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       std::vector<MedOp> InitOps;
       // An x86 filter or finally block is entered by the personality too, with
       // no callee-saved register of the faulting code.
-      const bool IsSEHHandlerRoot =
-          Root != 0 &&
+      const bool IsCxxHandlerRoot =
+          Root != 0 && HasX86CxxFrame &&
+          !Low.OrdinaryModuleAnalysisRoots.count(Func.Blocks[Root].StartAddr) &&
           std::any_of(Func.Blocks[Root].ExceptionalPreds.begin(),
                       Func.Blocks[Root].ExceptionalPreds.end(),
-                      [&](const ExceptionalEdge &E) {
-                        return E.Kind == ExceptionalEdgeKind::SEHHandler ||
-                               (HasX86SEHFrame &&
-                                (E.Kind == ExceptionalEdgeKind::SEHFilter ||
-                                 E.Kind == ExceptionalEdgeKind::SEHFinally));
+                      [](const ExceptionalEdge &E) {
+                        return E.Kind == ExceptionalEdgeKind::CxxCatch ||
+                               E.Kind == ExceptionalEdgeKind::CxxCleanup;
                       });
-      if (IsSEHHandlerRoot)
+      std::optional<int32_t> RestoredCxxSP;
+      if (Root != 0 && Func.Blocks[Root].Preds.empty() &&
+          !Low.OrdinaryModuleAnalysisRoots.count(Func.Blocks[Root].StartAddr))
+        if (auto It = RestoredCxxStackOffsets.find(Func.Blocks[Root].StartAddr);
+            It != RestoredCxxStackOffsets.end())
+          RestoredCxxSP = It->second;
+      const bool IsWindowsRuntimeRoot =
+          CxxContinuationRoots.count(Root) ||
+          (Root != 0 &&
+           (IsCxxHandlerRoot || RestoredCxxSP ||
+            std::any_of(Func.Blocks[Root].ExceptionalPreds.begin(),
+                        Func.Blocks[Root].ExceptionalPreds.end(),
+                        [&](const ExceptionalEdge &E) {
+                          return E.Kind == ExceptionalEdgeKind::SEHHandler ||
+                                 (HasX86SEHFrame &&
+                                  (E.Kind == ExceptionalEdgeKind::SEHFilter ||
+                                   E.Kind == ExceptionalEdgeKind::SEHFinally));
+                        })));
+      if (IsWindowsRuntimeRoot)
         SEHHandlerRoots.insert(Root);
       const bool IsItaniumEHRoot =
           !Func.Blocks[Root].ExceptionalPreds.empty() &&
@@ -954,6 +1143,28 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         Init.Opcode = NdOp::COPY;
         Init.Output = VIt->second;
         MedVar Input = VIt->second;
+        if (HasDirectX86RegistrationFrame && IsWindowsRuntimeRoot &&
+            Input.Kind == MedVar::Reg && Input.Size == 4) {
+          if (Input.RegOff == TRI.FramePointer)
+            Init.RegistrationRoot =
+                MedOp::RegistrationRootKind::EstablishedFramePointer;
+          else if (Input.RegOff == TRI.StackPointer && RestoredCxxSP) {
+            Init.RegistrationRoot =
+                MedOp::RegistrationRootKind::RestoredStackPointer;
+            Init.RegistrationStackOffset = *RestoredCxxSP;
+          } else if (Input.RegOff == TRI.StackPointer &&
+                     (IsCxxHandlerRoot ||
+                      std::any_of(Func.Blocks[Root].ExceptionalPreds.begin(),
+                                  Func.Blocks[Root].ExceptionalPreds.end(),
+                                  [](const ExceptionalEdge &Edge) {
+                                    return Edge.Kind ==
+                                               ExceptionalEdgeKind::SEHFilter ||
+                                           Edge.Kind ==
+                                               ExceptionalEdgeKind::SEHFinally;
+                                  })))
+            Init.RegistrationRoot =
+                MedOp::RegistrationRootKind::CallbackStackPointer;
+        }
         if (IsItaniumEHRoot && Input.Kind == MedVar::Reg &&
             Input.RegOff == TRI.IntReturnReg) {
           Input.Kind = MedVar::EHException;
@@ -980,9 +1191,10 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         // The unwinder enters an SEH handler with its own values in the
         // flags and in the registers the calling convention does not
         // preserve; EAX, the exception code, is defined separately.
-        if (IsSEHHandlerRoot &&
+        if (IsWindowsRuntimeRoot &&
             ((Input.Kind == MedVar::Reg && !TRI.isStackPointer(Input.RegOff) &&
-              !TRI.isFrameOrLinkReg(Input.RegOff) && !IsNonvolatile(Input)) ||
+              !TRI.isFrameOrLinkReg(Input.RegOff) &&
+              (HasX86RegistrationFrame || !IsNonvolatile(Input))) ||
              Input.Kind == MedVar::Flag))
           Input = MedVar::makeUnspecified(Input.Size, TargetArch);
         Init.addInput(Input);
@@ -1138,6 +1350,12 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   for (const auto &[Root, Blocks] : SEHProtected)
     SEHProtectedBlocks.insert(Blocks.begin(), Blocks.end());
   std::map<int, std::map<int, int>> SEHEntryVersions;
+  std::map<std::pair<int, va_t>, std::map<int, int>> CxxCallVersions;
+  std::set<std::pair<int, va_t>> CxxThrowingCalls;
+  for (const auto &[Root, Blocks] : CxxProtectedCalls)
+    for (const auto &[B, Sites] : Blocks)
+      for (va_t Site : Sites)
+        CxxThrowingCalls.emplace(B, Site);
 
   struct Frame {
     int B;
@@ -1161,6 +1379,10 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       for (int Id : SEHTrackedIds)
         SEHEntryVersions[F.B][Id] = GetVersion(Id);
     for (auto &Op : Blk.Ops) {
+      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          CxxThrowingCalls.count({F.B, Op.Addr}))
+        for (int Id : SEHTrackedIds)
+          CxxCallVersions[{F.B, Op.Addr}][Id] = GetVersion(Id);
       for (uint8_t I = 0; I < Op.NumInputs; ++I) {
         if (Op.Inputs[I].Id >= 0)
           Op.Inputs[I].SSAVer = GetVersion(Op.Inputs[I].Id);
@@ -1254,27 +1476,52 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         break;
       if (Seed.Opcode != NdOp::COPY || Seed.NumInputs != 1)
         continue;
+      if (Seed.RegistrationRoot != MedOp::RegistrationRootKind::None)
+        continue;
       MedVar &In = Seed.Inputs[0];
       const bool ProtectedSP =
           SEHProtectedSPRoots.count(Root) && IsFullStackPointer(In);
       if ((!IsSEHRestored(In) && !ProtectedSP) || In.Id != Seed.Output.Id ||
           In.SSAVer != 0)
         continue;
-      // Written in the range, the value at the fault is not known.
-      if (WrittenInRange(In)) {
+      const auto Calls = CxxProtectedCalls.find(Root);
+      const bool AtCalls = Calls != CxxProtectedCalls.end();
+      // Full-width SSA definitions identify the value at a synchronous call.
+      // A write through another register view still invalidates this proof.
+      bool AliasedWrite = false;
+      if (AtCalls)
+        for (int B : Blocks)
+          for (const MedOp &Op : Func.Blocks[B].Ops) {
+            auto CheckAlias = [&](const MedVar &V) {
+              AliasedWrite |= V.Kind == MedVar::Reg && V.Size &&
+                              V.RegOff < In.RegOff + In.Size &&
+                              In.RegOff < V.RegOff + V.Size && V.Id != In.Id;
+            };
+            CheckAlias(Op.Output);
+            for (const MedVar &Aux : Op.IntrinsicOutputs)
+              CheckAlias(Aux);
+          }
+      if ((!AtCalls && WrittenInRange(In)) || AliasedWrite) {
         In = MedVar::makeUnspecified(In.Size, TargetArch);
         continue;
       }
       std::optional<int> Live;
       bool Same = true;
-      for (int B : Blocks) {
-        auto It = SEHEntryVersions[B].find(In.Id);
-        if (It == SEHEntryVersions[B].end() || (Live && *Live != It->second)) {
+      auto AddLive = [&](const std::map<int, int> &Versions) {
+        auto It = Versions.find(In.Id);
+        if (It == Versions.end() || (Live && *Live != It->second)) {
           Same = false;
-          break;
+          return;
         }
         Live = It->second;
-      }
+      };
+      if (AtCalls) {
+        for (const auto &[B, Sites] : Calls->second)
+          for (va_t Site : Sites)
+            AddLive(CxxCallVersions[{B, Site}]);
+      } else
+        for (int B : Blocks)
+          AddLive(SEHEntryVersions[B]);
       if (!Same || !Live)
         In = MedVar::makeUnspecified(In.Size, TargetArch);
       else if (*Live > 0)
@@ -1288,6 +1535,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       if (Seed.Addr != Func.Blocks[Root].StartAddr)
         break;
       if (Seed.Opcode != NdOp::COPY || Seed.NumInputs != 1)
+        continue;
+      if (Seed.RegistrationRoot != MedOp::RegistrationRootKind::None)
         continue;
       MedVar &In = Seed.Inputs[0];
       if (IsNonvolatile(In) && In.Id == Seed.Output.Id && In.SSAVer == 0 &&

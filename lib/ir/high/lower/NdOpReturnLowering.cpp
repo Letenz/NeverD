@@ -117,6 +117,32 @@ bool isEntryIdentity(const MedFunc &Med, const MedVar &V) {
 void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
                                      const MedOp &InputOp, const MedFunc &Med) {
   MedOp CurOp = InputOp;
+  if (TargetArch == Arch::X86 && Med.ExceptionMetadata &&
+      Med.ExceptionMetadata->Encoding == ExceptionEncoding::X86CxxFuncInfo &&
+      Med.ExceptionMetadata->Registration && Med.ExceptionMetadata->Cxx &&
+      Med.RegistrationStates &&
+      Med.RegistrationStates->CxxContinuationsComplete &&
+      CurOp.NumInputs == 1 && CurOp.Inputs[0].Size == 4 && CurOp.OriginSeq >= 0)
+    if (const auto *Resume = Med.RegistrationStates->cxxContinuation(
+            CurOp.Addr, CurOp.OriginSeq);
+        Resume && Resume->EndAddress == CurBlock.EndAddr &&
+        std::any_of(Med.Blocks.begin(), Med.Blocks.end(),
+                    [&](const auto &Block) {
+                      return Block.StartAddr == Resume->TargetVA;
+                    })) {
+      const auto Value = forceInlineExpr(medvarToExpr(CurOp.Inputs[0]));
+      if (Value && Value->Kind == ExprKind::Const &&
+          Value->ConstVal == Resume->TargetVA) {
+        // The runtime consumes this pointer, restores SavedESP, then jumps.
+        // It is not a scalar return from the protected parent function.
+        HighStmt Jump;
+        Jump.Kind = StmtKind::Goto;
+        Jump.Addr = CurOp.Addr;
+        Jump.GotoTarget = Resume->TargetVA;
+        Func.Body.push_back(std::move(Jump));
+        return;
+      }
+    }
   if (Med.SourceParametersBound && Med.SourceTypeHint)
     if (const auto Error = sourceABIErrorResult(*Med.SourceTypeHint)) {
       if (!SwiftErrorEntryInput || !CurOp.HasSourceErrorResult ||
@@ -140,6 +166,21 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
   HighStmt S;
   S.Kind = StmtKind::Return;
   S.Addr = CurOp.Addr;
+  if (Med.CxxContinuationExitAnalysisComplete && InputOp.NumInputs == 1)
+    for (const auto &Exit : Med.CxxContinuationExits)
+      if (Exit.ReturnAddr == InputOp.Addr &&
+          Exit.ReturnSeq == InputOp.OriginSeq && Exit.BlockId == CurBlock.Id &&
+          Exit.ReturnValue == InputOp.Inputs[0])
+        if (Exit.Complete)
+          S.CxxContinuationReturnTargets = Exit.Targets;
+  if (!S.CxxContinuationReturnTargets.empty()) {
+    // This is a native pointer-valued dispatch result, even when a generic
+    // return-width heuristic found a narrower integer in another register.
+    S.RetVal = medvarToExpr(InputOp.Inputs[0]);
+    Func.ReturnType = NdType::makeInt(InputOp.Inputs[0].Size, false);
+    Func.Body.push_back(std::move(S));
+    return;
+  }
 
   // An established void declaration has no return carrier. Searching the
   // machine return register here would invent a value (and may move a prior

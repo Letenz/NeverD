@@ -1483,6 +1483,21 @@ const char *ehAnnotationUnrenderedShape(const llvm::MDNode &UnwindOperations,
     if (!Value || !ehAnnotationOptionalSInt32(*Value))
       return "registration optional value";
   }
+  const auto *RealignedFrame =
+      ehAnnotationNode(Registration, windows_eh_md::RegistrationRealignedFrame);
+  if (!RealignedFrame ||
+      (RealignedFrame->getNumOperands() != 0 &&
+       (RealignedFrame->getNumOperands() !=
+            windows_eh_md::RegistrationRealignedFrameOperandCount ||
+        !ehAnnotationUIntFields(
+            *RealignedFrame,
+            {{windows_eh_md::RegistrationFrameBaseRegister, 8},
+             {windows_eh_md::RegistrationFrameDefinitionVA, 64},
+             {windows_eh_md::RegistrationFrameAlignment, 32},
+             {windows_eh_md::RegistrationFrameAllocationBytes, 32},
+             {windows_eh_md::RegistrationFrameBaseOffset, 32},
+             {windows_eh_md::RegistrationFrameSavedParentOffset, 32}}))))
+    return "registration realigned frame";
   const auto *Stores =
       ehAnnotationNode(Registration, windows_eh_md::RegistrationTryLevelStores);
   const auto *Scopes =
@@ -1498,8 +1513,13 @@ const char *ehAnnotationUnrenderedShape(const llvm::MDNode &UnwindOperations,
         !ehAnnotationUIntFields(*Row,
                                 {{windows_eh_md::RegistrationStoreVA, 64},
                                  {windows_eh_md::RegistrationStoreEndVA, 64},
-                                 {windows_eh_md::RegistrationStoreLevel, 32}}))
+                                 {windows_eh_md::RegistrationStoreLevel, 32},
+                                 {windows_eh_md::RegistrationStoreWidth, 8}}))
       return "registration store";
+    const auto Width =
+        ehAnnotationUInt(*Row, windows_eh_md::RegistrationStoreWidth, 8);
+    if (*Width != 1 && *Width != 2 && *Width != 4)
+      return "registration store width";
   }
   for (const llvm::MDOperand &Operand : Scopes->operands()) {
     const auto *Row = llvm::dyn_cast_if_present<llvm::MDNode>(Operand.get());
@@ -1680,6 +1700,40 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
     return ++Rows <= MaxEHAnnotationRows &&
            Details.size() <= MaxEHAnnotationChars;
   };
+  if (Registration->getNumOperands()) {
+    const auto *Frame = ehAnnotationNode(
+        *Registration, windows_eh_md::RegistrationRealignedFrame);
+    if (Frame->getNumOperands()) {
+      const auto Base = *ehAnnotationUInt(
+          *Frame, windows_eh_md::RegistrationFrameBaseRegister, 8);
+      DetailOS << " * registration.frame: base=";
+      if (Base == 6)
+        DetailOS << "esi";
+      else
+        DetailOS << "x86-register-" << Base;
+      DetailOS
+          << ", definition=0x"
+          << llvm::utohexstr(*ehAnnotationUInt(
+                 *Frame, windows_eh_md::RegistrationFrameDefinitionVA, 64))
+          << ", alignment="
+          << *ehAnnotationUInt(*Frame,
+                               windows_eh_md::RegistrationFrameAlignment, 32)
+          << ", allocation="
+          << *ehAnnotationUInt(
+                 *Frame, windows_eh_md::RegistrationFrameAllocationBytes, 32)
+          << ", establisher_offset="
+          << int32_t(*ehAnnotationUInt(
+                 *Frame, windows_eh_md::RegistrationFrameBaseOffset, 32))
+          << ", saved_parent_offset="
+          << int32_t(*ehAnnotationUInt(
+                 *Frame, windows_eh_md::RegistrationFrameSavedParentOffset, 32))
+          << "\n";
+      if (!WithinBudget()) {
+        Invalid("annotation size limit");
+        return;
+      }
+    }
+  }
   for (unsigned I = 0; I < SEH->getNumOperands(); ++I) {
     const auto *Row =
         llvm::dyn_cast_if_present<llvm::MDNode>(SEH->getOperand(I));

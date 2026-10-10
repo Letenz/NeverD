@@ -243,7 +243,7 @@ void CodeText::scrollContentsBy(int, int) { viewport()->update(); }
 
 void CodeText::cancel() {
   ++serial_;
-  session_.analysisQueries().unsubscribeOwner(this);
+  session_.cancelAnalysisReads(this);
   if (loading_) {
     interrupted_ = true;
     loading_ = false;

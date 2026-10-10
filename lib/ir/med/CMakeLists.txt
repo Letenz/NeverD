@@ -36,6 +36,7 @@ add_neverd_component_library(NeverDIRMed
   lower/LowToMedX86Flags.cpp
   pass/MedCFGSimplify.cpp
   pass/MedConstantPropagation.cpp
+  pass/MedImmutableTableScans.cpp
   pass/MedDCE.cpp
   pass/MedDisplay.cpp
   pass/MedMutableSource.cpp

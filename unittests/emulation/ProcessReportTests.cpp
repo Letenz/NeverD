@@ -168,6 +168,44 @@ TEST(ProcessReport, DarwinXattrInputRejectsMalformedAndUnknownFields) {
       llvm::consumeError(O.takeError());
     }
 }
+TEST(ProcessReport, DarwinXattrMutationGrantsAreStrictAndObjectSpecific) {
+  auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[
+    {"path":"/data","bytes_hex":"00ff","extended_attributes":[],
+     "mutable_extended_attributes":true},
+    {"path":"/readonly","bytes_hex":"","extended_attributes":[],
+     "mutable_extended_attributes":false}],
+    "directories":[{"path":"/dir","extended_attributes":[],
+      "mutable_extended_attributes":true}],
+    "symbolic_links":[{"path":"/link","target_hex":"2f64617461",
+      "extended_attributes":[],"mutable_extended_attributes":true}]}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  EXPECT_EQ(O->DarwinFiles->MutableExtendedAttributes,
+            (std::set<std::string>{"/data", "/dir", "/link"}));
+  for (const char *Value : {"null", "0", "1", "\"true\"", "[]", "{}"})
+    for (const char *Kind : {"files", "directories", "symbolic_links"}) {
+      std::string Entry = "{\"path\":\"/data\",\"extended_attributes\":[],"
+                          "\"mutable_extended_attributes\":";
+      Entry += Value;
+      if (llvm::StringRef(Kind) == "files")
+        Entry += ",\"bytes_hex\":\"\"";
+      if (llvm::StringRef(Kind) == "symbolic_links")
+        Entry += ",\"target_hex\":\"78\"";
+      Entry += '}';
+      auto Bad = processOptionsFromJSON(
+          "{\"darwin_files\":{\"" + std::string(Kind) + "\":[" + Entry +
+          (llvm::StringRef(Kind) == "files" ? "]}}" : "] ,\"files\":[]}}"));
+      ASSERT_FALSE(bool(Bad));
+      llvm::consumeError(Bad.takeError());
+    }
+  auto Unknown = processOptionsFromJSON(R"({"darwin_files":{"files":[
+    {"path":"/data","bytes_hex":"","mutable_extended_attributes":true}]}})");
+  ASSERT_FALSE(bool(Unknown));
+  llvm::consumeError(Unknown.takeError());
+  auto FalseUnknown = processOptionsFromJSON(R"({"darwin_files":{"files":[
+    {"path":"/data","bytes_hex":"","mutable_extended_attributes":false}]}})");
+  ASSERT_TRUE(bool(FalseUnknown));
+  EXPECT_TRUE(FalseUnknown->DarwinFiles->MutableExtendedAttributes.empty());
+}
 TEST(ProcessReport,
      DarwinSymbolicLinkTargetsAreLosslessAndRequireDarwinProfiles) {
   auto Good =
@@ -582,6 +620,7 @@ TEST(ProcessReport, DarwinVirtualEnumerationPolicyIsStrictAndLossless) {
   EXPECT_EQ(P.MinimumBufferSize, 1u);
   EXPECT_EQ(P.InitialMinimumBufferSize, 64u);
   EXPECT_EQ(P.SeekOffset, UINT64_MAX);
+  EXPECT_FALSE(P.BulkAttributes);
   auto Refused = [&](const llvm::json::Value &V) {
     auto Out = Parse(V);
     EXPECT_FALSE(bool(Out)) << llvm::formatv("{0}", V).str();
@@ -600,6 +639,21 @@ TEST(ProcessReport, DarwinVirtualEnumerationPolicyIsStrictAndLossless) {
   }
   for (const char *Bad : {"null", "[]", "{}", "false", "1"})
     Refused(llvm::cantFail(llvm::json::parse(Bad)));
+  for (bool Enabled : {false, true}) {
+    auto V = Good;
+    (*V.getAsObject())["bulk_attributes"] = Enabled;
+    auto Out = Parse(V);
+    ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+    EXPECT_EQ(
+        Out->DarwinFiles->DirectoryEnumerationPolicies.at("/").BulkAttributes,
+        Enabled);
+  }
+  for (const char *Bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto V = Good;
+    (*V.getAsObject())["bulk_attributes"] =
+        llvm::cantFail(llvm::json::parse(Bad));
+    Refused(V);
+  }
   auto V = Good;
   (*V.getAsObject())["extra"] = 1;
   Refused(V);

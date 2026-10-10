@@ -255,9 +255,6 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   for (auto &Fn : Mod) {
     if (OnlyFunction && &Fn != OnlyFunction)
       continue;
-    if (!OnlyFunction && !Fn.isDeclaration() && GuardAnalysisOnlyFunctions &&
-        isAnalysisOnlyFunction(Fn))
-      continue;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
@@ -1134,7 +1131,7 @@ static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
     const auto *Callee = Call->getCalledFunction();
     if (LLVMCWriter::isNativeVectorIntrinsic(*Call, TheArch))
       return true;
-    return Callee && !Callee->isIntrinsic() &&
+    return (!Callee || !Callee->isIntrinsic()) &&
            isCVectorBoundarySignature(Call->getFunctionType());
   }
   return false;
@@ -1412,9 +1409,14 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                             [](const llvm::Use &Operand) {
                               return containsVectorType(Operand->getType());
                             })) &&
-              !isCVectorBoundaryInstruction(I, Opts.TheArch))
-            throw std::runtime_error(
-                "C projection retains an unsupported vector instruction");
+              !isCVectorBoundaryInstruction(I, Opts.TheArch)) {
+            std::string Detail;
+            llvm::raw_string_ostream Stream(Detail);
+            Stream
+                << "C projection retains an unsupported vector instruction in "
+                << F.getName() << ": " << I;
+            throw std::runtime_error(Stream.str());
+          }
         }
     }
   }

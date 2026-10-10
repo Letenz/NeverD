@@ -606,6 +606,13 @@ const char *neverd_unwind_frame_json(neverd_session_t, neverd_va_t address) {
   return copy("null");
 }
 const char *neverd_decompile(neverd_session_t s, neverd_va_t address) {
+  if (session(s)->path.ends_with("pseudocode-parallel.bin") &&
+      (address == Base || address == Base + 16)) {
+    std::printf("fixture parallel decompile %s started\n",
+                hexAddress(address).c_str());
+    std::fflush(stdout);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
   if (session(s)->path.ends_with("pseudocode-slow.bin") && address == Base) {
     std::puts("fixture slow decompile started");
     std::fflush(stdout);

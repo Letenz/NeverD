@@ -23,6 +23,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Object/COFF.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -38,6 +39,94 @@
 namespace {
 
 using namespace neverd;
+
+TEST(COFFExceptionPatch, CompatibilityLoadConfigSizeCannotHideEitherPEClass) {
+  for (bool Is64 : {false, true}) {
+    SCOPED_TRACE(Is64);
+    std::vector<uint8_t> Binary(0x800);
+    auto Word = [&](size_t Offset, uint16_t Value) {
+      llvm::support::endian::write16le(Binary.data() + Offset, Value);
+    };
+    auto Dword = [&](size_t Offset, uint32_t Value) {
+      llvm::support::endian::write32le(Binary.data() + Offset, Value);
+    };
+    Binary[0] = 'M';
+    Binary[1] = 'Z';
+    Dword(0x3c, 0x80);
+    Binary[0x80] = 'P';
+    Binary[0x81] = 'E';
+    Word(0x84, Is64 ? 0x8664 : 0x14c);
+    Word(0x86, 2);
+    const size_t Optional = 0x98;
+    const size_t OptionalSize = Is64 ? 0xf0 : 0xe0;
+    Word(0x94, OptionalSize);
+    Word(0x96, 2);
+    Word(Optional, Is64 ? 0x20b : 0x10b);
+    const uint64_t Base = Is64 ? 0x140000000 : 0x400000;
+    if (Is64)
+      llvm::support::endian::write64le(Binary.data() + Optional + 24, Base);
+    else
+      Dword(Optional + 28, Base);
+    Dword(Optional + 32, 0x1000);
+    Dword(Optional + 36, 0x200);
+    Dword(Optional + 56, 0x3000);
+    Dword(Optional + 60, 0x200);
+    Dword(Optional + (Is64 ? 108 : 92), 16);
+    const size_t Directories = Optional + (Is64 ? 112 : 96);
+    Dword(Directories + 80, 0x2000);
+    Dword(Directories + 84, 64);
+    for (unsigned I = 0; I != 2; ++I) {
+      const size_t Section = Optional + OptionalSize + I * 40;
+      const std::string Name = I ? ".rdata" : ".text";
+      std::copy(Name.begin(), Name.end(), Binary.begin() + Section);
+      Dword(Section + 8, I ? 0x400 : 0x200);
+      Dword(Section + 12, I ? 0x2000 : 0x1000);
+      Dword(Section + 16, I ? 0x400 : 0x200);
+      Dword(Section + 20, I ? 0x400 : 0x200);
+      Dword(Section + 36, I ? 0x40000040 : 0x60000020);
+    }
+    Binary[0x200] = 0xc3;
+    Dword(0x400, Is64 ? 320 : 192);
+    const size_t Flags =
+        Is64 ? offsetof(llvm::object::coff_load_configuration64, GuardFlags)
+             : offsetof(llvm::object::coff_load_configuration32, GuardFlags);
+    const size_t Table = Is64
+                             ? offsetof(llvm::object::coff_load_configuration64,
+                                        GuardCFFunctionTable)
+                             : offsetof(llvm::object::coff_load_configuration32,
+                                        GuardCFFunctionTable);
+    const size_t Count = Is64
+                             ? offsetof(llvm::object::coff_load_configuration64,
+                                        GuardCFFunctionCount)
+                             : offsetof(llvm::object::coff_load_configuration32,
+                                        GuardCFFunctionCount);
+    Dword(0x400 + Flags,
+          uint32_t(llvm::COFF::GuardFlags::CF_FUNCTION_TABLE_PRESENT));
+    if (Is64) {
+      llvm::support::endian::write64le(Binary.data() + 0x400 + Table,
+                                       Base + 0x2300);
+      llvm::support::endian::write64le(Binary.data() + 0x400 + Count, 2);
+    } else {
+      Dword(0x400 + Table, Base + 0x2300);
+      Dword(0x400 + Count, 2);
+    }
+    Dword(0x700, 0x1000);
+    Dword(0x704, 0x1001);
+    const Arch Target = Is64 ? Arch::X64 : Arch::X86;
+    auto Valid = validatePatchedCOFFImage(Binary, Target, false);
+    ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+    Dword(0x704, 0x1000);
+    auto Duplicate = validatePatchedCOFFImage(Binary, Target, false);
+    ASSERT_TRUE(bool(Duplicate));
+    EXPECT_NE(llvm::toString(std::move(Duplicate)).find("strictly RVA-sorted"),
+              std::string::npos);
+    Dword(0x400, 0x401);
+    auto Truncated = validatePatchedCOFFImage(Binary, Target, false);
+    ASSERT_TRUE(bool(Truncated));
+    EXPECT_NE(llvm::toString(std::move(Truncated)).find("declared load"),
+              std::string::npos);
+  }
+}
 
 std::optional<uint64_t> metadataInteger(const llvm::MDNode *Node,
                                         unsigned Index, unsigned Width) {
@@ -539,8 +628,7 @@ TEST(COFFExceptionPatch, AcceptsTargetAwareCanonicalSourceReencoding) {
   Image.ExceptionMetadata.Functions.push_back(std::move(EH));
   Image.ExceptionMetadata.rebuildIndex();
 
-  llvm::Error Error =
-      validateCOFFExceptionSourceIdentityClosure(Module, Image);
+  llvm::Error Error = validateCOFFExceptionSourceIdentityClosure(Module, Image);
   EXPECT_FALSE(static_cast<bool>(Error)) << llvm::toString(std::move(Error));
 }
 
@@ -1405,8 +1493,8 @@ TEST(COFFExceptionPatch,
   CompletePatchInput Input = makeCompletePatchInput(Context);
   ASSERT_NE(Input.Module, nullptr);
   ASSERT_NE(Input.Function, nullptr);
-  llvm::Function *Replaceable = addCompletePatchFunction(
-      Input, Context, "sub_140002000", 0x140002000);
+  llvm::Function *Replaceable =
+      addCompletePatchFunction(Input, Context, "sub_140002000", 0x140002000);
   ASSERT_NE(Replaceable, nullptr);
   addMixedSourceLayout(Input, 0x140001000, 0x140002000);
 
@@ -1429,8 +1517,8 @@ TEST(COFFExceptionPatch,
   const std::string Before = moduleIR(*Input.Module);
   SourceFunctionPreparation Preparation;
   std::string Detail;
-  EXPECT_FALSE(SourcePreparationProbe::prepare(
-      *Input.Module, &Input.Image, Preparation, Detail));
+  EXPECT_FALSE(SourcePreparationProbe::prepare(*Input.Module, &Input.Image,
+                                               Preparation, Detail));
   EXPECT_EQ(Detail,
             "coff exception patch: Windows EH metadata does not match the "
             "input image for function sub_140001000");
@@ -1662,18 +1750,17 @@ TEST(COFFExceptionPatch,
   CompletePatchInput Input = makeCompletePatchInput(Context);
   ASSERT_NE(Input.Module, nullptr);
   ASSERT_NE(Input.Function, nullptr);
-  llvm::Function *Replaceable = addCompletePatchFunction(
-      Input, Context, "sub_140002000", 0x140002000);
+  llvm::Function *Replaceable =
+      addCompletePatchFunction(Input, Context, "sub_140002000", 0x140002000);
   ASSERT_NE(Replaceable, nullptr);
   addMixedSourceLayout(Input, 0x140001000, 0x140002000);
 
   SourceFunctionPreparation Preparation;
   std::string Detail;
-  ASSERT_TRUE(SourcePreparationProbe::prepare(
-      *Input.Module, &Input.Image, Preparation, Detail))
+  ASSERT_TRUE(SourcePreparationProbe::prepare(*Input.Module, &Input.Image,
+                                              Preparation, Detail))
       << Detail;
-  EXPECT_EQ(Preparation.PreservedOriginalVAs.at("sub_140001000"),
-            0x140001000u);
+  EXPECT_EQ(Preparation.PreservedOriginalVAs.at("sub_140001000"), 0x140001000u);
   EXPECT_EQ(Preparation.ReplaceableOriginalVAs.at("sub_140002000"),
             0x140002000u);
   EXPECT_TRUE(Input.Function->isDeclaration());
@@ -1687,8 +1774,8 @@ TEST(COFFExceptionPatch,
   ASSERT_EQ(Table->getNumOperands(), 1u);
   llvm::MDNode *Row = Table->getOperand(0);
   ASSERT_NE(Row, nullptr);
-  const auto *FunctionValue = llvm::dyn_cast<llvm::ValueAsMetadata>(
-      Row->getOperand(0).get());
+  const auto *FunctionValue =
+      llvm::dyn_cast<llvm::ValueAsMetadata>(Row->getOperand(0).get());
   ASSERT_NE(FunctionValue, nullptr);
   EXPECT_EQ(FunctionValue->getValue(), Replaceable);
 
