@@ -113,7 +113,7 @@ llvm::Error validateCOFFRegistrationCxxIR(const llvm::Function &Function,
               "dispatch");
       }
   return coff_registration::validateFramePrivacy(
-      Function, {}, Proof->Frame.Slot, {}, {}, Proof->CallerPCWrites,
-      Proof->ChainReads, 0, Immutable, &Contract);
+      Function, {}, Proof->Frame.Slot, {}, Proof->IncomingAccesses,
+      Proof->CallerPCWrites, Proof->ChainReads, 0, Immutable, &Contract);
 }
 } // namespace neverd

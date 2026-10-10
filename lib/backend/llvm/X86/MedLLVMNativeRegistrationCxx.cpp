@@ -7,6 +7,7 @@
 #include "../eh/MedLLVMEHHelpers.h"
 #include "MedLLVMRegistrationCxxContinuation.h"
 #include "MedLLVMRegistrationCxxStack.h"
+#include "MedLLVMRegistrationIncoming.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
@@ -15,8 +16,8 @@
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
 #include "neverd/backend/llvm/X86RegistrationCatch.h"
+#include "neverd/backend/llvm/X86RegistrationEntry.h"
 #include "neverd/backend/llvm/X86RegistrationLayout.h"
-#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -60,7 +61,6 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   if (!States.Complete || !States.CallbackStatesComplete ||
       !States.RegistrationLifetimeComplete || !States.ChainOperationsComplete ||
       !States.IncomingFrameAccessesComplete ||
-      !States.IncomingFrameAccesses.empty() ||
       !States.CallFrameEffectsComplete || !States.CleanupFrameEffectsComplete ||
       !States.CxxContinuationsComplete || !States.CxxCatchObjectsComplete ||
       !States.RuntimeObjectAccessesComplete || !States.ImageReadsComplete)
@@ -85,15 +85,8 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   if (!CatchPlan)
     return false;
 
-  // Preserve an actual incoming ECX as ECX. A guessed cdecl formal would read
-  // an extra caller-stack word even when the source only spills this register.
-  // No additional register/stack parameters inherit that physical ABI.
-  const auto &TRI = getTargetRegInfo(Arch::X86);
-  const bool EntryECX = Func.Params.size() == 1;
-  if (Func.Params.size() != Parent.arg_size() || Func.Params.size() > 1 ||
-      (EntryECX && (Func.Params[0].RegOff != TRI.IntParamRegs[0] ||
-                    Func.Params[0].Size != 4 ||
-                    !Parent.getArg(0)->getType()->isIntegerTy(32))))
+  const auto EntryABI = getX86RegistrationCxxEntryABI(Func, Parent);
+  if (!EntryABI)
     return false;
 
   using RangeKey = std::pair<va_t, va_t>;
@@ -416,6 +409,11 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     Stack = *Plan;
   }
 
+  const auto Incoming = x86_registration::prepareIncomingFrame(
+      Func, Parent, RegistrationIncomingIR);
+  if (!Incoming)
+    return false;
+
   // Commit only after the source frame, calls, catches and resumption closure
   // are closed. The C++ runtime outlines these catch/cleanup pads; the whole
   // logical source frame remains one escaped alloca across every funclet.
@@ -427,16 +425,21 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
           .getCallee());
   Parent.setPersonalityFn(Personality);
   rewrite_source::setOriginalVA(*Personality, Runtime->RuntimeVA);
-  Parent.setCallingConv(EntryECX ? llvm::CallingConv::X86_ThisCall
-                                 : llvm::CallingConv::C);
+  Parent.setCallingConv(*EntryABI);
   Parent.addFnAttr(llvm::RewriteWinX86CxxFrameAttribute);
   Parent.addFnAttr("frame-pointer", "all");
   Parent.addFnAttr(llvm::Attribute::NoInline);
   Parent.addFnAttr(llvm::Attribute::OptimizeNone);
+  x86_registration::IncomingFrameProjection IncomingProjection(
+      Parent, EH.CodeRange.Begin, *Incoming);
+  llvm::SmallVector<llvm::Value *, 2> Escaped{FrameAlloca};
+  if (auto *Slot = IncomingProjection.slot())
+    Escaped.push_back(Slot);
   llvm::IRBuilder<> Entry(Parent.getEntryBlock().getTerminator());
   Entry.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
                        Mod, llvm::Intrinsic::localescape),
-                   {FrameAlloca});
+                   Escaped);
+  IncomingProjection.commit();
   FrameAlloca->setMetadata(
       windows_eh_md::RegistrationFrameAttachment,
       llvm::MDNode::get(*Ctx,
@@ -658,6 +661,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       Store->setVolatile(true);
   }
   RegistrationChainIR.clear();
+  RegistrationIncomingIR.clear();
   RegistrationMemoryIR.clear();
   CallSiteAddrs.clear();
   llvm::removeUnreachableBlocks(Parent);

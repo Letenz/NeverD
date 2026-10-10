@@ -34,6 +34,7 @@ struct CxxIRControlProof {
   std::map<uint32_t, const llvm::CleanupPadInst *> Cleanups;
   std::map<const llvm::CallBase *, CxxIRCall> Calls;
   std::set<const llvm::Instruction *> ChainReads;
+  std::set<const llvm::Instruction *> IncomingAccesses;
   std::vector<ExceptionAddressRange> CallerPCWrites;
 };
 llvm::Expected<const llvm::CatchReturnInst *>

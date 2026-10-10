@@ -46,6 +46,7 @@ class RealignedRewriteEvidenceTests(unittest.TestCase):
                                          "files": [{"name": n, "sha256": "a" * 64}
                                                    for n in libraries.LIBRARIES]}, "cases": []}
         (root / "catch-projection.xml").write_text('<testsuites tests="1"/>')
+        (root / "incoming-projection.xml").write_text('<testsuites tests="2"/>')
         for kind in runner.FORMS:
             (root / (kind + ".obj")).write_bytes(kind.encode())
             (root / (kind + "-emit.xml")).write_text('<testsuites tests="1"/>')
@@ -60,6 +61,8 @@ class RealignedRewriteEvidenceTests(unittest.TestCase):
             struct.pack_into("<i", product, 0x201, 0x2000 - 0x1005)
             receipt = {"schema": 1, "evidence": "checked-realigned-source-reconstruction",
                        "source_frame": "direct" if runner.proof_count(name) == 1 else "realigned",
+                       "incoming_reads": 3 if "-incoming" in name else 0,
+                       "incoming_writes": 2 if "-incoming" in name and "-readonly" not in name else 0,
                        "base": runner.BASES[0], "source_begin": 0x1000, "source_end": 0x1040,
                        "generated_begin": 0x2000, "generated_end": 0x2080,
                        "source_image_sha256": hashlib.sha256(original).hexdigest(),
@@ -85,7 +88,7 @@ class RealignedRewriteEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             capture = self.capture(root)
-            self.assertEqual(len(replay.validate_capture(root, capture)), 160)
+            self.assertEqual(len(replay.validate_capture(root, capture)), 224)
             for mutation in range(12):
                 changed = copy.deepcopy(capture)
                 case = changed["cases"][0]
@@ -161,6 +164,32 @@ class RealignedRewriteEvidenceTests(unittest.TestCase):
             record["contract_sha256"] = runner.file_digest(path)
             with self.assertRaises(ValueError):
                 replay.validate_capture(root, capture)
+
+    def test_requires_incoming_proof_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = self.capture(root)
+            path = root / "incoming-projection.xml"
+            for xml in ('<testsuites tests="0"/>', '<testsuites tests="1"/>',
+                        '<testsuites tests="2" failures="1"/>',
+                        '<testsuites tests="2"><testcase><skipped/></testcase></testsuites>'):
+                path.write_text(xml)
+                with self.subTest(xml=xml), self.assertRaises(ValueError):
+                    replay.validate_capture(root, capture)
+
+    def test_requires_actual_argument_effects_even_with_updated_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = self.capture(root)
+            record = next(c for c in capture["cases"] if c["case"] == "value-incoming-fixed")
+            path = root / record["case"] / "contract.json"
+            original = json.loads(path.read_text())
+            for field in ("incoming_reads", "incoming_writes"):
+                changed = dict(original, **{field: 0})
+                path.write_text(json.dumps(changed))
+                record["contract_sha256"] = runner.file_digest(path)
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    replay.validate_capture(root, capture)
 
     def test_runtime_requires_value_chain_iterations_and_exact_caller(self):
         with tempfile.TemporaryDirectory() as directory:

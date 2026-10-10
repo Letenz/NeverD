@@ -233,6 +233,14 @@ checked ABI. Source object
 borrows must be bounded, initialized and separate from registration storage;
 reference accesses retain the CRT-provided object identity through catch return.
 Reads and writes must retain the original image storage identity.
+Checked incoming cdecl words retain their physical caller locations across
+parent code and catch execution, including writes observed by the caller.
+The entry ABI permits contiguous observed 32-bit stack parameters or the
+existing single ECX parameter. Mixed register/stack signatures remain rejected.
+SEH and C++ share the transactional caller-frame projection; installation
+independently checks its entry initialization, escape, offsets, access widths,
+occurrences and calling convention. Private-frame pointers cannot escape into
+caller storage.
 For an aligned source, the synthetic allocation proves the parent coordinate's
 alignment and extent. Catch objects, cleanup borrows and SavedESP writeback use
 that same projection. A catch has a separately bounded scratch allocation;
@@ -251,11 +259,12 @@ fixup, so rebasing cannot turn them into pointers. Public installation requires
 checks actual emitted code, tables, SafeSEH and all absolute relocations. Entry
 patches may not overwrite preserved helper or CRT instructions. The current
 runtime fixtures cover integer value/reference catches, unbound typed catches,
-catch-all with signed and unsigned throws, and nested destruction, including
+catch-all with signed and unsigned throws, caller argument reads and writes,
+and nested destruction, including
 forced relocation. Fixed MSVC-style frames use an independent assembly fixture;
 realigned frames use compiler-generated parents. Both link the captured MSVC
 CRT libraries. The CI replay executes the identical PE files on Windows. Other
-try/catch graphs, unproved object types, incoming stack arguments, unproved dynamic frames
+try/catch graphs, unproved object types or entry ABIs, unproved dynamic frames
 and GS or asynchronous C++ remain available for analysis and are rejected for
 native installation.
 

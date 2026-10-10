@@ -6,6 +6,7 @@
 
 #include "RegistrationCxxCatchTestUtils.h"
 #include "RegistrationCxxContinuationTestUtils.h"
+#include "RegistrationCxxIncomingTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/codegen/COFF/COFFPatch.h"
@@ -320,6 +321,7 @@ TEST(WindowsRegistrationRealignedNative, InputPE32ReconstructsTheSourceFrame) {
   auto Proof = validateCOFFRegistrationCxxIR(*Parent, EH, *Image);
   ASSERT_FALSE(bool(Proof)) << llvm::toString(std::move(Proof));
   registration_test::checkUnboundCxxCatchEdits(*Parent, EH, *Image);
+  registration_test::checkCxxIncomingEdits(*Parent, EH, *Image);
   if (EH.Registration->RealignedFrame)
     checkFrameEdits(*Parent, EH, *Image);
   registration_test::checkCxxContinuationEdits(*Parent, EH, *Image);
@@ -361,6 +363,12 @@ TEST(WindowsRegistrationRealignedNative, InputPE32ReconstructsTheSourceFrame) {
                            true);
       };
       llvm::json::Object Record{
+          {"incoming_reads",
+           llvm::count_if(States.IncomingFrameAccesses,
+                          [](const auto &A) { return !A.Write; })},
+          {"incoming_writes",
+           llvm::count_if(States.IncomingFrameAccesses,
+                          [](const auto &A) { return A.Write; })},
           {"schema", 1},
           {"evidence", "checked-realigned-source-reconstruction"},
           {"source_frame",

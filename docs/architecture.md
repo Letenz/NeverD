@@ -127,6 +127,12 @@ cookies and result publication have separate translation units. The private
 state solver owns the shared lattice and cumulative work budget across them.
 The LLVM backend keeps registration lowering and callback preflight, scratch
 stack proof, outlining and security-check ABI under `lib/backend/llvm/X86`.
+`MedLLVMRegistrationIncoming` owns the transactional caller-frame projection
+used by both SEH and C++: preflight binds source memory occurrences, installation
+captures the physical entry frame in an escaped slot, and rollback restores
+pointers, metadata, volatility and newly introduced declarations. The shared
+C++ entry ABI accepts only observed contiguous cdecl words or a single ECX
+parameter; parameter attributes cannot silently select another register ABI.
 COFF installation, source-IR replay, callback identity, incoming-frame proof,
 image-pointer closure and emitted SEH table checks remain separate consumers
 under `lib/backend/codegen/COFF`. Splitting these implementations does not add a

@@ -11,8 +11,8 @@
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
+#include "neverd/backend/llvm/X86RegistrationEntry.h"
 #include "neverd/backend/llvm/X86RegistrationLayout.h"
-#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -110,8 +110,7 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
       !States.CallFrameEffectsComplete || !States.CleanupFrameEffectsComplete ||
       !States.CxxContinuationsComplete || !States.CxxCatchObjectsComplete ||
       !States.RuntimeObjectAccessesComplete || !States.ImageReadsComplete ||
-      !States.IncomingFrameAccessesComplete ||
-      !States.IncomingFrameAccesses.empty())
+      !States.IncomingFrameAccessesComplete)
     return rejectIR("replayed C++ registration effects are incomplete");
   const auto Coordinate =
       Source.Registration->RealignedFrame
@@ -134,16 +133,14 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
   LowToMedConverter Converter;
   Converter.setBinaryImage(&Image);
   auto Med = Converter.convert(Result.Source, Arch::X86, BinaryFormat::COFF);
-  const auto &TRI = getTargetRegInfo(Arch::X86);
-  if (Med.Params.size() != Function.arg_size() || Med.Params.size() > 1 ||
-      (Med.Params.empty()
-           ? Function.getCallingConv() != llvm::CallingConv::C
-           : (Function.getCallingConv() != llvm::CallingConv::X86_ThisCall ||
-              Med.Params[0].RegOff != TRI.IntParamRegs[0] ||
-              Med.Params[0].Size != 4 ||
-              !Function.getArg(0)->getType()->isIntegerTy(32))))
+  const auto EntryABI = getX86RegistrationCxxEntryABI(Med, Function);
+  if (!EntryABI || Function.getCallingConv() != *EntryABI)
     return rejectIR("C++ parent changed its physical entry ABI");
   const std::array<const llvm::Function *, 1> Functions = {&Function};
+  std::set<const llvm::Instruction *> IncomingSetup;
+  if (auto Error = validateIncomingCallerFrame(
+          Function, Med, Functions, Result.IncomingAccesses, IncomingSetup))
+    return std::move(Error);
   auto Segments = validateSourceSegments(Function, Med, {}, Functions, true);
   if (!Segments)
     return Segments.takeError();
@@ -185,8 +182,14 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
       if (const auto *Intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(&I)) {
         if (Intrinsic->getIntrinsicID() == llvm::Intrinsic::localescape) {
           if (Escape || &Block != &Function.getEntryBlock() ||
-              Intrinsic->arg_size() != 1 ||
-              Intrinsic->getArgOperand(0) != Frame->Slot)
+              Intrinsic->arg_size() !=
+                  1 + unsigned(!Result.IncomingAccesses.empty()) ||
+              Intrinsic->getArgOperand(0) != Frame->Slot ||
+              (Intrinsic->arg_size() == 2 &&
+               (!llvm::isa<llvm::AllocaInst>(Intrinsic->getArgOperand(1)) ||
+                !llvm::cast<llvm::AllocaInst>(Intrinsic->getArgOperand(1))
+                     ->getMetadata(
+                         windows_eh_md::RegistrationCallerFrameAttachment))))
             return rejectIR("C++ frame lost its unique whole-frame escape");
           Escape = Intrinsic;
         }
