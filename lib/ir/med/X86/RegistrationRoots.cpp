@@ -63,18 +63,28 @@ void RegistrationRoots::disconnectNoReturnFallthroughs(MedFunc &Func) const {
       !Low.RegistrationStates->RegistrationLifetimeComplete)
     return;
   for (auto &Block : Func.Blocks) {
-    for (const auto &Op : Block.Ops) {
+    if (Block.Id < 0 || size_t(Block.Id) >= Low.Blocks.size())
+      continue;
+    const auto &Source = Low.Blocks[Block.Id];
+    if (Source.StartAddr != Block.StartAddr || Source.EndAddr != Block.EndAddr)
+      continue;
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      const auto &Op = Block.Ops[I];
       if (Op.Opcode != NdOp::CALL || !Op.DoesNotReturn || Op.NumInputs != 1 ||
           !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4)
         continue;
       const auto *Effect =
           Low.RegistrationStates->callFrameEffect(Op.Addr, Op.OriginSeq);
+      const auto Boundary =
+          llvm::find_if(Source.InstructionBoundaries,
+                        [&](const auto &B) { return B.Address == Op.Addr; });
       if (!Effect || !Effect->DoesNotReturn ||
           Effect->Target != Op.Inputs[0].ConstVal ||
-          Effect->EndAddress != Block.EndAddr ||
-          llvm::any_of(
-              Block.Ops,
-              [&](const auto &Other) { return Other.Addr > Op.Addr; }) ||
+          Boundary == Source.InstructionBoundaries.end() ||
+          Boundary->Control != LowInstructionControl::Call ||
+          Boundary->Immediate != Effect->Target ||
+          Effect->EndAddress != Boundary->Address + Boundary->Size ||
+          Effect->EndAddress <= Op.Addr || Effect->EndAddress > Block.EndAddr ||
           llvm::any_of(Block.Succs, [&](int Succ) {
             return Succ < 0 || size_t(Succ) >= Func.Blocks.size();
           }))
@@ -82,6 +92,11 @@ void RegistrationRoots::disconnectNoReturnFallthroughs(MedFunc &Func) const {
       for (int Succ : Block.Succs)
         std::erase(Func.Blocks[Succ].Preds, Block.Id);
       Block.Succs.clear();
+      // CFG decoding can retain instructions after a source-proved terminal
+      // call, for example LLVM's jump to an unreachable normal destination.
+      // They cannot define SSA values or ordinary successors. Keep the source
+      // interval, exceptional edges and independently rooted resume blocks.
+      Block.Ops.resize(I + 1);
       break;
     }
   }

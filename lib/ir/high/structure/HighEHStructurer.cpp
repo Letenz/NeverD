@@ -19,6 +19,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "HighCFSimplifyDetail.h"
+#include "X86RegistrationTry.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
@@ -1764,6 +1765,11 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     }
     AddressSet ProtectedAddresses{Candidate.Range, Candidate.Cover};
     ProtectedAddresses.SplitScope = SplitRegistrationCxx;
+    const bool TerminalRegistration =
+        !Host && SplitRegistrationCxx &&
+        extractTerminalRegistrationTry(Func, Med, ProtectedBody, InsertAt);
+    if (TerminalRegistration)
+      Host = &Func.Body;
     if ((!Host &&
          !extractAddressSlice(Func.Body, ProtectedAddresses, EH.CodeRange,
                               ProtectedBody, InsertAt,
@@ -1774,7 +1780,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     }
     // A try joined from split parts may start with a part's statements: its
     // entry, and the label it carries, is its first statement's address.
-    va_t Entry = Candidate.Range.Begin;
+    va_t Entry = TerminalRegistration ? Med.Entry : Candidate.Range.Begin;
     if (!NestedParts.empty())
       for (const HighStmt &S : ProtectedBody)
         if (S.Addr && S.Addr != InvalidVA) {
