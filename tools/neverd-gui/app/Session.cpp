@@ -923,11 +923,12 @@ void Session::analyzeWholeProgram() {
 
 void Session::cancelReads() {
   // Session bookkeeping and external (MCP) callers keep their replies.
-  const QSet<QObject *> keep{&reads_, &external_};
+  QSet<QObject *> keep{&reads_, &external_};
   analysis_.cancelReads(keep);
   // Retained analysis requests may still need a queued project snapshot.
   // A cancelled replica already removes its own snapshot subscription.
-  queries_.cancelReads(keep | analysis_.snapshotOwners());
+  keep.unite(analysis_.snapshotOwners());
+  queries_.cancelReads(keep);
   emit message(tr("Queued requests cancelled; a running engine call finishes "
                   "unless the worker is restarted."),
                1);
