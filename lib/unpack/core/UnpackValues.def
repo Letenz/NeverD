@@ -43,6 +43,14 @@ NEVERD_UNPACK_PRIVATE_TEXT(
     UnknownEncodedPointerState,
     "the process profile has no encoded pointer inventory contract "
     "(snapshot_only emits analysis bytes)")
+NEVERD_UNPACK_PRIVATE_TEXT(
+    DynamicThreadLocalState,
+    "the captured process retains dynamic TLS/FLS slots; their ownership and "
+    "state are not reconstructed (snapshot_only emits analysis bytes)")
+NEVERD_UNPACK_PRIVATE_TEXT(
+    UnknownDynamicThreadLocalState,
+    "the process profile has no dynamic TLS/FLS inventory contract "
+    "(snapshot_only emits analysis bytes)")
 NEVERD_UNPACK_PRIVATE_TEXT(HeapInventory,
                            "the process heap inventory has invalid extents")
 NEVERD_UNPACK_PRIVATE_TEXT(ImportHelperLimit,

@@ -58,6 +58,8 @@ neverd mobile executable -o metadata --metadata-only
 
 Swift 還原使用 NeverD LLVM 分支的 `LLVMSwiftDemangle`，在 C++ 程序內分類簽章。不啟動外部名稱解碼器或工具鏈探索命令；建置和執行 NeverD 也不需要安裝 Swift 編譯器。該分支的原始碼建置與對應 LLVM 套件都包含此元件；NeverD 不會另行抓取 Swift 原始碼相依套件。簽章清單記錄 `demangler: {"name": "llvm-swift-demangle", "execution": "builtin", "version": "6.3.3"}`。受支援的簽章會先繫結至原生進入點和 ABI 位置，再產生真正的 `.swift` 函式、類別方法／初始化器及固定配置結構體方法。泛型／resilient、async／throwing、不支援的執行階段產生可呼叫形式，以及不完整的原始碼相依群組仍無法還原。
 
+已還原的 x86_64 純量 SSE 加、減、乘、除保留數值位元模式及 MXCSR 的捨入、DAZ/FTZ 和黏滯例外狀態。編譯這些原始碼需要支援 LLVM MXCSR 指標內建操作的 x86_64 Swift 目標。組裝 `member_source` 時，所需的 `module_preamble` 宣告必須保留在檔案作用域；請使用完整的 `sources/swift.swift` 輸出。轉換狀態及任意 96 位元記憶體或算術操作仍不支援。未遮罩例外需要另外在原生 Intel 上驗證；Rosetta 會強制設定例外遮罩位元。
+
 一般輸出包含 `sources/native.c`、選用的 `sources/objc.m` 和 `sources/swift.swift`、宣告與執行階段中繼資料、方法／簽章覆蓋 JSON、日誌、`artifacts/selected.macho` 和 `report.json`。不會有外部 Swift 工具鏈探索或名稱解碼日誌。產生的原始碼不會呼叫原始二進位檔作為還原橋接。Swift 的 `source_units` 將型別宣告與方法分組；不得串接獨立方法列來重建類別。外層 `status: "success"` 代表輸出已發布，不表示方法完整覆蓋或語義等價。
 
 `--metadata-only` 不執行原生原始碼匯出器，也不執行簽章名稱解碼，不輸出原始碼或方法覆蓋資料。所有模式都使用原生載入器已解析的 Objective-C 中繼資料。Swift 中繼資料採用有界的原生映像讀取；不支援的 fixup、可重定位配置或參照會保留部分診斷。`--max-func` 限制原生函式還原，在僅中繼資料模式中忽略。缺少原生函式本體會使一般執行失敗。暫時解包的輸入會刪除。

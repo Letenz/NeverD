@@ -281,6 +281,10 @@ std::string HighCWriter::sehFilterValueText(const HighExpr &Value) {
 
 void HighCWriter::writeCxxThrowExpr(const HighStmt &Stmt,
                                     const HighExpr &ThrowCall) {
+  if (!Opts.StructuredExceptionSyntax) {
+    OS << exprStr(ThrowCall);
+    return;
+  }
   OS << "throw";
   if (auto Printed = CxxThrowPrints.find(&Stmt);
       Printed != CxxThrowPrints.end()) {
@@ -296,6 +300,50 @@ void HighCWriter::writeCxxThrowExpr(const HighStmt &Stmt,
   if (!ThrowCall.Operands.empty() && ThrowCall.Operands[0] &&
       !isCxxRethrowObject(ThrowCall.Operands[0].get()))
     OS << " " << exprStr(*ThrowCall.Operands[0]);
+}
+
+void HighCWriter::writeCExceptionRegion(const HighStmt &Stmt, int Indent) {
+  // The C projection shows native entry points, not an invented setjmp-based
+  // replacement for the platform unwinder. A funclet keeps its own ABI,
+  // return and frame access in a separate definition in this emission.
+  for (size_t I = 0; I < Stmt.EHClauses.size(); ++I) {
+    const HighEHClause &Clause = Stmt.EHClauses[I];
+    const va_t Entry = Clause.Kind == HighEHClauseKind::CxxCleanup
+                           ? Clause.FilterOrActionVA
+                           : Clause.HandlerVA;
+    if (I < Stmt.EHClauseBodies.size() && !Stmt.EHClauseBodies[I].empty() &&
+        (!Entry || (CurrentFunc && Entry == CurrentFunc->Entry) ||
+         !DefinedFunctionsByAddress.count(Entry)))
+      throw std::invalid_argument(
+          "plain C exception view requires the native handler function; "
+          "an embedded handler cannot be assigned a new C ABI");
+  }
+  const std::vector<va_t> OuterLeave = std::move(LeaveTargets);
+  LeaveTargets.clear();
+  llvm::scope_exit Restore([&] { LeaveTargets = OuterLeave; });
+  emitIndent(Indent);
+  OS << "/* C++ unwind-table region [0x" << llvm::utohexstr(Stmt.EHRange.Begin)
+     << ", 0x" << llvm::utohexstr(Stmt.EHRange.End)
+     << "): dispatch is supplied by the image's exception runtime.\n";
+  for (const HighEHClause &Clause : Stmt.EHClauses) {
+    emitIndent(Indent);
+    OS << " * "
+       << (Clause.Kind == HighEHClauseKind::CxxCleanup ? "cleanup" : "handler")
+       << " @ 0x" << llvm::utohexstr(Clause.HandlerVA) << ", action @ 0x"
+       << llvm::utohexstr(Clause.FilterOrActionVA) << ", type descriptor @ 0x"
+       << llvm::utohexstr(Clause.TypeDescriptorVA) << ", state=" << Clause.State
+       << ", catch-object offset=" << Clause.CatchObjectOffset;
+    for (va_t Continuation : Clause.ContinuationVAs)
+      OS << ", continuation @ 0x" << llvm::utohexstr(Continuation);
+    OS << "\n";
+  }
+  emitIndent(Indent);
+  OS << " */\n";
+  emitIndent(Indent);
+  OS << "{\n";
+  writeTryBody(Stmt.Body, Indent + 1);
+  emitIndent(Indent);
+  OS << "}\n";
 }
 
 void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
@@ -1283,6 +1331,10 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
   }
 
   case StmtKind::CxxTry: {
+    if (!Opts.StructuredExceptionSyntax) {
+      writeCExceptionRegion(Stmt, Indent);
+      break;
+    }
     // `__leave` names the innermost __try; none of its jumps may use it here.
     const std::vector<va_t> OuterLeave = std::move(LeaveTargets);
     LeaveTargets.clear();
@@ -1673,8 +1725,8 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
   };
   for (size_t I = 0; I < End; ++I) {
     const HighStmt &S = Stmts[I];
-    if (S.Kind == StmtKind::If && S.Cond && I + 1 < End &&
-        Stmts[I + 1].Kind == StmtKind::CxxTry) {
+    if (Opts.StructuredExceptionSyntax && S.Kind == StmtKind::If && S.Cond &&
+        I + 1 < End && Stmts[I + 1].Kind == StmtKind::CxxTry) {
       const va_t NameAt = SoleLiveGoto(S.Body);
       const HighStmt &Try = Stmts[I + 1];
       const size_t NameIdx = FindAddr(Try.Body, NameAt);

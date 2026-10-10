@@ -71,8 +71,19 @@ void detail::mergeRelativeRelocationRootSources(
 }
 
 void CFGBuilder::splitBlocks() {
+  const ExceptionFunction *EH =
+      CurrentImg ? CurrentImg->ExceptionMetadata.findFunction(CurrentFuncEntry)
+                 : nullptr;
+  const bool Registration =
+      CurrentImg && CurrentImg->Arch == Arch::X86 && EH && EH->Registration;
   for (auto &[Addr, Rec] : Insns) {
     if (Rec.IsBranch && Rec.IsCond)
+      BlockStarts.insert(Addr + Rec.Size);
+    if (Registration &&
+        std::any_of(Rec.Ops.begin(), Rec.Ops.end(), [](const LowOp &Op) {
+          return Op.Opcode == NdOp::STORE &&
+                 Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS;
+        }))
       BlockStarts.insert(Addr + Rec.Size);
   }
 }

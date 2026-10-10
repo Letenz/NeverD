@@ -129,6 +129,95 @@ TEST(MedStackAlignment, RejectsAnAmbiguousEntryStackDefinition) {
   EXPECT_EQ(Ops[2].Opcode, NdOp::INT_AND);
 }
 
+TEST(MedStackAlignment, RegistrationRootsKeepDistinctRuntimeStackCoordinates) {
+  MedFunc Func = frameWithEntrySP(Arch::X86);
+  MedBlock Runtime;
+  Runtime.Id = 1;
+  Runtime.StartAddr = 0x1100;
+  auto FP = reg(1, Arch::X86);
+  FP.Id = 2;
+  FP.RegOff = getTargetRegInfo(Arch::X86).FramePointer;
+  auto IncomingFP = FP;
+  IncomingFP.SSAVer = 0;
+  auto Frame = op(NdOp::COPY, FP, IncomingFP);
+  Frame.RegistrationRoot = MedOp::RegistrationRootKind::EstablishedFramePointer;
+  Runtime.Ops.push_back(Frame);
+  auto Callback = op(NdOp::COPY, reg(1, Arch::X86), reg(0, Arch::X86));
+  Callback.RegistrationRoot = MedOp::RegistrationRootKind::CallbackStackPointer;
+  Runtime.Ops.push_back(Callback);
+  auto Resume = op(NdOp::COPY, reg(2, Arch::X86), reg(0, Arch::X86));
+  Resume.RegistrationRoot = MedOp::RegistrationRootKind::RestoredStackPointer;
+  Resume.RegistrationStackOffset = -28;
+  Runtime.Ops.push_back(Resume);
+  Runtime.Ops.push_back(op(NdOp::INT_AND, temp(3, Arch::X86), Callback.Output,
+                           MedVar::makeConst(0xfffffffc, 4)));
+  Runtime.Ops.push_back(op(NdOp::INT_AND, temp(4, Arch::X86), Resume.Output,
+                           MedVar::makeConst(0xfffffffc, 4)));
+  Func.Blocks.push_back(std::move(Runtime));
+
+  EXPECT_EQ(entryStackOffset(Func, FP, Arch::X86, BinaryFormat::COFF), -4);
+  EXPECT_EQ(
+      entryStackOffset(Func, Resume.Output, Arch::X86, BinaryFormat::COFF),
+      -32);
+  EXPECT_FALSE(
+      entryStackOffset(Func, Callback.Output, Arch::X86, BinaryFormat::COFF));
+  EXPECT_FALSE(
+      entryStackOffset(Func, Resume.Output, Arch::X86, BinaryFormat::ELF));
+  simplifyProvenStackAlignment(Func, Arch::X86, BinaryFormat::COFF);
+  EXPECT_EQ(Func.Blocks[1].Ops[3].Opcode, NdOp::INT_AND);
+  EXPECT_EQ(Func.Blocks[1].Ops[4].Opcode, NdOp::COPY);
+}
+
+TEST(MedStackAlignment, RejectsMalformedRegistrationRootCarriers) {
+  auto Root = op(NdOp::COPY, reg(1, Arch::X86), reg(0, Arch::X86));
+  Root.RegistrationRoot = MedOp::RegistrationRootKind::RestoredStackPointer;
+  Root.RegistrationStackOffset = -28;
+  ASSERT_TRUE(hasValidRegistrationRootShape(Root));
+  for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+    auto Bad = Root;
+    switch (Mutation) {
+    case 0:
+      Bad.OriginSeq = 0;
+      break;
+    case 1:
+      Bad.Output.Size = 8;
+      break;
+    case 2:
+      Bad.Inputs[0].RegOff = getTargetRegInfo(Arch::X86).FramePointer;
+      break;
+    case 3:
+      Bad.Output.TheArch = Arch::X64;
+      break;
+    case 4:
+      Bad.RegistrationStackOffset = -4;
+      break;
+    case 5:
+      Bad.RegistrationStackOffset = INT32_MIN;
+      break;
+    case 6:
+      Bad.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 7:
+      Bad.Opcode = NdOp::INT_ADD;
+      break;
+    case 8:
+      Bad.RegistrationRoot = MedOp::RegistrationRootKind::None;
+      break;
+    case 9:
+      ++Bad.Inputs[0].Id;
+      break;
+    case 10:
+      Bad.Inputs[0].SSAVer = 1;
+      break;
+    case 11:
+      Bad.Inputs[0].RenameTag = 1;
+      break;
+    }
+    EXPECT_FALSE(hasValidRegistrationRootShape(Bad)) << Mutation;
+    EXPECT_FALSE(registrationRootEntryStackOffset(Bad)) << Mutation;
+  }
+}
+
 TEST(MedStackAlignment, HonorsEntryResiduesOnOtherArchitectures) {
   struct Case {
     Arch Architecture;

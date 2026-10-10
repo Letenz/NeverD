@@ -1276,6 +1276,49 @@ add_neverd_unittest(NeverDWindowsEHMetadataEncoderTests
   WindowsEHMetadata
 )
 
+add_neverd_unittest(NeverDNoReturnTests
+  core/MedNoReturnTests.cpp
+  core/InternalNoReturnTests.cpp
+
+  LINK_COMPONENTS
+  IRLow
+  IRMed
+)
+
+add_neverd_unittest(NeverDRegistrationStateTests
+  eh/RegistrationStateTests.cpp
+
+  LINK_COMPONENTS
+  IRRegistrationState
+)
+
+add_neverd_unittest(NeverDRegistrationEHTests
+  eh/RegistrationTryLevelTests.cpp
+
+  LINK_COMPONENTS
+  IRLow
+  IRMed
+  IRHigh
+  Pipeline
+)
+
+add_neverd_unittest(NeverDWindowsRegistrationFrameTests
+  eh/WindowsRegistrationFrameTests.cpp
+  eh/WindowsRegistrationCxxFrameTests.cpp
+
+  LINK_COMPONENTS
+  WindowsRegistrationFrame
+)
+
+add_neverd_unittest(NeverDWindowsRegistrationNativeTests
+  eh/WindowsRegistrationNativeTests.cpp
+  eh/RegistrationCallTests.cpp
+
+  LINK_COMPONENTS
+  BackendLLVM
+  CodeGen
+)
+
 target_include_directories(NeverDWindowsEHMetadataEncoderTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}

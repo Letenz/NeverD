@@ -33,6 +33,11 @@ struct CEmitterOptions {
   /// the guards without changing the declarations themselves.
   bool EmitRecordGuards = true;
   bool UseDebugNames = true;
+  /// Structured pseudocode may use C++ exception syntax. A plain C view
+  /// keeps runtime calls and renders unwind-table edges and handler entries
+  /// explicitly, as the Itanium C projection already does. Platform C
+  /// extensions such as MSVC SEH remain C syntax.
+  bool StructuredExceptionSyntax = true;
   /// LLVMC clients with a complete source contract can retain the module's
   /// function types and request prototypes for definitions as well as imports.
   /// Disables inferred-void and debug-signature projections in that route.

@@ -48,6 +48,67 @@ class _OverlayView:
         return self._base.exists(path)
 
 
+class DocumentationEvidenceMatchingTests(unittest.TestCase):
+    def test_numeric_counts_keep_exact_ascii_boundaries(self) -> None:
+        cases = (
+            ("23", "23", True),
+            ("123", "23", False),
+            ("230", "23", False),
+            ("a23", "23", False),
+            ("23Z", "23", False),
+            ("a23Z and 23 checks", "23", True),
+            ("中23文", "23", True),
+            ("23/23", "23/23", True),
+            ("a23/23b", "23/23", False),
+            ("a23/23b, then 23/23", "23/23", True),
+            ("1,411", "1,411", True),
+            ("11,411", "1,411", False),
+            ("1'411", "1'411", True),
+            ("21'411", "1'411", False),
+            ("41-case", "41-case", True),
+            ("no numeric evidence", "23", False),
+            ("", "", True),
+        )
+        for text, token, expected in cases:
+            with self.subTest(text=text, token=token):
+                self.assertEqual(i18n.token_present(text, token), expected)
+
+    def test_evidence_checks_read_each_document_view(self) -> None:
+        path = Path("evidence.md")
+        for text, present in (("23 checks", True), ("a23b", False),
+                              ("23 checks", True)):
+            with self.subTest(text=text):
+                errors: list[str] = []
+                i18n.require_tokens(path, ("23",), errors, _TextView(text))
+                self.assertEqual(not errors, present)
+
+    def test_revision_claims_keep_local_boundaries_and_read_changed_text(self) -> None:
+        first, second = "1" * 40, "2" * 40
+        names = ("Alpha", "Beta")
+        cases = (
+            (f"Alpha at {first} Beta at {second}", True),
+            (f"Alpha Beta at {first}", False),
+            (f"Alpha\n\n{first}", False),
+            (f"- Alpha\n- {first}", False),
+            (f"```text\nAlpha at {first}\n```", False),
+            (f"- Alpha at {second}\n\n- Alpha at {first}", False),
+        )
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(i18n.comparison_tool_revision_is_paired(
+                    text, names[0], first, names), expected)
+
+        correct = f"Alpha at {first} Beta at {second}"
+        swapped = f"Alpha at {second} Beta at {first}"
+        tools = (("A", names[0], first), ("B", names[1], second))
+        for text, expected_errors in ((correct, 0), (swapped, 2), (correct, 0)):
+            with self.subTest(text=text):
+                errors: list[str] = []
+                i18n.validate_sbf_comparison_pairs(errors, Path("evidence.md"),
+                                                 text, tools)
+                self.assertEqual(len(errors), expected_errors)
+
+
 class EmulationDocumentationInventoryTests(unittest.TestCase):
     def test_wrapped_inventory_cannot_hide_missing_tokens(self) -> None:
         inventory = i18n.EMULATION_DOC_INVENTORY.read_text(encoding="utf-8")

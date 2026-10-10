@@ -46,6 +46,14 @@ LLVM C and IR windows, multiple windows, pinned views and back/forward history.
 The file-drop cases wait for the worker's loader-identification capability and
 check UTF-8 filenames through the Windows fixture boundary.
 
+The controller also starts a controlled 30-second decompile, proves uncached
+function and listing reads complete while it is running, then switches
+functions and checks cancellation without losing staged comments. A 20,000-line
+source fixture checks event-loop responsiveness and folded declarations across
+pages. `NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
+unchanged owner files, staged comments, signature replay and stale-input
+rejection. Database restore coverage keeps pseudocode closed until requested.
+
 ```sh
 cmake --build build-gui --target neverd-gui-tests neverd-gui-query-tests
 ctest --test-dir build-gui -R '^NeverDGui' --output-on-failure
@@ -61,6 +69,23 @@ functions. The Pseudocode profile needs a worker that supports the `source`
 representation. Each worker must keep its matching engine and runtime libraries.
 Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
+
+## Source dialects and DWARF ingestion
+
+`NeverDSourceDialectTests` checks C++ symbol validation, STL aliases, preserved
+custom template arguments, ATL names, and the C exception projection's native
+calls and handlers. `NeverDSessionCAPITests` checks detected defaults, explicit
+language pages and emission caches; `NeverDGuiController` checks the C++ title,
+switching back to C, and absence of a redundant C choice in C-only images.
+`NeverDDebugInfoTests` compares the extent sweep with a pairwise policy oracle,
+merges duplicate DIEs across parallel workers, and checks that DWARF references
+retain qualified record identity. Existing language/EH and source ABI suites
+cover the shared runtime detection and parameter-placement boundaries.
+
+For load benchmarks use Release, the same binary and warm-cache repetitions
+with `NEVERD_THREADS=1` and a fixed parallel count. Measure session loading
+separately from decompilation. Report algorithmic and parallel gains separately;
+thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
@@ -87,6 +112,26 @@ undefined-behavior checks remain enabled.
 Native execution requires an x64 host and Clang; the in-process SSE oracle
 additionally requires GCC/Clang. Skips on other hosts are explicit.
 This suite does not establish packed FP, VEX or x87 state coverage.
+
+`HighSwiftEmitter` checks typed scalar SSE transports, malformed shapes,
+definite local assignment, bounded 96-bit slices and module-wide helper names.
+Generated Swift executes at Onone/O with rounding, DAZ/FTZ, sticky status,
+subnormals, signed zeros, NaN payloads and exact numerical/MXCSR observations.
+Execution markers identify startup and each check boundary. Failed runs retain
+generated source, executables, captured output and actual native elapsed time;
+setting
+`NEVERD_KEEP_SWIFT_EXECUTION_ARTIFACTS` also retains successful local controls.
+Compiler and native execution bounds remain 120 seconds and 5 seconds.
+A separate bounded divide-by-zero control requires native x86_64 macOS;
+Rosetta forces exception masks even for raw SSE, so its unmasked-trap coverage
+is unavailable. `SwiftSourceProperties` compiles actual class members with
+file-level compiler declarations. `MobileIOSNative` rejects false source,
+missing or malformed preamble prefixes and mismatched method identities.
+The unchanged `scripts/test_mobile_swift_backend.py` acceptance workflow
+recompiles and executes arm64/x86_64 with classic/default fixups, checks all
+858 original behavior oracles per variant, and verifies the callable inventory.
+Swift execution requires swiftc; other hosts retain explicit skips. Native
+Intel hardware, Intel HVF and physical iOS are separate validation surfaces.
 
 `NeverDX86FPConversionAccuracyTests` separately covers signed scalar
 CVTSS2SI/CVTSD2SI and CVTTSS2SI/CVTTSD2SI, including their VEX forms. Independent
@@ -1920,6 +1965,245 @@ targets, and the reloaded IP-to-state graph.
 See [Windows Exception Reconstruction](windows-exception-reconstruction.md)
 for the analysis/native support matrix and the fail-closed patch contract.
 
+PE32 registration changes also require the focused state, frame and native
+targets. Changes to runtime entry stacks also require
+`NeverDMedStackAlignmentTests`, `NeverDNoReturnTests` and the `MedSSAMultiRoot`,
+`MedSEHEstablisherFrame`, `MedSEHHandlerEntry`, `MedTempIdentity` and
+`Win64Forwarder` regressions in `NeverDLiftTests`. These cover independent
+ordinary entries, restored versus private callback stacks, malformed root
+carriers, and existing x64 handler-frame behavior.
+`RegistrationCallABI` in the native target checks immutable scalar ThrowInfo,
+the exact CRT import, private object initialization and width, caller-PC
+observations and metadata mutation. The leaf-callee matrix also checks separate
+private-stack/object spills, pointer escape, bounds, unknown addresses and
+nonvolatile-register preservation. These proofs do not enable native source
+C++ reconstruction on their own.
+Cleanup-relay tests cover both EBP displacement widths, exact thiscall object
+reads, PE32 relative-branch wrapping, nonwrapping storage, writable/overlapping
+code, fixups, call substitutions, callee stack pops and FS-dependent effects.
+The independently loaded MSVC fixture also checks its two actual relays and
+their destructor footprints.
+The state target also checks source-call identity, initialized ECX object
+borrows, registration/SavedESP separation, partial stores, pointer taint,
+conflicting predecessors and preserved catch resumption after a private throw.
+The native call target checks cumulative failed-proof budgets and fresh-image
+callee indices.
+Cleanup projection tests check every reachable unwind state, initialization
+before state activation, missing or mismatched contracts, registration and
+SavedESP overlap, released storage, pointer taint and predecessor conflicts.
+Physical-return tests separately cover entry-EAX pass-through, computed
+scalars, object loads, caller-PC results and distinct return predecessors.
+Reachability tests distinguish empty pre-install/post-remove states from dead
+blocks, retain runtime catch/resumption roots after a private throw, and reject
+incomplete proofs, changed block ranges and missing/mismatched call receipts.
+The native call index memoizes relay contracts under the same shared budget;
+a descriptor alone grants no initialized object borrow.
+C++ runtime-object tests cover value/reference homes, exact type/width, private
+spills, bounds, scalar writes, partial pointers, ordered/FS accesses, escapes
+and stale catch identities. Loader tests also cover adjacent catch labels and
+independent function boundaries. Genuine MSVC value and reference images must
+agree in whole-module and selected-function state replay; the reference fixture
+checks all four runtime object occurrences.
+Scope mutation tests cover both SEH3 and EH4, exact exclusive table ends,
+partial overlap, PE32 overflow and cookie separation. The real source fixture
+also rejects an edited LLVM write to either format's scope table.
+C++ metadata tests cover all three FuncInfo versions, exception-spec records,
+reparsed graph equality, PE32 exclusive ends, distinct record overlap and
+writes from ordinary calls and cleanup relays. A private-throw closure test
+requires the exact checked CRT import and retains caller-PC write/read guards.
+The genuine MSVC fixture also rechecks all four record extents and its throwing
+helper and cleanup relays. These component facts do not imply source native
+C++ installation.
+PE32 C++ personality tests distinguish the original FuncInfo-loading thunk
+from the CRT entry, checking exact relocation operands, immutable storage,
+import identity and conflicting pointer records. Native-source classification
+tests reject changed registration, language and object contracts, unsupported
+dispatch shapes and missing compiler receipt capabilities. Genuine value/reference fixtures additionally
+verify typed catch and cleanup IR, compile it through the patch code generator,
+and authenticate each indexed catch row against its exact child funclet range.
+Changed range ownership must reject the machine-code receipt. These checks do
+not execute a reconstructed C++ source PE.
+With `LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS`, the same source fixture also checks
+the complete FuncInfo/unwind/try/handler bytes through the public COFF table
+validator. It requires all nonempty cleanup rows, original RTTI identity,
+physical catch subfields and exact absolute pointer fixups. Thirty mutations
+cover raw headers and graph edges, missing cleanup receipts, overlapping
+sections, missing/overlapping fixups, width, addend and target changes. The LLVM
+MC regression separately closes table extents, generated indices and object
+bounds. These receipts still do not authenticate edited IR effects or final PE
+installation.
+Native installation needs the LLVM fork exposing
+`LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
+`LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need
+`LLVM_NEVERD_X86_REGISTRATION_GS`. The pinned r4 packages and their matching
+source commit provide these receipts, including the C++ catch-subfield,
+function-range and handler receipts needed by native C++ reconstruction.
+
+```bash
+cmake --build build --parallel 4 --target neverd \
+  NeverDRegistrationStateTests NeverDRegistrationEHTests \
+  NeverDWindowsRegistrationFrameTests NeverDWindowsRegistrationNativeTests \
+  NeverDNoReturnTests
+build/bin/NeverDRegistrationStateTests
+build/bin/NeverDRegistrationEHTests
+build/bin/NeverDNoReturnTests
+build/bin/NeverDWindowsRegistrationFrameTests
+build/bin/NeverDWindowsRegistrationNativeTests \
+  --gtest_filter='-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract:WindowsRegistrationCxxSource.*'
+for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter; do
+  python scripts/check_windows_registration_rewrite.py \
+    --test-binary build/bin/NeverDWindowsRegistrationNativeTests \
+    --patch-binary build/bin/neverd --case "$registration_case" \
+    --output "build/evidence/registration-${registration_case}"
+done
+```
+
+With genuine MSVC value/reference fixtures, run the source IR and machine-code
+checks once per image. Missing input is a skip and cannot count as verification:
+
+```bash
+NEVERD_REGISTRATION_INPUT_CXX_PE32=/absolute/path/to/original.exe \
+  build/bin/NeverDWindowsRegistrationNativeTests \
+  --gtest_filter='WindowsRegistrationCxxSource.*'
+```
+
+The genuine C++ input unit also checks original image storage when an ordinary
+helper is emitted first, an emitter is reused and a helper-only shard masks the
+native parent. Its independent source/control validator rejects 24 edits to
+block and operation identities, call ABI and source targets, semantic pads,
+catch subfields, unwind/resumption edges, chain reads and localescape. Terminal
+no-return boundaries remain indexed after unreachable-code pruning. These
+control and compiler-table checks still do not establish source PE installation.
+The full C++ IR validator additionally replays actual affine frame addresses,
+scalar destructor borrows, definite byte initialization on normal and exceptional
+edges, typed runtime reference accesses, and original image storage. Its frame
+mutations keep the independent control proof valid while changing object bases,
+initialization width, undefined values, pointer-bearing scalar objects, private
+global storage, runtime reference homes and immutable metadata/runtime writes.
+Both value and reference inputs must pass the complete proof; a table receipt
+alone does not authenticate these effects or enable final PE installation.
+With `LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS`, the fixture additionally checks the
+actual generated registration handler's private owner, parent range and physical
+node. Thirty-three changes to its opcodes, FuncInfo/runtime targets, exact
+fixups, decoded parent store and SafeSEH metadata must reject while the complete
+language-table proof still succeeds. MC checks changed handler identities,
+cross-row agreement and bounded node layouts separately. These checks do not
+execute an installed source C++ PE. The unit also composes these proofs through
+prepare/apply/final validation, merges original/generated SafeSEH handlers and
+checks all nine dispatch HIGHLOW fields. It covers fixed images and disabled
+SafeSEH without activating a partial handler table. Nine rejected preparation
+changes leave generated bytes unchanged. Nine final-image mutations reject,
+including missing/redirected entry bytes, a changed machine class and original
+entry permissions. Four changed entry receipts (missing, duplicate or shifted
+source/target RVA) reject independently of the generated section hash.
+The compiler table receipt also normalizes the generated FuncInfo with the
+shared COFF decoder and closes all four indexed table extents. Final validation
+reparses that graph from actual PE sections, rejecting missing graph/encoding
+receipts and changed normalized try/unwind edges. A changed FuncInfo with a
+freshly recomputed section hash still rejects. This verifies the installed
+language graph. The genuine input test also reloads each public output through
+the ordinary COFF loader and requires the same complete generated FuncInfo
+graph. It also checks the separate ESI anchor, allocation/alignment and biased
+state observations. Changed prologue bytes cannot retain the checked anchor.
+Canonical metadata and source digests retain every coordinate; the EBP state
+solver and native classifier reject the realigned model until its state
+transfers are proved.
+Real MSVC directory-size64/declared-size192 load-configs must remain supported
+with complete section bounds.
+Final generic PE validation also checks valid and invalid CF/EH continuation
+tables after the 64-byte compatibility directory and rejects a declared
+load-config extent that leaves its image or raw backing.
+Checked callee extents exclude unreachable padding and include the exact throw import thunk. Interior callee/thunk patches
+reject, while a separately compiled unrelated replacement may coexist with the
+C++ parent. The same fixture exercises the public COFF patcher and a preserved
+callee renamed to an actual import, requiring the exact checked generated
+section, SafeSEH and relocation closure and the committed original-entry receipt.
+Set `NEVERD_REGISTRATION_OUTPUT_CXX_PE32` to save the manual transaction's EXE;
+`NEVERD_REGISTRATION_OUTPUT_CXX_PRODUCT_PE32` and
+`NEVERD_REGISTRATION_OUTPUT_CXX_COLLISION_PE32` save the public variants.
+Structural success is not runtime evidence.
+
+The focused Windows EH workflow first builds and executes genuine MSVC x86
+value/reference source fixtures on Windows, then transfers those exact inputs
+to Linux. With the pinned compiler's handler receipts, Linux runs the complete
+manual and public transactions and executes original/reconstructed images at preferred
+and forced bases under Wine. The serialized compiler contract binds the parent
+code range, private handler, nine pointer fields and source/final image hashes.
+The final Windows job executes the same hashed images and reparses their code
+owners, SafeSEH closure and pointer relocation values; previous runner success
+flags cannot substitute for the actual runtime observations.
+
+```bash
+python scripts/check_windows_registration_cxx_rewrite.py \
+  --input-root /absolute/path/to/native-msvc-inputs \
+  --test-binary build/bin/NeverDWindowsRegistrationNativeTests \
+  --patch-binary build/bin/neverd \
+  --output build/evidence/source-cxx --wine-prefix /absolute/path/to/wine32
+```
+
+On Windows, replay with `scripts/replay_windows_registration_cxx.py
+--evidence-root build/evidence/source-cxx --output build/native-cxx-replay.json`.
+Both profiles require `value=7`, cleanup `trace=213`, four iterations, restored
+FS chain, and `caught=7` by value or `caught=18` by reference. The observed caller PC
+must lie in the indexed generated parent rather than an original helper or
+another part of the generated section. Schema2 requires all six routes at both
+bases: original, manual, public COFF patcher, called-helper/import-name collision,
+CLI section and CLI inplace. All five generated routes must reproduce the entire
+checked manual transaction byte for byte, including preserved helpers, before
+runtime observation can count. Native replay validates every hash and the same
+complete route matrix. Schema1 replay remains explicitly manual-only for older
+evidence and cannot count as public/CLI runtime verification.
+
+The runtime runner builds actual SEH3, no-GS EH4 and initialized-GS EH4 source
+images, including explicit source exit checks, lifts their protected
+function and executes the original, manual installer, public COFF patcher,
+import-name collision and both CLI modes. Every image runs at its preferred
+base and at a forced relocated base. Assertions cover return values, ordered
+filter/finally traces, actual generated caller PCs, four repeated calls,
+restored FS:[0], SafeSEH and a newly installed Guard CF table-pointer relocation.
+The cdecl cases additionally read and write the actual caller-owned parameter
+slot through exceptional callbacks; synthetic frame initialization alone cannot
+satisfy those observations.
+State tests cover narrow C++ state writes, nonzero high bytes, path unions,
+sentinels, unknown prior states and scanner/lifter width disagreement. The
+canonical metadata and source semantic receipts retain the exact store width.
+Continuation tests require a decoded plain catch return, an exact code pointer
+and a reaching saved stack value. Nested catches must restore the enclosing
+catch context and its search minimum. CFG tests decode a previously missing
+continuation and reject instruction-interior, non-code, callee-cleanup return
+and independently owned function targets. A candidate with no decoded target
+retains diagnostic evidence but cannot grant native authority.
+State tests mutate the GS decode expression, target, width and instruction
+identity. Native input tests remove, duplicate and alter the indexed source
+check event and require the public patcher to reject it. Strict generated-only
+cookie probes vary caller stack alignment and corrupt EH and GS slots
+independently; they remain separate evidence from source reconstruction.
+Original-corpus and callback-only runs remain distinct evidence. Missing Wine,
+compiler receipts or skipped reconstruction cannot count as a pass.
+
+The `ci.yml` `windows_eh_only` profile runs the x86 original/callback probes
+and ARM32 cross-target PE checks. Supplying `windows_eh_llvm_artifact_run` adds
+all source reconstruction runs using a successful compiler build whose commit,
+archive checksum and BUILDINFO match the checked-out LLVM submodule. It also
+executes strict EH4 cookie probes with and without GS, requiring rejection after
+cookie corruption. A dependent Windows job replays the same hashed EXEs with
+the native CRT. Wine callback execution and native Windows replay are recorded
+as separate evidence. ARM32
+cross-target codegen and PE validation do not establish Windows ARM32 runtime
+execution.
+
+The native Windows job also builds `registration_cxx_runtime.cpp` with MSVC
+and its actual runtime libraries. Value and reference catches must preserve
+the caught object, destructor trace `213`, repeated calls and FS:[0] at both
+load bases. When the compiler provides checked catch subfields, the frame unit
+suite emits `NEVERD_REGISTRATION_CXX_RUNTIME_OBJECT`. The native runner links
+that exact object with the same real MSVC RTTI, throw helper and destructor to
+check value/reference catches in ordinary and 64-byte-aligned generated frames.
+Caller stack padding varies on repeated calls, and the recorded throw caller
+must belong to the selected parent according to its export and linker map.
+`check_windows_registration_cxx.py` labels original-program and generated-frame
+ABI evidence separately; neither establishes source C++ reconstruction.
+
 ### Language exception models
 
 Everything that is not the Windows table model lives in one focused target.
@@ -2612,7 +2896,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5037 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5399`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5054 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5416`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -3311,3 +3595,12 @@ See [released GKI contracts](android-gki-kernels.md).
 `DarwinFileTest.Xattr*` exercises both4096/16384-byte pages, full/short/query buffers, name and carrier bounds, complete ordered list prefixes, aliases and inaccessible tails, transport/budget errors, CWD/link policy, dup/removal/name reuse, independent stat validity and content invalidation. `DarwinFileOptions.Xattr*` bounds names/count/bytes and implicit-directory entry costs; `ProcessReport.DarwinXattr*` rejects malformed records without losing UTF8/order/opaque bytes. `DarwinProcess.ExtendedAttributesPreserveValuesNamesAndObjectLifetime` is required for every available ARM64 HVF profile. The three original modes also run through C/CLI and the unchanged Python SDK integration method across five thin profiles.
 
 `extended-attributes` is the only new native case. The private runner seeds ordinary attributes on its own file after resetting bytes, then the original raw-call workload derives list boundaries from the provider’s actual names, including automatic provenance. Literal and unknown modes are virtual-only. Native5s, newguest/Python5,000,000us/quantum1024 and public10s remain unchanged. Negative buffers on an explicitly empty list are unsupported because the private clear operation never produced a verified native empty list. Native Intel/physical iOS remain unverified. Root-only serial epochs retain source, products, controller inputs, failures, timeout captures and reap evidence.
+
+## Bounded bulk directory attributes
+
+The bulk-attributes workload checks whole groups, name/type membership, guarded unused bytes, low32 FD, bitmap words, native errors, dup/shared progress, independent opens, cached EOF and zero rewind. Literal and unknown modes are virtual-only. Model tests also cover full stat, invalidation, NFD/255-byte names, request/output aliasing, transport/budget failures, held moves/SWAP/removal/reuse and explicit authorization. Required native inventory is 63 workloads per platform: 189 matching ARM64 cases and 126 Intel cases. Only matching ARM64 HVF execution is locally verified. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
+
+
+## Darwin ordinary attribute mutations
+
+`XattrMutation*` model tests check both4KiB/16KiB pages, guarded literal values, low carriers, import/existence precedence, permission separation, name/value aliases, transport and budget rollback, reserved initial slots, shared growth and orphan/mapping lifetime. Strict JSON tests cover all three initial object kinds. The original `xattr-mutations`, `xattr-mutations-values` and `xattr-mutations-unsupported` workload modes cover all five thin Mach-O profiles through guest, C, CLI and the complete Python method. Native inventories retain every existing case and require the new workload on each available matching transport. Native Intel/physical iOS and complete Apple frameworks are separate unavailable coverage.

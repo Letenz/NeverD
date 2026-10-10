@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Address.h"
+#include "AnalysisService.h"
 #include "EngineClient.h"
 #include "QueryService.h"
 
@@ -37,10 +38,9 @@ struct LoadOptions {
   QString platform;
 };
 
-/// One analysis worker and the binary it has open.  The session starts the
-/// worker before a file is chosen (hiding engine start-up), owns the request
-/// dispatcher, publishes background-index progress from heartbeats, and runs
-/// edits with explicit Save/Discard/Cancel transitions for staged work.
+/// The project's writable worker and a disposable read-only analysis worker.
+/// Browsing and edits keep the owner dispatcher while expensive views use a
+/// verified replica. Save/Discard/Cancel transitions belong to the owner.
 class Session final : public QObject {
   Q_OBJECT
 public:
@@ -48,6 +48,7 @@ public:
   ~Session() override;
 
   QueryService &queries() { return queries_; }
+  QueryService &analysisQueries() { return analysis_.queries(); }
 
   bool connected() const { return connected_; }
   bool loaded() const { return loaded_; }
@@ -251,6 +252,7 @@ private:
 
   EngineClient client_;
   QueryService queries_;
+  AnalysisService analysis_;
   QObject reads_, external_;
   QString workerPath_, filePath_, pendingFile_, transition_, error_;
   /// How the pending file loads, and how the open file loaded, which a

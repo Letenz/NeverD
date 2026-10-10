@@ -189,6 +189,13 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+  // The quick start shows what a drop would do while a file is over it.
+  if (event->type() == QEvent::DragLeave || event->type() == QEvent::Drop)
+    if (auto *start = qobject_cast<QuickStartDialog *>(quickStart_.data())) {
+      auto *widget = qobject_cast<QWidget *>(object);
+      if (widget && (widget == start || start->isAncestorOf(widget)))
+        start->showDropTarget(false);
+    }
   if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove ||
       event->type() == QEvent::Drop) {
     auto *widget = qobject_cast<QWidget *>(object);
@@ -222,6 +229,9 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
                               ? Qt::CopyAction
                               : Qt::LinkAction);
       drop->accept();
+      if (event->type() != QEvent::Drop && quickStart)
+        if (auto *start = qobject_cast<QuickStartDialog *>(quickStart_.data()))
+          start->showDropTarget(true);
       if (event->type() == QEvent::Drop) {
         // Leave the native drop callback before opening or asking about
         // unsaved changes. The window owns the queued callback's lifetime.
@@ -256,6 +266,8 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
     const QPointer<CodeView> view = static_cast<CodeView *>(object);
     QTimer::singleShot(0, this, [this, view] { followFunction(view); });
   }
+  if (event->type() == QEvent::Hide && followsDisassembly(object))
+    static_cast<CodeView *>(object)->text()->cancel();
   return KDDockWidgets::QtWidgets::MainWindow::eventFilter(object, event);
 }
 
@@ -611,6 +623,23 @@ void MainWindow::initializeLayout() {
   if (!QFile::exists(layoutPath()) ||
       !KDDockWidgets::LayoutSaver().restoreFromFile(layoutPath()))
     applyDefaultLayout();
+  // A saved arrangement must not start a decompile while opening a file.
+  if (auto *dock = docks_.value(PseudocodeDock))
+    dock->forceClose();
+  followTimer_.setSingleShot(true);
+  followTimer_.setInterval(200);
+  connect(&followTimer_, &QTimer::timeout, this, [this] {
+    for (auto *view : {pseudocode_.data(),
+                       docks_.contains(RepresentationDock)
+                           ? static_cast<CodeView *>(
+                                 docks_.value(RepresentationDock)->widget())
+                           : nullptr})
+      if (view && view->isVisible() && !view->locked())
+        if (const auto function = currentFunction();
+            function && (view->text()->function() != function ||
+                         view->text()->interrupted()))
+          view->showFunction(*function);
+  });
 }
 
 void MainWindow::applyDefaultLayout() {
@@ -692,11 +721,21 @@ void MainWindow::buildStatusBar() {
 
 void MainWindow::connectSession() {
   connect(&session_, &Session::opened, this, [this] {
+    pseudocodeEnabled_ = false;
+    followTimer_.stop();
+    if (auto *dock = docks_.value(PseudocodeDock))
+      dock->forceClose();
+    if (pseudocode_)
+      pseudocode_->text()->clear();
     space_.clear();
     disassembly_->setGraphMode(false);
     for (auto *chooser : std::as_const(choosers_))
       chooser->model().reload();
     restoreProjectState();
+    // A database also carries a desktop. Restore its arrangement, but keep
+    // source analysis explicit for each newly opened project.
+    if (auto *dock = docks_.value(PseudocodeDock))
+      dock->forceClose();
     updateTitle();
     updateActions();
     disassembly_->focusContent();
@@ -933,11 +972,15 @@ void MainWindow::followFunction(CodeView *view) {
   // A view hidden behind another tab catches up when it is shown (see
   // eventFilter): reading the listing must not wait for a decompile that
   // no one sees.
-  if (synchronizing_ || !view || view->locked() || !view->isVisible())
+  if (synchronizing_ || !view || view->locked() || !view->isVisible() ||
+      (view == pseudocode_ && !pseudocodeEnabled_))
     return;
   if (const auto function = currentFunction();
-      function && view->text()->function() != function)
-    view->showFunction(*function);
+      function &&
+      (view->text()->function() != function || view->text()->interrupted())) {
+    view->text()->cancel();
+    followTimer_.start();
+  }
 }
 
 bool MainWindow::followsDisassembly(const QObject *object) const {
@@ -1530,13 +1573,26 @@ void MainWindow::showPseudocode(const QString &representation) {
   }
   auto *view = codeView(representation);
   const bool c = CodeView::isSource(representation);
+  if (c)
+    pseudocodeEnabled_ = true;
+  followTimer_.stop();
   auto *dock = docks_.value(c ? PseudocodeDock : RepresentationDock);
   if (!dock->isOpen()) {
-    if (c)
-      docks_.value(DisassemblyDock)->addDockWidgetAsTab(dock);
-    else
-      addDockWidget(dock, KDDockWidgets::Location_OnRight,
-                    docks_.value(DisassemblyDock));
+    auto *functions = docks_.value(FunctionsDock);
+    const int functionsWidth =
+        functions && functions->isOpen()
+            ? functions->dockWidget()->sizeInLayout().width()
+            : 0;
+    addDockWidget(dock, KDDockWidgets::Location_OnRight,
+                  docks_.value(DisassemblyDock));
+    if (functionsWidth)
+      functions->dockWidget()->resizeInLayout(
+          0, 0,
+          functionsWidth - functions->dockWidget()->sizeInLayout().width(), 0);
+    const int difference =
+        docks_.value(DisassemblyDock)->dockWidget()->sizeInLayout().width() -
+        dock->dockWidget()->sizeInLayout().width();
+    dock->dockWidget()->resizeInLayout(difference / 2, 0, 0, 0);
   }
   dock->open();
   dock->raise();

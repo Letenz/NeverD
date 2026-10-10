@@ -125,9 +125,11 @@ bool propagateInvariantConstants(MedFunc &Func) {
     for (const auto &Op : Block.Ops) {
       if (Op.NumInputs > Op.Inputs.size())
         return false;
-      const bool Plain = !Op.Dead && !Op.SourceCallHint &&
-                         Op.MemoryOrdering == NdMemoryOrdering::None &&
-                         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+      const bool Plain =
+          Op.RegistrationRoot == MedOp::RegistrationRootKind::None &&
+          !Op.Dead && !Op.SourceCallHint &&
+          Op.MemoryOrdering == NdMemoryOrdering::None &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
       const bool Copy = Plain && Op.Opcode == NdOp::COPY && Op.NumInputs == 1;
       // A constant holds a word: a view into a wider value (a vector lane, a
       // register pair, a double-word dividend) has none.

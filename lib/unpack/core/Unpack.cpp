@@ -188,6 +188,15 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
                                ? text::EncodedPointerState
                                : text::UnknownEncodedPointerState;
     }
+    if (!Result.RuntimeState.DynamicThreadLocalInventoryKnown ||
+        Result.RuntimeState.LiveDynamicTLSSlots ||
+        Result.RuntimeState.LiveDynamicFLSSlots) {
+      if (!Result.Diagnostic.empty())
+        Result.Diagnostic += "; ";
+      Result.Diagnostic += Result.RuntimeState.DynamicThreadLocalInventoryKnown
+                               ? text::DynamicThreadLocalState
+                               : text::UnknownDynamicThreadLocalState;
+    }
     if (!Result.Diagnostic.empty() && !Options.SnapshotOnly) {
       Result.Outcome = UnpackOutcome::UnsupportedState;
       return true;

@@ -2,6 +2,8 @@
 //------------===//
 #include "neverd/backend/swift/HighSwiftEmitter.h"
 
+#include "neverd/ir/high/X86FPStateShape.h"
+
 #include <algorithm>
 #include <cctype>
 #include <map>
@@ -34,6 +36,8 @@ std::string name(const std::string &Text) {
 }
 
 unsigned width(const TypeRef &Type) {
+  if (Type && Type->Kind == NdTypeKind::Int && Type->Size == 12)
+    return 96;
   if (Type && Type->Kind == NdTypeKind::Int && Type->Size == 16)
     return 128;
   if (!Type ||
@@ -187,6 +191,7 @@ class Writer {
   const HighFunc &F;
   const SwiftSourceSignature &S;
   const std::vector<SwiftSourceSignature> &Callees;
+  const std::vector<std::string> &ReservedNames;
   std::set<va_t> Dependencies;
   std::map<VarKey, std::string> Variables;
   std::map<VarKey, unsigned> VariableWidths;
@@ -196,7 +201,10 @@ class Writer {
   std::string Member;
   bool Initializer = false;
   bool UsesWide = false;
+  bool UsesX86FPState = false;
+  std::set<std::pair<Intrinsic, unsigned>> FPStateOperations;
   std::string WideType = "nd_word128";
+  std::string FPStateType, MXCSRLoadName, MXCSRStoreName;
   unsigned Indent = 1;
   unsigned LoopDepth = 0;
   unsigned SwitchDepth = 0;
@@ -337,8 +345,43 @@ class Writer {
     return It->second;
   }
 
+  std::string privateName(const std::string &Prefix) const {
+    for (unsigned Suffix = 0;; ++Suffix) {
+      const auto Candidate = Prefix + std::to_string(Suffix);
+      if (Candidate != S.Name && Candidate != S.ContextName &&
+          std::find(ReservedNames.begin(), ReservedNames.end(), Candidate) ==
+              ReservedNames.end() &&
+          std::none_of(Callees.begin(), Callees.end(),
+                       [&](const auto &Callee) {
+                         return Candidate == Callee.Name ||
+                                Candidate == Callee.ContextName ||
+                                std::any_of(Callee.ContextFields.begin(),
+                                            Callee.ContextFields.end(),
+                                            [&](const auto &Field) {
+                                              return Candidate == Field.Name ||
+                                                     Candidate ==
+                                                         Field.BackingName;
+                                            });
+                       }) &&
+          std::none_of(S.ContextFields.begin(), S.ContextFields.end(),
+                       [&](const auto &Field) {
+                         return Candidate == Field.Name ||
+                                Candidate == Field.BackingName;
+                       }))
+        return Candidate;
+    }
+  }
+
   std::string wideExpression(const ExprPtr &E, unsigned Depth) {
     UsesWide = true;
+    const unsigned Bits = width(E->Type);
+    if (Bits == 96) {
+      if (E->Kind == ExprKind::Var && E->Var.Kind != MedVar::Param &&
+          Defined.count(varKey(E->Var)))
+        return variable(E->Var, Bits);
+      throw Unsupported("96-bit Swift state requires a completed intrinsic "
+                        "result or a defined local copy");
+    }
     auto Pair = [&](const std::string &Low, const std::string &High) {
       return WideType + "(lo: " + Low + ", hi: " + High + ")";
     };
@@ -413,7 +456,82 @@ class Writer {
            "Swift.UInt64.self)\n        }\n    }\n";
   }
 
+  std::string fpStateHelper() const {
+    if (!UsesX86FPState)
+      return {};
+    const std::string Attributes = "        @inline(never) @_optimize(none)\n";
+    std::string Text =
+        "    struct " + FPStateType + " {\n" + Attributes +
+        "        static func read() -> Swift.UInt64 {\n"
+        "            var state: Swift.UInt32 = 0\n"
+        "            " +
+        MXCSRStoreName +
+        "(&state)\n"
+        "            return Swift.UInt64(state)\n        }\n" +
+        Attributes +
+        "        static func write(_ value: Swift.UInt64) {\n"
+        "            var state = Swift.UInt32(truncatingIfNeeded: value)\n"
+        "            " +
+        MXCSRLoadName + "(&state)\n        }\n";
+    for (const auto &[Id, Bytes] : FPStateOperations) {
+      const unsigned Bits = Bytes * 8;
+      const char *Operator = Id == Intrinsic::X86FPAddState   ? "+"
+                             : Id == Intrinsic::X86FPSubState ? "-"
+                             : Id == Intrinsic::X86FPMulState ? "*"
+                                                              : "/";
+      Text += Attributes + "        static func " +
+              x86ScalarFPStateMnemonic(Id) + std::to_string(Bits) +
+              "(_ a: Swift.UInt64, _ b: Swift.UInt64, _ incoming: "
+              "Swift.UInt64) -> " +
+              (Bytes == 4 ? "Swift.UInt64" : WideType) +
+              " {\n"
+              "            write(incoming)\n"
+              "            let left = " +
+              floatValue("a", Bits) +
+              "\n"
+              "            let right = " +
+              floatValue("b", Bits) +
+              "\n"
+              "            let result = (left " +
+              Operator +
+              " right).bitPattern\n"
+              "            let outgoing = read()\n"
+              "            return " +
+              (Bytes == 4 ? "Swift.UInt64(result) | (outgoing << 32)"
+                          : WideType + "(lo: result, hi: outgoing)") +
+              "\n        }\n";
+    }
+    return Text + "    }\n";
+  }
+
   std::string call(const ExprPtr &E, unsigned Depth, bool Statement = false) {
+    if (E && E->Kind == ExprKind::Call &&
+        isX86FPStateIntrinsic(E->IntrinsicId)) {
+      const auto Shape = x86FPStateHighShape(*E, Arch::Unknown);
+      if (E->IsIndirectCall || E->IndirectTarget || E->SourceCallHint ||
+          E->DoesNotReturn || !x86FPStateShapeIsValid(E->IntrinsicId, Shape) ||
+          isX86FPConversionStateIntrinsic(E->IntrinsicId) ||
+          (Statement && x86FPStateReturnsValue(E->IntrinsicId)) ||
+          (!Statement && !x86FPStateReturnsValue(E->IntrinsicId)))
+        throw Unsupported("unsupported Swift x86 floating-point state shape");
+      UsesX86FPState = true;
+      if (E->IntrinsicId == Intrinsic::X86ReadMXCSR)
+        return FPStateType + ".read()";
+      if (E->IntrinsicId == Intrinsic::X86WriteMXCSR)
+        return FPStateType + ".write(" + expression(E->Operands[0], Depth + 1) +
+               ")";
+      FPStateOperations.insert({E->IntrinsicId, Shape.LeftSize});
+      UsesWide |= Shape.OutputSize == 12;
+      std::string Text = FPStateType + "." +
+                         x86ScalarFPStateMnemonic(E->IntrinsicId) +
+                         std::to_string(Shape.LeftSize * 8) + "(";
+      for (size_t I = 0; I < E->Operands.size(); ++I) {
+        if (I)
+          Text += ", ";
+        Text += expression(E->Operands[I], Depth + 1);
+      }
+      return Text + ")";
+    }
     if (!E || E->Kind != ExprKind::Call || E->IsIndirectCall ||
         E->IntrinsicId != Intrinsic::None ||
         E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -522,7 +640,7 @@ class Writer {
     if (E->Kind == ExprKind::Call)
       return call(E, Depth);
     const unsigned Bits = width(E->Type);
-    if (Bits == 128)
+    if (Bits > 64)
       return wideExpression(E, Depth);
     auto Operand = [&](size_t Index) {
       if (Index >= E->Operands.size())
@@ -559,7 +677,7 @@ class Writer {
           E->Operands[0]->Type->Kind == NdTypeKind::Float)
         throw Unsupported("floating-point numeric casts require an explicit "
                           "conversion operation");
-      if (width(E->Operands[0]->Type) == 128)
+      if (width(E->Operands[0]->Type) > 64)
         return narrowed("(" + Operand(0) + ").lo", Bits);
       if (width(E->CastTo) > width(E->Operands[0]->Type) &&
           E->Operands[0]->Type->IsSigned)
@@ -622,7 +740,7 @@ class Writer {
           throw Unsupported(
               "Swift byte extraction exceeds its defined container");
         return narrowed(
-            SourceBits == 128
+            SourceBits > 64
                 ? "(" + Operand(0) + ").slice(" + std::to_string(Offset) + ")"
                 : "(" + Operand(0) + " >> " + std::to_string(Offset * 8) + ")",
             Bits);
@@ -799,13 +917,12 @@ class Writer {
           throw Unsupported(
               "Swift native assignment overwrites its bound self context");
         const unsigned Bits = width(ST.Dst->Type);
-        if ((Bits == 128 || (ST.Val && width(ST.Val->Type) == 128)) &&
+        if ((Bits > 64 || (ST.Val && width(ST.Val->Type) > 64)) &&
             (!ST.Val || width(ST.Val->Type) != Bits))
           throw Unsupported("Swift assignment crosses a wide-container "
                             "boundary without an explicit lane operation");
-        const std::string Value = Bits == 128
-                                      ? expression(ST.Val)
-                                      : narrowed(expression(ST.Val), Bits);
+        const std::string Value =
+            Bits > 64 ? expression(ST.Val) : narrowed(expression(ST.Val), Bits);
         line(variable(ST.Dst->Var, Bits) + " = " + Value);
         Defined.insert(varKey(ST.Dst->Var));
         break;
@@ -1012,12 +1129,34 @@ class Writer {
 
 public:
   Writer(const HighFunc &Function, const SwiftSourceSignature &Signature,
-         const std::vector<SwiftSourceSignature> &Callees)
-      : F(Function), S(Signature), Callees(Callees) {}
+         const std::vector<SwiftSourceSignature> &Callees,
+         const std::vector<std::string> &ReservedNames)
+      : F(Function), S(Signature), Callees(Callees),
+        ReservedNames(ReservedNames) {}
   std::vector<va_t> dependencies() const {
     return {Dependencies.begin(), Dependencies.end()};
   }
   const std::string &memberSource() const { return Member; }
+  std::string modulePreamble() const {
+    if (!UsesX86FPState)
+      return {};
+    // These fixed pointer signatures are LLVM compiler intrinsics, not calls
+    // into an original image or a C library. The target guard prevents another
+    // architecture from silently replacing MXCSR with its own FP environment.
+    return "#if arch(x86_64)\n"
+           "@_silgen_name(\"llvm.x86.sse.stmxcsr\")\n"
+           "private func " +
+           MXCSRStoreName +
+           "(_ address: Swift.UnsafeMutablePointer<Swift.UInt32>)\n"
+           "@_silgen_name(\"llvm.x86.sse.ldmxcsr\")\n"
+           "private func " +
+           MXCSRLoadName +
+           "(_ address: Swift.UnsafePointer<Swift.UInt32>)\n"
+           "#else\n"
+           "#error(\"Recovered MXCSR effects require an x86_64 Swift "
+           "target\")\n"
+           "#endif\n";
+  }
 
   std::string emit() {
     if (!S.UnsupportedReason.empty())
@@ -1030,14 +1169,10 @@ public:
       throw Unsupported("unsupported Swift declaration context");
     if (S.ContextKind != "global")
       (void)name(S.ContextName);
-    for (unsigned Suffix = 0;; ++Suffix) {
-      WideType = "nd_word128_" + std::to_string(Suffix);
-      if (WideType != S.Name && WideType != S.ContextName &&
-          std::none_of(Callees.begin(), Callees.end(), [&](const auto &Callee) {
-            return WideType == Callee.Name || WideType == Callee.ContextName;
-          }))
-        break;
-    }
+    WideType = privateName("nd_word128_");
+    FPStateType = privateName("nd_x86_fp_state_");
+    MXCSRLoadName = privateName("nd_x86_ldmxcsr_");
+    MXCSRStoreName = privateName("nd_x86_stmxcsr_");
     Initializer = S.DeclarationKind == "initializer";
     const bool Getter = S.DeclarationKind == "getter";
     const bool Setter = S.DeclarationKind == "setter";
@@ -1189,13 +1324,14 @@ public:
     std::string Locals;
     for (const auto &[Key, Variable] : Variables)
       Locals += "    var " + Variable + ": " +
-                (VariableWidths.at(Key) == 128 ? WideType : "Swift.UInt64") +
+                (VariableWidths.at(Key) > 64 ? WideType : "Swift.UInt64") +
                 "\n";
-    Member = Signature + wideHelper() + Aliases + Locals + Statements + "}\n";
+    Member = Signature + wideHelper() + fpStateHelper() + Aliases + Locals +
+             Statements + "}\n";
     std::string Result = Member;
     if (S.ContextKind != "global" && !Initializer && !Accessor)
       Result = "extension " + name(S.ContextName) + " {\n" + Result + "}\n";
-    return Result;
+    return modulePreamble() + Result;
   }
 };
 } // namespace
@@ -1203,12 +1339,14 @@ public:
 SwiftEmissionResult
 HighSwiftEmitter::emit(const HighFunc &Function,
                        const SwiftSourceSignature &Signature,
-                       const std::vector<SwiftSourceSignature> &Callees) const {
+                       const std::vector<SwiftSourceSignature> &Callees,
+                       const std::vector<std::string> &ReservedNames) const {
   SwiftEmissionResult Result;
   try {
-    Writer SourceWriter(Function, Signature, Callees);
+    Writer SourceWriter(Function, Signature, Callees, ReservedNames);
     Result.Source = SourceWriter.emit();
     Result.MemberSource = SourceWriter.memberSource();
+    Result.ModulePreamble = SourceWriter.modulePreamble();
     Result.Dependencies = SourceWriter.dependencies();
     Result.Recovered = true;
     Result.Limitations = {"Swift bodies are machine-code projections; original "
@@ -1216,6 +1354,11 @@ HighSwiftEmitter::emit(const HighFunc &Function,
                           "Instance field accesses require proven storage "
                           "metadata; compatible context declarations and "
                           "recovered initializers are assembled separately."};
+    if (!Result.ModulePreamble.empty())
+      Result.Limitations.push_back(
+          "MXCSR effects require an x86_64 Swift target and LLVM pointer "
+          "intrinsics; numerical helpers preserve floating-point state with "
+          "optimization disabled.");
   } catch (const Unsupported &Error) {
     Result.Reason = Error.what();
   }

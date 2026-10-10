@@ -370,8 +370,12 @@ private slots:
       QFile file(info.filePath());
       QVERIFY(file.open(QIODevice::ReadOnly));
       const auto svg = QString::fromUtf8(file.readAll());
-      // Control chrome takes the size of the part it draws.
-      if (groups.value(name) != QLatin1String("Chrome"))
+      // Control chrome takes the size of the part it draws, and line glyphs
+      // the 24 px grid they are drawn on.
+      if (groups.value(name) == QLatin1String("Glyph"))
+        QVERIFY2(svg.contains(QStringLiteral("viewBox=\"0 0 24 24\"")),
+                 qPrintable(name));
+      else if (groups.value(name) != QLatin1String("Chrome"))
         QVERIFY2(svg.contains(QStringLiteral("viewBox=\"0 0 16 16\"")),
                  qPrintable(name));
       const auto foreign = Foreign.match(svg);

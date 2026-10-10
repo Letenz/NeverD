@@ -32,6 +32,15 @@ readInitialImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size);
 std::optional<std::vector<uint8_t>>
 readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size);
 
+/// Read immutable PE32 instruction storage while admitting only HIGHLOW
+/// relocations at the supplied four-byte absolute operands. The consumer must
+/// decode and authenticate every operand; this proves storage and relocation
+/// shape, not the instruction's meaning or permission to copy its bytes.
+std::optional<std::vector<uint8_t>>
+readImmutablePE32CodeBytes(const BinaryImage &Image, va_t Address,
+                           uint32_t Size,
+                           const std::vector<va_t> &AbsoluteOperands);
+
 /// Read the complete runtime bits of one exact, resolved Mach-O chained
 /// rebase in unique immutable storage. Competing or overlapping fixups are
 /// rejected. This grants no ordinary pointer identity or byte-copy authority;

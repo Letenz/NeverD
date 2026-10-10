@@ -12,6 +12,7 @@ import subprocess
 import sys
 import unicodedata
 from collections import Counter, defaultdict
+from functools import lru_cache
 from pathlib import Path, PurePath
 from urllib.parse import unquote
 
@@ -883,12 +884,23 @@ def report(errors: list[str], message: str) -> None:
     errors.append(message)
 
 
-def token_present(text: str, token: str) -> bool:
-    """Match numeric evidence as a count, not as a substring of a hash."""
+@lru_cache(maxsize=1024)
+def _numeric_evidence_pattern(token: str) -> re.Pattern[str] | None:
     if re.fullmatch(r"[0-9][0-9,']*(?:/[0-9][0-9,']*)?", token):
         pattern = rf"(?<![0-9A-Za-z]){re.escape(token)}(?![0-9A-Za-z])"
-        return re.search(pattern, text) is not None
-    return token in text
+        return re.compile(pattern)
+    return None
+
+
+def token_present(text: str, token: str) -> bool:
+    """Match numeric evidence as a count, not as a substring of a hash."""
+    start = text.find(token)
+    if start < 0:
+        return False
+    pattern = _numeric_evidence_pattern(token)
+    # Keep the whole text for lookbehind, even when the first substring is
+    # inside a hash and a later occurrence is the required standalone count.
+    return pattern is None or pattern.search(text, start) is not None
 
 
 def comma_grouped_numeric_literal(literal: str) -> str:
@@ -1350,23 +1362,29 @@ def sbf_comparison_evidence_tokens(
 SBF_COMPARISON_REVISION_RE = re.compile(r"(?<![0-9a-f])([0-9a-f]{40})(?![0-9a-f])")
 
 
-def comparison_tool_revision_is_paired(
+def _comparison_claim_segments(
     text: str,
-    display_name: str,
-    revision: str,
     all_display_names: tuple[str, ...],
-) -> bool:
-    """Require every local name-then-revision claim to use the right object."""
+) -> tuple[tuple[str, tuple[re.Match[str], ...]], ...]:
     registered_name_re = re.compile(
         "|".join(
             re.escape(name) for name in sorted(all_display_names, key=len, reverse=True)
         )
     )
-    candidates: list[str] = []
     prose = without_markdown_fences(text)
-    segments = re.split(r"\n(?=- )|\n{2,}", prose)
-    for segment in segments:
-        registered_names = tuple(registered_name_re.finditer(segment))
+    return tuple(
+        (segment, tuple(registered_name_re.finditer(segment)))
+        for segment in re.split(r"\n(?=- )|\n{2,}", prose)
+    )
+
+
+def _comparison_revision_is_paired(
+    segments: tuple[tuple[str, tuple[re.Match[str], ...]], ...],
+    display_name: str,
+    revision: str,
+) -> bool:
+    candidates: list[str] = []
+    for segment, registered_names in segments:
         for occurrence in re.finditer(re.escape(display_name), segment):
             following = SBF_COMPARISON_REVISION_RE.search(segment, occurrence.end())
             if following is None:
@@ -1385,6 +1403,18 @@ def comparison_tool_revision_is_paired(
     return bool(candidates) and all(candidate == revision for candidate in candidates)
 
 
+def comparison_tool_revision_is_paired(
+    text: str,
+    display_name: str,
+    revision: str,
+    all_display_names: tuple[str, ...],
+) -> bool:
+    """Require every local name-then-revision claim to use the right object."""
+    return _comparison_revision_is_paired(
+        _comparison_claim_segments(text, all_display_names), display_name, revision
+    )
+
+
 def validate_sbf_comparison_pairs(
     errors: list[str],
     path: Path,
@@ -1393,14 +1423,15 @@ def validate_sbf_comparison_pairs(
 ) -> None:
     """Keep every display name bound to its own pinned repository object."""
     display_names = tuple(display_name for _id, display_name, _revision in tools)
+    # Parse this document once for all tools. The result belongs to this
+    # validation call, so another view or a changed document is read afresh.
+    segments = _comparison_claim_segments(text, display_names)
     for _tool_id, display_name, revision in tools:
         # The ordinary token check owns missing-name/revision diagnostics. Pair
         # checking is the stronger guard once both independent tokens exist.
         if display_name not in text or revision not in text:
             continue
-        if comparison_tool_revision_is_paired(
-            text, display_name, revision, display_names
-        ):
+        if _comparison_revision_is_paired(segments, display_name, revision):
             continue
         report(
             errors,

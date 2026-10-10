@@ -1,0 +1,113 @@
+// clang-format off: this include contains x86 assembly.
+// Shared semantic cases for the SEH3 and EH4 runtime probes.
+#if REGISTRATION_CASE == 1 || REGISTRATION_CASE == 2 || REGISTRATION_CASE == 4
+  mov dword ptr [ebp-4],1
+#else
+  mov dword ptr [ebp-4],0
+#endif
+#if REGISTRATION_CASE == 4
+  call _registration_no_raise
+#else
+  call _registration_raise
+#endif
+  mov dword ptr [ebp-4],REGISTRATION_SENTINEL
+#if REGISTRATION_CASE == 4
+  call .Lfinally
+#endif
+#if REGISTRATION_CASE == 3 || REGISTRATION_CASE == 4
+  mov eax,7
+#else
+  mov eax,9
+#endif
+  jmp .Lfinish
+.Lfilter:
+#if REGISTRATION_CASE == 1
+  mov eax,[ebp-4]
+  mov [_registration_trace],eax
+  mov eax,1
+#elif REGISTRATION_CASE == 2
+  mov eax,[_registration_trace]
+  imul eax,eax,10
+  add eax,2
+  mov [_registration_trace],eax
+  mov eax,1
+#elif REGISTRATION_CASE == 5 || REGISTRATION_CASE == 6
+  mov eax,[ebp+8]
+  mov [_registration_trace],eax
+  mov eax,1
+#elif REGISTRATION_CASE == 3
+  mov eax,[ebp-4]
+  add eax,1
+  mov [_registration_trace],eax
+  mov eax,-1
+#else
+  mov eax,[ebp-4]
+  add eax,1
+#endif
+  ret
+#if REGISTRATION_CASE == 1 || REGISTRATION_CASE == 4
+.Lfinally:
+#if REGISTRATION_CASE == 4
+  mov eax,[ebp-4]
+#if REGISTRATION_SENTINEL == -2
+  add eax,4
+#else
+  add eax,3
+#endif
+#else
+  mov eax,[_registration_trace]
+  imul eax,eax,10
+  add eax,2
+#endif
+  mov [_registration_trace],eax
+  ret
+#elif REGISTRATION_CASE == 2
+.Linnerfilter:
+  mov eax,[ebp-4]
+  mov [_registration_trace],eax
+  xor eax,eax
+  ret
+.Linnerhandler:
+  mov dword ptr [ebp-4],REGISTRATION_SENTINEL
+  mov eax,91
+  jmp .Lfinish
+#endif
+.Lhandler:
+#if REGISTRATION_CASE == 1 || REGISTRATION_CASE == 2
+  mov eax,[_registration_trace]
+  imul eax,eax,10
+  add eax,3
+  mov [_registration_trace],eax
+#endif
+#if REGISTRATION_CASE == 3 || REGISTRATION_CASE == 4
+  mov eax,97
+#elif REGISTRATION_CASE == 5
+  mov eax,[ebp+8]
+#elif REGISTRATION_CASE == 6
+  add dword ptr [ebp+8],10
+  mov eax,[ebp+8]
+  sub eax,10
+#else
+  mov eax,7
+#endif
+.Lfinish:
+#if REGISTRATION_EXPECT_GS
+  mov ecx, dword ptr [ebp - 32]
+  xor ecx, ebp
+  call "@__security_check_cookie@4"
+#endif
+  mov ecx,[ebp-16]
+  mov fs:[0],ecx
+  mov esp,ebp
+  pop ebp
+  ret
+#if REGISTRATION_CASE == 6
+.globl _registration_call_entry
+_registration_call_entry:
+  push 7
+  call _registration_entry
+  mov edx,[esp]
+  mov [_registration_parameter_after],edx
+  add esp,4
+  ret
+#endif

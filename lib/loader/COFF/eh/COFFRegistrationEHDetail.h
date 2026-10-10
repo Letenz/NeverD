@@ -16,6 +16,7 @@
 #ifndef NEVERD_LIB_LOADER_COFF_EH_COFFREGISTRATIONEHDETAIL_H
 #define NEVERD_LIB_LOADER_COFF_EH_COFFREGISTRATIONEHDETAIL_H
 
+#include "neverd/Limits.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -24,6 +25,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,7 +35,8 @@ namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE registration_detail {
 
 /// Bound on any single decoded table.  A scope table or `FuncInfo` map larger
 /// than this is a mis-identification, not a program.
-inline constexpr uint32_t MaxRegistrationRecords = 4096;
+inline constexpr uint32_t MaxRegistrationRecords =
+    limits::kMaxRegistrationEHRecords;
 
 void diagnose(ExceptionFunction &F, ExceptionParseStatus Status,
               const std::string &Message);
@@ -59,10 +62,40 @@ std::optional<T> readScalar(const BinaryImage &Img, va_t Address) {
 class FunctionRangeMap {
 public:
   explicit FunctionRangeMap(const BinaryImage &Img) {
+    // PE export entries and the image entry are format-owned boundaries even
+    // when no COFF symbol table or preceding padding made them discoverable.
+    for (const Export &Entry : Img.Exports)
+      if (isExecutableAddress(Img, Entry.Addr))
+        Starts.push_back(Entry.Addr);
+    if (isExecutableAddress(Img, Img.Entry))
+      Starts.push_back(Img.Entry);
     for (const Symbol &Sym : Img.Symbols) {
       if (!Sym.IsFunc || !isExecutableAddress(Img, Sym.Addr))
         continue;
       Starts.push_back(Sym.Addr);
+    }
+    // An exact PE32 direct entry jump can name a regenerated frame whose
+    // prologue lives in another section. Retain its target as a boundary;
+    // only the later registration/layout proofs can make it callable.
+    const auto OriginalStarts = Starts;
+    size_t Work = 0;
+    for (va_t Start : OriginalStarts) {
+      std::vector<va_t> Seen{Start};
+      for (unsigned Depth = 0; Depth != 8; ++Depth) {
+        if (++Work > limits::kMaxRegistrationEHStateWork ||
+            Start > uint64_t(UINT32_MAX) - 4)
+          break;
+        const auto *Code = Img.readVA(Start, 5);
+        if (!Code || Code[0] != 0xe9)
+          break;
+        const va_t Target = uint32_t(Start + 5 + readLE<uint32_t>(Code + 1));
+        if (!isExecutableAddress(Img, Target) ||
+            std::find(Seen.begin(), Seen.end(), Target) != Seen.end())
+          break;
+        Starts.push_back(Target);
+        Seen.push_back(Target);
+        Start = Target;
+      }
     }
     std::sort(Starts.begin(), Starts.end());
     Starts.erase(std::unique(Starts.begin(), Starts.end()), Starts.end());
@@ -107,29 +140,40 @@ public:
     const va_t ConfigVA = Img.Base + ConfigRVA;
     auto TableVA = readScalar<uint32_t>(Img, ConfigVA + 0x40);
     auto Count = readScalar<uint32_t>(Img, ConfigVA + 0x44);
-    if (!TableVA || !Count || *TableVA == 0 || *Count == 0 ||
-        *Count > MaxRegistrationRecords)
+    if (!TableVA || !Count) {
+      Invalid = true;
       return;
+    }
+    if (*TableVA == 0 && *Count == 0)
+      return;
+    Present = true;
+    if (*TableVA == 0 || *Count == 0 || *Count > MaxRegistrationRecords) {
+      Invalid = true;
+      return;
+    }
     for (uint32_t I = 0; I < *Count; ++I) {
       auto Entry = readScalar<uint32_t>(Img, va_t(*TableVA) + uint64_t(I) * 4);
-      if (!Entry)
+      if (!Entry || *Entry > InvalidVA - Img.Base ||
+          !isExecutableAddress(Img, Img.Base + *Entry) ||
+          (!Handlers.empty() && Handlers.back() >= Img.Base + *Entry)) {
+        Invalid = true;
         return;
-      if (*Entry > InvalidVA - Img.Base)
-        return;
+      }
       Handlers.push_back(Img.Base + *Entry);
     }
-    std::sort(Handlers.begin(), Handlers.end());
-    Present = true;
   }
 
   bool isPresent() const { return Present; }
+  bool isMalformed() const { return Invalid; }
   bool contains(va_t Address) const {
-    return std::binary_search(Handlers.begin(), Handlers.end(), Address);
+    return !Invalid &&
+           std::binary_search(Handlers.begin(), Handlers.end(), Address);
   }
 
 private:
   std::vector<va_t> Handlers;
   bool Present = false;
+  bool Invalid = false;
 };
 
 /// What a handler address turned out to be once its name and, failing that,
@@ -139,6 +183,10 @@ struct HandlerIdentity {
   std::string Name;
   /// `FuncInfo` address recovered from a `__ehhandler$` thunk.
   va_t CxxFuncInfoVA = 0;
+  va_t CxxThunkBodyVA = 0;
+  va_t CxxThunkEndVA = 0;
+  va_t CxxDispatchVA = 0;
+  va_t CxxDispatchIATVA = 0;
 };
 
 bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,
@@ -166,15 +214,18 @@ void expandPrologueHelpers(const BinaryImage &Img,
 
 uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
                             bool IsEH4,
-                            std::vector<RegistrationScopeRecord> &Scopes);
+                            std::vector<RegistrationScopeRecord> &Scopes,
+                            bool &BudgetExhausted);
 void recoverTryLevelStores(const BinaryImage &Img,
                            const ExceptionAddressRange &Range, int32_t Seed,
                            size_t ScopeCount, RegistrationChainInfo &Chain);
 bool decodeEH4Header(const BinaryImage &Img, va_t TableVA,
                      RegistrationChainInfo &Chain);
 
-bool decodeX86FuncInfo(ExceptionFunction &F, const BinaryImage &Img,
-                       va_t FuncInfoVA);
+bool decodeX86FuncInfo(
+    ExceptionFunction &F, const BinaryImage &Img, va_t FuncInfoVA,
+    std::map<va_t, va_t> *CallbackSources = nullptr,
+    std::vector<ExceptionAddressRange> *RecordRanges = nullptr);
 
 } // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE registration_detail
 } // namespace neverd::coff_loader

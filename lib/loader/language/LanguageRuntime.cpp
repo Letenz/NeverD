@@ -16,6 +16,7 @@
 
 #include "LanguageRuntimeDetail.h"
 
+#include "neverd/loader/SymbolSpelling.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -121,7 +122,14 @@ bool hasExactSymbol(const BinaryImage &Img, llvm::StringRef Name) {
 
 // The evidence detectLanguageRuntime reads; see LanguageRuntime.def.
 enum class EvidenceOrder { Chain, Otherwise, Fallback };
-enum class ProbeKind { Section, Symbol, SymbolPrefix, Bytes };
+enum class ProbeKind {
+  Section,
+  Symbol,
+  SymbolPrefix,
+  Bytes,
+  Itanium,
+  Microsoft
+};
 
 enum class EvidenceId {
 #define NEVERD_LANGUAGE_EVIDENCE(Id, Runtime, Order, Description) Id,
@@ -170,6 +178,17 @@ bool probeHolds(const BinaryImage &Img, const Probe &P) {
     return hasSymbolPrefix(Img, P.Value);
   case ProbeKind::Bytes:
     return imageContains(Img, P.Value);
+  case ProbeKind::Itanium:
+  case ProbeKind::Microsoft: {
+    const auto Scheme = P.Kind == ProbeKind::Itanium ? SymbolScheme::Itanium
+                                                     : SymbolScheme::Microsoft;
+    const auto Matches = [Scheme](const auto &Symbol) {
+      return symbolScheme(Symbol.Name) == Scheme &&
+             !cxxSourceName(Symbol.Name).empty();
+    };
+    return llvm::any_of(Img.Symbols, Matches) ||
+           llvm::any_of(Img.Imports, Matches);
+  }
   }
   return false;
 }

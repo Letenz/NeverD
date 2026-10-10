@@ -24,6 +24,11 @@ NEVERD_LIFETIME_VALUE(NativeTimeoutSeconds, 10)
 NEVERD_LIFETIME_VALUE(ModePrefix, '/')
 NEVERD_LIFETIME_VALUE(NormalMode, 'n')
 NEVERD_LIFETIME_VALUE(ReturnMode, 'r')
+NEVERD_LIFETIME_VALUE(FLSExitMode, 's')
+NEVERD_LIFETIME_VALUE(FLSUnloadMode, 'u')
+NEVERD_LIFETIME_VALUE(CleanupRole, 'N')
+NEVERD_LIFETIME_VALUE(FLSKind, 'F')
+NEVERD_LIFETIME_VALUE(FLSChildKind, 'C')
 NEVERD_LIFETIME_VALUE(FailLeafMode, 'a')
 NEVERD_LIFETIME_VALUE(FailMiddleMode, 'b')
 NEVERD_LIFETIME_VALUE(ExitLeafTLSMode, 'c')
@@ -46,6 +51,12 @@ NEVERD_LIFETIME_TEXT(
     NormalTrace,
     "LT10\nLD11\nMT10\nMD11\nET10\nEE00\nMT00\nMD01\nLT00\nLD01\nET00\n")
 NEVERD_LIFETIME_TEXT(EntryReturnTrace, "LT10\nLD11\nMT10\nMD11\nET10\nEE00\n")
+NEVERD_LIFETIME_TEXT(FLSExitTrace, "LT10\nLD11\nMT10\nMD11\nET10\nEE00\nLF00\nL"
+                                   "C00\nMT00\nMD01\nLT00\nLD01\nET00\n")
+NEVERD_LIFETIME_TEXT(FLSExitArgument, "/s")
+NEVERD_LIFETIME_TEXT(FLSUnloadPrefix,
+                     "LT10\nLD11\nMT10\nMD11\nET10\nNT10\nND10\nEE00\nLF00\n")
+NEVERD_LIFETIME_TEXT(FLSUnloadArgument, "/u")
 NEVERD_LIFETIME_TEXT(FailLeafTrace, "LT10\nLD11\n")
 NEVERD_LIFETIME_TEXT(FailMiddleTrace, "LT10\nLD11\nMT10\nMD11\n")
 NEVERD_LIFETIME_TEXT(ExitLeafTLSTrace, "LT10\nET00\n")
@@ -68,6 +79,7 @@ NEVERD_LIFETIME_TEXT(FaultArgument, "/g")
 NEVERD_LIFETIME_TEXT(FirstAttach, "LT10\n")
 NEVERD_LIFETIME_TEXT(LeafFile, "life-leaf.dll")
 NEVERD_LIFETIME_TEXT(MiddleFile, "life-middle.dll")
+NEVERD_LIFETIME_TEXT(CleanupFile, "life-cleanup.dll")
 NEVERD_LIFETIME_TEXT(ProgramFile, "lifetime.exe")
 NEVERD_LIFETIME_TEXT(StdoutFile, "stdout.bin")
 NEVERD_LIFETIME_TEXT(StderrFile, "stderr.bin")
@@ -80,6 +92,7 @@ NEVERD_LIFETIME_TEXT(NativeOnly, "requires native Windows x64")
 #endif
 #ifdef NEVERD_LIFETIME_CASE
 NEVERD_LIFETIME_CASE(Normal, "/n", ExitStatus)
+NEVERD_LIFETIME_CASE(FLSExit, "/s", ExitStatus)
 #endif
 #ifdef NEVERD_LIFETIME_RETURN_CASE
 NEVERD_LIFETIME_RETURN_CASE(EntryReturn, "/r", ExitStatus)

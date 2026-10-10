@@ -39,8 +39,8 @@ namespace {
 
 using namespace neverd;
 
-constexpr llvm::StringLiteral RichSchemaV8Fingerprint(
-    "34566d14a69607ce502bbd334730a7bca42fd96846ea4c71b6c3efbd8ccc11fa");
+constexpr llvm::StringLiteral RichSchemaV10Fingerprint(
+    "0b12a8fe4539dc42ae5f89f8623d251ec83d70ba2db4494f19d7805349655078");
 
 ExceptionFunction makeRichExceptionFunction() {
   ExceptionFunction EH;
@@ -163,7 +163,7 @@ ExceptionFunction makeRichExceptionFunction() {
   Registration.HandlerVA = 0x401020;
   Registration.ScopeTableVA = 0x403040;
   Registration.TryLevelOffset = -0x24;
-  Registration.TryLevelStores = {{0x401080, 0x401086, 0},
+  Registration.TryLevelStores = {{0x401080, 0x401086, 0, 1},
                                  {0x4010a0, 0x4010a6, -2}};
   Registration.SeededTryLevel = -2;
   Registration.RegistrationOffset = -0x18;
@@ -186,7 +186,7 @@ ExceptionFunction makeRichExceptionFunction() {
 
   ExceptionFunctionDecodeProvenance Provenance;
   Provenance.Structural.ParseStatus = ExceptionParseStatus::Malformed;
-  Provenance.Structural.Diagnostics = {"not part of schema v8"};
+  Provenance.Structural.Diagnostics = {"not part of schema v9"};
   EH.DecodeProvenance = std::move(Provenance);
   return EH;
 }
@@ -332,7 +332,7 @@ std::string fingerprintDigest(const llvm::Metadata &Metadata) {
   return llvm::toHex(llvm::ArrayRef<uint8_t>(Digest), /*LowerCase=*/true);
 }
 
-TEST(WindowsEHMetadataEncoder, PreservesSchemaV8Projection) {
+TEST(WindowsEHMetadataEncoder, PreservesSchemaV10Projection) {
   const ExceptionFunction EH = makeRichExceptionFunction();
   llvm::LLVMContext Context;
   llvm::MDNode *Payload =
@@ -343,23 +343,20 @@ TEST(WindowsEHMetadataEncoder, PreservesSchemaV8Projection) {
   const auto *CxxHeader = llvm::dyn_cast<llvm::MDNode>(
       Payload->getOperand(windows_eh_md::CxxHeader).get());
   ASSERT_NE(CxxHeader, nullptr);
-  ASSERT_EQ(CxxHeader->getNumOperands(),
-            windows_eh_md::CxxHeaderOperandCount);
-  EXPECT_EQ(metadataInteger(*CxxHeader,
-                            windows_eh_md::CxxNativeFuncInfoVA, 64),
+  ASSERT_EQ(CxxHeader->getNumOperands(), windows_eh_md::CxxHeaderOperandCount);
+  EXPECT_EQ(metadataInteger(*CxxHeader, windows_eh_md::CxxNativeFuncInfoVA, 64),
             EH.Cxx->NativeFuncInfoVA);
   const auto *Scopes = llvm::dyn_cast<llvm::MDNode>(
       Payload->getOperand(windows_eh_md::SEHScopes).get());
   ASSERT_NE(Scopes, nullptr);
   ASSERT_EQ(Scopes->getNumOperands(), 1u);
-  const auto *Scope =
-      llvm::dyn_cast<llvm::MDNode>(Scopes->getOperand(0).get());
+  const auto *Scope = llvm::dyn_cast<llvm::MDNode>(Scopes->getOperand(0).get());
   ASSERT_NE(Scope, nullptr);
   ASSERT_EQ(Scope->getNumOperands(), windows_eh_md::SEHScopeOperandCount);
-  EXPECT_EQ(metadataInteger(*Scope,
-                            windows_eh_md::SEHScopeNormalizedFilterVA, 64),
-            EH.SEH->Scopes.front().NormalizedFilterVA);
-  EXPECT_EQ(fingerprintDigest(*Payload), RichSchemaV8Fingerprint);
+  EXPECT_EQ(
+      metadataInteger(*Scope, windows_eh_md::SEHScopeNormalizedFilterVA, 64),
+      EH.SEH->Scopes.front().NormalizedFilterVA);
+  EXPECT_EQ(fingerprintDigest(*Payload), RichSchemaV10Fingerprint);
 }
 
 TEST(WindowsEHMetadataEncoder, PreservesCompleteX86RegistrationChain) {
@@ -444,6 +441,9 @@ TEST(WindowsEHMetadataEncoder, PreservesCompleteX86RegistrationChain) {
   EXPECT_EQ(
       metadataInteger(*FirstStore, windows_eh_md::RegistrationStoreLevel, 32),
       0u);
+  EXPECT_EQ(
+      metadataInteger(*FirstStore, windows_eh_md::RegistrationStoreWidth, 8),
+      1u);
   const auto *SecondStore =
       llvm::dyn_cast<llvm::MDNode>(Stores->getOperand(1).get());
   ASSERT_NE(SecondStore, nullptr);
@@ -458,6 +458,9 @@ TEST(WindowsEHMetadataEncoder, PreservesCompleteX86RegistrationChain) {
   EXPECT_EQ(
       metadataInteger(*SecondStore, windows_eh_md::RegistrationStoreLevel, 32),
       static_cast<uint32_t>(-2));
+  EXPECT_EQ(
+      metadataInteger(*SecondStore, windows_eh_md::RegistrationStoreWidth, 8),
+      4u);
 
   const auto *Scopes = llvm::dyn_cast<llvm::MDNode>(
       Registration->getOperand(windows_eh_md::RegistrationScopes).get());
@@ -496,6 +499,44 @@ TEST(WindowsEHMetadataEncoder, PreservesCompleteX86RegistrationChain) {
             1u);
 }
 
+TEST(WindowsEHMetadataEncoder, PreservesDistinctRealignedFrameCoordinates) {
+  auto EH = makeRichExceptionFunction();
+  EH.Registration->RealignedFrame =
+      RegistrationRealignedFrame{6, 0x40100f, 16, 0x270, -0x26c, -20};
+  llvm::LLVMContext Context;
+  auto *Payload = windows_eh_md::getCanonicalFunctionMetadata(Context, EH);
+  const auto *Registration = llvm::cast<llvm::MDNode>(
+      Payload->getOperand(windows_eh_md::Registration).get());
+  const auto *Frame = llvm::cast<llvm::MDNode>(
+      Registration->getOperand(windows_eh_md::RegistrationRealignedFrame)
+          .get());
+  ASSERT_EQ(Frame->getNumOperands(),
+            windows_eh_md::RegistrationRealignedFrameOperandCount);
+  EXPECT_EQ(
+      metadataInteger(*Frame, windows_eh_md::RegistrationFrameBaseRegister, 8),
+      6u);
+  EXPECT_EQ(
+      metadataInteger(*Frame, windows_eh_md::RegistrationFrameDefinitionVA, 64),
+      0x40100fu);
+  EXPECT_EQ(
+      metadataInteger(*Frame, windows_eh_md::RegistrationFrameAlignment, 32),
+      16u);
+  EXPECT_EQ(metadataInteger(
+                *Frame, windows_eh_md::RegistrationFrameAllocationBytes, 32),
+            0x270u);
+  EXPECT_EQ(
+      metadataInteger(*Frame, windows_eh_md::RegistrationFrameBaseOffset, 32),
+      uint32_t(-0x26c));
+  EXPECT_EQ(metadataInteger(
+                *Frame, windows_eh_md::RegistrationFrameSavedParentOffset, 32),
+            uint32_t(-20));
+  auto WithoutFrame = EH;
+  WithoutFrame.Registration->RealignedFrame.reset();
+  EXPECT_NE(fingerprintDigest(*Payload),
+            fingerprintDigest(*windows_eh_md::getCanonicalFunctionMetadata(
+                Context, WithoutFrame)));
+}
+
 TEST(WindowsEHMetadataEncoder,
      DistinguishesAbsentRegistrationOptionalsFromExplicitZero) {
   llvm::LLVMContext Context;
@@ -520,6 +561,7 @@ TEST(WindowsEHMetadataEncoder,
            windows_eh_md::RegistrationTryLevelOffset,
            windows_eh_md::RegistrationSeededTryLevel,
            windows_eh_md::RegistrationRecordOffset,
+           windows_eh_md::RegistrationRealignedFrame,
        }) {
     const auto *Optional =
         llvm::dyn_cast<llvm::MDNode>(Absent->getOperand(Operand).get());
@@ -641,7 +683,7 @@ TEST(WindowsEHMetadataEncoder, BitcodeRoundTripRemainsCanonical) {
 
   EXPECT_EQ(RoundTripPayload,
             windows_eh_md::getCanonicalFunctionMetadata(RoundTripContext, EH));
-  EXPECT_EQ(fingerprintDigest(*RoundTripPayload), RichSchemaV8Fingerprint);
+  EXPECT_EQ(fingerprintDigest(*RoundTripPayload), RichSchemaV10Fingerprint);
 }
 
 TEST(WindowsEHNativeSource, AcceptsOnlyTheExactSupportedCOFFSourceModels) {
@@ -828,20 +870,17 @@ TEST(WindowsEHNativeSource,
       WindowsEHNativeSourceReason::UnsupportedSEHScopeGraph);
 
   EH.SEH->Scopes = {Inner, Outer};
-  EXPECT_TRUE(
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF)
-          .canPatchOutput());
+  EXPECT_TRUE(classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF)
+                  .canPatchOutput());
 
   EH.Encoding = ExceptionEncoding::ARM64Unpacked;
   const WindowsEHNativeSourceClassification IRSource =
-      classifyWindowsEHNativeSource(
-          EH, Arch::AArch64, BinaryFormat::COFF,
-          WindowsEHNativeCapability::IRLowering);
+      classifyWindowsEHNativeSource(EH, Arch::AArch64, BinaryFormat::COFF,
+                                    WindowsEHNativeCapability::IRLowering);
   EXPECT_TRUE(IRSource.canLowerNativeIR());
   const WindowsEHNativeSourceClassification PatchSource =
-      classifyWindowsEHNativeSource(
-          EH, Arch::AArch64, BinaryFormat::COFF,
-          WindowsEHNativeCapability::OutputPatch);
+      classifyWindowsEHNativeSource(EH, Arch::AArch64, BinaryFormat::COFF,
+                                    WindowsEHNativeCapability::OutputPatch);
   EXPECT_FALSE(PatchSource.canPatchOutput());
   EXPECT_EQ(PatchSource.Reason,
             WindowsEHNativeSourceReason::UnsupportedSEHScopeGraph);
@@ -858,20 +897,17 @@ TEST(WindowsEHNativeSource,
   EXPECT_EQ(SemanticLegacyRange->End, RawLegacyRange.End + 3);
   EXPECT_EQ(EH.SEH->Scopes.front().GuardedRange.End, RawLegacyRange.End);
   const WindowsEHNativeSourceClassification LegacyIRSource =
-      classifyWindowsEHNativeSource(
-          EH, Arch::AArch64, BinaryFormat::COFF,
-          WindowsEHNativeCapability::IRLowering);
+      classifyWindowsEHNativeSource(EH, Arch::AArch64, BinaryFormat::COFF,
+                                    WindowsEHNativeCapability::IRLowering);
   EXPECT_TRUE(LegacyIRSource.canLowerNativeIR());
   const WindowsEHNativeSourceClassification LegacyPatchSource =
-      classifyWindowsEHNativeSource(
-          EH, Arch::AArch64, BinaryFormat::COFF,
-          WindowsEHNativeCapability::OutputPatch);
+      classifyWindowsEHNativeSource(EH, Arch::AArch64, BinaryFormat::COFF,
+                                    WindowsEHNativeCapability::OutputPatch);
   EXPECT_TRUE(LegacyPatchSource.canPatchOutput());
 
   ++EH.SEH->Scopes.front().GuardedRange.End;
-  EXPECT_EQ(classifyWindowsEHNativeSource(
-                EH, Arch::AArch64, BinaryFormat::COFF,
-                WindowsEHNativeCapability::IRLowering)
+  EXPECT_EQ(classifyWindowsEHNativeSource(EH, Arch::AArch64, BinaryFormat::COFF,
+                                          WindowsEHNativeCapability::IRLowering)
                 .Reason,
             WindowsEHNativeSourceReason::InvalidSEHScope);
 }
@@ -881,8 +917,8 @@ TEST(WindowsEHNativeSource,
   constexpr va_t Max = std::numeric_limits<va_t>::max();
   SEHScopeRecord Overflow;
   Overflow.GuardedRange = {Max - 7, Max - 2};
-  EXPECT_FALSE(getSemanticSEHGuardedRange(
-      Overflow, Arch::AArch64, ExceptionAddressRange{Max - 7, Max}));
+  EXPECT_FALSE(getSemanticSEHGuardedRange(Overflow, Arch::AArch64,
+                                          ExceptionAddressRange{Max - 7, Max}));
 
   SEHScopeRecord EscapesOwner;
   EscapesOwner.GuardedRange = {0x140001000, 0x140001011};
@@ -1018,6 +1054,31 @@ TEST(WindowsEHSemanticDigest, UsesVersionedLittleEndianSHA256Words) {
   EXPECT_EQ(windows_eh_semantics::SemanticDigestSchemaVersion, 1u);
 }
 
+TEST(WindowsEHSemanticDigest, RegistrationStateStoreWidthsBindTheSourceToken) {
+  ExceptionFunction EH;
+  EH.CodeRange = {0x401000, 0x401100};
+  EH.Encoding = ExceptionEncoding::X86ScopeTableEH3;
+  EH.Personality = ExceptionPersonality::ExceptHandler3;
+  auto &Chain = EH.Registration.emplace();
+  Chain.Scopes = {{-1, 0x401080, 0x401090, false}};
+  Chain.TryLevelStores = {{0x401020, 0x401024, 0, 1}};
+  const auto Byte =
+      windows_eh_semantics::getSEHScopeSemanticToken(EH, Arch::X86, 0);
+  ASSERT_TRUE(Byte);
+  Chain.TryLevelStores.front().Width = 4;
+  const auto Word =
+      windows_eh_semantics::getSEHScopeSemanticToken(EH, Arch::X86, 0);
+  ASSERT_TRUE(Word);
+  EXPECT_NE(*Byte, *Word);
+  Chain.TryLevelStores.front().Width = 3;
+  EXPECT_FALSE(
+      windows_eh_semantics::getSEHScopeSemanticToken(EH, Arch::X86, 0));
+  Chain.TryLevelStores.front().Width = 1;
+  Chain.TryLevelStores.front().Level = 256;
+  EXPECT_FALSE(
+      windows_eh_semantics::getSEHScopeSemanticToken(EH, Arch::X86, 0));
+}
+
 TEST(WindowsEHSemanticDigest,
      BindsEverySEHTokenToTheCompleteOrderedScopeGraph) {
   ExceptionFunction EH = makeNativeSEHSource();
@@ -1134,6 +1195,410 @@ TEST(WindowsEHSemanticDigest, BindsEveryCxxTokenToTheCompleteOrderedFH3Graph) {
       EH, Arch::AArch64, /*TryBlockIndex=*/0, /*CatchIndex=*/0);
   ASSERT_TRUE(AArch64Token.has_value());
   EXPECT_NE(*AArch64Token, *Baseline);
+}
+
+ExceptionFunction makeRegistrationCxxDigestSource() {
+  ExceptionFunction EH;
+  EH.CodeRange = {0x401000, 0x401100};
+  EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
+  EH.Personality = ExceptionPersonality::CxxFrameHandler3;
+  EH.PersonalityVA = 0x401200;
+  EH.HandlerDataVA = 0x403000;
+  auto &Chain = EH.Registration.emplace();
+  Chain.HandlerVA = 0x401180;
+  Chain.ScopeTableVA = EH.HandlerDataVA;
+  Chain.RegistrationOffset = -12;
+  Chain.TryLevelOffset = -4;
+  Chain.SeededTryLevel = -1;
+  Chain.ChainInstallVA = 0x401010;
+  Chain.ChainRemoveVA = 0x4010f0;
+  Chain.TryLevelStores = {{0x401020, 0x401024, 0, 1},
+                          {0x401080, 0x401087, -1, 4}};
+  auto &Cxx = EH.Cxx.emplace();
+  Cxx.NativeEncoding = CxxExceptionInfo::Encoding::FH3;
+  Cxx.NativeFuncInfoVA = EH.HandlerDataVA;
+  Cxx.Magic = 0x19930522;
+  Cxx.Version = CxxFuncInfoVersion::WithEHFlags;
+  Cxx.Flags = 1;
+  Cxx.MaxState = 2;
+  Cxx.UnwindMap.resize(2);
+  Cxx.UnwindMap[0].ToState = Cxx.UnwindMap[1].ToState = -1;
+  CxxTryBlock Try;
+  Try.TryLow = Try.TryHigh = 0;
+  Try.CatchHigh = 1;
+  CxxCatchHandler Catch;
+  Catch.TypeDescriptorVA = 0x404000;
+  Catch.CatchObjectOffset = -24;
+  Catch.HandlerVA = 0x401060;
+  Try.Handlers.push_back(Catch);
+  Cxx.TryBlocks.push_back(Try);
+  return EH;
+}
+
+TEST(WindowsEHNativeSource, PE32CxxOutputNeedsCompleteCompilerReceipts) {
+  auto EH = makeRegistrationCxxDigestSource();
+  EH.Registration->HandlerVA = EH.PersonalityVA;
+  EH.Cxx->IsSynchronous = true;
+  for (auto &Action : EH.Cxx->UnwindMap)
+    Action.Kind = CxxUnwindAction::ActionKind::None;
+  EH.Cxx->UnwindMap[1] = {0, 0x401300, CxxUnwindAction::ActionKind::Direct};
+  const auto IR = classifyWindowsEHNativeSource(
+      EH, Arch::X86, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
+  EXPECT_EQ(IR.Model, WindowsEHNativeSourceModel::X86RegistrationCxx);
+#ifdef LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS
+  EXPECT_TRUE(IR.canLowerNativeIR());
+#else
+  EXPECT_FALSE(IR.canLowerNativeIR());
+#endif
+  const auto Output =
+      classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF);
+#if defined(LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS) &&                            \
+    defined(LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS) &&                          \
+    defined(LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS)
+  EXPECT_TRUE(Output.canPatchOutput());
+  EXPECT_EQ(Output.Reason, WindowsEHNativeSourceReason::Eligible);
+#else
+  EXPECT_FALSE(Output.canPatchOutput());
+  EXPECT_EQ(Output.Reason,
+            WindowsEHNativeSourceReason::OutputReconstructionUnavailable);
+#endif
+  for (unsigned Mutation = 0; Mutation != 27; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = EH;
+    switch (Mutation) {
+    case 0:
+      Changed.ParseStatus = ExceptionParseStatus::Partial;
+      break;
+    case 1:
+      Changed.Encoding = ExceptionEncoding::X64UnwindV1;
+      break;
+    case 2:
+      Changed.Registration.reset();
+      break;
+    case 3:
+      ++Changed.Registration->HandlerVA;
+      break;
+    case 4:
+      ++Changed.Registration->ScopeTableVA;
+      break;
+    case 5:
+      Changed.Registration->RegistrationOffset = -16;
+      break;
+    case 6:
+      Changed.Registration->TryLevelOffset = -8;
+      break;
+    case 7:
+      Changed.Registration->SeededTryLevel = 0;
+      break;
+    case 8:
+      Changed.Registration->ChainInstallVA = Changed.CodeRange.End;
+      break;
+    case 9:
+      Changed.Registration->HasSecurityCookies = true;
+      break;
+    case 10:
+      Changed.Registration->Scopes.push_back({});
+      break;
+    case 11:
+      Changed.Cxx->IPMap.push_back({Changed.CodeRange.Begin, 0});
+      break;
+    case 12:
+      Changed.Cxx->Flags = 0;
+      break;
+    case 13:
+      Changed.Cxx->Magic = 0x19930521;
+      break;
+    case 14:
+      Changed.Cxx->UnwindMap[1].ActionVA = Changed.CodeRange.Begin;
+      break;
+    case 15:
+      Changed.Cxx->UnwindMap[1].ObjectOffset = -4;
+      break;
+    case 16:
+      Changed.Cxx->TryBlocks[0].Handlers[0].CatchObjectOffset = 0;
+      break;
+    case 17:
+      Changed.Cxx->TryBlocks[0].Handlers[0].Adjectives = 0x40;
+      break;
+    case 18:
+      Changed.Cxx->TryBlocks[0].Handlers[0].TypeDescriptorVA = 0;
+      break;
+    case 19:
+      Changed.Cxx->TryBlocks[0].Handlers[0].HandlerVA = Changed.CodeRange.Begin;
+      break;
+    case 20:
+      Changed.Cxx->TryBlocks[0].Handlers[0].ParentFrameOffset = -4;
+      break;
+    case 21:
+      Changed.Cxx->TryBlocks[0].Handlers[0].ContinuationVAs.push_back(0x401080);
+      break;
+    case 22:
+      Changed.Cxx->NativeEncoding = CxxExceptionInfo::Encoding::FH4;
+      break;
+    case 23:
+      Changed.Cxx->TryBlocks[0].Handlers.push_back(
+          Changed.Cxx->TryBlocks[0].Handlers[0]);
+      break;
+    case 24:
+      Changed.Cxx->MaxState = 3;
+      Changed.Cxx->UnwindMap.push_back(
+          {-1, 0, CxxUnwindAction::ActionKind::None});
+      Changed.Cxx->TryBlocks[0].TryLow = 1;
+      Changed.Cxx->TryBlocks[0].TryHigh = 1;
+      Changed.Cxx->TryBlocks[0].CatchHigh = 2;
+      break;
+    case 25:
+      Changed.Cxx->MaxState = 3;
+      Changed.Cxx->UnwindMap.push_back(
+          {-1, 0, CxxUnwindAction::ActionKind::None});
+      Changed.Cxx->TryBlocks[0].CatchHigh = 2;
+      break;
+    case 26:
+      Changed.Cxx->MaxState = 129;
+      Changed.Cxx->UnwindMap.resize(129);
+      break;
+    }
+    const auto Rejected =
+        classifyWindowsEHNativeSource(Changed, Arch::X86, BinaryFormat::COFF,
+                                      WindowsEHNativeCapability::IRLowering);
+    EXPECT_FALSE(Rejected.canLowerNativeIR());
+    EXPECT_NE(Rejected.Reason, WindowsEHNativeSourceReason::Eligible);
+    EXPECT_FALSE(
+        classifyWindowsEHNativeSource(Changed, Arch::X86, BinaryFormat::COFF)
+            .canPatchOutput());
+  }
+}
+
+TEST(WindowsEHSemanticDigest, BindsThePE32CxxGraphAndRegistrationContract) {
+  const auto EH = makeRegistrationCxxDigestSource();
+  const auto Token =
+      windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86, 0, 0);
+  ASSERT_TRUE(Token);
+  EXPECT_EQ(Token, windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86,
+                                                                  0, 0));
+  for (unsigned Mutation = 0; Mutation != 20; ++Mutation) {
+    auto Changed = EH;
+    auto &Chain = *Changed.Registration;
+    auto &Cxx = *Changed.Cxx;
+    switch (Mutation) {
+    case 0:
+      ++Changed.PersonalityVA;
+      break;
+    case 1:
+      ++Changed.HandlerDataVA;
+      break;
+    case 2:
+      ++Chain.HandlerVA;
+      break;
+    case 3:
+      ++Chain.ScopeTableVA;
+      break;
+    case 4:
+      --*Chain.RegistrationOffset;
+      break;
+    case 5:
+      --*Chain.TryLevelOffset;
+      break;
+    case 6:
+      Chain.SeededTryLevel.reset();
+      break;
+    case 7:
+      ++Chain.ChainInstallVA;
+      break;
+    case 8:
+      ++Chain.ChainRemoveVA;
+      break;
+    case 9:
+      ++Chain.TryLevelStores[0].StoreVA;
+      break;
+    case 10:
+      ++Chain.TryLevelStores[0].EndVA;
+      break;
+    case 11:
+      ++Chain.TryLevelStores[0].Level;
+      break;
+    case 12:
+      Chain.TryLevelStores[0].Width = 4;
+      break;
+    case 13:
+      ++Cxx.NativeFuncInfoVA;
+      break;
+    case 14:
+      Cxx.UnwindMap[1].ToState = 0;
+      break;
+    case 15:
+      --Cxx.TryBlocks[0].Handlers[0].CatchObjectOffset;
+      break;
+    case 16:
+      ++Cxx.TryBlocks[0].Handlers[0].TypeDescriptorVA;
+      break;
+    case 17:
+      ++Cxx.TryBlocks[0].Handlers[0].HandlerVA;
+      break;
+    case 18:
+      Cxx.TryBlocks[0].Handlers[0].Adjectives = 8;
+      break;
+    case 19:
+      Changed.Personality = ExceptionPersonality::CxxFrameHandlerX86;
+      break;
+    }
+    const auto Other = windows_eh_semantics::getCxxCatchSemanticToken(
+        Changed, Arch::X86, 0, 0);
+    ASSERT_TRUE(Other) << Mutation;
+    EXPECT_NE(*Other, *Token) << Mutation;
+  }
+  EXPECT_FALSE(classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF)
+                   .canPatchOutput());
+}
+
+TEST(WindowsEHSemanticDigest, BindsAllRealignedFrameCoordinates) {
+  auto EH = makeRegistrationCxxDigestSource();
+  const auto Direct =
+      windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86, 0, 0);
+  EH.Registration->RealignedFrame = RegistrationRealignedFrame{
+      6, EH.CodeRange.Begin + 15, 16, 0x270, -0x26c, -20};
+  const auto Token =
+      windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86, 0, 0);
+  ASSERT_TRUE(Token);
+  EXPECT_NE(Token, Direct);
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    auto Changed = EH;
+    auto &Frame = *Changed.Registration->RealignedFrame;
+    switch (Mutation) {
+    case 0:
+      ++Frame.BaseRegister;
+      break;
+    case 1:
+      ++Frame.DefinitionVA;
+      break;
+    case 2:
+      Frame.Alignment = 32;
+      break;
+    case 3:
+      ++Frame.AllocationBytes;
+      break;
+    case 4:
+      ++Frame.BaseOffset;
+      break;
+    case 5:
+      ++Frame.SavedParentFrameOffset;
+      break;
+    }
+    EXPECT_NE(Token, windows_eh_semantics::getCxxCatchSemanticToken(
+                         Changed, Arch::X86, 0, 0));
+    EXPECT_FALSE(
+        classifyWindowsEHNativeSource(Changed, Arch::X86, BinaryFormat::COFF)
+            .canPatchOutput());
+  }
+}
+
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+TEST(WindowsEHSemanticDigest, BindsCleanupToTheWholePE32CxxSourceGraph) {
+  auto EH = makeRegistrationCxxDigestSource();
+  EH.Cxx->UnwindMap[0].Kind = CxxUnwindAction::ActionKind::None;
+  EH.Cxx->UnwindMap[1] = {0, 0x401300, CxxUnwindAction::ActionKind::Direct};
+  const auto Token =
+      windows_eh_semantics::getCxxCleanupSemanticToken(EH, Arch::X86, 1);
+  ASSERT_TRUE(Token);
+  EXPECT_EQ(Token->Kind,
+            llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCleanup);
+  EXPECT_EQ(Token->Region, 1u);
+  EXPECT_EQ(Token->Clause, 0u);
+  EXPECT_EQ(Token,
+            windows_eh_semantics::getCxxCleanupSemanticToken(EH, Arch::X86, 1));
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCleanupSemanticToken(EH, Arch::X86, 0));
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCleanupSemanticToken(EH, Arch::X86, 2));
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCleanupSemanticToken(EH, Arch::X64, 1));
+  EXPECT_NE(Token, windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86,
+                                                                  0, 0));
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = EH;
+    switch (Mutation) {
+    case 0:
+      ++Changed.Cxx->UnwindMap[1].ActionVA;
+      break;
+    case 1:
+      Changed.Cxx->UnwindMap[1].ToState = -1;
+      break;
+    case 2:
+      --Changed.Cxx->TryBlocks[0].Handlers[0].CatchObjectOffset;
+      break;
+    case 3:
+      ++Changed.Cxx->TryBlocks[0].Handlers[0].TypeDescriptorVA;
+      break;
+    case 4:
+      ++Changed.Cxx->TryBlocks[0].Handlers[0].HandlerVA;
+      break;
+    case 5:
+      ++Changed.Registration->ChainInstallVA;
+      break;
+    case 6:
+      ++Changed.Registration->ChainRemoveVA;
+      break;
+    case 7:
+      ++Changed.Registration->TryLevelStores[0].StoreVA;
+      break;
+    case 8:
+      --*Changed.Registration->RegistrationOffset;
+      break;
+    case 9:
+      ++Changed.Cxx->NativeFuncInfoVA;
+      break;
+    }
+    const auto Other =
+        windows_eh_semantics::getCxxCleanupSemanticToken(Changed, Arch::X86, 1);
+    ASSERT_TRUE(Other);
+    EXPECT_NE(Token, Other);
+  }
+  auto Missing = EH;
+  Missing.Registration.reset();
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCleanupSemanticToken(Missing, Arch::X86, 1));
+  Missing = EH;
+  Missing.Cxx->UnwindMap[1].Kind =
+      CxxUnwindAction::ActionKind::DestructorWithObject;
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCleanupSemanticToken(Missing, Arch::X86, 1));
+}
+#endif
+
+TEST(WindowsEHSemanticDigest, RejectsConflictingPE32CxxTokenContracts) {
+  const auto Source = makeRegistrationCxxDigestSource();
+  EXPECT_FALSE(
+      windows_eh_semantics::getCxxCatchSemanticToken(Source, Arch::X64, 0, 0));
+  for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+    auto EH = Source;
+    switch (Mutation) {
+    case 0:
+      EH.ParseStatus = ExceptionParseStatus::Partial;
+      break;
+    case 1:
+      EH.Encoding = ExceptionEncoding::X64UnwindV1;
+      break;
+    case 2:
+      EH.Registration->Scopes.push_back({});
+      break;
+    case 3:
+      EH.Cxx->NativeEncoding = CxxExceptionInfo::Encoding::FH4;
+      break;
+    case 4:
+      EH.Registration->TryLevelStores[0].Width = 3;
+      break;
+    case 5:
+      EH.Registration->TryLevelStores[0].Level = 256;
+      break;
+    case 6:
+      EH.Cxx->UnwindMap[0].ToState = 0;
+      break;
+    }
+    EXPECT_FALSE(
+        windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86, 0, 0))
+        << Mutation;
+  }
 }
 
 TEST(WindowsEHSemanticDigest,

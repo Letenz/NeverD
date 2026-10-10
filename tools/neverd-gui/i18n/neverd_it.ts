@@ -2123,10 +2123,6 @@ Con segno: %4</translation>
         <translation>Versione %1</translation>
     </message>
     <message>
-        <source>Start</source>
-        <translation>Inizia</translation>
-    </message>
-    <message>
         <source>Recent files</source>
         <translation>File recenti</translation>
     </message>

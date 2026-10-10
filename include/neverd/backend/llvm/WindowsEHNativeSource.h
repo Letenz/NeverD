@@ -31,6 +31,8 @@ enum class WindowsEHNativeSourceModel : uint8_t {
   SEH,
   CxxFH3,
   CxxFH4,
+  X86RegistrationSEH,
+  X86RegistrationCxx,
 };
 
 /// The operation for which a normalized Windows exception source is being
@@ -90,6 +92,7 @@ enum class WindowsEHNativeSourceReason : uint8_t {
   UnsupportedCxxContinuation,
   OutputReconstructionUnavailable,
   UnsupportedSEHCallbackABI,
+  IncompleteRegistrationFrame,
 };
 
 struct WindowsEHNativeSourceClassification {
@@ -155,10 +158,10 @@ cxxDirectFuncletChain(const ExceptionFunction &EH);
 /// first. The map must be one chain to state -1. A Direct action has a zero
 /// object offset. Its callee is outside the function, or it is a block inside
 /// the parent whose address is outside every try or is its own IP boundary.
-/// An address strictly inside a protected range stays out. A DestructorWithObject
-/// action has a nonzero offset and a callee outside the function.
-/// DestructorWithObjectPointer, an address inside a try, a cycle, or an action
-/// off that chain stays out.
+/// An address strictly inside a protected range stays out. A
+/// DestructorWithObject action has a nonzero offset and a callee outside the
+/// function. DestructorWithObjectPointer, an address inside a try, a cycle, or
+/// an action off that chain stays out.
 std::vector<const CxxUnwindAction *>
 cxxLowerableDestructorChain(const ExceptionFunction &EH);
 

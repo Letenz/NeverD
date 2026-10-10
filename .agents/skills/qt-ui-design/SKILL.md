@@ -5,12 +5,23 @@ description: >-
 license: LicenseRef-Qt-Commercial OR BSD-3-Clause
 metadata:
   author: qt-ai-skills
-  version: "1.0"
+  version: "1.1"
   qt-version: "6.x"
   category: conceptual
-  changelog: "Initial release"
+  changelog: "Added the NeverD desktop design profile and visual verification guidance"
 ---
 # Qt UI Design
+
+## NeverD desktop profile
+
+For NeverD screens, read [the NeverD desktop profile](references/neverd-desktop.md)
+before designing or auditing. It records the product's established visual
+direction, content hierarchy, resizing behavior, and Qt rendering checks. Apply
+its desktop density and layout guidance in place of the generic sizing defaults
+below; preserve accessibility requirements and the user's current instructions.
+For other products, use the general guidance without importing NeverD's palette
+or screen dimensions.
+
 Before producing UI output, confirm you know: target platform, screen geometry, design system, content priority, viewing distance, locale, and input methods. Run the seven items below as a check against the conversation and the project state; ask only the items that are genuinely missing. When the user cannot answer an item, choose a sensible Qt default and name it in your response so the user can correct it.
 
 Small edits to an existing design — for example *"move the OK button to the right"*, *"change this label"*, *"make this red"* — do not trigger the checklist. Apply section 1 silently and verify section 2 (contrast, hit-target) where relevant.

@@ -68,7 +68,11 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
     target_link_libraries(neverd-worker-test-server PRIVATE neverd_worker_graph neverd_worker_format Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME NeverDWorkerTransport
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transport_test.py"
+                "$<TARGET_FILE:neverd-worker-test-server>")
+    add_test(NAME NeverDWorkerAnalysisSnapshot
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/analysis_snapshot_test.py"
               "$<TARGET_FILE:neverd-worker-test-server>")
+    set_tests_properties(NeverDWorkerAnalysisSnapshot PROPERTIES TIMEOUT 30)
     set_tests_properties(NeverDWorkerTransport PROPERTIES TIMEOUT 40)
     add_test(NAME NeverDWorkerGraphTransport
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/graph_transport_test.py"

@@ -90,6 +90,25 @@ NEVERD_GENERATED_MODE(NativeEncodedPointer, 26)
 // A decoder input is observed even when no encoder produced it in this run.
 NEVERD_GENERATED_MODE(DecodedPointer, 27)
 NEVERD_GENERATED_MODE(NativeDecodedPointer, 28)
+// Dynamic thread/fiber-local slots are separate from PE static TLS bytes.
+NEVERD_GENERATED_MODE(DynamicTLS, 29)
+NEVERD_GENERATED_MODE(DynamicFLS, 30)
+NEVERD_GENERATED_MODE(ReleasedDynamicTLS, 31)
+NEVERD_GENERATED_MODE(ReleasedDynamicFLS, 32)
+NEVERD_GENERATED_MODE(LateDynamicTLS, 33)
+NEVERD_GENERATED_MODE(LateDynamicFLS, 34)
+// An allocated zero-valued slot still has process-local ownership.
+NEVERD_GENERATED_MODE(ZeroDynamicTLS, 35)
+NEVERD_GENERATED_MODE(ZeroDynamicFLS, 36)
+// The modeled API permits storing in an unallocated in-range TLS cell.
+NEVERD_GENERATED_MODE(UnallocatedTLSValue, 37)
+NEVERD_GENERATED_MODE(ClearedUnallocatedTLSValue, 38)
+// Releasing a nonempty FLS slot must not discard its cleanup callback.
+NEVERD_GENERATED_MODE(FreedFLSCallback, 39)
+NEVERD_GENERATED_MODE(EmptyFLSCallback, 40)
+NEVERD_GENERATED_MODE(ReusedFLSCallback, 41)
+NEVERD_GENERATED_MODE(NestedFLSCallback, 42)
+NEVERD_GENERATED_MODE(RecursiveFLSCallback, 43)
 #endif
 
 #ifdef NEVERD_GENERATED_ADDRESS_REGISTER
@@ -164,4 +183,12 @@ NEVERD_GENERATED_KERNEL_API(WriteFile)
 NEVERD_GENERATED_KERNEL_API(GetProcessHeap)
 NEVERD_GENERATED_KERNEL_API(HeapAlloc)
 NEVERD_GENERATED_KERNEL_API(HeapFree)
+NEVERD_GENERATED_KERNEL_API(TlsAlloc)
+NEVERD_GENERATED_KERNEL_API(TlsFree)
+NEVERD_GENERATED_KERNEL_API(TlsGetValue)
+NEVERD_GENERATED_KERNEL_API(TlsSetValue)
+NEVERD_GENERATED_KERNEL_API(FlsAlloc)
+NEVERD_GENERATED_KERNEL_API(FlsFree)
+NEVERD_GENERATED_KERNEL_API(FlsGetValue)
+NEVERD_GENERATED_KERNEL_API(FlsSetValue)
 #endif

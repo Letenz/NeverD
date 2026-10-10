@@ -18,6 +18,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedConstantPropagation.h"
@@ -543,6 +544,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   Func.CxxContinuationEntries = Low.CxxContinuationEntries;
   Func.UnsafeIndirectBranchAddresses = Low.UnsafeIndirectBranchAddresses;
   Func.ExceptionMetadata = Low.ExceptionMetadata;
+  Func.RegistrationStates = Low.RegistrationStates;
+  Func.CalleePopBytes = Low.CalleePopBytes;
+  if (Low.RegistrationStates && Image)
+    Func.RegistrationCallerCleanupABIComplete =
+        hasCallerCleanupRegistrationABI(Low, *Image);
   if (SourceCallHintsEnabled && Image && Fmt == BinaryFormat::MachO &&
       TheArch == Arch::AArch64 && Image->Arch == TheArch) {
     Func.RegisterCopyProjections = sourceRegisterCopies(*Image, Low);
@@ -712,6 +718,13 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
             MOp.DoesNotReturn = hasLowInstructionControlFlag(
                 Boundary.ControlFlags, LowInstructionControlFlag::NoReturn);
         }
+        if (Low.RegistrationStates)
+          if (const auto *Call =
+                  Low.RegistrationStates->callFrameEffect(LOp.Addr, LOp.Seq))
+            if (LOp.Opcode == NdOp::CALL && LOp.NumInputs == 1 &&
+                LOp.Inputs[0].isConst() && LOp.Inputs[0].Size == 4 &&
+                LOp.Inputs[0].Offset == Call->Target)
+              MOp.DoesNotReturn |= Call->DoesNotReturn;
       }
 
       if (LOp.Output.Size > 0)
@@ -781,6 +794,13 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
           RegisterCallSlot = *Slot;
       if (!bindFormattedCall(MB, MOp, LOp))
         applyCallRegisterEffect(MOp, LOp);
+      if (TheArch == Arch::X86 && Low.RegistrationStates &&
+          Low.RegistrationStates->SecurityCookiesComplete &&
+          Low.RegistrationStates->cookieCheck(LOp.Addr, LOp.Seq)) {
+        MOp.Output = MedVar{};
+        MOp.Output.Id = -1;
+        MOp.CallPreservedGPRs = 0xff;
+      }
       if (TrackDispatchArgs)
         DispatchDefined = StepDefined(DispatchDefined, LOp);
 

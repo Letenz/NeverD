@@ -5636,9 +5636,26 @@ class LoopPlanInference {
       Cut.UseEntryPrefix = true;
       Cut.Rank = {NdVar::scalar(0, 8)};
     }
-    // These are candidate-only reachable witnesses. The final checker must
-    // recapture paired original/candidate prefixes with its own fresh state.
+    // Prefer the first arrival from the same complete entry traversal used
+    // by the final checker. A generalized prefix keeps symbolic values as
+    // total expressions, so a different witness can change the proposed
+    // invariant even when the two values agree on their respective paths.
+    Session.PrefixSearchCutpoint = -1;
+    Session.OriginalStart.reset();
+    Session.CandidateStart.reset();
+    Session.StartingCutpoint = -1;
+    Stage = "candidate entry arrivals";
+    runCandidate();
+    EntryArrivals = Session.CandidateReturns;
+    for (const auto &S : EntryArrivals)
+      if (S.Cutpoint >= 0 && !Session.LoopPrefixes[S.Cutpoint])
+        Session.LoopPrefixes[S.Cutpoint] = LoopPrefix{S, S, S.Predicate};
+    // The complete entry segment can stop before a nested cut. Only missing
+    // cuts need a separate bounded prefix search. These remain candidate-only
+    // witnesses; the final relation recaptures and checks both programs.
     for (size_t I = 0; I != Cuts.size(); ++I) {
+      if (Session.LoopPrefixes[I])
+        continue;
       Session.PrefixSearchCutpoint = static_cast<int>(I);
       Stage = "candidate entry prefix " + std::to_string(I);
       runCandidate();
@@ -5650,12 +5667,6 @@ class LoopPlanInference {
       Session.LoopPrefixes[I] = LoopPrefix{*It, *It, It->Predicate};
     }
     Session.PrefixSearchCutpoint = -1;
-    Session.OriginalStart.reset();
-    Session.CandidateStart.reset();
-    Session.StartingCutpoint = -1;
-    Stage = "candidate entry arrivals";
-    runCandidate();
-    EntryArrivals = Session.CandidateReturns;
     auto Edges = transitions(false);
     widenIncoming(Edges);
     seedCounterRelations(Edges);

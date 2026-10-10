@@ -122,6 +122,10 @@ NEVERD_UNPACK_REPORT_FIELD(EncodedPointerCount, "possible_encoded_pointers")
 NEVERD_UNPACK_REPORT_FIELD(EncodedPointerReferences,
                            "encoded_pointer_references")
 NEVERD_UNPACK_REPORT_FIELD(EncodedPointerValue, "value")
+NEVERD_UNPACK_REPORT_FIELD(DynamicThreadLocalKnown,
+                           "dynamic_thread_local_inventory_known")
+NEVERD_UNPACK_REPORT_FIELD(DynamicTLSCount, "live_dynamic_tls_slots")
+NEVERD_UNPACK_REPORT_FIELD(DynamicFLSCount, "live_dynamic_fls_slots")
 NEVERD_UNPACK_REPORT_FIELD(Storage, "storage")
 NEVERD_UNPACK_REPORT_FIELD(Offset, "offset")
 NEVERD_UNPACK_REPORT_FIELD(Address, "address")

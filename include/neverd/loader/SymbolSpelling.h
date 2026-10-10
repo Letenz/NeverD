@@ -56,6 +56,15 @@ std::string readableSymbolName(llvm::StringRef Name);
 /// spelling when it has one, else \p Name as it is.
 std::string displaySymbolName(llvm::StringRef Name);
 
+/// A C++ function or object's qualified name, without its signature. Empty
+/// for malformed names, other languages and implementation-only symbols.
+std::string cxxSourceName(llvm::StringRef Name);
+
+/// Simplify a type supplied by debug information using the same exact
+/// standard-library aliases as demangled symbols; custom template arguments
+/// remain visible.
+std::string readableCxxTypeName(llvm::StringRef Name);
+
 /// The stem of the C identifier that names \p Name, for Rust, Swift, D and
 /// Objective-C methods: their path's words joined with underscores
 /// (`core_fmt_write`; `String_Write_write_fmt` for a trait's method), and an

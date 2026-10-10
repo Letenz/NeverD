@@ -29,6 +29,7 @@ bool cacheable(const QString &operation) {
 
 bool readable(const QString &operation) {
   static const QSet<QString> operations{"metadata",
+                                        "analysis_snapshot",
                                         "history",
                                         "annotations",
                                         "contributions",
@@ -733,6 +734,13 @@ void QueryService::setAvailable(bool available) {
   state_->available = true;
   state_->schedulePump();
   state_->notify();
+}
+void QueryService::resetReadContext(const QString &project,
+                                    const QString &revision) {
+  resetSession();
+  state_->project = project;
+  state_->revision = revision;
+  setAvailable(!project.isEmpty());
 }
 bool QueryService::available() const { return state_->available; }
 QString QueryService::projectId() const { return state_->project; }

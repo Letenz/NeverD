@@ -4941,6 +4941,8 @@ void HighCWriter::hideX86CallPushSetup(const HighFunc &Func) {
 }
 
 void HighCWriter::foldCxxThrowConstructors(const HighFunc &Func) {
+  if (!Opts.StructuredExceptionSyntax)
+    return;
   if (!Opts.Image)
     return;
   struct ThrownObject {
@@ -5129,6 +5131,8 @@ void HighCWriter::nameCxxCatchObjects(const HighFunc &Func) {
   CxxCatchNames.clear();
   CxxCatchObjectDisps.clear();
   OpenCatchObjects.clear();
+  if (!Opts.StructuredExceptionSyntax)
+    return;
   auto nameTaken = [&](const std::string &Name) {
     if (Name.empty())
       return true;

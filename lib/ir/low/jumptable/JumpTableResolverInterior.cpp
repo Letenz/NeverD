@@ -16,6 +16,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -171,8 +172,27 @@ void CFGBuilder::exploreAddressTakenRoots(const BinaryImage &Img,
       if (Target > CurrentFuncRange->first && Target < CurrentFuncRange->second)
         RelocationSources[Target].insert(Slot);
     });
-  for (const auto &[Target, Sources] : RelocationSources)
-    RelocationCandidates.insert(Target);
+  const ExceptionFunction *Exception =
+      Img.ExceptionMetadata.findFunction(CurrentFuncEntry);
+  const auto CxxCallbackSources =
+      Exception
+          ? coff_loader::getCheckedX86CxxCallbackPointerSources(Img, *Exception)
+          : std::nullopt;
+  for (auto &[Target, Sources] : RelocationSources) {
+    if (Exception && Exception->Registration &&
+        (Exception->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||
+         Exception->Encoding == ExceptionEncoding::X86ScopeTableEH4))
+      std::erase_if(Sources, [&](va_t Slot) {
+        return Exception->Registration->scopePointerTarget(Slot) == Target;
+      });
+    if (CxxCallbackSources)
+      std::erase_if(Sources, [&](va_t Slot) {
+        const auto It = CxxCallbackSources->find(Slot);
+        return It != CxxCallbackSources->end() && It->second == Target;
+      });
+    if (!Sources.empty())
+      RelocationCandidates.insert(Target);
+  }
 
   std::set<va_t> Processed;
   for (;;) {

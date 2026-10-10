@@ -116,7 +116,15 @@ struct Session {
   static constexpr size_t MaxFunctionLlvmModules = 8;
   /// The C route that emitted a function's source, or the language its
   /// HighC source is spelled in.
-  enum class SourceRoute : uint8_t { HighC, LLVMC, LLVMCNoOpt, Rust, Go };
+  enum class SourceRoute : uint8_t {
+    HighC,
+    PlainC,
+    LLVMC,
+    LLVMCNoOpt,
+    Cpp,
+    Rust,
+    Go
+  };
   /// One function's emitted C.  A view pages through the whole text, and the
   /// text stays the same until the pipeline or an input of the emitter
   /// outside it changes (forgetEmittedSources), so every page after the first

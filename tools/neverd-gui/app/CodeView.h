@@ -38,6 +38,9 @@ public:
 
   void load(Address function, const QString &representation);
   void clear();
+  /// Stop obsolete requests/pages, including an in-flight analysis process
+  /// when no other view still subscribes to its result.
+  void cancel();
   std::optional<Address> function() const { return function_; }
   QString representation() const { return representation_; }
   /// First instruction address mapped to the cursor line.
@@ -76,6 +79,7 @@ public:
   const QString &status() const { return status_; }
   /// Pages of the current function are still arriving.
   bool loading() const { return loading_; }
+  bool interrupted() const { return interrupted_; }
   /// The language the loaded code reads in, "c", "rust" or "go"; empty for
   /// an IR or before the first page.
   QString language() const;
@@ -121,7 +125,7 @@ private:
   /// The library regions of the loaded function and its prelude.
   QJsonArray foldRegions() const;
   /// Display lines from the source, folded where the user asked.
-  void rebuildLines();
+  void rebuildLines(bool append = false);
   /// Position in the displayed text of a line and column.
   int displayPosition(int line, int column) const;
   QString regionAt(const QPoint &position) const;
@@ -143,12 +147,15 @@ private:
   QVariantList sourceRows_;
   QJsonArray regions_;
   qint64 byteOffset_ = 0;
+  qint64 sourceBytes_ = 0;
+  int renderedChars_ = 0, renderedRows_ = 0, widestLine_ = 0;
   bool regionsValid_ = false;
   LibraryCodeView library_;
   std::optional<Address> function_;
   QString representation_, status_, highlight_;
   quint64 serial_ = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;
+  bool interrupted_ = false;
   bool foldPreludeAfterLoad_ = true;
   /// The first page's prelude: lines and end_byte.
   QJsonObject prelude_;
@@ -215,7 +222,7 @@ signals:
 private:
   void updateStatus();
   /// The representations the loaded program offers: C beside Pseudocode
-  /// only for a program with Rust or Go code, whose Pseudocode reads those
+  /// only for a program with C++, Rust or Go code, whose Pseudocode reads those
   /// functions in their own language.
   void updateRepresentations();
   Session &session_;

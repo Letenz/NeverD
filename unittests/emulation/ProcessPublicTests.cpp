@@ -410,6 +410,14 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"extended-attributes-values",
                     emulation::darwin_test::ExtendedAttributesHex},
           std::pair{"extended-attributes-unsupported", "58"},
+          std::pair{"xattr-mutations", "56"},
+          std::pair{"xattr-mutations-values",
+                    emulation::darwin_test::XattrMutationsHex},
+          std::pair{"xattr-mutations-unsupported", "56"},
+          std::pair{"bulk-attributes", "42"},
+          std::pair{"bulk-attributes-values",
+                    emulation::darwin_test::BulkAttributesHex},
+          std::pair{"bulk-attributes-unsupported", "42"},
           std::pair{"attribute-names", "4e"},
           std::pair{"attribute-names-values",
                     emulation::darwin_test::AttributeNamesHex},
@@ -521,10 +529,13 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       (UnlinkLinks || RenameLinks) && ModeName.ends_with("-protected");
   const bool UnknownPathConf = ModeName == "kernel-pathconf-unsupported";
   const bool UnknownAttributes = ModeName == "common-attributes-unsupported";
+  const bool UnknownXattrMutation = ModeName == "xattr-mutations-unsupported";
   const bool UnknownXattrs = ModeName == "extended-attributes-unsupported";
   const bool UnknownNames = ModeName == "attribute-names-unsupported";
+  const bool UnknownBulk = ModeName == "bulk-attributes-unsupported";
   const bool Incomplete = ProtectedLink || UnknownPathConf ||
-                          UnknownAttributes || UnknownXattrs || UnknownNames;
+                          UnknownAttributes || UnknownXattrs || UnknownNames ||
+                          UnknownBulk || UnknownXattrMutation;
   const bool X64 = llvm::StringRef(File).ends_with("x86_64");
   SCOPED_TRACE(File);
   Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
@@ -941,6 +952,20 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::json::parse(emulation::darwin_test::CommonAttributesJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (ModeName.starts_with("xattr-mutations")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::XattrMutationsJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName.starts_with("bulk-attributes")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::BulkAttributesJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
   if (ModeName.starts_with("attribute-names")) {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     (*Input.getAsObject())[field::Quantum] = 1024;
@@ -992,6 +1017,31 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     ASSERT_NE(Last->get(field::Result), nullptr);
     EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
     EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+  }
+  if (UnknownBulk) {
+    EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
+              "Darwin selected file attributes are not modeled");
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    ASSERT_FALSE(Services->empty());
+    const auto *Last = Services->back().getAsObject();
+    ASSERT_NE(Last, nullptr);
+    EXPECT_EQ(Last->getString(field::Number), X64 ? "20001cd" : "1cd");
+    EXPECT_EQ(Last->get(field::Error), nullptr);
+    ASSERT_NE(Last->get(field::Result), nullptr);
+    EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+  }
+  if (UnknownXattrMutation) {
+    EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
+              "Darwin extended-attribute mutation is not authorized");
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    ASSERT_FALSE(Services->empty());
+    const auto *Last = Services->back().getAsObject();
+    EXPECT_EQ(Last->getString(field::Number), X64 ? "20000ec" : "ec");
+    EXPECT_EQ(Last->get(field::Error), nullptr);
+    ASSERT_NE(Last->get(field::Result), nullptr);
+    EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
   }
   if (UnknownXattrs) {
     EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),

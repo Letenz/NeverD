@@ -95,6 +95,7 @@ struct CxxUnwindAction {
     DestructorWithObjectPointer,
   } Kind = ActionKind::Direct;
   int32_t ObjectOffset = 0;
+  bool operator==(const CxxUnwindAction &) const = default;
 };
 
 inline const char *
@@ -115,6 +116,7 @@ getCxxUnwindActionKindName(CxxUnwindAction::ActionKind Kind) {
 struct CxxIPState {
   va_t IP = 0;
   int32_t State = -1;
+  bool operator==(const CxxIPState &) const = default;
 };
 
 struct CxxCatchHandler {
@@ -124,6 +126,7 @@ struct CxxCatchHandler {
   va_t HandlerVA = 0;
   int32_t ParentFrameOffset = 0;
   std::vector<va_t> ContinuationVAs;
+  bool operator==(const CxxCatchHandler &) const = default;
 };
 
 struct CxxTryBlock {
@@ -131,6 +134,7 @@ struct CxxTryBlock {
   int32_t TryHigh = -1;
   int32_t CatchHigh = -1;
   std::vector<CxxCatchHandler> Handlers;
+  bool operator==(const CxxTryBlock &) const = default;
 
   bool hasValidStateRange(uint32_t MaxState) const {
     if (MaxState > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()))
@@ -147,6 +151,7 @@ struct CxxTryBlock {
 struct CxxExceptionSpecType {
   uint32_t Adjectives = 0;
   va_t TypeDescriptorVA = 0;
+  bool operator==(const CxxExceptionSpecType &) const = default;
 };
 
 /// Which `FuncInfo` fields the record's magic declares.  MSVC only ever
@@ -196,6 +201,7 @@ struct CxxExceptionInfo {
   std::vector<CxxUnwindAction> UnwindMap;
   std::vector<CxxTryBlock> TryBlocks;
   std::vector<CxxIPState> IPMap;
+  bool operator==(const CxxExceptionInfo &) const = default;
 
   /// True when the function declares a dynamic exception specification, which
   /// only a record whose magic reaches `EH_MAGIC_NUMBER2` can do.

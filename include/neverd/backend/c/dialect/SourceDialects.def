@@ -18,6 +18,7 @@
 #endif
 
 NEVERD_SOURCE_DIALECT(C, "c", "C")
+NEVERD_SOURCE_DIALECT(Cpp, "cpp", "C++")
 NEVERD_SOURCE_DIALECT(Rust, "rust", "Rust")
 NEVERD_SOURCE_DIALECT(Go, "go", "Go")
 

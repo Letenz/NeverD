@@ -370,6 +370,9 @@ NEVERD_API const char *neverd_decompile_all(neverd_session_t Sess,
 /// Decompile with an explicit output language. Solidity is supported for EVM
 /// inputs and Rust is supported for Solana SBF inputs; unsupported
 /// input/language combinations return an actionable error.
+/// Native CPP (value 5), RUST and GO spell HighC in that source dialect;
+/// SOURCE chooses from the detected runtime. C retains native exception ABI
+/// calls and handler definitions rather than C++ exception statements.
 NEVERD_API const char *
 neverd_decompile_all_ex(neverd_session_t Sess, const char *InputPath,
                         neverd_output_language_t Language, int NoOpt,

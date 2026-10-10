@@ -4,7 +4,7 @@
 
 [← 文档索引](README.md)
 
-NeverD 在加载、提升、反编译和二进制重写的全过程中携带 Windows 表驱动异常信息。
+NeverD 在加载、提升、反编译和二进制重写的全过程中携带 Windows 异常信息。
 异常元数据属于函数的可执行契约：只有能够证明生成代码、runtime-function 记录、
 语言表与防护表相互一致时，NeverD 才允许重写。
 
@@ -29,7 +29,9 @@ NeverD 在加载、提升、反编译和二进制重写的全过程中携带 Win
 | `__CxxFrameHandler3` | unwind map、try map、catch、catch-object/frame offset、continuation 与 IP-to-state map | 可规约状态区间变为显式 C++ HighIR，并带 C 兼容类型注释 | 对下文所述严格受限且 verifier-clean 的子集执行原生 x64 重建 |
 | `__CxxFrameHandler4` | 有界变长解码到公共 C++ 图，包括 action kind 与 object offset | 同一 HighIR 图并保留 FH4 来源 | 仅分析；拒绝修改涉及的函数 |
 | `__GSHandlerCheck_SEH/EH/EH4` | 包装后的 personality 与经检查的 GS cookie 来源 | 基础语言图加 wrapper 注释 | 仅分析；拒绝修改涉及的函数，不做降级 |
-| x86 registration-chain EH | 与表驱动 EH 明确区分 | 不支持形式的注释 | 不重建 |
+| x86 registration-chain SEH3 | 经检查的 scope 图、实际 FS:[0] 操作、callback root 与基于 CFG 的 try-level 状态集合 | 可规约且无歧义的区域生成显式 EH 节点；其他状态保留原生注释 | 对下文固定栈帧、caller-cleanup 的已证明子集支持原生 PE32 重建 |
+| x86 registration-chain SEH4 | 经检查的 cookie 表达式、编码 scope 指针与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 对下文已认证的直接栈帧子集支持原生 PE32 重建，包含 EH/GS cookie 初始化 |
+| x86 registration-chain C++ EH | 绝对指针 FuncInfo、cleanup/对象契约与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 对下文经过证明的单 try、标量 catch 子集执行原生 PE32 重建 |
 
 畸形记录绝不会按普通完整记录处理。部分解码记录仍可用于检查，但不能授权生成原生
 元数据。如果 ARM xdata header 仍能证明一个有界可执行 fragment 范围，而后续 unwind
@@ -60,6 +62,95 @@ try-map entry 复用同一 handler map，解析工作也不能超过总预算。
 与 personality 的 FH3 记录按有界函数组解码，使父函数的 IP-to-state map 可以合法指向
 其 catch funclet，同时拒绝不相关 runtime function 的地址。
 
+### x86 registration 状态
+
+x86 没有 runtime-function directory。loader 从 registration prologue 找到 EH3/EH4
+scope table 或 C++ FuncInfo。SafeSEH 表必须已映射、严格排序，且目标可执行；损坏的表
+不能降级成“没有表”。C++ 各张表共用一个累计解码预算。
+
+`analyzeRegistrationStates` 是 LowIR 中 try-level 数据流的唯一所有者。它沿 CFG
+前驱与回边传播状态，在汇合点保留所有到达的 level，并仅在已解码的状态写入指令完成后
+应用新状态。loader 保留字节、字和双字写入的宽度；窄写入仅替换每个到达状态的对应
+低位。未知高位、非法结果或与提升后宽度不符都会使证明失败。不可达代码中的写入不能
+改变可达块的状态。运行时调用的 filter 与 cleanup
+callback 不属于父函数的词法保护区；catch/except 入口使用对应的运行时状态迁移。
+MedIR 单独携带这些推导结果，不修改 patch 事务认证的 loader 描述符。只有所有到达状态
+对区域归属一致时，HighIR 才生成结构化区域；未知迁移保留注释，不虚构 IP-to-state map。
+C++ catch 使用独立的运行时上下文：嵌套异常从活动 try 之上的状态开始搜索，catch
+返回的是交给运行时的 continuation 代码地址。LowIR 要求精确解码的返回指令与已证明
+的保存栈值，在同一函数内解码目标并重放恢复后的上下文。无法证明或相互冲突的
+continuation 保留注释，同时撤销原生重建权限。这些推导结果与源 FuncInfo 及父函数的
+标量返回值分别保留。
+只有 FuncInfo 解析器认证过的 callback 指针字段才会被排除出普通间接入口发现。
+同一目标的其他引用仍保留独立普通入口身份。MedIR 为仅由运行时进入的 catch 和 cleanup
+恢复父帧 EBP，将其私有 callback ESP 保留为未知值；经过检查的 continuation 则使用
+保存的父帧 ESP。栈偏移证明、HighIR 与 LLVM 共享同一坐标。非法根操作或相互冲突的
+保存栈值不能获得这些保证。
+结构化 catch 保留到已检查 continuation 的显式转移；回退注释保留 catch-object 偏移、
+parent-frame 偏移与 continuation 列表，同时让原生 handler 保持独立。
+当同一 try 的已检查地址区间包围独立 catch 时，只有移出仅由运行时进入的 callback 后
+能得到连续保护区，HighIR 才将其合并。普通前驱、夹在其间的未受保护语句或不明确的
+状态流都会阻止移动；保护区与 catch 作为一个事务提交。单独转换的 PE32 callback
+仍需证明父帧坐标投影后才能嵌入 clause；证明缺失时保留原生目标地址。
+直接 MSVC prologue 必须证明实际 FS:[0] 写入与 registration/state 字段的位置；普通局部
+变量中恰好相同的整数序列不能替代这一证据。
+
+SEH3/EH4 原生重建还会证明固定且私有的源栈帧、平衡的 FS:[0] 操作，以及每个普通 CFG
+block 唯一的活动状态。LLVM 拥有新的物理 registration；独立 filter 与 termination
+callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有经过认证的源
+链操作才会被替换。每个活动区间都有显式异步 scope 边界，包括内层 handler 进入外层
+保护区的入口。原函数和保留的直接被调函数必须证明 caller-cleanup 栈行为；间接调用
+或无法证明的栈清理约定仍被拒绝。
+
+cdecl 的传入栈槽在原内存操作发生处映射到真实调用者栈帧，独立 callback 中的读写也
+使用这一映射。保留 callee 的整个调用图必须证明栈帧私有：读取已初始化的栈字节，
+访问限于当前已分配区域，并恢复 callee-saved 寄存器和 SP。flags、vector 别名、spill
+和调用不会清洗栈帧来源。返回地址探针可以记录真实生成调用点供外部观察，但源函数或
+保留调用图内不能重新读取该值。除经过认证的 `RaiseException` 外，未知 import 和没有
+已检查内存访问契约的 intrinsic 不属于这一原生子集。
+
+编译器为 scope 行发射索引、精确表范围、外层状态、filter/handler 目标及源语义凭据。
+PE 事务检查实际字节和 DIR32 fixup，合并 SafeSEH 与 HIGHLOW relocation，并重新解析
+最终映像。新建的 Guard CF/EH continuation 表指针也会获得独立的 base relocation。
+注册链函数在 `section` 与 `inplace` 模式下都使用这个完整事务。
+
+SEH3 要求保留参数的已知 CRT import veneer。EH4 要求精确的转发 wrapper：四个
+dispatcher 参数、load-config cookie 地址、可执行 cookie checker 和 CRT common
+handler import 必须一致；仅凭 handler 名称不能授权重写。共享栈帧分析在 registration
+公开前证明编码 scope 指针与每个 cookie 表达式。源函数及保留的 callee 不能修改映像
+cookie 或 scope table；合成 cookie 值不能逸出私有栈帧。LLVM 按实际 registration
+record 推导生成 cookie 偏移，包括运行时的虚拟帧基址；安装器再与实际表字节逐项核对。
+直接初始化的 GS 栈槽由编译器生成 stack protector。GS 编码与退出校验使用同一虚拟
+基址，栈重新对齐时也保持一致。校验函数必须保留精确的 fastcall ABI 和原 wrapper
+使用的代码地址；同名函数或 import 不能替代这一身份。
+校验函数的经检查成功路径只将 ECX 与 load-config cookie 比较并返回，不修改栈存储
+或其他寄存器。LLVM 重新对齐栈时，回调引用的参数副本仍保留在可恢复的局部帧中。
+
+显式源 GS 校验要求在精确解码的调用发生处证明完整位宽的 ECX cookie 表达式，并认证
+校验函数身份。原生 lowering 只将该已证明的调用替换为带索引的执行事件，LLVM 再发射
+物理 stack protector 校验。公开安装器独立重放源证明，拒绝删除、复制、去标记或改变
+顺序的事件。独立 callback 内的源校验仍不属于这一子集。
+
+该路径要求 LLVM fork 提供 `LLVM_NEVERD_X86_REGISTRATION_EH` 契约；旧的已发布 r3
+预编译包会拒绝原生安装。EH4 还要求 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`，
+GS 初始化还要求 `LLVM_NEVERD_X86_REGISTRATION_GS`。
+
+x86 C++ 原生重建目前支持一个同步 typed try 和一个按值或引用捕获的标量 catch，
+源 unwind state 最多 128 个。输入必须具有经过证明的 MSVC 直接 registration frame，
+采用 magic `0x19930522` 的 FuncInfo，且不带 GS wrapper。保留的每个调用、throw type
+和 cleanup relay 都需要独立 ABI 证明。源对象借用必须有界、已经初始化且不与注册
+存储重叠；引用访问必须在 catch 返回前保留 CRT 提供的对象身份。所有读写保持原始
+映像存储身份。
+
+LLVM 重新发射物理 registration、typed catch home、有序 cleanup dispatch、完整
+FuncInfo 和私有 handler。公开安装要求编译器同时提供
+`LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS`、`LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS`
+与 `LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS`，随后独立重放编辑后的 IR，并检查实际
+机器码、语言表、SafeSEH 和全部绝对重定位。入口 patch 不得覆盖保留的 helper 或 CRT
+指令。当前运行样本在 Wine 和 Windows CRT 下证明整数按值/引用捕获、嵌套析构和强制
+重定位。其他 try/catch 图、未经证明的对象类型、传入栈参数、动态帧以及 GS 或异步
+C++ 仍保留分析信息，并拒绝原生安装。
+
 ## IR 契约
 
 异常元数据贯穿每种 IR 表示，同时不改变普通 CFG 的含义：
@@ -89,7 +180,7 @@ WinEH lowering：
 - 函数 attachment：`neverd.windows.eh`；
 - 原生 lowering 标记：`neverd.windows.eh.native`；
 - module table：`neverd.windows.eh.functions`；
-- 当前 schema version：`3`。
+- 当前 schema version：`9`。
 
 固定函数记录携带 parse status、encoding、code range、原生 runtime/unwind RVA、
 runtime-record kind 与 chain 来源、packed-unwind word、frame description、规范化和
@@ -181,6 +272,40 @@ IP-to-state map。
 
 修改 parser 时还要运行现有 ARM format case，因为 ARM packed/unpacked xdata 共用规范化
 模型与最终 runtime-entry 检查。
+
+registration 状态与 PE32 运行基线可单独验证：
+
+```bash
+cmake --build build-release --target NeverDRegistrationStateTests \
+  NeverDRegistrationEHTests NeverDWindowsRegistrationFrameTests --parallel 4
+build-release/bin/NeverDRegistrationStateTests
+build-release/bin/NeverDRegistrationEHTests
+NEVERD_REGISTRATION_RUNTIME_OBJECT=/tmp/neverd-frame.obj \
+  build-release/bin/NeverDWindowsRegistrationFrameTests
+python3 -m unittest scripts.tests.test_check_windows_registration_eh \
+  scripts.tests.test_check_windows_registration_frame \
+  scripts.tests.test_check_windows_registration_cookie -v
+python3 scripts/check_windows_registration_eh.py --output build-registration/evidence
+python3 scripts/check_windows_registration_frame.py --object /tmp/neverd-frame.obj \
+  --output build-registration/callback-runtime
+```
+
+执行器运行固定版本的 MSVC x86 SEH/C++ 样本，覆盖 `/GS` 开关与 O0/O2；Linux 使用 Wine，
+Windows 使用原生 loader。默认报告标记为 `original-runtime`。传入 `--patched-root` 后，
+必须提供全部八份重写样本；字节完全相同的副本会被拒绝，并逐个比较运行结果。只有这一
+模式报告 `changed-image-runtime`，证明修改后的映像运行结果一致。原生重建还需绑定
+源文件、输出文件和替换入口的 patch 回执，以及替换入口实际执行的证据。缺少运行环境
+或样本会失败。回调帧测试覆盖 PE32 filter/finally 的父帧恢复、既有 escape 索引、
+有界异常指针槽、独立回调栈、原子拒绝，以及实际 i386 COFF scope 表的代码生成；
+帧执行器保留链接时的 SafeSEH 检查，执行 16 次真实异常，并要求 filter 调用次数和处理结果
+完全符合预期；报告标记为 `generated-x86-callback-abi`。这些检查本身不授权原生 patch。
+源码重建 runner 在首选及强制重定位基址执行原始、手动安装、公开 COFF、符号冲突、
+CLI section 和 CLI inplace 六种映像。严格 EH4 oracle 还要求正常执行，以及分别损坏
+EH 和 GS cookie 后在 dispatch 前拒绝。Wine 的 common EH4 dispatcher 不检查 cookie，
+因此 fixture 会先完成该检查，再由真实 runtime 分派异常。
+CI 的 `windows_eh_only` 手动配置还验证 ARM32 交叉目标 PE 生成与重建；这不等于在
+Windows ARM32 上执行。提供精确 LLVM artifact build 后，下游 Windows job 会用原生
+Windows CRT 复跑同一批经哈希核对的 PE32 映像。
 
 ## 扩展原生支持
 

@@ -254,6 +254,94 @@ static int xattr_bytes(const u64 *words, const unsigned char *expected,
   }
   return 0;
 }
+static int xattr_mutations(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 200;
+  parent[last ? last : 1] = 0;
+  u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 201;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary || xattr_result(13, root, 0, 0, 0, 0, 0, 0, 0))
+    return 202;
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || xattr_result(199, file, 37, 0, 0, 0, 0, 37, 0))
+    return 203;
+  const char *beta = "user.neverd.beta", *empty = "user.neverd.empty";
+  const unsigned char value[7] = {0, 255, 'A', 0, 128, 'B', '\n'};
+  const unsigned char link_value = 42;
+  if (xattr_result(236, (u64) "data", (u64)beta, (u64)value, 7, 0, 2, 0, 0) ||
+      xattr_result(236, (u64) "data", (u64)beta, (u64)value, 7, 0, 2, 17, 1) ||
+      xattr_result(237, copy, (u64) "user.neverd.missing", (u64)value, 7, 0, 4,
+                   93, 1) ||
+      xattr_result(237, copy, (u64)beta, -1UL, 7, 0, 2, 14, 1) ||
+      xattr_result(237, copy, (u64)beta, 0, 1, 0, 0, 22, 1) ||
+      xattr_result(237, copy, (u64)beta, -1UL, 0, 1, 0, 22, 1) ||
+      xattr_result(237, 99, (u64)beta, -1UL, 0, 0, 0, 9, 1) ||
+      xattr_result(239, 99, -1UL, 0, 0, 0, 0, 14, 1) ||
+      xattr_result(237, 99, -1UL, 0, 0, 0, 1, 22, 1))
+    return 204;
+  u64 words[36];
+  unsigned char *out = (unsigned char *)words + 16;
+  xattr_canary(words);
+  if (xattr_result(235, file, (u64)beta, (u64)out, 7, 0, 0, 7, 0) ||
+      xattr_bytes(words, value, 7) ||
+      xattr_result(237, copy | 0x1234567800000000UL, (u64)empty, -1UL, 0,
+                   0x1234567800000000UL, 0, 0, 0) ||
+      xattr_result(239, copy, (u64)empty, 6, -1UL, -1UL, -1UL, 0, 0) ||
+      xattr_result(239, copy, (u64)empty, 4, -1UL, -1UL, -1UL, 93, 1))
+    return 205;
+  if (xattr_result(236, (u64) "alias", (u64)beta, (u64)&link_value, 1, 0, 65, 0,
+                   0))
+    return 206;
+  xattr_canary(words);
+  if (xattr_result(234, (u64) "alias", (u64)beta, (u64)out, 1, 0, 1, 1, 0) ||
+      xattr_bytes(words, &link_value, 1) ||
+      xattr_result(238, (u64) "alias", (u64)beta, 1, -1UL, -1UL, -1UL, 0, 0) ||
+      xattr_result(236, (u64) "empty", (u64)beta, -1UL, 0, 0, 0, 0, 0) ||
+      xattr_result(238, (u64) "empty", (u64)beta, 0, -1UL, -1UL, -1UL, 0, 0))
+    return 207;
+  if (xattr_result(128, (u64) "data", (u64) "moved", 0, 0, 0, 0, 0, 0) ||
+      xattr_result(238, (u64) "moved", (u64)beta, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(237, copy, (u64)beta, (u64)value, 7, 0, 2, 0, 0) ||
+      xattr_result(10, (u64) "moved", 0, 0, 0, 0, 0, 0, 0))
+    return 208;
+  xattr_canary(words);
+  if (xattr_result(235, file, (u64)beta, (u64)out, 7, 0, 0, 7, 0) ||
+      xattr_bytes(words, value, 7) ||
+      xattr_result(199, copy, 0, 1, 0, 0, 0, 37, 0))
+    return 209;
+  if (mode == 1) {
+    /* Complete virtual order is declared; no APFS order is inferred. */
+    xattr_canary(words);
+    if (xattr_result(241, copy, (u64)out, 256, 0, 0, 0, 17, 0) ||
+        xattr_bytes(words, (const unsigned char *)beta, 17) ||
+        xattr_result(4, 1, (u64)value, 7, 0, 0, 0, 7, 0) ||
+        xattr_result(4, 1, (u64)out, 17, 0, 0, 0, 17, 0))
+      return 210;
+  } else if (xattr_result(4, 1, (u64) "V", 1, 0, 0, 0, 1, 0)) {
+    return 211;
+  }
+  if (mode == 2) {
+    call(236, (u64) "readonly", (u64)beta, 0, 0, 0, 0, &error);
+    return 212;
+  }
+  if (xattr_result(6, copy, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, file, 0, 0, 0, 0, 0, 0, 0) ||
+      xattr_result(6, root, 0, 0, 0, 0, 0, 0, 0))
+    return 213;
+  return 37;
+}
+
 static int extended_attributes(const char *path, unsigned mode) {
   unsigned error;
   char parent[1024];
@@ -377,6 +465,164 @@ static int extended_attributes(const char *path, unsigned mode) {
       xattr_result(6, file, 0, 0, 0, 0, 0, 0, 0) ||
       xattr_result(6, root, 0, 0, 0, 0, 0, 0, 0) ||
       xattr_result(4, 1, (u64) "X", 1, 0, 0, 0, 1, 0))
+    return 238;
+  return 37;
+}
+
+/* Original TYPE-provider bulk controls. Native directory order and cookies
+ * are observations; identify this private catalogue as a set of names/types. */
+static unsigned bulk_group(const unsigned char *p) {
+  if (little_integer(p, 4) != 48 || little_integer(p + 4, 4) != 0x80000009UL ||
+      little_integer(p + 8, 8) || little_integer(p + 16, 8) ||
+      little_integer(p + 24, 4) != 12)
+    return 0;
+  const unsigned length = (unsigned)little_integer(p + 28, 4);
+  if (length < 1 || length > 12 || p[36 + length - 1])
+    return 0;
+  const char *name = (const char *)(p + 36);
+  const unsigned bit = equal(name, "alias")      ? 1
+                       : equal(name, "cycle")    ? 2
+                       : equal(name, "dangling") ? 4
+                       : equal(name, "data")     ? 8
+                       : equal(name, "empty")    ? 16
+                                                 : 0;
+  const unsigned wanted_length = bit == 4 ? 9 : bit == 8 ? 5 : 6;
+  const unsigned type = bit == 8 ? 1 : bit == 16 ? 2 : 5;
+  if (!bit || length != wanted_length || little_integer(p + 32, 4) != type)
+    return 0;
+  for (unsigned i = 36 + length; i != 48; ++i)
+    if (p[i])
+      return 0;
+  return bit;
+}
+static int bulk_collect(u64 fd, unsigned *request, u64 *words, u64 size,
+                        unsigned count, unsigned *seen) {
+  for (unsigned i = 0; i != 34; ++i)
+    words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (attribute_result(461, fd, (u64)request, (u64)(words + 1), size, 8, -1UL,
+                       count, 0))
+    return 221;
+  if (words[0] != 0xa5a5a5a5a5a5a5a5UL)
+    return 222;
+  for (unsigned i = 1 + count * 6; i != 34; ++i)
+    if (words[i] != 0xa5a5a5a5a5a5a5a5UL)
+      return 223;
+  unsigned found = 0;
+  for (unsigned i = 0; i != count; ++i) {
+    const unsigned bit = bulk_group((const unsigned char *)(words + 1 + i * 6));
+    if (!bit || (found & bit))
+      return 224;
+    found |= bit;
+  }
+  *seen = found;
+  return 0;
+}
+static int bulk_attributes(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 225;
+  parent[last ? last : 1] = 0;
+  const u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 226;
+  const u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary || attribute_result(13, root, 0, 0, 0, 0, 0, 0, 0))
+    return 227;
+  unsigned request[6] = {0xffff0005, 0x80000009, 0, 0, 0, 0};
+  if (mode == 2) {
+    if (attribute_result(4, 1, (u64) "B", 1, 0, 0, 0, 1, 0))
+      return 228;
+    request[1] = 0x80000001;
+    call(461, root, (u64)request, -1UL, 256, 0, 0, &error);
+    return 229; // NAME-only provider semantics are outside the explicit policy.
+  }
+  u64 words[34], observed[30];
+  unsigned first, rest, complete;
+  if (attribute_result(461, -1UL, -1UL, -1UL, 0, 0, 0, 9, 1) ||
+      attribute_result(461, file, -1UL, -1UL, 0, 0, 0, 20, 1) ||
+      attribute_result(461, root, -1UL, -1UL, 0, 0, 0, 14, 1) ||
+      attribute_result(461, root, (u64)request, -1UL, 0, 0, 0, 22, 1) ||
+      attribute_result(461, root, (u64)request, -1UL, 40, 0, 0, 34, 1))
+    return 230;
+  const u64 copy = call(41, root, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 231;
+  const u64 separate = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      bulk_collect(root | 0x1234567800000000UL, request, words, 48, 1,
+                   &first) ||
+      bulk_collect(copy, request, words, 256, 4, &rest) || (first & rest) ||
+      (first | rest) != 31)
+    return 232;
+  request[0] = 0xffffffff;
+  if (attribute_result(461, copy, (u64)request, -1UL, -1UL, 8, 0, 0, 0) ||
+      bulk_collect(separate, request, words, 256, 5, &complete) ||
+      complete != 31)
+    return 233;
+  for (unsigned i = 0; i != 30; ++i)
+    observed[i] = words[i + 1];
+  if (attribute_result(199, root, 0, 0, 0, 0, 0, 0, 0) ||
+      bulk_collect(copy, request, words, 256, 5, &complete) || complete != 31 ||
+      attribute_result(461, root, (u64)request, -1UL, 0, 0, 0, 0, 0))
+    return 234;
+  const u64 empty = call(5, (u64) "empty", 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      attribute_result(461, empty, (u64)request, -1UL, 0, 0, 0, 22, 1) ||
+      attribute_result(461, empty, (u64)request, -1UL, 1, 8, 0, 0, 0))
+    return 235;
+  if (attribute_result(6, empty, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(6, separate, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(6, copy, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(6, file, 0, 0, 0, 0, 0, 0, 0) ||
+      attribute_result(6, root, 0, 0, 0, 0, 0, 0, 0))
+    return 236;
+  if (mode == 1) {
+    // Independent virtual byte order; native mode checks the same set above.
+    static const u64 expected[30] = {0x8000000900000030UL,
+                                     0x0UL,
+                                     0x0UL,
+                                     0x60000000cUL,
+                                     0x61696c6100000005UL,
+                                     0x73UL,
+                                     0x8000000900000030UL,
+                                     0x0UL,
+                                     0x0UL,
+                                     0x60000000cUL,
+                                     0x6c63796300000005UL,
+                                     0x65UL,
+                                     0x8000000900000030UL,
+                                     0x0UL,
+                                     0x0UL,
+                                     0x90000000cUL,
+                                     0x676e616400000005UL,
+                                     0x676e696cUL,
+                                     0x8000000900000030UL,
+                                     0x0UL,
+                                     0x0UL,
+                                     0x50000000cUL,
+                                     0x6174616400000001UL,
+                                     0x0UL,
+                                     0x8000000900000030UL,
+                                     0x0UL,
+                                     0x0UL,
+                                     0x60000000cUL,
+                                     0x74706d6500000002UL,
+                                     0x79UL};
+    for (unsigned i = 0; i != 30; ++i)
+      if (observed[i] != expected[i])
+        return 237;
+  }
+  if (attribute_result(4, 1, mode == 1 ? (u64)observed : (u64) "B",
+                       mode == 1 ? sizeof(observed) : 1, 0, 0, 0,
+                       mode == 1 ? sizeof(observed) : 1, 0))
     return 238;
   return 37;
 }
@@ -6326,6 +6572,16 @@ int main(int argc, char **argv, char **envp, char **apple) {
                ? 79
                : mutable_initial_links(
                      argv[2], equal(argv[1], "virtual-mutable-initial-links"));
+  if (equal(argv[1], "bulk-attributes") ||
+      equal(argv[1], "bulk-attributes-values") ||
+      equal(argv[1], "bulk-attributes-unsupported"))
+    return argc < 3
+               ? 224
+               : bulk_attributes(argv[2],
+                                 equal(argv[1], "bulk-attributes-values") ? 1
+                                 : equal(argv[1], "bulk-attributes-unsupported")
+                                     ? 2
+                                     : 0);
   if (equal(argv[1], "attribute-names") ||
       equal(argv[1], "attribute-names-values") ||
       equal(argv[1], "attribute-names-unsupported"))
@@ -6334,6 +6590,16 @@ int main(int argc, char **argv, char **envp, char **apple) {
                : attribute_names(argv[2],
                                  equal(argv[1], "attribute-names-values") ? 1
                                  : equal(argv[1], "attribute-names-unsupported")
+                                     ? 2
+                                     : 0);
+  if (equal(argv[1], "xattr-mutations") ||
+      equal(argv[1], "xattr-mutations-values") ||
+      equal(argv[1], "xattr-mutations-unsupported"))
+    return argc < 3
+               ? 2
+               : xattr_mutations(argv[2],
+                                 equal(argv[1], "xattr-mutations-values") ? 1
+                                 : equal(argv[1], "xattr-mutations-unsupported")
                                      ? 2
                                      : 0);
   if (equal(argv[1], "extended-attributes") ||

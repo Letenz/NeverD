@@ -164,6 +164,8 @@ Json hello() {
               {"max_frame_bytes", MaxFrameBytes},
               {"capabilities",
                {"metadata",
+                "analysis_snapshot",
+                "analysis_restore",
                 "functions",
                 "disasm",
                 "bytes",

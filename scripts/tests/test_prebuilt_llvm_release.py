@@ -127,6 +127,15 @@ class PrebuiltLlvmReleaseWorkflowTests(unittest.TestCase):
 """,
             source,
         )
+        # Specialized manually selected jobs may use their own compiler setup.
+        # This contract belongs to the ordinary source-build matrix.
+        build = re.search(
+            r"^  build-and-test:\n.*?(?=^  [A-Za-z][\w-]*:|\Z)",
+            source,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(build, source)
+        source = build.group(0)
         self.assertIn(
             "NEVERD_LLVM_PREBUILT_MODE: "
             "${{ github.event_name == 'workflow_dispatch' "
@@ -177,18 +186,20 @@ message(STATUS "MIGRATED_TAG=${{NEVERD_LLVM_PREBUILT_TAG}}")
             "neverd-llvm-v23.0.0",
             "neverd-llvm-v23.0.0-r1",
             "neverd-llvm-v23.0.0-r2",
+            "neverd-llvm-v23.0.0-r3",
         ):
             with self.subTest(tag=tag):
                 self.assertEqual(
                     self.configured_tag_after_migration(tag),
-                    "neverd-llvm-v23.0.0-r3",
+                    "neverd-llvm-v23.0.0-r4",
                 )
 
-    def test_explicit_digest_preserves_the_selected_legacy_or_r1_tag(self):
+    def test_explicit_digest_preserves_the_selected_legacy_tag(self):
         for tag in (
             "neverd-llvm-v23.0.0",
             "neverd-llvm-v23.0.0-r1",
             "neverd-llvm-v23.0.0-r2",
+            "neverd-llvm-v23.0.0-r3",
         ):
             with self.subTest(tag=tag):
                 self.assertEqual(
@@ -692,10 +703,10 @@ class PrebuiltLlvmDocumentationTests(unittest.TestCase):
             source = readme.read_text(encoding="utf-8")
             with self.subTest(readme=readme.name):
                 self.assertIn(
-                    "-f release_tag=neverd-llvm-v23.0.0-r4", source
+                    "-f release_tag=neverd-llvm-v23.0.0-r5", source
                 )
                 self.assertIn(
-                    "-DNEVERD_LLVM_PREBUILT_TAG=neverd-llvm-v23.0.0-r3", source
+                    "-DNEVERD_LLVM_PREBUILT_TAG=neverd-llvm-v23.0.0-r4", source
                 )
                 self.assertIn("NEVERD_LLVM_PREBUILT_SHA256", source)
                 self.assertIn("-f overwrite_existing_assets=false", source)
@@ -720,14 +731,14 @@ class PrebuiltLlvmDocumentationTests(unittest.TestCase):
             "macOS arm64",
             "Linux x86_64",
             "Windows x64",
-            "neverd-llvm-v23.0.0-r3",
             "neverd-llvm-v23.0.0-r4",
+            "neverd-llvm-v23.0.0-r5",
             "cmake/NeverDLLVMPrebuilt.cmake",
             "scripts/audit_prebuilt_llvm_release.py",
             "every six hours",
             "sccache",
             "GitHub Actions cache",
-            ".cache/neverd-llvm/neverd-llvm-v23.0.0-r3",
+            ".cache/neverd-llvm/neverd-llvm-v23.0.0-r4",
             "use_prebuilt_llvm",
             "push and pull-request CI",
         ):
@@ -736,7 +747,7 @@ class PrebuiltLlvmDocumentationTests(unittest.TestCase):
 
         self.assertRegex(source, r"only a manually\s+selected `true`")
         self.assertIn(
-            "-DNEVERD_LLVM_PREBUILT_TAG=neverd-llvm-v23.0.0-r3", source
+            "-DNEVERD_LLVM_PREBUILT_TAG=neverd-llvm-v23.0.0-r4", source
         )
         self.assertNotIn(
             "-DNEVERD_LLVM_PREBUILT_TAG=neverd-llvm-v23.0.0\n", source

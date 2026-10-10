@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 04b2e4c2533989d2575907f26aa90f0e66f457bd69a18fc9edde7b066d1c3877 -->
+<!-- i18n-source: aa19cf02d09c66c62cfde94ee71c93b210f3d92165151c58778e1e91ec0df607 -->
 
 [← 文档索引](README.md)
 
@@ -1006,3 +1006,25 @@ Sources: [XNU syscall ABI](https://raw.githubusercontent.com/apple-oss-distribut
 ATTR_CMN_NAME=1 已通过 getattrlist220/fgetattrlist228/getattrlistat476 支持显式目录中具有唯一名称的非根对象。叶名称必须是 1..255 字节的合法 UTF-8。名称来自与 F_GETPATH 共用的实际对象路径，跨 dup、CWD、移动、SWAP、删除和名称重用保留最后链接的拼写；调用者别名不会覆盖它。名称和类型不依赖 stat；所选 stat 字段仍需完整有效观察。根/挂载标签、非法名称、硬链接或大小写别名、规范化和完整路径属性保持未知。
 
 8 字节 attrreference_t 位于其他公共字段之前；attr_dataoffset 相对于引用本身，attr_length 包含 NUL，末尾名称区域按四字节填充。短输出保留完整所需长度及精确前缀，包括被截断的 UTF-8。attribute-names / attribute-names-values / attribute-names-unsupported 经 guest/C/CLI/Python 检查原生行为、独立字节与保留既有输出的根名称停止。ARM64 私有对照通过 601 次原始查询、453 次完整保护缓冲区 SDK 比较和 384 次前缀检查。SDK15.5 没有 raw476 的类型声明。native5s、guest/Python5,000,000us/quantum1024、既有公开测试10s 不变。原生 Intel、物理 iOS 和完整运行时/框架仍未验证或未完成。
+
+## 有界目录批量属性
+
+getattrlistbulk(461) 需要显式 enumeration_policy.bulk_attributes=true；省略或 false 不授予权限。此虚拟 TYPE 契约按无符号字节顺序返回当前直接子项名称，不含点条目，使用本地序号而非原生文件系统 cookie。初始目录对象跨 dup、移动、SWAP、删除与名称重用保留授权；新建目录不继承批量授权。既有 minimum_buffer_size、initial_minimum_buffer_size、seek_offset 仅用于 getdirentries64。
+
+必须选择 NAME|OBJTYPE|RETURNED_ATTRS (0x80000009)，所选观察仍有效时可使用已有十一项公共字段。支持 Options0/8；bulk 忽略两个16位 bitmap/reserved 字，与独立 attrlist 校验分离。唯一属性编码器共用 attrreference_t 和 stat64 有效性判断。只返回完整记录：容得下时按8字节填充，否则允许最后一组为4字节大小。首组放不下时返回 ERANGE，输出和游标不变；所需输出仅部分可写时在复制前明确停止。只有实际返回的字节要求可写内存。
+
+dup 共享进度，独立 open 各自推进。非零已完成遍历在名称空间变化后仍保留 EOF，在请求校验后跳过大小和输出检查；初始空目录 offset0 重新检查视图。零 lseek 重置迭代；EOF 前成员变化、任意非零 seek、混用 getdirentries64/bulk 明确停止。NAME-only 回退、带 ERROR 的条目、快照、ACL/权限判断、主机顺序及其他 mask/options 不支持。bulk-attributes / bulk-attributes-values / bulk-attributes-unsupported 检查原生共同行为、虚拟字面字节及保留既有输出的未知选择停止。ARM64 私有准备通过728组带保护区的 raw/SDK 比较。native5s、guest/Python5,000,000us/quantum1024、public10s 不变。原生 Intel、iOS 真机及完整运行时/框架仍未验证或未完成。
+
+Sources: [XNU bulk ABI](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/man/man2/getattrlistbulk.2), [XNU attribute definitions](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/attr.h). Original implementation and probes; no Apple implementation copied.
+
+## 显式授权的普通扩展属性修改
+
+setxattr(236)、fsetxattr(237)、removexattr(238) 和 fremovexattr(239) 使用针对初始对象的独立授权：C++ `MutableExtendedAttributes`，严格布尔 JSON `mutable_extended_attributes=true`。获授权的文件、目录或符号链接必须声明完整的普通 `extended_attributes` 列表，也可声明已知空列表。内容可写或名称空间可修改并不授予此权限。授权和值随保留的对象经过 dup、移动、删除及映射租约继续存在；新建对象和复用名称的属性起初未知。已知别名、冲突的元数据标志、受保护的系统属性、ResourceFork、FinderInfo 和压缩语义仍不支持。
+
+替换保留虚拟列表位置，删除移除该项，新建追加到末尾。这是声明的进程内顺序，不推断 APFS 顺序。初始属性的字节、数量和授权路径引用始终预留。运行时超出初始预留的部分由现有 16 MiB/4096 限额统一管理；删除、内容失效或最终释放对象只回收这部分增量。容量、传输或截止时间失败不会发布暂存状态。必需输入完全不可读时返回 EFAULT；部分可读时在发布前明确报告不支持。修改成功使完整 stat 失效，不猜测时间，同时保留对象身份、目录成员、枚举版本/快照和游标。
+
+修改 ABI 使用 low32 FD/options/position 和 full64 size。特权及 FD 链接选项的早期检查先于名称导入，名称导入先于对象查找。set 在检查过大的 VFS 输入（E2BIG7）前拒绝非空长度的 NULL；查找先于普通名称、position 和冲突检查。set 先导入完整值，再返回 CREATE 已存在的 EEXIST17 或 REPLACE 不存在的 ENOATTR93。CREATE 与 REPLACE 同时设置返回 EINVAL；删除操作忽略这两个位。长度为零的 set 不读取值指针。其他标志、未知权限和未经观察的提供方行为均明确停止。
+
+xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported 使用原创原生/客体对照、独立虚拟字节字面值，以及保留已有输出的缺少授权停止用例。ARM64 私有准备验证了726次 raw/SDK 调用、完整544字节保护区观察及完整可读页。native5s/compile120s/drain1s/reap1s、guest/Python5,000,000us/quantum1024、public10s 均不变。原生 Intel、iOS 真机、dyld、Mach IPC、线程/信号、Objective-C/Swift 运行时及完整框架仍未验证或未完成。
+
+主要 ABI 参考：[XNU 系统调用声明](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/syscalls.master)、[xattr 定义](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/sys/xattr.h)。实现与探针均为原创，未复制 Apple 实现。
