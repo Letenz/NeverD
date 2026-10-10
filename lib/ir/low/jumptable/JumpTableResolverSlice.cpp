@@ -4339,6 +4339,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   };
   std::set<DefinedOccurrenceRootKey> DefinedOccurrenceRoots;
   bool DefinedOccurrenceRootsPrepared = false;
+  const TargetRegInfo &TRI = getTargetRegInfo(CurrentImg->Arch);
   auto prepareDefinedOccurrenceRoots = [&] {
     if (DefinedOccurrenceRootsPrepared)
       return true;
@@ -4366,6 +4367,29 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       for (const JumpTableValueOccurrence &Alternative : Query.Alternatives) {
         if (!Alternative.DefinedAtPoint)
           continue;
+        NdVar Producer = Alternative.Value;
+        if (Producer.isReg()) {
+          if (!consumeEvidenceProduct(
+                  2, orderedSetLookupWork(Graph.PointToOp.size())) ||
+              !consumeEvidence(2))
+            return false;
+          const auto Point =
+              Graph.PointToOp.find({Alternative.Addr, Alternative.Seq});
+          if (Point != Graph.PointToOp.end()) {
+            const auto [Block, Op] = Point->second;
+            const NdVar &Output = Graph.Blocks[Block].Ops[Op].Output;
+            // A guard may observe AL after an EAX producer. Name the actual
+            // complete definition once; resolveValue still slices its exact
+            // written lane and checks every intervening definition. Do not
+            // invent a narrow producer or equate it with the full register.
+            if (Output.isReg() && Producer.Size < Output.Size &&
+                Producer.Provenance == Output.Provenance &&
+                Producer.AddressOwnerVA == Output.AddressOwnerVA &&
+                TRI.isSubRegOf(Producer.Offset, Producer.Size, Output.Offset,
+                               Output.Size))
+              Producer = Output;
+          }
+        }
         const size_t Lookup =
             orderedSetLookupWork(DefinedOccurrenceRoots.size());
         if (!consumeEvidenceProduct(DefinedOccurrenceRootKeyWork, Lookup) ||
@@ -4373,7 +4397,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
             !consumeEvidence())
           return false;
         DefinedOccurrenceRoots.insert(definedOccurrenceRootKey(
-            Alternative.Addr, Alternative.Seq, Alternative.Value));
+            Alternative.Addr, Alternative.Seq, Producer));
       }
     }
     DefinedOccurrenceRootsPrepared = true;
@@ -4497,7 +4521,6 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     }
     return -1;
   };
-  const TargetRegInfo &TRI = getTargetRegInfo(CurrentImg->Arch);
   const llvm::ArrayRef<uint64_t> IntParamRegs =
       TRI.integerParamRegs(CurrentImg->abiFormat());
   const std::vector<TargetRegisterRange> CallPreservedRanges =

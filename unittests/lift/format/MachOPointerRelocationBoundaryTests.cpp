@@ -2000,7 +2000,7 @@ void spillAuthenticatedTargetLoadBase(AuthenticatedTargetLoadFixture &Fixture) {
   Fixture.Func.FrameSize = 16;
 }
 
-MedFunc makeDeepScalarIndexTableLookup(Arch TargetArch) {
+MedFunc makeDeepScalarIndexTableLookup(Arch TargetArch, int ChainLength = 20) {
   MedFunc Func = makeSpilledConstTableLookup(TargetArch);
   Func.Name = TargetArch == Arch::AArch64 ? "deep_scalar_index_table_arm64"
                                           : "deep_scalar_index_table_x86_64";
@@ -2016,7 +2016,7 @@ MedFunc makeDeepScalarIndexTableLookup(Arch TargetArch) {
 
   MedVar Current = Func.Params.front();
   std::vector<MedOp> ScalarChain;
-  for (int I = 0; I < 20; ++I) {
+  for (int I = 0; I < ChainLength; ++I) {
     MedVar Next;
     Next.Kind = MedVar::Temp;
     Next.TheArch = TargetArch;
@@ -15274,8 +15274,10 @@ TEST(LLVMCodePointerInvariantBoundary,
       for (const Case &C :
            {Case{32, Variant::Scalar}, Case{72, Variant::Scalar},
             Case{96, Variant::Scalar}, Case{140, Variant::Scalar},
-            Case{72, Variant::DataSeed}, Case{72, Variant::CodeSeed},
-            Case{72, Variant::DataSlot}, Case{72, Variant::UnknownSlot}}) {
+            Case{600, Variant::Scalar}, Case{140, Variant::DataSeed},
+            Case{140, Variant::CodeSeed}, Case{72, Variant::DataSeed},
+            Case{72, Variant::CodeSeed}, Case{72, Variant::DataSlot},
+            Case{72, Variant::UnknownSlot}}) {
         SCOPED_TRACE(std::string(formatTraceName(Format)) + "/" +
                      std::to_string(static_cast<int>(TargetArch)) + "/" +
                      std::to_string(C.Depth) + "/" +
@@ -15328,7 +15330,7 @@ TEST(LLVMCodePointerInvariantBoundary,
         Scale->Inputs[0] = Current;
         Ops.insert(Scale, std::make_move_iterator(Chain.begin()),
                    std::make_move_iterator(Chain.end()));
-        const bool Expected = C.Kind == Variant::Scalar && C.Depth < 128;
+        const bool Expected = C.Kind == Variant::Scalar && C.Depth < 512;
         const auto Load =
             std::find_if(Ops.begin(), Ops.end(), [](const MedOp &Op) {
               return Op.Opcode == NdOp::LOAD;
@@ -15339,7 +15341,7 @@ TEST(LLVMCodePointerInvariantBoundary,
             Classifier, Caller, Image, TargetArch, Format);
         EXPECT_EQ(MedLLVMProvenanceTestPeer::stableOffset(Classifier, Current,
                                                           nullptr),
-                  C.Depth < 128 && C.Kind != Variant::DataSeed &&
+                  C.Depth < 512 && C.Kind != Variant::DataSeed &&
                       C.Kind != Variant::CodeSeed);
         EXPECT_EQ(MedLLVMProvenanceTestPeer::pointerTableLoadIsCallableOnly(
                       Classifier, Load->Output),
@@ -15356,12 +15358,13 @@ TEST(LLVMCodePointerInvariantBoundary,
 
 TEST(LLVMDataPointerInvariantBoundary,
      SharedOffsetProofRetainsProvenanceAndDepthLimits) {
-  enum class Variant { Scalar, Data, Code, Forbidden, DeeperReuse };
+  enum class Variant { Scalar, Data, Code, Forbidden, DeeperReuse, TooDeep };
   for (Arch TargetArch : {Arch::AArch64, Arch::X64})
     for (BinaryFormat Format :
          {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
-      for (Variant Kind : {Variant::Scalar, Variant::Data, Variant::Code,
-                           Variant::Forbidden, Variant::DeeperReuse}) {
+      for (Variant Kind :
+           {Variant::Scalar, Variant::Data, Variant::Code, Variant::Forbidden,
+            Variant::DeeperReuse, Variant::TooDeep}) {
         SCOPED_TRACE(std::string(formatTraceName(Format)) + "/" +
                      std::to_string(static_cast<int>(TargetArch)) + "/" +
                      std::to_string(static_cast<int>(Kind)));
@@ -15381,10 +15384,11 @@ TEST(LLVMDataPointerInvariantBoundary,
               DataVA, Seed.Size,
               Kind == Variant::Data ? ConstantAddressProvenance::DataAddress
                                     : ConstantAddressProvenance::CodeAddress);
-        } else if (Kind == Variant::DeeperReuse) {
+        } else if (Kind == Variant::DeeperReuse || Kind == Variant::TooDeep) {
           std::vector<MedOp> Chain;
           MedVar Current = Shared;
-          for (int I = 0; I < 110; ++I) {
+          const int Depth = Kind == Variant::TooDeep ? 600 : 110;
+          for (int I = 0; I < Depth; ++I) {
             MedOp Copy;
             Copy.Opcode = NdOp::COPY;
             Copy.Output = Shared;
@@ -15410,7 +15414,7 @@ TEST(LLVMDataPointerInvariantBoundary,
         EXPECT_EQ(
             MedLLVMProvenanceTestPeer::stableOffset(
                 Classifier, Root, Kind == Variant::Forbidden ? &Seed : nullptr),
-            Kind == Variant::Scalar);
+            Kind == Variant::Scalar || Kind == Variant::DeeperReuse);
       }
 }
 
@@ -16881,6 +16885,42 @@ TEST(MachOLLVMDataPointerBoundary,
     EXPECT_TRUE(
         valueReferencesConstantGlobal(TableLoad->getPointerOperand(), Seen));
   }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
+     ClosedScalarGraphRechecksDepthLimitedOffsetsAcrossFormats) {
+  for (Arch TargetArch : {Arch::AArch64, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
+      for (int Length : {200, 600})
+        for (bool AddressSeed : {false, true}) {
+          SCOPED_TRACE(formatTraceName(Format));
+          SCOPED_TRACE(static_cast<int>(TargetArch));
+          SCOPED_TRACE(Length);
+          SCOPED_TRACE(AddressSeed);
+          BinaryImage Image = makeSpilledConstTableImage(TargetArch, Format);
+          MedFunc Lookup = makeDeepScalarIndexTableLookup(TargetArch, Length);
+          auto &Ops = Lookup.Blocks.front().Ops;
+          auto Seed = std::find_if(Ops.begin(), Ops.end(), [](const MedOp &Op) {
+            return Op.Output.Kind == MedVar::Temp && Op.Output.Id == 300;
+          });
+          ASSERT_NE(Seed, Ops.end());
+          if (AddressSeed)
+            Seed->Inputs[0] =
+                MedVar::makeConst(SpilledConstTableVA, Seed->Inputs[0].Size,
+                                  ConstantAddressProvenance::DataAddress);
+          auto Scale =
+              std::find_if(Ops.begin(), Ops.end(), [](const MedOp &Op) {
+                return Op.Opcode == NdOp::INT_LEFT;
+              });
+          ASSERT_NE(Scale, Ops.end());
+          MedLLVMEmitter Probe;
+          MedLLVMProvenanceTestPeer::prepareFreshAnalysis(Probe, Lookup, Image,
+                                                          TargetArch, Format);
+          EXPECT_EQ(MedLLVMProvenanceTestPeer::stableOffset(
+                        Probe, Scale->Inputs[0], nullptr),
+                    Length == 200 && !AddressSeed);
+        }
 }
 
 TEST(LLVMDataPointerInvariantBoundary,

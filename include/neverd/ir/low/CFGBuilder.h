@@ -1257,6 +1257,8 @@ private:
     /// occurrences.  Compare those definitions as occurrence-local SSA roots
     /// without re-resolving their inputs.  Callers must separately
     /// authenticate the relation that grants each producer.
+    /// A contained architectural register lane names the complete writer as
+    /// its root, while comparisons retain the lane's exact offset and width.
     bool UseDefinedAlternativesAsOccurrenceRoots = false;
     /// The candidate is an exact i386 GOT-base model use whose reaching value
     /// may be reloaded from a caller-frame spill.  Calls are transparent to

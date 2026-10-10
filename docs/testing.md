@@ -517,6 +517,20 @@ agree. Borrowed RBP fields, negative displacements and both signed and unsigned
 index extensions are covered; changed bases/offsets, partial reloads, stores,
 calls and memory barriers must not recover a table from the earlier guard.
 
+The same target's `NarrowGuard*` tests use long arithmetic prefixes before x86
+and x64 byte/word guards and AArch64 W-register guards. Low/high byte identity,
+disjoint writes and explicit index widening must retain exactly three slots
+through normal LLVM emission and verification. Changed lanes, other bytes,
+unbounded upper bits, call clobbers and exhausted budgets must not borrow the
+earlier bound. The fourth physical slot is deliberately outside that bound.
+An unrelated deep return expression exercises incomplete escape auditing:
+the proven table survives only with every relocation root retained.
+
+The pointer-boundary target checks closed scalar graph retries on x64 and
+AArch64 across ELF, Mach-O and COFF. Arithmetic deeper than the initial
+recursive walk can succeed; address seeds, forbidden dependencies, mixed code
+slots and chains beyond the independent graph depth limit must still fail.
+
 The pointer-boundary target's `LLVMFrameSlotProof` cases exercise shared PHI
 diamonds and loop-carried SELECT DAGs for x86, x64, ARM and AArch64. Deterministic work
 counters bound proof expansion independently of machine speed. Conflicting

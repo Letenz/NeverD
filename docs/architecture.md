@@ -342,10 +342,24 @@ newly reached backedge cannot reuse an entry-only domain. A complete
 single-consumer finite proof is not
 widened or vetoed by a weaker mask search. Module-wide storage mutation checks
 still run before source publication.
+Guard identity can name a contained architectural register lane at its exact
+full-register writer. The shared reaching-value resolver names that complete
+definition and retains the lane's offset and width, so a comparison of AL or
+W0 need not expand the earlier EAX or X0 calculation. Both the comparison and
+the table index must reach that same lane through every incoming path. Partial
+writes, call clobbers, implicit extension rules and proof budgets still apply.
+A failed optional consumer audit grants no relocation-root suppression. With
+its shared evidence budget intact, the resolver retains every root and replays
+the mandatory selector, address and target proofs under that stronger context.
+Shared-budget exhaustion still rejects the whole candidate.
 For a single absolute consumer, a relocation-backed physical run may contain
 unused pointers to other functions. Validate target ownership for every
 admitted selector coordinate before graph growth; an excluded prefix slot
 neither truncates the selector proof nor becomes a local successor.
+The LLVM scalar-offset proof may retry a depth-limited recursive walk with its
+independent closed-value-graph proof. That proof still checks every initializer,
+address provenance, forbidden value and memory source, with its own 512-level
+and 8192-node limits; reaching the first limit is never itself a certificate.
 The LLVM backend accepts a sparse table's logical address origin separately
 from its owned runtime slots. Eliding its target load still requires the exact
 operation witness, complete mapped slot and relocation ownership, and exclusive
