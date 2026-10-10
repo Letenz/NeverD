@@ -1013,6 +1013,17 @@ profile. Generic external FLOAT operations, packed FP, VEX arithmetic and
 remaining x87 control/TOP/tag semantics retain their separate contracts;
 this scalar state surface does not certify them.
 
+Swift consumes the same typed HighIR state contract for scalar SSE arithmetic.
+Its x86_64-only compiler pointer intrinsics import and commit MXCSR; numerical
+helpers disable optimization so arithmetic stays between those effects. The
+96-bit double-result/state carrier supports defined local copies and bounded
+byte extraction, not general memory or arithmetic. File-level declarations
+belong to the module preamble, separate from member bodies.
+`assembleSwiftSourceUnits` is the shared SDK and mobile-validation owner: each
+unit includes its exact preamble prefix, while the complete file places each
+distinct preamble once before the ordered unit bodies. Module-wide storage
+and declaration names participate in helper allocation before emission.
+
 The experimental [interpreter recovery stage](interpreter-recovery.md)
 specializes strictly lifted LowIR before the common MedIR boundary. Its
 provider owns immutable image evidence, `SymExec` owns instruction semantics,
@@ -3751,3 +3762,12 @@ Frame-offset proof keys normalize a top-level 64-bit address sum by removing its
 ## Mobile source assembly
 
 The Objective-C source exporter clears `CEmitterOptions::EmitRecordGuards` and `CEmitterOptions::UseUnalignedPointers` for the complete native unit and individual method units. Exact-width byte copies preserve unaligned memory access while keeping generated macros outside the mobile parser; conditional and mutating directives remain rejected.
+
+## Bounded bulk directory attributes
+
+DarwinFiles owns common attribute import, name/stat validity and record encoding. DarwinDirectory owns bulk grouping, explicit object authorization and description-owned iteration/cursor/EOF state, sharing the live child membership projection with getdirentries64. Dup shares one description; zero seek resets its iteration contract. JSON supplies explicit policy inputs, and service dispatch delegates without inventing filesystem observations.
+
+
+## Ordinary Darwin attribute mutations
+
+DarwinFiles owns retained attribute state, initial-object mutation grants, shared name import and complete-stat validity. DarwinExtendedAttributes stages value/list changes before one commit. Fixed initial reservations and runtime attribute excess use the same storage/count owner as content and namespace mutations; unlinked objects and mapping leases retain their dynamic charge until final release. JSON only imports explicit grants. Directory attribute mutation invalidates full metadata independently of membership, snapshots and enumeration versions.

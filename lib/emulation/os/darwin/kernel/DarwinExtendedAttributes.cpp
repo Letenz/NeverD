@@ -1,4 +1,4 @@
-//===- DarwinExtendedAttributes.cpp - Explicit xattr read observations ----===//
+//===- DarwinExtendedAttributes.cpp - Explicit xattr observations ---------===//
 //
 // NeverD Decompiler
 //
@@ -47,13 +47,168 @@ DarwinFiles::readExtendedAttributeName(uint64_t Address) {
 
 const std::vector<DarwinExtendedAttribute> *
 DarwinFiles::extendedAttributes(const Description &File) const {
+  const auto *State = attributeState(File);
+  return State ? State->get() : nullptr;
+}
+
+DarwinFiles::AttributeState *
+DarwinFiles::attributeState(const Description &File) const {
   if (File.File)
-    return File.File->ExtendedAttributes;
+    return &File.File->ExtendedAttributes;
   if (File.Directory)
-    return File.Directory->ExtendedAttributes;
+    return &File.Directory->ExtendedAttributes;
   if (File.Link)
-    return File.Link->ExtendedAttributes;
+    return &File.Link->ExtendedAttributes;
   return nullptr;
+}
+
+void DarwinFiles::invalidateAttributes(AttributeState &State) {
+  // The initial observation is a fixed reservation even after invalidation.
+  // Runtime growth belongs to the retained object and is released once.
+  if (State.DynamicCharge)
+    *StorageUsed -= State.DynamicCharge;
+  AttributeSlots -= State.ExtraCount;
+  State.DynamicCharge = State.ExtraCount = 0;
+  State.Modified.reset();
+  State.Invalidated = true;
+}
+
+void DarwinFiles::invalidateAttributeMetadata(Description &File) {
+  if (File.File)
+    File.File->MetadataInvalidated = true;
+  if (File.Directory)
+    File.Directory->MetadataInvalidated = true;
+  if (File.Link)
+    File.Link->MetadataInvalidated = true;
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::extendedAttributeMutation(ServiceKind Service,
+                                       const ProcessServiceEvent &Event,
+                                       ProcessResult &Result) {
+  const auto &A = Event.Arguments;
+  const bool Held =
+      Service == ServiceKind::FsetXattr || Service == ServiceKind::FremoveXattr;
+  const bool Set =
+      Service == ServiceKind::SetXattr || Service == ServiceKind::FsetXattr;
+  const uint32_t Flags = A[Set ? 5 : 2];
+  if (Flags & (XattrNoSecurity | XattrNoDefault |
+               (Held ? XattrNoFollow | XattrNoFollowAny : 0)))
+    return returned(InvalidArgument, true);
+  // Mutation's name import precedes object lookup, unlike the read routes.
+  auto Imported = readExtendedAttributeName(A[1]);
+  if (!Imported)
+    return Imported.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*Imported))
+    return returned(*Error, true);
+  auto Name = std::move(std::get<std::string>(*Imported));
+  if (Set && A[3] && !A[2])
+    return returned(InvalidArgument, true);
+  if (Set && A[3] > INT32_MAX)
+    return returned(ArgumentListTooLong, true);
+  std::optional<Description> ResolvedFile;
+  Description *File;
+  if (Held) {
+    const auto Found = Descriptors.find(uint32_t(A[0]));
+    if (Found == Descriptors.end())
+      return returned(BadDescriptor, true);
+    File = Found->second.Open.get();
+  } else {
+    auto Resolved =
+        resolvePath(A[0], AtCurrentDirectory, LookupMode::Existing,
+                    {!(Flags & XattrNoFollow), bool(Flags & XattrNoFollowAny)});
+    if (!Resolved)
+      return Resolved.takeError();
+    if (auto *Error = std::get_if<uint32_t>(&*Resolved))
+      return returned(*Error, true);
+    if (auto *Reason = std::get_if<const char *>(&*Resolved))
+      return unsupported(Result, *Reason);
+    ResolvedFile = std::move(std::get<Description>(*Resolved));
+    File = &*ResolvedFile;
+  }
+  if (File->Type != Kind::File && File->Type != Kind::Directory &&
+      File->Type != Kind::SymbolicLink)
+    return unsupported(Result, diagnostic::ExtendedAttributeKind);
+  if (!validExtendedAttributeName(Name))
+    return returned(InvalidArgument, true);
+  if (!ordinaryExtendedAttributeName(Name))
+    return unsupported(Result, diagnostic::ExtendedAttributeSpecial);
+  if (Flags &
+      ~uint32_t(XattrNoFollow | XattrCreate | XattrReplace | XattrNoFollowAny))
+    return unsupported(Result, diagnostic::ExtendedAttributeFlags);
+  if (Set &&
+      ((Flags & (XattrCreate | XattrReplace)) == (XattrCreate | XattrReplace) ||
+       uint32_t(A[4])))
+    return returned(InvalidArgument, true);
+  auto &State = *attributeState(*File);
+  const auto *Attributes = State.get();
+  if (!Attributes)
+    return unsupported(Result, diagnostic::ExtendedAttributeUnknown);
+  if (!State.Mutable)
+    return unsupported(Result, diagnostic::ExtendedAttributeNotMutable);
+  std::vector<uint8_t> Value;
+  if (Set && A[3]) {
+    if (A[3] > darwin_file_limits::Bytes)
+      return unsupported(Result, diagnostic::ExtendedAttributeMutationLimit);
+    auto Prefix = userMemoryPrefix(Memory, A[2], A[3], Read);
+    if (!Prefix)
+      return Prefix.takeError();
+    if (!*Prefix)
+      return returned(BadAddress, true);
+    if (*Prefix != A[3])
+      return unsupported(Result, diagnostic::ExtendedAttributeInput);
+    Value.resize(A[3]);
+    if (auto Error = Memory.read(A[2], Value))
+      return std::move(Error);
+  }
+  // Import the complete value before provider-style existence checks.
+  // Failed transport, CREATE or REPLACE must not publish even an empty value.
+  const auto Found = llvm::find_if(*Attributes, [&](const auto &Attribute) {
+    return Attribute.Name == Name;
+  });
+  const bool Exists = Found != Attributes->end();
+  if (Set && (Flags & XattrCreate) && Exists)
+    return returned(FileExists, true);
+  if ((!Set || (Flags & XattrReplace)) && !Exists)
+    return returned(NoAttribute, true);
+  uint64_t Cost = 0;
+  for (const auto &Attribute : *Attributes)
+    Cost += Attribute.Name.size() + 1 + Attribute.Bytes.size();
+  if (Exists)
+    Cost -= Found->Name.size() + 1 + Found->Bytes.size();
+  if (Set)
+    Cost += Name.size() + 1 + Value.size();
+  const uint64_t Charge =
+      Cost > State.InitialCharge ? Cost - State.InitialCharge : 0;
+  uint64_t Count = Attributes->size();
+  if (!Set)
+    --Count;
+  else if (!Exists)
+    ++Count;
+  const uint32_t Extra =
+      Count > State.Initial->size() ? Count - State.Initial->size() : 0;
+  if (auto Error = prepareMutation())
+    return std::move(Error);
+  const uint64_t Other = *StorageUsed - State.DynamicCharge;
+  const uint32_t OtherSlots = AttributeSlots - State.ExtraCount;
+  if (Charge > darwin_file_limits::Bytes - Other ||
+      Extra > darwin_file_limits::ExtendedAttributes - OtherSlots)
+    return unsupported(Result, diagnostic::ExtendedAttributeMutationLimit);
+  std::vector<DarwinExtendedAttribute> Updated = *Attributes;
+  const auto Index = Found - Attributes->begin();
+  if (!Set)
+    Updated.erase(Updated.begin() + Index);
+  else if (Exists)
+    Updated[Index].Bytes = std::move(Value);
+  else
+    Updated.push_back({std::move(Name), std::move(Value)});
+  State.Modified = std::move(Updated);
+  State.DynamicCharge = Charge;
+  State.ExtraCount = Extra;
+  *StorageUsed = Other + Charge;
+  AttributeSlots = OtherSlots + Extra;
+  invalidateAttributeMetadata(*File);
+  return returned(0);
 }
 
 llvm::Expected<std::optional<ServiceResult>>

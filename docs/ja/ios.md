@@ -215,7 +215,9 @@ Swift の `coverage_status` は分類済みの呼び出し可能項目のみを�
 
 復元済み Swift 行の `source_representation` は `native-method-body` または `compiler-generated-from-type` です。コンパイラー投影には `compiler_projection_kind` と `compiler_projection_evidence` も残します。`source_body_method_count` は復元したネイティブメソッド本体、`compiler_projection_method_count` は証明済みのコンパイラー投影を数え、合計は `recovered_method_count` と一致します。コンパイラーのエントリーも `method_count` の分母に残り、正確な識別情報を対応する一つの `type` ソース単位に記録します。型メタデータや依存先の名前だけで復元数を増やすことはありません。ネイティブの一括 JSON ではコンパイラーの行と型単位に `source` を含みますが、mobile の `source_units` は説明のみを保持して `source` を含まず、完全なソースは `sources/swift.swift` に保存されます。
 
-Swift バッチの `source_units` は `{kind, module, name, source, method_entries, method_identities}` を持ち、kind は `function` または `type`、各 identity は `{entry, mangled_symbol}` です。異なるシンボルは同じ入口を共有しつつ個別の ABI 出力を保持できます。各復元済み identity は一度だけ現れ、未復元 identity は含めません。`method_entries` は `method_identities` の入口を順に並べたものと一致し、アドレス重複を許します。同一 identity の重複を黙って統合してはいけません。バッチ `source` は各単位のソースと改行を順に結合したものです。Mobile は全体を `sources/swift.swift` に、単位の説明をカバレッジ JSON に保存します。個別メソッドの `source` は閲覧用で、単純連結ではクラス宣言を正しく構成できません。
+Swift バッチの `source_units` は `{kind, module, name, source, module_preamble, method_entries, method_identities}` を持ち、kind は `function` または `type`、各 identity は `{entry, mangled_symbol}` です。異なるシンボルは同じ入口を共有しつつ個別の ABI 出力を保持できます。各復元済み identity は一度だけ現れ、未復元 identity は含めません。`method_entries` は `method_identities` の入口を順に並べたものと一致し、アドレス重複を許します。同一 identity の重複を黙って統合してはいけません。バッチ `source` は以下の前置宣言の組み立て規則を使用します。Mobile は全体を `sources/swift.swift` に、単位の説明をカバレッジ JSON に保存します。個別メソッドの `source` は閲覧用で、単純連結ではクラス宣言を正しく構成できません。
+
+各ネイティブ単位は自己完結しており、`source` は正確な `module_preamble` で始まります。組み立てたファイルは、異なる空でない前置宣言を辞書順で連結し、その後、各単位からその正確な接頭辞を取り除いた本体を元の単位順で、単位ごとに改行を付けて連結します。不正な接頭辞は拒否されます。空または省略された前置宣言には従来の連結規則が適用されます。通常メソッド行も `module_preamble` を提供し、`member_source` の組み立てではこれらの宣言をファイルスコープに保持する必要があります。コンパイルするモジュールには完全なバッチソースを使用してください。
 
 ## ネイティブ直接エクスポートと SDK
 

@@ -1639,3 +1639,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 يفحص `ZeroTimeoutPollRetainsReadinessAndOrderedCopies` الاستدعاءات الخام O0/O2 لثمانية إصدارات GKI: الواصفات الحية والسالبة والمغلقة، وعد المكررات وتضييق الوسائط وترتيب المهلة والقناع وtimespec الصفرية للقراءة فقط، والاستيراد الكامل قبل الجاهزية وحفظ `revents` السابقة عند عطل لاحق. يحفظ `ZeroTimeoutPollKeepsUnobservedBoundaries` حدود النواة والموارد والأقنعة والانتظار والجاهزية غير المرصودة. يفحص `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` في Android الجدول المشترك وملكية errno عبر ستة ملفات حزم.
 
 ينفذ
+
+## سمات دليل مجمعة محدودة
+
+تفحص bulk-attributes المجموعات الكاملة ومجموعة الأسماء/الأنواع وحماية البايتات غير المستخدمة وlow32 FD وكلمات bitmap والأخطاء الأصلية وdup وopen المستقلة وEOF وrewind الصفري. النمطان الحرفي/المجهول افتراضيان فقط. تفحص النماذج أيضاً stat الكامل وإبطاله وأسماء NFD/255 بايت وأسماء إدخال/إخراج الذاكرة المتطابقة وأخطاء النقل/الميزانية والنقل/SWAP/الحذف/إعادة الاستخدام والصلاحيات الصريحة. القائمة المطلوبة63 حالة لكل منصة:189 ARM64 و126 Intel. تحقق التنفيذ المحلي من ARM64 HVF المطابق فقط. native5s وguest/Python5,000,000us/quantum1024 وpublic10s ثابتة.

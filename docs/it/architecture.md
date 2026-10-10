@@ -1602,3 +1602,7 @@ Le chiavi delle prove degli offset di frame normalizzano la somma principale del
 ## Assemblaggio dei sorgenti mobili
 
 L’esportatore dei sorgenti Objective-C disabilita `CEmitterOptions::EmitRecordGuards` e `CEmitterOptions::UseUnalignedPointers` per l’unità nativa completa e ogni unità di metodo. Le copie di byte di larghezza esatta preservano gli accessi alla memoria non allineati ed evitano di introdurre macro generate nel parser mobile; le direttive condizionali e quelle che modificano macro restano rifiutate.
+
+## Attributi di directory in gruppi limitati
+
+DarwinFiles possiede importazione comune, validità nome/stat e codifica. DarwinDirectory possiede gruppi, autorizzazione dell’oggetto e stato iterazione/cursore/EOF della descrizione, condividendo la proiezione dei figli attuali con getdirentries64. dup condivide una descrizione e seek zero ripristina il contratto. JSON fornisce politiche esplicite; il dispatch non inventa osservazioni del filesystem.

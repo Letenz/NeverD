@@ -30,6 +30,34 @@ inline DarwinFileOptions kernelPathConfOptions() {
 inline constexpr char AttributeNamesHex[] =
     "2c0000000900008000000000000000000000000000000000"
     "0c00000005000000010000006461746100000000";
+inline constexpr char XattrMutationsHex[] =
+    "00ff410080420a757365722e6e65766572642e6265746100";
+inline DarwinFileOptions xattrMutationsOptions() {
+  auto O = kernelPathConfOptions();
+  O.WorkingDirectory = "/";
+  O.Files["/readonly"] = {};
+  O.MutableDirectories.insert("/");
+  for (const auto &[Path, Target] : O.SymbolicLinks)
+    O.MutableSymbolicLinks.insert(Path);
+  for (const char *Path : {"/data", "/empty", "/alias", "/readonly"})
+    O.ExtendedAttributes[Path] = {};
+  O.MutableExtendedAttributes = {"/data", "/empty", "/alias"};
+  return O;
+}
+inline constexpr char XattrMutationsJSON[] = R"({
+  "files":[
+    {"path":"/data","bytes_hex":"30313233343536373839",
+     "extended_attributes":[],"mutable_extended_attributes":true},
+    {"path":"/readonly","bytes_hex":"","extended_attributes":[]}],
+  "directories":[{"path":"/","mutable":true},
+    {"path":"/empty","extended_attributes":[],
+     "mutable_extended_attributes":true}],
+  "symbolic_links":[
+    {"path":"/alias","target_hex":"64617461","mutable":true,
+     "extended_attributes":[],"mutable_extended_attributes":true},
+    {"path":"/dangling","target_hex":"6d697373696e67","mutable":true},
+    {"path":"/cycle","target_hex":"6379636c65","mutable":true}],
+  "working_directory":"/"})";
 inline DarwinFileOptions attributeNamesOptions() {
   auto O = kernelPathConfOptions();
   O.WorkingDirectory = "/";
@@ -459,6 +487,130 @@ inline constexpr char InitialDirectoryMetadataHex[] =
 inline constexpr DarwinDirectoryEnumerationPolicy EnumerationPolicy{1, 64, 0};
 inline constexpr char EnumerationPolicyJSON[] = R"({
   "minimum_buffer_size":1,"initial_minimum_buffer_size":64,"seek_offset":0})";
+inline constexpr char BulkAttributesHex[] =
+    "3000000009000080000000000000000000000000000000000c00000006000000"
+    "05000000616c6961730000000000000030000000090000800000000000000000"
+    "00000000000000000c00000006000000050000006379636c6500000000000000"
+    "3000000009000080000000000000000000000000000000000c00000009000000"
+    "0500000064616e676c696e670000000030000000090000800000000000000000"
+    "00000000000000000c0000000500000001000000646174610000000000000000"
+    "3000000009000080000000000000000000000000000000000c00000006000000"
+    "02000000656d70747900000000000000";
+inline DarwinFileOptions bulkAttributesOptions() {
+  auto O = kernelPathConfOptions();
+  O.WorkingDirectory = "/";
+  for (const char *Path : {"/", "/empty"}) {
+    DarwinFileMetadata M;
+    M.Inode = std::string_view(Path) == "/" ? 41 : 42;
+    M.Mode = 0040755;
+    M.LinkCount = 2;
+    M.BlockSize = 4096;
+    O.Metadata[Path] = M;
+    O.DirectoryEnumerationPolicies[Path] = {1, 64, 0, true};
+  }
+  return O;
+}
+inline constexpr char BulkAttributesJSON[] = R"({
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "30313233343536373839"
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "metadata": {
+        "device": 0,
+        "inode": 41,
+        "mode": 16877,
+        "link_count": 2,
+        "uid": 0,
+        "gid": 0,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      },
+      "enumeration_policy": {
+        "minimum_buffer_size": 1,
+        "initial_minimum_buffer_size": 64,
+        "seek_offset": 0,
+        "bulk_attributes": true
+      }
+    },
+    {
+      "path": "/empty",
+      "metadata": {
+        "device": 0,
+        "inode": 42,
+        "mode": 16877,
+        "link_count": 2,
+        "uid": 0,
+        "gid": 0,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      },
+      "enumeration_policy": {
+        "minimum_buffer_size": 1,
+        "initial_minimum_buffer_size": 64,
+        "seek_offset": 0,
+        "bulk_attributes": true
+      }
+    }
+  ],
+  "working_directory": "/",
+  "symbolic_links": [
+    {
+      "path": "/alias",
+      "target_hex": "64617461"
+    },
+    {
+      "path": "/dangling",
+      "target_hex": "6d697373696e67"
+    },
+    {
+      "path": "/cycle",
+      "target_hex": "6379636c65"
+    }
+  ]
+})";
 // Literal LP64 records: a, its parent, d, f and l in virtual byte order.
 inline constexpr char EnumerationMetadataHex[] =
     "1132547698badcfe000000000000000020000100042e00000000000000000000"
