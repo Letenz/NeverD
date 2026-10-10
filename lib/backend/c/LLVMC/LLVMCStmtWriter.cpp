@@ -3526,11 +3526,14 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
       (!Store || !Store->isSimple() || Store->getPointerAddressSpace() != 0))
     return false;
   auto *Type = Load ? Load->getType() : Store->getValueOperand()->getType();
-  // These carriers have exact C object representations. Partial-width
-  // integers and x87 have their separate exact-byte paths.
-  const bool Integer = Type->isIntegerTy(8) || Type->isIntegerTy(16) ||
-                       Type->isIntegerTy(32) || Type->isIntegerTy(64) ||
-                       Type->isIntegerTy(128);
+  // Use the LLVM byte extent: wider _BitInt objects can have C padding.
+  // Non-byte-aligned integers and x87 retain their separate exact-byte paths.
+  const bool Integer =
+      Type->isIntegerTy(8) || Type->isIntegerTy(16) || Type->isIntegerTy(32) ||
+      Type->isIntegerTy(64) || Type->isIntegerTy(128) ||
+      (Type->isIntegerTy() && Type->getIntegerBitWidth() > 128 &&
+       Type->getIntegerBitWidth() <= 512 &&
+       Type->getIntegerBitWidth() % 8 == 0);
   if (!Integer && !Type->isFloatTy() && !Type->isDoubleTy() &&
       !Type->isHalfTy() && !Type->isBFloatTy() && !Type->isPointerTy())
     return false;
