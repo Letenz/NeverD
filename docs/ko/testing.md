@@ -149,6 +149,8 @@ v4 테스트는 접두 구조의 크기와 패딩, 잘린 구조와 알 수 없�
 
 `NeverDInterpreterLLVMRefinementTests`는 새로운 조합 증명, 정확한 텍스트/함수 바인딩, 독립 예산, 전체 관찰과 더 넓은 소스 영역을 검사합니다. 바이트, 잔여 코드, 결과, 플래그, 상태 코드, 프레임 쓰기, poison 및 잘못되거나 오래된 루프 계획은 조합 기록을 거부해야 합니다. 임의 워드 카운트다운에는 두 귀납 전제가 필요하며, 독립 C 예제의 O1/O2 컴파일은 실제 직렬화 LLVM 입력을 검증합니다. 상태 모델 회귀는 숨겨진 진입 역방향 간선을 거부하고 부수적인 출처 정보를 복사하지 않으면서 루트 예산을 검사합니다.
 
+`InterpreterLLVMRefinement.Preservation*`는 부분 및 겹침 범위, 잘못된 요청, 독립 계산한 준비 비용, 양쪽의 동일한 최종 손상, 루프를 통한 진입값 저장과 복원, 새로운 불투명 상태 증거 및 후반 거부를 검사합니다. API 사용자인 `NeverDPEFixedImageTests`도 다시 빌드합니다. 요청 생략 시 결과, 카운터 및 다이제스트는 별도로 기준선과 비교합니다.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests

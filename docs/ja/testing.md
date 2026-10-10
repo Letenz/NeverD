@@ -150,6 +150,8 @@ v4 テストはプレフィックスのサイズとパディング、切り詰�
 
 `NeverDInterpreterLLVMRefinementTests` は新規の合成証明、正確なテキスト／関数の結合、独立予算、全観測項目、広いソース領域を検証します。バイト、残余、結果、フラグ、ステータス、フレーム書込み、poison、誤った／古いループ案の変更は合成証明を拒否させます。任意ワード幅のカウントダウンは両帰納前提を要求し、独立 C 例の O1/O2 コンパイルは実際の LLVM テキストを検証します。状態モデルの回帰は隠れた入口後退辺を拒否し、付随する出自情報をコピーせずルートを予算計上します。
 
+`InterpreterLLVMRefinement.Preservation*` は部分範囲と重複、不正要求、独立計算した準備コスト、両側の同一破壊、ループをまたぐ入口値の保存と復元、新しい不透明状態の証拠、後段の拒否を検証します。API 利用側の `NeverDPEFixedImageTests` も再ビルドします。要求省略時の結果・カウンタ・ダイジェストは別途ベースラインと比較します。
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
