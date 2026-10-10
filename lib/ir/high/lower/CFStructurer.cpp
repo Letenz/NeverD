@@ -669,6 +669,7 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
       if (IntrinsicSkip.count(OpIdx))
         continue;
       auto &CurOp = CurBlock.Ops[OpIdx];
+      const size_t StatementBegin = Func.Body.size();
       switch (CurOp.Opcode) {
       case NdOp::STORE:
         lowerStore(Func, CurOp);
@@ -700,6 +701,10 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
         lowerGenericAssign(Func, CurOp, PhiArgVars);
         break;
       }
+      if (StatementObserver && CurOp.Addr != InvalidVA && CurOp.OriginSeq >= 0)
+        for (size_t I = StatementBegin; I < Func.Body.size(); ++I)
+          if (Func.Body[I].Addr == CurOp.Addr && !Func.Body[I].IsPhiCopy)
+            StatementObserver(CurOp, Func.Body[I]);
     }
 
     if (Tree)

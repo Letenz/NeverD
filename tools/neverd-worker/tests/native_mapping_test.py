@@ -77,12 +77,32 @@ def run(executable):
                     assert resolved["status"] == "ok", resolved
                     assert resolved["payload"]["function_address"] == hex(entry)
                 for stage in ("c", "llvmc"):
-                    reply = client.call("decompile", {"address": hex(entry), "representation": stage, "limit": 2})
+                    reply = client.call("decompile", {"address": hex(entry), "representation": stage, "limit": 2048})
                     assert reply["status"] == "ok", reply
-                    assert reply["payload"]["mapping_status"] == "library_regions", reply
+                    assert reply["payload"]["mapping_status"] in ("library_regions", "instruction_anchors"), reply
                     assert reply["payload"]["library_regions"] == []
                     assert reply["payload"]["byte_offset"] == 0
-                    assert all(row["addresses"] == [] for row in reply["payload"]["rows"])
+                    result = reply["payload"]
+                    if result["mapping_status"] == "instruction_anchors":
+                        mapped = [row for row in result["rows"] if row["addresses"]]
+                        assert mapped, result
+                        assert all(set(row["addresses"]) <= instruction_addresses for row in mapped), result
+                        returned = [row for row in mapped if "return" in row.get("code_anchor", "")]
+                        assert returned, result
+                        assert returned[0]["addresses"][0] == hex(entry + (4 if arm64 else 5)), result
+                        # Paging and worker presentation edits preserve the exact anchors.
+                        text, rows, offset = "", [], 0
+                        while True:
+                            page = client.call("decompile", {"address": hex(entry), "representation": stage,
+                                                              "offset": offset, "limit": 2})["payload"]
+                            text += page["text"]
+                            rows.extend(page["rows"])
+                            if page["complete"]:
+                                break
+                            offset = page["next_offset"]
+                        assert text == result["text"] and rows == result["rows"]
+                    else:
+                        assert all(row["addresses"] == [] for row in result["rows"])
                 for stage in ("high", "llvm"):
                     reply = client.call("decompile", {"address": hex(entry), "representation": stage, "limit": 2})
                     assert reply["status"] == "ok", reply

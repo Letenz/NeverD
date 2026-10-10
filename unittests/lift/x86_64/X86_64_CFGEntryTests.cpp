@@ -1286,6 +1286,184 @@ TEST(CFGBuilderCoverage,
                    }));
 }
 
+TEST(CFGBuilderCoverage, LocalUnwindTargetRequiresExclusiveSameFrameUses) {
+  constexpr va_t Entry = 0x140001000, Target = Entry + 0x20;
+  constexpr va_t Stub = Entry + 0x180;
+  auto Make = [&]() {
+    BinaryImage Img;
+    Img.Arch = Arch::X64;
+    Img.Bits = Bitness::Bits64;
+    Img.Format = BinaryFormat::COFF;
+    Img.Base = 0x140000000;
+    Img.Entry = Entry;
+    Segment Text;
+    Text.Name = ".text";
+    Text.VA = Entry;
+    Text.Size = 0x181;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.assign(Text.Size, 0xcc);
+    const uint8_t Prologue[] = {
+        0x48, 0x83, 0xec, 0x28,             // sub rsp,40
+        0x48, 0x89, 0x64, 0x24, 0x20,       // mov [rsp+32],rsp
+        0x48, 0x8d, 0x15, 0x10, 0,    0, 0, // lea rdx,Target
+        0x48, 0x8b, 0x4c, 0x24, 0x20,       // mov rcx,[rsp+32]
+        0xe8, 0x66, 0x01, 0,    0};         // call Stub
+    std::copy(std::begin(Prologue), std::end(Prologue), Text.Data.begin());
+    std::fill(Text.Data.begin() + 0x1a, Text.Data.begin() + 0x21, 0x90);
+    Text.Data[0x21] = 0xeb;
+    Text.Data[0x22] = 0x0d;
+    const uint8_t Return[] = {0x48, 0x83, 0xc4, 0x28, 0xc3};
+    std::copy(std::begin(Return), std::end(Return), Text.Data.begin() + 0x30);
+    Text.Data[0x40] = 0xeb;
+    Text.Data[0x41] = 0xee;
+    Text.Data[0x180] = 0xc3;
+    Img.Segments.push_back(std::move(Text));
+    Img.Symbols.push_back(Symbol::makeFunc(Entry, 0x42));
+    Import I;
+    I.Name = "_local_unwind";
+    I.Module = "VCRUNTIME140.dll";
+    Img.Imports.push_back(I);
+    EXPECT_TRUE(Img.recordImportStub(Stub, 0));
+    ExceptionFunction EH;
+    EH.CodeRange = {Entry, Entry + 0x42};
+    EH.Encoding = ExceptionEncoding::X64UnwindV1;
+    EH.UnwindVersion = 1;
+    EH.UnwindFlags = 1;
+    EH.PrologueSize = 4;
+    EH.Personality = ExceptionPersonality::CSpecificHandler;
+    UnwindOperation Alloc;
+    Alloc.Kind = UnwindOperationKind::AllocateSmall;
+    Alloc.CodeOffset = 4;
+    Alloc.StackOffset = 40;
+    EH.UnwindOperations.push_back(Alloc);
+    EH.SEH.emplace();
+    SEHScopeRecord Scope;
+    Scope.GuardedRange = {Target, Target + 1};
+    Scope.Kind = SEHScopeKind::CatchAll;
+    Scope.HandlerVA = Entry + 0x40;
+    EH.SEH->Scopes.push_back(Scope);
+    Img.ExceptionMetadata.Functions.push_back(EH);
+    Img.ExceptionMetadata.rebuildIndex();
+    return Img;
+  };
+  for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Img = Make();
+    if (Mutation == 1)
+      Img.Segments[0].Data[0x11] = 0x8d; // lea rcx,[rsp+32]: wrong frame
+    if (Mutation == 2)
+      Img.Imports[0].Name = "unknown_callback";
+    if (Mutation == 10)
+      Img.Imports[0].Module = "untrusted_runtime.dll";
+    if (Mutation == 3) {
+      Segment Data;
+      Data.Name = ".data";
+      Data.VA = Entry + 0x200;
+      Data.Size = 8;
+      Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      for (unsigned B = 0; B != 8; ++B)
+        Data.Data.push_back(static_cast<uint8_t>(Target >> (B * 8)));
+      Img.CodePtrRelocSlots.insert(Data.VA);
+      Img.Segments.push_back(std::move(Data));
+    }
+    if (Mutation == 6 || Mutation == 8) {
+      // Interpose either an opaque call or a partial overwrite between the
+      // saved SP and its load. Neither may retain a must-value certificate.
+      auto &Bytes = Img.Segments[0].Data;
+      std::copy_backward(Bytes.begin() + 9, Bytes.begin() + 0x1a,
+                         Bytes.begin() + 0x1f);
+      const std::array<uint8_t, 5> OpaqueCall{0xe8, 0xf2, 0, 0, 0};
+      const std::array<uint8_t, 5> PartialStore{0xc6, 0x44, 0x24, 0x20, 1};
+      const auto &Insert = Mutation == 6 ? OpaqueCall : PartialStore;
+      std::copy(Insert.begin(), Insert.end(), Bytes.begin() + 9);
+      Bytes[0x11] = 0x0b; // adjusted lea rdx,Target
+      Bytes[0x1b] = 0x61; // adjusted call Stub
+      if (Mutation == 6) {
+        Import Opaque;
+        Opaque.Name = "opaque_function";
+        Opaque.Module = "other.dll";
+        Img.Imports.push_back(Opaque);
+        ASSERT_TRUE(Img.recordImportStub(Entry + 0x100, 1));
+      }
+    }
+    if (Mutation == 9) {
+      // A sibling function also exports the continuation value to an opaque
+      // call. Its separate use must veto narrowing this address's entry role.
+      const std::array<uint8_t, 13> Foreign{
+          0x48, 0x8d, 0x0d, 0x19, 0xff, 0xff, 0xff, // lea rcx,Target
+          0xe8, 0x54, 0,    0,    0,                // call foreign import
+          0xc3};
+      std::copy(Foreign.begin(), Foreign.end(),
+                Img.Segments[0].Data.begin() + 0x100);
+      Img.Symbols.push_back(Symbol::makeFunc(Entry + 0x100, Foreign.size()));
+      Import Opaque;
+      Opaque.Name = "opaque_function";
+      Opaque.Module = "other.dll";
+      Img.Imports.push_back(Opaque);
+      ASSERT_TRUE(Img.recordImportStub(Entry + 0x160, 1));
+    }
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    std::set<va_t> Entries{Entry, Stub};
+    if (Mutation == 6 || Mutation == 9)
+      Entries.insert(Entry + 0x100);
+    CFGBuilder Builder;
+    Builder.setKnownFuncEntries(&Entries);
+    LowFunc Low = Builder.build(Img, Dec, Entry, "unwind_frame");
+    ASSERT_TRUE(Low.OrdinaryModuleAnalysisRoots.count(Target));
+    if (Mutation == 4)
+      Entries.insert(Target); // an independently published function entry
+    std::vector<LowFunc> Bodies{Low};
+    if (Mutation == 11)
+      Bodies.front().TruncatedPathAddresses.push_back(Entry + 0x100);
+    if (Mutation == 12)
+      Entries.insert(Entry + 0x100); // an uninspected non-import body
+    if (Mutation == 9)
+      Bodies.push_back(Builder.build(Img, Dec, Entry + 0x100, "foreign_user"));
+    auto Evidence =
+        pipeline_detail::collectWindowsEHContinuationRootsForTesting(
+            Img, Bodies, Entries,
+            Mutation == 5 ? std::optional<size_t>{0} : std::nullopt,
+            /*CompleteModule=*/Mutation != 7);
+    if (Mutation != 0) {
+      EXPECT_TRUE(Evidence.LocalUnwindsByOwner.empty());
+      EXPECT_THROW(
+          LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
+          std::exception);
+      continue;
+    }
+    ASSERT_TRUE(Evidence.AnalysisComplete);
+    ASSERT_EQ(Evidence.LocalUnwindsByOwner[Entry].size(), 1u);
+    Low.SEHLocalUnwindContinuations = Evidence.LocalUnwindsByOwner[Entry];
+    EXPECT_EQ(Low.SEHLocalUnwindContinuations.front().FrameOffset, -40);
+    EXPECT_NO_THROW({
+      auto Med =
+          LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+      EXPECT_TRUE(verifyMedFunc(Med, "local-unwind-frame"));
+    });
+    // An unchanged call address cannot retain proof after its arguments change.
+    auto Changed = Low;
+    bool ChangedArgument = false;
+    for (auto &Block : Changed.Blocks)
+      for (auto &Op : Block.Ops)
+        if ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::COPY) &&
+            Op.Output == NdVar::reg(x86reg::RCX, 8)) {
+          Op.Opcode = NdOp::COPY;
+          Op.Inputs[0] = NdVar::cst(0, 8);
+          ChangedArgument = true;
+        }
+    ASSERT_TRUE(ChangedArgument);
+    EXPECT_THROW(
+        LowToMedConverter().convert(Changed, Arch::X64, BinaryFormat::COFF),
+        std::exception);
+    // A certificate cannot be replayed against a different unwind frame.
+    Low.SEHLocalUnwindContinuations.front().FrameOffset = -48;
+    EXPECT_THROW(
+        LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
+        std::exception);
+  }
+}
+
 TEST(CFGBuilderCoverage,
      RoutesExactLocalUnwindTargetFromUnlistedHelperToUniqueSEHOwner) {
   constexpr va_t SourceVA = 0x140001000;

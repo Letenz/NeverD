@@ -241,10 +241,12 @@ void neverd_session_set_debug_info_enabled(neverd_session_t s, int enabled) {
 const char *neverd_headers_json(neverd_session_t s) {
   // The Rust and Go fixtures read in their own language too.
   const std::string runtime =
-      session(s)->path.ends_with("pseudocode-rust.bin")  ? "rust"
-      : session(s)->path.ends_with("pseudocode-go.bin")  ? "go"
-      : session(s)->path.ends_with("pseudocode-cpp.bin") ? "cpp"
-                                                         : "c";
+      session(s)->path.ends_with("pseudocode-rust.bin") ? "rust"
+      : session(s)->path.ends_with("pseudocode-go.bin") ? "go"
+      : (session(s)->path.ends_with("pseudocode-cpp.bin") ||
+         session(s)->path.ends_with("code-edits-cpp.bin"))
+          ? "cpp"
+          : "c";
   Json pseudocode = Json::array({"c"});
   if (runtime != "c")
     pseudocode.push_back(runtime);
@@ -604,6 +606,13 @@ const char *neverd_unwind_frame_json(neverd_session_t, neverd_va_t address) {
   return copy("null");
 }
 const char *neverd_decompile(neverd_session_t s, neverd_va_t address) {
+  if (session(s)->path.ends_with("pseudocode-parallel.bin") &&
+      (address == Base || address == Base + 16)) {
+    std::printf("fixture parallel decompile %s started\n",
+                hexAddress(address).c_str());
+    std::fflush(stdout);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
   if (session(s)->path.ends_with("pseudocode-slow.bin") && address == Base) {
     std::puts("fixture slow decompile started");
     std::fflush(stdout);
@@ -731,6 +740,68 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {
   session(s)->error.clear();
+  if (session(s)->path.ends_with("code-edits.bin") ||
+      session(s)->path.ends_with("code-edits-cpp.bin") ||
+      session(s)->path.ends_with("code-edits-mapped.bin") ||
+      session(s)->path.ends_with("tab-sync-paged.bin")) {
+    const bool paged = session(s)->path.ends_with("tab-sync-paged.bin");
+    std::string full = "#include <stdint.h>\n"
+                       "int32_t function_20(int32_t v0) {\n"
+                       "  int32_t v1 = v0 + function_22();\n"
+                       "  const char *message = \"v0 v1 function_22\";\n"
+                       "  return v1;\n"
+                       "}\n";
+    if (paged)
+      for (int i = 6; i < 700; ++i)
+        full += "// code line " + std::to_string(i) + "\n";
+    std::vector<std::size_t> starts{0};
+    for (std::size_t i = 0; i + 1 < full.size(); ++i)
+      if (full[i] == '\n')
+        starts.push_back(i + 1);
+    const auto first = std::min(offset, starts.size());
+    const auto end = first + std::min(limit, starts.size() - first);
+    Json rows = Json::array();
+    for (auto i = first; i < end; ++i) {
+      const bool mapped =
+          (session(s)->path.ends_with("code-edits-mapped.bin") && i == 2) ||
+          (paged && i == 550);
+      rows.push_back({{"line", i},
+                      {"object_id", "source:" + std::to_string(i)},
+                      {"kind", "source"},
+                      {"mapping_status", mapped ? "mapped" : "unmapped"},
+                      {"addresses",
+                       mapped ? (paged ? Json::array({hexAddress(address + 8),
+                                                      hexAddress(address + 9)})
+                                       : Json::array({hexAddress(address + 2)}))
+                              : Json::array()}});
+    }
+    const auto beginByte = first < starts.size() ? starts[first] : full.size();
+    const auto endByte = end < starts.size() ? starts[end] : full.size();
+    return copy(Json{
+        {"schema_version", 1},
+        {"address", hexAddress(address)},
+        {"representation", representation},
+        {"dialect", "c"},
+        {"text", full.substr(beginByte, endByte - beginByte)},
+        {"rows", rows},
+        {"offset", first},
+        {"byte_offset", beginByte},
+        {"total_lines", starts.size()},
+        {"complete", end == starts.size()},
+        {"next_offset", end == starts.size() ? Json(nullptr) : Json(end)},
+        {"prelude", {{"lines", 1}, {"end_byte", starts[1]}}},
+        {"library_regions",
+         paged ? Json::array(
+                     {{{"id", "late-operation"},
+                       {"display_name", "fixture operation"},
+                       {"foldable", true},
+                       {"mapping_status", "mapped"},
+                       {"spans", Json::array({{{"begin_byte", starts[549]},
+                                               {"end_byte", starts[552]}}})}}})
+               : Json::array()},
+        {"source_names", Json::array()}}
+                    .dump());
+  }
   if (std::string(representation) == "source" ||
       std::string(representation) == "rust" ||
       std::string(representation) == "go") {
@@ -1131,8 +1202,10 @@ const char *neverd_xrefs_from_json(neverd_session_t s, neverd_va_t address) {
 const char *neverd_cfg_json(neverd_session_t s, neverd_va_t address) {
   session(s)->error.clear();
   Json nodes = Json::array(), edges = Json::array();
-  const int count =
-      address == Base + 2 ? 10000 : (address == Base + 1 ? 501 : 2);
+  const int count = address == Base + 2   ? 10000
+                    : address == Base + 1 ? 501
+                    : session(s)->path.ends_with("code-edits-mapped.bin") ? 16
+                                                                          : 2;
   for (int i = 0; i < count; ++i) {
     nodes.push_back({{"id", i},
                      {"start", hexAddress(address + i)},
@@ -1177,9 +1250,14 @@ int neverd_annotations_load(neverd_session_t s) {
 const char *neverd_renames_json(neverd_session_t s) {
   Json result = Json::array();
   for (const auto &[address, name] : session(s)->names)
-    result.push_back({{"addr", hexAddress(address)},
-                      {"renamed", name},
-                      {"original", "function_0"}});
+    result.push_back(
+        {{"addr", hexAddress(address)},
+         {"renamed", name},
+         {"original",
+          address == Base + 0x150 &&
+                  session(s)->path.ends_with("pseudocode-navigation.bin")
+              ? "_ZN3BarC1Ev"
+              : "function_" + std::to_string((address - Base) / 16)}});
   return copy(result.dump());
 }
 int neverd_renames_load(neverd_session_t s) {

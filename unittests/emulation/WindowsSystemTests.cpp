@@ -145,6 +145,31 @@ TEST_P(WindowsSystem, ExecutesOriginalSystemModuleScenarios) {
       EXPECT_EQ(R->ReturnValue, ExitStatus);
   }
 }
+
+TEST_P(WindowsSystem, ExplicitVersionBytesReachGuestCodeWithoutTruncation) {
+  const std::optional<WindowsPEBVersion> Versions[] = {
+      std::nullopt, WindowsPEBVersion{10, 0, 19043, 2},
+      WindowsPEBVersion{0xffffffff, 0x87654321, 65535, 0xfedcba98}};
+  Options.Arguments = {ProgramFile, "!b"};
+  for (const auto &Version : Versions) {
+    Options.Windows->PEBVersion = Version;
+    const auto Expected = Version.value_or(WindowsPEBVersion{});
+    uint8_t Bytes[16];
+    for (auto [Offset, Value] : {std::pair{0, Expected.Major},
+                                 {4, Expected.Minor},
+                                 {8, uint32_t(Expected.Build)},
+                                 {12, Expected.Platform}})
+      llvm::support::endian::write32le(Bytes + Offset, Value);
+    auto R = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, ExitStatus) << llvm::toHex(R->StandardError);
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(
+        R->StandardOutput,
+        std::string(reinterpret_cast<const char *>(Bytes), sizeof(Bytes)));
+  }
+}
 TEST_P(WindowsSystem, FLSExitCallbacksAreNotProgramInvocations) {
   for (const auto &C : Cases) {
     if (!llvm::StringRef(C.Name).starts_with("FLS"))
@@ -381,7 +406,9 @@ TEST(WindowsSystemNative, RunsOriginalSystemModuleExecutable) {
   const auto Error = (Root / StderrFile).string();
   const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
                                                       Error};
-  for (const auto &C : Cases) {
+  std::vector<Case> NativeCases(std::begin(Cases), std::end(Cases));
+  NativeCases.push_back({"PEBVersion", "!v", "0100000076000000"});
+  for (const auto &C : NativeCases) {
     const bool Returns = llvm::StringRef(C.Argument) == ReturnArgument ||
                          llvm::StringRef(C.Argument) == FLSReturnArgument;
     for (unsigned I = 0; I < (Returns ? RepeatCount : 1); ++I) {
@@ -407,7 +434,8 @@ TEST(WindowsSystemNative, RunsOriginalSystemModuleExecutable) {
       llvm::outs() << ObservationLabel << C.Argument << ' ' << Status << ' '
                    << llvm::toHex((*Out)->getBuffer()) << '\n';
       EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
-      EXPECT_TRUE((*Err)->getBuffer().empty());
+      EXPECT_TRUE((*Err)->getBuffer().empty())
+          << llvm::toHex((*Err)->getBuffer());
       EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), C.Expected);
     }
   }

@@ -7,6 +7,7 @@
 #define NEVERD_EMULATION_WINDOWSPROCESSOPTIONS_H
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,10 +24,20 @@ struct WindowsModuleInput {
   /// Explicit host input file, never loaded as host executable code.
   std::filesystem::path Path;
 };
+/// Explicit version bytes in the process environment. This does not select
+/// native service numbers or claim to emulate a particular Windows release.
+struct WindowsPEBVersion {
+  uint32_t Major = 0, Minor = 0;
+  uint16_t Build = 0;
+  uint32_t Platform = 0;
+};
 struct WindowsProcessOptions {
   /// Only reachable startup dependencies are read. API providers cannot be
   /// overridden. DLL initialization and dynamic loading are separate contracts.
   std::vector<WindowsModuleInput> Modules;
+  /// Absent retains the profile's zero-filled version fields. Capturing code
+  /// that depends on these bytes requires an explicit matching target input.
+  std::optional<WindowsPEBVersion> PEBVersion;
   /// Load an image whose loader facts the model does not implement, and stop
   /// only if execution depends on one. Exports outside the API inventory and
   /// modules outside the catalogue bind to opaque entries: they resolve to

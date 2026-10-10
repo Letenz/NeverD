@@ -127,6 +127,12 @@ if(TARGET capstone)
 endif()
 
 # --- NeverD CMake helpers (mirrors LLVM's AddLLVM.cmake) ---
+# Source files and literal test data are UTF-8 on every host. MSVC otherwise
+# decodes non-ASCII source using the runner's active Windows code page, even
+# for u8/U literals, changing the bytes/code points under test.
+if(MSVC)
+    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>")
+endif()
 include(${CMAKE_SOURCE_DIR}/cmake/AddNeverD.cmake)
 
 # Capability claims are executable source policy, independent of whether the

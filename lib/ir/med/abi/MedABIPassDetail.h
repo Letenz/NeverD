@@ -40,6 +40,11 @@ namespace neverd {
 
 struct BinaryImage;
 
+/// Whether an operation prevents recovering an earlier ABI value. Explicit
+/// numerical/MXCSR effects do not call a callee or write argument storage.
+/// Unknown intrinsic effects retain the conservative boundary.
+bool isAbiRecoveryBarrier(const MedOp &Op);
+
 struct AbiSpillContext {
   const MedFunc &Func;
   const TargetRegInfo &TRI;
@@ -208,7 +213,7 @@ findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
 /// Win64 thiscall clobbers rcx. The callee this is the guarded table, not
 /// live-in parent this.
 std::optional<MedVar> uniquePredNonNullGuard(const MedFunc &Func,
-                                            const MedBlock &Blk);
+                                             const MedBlock &Blk);
 
 } // namespace neverd
 

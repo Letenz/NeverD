@@ -38,6 +38,9 @@ SAFETY_LABELS = (
 # required on every host so a build cannot retain generic loader fixtures while
 # silently dropping the artifact and discovery path promised to SDK users.
 PLUGIN_LABELS = ("NeverDExamplePluginTests",)
+# Every host executes generated Rust/Go and the native source mapping contract.
+# CI provisions both compilers and generates the small HighC/LLVMC corpus.
+SOURCE_DIALECT_LABELS = ("NeverDSourceDialectTests", "NeverDSourceAnchorTests")
 # The LowIR concolic contract spans its core engine, six-format integration,
 # C ABI, CLI, and real Python binding.  All five are focused suites and must
 # remain present and selected on every supported CI host.
@@ -231,6 +234,14 @@ def audit_inventory(
             + ", ".join(absent_integrity)
         )
 
+    absent_source = [
+        label for label in SOURCE_DIALECT_LABELS if label not in present_labels
+    ]
+    if absent_source:
+        raise InventoryError(
+            "source dialect tests are not under test: " + ", ".join(absent_source)
+        )
+
     semantic_names = {
         record.name for record in records if SEMANTIC_LABEL in record.labels
     }
@@ -287,6 +298,15 @@ def audit_inventory(
         raise InventoryError(
             f"profile {profile!r} does not select required failure-integrity tests: "
             + ", ".join(unselected_integrity)
+        )
+
+    unselected_source = [
+        label for label in SOURCE_DIALECT_LABELS if label not in selected_labels
+    ]
+    if unselected_source:
+        raise InventoryError(
+            f"profile {profile!r} does not select required source dialect tests: "
+            + ", ".join(unselected_source)
         )
 
     heavy_sets = {

@@ -37,7 +37,9 @@ neverd unpack packed.exe -o unpacked.exe \
 
 `runtime_state.encoded_pointer_inventory_known` 表示程序設定是否提供已觀察的指標編碼值。`possible_encoded_pointers` 統計擷取映像與主執行緒 TLS 中完全相等的指標寬度值，包括未對齊儲存；`encoded_pointer_references` 保留前 64 個位置的 `storage`、`offset`、`rva` 和 `value`。Windows 從已完成的 `EncodePointer`/`RtlEncodePointer` 傳回值和 `DecodePointer`/`RtlDecodePointer` 輸入收集編碼值。缺少清單或存在符合值時傳回 `unsupported_state`；明確要求的快照保留診斷。符合值也可能是整數或未使用資料，不能據此授權重新編碼。擷取前已清除的值、僅在擷取後產生的編碼不會觸發此拒絕。清單不涵蓋自訂編碼、部分或轉換後的值、暫存器、堆疊狀態及未到達路徑。
 
-`runtime_state.dynamic_thread_local_inventory_known` 表示程序設定是否提供擷取時的動態執行緒／纖程區域槽位狀態。`live_dynamic_tls_slots` 與 `live_dynamic_fls_slots` 和 PE 靜態 TLS 分開計數：已配置槽位即使值為零也計入；沒有配置紀錄的非零 TLS 單元也計入。清單未知或仍有槽位狀態時傳回 `unsupported_state`，明確要求的快照保留計數與診斷。擷取前已釋放的槽位、已清零且未配置的 TLS 單元，以及擷取後才建立的狀態不會觸發此拒絕。計數不重建槽位所有權、值或回呼，也不證明其他執行緒或纖程的狀態。 `FlsFree` 在釋放目前纖程槽位前，透過客體 ABI 執行非零值對應的已註冊清理回呼。回呼可呼叫已建模 API 並釋放其他 FLS 槽位；遞迴釋放同一活動槽位會以 `unsupported_service` 停止。 入口正常返回與 `ExitProcess` 也會在 DLL／TLS 處理程序分離通知前執行目前纖程剩餘的清理回呼。每個回呼完成後清零纖程值並保留已配置索引；清理中新配置的後續槽位也納入同一次有界退出。 退出清理中的載入器操作仍明確不受支援，不會把一般載入／卸載語意套用於處理程序終止。
+`runtime_state.dynamic_thread_local_inventory_known` 表示程序設定是否提供擷取時的動態執行緒／纖程區域槽位狀態。`live_dynamic_tls_slots` 與 `live_dynamic_fls_slots` 和 PE 靜態 TLS 分開計數：已配置槽位即使值為零也計入；沒有配置紀錄的非零 TLS 單元也計入。清單未知或仍有槽位狀態時傳回 `unsupported_state`，明確要求的快照保留計數與診斷。擷取前已釋放的槽位、已清零且未配置的 TLS 單元，以及擷取後才建立的狀態不會觸發此拒絕。計數不重建槽位所有權、值或回呼，也不證明其他執行緒或纖程的狀態。
+
+對於目前纖程，`FlsFree` 先清零非零槽值，再透過客體 ABI 呼叫已註冊的回呼。如果回呼再次寫入非零值，就以新值重複清理，直到可以釋放索引。回呼可呼叫已建模 API 並釋放其他槽位；遞迴釋放同一活動槽位會以 `unsupported_service` 停止。入口正常返回與 `ExitProcess` 會在 DLL／TLS 處理程序分離通知前執行剩餘回呼。退出清理固定使用開始時的歷史配置上界：範圍內尚未遍歷的索引可被初始化或重用，更高的新配置不會擴大本次掃描。退出回呼可讀取原值；完成後清除其寫入並保留已配置索引。所有回呼共用處理程序執行預算。退出清理中的載入器操作仍明確不受支援。
 
 `--options='{"snapshot_only":true}'` 明確要求分析位元組。接受入口且重建成功後，結果一律為 `snapshot`，並保留執行階段狀態診斷。此選項不會恢復堆積資料、推斷重定位、證明原生執行成功或反虛擬化。堆積參照數量為零也不能證明其他 OS 狀態或未執行路徑正確。
 
@@ -104,3 +106,5 @@ neverd unpack packed.exe -o unpacked.exe \
 
 
 `WrappedEntriesRequireExplicitTransferEvidence` 涵蓋 DLL 包裝器透過更深的堆疊呼叫復原入口。預設結果仍為 `no_entry`；透過 `transfer` 選取該已觀察呼叫後，可重建可載入 DLL。僅憑深層呼叫無法區分入口與初始化器。
+
+復原的 DLL 入口與原始 PE 入口不同時，寫入器產生載入器通知配接器：程序附加進入選定入口，卸載與執行緒通知進入原始的可執行入口，以保留外層包裝函式的清理。原始入口不可用時重建失敗。報告的 `entry_rva` 仍表示選定的程式入口，PE 標頭可指向配接器。獨立包裝 DLL 測試在兩種模擬架構與原生 Windows 上檢查選定函式之外的清理。

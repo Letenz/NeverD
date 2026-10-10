@@ -108,8 +108,13 @@ int main(void) {
           [driver foundationVersion] != NSFoundationVersionNumber)
         return 10;
       double value = -12.25 * i;
-      if ([driver remainder:value divisor:3.125] != fmod(value, 3.125))
+      double actual = [driver remainder:value divisor:3.125];
+      double expected = fmod(value, 3.125);
+      if (actual != expected) {
+        fprintf(stderr, "remainder case %u: actual=%.17g expected=%.17g\n",
+                i, actual, expected);
         return 6;
+      }
     }
     struct Worker worker = {driver, PTHREAD_MUTEX_INITIALIZER, 0, 0};
     pthread_t threads[4];

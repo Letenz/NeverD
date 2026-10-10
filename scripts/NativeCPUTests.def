@@ -78,6 +78,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "PEMapping.AllZeroRawPagesRemainAccessibleThroughVirtualSize")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("PEMapping.PageRoundingCannotWrapThePE32Extent")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PERebuild.DLLNotificationsRequireAnExecutableOriginalEntry")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "PERebuild.ConflictingContinuationsRetainEveryOverlappingStart")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "PERebuild.TouchingWindowsAndRepeatedWitnessesRemainRepairable")
@@ -143,6 +145,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated.FLSCleanupRejectsRecursiveFreeOfTheActiveSlot/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.RearmedFLSCleanupUsesTheProcessEventBudget/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.RearmedFLSCleanupUsesTheProcessEventBudget/"
     "{backend_title}DirectX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
@@ -2434,6 +2442,9 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsSystem.ExecutesOriginalSystemModuleScenarios/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsSystem.ExplicitVersionBytesReachGuestCodeWithoutTruncation/"
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsSystem.FLSExitCallbacksAreNotProgramInvocations/"

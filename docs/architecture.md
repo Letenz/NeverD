@@ -11,15 +11,49 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
-runs source/IR and graph reads in a disposable read-only worker. The owner
+runs source/IR and graph reads in up to two disposable read-only workers. The
+replicas start lazily: independent views can load different functions in
+parallel, while each view's pages and graph transaction stay on one dispatcher.
+External clients keep one dispatcher because graph summaries and viewports can
+arrive as separate interleaved requests. The pool retains a shared total
+response-cache allowance. The owner
 exports loader choices, loaded-input identity, user edits, staged comments,
 signature inputs and string options. The replica verifies the input and
 committed edits before applying the remaining in-memory state; a mismatch
-fails explicitly. Owner revision changes invalidate the replica and its cache.
+fails explicitly. Owner revision changes invalidate every replica and its cache.
 Cancelling its final subscriber retires the process, since a synchronous C API
 analysis call cannot be interrupted safely. Replica revisions and analysis
-discovery never advance the writable project's state. Both workers use the
+discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
+
+The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
+notes. `UserStateTables.def` includes this state in history, recovery, read-only
+replicas and database packing. Source identity and exact row anchors prevent
+edits from silently attaching to regenerated text. The GUI selects precise
+occurrences through the existing folded-source projection; image names and
+mapped comments continue to use engine address edits. Local presentation names
+do not establish variable, type or instruction semantics.
+
+Pseudocode navigation uses instruction anchors recorded during source emission.
+HighIR statement observations retain function, address, sequence and statement
+kind; synthetic, ambiguous and changed-kind statements supply no anchor. LLVM
+observations retain weak handles through optimization and the private C clone.
+The source recorder publishes statement spans only when its private rendering
+reproduces ordinary source byte for byte. Instruction and library recordings use
+independent renders so navigation cannot weaken library folding evidence. The
+C API checks every occurrence against the same canonical LowIR boundaries and
+sequences used by Low/Med pages. C++, Rust and Go record individual statement
+spans. Navigation projects only a complete, unambiguous recorded piece, ignoring
+surrounding whitespace; it never expands to an enclosing function or joins
+partial pieces. A function shown as C after a dialect refusal loses its
+statement anchors. Library folding retains its separate region projection.
+This supplies navigation evidence rather than complete expression provenance.
+Source and assembly cursors browse independently.
+Tab consumes the selected row's primary address, preserving a secondary address
+chosen by an assembly-to-source Tab so a round trip returns to the same
+instruction. Reverse navigation waits for the source pages and expands the
+mapped row's fold. An unmapped row explicitly falls back to its own function
+entry; an unmapped instruction reports the missing source mapping.
 
 Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
 the fallback. Validated Itanium/MSVC names also identify C++ without an
@@ -325,6 +359,24 @@ from its owned runtime slots. Eliding its target load still requires the exact
 operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
 authority from sharing that origin.
+
+The resolver's point-sensitive stack identity uses anchored affine equations.
+Cyclic predecessors share equation nodes instead of recursively expanding the
+same frame state for each query. Every incoming value must agree; unanchored
+cycles, nonzero loop deltas and overflowing intermediate offsets invalidate
+their users. The existing evidence allowance charges graph construction and
+propagation. Completed equations are immutable within a proof mode, so later
+queries solve only new dependencies. Register/memory transparent-cycle memo
+entries are reusable only until either resolver learns a concrete result;
+both share the invalidation generation because their walks recurse into each
+other. Neither cache bypasses incomplete-proof rejection.
+
+Proof graph indexes use a private arena that outlives their containers and is
+retired with the synchronous query. Ordered insertion hints preserve duplicate
+and out-of-order point handling. A fixed-size register lane cache checks the
+complete offset/width key and uses the query's immutable target metadata.
+These storage and lookup optimizations retain the original evidence charges;
+they do not reuse CFG or value proofs across changed snapshots.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
@@ -753,6 +805,13 @@ before writing, including arguments it only passes on to its own callees.
 For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
+
+Additional callee CFGs are admitted in deterministic breadth-first order.
+Batches retain at most eight bodies and use at most four independent decoders
+when symbol extents predict enough work; small batches stay serial. Read-only
+image indexes and the existing synchronized no-return cache may be shared.
+Summary publication and format-call collection retain the original order,
+depth and count limits. `NEVERD_THREADS=1` restricts this phase to one worker.
 
 Function starts follow the same evidence rule. An x64 `RUNTIME_FUNCTION` with
 chained unwind info continues its parent function (`BinaryImage::
@@ -1194,6 +1253,20 @@ as emitted by [older LLVM versions](https://github.com/llvm/llvm-project/blob/ll
 HighIR uses only certified catch returns to form continuation jumps, including
 nested catches. Independent ordinary entries cannot borrow this frame proof.
 
+For x64 SEH, whole-module LowIR analysis can narrow an address-taken label to
+a local-unwind continuation when every address use is an exact imported
+`_local_unwind` call in the same owner. Relocation pointers, sibling users,
+selected-function scans and exhausted budgets cannot establish exclusivity.
+An independent call-site proof requires the frame argument to equal current
+SP through full-width copies, constant offsets or private spills untouched by
+an intervening opaque call or write. Generic address may-facts alone cannot
+prove a saved frame value. An operation digest binds that proof to the current
+argument-producing block prefix. Shared SSA then checks the call occurrence, parent
+unwind allocation, decoded prologue, converted SP effects and every relevant
+predecessor path. The initial contract requires an ordinary-reachable target;
+cross-funclet frame borrowing and saved frames surviving opaque calls remain
+unsupported until their memory and activation lifetimes can be proved.
+
 LLVMC preserves relocatable constant address arithmetic, and constant
 `ptrtoint` of a global denotes its address, not initializer bytes. Freeze
 projection requires either LLVM definedness or a bounded integer expression
@@ -1408,6 +1481,8 @@ Loop inference reuses completed, model-free SAT/UNSAT answers only within one sy
 Bit-relation pruning checks all surviving candidates under one incoming domain before moving to the next. Every retained relation must still pass every complete arrival predicate in the original arrival order. Refuted candidates stay removed; unknown answers and exhausted budgets still abort inference. This ordering reuses the existing domain-scoped solver encoding without changing state templates or sharing proofs between domains.
 
 Native loop inference also admits repeated original addresses when each residual origin is uniquely mapped. After state and rank inference, it proves opposite literal bits over the complete reconstructed candidate templates and proposes masked Register, Frame or SystemFlags selectors. Context identities and concrete prefix values are never assumptions. Inseparable domains refuse; metadata, bit scans and dependency walks consume existing budgets. The independent original/candidate checker still proves every admitted path, state observation and rank transition. Proof/object schemas remain 17/16; automatic source and ordinary ABI composition remain separate. Unique native origins retain their previous search priority; additional contexts share the same cumulative search budget.
+
+After native selector inference, candidate-derived prefix inputs are bound to `CandidatePrefix`. For generalized prefix-backed cuts, an internal builder may append own-side `(prefix & ~mask) | value` state assignments, preserving unselected bits and all previous predicates, ranks, assignments and guards. If either side's guard ranges overlap existing assignments or each other, neither side of that cut is appended. Construction consumes cumulative work and metadata budgets and rejects temporary-offset overflow. The shared validator checks the complete plan before and after construction; the independent native checker retains every proof obligation. Ordinary LowIR inference is unchanged.
 
 When only one chosen cut has a repeated native origin, structurally known literal bits of its complete reconstructed template can also supply selectors. States that do not match continue past that address, including earlier unselected contexts. Function temporaries cannot supply native selectors; scans consume the existing cut-selection and node budgets. These are untrusted proposals: the independent checker must still prove real-entry coverage, all state observations and every rank transition.
 
@@ -3615,6 +3690,8 @@ UIButton's `contentEdgeInsets`, `imageEdgeInsets` and `titleEdgeInsets` getters 
 
 `WindowsProcessHeap` owns allocation, resize, free and size queries for the process heap and bounded private heaps. Each allocation retains its owning heap when moved. `HeapDestroy` releases only that private heap’s blocks and retires its handle; other heaps and environment snapshots survive. Unknown, retired, process-heap destruction and cross-heap operations are refused before mutation. Private heaps accept growing requests with an initial size of at most one page; fixed maxima and larger initial commitments remain unsupported. The four-heap limit counts live heaps, so destruction permits further creation without revalidating stale handles. Handles are opaque model identities; native allocator headers are not materialized. `HeapReAlloc` preserves retained bytes, honors `HEAP_ZERO_MEMORY` and `HEAP_REALLOC_IN_PLACE_ONLY`, and returns NULL with `ERROR_NOT_ENOUGH_MEMORY` (8) on allocation failure. Separate page backing returns capacity on shrink, free and destruction; work observes the execution deadline. `WindowsHeapTests.cpp` checks both ISAs, ownership, lifetime turnover, failure atomicity and an independent native Windows oracle.
 
+`windows.peb_version` explicitly supplies the PEB `major`, `minor`, `build` and `platform` fields. All four unsigned integer fields are required; `build` is 16 bits and the other fields are 32 bits. Omission preserves the profile’s zero-filled version fields. `WindowsProcessEnvironment` owns their initialization on x64 and ARM64. This input does not choose native service numbers or certify compatibility with that Windows release. Capture and native replay must agree on any environment bytes on which retained code depends.
+
 `WindowsSystemModules` builds bounded PE64 model images for `ntdll.dll`, `kernelbase.dll` and `kernel32.dll` on both ISAs. Their mapped bases are shared by ASCII `GetModuleHandleA` / `GetModuleHandleW`, `LoadLibraryA` / `LoadLibraryW` and `GetProcAddress`; PEB/LDR and `MEM_IMAGE` describe those same images. Static imports, named queries and guest forwarders use the same API gates and export resolver. Providers stay pinned, have no guest initialization callbacks and do not prevent entry return after ordinary guest DLLs unload. Changed headers or export metadata stop lookup. Unknown system export names and nonzero system ordinal queries stop explicitly; case-only mismatches of modeled names and empty names return error 127, while a null query returns 87. Generated bytes and addresses are model policy; Windows DLL version layouts, native ordinals and cross-provider aliases are not reconstructed. `WindowsSystemTests.cpp` compares original x64/ARM64 executables with native Windows, including eight independent initial-thread returns.
 
 `WindowsNativeServices` owns one explicit model service catalogue. Numbered Nt/Zw aliases share a gate, ordered by the number advertised in its prologue. The x64 native boundary reads argument zero from R10 and retains the Win64 stub frame, including stack arguments at RSP + 0x28 and entry alignment. Returning services resume the next instruction with unchanged RSP and the SYSCALL RCX/R11 clobbers. Copied or inline gates carry `direct_service_number` and do not create export-call evidence. Unknown numbers and unimplemented services stop explicitly; these model numbers are not a mapping for an arbitrary Windows version. [Nt/Zw](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-nt-and-zw-versions-of-the-native-system-services-routines). Internal execution watches witness both native prologue instructions before identifying an export call. Interior jumps remain numeric bindings even when RCX equals R10. These watches also run without a caller observer and never generate callbacks outside the caller’s requested ranges.
@@ -3983,3 +4060,5 @@ DarwinFiles owns common attribute import, name/stat validity and record encoding
 ## Ordinary Darwin attribute mutations
 
 DarwinFiles owns retained attribute state, initial-object mutation grants, shared name import and complete-stat validity. DarwinExtendedAttributes stages value/list changes before one commit. Fixed initial reservations and runtime attribute excess use the same storage/count owner as content and namespace mutations; unlinked objects and mapping leases retain their dynamic charge until final release. JSON only imports explicit grants. Directory attribute mutation invalidates full metadata independently of membership, snapshots and enumeration versions.
+
+When a recovered DLL entry differs from its original PE entry, the writer emits a loader-notification adapter: process attach goes to the selected entry; detach and thread notifications go to the original live executable entry so outer-wrapper cleanup remains reachable. An unavailable original entry fails rebuilding. Reported `entry_rva` still identifies the selected program entry; the PE header can point to the adapter. The independent wrapped-DLL fixture checks cleanup outside the selected function on both emulated architectures and native Windows.

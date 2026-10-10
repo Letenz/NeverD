@@ -39,12 +39,14 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/ModRef.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -302,6 +304,28 @@ callArguments(std::string_view Source, std::string_view Callee, bool Last) {
 std::optional<std::vector<std::string_view>>
 lastCallArguments(std::string_view Source, std::string_view Callee) {
   return callArguments(Source, Callee, true);
+}
+
+// Declarations are emitted even for a selected function. Count and order
+// calls in that definition, never in its prerequisite prototypes.
+std::string sourceFunctionDefinition(const std::string &Source,
+                                     std::string_view Name) {
+  const std::string Needle = std::string(Name) + "(";
+  size_t From = 0;
+  while ((From = Source.find(Needle, From)) != std::string::npos) {
+    const size_t End = Source.find('\n', From);
+    if (Source.find('{', From) < End) {
+      const size_t Begin = Source.rfind('\n', From);
+      const size_t Close = Source.find("\n}", End);
+      if (Close != std::string::npos)
+        return Source.substr(Begin == std::string::npos ? 0 : Begin + 1,
+                             Close + 2 -
+                                 (Begin == std::string::npos ? 0 : Begin + 1));
+    }
+    From += Needle.size();
+  }
+  ADD_FAILURE() << "missing source definition for " << Name << "\n" << Source;
+  return {};
 }
 
 std::string_view sourceLineContaining(std::string_view Source,
@@ -2122,9 +2146,10 @@ TEST(LLVMCPointerAddresses, SingleUseCallInlinesThroughRegisterHome) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("GetLength("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("len0"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("GetLength("), Source.rfind("GetLength(")) << Source;
+  const std::string Body = sourceFunctionDefinition(Source, "fill_len");
+  EXPECT_NE(Body.find("GetLength("), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("len0"), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("GetLength("), Body.rfind("GetLength(")) << Source;
 }
 
 TEST(LLVMCPointerAddresses, CallUsedTwiceStaysAssigned) {
@@ -2270,13 +2295,14 @@ TEST(LLVMCPointerAddresses, SingleUseCallInlinesIntoHomeFedField) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("this->values_ = (uint64_t)((int32_t)((uint32_t)("
-                        "GetLength(this))))"),
+  const std::string Body = sourceFunctionDefinition(Source, "fill_values");
+  EXPECT_NE(Body.find("this->values_ = (uint64_t)((int32_t)((uint32_t)("
+                      "GetLength(this))))"),
             std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("GetLength("), Source.rfind("GetLength(")) << Source;
-  EXPECT_EQ(Source.find("len0"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("this->values_ = GetLength("), std::string::npos)
+  EXPECT_EQ(Body.find("GetLength("), Body.rfind("GetLength(")) << Source;
+  EXPECT_EQ(Body.find("len0"), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("this->values_ = GetLength("), std::string::npos)
       << Source;
 }
 
@@ -2320,10 +2346,11 @@ TEST(LLVMCPointerAddresses, SingleUseCallInlinesIntoLaterCall) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("use_len(GetLength("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("= GetLength("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("GetLength("), Source.rfind("GetLength(")) << Source;
-  EXPECT_EQ(Source.find("len0"), std::string::npos) << Source;
+  const std::string Body = sourceFunctionDefinition(Source, "fill_later");
+  EXPECT_NE(Body.find("use_len(GetLength("), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("= GetLength("), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("GetLength("), Body.rfind("GetLength(")) << Source;
+  EXPECT_EQ(Body.find("len0"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, OverLimitCallOperandDoesNotBlockInlining) {
@@ -2390,10 +2417,11 @@ TEST(LLVMCPointerAddresses, OverLimitCallOperandDoesNotBlockInlining) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("this->values_ = GetLength("), std::string::npos)
+  const std::string Body = sourceFunctionDefinition(Source, "fill_values");
+  EXPECT_NE(Body.find("this->values_ = GetLength("), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("len0"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("GetLength("), Source.rfind("GetLength(")) << Source;
+  EXPECT_EQ(Body.find("len0"), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("GetLength("), Body.rfind("GetLength(")) << Source;
 }
 
 TEST(LLVMCPointerAddresses, UnprintedCursorCopyDoesNotBlockSingleUseCall) {
@@ -2519,10 +2547,11 @@ TEST(LLVMCPointerAddresses, SingleUseCallInlinesIntoLaterIf) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("if (!((uint32_t)(GetLength("), std::string::npos)
+  const std::string Body = sourceFunctionDefinition(Source, "check_later");
+  EXPECT_NE(Body.find("if (!((uint32_t)(GetLength("), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("= GetLength("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("GetLength("), Source.rfind("GetLength(")) << Source;
+  EXPECT_EQ(Body.find("= GetLength("), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("GetLength("), Body.rfind("GetLength(")) << Source;
 }
 
 TEST(LLVMCPointerAddresses, ConstructorThenDestructorPrintsBeforeCleanup) {
@@ -2571,18 +2600,18 @@ TEST(LLVMCPointerAddresses, ConstructorThenDestructorPrintsBeforeCleanup) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
-  const auto IconAt = Source.find("GetDisplayIcon(");
-  const auto LenAt = Source.find("GetLength(");
-  const auto DtorAt = Source.find("CStringT_dtor(");
+  const std::string Body = sourceFunctionDefinition(Source, "order_cleanup");
+  const auto IconAt = Body.find("GetDisplayIcon(");
+  const auto LenAt = Body.find("GetLength(");
+  const auto DtorAt = Body.find("CStringT_dtor(");
   ASSERT_NE(IconAt, std::string::npos) << Source;
   ASSERT_NE(LenAt, std::string::npos) << Source;
   ASSERT_NE(DtorAt, std::string::npos) << Source;
   EXPECT_LT(IconAt, DtorAt) << Source;
   EXPECT_LT(LenAt, DtorAt) << Source;
-  EXPECT_EQ(Source.find("GetDisplayIcon(", DtorAt), std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("GetLength(", DtorAt), std::string::npos) << Source;
-  EXPECT_NE(Source.find("if (", DtorAt), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("GetDisplayIcon(", DtorAt), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("GetLength(", DtorAt), std::string::npos) << Source;
+  EXPECT_NE(Body.find("if (", DtorAt), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, UnrelatedDestructorKeepsSingleUseCallOrder) {
@@ -2625,11 +2654,13 @@ TEST(LLVMCPointerAddresses, UnrelatedDestructorKeepsSingleUseCallOrder) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
+  const std::string Body =
+      sourceFunctionDefinition(Source, "unrelated_cleanup");
   // Different pointer arguments do not prove these external calls have
   // disjoint global effects or cannot throw. Keep their original order.
-  const auto LengthAt = Source.find("= GetLength(");
-  const auto DtorAt = Source.find("CStringT_dtor(");
-  const auto IfAt = Source.find("if (");
+  const auto LengthAt = Body.find("= GetLength(");
+  const auto DtorAt = Body.find("CStringT_dtor(");
+  const auto IfAt = Body.find("if (");
   ASSERT_NE(LengthAt, std::string::npos) << Source;
   ASSERT_NE(DtorAt, std::string::npos) << Source;
   ASSERT_NE(IfAt, std::string::npos) << Source;
@@ -2911,8 +2942,9 @@ TEST(LLVMCPointerAddresses, InvokeCallIsNotInlined) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("= GetLength("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("GetLength("), Source.rfind("GetLength(")) << Source;
+  const std::string Body = sourceFunctionDefinition(Source, "invoke_len");
+  EXPECT_NE(Body.find("= GetLength("), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("GetLength("), Body.rfind("GetLength(")) << Source;
 }
 
 TEST(LLVMCPointerAddresses, FieldIncrementPrintsPlusEquals) {
@@ -37052,7 +37084,8 @@ static void format_args(void *input) {
   memcpy(&captured_types, input, sizeof(captured_types));
   memcpy(&captured_values, (char *)input + 8, sizeof(captured_values));
 }
-)" + Source + R"(
+)" + sourceFunctionDefinition(Source, "pack_mixed_calls") +
+                                       R"(
 int main(void) {
   uint64_t object = 0;
   const uint32_t lengths[] = {0, 7, UINT32_C(0x80000001), UINT32_MAX};
@@ -37724,13 +37757,15 @@ TEST(LLVMCPointerAddresses, LeftoverEaxNarrowStoreThenWideCopyTakesCallResult) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("var_m18.types_"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("var_m18 = pAuxData"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("pAuxData.types_"), std::string::npos) << Source;
+  const std::string Body =
+      sourceFunctionDefinition(Source, "leftover_eax_copy");
+  EXPECT_NE(Body.find("var_m18.types_"), std::string::npos) << Source;
+  EXPECT_NE(Body.find("GetPeriodID"), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("var_m18 = pAuxData"), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("pAuxData.types_"), std::string::npos) << Source;
   unsigned PeriodCalls = 0;
-  for (size_t At = 0;
-       (At = Source.find("GetPeriodID(", At)) != std::string::npos; At += 1)
+  for (size_t At = 0; (At = Body.find("GetPeriodID(", At)) != std::string::npos;
+       At += 1)
     ++PeriodCalls;
   EXPECT_EQ(PeriodCalls, 1u) << Source;
 }
@@ -37854,12 +37889,13 @@ TEST(LLVMCPointerAddresses, DistantArgListCopyOfNarrowCallPrintsTypes) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("var_m50.types_"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("var_m50 = var_mC8"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("var_mC8.types_"), std::string::npos) << Source;
+  const std::string Body = sourceFunctionDefinition(Source, "adjustment_level");
+  EXPECT_NE(Body.find("var_m50.types_"), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("var_m50 = var_mC8"), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("var_mC8.types_"), std::string::npos) << Source;
   unsigned Calls = 0;
   for (size_t At = 0;
-       (At = Source.find("GetAdjustmentLevel(", At)) != std::string::npos;
+       (At = Body.find("GetAdjustmentLevel(", At)) != std::string::npos;
        At += 1)
     ++Calls;
   EXPECT_EQ(Calls, 1u) << Source;
@@ -39460,9 +39496,17 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeHasSingleWin64Arg) {
   EXPECT_EQ(Source.find("*(uint64_t*)0"), std::string::npos) << Source;
 }
 
-// The lifter models image loads as volatile. Preserve that observable read
-// even for .rdata, then pass the captured SSA value to the exception call.
+// A load certified immutable by MedIR can fold to its exact exception code.
+// Otherwise the LLVM projection must preserve its captured volatile value.
 void expectCapturedSehExceptionCode(const std::string &Source) {
+  const auto Folded = lastCallArguments(
+      sourceLineContaining(Source, "    RaiseException("), "RaiseException");
+  if (Folded && Folded->size() == 4 &&
+      ((*Folded)[0] == "3762425857" || (*Folded)[0] == "0xE0421001")) {
+    for (size_t I = 1; I < Folded->size(); ++I)
+      EXPECT_EQ(llvm::StringRef((*Folded)[I]).trim(), "0") << Source;
+    return;
+  }
   const size_t DeclAt = Source.find("extern uint32_t dword_140003260;");
   const size_t LoadAt =
       Source.find(" = *((uint32_t volatile*)(&dword_140003260));");
@@ -39535,7 +39579,7 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   const std::string Source = llvmcOnlyFunction(std::move(*Img), 0x140001050);
   ASSERT_FALSE(Source.empty()) << Source;
   const auto ExceptAt =
-      Source.find("} __except (sub_1400024E0(GetExceptionInformation())) {");
+      Source.find("} __except (sub_1400024E0(GetExceptionInformation(), ");
   const auto HandlerAt = Source.find("L_bb_4:");
   EXPECT_NE(ExceptAt, std::string::npos) << Source;
   EXPECT_NE(HandlerAt, std::string::npos) << Source;
@@ -39593,38 +39637,72 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   ASSERT_TRUE(static_cast<bool>(FoundCompiler)) << "clang is required";
   const std::string Compiler = *FoundCompiler;
 #endif
-  llvm::SmallString<128> SourcePath, ErrorPath;
+  llvm::SmallString<128> SourcePath, ErrorPath, IRPath;
   ASSERT_FALSE(
       llvm::sys::fs::createTemporaryFile("neverd-seh-join", "c", SourcePath));
   llvm::FileRemover RemoveSource(SourcePath);
   ASSERT_FALSE(
       llvm::sys::fs::createTemporaryFile("neverd-seh-join", "err", ErrorPath));
   llvm::FileRemover RemoveError(ErrorPath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-seh-join", "ll", IRPath));
+  llvm::FileRemover RemoveIR(IRPath);
   std::error_code EC;
   {
     llvm::raw_fd_ostream File(SourcePath, EC);
     ASSERT_FALSE(EC) << EC.message();
     File << "#include <stdint.h>\n"
-            "extern void RaiseException(uint32_t, uint32_t, uint32_t, "
-            "uint32_t);\n"
-            "extern int sub_1400024E0(void *);\n"
+            "extern void RaiseException(uint32_t, uint32_t, uint32_t, const "
+            "uintptr_t *);\n"
             "extern void *GetExceptionInformation(void);\n"
          << Source;
   }
   llvm::SmallVector<llvm::StringRef, 8> Arguments{
-      Compiler,          "--target=x86_64-pc-windows-msvc",
-      "-fms-extensions", "-std=c11",
-      "-fsyntax-only",   "-Werror=uninitialized",
-      SourcePath};
+      Compiler,
+      "--target=x86_64-pc-windows-msvc",
+      "-fms-extensions",
+      "-std=c11",
+      "-S",
+      "-emit-llvm",
+      "-Werror=uninitialized",
+      SourcePath,
+      "-o",
+      IRPath};
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
   std::string Error;
   const int CompileStatus = llvm::sys::ExecuteAndWait(
       Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
   auto ErrorBuffer = llvm::MemoryBuffer::getFile(ErrorPath);
-  EXPECT_EQ(CompileStatus, 0)
+  ASSERT_EQ(CompileStatus, 0)
       << Error << (ErrorBuffer ? (*ErrorBuffer)->getBuffer().str() : "") << "\n"
       << Source;
+
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Recompiled = llvm::parseIRFile(IRPath, Diagnostic, Context);
+  ASSERT_NE(Recompiled, nullptr) << Diagnostic.getMessage().str();
+  unsigned ParentFrameCaptures = 0, FilterCalls = 0;
+  for (const auto &Function : *Recompiled)
+    for (const auto &Block : Function)
+      for (const auto &Inst : Block) {
+        const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst);
+        const auto *Callee = Call ? Call->getCalledFunction() : nullptr;
+        if (!Callee)
+          continue;
+        if (Callee->getIntrinsicID() == llvm::Intrinsic::localaddress) {
+          ++ParentFrameCaptures;
+          EXPECT_EQ(Function.getName(), "sub_140001050");
+        }
+        if (Callee->getName() == "sub_1400024E0") {
+          ++FilterCalls;
+          ASSERT_EQ(Call->arg_size(), 2u);
+          EXPECT_TRUE(llvm::isa<llvm::LoadInst>(Call->getArgOperand(1)))
+              << "the outlined filter must recover the parent's captured frame";
+        }
+      }
+  EXPECT_EQ(ParentFrameCaptures, 1u);
+  EXPECT_EQ(FilterCalls, 1u);
 
   auto OptImg = loadBinary(Path, FuncOpts);
   ASSERT_TRUE(static_cast<bool>(OptImg)) << llvm::toString(OptImg.takeError());
@@ -39819,9 +39897,8 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies) {
     EXPECT_NE(Source.find("stos_count"), std::string::npos) << Source;
     EXPECT_NE(Source.find("__asm__(\"llvm.localaddress\")"), std::string::npos)
         << Source;
-    // --func output intentionally omits other function bodies/declarations.
-    // Supply only those external prototypes; every local must still be declared
-    // and initialized by the emitter, and all integer address operations typed.
+    // Function selection retains the emitter's exact dependency declarations.
+    // Supply only the source-level compiler builtin declaration.
     auto Compiler = llvm::sys::findProgramByName("clang");
     ASSERT_TRUE(static_cast<bool>(Compiler)) << "clang is required";
     llvm::SmallString<128> Input, Errors;
@@ -39837,8 +39914,6 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies) {
       OS << "#include <stdint.h>\n"
             "void RaiseException(uint32_t, uint32_t, uint32_t, const uintptr_t "
             "*);\n"
-            "void sub_140002501(unsigned char, void *);\n"
-            "int sub_140002539(void *);\n"
             "void *GetExceptionInformation(void);\n"
          << Source;
     }
@@ -40282,8 +40357,6 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   EXPECT_NE(GlobalStore.find(JoinedAddress), std::string_view::npos) << Source;
   const auto Return = sourceLineContaining(HandlerText, "return ");
   ASSERT_FALSE(Return.empty()) << Source;
-  EXPECT_NE(Return.find("return (uint32_t)("), std::string_view::npos)
-      << Source;
   EXPECT_NE(Return.find(") + 1;"), std::string_view::npos) << Source;
   EXPECT_NE(Return.find("__builtin_memcpy(&"), std::string_view::npos)
       << Source;
@@ -40310,7 +40383,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   const std::string GlobalName((*GlobalArgs)[0].substr(1));
   EXPECT_EQ(
       llvm::StringRef(sourceLineContaining(Source, ReturnName + ";")).trim(),
-      "int32_t " + ReturnName + ";")
+      "uint32_t " + ReturnName + ";")
       << Source;
   EXPECT_EQ(
       llvm::StringRef(sourceLineContaining(Source, GlobalName + ";")).trim(),
@@ -40319,9 +40392,9 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   compileAndRunSehContinuation(
       "uint8_t *frame = frameStorage;\nmemset(frame, 0xa5, 64);\n"
       "const uintptr_t frame_base = (uintptr_t)(frame + 32);\n"
-      "memcpy(frame, &bits, 4);\nint32_t " +
-          ReturnName + ", " + GlobalName + ";\n" + std::string(GlobalStore) +
-          "\n" + std::string(Return),
+      "memcpy(frame, &bits, 4);\nuint32_t " +
+          ReturnName + ";\nint32_t " + GlobalName + ";\n" +
+          std::string(GlobalStore) + "\n" + std::string(Return),
       "dword_4040C8", /*Portable=*/true);
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;

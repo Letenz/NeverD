@@ -37,7 +37,9 @@ neverd unpack packed.exe -o unpacked.exe \
 
 `runtime_state.encoded_pointer_inventory_known` 表示进程配置是否提供已观察到的指针编码值。`possible_encoded_pointers` 统计捕获映像和主线程 TLS 中完全相等的指针宽度值，包括未对齐存储；`encoded_pointer_references` 保留前 64 个位置的 `storage`、`offset`、`rva` 和 `value`。Windows 从已完成的 `EncodePointer`/`RtlEncodePointer` 返回值和 `DecodePointer`/`RtlDecodePointer` 输入收集编码值。缺少清单或存在匹配时返回 `unsupported_state`；显式快照保留诊断。匹配也可能是整数或未使用数据，不能据此授权重新编码。捕获前已清除的值、仅在捕获后生成的编码不会触发该拒绝。清单不覆盖自定义编码、部分或变换后的值、寄存器、栈状态及未到达路径。
 
-`runtime_state.dynamic_thread_local_inventory_known` 表示进程配置是否提供捕获时的动态线程／纤程局部槽位状态。`live_dynamic_tls_slots` 和 `live_dynamic_fls_slots` 与 PE 静态 TLS 分开计数：已分配槽位即使值为零也计入；没有分配记录的非零 TLS 单元也计入。清单未知或仍有槽位状态时返回 `unsupported_state`，显式快照保留计数与诊断。捕获前已释放的槽位、已清零且未分配的 TLS 单元，以及捕获后才创建的状态不会触发该拒绝。计数不重建槽位所有权、值或回调，也不证明其他线程或纤程的状态。 `FlsFree` 在释放当前纤程槽位前，通过来宾 ABI 执行非零值对应的已注册清理回调。回调可调用已建模 API 并释放其他 FLS 槽位；递归释放同一活动槽位会以 `unsupported_service` 停止。 入口正常返回与 `ExitProcess` 也会在 DLL／TLS 进程分离通知前执行当前纤程剩余的清理回调。每个回调完成后清零纤程值并保留已分配索引；清理中新分配的后续槽位也纳入同一次有界退出。 退出清理中的加载器操作仍明确不受支持，不会把普通加载／卸载语义套用于进程终止。
+`runtime_state.dynamic_thread_local_inventory_known` 表示进程配置是否提供捕获时的动态线程／纤程局部槽位状态。`live_dynamic_tls_slots` 和 `live_dynamic_fls_slots` 与 PE 静态 TLS 分开计数：已分配槽位即使值为零也计入；没有分配记录的非零 TLS 单元也计入。清单未知或仍有槽位状态时返回 `unsupported_state`，显式快照保留计数与诊断。捕获前已释放的槽位、已清零且未分配的 TLS 单元，以及捕获后才创建的状态不会触发该拒绝。计数不重建槽位所有权、值或回调，也不证明其他线程或纤程的状态。
+
+对于当前纤程，`FlsFree` 先清零非零槽值，再通过来宾 ABI 调用已注册的回调。如果回调再次写入非零值，就用新值重复清理，直到可以释放索引。回调可以调用已建模 API 并释放其他槽位；递归释放同一活动槽位会以 `unsupported_service` 停止。入口正常返回与 `ExitProcess` 会在 DLL／TLS 进程分离通知前执行剩余回调。退出清理固定使用开始时的历史分配上界：范围内尚未遍历的索引可以被初始化或复用，更高的新分配不会扩大本次扫描。退出回调可以读取原值；完成后清除其写入并保留已分配索引。所有回调共享进程执行预算。退出清理中的加载器操作仍明确不受支持。
 
 `--options='{"snapshot_only":true}'` 显式请求分析字节。接受入口且重建成功后，结果始终为 `snapshot`，运行时状态诊断仍会保留。该选项不会恢复堆数据、推断重定位、证明原生运行成功或反虚拟化。堆引用数量为零也不能证明其他 OS 状态或未执行路径正确。
 
@@ -104,3 +106,5 @@ neverd unpack packed.exe -o unpacked.exe \
 
 
 `WrappedEntriesRequireExplicitTransferEvidence` 覆盖 DLL 包装器通过更深的栈调用恢复入口。默认结果仍为 `no_entry`；通过 `transfer` 选择该已观察调用后，可重建可加载 DLL。仅凭深层调用无法区分入口与初始化器。
+
+恢复的 DLL 入口与原始 PE 入口不同时，写入器生成加载器通知适配器：进程附加进入选定入口，卸载和线程通知进入原始的可执行入口，以保留外层包装函数的清理。原始入口不可用时重建失败。报告的 `entry_rva` 仍表示选定的程序入口，PE 头可以指向适配器。独立包装 DLL 测试在两种仿真架构和原生 Windows 上检查选定函数之外的清理。

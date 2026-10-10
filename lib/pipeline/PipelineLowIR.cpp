@@ -20,6 +20,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/InternalNoReturn.h"
+#include "neverd/ir/low/LowUndefinedEffects.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
@@ -35,6 +36,7 @@
 #include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -474,6 +476,7 @@ struct LocalUnwindContinuationEvidence {
   std::vector<std::set<va_t>> TargetsByFunction;
   std::vector<bool> CompleteByFunction;
   std::vector<bool> SawCallByFunction;
+  std::vector<std::vector<LowSEHLocalUnwindEvidence>> SameFrameCallsByFunction;
 };
 
 enum class ModuleAddressEdgeTraversal : uint8_t {
@@ -496,6 +499,116 @@ struct ModuleEvidenceBudget {
     return true;
   }
 };
+
+/// The module address lattice retains may-dependencies through escaped frame
+/// cells. They are not a must-value memory proof. Independently check the two
+/// pointer values at this call: only exact full-width copies and arithmetic,
+/// and private spills since the last opaque call/store, can carry current SP.
+bool localUnwindUsesCurrentSP(const LowBlock &Block, size_t End,
+                              const TargetRegInfo &TRI,
+                              ModuleEvidenceBudget &Budget) {
+  std::map<LowValueKey, int64_t> Values;
+  std::map<int64_t, int64_t> Spills;
+  const NdVar SP = NdVar::reg(TRI.StackPointer, 8);
+  Values[{SP.Space, SP.Offset, SP.Size}] = 0;
+  auto Get = [&](const NdVar &V) -> std::optional<int64_t> {
+    if (V.Size != 8 || (!V.isReg() && !V.isTemp()))
+      return std::nullopt;
+    auto It = Values.find({V.Space, V.Offset, V.Size});
+    return It == Values.end() ? std::nullopt
+                              : std::optional<int64_t>{It->second};
+  };
+  va_t Instruction = InvalidVA;
+  for (size_t I = 0; I < End; ++I) {
+    if (!Budget.consume())
+      return false;
+    const LowOp &Op = Block.Ops[I];
+    if (Op.NumInputs > std::size(Op.Inputs) ||
+        Op.MemoryOrdering != NdMemoryOrdering::None ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        (Op.Output.Size && ((!Op.Output.isReg() && !Op.Output.isTemp()) ||
+                            Op.Output.Offset > UINT64_MAX - Op.Output.Size)))
+      return false;
+    if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR ||
+        Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::RETURN)
+      return false;
+    if (Op.Addr != Instruction) {
+      std::erase_if(Values, [](const auto &V) {
+        return std::get<0>(V.first) == VnodeSpace::TEMP;
+      });
+      Instruction = Op.Addr;
+    }
+    if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+        Op.Opcode == NdOp::INTRINSIC) {
+      // Even a pointer to a neighbouring local could give an opaque callee
+      // access to a saved SP. Do not infer the pointee extent from its width.
+      Spills.clear();
+      const auto CurrentSP = Get(SP);
+      Values.clear();
+      if (CurrentSP && Op.Opcode != NdOp::INTRINSIC && Op.Output != SP)
+        Values[{SP.Space, SP.Offset, SP.Size}] = *CurrentSP;
+      continue;
+    }
+    if (Op.Opcode == NdOp::STORE) {
+      if (Op.NumInputs != 2) {
+        Spills.clear();
+        continue;
+      }
+      const auto Address = Get(Op.Inputs[0]);
+      const auto Value = Get(Op.Inputs[1]);
+      int64_t StoreEnd = 0;
+      if (!Address || !Op.Inputs[1].Size ||
+          llvm::AddOverflow(*Address, int64_t{Op.Inputs[1].Size}, StoreEnd)) {
+        Spills.clear();
+        continue;
+      }
+      std::erase_if(Spills, [&](const auto &S) {
+        int64_t End = 0;
+        return llvm::AddOverflow(S.first, int64_t{8}, End) ||
+               (*Address < End && S.first < StoreEnd);
+      });
+      if (Value && Op.Inputs[1].Size == 8)
+        Spills[*Address] = *Value;
+      continue;
+    }
+    std::optional<int64_t> Value;
+    if (Op.Output.Size == 8 && Op.NumInputs == 1 && Op.Opcode == NdOp::COPY)
+      Value = Get(Op.Inputs[0]);
+    else if (Op.Output.Size == 8 && Op.NumInputs == 2 &&
+             (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
+             Op.Inputs[1].isConst() && Op.Inputs[1].Size == 8) {
+      if (auto Base = Get(Op.Inputs[0])) {
+        const int64_t Delta = static_cast<int64_t>(Op.Inputs[1].Offset);
+        int64_t Sum = 0;
+        const bool Overflow = Op.Opcode == NdOp::INT_ADD
+                                  ? llvm::AddOverflow(*Base, Delta, Sum)
+                                  : llvm::SubOverflow(*Base, Delta, Sum);
+        if (!Overflow)
+          Value = Sum;
+      }
+    } else if (Op.Output.Size == 8 && Op.NumInputs == 1 &&
+               Op.Opcode == NdOp::LOAD) {
+      if (auto Address = Get(Op.Inputs[0]))
+        if (auto It = Spills.find(*Address); It != Spills.end())
+          Value = It->second;
+    }
+    if (!Op.Output.Size)
+      continue;
+    // Partial definitions invalidate the entire identity, including a wider
+    // register subsequently re-read after a byte/word write.
+    std::erase_if(Values, [&](const auto &V) {
+      const auto &[Space, Offset, Size] = V.first;
+      return Space == Op.Output.Space &&
+             Offset < Op.Output.Offset + Op.Output.Size &&
+             Op.Output.Offset < Offset + Size;
+    });
+    if (Value)
+      Values[{Op.Output.Space, Op.Output.Offset, Op.Output.Size}] = *Value;
+  }
+  const auto CurrentSP = Get(SP);
+  const auto Frame = Get(NdVar::reg(TRI.Win64ParamRegs.front(), 8));
+  return CurrentSP && Frame && *CurrentSP == *Frame;
+}
 
 LowValueKey lowValueKey(const NdVar &Value) {
   return {Value.Space, Value.Offset, Value.Size};
@@ -606,6 +719,7 @@ bool collectLowAddressUses(
     LocalUnwind->TargetsByFunction.assign(Funcs.size(), {});
     LocalUnwind->CompleteByFunction.assign(Funcs.size(), true);
     LocalUnwind->SawCallByFunction.assign(Funcs.size(), false);
+    LocalUnwind->SameFrameCallsByFunction.assign(Funcs.size(), {});
   }
 
   std::map<va_t, std::vector<const ModuleJumpTableOwner *>> OwnersByContainer;
@@ -1525,8 +1639,32 @@ bool collectLowAddressUses(
                         Continuation.ExactValues.begin()->Address;
                     if (AdditionalExactRoots->count(Target) == 0)
                       LocalUnwind->CompleteByFunction[FuncIndex] = false;
-                    else
+                    else {
                       LocalUnwind->TargetsByFunction[FuncIndex].insert(Target);
+                      const auto Frame = factsFor(
+                          NdVar::reg(TRI.Win64ParamRegs[0], TRI.PointerSize));
+                      const auto SP = factsFor(
+                          NdVar::reg(TRI.StackPointer, TRI.PointerSize));
+                      const llvm::StringRef Module = Imported->Module;
+                      const bool KnownRuntime =
+                          Module.equals_insensitive("vcruntime140.dll") ||
+                          Module.equals_insensitive("vcruntime140d.dll") ||
+                          Module.equals_insensitive("msvcrt.dll") ||
+                          Module.equals_insensitive("msvcrtd.dll");
+                      if (KnownRuntime && Frame.isPrivateFrameOnly() &&
+                          SP.isPrivateFrameOnly() &&
+                          Frame.FrameOffsets == SP.FrameOffsets &&
+                          localUnwindUsesCurrentSP(Block, OpIndex, TRI,
+                                                   Budget) &&
+                          Budget.consume(OpIndex + 1))
+                        LocalUnwind->SameFrameCallsByFunction[FuncIndex]
+                            .push_back(
+                                {Target, Op.Addr, Op.Seq, CalleeVA,
+                                 *Frame.FrameOffsets.begin(),
+                                 lowUndefinedOperationDigest(
+                                     llvm::ArrayRef(Block.Ops).take_front(
+                                         OpIndex + 1))});
+                    }
                   }
                 }
               }
@@ -2081,6 +2219,7 @@ bool collectLowAddressUses(
 struct EHContinuationRootDiscovery {
   std::map<va_t, std::set<va_t>> RootsByOwner;
   std::map<va_t, std::vector<LowCxxContinuationEntryEvidence>> EntriesByOwner;
+  std::map<va_t, std::vector<LowSEHLocalUnwindEvidence>> LocalUnwindsByOwner;
   std::vector<std::vector<LowCxxContinuationExitEvidence>>
       CxxContinuationExitsByFunction;
   std::vector<bool> CxxContinuationExitAnalysisCompleteByFunction;
@@ -2096,7 +2235,8 @@ struct EHContinuationRootDiscovery {
 /// discarded and recomputed after module arbitration.
 EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
     const BinaryImage &Img, const std::vector<LowFunc> &Funcs,
-    const std::set<va_t> &FunctionEntries, std::optional<size_t> TestBudget) {
+    const std::set<va_t> &FunctionEntries, std::optional<size_t> TestBudget,
+    bool CompleteModule = true) {
   EHContinuationRootDiscovery Result;
   Result.CxxContinuationExitsByFunction.assign(Funcs.size(), {});
   Result.CxxContinuationExitAnalysisCompleteByFunction.assign(Funcs.size(),
@@ -2211,6 +2351,76 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
                              &LocalUnwind)) {
     Result.AnalysisComplete = false;
     return Result;
+  }
+
+  // A same-function unwind target is not an independent machine entry merely
+  // because LEA takes its address. Certify every observable use before giving
+  // it that narrower role. Relocation-backed pointers, foreign uses, widened
+  // values, and calls with a different/unknown frame retain the ordinary role.
+  const detail::AbsoluteRelocationRootIndex RelocationRoots(Img);
+  std::set<va_t> InspectedEntries;
+  for (const LowFunc &F : Funcs) {
+    CompleteModule &= !F.Blocks.empty() && F.hasCompleteLiftCoverage();
+    InspectedEntries.insert(F.Entry);
+  }
+  for (va_t Entry : FunctionEntries)
+    if (!InspectedEntries.count(Entry) && !Img.findImportStubAt(Entry))
+      CompleteModule = false;
+  for (size_t I = 0; CompleteModule && I < Funcs.size(); ++I) {
+    const LowFunc &F = Funcs[I];
+    if (!F.ExceptionMetadata || !F.ExceptionMetadata->SEH ||
+        !LocalUnwind.CompleteByFunction[I])
+      continue;
+    const auto &EH = *F.ExceptionMetadata;
+    std::map<va_t, std::set<va_t>> RelocationSources;
+    if (!RelocationRoots.collectSources(Img, EH.CodeRange.Begin,
+                                        EH.CodeRange.End, RelocationSources))
+      continue;
+    std::map<va_t, std::vector<LowSEHLocalUnwindEvidence>> Candidates;
+    for (const auto &Call : LocalUnwind.SameFrameCallsByFunction[I])
+      if (Call.Target != F.Entry && EH.ownsCode(Call.Target) &&
+          !isFunctionEntry(Call.Target) &&
+          !RelocationSources.count(Call.Target))
+        Candidates[Call.Target].push_back(Call);
+    for (const auto &[Target, Calls] : Candidates) {
+      const Section *Section = Img.getSectionFor(Target);
+      const Segment *Segment = Img.getSegmentFor(Target);
+      const va_t Container = Section   ? Section->VA
+                             : Segment ? Segment->VA
+                                       : InvalidVA;
+      bool Exclusive = true;
+      for (const auto &Use : IgnoredUses) {
+        if (!Budget.consume()) {
+          Result.AnalysisComplete = false;
+          Result.LocalUnwindsByOwner.clear();
+          return Result;
+        }
+        const bool Exact = llvm::any_of(Use.ExactAddresses, [&](const auto &A) {
+          return A.Address == Target;
+        });
+        const bool May = llvm::any_of(Use.RootScopes, [&](const auto &Root) {
+          return Root.OwnerKind == ModuleAddressOwnerKind::Unknown ||
+                 Root.OwnerVA == Container;
+        });
+        if (!Exact && !May)
+          continue;
+        // The generic call-use summary includes unspecified registers and
+        // frame contents. This exact runtime ABI consumes only the two
+        // arguments independently certified above, including an exact target.
+        if (Use.FuncIndex != I ||
+            Use.UseKind != ModuleAddressUse::Kind::PointerEscape ||
+            !llvm::any_of(Calls, [&](const auto &Call) {
+              return Use.Addr == Call.CallAddr && Use.Seq == Call.CallSeq;
+            })) {
+          Exclusive = false;
+          break;
+        }
+      }
+      if (Exclusive)
+        Result.LocalUnwindsByOwner[F.Entry].insert(
+            Result.LocalUnwindsByOwner[F.Entry].end(), Calls.begin(),
+            Calls.end());
+    }
   }
 
   for (size_t FuncIndex = 0; FuncIndex < Funcs.size(); ++FuncIndex) {
@@ -2822,10 +3032,12 @@ ReturnedCodeEvidenceTestResult collectReturnedCodeEvidenceForTesting(
 
 WindowsEHContinuationRootTestResult collectWindowsEHContinuationRootsForTesting(
     const BinaryImage &Img, const std::vector<LowFunc> &Funcs,
-    const std::set<va_t> &FunctionEntries, std::optional<size_t> TestBudget) {
+    const std::set<va_t> &FunctionEntries, std::optional<size_t> TestBudget,
+    bool CompleteModule) {
   EHContinuationRootDiscovery Result = collectWindowsEHContinuationRoots(
-      Img, Funcs, FunctionEntries, TestBudget);
-  return {std::move(Result.RootsByOwner), Result.AnalysisComplete};
+      Img, Funcs, FunctionEntries, TestBudget, CompleteModule);
+  return {std::move(Result.RootsByOwner), std::move(Result.LocalUnwindsByOwner),
+          Result.AnalysisComplete};
 }
 
 } // namespace pipeline_detail
@@ -3088,42 +3300,81 @@ void computeCallRegisterEffects(
     Depth[LF.Entry] = 0;
     Work.push_back(LF.Entry);
   }
-  Decoder ExtraDec;
-  if (!ExtraDec.init(Img.Arch, Img.Mode))
-    return;
-  ExtraDec.configureFor(Img);
-  CFGBuilder ExtraCFG;
-  ExtraCFG.setKnownFuncEntries(&FuncEntries);
-  ExtraCFG.setNoReturnTargetIndex(&NoReturnTargets);
-  ExtraCFG.setNoReturnCalleeProver(&NoReturnCallees);
-  ExtraCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
-  ExtraCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
   size_t ExtraLifts = 0;
-  // Walk callees breadth-first. A direct callee's summary needs its own
-  // callees, so the lift budget goes to shallow callees before one deep chain
-  // exhausts it and leaves a pass-through argument unsummarized.
-  for (size_t Next = 0; Next < Work.size(); ++Next) {
-    const va_t Caller = Work[Next];
-    const int CalleeDepth = Depth[Caller] + 1;
-    std::set<va_t> Callees = Effects[Caller].Callees;
-    Callees.insert(Effects[Caller].NoReturnCallees.begin(),
-                   Effects[Caller].NoReturnCallees.end());
-    for (va_t Callee : Callees) {
-      if (Effects.count(Callee) ||
-          CalleeDepth > limits::kMaxCallEffectCalleeDepth ||
-          ExtraLifts >= limits::kMaxCallEffectExtraLifts ||
-          !Img.hasExecutableCodeOwnerAt(Callee))
-        continue;
-      ++ExtraLifts;
-      LowFunc Body =
-          ExtraCFG.build(Img, ExtraDec, Callee, Img.getFunctionNameAt(Callee));
-      CollectFormattedCalls(Body, /*Converted=*/false);
-      Effects[Callee] =
-          localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads);
-      if (forwardsToGuardDispatch(Img, Body))
-        GuardForwarders.insert(Callee);
-      Depth[Callee] = CalleeDepth;
-      Work.push_back(Callee);
+  // Reserve callees one breadth-first frontier at a time in the original
+  // caller/address order. Discovery, budget admission and summary publication
+  // remain deterministic; only independent CFG builds run concurrently.
+  for (size_t Next = 0; Next < Work.size();) {
+    const size_t FrontierEnd = Work.size();
+    std::vector<std::pair<va_t, std::string>> Pending;
+    for (; Next < FrontierEnd; ++Next) {
+      const va_t Caller = Work[Next];
+      const int CalleeDepth = Depth[Caller] + 1;
+      std::set<va_t> Callees = Effects[Caller].Callees;
+      Callees.insert(Effects[Caller].NoReturnCallees.begin(),
+                     Effects[Caller].NoReturnCallees.end());
+      for (va_t Callee : Callees) {
+        if (Depth.count(Callee) ||
+            CalleeDepth > limits::kMaxCallEffectCalleeDepth ||
+            ExtraLifts >= limits::kMaxCallEffectExtraLifts ||
+            !Img.hasExecutableCodeOwnerAt(Callee))
+          continue;
+        ++ExtraLifts;
+        Depth[Callee] = CalleeDepth;
+        Pending.emplace_back(Callee, Img.getFunctionNameAt(Callee));
+      }
+    }
+    // Keep at most eight completed bodies and four active CFG builders alive.
+    // Tiny batches stay serial. Table/stack proofs can dominate bodies only
+    // a few KiB long, so medium batches can also use independent decoders.
+    constexpr size_t BatchSize = 8;
+    constexpr uint64_t MinParallelBytes = 4096;
+    for (size_t Begin = 0; Begin < Pending.size(); Begin += BatchSize) {
+      const size_t Count = std::min(BatchSize, Pending.size() - Begin);
+      std::vector<LowFunc> Bodies(Count);
+      std::vector<uint64_t> Weights(Count, 0);
+      std::atomic<bool> Initialized{true};
+      uint64_t Bytes = 0;
+      for (size_t I = 0; I < Count; ++I) {
+        const va_t Entry = Pending[Begin + I].first;
+        const va_t End = Img.getFunctionMetadataEnd(Entry, CodeOwnerIndex);
+        if (End != InvalidVA && End > Entry)
+          Weights[I] = std::min<uint64_t>(End - Entry, 1u << 20);
+        Bytes += Weights[I];
+      }
+      parallelForEachWeighted(
+          Weights,
+          [&](auto Claim, size_t N) {
+            Decoder ExtraDec;
+            if (!ExtraDec.init(Img)) {
+              Initialized.store(false, std::memory_order_relaxed);
+              return;
+            }
+            CFGBuilder ExtraCFG;
+            ExtraCFG.setKnownFuncEntries(&FuncEntries);
+            ExtraCFG.setNoReturnTargetIndex(&NoReturnTargets);
+            ExtraCFG.setNoReturnCalleeProver(&NoReturnCallees);
+            ExtraCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
+            ExtraCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
+            for (size_t I; (I = Claim()) < N;) {
+              const auto &[Entry, Name] = Pending[Begin + I];
+              Bodies[I] = ExtraCFG.build(Img, ExtraDec, Entry, Name);
+            }
+          },
+          Bytes >= MinParallelBytes ? 2 : limits::kMinParallelIRWorkItems,
+          /*MaxThreads=*/4);
+      if (!Initialized.load(std::memory_order_relaxed))
+        return;
+      for (size_t I = 0; I < Count; ++I) {
+        const va_t Callee = Pending[Begin + I].first;
+        const LowFunc &Body = Bodies[I];
+        CollectFormattedCalls(Body, /*Converted=*/false);
+        Effects[Callee] =
+            localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads);
+        if (forwardsToGuardDispatch(Img, Body))
+          GuardForwarders.insert(Callee);
+        Work.push_back(Callee);
+      }
     }
   }
   auto Family = [](uint64_t RegOff) {
@@ -3312,12 +3563,15 @@ void Pipeline::buildLowIR(
         Function.OrdinaryModuleAnalysisRoots;
   std::map<va_t, std::vector<LowCxxContinuationEntryEvidence>>
       StableCxxContinuationEntriesByOwner;
+  std::map<va_t, std::vector<LowSEHLocalUnwindEvidence>>
+      StableLocalUnwindsByOwner;
   std::vector<std::vector<LowCxxContinuationExitEvidence>>
       StableCxxContinuationExitsByFunction;
   std::vector<bool> StableCxxContinuationExitAnalysisCompleteByFunction;
   bool HasStableCxxContinuationExitSnapshot = false;
   auto clearStableCxxContinuationExitSnapshot = [&]() {
     StableCxxContinuationEntriesByOwner.clear();
+    StableLocalUnwindsByOwner.clear();
     StableCxxContinuationExitsByFunction.clear();
     StableCxxContinuationExitAnalysisCompleteByFunction.clear();
     HasStableCxxContinuationExitSnapshot = false;
@@ -3472,7 +3726,9 @@ void Pipeline::buildLowIR(
       EHContinuationRootDiscovery Discovered =
           collectWindowsEHContinuationRoots(
               Img, AllLow, FuncEntries,
-              Opts.EHContinuationEvidenceBudgetForTesting);
+              Opts.EHContinuationEvidenceBudgetForTesting,
+              Opts.OnlyFunctionEntries.empty() && !Opts.MaxFunctions &&
+                  Opts.FunctionEdits.empty());
       if (!Discovered.AnalysisComplete) {
         clearContinuationRoots();
         return false;
@@ -3495,6 +3751,7 @@ void Pipeline::buildLowIR(
             std::move(Discovered.CxxContinuationExitsByFunction);
         StableCxxContinuationEntriesByOwner =
             std::move(Discovered.EntriesByOwner);
+        StableLocalUnwindsByOwner = std::move(Discovered.LocalUnwindsByOwner);
         StableCxxContinuationExitAnalysisCompleteByFunction =
             std::move(Discovered.CxxContinuationExitAnalysisCompleteByFunction);
         HasStableCxxContinuationExitSnapshot = true;
@@ -3587,6 +3844,7 @@ void Pipeline::buildLowIR(
   for (LowFunc &Function : AllLow) {
     Function.CxxContinuationExits.clear();
     Function.CxxContinuationEntries.clear();
+    Function.SEHLocalUnwindContinuations.clear();
     Function.CxxContinuationExitAnalysisComplete = false;
   }
   if (ContinuationAndArbitrationStable &&
@@ -3594,6 +3852,9 @@ void Pipeline::buildLowIR(
       StableCxxContinuationExitsByFunction.size() == Total &&
       StableCxxContinuationExitAnalysisCompleteByFunction.size() == Total) {
     for (size_t I = 0; I < Total; ++I) {
+      if (auto Found = StableLocalUnwindsByOwner.find(AllLow[I].Entry);
+          Found != StableLocalUnwindsByOwner.end())
+        AllLow[I].SEHLocalUnwindContinuations = std::move(Found->second);
       if (auto Found =
               StableCxxContinuationEntriesByOwner.find(AllLow[I].Entry);
           Found != StableCxxContinuationEntriesByOwner.end())

@@ -199,8 +199,8 @@ public:
         Budget(Budget), Exceptions(Exceptions) {}
   llvm::Expected<ServiceOutcome> invoke(const Service &Service,
                                         const NativeCallEvent &Event);
-  llvm::Error complete(const FLSCleanup &Cleanup);
-  llvm::Expected<std::optional<FLSCleanup>> exitCleanup(uint32_t &Next);
+  llvm::Expected<bool> complete(FLSCleanup &Cleanup);
+  llvm::Expected<std::optional<FLSCleanup>> exitCleanup();
   std::vector<ProcessHeapAllocationView> heapAllocations() const;
   std::vector<uint64_t> encodedPointers() const {
     return {EncodedPointers.begin(), EncodedPointers.end()};
@@ -273,6 +273,11 @@ private:
     bool Cleaning = false;
   };
   std::map<uint32_t, FiberData> FLSData;
+  uint32_t FLSHighIndex = 0;
+  struct FiberExit {
+    uint32_t Next = 0, Limit;
+  };
+  std::optional<FiberExit> FLSExit;
   struct Allocation {
     uint64_t Size, MappedSize;
     bool EnvironmentSnapshot = false;

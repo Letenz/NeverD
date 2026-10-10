@@ -5,6 +5,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../lib/analysis/core/NativeUndefinedIndependence.h"
 #include "gtest/gtest.h"
 
 #include "neverd/analysis/BinaryInterpreterSpecialization.h"
@@ -75,6 +76,74 @@ Program repeatedNativeContexts() {
              0xd2, 0x74, 2,    0xeb, 0,    0xe3, 9,    0x48, 0x01,
              0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
   P.Options.ControlRegisters = {{x86reg::R10, 8}};
+  return P;
+}
+
+Program alternatingNativeContexts(bool Frame, bool Byte, bool Reverse,
+                                  bool MirrorFrame = false) {
+  Program P({});
+  auto &Code = P.Image.Segments.front();
+  const auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Code.Data.insert(Code.Data.end(), Bytes);
+  };
+  // The entry phase remains a function of an arbitrary input. Branching on
+  // it lets recovery specialize two contexts of the same native loop.
+  Emit({0x49, 0x89, 0xfa}); // mov r10,rdi
+  if (Byte)
+    Emit({0x41, 0x80, 0xe2, 1}); // and r10b,1
+  else
+    Emit({0x49, 0x83, 0xe2, 1}); // and r10,1
+  const auto Toggle = [&](bool InFrame) {
+    if (InFrame && Byte)
+      Emit({0x80, 0x74, 0x24, 0xfb, 1}); // xor byte [rsp-5],1
+    else if (InFrame)
+      Emit({0x48, 0x83, 0x74, 0x24, 0xf8, 1});
+    else if (Byte)
+      Emit({0x41, 0x80, 0xf2, 1}); // xor r10b,1
+    else
+      Emit({0x49, 0x83, 0xf2, 1}); // xor r10,1
+  };
+  if (Reverse)
+    Toggle(false);
+  Emit({0x45, 0x84, 0xd2, 0x74, 2, 0xeb, 0}); // test r10b,r10b; split
+  if (Frame) {
+    if (Byte)
+      Emit({0x44, 0x88, 0x54, 0x24, 0xfb});
+    else
+      Emit({0x4c, 0x89, 0x54, 0x24, 0xf8});
+    if (!MirrorFrame)
+      Emit({0x45, 0x31, 0xd2}); // Only the frame retains the phase.
+  }
+  Emit({0x39, 0xff}); // Normalize flags on every arrival.
+  const auto Header = Code.Data.size();
+  Emit({0xe3, 0}); // jrcxz done
+  Emit({0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff});
+  Toggle(Frame);
+  if (MirrorFrame)
+    Toggle(false);
+  Emit({0x39, 0xff});
+  const auto Backedge = Code.Data.size();
+  Emit({0xeb, static_cast<uint8_t>(Header - (Backedge + 2))});
+  Code.Data[Header + 1] = static_cast<uint8_t>(Code.Data.size() - (Header + 2));
+  Emit({0xc3});
+  Code.Size = Code.FileSz = Code.Data.size();
+  const uint16_t Width = Byte ? 1 : 8;
+  if (Frame)
+    P.Options.ControlFrameSlots = {{Byte ? -5 : -8, Width}};
+  if (!Frame || MirrorFrame)
+    P.Options.ControlRegisters = {{x86reg::R10, Width}};
+  P.Contract.ObserveWrittenFrameBytes = true;
+  return P;
+}
+
+Program repeatedNativeFrameContexts() {
+  // Only the frame separates two contexts after clearing the input register
+  // and normalizing arithmetic flags. The loop preserves each phase.
+  Program P({0x83, 0xe7, 1,    0x85, 0xff, 0x74, 11,   0x48, 0xc7, 0x44, 0x24,
+             0xf8, 1,    0,    0,    0,    0xeb, 9,    0x48, 0xc7, 0x44, 0x24,
+             0xf8, 0,    0,    0,    0,    0x31, 0xff, 0x39, 0xff, 0xe3, 9,
+             0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
+  P.Options.ControlFrameSlots = {{-8, 8}};
   return P;
 }
 
@@ -2034,15 +2103,334 @@ TEST(BinaryLowIRLoopInference, NativeSelectorsProveRepeatedContexts) {
   EXPECT_EQ(R.Refinement.Proof.LoopInitiations, 2U);
 }
 
+TEST(BinaryLowIRLoopInference,
+     NativeSelectorsGeneralizeAlternatingEntryPhases) {
+  for (bool Frame : {false, true})
+    for (bool Byte : {false, true})
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Frame << ":" << Byte << ":" << Reverse);
+        auto P = alternatingNativeContexts(Frame, Byte, Reverse);
+        const auto Recovery = P.recover();
+        ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+        const auto R = inferAndCheckBinaryLowIRLoopRefinement(
+            P.Image, Entry, P.Options, Recovery, P.Contract);
+        EXPECT_TRUE(R.Inference.inferred()) << R.Inference.Diagnostic;
+        EXPECT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
+        if (!R.proved())
+          continue;
+        EXPECT_GT(R.Refinement.Proof.LoopTransitions, 0U);
+        EXPECT_GT(R.Refinement.Proof.RankingChecks, 0U);
+        EXPECT_TRUE(
+            std::any_of(R.Inference.Plan->Cutpoints.begin(),
+                        R.Inference.Plan->Cutpoints.end(),
+                        [](const auto &C) { return C.GeneralizeEntryPrefix; }));
+        if (!Frame)
+          EXPECT_FALSE(
+              R.Inference.Plan->Cutpoints.front().OriginalGuards.empty());
+      }
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorsGeneralizeMirroredFramePhases) {
+  for (bool Byte : {false, true})
+    for (bool Reverse : {false, true}) {
+      SCOPED_TRACE(Byte);
+      SCOPED_TRACE(Reverse);
+      auto P = alternatingNativeContexts(true, Byte, Reverse, true);
+      const auto Recovery = P.recover();
+      ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+      const auto R = inferAndCheckBinaryLowIRLoopRefinement(
+          P.Image, Entry, P.Options, Recovery, P.Contract);
+      ASSERT_TRUE(R.Inference.inferred()) << R.Inference.Diagnostic;
+      ASSERT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
+      ASSERT_EQ(R.Inference.Plan->Cutpoints.size(), 1U);
+      const auto &C = R.Inference.Plan->Cutpoints.front();
+      EXPECT_TRUE(C.GeneralizeEntryPrefix);
+      EXPECT_TRUE(std::any_of(
+          C.OriginalGuards.begin(), C.OriginalGuards.end(), [](const auto &G) {
+            return G.Location.Space == LowIRLoopSpace::Frame;
+          }));
+    }
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorStateRetainsWholeOverlappingCut) {
+  auto P = repeatedNativeFrameContexts();
+  P.Contract.ObserveWrittenFrameBytes = true;
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Inferred = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(Inferred.proved()) << Inferred.Inference.Diagnostic << ": "
+                                 << Inferred.Refinement.Proof.Diagnostic;
+  ASSERT_EQ(Inferred.Inference.Plan->Cutpoints.size(), 2U);
+  const auto Check = [&](const LowIRLoopRefinementPlan &Plan) {
+    return checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                          Recovery.Residual, P.Contract, Plan);
+  };
+  // Compose the actual production builder with complete native proofs. These
+  // explicit plans isolate overlap policy from automatic widening choices.
+  for (unsigned Kind = 0; Kind != 3; ++Kind) {
+    SCOPED_TRACE(Kind);
+    auto Plan = *Inferred.Inference.Plan;
+    for (auto &C : Plan.Cutpoints) {
+      ASSERT_TRUE(C.UseEntryPrefix);
+      ASSERT_FALSE(C.GeneralizeEntryPrefix);
+      ASSERT_EQ(C.OriginalGuards.size(), 1U);
+      ASSERT_EQ(C.CandidateGuards.size(), 1U);
+      C.GeneralizeEntryPrefix = true;
+    }
+    auto &Overlap = Plan.Cutpoints.back();
+    const LowIRLoopLocation Byte{LowIRLoopSpace::Frame, uint64_t(-7), 1};
+    const auto Prefix = NdVar::tmp(0x100000, 1);
+    // This is a genuine original-prefix binding. The builder must preserve
+    // it; candidate-inference rebinding belongs to its separate caller.
+    Overlap.Inputs.push_back({LowIRLoopSide::OriginalPrefix, Byte, Prefix});
+    if (Kind == 2)
+      Overlap.OriginalGuards.push_back(Overlap.OriginalGuards.front());
+    else
+      (Kind == 0 ? Overlap.OriginalState : Overlap.CandidateState)
+          .push_back({Byte, Prefix});
+    const auto Before = Plan;
+    const auto Valid = Check(Before);
+    ASSERT_TRUE(Valid.proved()) << Valid.Proof.Diagnostic;
+
+    // Compute the required work from this fixture, independently of the
+    // builder's reported count: one metadata visit per cut, one visit plus
+    // every byte for all state/guard ranges (including the retained cut),
+    // then fresh-temporary scans and four appended records per disjoint guard.
+    uint64_t ExpectedWork = 17 + Before.Cutpoints.size();
+    for (const auto &C : Before.Cutpoints) {
+      for (const auto *State : {&C.OriginalState, &C.CandidateState})
+        for (const auto &A : *State)
+          ExpectedWork += 1 + A.Location.Bytes;
+      for (const auto *Guards : {&C.OriginalGuards, &C.CandidateGuards})
+        for (const auto &G : *Guards)
+          ExpectedWork += 1 + G.Location.Bytes;
+    }
+    const auto &Disjoint = Before.Cutpoints.front();
+    ExpectedWork +=
+        Disjoint.Inputs.size() + Disjoint.Expressions.size() +
+        4 * (Disjoint.OriginalGuards.size() + Disjoint.CandidateGuards.size());
+    struct WorkLimit {};
+    uint64_t Work = 0;
+    const auto Prepare = [&](uint64_t Limit) {
+      std::optional<LowIRLoopRefinementPlan> Proposed = Before;
+      Work = 17; // Work already consumed by the inference caller.
+      try {
+        const auto Failure = detail::proposeNativeLoopSelectorStates(
+            *Proposed, {}, [&](uint64_t Count) {
+              if (Count > Limit - Work)
+                throw WorkLimit{};
+              Work += Count;
+            });
+        EXPECT_FALSE(Failure);
+        if (Failure)
+          Proposed.reset();
+      } catch (const WorkLimit &) {
+        // Even if an earlier cut was appended, no partial plan is consumed.
+        Proposed.reset();
+      }
+      return Proposed;
+    };
+    const auto Proposed = Prepare(UINT64_MAX);
+    ASSERT_TRUE(Proposed);
+    EXPECT_EQ(Work, ExpectedWork);
+    const auto &Kept = Proposed->Cutpoints.back();
+    EXPECT_EQ(Kept.Inputs.size(), Overlap.Inputs.size());
+    EXPECT_EQ(Kept.Expressions.size(), Overlap.Expressions.size());
+    EXPECT_EQ(Kept.OriginalState.size(), Overlap.OriginalState.size());
+    EXPECT_EQ(Kept.CandidateState.size(), Overlap.CandidateState.size());
+    EXPECT_EQ(Kept.Inputs.back().Side, LowIRLoopSide::OriginalPrefix);
+    const auto &Appended = Proposed->Cutpoints.front();
+    const auto &Old = Before.Cutpoints.front();
+    EXPECT_EQ(Appended.Inputs.size(), Old.Inputs.size() + 2);
+    EXPECT_EQ(Appended.Expressions.size(), Old.Expressions.size() + 4);
+    EXPECT_EQ(Appended.OriginalState.size(), Old.OriginalState.size() + 1);
+    EXPECT_EQ(Appended.CandidateState.size(), Old.CandidateState.size() + 1);
+    const auto Good = Check(*Proposed);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    ASSERT_TRUE(Good.Proof.Certificate);
+    EXPECT_EQ(Good.Proof.Certificate->Scope,
+              LowIRRefinementScope::InductiveNativeToLowIRLoops);
+    EXPECT_EQ(Good.Certificate->Relation.InputDigest,
+              Good.Proof.Certificate->InputDigest);
+    EXPECT_GT(Good.Proof.LoopTransitions, 0U);
+    EXPECT_GT(Good.Proof.RankingChecks, 0U);
+    const auto Exact = Prepare(ExpectedWork);
+    ASSERT_TRUE(Exact);
+    EXPECT_TRUE(Check(*Exact).proved());
+    EXPECT_FALSE(Prepare(ExpectedWork - 1));
+  }
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorStateRejectsTemporaryOverflow) {
+  auto P = repeatedNativeFrameContexts();
+  P.Contract.ObserveWrittenFrameBytes = true;
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Inferred = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(Inferred.proved()) << Inferred.Inference.Diagnostic << ": "
+                                 << Inferred.Refinement.Proof.Diagnostic;
+  auto Plan = *Inferred.Inference.Plan;
+  auto &C = Plan.Cutpoints.front();
+  C.GeneralizeEntryPrefix = true;
+  // This binding itself fits. There is no room for three fresh eight-byte
+  // temporary slots per guard beyond it, even though the plan is valid.
+  C.Inputs.push_back({LowIRLoopSide::OriginalPrefix,
+                      {LowIRLoopSpace::Frame, uint64_t(-8), 8},
+                      NdVar::tmp(UINT64_MAX - 15, 8)});
+  const auto Valid = checkBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery.Residual, P.Contract, Plan);
+  ASSERT_TRUE(Valid.proved()) << Valid.Proof.Diagnostic;
+  std::optional<LowIRLoopRefinementPlan> Proposed = Plan;
+  const auto Failure =
+      detail::proposeNativeLoopSelectorStates(*Proposed, {}, [](uint64_t) {});
+  ASSERT_TRUE(Failure);
+  EXPECT_EQ(Failure->Status, LowIRLoopInferenceStatus::Invalid);
+  EXPECT_NE(Failure->Diagnostic.find("temporary offset overflow"),
+            std::string::npos);
+  Proposed.reset(); // Failed construction publishes no plan or certificate.
+  EXPECT_FALSE(Proposed);
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorStateMetadataHasIndependentLimit) {
+  auto P = alternatingNativeContexts(false, true, false);
+  std::vector<uint8_t> Prefix;
+  // These are executed writes, not entry assumptions. Keep all register and
+  // written-frame observations. Fixed ranges each add two guards and two
+  // input/assignment pairs, isolating plan capacity from instruction visits.
+  for (unsigned Reg : {2, 3, 5, 6, 8, 9, 11, 12, 13, 14, 15}) {
+    if (Reg >= 8)
+      Prefix.push_back(0x41);
+    Prefix.insert(Prefix.end(), {uint8_t(0xb8 + (Reg & 7)), 0, 0, 0, 0});
+  }
+  for (int Offset = -64; Offset < 0; Offset += 8)
+    Prefix.insert(Prefix.end(), {0x48, 0xc7, 0x44, 0x24,
+                                 static_cast<uint8_t>(Offset), 0, 0, 0, 0});
+  auto &Code = P.Image.Segments.front();
+  Code.Data.insert(Code.Data.begin(), Prefix.begin(), Prefix.end());
+  Code.Size = Code.FileSz = Code.Data.size();
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Check = [&](const LowIRLoopInferenceLimits &Limits) {
+    return inferAndCheckBinaryLowIRLoopRefinement(
+        P.Image, Entry, P.Options, Recovery, P.Contract, Witness::LiftedBits,
+        {}, Limits);
+  };
+  const auto Good = Check({});
+  ASSERT_TRUE(Good.proved())
+      << Good.Inference.Diagnostic << ": " << Good.Refinement.Proof.Diagnostic;
+  uint64_t Metadata = 0;
+  for (const auto &C : Good.Inference.Plan->Cutpoints)
+    Metadata += C.Inputs.size() + C.OriginalState.size() +
+                C.CandidateState.size() + C.Rank.size() +
+                C.OriginalGuards.size() + C.CandidateGuards.size();
+  LowIRLoopInferenceLimits Exact;
+  Exact.Execution.MaxInstructions = Metadata;
+  const auto Fits = Check(Exact);
+  ASSERT_TRUE(Fits.proved()) << Metadata << ": " << Fits.Inference.Diagnostic;
+  --Exact.Execution.MaxInstructions;
+  const auto Short = Check(Exact);
+  EXPECT_EQ(Short.Inference.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+  EXPECT_NE(Short.Inference.Diagnostic.find("native selector state metadata"),
+            std::string::npos)
+      << Short.Inference.Diagnostic;
+  EXPECT_FALSE(Short.Inference.Plan);
+  EXPECT_FALSE(Short.Refinement.Certificate);
+  EXPECT_FALSE(Short.Refinement.Proof.Certificate);
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorStatePreservesProofObligations) {
+  auto P = alternatingNativeContexts(false, true, false);
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Good = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(Good.proved())
+      << Good.Inference.Diagnostic << ": " << Good.Refinement.Proof.Diagnostic;
+  ASSERT_EQ(Good.Inference.Plan->Cutpoints.size(), 1U);
+  ASSERT_TRUE(Good.Refinement.Proof.Certificate);
+  EXPECT_EQ(Good.Refinement.Proof.Certificate->Scope,
+            LowIRRefinementScope::InductiveNativeToLowIRLoops);
+  EXPECT_EQ(Good.Refinement.Certificate->Relation.InputDigest,
+            Good.Refinement.Proof.Certificate->InputDigest);
+  const auto Check = [&](const LowIRLoopRefinementPlan &Plan) {
+    return checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                          Recovery.Residual, P.Contract, Plan);
+  };
+  for (bool Original : {true, false}) {
+    SCOPED_TRACE(Original);
+    auto Bad = *Good.Inference.Plan;
+    auto &C = Bad.Cutpoints.front();
+    auto &State = Original ? C.OriginalState : C.CandidateState;
+    const auto A = std::find_if(State.begin(), State.end(), [](const auto &A) {
+      return A.Location.Space == LowIRLoopSpace::Register &&
+             A.Location.Offset == x86reg::R10;
+    });
+    ASSERT_NE(A, State.end());
+    const auto Op = std::find_if(
+        C.Expressions.begin(), C.Expressions.end(),
+        [&](const auto &Op) { return Op.Output.Offset == A->Value.Offset; });
+    ASSERT_NE(Op, C.Expressions.end());
+    ASSERT_EQ(Op->Opcode, NdOp::INT_OR);
+    // The selector masks only the low byte. Forcing bit eight must still
+    // fail full state equality on each side, despite satisfying that guard.
+    Op->Inputs[1].Offset |= uint64_t{1} << 8;
+    refused(Check(Bad), Status::Different);
+  }
+  auto BadRank = *Good.Inference.Plan;
+  for (auto &V : BadRank.Cutpoints.front().Rank)
+    V = NdVar::scalar(0, V.Size);
+  refused(Check(BadRank), Status::Different);
+
+  auto MissingSelector = *Good.Inference.Plan;
+  MissingSelector.Cutpoints.front().OriginalGuards.clear();
+  refused(Check(MissingSelector), Status::Different);
+
+  auto OverlappingAssignments = *Good.Inference.Plan;
+  auto &State = OverlappingAssignments.Cutpoints.front().OriginalState;
+  State.push_back(State.back());
+  refused(Check(OverlappingAssignments), Status::Invalid);
+
+  auto &Bytes = P.Image.Segments.front().Data;
+  const uint8_t Add[] = {0x48, 0x01, 0xc8};
+  const auto It =
+      std::search(Bytes.begin(), Bytes.end(), std::begin(Add), std::end(Add));
+  ASSERT_NE(It, Bytes.end());
+  It[1] = 0x29; // ADD -> SUB while preserving the recovered candidate.
+  refused(Check(*Good.Inference.Plan), Status::Different);
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorStateConstructionWorkIsBounded) {
+  auto P = alternatingNativeContexts(false, true, false);
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Check = [&](const LowIRLoopInferenceLimits &Limits) {
+    return inferAndCheckBinaryLowIRLoopRefinement(
+        P.Image, Entry, P.Options, Recovery, P.Contract, Witness::LiftedBits,
+        {}, Limits);
+  };
+  const auto Good = Check({});
+  ASSERT_TRUE(Good.proved())
+      << Good.Inference.Diagnostic << ": " << Good.Refinement.Proof.Diagnostic;
+  LowIRLoopInferenceLimits Exact;
+  Exact.MaxCutSelectionWork = Good.Inference.CutSelectionWork;
+  ASSERT_GT(Exact.MaxCutSelectionWork, 0U);
+  ASSERT_TRUE(Check(Exact).proved());
+  --Exact.MaxCutSelectionWork;
+  const auto Short = Check(Exact);
+  EXPECT_EQ(Short.Inference.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+  EXPECT_NE(Short.Inference.Diagnostic.find("native selector state proposals"),
+            std::string::npos)
+      << Short.Inference.Diagnostic;
+  EXPECT_FALSE(Short.Inference.Plan);
+  EXPECT_FALSE(Short.Refinement.Certificate);
+  EXPECT_FALSE(Short.Refinement.Proof.Certificate);
+}
+
 TEST(BinaryLowIRLoopInference, NativeSelectorsProveFrameContexts) {
-  // Split on one input bit, store the context in the entry-relative frame,
-  // then erase the input register and normalize arithmetic flags before the
-  // loop. The frame is the only machine-state location separating both cuts.
-  Program P({0x83, 0xe7, 1,    0x85, 0xff, 0x74, 11,   0x48, 0xc7, 0x44, 0x24,
-             0xf8, 1,    0,    0,    0,    0xeb, 9,    0x48, 0xc7, 0x44, 0x24,
-             0xf8, 0,    0,    0,    0,    0x31, 0xff, 0x39, 0xff, 0xe3, 9,
-             0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
-  P.Options.ControlFrameSlots = {{-8, 8}};
+  auto P = repeatedNativeFrameContexts();
   const auto Recovery = P.recover();
   ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
   const auto R = inferAndCheckBinaryLowIRLoopRefinement(

@@ -22,8 +22,7 @@ class Session;
 
 /// Text of one function in a code representation: C pseudocode (native or
 /// through LLVM) or a textual IR.  Lines are fetched in pages and colored
-/// locally; rows the worker maps to instructions synchronize with the
-/// disassembly cursor.
+/// locally; explicit navigation uses the worker's instruction mappings.
 class CodeText final : public QAbstractScrollArea {
   Q_OBJECT
 public:
@@ -43,15 +42,20 @@ public:
   void cancel();
   std::optional<Address> function() const { return function_; }
   QString representation() const { return representation_; }
-  /// First instruction address mapped to the cursor line.
+  /// The assembly-selected address on the cursor line, or its primary mapping.
   std::optional<Address> currentAddress() const;
-  /// Highlight rows mapped to \p address and reveal the first.
-  void revealAddress(Address address);
+  /// Select the first row mapped to \p address, waiting for all pages and
+  /// expanding its fold if needed. A new load or cursor move cancels the wait.
+  void selectAddress(Address address);
   QString currentToken() const;
+  /// The selected source name's image address or declared-local identity.
+  std::optional<QJsonObject> renameTarget() const;
+  /// The original source row under the cursor, independent of folding.
+  std::optional<QJsonObject> commentTarget() const;
   QString selectedText() const;
   QString allText() const;
   bool findText(const QString &text, bool forward);
-  /// Move the cursor to \p line, revealing it and following its mapping.
+  /// Move the cursor to \p line and reveal it.
   void setCursorLine(int line) { moveCursor(line, 0, false); }
   int lineCount() const { return int(lines_.size()); }
   /// Recognized library operations that can fold into one-line summaries.
@@ -97,6 +101,7 @@ public:
 
 signals:
   void locationChanged(neverd::gui::Address address);
+  void addressSelected(neverd::gui::Address address, bool mapped);
   /// A name was double-clicked; the owner resolves and navigates.
   void nameActivated(const QString &name);
   /// A global the code declares at an image address was double-clicked.
@@ -152,6 +157,7 @@ private:
   bool regionsValid_ = false;
   LibraryCodeView library_;
   std::optional<Address> function_;
+  std::optional<Address> pendingAddress_, selectedAddress_;
   QString representation_, status_, highlight_;
   quint64 serial_ = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;
@@ -166,6 +172,12 @@ private:
   /// The source names of every page by their spelling, and those spellings
   /// by their first character, longest first.
   QHash<QString, SourceName> sourceNames_;
+  struct EditName {
+    int begin, end;
+    QJsonObject target;
+  };
+  QVector<EditName> editNames_;
+  bool editMetadata_ = false;
   QHash<QChar, QVector<QString>> sourceNameIndex_;
   /// The length of a source name at \p position of \p text, or 0.
   int sourceNameLength(const QString &text, int position) const;

@@ -6185,8 +6185,19 @@ std::string LLVMCWriter::windowsEHFilterExpr(const llvm::CatchSwitchInst &CS) {
   llvm::Value *Filter = Pad->getArgOperand(0)->stripPointerCasts();
   if (llvm::isa<llvm::ConstantPointerNull>(Filter))
     return "EXCEPTION_EXECUTE_HANDLER";
-  if (const auto *Fn = llvm::dyn_cast<llvm::Function>(Filter))
-    return functionIdentifier(*Fn) + "(GetExceptionInformation())";
+  if (const auto *Fn = llvm::dyn_cast<llvm::Function>(Filter)) {
+    std::string Args = "GetExceptionInformation()";
+    if (Fn->arg_size() == 2 && Fn->getArg(0)->getType()->isPointerTy() &&
+        Fn->getArg(1)->getType()->isPointerTy()) {
+      if (SEHFilterFrameName.empty())
+        SEHFilterFrameName = freshVar("seh_parent_frame");
+      Args += ", " + SEHFilterFrameName;
+    } else if (Fn->arg_size() != 1 ||
+               !Fn->getArg(0)->getType()->isPointerTy()) {
+      throw std::runtime_error("unsupported Windows SEH filter source ABI");
+    }
+    return functionIdentifier(*Fn) + "(" + Args + ")";
+  }
   return "nd_seh_filter_0x0(GetExceptionInformation())";
 }
 

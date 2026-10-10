@@ -8,6 +8,7 @@ from scripts.audit_ci_test_inventory import (
     INTEGRITY_LABELS,
     PLUGIN_LABELS,
     SAFETY_LABELS,
+    SOURCE_DIALECT_LABELS,
     InventoryError,
     audit_inventory,
     write_github_reports,
@@ -21,6 +22,7 @@ PLUGIN_NAMES = tuple(f"plugin/{label}" for label in PLUGIN_LABELS)
 SAFETY_NAMES = tuple(f"safety/{label}" for label in SAFETY_LABELS)
 CONCOLIC_NAMES = tuple(f"concolic/{label}" for label in CONCOLIC_LABELS)
 INTEGRITY_NAMES = tuple(f"integrity/{label}" for label in INTEGRITY_LABELS)
+SOURCE_NAMES = tuple(f"source/{label}" for label in SOURCE_DIALECT_LABELS)
 
 
 def ctest_inventory(*entries: tuple[str, tuple[str, ...]]) -> dict:
@@ -52,10 +54,34 @@ def valid_inventory() -> dict:
         *((name, (label,)) for name, label in zip(CONCOLIC_NAMES, CONCOLIC_LABELS)),
         *((name, (label,)) for name, label in zip(CORPUS_NAMES, CORPUS_LABELS)),
         *((name, (label,)) for name, label in zip(INTEGRITY_NAMES, INTEGRITY_LABELS)),
+        *((name, (label,)) for name, label in zip(SOURCE_NAMES, SOURCE_DIALECT_LABELS)),
     )
 
 
 class AuditInventoryTests(unittest.TestCase):
+    def test_source_dialect_suites_must_exist_and_be_selected_on_every_host(self):
+        for profile, expression in (
+            ("linux-semantic", r"^NeverDPatchFullTests$"),
+            ("macos-patch", r"^NeverDSemanticTests$"),
+            ("windows-focused", r"^NeverD(Semantic|PatchFull)Tests$"),
+        ):
+            for label, name in zip(SOURCE_DIALECT_LABELS, SOURCE_NAMES):
+                for exclude in (False, True):
+                    document = valid_inventory()
+                    if exclude:
+                        test = next(t for t in document["tests"] if t["name"] == name)
+                        test["properties"][0]["value"].append(
+                            SEMANTIC if profile == "macos-patch" else PATCH
+                        )
+                    else:
+                        document["tests"] = [
+                            t for t in document["tests"] if t["name"] != name
+                        ]
+                    with self.subTest(profile=profile, label=label, exclude=exclude):
+                        with self.assertRaisesRegex(InventoryError, "source dialect"):
+                            audit_inventory(document, profile, expression,
+                                            semantic_minimum=2, patch_minimum=2)
+
     def test_selected_records_retain_labels_for_execution_reconciliation(self):
         result = self.audit("linux-semantic", r"^NeverDPatchFullTests$")
         self.assertEqual(len(result.selected_records), result.selected_count)
@@ -88,13 +114,13 @@ class AuditInventoryTests(unittest.TestCase):
         result = self.audit("linux-semantic", r"^NeverDPatchFullTests$")
         self.assertEqual(
             result.full_count,
-            8 + len(PLUGIN_NAMES) + len(CONCOLIC_NAMES) + len(CORPUS_NAMES) + len(INTEGRITY_NAMES),
+            8 + len(PLUGIN_NAMES) + len(CONCOLIC_NAMES) + len(CORPUS_NAMES) + len(INTEGRITY_NAMES) + len(SOURCE_NAMES),
         )
         self.assertEqual(result.semantic_count, 2)
         self.assertEqual(result.patch_count, 2)
         self.assertEqual(
             result.selected_count,
-            6 + len(PLUGIN_NAMES) + len(CONCOLIC_NAMES) + len(CORPUS_NAMES) + len(INTEGRITY_NAMES),
+            6 + len(PLUGIN_NAMES) + len(CONCOLIC_NAMES) + len(CORPUS_NAMES) + len(INTEGRITY_NAMES) + len(SOURCE_NAMES),
         )
         self.assertEqual(result.excluded_count, 2)
         self.assertEqual(
@@ -109,6 +135,7 @@ class AuditInventoryTests(unittest.TestCase):
                 *CONCOLIC_NAMES,
                 *CORPUS_NAMES,
                 *INTEGRITY_NAMES,
+                *SOURCE_NAMES,
             },
         )
 
@@ -116,7 +143,7 @@ class AuditInventoryTests(unittest.TestCase):
         result = self.audit("macos-patch", r"^NeverDSemanticTests$")
         self.assertEqual(
             result.selected_count,
-            6 + len(PLUGIN_NAMES) + len(CONCOLIC_NAMES) + len(CORPUS_NAMES) + len(INTEGRITY_NAMES),
+            6 + len(PLUGIN_NAMES) + len(CONCOLIC_NAMES) + len(CORPUS_NAMES) + len(INTEGRITY_NAMES) + len(SOURCE_NAMES),
         )
         self.assertEqual(
             set(result.selected_names),
@@ -130,6 +157,7 @@ class AuditInventoryTests(unittest.TestCase):
                 *CONCOLIC_NAMES,
                 *CORPUS_NAMES,
                 *INTEGRITY_NAMES,
+                *SOURCE_NAMES,
             },
         )
 
@@ -139,7 +167,7 @@ class AuditInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             result.selected_count,
-            4 + len(PLUGIN_NAMES) + len(CONCOLIC_NAMES) + len(CORPUS_NAMES) + len(INTEGRITY_NAMES),
+            4 + len(PLUGIN_NAMES) + len(CONCOLIC_NAMES) + len(CORPUS_NAMES) + len(INTEGRITY_NAMES) + len(SOURCE_NAMES),
         )
         self.assertEqual(
             set(result.selected_names),
@@ -151,6 +179,7 @@ class AuditInventoryTests(unittest.TestCase):
                 *CONCOLIC_NAMES,
                 *CORPUS_NAMES,
                 *INTEGRITY_NAMES,
+                *SOURCE_NAMES,
             },
         )
 
@@ -410,13 +439,14 @@ class AuditInventoryTests(unittest.TestCase):
             )
 
             selected = (
-                6 + len(PLUGIN_NAMES) + len(CONCOLIC_NAMES) + len(CORPUS_NAMES) + len(INTEGRITY_NAMES)
+                6 + len(PLUGIN_NAMES) + len(CONCOLIC_NAMES) + len(CORPUS_NAMES)
+                + len(INTEGRITY_NAMES) + len(SOURCE_NAMES)
             )
             outputs = output_path.read_text(encoding="utf-8")
             self.assertIn(f"count={selected}\n", outputs)
             self.assertIn(
                 "full_count="
-                f"{8 + len(PLUGIN_NAMES) + len(CONCOLIC_NAMES) + len(CORPUS_NAMES) + len(INTEGRITY_NAMES)}\n",
+                f"{selected + 2}\n",
                 outputs,
             )
             self.assertIn("semantic_count=2\n", outputs)

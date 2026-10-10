@@ -1440,6 +1440,18 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     // A mapping failure leaves the successful ordinary source intact, with
     // unknown spans. Errors in the ordinary emission still propagate.
   }
+  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary, true);
+  try {
+    if (Sources)
+      Instructions.prepareLLVMSources(*Sources);
+    std::string Annotated;
+    llvm::raw_string_ostream OS(Annotated);
+    LLVMCWriter Marked(OS, Opts, Dbg, Img, true, &Instructions);
+    Marked.writeModule(*Projection, ProjectionOnly);
+    Instructions.finish(Annotated, Ordinary);
+  } catch (const std::exception &) {
+    // Navigation evidence does not authorize changes to source/library mapping.
+  }
   Out << Ordinary;
   return true;
 }

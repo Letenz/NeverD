@@ -6,7 +6,8 @@
 // Each row is a complete destination/source/control alternative. Absent
 // requires exactly two operands; an explicit control requires exactly three.
 // Memory and General use the instruction's declared width; Integer permits
-// r32/r64, IntegerMemory permits m32/m64, and Immediate permits imm8. Xmm
+// r32/r64, Integer32 requires r32, IntegerMemory permits m32/m64, and
+// Immediate permits imm8. Xmm
 // names only the modeled XMM0-XMM15 register bank. IntegerSource validates
 // its source width through these integer alternatives rather than Width.
 #ifdef NEVERD_X64_VECTOR_FORM
@@ -21,6 +22,8 @@ NEVERD_X64_VECTOR_FORM(IntegerResult)
 NEVERD_X64_VECTOR_FORM(IntegerSource)
 NEVERD_X64_VECTOR_FORM(RegisterMask)
 NEVERD_X64_VECTOR_FORM(SourceControl)
+NEVERD_X64_VECTOR_FORM(WordInsert)
+NEVERD_X64_VECTOR_FORM(WordExtract)
 #endif
 #ifdef NEVERD_X64_VECTOR_OPERANDS
 NEVERD_X64_VECTOR_OPERANDS(RegisterPair, Xmm, Xmm, Absent)
@@ -47,4 +50,7 @@ NEVERD_X64_VECTOR_OPERANDS(IntegerSource, Xmm, IntegerMemory, Absent)
 NEVERD_X64_VECTOR_OPERANDS(RegisterMask, Integer, Xmm, Absent)
 NEVERD_X64_VECTOR_OPERANDS(SourceControl, Xmm, Xmm, Immediate)
 NEVERD_X64_VECTOR_OPERANDS(SourceControl, Xmm, Memory, Immediate)
+NEVERD_X64_VECTOR_OPERANDS(WordInsert, Xmm, Integer32, Immediate)
+NEVERD_X64_VECTOR_OPERANDS(WordInsert, Xmm, Memory, Immediate)
+NEVERD_X64_VECTOR_OPERANDS(WordExtract, Integer32, Xmm, Immediate)
 #endif
