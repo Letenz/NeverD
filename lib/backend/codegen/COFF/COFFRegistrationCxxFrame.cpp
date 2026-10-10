@@ -20,13 +20,17 @@ llvm::Error validateCOFFRegistrationCxxIR(const llvm::Function &Function,
   if (!Proof)
     return Proof.takeError();
   const auto &States = *Proof->Source.RegistrationStates;
-  const auto &Object = States.CxxCatchObjects[0];
   coff_registration::RegistrationCxxFrameContract Contract;
   Contract.Image = &Image;
   Contract.Catch = Proof->Catch;
-  Contract.HomeOffset = int64_t(Proof->Frame.EntrySP) - 4 + Object.FrameOffset;
-  Contract.ObjectSize = Object.ObjectSize;
-  Contract.Reference = Object.Reference;
+  if (const auto &Home = Proof->CatchHome) {
+    Contract.HomeOffset = Home->Offset;
+    Contract.ObjectSize = Home->ObjectSize;
+    Contract.Reference = Home->Reference;
+  }
+  Contract.CallbackStack = Proof->CallbackStack;
+  Contract.CallbackBlocks = Proof->CallbackBlocks;
+  Contract.SavedStackOffset = int64_t(Proof->Frame.Establisher) - 16;
   auto Ranges = coff_loader::getCheckedX86CxxMetadataRanges(Image, Source);
   auto Runtime = coff_loader::getCheckedX86CxxPersonalityABI(Image, Source);
   if (!Ranges || !Runtime)
@@ -51,7 +55,7 @@ llvm::Error validateCOFFRegistrationCxxIR(const llvm::Function &Function,
       Contract.Borrows.emplace(
           Call,
           coff_registration::RegistrationFrameBorrow{
-              int64_t(Proof->Frame.EntrySP) - 4 + *Checked.ObjectFrameOffset,
+              int64_t(Proof->Frame.Establisher) + *Checked.ObjectFrameOffset,
               Checked.Contract.ECXReads, Checked.Contract.ECXWrites});
     if (Checked.Contract.CalleeKind ==
         RegistrationCalleeFrameContract::Kind::PrivateThrow) {

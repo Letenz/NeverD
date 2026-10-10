@@ -108,6 +108,8 @@ Objective-C 接收物件事實區分方法入口的 self 與確定的類別參�
 
 `NeverDLLVMInterpreterModel` 負責獨立、有界的純量 LLVM 匯入，使用相同原始狀態 ABI。`modelLLVMInterpreterMachineStateX64` 保留真實狀態碼回傳，並產生明確的語義有效性檢查。`llvmInterpreterMachineStateContract` 提供完整觀察項與零監視位元組保持義務；入口域、記憶體及完整證明由呼叫方負責。LLVM 匯入不改變一般提升或原始碼發布，也不證明編譯器。
 
+LLVM 匯入器將每次實際執行的 guest load/store 中大於一的對齊要求，轉為針對其真實 64 位元位址的累積語義有效性義務。存取寬度及記憶體效果不變；遮罩、比較和累積操作使用既有建構預算。文字省略對齊時採用解析後的 ABI 對齊；`align 1` 不產生檢查。這不會增加入口假設或可存取位元組。狀態物件存取仍遵守獨立的八位元組對齊契約，atomic/volatile 存取仍不受支援。
+
 `modelLLVMScalarFunction` 重用相同匯入器，接受純 `noundef` 整數參數與整數回傳值（`i1/i8/i16/i32/i64`）。共用模型處理漏斗位移的端點，並以雙倍位寬乘積檢查乘法溢位約束。`checkLLVMScalarEquivalence` 透過 `SymExec` 執行兩份模型，找出控制輸入位元，窮盡其全部組合，其餘位元保持符號化。每個回傳值必須相同，每項已執行操作必須有定義；分區、路徑、節點及累計工作預算限制查詢。`SymContext::constantWindow` 提供累計查詢計費，同時保留既有單次查詢上限。拒絕結果不允許改寫。此唯讀 C++ 查詢不改變預設原始碼輸出，也不提供持久化的原生 ABI 或編譯器證明。
 
 `projectLLVMScalarResult` 透過結構或陣列的 `insertvalue` 包裝複製明確指定的整數回傳欄位及位元視窗。它保留所有參數、控制流程、純量運算、註記和 `assume` 呼叫，僅移除無用的聚合包裝，再交由共用純量模型驗證。建構與建模預算分開；不支援的契約或預算耗盡時不發布模組，也不修改輸入。狀態碼、值及保留狀態的每個必要觀察項仍須完整證明；選取欄位不建立入口、框架或原生 ABI 契約。
@@ -171,6 +173,10 @@ Objective-C 接收物件事實區分方法入口的 self 與確定的類別參�
 LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，並在一般純量生成前執行有預算限制的逐位元組必然資料流分析，不引入第二套值求值器。
 
 `NeverDInterpreterLLVMRefinement` 負責組合原生到 LLVM 的證明。它重新建立兩側狀態模型與強制契約，透過權威執行設定產生僅在入口執行的旗標投影，並重新檢查兩個前提。呼叫端可提交迴圈候選方案，但不能替換模型、觀察項或證明憑據。分析模型僅複製可執行圖與宣告入口；入口回邊會遭拒絕，避免重複初始化狀態。
+
+可選的 `InterpreterLLVMRefinementPreservation` 請求向兩段全新證明加入 GPR 位元組保存義務。準備層統一負責有預算的驗證、重疊聯集與按字分割；完整狀態、定義性與框架觀察項仍須保留。`NativeState` 只傳給原生檢查器，支援 `SelectedWitness`，拒絕 `AllUndefinedChoices`。子憑據綁定各自的有效契約；空請求維持原有預設行為。
+
+`InterpreterLLVMNativeCollection` 將兩項預設關閉的收集選項僅傳給全新原生證明。保留的稽核邊界必須在所選 witness 下不可達；延遲收集的分支仍須為每條可行路徑提供完整語義。原生憑據綁定這些選項，原始碼假設、觀察項和證明預算維持不變。
 
 恢復 C API v3 與 CLI 將明確的欄位、細化和求解查詢預算傳入共用特化器。轉接層先檢查結構大小與 reserved 欄位，再讀取擴充；v1/v2 配置和預設值保持穩定。提高預算僅改變允許的工作量，不改變執行契約或結果發布條件。
 
@@ -1139,7 +1145,7 @@ Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`�
 
 Windows 行程時間策略由 `os/windows/process/` 的 `WindowsProcessTime.cpp` 管理。`std::chrono` 區分主機實際時間與單調計數器，`WindowsProcess.def` 定義客體時間單位與有限等待上限；CPU 後端不承載 Windows 時間策略。
 
-`lib/unpack` 分四層恢復加殼鏡像。`core` 負責編排和格式註冊表。`format/pe` 驗證容器並重建觀察到的記憶體、導入和中繼資料；`PETLS.cpp` 根據載入器分配資訊及觀察到的回呼驗證替換的 TLS 記錄。不使用保護器註冊表或靜態外殼簽章選擇入口。`dynamic` 透過 `observeProcess` 觀察來賓行程：`Observation.def` 把每種容器與指令集對應到一個行程設定檔，並給出每種指令集的堆疊指標和指令視窗。新增一個目標只需一列表項和一個模組目錄，表中沒有對應列的輸入會被依名稱拒絕。`ExecutionSession` 負責執行監視；`ProcessObserver` 讀取已停止的行程並選擇下一個停止點，但不能改變來賓狀態。模擬層只知道 `defer_unmodeled`，它把未建模的匯入繫結到一旦執行就停止的不透明入口。參見[脫殼](unpack.md)。 延遲載入允許可執行回呼或入口目標位於零填充記憶體，由先前的初始化器產生程式碼。回呼陣列與 TLS 配置中繼資料仍須有經驗證的檔案內容；一般嚴格載入保留檔案覆蓋檢查。作業系統模型提供呼叫歸屬，並在準備呼叫或恢復暫停的呼叫者時通知觀察器。轉移監視在這些邊界重新設定，涵蓋回呼與產生的入口位於同一頁的情況。
+`lib/unpack` 按職責分層恢復加殼鏡像。`core` 負責編排和格式註冊表。`format/pe` 驗證容器並重建觀察到的記憶體、導入和中繼資料；`PETLS.cpp` 根據載入器分配資訊及觀察到的回呼驗證替換的 TLS 記錄。不使用保護器註冊表或靜態外殼簽章選擇入口。`dynamic` 透過 `observeProcess` 觀察來賓行程：`Observation.def` 把每種容器與指令集對應到一個行程設定檔，並給出每種指令集的堆疊指標和指令視窗。新增一個目標只需一列表項和一個模組目錄，表中沒有對應列的輸入會被依名稱拒絕。`ExecutionSession` 負責執行監視；`ProcessObserver` 讀取已停止的行程並選擇下一個停止點，但不能改變來賓狀態。模擬層只知道 `defer_unmodeled`，它把未建模的匯入繫結到一旦執行就停止的不透明入口。參見[脫殼](unpack.md)。 延遲載入允許可執行回呼或入口目標位於零填充記憶體，由先前的初始化器產生程式碼。回呼陣列與 TLS 配置中繼資料仍須有經驗證的檔案內容；一般嚴格載入保留檔案覆蓋檢查。作業系統模型提供呼叫歸屬，並在準備呼叫或恢復暫停的呼叫者時通知觀察器。轉移監視在這些邊界重新設定，涵蓋回呼與產生的入口位於同一頁的情況。
 
 `WindowsLibraryHost.cpp` 負責 DLL 宿主建構，Windows 載入器負責一般載入與卸載生命週期。`ProcessView::inputModule()` 區分觀察輸入與宿主 EXE，允許延後建立初始快照。`ProcessView::callFrame()` 透過 `IntegerABI` 讀取整數參數與返回事實；`dynamic/ProcessTransfer` 負責匹配返回位址與堆疊的完成證據。僅 `PETLS.cpp` 決定該證據是否完成程序附加回呼。
 
@@ -1413,39 +1419,10 @@ DarwinFiles 負責共通屬性匯入、名稱/stat 有效性與紀錄編碼；Da
 
 復原的 DLL 入口與原始 PE 入口不同時，寫入器產生載入器通知配接器：程序附加進入選定入口，卸載與執行緒通知進入原始的可執行入口，以保留外層包裝函式的清理。原始入口不可用時重建失敗。報告的 `entry_rva` 仍表示選定的程式入口，PE 標頭可指向配接器。獨立包裝 DLL 測試在兩種模擬架構與原生 Windows 上檢查選定函式之外的清理。
 
-## Darwin 名稱身分所有權
+`ProcessView::runtimeState()` 傳遞不可變的 OS 自有狀態。`WindowsProcessState.cpp` 從權威所有者擷取資源識別、已提交記憶體及生命週期。`unpack/os/windows` 驗證並編譯初始化器；`format/pe/PERuntime.cpp` 負責配置與合併匯入、TLS 及展開中繼資料。通用觀察層不解讀 Windows 物件配置，也不以整數比對推測歸屬。
 
-DarwinFiles 將 FileEntry、LinkEntry 與 Contents、LinkNode 分開索引。項目擁有 NameIdentity，保存路徑、父目錄和動態名稱費用；身分不擁有檔案或連結物件。描述物件選擇身分，並保留物件以存取位元組、中繼資料、屬性和映射租約。子樹重新命名依確切身分和父目錄選擇項目。現有單名稱契約在刪除和名稱重用後保留身分，維持回收與固定輸入預留規則。目錄物件仍是自身身分。上述所有權分離支援下文的有界硬連結契約。
+`observeImage` 依 PE 執行域選擇處理程序或驅動環境。`observeDriver` 透過 `EmulationRuntime` 共用停止態 `ProcessObserver` 回呼；核心所有權與 DriverEntry ABI 檢查仍由驅動層負責。排程時間片保留呼叫身分。見[驅動脫殼](unpack.md)。
 
-## 有界 Darwin 硬連結
+`support/X86Addressing.h` 統一負責提升器與受檢執行器對普通 SIB 無索引標記的位寬判定：`EIZ` 僅在 32 位元位址下表示無索引，`RIZ` 僅在 64 位元位址下表示無索引；兩者均不能充當基底暫存器或 VSIB 向量索引。REX.X 選擇的 R12/R12D 仍是真實的縮放索引。`X64Address` 回歸在兩種權限級別比較原始處理器執行、記憶體存取觀察、取消與記憶體錯誤，`X86NoIndexAddress` 則保留嚴格提升與格式錯誤別名檢查。
 
-原始 link 跟隨最終符號連結目標；linkat 的 flags=0 連結符號連結物件本身，AT_SYMLINK_FOLLOW 跟隨目標。僅接受 low32 的 0/0x40，其餘低位在匯入前回傳 EINVAL。來源查找與目錄 EPERM 先於目標匯入；已存在目標回傳 EEXIST。目標父目錄需修改授權且雙方須屬明確建立的同一掛載域。初始身分別名及已知裝置/模式/旗標衝突仍不支援。
-
-別名只消耗名稱項目及路徑/NUL 費用，不消耗新 inode；位元組、屬性授權及映射租約由共享物件持有。既有明確策略更新連結數與 ctime；缺少策略時完整 stat 未知。屬性修改使完整 stat 失效，內容修改使屬性觀察失效。描述物件及最後映射保留刪除名稱的費用；替換只抵扣可立即釋放的費用。子樹依確切身分及父目錄移動，樹外別名留在原位；相對符號目標使用所選項目的父目錄。
-
-曾有多個名稱的物件，即使剩一個或零個名稱，F_GETPATH/ATTR_CMN_NAME 仍不支援；APFS 快取尚無通用模型。批量 NAME 來自實際項目，相同物件的普通重新命名/SWAP 保留雙方。EXCL 大小寫、O_SYMLINK、原生 Intel HVF、實體 iOS、ACL、映射一致性/EOF 訊號、dyld、Mach IPC、執行緒與完整框架仍是缺口。本節僅在上述契約內擴展前文限制。
-
-```text
-link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
-DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
-LinkedNames, HadMultipleNames, DetachedNames
-F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
-getattrlistbulk(461), O_SYMLINK
-hard-links
-hard-links-values
-hard-links-name-unsupported
-hard-links-attributes-unsupported
-HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
-native5s / compile120s / drain1s / reap1s
-guest/Python5,000,000us / quantum1024 / public10s
-34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
-65 mandatory workloads per platform / ARM64 195 / Intel 130
-```
-
-## 原生不透明狀態保持
-
-可選 C++ 契約 `NativePreservedState` 請求封閉集合 `LegacyIntegerOpaqueV1`：向量容器 0–31 的 `[0,512)` 位元、APX R16–R31 的 `[0,64)` 位元、x87 控制字的 `[0,16)` 位元及 MXCSR 已定義的 `[0,16)` 位元。XMM/YMM 分別別名至每個 64 位元組向量容器的低 128/256 位元；可選元件僅在架構實際提供時涵蓋。MXCSR 使用獨立元件識別。已建模 GPR、旗標、記憶體、堆疊、遮罩暫存器、其餘 x87 狀態、CET 及所有未列出的元件均不在集合內。
-
-重新進行的嚴格 x64 解碼提供獨立指令形式稽核，綁定原始位元組、完整 LowIR 操作及語意版本。沒有寫入或完整的未定義輸出中繼資料都不能建立此事實。原生執行器在切點或效果前檢查每條到達的指令、群組內部指令及內部被呼叫函式。實體 CALL/RET 憑據綁定原始與展開後的操作段；特殊稽核僅由精確的停用 CET 之 RDSSP 設定擁有者提供。所有來源段、後繼、觀察及秩檢查完成後才能發布，額外中繼資料檢查消耗現有預算。過期證據或最後一段失敗均不產生憑證。
-
-有限獨立性檢查導出 `AllUndefinedChoices`；有限及歸納細化僅導出 `SelectedWitness`，並拒絕全選擇請求。檢查兩個具名見證不能擴大範圍。靜態 LowIR API 不能授權原生保持。省略請求保留現有行為及結構版本 17；請求綁定版本 18 與執行摘要。這個可選架構前提不證明一般 ABI、實體 CPU 的未定義選擇或預設 C 輸出。
+普通 RAM 的 `XCHG` 支援未對齊的 8/16/32/64 位元運算元，包含顯式 LOCK 前綴與隱式加鎖兩種形式。共用 RAM 交易保留入口有效位址、序列化發布結果，並捨棄取消或錯誤時的寫入；處理器執行原始交換指令。`X64Address` 涵蓋位址與暫存器重疊、部分暫存器寫入、快取列與頁面跨界、觀察回呼及缺頁錯誤。MMIO 交換仍要求提供者契約和自然對齊，其他 LOCK 指令系列沿用既有准入規則。

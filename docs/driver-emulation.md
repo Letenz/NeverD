@@ -185,7 +185,7 @@ inventing requests or unload.
 
 Images use their preferred base unless a scenario selects a valid relocated
 address, and must be PE32+ x64 executables with the native subsystem. Imports
-may come from `ntoskrnl.exe`, `ntkrnlmp.exe` or `WDFLDR.SYS`.
+may come from `ntoskrnl.exe`, `ntkrnlmp.exe`, `HAL.dll` or `WDFLDR.SYS`.
 The execution loader supports validated x64 `DIR64` base relocations and a
 limited security-cookie load configuration, initialized before the entry wrapper
 with a deterministic guest cookie. Other unmodeled load-configuration
@@ -533,9 +533,11 @@ The initial API model deliberately has a finite contract:
 | `ProbeForRead`, `ProbeForWrite`, `ExGetPreviousMode` | User-mode request context with numerical read probing, page-touching write probing and explicit access/misalignment exceptions |
 | `ExAllocatePool2` | Paged/nonpaged NX allocations, zeroed by default; uninitialized and cache-aligned flags modeled; invalid required flags return NULL, quota/executable pools and raised allocation exceptions stop |
 | `MmGetSystemRoutineAddress` | Resolves a counted guest name through the shared export inventory |
+| `NtQuerySystemInformation`, `ZwQuerySystemInformation` | Class `11` (`SystemModuleInformation`) at PASSIVE_LEVEL: zero-length size queries and complete Win64 module records for modeled providers and the input driver. Partial buffers and unknown classes stop explicitly. |
 | `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | MDL system aliases and process-owned user views retain physical cache attributes and permissions; nonpaged pool MDLs reuse the original pool mapping through the safe helper |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | Standalone or IRP-associated nonpaged-pool/user descriptors, mutable chain links, independent locks and shared system aliases; no quota |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | Explicit session registry, per-handle rights and lifetime, query buffer sizing and mutations; no host registry access |
+| `ExAllocatePool` | Legacy two-argument data allocation for pool types `0`, `1`, and `512`; shared alignment, uninitialized-byte model, size/IRQL checks and NULL on exhaustion. Free through `ExFreePool` or a zero-tag `ExFreePoolWithTag`; retained allocations remain kernel dependencies. |
 | `ExAllocatePoolWithTag`, `ExFreePoolWithTag`, `ExFreePool` | Data allocations for pool types `0`, `1`, and `512`; positive size/tag, matching tagged frees, no address reuse |
 | `IoCreateDevice`, `IoDeleteDevice` | Device type `0x22`, characteristics `0` or `0x100`, bounded extensions, ASCII `\Device\Name` names |
 | `IoAttachDeviceToDeviceStack`, `IoDetachDevice` | Same-driver attachment; attach returns the previous top, detach consumes the saved lower device; explicit topology/lifetime limits above |
@@ -574,6 +576,8 @@ The initial API model deliberately has a finite contract:
 | `IoSetCancelRoutine`, `IoAcquireCancelSpinLock`, `IoReleaseCancelSpinLock`, `IoCancelIrp` | Live WDM IRP cancel-routine exchange, nonrecursive system cancel lock with saved IRQL, and synchronous driver-initiated cancellation; the WDK inline helper uses the same IRP field |
 | `IofCompleteRequest`, `IoCompleteRequest` | `IO_NO_INCREMENT`; executes completion unwinding, supports stopped/resumed completion and retires IRP/MDL/buffer storage only at its terminal boundary |
 | `memcpy`, `memmove`, `memset`, `memcmp`, `RtlCopyMemory`, `RtlMoveMemory`, `RtlFillMemory`, `RtlZeroMemory`, `RtlCompareMemory` | Bounded guest buffer operations, at most 1 MiB per call; non-overlapping copy APIs reject overlaps |
+
+`MmProbeAndLockPages` also accepts `KernelMode` ranges within one contiguous loader-owned span of the input driver image at IRQL <= APC_LEVEL. The model checks the requested read/write permissions and uses the existing physical-page quota; image holes and unrelated mappings are not image ownership. This ownership also identifies images loaded below the user-address cutoff. System aliases share the original bytes and physical identities without changing the original image protections. Locks must be paired with unlock and descriptor release. MDL calls retain the existing UNPACK recovery dependency; modeled image access alone does not certify portable driver restoration.
 
 `KernelDispatcher` decodes semaphore `Count`, `Limit` and `Adjustment` as signed 32-bit `LONG`, mutex `Level` as 32-bit `ULONG`, and `Wait` as 8-bit `BOOLEAN`, ignoring undefined register bits under the [Windows x64 ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170). Invalid low-width values and semaphore overflow fail before object state changes.
 
@@ -708,8 +712,10 @@ modeled read-only except for `MDL.Next`. Process fields, unbuilt PFN access,
 hand-built MDLs and direct access through raw UserBuffer are rejected. User
 mappings follow the process-owned MDL contract below. A zero-length direct buffer has a null MDL.
 
-`IoAllocateMdl` allocates metadata for a nonempty, nonoverflowing buffer of at
-most 1 MiB; it does not probe or lock that buffer. `Irp` may be NULL or a live
+`IoAllocateMdl` allocates metadata for a nonempty, nonoverflowing buffer without
+probing or locking it. The modeled descriptor, including its PFN array, must
+fit its 16-bit size field; page offsets count toward PFN capacity. Descriptor
+storage is independent of the described buffer size. `Irp` may be NULL or a live
 modeled IRP. A primary descriptor replaces the current driver-owned chain head;
 the detached descriptors remain driver-owned. A secondary descriptor appends
 to the current chain, or becomes the head when the chain is empty. The original
@@ -991,7 +997,7 @@ and driver callback addresses. Guest addresses are hexadecimal strings so
 JSON consumers do not lose 64-bit precision.
 The `configuration` object records the run's limits, service name,
 `kernel_exports` overrides and original `registry` input.
-The profile is `wdm-x64-scheduled-v86`. `nt_status` remains the DriverEntry
+The profile is `wdm-x64-scheduled-v92`. `nt_status` remains the DriverEntry
 result, while `scenario_success` describes initialization and completed
 requests together. `phase`, `requests`, and `unload_completed` identify which
 parts of the requested lifecycle ran. Each API call and CPU write also records
@@ -1184,3 +1190,13 @@ use Unicorn. The existing ISA and OS contracts remain authoritative. See
 evidence and Intel runtime coverage are reported separately.
 
 Explicit CPU0 preemption, clock semantics and current limits are described in [driver scheduling](driver-scheduling.md).
+
+## HAL exports and performance counter
+
+`HAL.dll` is a separate, case-insensitive import provider. Static imports and `MmGetSystemRoutineAddress` share exact, case-sensitive export identities across the kernel and HAL; conflicting live identities are refused. `kernel_exports` overrides known HAL routines in their HAL namespace; other explicit declarations remain kernel exports. Unknown HAL imports retain lazy traps, without acquiring a kernel API contract merely from their name.
+
+`KeQueryPerformanceCounter` returns the shared scheduler time in 100 ns ticks with a fixed frequency of 10,000,000 ticks per second. Its optional output pointer is checked for the complete eight-byte write and object lifetime. The call is available at every valid x64 IRQL. Cooperative mode advances time only at existing scheduling boundaries; instruction-clock mode retains its configured timing. Counter reads never create a second clock or advance time themselves. This is a deterministic profile, not a measurement of host hardware. The independently compiled runtime fixture checks static/dynamic identity, frequency and monotonicity at preferred and rebased addresses on native CPU backends.
+
+`RDTSC` and `RDTSCP` read the same 10 MHz scheduler clock as `KeQueryPerformanceCounter`. `RDTSCP` returns zero in ECX for the single modeled processor. EAX/EDX (and ECX for RDTSCP) zero their upper halves; other registers and flags are preserved. Cooperative reads do not advance time. With explicit instruction scheduling, the read observes time after its own admitted instruction is charged, independently of the quantum. Overflow stops before publishing register results. Instruction limits and observer stops still apply. This profile does not measure host TSC frequency or expose host processor identity; MSR access, RDPMC and other unmodeled CPU queries remain unsupported.
+
+`KernelModuleImages` derives readable PE headers and export tables from `KernelExportRegistry`; static imports, dynamic lookup and module enumeration share the same addresses. Provider code remains opaque, and the inventory describes the modeled environment, not the host kernel. Both outputs are checked before writes, including pool lifetimes and overlap. Nt queries require a known kernel previous-mode; Zw queries use the kernel contract. A complete module query retains an explicit recovery dependency, even after its buffer is freed; provider-image pointers are also tracked as borrowed state. `KernelExportTests.cpp` checks PE parsing, permissions, ABI fields, refused writes and recovery dependencies; the original compiled runtime fixture walks these export tables on the CPU backends.

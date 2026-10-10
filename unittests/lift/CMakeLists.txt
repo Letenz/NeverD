@@ -1296,6 +1296,8 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTestUtils.cpp
   eh/RegistrationCxxContinuationTests.cpp
   eh/RegistrationRealignedStateTests.cpp
+  eh/RegistrationRealignedTestUtils.cpp
+  eh/RegistrationCallbackStateTests.cpp
 
   LINK_COMPONENTS
   IRRegistrationState
@@ -1313,10 +1315,26 @@ add_neverd_unittest(NeverDRegistrationEHTests
 
 add_neverd_unittest(NeverDWindowsRegistrationFrameTests
   eh/WindowsRegistrationFrameTests.cpp
+  eh/WindowsRegistrationFrameLayoutTests.cpp
   eh/WindowsRegistrationCxxFrameTests.cpp
 
   LINK_COMPONENTS
   WindowsRegistrationFrame
+)
+
+add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
+  eh/WindowsRegistrationRealignedTests.cpp
+  eh/WindowsRegistrationRealignedNativeTests.cpp
+  eh/WindowsRegistrationDirectNativeTests.cpp
+  eh/WindowsRegistrationHighCallbackTests.cpp
+  eh/RegistrationCxxCatchTestUtils.cpp
+  eh/RegistrationCxxContinuationTestUtils.cpp
+
+  LINK_COMPONENTS
+  IRHigh
+  BackendC
+  BackendLLVM
+  CodeGen
 )
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
@@ -2160,6 +2178,7 @@ if(NOT CLANG_EXEC)
 endif()
 
 set(X86_64_TEST_SOURCES
+  x86_64/test_jumptable_narrow_guard_x64.s
   x86_64/test_arith.c
   x86_64/test_muldiv.c
   x86_64/test_control_flow.c
@@ -2228,6 +2247,7 @@ set(X86_64_TEST_SOURCES
 )
 
 set(X86_32_TEST_SOURCES
+  x86_32/test_jumptable_narrow_guard_i386.s
   x86_32/test_extern_calls_i386.c
   x86_32/test_extern_calls_nopic_i386.c
   x86_32/test_return_join_i386.c
@@ -2259,6 +2279,7 @@ set(X86_32_TEST_SOURCES
 )
 
 set(AARCH64_TEST_SOURCES
+  aarch64/test_jumptable_narrow_guard_a64.s
   aarch64/test_extern_calls_a64.c
   aarch64/test_extern_calls_nopic_a64.c
   aarch64/test_return_join_a64.c
@@ -3681,9 +3702,20 @@ add_neverd_unittest(NeverDX86FPConversionAccuracyTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86FPConversionAccuracyTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
+add_neverd_unittest(NeverDX86FPRoundAccuracyTests
+  x86_64/X86_64_FPRoundAccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPRoundAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
 add_neverd_unittest(NeverDX86EncodingAccuracyTests
   x86_64/X86_64_EncodingAccuracyTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86RdSspAccuracyTests
+  x86_64/X86_64_RdSspAccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86RdSspAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
 
 add_neverd_unittest(NeverDX86SIMDAccuracyTests
   x86_64/X86_64_SIMDAccuracyTests.cpp

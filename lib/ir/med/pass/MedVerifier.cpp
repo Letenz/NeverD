@@ -20,6 +20,7 @@
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
+#include "neverd/ir/med/X86RegistrationFrame.h"
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
@@ -59,6 +60,10 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
         else if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
                  Op.Inputs[0].isConst()) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (Id == Intrinsic::CetRdSsp &&
+              !x86ShadowStackReadShapeIsValid(x86ShadowStackReadMedShape(Op)))
+            Err("shadow stack read has an invalid full-GPR contract", Blk.Id,
+                Op.Addr);
           if (isX86FPStateIntrinsic(Id) &&
               !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op)))
             Err("x86 FP state intrinsic has an invalid numerical/state "
@@ -141,6 +146,13 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
         if (!hasValidRegistrationRootShape(Op))
           Err("registration runtime root has an invalid carrier", Blk.Id,
               Op.Addr);
+        else if ((Op.RegistrationRoot ==
+                      MedOp::RegistrationRootKind::RealignedFramePointer ||
+                  Op.RegistrationRoot == MedOp::RegistrationRootKind::
+                                             RealignedRestoredStackPointer) &&
+                 !registrationRootFrameCoordinate(Func, Op))
+          Err("realigned registration root has no checked source coordinate",
+              Blk.Id, Op.Addr);
       } else if (Op.RegistrationStackOffset != 0)
         Err("restored stack offset has no registration runtime root", Blk.Id,
             Op.Addr);
