@@ -5732,6 +5732,57 @@ TEST_F(JTE_X86_64, GuardEvidenceStopsAtMatchedIndexBeforeWideAncestor) {
   EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
 }
 
+TEST_F(JTE_X86_64, GuardEvidenceSeparatesValueHistoryFromSyntaxDepth) {
+  auto ImageOrErr = neverd::loadBinary(identityCfgLaneObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const auto &Image = *ImageOrErr;
+  for (const auto &[Name, ExpectedTables] :
+       {std::pair{"jt_identity_guard_long_predecessors", 1u},
+        std::pair{"jt_identity_guard_unrelated_predecessors", 0u},
+        std::pair{"jt_identity_guard_changed_low_byte", 0u},
+        std::pair{"jt_identity_guard_depth_budget", 0u}}) {
+    SCOPED_TRACE(Name);
+    const auto *Function = Image.findSymbol(Name);
+    ASSERT_NE(Function, nullptr);
+    neverd::Decoder Decoder;
+    ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+    neverd::CFGBuilder Builder;
+    const auto Low = Builder.build(Image, Decoder, Function->Addr, Name);
+    ASSERT_TRUE(Low.hasCompleteInstructionLift());
+    if (std::string_view(Name) != "jt_identity_guard_depth_budget")
+      EXPECT_GE(Low.Blocks.size(), 80u);
+    ASSERT_EQ(Low.JumpTables.size(), ExpectedTables);
+    EXPECT_TRUE(lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_BR));
+    EXPECT_FALSE(lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_CALL));
+    if (ExpectedTables) {
+      EXPECT_EQ(Low.JumpTables.front().Targets.size(), 128u);
+      std::set<uint64_t> CaseValues;
+      for (const auto Target : Low.JumpTables.front().Targets) {
+        const auto Block = std::find_if(Low.Blocks.begin(), Low.Blocks.end(),
+                                        [&](const auto &Candidate) {
+                                          return Candidate.StartAddr == Target;
+                                        });
+        ASSERT_NE(Block, Low.Blocks.end());
+        EXPECT_TRUE(std::any_of(
+            Block->Ops.begin(), Block->Ops.end(),
+            [](const auto &Op) { return Op.Opcode == neverd::NdOp::RETURN; }));
+        std::set<uint64_t> TargetValues;
+        for (const auto &Op : Block->Ops)
+          for (unsigned I = 0; I < Op.NumInputs; ++I)
+            if (Op.Inputs[I].isConst() && Op.Inputs[I].Size == 4 &&
+                Op.Inputs[I].Offset >= 5100 && Op.Inputs[I].Offset <= 5103)
+              TargetValues.insert(Op.Inputs[I].Offset);
+        ASSERT_EQ(TargetValues.size(), 1u);
+        CaseValues.insert(*TargetValues.begin());
+      }
+      EXPECT_EQ(CaseValues, (std::set<uint64_t>{5100, 5101, 5102, 5103}));
+      EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+      EXPECT_TRUE(Low.TruncatedPathAddresses.empty());
+    }
+  }
+}
+
 TEST_F(JTE_X86_64, GuardEvidenceDepthBudgetFailsClosed) {
   auto R = liftToLowIR(identityCfgLaneObj());
   ASSERT_EQ(R.exitCode, 0) << R.err;

@@ -31,11 +31,14 @@ RegistrationRoots::RegistrationRoots(const LowFunc &Low, Arch Architecture,
   if (Format != BinaryFormat::COFF || !hasFrame() || !EH.Registration)
     return;
   const auto &Chain = *EH.Registration;
-  Direct = !Chain.RealignedFrame &&
-           Chain.RegistrationOffset == (HasCxxFrame ? -12 : -16) &&
-           Chain.TryLevelOffset == -4;
   const auto *State =
       Low.RegistrationStates ? &*Low.RegistrationStates : nullptr;
+  Direct =
+      !Chain.RealignedFrame &&
+      (HasCxxFrame
+           ? (Chain.RegistrationOffset == -12 && Chain.TryLevelOffset == -4) ||
+                 cxxRegistrationFrameCoordinate(EH, State).has_value()
+           : Chain.RegistrationOffset == -16 && Chain.TryLevelOffset == -4);
   Realigned = HasCxxFrame && Low.Entry == EH.CodeRange.Begin &&
               realignedRegistrationFrameCoordinate(EH, State).has_value();
   if (!(Direct || Realigned) || !HasCxxFrame || !State ||
@@ -109,11 +112,15 @@ void RegistrationRoots::initialize(MedOp &Op, bool RuntimeRoot, bool Callback,
       Value.Size != 4)
     return;
   const auto &TRI = getTargetRegInfo(Arch::X86);
-  if (Value.RegOff == TRI.FramePointer)
+  if (Value.RegOff == TRI.FramePointer) {
     Op.RegistrationRoot =
         Realigned ? MedOp::RegistrationRootKind::RealignedFramePointer
                   : MedOp::RegistrationRootKind::EstablishedFramePointer;
-  else if (Value.RegOff == TRI.StackPointer && RestoredSP) {
+    if (HasCxxFrame &&
+        Low.ExceptionMetadata->Registration->cxxRuntimeFrameOffset().value_or(
+            0))
+      Op.RegistrationRoot = MedOp::RegistrationRootKind::DisplacedFramePointer;
+  } else if (Value.RegOff == TRI.StackPointer && RestoredSP) {
     Op.RegistrationRoot =
         Realigned ? MedOp::RegistrationRootKind::RealignedRestoredStackPointer
                   : MedOp::RegistrationRootKind::RestoredStackPointer;

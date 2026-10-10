@@ -1,0 +1,360 @@
+{
+  "schema": 1,
+  "kind": "local-debugger-and-proof-bound-research",
+  "date": "2026-10-10",
+  "input": {
+    "repository_path": "unittests/corpus/corpus/rust-eh/x86_64-unknown-linux-gnu/unwind/o2/bin/rust_eh_probe-x86_64-unknown-linux-gnu-unwind-o2",
+    "sha256": "ff7b02957d3c10e9e6d409c62312d0ddcc261a9f69e3807be089ec319a53e538"
+  },
+  "measurement_limits": [
+    "These are separate diagnostic experiments, not an equal-work end-to-end GUI comparison.",
+    "Normal IDA cold means no cached cfunc after automatic analysis; OS caches and prior database/type analysis are not reset.",
+    "Event boundaries are cumulative elapsed times, not exclusive pass CPU times. Python text copying is outside decompile_render_ns.",
+    "GDB changes both scheduling and executed verification work. Stack proportions are not normal-runtime CPU shares.",
+    "Native CFG entry counts do not establish that every result completed every semantic proof.",
+    "The64 stage and64 depth measurements are separate probes;128 collects both. Their timings are not used as production performance claims.",
+    "The exact recorded-state comparison excludes resource-cache contents and does not alone prove a general safe early-exit rule.",
+    "Raw source artifacts are local ignored build outputs; only this numerical extraction is published."
+  ],
+  "ida": {
+    "entry": "0x19b24",
+    "kernel_version": "9.4",
+    "hexrays_version": "9.4.0.260610",
+    "experiments": 6,
+    "decompile_calls": 37,
+    "independent_microcode_calls": 7,
+    "normal_cold_runs": [
+      {
+        "label": "hooks-001",
+        "hooks_enabled": true,
+        "database_open_ns": 1257447830,
+        "autoanalysis_ns": 2301078548,
+        "decompile_ns": 3113393813,
+        "get_pseudocode_ns": 26145617,
+        "decompile_render_ns": 3139547660,
+        "text_copy_ns": 3828373
+      },
+      {
+        "label": "nohooks-001",
+        "hooks_enabled": false,
+        "database_open_ns": 1572675043,
+        "autoanalysis_ns": 2893245265,
+        "decompile_ns": 3242888208,
+        "get_pseudocode_ns": 20465524,
+        "decompile_render_ns": 3263361243,
+        "text_copy_ns": 2906342
+      },
+      {
+        "label": "cache-text-001",
+        "hooks_enabled": false,
+        "database_open_ns": 1576389179,
+        "autoanalysis_ns": 2134636129,
+        "decompile_ns": 3059212329,
+        "get_pseudocode_ns": 20361152,
+        "decompile_render_ns": 3079580375,
+        "text_copy_ns": 2850297
+      },
+      {
+        "label": "stages-001",
+        "hooks_enabled": true,
+        "database_open_ns": 1646754416,
+        "autoanalysis_ns": 2616560815,
+        "decompile_ns": 3028342603,
+        "get_pseudocode_ns": 20642097,
+        "decompile_render_ns": 3048990772,
+        "text_copy_ns": 2989014
+      }
+    ],
+    "normal_hook_boundaries_ns": {
+      "microcode": 40993389,
+      "preoptimized": 100634643,
+      "locopt": 147069441,
+      "calls_done": 652907039,
+      "glbopt": 1248177504,
+      "pre_structural": 1257082922,
+      "structural": 1287835595
+    },
+    "normal_hook_decompile_return_ns": 3113393813,
+    "normal_hook_decompile_and_pseudocode_ns": 3139547660,
+    "normal_hook_python_copy_ns": 3828373,
+    "normal_and_gdb_ctree_maturity_counts": {
+      "CMAT_ZERO": 10,
+      "CMAT_BUILT": 10,
+      "CMAT_TRANS1": 10,
+      "CMAT_NICE": 10,
+      "CMAT_TRANS2": 10,
+      "CMAT_CPA": 10,
+      "CMAT_TRANS3": 9,
+      "CMAT_CASTED": 1,
+      "CMAT_FINAL": 1
+    },
+    "gdb_sampling": {
+      "samples": 290,
+      "decompile_and_pseudocode_ns": 8780266715,
+      "inclusive_debugger_gated_verification_samples": 88,
+      "same_text_hash_as_normal": true,
+      "same_final_microcode_counts_as_normal": true,
+      "main_user_cpu_ticks": 724,
+      "main_system_cpu_ticks": 1,
+      "other_live_thread_delta_ticks": 0,
+      "ticks_per_second": 100
+    },
+    "gdb_decoder": {
+      "calls": 17341,
+      "unique_addresses": 2976,
+      "root_calls": 14227,
+      "root_unique_addresses": 2925,
+      "other_function_owners": 25,
+      "other_functions_unique_addresses": 25,
+      "outside_function_chunks_calls": 1062,
+      "outside_function_chunks_unique_addresses": 26,
+      "timing_eligible": false
+    },
+    "coverage": {
+      "elf_symbol_start": "0x19b24",
+      "elf_symbol_end": "0x1d706",
+      "elf_symbol_bytes": 15330,
+      "ida_function_start": "0x19b24",
+      "ida_function_end": "0x1d3aa",
+      "ida_function_bytes": 14470,
+      "ida_decoded_instructions": 2925,
+      "tail_bytes": 860,
+      "tail_owned_by_any_ida_function": false
+    }
+  },
+  "neverd": {
+    "control_commit": "882dc00bb83f282015831529844354107e12dc31",
+    "gdb_scope": {
+      "engine_sha256": "6572c9f092306be7372c3c6fd912d6af6f2fbb13b05b58066c0ce1fb61048d6b",
+      "entry": "0x19b24",
+      "builds": 237,
+      "unique_targets": 91,
+      "categories": {
+        "pipeline_candidate_build": {
+          "requests": 1,
+          "distinct_targets": 1,
+          "extra_requests_after_first_per_target": 0
+        },
+        "register_summary_build": {
+          "requests": 88,
+          "distinct_targets": 88,
+          "extra_requests_after_first_per_target": 0
+        },
+        "x87_projection_build": {
+          "requests": 135,
+          "distinct_targets": 90,
+          "extra_requests_after_first_per_target": 45
+        },
+        "no_return_proof_build": {
+          "requests": 13,
+          "distinct_targets": 6,
+          "extra_requests_after_first_per_target": 7
+        }
+      },
+      "all_88_register_targets_also_built_for_x87": true
+    },
+    "ordinary_context": {
+      "engine_sha256": "4176ec8938ed5b9c5d8daf1356f8b09c5550de3efcb62175661ce61b1ee1cfc8",
+      "exact_contexts": 14,
+      "categories": {
+        "no_return": {
+          "builds": 13,
+          "distinct_entries": 6
+        },
+        "register_summary": {
+          "builds": 88,
+          "distinct_entries": 88
+        },
+        "selected": {
+          "builds": 1,
+          "distinct_entries": 1
+        },
+        "x87": {
+          "builds": 135,
+          "distinct_entries": 90
+        }
+      },
+      "cross_purpose_entries": 88,
+      "closest_cross_purpose_context_differences": [
+        {
+          "fields": [
+            "no_return_depth",
+            "skip_x87_fixup",
+            "function_name"
+          ],
+          "entries": 83
+        },
+        {
+          "fields": [
+            "no_return_depth",
+            "skip_x87_fixup",
+            "image_code_ref_targets",
+            "function_name"
+          ],
+          "entries": 5
+        }
+      ],
+      "same_cache_concurrent_followers": 3
+    },
+    "proof_bound_experiment": {
+      "entry": "0x38ef0",
+      "production_timing_claim": false,
+      "work_budgets_unchanged": true,
+      "changed_call_arguments": {
+        "repository_path": "lib/ir/low/jumptable/JumpTableResolverGuardAlias.cpp",
+        "call_sites": 2,
+        "before": 0,
+        "before_effective_limit": 64,
+        "after": 128
+      },
+      "depth64": {
+        "events": {
+          "stage_begin": 16,
+          "candidate": 136,
+          "stage_end": 16,
+          "rollback": 7,
+          "resolve_exit": 1
+        },
+        "depth_batches": 2362,
+        "complete_depth_batches": 2296,
+        "incomplete_depth_batches": 59,
+        "early_unclassified_depth_batches": 7,
+        "value_cache_hits": 511,
+        "final": {
+          "retained_instructions": 975,
+          "published_instructions": 87,
+          "published_blocks": 15,
+          "resolved_tables": 0,
+          "target_slots": 0,
+          "stage_incomplete": true,
+          "stage_budget_remaining": 1901178945
+        }
+      },
+      "depth128": {
+        "events": {
+          "stage_begin": 4,
+          "candidate": 28,
+          "stage_end": 4,
+          "resolve_exit": 1
+        },
+        "depth_batches": 466,
+        "complete_depth_batches": 466,
+        "incomplete_depth_batches": 0,
+        "early_unclassified_depth_batches": 0,
+        "value_cache_hits": 73,
+        "final": {
+          "retained_instructions": 975,
+          "published_instructions": 975,
+          "published_blocks": 214,
+          "resolved_tables": 9,
+          "target_slots": 40,
+          "stage_incomplete": false,
+          "stage_budget_remaining": 1894317097
+        }
+      },
+      "depth64_rejections": {
+        "resolveValue": 1786,
+        "resolveMemory": 28,
+        "actual_depth": 65,
+        "effective_limit": 64,
+        "all_failed_batches_resource_flags_false": true,
+        "failed_batch_final_match_budget_min": 61327,
+        "failed_batch_final_match_budget_max": 62124,
+        "at_rejection_evidence_budget_min": 519300159,
+        "at_rejection_evidence_budget_max": 527645069
+      },
+      "depth128_rejections": 0,
+      "final128_matches_prior64_transient_full_graph": true,
+      "final128_matches_prior64_transient_full_targets": true,
+      "final128_matches_prior64_transient_published_addresses": true,
+      "engine_hashes": {
+        "depth64": "c31f0bff765ebd00bbeaf2bdd6713f1817f48523fccf8dce161e1c00fb4993b8",
+        "depth128": "847cece0eb04e3af325ef610ae97b002787e7d5bc0c2ea441ac435bad7a1f43e",
+        "stage64": "2185e5672c9717817b26e1f49e8e1c4fab70f9878a873c6b69d4fe52d3fb675c"
+      },
+      "graph_equality_scope": "The serialized instruction records, ordered target vectors, block-start and root/source inventories were compared exactly. Published instruction addresses were compared separately; this is not a comparison of post-x87-fixup final LowFunc objects."
+    }
+  },
+  "source_evidence": [
+    {
+      "label": "ida-phase-summary",
+      "repository_relative_path": "build/ida-performance-research/phase-evidence-summary.json",
+      "sha256": "4af5162e36edbdda6a6316f3abe3d4b8da95287bb048778f58a785ba52bdad8e"
+    },
+    {
+      "label": "ida-native-samples-summary",
+      "repository_relative_path": "build/ida-performance-research/gdb-samples-001.compact.json",
+      "sha256": "0f9ccc81d4ea6f10ff7cc787343f3a136c51649b289b357846c6f8778db6f860"
+    },
+    {
+      "label": "ida-api-scope",
+      "repository_relative_path": "build/ida-performance-research/ida-api-scope-summary.json",
+      "sha256": "1e53885179fc55d0a19f91fd506fd71a66ea2fc3f025796071b3a07f8154d324"
+    },
+    {
+      "label": "neverd-native-scope",
+      "repository_relative_path": "build/ida-performance-research/neverd-scope-validated-summary.json",
+      "sha256": "f827209f5938ebf9d08b476d734d3a8a2e3bc28e135b4acf1ff40796d95be3b6"
+    },
+    {
+      "label": "neverd-ordinary-context",
+      "repository_relative_path": "build/perf-round5/context-diagnostic/summary.json",
+      "sha256": "ea1b79dddd0dd2341ab8db2fb92155d7e0cb88365e7cf0b77f63af6fd2e37cd9"
+    },
+    {
+      "label": "neverd-stage64-summary",
+      "repository_relative_path": "build/perf-round5/stage-diagnostic/analysis.json",
+      "sha256": "4f33f6817c1a263776386992e8f9d70dd62027299519cc10c75a0fbbd6512f74"
+    },
+    {
+      "label": "neverd-depth64-summary",
+      "repository_relative_path": "build/perf-round5/depth-diagnostic/analysis.json",
+      "sha256": "84af503234898994f5589d8d70fbb5d5b42dacb6296e30fd9680c0cf34cc969b"
+    },
+    {
+      "label": "neverd-depth128-summary",
+      "repository_relative_path": "build/perf-round5/depth-diagnostic/depth128/analysis.json",
+      "sha256": "171f4947c770ea983cd4813d9dbc3c070d0d72a14d5e490155ae797550b78a5c"
+    },
+    {
+      "label": "neverd-depth-comparison",
+      "repository_relative_path": "build/perf-round5/depth-diagnostic/comparison/analysis.json",
+      "sha256": "a9651ddebbd85384bccad2ba170eb7a4917ac6b66a67c2bdf6a75ff7351439fd"
+    },
+    {
+      "label": "neverd-depth-experiment-patch",
+      "repository_relative_path": "build/perf-round5/depth-diagnostic/depth128.patch",
+      "sha256": "2909e724e7fe4adbacea6abbb47f0dd4ddcead3b42b005a15d0566f7ea2d5e89"
+    },
+    {
+      "label": "ida-hooks-001",
+      "repository_relative_path": "build/ida-performance-research/hooks-001/evidence.json",
+      "sha256": "0047c704f70427842e4c27d61d21f3c42d8a03702dc495ce302751501468aef4"
+    },
+    {
+      "label": "ida-nohooks-001",
+      "repository_relative_path": "build/ida-performance-research/nohooks-001/evidence.json",
+      "sha256": "0df37a527a2ea1d103dbab36ac4c6dca97bb2b73721e4dab121c780216d5ba1d"
+    },
+    {
+      "label": "ida-gdb-hooks-001",
+      "repository_relative_path": "build/ida-performance-research/gdb-hooks-001/evidence.json",
+      "sha256": "5a4ab913ce80f339baac3669aacf863d05d15175eb7491e0a29e3383c4ef82b2"
+    },
+    {
+      "label": "ida-gdb-counts-001",
+      "repository_relative_path": "build/ida-performance-research/gdb-counts-001/evidence.json",
+      "sha256": "eedf501680f6d03a26ace151e7c703292d2240270ce0bf539fc983f9261f6419"
+    },
+    {
+      "label": "ida-cache-text-001",
+      "repository_relative_path": "build/ida-performance-research/cache-text-001/evidence.json",
+      "sha256": "986ce1714830eadee49550bcce325f13481b2118776864f31f6c31f740711573"
+    },
+    {
+      "label": "ida-stages-001",
+      "repository_relative_path": "build/ida-performance-research/stages-001/evidence.json",
+      "sha256": "84d6fd38e8bad3556df19e13f4097477b2b77f449357c1e2e58b065fb5c3f628"
+    }
+  ]
+}

@@ -189,6 +189,12 @@ actual warm hits, identical cold/warm budget consumption and a fresh successful
 proof when the same address belongs to a different valid image. Truncated
 instruction streams remain unretained.
 
+The concurrent graph tests hold a builder at a real prover callback and observe
+registered waiters before releasing it. They check one construction for matching
+inputs, independent proof budgets, exception and incomplete-lift wakeups,
+different contexts, and reentrant callbacks across threads and caches. These
+overlaps are coordinated by conditions rather than assumed from timing.
+
 `X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
 machine bytes, generated LLVM, HighC and a separately generated C caller linked
 to native callees. Linux x64 hosts execute both i386 and x64, default/NoOpt
@@ -764,6 +770,12 @@ budgets at every small-fixture boundary, ordered mixed results and feasible
 masks, all query fields, proof limits and graph-independent relocation context.
 Incomplete proofs and oversized records cannot be retained; count and byte
 limits are checked independently.
+The long-predecessor guard fixture separates a shallow comparison from its
+value's CFG history. It checks 128 table slots reaching four exact case targets,
+unrelated guards and partial-register changes, while retaining the independent
+deep-syntax refusal. The cache case checks rejection beyond the expanded value
+depth, that a complete expanded-depth answer cannot satisfy a default-depth
+query, and that repeated expanded queries preserve results and work charges.
 `PipelineOutcome.ParallelCalleeFrontiersPreserveEveryRegisterSummary` compares
 serial and parallel summaries across two 40-function callee frontiers.
 
@@ -2561,17 +2573,31 @@ This is generated-frame analysis/runtime evidence, not source reconstruction.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned
 value/reference, unbound value/reference and catch-all parents. Independent
 assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.
-Catch-all also executes with an unsigned throw. The runner lifts real PE32
+LLVM fixed-frame parents cover all five forms, unsigned catch-all and a larger
+allocation requiring an imm32 stack adjustment. Their additional proof checks
+exact prologue fields, paired chain registers, displaced runtime roots, callback
+EBP restoration and saved-register separation.
+Catch-all also executes with an unsigned throw. Four additional direct-frame
+profiles cover value/reference/catch-all with parent and catch argument writes,
+and catch-all with read-only arguments. Their assembly caller checks both
+physical argument words after return, with four signed input pairs and stack
+layouts. The runner lifts real PE32
 instructions and reconstructs
 through the public patcher and both CLI modes. Pass `--test-binary`,
 `--patch-binary`, `--runtime-libs` and `--output`. Every source and control
-requires source reconstruction; aligned profiles additionally require both
-callback HighIR checks. Runtime probes
+requires source reconstruction; LLVM fixed and aligned profiles additionally
+require both callback HighIR checks. Displaced fixed frames also require the source-coordinate
+and prologue mutation checks. Runtime probes
 use four caller stack layouts to check the catch value, reference effect,
 caller PC and restored FS chain.
-All twenty source/control profiles and four installation routes execute at two
-forced bases (160 executions). CLI bytes must equal the checked public output;
+All forty-two source/control profiles and four installation routes execute at two
+forced bases (336 executions). CLI bytes must equal the checked public output;
 the throw caller must lie in that output's recovered generated owner.
+Incoming-frame tests also verify transactional rollback and reject unobserved
+entry words, register ABI attributes, missing/changed access receipts, wrong
+physical offsets, frame-depth changes, hidden slot writes, unindexed caller
+memory operations and private-frame pointer leaks. Replay requires the source
+read/write counts and both executed entry/rollback checks.
 Twelve frame/stack edits plus eight continuation edits reject independently,
 including valid control receipts with uninitialized scratch reads, accesses
 after catch return and callback pointers outside the SavedESP bridge.
@@ -2583,7 +2609,7 @@ The separate layout tests cover all supported alignments, source residues,
 signed displacement bounds and under-aligned allocations.
 `replay_windows_registration_realigned_rewrite.py` authenticates the source,
 objects, IR, checked installation receipts, executed tests and exact PE matrix
-before native Windows executes those same 160 files. It does not relink them.
+before native Windows executes those same 336 files. It does not relink them.
 Real MSVC directory-size64/declared-size192 load-configs must remain supported
 with complete section bounds.
 Final generic PE validation also checks valid and invalid CF/EH continuation
