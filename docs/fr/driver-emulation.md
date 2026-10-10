@@ -407,7 +407,7 @@ Le modèle initial d’API possède volontairement un contrat limité :
 | `IofCompleteRequest`, `IoCompleteRequest` | `IO_NO_INCREMENT` ; déroule la fin avec arrêt/reprise et libère IRP/MDL/tampons uniquement à la limite finale |
 | `memcpy`, `memmove`, `memset`, `memcmp`, `RtlCopyMemory`, `RtlMoveMemory`, `RtlFillMemory`, `RtlZeroMemory`, `RtlCompareMemory` | Opérations bornées sur les tampons invités, au plus 1 MiB par appel ; les API de copie sans chevauchement rejettent les chevauchements |
 
-`MmProbeAndLockPages` accepte aussi en `KernelMode` une plage contiguë de l’image du pilote détenue par le chargeur, à IRQL <= APC_LEVEL. Le modèle vérifie les droits demandés et conserve le quota de pages physiques ; les trous et les mappages étrangers sont exclus. Cette propriété identifie aussi les images sous la limite des adresses utilisateur. Les alias système partagent les octets et identités physiques sans changer les protections originales. Chaque verrouillage exige déverrouillage et libération du descripteur. Les appels MDL conservent la dépendance de restauration UNPACK ; l’accès modélisé ne certifie pas une restauration portable.
+`MmProbeAndLockPages` accepte en `KernelMode` une plage contiguë de l’image du pilote détenue par le chargeur, à IRQL <= APC_LEVEL. Les pages doivent être lisibles et respecter le quota physique. Leur stockage étant déjà privé et résident, `IoWriteAccess` et `IoModifyAccess` autorisent un alias MDL inscriptible même si la vue originale est en lecture seule ; `IoReadAccess` conserve un alias en lecture seule. Les protections originales restent inchangées. Les trous et mappages étrangers sont exclus, y compris sous la limite des adresses utilisateur grâce à la propriété explicite. Chaque verrouillage exige déverrouillage et libération du descripteur. Les appels MDL conservent la dépendance de restauration UNPACK ; l’accès modélisé ne certifie pas une restauration portable.
 
 `KernelDispatcher` décode `Count`, `Limit` et `Adjustment` du sémaphore comme des `LONG` signés sur 32 bits, `Level` du mutex comme un `ULONG` sur 32 bits et `Wait` comme un `BOOLEAN` sur 8 bits, en ignorant les bits de registre indéfinis selon l’[ABI Windows x64](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170). Les valeurs invalides dans la largeur définie et les dépassements du sémaphore sont rejetés avant toute modification de l’objet.
 
@@ -681,7 +681,7 @@ invitées sont des chaînes hexadécimales afin que les consommateurs JSON ne
 perdent pas de précision sur 64 bits. L’objet `configuration` enregistre les
 limites, le nom du service, les substitutions `kernel_exports` et l’entrée
 `registry` de l’exécution. Le profil est
-`wdm-x64-scheduled-v92`. `nt_status` reste le résultat de DriverEntry, tandis
+`wdm-x64-scheduled-v93`. `nt_status` reste le résultat de DriverEntry, tandis
 que `scenario_success` décrit conjointement l’initialisation et les requêtes
 terminées. `phase`, `requests` et `unload_completed` identifient les parties du
 cycle demandé qui ont été exécutées. Chaque appel d’API et écriture CPU indique

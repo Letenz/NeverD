@@ -1449,8 +1449,41 @@ TEST_F(KernelImageMDL, WriteAliasesModifyTheExistingImageAndReleaseTheirView) {
   EXPECT_TRUE(take(Model->hasUnpackDependencies()));
 }
 
-TEST_F(KernelImageMDL, FailedWriteProbePreservesTheDescriptorAndPermissions) {
+TEST_F(KernelImageMDL, WritableAliasesKeepReadOnlyImageViewsProtected) {
+  for (const auto Operation : {IoWriteAccess, IoModifyAccess}) {
+    SCOPED_TRACE(Operation);
+    const auto Address = ImageBase + profile::PageSize - 4;
+    const auto Length = profile::PageSize + 8;
+    const auto MDL = call("IoAllocateMdl", {Address, Length, 0, 0, 0});
+    auto Locked =
+        Model->call("MmProbeAndLockPages", {MDL, KernelMode, Operation});
+    ASSERT_TRUE(bool(Locked)) << llvm::toString(Locked.takeError());
+    const auto Alias = call(
+        "MmGetSystemAddressForMdlSafe",
+        {MDL, NormalPagePriority | MdlMappingNoWrite | MdlMappingNoExecute});
+    ASSERT_NE(Alias, 0u);
+    EXPECT_FALSE(take(Memory->canAccess(Alias, Length, Write)));
+    call("MmProtectMdlSystemAddress", {MDL, PageReadWrite});
+    for (const auto Offset : {uint64_t(0), uint64_t(4), Length - 4}) {
+      put(Alias + Offset, 0x78654321, 4);
+      EXPECT_EQ(get(Address + Offset, 4), 0x78654321u);
+    }
+    EXPECT_FALSE(take(Memory->canAccess(ImageBase, 1, Write)));
+    EXPECT_FALSE(
+        take(Memory->canAccess(ImageBase + 2 * profile::PageSize, 1, Write)));
+    EXPECT_TRUE(
+        take(Memory->canAccess(ImageBase + 2 * profile::PageSize, 1, Execute)));
+    EXPECT_FALSE(take(Memory->canAccess(Alias, Length, Execute)));
+    call("MmUnlockPages", {MDL});
+    EXPECT_FALSE(take(Memory->canAccess(Alias, 1, Read)));
+    EXPECT_EQ(get(Address, 4), 0x78654321u);
+    call("IoFreeMdl", {MDL});
+  }
+}
+
+TEST_F(KernelImageMDL, UnreadableImageProbePreservesDescriptorAndPermissions) {
   const auto MDL = call("IoAllocateMdl", {ImageBase, 32, 0, 0, 0});
+  success(Memory->protect(ImageBase, profile::PageSize, 0));
   std::vector<uint8_t> Before(get(MDL + MDLSizeOffset, 2));
   success(Memory->read(MDL, Before));
   auto Locked =
@@ -1462,7 +1495,9 @@ TEST_F(KernelImageMDL, FailedWriteProbePreservesTheDescriptorAndPermissions) {
   std::vector<uint8_t> After(Before.size());
   success(Memory->read(MDL, After));
   EXPECT_EQ(After, Before);
+  EXPECT_FALSE(take(Memory->canAccess(ImageBase, 1, Read)));
   EXPECT_FALSE(take(Memory->canAccess(ImageBase, 1, Write)));
+  success(Memory->protect(ImageBase, profile::PageSize, Read));
   call("MmProbeAndLockPages", {MDL, KernelMode, IoReadAccess});
   call("MmUnlockPages", {MDL});
   call("IoFreeMdl", {MDL});

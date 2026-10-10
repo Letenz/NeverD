@@ -69,7 +69,7 @@ TEST_P(DriverImageMemory, ImageMDLAliasesPreserveBytesAndCompleteUnload) {
       EXPECT_EQ(
           std::count_if(Run->Calls.begin(), Run->Calls.end(),
                         [&](const auto &Call) { return Call.Name == Name; }),
-          1)
+          2)
           << Name;
   }
 }
