@@ -48,8 +48,12 @@ surrounding whitespace; it never expands to an enclosing function or joins
 partial pieces. A function shown as C after a dialect refusal loses its
 statement anchors. Library folding retains its separate region projection.
 This supplies navigation evidence rather than complete expression provenance.
-Tab consumes the selected row's primary address; an unmapped row explicitly
-falls back to its own function entry.
+Source and assembly cursors browse independently.
+Tab consumes the selected row's primary address, preserving a secondary address
+chosen by an assembly-to-source Tab so a round trip returns to the same
+instruction. Reverse navigation waits for the source pages and expands the
+mapped row's fold. An unmapped row explicitly falls back to its own function
+entry; an unmapped instruction reports the missing source mapping.
 
 Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
 the fallback. Validated Itanium/MSVC names also identify C++ without an

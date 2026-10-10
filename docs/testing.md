@@ -48,9 +48,9 @@ check UTF-8 filenames through the Windows fixture boundary.
 
 The controller also starts a controlled 30-second decompile, proves uncached
 function and listing reads complete while it is running, then switches
-functions and checks cancellation without losing staged comments. A 20,000-line
-source fixture checks event-loop responsiveness and folded declarations across
-pages. Concurrent analysis cases check that a slow view cannot block another
+functions with Tab and checks cancellation without losing staged comments. A
+20,000-line source fixture checks event-loop responsiveness and folded
+declarations across pages. Concurrent analysis cases check that a slow view cannot block another
 function, cancellation only retires its own executor, subsequent pages keep
 their dispatcher when a third function queues, external graph snapshots survive
 interleaved requests, and opening another project retires both replicas.
@@ -77,10 +77,12 @@ single-line paging without spreading return addresses across the function.
 `SessionCAPITest.CSourcePagesRetainCanonicalReturnAnchors` and the real worker's
 native mapping test verify x64 and AArch64 high-VA source rows through small
 pages, including return instruction addresses distinct from the function entry.
-The controller's `tabFromCodeUsesSelectedInstruction` uses a pinned source view
-and independently moved assembly; its optional native rows use the same PE/PDB
-and environment variables described below. Unmapped declarations exercise the
-explicit entry fallback.
+The controller's `tabFromCodeUsesSelectedInstruction` verifies independent
+click/arrow navigation and both Tab directions; its optional native rows use the
+same PE/PDB and environment variables described below. Unmapped declarations
+exercise the explicit entry fallback. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
+listing jumps, rows beyond the first page, folded operations, secondary address
+round trips, cross-function navigation and missing instruction mappings.
 
 ```sh
 cmake --build build-gui --target neverd-gui-tests neverd-gui-query-tests

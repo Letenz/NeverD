@@ -146,26 +146,27 @@ shows the whole function and the visible area.
 
 Opening a file or database starts with disassembly and does not generate
 pseudocode, including when a saved desktop had it open. **F5** or **Tab** opens
-Pseudocode on the right of disassembly. Tab from Pseudocode returns focus to
-disassembly while keeping both panes visible. Once opened, Pseudocode follows
-the current function after a 200 ms pause in navigation; leaving an unfinished
-function cancels its analysis when no other view needs it. Closing or hiding
-the pane stops its requests until it is shown again.
+Pseudocode on the right of disassembly. The panes browse independently: clicks,
+arrow keys and scrolling do not move the other pane. **Tab** from a code window
+selects its mapped instruction in disassembly; Tab from disassembly selects the
+mapped source row in the last code window used, keeping its representation and
+both panes visible. A folded target row expands, and a new function waits for
+all its source pages before selecting the row. An unmapped source row falls
+back to its function entry with a message; an unmapped instruction reports that
+no source row is available and keeps the existing source cursor. Closing or
+hiding a pane stops its requests; showing it again resumes its own function.
 
 **Pseudocode** and **IR** windows show pseudocode in the function's
 own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of
-the current function and follow the disassembly
-unless their lock is set. A window hidden behind another tab catches up when it
-is shown, so moving through the disassembly never waits for a decompile no one
-sees, and F5 pressed while a jump is loading decompiles the function the jump
-lands in. Source arrives in 256-line pages; the view appends new lines without
-recoloring all preceding pages. The engine emits a function's source once and
-pages it from there; a function longer than one page keeps the listing's names,
+the requested function. F5 or Tab pressed while a jump is loading decompiles the
+function the jump lands in. Source arrives in 256-line pages; the view appends
+new lines without recoloring all preceding pages. The engine emits a function's
+source once and pages it from there; a function longer than one page keeps the listing's names,
 such as `main`. The
 LLVM views translate the current function alone,
 with the others declared, so a function the engine refuses to translate shows
-its reason without affecting other functions. Rows mapped to instructions move
-the disassembly cursor. C opens at the function: the includes, support types and
+its reason without affecting other functions. Tab navigates using explicit
+instruction mappings. C opens at the function: the includes, support types and
 declarations before its definition fold into one line. Recognized library
 operations in C can fold into one-line summaries too. Click a summary or press
 Keypad + on it to expand it; Keypad - folds the declarations again, and the
