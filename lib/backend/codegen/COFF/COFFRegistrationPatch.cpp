@@ -1176,7 +1176,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
             if (C->arg_size() != 2 || integer(C->getArgOperand(0), 8) != 1 ||
                 !Frame ||
                 Frame->getIntrinsicID() != llvm::Intrinsic::localaddress ||
-                !F || F->Inputs.size() != 1 || F->Inputs[0] != Pad ||
+                !F || F->Inputs.size() != 1 || F->Inputs[0].get() != Pad ||
                 ++Calls != 1)
               return reject("finally callback lost its abnormal parent frame");
             AbnormalFinallyIR.insert(C);

@@ -235,7 +235,7 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
   auto BundleIs = [](const llvm::CallBase &Call, const llvm::Value *Pad) {
     auto Bundle = Call.getOperandBundle("funclet");
     return Pad ? Bundle && Bundle->Inputs.size() == 1 &&
-                     Bundle->Inputs[0] == Pad
+                     Bundle->Inputs[0].get() == Pad
                : !Bundle;
   };
   std::function<const llvm::BasicBlock *(int32_t)> UnwindAt =

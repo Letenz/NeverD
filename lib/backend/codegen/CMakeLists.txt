@@ -39,4 +39,5 @@ add_neverd_component_library(NeverDCodeGen
   IR
   Loader
   WindowsEHMetadata
+  WindowsRegistrationFrame
 )
