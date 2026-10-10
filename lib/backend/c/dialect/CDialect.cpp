@@ -245,6 +245,13 @@ private:
 
   void stmt(const Stmt *S) {
     leadingComments(S->Leading);
+    const size_t Begin = mark();
+    stmtInner(S);
+    trailingComments(S->Trailing);
+    piece(S->Begin, S->End, Begin);
+  }
+
+  void stmtInner(const Stmt *S) {
     switch (S->Kind) {
     case csyntax::StmtKind::Compound:
       block("", S);
@@ -363,7 +370,6 @@ private:
            (T.Source.slice(S->Begin, S->End).ends_with(";") ? "" : ";"));
       break;
     }
-    trailingComments(S->Trailing);
   }
 
   void declarationLine(const Decl *D) {

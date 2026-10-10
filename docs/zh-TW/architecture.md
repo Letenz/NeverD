@@ -1109,6 +1109,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 `WindowsProcessHeap` 統一管理程序堆積與有界私有堆積的配置、調整大小、釋放及大小查詢。配置移動後仍保留所屬堆積。`HeapDestroy` 只釋放對應私有堆積的物件並使控制代碼失效，其他堆積與環境快照繼續有效。未知或已銷毀的控制代碼、銷毀程序堆積及跨堆積操作均在修改前拒絕。私有堆積僅接受初始大小不超過一頁的可成長請求；固定上限及更大的初始認可量仍不支援。四個堆積的限制依存活數量計算，銷毀後可繼續建立，但舊控制代碼不會重新有效。控制代碼是模型中的不透明識別，不產生原生配置器標頭。`HeapReAlloc`: 調整大小保留原有位元組，遵守 `HEAP_ZERO_MEMORY` 與 `HEAP_REALLOC_IN_PLACE_ONLY`，配置失敗傳回 NULL 並設定 `ERROR_NOT_ENOUGH_MEMORY`（8）。獨立頁後備在縮小、釋放與銷毀時歸還容量，操作受執行期限約束。`WindowsHeapTests.cpp` 涵蓋兩種 ISA、所有權、生命週期周轉、失敗原子性與獨立原生 Windows 對照。
 
+`windows.peb_version` 明確提供 PEB 的 `major`、`minor`、`build` 與 `platform` 欄位。四個無號整數欄位皆須提供；`build` 為 16 位元，其餘為 32 位元。省略時保留設定檔的零填充版本欄位。`WindowsProcessEnvironment` 統一負責 x64 與 ARM64 的初始化。此輸入不選擇原生系統呼叫編號，也不證明對應 Windows 版本的相容性。擷取與原生重播必須保持保留程式碼所依賴的環境位元組一致。
+
 `WindowsSystemModules` 為兩種 ISA 建立有界的 `ntdll.dll`、`kernelbase.dll` 與 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 和 `GetProcAddress` 共用映射基址；PEB/LDR 與 `MEM_IMAGE` 描述相同映像。靜態匯入、名稱查詢與客體 DLL 轉送使用相同 API 跳板及匯出解析器。提供者固定駐留，不執行客體初始化回呼，普通客體 DLL 全部卸載後不會阻止進入點傳回。標頭或匯出中繼資料改變會停止查詢。未知系統匯出名稱與非零系統序號查詢明確停止；已建模名稱的大小寫不符及空名稱傳回錯誤 127，空指標查詢傳回 87。產生的位元組與位址屬於模型策略，不重建特定 Windows DLL 配置、原生序號或跨提供者別名。`WindowsSystemTests.cpp` 對照原始 x64/ARM64 EXE 與原生 Windows，並獨立觀察八次初始執行緒傳回。
 
 `WindowsNativeServices` 統一管理明確的模型服務編號。帶編號的 Nt/Zw 別名共用入口，並依序言中宣告的編號排列。x64 原生服務邊界從 R10 讀取首參，保留 Win64 樁函式的堆疊配置，包括 RSP + 0x28 的堆疊參數及入口對齊要求。返回時繼續執行下一條指令，維持 RSP，並套用 SYSCALL 的 RCX/R11 覆寫語意。複製或行內入口記錄 `direct_service_number`，不構成匯出函式呼叫證據。未知編號與未實作服務會明確停止；模型編號不能代表任意 Windows 版本。 [Nt/Zw](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-nt-and-zw-versions-of-the-native-system-services-routines). 內部執行觀察必須見證兩條入口序言指令，才認定匯出函式呼叫。跳入入口中部即使 RCX 等於 R10，仍保留編號依賴。此觀察在沒有呼叫端觀察器時也生效，且不會向呼叫端要求範圍之外發送觀察回呼。
@@ -1408,3 +1410,5 @@ Objective-C 原始碼匯出器對完整原生單元與各方法單元同時關�
 ## 有界目錄批次屬性
 
 DarwinFiles 負責共通屬性匯入、名稱/stat 有效性與紀錄編碼；DarwinDirectory 負責批次分組、明確物件授權與描述物件擁有的迭代/游標/EOF 狀態，與 getdirentries64 共用目前子項投影。dup 共用同一描述物件，零 seek 重設迭代契約。JSON 提供明確策略輸入，服務派送不推斷檔案系統觀察。
+
+復原的 DLL 入口與原始 PE 入口不同時，寫入器產生載入器通知配接器：程序附加進入選定入口，卸載與執行緒通知進入原始的可執行入口，以保留外層包裝函式的清理。原始入口不可用時重建失敗。報告的 `entry_rva` 仍表示選定的程式入口，PE 標頭可指向配接器。獨立包裝 DLL 測試在兩種模擬架構與原生 Windows 上檢查選定函式之外的清理。

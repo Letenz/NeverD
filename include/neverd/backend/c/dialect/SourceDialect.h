@@ -95,6 +95,12 @@ struct SourceDialectText {
   /// them, or the smallest piece around them.
   std::optional<std::pair<size_t, size_t>> map(size_t CBegin,
                                                size_t CEnd) const;
+  /// Map one complete recorded piece, ignoring surrounding C whitespace.
+  /// Navigation must not expand a partial piece to an enclosing declaration
+  /// or combine pieces across unrecorded text. Ambiguous renderings are
+  /// refused.
+  std::optional<std::pair<size_t, size_t>>
+  mapExact(llvm::StringRef C, size_t CBegin, size_t CEnd) const;
   /// Where the text spelling the C from \p CBegin on starts: the first
   /// piece that starts there or after.
   std::optional<size_t> mapOffset(size_t CBegin) const;

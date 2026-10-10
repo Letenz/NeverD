@@ -84,7 +84,7 @@ __declspec(thread) U32 ThreadValue = InitialTLS;
 __declspec(allocate(".tls")) char TLSStart;
 __declspec(allocate(".tls$ZZZ")) char TLSEnd;
 U32 _tls_index;
-static U32 Initializers, Attached;
+static U32 Initializers, Attached, WrapperCleanup;
 U32 DataValue;
 #define BODY __attribute__((section(".body$m"), noinline))
 __attribute__((section(".body$a"),
@@ -237,6 +237,7 @@ int dllEntry(void *Base, U32 Reason, void *Reserved) {
     return !Pack.Fail;
   }
   check(Reason == 0 && Attached == 1);
+  check(Pack.Mode != WrappedEntryMode || WrapperCleanup == 1);
   output(DetachText, sizeof(DetachText) - 1);
   return 1;
 }
@@ -247,6 +248,8 @@ __attribute__((noinline)) static void decode(void) {
 }
 __attribute__((noinline)) static int wrappedEntry(void *Base, U32 Reason,
                                                   void *Reserved) {
+  if (Reason == 0)
+    ++WrapperCleanup;
   int Result = dllEntry(Base, Reason, Reserved);
   check(Result == 1);
   return Result;

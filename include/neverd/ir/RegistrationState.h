@@ -56,6 +56,11 @@ struct RegistrationCxxContinuation {
   va_t EndAddress = InvalidVA;
   int OpSeq = -1;
   va_t TargetVA = InvalidVA;
+  /// The runtime snapshot captured before dispatch, relative to established
+  /// EBP. Returning from this catch writes that pointer back to SavedESP
+  /// (RegistrationOffset - 4) before restoring ESP and jumping to TargetVA.
+  /// LowIR and MedIR retain this implicit memory effect on the exact RETURN;
+  /// HighIR and native LLVM lowering must materialize it in the source frame.
   int32_t SavedStackOffset = 0;
   bool operator==(const RegistrationCxxContinuation &) const = default;
 };

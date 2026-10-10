@@ -106,3 +106,5 @@ Las importaciones diferidas basadas en RVA conservan los thunks internos pendien
 
 
 `WrappedEntriesRequireExplicitTransferEvidence` cubre un wrapper DLL que llama a la entrada restaurada con una pila más profunda. El resultado predeterminado sigue siendo `no_entry`; seleccionar la llamada observada con `transfer` reconstruye una DLL cargable. La profundidad sola no distingue entrada e inicializador.
+
+Si la entrada DLL recuperada difiere de la entrada PE original, un adaptador envía la conexión del proceso a la entrada elegida y la desconexión y las notificaciones de hilo a la entrada original ejecutable, preservando la limpieza del envoltorio. Si la entrada original no está disponible, la reconstrucción falla. `entry_rva` sigue indicando la entrada elegida; la cabecera PE puede apuntar al adaptador. Una prueba DLL independiente comprueba la limpieza en ambas arquitecturas emuladas y en Windows nativo.

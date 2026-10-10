@@ -100,6 +100,82 @@ TEST(SourceDialect, CxxSymbolsAreValidatedAndKeepOperatorsAndTemplates) {
   EXPECT_TRUE(cxxSourceName("?nodeType@QDomNode@@QEBAHXZjunk").empty());
 }
 
+TEST(SourceDialect, NavigationKeepsStatementsSeparateInEveryDialect) {
+  const llvm::StringRef C = "int next(int v);\n"
+                            "int work(int v) {\n"
+                            "    v = next(v);\n"
+                            "    if (v) {\n"
+                            "        return v;\n"
+                            "    }\n"
+                            "    return 0;\n"
+                            "}\n";
+  for (SourceDialect Dialect :
+       {SourceDialect::Cpp, SourceDialect::Rust, SourceDialect::Go}) {
+    SCOPED_TRACE(sourceDialectKey(Dialect).str());
+    const auto Spelled = spell(
+        C, Dialect,
+        {{CSourceName::Kind::Function, "next", "_ZN4Demo4nextEi", 0x2000}});
+    ASSERT_TRUE(Spelled.Unread.empty());
+    size_t PreviousEnd = 0;
+    for (llvm::StringRef Line :
+         {"    v = next(v);\n", "        return v;\n", "    return 0;\n"}) {
+      const size_t Begin = C.find(Line);
+      ASSERT_NE(Begin, llvm::StringRef::npos);
+      const auto Span = Spelled.mapExact(C, Begin, Begin + Line.size());
+      ASSERT_TRUE(Span) << Line.str();
+      EXPECT_GE(Span->first, PreviousEnd);
+      PreviousEnd = Span->second;
+      const auto Text =
+          llvm::StringRef(Spelled.Text).slice(Span->first, Span->second).trim();
+      EXPECT_FALSE(Text.contains('\n')) << Text.str();
+      EXPECT_TRUE(Text.contains(Line.contains("next")       ? "next(v)"
+                                : Line.contains("return v") ? "return v"
+                                                            : "return 0"))
+          << Text.str();
+    }
+    // Partial expressions and slices containing only part of a control-flow
+    // statement cannot borrow its mapping, even if they contain whole children.
+    const size_t Call = C.find("next(v)");
+    EXPECT_FALSE(Spelled.mapExact(C, Call, Call + 7));
+    const size_t InnerReturn = C.find("        return v;");
+    const size_t FinalReturn = C.find("    return 0;");
+    EXPECT_FALSE(Spelled.mapExact(C, InnerReturn, FinalReturn));
+  }
+}
+
+TEST(SourceDialect, NavigationRefusesAFunctionShownAsC) {
+  const llvm::StringRef C = "int work(int v) {\n"
+                            "    v = v * 2;\n"
+                            "    return v++ + 1;\n"
+                            "}\n";
+  for (SourceDialect Dialect : {SourceDialect::Rust, SourceDialect::Go}) {
+    SCOPED_TRACE(sourceDialectKey(Dialect).str());
+    const auto Spelled = spell(C, Dialect);
+    ASSERT_EQ(Spelled.Unread.size(), 1u);
+    for (llvm::StringRef Line : {"    v = v * 2;\n", "    return v++ + 1;\n"}) {
+      const size_t Begin = C.find(Line);
+      EXPECT_TRUE(Spelled.map(Begin, Begin + Line.size()));
+      EXPECT_FALSE(Spelled.mapExact(C, Begin, Begin + Line.size()));
+    }
+    EXPECT_TRUE(llvm::StringRef(Spelled.Text).contains(C.trim()));
+  }
+}
+
+TEST(SourceDialect, NavigationRefusesConflictingOrInvalidSpans) {
+  const llvm::StringRef C = "    return 1;\n";
+  SourceDialectText Spelled;
+  Spelled.Text = "return 1;\nreturn 1;\n";
+  Spelled.Pieces = {{4, 13, 0, 9}, {4, 13, 10, 19}};
+  EXPECT_FALSE(Spelled.mapExact(C, 0, C.size()));
+  Spelled.Pieces.pop_back();
+  EXPECT_TRUE(Spelled.mapExact(C, 0, C.size()));
+  EXPECT_FALSE(Spelled.mapExact(C, 0, 4));
+  EXPECT_FALSE(Spelled.mapExact(C, 0, C.size() + 1));
+  EXPECT_FALSE(Spelled.mapExact(C, C.size(), 0));
+  Spelled.Pieces.front().End = Spelled.Text.size() + 1;
+  EXPECT_FALSE(Spelled.mapExact(C, 0, C.size()));
+}
+
 TEST(SourceDialect, CxxProgramDefaultsIncludeCLinkageEntryPoints) {
   for (auto Runtime :
        {SourceLanguageRuntime::CxxItanium, SourceLanguageRuntime::CxxMSVC}) {

@@ -106,3 +106,5 @@ Le importazioni ritardate basate su RVA mantengono i thunk interni irrisolti e r
 
 
 `WrappedEntriesRequireExplicitTransferEvidence` copre un wrapper DLL che chiama l’ingresso ripristinato con stack più profondo. Il risultato predefinito resta `no_entry`; selezionare la chiamata osservata con `transfer` ricostruisce una DLL caricabile. La sola profondità non distingue ingresso e inizializzatore.
+
+Se l’ingresso DLL recuperato differisce dall’ingresso PE originale, un adattatore invia il collegamento del processo all’ingresso scelto e lo scollegamento e le notifiche dei thread all’ingresso originale eseguibile, mantenendo la pulizia del wrapper. Se l’ingresso originale non è disponibile, la ricostruzione fallisce. `entry_rva` indica ancora l’ingresso scelto; l’intestazione PE può puntare all’adattatore. Un test DLL indipendente verifica la pulizia su entrambe le architetture emulate e su Windows nativo.

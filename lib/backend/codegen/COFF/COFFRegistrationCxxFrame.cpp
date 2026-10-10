@@ -1,4 +1,4 @@
-//===- COFFRegistrationCxxFrame.cpp - PE32 C++ frame proof ---------------===//
+//===- COFFRegistrationCxxFrame.cpp - PE32 C++ frame proof ----------------===//
 //
 // NeverD Decompiler
 //
@@ -6,6 +6,7 @@
 #include "COFFRegistrationCxxIRProof.h"
 #include "COFFRegistrationFrameProof.h"
 
+#include "neverd/Limits.h"
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"

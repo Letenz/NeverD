@@ -1,4 +1,4 @@
-//===- COFFRegistrationIRProof.h - Shared PE32 IR contract checks --------===//
+//===- COFFRegistrationIRProof.h - Shared PE32 IR contract checks ---------===//
 //
 // NeverD Decompiler
 //
@@ -66,6 +66,24 @@ exactSemanticToken(const llvm::Instruction &Pad,
 }
 
 using CallbackKey = std::pair<va_t, bool>;
+
+/// Authenticate the actual callback set, runtime roots and recovered frame.
+/// Table validation uses the same identities as independent source replay.
+llvm::Expected<std::map<CallbackKey, const llvm::Function *>> callbacks(
+    const llvm::Function &Parent, const ExceptionFunction &Source,
+    const std::map<CallbackKey, std::set<uint8_t>> *ExpectedRoots = nullptr,
+    std::map<const llvm::Function *, const llvm::StoreInst *>
+        *ExceptionBridges = nullptr);
+
+llvm::Error validateSymbolicImagePointers(const llvm::Module &Module,
+                                          uint64_t ImageBase,
+                                          uint64_t ImageSize);
+llvm::Error
+validateIncomingCallerFrame(const llvm::Function &Parent, const MedFunc &Source,
+                            llvm::ArrayRef<const llvm::Function *> Functions,
+                            std::set<const llvm::Instruction *> &Accesses,
+                            std::set<const llvm::Instruction *> &Setup);
+
 struct RegistrationFrame {
   const llvm::AllocaInst *Slot = nullptr;
   uint64_t EntrySP = 0;

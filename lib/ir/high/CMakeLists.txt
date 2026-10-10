@@ -16,6 +16,7 @@ add_neverd_component_library(NeverDIRHigh
   lower/NdOpCallIndLowering.cpp
   lower/NdOpLowering.cpp
   lower/NdOpReturnLowering.cpp
+  lower/X86RegistrationReturn.cpp
   lower/NdOpSwitchRecovery.cpp
   pass/HighCleanup.cpp
   pass/HighCopyProp.cpp

@@ -69,6 +69,11 @@ that read-only replicas load these edits without changing durable owner files.
 
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
+`SourceDialect.Navigation*` checks distinct statement ranges in C++, Rust and
+Go, partial slices, conflicting spans and functions shown as C after a dialect
+refusal. `SessionCAPITest.DialectNavigationMapsOnlyTheReturnRowAcrossPages`
+checks real x64/AArch64 source and explicit dialect pages, unmapped headers and
+single-line paging without spreading return addresses across the function.
 `SessionCAPITest.CSourcePagesRetainCanonicalReturnAnchors` and the real worker's
 native mapping test verify x64 and AArch64 high-VA source rows through small
 pages, including return instruction addresses distinct from the function entry.
@@ -2024,6 +2029,16 @@ borrows, registration/SavedESP separation, partial stores, pointer taint,
 conflicting predecessors and preserved catch resumption after a private throw.
 The native call target checks cumulative failed-proof budgets and fresh-image
 callee indices.
+Catch-return tests require the pre-dispatch SavedESP snapshot to survive catch
+writes and subsequent continuation reads; unknown snapshots remain rejected.
+The native fixture independently edits or removes the writeback, changes its
+value/address, and moves or duplicates it before installation. Run
+`check_windows_registration_cxx_rewrite.py --saved-stack-probe` with the same
+MSVC inputs and tools as the ordinary source oracle. It derives a bounded
+machine-code probe that overwrites SavedESP with 7 and then reads the
+initialized inner guard through the restored pointer. Its report distinguishes the derived input from its
+hashed native MSVC baseline. CI runs both capture forms through all six
+preferred/rebased routes in Wine and replays those identical files on Windows.
 Cleanup projection tests check every reachable unwind state, initialization
 before state activation, missing or mismatched contracts, registration and
 SavedESP overlap, released storage, pointer taint and predecessor conflicts.
@@ -2932,7 +2947,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5056 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5418`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5058 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5420`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
