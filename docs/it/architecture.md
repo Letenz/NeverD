@@ -1608,3 +1608,11 @@ L’esportatore dei sorgenti Objective-C disabilita `CEmitterOptions::EmitRecord
 ## Attributi di directory in gruppi limitati
 
 DarwinFiles possiede importazione comune, validità nome/stat e codifica. DarwinDirectory possiede gruppi, autorizzazione dell’oggetto e stato iterazione/cursore/EOF della descrizione, condividendo la proiezione dei figli attuali con getdirentries64. dup condivide una descrizione e seek zero ripristina il contratto. JSON fornisce politiche esplicite; il dispatch non inventa osservazioni del filesystem.
+
+## Conservazione dello stato nativo opaco
+
+Il contratto C++ facoltativo `NativePreservedState` richiede l’insieme chiuso `LegacyIntegerOpaqueV1`: contenitori vettoriali 0–31, bit `[0,512)`; APX R16–R31, `[0,64)`; parola di controllo x87, `[0,16)`; bit definiti MXCSR, `[0,16)`. XMM/YMM sono alias dei 128/256 bit bassi di ogni contenitore da 64 byte. I componenti opzionali sono coperti solo dove presenti nell’architettura. MXCSR ha un’identità separata. Sono esclusi GPR modellati, flag, memoria, stack, maschere, altro stato x87, CET e ogni componente non elencato.
+
+Una nuova decodifica x64 rigorosa fornisce un audit indipendente delle forme, vincolato ai byte originali, alle operazioni LowIR complete e alla versione semantica. Assenza di scritture o metadati completi delle uscite indefinite non bastano. L’esecutore controlla ogni istruzione raggiunta, interno dei gruppi e chiamata interna prima di tagli o effetti. Le ricevute CALL/RET fisiche vincolano sequenze originali ed espanse; solo il proprietario dell’esatto profilo RDSSP con CET disabilitato fornisce il relativo audit speciale. Tutti i segmenti sorgente, successori, osservazioni e ranghi devono terminare prima della pubblicazione. L’ispezione aggiuntiva usa i budget esistenti; prove obsolete o il fallimento dell’ultimo segmento non producono certificati.
+
+L’indipendenza finita deriva `AllUndefinedChoices`; il raffinamento finito e induttivo deriva solo `SelectedWitness` e rifiuta richieste universali. Verificare entrambi i testimoni nominati non amplia l’ambito. Le API LowIR statiche non autorizzano conservazione nativa. L’omissione mantiene comportamento e schema 17; la richiesta vincola schema 18 e riepilogo di esecuzione. Questo prerequisito facoltativo non certifica ABI ordinaria, scelte indefinite della CPU fisica o output C predefinito.

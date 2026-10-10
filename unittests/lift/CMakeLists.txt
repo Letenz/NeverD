@@ -895,6 +895,7 @@ add_neverd_unittest(NeverDX86CarryArithmeticFlagTests
 )
 
 add_neverd_unittest(NeverDX86UndefinedEffectsTests
+  x86_64/X86_64_PreservedStateTests.cpp
   x86_64/X86_64_UndefinedEffectsTests.cpp
   x86_64/X86_64_ShiftUndefinedEffectsTests.cpp
   x86_64/X86_64_DoubleShiftUndefinedEffectsTests.cpp
