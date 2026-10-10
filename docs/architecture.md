@@ -383,6 +383,11 @@ map decoding, budgets and query redaction. `SourceView` owns the bounded display
 projection and original/projected range mapping; `SessionView` owns preview,
 publication and revocation. CLI/worker adapters cannot bypass those policies.
 Views use owned parser token/comment spans and never claim semantic rewrites.
+`BunContainer` owns ELF/Mach-O/PE graph location, target identity and native-range
+validation. `Bun` owns the shared graph records, flags and module decoding;
+transport capability lists and extraction results use the same profile builder.
+Adding a target container does not change source semantics or imply native
+machine-code/bytecode decompilation.
 `SourceNavigation` owns syntax containment and lexical links; `SessionAnchor`
 joins source coordinates, original storage and committed display views. Bun
 source range conversion uses the same decoder as source extraction. Compressed

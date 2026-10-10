@@ -443,6 +443,15 @@ Navigation/anchor cases compare ordinary, Bun and compressed-map storage
 precision, committed-view coverage, revisions and direct/framed query parity.
 CLI cases also exercise `bun-navigate`, `bun-view` and `bun-anchor` with an
 unusable external-tool PATH.
+
+The optional `NEVERD_BUN_142_CROSS_CORPUS` is documented in the
+[Bun cross-container corpus](../unittests/web/fixtures/bun/cross/README.md).
+`WebBun.CrossPlatformFullCompilerContainersWhenSupplied` validates twenty pinned
+ELF/Mach-O/PE compiler images for the additional ARM64/x64 targets; absent full
+images are a skip. Preserved graph tests use synthetic wrappers and cannot
+replace this qualification. All reads, negative mutations and golden member
+checks are C++, and the generated targets are never run.
+
 `NeverDWebNativeTests` compares file and immutable-buffer loading of synthetic
 ELF/PE/thin Mach-O, verifies direct native bytes and static decompilation after
 web/input destruction, rejects truncated images and implicit universal slices,
