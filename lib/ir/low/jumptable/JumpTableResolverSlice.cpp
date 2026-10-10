@@ -17,6 +17,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "AffineFrameState.h"
 #include "JumpTableResolverDetail.h"
 
 #include "neverd/Limits.h"
@@ -4536,8 +4537,21 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   // A disengaged memo value is the single prepaid Active state.  Reusing the
   // same map node for the completed result avoids allocating an Active-set node
   // and then a second memo node after the shared allowance has been consumed.
-  std::map<ValueKey, std::optional<ResolverResult>> ValueMemo;
-  std::map<MemoryKey, std::optional<ResolverResult>> MemoryMemo;
+  struct ResolverMemoEntry {
+    std::optional<ResolverResult> Result;
+    uint64_t Generation = 0;
+  };
+  // A transparent Cycle has no concrete definition of its own. Retain it
+  // while the surrounding recursive walk has learned no new value; any
+  // completed Value/Invalid result invalidates that temporary knowledge.
+  // Sharing the generation is necessary because values and memory recurse
+  // into each other. Concrete memo results retain their usual batch lifetime.
+  // Only transparent edges and exact self-copies propagate Cycle. A real
+  // definition (including a loop-carried store/arithmetic update) publishes
+  // Value or Invalid, advancing the generation before a cycle can be reused.
+  uint64_t ResolverMemoGeneration = 0;
+  std::map<ValueKey, ResolverMemoEntry> ValueMemo;
+  std::map<MemoryKey, ResolverMemoEntry> MemoryMemo;
   std::map<LaneKey, std::optional<bool>> FrameAddressTaintMemo;
   bool QueryResolverAnalysisIncomplete = false;
   bool ResolvingPredicate = false;
@@ -4854,74 +4868,22 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   // pop, dynamic adjustment, and FP setup create different epochs of that
   // register.  This point-sensitive affine dataflow proves equal epochs across
   // CFG joins and rejects any ambiguous or non-affine update.
-  enum class FrameResultKind : uint8_t { Invalid, Cycle, Value };
-  struct FrameResult {
-    FrameResultKind Kind = FrameResultKind::Invalid;
-    int64_t Offset = 0;
-  };
-  auto frameInvalid = [] { return FrameResult{}; };
-  auto frameCycle = [](int64_t Delta = 0) {
-    return FrameResult{FrameResultKind::Cycle, Delta};
-  };
+  using FrameResultKind = detail::AffineFrameState::Kind;
+  using FrameResult = detail::AffineFrameState::Result;
+  detail::AffineFrameState FrameStates(consumeEvidence);
+  auto frameInvalid = [] { return detail::AffineFrameState::invalid(); };
   auto frameValue = [](int64_t Offset) {
-    return FrameResult{FrameResultKind::Value, Offset};
+    return detail::AffineFrameState::constant(Offset);
   };
   using FrameKey = std::tuple<int, int, uint64_t>;
-  std::map<FrameKey, std::optional<FrameResult>> FrameMemo;
+  std::map<FrameKey, FrameResult> FrameMemo;
   std::function<FrameResult(int, int, uint64_t, unsigned)> resolveFrameBase;
   std::function<FrameResult(int, int, const NdVar &, unsigned)> resolveFrameVar;
 
-  auto mergeFrameResults = [&](llvm::ArrayRef<FrameResult> Incoming,
-                               bool IgnoreTransparentCycles) {
-    bool SawCycle = false;
-    bool SawValue = false;
-    int64_t Common = 0;
-    int64_t CycleDelta = 0;
-    for (const FrameResult &R : Incoming) {
-      if (!consumeEvidence())
-        return frameInvalid();
-      if (R.Kind == FrameResultKind::Cycle) {
-        if (!SawCycle) {
-          CycleDelta = R.Offset;
-          SawCycle = true;
-        } else if (CycleDelta != R.Offset) {
-          return frameInvalid();
-        }
-        continue;
-      }
-      if (R.Kind != FrameResultKind::Value)
-        return frameInvalid();
-      if (!SawValue) {
-        Common = R.Offset;
-        SawValue = true;
-      } else if (Common != R.Offset) {
-        return frameInvalid();
-      }
-    }
-    if (!SawValue)
-      return SawCycle ? frameCycle(CycleDelta) : frameInvalid();
-    if (SawCycle && (!IgnoreTransparentCycles || CycleDelta != 0))
-      return frameInvalid();
-    return frameValue(Common);
-  };
-
   auto adjustFrame = [&](FrameResult Base, const NdVar &Constant,
                          uint16_t ArithmeticSize, bool Subtract) {
-    if (Base.Kind == FrameResultKind::Invalid)
-      return frameInvalid();
-    const std::optional<int64_t> Delta =
-        stackSignedDelta(Constant, ArithmeticSize);
-    if (!Delta)
-      return frameInvalid();
-    const std::optional<int64_t> Offset =
-        stackCheckedOffset(Base.Offset, *Delta, Subtract);
-    if (!Offset)
-      return frameInvalid();
-    // Preserve the affine delta while traversing a recursive frame cycle.  A
-    // balanced push/pop path returns Cycle(0) and is transparent at the loop
-    // header; any non-zero net adjustment is rejected by mergeFrameResults.
-    return Base.Kind == FrameResultKind::Cycle ? frameCycle(*Offset)
-                                               : frameValue(*Offset);
+    const auto Delta = stackSignedDelta(Constant, ArithmeticSize);
+    return Delta ? FrameStates.adjust(Base, *Delta, Subtract) : frameInvalid();
   };
 
   resolveFrameVar = [&](int Block, int Before, const NdVar &Value,
@@ -4986,9 +4948,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     if (!Guarded)
       return frameInvalid();
     if (*Guarded)
-      Result = mergeFrameResults(
-          {resolveFrameVar(Block, DefIndex, Value, Depth + 1), Result},
-          /*IgnoreTransparentCycles=*/false);
+      Result = FrameStates.merge(
+          {resolveFrameVar(Block, DefIndex, Value, Depth + 1), Result});
     return Result;
   };
 
@@ -5003,14 +4964,19 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       return frameInvalid();
     auto MemoIt = FrameMemo.find(Key);
     if (MemoIt != FrameMemo.end())
-      return MemoIt->second ? *MemoIt->second : frameCycle();
+      return MemoIt->second;
     if (Depth > MaxResolverDepth) {
       QueryResolverAnalysisIncomplete = true;
       return frameInvalid();
     }
     if (!consumeMemoInsert(FrameKeyWork, FrameMemo.size()))
       return frameInvalid();
-    MemoIt = FrameMemo.try_emplace(Key, std::nullopt).first;
+    const FrameResult Reference = FrameStates.reference();
+    if (Reference.K != FrameResultKind::Reference)
+      return frameInvalid();
+    // Publish the equation's identity before collecting dependencies. A
+    // backedge reuses this node instead of expanding a context-local Cycle.
+    MemoIt = FrameMemo.try_emplace(Key, Reference).first;
 
     const ResolverFlowBlock &B = Graph.Blocks[Block];
     const LaneView Query = viewOf(NdVar::reg(
@@ -5109,9 +5075,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         // A predicated frame-register write is a merge of the old and new
         // epochs.  Unless both paths prove the same canonical offset, the
         // frame identity is ambiguous and must fail closed.
-        Result = mergeFrameResults(
-            {resolveFrameBase(Block, I, BaseReg, Depth + 1), Result},
-            /*IgnoreTransparentCycles=*/false);
+        Result = FrameStates.merge(
+            {resolveFrameBase(Block, I, BaseReg, Depth + 1), Result});
       }
       break;
     }
@@ -5155,17 +5120,10 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         }
         Incoming.push_back(std::move(PredResult));
       }
-      Result = Incoming.empty()
-                   ? frameInvalid()
-                   : mergeFrameResults(Incoming,
-                                       /*IgnoreTransparentCycles=*/true);
+      Result = Incoming.empty() ? frameInvalid() : FrameStates.merge(Incoming);
     }
 
-    if (Result.Kind == FrameResultKind::Cycle)
-      FrameMemo.erase(MemoIt);
-    else
-      MemoIt->second = Result;
-    return Result;
+    return FrameStates.define(Reference, Result) ? Reference : frameInvalid();
   };
 
   auto canonicalFrameSlotKey = [&](int Block, int FromIdx, const NdVar &Address,
@@ -5182,8 +5140,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         GuestAddress.Size > CurrentImg->getPointerSize())
       GuestAddress.Size = CurrentImg->getPointerSize();
     FrameResult AddressState =
-        resolveFrameVar(Block, FromIdx + 1, GuestAddress, /*Depth=*/0);
-    if (AddressState.Kind != FrameResultKind::Value)
+        FrameStates.value(resolveFrameVar(Block, FromIdx + 1, GuestAddress,
+                                          /*Depth=*/0));
+    if (AddressState.K != FrameResultKind::Value)
       return false;
     BaseReg = TRI.StackPointer;
     Offset = AddressState.Offset;
@@ -5270,11 +5229,11 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     }
     if (Value.isReg() && TRI.isFrameReg(Value.Offset)) {
       const bool WasIncomplete = QueryResolverAnalysisIncomplete;
-      const FrameResult Frame =
-          resolveFrameBase(Block, Before, Value.Offset, Depth + 1);
+      const FrameResult Frame = FrameStates.value(
+          resolveFrameBase(Block, Before, Value.Offset, Depth + 1));
       if (!WasIncomplete && QueryResolverAnalysisIncomplete)
         return std::nullopt;
-      if (Frame.Kind == FrameResultKind::Value)
+      if (Frame.K == FrameResultKind::Value)
         return true;
       // An incoming caller FP or another non-affine scalar is not thereby a
       // current-frame address.  Only the canonical frame proof grants taint;
@@ -5448,10 +5407,11 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       if (Value.Size < CurrentImg->getPointerSize())
         return false;
       const bool WasIncomplete = QueryResolverAnalysisIncomplete;
-      FrameResult Address = resolveFrameVar(Block, Before, Value, 0);
+      FrameResult Address =
+          FrameStates.value(resolveFrameVar(Block, Before, Value, 0));
       if (!WasIncomplete && QueryResolverAnalysisIncomplete)
         return std::nullopt;
-      if (Address.Kind == FrameResultKind::Value) {
+      if (Address.K == FrameResultKind::Value) {
         const uint16_t PointerSize = CurrentImg->getPointerSize();
         if (SlotOffset > std::numeric_limits<int64_t>::max() -
                              static_cast<int64_t>(SlotSize) ||
@@ -5595,15 +5555,26 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     if (!consumeMemoLookup(MemoryKeyWork, MemoryMemo.size()))
       return resolverInvalid();
     auto MemoIt = MemoryMemo.find(Key);
-    if (MemoIt != MemoryMemo.end())
-      return MemoIt->second ? *MemoIt->second : resolverCycle();
+    if (MemoIt != MemoryMemo.end()) {
+      const auto &Entry = MemoIt->second;
+      if (!Entry.Result)
+        return resolverCycle();
+      if (Entry.Result->Kind != ResolverResultKind::Cycle ||
+          Entry.Generation == ResolverMemoGeneration)
+        return *Entry.Result;
+    }
     if (Depth > MaxResolverDepth) {
       QueryResolverAnalysisIncomplete = true;
       return resolverInvalid();
     }
-    if (!consumeMemoInsert(MemoryKeyWork, MemoryMemo.size()))
-      return resolverInvalid();
-    MemoIt = MemoryMemo.try_emplace(Key, std::nullopt).first;
+    if (MemoIt == MemoryMemo.end()) {
+      if (!consumeMemoInsert(MemoryKeyWork, MemoryMemo.size()) ||
+          !consumeEvidence(2))
+        return resolverInvalid();
+      MemoIt = MemoryMemo.try_emplace(Key, ResolverMemoEntry{}).first;
+    } else {
+      MemoIt->second.Result.reset();
+    }
 
     const ResolverFlowBlock &B = Graph.Blocks[Block];
     ResolverResult Result = resolverInvalid();
@@ -5859,6 +5830,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       std::vector<ResolverResult> Incoming;
       if (!consumeEvidenceProduct(B.Preds.size(), 2) || !consumeEvidence(2)) {
         MemoryMemo.erase(MemoIt);
+        ++ResolverMemoGeneration;
         return resolverInvalid();
       }
       Incoming.reserve(B.Preds.size());
@@ -5886,10 +5858,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                      : resolverInvalid();
       }
     }
-    if (Result.Kind == ResolverResultKind::Cycle)
-      MemoryMemo.erase(MemoIt);
-    else
-      MemoIt->second = Result;
+    if (Result.Kind != ResolverResultKind::Cycle)
+      ++ResolverMemoGeneration;
+    MemoIt->second = {Result, ResolverMemoGeneration};
     return Result;
   };
 
@@ -5904,7 +5875,12 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       return resolverInvalid();
     auto MemoIt = ValueMemo.find(Key);
     if (MemoIt != ValueMemo.end()) {
-      return MemoIt->second ? *MemoIt->second : resolverCycle();
+      const auto &Entry = MemoIt->second;
+      if (!Entry.Result)
+        return resolverCycle();
+      if (Entry.Result->Kind != ResolverResultKind::Cycle ||
+          Entry.Generation == ResolverMemoGeneration)
+        return *Entry.Result;
     }
     // A bounded recursive walk may revisit an exact active state at the depth
     // boundary.  Consult the prepaid memo first so that back edges close as a
@@ -5913,9 +5889,14 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       QueryResolverAnalysisIncomplete = true;
       return resolverInvalid();
     }
-    if (!consumeMemoInsert(ValueKeyWork, ValueMemo.size()))
-      return resolverInvalid();
-    MemoIt = ValueMemo.try_emplace(Key, std::nullopt).first;
+    if (MemoIt == ValueMemo.end()) {
+      if (!consumeMemoInsert(ValueKeyWork, ValueMemo.size()) ||
+          !consumeEvidence(2))
+        return resolverInvalid();
+      MemoIt = ValueMemo.try_emplace(Key, ResolverMemoEntry{}).first;
+    } else {
+      MemoIt->second.Result.reset();
+    }
 
     const ResolverFlowBlock &B = Graph.Blocks[Block];
     const LaneView Query = viewOf(V);
@@ -6692,6 +6673,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           !consumeEvidenceProduct(B.Preds.size() + 1, 2) ||
           !consumeEvidence(2)) {
         ValueMemo.erase(MemoIt);
+        ++ResolverMemoGeneration;
         return resolverInvalid();
       }
       Incoming.reserve(B.Preds.size() + 1);
@@ -6779,10 +6761,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       }
     }
 
-    if (Result.Kind == ResolverResultKind::Cycle)
-      ValueMemo.erase(MemoIt);
-    else
-      MemoIt->second = Result;
+    if (Result.Kind != ResolverResultKind::Cycle)
+      ++ResolverMemoGeneration;
+    MemoIt->second = {Result, ResolverMemoGeneration};
     return Result;
   };
 
@@ -7869,7 +7850,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       // so the next query can build a complete result of its own.
       ValueMemo.clear();
       MemoryMemo.clear();
+      ++ResolverMemoGeneration;
       FrameMemo.clear();
+      FrameStates.clear();
       QueryResolverAnalysisIncomplete = false;
     }
     if (!consumeEvidence()) {
@@ -7890,21 +7873,27 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         *MemoOccurrenceRootMode != OccurrenceRootMode) {
       ValueMemo.clear();
       MemoryMemo.clear();
+      ++ResolverMemoGeneration;
       FrameMemo.clear();
+      FrameStates.clear();
     }
     MemoOccurrenceRootMode = OccurrenceRootMode;
     if (MemoPrivateFrameCallMode &&
         *MemoPrivateFrameCallMode != Query.AllowPrivateFrameMemoryAcrossCalls) {
       ValueMemo.clear();
       MemoryMemo.clear();
+      ++ResolverMemoGeneration;
       FrameMemo.clear();
+      FrameStates.clear();
     }
     MemoPrivateFrameCallMode = Query.AllowPrivateFrameMemoryAcrossCalls;
     if (MemoScalarConstantFoldMode &&
         *MemoScalarConstantFoldMode != Query.FoldScalarConstantOps) {
       ValueMemo.clear();
       MemoryMemo.clear();
+      ++ResolverMemoGeneration;
       FrameMemo.clear();
+      FrameStates.clear();
     }
     MemoScalarConstantFoldMode = Query.FoldScalarConstantOps;
     const bool UnsignedOrderMode =
@@ -7912,7 +7901,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     if (MemoUnsignedOrderMode && *MemoUnsignedOrderMode != UnsignedOrderMode) {
       ValueMemo.clear();
       MemoryMemo.clear();
+      ++ResolverMemoGeneration;
       FrameMemo.clear();
+      FrameStates.clear();
     }
     MemoUnsignedOrderMode = UnsignedOrderMode;
     if (Query.Candidate.Size == 0 ||
@@ -8010,6 +8001,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       if (!AdjustedOffset)
         continue;
       MemoryMemo.clear();
+      ++ResolverMemoGeneration;
       ActiveFrameMemoryQuery =
           Query.Relation == JumpTableValueRelation::AuthenticatedFrameMemory
               ? &Query
@@ -8019,6 +8011,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                      /*Depth=*/0);
       ActiveFrameMemoryQuery = nullptr;
       MemoryMemo.clear();
+      ++ResolverMemoGeneration;
       if (Query.Relation == JumpTableValueRelation::AuthenticatedFrameMemory) {
         Results[QueryIndex] = CandidateValue.Kind == ResolverResultKind::Value;
         if (EvidenceBudgetExhausted || QueryResolverAnalysisIncomplete)
@@ -8406,6 +8399,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         markIncomplete(QueryIndex);
       } else {
         ValueMemo.erase(*CandidateRetryKey);
+        ++ResolverMemoGeneration;
         ResolverResult Retried = resolveValue(
             CandidateRetryBlock, CandidateRetryBefore, Query.Candidate,
             /*Depth=*/0);

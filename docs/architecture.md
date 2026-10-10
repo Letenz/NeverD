@@ -298,6 +298,17 @@ operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
 authority from sharing that origin.
 
+The resolver's point-sensitive stack identity uses anchored affine equations.
+Cyclic predecessors share equation nodes instead of recursively expanding the
+same frame state for each query. Every incoming value must agree; unanchored
+cycles, nonzero loop deltas and overflowing intermediate offsets invalidate
+their users. The existing evidence allowance charges graph construction and
+propagation. Completed equations are immutable within a proof mode, so later
+queries solve only new dependencies. Register/memory transparent-cycle memo
+entries are reusable only until either resolver learns a concrete result;
+both share the invalidation generation because their walks recurse into each
+other. Neither cache bypasses incomplete-proof rejection.
+
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
 finite domain with every independent root retained and all group edges absent.
@@ -725,6 +736,13 @@ before writing, including arguments it only passes on to its own callees.
 For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
+
+Additional callee CFGs are admitted in deterministic breadth-first order.
+Batches retain at most eight bodies and use at most four independent decoders
+when symbol extents predict enough work; small batches stay serial. Read-only
+image indexes and the existing synchronized no-return cache may be shared.
+Summary publication and format-call collection retain the original order,
+depth and count limits. `NEVERD_THREADS=1` restricts this phase to one worker.
 
 Function starts follow the same evidence rule. An x64 `RUNTIME_FUNCTION` with
 chained unwind info continues its parent function (`BinaryImage::

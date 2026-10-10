@@ -426,6 +426,12 @@ build-release/bin/NeverDARM32InterworkingTests
 
 ## Finite native dispatch
 
+`AffineFrameState.*` in `NeverDJumpTableTests` checks balanced and nonzero
+cycles, unknown roots, conflicting anchors, intermediate overflow, budget
+exhaustion, incremental graph growth and cache reset. A seeded independent
+backward path-constraint oracle checks cyclic equation results. Repeated
+diamond graphs check linear evidence growth rather than a wall-clock cutoff.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer
