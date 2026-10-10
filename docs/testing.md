@@ -2711,11 +2711,18 @@ substituted evidence.
 `check_windows_registration_nested_try.py` compiles independent Clang `-O0`
 and `-O1` parents and links the captured CRT libraries. Inner reference catches
 and outer value/catch-all clauses exercise all three continuations under four
-caller stack layouts. The 32-image source/control matrix covers both CLI patch
+caller stack layouts, including a new throw inside the inner catch. The
+64-image source/control matrix covers both CLI patch
 modes and forced rebasing. The C++ test rejects changed prologue saves,
 personality argument reads, search edges, handler order, continuation ownership,
-and emitted try/unwind state rows. HighIR must contain both nested tries and
-all three callback bodies; C output also receives a syntax check.
+and emitted try/unwind state rows. Secondary-search mutations also reject
+searching the exited inner try or losing the active catch token. HighIR must
+contain both nested tries and all three callback bodies; C output receives a
+syntax check. `windows_registration_runtime.py` captures the selected MSVC
+x86 redistributable DLL alongside the link libraries. Each image runs with
+that exact app-local runtime, with a native-only Wine override, and replay
+authenticates its provider and digest. A missing or changed runtime fails;
+Wine's built-in catch-guard behavior cannot silently replace the Windows CRT.
 `RegistrationCxxUnwind` tests nested, disjoint, three-level and cleanup search
 graphs. `replay_windows_registration_nested_try.py` authenticates the source,
 rejection tests, compiler objects, IR, decompilation and installed PE bytes
