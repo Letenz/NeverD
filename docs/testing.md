@@ -2505,24 +2505,32 @@ the capture records that library provenance alongside the generated object.
 Use these native libraries for CRT RTTI definitions: a Wine-only import stub
 can admit exports that the native CRT does not provide.
 This is generated-frame analysis/runtime evidence, not source reconstruction.
-`check_windows_registration_realigned_rewrite.py` separately emits typed value
-and reference parents, lifts their real PE32 instructions and reconstructs
+`check_windows_registration_realigned_rewrite.py` separately emits aligned
+value/reference, unbound value/reference and catch-all parents. Independent
+assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.
+Catch-all also executes with an unsigned throw. The runner lifts real PE32
+instructions and reconstructs
 through the public patcher and both CLI modes. Pass `--test-binary`,
-`--patch-binary`, `--runtime-libs` and `--output`. Each typed source and control
-requires source reconstruction and both callback HighIR checks. Runtime probes
+`--patch-binary`, `--runtime-libs` and `--output`. Every source and control
+requires source reconstruction; aligned profiles additionally require both
+callback HighIR checks. Runtime probes
 use four caller stack layouts to check the catch value, reference effect,
 caller PC and restored FS chain.
-All four source/control profiles and four installation routes execute at two
-forced bases (32 executions). CLI bytes must equal the checked public output;
+All twenty source/control profiles and four installation routes execute at two
+forced bases (160 executions). CLI bytes must equal the checked public output;
 the throw caller must lie in that output's recovered generated owner.
 Twelve frame/stack edits plus eight continuation edits reject independently,
 including valid control receipts with uninitialized scratch reads, accesses
 after catch return and callback pointers outside the SavedESP bridge.
+Unbound catches additionally reject fabricated homes, contradictory null-object
+metadata, changed RTTI/adjectives, uninitialized parent reads and literal-field
+relocations (including overlaps and unknown widths). Replay binds both fixture
+emitters and requires each profile's exact reconstruction/HighIR test count.
 The separate layout tests cover all supported alignments, source residues,
 signed displacement bounds and under-aligned allocations.
 `replay_windows_registration_realigned_rewrite.py` authenticates the source,
 objects, IR, checked installation receipts, executed tests and exact PE matrix
-before native Windows executes those same 32 files. It does not relink them.
+before native Windows executes those same 160 files. It does not relink them.
 Real MSVC directory-size64/declared-size192 load-configs must remain supported
 with complete section bounds.
 Final generic PE validation also checks valid and invalid CF/EH continuation

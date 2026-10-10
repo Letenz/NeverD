@@ -419,9 +419,10 @@ TEST(WindowsRegistrationRealigned, InputPE32RecoversTheCallbackContract) {
     });
   }
 
-  // Source callback analysis does not grant a new native frame/ABI model.
-  EXPECT_FALSE(classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF)
-                   .canPatchOutput());
+  // Catch-all classification permits lowering; independent control and frame
+  // proofs still decide whether a particular function can be installed.
+  EXPECT_TRUE(classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF)
+                  .canPatchOutput());
 
   auto Change = [](BinaryImage &Img, va_t Address, uint8_t Byte) {
     for (auto &Segment : Img.Segments)
