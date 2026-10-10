@@ -112,10 +112,6 @@ private:
                             std::optional<Address> from);
   void navigateHistory(bool forward);
   void synchronize(Address address, QObject *source);
-  /// Show the current function in the code view \p view if it can be seen.
-  void followFunction(CodeView *view);
-  /// Whether \p object is a code view that follows the disassembly.
-  bool followsDisassembly(const QObject *object) const;
   void updateActions();
   void updateStatusBar();
   void updateTitle();
@@ -135,7 +131,8 @@ private:
   void comment();
   void jumpAnywhere();
   void showCrossReferences(std::optional<Address> address, bool to);
-  void showPseudocode(const QString &representation);
+  void showPseudocode(const QString &representation,
+                      bool selectAssemblyAddress = false);
   void toggleGraph();
   void searchBinary(const QString &kind, bool again);
   void searchHighlight(bool forward);
@@ -186,9 +183,9 @@ private:
   QHash<QString, Dock *> docks_;
   QHash<int, ChooserView *> choosers_;
   QPointer<CodeView> pseudocode_;
-  bool pseudocodeEnabled_ = false;
-  QTimer followTimer_;
   QPointer<CodeView> lastCodeView_;
+  /// Tab returns to the last code window, even after assembly takes focus.
+  QPointer<CodeView> tabCodeView_;
   std::optional<Address> initialAddress_;
   bool restoreGraph_ = false;
   QPointer<QDialog> quickStart_;
@@ -200,7 +197,6 @@ private:
   QString lastTextSearch_, lastByteSearch_;
   QString lastPaletteCommand_;
   bool searchDown_ = true;
-  bool synchronizing_ = false;
   quint64 codeNavigationSerial_ = 0;
   bool codeHistoryNavigation_ = false;
   bool hexActive_ = false;
@@ -209,7 +205,7 @@ private:
   QTimer statusTimer_;
   QStringList pendingCommands_;
   /// The code view asked for while a jump was still loading.
-  std::optional<QString> pseudocodeAfterJump_;
+  std::optional<std::pair<QString, bool>> pseudocodeAfterJump_;
   QHash<QString, const char *> dockTitles_;
   static inline MainWindow *instance_ = nullptr;
 };

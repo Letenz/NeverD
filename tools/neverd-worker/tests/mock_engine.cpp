@@ -735,13 +735,18 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
   session(s)->error.clear();
   if (session(s)->path.ends_with("code-edits.bin") ||
       session(s)->path.ends_with("code-edits-cpp.bin") ||
-      session(s)->path.ends_with("code-edits-mapped.bin")) {
-    const std::string full = "#include <stdint.h>\n"
-                             "int32_t function_20(int32_t v0) {\n"
-                             "  int32_t v1 = v0 + function_22();\n"
-                             "  const char *message = \"v0 v1 function_22\";\n"
-                             "  return v1;\n"
-                             "}\n";
+      session(s)->path.ends_with("code-edits-mapped.bin") ||
+      session(s)->path.ends_with("tab-sync-paged.bin")) {
+    const bool paged = session(s)->path.ends_with("tab-sync-paged.bin");
+    std::string full = "#include <stdint.h>\n"
+                       "int32_t function_20(int32_t v0) {\n"
+                       "  int32_t v1 = v0 + function_22();\n"
+                       "  const char *message = \"v0 v1 function_22\";\n"
+                       "  return v1;\n"
+                       "}\n";
+    if (paged)
+      for (int i = 6; i < 700; ++i)
+        full += "// code line " + std::to_string(i) + "\n";
     std::vector<std::size_t> starts{0};
     for (std::size_t i = 0; i + 1 < full.size(); ++i)
       if (full[i] == '\n')
@@ -751,33 +756,44 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
     Json rows = Json::array();
     for (auto i = first; i < end; ++i) {
       const bool mapped =
-          session(s)->path.ends_with("code-edits-mapped.bin") && i == 2;
-      rows.push_back(
-          {{"line", i},
-           {"object_id", "source:" + std::to_string(i)},
-           {"kind", "source"},
-           {"mapping_status", mapped ? "mapped" : "unmapped"},
-           {"addresses",
-            mapped ? Json::array({hexAddress(address + 2)}) : Json::array()}});
+          (session(s)->path.ends_with("code-edits-mapped.bin") && i == 2) ||
+          (paged && i == 550);
+      rows.push_back({{"line", i},
+                      {"object_id", "source:" + std::to_string(i)},
+                      {"kind", "source"},
+                      {"mapping_status", mapped ? "mapped" : "unmapped"},
+                      {"addresses",
+                       mapped ? (paged ? Json::array({hexAddress(address + 8),
+                                                      hexAddress(address + 9)})
+                                       : Json::array({hexAddress(address + 2)}))
+                              : Json::array()}});
     }
     const auto beginByte = first < starts.size() ? starts[first] : full.size();
     const auto endByte = end < starts.size() ? starts[end] : full.size();
-    return copy(
-        Json{{"schema_version", 1},
-             {"address", hexAddress(address)},
-             {"representation", representation},
-             {"dialect", "c"},
-             {"text", full.substr(beginByte, endByte - beginByte)},
-             {"rows", rows},
-             {"offset", first},
-             {"byte_offset", beginByte},
-             {"total_lines", starts.size()},
-             {"complete", end == starts.size()},
-             {"next_offset", end == starts.size() ? Json(nullptr) : Json(end)},
-             {"prelude", {{"lines", 1}, {"end_byte", starts[1]}}},
-             {"library_regions", Json::array()},
-             {"source_names", Json::array()}}
-            .dump());
+    return copy(Json{
+        {"schema_version", 1},
+        {"address", hexAddress(address)},
+        {"representation", representation},
+        {"dialect", "c"},
+        {"text", full.substr(beginByte, endByte - beginByte)},
+        {"rows", rows},
+        {"offset", first},
+        {"byte_offset", beginByte},
+        {"total_lines", starts.size()},
+        {"complete", end == starts.size()},
+        {"next_offset", end == starts.size() ? Json(nullptr) : Json(end)},
+        {"prelude", {{"lines", 1}, {"end_byte", starts[1]}}},
+        {"library_regions",
+         paged ? Json::array(
+                     {{{"id", "late-operation"},
+                       {"display_name", "fixture operation"},
+                       {"foldable", true},
+                       {"mapping_status", "mapped"},
+                       {"spans", Json::array({{{"begin_byte", starts[549]},
+                                               {"end_byte", starts[552]}}})}}})
+               : Json::array()},
+        {"source_names", Json::array()}}
+                    .dump());
   }
   if (std::string(representation) == "source" ||
       std::string(representation) == "rust" ||
@@ -1179,8 +1195,10 @@ const char *neverd_xrefs_from_json(neverd_session_t s, neverd_va_t address) {
 const char *neverd_cfg_json(neverd_session_t s, neverd_va_t address) {
   session(s)->error.clear();
   Json nodes = Json::array(), edges = Json::array();
-  const int count =
-      address == Base + 2 ? 10000 : (address == Base + 1 ? 501 : 2);
+  const int count = address == Base + 2   ? 10000
+                    : address == Base + 1 ? 501
+                    : session(s)->path.ends_with("code-edits-mapped.bin") ? 16
+                                                                          : 2;
   for (int i = 0; i < count; ++i) {
     nodes.push_back({{"id", i},
                      {"start", hexAddress(address + i)},

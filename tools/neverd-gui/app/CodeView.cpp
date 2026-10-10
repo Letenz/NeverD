@@ -243,6 +243,8 @@ void CodeText::scrollContentsBy(int, int) { viewport()->update(); }
 
 void CodeText::cancel() {
   ++serial_;
+  pendingAddress_.reset();
+  selectedAddress_.reset();
   session_.analysisQueries().unsubscribeOwner(this);
   if (loading_) {
     interrupted_ = true;
@@ -360,12 +362,15 @@ void CodeText::request(int offset, quint64 serial) {
               tr("Saved variable names belong to a different source rendering");
         updateRange();
         viewport()->update();
+        if (const auto address = std::exchange(pendingAddress_, {}))
+          selectAddress(*address);
         emit statusChanged();
       },
       [this, serial](const QString &, const QString &message) {
         if (serial != serial_)
           return;
         loading_ = false;
+        pendingAddress_.reset();
         // A refused function reads in no language and names nothing.
         editNames_.clear();
         editMetadata_ = true;
@@ -914,6 +919,8 @@ void CodeText::paintEvent(QPaintEvent *) {
 }
 
 void CodeText::moveCursor(int line, int column, bool extend) {
+  pendingAddress_.reset();
+  selectedAddress_.reset();
   if (lines_.isEmpty())
     return;
   if (extend && !anchor_)
@@ -937,21 +944,46 @@ std::optional<Address> CodeText::currentAddress() const {
   if (cursorLine_ < 0 || cursorLine_ >= lines_.size() ||
       lines_[cursorLine_].addresses.isEmpty())
     return std::nullopt;
+  if (selectedAddress_ &&
+      lines_[cursorLine_].addresses.contains(*selectedAddress_))
+    return selectedAddress_;
   return lines_[cursorLine_].addresses.front();
 }
 
-void CodeText::revealAddress(Address address) {
+void CodeText::selectAddress(Address address) {
+  if (loading_) {
+    pendingAddress_ = address;
+    return;
+  }
+  // Unfold the mapped original row, rather than selecting a summary whose
+  // instruction addresses belong to several hidden source rows.
+  for (const auto &value : sourceRows_) {
+    const auto row = value.toMap();
+    const auto addresses = row.value(QStringLiteral("addresses")).toList();
+    if (std::none_of(addresses.cbegin(), addresses.cend(),
+                     [address](const QVariant &value) {
+                       return parseAddress(value.toString()) == address;
+                     }))
+      continue;
+    const int sourceLine = row.value(QStringLiteral("line"), -1).toInt();
+    if (library_.unfoldSourceLine(sourceLine)) {
+      rebuildLines();
+      emit foldingChanged();
+    }
+    break;
+  }
   marked_.clear();
   for (int i = 0; i < lines_.size(); ++i)
     if (lines_[i].addresses.contains(address))
       marked_.append(i);
   if (!marked_.isEmpty()) {
-    auto *bar = verticalScrollBar();
-    const int line = marked_.front();
-    if (line < bar->value() || line >= bar->value() + visibleLines())
-      bar->setValue(std::max(0, line - visibleLines() / 3));
+    moveCursor(marked_.front(), 0, false);
+    // Preserve an assembly address that is one of several on this row, so
+    // a Tab round trip returns to the instruction the user selected.
+    selectedAddress_ = address;
   }
   viewport()->update();
+  emit addressSelected(address, !marked_.isEmpty());
 }
 
 QString CodeText::currentToken() const {
@@ -1146,6 +1178,8 @@ void CodeText::mousePressEvent(QMouseEvent *event) {
 void CodeText::mouseMoveEvent(QMouseEvent *event) {
   if (!(event->buttons() & Qt::LeftButton) || lines_.isEmpty())
     return;
+  pendingAddress_.reset();
+  selectedAddress_.reset();
   const int line =
       std::clamp(lineAt(int(event->position().y())), 0, int(lines_.size()) - 1);
   if (!anchor_)

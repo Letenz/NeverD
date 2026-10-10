@@ -177,19 +177,27 @@ private slots:
   void tabFromCodeUsesSelectedInstruction_data() {
     QTest::addColumn<QString>("representation");
     QTest::addColumn<bool>("native");
-    QTest::newRow("pseudocode") << QStringLiteral("source") << false;
-    QTest::newRow("llvm-c") << QStringLiteral("llvmc") << false;
-    QTest::newRow("low-ir") << QStringLiteral("low") << false;
+    QTest::addColumn<bool>("graph");
+    QTest::newRow("pseudocode") << QStringLiteral("source") << false << false;
+    QTest::newRow("llvm-c") << QStringLiteral("llvmc") << false << false;
+    QTest::newRow("low-ir") << QStringLiteral("low") << false << false;
+    QTest::newRow("pseudocode-graph")
+        << QStringLiteral("source") << false << true;
     if (!qEnvironmentVariable("NEVERD_CODE_NAV_WORKER").isEmpty() &&
         !qEnvironmentVariable("NEVERD_CODE_NAV_FILE").isEmpty()) {
-      QTest::newRow("native-pseudocode") << QStringLiteral("source") << true;
-      QTest::newRow("native-llvm-c") << QStringLiteral("llvmc") << true;
+      QTest::newRow("native-pseudocode")
+          << QStringLiteral("source") << true << false;
+      QTest::newRow("native-llvm-c")
+          << QStringLiteral("llvmc") << true << false;
+      QTest::newRow("native-pseudocode-graph")
+          << QStringLiteral("source") << true << true;
     }
   }
 
   void tabFromCodeUsesSelectedInstruction() {
     QFETCH(QString, representation);
     QFETCH(bool, native);
+    QFETCH(bool, graph);
     QTemporaryDir directory;
     Workbench bench(native ? qEnvironmentVariable("NEVERD_CODE_NAV_WORKER")
                            : QString::fromLocal8Bit(TEST_WORKER));
@@ -207,6 +215,10 @@ private slots:
     const auto other = native ? *functions->model().addressAt(1) : Base + 0x180;
     assembly->navigate(function);
     QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    if (graph) {
+      assembly->setGraphMode(true);
+      QTRY_VERIFY(assembly->graphMode() && assembly->graph()->loaded());
+    }
     bench
         .action(representation == QLatin1String("low") ? ActionId::ViewLowIR
                 : representation == QLatin1String("llvmc")
@@ -218,6 +230,7 @@ private slots:
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->lineCount() > 2);
     code->setPreludeFolded(false);
+    const auto initialAssembly = assembly->currentAddress();
     if (native) {
       code->setCursorLine(0);
       QVERIFY(code->findText(QStringLiteral("return ("), true));
@@ -239,14 +252,23 @@ private slots:
       QTRY_VERIFY(decoded);
     } else
       QCOMPARE(target, std::optional<Address>(function + 2));
-    for (auto *button : view->findChildren<QToolButton *>())
-      if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
-        button->setChecked(true);
-    QVERIFY(view->locked());
-    // A pinned source and independently moved assembly reproduce the bug:
-    // simply changing focus leaves the cursor at the wrong function/entry.
+    // Clicks and arrow keys select source rows without moving assembly.
+    if (!native) {
+      const int height = int(
+          std::ceil(QFontMetricsF(Theme::instance().codeFont()).lineSpacing()));
+      QTest::mouseClick(code->viewport(), Qt::LeftButton, {},
+                        QPoint(100, 2 * height + height / 2));
+      QCOMPARE(code->currentAddress(), target);
+    }
+    QTest::keyClick(code, Qt::Key_Right);
+    QTest::qWait(250);
+    QCOMPARE(assembly->currentAddress(), initialAssembly);
+    // Assembly navigation leaves this unpinned source on its own function.
     assembly->navigate(other);
     QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(other));
+    QTest::qWait(300);
+    QCOMPARE(code->function(), std::optional<Address>(function));
+    QCOMPARE(code->currentAddress(), target);
     bench.window->activateWindow();
     QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
     code->setFocus();
@@ -255,6 +277,17 @@ private slots:
     QTRY_COMPARE(assembly->currentAddress(), target);
     QTRY_VERIFY(!code->hasFocus());
     QCOMPARE(code->function(), std::optional<Address>(function));
+    // A reverse Tab must select the mapped row, rather than simply show the
+    // function. Changing the source cursor first disproves a focus-only fix.
+    code->setCursorLine(0);
+    QVERIFY(!code->currentAddress());
+    QCOMPARE(assembly->currentAddress(), target);
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+    QTRY_VERIFY(code->hasFocus());
+    QTRY_COMPARE(code->currentAddress(), target);
+    QCOMPARE(view->representation(), representation);
     if (native) {
       const auto capture = qEnvironmentVariable("NEVERD_CODE_NAV_CAPTURE_DIR");
       if (!capture.isEmpty())
@@ -263,13 +296,99 @@ private slots:
     }
 
     // A declaration has no instruction anchor; the fallback is explicit and
-    // belongs to this pinned function, not the hidden assembly's function.
+    // belongs to this source function, not the hidden assembly's function.
     code->setCursorLine(0);
     QVERIFY(!code->currentAddress());
     code->setFocus();
     QTRY_VERIFY(code->hasFocus());
     QTest::keyClick(code, Qt::Key_Tab);
     QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
+  }
+
+  void tabFromAssemblyWaitsForPagesAndUnfoldsTarget() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("tab-sync-paged.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    const Address function = Base + 0x140, other = Base + 0x180;
+    assembly->navigate(function + 9);
+    assembly->focusContent();
+    // Tab during a listing jump also waits for the correct function to land.
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    CodeView *view = nullptr;
+    QTRY_VERIFY((view = bench.codeView(QStringLiteral("source"))));
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading());
+    QCOMPARE(code->function(), std::optional<Address>(function));
+    QCOMPARE(code->currentAddress(), std::optional<Address>(function + 9));
+    QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
+    QVERIFY(code->preludeFolded());
+    QVERIFY(code->verticalScrollBar()->value() > 256);
+    QVERIFY(code->hasFocus());
+
+    // Reuse the complete function without a decompile and expand just the
+    // target operation; the declaration prelude stays folded.
+    code->setFolded(true);
+    QVERIFY(code->libraryFolded());
+    code->setCursorLine(0);
+    assembly->focusContent();
+    QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+    QTRY_VERIFY(code->hasFocus());
+    QVERIFY(!code->libraryFolded());
+    QVERIFY(code->preludeFolded());
+    QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(function + 9));
+    // This row's primary mapping is +8: the selected secondary instruction
+    // still survives the reverse Tab.
+    QTest::keyClick(code, Qt::Key_Tab);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 9));
+
+    const auto oldScroll = code->verticalScrollBar()->value();
+    assembly->navigate(other + 9);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(other));
+    QTest::qWait(300);
+    QCOMPARE(code->function(), std::optional<Address>(function));
+    QCOMPARE(code->verticalScrollBar()->value(), oldScroll);
+    assembly->focusContent();
+    QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+    QTRY_VERIFY(!code->loading() && code->function() == other);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
+    QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
+    QVERIFY(code->hasFocus());
+
+    // Missing mappings are reported without guessing a nearby source row.
+    assembly->navigate(other + 5);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(other + 5));
+    assembly->focusContent();
+    QSignalSpy selected(code, &CodeText::addressSelected);
+    QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+    QTRY_COMPARE(selected.size(), 1);
+    QCOMPARE(selected.first().at(1).toBool(), false);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
+
+    // Two code panes can display the same representation. Reverse Tab must
+    // return to the actual pane used, rather than the default source dock.
+    bench.action(ActionId::ViewLowIR)->trigger();
+    auto *second = bench.codeView(QStringLiteral("low"));
+    QVERIFY(second && second != view);
+    second->setRepresentation(QStringLiteral("source"));
+    QTRY_VERIFY(!second->text()->loading());
+    second->text()->setFocus();
+    QTRY_VERIFY(second->text()->hasFocus());
+    assembly->navigate(function + 9);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 9));
+    assembly->focusContent();
+    QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+    QTRY_VERIFY(second->text()->hasFocus() && !second->text()->loading());
+    QCOMPARE(second->text()->function(), std::optional<Address>(function));
+    QCOMPARE(second->text()->currentAddress(),
+             std::optional<Address>(function + 9));
+    QCOMPARE(code->function(), std::optional<Address>(other));
+    QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
   }
 
   void pseudocodeNamesAndCommentsEditTheirSource_data() {
@@ -520,7 +639,7 @@ private slots:
       }
     }
   }
-  void slowPseudocodeKeepsBrowsingAndFollowsLatestFunction() {
+  void slowPseudocodeKeepsBrowsingUntilExplicitTab() {
     QTemporaryDir directory;
     Workbench bench;
     const auto path =
@@ -560,6 +679,13 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(functions && listing, 1500);
     QVERIFY(view->text()->loading());
     bench.window->disassembly()->navigate(Base + 16);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 16));
+    QTest::qWait(300);
+    QCOMPARE(view->text()->function(), std::optional<Address>(Base));
+    QVERIFY(view->text()->loading());
+    bench.window->disassembly()->focusContent();
+    bench.action(ActionId::JumpPseudocode)->trigger();
     QTRY_COMPARE_WITH_TIMEOUT(view->text()->function(),
                               std::optional<Address>(Base + 16), 3000);
     QTRY_VERIFY_WITH_TIMEOUT(
@@ -992,6 +1118,7 @@ private slots:
     auto *view = bench.codeView(QStringLiteral("source"));
     QVERIFY(view);
     QTRY_VERIFY(!view->text()->loading() && view->text()->isVisible());
+    const auto originalFunction = view->text()->function();
     if (closed) {
       for (auto *dock :
            bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
@@ -1032,14 +1159,18 @@ private slots:
     QVERIFY(disassembly->isVisible());
     QVERIFY(!view->isVisible());
     if (!closed) {
-      // Showing the existing tab catches up to the new owner revision.
+      // Showing the existing tab catches up to edits of its own function,
+      // without following assembly navigation performed while it was hidden.
       for (auto *dock :
            bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
         if (dock->widget() == view)
           dock->raise();
+      QTRY_COMPARE(view->text()->function(), originalFunction);
+      QTRY_VERIFY(!view->text()->loading() && !view->text()->interrupted());
+      disassembly->focusContent();
+      bench.action(ActionId::JumpPseudocode)->trigger();
       QTRY_COMPARE(view->text()->function(),
                    std::optional<Address>(Base + 0x160));
-      QTRY_VERIFY(!view->text()->loading() && !view->text()->interrupted());
     }
   }
 
@@ -1196,6 +1327,8 @@ private slots:
              QStringLiteral("_ZN4core3fmt5write17h0123456789abcdefE"));
     // A function the engine refuses reads in no language.
     bench.window->disassembly()->navigate(Base + 0x180);
+    bench.window->disassembly()->focusContent();
+    bench.action(ActionId::JumpPseudocode)->trigger();
     QTRY_VERIFY_WITH_TIMEOUT(
         !code->loading() &&
             code->status().contains(QStringLiteral("fixture refuses")),
@@ -1206,6 +1339,8 @@ private slots:
                  QStringLiteral("Pseudocode-A"));
     QVERIFY(!code->sourceNameAt(0, 0));
     bench.window->disassembly()->navigate(Base + 0x140);
+    bench.window->disassembly()->focusContent();
+    bench.action(ActionId::JumpPseudocode)->trigger();
     QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
                                  code->language() == QLatin1String("rust"),
                              OpenTimeoutMs);
@@ -2007,12 +2142,15 @@ private slots:
     QCOMPARE(pseudocode->text()->function(),
              std::optional<Address>(Base + 0x140));
 
-    // IR rows mapped to instructions move the disassembly cursor.
+    // IR rows select independently; Tab moves the disassembly cursor.
     bench.action(ActionId::ViewLowIR)->trigger();
     CodeView *ir = nullptr;
     QTRY_VERIFY((ir = bench.codeView(QStringLiteral("low"))) != nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(ir->text()->lineCount() > 3, OpenTimeoutMs);
     ir->text()->setCursorLine(3);
+    QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x140));
+    ir->text()->setFocus();
+    bench.action(ActionId::JumpPseudocode)->trigger();
     QTRY_COMPARE(disassembly->currentItem(),
                  std::optional<Address>(Base + 0x143));
 
