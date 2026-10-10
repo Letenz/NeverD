@@ -87,6 +87,8 @@ public:
   // Monotonic within an open project; ordinary edit revisions do not reset it.
   bool analysisComplete() const;
   bool hasPending() const;
+  /// Read jobs with live subscribers, excluding a cancelled job's final ACK.
+  qsizetype pendingReadCount() const;
   bool hasCommands() const;
   void setCacheBudgetMiB(int mebibytes);
   /// Background analysis changed what reads list, such as the functions it

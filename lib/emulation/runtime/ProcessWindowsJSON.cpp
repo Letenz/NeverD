@@ -19,6 +19,23 @@ windowsOptionsFromJSON(const llvm::json::Value &Value) {
     return Invalid(field::Windows);
   WindowsProcessOptions Out;
   for (const auto &[Key, V] : *Object) {
+    if (Key == field::PEBVersion) {
+      const auto *Version = V.getAsObject();
+      if (!Version || Version->size() != 4)
+        return Invalid(Key);
+      auto Major = Version->getInteger(field::VersionMajor);
+      auto Minor = Version->getInteger(field::VersionMinor);
+      auto Build = Version->getInteger(field::VersionBuild);
+      auto Platform = Version->getInteger(field::VersionPlatform);
+      if (!Major || *Major < 0 || uint64_t(*Major) > UINT32_MAX || !Minor ||
+          *Minor < 0 || uint64_t(*Minor) > UINT32_MAX || !Build || *Build < 0 ||
+          *Build > UINT16_MAX || !Platform || *Platform < 0 ||
+          uint64_t(*Platform) > UINT32_MAX)
+        return Invalid(Key);
+      Out.PEBVersion = WindowsPEBVersion{uint32_t(*Major), uint32_t(*Minor),
+                                         uint16_t(*Build), uint32_t(*Platform)};
+      continue;
+    }
     if (Key == field::DeferUnmodeled) {
       auto Defer = V.getAsBoolean();
       if (!Defer)

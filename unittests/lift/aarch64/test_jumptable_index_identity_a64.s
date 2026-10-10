@@ -820,3 +820,60 @@ a64_compact_mod17_reused_zext_table:
   .byte (.La64_compact_mod17_case15 - .La64_compact_mod17_anchor) / 4
   .byte (.La64_compact_mod17_case16 - .La64_compact_mod17_anchor) / 4
 .size a64_compact_mod17_reused_zext_table, .-a64_compact_mod17_reused_zext_table
+
+// Independently recomputed structure-field addresses retain pointer, offset,
+// and width identity, but a different address or intervening store does not.
+.text
+.p2align 2
+.macro A64_FIELD_RELOAD name, offset=36, mode=0
+.globl \name
+.type \name, %function
+\name:
+  add x3, x0, #36
+  ldr w10, [x3]
+  cmp w10, #2
+  b.hi .La64_field_default\@
+  .if \mode == 1
+  str w1, [x2]
+  .elseif \mode == 2
+  add x0, x0, #4
+  .elseif \mode == 3
+  dmb ish
+  .endif
+  add x3, x0, #\offset
+  ldr w10, [x3]
+  adrp x9, .La64_field_table\@
+  add x9, x9, :lo12:.La64_field_table\@
+  ldrsw x11, [x9, x10, lsl #2]
+  add x11, x9, x11
+  br x11
+.La64_field_case0\@:
+  mov w0, #630
+  ret
+.La64_field_case1\@:
+  mov w0, #631
+  ret
+.La64_field_case2\@:
+  mov w0, #632
+  ret
+.La64_field_poison\@:
+  mov w0, #639
+  ret
+.La64_field_default\@:
+  mov w0, #638
+  ret
+.size \name, .-\name
+.pushsection .rodata,"a",%progbits
+.p2align 2
+.La64_field_table\@:
+  .word .La64_field_case0\@-.La64_field_table\@
+  .word .La64_field_case1\@-.La64_field_table\@
+  .word .La64_field_case2\@-.La64_field_table\@
+  .word .La64_field_poison\@-.La64_field_table\@
+.popsection
+.endm
+A64_FIELD_RELOAD a64_field_offset_reload
+A64_FIELD_RELOAD a64_field_offset_different, 40
+A64_FIELD_RELOAD a64_field_offset_store, 36, 1
+A64_FIELD_RELOAD a64_field_offset_changed_base, 36, 2
+A64_FIELD_RELOAD a64_field_offset_fence, 36, 3

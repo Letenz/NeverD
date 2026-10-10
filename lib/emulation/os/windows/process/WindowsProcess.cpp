@@ -318,7 +318,6 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   uint64_t ExpectedSP = 0, ExpectedGate = 0;
   uint64_t RootStackPointer = StackTop;
   std::optional<FLSCleanup> ExitCleanup;
-  uint32_t NextExitSlot = 0;
   bool ExitCleanupDone = false;
   struct Continuation {
     using Work = std::variant<Loader::Operation, FLSCleanup>;
@@ -420,11 +419,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   auto Prepare = [&]() -> llvm::Expected<bool> {
     while (true) {
       // Root thread cleanup precedes DLL/TLS process-detach notifications.
-      // Keep the cursor across guest calls so a callback can initialize a
-      // later slot without replaying an already completed callback.
+      // The services owner retains the sweep boundary across guest calls.
       if (Pending.empty() && Life.exitsNormally() && !ExitCleanup &&
           !ExitCleanupDone) {
-        auto Next = OS.exitCleanup(NextExitSlot);
+        auto Next = OS.exitCleanup();
         if (!Next)
           return Next.takeError();
         ExitCleanup = std::move(*Next);
@@ -664,19 +662,21 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     }
     if (!Exceptions.activeAt(Pending.size()) && Request->PC == ExpectedGate &&
         (*SP)[0] == ExpectedSP) {
-      if (const auto *Cleanup = CurrentCleanup()) {
-        if (auto E = OS.complete(*Cleanup)) {
-          Failed(std::move(E));
+      if (auto *Cleanup = CurrentCleanup()) {
+        auto Completed = OS.complete(*Cleanup);
+        if (!Completed) {
+          Failed(Completed.takeError());
           break;
         }
-        if (!Pending.empty()) {
+        if (*Completed && !Pending.empty()) {
           if (auto E = Resume(1, 0)) {
             Failed(std::move(E));
             break;
           }
           continue;
         }
-        ExitCleanup.reset();
+        if (*Completed)
+          ExitCleanup.reset();
       } else {
         auto V = CPU.readRegister(ABI->info().Result);
         if (!V) {

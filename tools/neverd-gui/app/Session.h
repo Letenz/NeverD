@@ -38,7 +38,7 @@ struct LoadOptions {
   QString platform;
 };
 
-/// The project's writable worker and a disposable read-only analysis worker.
+/// The project's writable worker and a bounded read-only analysis pool.
 /// Browsing and edits keep the owner dispatcher while expensive views use a
 /// verified replica. Save/Discard/Cancel transitions belong to the owner.
 class Session final : public QObject {
@@ -48,7 +48,12 @@ public:
   ~Session() override;
 
   QueryService &queries() { return queries_; }
-  QueryService &analysisQueries() { return analysis_.queries(); }
+  QueryService &analysisQueries(const QJsonObject &payload, QObject *owner) {
+    return analysis_.queries(payload, owner);
+  }
+  void cancelAnalysisReads(QObject *owner) {
+    analysis_.unsubscribeOwner(owner);
+  }
 
   bool connected() const { return connected_; }
   bool loaded() const { return loaded_; }
@@ -157,6 +162,7 @@ public:
   void deleteFunction(Address entry, std::optional<quint64> epoch = {});
   void rename(Address function, const QString &name,
               std::optional<quint64> epoch = {});
+  void editCode(const QJsonObject &edit, quint64 epoch);
   void setComment(Address address, const QString &text,
                   std::optional<quint64> epoch = {});
   void undo();
@@ -252,7 +258,7 @@ private:
 
   EngineClient client_;
   QueryService queries_;
-  AnalysisService analysis_;
+  AnalysisPool analysis_;
   QObject reads_, external_;
   QString workerPath_, filePath_, pendingFile_, transition_, error_;
   /// How the pending file loads, and how the open file loaded, which a

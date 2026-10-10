@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -137,9 +138,13 @@ template <typename Fn> void parallelForEach(size_t Total, Fn ThreadBody) {
 /// thread idles.  Processing the heaviest elements first (longest-processing-
 /// time scheduling) keeps the tail short; \p Weight must have exactly \p Total
 /// entries (a cheap per-element cost proxy such as an op count).
+/// Expensive small batches may lower MinWorkItems and cap MaxThreads to bound
+/// their temporary working sets. The process-wide thread limit still applies.
 template <typename Fn>
-void parallelForEachWeighted(const std::vector<uint64_t> &Weight,
-                             Fn ThreadBody) {
+void parallelForEachWeighted(
+    const std::vector<uint64_t> &Weight, Fn ThreadBody,
+    size_t MinWorkItems = limits::kMinParallelIRWorkItems,
+    unsigned MaxThreads = std::numeric_limits<unsigned>::max()) {
   const size_t Total = Weight.size();
   if (Total == 0)
     return;
@@ -149,7 +154,7 @@ void parallelForEachWeighted(const std::vector<uint64_t> &Weight,
   std::sort(Order.begin(), Order.end(), [&](size_t A, size_t B) {
     return Weight[A] != Weight[B] ? Weight[A] > Weight[B] : A < B;
   });
-  if (Total < limits::kMinParallelIRWorkItems) {
+  if (Total < MinWorkItems || MaxThreads <= 1) {
     size_t Pos = 0;
     auto Claim = [&]() -> size_t {
       return Pos < Total ? Order[Pos++] : Total;
@@ -158,8 +163,8 @@ void parallelForEachWeighted(const std::vector<uint64_t> &Weight,
     return;
   }
 
-  const unsigned NumThreads =
-      static_cast<unsigned>(std::min<size_t>(workerThreadCount(), Total));
+  const unsigned NumThreads = static_cast<unsigned>(
+      std::min<size_t>(std::min(workerThreadCount(), MaxThreads), Total));
   std::atomic<size_t> NextPos{0};
   // Claim returns the next real element index (mapped through the heaviest-
   // first order), or a value >= Total once the work is exhausted — matching the

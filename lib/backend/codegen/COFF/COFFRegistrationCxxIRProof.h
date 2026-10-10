@@ -32,6 +32,11 @@ struct CxxIRControlProof {
   std::set<const llvm::Instruction *> ChainReads;
   std::vector<ExceptionAddressRange> CallerPCWrites;
 };
+llvm::Expected<const llvm::CatchReturnInst *>
+validateCxxContinuationRestore(const llvm::Instruction &Anchor,
+                               const RegistrationFrame &Frame,
+                               const RegistrationCxxContinuation &Resume);
+
 llvm::Expected<CxxIRControlProof>
 getCheckedCxxControlIRProof(const llvm::Function &Function,
                             const ExceptionFunction &Source,

@@ -1031,6 +1031,34 @@ TEST(ProcessReport, PreservesExplicitWindowsCatalogueAndRejectsOtherProfiles) {
       EXPECT_EQ(llvm::toString(R.takeError()), field::WindowsProfile);
   }
 }
+TEST(ProcessReport, WindowsPEBVersionRequiresEveryFieldAtItsNativeWidth) {
+  for (
+      const char *Text :
+      {R"({"major":10,"minor":0,"build":19043,"platform":2})",
+       R"({"major":4294967295,"minor":4294967295,"build":65535,"platform":4294967295})"}) {
+    auto O = processOptionsFromJSON(
+        std::string(R"({"windows":{"peb_version":)") + Text + "}}");
+    ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+    ASSERT_TRUE(O->Windows && O->Windows->PEBVersion);
+    EXPECT_GE(O->Windows->PEBVersion->Build, 19043u);
+  }
+  for (const char *Bad :
+       {"null", "[]", "{}", R"({"major":10,"minor":0,"build":19043})",
+        R"({"major":10,"minor":0,"build":19043,"platform":2,"extra":0})",
+        R"({"major":-1,"minor":0,"build":19043,"platform":2})",
+        R"({"major":4294967296,"minor":0,"build":19043,"platform":2})",
+        R"({"major":10,"minor":4294967296,"build":19043,"platform":2})",
+        R"({"major":10,"minor":0,"build":65536,"platform":2})",
+        R"({"major":10,"minor":0,"build":-1,"platform":2})",
+        R"({"major":10,"minor":0,"build":1.5,"platform":2})",
+        R"({"major":10,"minor":0,"build":true,"platform":2})",
+        R"({"major":10,"minor":0,"build":19043,"platform":4294967296})"}) {
+    auto O = processOptionsFromJSON(
+        std::string(R"({"windows":{"peb_version":)") + Bad + "}}");
+    EXPECT_FALSE(bool(O)) << Bad;
+    llvm::consumeError(O.takeError());
+  }
+}
 TEST(ProcessReport, DarwinUsageIsLosslessAndEachSnapshotIsIndependent) {
   auto Good = processOptionsFromJSON(std::string("{\"darwin_system\":") +
                                      darwin_test::ResourceUsageJSON + "}");

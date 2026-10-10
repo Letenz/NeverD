@@ -59,6 +59,14 @@ struct CSourceRegion {
   bool Mapped = false;
 };
 
+/// A surviving emission event's original instruction occurrences. This is
+/// navigation evidence, not a complete dependency/provenance claim.
+struct CSourceAnchor {
+  va_t Function = 0;
+  CSourceSpan Span;
+  std::vector<sigs::LibraryOccurrence> Occurrences;
+};
+
 /// Per-emission inputs and output, separate from lifted IR and from C text.
 /// Input snapshots must outlive emission. Regions is replaced on every emit;
 /// absence of a surviving, complete mapping leaves a region unfolded.
@@ -67,6 +75,8 @@ struct CSourceMap {
   const HighSourceMap *HighSources = nullptr;
   const LLVMSourceMap *LLVMSources = nullptr;
   std::vector<CSourceRegion> Regions;
+  /// Replaced on every emit; published only with byte-identical source text.
+  std::vector<CSourceAnchor> Anchors;
   /// The top-level definitions in text order, replaced on every emit. Text
   /// before the first is the translation unit's prelude: includes, support
   /// types and declarations.

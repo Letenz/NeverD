@@ -243,7 +243,9 @@ void CodeText::scrollContentsBy(int, int) { viewport()->update(); }
 
 void CodeText::cancel() {
   ++serial_;
-  session_.analysisQueries().unsubscribeOwner(this);
+  pendingAddress_.reset();
+  selectedAddress_.reset();
+  session_.cancelAnalysisReads(this);
   if (loading_) {
     interrupted_ = true;
     loading_ = false;
@@ -271,6 +273,8 @@ void CodeText::clear() {
   anchor_.reset();
   marked_.clear();
   sourceNames_.clear();
+  editNames_.clear();
+  editMetadata_ = false;
   sourceNameIndex_.clear();
   unread_ = 0;
   updateRange();
@@ -352,15 +356,24 @@ void CodeText::request(int offset, quint64 serial) {
         if (unread_ > 0)
           status_ += (status_.isEmpty() ? QString() : QStringLiteral(" · ")) +
                      tr("%n declarations shown as C", nullptr, unread_);
+        if (payload.value("code_edits_stale").toBool())
+          status_ +=
+              QStringLiteral(" · ") +
+              tr("Saved variable names belong to a different source rendering");
         updateRange();
         viewport()->update();
+        if (const auto address = std::exchange(pendingAddress_, {}))
+          selectAddress(*address);
         emit statusChanged();
       },
       [this, serial](const QString &, const QString &message) {
         if (serial != serial_)
           return;
         loading_ = false;
+        pendingAddress_.reset();
         // A refused function reads in no language and names nothing.
+        editNames_.clear();
+        editMetadata_ = true;
         sourceNames_.clear();
         sourceNameIndex_.clear();
         unread_ = 0;
@@ -382,6 +395,10 @@ void CodeText::request(int offset, quint64 serial) {
 }
 
 void CodeText::appendPage(const QJsonObject &payload, int offset) {
+  if (offset == 0) {
+    editNames_.clear();
+    editMetadata_ = payload.contains("code_names");
+  }
   const QString text = payload.value("text").toString();
   const qint64 pageOffset = payload.value("byte_offset").toInteger(-1);
   if (offset == 0) {
@@ -410,6 +427,7 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
     lines_.clear();
     lineStarts_.clear();
   }
+  const int pageCharBase = source_.size();
   source_ += text;
   sourceBytes_ += text.toUtf8().size();
   if (!text.isEmpty() && !text.endsWith(QLatin1Char('\n'))) {
@@ -420,6 +438,20 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
     sourceRows_.append(row.toObject().toVariantMap());
   // A source name's bytes are in the page that holds its line.
   const QByteArray bytes = text.toUtf8();
+  for (const auto &value : payload.value("code_names").toArray()) {
+    const auto name = value.toObject();
+    const auto begin = name.value("begin_byte").toInteger(-1) - pageOffset;
+    const auto end = name.value("end_byte").toInteger(-1) - pageOffset;
+    if (begin >= 0 && end > begin && end <= bytes.size()) {
+      auto target = name;
+      const auto spelling = QString::fromUtf8(bytes.mid(begin, end - begin));
+      target["name"] = spelling;
+      editNames_.push_back(
+          {pageCharBase + int(QString::fromUtf8(bytes.left(begin)).size()),
+           pageCharBase + int(QString::fromUtf8(bytes.left(end)).size()),
+           std::move(target)});
+    }
+  }
   bool namesAdded = false;
   for (const auto &value : payload.value("source_names").toArray()) {
     const auto name = value.toObject();
@@ -887,6 +919,8 @@ void CodeText::paintEvent(QPaintEvent *) {
 }
 
 void CodeText::moveCursor(int line, int column, bool extend) {
+  pendingAddress_.reset();
+  selectedAddress_.reset();
   if (lines_.isEmpty())
     return;
   if (extend && !anchor_)
@@ -910,27 +944,106 @@ std::optional<Address> CodeText::currentAddress() const {
   if (cursorLine_ < 0 || cursorLine_ >= lines_.size() ||
       lines_[cursorLine_].addresses.isEmpty())
     return std::nullopt;
+  if (selectedAddress_ &&
+      lines_[cursorLine_].addresses.contains(*selectedAddress_))
+    return selectedAddress_;
   return lines_[cursorLine_].addresses.front();
 }
 
-void CodeText::revealAddress(Address address) {
+void CodeText::selectAddress(Address address) {
+  if (loading_) {
+    pendingAddress_ = address;
+    return;
+  }
+  // Unfold the mapped original row, rather than selecting a summary whose
+  // instruction addresses belong to several hidden source rows.
+  for (const auto &value : sourceRows_) {
+    const auto row = value.toMap();
+    const auto addresses = row.value(QStringLiteral("addresses")).toList();
+    if (std::none_of(addresses.cbegin(), addresses.cend(),
+                     [address](const QVariant &value) {
+                       return parseAddress(value.toString()) == address;
+                     }))
+      continue;
+    const int sourceLine = row.value(QStringLiteral("line"), -1).toInt();
+    if (library_.unfoldSourceLine(sourceLine)) {
+      rebuildLines();
+      emit foldingChanged();
+    }
+    break;
+  }
   marked_.clear();
   for (int i = 0; i < lines_.size(); ++i)
     if (lines_[i].addresses.contains(address))
       marked_.append(i);
   if (!marked_.isEmpty()) {
-    auto *bar = verticalScrollBar();
-    const int line = marked_.front();
-    if (line < bar->value() || line >= bar->value() + visibleLines())
-      bar->setValue(std::max(0, line - visibleLines() / 3));
+    moveCursor(marked_.front(), 0, false);
+    // Preserve an assembly address that is one of several on this row, so
+    // a Tab round trip returns to the instruction the user selected.
+    selectedAddress_ = address;
   }
   viewport()->update();
+  emit addressSelected(address, !marked_.isEmpty());
 }
 
 QString CodeText::currentToken() const {
   if (cursorLine_ < 0 || cursorLine_ >= lines_.size())
     return {};
   return lines_[cursorLine_].styled.tokenAt(cursorColumn_);
+}
+
+std::optional<QJsonObject> CodeText::renameTarget() const {
+  if (!function_ || loading_)
+    return std::nullopt;
+  const auto display = displayPosition(cursorLine_, cursorColumn_);
+  if (!library_.regionAt(display).isEmpty())
+    return std::nullopt;
+  const auto position =
+      library_.canFold() ? library_.originalPosition(display) : display;
+  for (const auto &name : editNames_)
+    if (position >= name.begin && position < name.end)
+      return name.target;
+  if (editMetadata_)
+    return std::nullopt;
+  const auto token = currentToken();
+  if (const auto at = objectAddress(token))
+    return QJsonObject{{"address", hexAddress(*at)}, {"name", token}};
+  if (const auto name = sourceNameAt(cursorLine_, cursorColumn_)) {
+    if (name->second.address)
+      return QJsonObject{{"address", hexAddress(*name->second.address)},
+                         {"name", token}};
+    return QJsonObject{{"query", name->second.symbol}, {"name", token}};
+  }
+  if (const auto linked = linkedSymbol(token))
+    return QJsonObject{{"query", *linked}, {"name", token}};
+  return std::nullopt;
+}
+
+std::optional<QJsonObject> CodeText::commentTarget() const {
+  if (!function_ || loading_ || lines_.isEmpty())
+    return std::nullopt;
+  const auto position = displayPosition(cursorLine_, 0);
+  if (library_.regionAt(position) == QLatin1String(PreludeRegion))
+    return QJsonObject{{"mapped_address", hexAddress(*function_)}};
+  if (!library_.regionAt(position).isEmpty())
+    return std::nullopt;
+  const int line =
+      library_.canFold() ? library_.sourceLineAt(position) : cursorLine_;
+  for (const auto &value : sourceRows_) {
+    const auto row = value.toMap();
+    if (row.value("line").toInt() != line || !row.contains("code_anchor"))
+      continue;
+    QJsonObject target{{"line", line},
+                       {"anchor", row.value("code_anchor").toString()},
+                       {"text", row.value("code_comment").toString()}};
+    // A note saved before the engine could map this row retains its source
+    // identity; adding an address mapping must not hide subsequent edits.
+    if (!row.value("code_comment_is_source").toBool())
+      if (const auto at = currentAddress())
+        target["mapped_address"] = hexAddress(*at);
+    return target;
+  }
+  return std::nullopt;
 }
 
 QString CodeText::selectedText() const {
@@ -1065,6 +1178,8 @@ void CodeText::mousePressEvent(QMouseEvent *event) {
 void CodeText::mouseMoveEvent(QMouseEvent *event) {
   if (!(event->buttons() & Qt::LeftButton) || lines_.isEmpty())
     return;
+  pendingAddress_.reset();
+  selectedAddress_.reset();
   const int line =
       std::clamp(lineAt(int(event->position().y())), 0, int(lines_.size()) - 1);
   if (!anchor_)

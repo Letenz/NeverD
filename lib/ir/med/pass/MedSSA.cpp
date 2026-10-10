@@ -14,6 +14,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/LowUndefinedEffects.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/lift/X86Regs.h"
@@ -104,6 +105,33 @@ std::optional<uint64_t> proveSEHEstablisherFrame(
   if (HandlerId <= 0 || (!OrdinaryEntry && !Preds[HandlerId].empty()) ||
       (!CxxContinuation && Low.OrdinaryModuleAnalysisRoots.count(Handler)))
     Fail("handler also has an ordinary entry role");
+
+  std::map<int, std::vector<std::pair<int, int64_t>>> LocalUnwindSources;
+  if (!CxxContinuation)
+    for (const auto &Entry : Low.SEHLocalUnwindContinuations) {
+      int Target = -1, Source = -1;
+      for (size_t B = 0; B < N; ++B) {
+        if (Low.Blocks[B].StartAddr == Entry.Target)
+          Target = static_cast<int>(B);
+        for (size_t I = 0; I < Low.Blocks[B].Ops.size(); ++I) {
+          const LowOp &Op = Low.Blocks[B].Ops[I];
+          if (Op.Addr == Entry.CallAddr && Op.Seq == Entry.CallSeq &&
+              Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+              Op.Inputs[0].isConst() && Op.Inputs[0].Size == 8 &&
+              Op.Inputs[0].Offset == Entry.Callee) {
+            if (Source >= 0 || Entry.OperationDigest.empty() ||
+                Entry.OperationDigest !=
+                    lowUndefinedOperationDigest(
+                        llvm::ArrayRef(Low.Blocks[B].Ops).take_front(I + 1)))
+              Fail("stale local-unwind argument proof");
+            Source = static_cast<int>(B);
+          }
+        }
+      }
+      if (Target <= 0 || Source < 0 || Entry.FrameOffset >= 0)
+        Fail("stale local-unwind continuation certificate");
+      LocalUnwindSources[Target].emplace_back(Source, Entry.FrameOffset);
+    }
 
   // Every ordinary predecessor path into a protected block participates. A
   // stack adjustment before the guarded interval matters just as much as one
@@ -213,6 +241,9 @@ std::optional<uint64_t> proveSEHEstablisherFrame(
       continue;
     Relevant[B] = true;
     Work.insert(Work.end(), Preds[B].begin(), Preds[B].end());
+    if (auto It = LocalUnwindSources.find(B); It != LocalUnwindSources.end())
+      for (const auto &[Source, Offset] : It->second)
+        Work.push_back(Source);
     if (IsHandlerSource(B)) {
       Sources.push_back(B);
       if (!AddProtectedBlocks(Low.Blocks[B].StartAddr))
@@ -235,6 +266,7 @@ std::optional<uint64_t> proveSEHEstablisherFrame(
         (!Reachable[B] ||
          (B != 0 &&
           Low.OrdinaryModuleAnalysisRoots.count(Low.Blocks[B].StartAddr) &&
+          !LocalUnwindSources.count(static_cast<int>(B)) &&
           !(CxxContinuation && IsCxxContinuation(Low.Blocks[B].StartAddr)))))
       Fail("protected scope has an independent ordinary entry at " +
            std::to_string(Low.Blocks[B].StartAddr));
@@ -444,6 +476,12 @@ std::optional<uint64_t> proveSEHEstablisherFrame(
     Fail("converted prologue disagrees with decoded SP effects");
   if (ExpectedAdjustments != ActualAdjustments)
     Fail("decoded prologue disagrees with unwind allocation");
+  for (const auto &[Target, Sources] : LocalUnwindSources)
+    if (Relevant[Target])
+      for (const auto &[Source, Offset] : Sources)
+        if (DynamicSP || !Relevant[Source] || !Reachable[Source] ||
+            Offset != -static_cast<int64_t>(FrameBytes))
+          Fail("local-unwind call does not carry the protected frame");
   // Ordinary flow into a shared handler is not proven to bring the SP the
   // dispatcher resumes with once SP moves on the way in.
   if (DynamicSP && OrdinaryEntry)

@@ -8,6 +8,7 @@
 #include "llvm/Support/Program.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -188,8 +189,14 @@ void verifyRuntime(bool Chained,
   const bool UnfairLocks = FixtureKind == RuntimeFixture::UnfairLocks;
   const bool Protocols = FixtureKind == RuntimeFixture::Protocols;
   llvm::SmallString<128> Directory;
-  ASSERT_FALSE(
-      llvm::sys::fs::createUniqueDirectory("neverd-objc-arc", Directory));
+  std::string Prefix = "neverd-objc-arc";
+  if (const char *Artifacts = std::getenv("NEVERD_TEST_ARTIFACT_DIR")) {
+    std::error_code Error;
+    std::filesystem::create_directories(Artifacts, Error);
+    ASSERT_FALSE(Error) << Error.message();
+    Prefix = (std::filesystem::path(Artifacts) / Prefix).string();
+  }
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
   const std::filesystem::path Work(Directory.str().str());
   const auto Cleanup = llvm::make_scope_exit([&] {
     if (::testing::Test::HasFailure()) {

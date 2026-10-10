@@ -194,6 +194,7 @@ enum class VectorOperand {
   Memory,
   General,
   Integer,
+  Integer32,
   IntegerMemory,
   Immediate
 };
@@ -254,6 +255,8 @@ bool matchesVectorOperand(VectorOperand Kind, const cs_x86_op &O,
   case VectorOperand::Integer:
     return isGeneralOperand(O) &&
            (O.size == x64::DWordBytes || O.size == x64::WordBytes);
+  case VectorOperand::Integer32:
+    return isGeneralOperand(O) && O.size == x64::DWordBytes;
   case VectorOperand::IntegerMemory:
     return O.type == X86_OP_MEM &&
            (O.size == x64::DWordBytes || O.size == x64::WordBytes);
@@ -263,6 +266,11 @@ bool matchesVectorOperand(VectorOperand Kind, const cs_x86_op &O,
   llvm_unreachable(diagnostic::Instruction);
 }
 bool admitsVectorOperands(const cs_x86 &X, const VectorOperation &V) {
+  // PEXTRW shares a decoder identity with its SSE4.1 r/m16 encoding. The
+  // checked SSE2 contract admits only 66 0F C5; its GPR result clears all
+  // bits above bit 15, including when the ignored REX.W prefix is present.
+  if (V.Form == VectorForm::WordExtract && X.opcode[1] != 0xc5)
+    return false;
   return llvm::any_of(VectorOperands, [&](const auto &Pattern) {
     const bool HasControl = Pattern.Control != VectorOperand::Absent;
     return Pattern.Form == V.Form && X.op_count == (HasControl ? 3 : 2) &&
