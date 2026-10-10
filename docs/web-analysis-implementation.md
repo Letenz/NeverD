@@ -1033,6 +1033,16 @@ staged directories matched `LICENSES/ada` byte for byte. Scoped formatting and
 `git diff --check` passed. Existing duplicate-library linker warnings remain;
 there were no new compiler diagnostics in the final build.
 
+Publication also incorporated `dev` at `aea8fd619`, including GUI text selection
+and realigned x86 native EH work, through a conflict-free merge. The affected
+native libraries rebuilt successfully. All 59 selected HTML/import-map/native
+and ASAR CLI cases passed, including the pinned Bun native handoff. Session C API
+passed 91 of 99 cases with its same eight platform skips; the native-buffer
+loader case and seven web/native worker smoke suites passed. Logs use
+`/tmp/neverd-import-maps-dev-{build,tests,session,loader,worker}.log`.
+The upstream GUI and dedicated realigned-EH suites were not part of this web
+integration profile; their qualification is not inferred from these checks.
+
 The five epics remain open. This increment qualifies captured import-map
 candidates locally; package graphs/diffs, passive observations, other desktop
 and native JS formats, semantic rewrites, C++ MCP and cross-host distribution
