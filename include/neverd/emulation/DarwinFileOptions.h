@@ -40,8 +40,9 @@ struct DarwinExtendedAttribute {
 
 /// Fixed stat64 observations. Regular-file Size must match its bytes; directory
 /// Size is an explicit nonnegative observation, not an entry count.
-/// These observations do not grant or revoke catalogue access, and reads do
-/// not advance timestamps. Unknown metadata is not synthesized from the host.
+/// These observations alone do not authorize catalogue access. The explicit
+/// StaticOwnerQueries environment can use Mode/UID; reads do not advance
+/// timestamps. Unknown metadata is not synthesized from the host.
 struct DarwinFileMetadata {
   int32_t Device = 0;
   uint64_t Inode = 0;
@@ -168,11 +169,23 @@ struct DarwinDirectoryEnumerationPolicy {
   bool BulkAttributes = false;
 };
 
+/// Immutable ordinary local owner authorization for access/faccessat only.
+/// Declares no ACL, MAC, additional kauth listener, entitlement or other
+/// permission bypass; a writable/executable nonopaque local mount with
+/// ownership enabled; flags=0 and no special mode bits. Actual checks require
+/// explicit credentials, metadata and a matching nonzero owner UID. Root and
+/// nonowner authorization remain unsupported. Other vnode operations are
+/// closed; existing opaque standard streams remain independent.
+enum class DarwinFileAuthorization { StaticOwnerQueries };
+
 /// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup
 /// shares an open description. Ancestor directories are implicit.
 struct DarwinFileOptions {
   std::map<std::string, std::vector<uint8_t>> Files;
+  /// Absence retains existence-only queries without permission enforcement.
+  /// This declaration never infers missing credentials or metadata.
+  std::optional<DarwinFileAuthorization> Authorization;
   /// Absent means unknown input; an explicitly empty stream is EOF.
   std::optional<std::vector<uint8_t>> StandardInput;
   /// Exclusive FD ceiling, including the initially open descriptors 0/1/2.

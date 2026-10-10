@@ -900,11 +900,11 @@ Release Darwin reconciled 937 registrations: 553 passed, 384 unavailable-backend
 
 ## File existence queries
 
-`access(33)` and `faccessat(466)` query the current virtual catalogue without allocating a descriptor or changing file bytes, cursors, flags or metadata. F_OK proves that a name exists under the existing catalogue traversal contract. Metadata does not grant or revoke catalogue access; these calls do not establish native ancestor-search, ACL or MAC authorization. Missing or invalidated stat observations do not prevent an existence query. Deleted names return ENOENT even while old descriptors or mappings retain the object; creation, name reuse and rename use the current namespace.
+Without `darwin_files.authorization`, `access(33)` and `faccessat(466)` query the current virtual catalogue without allocating a descriptor or changing file bytes, cursors, flags or metadata. F_OK proves that a name exists under the existing catalogue traversal contract. Metadata alone does not grant or revoke catalogue access; these legacy queries do not establish native ancestor-search, ACL or MAC authorization. Missing or invalidated stat observations do not prevent an existence query. Deleted names return ENOENT even while old descriptors or mappings retain the object; creation, name reuse and rename use the current namespace. The explicit static owner-query environment below has its own SEARCH and supported-operation rules.
 
-Mode uses the low 32 bits. Native authorization actions come from R/W/X (bits 0–2) or extended rights (bits 9–21). When `(mode & 0x003ffe07) == 0`, the request is an existence query; other bits, including the sign bit, are ignored rather than rejected as EINVAL. Requested permissions remain UnsupportedService after successful lookup, even if metadata or mutation grants appear permissive. Known pathname/descriptor errors occur first. No permission result is guessed.
+Mode uses the low 32 bits. Native authorization actions come from R/W/X (bits 0–2) or extended rights (bits 9–21). When `(mode & 0x003ffe07) == 0`, the request is an existence query; other bits, including the sign bit, are ignored rather than rejected as EINVAL. Without the explicit owner-query environment, requested permissions remain UnsupportedService after successful lookup, even if metadata or mutation grants appear permissive. Known pathname/descriptor errors occur first. No permission result is guessed.
 
-Faccessat accepts low-bit flags AT_EACCESS (0x10), AT_SYMLINK_NOFOLLOW (0x20) and AT_SYMLINK_NOFOLLOW_ANY (0x800), in any combination. Other flags return EINVAL before pathname or FD access, including when the catalogue is absent. Real/effective identities are fixed; fixed link lookup uses the policies described below. Absolute paths ignore dirfd; relative lookup retains configured CWD/directory-FD requirements. Non-AT_FDCWD nameiat routes import one byte and check a relative directory FD before full string import; a slash skips that FD check. An inaccessible first byte is EFAULT14; a later fault follows EBADF9/ENOTDIR20 for relative bad/file FDs. Empty relative paths still check the FD: EBADF for unknown, ENOTDIR for regular files, otherwise ENOENT. Missing catalogue and unknown stream-directory identity remain explicitly unsupported.
+Faccessat accepts low-bit flags AT_EACCESS (0x10), AT_SYMLINK_NOFOLLOW (0x20) and AT_SYMLINK_NOFOLLOW_ANY (0x800), in any combination. Other flags return EINVAL before pathname or FD access, including when the catalogue is absent. AT_EACCESS selects explicit effective credentials in the owner-query environment; legacy existence queries do not authorize either identity. Fixed link lookup uses the policies described below. Absolute paths ignore dirfd; relative lookup retains configured CWD/directory-FD requirements. Non-AT_FDCWD nameiat routes import one byte and check a relative directory FD before full string import; a slash skips that FD check. An inaccessible first byte is EFAULT14; a later fault follows EBADF9/ENOTDIR20 for relative bad/file FDs. Empty relative paths still check the FD: EBADF for unknown, ENOTDIR for regular files, otherwise ENOENT. Missing catalogue and unknown stream-directory identity remain explicitly unsupported.
 
 The independent `file-access` workload compares both raw calls, ignored mode bits, flag combinations and lookup order on native macOS and five guest combinations through C++, C/CLI/Python. Native NOFOLLOW_ANY checks use a relative directory FD so host `/tmp` or `/var` symlinks do not alter the reference. Direct tests cover live namespace changes, mixed permission bits, descriptor exhaustion, metadata independence and failed guest-memory access.
 
@@ -1349,7 +1349,9 @@ New regular files use that UID while inheriting device/GID from their direct
 parent; rename, retained descriptors and old-name reuse preserve object identity.
 Existing input stat records remain independent. Root does not grant file writes,
 mutable directories, permissions or ACLs. Credential mutation, setuid/setgid/
-setgroups, process/session creation and authorization enforcement remain absent.
+setgroups and process/session creation remain absent. Credentials alone do not
+authorize filesystem operations; the separate static owner-query environment
+below is the sole supported permission-query exception.
 
 getgroups interprets the low32 capacity bits as signed int. Negative capacity
 returns EINVAL before observations or memory. Missing groups stop unsupported
@@ -1830,3 +1832,87 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU Mach trap table](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/syscall_sw.c), [self-port name owners](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_tt.c), [host-port owner](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_host.c), [ARM64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [x64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/i386/bsd_i386.c).
+
+
+## Static ordinary-owner permission queries
+
+The exact opt-in `darwin_files.authorization="static-owner-queries"` (C++
+DarwinFileAuthorization::StaticOwnerQueries) declares an immutable ordinary
+local permission environment: no ACL, MAC, additional kauth listener,
+entitlement or other permission bypass; a writable, executable, nonopaque local
+mount with ownership enabled; supplied flags=0 and no special mode bits.
+Metadata and credentials alone never make this declaration. It supplies static
+access/faccessat permission queries; normal file workloads need a later, broader
+authorization environment.
+
+An actual check requires explicit darwin_system.credentials and the actual
+object's metadata. Access selects real_uid; AT_EACCESS selects effective_uid for
+both pathname SEARCH and final R/W/X. The selected UID must be nonzero and match
+the object's UID. Every requested owner permission bit must be present; a known
+denial returns EACCES13 with the existing BSD carry convention. Missing
+credentials/metadata, selected UID0, nonowner, extended actions and R/W/X on a
+retained terminal link stop UnsupportedService. An unselected UID0 remains a
+valid observation. No host identity, UID1000 fallback, group/world permissions
+or root exemption is inferred.
+
+SEARCH uses the current parent directory's X bit before child lookup, including
+missing children, applicable dot/dotdot reductions and every symlink restart.
+F_OK and ignored mode bits require only those actual SEARCH checks, with no final
+owner check. Slash-only root LOOKUP and root-clamped dotdot perform no SEARCH;
+consumed trailing separators do not add a final-directory SEARCH. Invalid flags,
+path copying, relative dirfd admission and empty-name errors keep their original
+order. After known allowed SEARCH, a component beyond Name255 stops Unsupported:
+that resource bound does not prove filesystem ENAMETOOLONG. Denied SEARCH still
+returns EACCES13 first; unknown SEARCH stops before the child lookup. The
+separate whole copied-path bound is unchanged.
+
+All other dispatched file operations, including read-only open, O_WRONLY/TRUNC,
+stat, chdir, readlink, pathconf, attributes, enumeration and namespace mutation,
+stop before effects. Only established typed Input/Output/Error standard streams
+and their dup aliases retain read/write/vector/positioned preflight, close,
+dup/dup2, lseek and existing fcntl controls. Numeric FD0/1/2 does not grant this
+exception. File-backed mmap and direct mappingSource are closed; anonymous
+memory remains independent. Shared C++/JSON admission rejects mutation/creation
+policies and grants, known flags/special bits and known inode/device aliases.
+Missing metadata remains unknown. The declaration adds no path/entry charge and
+keeps the existing256-entry/16MiB limits.
+
+The example supplies actual root SEARCH facts as well as a0400 owner file;
+queries can read-check /data and return EACCES for its write-check. It does not
+open that file:
+
+```json
+{"darwin_files":{"authorization":"static-owner-queries","files":[{"path":"/data","bytes_hex":"00","metadata":{"device":7,"inode":2,"mode":33024,"link_count":1,"uid":501,"gid":20,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16832,"link_count":2,"uid":501,"gid":20,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20}}}
+```
+
+Original native ARM64 O0/O1/O2 evidence retains2472 raw/SDK pairs, including2439
+independent literal checks and33 capture-only observations, under the original
+compile120s/native5s limits. The private held-dirfd tree records actual owner,
+mode, flags, statfs and fstatx/filesec ACL-property absence. The initial probe's
+NULL/ENOENT was an ACL-absence protocol mismatch, before any permission queries;
+its failed record is retained. Native real/effective IDs are equal on this host;
+distinct identity selection is a pinned-source/model contract. Absence of every
+global security hook and opaque mount internal is not independently observed.
+The SDK-free owner-queries workload is supplied-model evidence and stays out of
+the58 deterministic native-common workloads. Group/root/ACL/MAC authorization,
+dynamic credentials, authorized open/creation/namespace operations, readiness,
+advancing clocks, Mach IPC/threads, dyld/TLS and complete runtimes/frameworks
+remain unfinished. Native Intel HVF and physical iOS remain unverified.
+
+```text
+DarwinFileAuthorization::StaticOwnerQueries / authorization=static-owner-queries
+access33 / faccessat466 / real_uid / effective_uid / AT_EACCESS0x10
+owner R/W/X / all requested bits / directory SEARCH / EACCES13
+no-action root LOOKUP / root-clamped dotdot / consumed terminal separators
+unknown credentials-metadata-root-nonowner -> UnsupportedService
+all other vnode routes closed / typed standard streams and dup aliases only
+anonymous memory independent / file-backed mmap and mappingSource closed
+Name255 availability stop after allowed SEARCH / no guessed filesystem errno
+owner-queries / owner-query-stop / owner-query-open / owner-query-map
+OwnerQueriesKeepPermissionAndUnknownBoundaries
+71 mandatory workloads per platform / ARM64 213 / Intel 142 unverified
+original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
+native5s / compile120s / owner-build1200s / guest-Python5,000,000us
+```
+
+[XNU access and subject selection](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [real credential copy](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [owner authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [pathname SEARCH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c), [cached lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_cache.c), [Libc ACL properties](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/gen/filesec.c), [fstatx ACL absence](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/statx_np.c).

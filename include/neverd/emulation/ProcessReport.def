@@ -32,6 +32,7 @@ NEVERD_PROCESS_REPORT_FIELD(LinuxTime, "linux_time")
 NEVERD_PROCESS_REPORT_FIELD(AdvanceOnIdle, "advance_on_idle")
 NEVERD_PROCESS_REPORT_FIELD(LinuxFiles, "linux_files")
 NEVERD_PROCESS_REPORT_FIELD(DarwinFiles, "darwin_files")
+NEVERD_PROCESS_REPORT_FIELD(FileAuthorization, "authorization")
 NEVERD_PROCESS_REPORT_FIELD(DarwinTime, "darwin_time")
 NEVERD_PROCESS_REPORT_FIELD(DarwinSystem, "darwin_system")
 NEVERD_PROCESS_REPORT_FIELD(SystemOSType, "os_type")
@@ -242,6 +243,7 @@ NEVERD_PROCESS_REPORT_TEXT(DarwinSystemProfile,
 NEVERD_PROCESS_REPORT_TEXT(DarwinTimeProfile,
                            "darwin_time requires a macOS or iOS profile")
 NEVERD_PROCESS_REPORT_TEXT(DarwinFilesOptions, "invalid darwin_files option: ")
+NEVERD_PROCESS_REPORT_TEXT(StaticOwnerQueries, "static-owner-queries")
 NEVERD_PROCESS_REPORT_TEXT(DarwinFilesProfile,
                            "darwin_files requires a macOS or iOS profile")
 NEVERD_PROCESS_REPORT_TEXT(LinuxKernelOptions, "invalid linux_kernel option: ")

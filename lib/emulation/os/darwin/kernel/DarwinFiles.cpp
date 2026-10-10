@@ -105,6 +105,19 @@ bool validMutationPolicy(const DarwinFileMutationPolicy &Policy) {
 }
 llvm::Expected<FileFootprint>
 fileOptionsFootprint(const DarwinFileOptions &Options) {
+  if (Options.Authorization &&
+      (*Options.Authorization != DarwinFileAuthorization::StaticOwnerQueries ||
+       !Options.WritableFiles.empty() || !Options.MutableDirectories.empty() ||
+       !Options.MutableSymbolicLinks.empty() ||
+       !Options.MutableExtendedAttributes.empty() || Options.CreationPolicy ||
+       !Options.MutationPolicies.empty() ||
+       !Options.DirectoryMutationPolicies.empty() ||
+       !Options.SymbolicLinkMutationPolicies.empty() ||
+       !Options.RemovableDirectories.empty() ||
+       !Options.MovableDirectories.empty() ||
+       !Options.ExchangeableDirectories.empty() ||
+       !Options.SwapRenameDirectories.empty()))
+    return failure(diagnostic::FileAuthorizationOption);
   if (Options.InitialUmask && *Options.InitialUmask > 07777)
     return failure(diagnostic::FileUmaskOption);
   uint64_t Entries = Options.Files.size() + Options.Directories.size() +
@@ -183,6 +196,8 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
          M.Size != Options.SymbolicLinks.at(Path).size()) ||
         M.Blocks > INT64_MAX || M.BlockSize > INT32_MAX)
       return failure(diagnostic::FileMetadataOption);
+    if (Options.Authorization && (M.Flags || (M.Mode & 07000)))
+      return failure(diagnostic::FileAuthorizationOption);
     for (auto T : {M.AccessTime, M.ModificationTime, M.ChangeTime, M.BirthTime})
       if (!validTime(T))
         return failure(diagnostic::FileMetadataOption);
@@ -511,6 +526,8 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
   for (const auto &[Path, Inode] : Inodes)
     if (HasAlias(Path))
       Aliases.insert(Path);
+  if (Options.Authorization && !Aliases.empty())
+    return failure(diagnostic::FileAuthorizationOption);
   return FileFootprint{Total, uint32_t(Entries), uint32_t(AttributeCount),
                        std::move(Aliases)};
 }
@@ -536,9 +553,10 @@ llvm::Error validateFileOptions(const DarwinFileOptions &Options) {
 
 DarwinFiles::DarwinFiles(GuestMemory &Memory,
                          const std::optional<DarwinFileOptions> &Options,
-                         uint64_t OutputLimit, uint32_t EffectiveUID)
+                         uint64_t OutputLimit, uint32_t EffectiveUID,
+                         const std::optional<DarwinCredentials> &Credentials)
     : Memory(Memory), Options(Options), OutputLimit(OutputLimit),
-      EffectiveUID(EffectiveUID) {
+      EffectiveUID(EffectiveUID), Credentials(Credentials) {
   const llvm::ArrayRef<uint8_t> Input =
       Options && Options->StandardInput
           ? llvm::ArrayRef<uint8_t>(*Options->StandardInput)
@@ -898,10 +916,33 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
   return returned(FD);
 }
 
+bool DarwinFiles::staticOwnerQueries() const {
+  return Options &&
+         Options->Authorization == DarwinFileAuthorization::StaticOwnerQueries;
+}
+
+DarwinFiles::Authorization
+DarwinFiles::authorizeOwner(const DarwinFileMetadata *Metadata,
+                            uint32_t Actions, Subject User) const {
+  if (!Credentials)
+    return diagnostic::FileAuthorizationCredentials;
+  const auto UID =
+      User == Subject::Real ? Credentials->RealUID : Credentials->EffectiveUID;
+  if (!UID)
+    return diagnostic::FileAuthorizationOwner;
+  if (!Metadata)
+    return diagnostic::FileAuthorizationMetadata;
+  if (UID != Metadata->UID)
+    return diagnostic::FileAuthorizationOwner;
+  if (((Metadata->Mode >> 6) & Actions) != Actions)
+    return uint32_t(PermissionDenied);
+  return std::monostate{};
+}
+
 llvm::Expected<DarwinFiles::Lookup>
 DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
                          LookupMode Mode, LinkPolicy Links,
-                         bool CheckDirectoryPrefix) {
+                         bool CheckDirectoryPrefix, Subject User) {
   if (!Options)
     return diagnostic::FileInputs;
   initializeNamespace();
@@ -958,10 +999,23 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
       const auto Part = Parts[Index];
       if (Type != PathKind::Directory)
         return uint32_t(NotDirectory);
-      if (Part.size() > limits::Name)
+      if (!staticOwnerQueries() && Part.size() > limits::Name)
         return uint32_t(NameTooLong);
       if (Part.empty())
         continue;
+      // Slash-only LOOKUP has no SEARCH. Root-clamped dotdot returns the root
+      // before the cold SEARCH point in the pinned namei owner. All other
+      // components authorize the actual parent before reducing dots or
+      // asking the filesystem for a child, including a missing one.
+      if (staticOwnerQueries() && (Part != ".." || Directory->Parent)) {
+        auto Authorization = authorizeOwner(Directory->Metadata, 1, User);
+        if (auto *Error = std::get_if<uint32_t>(&Authorization))
+          return *Error;
+        if (auto *Reason = std::get_if<const char *>(&Authorization))
+          return *Reason;
+      }
+      if (staticOwnerQueries() && Part.size() > limits::Name)
+        return diagnostic::FileAuthorizationName;
       // RENAME rejects its terminal dot before looking up that component.
       // Earlier missing/file/removed ancestors still take precedence.
       if ((Mode == LookupMode::RenameTarget ||
@@ -1076,8 +1130,9 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
 
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::access(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
-                    ProcessResult &Result, LinkPolicy Links) {
-  auto Resolved = resolvePath(Path, DirectoryFD, LookupMode::Existing, Links);
+                    ProcessResult &Result, LinkPolicy Links, Subject User) {
+  auto Resolved =
+      resolvePath(Path, DirectoryFD, LookupMode::Existing, Links, true, User);
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
@@ -1088,8 +1143,18 @@ DarwinFiles::access(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
   // bits. Other low-carrier bits are ignored, not an EINVAL or a grant. The
   // catalogue proves name existence; stat observations do not prove ACL/MAC
   // authorization, including when mutation grants permit model operations.
-  if (Mode & AccessPermissionMask)
+  const uint32_t Actions = Mode & AccessPermissionMask;
+  if (!Actions)
+    return returned(0);
+  const auto &File = std::get<Description>(*Resolved);
+  if (!staticOwnerQueries() || (Actions & ~uint32_t(7)) ||
+      (File.Type != Kind::File && File.Type != Kind::Directory))
     return unsupported(Result, diagnostic::FileAccessPermissions);
+  auto Authorization = authorizeOwner(metadata(File), Actions, User);
+  if (auto *Error = std::get_if<uint32_t>(&Authorization))
+    return returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&Authorization))
+    return unsupported(Result, *Reason);
   return returned(0);
 }
 
@@ -2432,6 +2497,8 @@ ServiceResult DarwinFiles::seek(Description &File, uint64_t Offset,
 }
 
 DarwinFiles::MappingSource DarwinFiles::mappingSource(uint32_t FD) const {
+  if (staticOwnerQueries())
+    return diagnostic::FileAuthorizationScope;
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return uint32_t(BadDescriptor);
@@ -2493,6 +2560,30 @@ llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
                     ProcessResult &Result) {
   const auto &A = Event.Arguments;
+  if (staticOwnerQueries()) {
+    // Closed by default, including new file routes. Only queries and the
+    // established opaque stream family may reach their normal preflight.
+    switch (Service) {
+    case ServiceKind::Access:
+    case ServiceKind::FaccessAt:
+    case ServiceKind::Read:
+    case ServiceKind::Write:
+    case ServiceKind::Readv:
+    case ServiceKind::Writev:
+    case ServiceKind::Pread:
+    case ServiceKind::Pwrite:
+    case ServiceKind::Preadv:
+    case ServiceKind::Pwritev:
+    case ServiceKind::Close:
+    case ServiceKind::Dup:
+    case ServiceKind::Dup2:
+    case ServiceKind::Lseek:
+    case ServiceKind::Fcntl:
+      break;
+    default:
+      return unsupported(Result, diagnostic::FileAuthorizationScope);
+    }
+  }
   if (Service == ServiceKind::SetXattr || Service == ServiceKind::FsetXattr ||
       Service == ServiceKind::RemoveXattr ||
       Service == ServiceKind::FremoveXattr)
@@ -2544,7 +2635,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       return returned(InvalidArgument, true);
     return access(
         A[1], A[0], A[2], Result,
-        {!(Flags & (AtNoFollow | AtNoFollowAny)), bool(Flags & AtNoFollowAny)});
+        {!(Flags & (AtNoFollow | AtNoFollowAny)), bool(Flags & AtNoFollowAny)},
+        Flags & AtEffectiveAccess ? Subject::Effective : Subject::Real);
   }
   if (Service == ServiceKind::Rename)
     return rename(A[0], AtCurrentDirectory, A[1], AtCurrentDirectory,
@@ -2717,6 +2809,9 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return returned(BadDescriptor, true);
   auto &FD = I->second;
   auto &File = *FD.Open;
+  if (staticOwnerQueries() && File.Type != Kind::Input &&
+      File.Type != Kind::Output && File.Type != Kind::Error)
+    return unsupported(Result, diagnostic::FileAuthorizationScope);
   if (Vectored || Writing || Service == ServiceKind::Read ||
       Service == ServiceKind::Pread) {
     const auto Access = File.Flags & OpenAccessMask;

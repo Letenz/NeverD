@@ -413,6 +413,26 @@ NEVERD_DARWIN_DIAGNOSTIC(FileOptionPath,
                          "invalid or conflicting Darwin catalogue path")
 NEVERD_DARWIN_DIAGNOSTIC(FileAccessPermissions,
                          "Darwin access permission checks are not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAuthorizationOption,
+    "Darwin static owner queries require an immutable ordinary environment "
+    "without known inode aliases")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAuthorizationScope,
+    "Darwin static owner queries do not authorize other vnode operations")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAuthorizationCredentials,
+    "Darwin owner authorization requires explicit credentials")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAuthorizationOwner,
+    "Darwin owner authorization requires a matching nonzero owner UID")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAuthorizationMetadata,
+    "Darwin owner authorization requires explicit object metadata")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAuthorizationName,
+    "Darwin component exceeds the model bound; filesystem length semantics "
+    "are not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileInputs, "Darwin file catalogue is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
                          "Darwin directory creation exceeds catalogue limits")

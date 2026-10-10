@@ -11,6 +11,73 @@
 #include <string_view>
 
 namespace neverd::emulation::darwin_test {
+inline DarwinFileMetadata ownerQueryMetadata(uint16_t Mode, uint64_t Inode,
+                                             uint64_t Size = 0) {
+  DarwinFileMetadata M;
+  M.Device = 7;
+  M.Inode = Inode;
+  M.Mode = Mode;
+  M.LinkCount = (Mode & 0170000) == 0040000 ? 2 : 1;
+  M.UID = 501;
+  M.GID = 20;
+  M.Size = Size;
+  M.BlockSize = 4096;
+  return M;
+}
+inline DarwinFileOptions ownerQueryOptions() {
+  DarwinFileOptions O;
+  O.Authorization = DarwinFileAuthorization::StaticOwnerQueries;
+  O.Files["/data"] = {'a', 'b', 0, 255, 'e', 'f'};
+  O.Files["/directory/leaf"] = {};
+  O.Files["/unknown"] = {};
+  O.Directories = {"/", "/directory"};
+  O.WorkingDirectory = "/";
+  O.Metadata["/"] = ownerQueryMetadata(0040700, 1);
+  O.Metadata["/data"] = ownerQueryMetadata(0100400, 2, 6);
+  O.Metadata["/directory"] = ownerQueryMetadata(0040000, 3);
+  O.Metadata["/directory/leaf"] = ownerQueryMetadata(0100700, 4);
+  O.SymbolicLinks["/alias"] = {'d', 'a', 't', 'a'};
+  O.SymbolicLinks["/via"] = {'d', 'i', 'r', 'e', 'c', 't', 'o', 'r', 'y'};
+  return O;
+}
+inline constexpr char OwnerQueriesJSON[] = R"({
+  "authorization":"static-owner-queries",
+  "files":[
+    {"path":"/data","bytes_hex":"616200ff6566","metadata":{
+      "device":7,"inode":2,"mode":33024,"link_count":1,"uid":501,"gid":20,
+      "size":6,"block_size":4096,"blocks":0,"flags":0,"generation":0,
+      "access_time":{"seconds":0,"nanoseconds":0},
+      "modification_time":{"seconds":0,"nanoseconds":0},
+      "change_time":{"seconds":0,"nanoseconds":0},
+      "birth_time":{"seconds":0,"nanoseconds":0}}},
+    {"path":"/directory/leaf","bytes_hex":"","metadata":{
+      "device":7,"inode":4,"mode":33216,"link_count":1,"uid":501,"gid":20,
+      "size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,
+      "access_time":{"seconds":0,"nanoseconds":0},
+      "modification_time":{"seconds":0,"nanoseconds":0},
+      "change_time":{"seconds":0,"nanoseconds":0},
+      "birth_time":{"seconds":0,"nanoseconds":0}}},
+    {"path":"/unknown","bytes_hex":""}],
+  "directories":[
+    {"path":"/","metadata":{
+      "device":7,"inode":1,"mode":16832,"link_count":2,"uid":501,"gid":20,
+      "size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,
+      "access_time":{"seconds":0,"nanoseconds":0},
+      "modification_time":{"seconds":0,"nanoseconds":0},
+      "change_time":{"seconds":0,"nanoseconds":0},
+      "birth_time":{"seconds":0,"nanoseconds":0}}},
+    {"path":"/directory","metadata":{
+      "device":7,"inode":3,"mode":16384,"link_count":2,"uid":501,"gid":20,
+      "size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,
+      "access_time":{"seconds":0,"nanoseconds":0},
+      "modification_time":{"seconds":0,"nanoseconds":0},
+      "change_time":{"seconds":0,"nanoseconds":0},
+      "birth_time":{"seconds":0,"nanoseconds":0}}}],
+  "symbolic_links":[{"path":"/alias","target_hex":"64617461"},
+    {"path":"/via","target_hex":"6469726563746f7279"}],
+  "working_directory":"/"})";
+inline constexpr char OwnerQueryCredentialsJSON[] = R"({"credentials":{
+  "real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20}})";
 inline constexpr char KernelPathConfHex[] =
     "0100000000000000010000000000000001000000000000000000000000000000"
     "0010000000000000000001000000000000100000000000000010000000000000"

@@ -5034,6 +5034,87 @@ static int directory_mutations(const char *path) {
   return 37;
 }
 
+static int owner_query_result(unsigned api, const char *path, u64 mode,
+                              u64 flags, u64 expected) {
+  unsigned error;
+  u64 result = api ? call(466, -2UL, (u64)path, mode, flags, 0, 0, &error)
+                   : call(33, (u64)path, mode, 0, 0, 0, 0, &error);
+  if (result != expected || error != (expected != 0))
+    return 211;
+#if defined(__aarch64__)
+  if (secondary)
+    return 212;
+#endif
+  return 0;
+}
+static int owner_queries(const char *stop_path, unsigned scope) {
+  unsigned error;
+  if (stop_path || scope) {
+    if (call(4, 1, (u64) "!", 1, 0, 0, 0, &error) != 1 || error)
+      return 213;
+    if (scope == 1)
+      call(5, (u64) "/data", 0x601, 0, 0, 0, 0, &error);
+    else if (scope == 2)
+      call(197, 0, PAGE, 1, 2, 1, 0, &error);
+    else
+      call(33, (u64)stop_path, 4, 0, 0, 0, 0, &error);
+    return 214; /* Every selected operation must stop before this return. */
+  }
+  const unsigned file_errors[] = {0, 13, 13, 13, 0, 13, 13, 13};
+  for (unsigned api = 0; api != 3; ++api)
+    for (unsigned request = 0; request != 8; ++request) {
+      int status = owner_query_result(api, "/data", request, api == 2 ? 16 : 0,
+                                      file_errors[request]);
+      if (status)
+        return status;
+    }
+  // Keep pointers in call instructions: a constant pointer table introduces
+  // Mach-O rebases and changes this SDK-free static guest's loading contract.
+#define OWNER_QUERY(path, mode, expected)                                      \
+  do {                                                                         \
+    int status = owner_query_result(0, path, mode, 0, expected);               \
+    if (status)                                                                \
+      return status;                                                           \
+  } while (0)
+  OWNER_QUERY("/directory", 0, 0);
+  OWNER_QUERY("/directory", 1, 13);
+  OWNER_QUERY("/directory/", 0, 0);
+  OWNER_QUERY("/directory/.", 0, 13);
+  OWNER_QUERY("/directory/..", 0, 13);
+  OWNER_QUERY("/directory/leaf", 0, 13);
+  OWNER_QUERY("/directory/missing", 0, 13);
+  OWNER_QUERY("/via/leaf", 0, 13);
+  OWNER_QUERY("/alias", 4, 0);
+  OWNER_QUERY("/alias", 2, 13);
+  OWNER_QUERY("/unknown", 0, 0);
+  OWNER_QUERY("/missing", 0, 2);
+  OWNER_QUERY("/data/child", 0, 20);
+  OWNER_QUERY("////", 0, 0);
+  OWNER_QUERY("/../../", 0, 0);
+  OWNER_QUERY("/data", 0x1234567880000088UL, 0);
+  OWNER_QUERY("", 0, 2);
+  OWNER_QUERY((const char *)1, 0, 14);
+#undef OWNER_QUERY
+  if (owner_query_result(1, "/alias", 0, 32, 0) ||
+      owner_query_result(1, "/via/leaf", 0, 2048, 62) ||
+      owner_query_result(1, (const char *)1, 7, 1, 22))
+    return 215;
+  if (call(466, 999, (u64) "/data", 4, 16, 0, 0, &error) != 0 || error)
+    return 216;
+  if (call(466, 999, (u64) "data", 0, 0, 0, 0, &error) != 9 || !error)
+    return 217;
+  if (call(0x1234567800000021UL, (u64) "/data", 4, 0, 0, 0, 0, &error) || error)
+    return 218;
+  u64 address = call(197, 0, PAGE, 3, 0x1002, -1UL, 0, &error);
+  if (error || address % PAGE)
+    return 219;
+  *(volatile u64 *)address = 0x1122334455667788UL;
+  if (*(volatile u64 *)address != 0x1122334455667788UL ||
+      call(73, address, PAGE, 0, 0, 0, 0, &error) || error)
+    return 220;
+  return call(4, 1, (u64) "P", 1, 0, 0, 0, &error) == 1 && !error ? 37 : 221;
+}
+
 static int file_access(const char *path) {
   unsigned error;
   char parent[1024];
@@ -7062,6 +7143,14 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return call(116, 0, 0, 0, 0, 0, 0, &error) || error || secondary ? 51 : 37;
   if (equal(argv[1], "time") || equal(argv[1], "time-values"))
     return time_calls(equal(argv[1], "time-values"));
+  if (equal(argv[1], "owner-queries"))
+    return owner_queries(0, 0);
+  if (equal(argv[1], "owner-query-stop"))
+    return owner_queries(argc < 3 ? "/data" : argv[2], 0);
+  if (equal(argv[1], "owner-query-open"))
+    return owner_queries(0, 1);
+  if (equal(argv[1], "owner-query-map"))
+    return owner_queries(0, 2);
   if (equal(argv[1], "mach-self-ports") ||
       equal(argv[1], "mach-self-port-values"))
     return mach_self_ports(equal(argv[1], "mach-self-port-values"));

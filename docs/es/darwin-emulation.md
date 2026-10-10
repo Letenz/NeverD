@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 6b97c519ec7571ed3662f187b14b7e01d5dd18954fa582e38dba79c2f915a113 -->
+<!-- i18n-source: 47deab21aba179a1e8efc43cabdf488c5af9a20a1b5d8597ee427c157ed212f6 -->
 
 [← Índice de documentación](README.md)
 
@@ -1067,3 +1067,37 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU Mach trap table](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/syscall_sw.c), [self-port name owners](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_tt.c), [host-port owner](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_host.c), [ARM64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [x64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/i386/bsd_i386.c).
+
+
+## Consultas estáticas de permisos del propietario ordinario
+
+darwin_files.authorization="static-owner-queries" (DarwinFileAuthorization::StaticOwnerQueries) declara un entorno local ordinario inmutable: sin ACL, MAC, oyentes kauth adicionales, entitlement ni otros bypass; montaje escribible, ejecutable y no opaque, con propiedad activa; flags=0 y sin bits especiales. Las observaciones solas no autorizan. Solo activa consultas access/faccessat.
+
+Cada comprobación requiere darwin_system.credentials explícito y metadatos del objeto real. access usa real_uid; AT_EACCESS usa effective_uid para SEARCH y R/W/X final. El UID elegido debe ser no cero y propietario, con todos los bits solicitados. Denegación conocida devuelve EACCES13 y carry BSD existente. Identidad/metadatos desconocidos, UID0 seleccionado, no propietario, acciones extendidas y R/W/X del enlace terminal retenido paran UnsupportedService; UID0 no seleccionado sigue válido. No se infieren host, UID1000, grupos/otros ni exención root.
+
+SEARCH comprueba X del padre antes de buscar hijo, nombre ausente, puntos aplicables o reiniciar enlace. F_OK/bits ignorados solo requieren SEARCH real; raíz solo con barras y dotdot limitado a raíz no lo requieren. Barras finales consumidas no añaden SEARCH final. Se conserva el orden flags/copia/dirfd relativo/nombre vacío. Name255 es un límite de disponibilidad: tras SEARCH permitido, exceso Unsupported; denegación EACCES primero, desconocido parada primero, sin inventar errno del filesystem.
+
+Todas las demás rutas, incluso open/stat/chdir/readlink/atributos/enumeración/mutación, paran antes de efectos. Solo flujos reales Input/Output/Error y alias dup conservan I/O, close, dup/dup2, lseek y fcntl; números FD0/1/2 no otorgan excepción. mmap de archivo/mappingSource cerrados, memoria anónima independiente. Admisión C++/JSON común rechaza derechos/políticas de mutación/creación, flags/bits especiales conocidos y alias inode/device; conserva desconocidos y256 entradas/16MiB.
+
+El ejemplo declara SEARCH raíz y archivo0400: lectura permitida, escritura EACCES, open no soportado. ARM64 O0/O1/O2 conserva2472 pares raw/SDK,2439 literales independientes,33 solo capturas con compile120s/native5s. fstatx/filesec observa ACL ausente; primer error NULL/ENOENT ocurrió antes de consultas y se conserva. UID nativos real/effective iguales; selección distinta usa fuente/modelo fijados. Hooks globales e interiores opaque sin prueba completa. owner-queries se excluye de58 referencias nativas deterministas. Grupos/root/ACL/MAC, credenciales dinámicas, autorización vnode general, espera, relojes, Mach IPC/hilos, dyld/TLS y runtimes completos pendientes; Intel HVF e iOS físico sin verificar.
+
+```json
+{"darwin_files":{"authorization":"static-owner-queries","files":[{"path":"/data","bytes_hex":"00","metadata":{"device":7,"inode":2,"mode":33024,"link_count":1,"uid":501,"gid":20,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16832,"link_count":2,"uid":501,"gid":20,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20}}}
+```
+
+```text
+DarwinFileAuthorization::StaticOwnerQueries / authorization=static-owner-queries
+access33 / faccessat466 / real_uid / effective_uid / AT_EACCESS0x10
+owner R/W/X / all requested bits / directory SEARCH / EACCES13
+no-action root LOOKUP / root-clamped dotdot / consumed terminal separators
+unknown credentials-metadata-root-nonowner -> UnsupportedService
+all other vnode routes closed / typed standard streams and dup aliases only
+anonymous memory independent / file-backed mmap and mappingSource closed
+Name255 availability stop after allowed SEARCH / no guessed filesystem errno
+owner-queries / owner-query-stop / owner-query-open / owner-query-map
+OwnerQueriesKeepPermissionAndUnknownBoundaries
+71 mandatory workloads per platform / ARM64 213 / Intel 142 unverified
+original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
+native5s / compile120s / owner-build1200s / guest-Python5,000,000us
+```
+[XNU access and subject selection](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [real credential copy](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [owner authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [pathname SEARCH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c), [cached lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_cache.c), [Libc ACL properties](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/gen/filesec.c), [fstatx ACL absence](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/statx_np.c).

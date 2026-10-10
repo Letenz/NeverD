@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 6b97c519ec7571ed3662f187b14b7e01d5dd18954fa582e38dba79c2f915a113 -->
+<!-- i18n-source: 47deab21aba179a1e8efc43cabdf488c5af9a20a1b5d8597ee427c157ed212f6 -->
 
 [← 文档索引](README.md)
 
@@ -1173,3 +1173,37 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU Mach trap table](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/syscall_sw.c), [self-port name owners](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_tt.c), [host-port owner](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_host.c), [ARM64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [x64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/i386/bsd_i386.c).
+
+
+## 静态普通所有者权限查询
+
+精确选项 darwin_files.authorization="static-owner-queries"（DarwinFileAuthorization::StaticOwnerQueries）声明不可变的普通本地权限环境：无 ACL、MAC、额外 kauth 监听器、entitlement 或其他权限绕过；挂载可写、可执行、非 opaque，且启用所有权；已知 flags=0，无特殊模式位。旧章节的文件与凭据观测本身不授予权限；此声明仅启用 access/faccessat 查询。
+
+真正的检查要求显式 darwin_system.credentials 和实际对象元数据。access 选择 real_uid，AT_EACCESS 对全部目录 SEARCH 和最终 R/W/X 选择 effective_uid。选中的 UID 必须非零并匹配对象所有者，且必须具有所有请求的 owner 位；已知拒绝返回 EACCES13 和原有 BSD carry。缺失身份/元数据、选中 UID0、非所有者、扩展动作及保留终端链接的 R/W/X 停止为 UnsupportedService；未选中的 UID0 仍合法。不得推断宿主身份、默认 UID1000、组/其他人权限或 root 豁免。
+
+目录 X 位的 SEARCH 在子项查找之前，包括缺失名称、适用的点/点点约简和链接重启。F_OK/忽略位仅执行真正需要的 SEARCH；纯斜线根路径及根处被钳制的点点无 SEARCH，已消费的尾斜线不增加最终目录检查。标志、路径复制、相对 dirfd 和空名称错误顺序保持不变。Name255 是可用性上限：已知 SEARCH 允许后，超长分量停止 Unsupported；已知拒绝先返回 EACCES，未知先停止，不猜文件系统 errno。整个路径复制上限保持不变。
+
+其他全部文件路由（包括只读 open、O_WRONLY/TRUNC、stat、chdir、readlink、属性、枚举和命名空间修改）在效果之前停止。仅真正的 Input/Output/Error 标准流及 dup 别名保留已有 I/O 预检、close、dup/dup2、lseek 和 fcntl 控制；FD 数值0/1/2不构成豁免。文件 mmap 和直接 mappingSource 均关闭，匿名内存独立。共享 C++/JSON 准入拒绝修改/创建策略与授权、已知 flags/特殊位及 inode/device 别名；缺失元数据仍未知，256项/16MiB 上限与计费不变。
+
+下例同时声明根目录 SEARCH 和0400文件的所有者事实：读检查成功，写检查 EACCES，但不能打开文件。原生 ARM64 O0/O1/O2 保留2472组 raw/SDK 对照，2439组独立字面值检查、33组仅捕获，仍用 compile120s/native5s。fstatx/filesec 确认 ACL 属性缺省；最初 NULL/ENOENT 协议误判发生在权限查询之前，失败记录保留。宿主 real/effective 相同，不同身份选择依据固定源码和模型；全部全局安全钩子及 opaque 挂载内部未独立验证。提供模型输入的 owner-queries 不进入58个原生确定性公共程序。组/root/ACL/MAC授权、动态身份、一般 open/创建/命名空间授权、就绪等待、推进时钟、Mach IPC/线程、dyld/TLS和完整运行时/框架仍未完成；原生 Intel HVF 和物理 iOS 未验证。
+
+```json
+{"darwin_files":{"authorization":"static-owner-queries","files":[{"path":"/data","bytes_hex":"00","metadata":{"device":7,"inode":2,"mode":33024,"link_count":1,"uid":501,"gid":20,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16832,"link_count":2,"uid":501,"gid":20,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20}}}
+```
+
+```text
+DarwinFileAuthorization::StaticOwnerQueries / authorization=static-owner-queries
+access33 / faccessat466 / real_uid / effective_uid / AT_EACCESS0x10
+owner R/W/X / all requested bits / directory SEARCH / EACCES13
+no-action root LOOKUP / root-clamped dotdot / consumed terminal separators
+unknown credentials-metadata-root-nonowner -> UnsupportedService
+all other vnode routes closed / typed standard streams and dup aliases only
+anonymous memory independent / file-backed mmap and mappingSource closed
+Name255 availability stop after allowed SEARCH / no guessed filesystem errno
+owner-queries / owner-query-stop / owner-query-open / owner-query-map
+OwnerQueriesKeepPermissionAndUnknownBoundaries
+71 mandatory workloads per platform / ARM64 213 / Intel 142 unverified
+original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
+native5s / compile120s / owner-build1200s / guest-Python5,000,000us
+```
+[XNU access and subject selection](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [real credential copy](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [owner authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [pathname SEARCH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c), [cached lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_cache.c), [Libc ACL properties](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/gen/filesec.c), [fstatx ACL absence](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/statx_np.c).

@@ -36,7 +36,7 @@ struct DarwinResourceUsage {
   /// ru_nsignals, ru_nvcsw, ru_nivcsw. Meanings are implementation-defined.
   std::array<int64_t, CounterCount> Counters{};
 };
-/// Fixed credential observations, not permission or privilege authorization.
+/// Fixed credential observations; alone these do not authorize permissions.
 /// Supported IDs are 0..INT32_MAX. A supplied GroupAccessList has 1..16
 /// entries, preserves order/duplicates and starts with EffectiveGID.
 /// Omitted groups are unknown; constructing this record explicitly declares
@@ -74,8 +74,11 @@ struct DarwinSystemOptions {
   std::optional<DarwinResourceUsage> ResourceUsageSelf;
   std::optional<DarwinResourceUsage> ResourceUsageChildren;
   /// Scalar queries and new-file UID share this immutable observation.
-  /// Absence retains UID/GID 1000; it never supplies a group list or grants
-  /// filesystem permissions, credential mutation or privileged sysctl writes.
+  /// Absence retains UID/GID 1000 for observations; this fallback never
+  /// supplies authorization knowledge. StaticOwnerQueries uses only explicitly
+  /// supplied real/effective UID. Groups, credential mutation and privileged
+  /// sysctl writes remain independent and are not enabled by these
+  /// observations.
   std::optional<DarwinCredentials> Credentials;
   /// Nonnegative int observation (0..INT32_MAX) for kern.maxfilesperproc.
   /// With ResourceLimits[8].Current this supplies getdtablesize; neither

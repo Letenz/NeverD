@@ -515,6 +515,7 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
                     emulation::darwin_test::ThreadIdentityHex},
           std::pair{"thread-identity-missing", "21"},
           std::pair{"mach-self-ports", "4a"},
+          std::pair{"owner-queries", "50"},
           std::pair{"mach-self-port-values",
                     emulation::darwin_test::MachSelfPortsHex},
           std::pair{"mach-self-port-missing-thread", "21"},
@@ -1057,6 +1058,15 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     (*Input.getAsObject())[field::Quantum] = 1024;
     (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
         llvm::json::parse(emulation::darwin_test::KernelPathConfJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName == "owner-queries") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::OwnerQueriesJSON));
+    (*Input.getAsObject())[field::DarwinSystem] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::OwnerQueryCredentialsJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
   if (SelfPorts) {
@@ -1620,6 +1630,68 @@ INSTANTIATE_TEST_SUITE_P(
           C = '_';
       return Name;
     });
+
+TEST_F(ProcessPublic, DarwinOwnerQueriesRejectContradictionsBeforeLoading) {
+  for (const char *Bad :
+       {"null", "true", "0", "1.5", "{}", "[]", "\"\"", "\"owner\"",
+        "\"StaticOwnerQueries\"", "\"static-owner-queries\\u0000\""}) {
+    const auto Request = std::string("{\"darwin_files\":{\"files\":[],") +
+                         "\"authorization\":" + Bad + "}}";
+    for (const char *Profile :
+         {MacOSMachO64, IOSMachO64, IOSSimulatorMachO64}) {
+      EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                            Request.c_str()),
+                nullptr);
+      EXPECT_NE(takeString(neverd_last_error(Session)).find("authorization"),
+                std::string::npos);
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    }
+  }
+  for (unsigned Change = 0; Change != 6; ++Change) {
+    SCOPED_TRACE(Change);
+    auto Files = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::OwnerQueriesJSON));
+    auto &Object = *Files.getAsObject();
+    auto *File = (*Object.getArray(field::Files))[0].getAsObject();
+    auto *Directory = (*Object.getArray(field::Directories))[0].getAsObject();
+    if (Change == 0)
+      (*File)[field::FileWritable] = true;
+    else if (Change == 1)
+      (*Directory)[field::DirectoryMutable] = true;
+    else if (Change == 2)
+      (*File->getObject(field::FileMetadata))[field::FileFlags] = 1;
+    else if (Change == 3)
+      (*File->getObject(field::FileMetadata))[field::FileMode] = 35072;
+    else if (Change == 4)
+      (*File->getObject(field::FileMetadata))[field::FileInode] = 1;
+    else
+      Object[field::FileCreationPolicy] = llvm::json::Object{};
+    llvm::json::Object RequestOptions;
+    RequestOptions[field::DarwinFiles] = std::move(Files);
+    const auto Request = jsonText(std::move(RequestOptions));
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                          MacOSMachO64, Request.c_str()),
+              nullptr);
+    const auto Error = takeString(neverd_last_error(Session));
+    EXPECT_TRUE(llvm::StringRef(Error).contains(
+        Change == 5 ? field::FileCreationPolicy
+                    : "Darwin static owner queries"))
+        << Error;
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+  llvm::json::Object ValidOptions;
+  ValidOptions[field::DarwinFiles] = llvm::cantFail(
+      llvm::json::parse(emulation::darwin_test::OwnerQueriesJSON));
+  const auto Valid = jsonText(std::move(ValidOptions));
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                          Valid.c_str()),
+              nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinFilesProfile);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+}
 
 TEST_F(ProcessPublic,
        DarwinMachSelfPortsRejectMalformedObservationsBeforeLoading) {

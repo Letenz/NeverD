@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 6b97c519ec7571ed3662f187b14b7e01d5dd18954fa582e38dba79c2f915a113 -->
+<!-- i18n-source: 47deab21aba179a1e8efc43cabdf488c5af9a20a1b5d8597ee427c157ed212f6 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -1069,3 +1069,37 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU Mach trap table](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/syscall_sw.c), [self-port name owners](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_tt.c), [host-port owner](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_host.c), [ARM64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [x64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/i386/bsd_i386.c).
+
+
+## 静的な通常所有者の権限照会
+
+darwin_files.authorization="static-owner-queries"（DarwinFileAuthorization::StaticOwnerQueries）は不変の通常ローカル環境を明示します。ACL、MAC、追加 kauth リスナー、entitlement と他の権限迂回を除外し、所有権が有効な書込可能・実行可能・非 opaque マウント、flags=0、特殊モードビットなしを宣言します。従来の観測だけでは権限を与えず、対象は access/faccessat の照会です。
+
+実際の検査には明示した darwin_system.credentials と実際のオブジェクトのメタデータが必要です。access は real_uid、AT_EACCESS は SEARCH と最終 R/W/X の両方で effective_uid を使います。選択 UID は非ゼロの所有者で、要求した全 owner ビットが必要です。既知の拒否は EACCES13 と従来の BSD carry。未知の資格情報/メタデータ、選択 UID0、非所有者、拡張動作、保持した末端リンクの R/W/X は UnsupportedService。選択しない UID0 は有効です。ホスト、UID1000、グループ/その他、root 例外は推測しません。
+
+親ディレクトリの X/SEARCH は子検索、欠落名、該当するドット/ドットドット、リンク再開より前です。F_OK と無視ビットは実際の SEARCH のみを要求します。スラッシュだけの root と root で制限されたドットドットは SEARCH なし。消費した末尾スラッシュは最終 SEARCH を追加しません。フラグ、コピー、相対 dirfd、空名のエラー順を維持。Name255 は利用可能性の上限で、許可 SEARCH 後の超過は Unsupported、拒否は先に EACCES、未知は先に停止し、ファイルシステム errno を推測しません。
+
+他の全ファイル操作（open、stat、chdir、readlink、属性、列挙、名前空間変更）は効果前に停止。実際の Input/Output/Error と dup 別名だけが既存 I/O、close、dup/dup2、lseek、fcntl を維持し、FD0/1/2という数値では免除されません。ファイル mmap/mappingSource は閉じ、匿名メモリは独立。共有 C++/JSON は変更/作成権限、既知 flags/特殊ビット、inode/device 別名を拒否し、未知データと256項/16MiB計上は保持します。
+
+例は root SEARCH と0400所有者ファイルを示し、読取り検査は成功、書込みは EACCES、open は非対応です。ARM64 O0/O1/O2 は2472 raw/SDK組、2439独立リテラル、33観測のみを compile120s/native5s で保持。fstatx/filesecで ACL 欠省を確認。初回 NULL/ENOENT 誤判定は権限照会前で記録を保持。ネイティブの real/effective は同一で、異なる選択は固定ソース/モデルの証拠です。全グローバルフック/opaque 内部は未検証。owner-queries は58決定的ネイティブ参照に含めません。グループ/root/ACL/MAC、動的資格情報、一般 vnode 権限、待機、時計、Mach IPC/スレッド、dyld/TLS、完全なランタイムは未完成。Intel HVF と実機 iOS は未検証です。
+
+```json
+{"darwin_files":{"authorization":"static-owner-queries","files":[{"path":"/data","bytes_hex":"00","metadata":{"device":7,"inode":2,"mode":33024,"link_count":1,"uid":501,"gid":20,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16832,"link_count":2,"uid":501,"gid":20,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20}}}
+```
+
+```text
+DarwinFileAuthorization::StaticOwnerQueries / authorization=static-owner-queries
+access33 / faccessat466 / real_uid / effective_uid / AT_EACCESS0x10
+owner R/W/X / all requested bits / directory SEARCH / EACCES13
+no-action root LOOKUP / root-clamped dotdot / consumed terminal separators
+unknown credentials-metadata-root-nonowner -> UnsupportedService
+all other vnode routes closed / typed standard streams and dup aliases only
+anonymous memory independent / file-backed mmap and mappingSource closed
+Name255 availability stop after allowed SEARCH / no guessed filesystem errno
+owner-queries / owner-query-stop / owner-query-open / owner-query-map
+OwnerQueriesKeepPermissionAndUnknownBoundaries
+71 mandatory workloads per platform / ARM64 213 / Intel 142 unverified
+original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
+native5s / compile120s / owner-build1200s / guest-Python5,000,000us
+```
+[XNU access and subject selection](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [real credential copy](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [owner authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [pathname SEARCH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c), [cached lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_cache.c), [Libc ACL properties](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/gen/filesec.c), [fstatx ACL absence](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/statx_np.c).

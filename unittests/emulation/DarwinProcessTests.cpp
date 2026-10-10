@@ -189,6 +189,99 @@ TEST_P(DarwinProcess, MachSelfPortsPreserveExplicitBitsAndIndependentRuns) {
   }
 }
 
+TEST_P(DarwinProcess, OwnerQueriesKeepPermissionAndUnknownBoundaries) {
+  Options.InstructionQuantum = 1024;
+  Options.DarwinFiles = darwin_test::ownerQueryOptions();
+  Options.DarwinSystem.emplace().Credentials =
+      DarwinCredentials{501, 501, 20, 20, {}};
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("owner-queries");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 37);
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    EXPECT_EQ(R->StandardOutput, "P");
+    EXPECT_TRUE(R->StandardError.empty());
+    ASSERT_EQ(R->Services.size(), 51u);
+    constexpr uint64_t FileErrors[] = {0, 13, 13, 13, 0, 13, 13, 13};
+    for (unsigned API = 0; API != 3; ++API) {
+      for (unsigned Request = 0; Request != 8; ++Request) {
+        const auto &E = R->Services[API * 8 + Request];
+        EXPECT_EQ(E.Number, Class + (API ? 466 : 33));
+        EXPECT_EQ(E.Result, FileErrors[Request]);
+        EXPECT_EQ(E.Error, FileErrors[Request] != 0);
+        EXPECT_EQ(E.Arguments[API ? 2 : 1], Request);
+      }
+    }
+    const auto &Raw = R->Services[47];
+    EXPECT_EQ(Raw.Number, 0x1234567800000021ULL | Class);
+    EXPECT_EQ(Raw.Result, 0u);
+    EXPECT_EQ(Raw.Error, false);
+    EXPECT_EQ(R->Services[48].Number, Class + 197);
+    EXPECT_EQ(R->Services[48].Error, false);
+    EXPECT_EQ(R->Services[49].Number, Class + 73);
+    EXPECT_EQ(R->Services[49].Result, 0u);
+    EXPECT_EQ(R->Services[50].Number, Class + 4);
+    EXPECT_EQ(R->Services[50].Result, 1u);
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").Mode, 0100400);
+    EXPECT_EQ(Options.DarwinSystem->Credentials->RealUID, 501u);
+  }
+  const auto Good = Options;
+  for (const char *Mode : {"owner-query-open", "owner-query-map"}) {
+    Options = Good;
+    auto R = run(Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(
+        R->Diagnostic,
+        "Darwin static owner queries do not authorize other vnode operations");
+    EXPECT_EQ(R->StandardOutput, "!");
+    ASSERT_EQ(R->Services.size(), 2u);
+    EXPECT_EQ(R->Services.back().Number,
+              Class + (llvm::StringRef(Mode).ends_with("map") ? 197 : 5));
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
+  for (unsigned Missing = 0; Missing != 6; ++Missing) {
+    SCOPED_TRACE(Missing);
+    Options = Good;
+    Options.Arguments[2] = "/data";
+    const char *Reason;
+    if (Missing == 0) {
+      Options.DarwinSystem.reset();
+      Reason = "Darwin owner authorization requires explicit credentials";
+    } else if (Missing < 3) {
+      Options.DarwinFiles->Metadata.erase(Missing == 1 ? "/" : "/data");
+      Reason = "Darwin owner authorization requires explicit object metadata";
+    } else {
+      Options.DarwinSystem->Credentials->RealUID = Missing == 3 ? 0 : 502;
+      if (Missing == 5) {
+        Options.DarwinSystem->Credentials->RealUID = 501;
+        Options.DarwinFiles->Metadata["/data"].UID = 502;
+      }
+      Reason =
+          "Darwin owner authorization requires a matching nonzero owner UID";
+    }
+    auto R = run("owner-query-stop");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R->Diagnostic, Reason);
+    EXPECT_EQ(R->StandardOutput, "!");
+    ASSERT_EQ(R->Services.size(), 2u);
+    EXPECT_EQ(R->Services.back().Number, Class + 33);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
+  Options = Good;
+  auto Independent = run("owner-queries");
+  ASSERT_TRUE(bool(Independent)) << llvm::toString(Independent.takeError());
+  EXPECT_EQ(Independent->Stop, ProcessStopReason::Exited)
+      << Independent->Diagnostic;
+  EXPECT_EQ(Independent->StandardOutput, "P");
+}
+
 TEST_P(DarwinProcess, ThreadIdentityPreservesExplicitBitsAndIndependentRuns) {
   Options.InstructionQuantum = 1024;
   const uint64_t Class =
