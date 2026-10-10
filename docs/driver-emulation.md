@@ -533,6 +533,7 @@ The initial API model deliberately has a finite contract:
 | `ProbeForRead`, `ProbeForWrite`, `ExGetPreviousMode` | User-mode request context with numerical read probing, page-touching write probing and explicit access/misalignment exceptions |
 | `ExAllocatePool2` | Paged/nonpaged NX allocations, zeroed by default; uninitialized and cache-aligned flags modeled; invalid required flags return NULL, quota/executable pools and raised allocation exceptions stop |
 | `MmGetSystemRoutineAddress` | Resolves a counted guest name through the shared export inventory |
+| `NtQuerySystemInformation`, `ZwQuerySystemInformation` | Class `11` (`SystemModuleInformation`) at PASSIVE_LEVEL: zero-length size queries and complete Win64 module records for modeled providers and the input driver. Partial buffers and unknown classes stop explicitly. |
 | `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | MDL system aliases and process-owned user views retain physical cache attributes and permissions; nonpaged pool MDLs reuse the original pool mapping through the safe helper |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | Standalone or IRP-associated nonpaged-pool/user descriptors, mutable chain links, independent locks and shared system aliases; no quota |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | Explicit session registry, per-handle rights and lifetime, query buffer sizing and mutations; no host registry access |
@@ -992,7 +993,7 @@ and driver callback addresses. Guest addresses are hexadecimal strings so
 JSON consumers do not lose 64-bit precision.
 The `configuration` object records the run's limits, service name,
 `kernel_exports` overrides and original `registry` input.
-The profile is `wdm-x64-scheduled-v89`. `nt_status` remains the DriverEntry
+The profile is `wdm-x64-scheduled-v90`. `nt_status` remains the DriverEntry
 result, while `scenario_success` describes initialization and completed
 requests together. `phase`, `requests`, and `unload_completed` identify which
 parts of the requested lifecycle ran. Each API call and CPU write also records
@@ -1193,3 +1194,5 @@ Explicit CPU0 preemption, clock semantics and current limits are described in [d
 `KeQueryPerformanceCounter` returns the shared scheduler time in 100 ns ticks with a fixed frequency of 10,000,000 ticks per second. Its optional output pointer is checked for the complete eight-byte write and object lifetime. The call is available at every valid x64 IRQL. Cooperative mode advances time only at existing scheduling boundaries; instruction-clock mode retains its configured timing. Counter reads never create a second clock or advance time themselves. This is a deterministic profile, not a measurement of host hardware. The independently compiled runtime fixture checks static/dynamic identity, frequency and monotonicity at preferred and rebased addresses on native CPU backends.
 
 `RDTSC` and `RDTSCP` read the same 10 MHz scheduler clock as `KeQueryPerformanceCounter`. `RDTSCP` returns zero in ECX for the single modeled processor. EAX/EDX (and ECX for RDTSCP) zero their upper halves; other registers and flags are preserved. Cooperative reads do not advance time. With explicit instruction scheduling, the read observes time after its own admitted instruction is charged, independently of the quantum. Overflow stops before publishing register results. Instruction limits and observer stops still apply. This profile does not measure host TSC frequency or expose host processor identity; MSR access, RDPMC and other unmodeled CPU queries remain unsupported.
+
+`KernelModuleImages` derives readable PE headers and export tables from `KernelExportRegistry`; static imports, dynamic lookup and module enumeration share the same addresses. Provider code remains opaque, and the inventory describes the modeled environment, not the host kernel. Both outputs are checked before writes, including pool lifetimes and overlap. Nt queries require a known kernel previous-mode; Zw queries use the kernel contract. A complete module query retains an explicit recovery dependency, even after its buffer is freed; provider-image pointers are also tracked as borrowed state. `KernelExportTests.cpp` checks PE parsing, permissions, ABI fields, refused writes and recovery dependencies; the original compiled runtime fixture walks these export tables on the CPU backends.

@@ -323,6 +323,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | ゲスト例外を発生し通常の API 復帰なし。実際の C フィルター／ハンドラーと unwind finally、ユーザー CPU メモリー例外の限定的な再開は後述 |
 | `ExAllocatePool2` | ページプール／非ページ NX プールの割り当て。デフォルトでゼロ初期化し、未初期化とキャッシュ整列のフラグをモデル化する。無効な必須フラグは NULL を返し、クォータ／実行可能プールおよび割り当て例外の送出では停止する |
 | `MmGetSystemRoutineAddress` | 長さを持つゲストの名前を、共通のエクスポート一覧で解決する |
+| `NtQuerySystemInformation`, `ZwQuerySystemInformation` | PASSIVE_LEVEL でクラス `11`（`SystemModuleInformation`）をサポートします。長さゼロのサイズ照会と、モデル化した提供元および入力ドライバーの完全な Win64 モジュール記録を返します。部分バッファーと未知の情報クラスでは明示的に停止します。 |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | 宣言済み変換後部分区間、非キャッシュ RO／RW、共有別名、正確な unmap。任意物理メモリは未対応 |
 | `IoConnectInterrupt`, `IoDisconnectInterrupt`, `IoConnectInterruptEx`, `IoDisconnectInterruptEx` | 厳密に割り当てられた排他的／共有 latched または level_sensitive ライン。PASSIVE_LEVEL の従来 ABI と Ex 1／2／4、厳密な接続世代とロック所有権 |
 | `KeSynchronizeExecution`, `KeAcquireInterruptSpinLock`, `KeReleaseInterruptSpinLock` | 実際の BOOLEAN 同期コールバックと、割り当て DIRQL 以上の同期 IRQL での同じ非再帰ロック。元の呼び出し元 IRQL と所有権を復元 |
@@ -468,7 +469,7 @@ MinGW-w64 の include ディレクトリがデフォルトと異なる場合は 
 
 JSON レポートは `stop_reason`、null を取り得る `nt_status` と `nt_success`、停止時の PC、命令数を区別します。デバイスオブジェクトやドライバーのコールバックアドレスなど、停止前に収集した API 呼び出しと観測可能な状態を保持します。ゲストアドレスは 16 進文字列として表現するため、JSON の利用側で 64 ビットの精度が失われません。
 
-`configuration` オブジェクトには、実行の上限、サービス名、`kernel_exports` の上書き設定を記録します。プロファイルは `wdm-x64-scheduled-v89` です。`nt_status` は引き続き DriverEntry の結果を示し、`scenario_success` は初期化と完了済みリクエストを合わせた結果を示します。`phase`、`requests`、`unload_completed` は、要求されたライフサイクルのどの部分が実行されたかを示します。API 呼び出しと CPU 書き込みにも、そのフェーズ（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N`、`unload`）を記録します。各リクエストはディスパッチと I/O のステータス、完了の有無、information 長、返された `output_hex` バイト列を報告します。`preferred_image_base` は元の PE ベースアドレスを示します。`security_cookie` は初期化した Cookie のゲストアドレスで、不要だった場合は `"0x0"` です。リクエストのレポートフィールドは `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex`、`output_hex` です。 `configuration.registry` は元のレジストリ設定を保持します。 `information_hex` は元の 64 ビット `IoStatus.Information` を 16 進文字列で正確に保持します。従来の数値フィールド `information` も保持します。
+`configuration` オブジェクトには、実行の上限、サービス名、`kernel_exports` の上書き設定を記録します。プロファイルは `wdm-x64-scheduled-v90` です。`nt_status` は引き続き DriverEntry の結果を示し、`scenario_success` は初期化と完了済みリクエストを合わせた結果を示します。`phase`、`requests`、`unload_completed` は、要求されたライフサイクルのどの部分が実行されたかを示します。API 呼び出しと CPU 書き込みにも、そのフェーズ（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N`、`unload`）を記録します。各リクエストはディスパッチと I/O のステータス、完了の有無、information 長、返された `output_hex` バイト列を報告します。`preferred_image_base` は元の PE ベースアドレスを示します。`security_cookie` は初期化した Cookie のゲストアドレスで、不要だった場合は `"0x0"` です。リクエストのレポートフィールドは `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex`、`output_hex` です。 `configuration.registry` は元のレジストリ設定を保持します。 `information_hex` は元の 64 ビット `IoStatus.Information` を 16 進文字列で正確に保持します。従来の数値フィールド `information` も保持します。
 
 ワーク項目の観測フェーズは `callback:N` です。保留リクエストの `dispatch_status` は `STATUS_PENDING` を保持し、最終完了状態は別の `io_status` に記録され、`scenario_success` の判定に使われます。
 
@@ -586,3 +587,5 @@ CPU0 の明示的プリエンプション、仮想時計と制約は[ドライ�
 `KeQueryPerformanceCounter` は共有スケジューラー時刻を 100 ns 単位で返し、周波数は毎秒 10,000,000 回に固定されます。省略可能な出力ポインターでは、8 バイト全体の書き込み権限とオブジェクト寿命を検査します。有効なすべての x64 IRQL で呼び出せます。協調モードは既存のスケジューリング境界でのみ時刻を進め、命令クロックモードは設定済みの計時を維持します。読み取り自体は別の時計を作らず、時刻も進めません。これは決定的なプロファイルであり、ホストハードウェアの測定ではありません。独立コンパイルした実行時フィクスチャは、ネイティブ CPU バックエンドで優先アドレスと再配置アドレスにおける静的／動的識別、周波数、単調性を確認します。
 
 `RDTSC` と `RDTSCP` は `KeQueryPerformanceCounter` と同じ 10 MHz のスケジューラ時計を読みます。`RDTSCP` の ECX は単一のモデルプロセッサを示すゼロです。EAX/EDX（RDTSCP では ECX も）の上位 32 ビットをゼロにし、他のレジスタとフラグは維持します。協調実行では読み取りによって時間は進みません。明示的な命令スケジューリングでは、その命令の計上後の時刻を読み、量子の長さには依存しません。オーバーフローは結果の書き込み前に停止し、命令予算と観測停止も有効です。ホストの TSC 周波数やプロセッサ識別情報は公開しません。MSR アクセス、RDPMC、その他の未モデル化 CPU 問い合わせは未対応です。
+
+`KernelModuleImages` は `KernelExportRegistry` から読み取り可能な PE ヘッダーとエクスポート表を生成し、静的インポート、動的検索、モジュール列挙で同じアドレスを使用します。提供元のコードは不透明で、一覧はホストカーネルではなくモデル環境を記述します。両出力について、プールの寿命と重複を含め、書き込み前に検査します。Nt 照会には既知のカーネル previous-mode が必要で、Zw 照会はカーネル契約を使用します。完全な照会はバッファー解放後も明示的な復元依存関係を保持し、提供元イメージへのポインターも借用状態として追跡します。`KernelExportTests.cpp` は PE 解析、権限、ABI フィールド、書き込み拒否、復元依存関係を検査し、独自のコンパイル済みランタイムフィクスチャは CPU バックエンド上でエクスポート表を走査します。
