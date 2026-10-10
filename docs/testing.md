@@ -48,9 +48,9 @@ check UTF-8 filenames through the Windows fixture boundary.
 
 The controller also starts a controlled 30-second decompile, proves uncached
 function and listing reads complete while it is running, then switches
-functions and checks cancellation without losing staged comments. A 20,000-line
-source fixture checks event-loop responsiveness and folded declarations across
-pages. Concurrent analysis cases check that a slow view cannot block another
+functions with Tab and checks cancellation without losing staged comments. A
+20,000-line source fixture checks event-loop responsiveness and folded
+declarations across pages. Concurrent analysis cases check that a slow view cannot block another
 function, cancellation only retires its own executor, subsequent pages keep
 their dispatcher when a third function queues, external graph snapshots survive
 interleaved requests, and opening another project retires both replicas.
@@ -77,10 +77,12 @@ single-line paging without spreading return addresses across the function.
 `SessionCAPITest.CSourcePagesRetainCanonicalReturnAnchors` and the real worker's
 native mapping test verify x64 and AArch64 high-VA source rows through small
 pages, including return instruction addresses distinct from the function entry.
-The controller's `tabFromCodeUsesSelectedInstruction` uses a pinned source view
-and independently moved assembly; its optional native rows use the same PE/PDB
-and environment variables described below. Unmapped declarations exercise the
-explicit entry fallback.
+The controller's `tabFromCodeUsesSelectedInstruction` verifies independent
+click/arrow navigation and both Tab directions; its optional native rows use the
+same PE/PDB and environment variables described below. Unmapped declarations
+exercise the explicit entry fallback. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
+listing jumps, rows beyond the first page, folded operations, secondary address
+round trips, cross-function navigation and missing instruction mappings.
 
 ```sh
 cmake --build build-gui --target neverd-gui-tests neverd-gui-query-tests
@@ -121,6 +123,17 @@ separately from decompilation. Report algorithmic and parallel gains separately;
 thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
+
+`NeverDX64MemoryUpdateTests` also checks the SSE2 word transfers that Clang 21
+can emit for scalar structure comparisons. `X64WordLane` uses independent
+`PINSRW` and `PEXTRW` encodings across the available KVM, WHP, HVF and Unicorn
+checked backends. It verifies all eight lanes, masked imm8 indices, extended
+registers, ignored REX.W, two-byte memory reads, page faults and retry,
+observer cancellation, unchanged FLAGS/MXCSR and register preservation.
+The [Intel instruction reference](https://cdrdv2-public.intel.com/825760/325383-sdm-vol-2abcd.pdf)
+specifies these SSE2 forms separately from the SSE4.1 extraction encoding;
+MMX, VEX/EVEX and SSE4.1 neighbors remain negative controls. These instruction
+tests are independent of the compiler version used to build process fixtures.
 
 `NeverDX86FPStateAccuracyTests` compares original scalar SSE byte fixtures
 against actual NeverD Codegen objects and standalone HighC/LLVMC source.
@@ -502,6 +515,23 @@ build-release/bin/NeverDIndCallXformTests --gtest_filter='*TailVarietyRT*'
 before the owned runtime slots. Missing maps, fixups or ownership, added filler
 slots, unindexed reads, malformed strides, address overflow and exhausted
 evidence must retain the ordinary load path.
+
+`NeverDJumpTableTests` checks repeated field loads at nonzero offsets on x64
+and AArch64. Independently computed addresses may share a switch guard only
+when their full-width pointer, displacement, load width and memory history
+agree. Borrowed RBP fields, negative displacements and both signed and unsigned
+index extensions are covered; changed bases/offsets, partial reloads, stores,
+calls and memory barriers must not recover a table from the earlier guard.
+
+The pointer-boundary target's `LLVMFrameSlotProof` cases exercise shared PHI
+diamonds and loop-carried SELECT DAGs for x86, x64, ARM and AArch64. Deterministic work
+counters bound proof expansion independently of machine speed. Conflicting
+coordinates, nonzero recurrences, unanchored cycles, lossy pointer casts and
+query-local budget exhaustion must fail closed. Exact slots, affine recurrences,
+scalar ranges and frame intervals consume one saturating budget, including
+nested queries. Interval regressions reject independent rootless cycles and
+mutually seeded recurrences that eventually grow into another stack slot;
+reversing PHI-arm order must preserve the result.
 
 `NeverDLLVMCValueTests` additionally checks relocated bytes that resemble
 strings, generic builtins compiled for a different source ISA, and dead image
@@ -2033,6 +2063,16 @@ borrows, registration/SavedESP separation, partial stores, pointer taint,
 conflicting predecessors and preserved catch resumption after a private throw.
 The native call target checks cumulative failed-proof budgets and fresh-image
 callee indices.
+Catch-return tests require the pre-dispatch SavedESP snapshot to survive catch
+writes and subsequent continuation reads; unknown snapshots remain rejected.
+The native fixture independently edits or removes the writeback, changes its
+value/address, and moves or duplicates it before installation. Run
+`check_windows_registration_cxx_rewrite.py --saved-stack-probe` with the same
+MSVC inputs and tools as the ordinary source oracle. It derives a bounded
+machine-code probe that overwrites SavedESP with 7 and then reads the
+initialized inner guard through the restored pointer. Its report distinguishes the derived input from its
+hashed native MSVC baseline. CI runs both capture forms through all six
+preferred/rebased routes in Wine and replays those identical files on Windows.
 Cleanup projection tests check every reachable unwind state, initialization
 before state activation, missing or mismatched contracts, registration and
 SavedESP overlap, released storage, pointer taint and predecessor conflicts.

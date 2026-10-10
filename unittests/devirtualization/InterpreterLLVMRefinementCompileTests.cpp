@@ -44,7 +44,10 @@ TEST_F(CompiledLLVMRefinement, PhysicalReturnsBindCompiledFrameWrites) {
       const std::string Text{std::istreambuf_iterator<char>(Input),
                              std::istreambuf_iterator<char>()};
       const auto Proof = P.check(R.Residual, Text);
-      ASSERT_TRUE(Proof.Native.proved()) << Proof.Native.Proof.Diagnostic;
+      ASSERT_TRUE(Proof.Native.proved())
+          << Proof.Diagnostic << "\n"
+          << Proof.Native.Proof.Diagnostic << "\n"
+          << Text;
       if (WrongFrame) {
         rejected(Proof, Stage::LLVM);
         EXPECT_EQ(Proof.LLVM.Status, Status::Different);

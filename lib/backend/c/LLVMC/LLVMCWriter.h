@@ -585,6 +585,7 @@ public:
   void writeCatchSwitch(llvm::CatchSwitchInst &CS, int Indent);
   void writeCleanupRet(llvm::CleanupReturnInst &CR, int Indent);
   std::string windowsEHFilterExpr(const llvm::CatchSwitchInst &CS);
+  std::string SEHFilterFrameName;
   std::string windowsCxxCatchType(const llvm::CatchPadInst &Pad);
   void emitIndent(int N);
   const llvm::AllocaInst *asAllocaPointer(const llvm::Value *V) const;

@@ -44,8 +44,7 @@ std::optional<int64_t> predecessorStoreOffset(const AbiCallContext &C,
     return 0;
   for (int K = StoreIdx - 1; K >= 0; --K) {
     const MedOp &DefOp = Pred.Ops[static_cast<size_t>(K)];
-    if (DefOp.Opcode == NdOp::CALL || DefOp.Opcode == NdOp::INDIR_CALL ||
-        DefOp.Opcode == NdOp::INTRINSIC)
+    if (isAbiRecoveryBarrier(DefOp))
       break;
     if (DefOp.Output.Id != AddrVar.Id || DefOp.Output.SSAVer != AddrVar.SSAVer)
       continue;
@@ -78,8 +77,7 @@ void scanPredecessorStackArgs(const AbiCallContext &C, bool &HasStackArg,
       continue;
     for (int J = static_cast<int>(Pred->Ops.size()) - 1; J >= 0; --J) {
       const MedOp &Prev = Pred->Ops[static_cast<size_t>(J)];
-      if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-          Prev.Opcode == NdOp::INTRINSIC)
+      if (isAbiRecoveryBarrier(Prev))
         break;
       if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
           Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -108,8 +106,7 @@ void takePredecessorStackArgs(AbiCallContext &C) {
       continue;
     for (int J = static_cast<int>(Pred->Ops.size()) - 1; J >= 0; --J) {
       const MedOp &Prev = Pred->Ops[static_cast<size_t>(J)];
-      if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-          Prev.Opcode == NdOp::INTRINSIC)
+      if (isAbiRecoveryBarrier(Prev))
         break;
       if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
           Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)

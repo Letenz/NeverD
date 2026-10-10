@@ -385,6 +385,8 @@ private:
   bool lowerSwitchFromJumpTable(HighFunc &Func, const MedBlock &CurBlock,
                                 const MedOp &CurOp, const MedFunc &Med,
                                 const JumpTable &JT);
+  bool lowerX86RegistrationCatchReturn(HighFunc &Func, const MedBlock &CurBlock,
+                                       const MedOp &CurOp, const MedFunc &Med);
   void lowerReturn(HighFunc &Func, const MedBlock &CurBlock, const MedOp &CurOp,
                    const MedFunc &Med);
   void lowerGenericAssign(HighFunc &Func, const MedOp &CurOp,

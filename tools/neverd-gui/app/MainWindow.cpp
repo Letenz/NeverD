@@ -260,14 +260,20 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
   if (event->type() == QEvent::Show)
     if (auto *input = qobject_cast<QInputDialog *>(object))
       input->setMinimumWidth(InputDialogWidth);
-  // A code view shown again follows the function it missed while hidden,
-  // after whatever showed it has chosen its own.
-  if (event->type() == QEvent::Show && followsDisassembly(object)) {
-    const QPointer<CodeView> view = static_cast<CodeView *>(object);
-    QTimer::singleShot(0, this, [this, view] { followFunction(view); });
+  if (auto *code = qobject_cast<CodeView *>(object)) {
+    // Reopening resumes this pane's interrupted function, independently of
+    // the assembly cursor. Hidden panes do not keep analysis jobs running.
+    if (event->type() == QEvent::Show) {
+      const QPointer<CodeView> view = code;
+      QTimer::singleShot(0, this, [view] {
+        if (view && view->isVisible() && view->text()->interrupted())
+          if (const auto function = view->text()->function())
+            view->showFunction(*function);
+      });
+    }
+    if (event->type() == QEvent::Hide)
+      code->text()->cancel();
   }
-  if (event->type() == QEvent::Hide && followsDisassembly(object))
-    static_cast<CodeView *>(object)->text()->cancel();
   return KDDockWidgets::QtWidgets::MainWindow::eventFilter(object, event);
 }
 
@@ -512,11 +518,8 @@ void MainWindow::buildDocks() {
             if (graph)
               showOverview();
           });
-  connect(hex_, &HexView::locationChanged, this, [this](Address address) {
-    synchronizing_ = true;
-    disassembly_->navigate(address, false);
-    synchronizing_ = false;
-  });
+  connect(hex_, &HexView::locationChanged, this,
+          [this](Address address) { disassembly_->navigate(address, false); });
   connect(output_, &OutputWindow::navigateRequested, this,
           [this](Address address) { jump(address); });
   // The output window and dialogs act on the last analysis view used.
@@ -525,10 +528,11 @@ void MainWindow::buildDocks() {
             for (auto it = docks_.cbegin(); it != docks_.cend(); ++it)
               if (*it && (*it)->isAncestorOf(now)) {
                 // Choosers and auxiliary windows keep the analysis context.
-                if (auto *view = qobject_cast<CodeView *>((*it)->widget()))
+                if (auto *view = qobject_cast<CodeView *>((*it)->widget())) {
                   lastCodeView_ = view;
-                else if (it.key() == QLatin1String(DisassemblyDock) ||
-                         it.key() == QLatin1String(HexDock))
+                  tabCodeView_ = view;
+                } else if (it.key() == QLatin1String(DisassemblyDock) ||
+                           it.key() == QLatin1String(HexDock))
                   lastCodeView_.clear();
                 if (it.key() != QLatin1String(OutputDock))
                   hexActive_ = it.key() == QLatin1String(HexDock);
@@ -577,13 +581,13 @@ CodeView *MainWindow::codeView(const QString &representation) {
           &MainWindow::retitleCodeDocks);
   connect(view, &CodeView::languageChanged, this,
           &MainWindow::retitleCodeDocks);
-  connect(view->text(), &CodeText::locationChanged, this, [this](Address a) {
-    if (synchronizing_)
-      return;
-    synchronizing_ = true;
-    disassembly_->navigate(a, false);
-    synchronizing_ = false;
-  });
+  connect(view->text(), &CodeText::addressSelected, this,
+          [this](Address, bool mapped) {
+            if (!mapped)
+              output_->append(
+                  tr("This instruction has no source-line address mapping."),
+                  1);
+          });
   connect(view->text(), &CodeText::nameActivated, this,
           [this, view](const QString &name) { activateCodeName(view, name); });
   // Data shows in the disassembly, as an import's name does.
@@ -626,20 +630,6 @@ void MainWindow::initializeLayout() {
   // A saved arrangement must not start a decompile while opening a file.
   if (auto *dock = docks_.value(PseudocodeDock))
     dock->forceClose();
-  followTimer_.setSingleShot(true);
-  followTimer_.setInterval(200);
-  connect(&followTimer_, &QTimer::timeout, this, [this] {
-    for (auto *view : {pseudocode_.data(),
-                       docks_.contains(RepresentationDock)
-                           ? static_cast<CodeView *>(
-                                 docks_.value(RepresentationDock)->widget())
-                           : nullptr})
-      if (view && view->isVisible() && !view->locked())
-        if (const auto function = currentFunction();
-            function && (view->text()->function() != function ||
-                         view->text()->interrupted()))
-          view->showFunction(*function);
-  });
 }
 
 void MainWindow::applyDefaultLayout() {
@@ -721,8 +711,7 @@ void MainWindow::buildStatusBar() {
 
 void MainWindow::connectSession() {
   connect(&session_, &Session::opened, this, [this] {
-    pseudocodeEnabled_ = false;
-    followTimer_.stop();
+    pseudocodeAfterJump_.reset();
     if (auto *dock = docks_.value(PseudocodeDock))
       dock->forceClose();
     if (pseudocode_)
@@ -956,36 +945,7 @@ void MainWindow::synchronize(Address address, QObject *source) {
     hex_->setCurrent(address, 1);
   const auto function = currentFunction();
   session_.publishSelection(address, function, QStringLiteral("disassembly"));
-  followFunction(pseudocode_);
-  if (auto *ir = docks_.value(RepresentationDock); ir && ir->isOpen()) {
-    auto *view = static_cast<CodeView *>(ir->widget());
-    if (function && view->text()->function() != function && !synchronizing_ &&
-        !view->locked())
-      followFunction(view);
-    else
-      view->text()->revealAddress(address);
-  }
   updateActions();
-}
-
-void MainWindow::followFunction(CodeView *view) {
-  // A view hidden behind another tab catches up when it is shown (see
-  // eventFilter): reading the listing must not wait for a decompile that
-  // no one sees.
-  if (synchronizing_ || !view || view->locked() || !view->isVisible() ||
-      (view == pseudocode_ && !pseudocodeEnabled_))
-    return;
-  if (const auto function = currentFunction();
-      function &&
-      (view->text()->function() != function || view->text()->interrupted())) {
-    view->text()->cancel();
-    followTimer_.start();
-  }
-}
-
-bool MainWindow::followsDisassembly(const QObject *object) const {
-  const auto *ir = docks_.value(RepresentationDock);
-  return object && (object == pseudocode_ || (ir && object == ir->widget()));
 }
 
 //===----------------------------------------------------------------------===//
@@ -1092,9 +1052,7 @@ void MainWindow::connectActions() {
   on(ActionId::JumpPseudocode, [this] {
     // From any pseudocode or IR window back to the disassembly.
     if (auto *view = focusedCodeView()) {
-      // Consume the selected row's explicit mapping again: background cursor
-      // synchronization may still be queued, or the assembly may have moved
-      // independently while this source window was pinned.
+      tabCodeView_ = view;
       if (const auto address = view->text()->currentAddress())
         navigate(*address);
       else if (const auto function = view->text()->function()) {
@@ -1104,7 +1062,9 @@ void MainWindow::connectActions() {
         navigate(*function);
       }
     } else {
-      showPseudocode(CodeView::pseudocodeRepresentation());
+      showPseudocode(tabCodeView_ ? tabCodeView_->representation()
+                                  : CodeView::pseudocodeRepresentation(),
+                     true);
     }
   });
   on(ActionId::JumpAnywhere, [this] { jumpAnywhere(); });
@@ -1676,7 +1636,8 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
       navigate(*chosen);
 }
 
-void MainWindow::showPseudocode(const QString &representation) {
+void MainWindow::showPseudocode(const QString &representation,
+                                bool selectAssemblyAddress) {
   // A jump still loading decides the function, as it does for the graph:
   // decompile once it lands, not the function the cursor is leaving.
   if (disassembly_ && disassembly_->listing()->jumpPending()) {
@@ -1685,10 +1646,10 @@ void MainWindow::showPseudocode(const QString &representation) {
           disassembly_->listing(), &ListingView::jumpSettled, this,
           [this] {
             if (const auto pending = std::exchange(pseudocodeAfterJump_, {}))
-              showPseudocode(*pending);
+              showPseudocode(pending->first, pending->second);
           },
           Qt::SingleShotConnection);
-    pseudocodeAfterJump_ = representation;
+    pseudocodeAfterJump_ = std::pair{representation, selectAssemblyAddress};
     return;
   }
   const auto function = currentFunction();
@@ -1697,11 +1658,11 @@ void MainWindow::showPseudocode(const QString &representation) {
                     1);
     return;
   }
-  auto *view = codeView(representation);
-  const bool c = CodeView::isSource(representation);
-  if (c)
-    pseudocodeEnabled_ = true;
-  followTimer_.stop();
+  auto *view = selectAssemblyAddress && tabCodeView_ &&
+                       tabCodeView_->representation() == representation
+                   ? tabCodeView_.data()
+                   : codeView(representation);
+  const bool c = view == pseudocode_;
   auto *dock = docks_.value(c ? PseudocodeDock : RepresentationDock);
   if (!dock->isOpen()) {
     auto *functions = docks_.value(FunctionsDock);
@@ -1723,7 +1684,14 @@ void MainWindow::showPseudocode(const QString &representation) {
   dock->open();
   dock->raise();
   view->setRepresentation(representation);
-  view->showFunction(*function);
+  // Reusing the loaded function keeps its cursor and folding state. Tab is
+  // the only ordinary cursor action that selects an address in the other pane.
+  if (!selectAssemblyAddress || view->text()->function() != function ||
+      view->text()->interrupted())
+    view->showFunction(*function);
+  if (selectAssemblyAddress)
+    if (const auto address = disassembly_->currentAddress())
+      view->text()->selectAddress(*address);
   view->text()->setFocus();
 }
 

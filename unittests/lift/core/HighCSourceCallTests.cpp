@@ -2479,6 +2479,58 @@ int main(void) {
 })");
 }
 
+TEST(HighCSourceCalls, FloatingCallCarriersRemainBitsAtSourceBoundaries) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    std::vector<HighFunc> Functions;
+    for (unsigned Width : {4U, 8U}) {
+      auto Bits = NdType::makeInt(Width, false);
+      auto Float = NdType::makeFloat(Width);
+      const std::string Suffix = std::to_string(Width);
+      const std::string Helper = "_helper_" + Suffix;
+      Functions.push_back(returning(Helper, parameter(0, Float), {Float}));
+      for (unsigned Boundary = 0; Boundary != 3; ++Boundary) {
+        auto Value =
+            call(native(Helper, Float, {Float}), Bits, {parameter(0, Bits)});
+        if (Boundary == 1) {
+          auto Cast = std::make_shared<HighExpr>();
+          Cast->Kind = ExprKind::BitCast;
+          Cast->Type = Float;
+          Cast->Operands = {Value};
+          Value = std::move(Cast);
+        } else if (Boundary == 2) {
+          Value = HighExpr::makeCall(Helper, 0x2000, {Value});
+          Value->Type = Float;
+        }
+        auto Function =
+            returning("forward_" + Suffix + "_" + std::to_string(Boundary),
+                      Value, {Bits});
+        Function.ReturnType = Float;
+        Functions.push_back(std::move(Function));
+      }
+    }
+    const auto Source = emit(Functions, true, Architecture) + R"(
+int main(void) {
+  const uint32_t a[] = {0,0x80000000U,1,0x3fa00000U,0xc1240000U,0x7fc00042U,0x7f800000U};
+  const uint64_t b[] = {0,0x8000000000000000ULL,1,0x3ff4000000000000ULL,
+                        0xc024800000000000ULL,0x7ff8000000000042ULL,0x7ff0000000000000ULL};
+  for (unsigned i=0; i<sizeof(a)/sizeof(a[0]); ++i)
+    if (__builtin_bit_cast(uint32_t, forward_4_0(a[i])) != a[i] ||
+        __builtin_bit_cast(uint32_t, forward_4_1(a[i])) != a[i] ||
+        __builtin_bit_cast(uint32_t, forward_4_2(a[i])) != a[i]) return 1;
+  for (unsigned i=0; i<sizeof(b)/sizeof(b[0]); ++i)
+    if (__builtin_bit_cast(uint64_t, forward_8_0(b[i])) != b[i] ||
+        __builtin_bit_cast(uint64_t, forward_8_1(b[i])) != b[i] ||
+        __builtin_bit_cast(uint64_t, forward_8_2(b[i])) != b[i]) return 2;
+  return 0;
+})";
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Optimization);
+      ASSERT_NO_FATAL_FAILURE(compileAndRun(Source, {Optimization}));
+    }
+  }
+}
+
 TEST(HighCSourceCalls,
      MessageCallCompilesAndExecutesMixedPointerFloatIntegerSignature) {
   auto U64 = NdType::makeInt(8, false);

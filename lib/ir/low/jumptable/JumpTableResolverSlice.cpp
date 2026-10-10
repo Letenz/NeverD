@@ -2360,12 +2360,11 @@ static ResolverResult resolverValue(ResolverValue Value) {
                : resolverInvalid();
 }
 
-static ResolverResult
-mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
-                     std::string_view MergeRoot = {},
-                     bool IgnoreTransparentCycles = false,
-                     const std::function<bool(size_t)> &ConsumeWork = {},
-                     bool *AnalysisIncomplete = nullptr) {
+static ResolverResult mergeResolverResults(
+    llvm::ArrayRef<ResolverResult> Incoming, std::string_view MergeRoot = {},
+    bool IgnoreTransparentCycles = false,
+    const std::function<bool(size_t)> &ConsumeWork = {},
+    bool *AnalysisIncomplete = nullptr, bool CompareAddressArithmetic = false) {
   bool WorkExhausted = false;
   auto consume = [&](size_t Amount = 1) {
     const bool Available = !ConsumeWork || ConsumeWork(Amount);
@@ -2411,36 +2410,49 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
     return resolverInvalid();
   const ResolverValue &Common = Values.front();
   std::function<bool(const ResolverValue &, const ResolverValue &, unsigned)>
-      Same =
-          [&](const ResolverValue &A, const ResolverValue &B, unsigned Depth) {
-            if (Depth > limits::kMaxJumpTableGuardExpressionDepth) {
-              WorkExhausted = true;
-              if (AnalysisIncomplete)
-                *AnalysisIncomplete = true;
-              return false;
-            }
-            if (!consume())
-              return false;
-            if (A == B)
-              return true;
-            if (!A || !B || A->K != B->K || A->Size != B->Size ||
-                A->SliceOffset != B->SliceOffset ||
-                A->Constant != B->Constant || A->Provenance != B->Provenance ||
-                A->AddressOwnerVA != B->AddressOwnerVA)
-              return false;
-            if (!budgetedResolverRootsEqual(A->Root, B->Root, consume) ||
-                A->Opcode != B->Opcode || A->HasOpcode != B->HasOpcode ||
-                A->ConstraintKind != B->ConstraintKind ||
-                A->ScalarModelOrigin != B->ScalarModelOrigin ||
-                A->Inputs.size() != B->Inputs.size())
-              return false;
-            if (!Same(A->Input, B->Input, Depth + 1))
-              return false;
-            for (size_t I = 0; I < A->Inputs.size(); ++I)
-              if (!Same(A->Inputs[I], B->Inputs[I], Depth + 1))
-                return false;
-            return true;
-          };
+      Same = [&](const ResolverValue &A, const ResolverValue &B,
+                 unsigned Depth) {
+        if (Depth > limits::kMaxJumpTableGuardExpressionDepth) {
+          WorkExhausted = true;
+          if (AnalysisIncomplete)
+            *AnalysisIncomplete = true;
+          return false;
+        }
+        if (!consume())
+          return false;
+        if (A == B)
+          return true;
+        if (!A || !B || A->K != B->K || A->Size != B->Size ||
+            A->SliceOffset != B->SliceOffset || A->Constant != B->Constant ||
+            A->Provenance != B->Provenance ||
+            A->AddressOwnerVA != B->AddressOwnerVA)
+          return false;
+        // Independently recomputed field addresses can use distinct ADD
+        // occurrences while carrying the same pointer and displacement.
+        // Only the memory-address comparison opts into this pure integer
+        // identity. Other transforms and all value/guard occurrence roots
+        // retain their exact producer identity. Widths, relocation owners,
+        // complete operands and nested roots still have to agree below.
+        const bool PureAddressArithmetic =
+            CompareAddressArithmetic &&
+            A->K == ResolverValueExpr::Kind::Transform && A->HasOpcode &&
+            A->Root.starts_with("T:") && B->Root.starts_with("T:") &&
+            (A->Opcode == NdOp::INT_ADD || A->Opcode == NdOp::INT_SUB) &&
+            A->Size > 0 && A->Size <= sizeof(uint64_t) && A->Inputs.size() == 2;
+        if ((!PureAddressArithmetic &&
+             !budgetedResolverRootsEqual(A->Root, B->Root, consume)) ||
+            A->Opcode != B->Opcode || A->HasOpcode != B->HasOpcode ||
+            A->ConstraintKind != B->ConstraintKind ||
+            A->ScalarModelOrigin != B->ScalarModelOrigin ||
+            A->Inputs.size() != B->Inputs.size())
+          return false;
+        if (!Same(A->Input, B->Input, Depth + 1))
+          return false;
+        for (size_t I = 0; I < A->Inputs.size(); ++I)
+          if (!Same(A->Inputs[I], B->Inputs[I], Depth + 1))
+            return false;
+        return true;
+      };
   if (std::all_of(Values.begin(), Values.end(), [&](const ResolverValue &V) {
         return Same(Common, V, /*Depth=*/0);
       }))
@@ -6470,7 +6482,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                     mergeResolverResults(Addresses, /*MergeRoot=*/{},
                                          /*IgnoreTransparentCycles=*/false,
                                          consumeEvidence,
-                                         &EvidenceBudgetExhausted)
+                                         &EvidenceBudgetExhausted,
+                                         /*CompareAddressArithmetic=*/true)
                             .Kind != ResolverResultKind::Value)
                   continue;
                 const ResolverResult Earlier =

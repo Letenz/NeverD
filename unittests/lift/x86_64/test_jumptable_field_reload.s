@@ -107,4 +107,86 @@ jt_field_reload_other:
         .long   .Lother_case2-.Lother_table
         .long   .Lother_poison-.Lother_table
 
+// RBP is a borrowed frame/structure pointer, not this function's own frame.
+// The compare and reload independently compute the same nonzero field address.
+// Four physical table slots keep the unsigned guard essential to recovery.
+        .text
+        .macro OFFSET_RELOAD name, guard=36, reload=36, mode=0
+        .globl \name
+        .type \name,@function
+\name:
+        pushq   %rbp
+        movq    %rdi, %rbp
+        cmpl    $2, \guard(%rbp)
+        ja      .Loffset_default\@
+        .if \mode == 2
+        addq    $4, %rbp
+        .elseif \mode == 3
+        movl    $3, (%rsi)
+        .elseif \mode == 4
+        callq   jt_field_reload_barrier
+        .elseif \mode == 5
+        mfence
+        .elseif \mode == 6
+        movq    %rsi, %rbp
+        .endif
+        .if \mode == 1
+        movl    \reload(%rbp), %eax
+        .elseif \mode == 7
+        movzwl  \reload(%rbp), %eax
+        .else
+        movslq  \reload(%rbp), %rax
+        .endif
+        leaq    .Loffset_table\@(%rip), %rdx
+        movslq  (%rdx,%rax,4), %rax
+        addq    %rdx, %rax
+        jmpq    *%rax
+.Loffset_case0\@:
+        movl    $630, %eax
+        popq    %rbp
+        retq
+.Loffset_case1\@:
+        movl    $631, %eax
+        popq    %rbp
+        retq
+.Loffset_case2\@:
+        movl    $632, %eax
+        popq    %rbp
+        retq
+.Loffset_poison\@:
+        movl    $639, %eax
+        popq    %rbp
+        retq
+.Loffset_default\@:
+        movl    $638, %eax
+        popq    %rbp
+        retq
+        .size \name, .-\name
+        .pushsection .rodata,"a",@progbits
+        .p2align 2
+.Loffset_table\@:
+        .long .Loffset_case0\@-.Loffset_table\@
+        .long .Loffset_case1\@-.Loffset_table\@
+        .long .Loffset_case2\@-.Loffset_table\@
+        .long .Loffset_poison\@-.Loffset_table\@
+        .popsection
+        .endm
+
+        OFFSET_RELOAD jt_field_offset_sext
+        OFFSET_RELOAD jt_field_offset_zext, 36, 36, 1
+        OFFSET_RELOAD jt_field_offset_negative, -36, -36
+        OFFSET_RELOAD jt_field_offset_different, 36, 40
+        OFFSET_RELOAD jt_field_offset_changed_base, 36, 36, 2
+        OFFSET_RELOAD jt_field_offset_store, 36, 36, 3
+        OFFSET_RELOAD jt_field_offset_call, 36, 36, 4
+        OFFSET_RELOAD jt_field_offset_fence, 36, 36, 5
+        OFFSET_RELOAD jt_field_offset_other_base, 36, 36, 6
+        OFFSET_RELOAD jt_field_offset_narrow, 36, 36, 7
+
+        .type jt_field_reload_barrier,@function
+jt_field_reload_barrier:
+        movl    $3, 36(%rdi)
+        retq
+        .size jt_field_reload_barrier, .-jt_field_reload_barrier
+
         .section .note.GNU-stack,"",@progbits
