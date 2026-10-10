@@ -1311,6 +1311,7 @@ add_neverd_unittest(NeverDRegistrationEHTests
 
 add_neverd_unittest(NeverDWindowsRegistrationFrameTests
   eh/WindowsRegistrationFrameTests.cpp
+  eh/WindowsRegistrationFrameLayoutTests.cpp
   eh/WindowsRegistrationCxxFrameTests.cpp
 
   LINK_COMPONENTS
@@ -1319,6 +1320,8 @@ add_neverd_unittest(NeverDWindowsRegistrationFrameTests
 
 add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
   eh/WindowsRegistrationRealignedTests.cpp
+  eh/WindowsRegistrationRealignedNativeTests.cpp
+  eh/RegistrationCxxContinuationTestUtils.cpp
 
   LINK_COMPONENTS
   IRHigh
