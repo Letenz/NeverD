@@ -113,6 +113,7 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64VectorMaskTests.cpp
   X64ShuffleTests.cpp
   X64PartialMoveTests.cpp
+  X64WordLaneTests.cpp
   X64IntegerFloatTests.cpp
   X64FloatIntegerTests.cpp
   X64SSEComparisonTests.cpp

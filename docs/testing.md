@@ -89,6 +89,17 @@ thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
+`NeverDX64MemoryUpdateTests` also checks the SSE2 word transfers that Clang 21
+can emit for scalar structure comparisons. `X64WordLane` uses independent
+`PINSRW` and `PEXTRW` encodings across the available KVM, WHP, HVF and Unicorn
+checked backends. It verifies all eight lanes, masked imm8 indices, extended
+registers, ignored REX.W, two-byte memory reads, page faults and retry,
+observer cancellation, unchanged FLAGS/MXCSR and register preservation.
+The [Intel instruction reference](https://cdrdv2-public.intel.com/825760/325383-sdm-vol-2abcd.pdf)
+specifies these SSE2 forms separately from the SSE4.1 extraction encoding;
+MMX, VEX/EVEX and SSE4.1 neighbors remain negative controls. These instruction
+tests are independent of the compiler version used to build process fixtures.
+
 `NeverDX86FPStateAccuracyTests` compares original scalar SSE byte fixtures
 against actual NeverD Codegen objects and standalone HighC/LLVMC source.
 Default/NoOpt IR and C O0/O2 cover all four rounding modes, DAZ/FTZ, seeded
