@@ -2508,10 +2508,10 @@ This is generated-frame analysis/runtime evidence, not source reconstruction.
 `check_windows_registration_realigned_rewrite.py` separately emits typed value
 and reference parents, lifts their real PE32 instructions and reconstructs
 through the public patcher and both CLI modes. Pass `--test-binary`,
-`--patch-binary`, `--runtime-libs` and `--output`. Four caller stack layouts
-also require the callback HighIR checks on each typed source and control.
-The runtime probes
-check the catch value, reference effect, caller PC and restored FS chain.
+`--patch-binary`, `--runtime-libs` and `--output`. Each typed source and control
+requires source reconstruction and both callback HighIR checks. Runtime probes
+use four caller stack layouts to check the catch value, reference effect,
+caller PC and restored FS chain.
 All four source/control profiles and four installation routes execute at two
 forced bases (32 executions). CLI bytes must equal the checked public output;
 the throw caller must lie in that output's recovered generated owner.
