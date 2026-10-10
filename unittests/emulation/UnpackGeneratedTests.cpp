@@ -22,6 +22,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Program.h"
 
 #if defined(_WIN32) && defined(_M_X64)
@@ -716,9 +717,26 @@ TEST_P(UnpackGenerated,
     EXPECT_EQ(Restored.ImportRepair.ObservedCalls, 0u);
     const auto Output = Scratch / RebuiltFile;
     test::writeFile(Output, Restored.Image);
-    expectNativeWindows(Output, ExitStatus);
-    ASSERT_FALSE(HasFailure());
     const auto Image = test::readImage(Restored.Image);
+    ASSERT_FALSE(HasFailure());
+    // Windows requires adjacent section RVAs. Wine accepts holes, so check
+    // this loader contract even on hosts that cannot launch a native PE.
+    llvm::object::pe32plus_header PE;
+    std::memcpy(
+        &PE,
+        Image.File.data() + Image.EntryOffset -
+            offsetof(llvm::object::pe32plus_header, AddressOfEntryPoint),
+        sizeof(PE));
+    uint64_t Next = llvm::alignTo(uint64_t(PE.SizeOfHeaders),
+                                  uint64_t(PE.SectionAlignment));
+    for (const auto &Section : Image.Sections) {
+      EXPECT_EQ(Section.RVA, Next) << Section.Name;
+      Next = llvm::alignTo(uint64_t(Section.RVA) +
+                               std::max(Section.VirtualSize, Section.FileSize),
+                           uint64_t(PE.SectionAlignment));
+    }
+    EXPECT_EQ(Next, PE.SizeOfImage);
+    expectNativeWindows(Output, ExitStatus);
     ASSERT_FALSE(HasFailure());
     for (const auto &Section : Image.Sections)
       if (llvm::StringRef(Section.Name).starts_with(".nd"))
