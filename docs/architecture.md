@@ -163,8 +163,16 @@ the continuation's independent runtime frame. Shared coordinate projection
 expresses the aligned establisher from entry ESP for HighIR and LLVM, while
 entry-stack proofs cannot claim a fixed displacement. Pointer-copy and slot
 proofs keep each runtime definition's identity. Full callback lowering and
-native re-reconstruction still need their own source-frame contract; HighIR
-retains handler/continuation annotations for this model.
+native re-reconstruction have separate contracts. HighIR retains
+handler/continuation annotations for this model. Native scalar-catch lowering
+projects the source coordinate only into an allocation with proved physical
+alignment. A dedicated catch-stack planner bounds private ESP uses; catch
+objects, cleanup borrows and continuation writeback share the parent projection.
+The COFF consumer independently binds the private stack to the source callback,
+checks its lifetime and allows a parent bridge only through SavedESP. Its memory
+proof tracks initialization by allocation identity and resets callback bytes at
+every catch entry. Shared mask folding requires actual alloca alignment and
+cannot infer a constant displacement for an arbitrary source entry ESP.
 The LowIR no-return path proof lives in the low validation component, so call
 ABI checks do not depend on aggregate IR or MedIR. LowIR and MedIR consume the
 same architectural intrinsic-termination definition; both follow exceptional

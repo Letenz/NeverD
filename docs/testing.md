@@ -53,6 +53,10 @@ than the dispatcher admits. Functions activation covers Pseudocode, explicit C,
 LLVM C and IR windows, multiple windows, pinned views and back/forward history.
 The file-drop cases wait for the worker's loader-identification capability and
 check UTF-8 filenames through the Windows fixture boundary.
+Character-selection cases drag address prefixes, assembly text, C and Go
+pseudocode, and ordinary source rows beside a folded prelude in both directions.
+They check Ctrl+C and Edit Copy, selection retention on mouse release and right
+click, Shift-arrow selection and partial first/last rows across a newline.
 
 The controller also starts a controlled 30-second decompile, proves uncached
 function and listing reads complete while it is running, then switches
@@ -2422,7 +2426,8 @@ state observations. Changed prologue bytes cannot retain the checked anchor.
 Canonical metadata and source digests retain every coordinate. The realigned
 state proof checks independent callback allocation, initialized spills, exact
 parent-frame recovery, preserved callback calls and balanced runtime returns;
-HighIR and the native classifier retain their separate frame-lowering gates.
+HighIR retains its separate full-clause projection gate; native lowering needs
+the additional physical-layout and callback-stack proofs described below.
 `NeverDWindowsRegistrationRealignedTests` emits a 64-byte-aligned frame with a
 catch that calls a checked thiscall leaf on its parent local. Run
 `check_windows_registration_realigned.py --test-binary <test-binary>
@@ -2451,6 +2456,22 @@ the capture records that library provenance alongside the generated object.
 Use these native libraries for CRT RTTI definitions: a Wine-only import stub
 can admit exports that the native CRT does not provide.
 This is generated-frame analysis/runtime evidence, not source reconstruction.
+`check_windows_registration_realigned_rewrite.py` separately emits typed value
+and reference parents, lifts their real PE32 instructions and reconstructs
+through the public patcher and both CLI modes. Pass `--test-binary`,
+`--patch-binary`, `--runtime-libs` and `--output`. Four caller stack layouts
+check the catch value, reference effect, caller PC and restored FS chain.
+All four source/control profiles and four installation routes execute at two
+forced bases (32 executions). CLI bytes must equal the checked public output;
+the throw caller must lie in that output's recovered generated owner.
+Twelve frame/stack edits plus eight continuation edits reject independently,
+including valid control receipts with uninitialized scratch reads, accesses
+after catch return and callback pointers outside the SavedESP bridge.
+The separate layout tests cover all supported alignments, source residues,
+signed displacement bounds and under-aligned allocations.
+`replay_windows_registration_realigned_rewrite.py` authenticates the source,
+objects, IR, checked installation receipts, executed tests and exact PE matrix
+before native Windows executes those same 32 files. It does not relink them.
 Real MSVC directory-size64/declared-size192 load-configs must remain supported
 with complete section bounds.
 Final generic PE validation also checks valid and invalid CF/EH continuation
