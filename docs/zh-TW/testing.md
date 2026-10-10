@@ -97,6 +97,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `LLVMGuestAlignment.*` 將載入和儲存與獨立位元組記憶體參考實作比較，涵蓋正確和錯誤的對齊域、自由高位址位元、解析後的預設對齊、部分寬度、未使用或被覆寫的存取、不可達分支及恰好/少一單位的建構預算。`InterpreterLLVMRefinement.GuestAlignmentRequiresBothFreshPremises` 透過兩次新鮮關係檢查驗證原生堆疊儲存、相符的入口同餘條件和遭改寫的原始碼效果。
 
+`LLVMByteSwap*`、`LLVMScalarByteSwap.*` 和 `InterpreterLLVMRefinement.ByteSwapRequiresBothFreshPremises` 以獨立位元組複製及位移／遮罩參照檢查高位元組保留、跨區塊值、poison 保留、嚴格呼叫契約與獨立計數的精確／少一預算。Clang O1/O2 測試必須包含實際交換 intrinsic；小型原生位元組交換／BSWAP 測試檢查雙方的新證明，並拒絕錯誤值或遺漏高半字清零。
+
 `NeverDLLVMScalarEquivalenceTests` 涵蓋完整迴圈域、零次迴圈、PHI 同時交換、switch、高位輸入、最後分區反例、產生 poison 的額外更新、回傳範圍、不支援的契約，以及精確、少一單位及零預算。獨立雙寬與溢位參考實作涵蓋各支援字寬的漏斗位移端點及帶溢位約束的乘法；獨立巢狀迴圈 C 於 O1/O2 檢查編譯器輸入形態。狀態模型測試也檢查漏斗位移端點。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` 檢查累計查詢計費與不變的局部上限。
 
 `LLVMScalarDecision.*` 涵蓋深層精確位移/擴展約束、常數分支決策、兩條迴圈回邊、保留高資料位元、末端未定義操作、不終止、已檢查函式的後續修改，以及精確/少一/局部預算。`LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles` 將獨立撰寫的單回邊和雙回邊遞推與無號 C oracle 在 O0/O2 下比較，共 32,768 次呼叫。這些是純量模型檢查，不代表原生 ABI 或完整二進位還原涵蓋。

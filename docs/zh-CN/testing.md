@@ -97,6 +97,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `LLVMGuestAlignment.*` 将加载和存储与独立字节内存参考实现比较，覆盖正确和错误的对齐域、自由高位地址、解析后的默认对齐、部分宽度、未使用或被覆盖的访问、不可达分支及恰好/少一单位的构造预算。`InterpreterLLVMRefinement.GuestAlignmentRequiresBothFreshPremises` 通过两次新鲜关系检查验证原生栈存储、匹配的入口同余条件和被改写的源码效果。
 
+`LLVMByteSwap*`、`LLVMScalarByteSwap.*` 和 `InterpreterLLVMRefinement.ByteSwapRequiresBothFreshPremises` 使用独立字节复制及移位／掩码参照，检查高字节保留、跨块值、poison 保留、严格调用契约，以及独立计数的精确／少一预算。Clang O1/O2 夹具要求实际出现字节交换 intrinsic；小型原生字节交换／BSWAP 夹具检查两侧新鲜证明，并拒绝错误值或遗漏高半字清零。
+
 `NeverDLLVMScalarEquivalenceTests` 覆盖完整循环域、零次循环、PHI 同时交换、switch、高位输入、最后分区反例、产生 poison 的额外更新、返回范围、不支持的契约，以及精确、少一单位和零预算。独立双宽与溢出参考实现覆盖各受支持字宽的漏斗移位端点和带溢出约束的乘法；独立嵌套循环 C 在 O1/O2 检查编译器输入形态。状态模型测试也检查漏斗移位端点。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` 检查累计查询计费和不变的局部上限。
 
 `LLVMScalarDecision.*` 覆盖深层精确移位/扩展约束、常量分支决策、两条循环回边、保留高数据位、末端未定义操作、不终止、已检查函数的后续修改，以及精确/少一/局部预算。`LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles` 将独立编写的单回边和双回边递推与无符号 C oracle 在 O0/O2 下比较，共 32,768 次调用。这些是标量模型检查，不代表原生 ABI 或完整二进制还原覆盖。

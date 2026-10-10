@@ -99,6 +99,8 @@ v4 테스트는 접두 구조의 크기와 패딩, 잘린 구조와 알 수 없�
 
 `LLVMGuestAlignment.*`는 로드와 스토어를 독립적인 바이트 메모리 기준과 비교하여 정렬 및 비정렬 도메인, 자유로운 주소 상위 비트, 파싱된 기본 정렬, 부분 폭, 미사용 또는 덮어쓴 접근, 도달 불가능한 분기와 정확한/한 단위 부족 구성 예산을 검사합니다. `InterpreterLLVMRefinement.GuestAlignmentRequiresBothFreshPremises`는 두 관계를 새로 검사하여 네이티브 스택 저장, 일치하는 진입 합동 조건과 변경된 소스 효과를 검증합니다.
 
+`LLVMByteSwap*`, `LLVMScalarByteSwap.*`, `InterpreterLLVMRefinement.ByteSwapRequiresBothFreshPremises`는 독립적인 바이트 복사 및 시프트/마스크 기준으로 상위 바이트 보존, 블록 간 값, poison, 호출 계약과 독립 계산한 정확/한 단위 부족 예산을 확인합니다. Clang O1/O2 예제는 실제 교환 intrinsic을 요구합니다. 작은 네이티브 교환/BSWAP 예제는 양쪽을 새로 증명하고 잘못된 값이나 상위 워드 초기화 누락을 거부합니다.
+
 `NeverDLLVMScalarEquivalenceTests`는 전체 루프 입력 영역, 0회 반복, PHI 동시 교환, switch, 상위 입력 비트, 마지막 분할의 반례, poison을 만드는 추가 갱신, 반환 범위, 미지원 계약 및 정확한·한 단위 부족·0 예산을 검사합니다. 독립적인 두 배 폭·오버플로 기준 구현이 지원하는 각 폭의 funnel 끝점과 제약된 곱셈을 검사하며 독립 중첩 루프 C의 O1/O2 출력이 컴파일러 입력 형태를 확인합니다. 상태 모델 테스트도 끝점을 검사합니다. `SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings`는 누적 계산과 기존 개별 한도를 검사합니다.
 
 `LLVMScalarDecision.*`는 깊은 exact 시프트·확장 조건, 상수 분기, 두 루프 역방향 간선, 보존된 상위 데이터 비트, 마지막 미정의 연산, 비종료, 검사한 함수의 수정, 정확한 예산·한 단위 부족·지역 한도를 검사합니다. `LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles`는 독립적으로 작성한 역방향 간선 하나와 두 개의 점화식을 부호 없는 C 오라클과 O0/O2에서 총 32,768회 비교합니다. 이는 스칼라 모델 검사이며 네이티브 ABI나 전체 바이너리 복원 범위를 뜻하지 않습니다.

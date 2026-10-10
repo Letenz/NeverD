@@ -100,6 +100,8 @@ v4 テストはプレフィックスのサイズとパディング、切り詰�
 
 `LLVMGuestAlignment.*` はロードとストアを独立したバイトメモリ参照実装と比較し、整列・非整列の領域、自由なアドレス上位ビット、解析された既定アラインメント、部分幅、未使用・上書きされたアクセス、到達不能な分岐、ちょうど十分・1 単位不足の構築予算を検証します。`InterpreterLLVMRefinement.GuestAlignmentRequiresBothFreshPremises` は両関係を新たに検査し、ネイティブのスタックストア、入口合同条件の一致、ソース効果の改変を確認します。
 
+`LLVMByteSwap*`、`LLVMScalarByteSwap.*`、`InterpreterLLVMRefinement.ByteSwapRequiresBothFreshPremises` は独立したバイトコピーとシフト／マスクの参照で、上位バイト、ブロック間の値、poison、呼び出し契約、独立計数による厳密／一単位不足の予算を検証します。Clang O1/O2 では実際の交換 intrinsic を要求し、小さなネイティブ交換／BSWAP 例では両側を新たに証明し、誤った値や上位半分のゼロクリア漏れを拒否します。
+
 `NeverDLLVMScalarEquivalenceTests` は完全なループ入力領域、ゼロ回反復、PHI の同時交換、switch、入力の上位ビット、最後の分割での反例、poison を生む追加更新、戻り値範囲、未対応契約、ちょうど・1不足・ゼロの予算を検査します。独立した倍幅・オーバーフローの参照実装が各対応幅のファネル端点と制約付き乗算を検査し、独立した入れ子ループ C の O1/O2 出力がコンパイラー入力形態を確認します。状態モデルのスイートも端点を検査します。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` は累積計測と従来の局所上限を確認します。
 
 `LLVMScalarDecision.*` は深い exact シフトと拡張の制約、定数分岐、二つのループ後退辺、高位データビット、末尾の未定義操作、非停止、検査済み関数の変更、厳密・一つ不足・局所予算を検査します。`LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles` は独立作成の単一・二重後退辺の漸化式を符号なし C オラクルと O0/O2 で比較し、合計 32,768 回呼び出します。これはスカラーモデルの検査であり、ネイティブ ABI やバイナリ全体の復元範囲を示すものではありません。
