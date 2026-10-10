@@ -376,7 +376,9 @@ std::optional<va_t> LLVMCWriter::imageDataVA(const llvm::Value *V) const {
   // A home may copy a load from another home that eventually copies this
   // same load back. No image address is established by that cycle.
   static thread_local llvm::SmallPtrSet<const llvm::Value *, 32> Active;
-  if (!Active.insert(V).second)
+  // Cycle detection does not bound a long acyclic cast/home chain. This is
+  // optional image provenance: exhaustion keeps the ordinary SSA projection.
+  if (Active.size() >= 64 || !Active.insert(V).second)
     return std::nullopt;
   struct ActiveGuard {
     llvm::SmallPtrSet<const llvm::Value *, 32> &Values;
