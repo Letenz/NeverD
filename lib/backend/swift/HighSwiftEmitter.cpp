@@ -505,6 +505,9 @@ class Writer {
   }
 
   std::string call(const ExprPtr &E, unsigned Depth, bool Statement = false) {
+    if (E && E->IntrinsicId == Intrinsic::CetRdSsp)
+      throw Unsupported(
+          "Swift shadow stack reads require a caller-scoped contract");
     if (E && E->Kind == ExprKind::Call &&
         isX86FPStateIntrinsic(E->IntrinsicId)) {
       const auto Shape = x86FPStateHighShape(*E, Arch::Unknown);

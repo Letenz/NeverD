@@ -59,6 +59,10 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
         else if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
                  Op.Inputs[0].isConst()) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (Id == Intrinsic::CetRdSsp &&
+              !x86ShadowStackReadShapeIsValid(x86ShadowStackReadMedShape(Op)))
+            Err("shadow stack read has an invalid full-GPR contract", Blk.Id,
+                Op.Addr);
           if (isX86FPStateIntrinsic(Id) &&
               !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op)))
             Err("x86 FP state intrinsic has an invalid numerical/state "

@@ -19,6 +19,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
+#include "neverd/ir/high/X86ShadowStackShape.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -959,6 +960,26 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (E.IntrinsicId == Intrinsic::CetRdSsp) {
+    const auto Shape = x86ShadowStackReadHighShape(E, Opts.TheArch);
+    if (!x86ShadowStackReadShapeIsValid(Shape))
+      llvm::report_fatal_error("invalid HighC shadow stack read contract");
+    const std::string Temp = MemoryIdentifiers.allocate("nd_ssp_value");
+    const std::string Type =
+        "uint" + std::to_string(Shape.OutputSize * 8) + "_t";
+    const std::string Op = Shape.ReadWidth == 8    ? "rdsspq %0"
+                           : Shape.OutputSize == 8 ? "rdsspd %k0"
+                                                   : "rdsspd %0";
+    const std::string Result =
+        E.Type->Kind == NdTypeKind::Ptr
+            ? "(" + typeToC(E.Type) + ")(uintptr_t)" + Temp
+            : Temp;
+    // A helper CALL would change SSP. The tied full-width local preserves the
+    // old high half when RDSSPD is a NOP, and evaluates the input exactly once.
+    return "({ " + Type + " " + Temp + " = (" + Type + ")(" +
+           exprStr(*E.Operands[0]) + "); __asm__ volatile(\"" + Op +
+           "\" : \"+r\"(" + Temp + ") :: \"memory\"); " + Result + "; })";
+  }
   if (E.SourceCallHint)
     return renderSourceCallExpr(E);
   if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default)
