@@ -360,6 +360,16 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebPackages.*` in `NeverDWebArtifactTests` covers npm v1/v2/v3 placement,
+hidden locks, aliases/workspaces, optional/peer rules, declaration conflicts,
+field evidence coverage, two-root diffs and metadata budgets. The optional
+`NEVERD_NPM_CLI_1190_LOCK` path enables the pinned full npm CLI v11.9.0 lockfile
+case described in the [package profile](web-package-profile.md). It performs
+no download or installation. `WebPackageSDK.*` and `NeverDWorkerWeb` exercise
+metadata pages, stale IDs, private canaries and direct/framed adapter parity.
+Run the owning web CTest directory after changes to shared artifact/error or
+session boundaries; unavailable parser/compression/host profiles remain explicit.
+
 The Bun profile's C++ cases add preserved compiler graph hashes, synthetic
 hostile ELF/graph layouts, source encoding and immutable range checks. Set
 `NEVERD_BUN_142_CORPUS` to the pinned full-image corpus to qualify complete
@@ -2666,6 +2676,20 @@ retain all callback bodies and resume labels; C receives a syntax check.
 IR, installation, decompilation and PE identities before replaying the same
 files on Windows. Its Python admission suite rejects incomplete, stale or
 substituted evidence.
+
+`check_windows_registration_nested_try.py` compiles independent Clang `-O0`
+and `-O1` parents and links the captured CRT libraries. Inner reference catches
+and outer value/catch-all clauses exercise all three continuations under four
+caller stack layouts. The 32-image source/control matrix covers both CLI patch
+modes and forced rebasing. The C++ test rejects changed prologue saves,
+personality argument reads, search edges, handler order, continuation ownership,
+and emitted try/unwind state rows. HighIR must contain both nested tries and
+all three callback bodies; C output also receives a syntax check.
+`RegistrationCxxUnwind` tests nested, disjoint, three-level and cleanup search
+graphs. `replay_windows_registration_nested_try.py` authenticates the source,
+rejection tests, compiler objects, IR, decompilation and installed PE bytes
+before executing the identical images on Windows. Its Python admission tests
+reject missing routes, stale proofs, altered images and lost nested regions.
 
 
 The focused Windows EH workflow first builds and executes genuine MSVC x86

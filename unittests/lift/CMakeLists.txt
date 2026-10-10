@@ -1278,6 +1278,7 @@ target_link_libraries(NeverDLiftTests PRIVATE
 
 add_neverd_unittest(NeverDWindowsEHMetadataEncoderTests
   eh/WindowsEHMetadataEncoderTests.cpp
+  eh/RegistrationCxxUnwindTests.cpp
 
   LINK_COMPONENTS
   WindowsEHMetadata
@@ -1327,6 +1328,8 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
   eh/WindowsRegistrationRealignedTests.cpp
   eh/WindowsRegistrationRealignedNativeTests.cpp
   eh/WindowsRegistrationMultipleCatchTests.cpp
+  eh/WindowsRegistrationNestedTryTests.cpp
+  eh/RegistrationNestedTryTestUtils.cpp
   eh/RegistrationMultipleCatchTestUtils.cpp
   eh/WindowsRegistrationFixedTests.cpp
   eh/WindowsRegistrationDirectNativeTests.cpp
