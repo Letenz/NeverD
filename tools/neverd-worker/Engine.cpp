@@ -2044,16 +2044,64 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (at.is_null())
       throw Error("invalid_request", "No image byte at " + hexAddress(address));
     const auto kind = at.at("kind").get<std::string>();
-    if (kind == "instruction")
+    if (kind == "instruction" && action == "code")
+      return {{"address", at.at("start")},
+              {"kind", CodeItemKind},
+              {"size", at.at("size")},
+              {"saved", false}};
+    if (kind == "instruction" &&
+        at.value("user", std::string()) != CodeItemKind)
       throw Error("invalid_request",
                   "Code belongs to its function; delete the function to "
                   "define data in its bytes");
     // The item the cursor is in is the one the action changes.
-    const auto start = parseAddress(at.at("start").get<std::string>());
+    const auto start = action == "code"
+                           ? address
+                           : parseAddress(at.at("start").get<std::string>());
     const auto user = at.value("user", std::string());
     Json row;
+    std::vector<std::pair<std::uint64_t, Json>> code;
     std::uint64_t size = 0;
-    if (action == "data") {
+    if (action == "code") {
+      using DisasmEx =
+          const char *(*)(neverd_session_t, neverd_va_t, int, unsigned);
+      const auto decode = engineSymbol<DisasmEx>("neverd_disasm_json_ex");
+      if (!decode)
+        throw Error("unsupported", "This engine cannot define native code");
+      // Decode one basic block without following its successors or inventing
+      // a function. Known instructions are a boundary, and unmodelled control
+      // flow never invites guessing what bytes follow it.
+      constexpr std::size_t MaxInstructions = 256;
+      auto cursor = start;
+      for (;;) {
+        if (!code.empty()) {
+          const auto next = listing().item(cursor);
+          if (next.is_null() || next.at("kind") == "instruction")
+            break;
+        }
+        if (code.size() == MaxInstructions)
+          throw Error("resource_limit",
+                      "Code definition exceeds 256 instructions");
+        const auto decoded =
+            backendJson(decode(session_, cursor, 1, NEVERD_DISASM_FLOW), true);
+        if (!decoded.is_array() || decoded.size() != 1 ||
+            parseAddress(decoded[0].at("addr").get<std::string>()) != cursor)
+          throw Error("invalid_request",
+                      "Invalid or truncated instruction at " +
+                          hexAddress(cursor));
+        const auto &instruction = decoded[0];
+        const auto bytes = instruction.at("size").get<std::uint64_t>();
+        if (!bytes || bytes > 16 ||
+            cursor > std::numeric_limits<std::uint64_t>::max() - bytes)
+          throw Error("invalid_request", "Invalid instruction size");
+        code.push_back({cursor, {{"kind", CodeItemKind}, {"size", bytes}}});
+        size += bytes;
+        cursor += bytes;
+        const auto flow = instruction.value("flow", std::string());
+        if (!flow.empty() && flow != "call" && flow != "icall")
+          break;
+      }
+    } else if (action == "data") {
       // The data carousel: byte, word, dword, qword, then byte again.
       static constexpr std::array<std::uint64_t, 4> Carousel = {1, 2, 4, 8};
       size = sizeField(p, "size", 0, 8);
@@ -2098,14 +2146,23 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       row = {{"kind", UndefinedItemKind}, {"size", size}};
     } else {
       throw Error("invalid_request",
-                  "action is \"data\", \"string\" or \"undefine\"");
+                  "action is \"code\", \"data\", \"string\" or \"undefine\"");
     }
     auto &store = history();
     auto state = store.committedState();
     // The engine checks the item against the image and the other items;
     // undefined bytes it covers stay undefined around it.
-    if (items.set(session_, start, row.dump().c_str()) != 0)
-      throw Error("invalid_request", error());
+    if (code.empty())
+      code.push_back({start, std::move(row)});
+    try {
+      for (const auto &[entry, definition] : code)
+        if (items.set(session_, entry, definition.dump().c_str()) != 0)
+          throw Error("invalid_request", error());
+    } catch (...) {
+      (void)items.load(session_);
+      namesChanged();
+      throw;
+    }
     // One history step holds every row the edit changed, the item's first.
     std::map<std::uint64_t, std::pair<Json, Json>> changed;
     for (const auto &item : state.at("items"))
@@ -2138,7 +2195,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     ++revision_;
     return {{"address", hexAddress(start)},
             {"kind", after.at("kind")},
-            {"size", after.at("size")},
+            {"size", action == "code" ? Json(size) : after.at("size")},
             {"saved", true}};
   }
   if (operation == "operand_format") {

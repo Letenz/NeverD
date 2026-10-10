@@ -28,6 +28,9 @@ using neverd::worker::Json;
 using neverd::worker::parseAddress;
 namespace {
 constexpr std::uint64_t Base = 0xffff800012340000ULL;
+constexpr std::uint64_t CodeBase = Base + 0x2700;
+constexpr unsigned char CodeBytes[] = {0x90, 0x48, 0x83, 0xc4,
+                                       0x28, 0xc3, 0x0f};
 // A read-only data section of relocated pointers: slot i points to function
 // i + 1.
 constexpr std::uint64_t DataBase = Base + 0x3000, DataSlots = 8;
@@ -91,6 +94,11 @@ struct MockSession {
 };
 MockSession *session(neverd_session_t s) {
   return static_cast<MockSession *>(s);
+}
+std::uint64_t codeSize(neverd_session_t s) {
+  return session(s)->path.ends_with("make-code.bin")
+             ? CodeBase + sizeof(CodeBytes) - Base
+             : CodeSize;
 }
 const char *copy(std::string value) {
   char *result = static_cast<char *>(std::malloc(value.size() + 1));
@@ -319,7 +327,7 @@ int neverd_func_size(neverd_session_t s, int index) {
     return 16;
   const auto end = index + 1 < static_cast<int>(functions.size())
                        ? functions[index + 1]
-                       : Base + CodeSize;
+                       : Base + codeSize(s);
   return static_cast<int>(std::min<std::uint64_t>(16, end - functions[index]));
 }
 const char *neverd_func_name(neverd_session_t s, int index) {
@@ -377,6 +385,13 @@ const char *neverd_resolve_addr(neverd_session_t s, neverd_va_t address) {
 }
 int neverd_read_bytes(neverd_session_t, neverd_va_t address,
                       unsigned char *buffer, int size) {
+  if (size >= 0 && address >= CodeBase &&
+      address - CodeBase < sizeof(CodeBytes)) {
+    const auto available = static_cast<int>(
+        std::min<std::uint64_t>(size, CodeBase + sizeof(CodeBytes) - address));
+    std::copy_n(CodeBytes + (address - CodeBase), available, buffer);
+    return available;
+  }
   if (size >= 0 && address >= RodataBase && address - RodataBase < RodataSize) {
     // "\u4e2d\u6587" in UTF-8 at +0 and "Wide" in UTF-16LE at +8, zero filled.
     static constexpr unsigned char Rodata[RodataSize] = {
@@ -445,6 +460,28 @@ constexpr std::uint64_t JoinFunctionEntry = Base + 0x60;
 Json fixtureInstructions(neverd_va_t address, int count, bool flow,
                          bool stack) {
   Json result = Json::array();
+  if (address >= CodeBase && address < CodeBase + sizeof(CodeBytes)) {
+    for (int i = 0; i < count; ++i) {
+      const auto offset = address - CodeBase;
+      if (offset != 0 && offset != 1 && offset != 5)
+        break; // The last byte is a truncated x86 opcode.
+      const bool add = offset == 1, ret = offset == 5;
+      Json row{{"addr", hexAddress(address)},
+               {"size", add ? 4 : 1},
+               {"mnemonic", add   ? "add"
+                            : ret ? "ret"
+                                  : "nop"},
+               {"op_str", add ? "rsp, 0x28" : ""},
+               {"bytes", add   ? "4883c428"
+                         : ret ? "c3"
+                               : "90"}};
+      if (flow && ret)
+        row["flow"] = "ret";
+      result.push_back(std::move(row));
+      address += add ? 4 : 1;
+    }
+    return result;
+  }
   for (int i = 0; i < count && address >= Base && address + i - Base < 9600;
        ++i) {
     const auto at = address + i;
@@ -1128,10 +1165,10 @@ const char *neverd_strings_json(neverd_session_t, int) {
                      {"length", 10}});
   return copy(items.dump());
 }
-const char *neverd_segments_json(neverd_session_t) {
+const char *neverd_segments_json(neverd_session_t s) {
   return copy(Json::array({{{"name", ".text"},
                             {"va", hexAddress(Base)},
-                            {"size", "0x2580"},
+                            {"size", hexAddress(codeSize(s))},
                             {"flags", "R-X"}},
                            {{"name", ".data.rel.ro"},
                             {"va", hexAddress(DataBase)},
@@ -1147,14 +1184,14 @@ const char *neverd_segments_json(neverd_session_t) {
                             {"flags", "RW-"}}})
                   .dump());
 }
-const char *neverd_sections_json(neverd_session_t) {
+const char *neverd_sections_json(neverd_session_t s) {
   // Spelled like the engine: numeric sizes and R/W/X flags.
   return copy(Json::array({{{"name", ".text"},
                             {"segment", ".text"},
                             {"va", hexAddress(Base)},
-                            {"size", 0x2580},
+                            {"size", codeSize(s)},
                             {"file_off", 0x1000},
-                            {"file_sz", 0x2580},
+                            {"file_sz", codeSize(s)},
                             {"alignment", 16},
                             {"flags", "R-X"}},
                            {{"name", ".data.rel.ro"},
@@ -1362,7 +1399,7 @@ int neverd_renames_load(neverd_session_t s) {
 // decides.
 int neverd_func_create(neverd_session_t s, neverd_va_t address) {
   auto &state = *session(s);
-  if (address < Base || address - Base >= CodeSize) {
+  if (address < Base || address - Base >= codeSize(s)) {
     state.error = hexAddress(address) + " is not in executable code";
     return -1;
   }
@@ -1417,6 +1454,16 @@ int neverd_item_set(neverd_session_t s, neverd_va_t address, const char *text) {
                          : kind == "dword" ? 4
                          : kind == "qword" ? 8
                                            : 0;
+    if (kind == "code") {
+      const auto instructions = fixtureInstructions(address, 1, false, false);
+      if (instructions.empty() ||
+          (row.contains("size") &&
+           row.at("size") != instructions.front().at("size"))) {
+        state.error = "invalid code definition";
+        return -1;
+      }
+      size = instructions.front().at("size").get<std::uint64_t>();
+    }
     if (!size && kind != "string" && kind != "undefined") {
       state.error = "unknown data item kind " + kind;
       return -1;

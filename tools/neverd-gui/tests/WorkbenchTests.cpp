@@ -2794,6 +2794,100 @@ private slots:
     QVERIFY(!bytes.contains("late edit after save intent"));
   }
 
+  void cDefinesInstructionsAndDatabaseKeepsThem_data() {
+    QTest::addColumn<bool>("native");
+    QTest::newRow("fixture") << false;
+    if (!qEnvironmentVariable("NEVERD_CODE_NAV_WORKER").isEmpty() &&
+        !qEnvironmentVariable("NEVERD_MAKE_CODE_FILE").isEmpty())
+      QTest::newRow("native") << true;
+  }
+
+  void cDefinesInstructionsAndDatabaseKeepsThem() {
+    QFETCH(bool, native);
+    QTemporaryDir directory;
+    const auto path = directory.filePath(QStringLiteral("make-code.bin"));
+    const auto worker = native ? qEnvironmentVariable("NEVERD_CODE_NAV_WORKER")
+                               : QString::fromLocal8Bit(TEST_WORKER);
+    if (native)
+      QVERIFY(QFile::copy(qEnvironmentVariable("NEVERD_MAKE_CODE_FILE"), path));
+    else
+      writeFixture(directory, QStringLiteral("make-code.bin"));
+    const auto database = ProjectDatabase::pathFor(path);
+    const Address entry = native ? Address(0x400078) : Base;
+    const Address start = native ? entry + 6 : Base + 0x2700;
+    {
+      Workbench bench(worker);
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      bench.window->activateWindow();
+      QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+      auto *view = bench.window->disassembly();
+      view->navigate(start);
+      view->focusContent();
+      QTRY_COMPARE(view->currentItem(), std::optional<Address>(start));
+      QTRY_VERIFY(view->listing()->hasFocus());
+      QTRY_VERIFY(bench.action(ActionId::EditDefineCode)->isEnabled());
+      QCOMPARE(bench.action(ActionId::EditDefineCode)->shortcut(),
+               QKeySequence("C"));
+      QTest::keyClick(view->listing(), Qt::Key_C);
+      const auto rows = [&] {
+        return QJsonDocument::fromJson(readAll(path + ".neverd-items.json"))
+            .array();
+      };
+      QTRY_COMPARE_WITH_TIMEOUT(rows().size(), 3, OpenTimeoutMs);
+      QTRY_VERIFY(view->listing()->currentLineText().contains("nop"));
+      QCOMPARE(view->currentItem(), std::optional<Address>(start));
+      QVERIFY(!view->currentFunction());
+      QTRY_VERIFY(bench.session.canUndo());
+      bench.session.undo();
+      QTRY_VERIFY_WITH_TIMEOUT(rows().isEmpty(), OpenTimeoutMs);
+      QTRY_VERIFY(view->listing()->currentLineText().contains("db"));
+      QTRY_VERIFY(bench.session.canRedo());
+      bench.session.redo();
+      QTRY_COMPARE_WITH_TIMEOUT(rows().size(), 3, OpenTimeoutMs);
+      view->navigate(start + 1);
+      QTRY_COMPARE(view->currentItem(), std::optional<Address>(start + 1));
+      QTRY_VERIFY(view->listing()->currentLineText().contains("add"));
+      if (const auto capture =
+              qEnvironmentVariable("NEVERD_CODE_NAV_CAPTURE_DIR");
+          !capture.isEmpty()) {
+        QDir().mkpath(capture);
+        QVERIFY(bench.window->grab().save(
+            capture +
+            (native ? "/make-code-native.png" : "/make-code-fixture.png")));
+      }
+      QSignalSpy saved(&bench.session, &Session::databaseSaved);
+      bench.session.save();
+      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
+      QVERIFY(saved.first().first().toBool());
+      // C is not consumed as a data definition in the source window.
+      view->navigate(entry);
+      QTRY_COMPARE(view->currentItem(), std::optional<Address>(entry));
+      QTRY_COMPARE_WITH_TIMEOUT(view->currentFunction(),
+                                std::optional<Address>(entry), OpenTimeoutMs);
+      QTRY_VERIFY(bench.action(ActionId::ViewPseudocode)->isEnabled());
+      bench.action(ActionId::ViewPseudocode)->trigger();
+      auto *source = bench.codeView(QStringLiteral("source"));
+      QVERIFY(source);
+      QTRY_VERIFY(source->isVisible() && !source->text()->loading());
+      source->text()->window()->activateWindow();
+      QVERIFY(QTest::qWaitForWindowActive(source->text()->window()));
+      source->text()->setFocus();
+      QTRY_VERIFY(source->text()->hasFocus());
+      QTRY_VERIFY(!bench.action(ActionId::EditDefineCode)->isEnabled());
+    }
+    {
+      Workbench bench(worker);
+      bench.window->openFile(database);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      auto *view = bench.window->disassembly();
+      view->navigate(start + 1);
+      QTRY_COMPARE(view->currentItem(), std::optional<Address>(start + 1));
+      QTRY_VERIFY(view->listing()->currentLineText().contains("add"));
+      QVERIFY(!view->currentFunction());
+    }
+  }
+
   void databaseCarriesTheProject() {
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("project.bin"));
