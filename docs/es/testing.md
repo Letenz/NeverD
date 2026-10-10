@@ -154,6 +154,8 @@ Los tests de cuenta regresiva protegida cubren reintentos tras rechazar la plant
 
 `InterpreterLLVMRefinement.Preservation*` cubre rangos parciales o solapados, peticiones inválidas, coste de preparación calculado independientemente, alteraciones finales idénticas, guardado/restauración de valores de entrada a través de bucles, evidencia opaca nueva y rechazos tardíos. Reconstruir también el consumidor de API `NeverDPEFixedImageTests`. Comparar por separado resultados, contadores y resúmenes sin petición con la base.
 
+`InterpreterLLVMRefinement.Collection*` comprueba retención y aplazamiento necesarios en pruebas finitas e inductivas, ramas inválidas alcanzables, rechazo tardío de la fuente, conservación de entrada y las cuatro identidades de opciones nativas. Compilar fallos que omitan su transmisión en el módulo de composición para verificar cada opción necesaria.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
