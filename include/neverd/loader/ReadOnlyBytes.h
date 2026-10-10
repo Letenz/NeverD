@@ -9,6 +9,10 @@
 namespace neverd {
 struct BinaryImage;
 
+/// Whether this linked native image has a supported immutable-read contract.
+/// Individual reads still require exact mappings, permissions and fixups.
+bool supportsImmutableImageReads(const BinaryImage &Image);
+
 /// Read one uniquely mapped immutable byte range with no pointer fixups.
 /// The caller separately proves that copying its contents preserves the use;
 /// this routine establishes neither pointer identity nor ownership/lifetime.
@@ -51,12 +55,15 @@ bool isImagePointerBitPattern(const BinaryImage &Image, uint64_t Bits,
 
 /// Read a full-width resolved data pointer from uniquely mapped immutable
 /// storage. The relocation must identify the current target's owning range.
+/// Supports linked Mach-O and exact PE DIR64/HIGHLOW data slots; conflicting
+/// or partial relocations, runtime import slots and duplicate fixups refuse.
 /// This proves the loaded value only, not a binding for the slot's address or
 /// permission to copy the target object.
 std::optional<va_t> readImmutableImagePointer(const BinaryImage &Image,
                                               va_t Address);
 
-/// Read one exact resolved chained code pointer in unique immutable storage.
+/// Read one exact resolved code pointer in unique immutable storage: a linked
+/// Mach-O chained slot or a PE DIR64/HIGHLOW slot.
 /// The target must be a current authenticated local function entry with
 /// immutable instruction bytes. This proves an address, never its ABI or
 /// permission to use a code pointer as an ordinary data pointer.

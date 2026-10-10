@@ -267,6 +267,7 @@ class OutcomePolicyTests(unittest.TestCase):
                 "NeverDSessionLLVMTests",
                 "NeverDSemanticFixtureTests",
                 "NeverDPipelineOutcomeTests",
+                "NeverDImageAnalysisBoundaryTests",
             ):
                 with self.subTest(profile=profile, label=label):
                     self.assertIn(label, required_labels(profile))

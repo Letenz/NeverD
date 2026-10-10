@@ -937,6 +937,59 @@ The loader validates bounded, acyclic graphs of Darwin constant strings, integer
 
 ## IR representations and routes
 
+COFF loading records validated DWARF FDE extents before heuristic function
+discovery. Those extents also bound named symbols with no size. Debug sections
+do not supply pointer-table or relocation-scan roots, including debug ranges
+inside an otherwise loadable segment. This keeps CRT internal labels owned by
+their containing function without discarding independently proven entries.
+
+Shared MedIR constant propagation evaluates immutable linked-image table scans
+before the source routes diverge. PE/COFF, ELF and Mach-O share the native
+x86, x64, ARM and AArch64 byte-read contract. `ReadOnlyBytes` owns target and
+format admission, mapped storage and relocation
+checks; the evaluator cannot interpret a relocated pointer as raw scalar
+bytes. Pointer slots use the target's width, and unmarked pointer-sized bytes
+that could represent an image address retain their LOAD. Exact pointer
+projection still requires the corresponding format-specific relocation proof.
+PE and Mach-O code-pointer readers share the same authenticated local target,
+instruction alignment and complete immutable instruction-storage checks.
+A single-block scan must terminate within its work/iteration limits,
+have no side effects or independent entry, and produce every exit value before
+replacement. The whole invocation shares one work budget across definition
+indexing, rounds and loops; incomplete indexes are never published. Both
+constant propagation and scan evaluation use `hasCompleteOrdinaryPhiInputs`
+to require every actual predecessor exactly once at the PHI's width.
+Unproved scans retain their original CFG. LLVM pointer recurrence
+proofs separately memoize only path-independent results under a work budget;
+independent roots remain reachable when constant edges are pruned.
+Retained source-call certificates keep their original MedIR value graphs until
+a transformation can rebind their occurrence and frame evidence. A role-neutral
+address in a pointer mirror remains a valid raw recurrence initializer, matching
+the emitter's deferred address materialization rather than requiring an eager
+data-pointer projection.
+Both proofs retain exact object ownership, including one-past addresses at an
+adjacent section boundary. The shared evaluator uses the image's conservative
+relocation predicate for untagged constants; equal original VAs alone cannot
+establish equality between independently rebuilt objects.
+
+FH3 catch-return evidence binds the source funclet, return instruction and
+owning continuation after module discovery converges. Shared SSA verifies the
+parent's unwind, decoded prologue and converted stack effects before restoring
+its frame. Synchronous x64 C++ exceptional edges retain the throwing call's
+address and use its saved return PC for state lookup; SSA samples restored
+registers before that call. This handles IP-map boundaries inside instructions
+as emitted by [older LLVM versions](https://github.com/llvm/llvm-project/blob/llvmorg-18.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L875).
+HighIR uses only certified catch returns to form continuation jumps, including
+nested catches. Independent ordinary entries cannot borrow this frame proof.
+
+LLVMC preserves relocatable constant address arithmetic, and constant
+`ptrtoint` of a global denotes its address, not initializer bytes. Freeze
+projection requires either LLVM definedness or a bounded integer expression
+whose C evaluation refines it without introducing undefined behavior.
+Division additionally requires defined operands. Helper discovery covers all
+emitted bodies, including Windows analysis bodies; supported indirect vector
+calls use the same C vector ABI as direct calls.
+
 `ir/FloatConversion.h` owns the result policy for scalar float-to-integer
 operations: saturation for the non-x86 path and x86 indefinite results for
 invalid conversions. HighC and the LLVM lowering select that same policy;

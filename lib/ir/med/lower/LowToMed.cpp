@@ -20,6 +20,7 @@
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/MedConstantPropagation.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -538,6 +539,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   Func.Entry = Low.Entry;
   Func.Name = Low.Name;
   Func.JumpTables = Low.JumpTables;
+  Func.ModuleAnalysisRoots = Low.ModuleAnalysisRoots;
+  Func.CxxContinuationEntries = Low.CxxContinuationEntries;
   Func.UnsafeIndirectBranchAddresses = Low.UnsafeIndirectBranchAddresses;
   Func.ExceptionMetadata = Low.ExceptionMetadata;
   if (SourceCallHintsEnabled && Image && Fmt == BinaryFormat::MachO &&
@@ -1089,6 +1092,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     // duplicated, or no longer has the certified operand role deliberately
     // yields no plan; backends must fail closed rather than fall back to a
     // physical register-number scan.
+    if (Image && foldImmutableTableScans(Func, *Image)) {
+      propagateInvariantConstants(Func);
+      runDce(Func);
+      debugVerifyMedFunc(Func, "foldImmutableTableScans");
+    }
     resolveSwitchSelectorPlans(Func);
     resolveScalarAddressModels(Func,
                                Low.RelocatedInstructionScalarModelOccurrences);

@@ -1469,6 +1469,99 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
       readOnlyAfterRelocRun(Seg, RunStart, RunEnd);
       return RunStart;
     };
+    // Prove the entire recurrence graph before accepting any cycle. A PHI
+    // inside a multi-header recurrence need not have an initializer among its
+    // own incoming arms. Every transport must preserve a full pointer, all
+    // external leaves must agree, and every node must reach an initializer.
+    // The last check excludes a disconnected uninitialized cycle hidden in
+    // one arm of an otherwise anchored PHI.
+    auto proveReadOnlyRecurrence = [&](const MedVar &Root) -> AddressProof {
+      using Key = std::pair<AddressProvenanceVarKey, bool>;
+      std::map<Key, std::vector<Key>> Users;
+      std::set<Key> Visited, Anchored;
+      std::vector<std::pair<MedVar, bool>> Work{{Root, false}};
+      std::vector<Key> Anchors;
+      std::optional<PureReadOnlyBaseIdentity> Base;
+      size_t Budget = limits::kMaxPointerRecurrenceEvidenceWork;
+      while (!Work.empty()) {
+        auto [Value, Direct] = Work.back();
+        Work.pop_back();
+        if (!Budget--)
+          return invalidProof();
+        const Key K{addressProvenanceVarKey(Value), Direct && Value.isConst()};
+        if (!Visited.insert(K).second)
+          continue;
+        if (auto Identity = pureReadOnlyBaseIdentity(Value, Direct)) {
+          if (Base && *Base != *Identity)
+            return invalidProof();
+          Base = Identity;
+          Anchors.push_back(K);
+          continue;
+        }
+        if (Value.isConst() || Value.Size != Img->getPointerSize())
+          return invalidProof();
+        auto Add = [&](const MedVar &Input, bool DirectPhi = false) {
+          Users[{addressProvenanceVarKey(Input), DirectPhi && Input.isConst()}]
+              .push_back(K);
+          Work.emplace_back(Input, DirectPhi);
+        };
+        if (const auto *Phi = lookupPhi(Value)) {
+          bool HaveEdge = false;
+          for (const auto &[Pred, Arg] : Phi->Args) {
+            const auto Edge = classifyPhiIncomingEdge(*Phi, Pred);
+            if (Edge == PhiEdgeFeasibility::Infeasible)
+              continue;
+            if (Edge != PhiEdgeFeasibility::ProvenFeasible)
+              return invalidProof();
+            HaveEdge = true;
+            Add(Arg, Arg.isConst());
+          }
+          if (!HaveEdge)
+            return invalidProof();
+          continue;
+        }
+        const auto *Def = lookupDef(Value);
+        if (!Def)
+          return invalidProof();
+        if (auto Forwarded = pointerPreservingInput(*Def);
+            Forwarded && Forwarded->Size == Value.Size) {
+          Add(*Forwarded);
+        } else if ((Def->Opcode == NdOp::INT_ADD ||
+                    Def->Opcode == NdOp::INT_SUB) &&
+                   Def->NumInputs == 2 && Def->Inputs[1].isConst() &&
+                   constantIsStableAddressOffset(Def->Inputs[1]) &&
+                   Def->Inputs[0].Size == Value.Size) {
+          Add(Def->Inputs[0]);
+        } else if (selectPreservesPointerValues(*Def)) {
+          Add(Def->Inputs[1]);
+          Add(Def->Inputs[2]);
+        } else {
+          return invalidProof();
+        }
+      }
+      while (!Anchors.empty()) {
+        Key K = Anchors.back();
+        Anchors.pop_back();
+        if (!Budget--)
+          return invalidProof();
+        if (Anchored.insert(K).second)
+          if (auto It = Users.find(K); It != Users.end())
+            Anchors.insert(Anchors.end(), It->second.begin(), It->second.end());
+      }
+      if (!Base || Anchored.size() != Visited.size() ||
+          !belongsToClaimedCodeTableRun(Base->VA))
+        return invalidProof();
+      const auto *Seg = Img->getSegmentFor(Base->VA);
+      // A one-past address may numerically land in the next table, while its
+      // rebuilt pointer still belongs to the preceding object. This proof
+      // selects a table by the numeric address and cannot own that case.
+      if (Base->Symbolized && Img->getSegmentFor(Base->OwnerVA) != Seg)
+        return invalidProof();
+      return Seg ? tableProof(pointerTableRunStart(Seg),
+                              Base->Symbolized ? AddressModel::Symbolized
+                                               : AddressModel::Raw)
+                 : invalidProof();
+    };
     using AuditSeen = std::set<std::tuple<int, int, int>>;
     std::function<AddressProof(const MedVar &, int, AuditSeen, bool)>
         proveAddressRole = [&](const MedVar &Value, int Depth, AuditSeen Seen,
@@ -1502,6 +1595,9 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
         return invalidProof();
 
       if (const PhiNode *Phi = lookupPhi(Value)) {
+        if (auto Recurrence = proveReadOnlyRecurrence(Value);
+            Recurrence.Role == AddressRole::PointerTable)
+          return Recurrence;
         std::optional<AddressProof> Merged;
         bool SawInitialization = false;
         for (const auto &[Pred, Arg] : Phi->Args) {

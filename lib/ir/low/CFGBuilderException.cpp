@@ -37,7 +37,8 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     return -1;
   };
   auto AddEdge = [&](LowBlock &Source, va_t TargetVA, ExceptionalEdgeKind Kind,
-                     uint32_t Region, int32_t State) {
+                     uint32_t Region, int32_t State,
+                     va_t SourceVA = InvalidVA) {
     if (TargetVA == 0)
       return;
     ExceptionalEdge Edge;
@@ -46,6 +47,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     Edge.Kind = Kind;
     Edge.RegionIndex = Region;
     Edge.State = State;
+    Edge.SourceVA = SourceVA;
     if (std::find(Source.ExceptionalSuccs.begin(),
                   Source.ExceptionalSuccs.end(),
                   Edge) == Source.ExceptionalSuccs.end())
@@ -97,20 +99,20 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
 
   if (Metadata.Cxx) {
     const CxxExceptionInfo &Cxx = *Metadata.Cxx;
-    for (LowBlock &Block : Func.Blocks) {
+    auto AddCxxEdges = [&](LowBlock &Block, va_t IP, va_t SourceVA) {
       int32_t State = -1;
       for (const CxxIPState &IPState : Cxx.IPMap) {
-        if (IPState.IP > Block.StartAddr)
+        if (IPState.IP > IP)
           break;
         State = IPState.State;
       }
       if (State < 0 || State >= static_cast<int32_t>(Cxx.UnwindMap.size()))
-        continue;
+        return;
 
       const CxxUnwindAction &Cleanup = Cxx.UnwindMap[State];
       if (Cleanup.ActionVA != 0)
         AddEdge(Block, Cleanup.ActionVA, ExceptionalEdgeKind::CxxCleanup,
-                static_cast<uint32_t>(State), State);
+                static_cast<uint32_t>(State), State, SourceVA);
 
       for (size_t I = 0; I < Cxx.TryBlocks.size(); ++I) {
         const CxxTryBlock &Try = Cxx.TryBlocks[I];
@@ -118,7 +120,21 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
           continue;
         for (const CxxCatchHandler &Catch : Try.Handlers)
           AddEdge(Block, Catch.HandlerVA, ExceptionalEdgeKind::CxxCatch,
-                  static_cast<uint32_t>(I), State);
+                  static_cast<uint32_t>(I), State, SourceVA);
+      }
+    };
+    for (LowBlock &Block : Func.Blocks) {
+      if (Cxx.IsSynchronous && CurrentImg && CurrentImg->Arch == Arch::X64) {
+        // x64 FH3/FH4 state lookup uses the saved return PC. Clang can put
+        // an IP-map boundary one byte past a label, inside an instruction;
+        // it is not necessarily a basic-block boundary. Preserve each call's
+        // state and source instead of borrowing the state at block entry.
+        for (const LowInstructionBoundary &Insn : Block.InstructionBoundaries)
+          if (Insn.Control == LowInstructionControl::Call && Insn.Size &&
+              Insn.Address <= InvalidVA - Insn.Size)
+            AddCxxEdges(Block, Insn.Address + Insn.Size, Insn.Address);
+      } else {
+        AddCxxEdges(Block, Block.StartAddr, InvalidVA);
       }
     }
   }
@@ -200,13 +216,14 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
         // The chain is a linked list inside a table the decoder already
         // bounded, so a step budget of the action count both terminates a
         // cycle and cannot cut a well-formed chain short.
-        for (size_t Step = 0; Offset && Step <= Itanium.Actions.size(); ++Step) {
+        for (size_t Step = 0; Offset && Step <= Itanium.Actions.size();
+             ++Step) {
           const ItaniumAction *Action = FindAction(*Offset);
           if (!Action)
             break;
-          AddClause(Action->isCleanup()   ? ExceptionalEdgeKind::ItaniumCleanupPad
-                    : Action->isCatch()   ? ExceptionalEdgeKind::ItaniumCatchPad
-                                          : ExceptionalEdgeKind::ItaniumSpecPad,
+          AddClause(Action->isCleanup() ? ExceptionalEdgeKind::ItaniumCleanupPad
+                    : Action->isCatch() ? ExceptionalEdgeKind::ItaniumCatchPad
+                                        : ExceptionalEdgeKind::ItaniumSpecPad,
                     Action->TypeFilter);
           Offset = Action->NextActionOffset;
         }

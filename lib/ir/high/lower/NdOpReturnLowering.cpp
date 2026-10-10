@@ -140,6 +140,21 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
   HighStmt S;
   S.Kind = StmtKind::Return;
   S.Addr = CurOp.Addr;
+  if (Med.CxxContinuationExitAnalysisComplete && InputOp.NumInputs == 1)
+    for (const auto &Exit : Med.CxxContinuationExits)
+      if (Exit.ReturnAddr == InputOp.Addr &&
+          Exit.ReturnSeq == InputOp.OriginSeq && Exit.BlockId == CurBlock.Id &&
+          Exit.ReturnValue == InputOp.Inputs[0])
+        if (Exit.Complete)
+          S.CxxContinuationReturnTargets = Exit.Targets;
+  if (!S.CxxContinuationReturnTargets.empty()) {
+    // This is a native pointer-valued dispatch result, even when a generic
+    // return-width heuristic found a narrower integer in another register.
+    S.RetVal = medvarToExpr(InputOp.Inputs[0]);
+    Func.ReturnType = NdType::makeInt(InputOp.Inputs[0].Size, false);
+    Func.Body.push_back(std::move(S));
+    return;
+  }
 
   // An established void declaration has no return carrier. Searching the
   // machine return register here would invent a value (and may move a prior

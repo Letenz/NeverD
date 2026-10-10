@@ -115,6 +115,8 @@ private:
   struct AddressProvenanceWorkCounts {
     uint64_t EdgeClassifications = 0;
     uint64_t RecurrenceProofs = 0;
+    uint64_t RecurrenceNodes = 0;
+    uint64_t AliasNodes = 0;
     uint64_t StableOffsetProofs = 0;
     uint64_t IndexedBaseProofs = 0;
   };
@@ -880,13 +882,18 @@ private:
     uint64_t VA = 0;
     uint16_t Width = 0;
     bool Symbolized = false;
+    uint64_t OwnerVA = InvalidVA;
+
+    bool operator==(const PureReadOnlyBaseIdentity &) const = default;
   };
 
   /// Recover the identity of a full-width immutable object-data base carried
   /// only through pointer-preserving forwarders. Direct PHI constants bypass
   /// getVar and therefore retain the raw address model; operation inputs use
-  /// getVar's shared raw-versus-symbolized policy. PHIs, loads, arithmetic,
-  /// truncation, and numeric coincidences are deliberately not identities.
+  /// getVar's shared raw-versus-symbolized policy and exact object ownership.
+  /// An authenticated immutable pointer slot can also establish an identity.
+  /// PHIs, other loads, arithmetic, truncation, and numeric coincidences
+  /// cannot.
   std::optional<PureReadOnlyBaseIdentity>
   pureReadOnlyBaseIdentity(const MedVar &V,
                            bool DirectPhiConstantBypassesGetVar) const;
