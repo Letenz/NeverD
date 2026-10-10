@@ -41,11 +41,20 @@ add_neverd_unittest(NeverDPEFixedImageTests
 )
 
 if(TARGET neverd_shared)
+  set(_pe_browse_components Loader CodeGen)
+  if(APPLE)
+    # Resolve the C++ helpers and LLVM from the same dylib as the C API.
+    # Static components would register LLVM command-line options twice.
+    set(_pe_browse_components "")
+  endif()
   add_neverd_unittest(NeverDPEBrowseCompatibilityTests
     PEBrowseCompatibilityTests.cpp
-    LINK_COMPONENTS Loader CodeGen
+    LINK_COMPONENTS ${_pe_browse_components}
     LINK_LIBS neverd_shared
   )
+  target_include_directories(NeverDPEBrowseCompatibilityTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+  unset(_pe_browse_components)
 endif()
 
 add_neverd_unittest(NeverDLowIRRefinementTests

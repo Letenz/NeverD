@@ -70,6 +70,11 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     SourceBundles.cpp SourceView.cpp SourceNavigation.cpp SourceOrigins.cpp SourcePaths.cpp ElectronSource.cpp ElectronSelection.cpp ElectronIPC.cpp ElectronEntries.cpp PrimitiveNumbers.cpp)
   target_link_libraries(NeverDWeb PRIVATE neverd_js_parser)
   target_compile_definitions(NeverDWeb PRIVATE NEVERD_ENABLE_WEB_JAVASCRIPT=1)
+  if(MSVC)
+    # HermesModel forwards variadic AST field lists through nested macros.
+    # The traditional MSVC preprocessor does not expand these as C++ requires.
+    target_compile_options(NeverDWeb PRIVATE /Zc:preprocessor)
+  endif()
   # The parser's build directory is EXCLUDE_FROM_ALL, including its install
   # rules. Ship both embedded-source license sets from the owning feature.
   install(DIRECTORY "${CMAKE_SOURCE_DIR}/LICENSES/hermes/"
