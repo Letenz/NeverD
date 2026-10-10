@@ -153,6 +153,8 @@ Geschützte Countdown-Tests prüfen den nächsten Versuch nach einem verworfenen
 
 `NeverDInterpreterLLVMRefinementTests` prüft neue Gesamtbeweise, exakte Text-/Funktionsbindung, unabhängige Budgets, vollständige Beobachtungen und größere Quellbereiche. Geänderte Bytes, Restprogramme, Ergebnisse, Flags, Status, Frame-Schreibzugriffe, Poison und falsche/veraltete Schleifenpläne müssen den Gesamtnachweis verhindern. Beliebige Wortzähler erfordern beide induktiven Voraussetzungen; unabhängige C-Beispiele mit O1/O2 prüfen tatsächlichen serialisierten LLVM-Input. Zustandsmodelltests lehnen versteckte Einstieg-Rückkanten ab und begrenzen Wurzeln ohne Kopie zusätzlicher Herkunftsdaten.
 
+`InterpreterLLVMRefinement.Preservation*` prüft Teilbereiche und Überlappungen, ungültige Anfragen, unabhängig berechneten Vorbereitungsaufwand, identische Endwertänderungen, Sicherung/Wiederherstellung von Eintrittswerten über Schleifen, neue opake Nachweise und späte Ablehnung. Auch den API-Verbraucher `NeverDPEFixedImageTests` neu bauen. Ergebnisse, Zähler und Digests bei ausgelassener Anfrage separat mit der Basis vergleichen.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests

@@ -153,6 +153,8 @@ Les tests de décompte gardé couvrent la reprise après rejet du modèle du cor
 
 `NeverDInterpreterLLVMRefinementTests` vérifie la composition nouvelle, la liaison texte/fonction exacte, les budgets indépendants, toutes les observations et le domaine source élargi. Des octets, résidus, résultats, drapeaux, statuts, écritures, poison ou plans faux/périmés doivent empêcher l’attestation composée. Le décompte sur un mot arbitraire exige les deux prémisses inductives ; des exemples C indépendants compilés en O1/O2 vérifient le LLVM sérialisé réel. Les régressions refusent les retours d’entrée cachés et bornent les racines sans copier la provenance accessoire.
 
+`InterpreterLLVMRefinement.Preservation*` couvre plages partielles ou superposées, requêtes invalides, coût de préparation calculé indépendamment, altérations finales identiques, sauvegarde/restauration des valeurs d’entrée à travers les boucles, preuves opaques nouvelles et refus tardifs. Reconstruire aussi le consommateur d’API `NeverDPEFixedImageTests`. Comparer séparément résultats, compteurs et résumés sans requête à la référence.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
