@@ -9,7 +9,17 @@ add_neverd_component_library(NeverDIRLowValidation
 )
 
 add_neverd_component_library(NeverDIRRegistrationState
-  RegistrationState.cpp
+  X86/RegistrationState.cpp
+  X86/RegistrationStateCalls.cpp
+  X86/RegistrationStateCxx.cpp
+  X86/RegistrationStateContracts.cpp
+  X86/RegistrationStateCookies.cpp
+  X86/RegistrationStateDispatch.cpp
+  X86/RegistrationStateOccurrences.cpp
+  X86/RegistrationStateResult.cpp
+  X86/RegistrationStateTransfer.cpp
+  X86/RegistrationStateUnwind.cpp
+  X86/RegistrationFrame.cpp
 )
 
 add_neverd_component_library(NeverDIRLow
@@ -26,7 +36,10 @@ add_neverd_component_library(NeverDIRLow
   FuncDetectorARM.cpp
   FuncDetectorAArch64.cpp
   IndirectTailFrame.cpp
-  RegistrationABI.cpp
+  X86/RegistrationCalleeABI.cpp
+  X86/RegistrationCalleeFrame.cpp
+  X86/RegistrationCalleeIndex.cpp
+  X86/RegistrationCallerABI.cpp
   NdOpEmulator.cpp
   NdOpEmulatorExec.cpp
   NdOpEmulatorFloatConvert.cpp

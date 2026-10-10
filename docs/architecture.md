@@ -71,6 +71,16 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+The implementation lives under `lib/ir/low/X86`: frame transfer, callee ABI,
+state initialization, ordinary transfers, C++ calls/objects, exceptional roots,
+cookies and result publication have separate translation units. The private
+state solver owns the shared lattice and cumulative work budget across them.
+The LLVM backend keeps registration lowering and callback preflight, scratch
+stack proof, outlining and security-check ABI under `lib/backend/llvm/X86`.
+COFF installation, source-IR replay, callback identity, incoming-frame proof,
+image-pointer closure and emitted SEH table checks remain separate consumers
+under `lib/backend/codegen/COFF`. Splitting these implementations does not add a
+second source-semantics owner or turn an analysis result into rewrite permission.
 It also publishes ordinary, runtime-dispatch and catch-resumption reachability.
 Empty levels alone do not identify dead code: a reached block can precede
 installation or follow removal. The call ABI consumer prunes only with complete

@@ -1,10 +1,10 @@
-//===- MedLLVMNativeRegistrationCxx.cpp - Native PE32 C++ EH -------------===//
+//===- MedLLVMNativeRegistrationCxx.cpp - Native PE32 C++ EH --------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 
-#include "MedLLVMEHHelpers.h"
+#include "../eh/MedLLVMEHHelpers.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
