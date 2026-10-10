@@ -19,6 +19,7 @@
 
 #include "AffineFrameState.h"
 #include "JumpTableResolverDetail.h"
+#include "ResolverLaneView.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -38,6 +39,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <charconv>
 #include <cstdint>
 #include <cstring>
@@ -47,6 +49,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <memory_resource>
 #include <optional>
 #include <set>
 #include <string>
@@ -74,10 +77,25 @@ bool detail::recordUniqueJumpTableProofPoint(
 namespace {
 
 size_t orderedSetLookupWork(size_t Count) {
-  size_t Work = 1;
-  for (size_t N = Count; N > 1; N = N / 2 + N % 2)
-    ++Work;
-  return Work;
+  // The evidence charge is 1 + ceil(log2(Count)), including one unit for an
+  // empty lookup. Compute it without walking the tree height for every debit.
+  return Count > 1 ? 1 + std::bit_width(Count - 1) : 1;
+}
+
+// Instructions and most proof points arrive in address order. Preserve the
+// ordinary lower_bound result for duplicate or out-of-order points, while
+// avoiding a full tree search for the usual append or repeated-last-key case.
+template <typename Key, typename Value, typename Allocator>
+auto ascendingLowerBound(
+    std::map<Key, Value, std::less<Key>, Allocator> &Values, const Key &K) {
+  if (Values.empty())
+    return Values.end();
+  const auto Last = std::prev(Values.end());
+  if (Last->first < K)
+    return Values.end();
+  if (Last->first == K)
+    return Last;
+  return Values.lower_bound(K);
 }
 
 bool intrinsicMayClobberFrameMemory(const LowOp &Op) {
@@ -185,16 +203,30 @@ struct ResolverFlowBlock {
 };
 
 struct ResolverFlowGraph {
+  // Ordered proof indexes are built and retired together. Keep their nodes
+  // in one query-owned arena instead of allocating/freeing every tree node.
+  // The stable heap address survives returning the graph by value, and this
+  // first member is destroyed after every container that refers to it.
+  std::unique_ptr<std::pmr::monotonic_buffer_resource> IndexStorage =
+      std::make_unique<std::pmr::monotonic_buffer_resource>(
+          std::pmr::new_delete_resource());
   std::vector<ResolverFlowBlock> Blocks;
-  std::map<va_t, int> InsnToBlock;
-  std::map<detail::JumpTableProofPoint, detail::JumpTableProofLocation>
-      PointToOp;
-  std::set<detail::JumpTableProofPoint> AmbiguousPoints;
+  std::pmr::map<va_t, int> InsnToBlock{IndexStorage.get()};
+  std::pmr::map<detail::JumpTableProofPoint, detail::JumpTableProofLocation>
+      PointToOp{IndexStorage.get()};
+  std::pmr::set<detail::JumpTableProofPoint> AmbiguousPoints{
+      IndexStorage.get()};
   std::set<va_t> InstructionGuards;
   /// Durable and conditional block-entry roots that actually seeded the final
   /// pruned graph.  Dominance and live-in identity must use this set rather
   /// than graph indegree or PersistentCFGRoots alone.
   std::vector<int> RootBlocks;
+
+  ResolverFlowGraph() = default;
+  ResolverFlowGraph(ResolverFlowGraph &&) = default;
+  // Moving the arena over a populated graph would release storage before its
+  // old indexes are retired. Graphs are only constructed and returned.
+  ResolverFlowGraph &operator=(ResolverFlowGraph &&) = delete;
 };
 
 // A direct call to the following instruction is an internal CFG edge. On
@@ -328,7 +360,7 @@ static ResolverFlowGraph buildResolverFlowGraph(
   };
   auto failIncomplete = [&]() { return ResolverFlowGraph{}; };
   ResolverFlowGraph Graph;
-  std::map<va_t, size_t> GroupCounts;
+  std::pmr::map<va_t, size_t> GroupCounts{Graph.IndexStorage.get()};
   for (const ResolverInsnSnapshot &Insn : Insns) {
     if (!consumeWork() || !consumeLookup(BlockStarts.size()))
       return failIncomplete();
@@ -338,7 +370,7 @@ static ResolverFlowGraph buildResolverFlowGraph(
     --BI;
     if (!consumeLookup(GroupCounts.size()))
       return failIncomplete();
-    auto Count = GroupCounts.lower_bound(*BI);
+    auto Count = ascendingLowerBound(GroupCounts, *BI);
     if (Count == GroupCounts.end() || Count->first != *BI) {
       if (!consumeWork(5))
         return failIncomplete();
@@ -352,12 +384,14 @@ static ResolverFlowGraph buildResolverFlowGraph(
     ++Count->second;
   }
 
-  std::map<va_t, std::vector<const ResolverInsnSnapshot *>> Grouped;
+  std::pmr::map<va_t, std::vector<const ResolverInsnSnapshot *>> Grouped{
+      Graph.IndexStorage.get()};
   for (const auto &[Start, Count] : GroupCounts) {
     if (!consumeWork() || !consumeMapNodeInsert(Grouped.size()) ||
         !consumeProduct(Count, 2) || !consumeWork(2))
       return failIncomplete();
-    auto Group = Grouped.try_emplace(Start).first;
+    auto Group = Grouped.emplace_hint(
+        Grouped.end(), Start, std::vector<const ResolverInsnSnapshot *>{});
     Group->second.reserve(Count);
   }
   for (const ResolverInsnSnapshot &Insn : Insns) {
@@ -375,7 +409,7 @@ static ResolverFlowGraph buildResolverFlowGraph(
     Group->second.push_back(&Insn);
   }
 
-  std::map<va_t, int> StartToBlock;
+  std::pmr::map<va_t, int> StartToBlock{Graph.IndexStorage.get()};
   if (Grouped.size() > static_cast<size_t>(std::numeric_limits<int>::max()) ||
       !consumeProduct(Grouped.size(), 2) || !consumeProduct(Insns.size(), 2) ||
       !consumeWork(2))
@@ -387,7 +421,7 @@ static ResolverFlowGraph buildResolverFlowGraph(
     if (!consumeWork() || !consumeMapNodeInsert(StartToBlock.size()))
       return failIncomplete();
     const int Id = static_cast<int>(Graph.Blocks.size());
-    StartToBlock.try_emplace(Start, Id);
+    StartToBlock.emplace_hint(StartToBlock.end(), Start, Id);
     ResolverFlowBlock Block;
     Block.Start = Start;
     size_t BlockOpCount = 0;
@@ -421,11 +455,12 @@ static ResolverFlowGraph buildResolverFlowGraph(
       Block.HasResumableTerminator |= Insn->IsResumableTerminator;
       if (!consumeMapNodeInsert(Graph.InsnToBlock.size()))
         return failIncomplete();
-      Graph.InsnToBlock.try_emplace(Insn->Addr, Id);
+      Graph.InsnToBlock.emplace_hint(Graph.InsnToBlock.end(), Insn->Addr, Id);
       if (Insn->IsInstructionGuard) {
         if (!consumeSetNodeInsert(Graph.InstructionGuards.size()))
           return failIncomplete();
-        Graph.InstructionGuards.insert(Insn->Addr);
+        Graph.InstructionGuards.emplace_hint(Graph.InstructionGuards.end(),
+                                             Insn->Addr);
       }
       for (const LowOp &Op : Insn->Ops) {
         if (!consumeWork())
@@ -443,7 +478,7 @@ static ResolverFlowGraph buildResolverFlowGraph(
           continue;
         if (!consumeProofPointLookup(Graph.PointToOp.size()))
           return failIncomplete();
-        auto Unique = Graph.PointToOp.lower_bound(Point);
+        auto Unique = ascendingLowerBound(Graph.PointToOp, Point);
         if (Unique == Graph.PointToOp.end() || Unique->first != Point) {
           if (!consumeProduct(ProofPointKeyWork + ProofLocationWork, 2) ||
               !consumeWork())
@@ -2438,6 +2473,158 @@ static ResolverResult mergeResolverResults(
 
 } // namespace
 
+// Reuse only the pure graph-construction result, never a value proof or a
+// fixed-point stage. Every graph input is compared by value; proposal history,
+// one-shot test hooks and solver limits continue through their original paths.
+struct CFGBuilder::ResolverGraphCache {
+  struct StorageOwner {
+    va_t Branch;
+    bool HasTargets;
+    std::vector<JumpTableStorageRange> Ranges;
+    std::optional<JumpTableStorageRange> ImplicitRange;
+  };
+
+  std::vector<std::vector<LowOp>> OwnedOps;
+  std::vector<std::vector<va_t>> OwnedTargets;
+  std::vector<ResolverInsnSnapshot> Snapshot;
+  std::set<va_t> BlockStarts;
+  std::set<va_t> Roots;
+  std::map<va_t, std::set<va_t>> ConditionalRoots;
+  std::vector<StorageOwner> Owners;
+  size_t Work;
+  ResolverFlowGraph Graph;
+
+  static bool sameOp(const LowOp &A, const LowOp &B) {
+    return A.Opcode == B.Opcode && A.MemoryOrdering == B.MemoryOrdering &&
+           A.MemoryAddressSpace == B.MemoryAddressSpace &&
+           A.Output == B.Output && A.NumInputs == B.NumInputs &&
+           A.Addr == B.Addr && A.Seq == B.Seq &&
+           std::equal(std::begin(A.Inputs), std::end(A.Inputs),
+                      std::begin(B.Inputs));
+  }
+
+  static bool sameInsn(const ResolverInsnSnapshot &A,
+                       const ResolverInsnSnapshot &B) {
+    return A.Addr == B.Addr && A.Size == B.Size && A.IsBranch == B.IsBranch &&
+           A.IsCond == B.IsCond && A.IsCall == B.IsCall && A.IsRet == B.IsRet &&
+           A.IsIndirect == B.IsIndirect &&
+           A.IsOpaqueTerminator == B.IsOpaqueTerminator &&
+           A.IsResumableTerminator == B.IsResumableTerminator &&
+           A.IsNoReturnCall == B.IsNoReturnCall &&
+           A.IsInstructionGuard == B.IsInstructionGuard &&
+           A.BranchTarget == B.BranchTarget &&
+           A.JumpTableTargets == B.JumpTableTargets &&
+           A.Ops.size() == B.Ops.size() &&
+           std::equal(A.Ops.begin(), A.Ops.end(), B.Ops.begin(), sameOp);
+  }
+
+  // Cap retained input payloads at 8 MiB, and cap graph vertices separately.
+  // A single builder retains at most one graph; oversized inputs use the
+  // established uncached path. This bound also limits cache-comparison work.
+  static bool canRetain(const CFGBuilder &B,
+                        const std::vector<ResolverInsnSnapshot> &Input,
+                        const std::set<va_t> &ProofRoots) {
+    if (Input.size() > 8192 || B.BlockStarts.size() > 8192 ||
+        B.ResolvedTableInfo.size() > 1024)
+      return false;
+    size_t Remaining = 8 * 1024 * 1024;
+    auto account = [&](size_t Count, size_t Size) {
+      if (Count > Remaining / Size)
+        return false;
+      Remaining -= Count * Size;
+      return true;
+    };
+    if (!account(Input.size(), sizeof(ResolverInsnSnapshot) +
+                                   sizeof(std::vector<LowOp>) +
+                                   sizeof(std::vector<va_t>)) ||
+        !account(B.BlockStarts.size(), 4 * sizeof(va_t)) ||
+        !account(ProofRoots.size(), 4 * sizeof(va_t)) ||
+        !account(B.DiscoveredCodeRefSources.size(), 8 * sizeof(va_t)) ||
+        !account(B.ResolvedTableInfo.size(), sizeof(StorageOwner)))
+      return false;
+    for (const auto &I : Input)
+      if (!account(I.Ops.size(), sizeof(LowOp)) ||
+          !account(I.JumpTableTargets.size(), sizeof(va_t)))
+        return false;
+    for (const auto &[Root, Sources] : B.DiscoveredCodeRefSources)
+      if (!account(Sources.size(), 4 * sizeof(va_t)))
+        return false;
+    for (const auto &[Branch, Info] : B.ResolvedTableInfo)
+      if (!account(Info.StorageRanges.size(), sizeof(JumpTableStorageRange)))
+        return false;
+    return true;
+  }
+
+  ResolverGraphCache(const CFGBuilder &B,
+                     std::vector<ResolverInsnSnapshot> &&Input,
+                     const std::set<va_t> &ProofRoots, size_t GraphWork,
+                     ResolverFlowGraph &&BuiltGraph)
+      : Snapshot(std::move(Input)), BlockStarts(B.BlockStarts),
+        Roots(ProofRoots), ConditionalRoots(B.DiscoveredCodeRefSources),
+        Work(GraphWork), Graph(std::move(BuiltGraph)) {
+    // Moving the snapshot vector preserves the addresses held by LastInsn.
+    // Freeze its borrowed payloads before any proposal can mutate or roll back
+    // the originating instruction map or an override vector.
+    OwnedOps.reserve(Snapshot.size());
+    OwnedTargets.reserve(Snapshot.size());
+    for (auto &I : Snapshot) {
+      OwnedOps.emplace_back(I.Ops.begin(), I.Ops.end());
+      OwnedTargets.emplace_back(I.JumpTableTargets.begin(),
+                                I.JumpTableTargets.end());
+      I.Ops = OwnedOps.back();
+      I.JumpTableTargets = OwnedTargets.back();
+    }
+    Owners.reserve(B.ResolvedTableInfo.size());
+    for (const auto &[Branch, Info] : B.ResolvedTableInfo) {
+      const auto Rec = B.Insns.find(Branch);
+      const bool HasTargets =
+          Rec != B.Insns.end() && !Rec->second.JumpTableTargets.empty();
+      StorageOwner Owner{Branch, HasTargets, {}, std::nullopt};
+      if (HasTargets) {
+        if (!Info.StorageRanges.empty())
+          Owner.Ranges = Info.StorageRanges;
+        else
+          Owner.ImplicitRange = implicitJumpTableStorageRange(
+              Info, Rec->second.JumpTableTargets.size());
+      }
+      Owners.push_back(std::move(Owner));
+    }
+  }
+
+  bool matches(const CFGBuilder &B,
+               const std::vector<ResolverInsnSnapshot> &Input,
+               const std::set<va_t> &ProofRoots) const {
+    if (BlockStarts != B.BlockStarts || Roots != ProofRoots ||
+        ConditionalRoots != B.DiscoveredCodeRefSources ||
+        Owners.size() != B.ResolvedTableInfo.size() ||
+        Snapshot.size() != Input.size() ||
+        !std::equal(Snapshot.begin(), Snapshot.end(), Input.begin(), sameInsn))
+      return false;
+    // The storage callback always receives the graph's active-owner filter.
+    // Preserve every visited map key (including absent/empty instructions),
+    // range order, and the implicit range: these determine both its result and
+    // its exact work charge. PublishedReachableInsns is not read on this path.
+    size_t I = 0;
+    for (const auto &[Branch, Info] : B.ResolvedTableInfo) {
+      const auto &Owner = Owners[I++];
+      const auto Rec = B.Insns.find(Branch);
+      const bool HasTargets =
+          Rec != B.Insns.end() && !Rec->second.JumpTableTargets.empty();
+      if (Owner.Branch != Branch || Owner.HasTargets != HasTargets)
+        return false;
+      if (!HasTargets)
+        continue;
+      if (Owner.Ranges != Info.StorageRanges)
+        return false;
+      if (Info.StorageRanges.empty() &&
+          Owner.ImplicitRange != implicitJumpTableStorageRange(
+                                     Info, Rec->second.JumpTableTargets.size()))
+        return false;
+    }
+    return true;
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // sliceBackForTableBase — backward data-flow slicing
 //===----------------------------------------------------------------------===//
@@ -4263,19 +4450,44 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                          ? *ActiveJumpTableProofRoots
                                          : PersistentCFGRoots;
   bool GraphComplete = false;
-  const ResolverFlowGraph Graph = buildResolverFlowGraph(
-      Snapshot, BlockStarts, ProofRoots, DiscoveredCodeRefSources,
-      [&](va_t Address, const std::set<va_t> *ActiveOwners) {
-        return resolvedJumpTableOwnsStorageAddress(Address, ActiveOwners,
-                                                   GraphWorkBudget);
-      },
-      GraphWorkBudget, &GraphComplete);
+  std::optional<ResolverFlowGraph> FreshGraph;
+  // Keep a local owner: a nested query may replace the builder's cache while
+  // this synchronous proof is still using its immutable graph.
+  std::shared_ptr<const ResolverGraphCache> ReusedGraph;
+  if (GraphWorkBudget && CachedResolverGraph &&
+      CachedResolverGraph->matches(*this, Snapshot, ProofRoots)) {
+    GraphComplete =
+        consumeResolverGraphWork(GraphWorkBudget, CachedResolverGraph->Work);
+    if (GraphComplete)
+      ReusedGraph = CachedResolverGraph;
+  } else {
+    const size_t Before = GraphWorkBudget ? *GraphWorkBudget : 0;
+    FreshGraph.emplace(buildResolverFlowGraph(
+        Snapshot, BlockStarts, ProofRoots, DiscoveredCodeRefSources,
+        [&](va_t Address, const std::set<va_t> *ActiveOwners) {
+          return resolvedJumpTableOwnsStorageAddress(Address, ActiveOwners,
+                                                     GraphWorkBudget);
+        },
+        GraphWorkBudget, &GraphComplete));
+    if (GraphComplete && GraphWorkBudget &&
+        ResolverGraphCache::canRetain(*this, Snapshot, ProofRoots)) {
+      ReusedGraph = std::make_shared<ResolverGraphCache>(
+          *this, std::move(Snapshot), ProofRoots, Before - *GraphWorkBudget,
+          std::move(*FreshGraph));
+      CachedResolverGraph = ReusedGraph;
+    }
+  }
   if (!GraphComplete) {
     if (QueryAnalysisComplete)
       std::fill(QueryAnalysisComplete->begin(), QueryAnalysisComplete->end(),
                 false);
     return Results;
   }
+  const ResolverFlowGraph &Graph =
+      ReusedGraph ? ReusedGraph->Graph : *FreshGraph;
+  // A cache hit pays the full cold graph charge, including storage ownership.
+  // Resource-incomplete graphs never enter the cache. Value analysis below is
+  // always replayed and may independently report analysis-incomplete.
   // Graph construction is only the first half of one evidence query.  Keep
   // charging the same candidate-local account while reconstructing frame,
   // memory and value state, and while matching/symbolizing the resulting DAG.
@@ -4339,6 +4551,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   };
   std::set<DefinedOccurrenceRootKey> DefinedOccurrenceRoots;
   bool DefinedOccurrenceRootsPrepared = false;
+  const TargetRegInfo &TRI = getTargetRegInfo(CurrentImg->Arch);
   auto prepareDefinedOccurrenceRoots = [&] {
     if (DefinedOccurrenceRootsPrepared)
       return true;
@@ -4366,6 +4579,29 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       for (const JumpTableValueOccurrence &Alternative : Query.Alternatives) {
         if (!Alternative.DefinedAtPoint)
           continue;
+        NdVar Producer = Alternative.Value;
+        if (Producer.isReg()) {
+          if (!consumeEvidenceProduct(
+                  2, orderedSetLookupWork(Graph.PointToOp.size())) ||
+              !consumeEvidence(2))
+            return false;
+          const auto Point =
+              Graph.PointToOp.find({Alternative.Addr, Alternative.Seq});
+          if (Point != Graph.PointToOp.end()) {
+            const auto [Block, Op] = Point->second;
+            const NdVar &Output = Graph.Blocks[Block].Ops[Op].Output;
+            // A guard may observe AL after an EAX producer. Name the actual
+            // complete definition once; resolveValue still slices its exact
+            // written lane and checks every intervening definition. Do not
+            // invent a narrow producer or equate it with the full register.
+            if (Output.isReg() && Producer.Size < Output.Size &&
+                Producer.Provenance == Output.Provenance &&
+                Producer.AddressOwnerVA == Output.AddressOwnerVA &&
+                TRI.isSubRegOf(Producer.Offset, Producer.Size, Output.Offset,
+                               Output.Size))
+              Producer = Output;
+          }
+        }
         const size_t Lookup =
             orderedSetLookupWork(DefinedOccurrenceRoots.size());
         if (!consumeEvidenceProduct(DefinedOccurrenceRootKeyWork, Lookup) ||
@@ -4373,7 +4609,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
             !consumeEvidence())
           return false;
         DefinedOccurrenceRoots.insert(definedOccurrenceRootKey(
-            Alternative.Addr, Alternative.Seq, Alternative.Value));
+            Alternative.Addr, Alternative.Seq, Producer));
       }
     }
     DefinedOccurrenceRootsPrepared = true;
@@ -4497,45 +4733,13 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     }
     return -1;
   };
-  const TargetRegInfo &TRI = getTargetRegInfo(CurrentImg->Arch);
   const llvm::ArrayRef<uint64_t> IntParamRegs =
       TRI.integerParamRegs(CurrentImg->abiFormat());
   const std::vector<TargetRegisterRange> CallPreservedRanges =
       TRI.callPreservedRanges(CurrentImg->abiFormat());
-  struct LaneView {
-    VnodeSpace Space = VnodeSpace::CONST;
-    uint64_t Container = InvalidVA;
-    uint16_t ContainerSize = 0;
-    uint16_t Begin = 0;
-    uint16_t Size = 0;
-    bool Valid = false;
-  };
-  auto viewOf = [&](const NdVar &V) -> LaneView {
-    LaneView View;
-    if (V.Size == 0 || (!V.isReg() && !V.isTemp()))
-      return View;
-    View.Space = V.Space;
-    View.Size = V.Size;
-    if (V.isTemp()) {
-      View.Container = V.Offset;
-      View.ContainerSize = V.Size;
-      View.Valid = true;
-      return View;
-    }
-    auto [WideOff, WideSize] = TRI.findWideReg(V.Offset, V.Size);
-    int ByteOffset = TRI.subRegByteOffset(V.Offset, V.Size, WideOff, WideSize);
-    if (ByteOffset < 0) {
-      if (V.Offset < WideOff || V.Offset - WideOff > WideSize ||
-          V.Size > WideSize - (V.Offset - WideOff))
-        return View;
-      ByteOffset = static_cast<int>(V.Offset - WideOff);
-    }
-    View.Container = WideOff;
-    View.ContainerSize = WideSize;
-    View.Begin = static_cast<uint16_t>(ByteOffset);
-    View.Valid = true;
-    return View;
-  };
+  using LaneView = detail::ResolverLaneView;
+  detail::ResolverLaneViews LaneViews(TRI);
+  auto viewOf = [&](const NdVar &V) { return LaneViews.get(V); };
   auto sameContainer = [](const LaneView &A, const LaneView &B) {
     return A.Valid && B.Valid && A.Space == B.Space &&
            A.Container == B.Container;

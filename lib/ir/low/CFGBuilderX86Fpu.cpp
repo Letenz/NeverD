@@ -23,8 +23,14 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/Limits.h"
+#include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/LowNoReturn.h"
+#include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/SymbolDecoration.h"
 
 #include <map>
 #include <queue>
@@ -55,7 +61,327 @@ int demaskDelta(int D) {
 
 } // namespace
 
+/// The index lives for one CFG build of an unchanged image. Its cached local
+/// graphs contain machine facts, not answers obtained under a caller's budget.
+/// Each query pays for its complete call closure and every dataflow transfer.
+class X87CallEffectIndex {
+  struct Step {
+    int Delta = 0;
+    uint8_t Reads = 0;
+    uint8_t Writes = 0;
+    std::optional<va_t> Callee;
+    bool Unknown = false;
+  };
+  struct Block {
+    std::vector<Step> Steps;
+    std::vector<int> Successors;
+    bool Returns = false;
+    bool Stops = false;
+  };
+  struct Graph {
+    std::vector<Block> Blocks;
+    size_t Cost = 0;
+    bool Complete = false;
+  };
+  struct Query {
+    size_t Remaining = limits::kMaxX87CallProofWork;
+    std::set<va_t> Charged, Active;
+    std::map<std::pair<va_t, unsigned>, std::optional<int>> Results;
+    bool pay(size_t Cost) {
+      if (Cost > Remaining) {
+        Remaining = 0;
+        return false;
+      }
+      Remaining -= Cost;
+      return true;
+    }
+  };
+  const CFGBuilder &Settings;
+  const BinaryImage &Image;
+  std::map<va_t, Graph> Graphs;
+  std::map<va_t, std::optional<int>> Answers;
+
+  std::optional<int> importEffect(llvm::StringRef Name) const {
+    bool Floating = false, LongDouble = false, Complex = false;
+    if (const auto *Prototype =
+            libc::libcPrototype(Name.str(), Image.abiFormat())) {
+      Floating = libc::isFloatingType(Prototype->Return);
+      LongDouble = Prototype->Return == "long double";
+    } else if (const auto Arity = importNamesAreCNames(Image.Format)
+                                      ? libc::libcArity(Name.str())
+                                      : libc::libcArityForSymbol(Name.str())) {
+      Floating = libc::floatReturnBytes(*Arity) != 0;
+      LongDouble = Arity->FpRetLongDouble;
+      Complex = Arity->FpRetComplex;
+    } else {
+      return std::nullopt;
+    }
+    if (Image.Arch == Arch::X86)
+      return Complex ? std::nullopt
+                     : std::optional<int>(Floating || LongDouble ? -1 : 0);
+    // Win64 toolchains disagree on long double's representation. An import
+    // name alone cannot choose MSVC's double or MinGW's x87 result contract.
+    if (LongDouble)
+      return Image.abiFormat() == BinaryFormat::COFF || Complex
+                 ? std::nullopt
+                 : std::optional<int>(-1);
+    return 0;
+  }
+
+  static bool modeledIntrinsic(const LowOp &Op) {
+    if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
+      return false;
+    if (isArchitecturalNoReturn(Op))
+      return true;
+    // The decoder already accounts for the numeric x87 operations' pops and
+    // pushes. Environment restores, tag changes and unknown intrinsics have
+    // additional state effects and cannot acquire a net-stack summary here.
+    switch (static_cast<Intrinsic>(Op.Inputs[0].Offset)) {
+    case Intrinsic::X87Fsin:
+    case Intrinsic::X87Fcos:
+    case Intrinsic::X87F2xm1:
+    case Intrinsic::X87Fscale:
+    case Intrinsic::X87Fprem:
+    case Intrinsic::X87Fprem1:
+    case Intrinsic::X87Fpatan:
+    case Intrinsic::X87Fyl2x:
+    case Intrinsic::X87Fyl2xp1:
+    case Intrinsic::X87Fptan:
+    case Intrinsic::X87Fxtractsig:
+    case Intrinsic::X87Fxtractexp:
+    case Intrinsic::X87Fnclex:
+    case Intrinsic::X87ReadStatus:
+    case Intrinsic::X87Wait:
+    case Intrinsic::Pause:
+    case Intrinsic::Cpuid:
+    case Intrinsic::Rdtsc:
+    case Intrinsic::Rdtscp:
+    case Intrinsic::Mfence:
+    case Intrinsic::Lfence:
+    case Intrinsic::Sfence:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  const Graph &graph(va_t Entry) {
+    auto [It, Fresh] = Graphs.try_emplace(Entry);
+    Graph &G = It->second;
+    if (!Fresh || !Image.hasExecutableCodeOwnerAt(Entry))
+      return G;
+    Decoder Dec;
+    if (!Dec.init(Image))
+      return G;
+    CFGBuilder Builder;
+    Builder.SkipX87StackFixup = true;
+    Builder.setKnownFuncEntries(Settings.KnownFuncEntries);
+    Builder.setNoReturnTargetIndex(Settings.NoReturnTargets);
+    Builder.setNoReturnCalleeProver(Settings.NoReturnCallees,
+                                    Settings.NoReturnCalleeDepth + 1);
+    Builder.setAbsoluteRelocationRootIndex(Settings.AbsoluteRelocationRoots);
+    Builder.setExecutableCodeOwnerIndex(Settings.ExecutableCodeOwners);
+    Builder.ProtectedJumpTableRelocationSlots =
+        Settings.ProtectedJumpTableRelocationSlots;
+    Builder.UnsafeJumpTableBranches = Settings.UnsafeJumpTableBranches;
+    const LowFunc F = Builder.build(Image, Dec, Entry);
+    if (!F.hasCompleteInstructionLift() || !F.TruncatedPathAddresses.empty() ||
+        F.Blocks.empty() || F.Blocks.front().StartAddr != Entry)
+      return G;
+    G.Blocks.resize(F.Blocks.size());
+    for (size_t I = 0; I < F.Blocks.size(); ++I) {
+      const LowBlock &Source = F.Blocks[I];
+      Block &B = G.Blocks[I];
+      if (Source.Id != static_cast<int>(I) ||
+          Source.InstructionBoundaries.empty() ||
+          !Source.ExceptionalSuccs.empty() || !Source.ExceptionalPreds.empty())
+        return G;
+      G.Cost += 1 + Source.Ops.size() + Source.Succs.size();
+      if (G.Cost > limits::kMaxX87CallProofWork)
+        return G;
+      B.Successors = Source.Succs;
+      for (int S : B.Successors)
+        if (S < 0 || static_cast<size_t>(S) >= F.Blocks.size())
+          return G;
+      for (const LowInstructionBoundary &Boundary :
+           Source.InstructionBoundaries) {
+        const auto RecIt = Builder.Insns.find(Boundary.Address);
+        if (RecIt == Builder.Insns.end() ||
+            RecIt->second.Size != Boundary.Size ||
+            Boundary.FirstOp > Source.Ops.size() ||
+            Boundary.OpCount > Source.Ops.size() - Boundary.FirstOp)
+          return G;
+        const auto &Rec = RecIt->second;
+        Step S;
+        S.Delta = demaskDelta(Rec.FpuTopOut - Rec.FpuTopIn);
+        S.Unknown = Rec.FpuReset;
+        for (size_t O = Boundary.FirstOp;
+             O < Boundary.FirstOp + Boundary.OpCount; ++O) {
+          const LowOp &Op = Source.Ops[O];
+          if (Op.Opcode == NdOp::INTRINSIC) {
+            S.Unknown |= !modeledIntrinsic(Op);
+            B.Stops |= isArchitecturalNoReturn(Op);
+          }
+          for (unsigned K = 0; K < Op.NumInputs; ++K)
+            if (isStReg(Op.Inputs[K])) {
+              const uint8_t Bit =
+                  uint8_t(1u << ((x86reg::stRegIndex(Op.Inputs[K].Offset) -
+                                  Rec.FpuTopIn) &
+                                 7));
+              S.Reads |= Bit & ~S.Writes;
+              S.Unknown |= Op.Inputs[K].Size != x86reg::FPURegSize;
+            }
+          if (isStReg(Op.Output)) {
+            if (Op.Output.Size != x86reg::FPURegSize)
+              S.Unknown = true;
+            else
+              S.Writes |= uint8_t(
+                  1u << ((x86reg::stRegIndex(Op.Output.Offset) - Rec.FpuTopIn) &
+                         7));
+          }
+          if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+            if (hasLowInstructionControlFlag(
+                    Boundary.ControlFlags,
+                    LowInstructionControlFlag::NoReturn)) {
+              B.Stops = true;
+              continue;
+            }
+            if (S.Callee || Op.NumInputs == 0)
+              S.Unknown = true;
+            else if (Op.Inputs[0].isConst())
+              S.Callee = Op.Inputs[0].Offset;
+            else
+              S.Callee = loadedCallSlot(F, Source, O, Op.Inputs[0]);
+            S.Unknown |= !S.Callee;
+          }
+          B.Returns |= Op.Opcode == NdOp::RETURN;
+        }
+        if (S.Delta || S.Reads || S.Writes || S.Callee || S.Unknown)
+          B.Steps.push_back(S);
+      }
+      if (B.Successors.empty() && !B.Returns && !B.Stops)
+        return G;
+    }
+    G.Complete = true;
+    return G;
+  }
+
+  std::optional<int> prove(va_t Entry, unsigned Depth, Query &Q) {
+    if (!Q.pay(1) || Depth >= limits::kMaxX87CallProofDepth)
+      return std::nullopt;
+    const auto Key = std::make_pair(Entry, Depth);
+    if (auto It = Q.Results.find(Key); It != Q.Results.end())
+      return It->second;
+    if (!Q.Active.insert(Entry).second)
+      return std::nullopt;
+    auto Compute = [&]() -> std::optional<int> {
+      if (Q.Charged.insert(Entry).second &&
+          Q.Charged.size() > limits::kMaxX87CallProofFunctions)
+        return std::nullopt;
+      if (const auto Name = importCalleeName(Image, Entry); !Name.empty())
+        return importEffect(Name);
+      const Graph &G = graph(Entry);
+      if (!G.Complete || !Q.pay(G.Cost))
+        return std::nullopt;
+      std::map<va_t, int> Callees;
+      for (const Block &B : G.Blocks)
+        for (const Step &S : B.Steps) {
+          if (S.Unknown)
+            return std::nullopt;
+          if (S.Callee && !Callees.count(*S.Callee)) {
+            const auto Effect = prove(*S.Callee, Depth + 1, Q);
+            if (!Effect || (*Effect != 0 && *Effect != -1))
+              return std::nullopt;
+            Callees.emplace(*S.Callee, *Effect);
+          }
+        }
+      struct State {
+        int Top = 0;
+        uint8_t Defined = 0;
+      };
+      std::vector<std::optional<State>> Entries(G.Blocks.size()),
+          Exits(G.Blocks.size());
+      std::queue<int> Work;
+      Entries[0] = State{};
+      Work.push(0);
+      while (!Work.empty()) {
+        const int Id = Work.front();
+        Work.pop();
+        const Block &B = G.Blocks[Id];
+        if (!Q.pay(1 + B.Steps.size() + B.Successors.size()))
+          return std::nullopt;
+        State Value = *Entries[Id];
+        for (const Step &S : B.Steps) {
+          for (int K = 0; K != 8; ++K)
+            if ((S.Reads & (1u << K)) &&
+                !(Value.Defined & (1u << ((Value.Top + K) & 7))))
+              return std::nullopt;
+          const int Delta = S.Delta + (S.Callee ? Callees.at(*S.Callee) : 0);
+          // Pushes discard stale slots before their new definitions; pops
+          // discard them after the instruction's reads and writes.
+          for (int K = Delta; K < 0; ++K)
+            Value.Defined &= uint8_t(~(1u << ((Value.Top + K) & 7)));
+          for (int K = 0; K != 8; ++K)
+            if (S.Writes & (1u << K))
+              Value.Defined |= uint8_t(1u << ((Value.Top + K) & 7));
+          for (int K = 0; K < Delta; ++K)
+            Value.Defined &= uint8_t(~(1u << ((Value.Top + K) & 7)));
+          Value.Top += Delta;
+          if (Value.Top < -8 || Value.Top > 8)
+            return std::nullopt;
+          if (S.Callee && Callees.at(*S.Callee) == -1)
+            Value.Defined |= uint8_t(1u << (Value.Top & 7));
+        }
+        Exits[Id] = Value;
+        for (int S : B.Successors) {
+          if (!Entries[S]) {
+            Entries[S] = Value;
+            Work.push(S);
+          } else {
+            if (Entries[S]->Top != Value.Top)
+              return std::nullopt;
+            const uint8_t Meet = Entries[S]->Defined & Value.Defined;
+            if (Meet != Entries[S]->Defined) {
+              Entries[S]->Defined = Meet;
+              Work.push(S);
+            }
+          }
+        }
+      }
+      std::optional<int> Result;
+      for (size_t I = 0; I < G.Blocks.size(); ++I) {
+        if (!Exits[I] || !G.Blocks[I].Returns)
+          continue;
+        const State &Out = *Exits[I];
+        if ((Result && *Result != Out.Top) || (Out.Top != 0 && Out.Top != -1) ||
+            (Out.Top == -1 && !(Out.Defined & (1u << 7))))
+          return std::nullopt;
+        Result = Out.Top;
+      }
+      return Result;
+    };
+    const auto Result = Compute();
+    Q.Active.erase(Entry);
+    Q.Results.emplace(Key, Result);
+    return Result;
+  }
+
+public:
+  explicit X87CallEffectIndex(const CFGBuilder &Builder)
+      : Settings(Builder), Image(*Builder.CurrentImg) {}
+  std::optional<int> effect(va_t Entry) {
+    if (auto It = Answers.find(Entry); It != Answers.end())
+      return It->second;
+    Query Q;
+    const auto Result = prove(Entry, 0, Q);
+    Answers.emplace(Entry, Result);
+    return Result;
+  }
+};
+
 void CFGBuilder::fixupFpuStack(LowFunc &Func) {
+  if (SkipX87StackFixup)
+    return;
   if (!CurrentImg)
     return;
   if (CurrentImg->Arch != Arch::X86 && CurrentImg->Arch != Arch::X64)
@@ -70,17 +396,50 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
   for (size_t I = 0; I < N; ++I) {
     auto &Blk = Func.Blocks[I];
     bool First = true;
-    for (auto It = Insns.lower_bound(Blk.StartAddr);
-         It != Insns.end() && It->first < Blk.EndAddr; ++It) {
+    int CallShift = 0;
+    for (const LowInstructionBoundary &Boundary : Blk.InstructionBoundaries) {
+      const auto It = Insns.find(Boundary.Address);
+      if (It == Insns.end())
+        continue;
       const InsnRecord &Rec = It->second;
       if (First) {
         LiftedIn[I] = Rec.FpuTopIn;
         First = false;
       }
-      LiftedOut[I] = Rec.FpuTopOut;
-      if (Rec.FpuReset)
+      if (Rec.FpuReset) {
         HasReset[I] = true;
+        CallShift = 0;
+      }
       BlockDelta[I] += demaskDelta(Rec.FpuTopOut - Rec.FpuTopIn);
+      for (size_t O = Boundary.FirstOp;
+           O < Boundary.FirstOp + Boundary.OpCount && O < Blk.Ops.size(); ++O) {
+        LowOp &Op = Blk.Ops[O];
+        rebaseStReg(Op.Output, CallShift);
+        for (uint8_t K = 0; K < Op.NumInputs; ++K)
+          rebaseStReg(Op.Inputs[K], CallShift);
+        if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+            Op.NumInputs == 0 ||
+            hasLowInstructionControlFlag(Boundary.ControlFlags,
+                                         LowInstructionControlFlag::NoReturn))
+          continue;
+        const auto Target = Op.Inputs[0].isConst()
+                                ? std::optional<va_t>(Op.Inputs[0].Offset)
+                                : loadedCallSlot(Func, Blk, O, Op.Inputs[0]);
+        if (!Target)
+          continue;
+        if (!X87CallEffects)
+          X87CallEffects = std::make_shared<X87CallEffectIndex>(*this);
+        if (X87CallEffects->effect(*Target) != std::optional<int>(-1))
+          continue;
+        // The callee's complete returning paths push exactly one initialized
+        // value. Publish the definition before SSA and advance TOP before
+        // rebasing subsequent instructions, including successor blocks.
+        --CallShift;
+        --BlockDelta[I];
+        Op.Output = NdVar::reg(x86reg::stReg((Rec.FpuTopIn + CallShift) & 7),
+                               x86reg::FPURegSize);
+      }
+      LiftedOut[I] = (Rec.FpuTopOut + CallShift) & 7;
     }
     for (auto &Op : Blk.Ops) {
       if (isStReg(Op.Output)) {
@@ -101,6 +460,17 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
     AnyFpu = AnyFpu || HasFpu[I];
   if (!AnyFpu)
     return;
+  if (!X87CallEffects)
+    X87CallEffects = std::make_shared<X87CallEffectIndex>(*this);
+  const bool ReturnsX87 =
+      X87CallEffects->effect(Func.Entry) == std::optional<int>(-1);
+  auto bindReturn = [&](LowBlock &Block, int Top) {
+    if (!ReturnsX87)
+      return;
+    for (LowOp &Op : Block.Ops)
+      if (Op.Opcode == NdOp::RETURN && Op.NumInputs == 1)
+        Op.Inputs[0] = NdVar::reg(x86reg::stReg(Top & 7), x86reg::FPURegSize);
+  };
 
   int EntryBlk = -1;
   for (size_t I = 0; I < N; ++I)
@@ -156,16 +526,17 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
     // One TOP per block — re-base each block in place (the common case; a no-op
     // for offset 0, i.e. straight-line / stack-balanced code).
     for (size_t I = 0; I < N; ++I) {
-      if (TopSets[I].empty() || HasReset[I] || !HasFpu[I])
+      if (TopSets[I].empty())
         continue;
-      int Offset = (*TopSets[I].begin() - LiftedIn[I]) & 7;
-      if (Offset == 0)
-        continue;
-      for (auto &Op : Func.Blocks[I].Ops) {
-        rebaseStReg(Op.Output, Offset);
-        for (int K = 0; K < Op.NumInputs; ++K)
-          rebaseStReg(Op.Inputs[K], Offset);
-      }
+      const int Top = *TopSets[I].begin();
+      int Offset = (Top - LiftedIn[I]) & 7;
+      if (!HasReset[I] && HasFpu[I] && Offset != 0)
+        for (auto &Op : Func.Blocks[I].Ops) {
+          rebaseStReg(Op.Output, Offset);
+          for (int K = 0; K < Op.NumInputs; ++K)
+            rebaseStReg(Op.Inputs[K], Offset);
+        }
+      bindReturn(Func.Blocks[I], exitTop(static_cast<int>(I), Top));
     }
     return;
   }
@@ -218,6 +589,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
         }
     }
     int Ex = exitTop(B, T);
+    bindReturn(NB, Ex);
     for (int S : Func.Blocks[B].Succs)
       NB.Succs.push_back(S >= 0 && S < static_cast<int>(N) ? stateFor(S, Ex)
                                                            : S);

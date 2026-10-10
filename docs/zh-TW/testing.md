@@ -147,6 +147,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `NeverDInterpreterLLVMRefinementTests` 檢查全新的原生到 LLVM 組合證明、精確文字／函式綁定、獨立預算、完整觀察項及刻意擴大的原始碼域。修改位元組、殘餘程式、結果、旗標、狀態碼、框架寫入、poison 或錯誤／過期迴圈方案，都必須拒絕組合憑據。任意字長倒數要求兩段歸納前提；獨立 C 案例在 O1/O2 編譯後驗證實際序列化 LLVM 輸入。狀態模型回歸拒絕隱藏入口回邊，對入口集合計費且不複製附屬來源資訊。
 
+`InterpreterLLVMRefinement.Preservation*` 涵蓋局部／重疊範圍、非法請求、獨立計算的準備開銷、兩端相同的最終破壞、跨迴圈的入口保存／還原、新鮮不透明狀態證據及後期拒絕。`NeverDPEFixedImageTests` 也是 API 使用端，需要重新建置。未提供請求時的結果、計數與摘要另行對照基準。
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
@@ -1568,3 +1570,7 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護區、low32 FD、bitmap 字、原生錯誤、dup 共用進度、獨立 open、快取 EOF 與零 rewind。字面值與未知模式僅用於虛擬環境。模型另涵蓋完整 stat、失效、NFD/255位元組名稱、輸入/輸出別名、傳輸/預算失敗、移動/SWAP/刪除/重用及明確授權。每個平台必需63個工作負載：ARM64 為189例，Intel 為126例；本地僅驗證匹配的 ARM64 HVF。native5s、guest/Python5,000,000us/quantum1024、public10s 不變。
 
 `MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` 檢查原程式的模型執行、恢復、區段權限及原始與恢復程式的 Windows 原生執行，涵蓋私有堆積擴容與釋放、編碼內部指標、FLS 回呼重設、遞迴鎖、LastError，以及虛擬頁面的保留、提交與保護。`MaterializationRequiresKnownSupportedState` 拒絕缺失版本及動態 TLS；`RuntimeRestorationHasTheSameCAPIAndCLIContract` 比較精確位元組及報告。Linux 建構檢查與 Wine 觀察不能取代原生 Windows 生命週期證據。
+
+## 原生不透明狀態檢查
+
+`X86PreservedState.*` 檢查重新解碼的純量形式、精確暫存器別名、嚴格重設及位元組/操作段/版本過期拒絕。`OriginalBinaryUndefinedIndependence.*Opaque*` 涵蓋分支、內部呼叫、完整間接目標、精確設定及獨立解碼的中繼資料預算恰好足夠/少一單位邊界。`BinaryLowIR*.*Opaque*` 涵蓋選擇見證與任意未定義選擇、多歸納來源、後期秩/預算拒絕、真實入口純量保持，以及 LowIR 不變但後續來源段位元組改變時執行摘要必須改變。`NativeUndefinedIndependence.*Opaque*` 和 `NativeStackControl.*FreshMemoryCall*` 檢查群組內部、切點前邊界、過期記錄及堆疊修改前的目標求值。重建受影響的中繼資料使用端，包括 `NeverDInterpreterLLVMRefinementTests`；分別報告 sanitizer、編譯故障注入與一般測試結果。
