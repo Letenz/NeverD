@@ -250,9 +250,9 @@ void addContinuationEvidence(MedFunc &Func, size_t BlockIndex,
                              std::vector<va_t> Targets) {
   ASSERT_LT(BlockIndex, Func.Blocks.size());
   MedOp &Return = Func.Blocks[BlockIndex].Ops.back();
-  Return.addInput(MedVar::makeConst(
-      Targets.empty() ? 0 : Targets.front(), /*Sz=*/8,
-      ConstantAddressProvenance::CodeAddress));
+  Return.addInput(MedVar::makeConst(Targets.empty() ? 0 : Targets.front(),
+                                    /*Sz=*/8,
+                                    ConstantAddressProvenance::CodeAddress));
 
   MedCxxContinuationExitEvidence Evidence;
   Evidence.ReturnAddr = Return.Addr;
@@ -286,8 +286,8 @@ bool hasCompleteContinuationPlan(std::vector<MedFunc> Funcs, va_t SourceVA,
   llvm::LLVMContext Context;
   MedLLVMEmitter Emitter;
   auto Module = Emitter.emit(Funcs, Context, "continuation_plan_case",
-                             Arch::X64, {}, UseImage ? &Image : nullptr,
-                             Format, /*MergeableGlobals=*/false, BodyMask);
+                             Arch::X64, {}, UseImage ? &Image : nullptr, Format,
+                             /*MergeableGlobals=*/false, BodyMask);
   EXPECT_NE(Module, nullptr);
   if (!Module)
     return false;
@@ -558,14 +558,13 @@ TEST(COFFExceptionIR, EmitsVerifierCleanBoundedFH4CatchAllContract) {
       auto Bundle = Call->getOperandBundle(windows_eh_md::ProvenanceBundle);
       if (!Bundle)
         continue;
-      ASSERT_EQ(Bundle->Inputs.size(),
-                windows_eh_md::ProvenanceOperandCount);
+      ASSERT_EQ(Bundle->Inputs.size(), windows_eh_md::ProvenanceOperandCount);
       const auto *Model = llvm::dyn_cast<llvm::ConstantInt>(
           Bundle->Inputs[windows_eh_md::ProvenanceModel].get());
       ASSERT_NE(Model, nullptr);
-      EXPECT_EQ(Model->getZExtValue(), static_cast<unsigned>(
-                                          windows_eh_md::NativeProvenanceModel::
-                                              CxxFH4));
+      EXPECT_EQ(
+          Model->getZExtValue(),
+          static_cast<unsigned>(windows_eh_md::NativeProvenanceModel::CxxFH4));
       ++FH4ProvenanceAnchors;
     }
   EXPECT_EQ(FH4ProvenanceAnchors, 3u);
@@ -594,9 +593,8 @@ TEST(COFFExceptionIR, LLVMCNativeObjectDestructorPrintsInUnwindCleanup) {
   EXPECT_EQ(Patch.Reason,
             WindowsEHNativeSourceReason::UnsupportedCxxUnwindAction);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
   ASSERT_EQ(IR.Model, WindowsEHNativeSourceModel::CxxFH3);
 
@@ -657,9 +655,8 @@ TEST(COFFExceptionIR, LLVMCNativeDirectFuncletPrintsInUnwindCleanup) {
   EXPECT_EQ(Patch.Reason,
             WindowsEHNativeSourceReason::UnsupportedCxxUnwindAction);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
   ASSERT_EQ(IR.Model, WindowsEHNativeSourceModel::CxxFH3);
 
@@ -710,15 +707,12 @@ TEST(COFFExceptionIR, LLVMCNativeInParentDirectFuncletPrintsItsBodyInCleanup) {
       llvm::FunctionType::get(llvm::Type::getVoidTy(Fixture.Context), false);
   auto *Body = llvm::Function::Create(
       BodyTy, llvm::GlobalValue::ExternalLinkage, "dtor_body", Fixture.Module);
-  auto *FuncletBB =
-      llvm::BasicBlock::Create(Fixture.Context, "unwind.local", Fixture.Function);
+  auto *FuncletBB = llvm::BasicBlock::Create(Fixture.Context, "unwind.local",
+                                             Fixture.Function);
   llvm::IRBuilder<>(FuncletBB).CreateCall(Body);
   llvm::IRBuilder<>(FuncletBB).CreateRetVoid();
   Fixture.OriginalBlockMap.emplace(2, FuncletBB);
-  Cxx.IPMap = {{Begin, -1},
-               {Begin + 4, 0},
-               {Begin + 0x20, 1},
-               {FuncletVA, -1}};
+  Cxx.IPMap = {{Begin, -1}, {Begin + 4, 0}, {Begin + 0x20, 1}, {FuncletVA, -1}};
   Fixture.Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
 
   const WindowsEHNativeSourceClassification Patch =
@@ -728,9 +722,8 @@ TEST(COFFExceptionIR, LLVMCNativeInParentDirectFuncletPrintsItsBodyInCleanup) {
   EXPECT_EQ(Patch.Reason,
             WindowsEHNativeSourceReason::UnsupportedCxxUnwindAction);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -778,8 +771,8 @@ TEST(COFFExceptionIR, LLVMCNativeTryBodyDirectFuncletPrintsItsBodyInCleanup) {
       llvm::FunctionType::get(llvm::Type::getVoidTy(Fixture.Context), false);
   auto *Body = llvm::Function::Create(
       BodyTy, llvm::GlobalValue::ExternalLinkage, "try_dtor", Fixture.Module);
-  auto *FuncletBB = llvm::BasicBlock::Create(Fixture.Context, "unwind.try",
-                                             Fixture.Function);
+  auto *FuncletBB =
+      llvm::BasicBlock::Create(Fixture.Context, "unwind.try", Fixture.Function);
   llvm::IRBuilder<>(FuncletBB).CreateCall(Body);
   llvm::IRBuilder<>(FuncletBB).CreateRetVoid();
   Fixture.OriginalBlockMap.emplace(2, FuncletBB);
@@ -797,9 +790,8 @@ TEST(COFFExceptionIR, LLVMCNativeTryBodyDirectFuncletPrintsItsBodyInCleanup) {
   EXPECT_EQ(Patch.Reason,
             WindowsEHNativeSourceReason::UnsupportedCxxUnwindAction);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -862,9 +854,8 @@ TEST(COFFExceptionIR, LLVMCNativeDirectFuncletChainPrintsInUnwindOrder) {
   EXPECT_EQ(Patch.Reason,
             WindowsEHNativeSourceReason::UnsupportedCxxUnwindAction);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -936,9 +927,8 @@ TEST(COFFExceptionIR, LLVMCNativeDirectFuncletChainAcrossTryPrintsBothEdges) {
   EXPECT_EQ(Patch.Reason,
             WindowsEHNativeSourceReason::UnsupportedCxxUnwindAction);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -965,8 +955,8 @@ TEST(COFFExceptionIR, LLVMCNativeDirectFuncletChainAcrossTryPrintsBothEdges) {
   ASSERT_NE(InnerCleanup, std::string::npos) << Source;
   const auto InnerAt = Source.find("unwind_inner(", InnerCleanup);
   const auto CatchAt = Source.find("} catch (", InnerCleanup);
-  const auto OuterCleanup = Source.find("} /* unwind cleanup */",
-                                        InnerCleanup + 1);
+  const auto OuterCleanup =
+      Source.find("} /* unwind cleanup */", InnerCleanup + 1);
   ASSERT_NE(InnerAt, std::string::npos) << Source;
   ASSERT_NE(CatchAt, std::string::npos) << Source;
   ASSERT_NE(OuterCleanup, std::string::npos) << Source;
@@ -1016,9 +1006,8 @@ TEST(COFFExceptionIR, LLVMCNativeMixedDestructorChainPrintsInUnwindOrder) {
   EXPECT_EQ(Patch.Reason,
             WindowsEHNativeSourceReason::UnsupportedCxxUnwindAction);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -1117,12 +1106,8 @@ TEST(COFFExceptionIR, LLVMCNativeNestedOutOfLineFuncletsPrintInUnwindOrder) {
   llvm::IRBuilder<>(OuterHandlerBB).CreateRetVoid();
   Fixture.OriginalBlockMap.emplace(2, OuterBodyBB);
   Fixture.OriginalBlockMap.emplace(3, OuterHandlerBB);
-  Cxx.IPMap = {{Begin, -1},
-               {Begin + 4, 1},
-               {Begin + 0x10, 0},
-               {Begin + 0x20, 2},
-               {Begin + 0x30, 3},
-               {Begin + 0x40, -1}};
+  Cxx.IPMap = {{Begin, -1},       {Begin + 4, 1},    {Begin + 0x10, 0},
+               {Begin + 0x20, 2}, {Begin + 0x30, 3}, {Begin + 0x40, -1}};
   Fixture.Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
 
   const WindowsEHNativeSourceClassification Patch =
@@ -1132,9 +1117,8 @@ TEST(COFFExceptionIR, LLVMCNativeNestedOutOfLineFuncletsPrintInUnwindOrder) {
   EXPECT_EQ(Patch.Reason,
             WindowsEHNativeSourceReason::UnsupportedCxxUnwindAction);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -1189,10 +1173,8 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchFuncletPrintsInCatch) {
   Cxx.TryBlocks.front().Handlers.front().HandlerVA = FuncletVA;
   Cxx.TryBlocks.front().Handlers.front().ContinuationVAs = {Begin + 0x20};
   Fixture.Source.Blocks.front().StartAddr = Begin + 4;
-  Cxx.IPMap = {{Begin, -1},
-               {Begin + 4, 0},
-               {Begin + 0x20, 1},
-               {Begin + 0x30, -1}};
+  Cxx.IPMap = {
+      {Begin, -1}, {Begin + 4, 0}, {Begin + 0x20, 1}, {Begin + 0x30, -1}};
   Fixture.Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
 
   const WindowsEHNativeSourceClassification Patch =
@@ -1201,9 +1183,8 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchFuncletPrintsInCatch) {
   EXPECT_FALSE(Patch.canPatchOutput());
   EXPECT_EQ(Patch.Reason, WindowsEHNativeSourceReason::InvalidCxxHandler);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -1235,7 +1216,8 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchFuncletPrintsInCatch) {
       << Source;
 }
 
-TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchWithoutContinuationPrintsFunclet) {
+TEST(COFFExceptionIR,
+     LLVMCNativeOutOfLineCatchWithoutContinuationPrintsFunclet) {
   DirectCxxFixture Fixture("native_ool_catch_no_cont", true);
   ExceptionFunction &EH = *Fixture.Source.ExceptionMetadata;
   CxxExceptionInfo &Cxx = *EH.Cxx;
@@ -1244,10 +1226,8 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchWithoutContinuationPrintsFunclet)
   Cxx.TryBlocks.front().Handlers.front().HandlerVA = FuncletVA;
   Cxx.TryBlocks.front().Handlers.front().ContinuationVAs.clear();
   Fixture.Source.Blocks.front().StartAddr = Begin + 4;
-  Cxx.IPMap = {{Begin, -1},
-               {Begin + 4, 0},
-               {Begin + 0x20, 1},
-               {Begin + 0x30, -1}};
+  Cxx.IPMap = {
+      {Begin, -1}, {Begin + 4, 0}, {Begin + 0x20, 1}, {Begin + 0x30, -1}};
   Fixture.Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
 
   const WindowsEHNativeSourceClassification Patch =
@@ -1256,9 +1236,8 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchWithoutContinuationPrintsFunclet)
   EXPECT_FALSE(Patch.canPatchOutput());
   EXPECT_EQ(Patch.Reason, WindowsEHNativeSourceReason::InvalidCxxHandler);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -1298,7 +1277,7 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchWithTwoContinuationsPrintsBoth) {
   const va_t Begin = EH.CodeRange.Begin;
   Cxx.TryBlocks.front().Handlers.front().HandlerVA = FuncletVA;
   Cxx.TryBlocks.front().Handlers.front().ContinuationVAs = {Begin + 0x20,
-                                                           Begin + 0x28};
+                                                            Begin + 0x28};
   Fixture.Source.Blocks.front().StartAddr = Begin + 4;
   Fixture.Source.Blocks[1].EndAddr = Begin + 0x28;
   MedBlock Second;
@@ -1314,15 +1293,13 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchWithTwoContinuationsPrintsBoth) {
       ResumeTy, llvm::GlobalValue::ExternalLinkage, "resume_b", Fixture.Module);
   llvm::BasicBlock *ContA = Fixture.OriginalBlockMap.at(1);
   llvm::IRBuilder<>(ContA->getTerminator()).CreateCall(ResumeA);
-  auto *ContB = llvm::BasicBlock::Create(Fixture.Context, "cont_b",
-                                         Fixture.Function);
+  auto *ContB =
+      llvm::BasicBlock::Create(Fixture.Context, "cont_b", Fixture.Function);
   llvm::IRBuilder<>(ContB).CreateCall(ResumeB);
   llvm::IRBuilder<>(ContB).CreateRetVoid();
   Fixture.OriginalBlockMap.emplace(2, ContB);
-  Cxx.IPMap = {{Begin, -1},
-               {Begin + 4, 0},
-               {Begin + 0x20, 1},
-               {Begin + 0x38, -1}};
+  Cxx.IPMap = {
+      {Begin, -1}, {Begin + 4, 0}, {Begin + 0x20, 1}, {Begin + 0x38, -1}};
   Fixture.Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
 
   const WindowsEHNativeSourceClassification Patch =
@@ -1331,9 +1308,8 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchWithTwoContinuationsPrintsBoth) {
   EXPECT_FALSE(Patch.canPatchOutput());
   EXPECT_EQ(Patch.Reason, WindowsEHNativeSourceReason::InvalidCxxHandler);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -1367,8 +1343,10 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchWithTwoContinuationsPrintsBoth) {
   const auto ResumeBAt = Source.find("resume_b(", CatchAt);
   EXPECT_NE(ResumeAAt, std::string::npos) << Source;
   EXPECT_NE(ResumeBAt, std::string::npos) << Source;
-  EXPECT_EQ(Source.find("resume_a(", ResumeAAt + 1), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("resume_b(", ResumeBAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("resume_a(", ResumeAAt + 1), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("resume_b(", ResumeBAt + 1), std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("__builtin_unreachable();", CatchAt), std::string::npos)
       << Source;
 }
@@ -1382,18 +1360,16 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchInsideBlockSplitsContinuation) {
   Cxx.TryBlocks.front().Handlers.front().HandlerVA = FuncletVA;
   Cxx.TryBlocks.front().Handlers.front().ContinuationVAs = {Begin + 0x28};
   Fixture.Source.Blocks.front().StartAddr = Begin + 4;
-  Cxx.IPMap = {{Begin, -1},
-               {Begin + 4, 0},
-               {Begin + 0x20, 1},
-               {Begin + 0x30, -1}};
+  Cxx.IPMap = {
+      {Begin, -1}, {Begin + 4, 0}, {Begin + 0x20, 1}, {Begin + 0x30, -1}};
   auto *ResumeTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Fixture.Context), false);
-  auto *BeforeFn = llvm::Function::Create(
-      ResumeTy, llvm::GlobalValue::ExternalLinkage, "before_resume",
-      Fixture.Module);
-  auto *AfterFn = llvm::Function::Create(
-      ResumeTy, llvm::GlobalValue::ExternalLinkage, "after_resume",
-      Fixture.Module);
+  auto *BeforeFn =
+      llvm::Function::Create(ResumeTy, llvm::GlobalValue::ExternalLinkage,
+                             "before_resume", Fixture.Module);
+  auto *AfterFn =
+      llvm::Function::Create(ResumeTy, llvm::GlobalValue::ExternalLinkage,
+                             "after_resume", Fixture.Module);
   llvm::BasicBlock *Body = Fixture.OriginalBlockMap.at(1);
   llvm::IRBuilder<> BodyBuilder(Body->getTerminator());
   llvm::CallInst *Before = BodyBuilder.CreateCall(BeforeFn);
@@ -1408,9 +1384,8 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchInsideBlockSplitsContinuation) {
   EXPECT_FALSE(Patch.canPatchOutput());
   EXPECT_EQ(Patch.Reason, WindowsEHNativeSourceReason::InvalidCxxHandler);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -1443,7 +1418,10 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchInsideBlockSplitsContinuation) {
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("after_resume(", CatchAt), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("before_resume("), std::string::npos) << Source;
+  // The module may retain an unused declaration; the continuation must skip
+  // the call in the emitted catch body.
+  EXPECT_EQ(Source.find("before_resume(", CatchAt), std::string::npos)
+      << Source;
 }
 
 TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchInteriorStoreStaysBeforeResume) {
@@ -1455,18 +1433,16 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchInteriorStoreStaysBeforeResume) {
   Cxx.TryBlocks.front().Handlers.front().HandlerVA = FuncletVA;
   Cxx.TryBlocks.front().Handlers.front().ContinuationVAs = {Begin + 0x28};
   Fixture.Source.Blocks.front().StartAddr = Begin + 4;
-  Cxx.IPMap = {{Begin, -1},
-               {Begin + 4, 0},
-               {Begin + 0x20, 1},
-               {Begin + 0x30, -1}};
+  Cxx.IPMap = {
+      {Begin, -1}, {Begin + 4, 0}, {Begin + 0x20, 1}, {Begin + 0x30, -1}};
   auto *ResumeTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Fixture.Context), false);
-  auto *BeforeFn = llvm::Function::Create(
-      ResumeTy, llvm::GlobalValue::ExternalLinkage, "before_resume",
-      Fixture.Module);
-  auto *AfterFn = llvm::Function::Create(
-      ResumeTy, llvm::GlobalValue::ExternalLinkage, "after_resume",
-      Fixture.Module);
+  auto *BeforeFn =
+      llvm::Function::Create(ResumeTy, llvm::GlobalValue::ExternalLinkage,
+                             "before_resume", Fixture.Module);
+  auto *AfterFn =
+      llvm::Function::Create(ResumeTy, llvm::GlobalValue::ExternalLinkage,
+                             "after_resume", Fixture.Module);
   auto *I32Ty = llvm::Type::getInt32Ty(Fixture.Context);
   llvm::IRBuilder<> Entry(
       &*Fixture.Function->getEntryBlock().getFirstInsertionPt());
@@ -1486,9 +1462,8 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchInteriorStoreStaysBeforeResume) {
   EXPECT_FALSE(Patch.canPatchOutput());
   EXPECT_EQ(Patch.Reason, WindowsEHNativeSourceReason::InvalidCxxHandler);
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -1516,7 +1491,8 @@ TEST(COFFExceptionIR, LLVMCNativeOutOfLineCatchInteriorStoreStaysBeforeResume) {
   const auto CallAt = Source.find("catch_funclet(", CatchAt);
   ASSERT_NE(CallAt, std::string::npos) << Source;
   EXPECT_NE(Source.find("after_resume(", CatchAt), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("before_resume("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("before_resume(", CatchAt), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("slot_mark", CatchAt), std::string::npos) << Source;
 }
 
@@ -1526,22 +1502,19 @@ TEST(COFFExceptionIR, LLVMCNativeInFunctionCatchFuncletPrintsCallInCatch) {
   const va_t Begin = EH.CodeRange.Begin;
   Fixture.Source.Blocks.front().StartAddr = Begin + 4;
   CxxExceptionInfo &Cxx = *EH.Cxx;
-  Cxx.IPMap = {{Begin, -1},
-               {Begin + 4, 0},
-               {Begin + 0x20, 1},
-               {Begin + 0x30, -1}};
+  Cxx.IPMap = {
+      {Begin, -1}, {Begin + 4, 0}, {Begin + 0x20, 1}, {Begin + 0x30, -1}};
   auto *BodyTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Fixture.Context), false);
-  auto *Body = llvm::Function::Create(BodyTy, llvm::GlobalValue::ExternalLinkage,
-                                      "catch_body", Fixture.Module);
+  auto *Body = llvm::Function::Create(
+      BodyTy, llvm::GlobalValue::ExternalLinkage, "catch_body", Fixture.Module);
   llvm::BasicBlock *HandlerBB = Fixture.OriginalBlockMap.at(1);
   ASSERT_NE(HandlerBB->getTerminator(), nullptr);
   llvm::IRBuilder<>(HandlerBB->getTerminator()).CreateCall(Body);
   Fixture.Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
 
-  const WindowsEHNativeSourceClassification IR =
-      classifyWindowsEHNativeSource(EH, Arch::X64, BinaryFormat::COFF,
-                                    WindowsEHNativeCapability::IRLowering);
+  const WindowsEHNativeSourceClassification IR = classifyWindowsEHNativeSource(
+      EH, Arch::X64, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
   ASSERT_TRUE(IR.canLowerNativeIR());
 
   MedLLVMEmitter Emitter;
@@ -2280,8 +2253,7 @@ TEST(COFFExceptionIR,
   EXPECT_NE(Optimization.Stop, OptimizationStopReason::InputInvalid);
   EXPECT_NE(Optimization.Stop, OptimizationStopReason::VerificationFailed);
   expectVerifierClean(*Module);
-  auto OptimizedPlan =
-      planCOFFExceptionPatch(*Module, Image, Arch::AArch64);
+  auto OptimizedPlan = planCOFFExceptionPatch(*Module, Image, Arch::AArch64);
   ASSERT_TRUE(static_cast<bool>(OptimizedPlan))
       << llvm::toString(OptimizedPlan.takeError());
 
@@ -2551,15 +2523,14 @@ TEST(COFFExceptionIR, EmitsVerifierCleanNativeARM32CatchAllSEH) {
   EH.SEH->Scopes.push_back(Scope);
   const va_t PersonalityVA = EH.PersonalityVA;
   Func.ExceptionMetadata = std::move(EH);
-  MedFunc Personality =
-      makeAddressBackedPersonality(PersonalityBodyVA,
-                                   "\01__C_specific_handler");
+  MedFunc Personality = makeAddressBackedPersonality(PersonalityBodyVA,
+                                                     "\01__C_specific_handler");
 
   llvm::LLVMContext Context;
   MedLLVMEmitter Emitter;
-  auto Module = Emitter.emit({Func, Personality}, Context, "arm32_native_seh",
-                             Arch::ARM, {{MayThrowVA, "may_throw"}}, nullptr,
-                             BinaryFormat::COFF);
+  auto Module =
+      Emitter.emit({Func, Personality}, Context, "arm32_native_seh", Arch::ARM,
+                   {{MayThrowVA, "may_throw"}}, nullptr, BinaryFormat::COFF);
   ASSERT_NE(Module, nullptr);
   expectVerifierClean(*Module);
 
@@ -2624,8 +2595,8 @@ TEST(COFFExceptionIR, EmitsVerifierCleanNativeARM32CatchAllSEH) {
           sizeof(uint32_t) > Section.Size - (Address - Section.VA) ||
           !rangeInBounds(Section.Offset, Section.Size, Compiled.Bytes.size()))
         continue;
-      const size_t Offset = static_cast<size_t>(
-          Section.Offset + (Address - Section.VA));
+      const size_t Offset =
+          static_cast<size_t>(Section.Offset + (Address - Section.VA));
       return readLE<uint32_t>(Compiled.Bytes.data() + Offset);
     }
     return std::nullopt;
@@ -2633,13 +2604,11 @@ TEST(COFFExceptionIR, EmitsVerifierCleanNativeARM32CatchAllSEH) {
   ASSERT_GE(Record.BeginVA, Image.Base);
   ASSERT_GE(Record.EndVA, Image.Base);
   ASSERT_GE(Record.HandlerVA, Image.Base);
-  ASSERT_LE(Record.BeginVA - Image.Base,
-            std::numeric_limits<uint32_t>::max());
+  ASSERT_LE(Record.BeginVA - Image.Base, std::numeric_limits<uint32_t>::max());
   ASSERT_LE(Record.EndVA - Image.Base, std::numeric_limits<uint32_t>::max());
   ASSERT_LE(Record.HandlerVA - Image.Base,
             std::numeric_limits<uint32_t>::max());
-  const uint32_t BeginRVA =
-      static_cast<uint32_t>(Record.BeginVA - Image.Base);
+  const uint32_t BeginRVA = static_cast<uint32_t>(Record.BeginVA - Image.Base);
   const uint32_t EndRVA = static_cast<uint32_t>(Record.EndVA - Image.Base);
   const uint32_t HandlerRVA =
       static_cast<uint32_t>(Record.HandlerVA - Image.Base);
@@ -3629,46 +3598,47 @@ TEST(COFFExceptionIR,
                      : "mustprogress-implied willreturn");
     for (bool IsDefinition : {false, true}) {
       SCOPED_TRACE(IsDefinition ? "pure definition" : "pure declaration");
-    DirectSEHFixture Fixture("atomic_seh_pure_callback",
-                             /*TerminateProtectedBlock=*/true);
-    SEHScopeRecord &Scope =
-        Fixture.Source.ExceptionMetadata->SEH->Scopes.front();
-    Scope.Kind = SEHScopeKind::Finally;
-    Scope.FilterOrFinallyVA = CallbackVA;
-    Scope.HandlerVA = CallbackVA;
-    Scope.ContinuationVA = 0;
+      DirectSEHFixture Fixture("atomic_seh_pure_callback",
+                               /*TerminateProtectedBlock=*/true);
+      SEHScopeRecord &Scope =
+          Fixture.Source.ExceptionMetadata->SEH->Scopes.front();
+      Scope.Kind = SEHScopeKind::Finally;
+      Scope.FilterOrFinallyVA = CallbackVA;
+      Scope.HandlerVA = CallbackVA;
+      Scope.ContinuationVA = 0;
 
-    llvm::Function *Callback = llvm::Function::Create(
-        sehCallbackType(Fixture.Context, SEHScopeKind::Finally),
-        llvm::GlobalValue::ExternalLinkage, "pure_seh_finally_callback",
-        Fixture.Module);
-    if (IsDefinition)
-      llvm::IRBuilder<>(
-          llvm::BasicBlock::Create(Fixture.Context, "entry", Callback))
-          .CreateRetVoid();
-    Callback->addFnAttr(llvm::Attribute::NoUnwind);
-    Callback->addFnAttr(ReturnAttribute);
-    Callback->setDoesNotAccessMemory();
+      llvm::Function *Callback = llvm::Function::Create(
+          sehCallbackType(Fixture.Context, SEHScopeKind::Finally),
+          llvm::GlobalValue::ExternalLinkage, "pure_seh_finally_callback",
+          Fixture.Module);
+      if (IsDefinition)
+        llvm::IRBuilder<>(
+            llvm::BasicBlock::Create(Fixture.Context, "entry", Callback))
+            .CreateRetVoid();
+      Callback->addFnAttr(llvm::Attribute::NoUnwind);
+      Callback->addFnAttr(ReturnAttribute);
+      Callback->setDoesNotAccessMemory();
 
-    MedLLVMEmitter Emitter;
-    MedLLVMEmitterTestPeer::prepare(Emitter, Fixture.Context, Fixture.Module,
-                                    *Fixture.Function, Fixture.Source,
-                                    Arch::X64);
-    MedLLVMEmitterTestPeer::setFunctionName(Emitter, CallbackVA,
-                                            Callback->getName());
-    MedLLVMEmitterTestPeer::setCallSiteAddress(Emitter, *Fixture.Call,
-                                               Fixture.Source.Entry + 4);
-    expectVerifierClean(Fixture.Module);
-    const std::string BeforeIR = printModuleIR(Fixture.Module);
-    const auto BeforeCallSites =
-        MedLLVMEmitterTestPeer::callSiteAddresses(Emitter);
+      MedLLVMEmitter Emitter;
+      MedLLVMEmitterTestPeer::prepare(Emitter, Fixture.Context, Fixture.Module,
+                                      *Fixture.Function, Fixture.Source,
+                                      Arch::X64);
+      MedLLVMEmitterTestPeer::setFunctionName(Emitter, CallbackVA,
+                                              Callback->getName());
+      MedLLVMEmitterTestPeer::setCallSiteAddress(Emitter, *Fixture.Call,
+                                                 Fixture.Source.Entry + 4);
+      expectVerifierClean(Fixture.Module);
+      const std::string BeforeIR = printModuleIR(Fixture.Module);
+      const auto BeforeCallSites =
+          MedLLVMEmitterTestPeer::callSiteAddresses(Emitter);
 
-    EXPECT_FALSE(MedLLVMEmitterTestPeer::emitSEH(
-        Emitter, Fixture.Source, *Fixture.Function, Fixture.OriginalBlockMap));
-    EXPECT_EQ(printModuleIR(Fixture.Module), BeforeIR);
-    EXPECT_EQ(MedLLVMEmitterTestPeer::callSiteAddresses(Emitter),
-              BeforeCallSites);
-    expectVerifierClean(Fixture.Module);
+      EXPECT_FALSE(MedLLVMEmitterTestPeer::emitSEH(Emitter, Fixture.Source,
+                                                   *Fixture.Function,
+                                                   Fixture.OriginalBlockMap));
+      EXPECT_EQ(printModuleIR(Fixture.Module), BeforeIR);
+      EXPECT_EQ(MedLLVMEmitterTestPeer::callSiteAddresses(Emitter),
+                BeforeCallSites);
+      expectVerifierClean(Fixture.Module);
     }
   }
 }
@@ -3826,8 +3796,9 @@ TEST(COFFExceptionIR, RejectsRealLiftedAArch64FilterWithWidenedReturnABI) {
   const llvm::MDNode *Contract =
       LiftedParent->getMetadata(exception_rewrite::FunctionAttachment);
   ASSERT_NE(Contract, nullptr);
-  EXPECT_EQ(metadataInteger(Contract, exception_rewrite::Lowering, 8),
-            static_cast<uint8_t>(exception_rewrite::LoweringState::NotRequired));
+  EXPECT_EQ(
+      metadataInteger(Contract, exception_rewrite::Lowering, 8),
+      static_cast<uint8_t>(exception_rewrite::LoweringState::NotRequired));
 
   const WindowsEHNativeSourceClassification Classification =
       classifyWindowsEHNativeSource(EH, Arch::AArch64, BinaryFormat::COFF,
@@ -4718,8 +4689,8 @@ TEST(COFFExceptionIR,
   constexpr va_t ContinuationVA = ParentVA + 0x20;
   constexpr va_t CatchVA = 0x140002000;
 
-  MedFunc Parent = makeContinuationPlanFunction(
-      ParentVA, "separated_parent", {ParentVA, ContinuationVA});
+  MedFunc Parent = makeContinuationPlanFunction(ParentVA, "separated_parent",
+                                                {ParentVA, ContinuationVA});
   MedFunc Catch =
       makeContinuationPlanFunction(CatchVA, "separated_catch", {CatchVA});
   Catch.ReturnType = NdType::makeInt(/*Sz=*/8, /*Signed=*/false);
@@ -4783,7 +4754,8 @@ TEST(COFFExceptionIR, RejectsIncompleteSeparatedCxxContinuationPlans) {
         ParentVA, "empty_target_parent", {ParentVA, ContinuationA});
     MedFunc Catch =
         makeContinuationPlanFunction(CatchVA, "empty_target_catch", {CatchVA});
-    setSeparatedFH3GroupIdentity(Parent, Catch, /*NativeFuncInfoVA=*/0x140010820);
+    setSeparatedFH3GroupIdentity(Parent, Catch,
+                                 /*NativeFuncInfoVA=*/0x140010820);
     addContinuationEvidence(Catch, 0, {});
     EXPECT_FALSE(hasCompleteContinuationPlan({Parent, Catch}, CatchVA,
                                              /*BodyMask=*/nullptr,
@@ -4791,13 +4763,14 @@ TEST(COFFExceptionIR, RejectsIncompleteSeparatedCxxContinuationPlans) {
   }
   {
     SCOPED_TRACE("exit evidence has multiple targets");
-    MedFunc Parent = makeContinuationPlanFunction(
-        ParentVA, "multi_target_parent",
-        {ParentVA, ContinuationA, ContinuationB});
+    MedFunc Parent =
+        makeContinuationPlanFunction(ParentVA, "multi_target_parent",
+                                     {ParentVA, ContinuationA, ContinuationB});
     MedFunc Catch =
         makeContinuationPlanFunction(CatchVA, "multi_target_catch", {CatchVA});
     Catch.ReturnType = NdType::makeInt(8, false);
-    setSeparatedFH3GroupIdentity(Parent, Catch, /*NativeFuncInfoVA=*/0x140010830);
+    setSeparatedFH3GroupIdentity(Parent, Catch,
+                                 /*NativeFuncInfoVA=*/0x140010830);
     addContinuationEvidence(Catch, 0, {ContinuationA, ContinuationB});
     EXPECT_FALSE(hasCompleteContinuationPlan({Parent, Catch}, CatchVA));
   }
@@ -4808,7 +4781,8 @@ TEST(COFFExceptionIR, RejectsIncompleteSeparatedCxxContinuationPlans) {
     MedFunc Catch =
         makeContinuationPlanFunction(CatchVA, "missing_bind_catch", {CatchVA});
     Catch.ReturnType = NdType::makeInt(8, false);
-    setSeparatedFH3GroupIdentity(Parent, Catch, /*NativeFuncInfoVA=*/0x140010840);
+    setSeparatedFH3GroupIdentity(Parent, Catch,
+                                 /*NativeFuncInfoVA=*/0x140010840);
     addContinuationEvidence(Catch, 0, {ContinuationA});
     Catch.CxxContinuationExits.front().ReturnSeq += 1;
     EXPECT_FALSE(hasCompleteContinuationPlan({Parent, Catch}, CatchVA));
@@ -4839,8 +4813,7 @@ TEST(COFFExceptionIR, RejectsIncompleteSeparatedCxxContinuationPlans) {
     setSeparatedFH3GroupIdentity(Catch, /*NativeFuncInfoVA=*/0x140010860,
                                  /*IsCatchFunclet=*/true);
     addContinuationEvidence(Catch, 0, {SharedTarget});
-    EXPECT_FALSE(
-        hasCompleteContinuationPlan({OwnerA, OwnerB, Catch}, CatchVA));
+    EXPECT_FALSE(hasCompleteContinuationPlan({OwnerA, OwnerB, Catch}, CatchVA));
   }
   {
     SCOPED_TRACE("target address has no lifted block");
@@ -4872,7 +4845,8 @@ TEST(COFFExceptionIR, RejectsIncompleteSeparatedCxxContinuationPlans) {
     MedFunc Catch = makeContinuationPlanFunction(
         CatchVA, "duplicate_evidence_catch", {CatchVA});
     Catch.ReturnType = NdType::makeInt(8, false);
-    setSeparatedFH3GroupIdentity(Parent, Catch, /*NativeFuncInfoVA=*/0x140010890);
+    setSeparatedFH3GroupIdentity(Parent, Catch,
+                                 /*NativeFuncInfoVA=*/0x140010890);
     addContinuationEvidence(Catch, 0, {ContinuationA});
     Catch.CxxContinuationExits.push_back(Catch.CxxContinuationExits.front());
     EXPECT_FALSE(hasCompleteContinuationPlan({Parent, Catch}, CatchVA));
@@ -4885,16 +4859,16 @@ TEST(COFFExceptionIR,
   constexpr va_t ExpectedTarget = ParentVA + 0x20;
   constexpr va_t EmittedTarget = ParentVA + 0x40;
   constexpr va_t CatchVA = 0x140022000;
-  MedFunc Parent = makeContinuationPlanFunction(
-      ParentVA, "wrong_value_parent",
-      {ParentVA, ExpectedTarget, EmittedTarget});
+  MedFunc Parent =
+      makeContinuationPlanFunction(ParentVA, "wrong_value_parent",
+                                   {ParentVA, ExpectedTarget, EmittedTarget});
   MedFunc Catch =
       makeContinuationPlanFunction(CatchVA, "wrong_value_catch", {CatchVA});
   Catch.ReturnType = NdType::makeInt(8, false);
   setSeparatedFH3GroupIdentity(Parent, Catch, /*NativeFuncInfoVA=*/0x140020800);
   addContinuationEvidence(Catch, 0, {ExpectedTarget});
-  MedVar WrongValue = MedVar::makeConst(
-      EmittedTarget, /*Sz=*/8, ConstantAddressProvenance::CodeAddress);
+  MedVar WrongValue = MedVar::makeConst(EmittedTarget, /*Sz=*/8,
+                                        ConstantAddressProvenance::CodeAddress);
   Catch.Blocks.front().Ops.back().Inputs[0] = WrongValue;
   Catch.CxxContinuationExits.front().ReturnValue = WrongValue;
 
@@ -4905,8 +4879,8 @@ TEST(COFFExceptionIR, RejectsVoidContinuationReturnEvenWithExactEvidence) {
   constexpr va_t ParentVA = 0x140031000;
   constexpr va_t ContinuationVA = ParentVA + 0x20;
   constexpr va_t CatchVA = 0x140032000;
-  MedFunc Parent = makeContinuationPlanFunction(
-      ParentVA, "void_return_parent", {ParentVA, ContinuationVA});
+  MedFunc Parent = makeContinuationPlanFunction(ParentVA, "void_return_parent",
+                                                {ParentVA, ContinuationVA});
   MedFunc Catch =
       makeContinuationPlanFunction(CatchVA, "void_return_catch", {CatchVA});
   setSeparatedFH3GroupIdentity(Parent, Catch, /*NativeFuncInfoVA=*/0x140030800);
@@ -4919,8 +4893,8 @@ TEST(COFFExceptionIR, RejectsBodyMaskOmittedContinuationMember) {
   constexpr va_t ParentVA = 0x140041000;
   constexpr va_t ContinuationVA = ParentVA + 0x20;
   constexpr va_t CatchVA = 0x140042000;
-  MedFunc Parent = makeContinuationPlanFunction(
-      ParentVA, "masked_parent", {ParentVA, ContinuationVA});
+  MedFunc Parent = makeContinuationPlanFunction(ParentVA, "masked_parent",
+                                                {ParentVA, ContinuationVA});
   MedFunc Catch =
       makeContinuationPlanFunction(CatchVA, "masked_catch", {CatchVA});
   Catch.ReturnType = NdType::makeInt(8, false);
@@ -4936,10 +4910,10 @@ TEST(COFFExceptionIR, RequiresExactSetOfSeparatedCatchReturns) {
   constexpr va_t ParentVA = 0x140045000;
   constexpr va_t ContinuationVA = ParentVA + 0x20;
   constexpr va_t CatchVA = 0x140046000;
-  MedFunc Parent = makeContinuationPlanFunction(
-      ParentVA, "return_set_parent", {ParentVA, ContinuationVA});
-  MedFunc Catch = makeContinuationPlanFunction(
-      CatchVA, "return_set_catch", {CatchVA, CatchVA + 0x20});
+  MedFunc Parent = makeContinuationPlanFunction(ParentVA, "return_set_parent",
+                                                {ParentVA, ContinuationVA});
+  MedFunc Catch = makeContinuationPlanFunction(CatchVA, "return_set_catch",
+                                               {CatchVA, CatchVA + 0x20});
   Catch.ReturnType = NdType::makeInt(8, false);
   setSeparatedFH3GroupIdentity(Parent, Catch,
                                /*NativeFuncInfoVA=*/0x140044800);
@@ -4955,25 +4929,24 @@ TEST(COFFExceptionIR, RejectsAmbiguousOrMissingSeparatedFH3Parent) {
   constexpr va_t ParentVA = 0x140047000;
   constexpr va_t ContinuationVA = ParentVA + 0x20;
   constexpr va_t CatchVA = 0x140048000;
-  MedFunc ParentA = makeContinuationPlanFunction(
-      ParentVA, "duplicate_parent_a", {ParentVA, ContinuationVA});
+  MedFunc ParentA = makeContinuationPlanFunction(ParentVA, "duplicate_parent_a",
+                                                 {ParentVA, ContinuationVA});
   MedFunc ParentB = makeContinuationPlanFunction(
       0x140049000, "duplicate_parent_b", {0x140049000});
-  MedFunc Catch =
-      makeContinuationPlanFunction(CatchVA, "duplicate_parent_catch", {CatchVA});
+  MedFunc Catch = makeContinuationPlanFunction(
+      CatchVA, "duplicate_parent_catch", {CatchVA});
   Catch.ReturnType = NdType::makeInt(8, false);
   setSeparatedFH3GroupIdentity(ParentA, Catch,
                                /*NativeFuncInfoVA=*/0x140046800);
   setSeparatedFH3GroupIdentity(ParentB, /*NativeFuncInfoVA=*/0x140046800,
                                /*IsCatchFunclet=*/false);
   addContinuationEvidence(Catch, 0, {ContinuationVA});
-  EXPECT_FALSE(
-      hasCompleteContinuationPlan({ParentA, ParentB, Catch}, CatchVA));
+  EXPECT_FALSE(hasCompleteContinuationPlan({ParentA, ParentB, Catch}, CatchVA));
 
   MedFunc PlainTarget = makeContinuationPlanFunction(
       ParentVA, "missing_parent_target", {ParentVA, ContinuationVA});
-  MedFunc OrphanCatch = makeContinuationPlanFunction(
-      CatchVA, "missing_parent_catch", {CatchVA});
+  MedFunc OrphanCatch =
+      makeContinuationPlanFunction(CatchVA, "missing_parent_catch", {CatchVA});
   OrphanCatch.ReturnType = NdType::makeInt(8, false);
   setSeparatedFH3GroupIdentity(OrphanCatch,
                                /*NativeFuncInfoVA=*/0x140046900,
@@ -5015,8 +4988,8 @@ TEST(COFFExceptionIR, RejectsUnauthenticatedSeparatedFH3SourceShape) {
   auto Make = [&] {
     MedFunc Parent = makeContinuationPlanFunction(
         ParentVA, "source_shape_parent", {ParentVA, ContinuationVA});
-    MedFunc Catch = makeContinuationPlanFunction(
-        CatchVA, "source_shape_catch", {CatchVA});
+    MedFunc Catch =
+        makeContinuationPlanFunction(CatchVA, "source_shape_catch", {CatchVA});
     Catch.ReturnType = NdType::makeInt(8, false);
     setSeparatedFH3GroupIdentity(Parent, Catch,
                                  /*NativeFuncInfoVA=*/0x14004b800);
@@ -5055,8 +5028,8 @@ TEST(COFFExceptionIR, RejectsContinuationPlanOutsideX64COFF) {
   constexpr va_t ParentVA = 0x14004e000;
   constexpr va_t ContinuationVA = ParentVA + 0x20;
   constexpr va_t CatchVA = 0x14004f000;
-  MedFunc Parent = makeContinuationPlanFunction(
-      ParentVA, "non_coff_parent", {ParentVA, ContinuationVA});
+  MedFunc Parent = makeContinuationPlanFunction(ParentVA, "non_coff_parent",
+                                                {ParentVA, ContinuationVA});
   MedFunc Catch =
       makeContinuationPlanFunction(CatchVA, "non_coff_catch", {CatchVA});
   Catch.ReturnType = NdType::makeInt(8, false);
@@ -5097,8 +5070,8 @@ TEST(COFFExceptionIR, RejectsAmbiguousFH3RangeOwnerForContinuationTarget) {
   constexpr va_t OverlapVA = ParentVA + 0x10;
   constexpr va_t ContinuationVA = ParentVA + 0x40;
   constexpr va_t CatchVA = 0x140057000;
-  MedFunc Parent = makeContinuationPlanFunction(
-      ParentVA, "overlap_parent", {ParentVA, ContinuationVA});
+  MedFunc Parent = makeContinuationPlanFunction(ParentVA, "overlap_parent",
+                                                {ParentVA, ContinuationVA});
   MedFunc Overlap = makeContinuationPlanFunction(
       OverlapVA, "overlap_ineligible_contribution", {OverlapVA});
   MedFunc Catch =
@@ -5114,16 +5087,15 @@ TEST(COFFExceptionIR, RejectsAmbiguousFH3RangeOwnerForContinuationTarget) {
   Overlap.ExceptionMetadata->Cxx->IsSeparated = false;
   addContinuationEvidence(Catch, 0, {ContinuationVA});
 
-  EXPECT_FALSE(
-      hasCompleteContinuationPlan({Parent, Overlap, Catch}, CatchVA));
+  EXPECT_FALSE(hasCompleteContinuationPlan({Parent, Overlap, Catch}, CatchVA));
 }
 
 TEST(COFFExceptionIR, RejectsContinuationTargetThatIsAnyMedFuncEntry) {
   constexpr va_t ParentVA = 0x140058000;
   constexpr va_t ContinuationVA = ParentVA + 0x20;
   constexpr va_t CatchVA = 0x140059000;
-  MedFunc Parent = makeContinuationPlanFunction(
-      ParentVA, "entry_parent", {ParentVA, ContinuationVA});
+  MedFunc Parent = makeContinuationPlanFunction(ParentVA, "entry_parent",
+                                                {ParentVA, ContinuationVA});
   MedFunc InteriorEntry;
   InteriorEntry.Entry = ContinuationVA;
   InteriorEntry.Name = "empty_interior_function";
@@ -5145,8 +5117,8 @@ TEST(COFFExceptionIR, RequiresContinuationOccurrencesInsideOwnerCodeRanges) {
     std::vector<va_t> ParentBlocks{ParentVA};
     if (Target != ParentVA)
       ParentBlocks.push_back(Target);
-    MedFunc Parent = makeContinuationPlanFunction(
-        ParentVA, "range_parent", ParentBlocks);
+    MedFunc Parent =
+        makeContinuationPlanFunction(ParentVA, "range_parent", ParentBlocks);
     MedFunc Catch =
         makeContinuationPlanFunction(CatchVA, "range_catch", {CatchVA});
     Catch.ReturnType = NdType::makeInt(8, false);
@@ -5181,11 +5153,10 @@ TEST(COFFExceptionIR, RequiresContinuationOccurrencesInsideOwnerCodeRanges) {
 }
 
 TEST(COFFExceptionIR, RejectsShortBodyMaskWithoutReadingPastIt) {
-  MedFunc Parent =
-      makeContinuationPlanFunction(0x140061000, "short_mask_parent",
-                                   {0x140061000, 0x140061020});
-  MedFunc Catch = makeContinuationPlanFunction(
-      0x140062000, "short_mask_catch", {0x140062000});
+  MedFunc Parent = makeContinuationPlanFunction(
+      0x140061000, "short_mask_parent", {0x140061000, 0x140061020});
+  MedFunc Catch = makeContinuationPlanFunction(0x140062000, "short_mask_catch",
+                                               {0x140062000});
   Catch.ReturnType = NdType::makeInt(8, false);
   setSeparatedFH3GroupIdentity(Parent, Catch,
                                /*NativeFuncInfoVA=*/0x140060800);
@@ -5208,9 +5179,8 @@ TEST(COFFExceptionIR, RejectsShortBodyMaskWithoutReadingPastIt) {
                          nullptr, BinaryFormat::COFF,
                          /*MergeableGlobals=*/false, &ShortBodyMask),
             nullptr);
-  EXPECT_FALSE(
-      MedLLVMEmitterTestPeer::cxxContinuationPlan(Emitter, Catch.Entry)
-          .has_value());
+  EXPECT_FALSE(MedLLVMEmitterTestPeer::cxxContinuationPlan(Emitter, Catch.Entry)
+                   .has_value());
 }
 
 TEST(COFFExceptionIR, UsesRegisterIdentityForContinuationParamValues) {

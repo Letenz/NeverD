@@ -540,6 +540,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("extended-attributes", b"X"),
                                            ("extended-attributes-values", bytes.fromhex("00ff410080420a757365722e6e65766572642e6265746100757365722e6e65766572642e616c70686100757365722e6e65766572642e656d70747900")),
                                            ("extended-attributes-unsupported", b"X"),
+                                           ("xattr-mutations", b"V"),
+                                           ("xattr-mutations-values", bytes.fromhex("00ff410080420a757365722e6e65766572642e6265746100")),
+                                           ("xattr-mutations-unsupported", b"V"),
+                                           ("bulk-attributes", b"B"),
+                                           ("bulk-attributes-values", bytes.fromhex("3000000009000080000000000000000000000000000000000c0000000600000005000000616c696173000000000000003000000009000080000000000000000000000000000000000c00000006000000050000006379636c65000000000000003000000009000080000000000000000000000000000000000c000000090000000500000064616e676c696e67000000003000000009000080000000000000000000000000000000000c00000005000000010000006461746100000000000000003000000009000080000000000000000000000000000000000c0000000600000002000000656d70747900000000000000")),
+                                           ("bulk-attributes-unsupported", b"B"),
                                            ("attribute-names", b"N"),
                                            ("attribute-names-values", bytes.fromhex(
                                                "2c0000000900008000000000000000000000000000000000"
@@ -1141,6 +1147,115 @@ class ProcessIntegrationTests(unittest.TestCase):
                                     for name, target in (("alias", "data"), ("dangling", "missing"),
                                                          ("cycle", "cycle"))]}
                             file_options = json.dumps(query_options)
+                        unknown_bulk = mode == "bulk-attributes-unsupported"
+                        if mode.startswith("bulk-attributes"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = json.loads(r'''
+{
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "30313233343536373839"
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "metadata": {
+        "device": 0,
+        "inode": 41,
+        "mode": 16877,
+        "link_count": 2,
+        "uid": 0,
+        "gid": 0,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      },
+      "enumeration_policy": {
+        "minimum_buffer_size": 1,
+        "initial_minimum_buffer_size": 64,
+        "seek_offset": 0,
+        "bulk_attributes": true
+      }
+    },
+    {
+      "path": "/empty",
+      "metadata": {
+        "device": 0,
+        "inode": 42,
+        "mode": 16877,
+        "link_count": 2,
+        "uid": 0,
+        "gid": 0,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      },
+      "enumeration_policy": {
+        "minimum_buffer_size": 1,
+        "initial_minimum_buffer_size": 64,
+        "seek_offset": 0,
+        "bulk_attributes": true
+      }
+    }
+  ],
+  "working_directory": "/",
+  "symbolic_links": [
+    {
+      "path": "/alias",
+      "target_hex": "64617461"
+    },
+    {
+      "path": "/dangling",
+      "target_hex": "6d697373696e67"
+    },
+    {
+      "path": "/cycle",
+      "target_hex": "6379636c65"
+    }
+  ]
+}
+''')
+                            file_options = json.dumps(query_options)
                         unknown_names = mode == "attribute-names-unsupported"
                         if mode.startswith("attribute-names"):
                             query_options = json.loads(file_options)
@@ -1154,6 +1269,28 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                    {"path": "/dangling", "target_hex": "6d697373696e67", "mutable": True},
                                                    {"path": "/cycle", "target_hex": "6379636c65", "mutable": True}],
                                 "working_directory": "/"}
+                            file_options = json.dumps(query_options)
+                        unknown_xattr_mutation = mode == "xattr-mutations-unsupported"
+                        if mode.startswith("xattr-mutations"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = json.loads(r'''
+{
+  "files":[
+    {"path":"/data","bytes_hex":"30313233343536373839",
+     "extended_attributes":[],"mutable_extended_attributes":true},
+    {"path":"/readonly","bytes_hex":"","extended_attributes":[]}],
+  "directories":[{"path":"/","mutable":true},
+    {"path":"/empty","extended_attributes":[],
+     "mutable_extended_attributes":true}],
+  "symbolic_links":[
+    {"path":"/alias","target_hex":"64617461","mutable":true,
+     "extended_attributes":[],"mutable_extended_attributes":true},
+    {"path":"/dangling","target_hex":"6d697373696e67","mutable":true},
+    {"path":"/cycle","target_hex":"6379636c65","mutable":true}],
+  "working_directory":"/"}
+''')
                             file_options = json.dumps(query_options)
                         unknown_xattrs = mode == "extended-attributes-unsupported"
                         if mode.startswith("extended-attributes"):
@@ -1221,7 +1358,7 @@ class ProcessIntegrationTests(unittest.TestCase):
 }
 ''')
                             file_options = json.dumps(query_options)
-                        incomplete = protected_link or unknown_pathconf or unknown_attributes or unknown_xattrs or unknown_names
+                        incomplete = protected_link or unknown_pathconf or unknown_attributes or unknown_xattrs or unknown_names or unknown_bulk or unknown_xattr_mutation
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"],
                                          "unsupported_service" if incomplete else "exited",
@@ -1229,6 +1366,13 @@ class ProcessIntegrationTests(unittest.TestCase):
                         self.assertEqual(result["exit_status"], None if incomplete else 37, mode)
                         self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
                         self.assertEqual(result["stderr_hex"], "")
+                        if unknown_bulk:
+                            self.assertEqual(result["diagnostic"],
+                                             "Darwin selected file attributes are not modeled")
+                            last = result["services"][-1]
+                            self.assertEqual(last["number"], "20001cd" if architecture == "x86_64" else "1cd")
+                            self.assertIsNone(last["result"])
+                            self.assertNotIn("error", last)
                         if unknown_names:
                             self.assertEqual(result["diagnostic"],
                                              "Darwin object name is outside the bounded UTF-8 catalogue contract")
@@ -1236,6 +1380,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                                              "20000dc" if architecture == "x86_64" else "dc")
                             self.assertIsNone(result["services"][-1]["result"])
                             self.assertNotIn("error", result["services"][-1])
+                        if unknown_xattr_mutation:
+                            last = result["services"][-1]
+                            self.assertEqual(last["number"], "20000ec" if architecture == "x86_64" else "ec")
+                            self.assertIsNone(last["result"])
+                            self.assertNotIn("error", last)
+                            self.assertEqual(result["diagnostic"], "Darwin extended-attribute mutation is not authorized")
                         if unknown_xattrs:
                             last = result["services"][-1]
                             self.assertEqual(last["number"], "20000ea" if architecture == "x86_64" else "ea")

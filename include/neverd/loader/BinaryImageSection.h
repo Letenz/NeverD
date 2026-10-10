@@ -14,6 +14,7 @@
 #define NEVERD_LOADER_BINARYIMAGESECTION_H
 
 #include "neverd/Common.h"
+#include "neverd/object/SectionNames.h"
 
 #include <cstdint>
 #include <string>
@@ -40,6 +41,9 @@ struct Section {
   bool isExecutable() const { return hasFlag(Flags, SegmentFlags::Executable); }
   bool isWritable() const { return hasFlag(Flags, SegmentFlags::Writable); }
   bool isReadable() const { return hasFlag(Flags, SegmentFlags::Readable); }
+  bool isDebugInfo() const {
+    return SegmentName == "__DWARF" || section_names::isDebugSectionName(Name);
+  }
   bool contains(va_t Addr) const { return Addr >= VA && Addr - VA < Size; }
 };
 

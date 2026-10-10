@@ -84,7 +84,7 @@ QJsonObject GraphView::metrics() const {
 }
 
 void GraphView::showFunction(Address function, std::optional<Address> cursor) {
-  session_.analysisQueries().unsubscribeOwner(this);
+  session_.cancelAnalysisReads(this);
   const bool sameFunction = function_ == function && !nodes_.isEmpty();
   function_ = function;
   pendingCursor_ = cursor ? cursor : std::optional<Address>(function);
@@ -113,7 +113,8 @@ void GraphView::request(int nodeOffset, int edgeOffset, const QString &layout,
                       {"edge_offset", edgeOffset}};
   if (!layout.isEmpty())
     payload["layout_revision"] = layout;
-  session_.analysisQueries().graphViewport(
+  auto &queries = session_.analysisQueries(payload, this);
+  queries.graphViewport(
       payload, this, [this, serial](const QJsonObject &response) {
         if (serial != serial_)
           return;

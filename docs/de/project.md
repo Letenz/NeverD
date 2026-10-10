@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: f83891280e2285b090cdbf4ab4982b2e42ef40fa5e1a8e529fdbf816c0007f08 -->
+<!-- i18n-source: c2384f22e6d167b6294f2cbed8eea7aaedcbc86523ba5b73f2e1471cf41434a9 -->
 
 <div align="center">
 
@@ -196,7 +196,7 @@ Erste Konfiguration baut den LLVM-Fork lokal (oft 30–60 Minuten). Spätere Bui
 ```bash
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DNEVERD_LLVM_PREBUILT=ON \
-  -DNEVERD_LLVM_PREBUILT_TAG=neverd-llvm-v23.0.0-r3
+  -DNEVERD_LLVM_PREBUILT_TAG=neverd-llvm-v23.0.0-r4
 cmake --build build
 ```
 
@@ -212,19 +212,19 @@ Welches Paket verwendet wird, ergibt sich aus dem Host, auf dem CMake läuft:
 
 Jedes Archiv wird vor dem Entpacken nach `~/.cache/neverd-llvm/<tag>/<arch>/` oder `NEVERD_LLVM_PREBUILT_CACHE_DIR` gegen den in `cmake/NeverDLLVMPrebuilt.cmake` fixierten Digest geprüft. Für dort nicht beschriebene Tags gilt die veröffentlichte `.sha256`-Datei. Beim fixierten Standard muss `BUILDINFO.txt` außerdem den exakten LLVM-Submodul-Commit nennen. Release-Builds verwenden ccache unter macOS/Linux sowie sccache mit dem GitHub-Actions-Cache für Windows clang-cl. Compiler-Caches beschleunigen nur Neubuilds und werden nie als Release-Artefakte veröffentlicht.
 
-Standard ist die Paketrevision `neverd-llvm-v23.0.0-r3`. Git-Tag, Release-Ziel, Quell-Commit und die drei Archiv-Digests bilden eine unveränderliche versionierte Quellreferenz. Build-Verzeichnisse mit altem Basistag, `neverd-llvm-v23.0.0-r1` oder `neverd-llvm-v23.0.0-r2` wechseln automatisch zu `r3`, außer bei explizitem `NEVERD_LLVM_PREBUILT_SHA256`. `Prebuilt LLVM Audit` läuft bei Pushes, Pull Requests und alle sechs Stunden. `scripts/audit_prebuilt_llvm_release.py` vergleicht die Quellreferenz mit dem aktuellen GitHub-Release und allen veröffentlichten Prüfsummendateien.
+Standard ist die Paketrevision `neverd-llvm-v23.0.0-r4`. Git-Tag, Release-Ziel, Quell-Commit und die drei Archiv-Digests bilden eine unveränderliche versionierte Quellreferenz. Build-Verzeichnisse mit altem Basistag, `neverd-llvm-v23.0.0-r1`, `neverd-llvm-v23.0.0-r2` oder `neverd-llvm-v23.0.0-r3` wechseln automatisch zu `r4`, außer bei explizitem `NEVERD_LLVM_PREBUILT_SHA256`. `Prebuilt LLVM Audit` läuft bei Pushes, Pull Requests und alle sechs Stunden. `scripts/audit_prebuilt_llvm_release.py` vergleicht die Quellreferenz mit dem aktuellen GitHub-Release und allen veröffentlichten Prüfsummendateien.
 
-Ändert sich der LLVM-Fork, während LLVM weiter `23.0.0` meldet, veröffentlichen Sie die nächste Paketrevision `neverd-llvm-v23.0.0-r4`, danach `-r5`. Überschreiben Sie weder bestehende Releases noch erfinden Sie die LLVM-Version `23.0.1`:
+Ändert sich der LLVM-Fork, während LLVM weiter `23.0.0` meldet, veröffentlichen Sie die nächste Paketrevision `neverd-llvm-v23.0.0-r5`, danach `-r6`. Überschreiben Sie weder bestehende Releases noch erfinden Sie die LLVM-Version `23.0.1`:
 
 ```bash
 gh workflow run neverd-release.yml \
   --repo NeverSight/llvm-project \
   --ref main \
-  -f release_tag=neverd-llvm-v23.0.0-r4 \
+  -f release_tag=neverd-llvm-v23.0.0-r5 \
   -f overwrite_existing_assets=false
 ```
 
-Aktualisieren Sie nach Erfolg Standardtag, fixierten Commit und alle drei Digests in `cmake/NeverDLLVMPrebuilt.cmake` gemeinsam. Ein neues Paket wird unter `.cache/neverd-llvm/<tag>` gecacht; veraltete oder neu veröffentlichte Archive scheitern vor dem Entpacken. `overwrite_existing_assets` dient nur der historischen Wiederherstellung und bleibt im normalen Revisionsablauf aus.
+Aktualisieren Sie nach Erfolg Standardtag, fixierten Commit und alle drei Digests in `cmake/NeverDLLVMPrebuilt.cmake` gemeinsam. Jede Paketrevision verwendet ein eigenes Cache-Verzeichnis; der aktuelle Standard liegt unter `.cache/neverd-llvm/neverd-llvm-v23.0.0-r4`. Veraltete oder neu veröffentlichte Archive scheitern vor dem Entpacken. `overwrite_existing_assets` dient nur der historischen Wiederherstellung und bleibt im normalen Revisionsablauf aus.
 
 **Artefakte**
 

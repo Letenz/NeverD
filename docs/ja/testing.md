@@ -1246,7 +1246,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5054 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5416`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5056 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5418`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1540,6 +1540,8 @@ block とコピーの公開テストでは、独立した二つの 48 バイト�
 
 `BinaryLowIRLoopInference.NativeSelectors*` は二つのレジスタ文脈、フレームのみの文脈、三領域の論理積、区別不能なテンプレート、由来・ネイティブ本体の変更、推論と証明の独立した厳密予算および一不足予算を検査する。ループ回数は任意で入口定数を追加しない。
 
+`NativeSelectorsGeneralize*` はレジスタ／フレームの交互フェーズについて自動復元と完全なネイティブ証明を検査し、上位ビットが記号的なバイトマスクも含む。`NativeSelectorState*` は誤った順位／本体、マスク外ビットの破損、不正代入、作業量とメタデータの厳密予算／一不足予算を検査する。明示的な有効計画では、実際のビルダーと変換前後の完全なネイティブ検査を組み合わせ、重複する切断点と非重複の切断点、元側プレフィックスの由来保持、フォールバック走査の課金、一時オフセットのオーバーフロー拒否を確認する。明示計画の検査と自動推論の範囲は区別する。
+
 `DarwinIndirectRecordCalls` は現在の MakeScale 契約と 22 種類のインポート/ABI 変更を検査し、共有の値渡しコピー証明で 48 バイト全体の私有結果を使用します。非整列、変位、重複、フレーム外の結果範囲は拒否されます。完全な戻り値 ABI が残っていても、確実な書き込み効果を除去すると拒否されます。
 
 `SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity` は入口・キャリア・書き込みの 10 変更と入口 ABI の欠落を拒否する。`NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress` は直接末尾呼び出しを再リフトし、明示的出力引数、6 書き込み、公開ゲートを確認する。
@@ -1614,3 +1616,7 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: 八つの固定版で raw／Bionic の識別、PROF／VIRT／SCHED、下位 32 ビット、ポインター故障より先の対象検証、標本欠落、別名、非負 CPU 時間、壁時計と CPU のアイドル分離を確認します。`AndroidTimeTests.cpp` は出力とカナリアを、協調 syscall は現在の非リーダー TID を確認します。
 
 `ZeroTimeoutPollRetainsReadinessAndOrderedCopies` は八版の O0／O2 生呼び出しで、生存・負・閉じた記述子、重複件数、引数の縮小、タイムアウトとマスクの順序、読み取り専用ゼロ timespec、全メタデータの先行取り込み、後続障害で残る `revents` を検証します。`ZeroTimeoutPollKeepsUnobservedBoundaries` は未観測のカーネル、上限、マスク、待機、準備状態を維持します。Android の `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` は六つの梱包形式で共有表と errno の所有者を確認します。
+
+## 有界ディレクトリ一括属性
+
+bulk-attributes は完全なグループ、名前/型の集合、未使用バイトの保護、low32 FD、bitmap ワード、ネイティブエラー、dup、独立 open、EOF、ゼロ rewind を確認する。リテラル/未対応モードは仮想専用。モデルは完全な stat と無効化、NFD/255バイト名、入出力の別名、転送/予算エラー、移動/SWAP/削除/再使用、明示権限も確認する。必須在庫はプラットフォーム当たり63項目、ARM64 は189件、Intel は126件。本機で検証した実行は一致する ARM64 HVF のみ。native5s、guest/Python5,000,000us/quantum1024、public10s は不変。

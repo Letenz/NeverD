@@ -28,6 +28,15 @@ namespace section_names {
 // the symbols it does not define; no object format names a section so.
 constexpr const char *SynthesizedExtern = "extern";
 
+/// Format-reserved debug record containers. Their embedded code addresses
+/// describe source ranges and call return PCs, not runtime function pointers.
+inline bool isDebugSectionName(llvm::StringRef Name) {
+  return Name == ".debug" || Name.starts_with(".debug_") ||
+         Name.starts_with(".debug$") || Name.starts_with(".zdebug_") ||
+         Name.starts_with("__debug_") || Name.starts_with("__zdebug_") ||
+         Name == ".stab" || Name.starts_with(".stab.") || Name == ".stabstr";
+}
+
 namespace elf {
 constexpr const char *Text = ".text";
 // Function/section split produced by -ffunction-sections and hot/cold

@@ -13,8 +13,8 @@
 #ifndef NEVERD_IR_MED_MEDNORETURN_H
 #define NEVERD_IR_MED_MEDNORETURN_H
 
+#include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/ir/med/MedIR.h"
-#include "neverd/ir/low/LowIR.h"
 
 #include <vector>
 
@@ -26,15 +26,8 @@ namespace neverd {
 /// does not grant an intrinsic a source ABI or memory semantics.
 bool isArchitecturalNoReturn(const MedOp &Op);
 
-/// LowIR form of the same architectural termination fact. Consumers must
-/// still prove that the operation ends its block before cutting a path.
-bool isArchitecturalNoReturn(const LowOp &Op);
-
 /// The same facts for callers that name the architecture; it adds nothing.
 inline bool isArchitecturalNoReturn(const MedOp &Op, Arch) {
-  return isArchitecturalNoReturn(Op);
-}
-inline bool isArchitecturalNoReturn(const LowOp &Op, Arch) {
   return isArchitecturalNoReturn(Op);
 }
 

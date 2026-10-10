@@ -308,25 +308,25 @@ MedLLVMEmitter::tryResolveReadOnlyDataPtr(const MedVar &AddrVar,
   bool SawAmbiguous = false;
   const MedOp *Top = lookupDef(AddrVar);
   auto isKnownReadOnlyBase = [&](const MedVar &Value) {
-    std::optional<uint64_t> VA =
-        Value.isConst() ? std::optional<uint64_t>(Value.ConstVal)
-                        : traceSSAConst(Value);
+    std::optional<uint64_t> VA = Value.isConst()
+                                     ? std::optional<uint64_t>(Value.ConstVal)
+                                     : traceSSAConst(Value);
     return VA && isMaterializableReadOnlyDataAddress(*VA);
   };
-  const bool PreferIndexed =
-      Top && Top->Opcode == NdOp::INT_ADD && Top->NumInputs >= 2 &&
-      (isKnownReadOnlyBase(Top->Inputs[0]) ||
-       isKnownReadOnlyBase(Top->Inputs[1]));
+  const bool PreferIndexed = Top && Top->Opcode == NdOp::INT_ADD &&
+                             Top->NumInputs >= 2 &&
+                             (isKnownReadOnlyBase(Top->Inputs[0]) ||
+                              isKnownReadOnlyBase(Top->Inputs[1]));
   if (PreferIndexed)
     if (auto *P =
-        tryResolveIndexedGlobalPtr(AddrVar, SizeHint, FailClosed, Builder))
+            tryResolveIndexedGlobalPtr(AddrVar, SizeHint, FailClosed, Builder))
       return P;
   if (SelectMergeFailureCacheFor != CurMedFunc) {
     SelectMergeFailureCacheFor = CurMedFunc;
     SelectMergeFailureCache.clear();
   }
-  const auto SelectMergeKey = std::make_tuple(
-      addressProvenanceVarKey(AddrVar), SizeHint, FailClosed);
+  const auto SelectMergeKey =
+      std::make_tuple(addressProvenanceVarKey(AddrVar), SizeHint, FailClosed);
   if (!SelectMergeFailureCache.count(SelectMergeKey)) {
     if (auto *P = tryResolveSelectMergeTable(AddrVar, SizeHint, FailClosed,
                                              Builder, &SawAmbiguous))
@@ -338,7 +338,7 @@ MedLLVMEmitter::tryResolveReadOnlyDataPtr(const MedVar &AddrVar,
   }
   if (!PreferIndexed)
     if (auto *P =
-        tryResolveIndexedGlobalPtr(AddrVar, SizeHint, FailClosed, Builder))
+            tryResolveIndexedGlobalPtr(AddrVar, SizeHint, FailClosed, Builder))
       return P;
   if (auto *P = tryResolveLiteralPoolTable(AddrVar, SizeHint, Builder))
     return P;
@@ -360,35 +360,6 @@ llvm::Value *MedLLVMEmitter::tryResolvePointerArg(const MedVar &AddrVar,
     rejectEscapingAddressFragment(AddrVar, "a call argument");
     return nullptr;
   }
-  // An all-address PHI/SELECT still needs the structural merge owner even
-  // though its leaves now carry exact occurrence provenance.  getVar has
-  // already materialized those leaves, but emitting the integer SSA merge
-  // directly can mix raw and symbolized address models (and loses the
-  // canonical run-relative form used by fixed pointer arguments).  Give the
-  // all-arms audit one opportunity to rebuild the merge.  A role-neutral
-  // Address is only producer evidence, however: ARM PC+literal and i386
-  // GOT+GOTOFF relations keep their numeric leaves until this pointer consumer
-  // selects a data owner.  If this is not a merge, let Address continue through
-  // the direct/writable/read-only resolvers below.  Their symbolized-vs-raw
-  // audits prevent a second base from being applied.
-  if (Occurrence.Model == ConstantProvenanceSummary::ValueModel::Address) {
-    bool SawAmbiguous = false;
-    if (SelectMergeFailureCacheFor != CurMedFunc) {
-      SelectMergeFailureCacheFor = CurMedFunc;
-      SelectMergeFailureCache.clear();
-    }
-    const auto SelectMergeKey = std::make_tuple(
-        addressProvenanceVarKey(AddrVar), uint16_t(0), FailClosed);
-    if (!SelectMergeFailureCache.count(SelectMergeKey)) {
-      if (llvm::Value *Merged = tryResolveSelectMergeTable(
-              AddrVar, /*SizeHint=*/0, FailClosed, Builder, &SawAmbiguous))
-        return Merged;
-      if (SawAmbiguous)
-        return nullptr;
-      if (!FatalDataPointerResolution && !FatalCodePointerResolution)
-        SelectMergeFailureCache.insert(SelectMergeKey);
-    }
-  }
   // Scalar, fragment, and mixed explicit occurrences must never fall through
   // to value-global heuristics.  Unlike Address, they carry no complete data-
   // pointer relation for this consumer to own.
@@ -398,8 +369,8 @@ llvm::Value *MedLLVMEmitter::tryResolvePointerArg(const MedVar &AddrVar,
     // read-only resolver proves one stable data owner.  Keep that exact
     // certificate; scalar and fragment values remain rejected.
     if (Occurrence.Model == ConstantProvenanceSummary::ValueModel::Mixed)
-      if (llvm::Value *P = tryResolveReadOnlyDataPtr(
-              AddrVar, /*SizeHint=*/0, FailClosed, Builder))
+      if (llvm::Value *P = tryResolveReadOnlyDataPtr(AddrVar, /*SizeHint=*/0,
+                                                     FailClosed, Builder))
         return P;
     return nullptr;
   }
@@ -534,6 +505,38 @@ llvm::Value *MedLLVMEmitter::tryResolvePointerArg(const MedVar &AddrVar,
         SelectMergeFailureCache.insert(SelectMergeKey);
       return nullptr;
     }
+
+  // An all-address PHI still needs the structural merge owner even
+  // though its leaves now carry exact occurrence provenance. Flat SELECTs
+  // above materialize each arm independently, including distinct data runs.
+  // More general merges need the shared-base audit below. getVar has
+  // already materialized those leaves, but emitting the integer SSA merge
+  // directly can mix raw and symbolized address models (and loses the
+  // canonical run-relative form used by fixed pointer arguments).  Give the
+  // all-arms audit one opportunity to rebuild the merge.  A role-neutral
+  // Address is only producer evidence, however: ARM PC+literal and i386
+  // GOT+GOTOFF relations keep their numeric leaves until this pointer consumer
+  // selects a data owner.  If this is not a merge, let Address continue through
+  // the direct/writable/read-only resolvers below.  Their symbolized-vs-raw
+  // audits prevent a second base from being applied.
+  if (Occurrence.Model == ConstantProvenanceSummary::ValueModel::Address) {
+    bool SawAmbiguous = false;
+    if (SelectMergeFailureCacheFor != CurMedFunc) {
+      SelectMergeFailureCacheFor = CurMedFunc;
+      SelectMergeFailureCache.clear();
+    }
+    const auto SelectMergeKey = std::make_tuple(
+        addressProvenanceVarKey(AddrVar), uint16_t(0), FailClosed);
+    if (!SelectMergeFailureCache.count(SelectMergeKey)) {
+      if (llvm::Value *Merged = tryResolveSelectMergeTable(
+              AddrVar, /*SizeHint=*/0, FailClosed, Builder, &SawAmbiguous))
+        return Merged;
+      if (SawAmbiguous)
+        return nullptr;
+      if (!FatalDataPointerResolution && !FatalCodePointerResolution)
+        SelectMergeFailureCache.insert(SelectMergeKey);
+    }
+  }
 
   // A direct &global (or COPY thereof) first uses exact occurrence ownership.
   // Pointer arguments are speculative ABI guesses, unlike a LOAD/STORE

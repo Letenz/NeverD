@@ -227,7 +227,9 @@ Swift 的 `coverage_status` 只统计已分类的可调用项。整体 Swift `st
 
 每个已恢复 Swift 条目的 `source_representation` 为 `native-method-body` 或 `compiler-generated-from-type`。编译器投影还保留 `compiler_projection_kind` 和 `compiler_projection_evidence`。`source_body_method_count` 统计已恢复原生方法体，`compiler_projection_method_count` 统计通过证明的编译器投影，两者之和等于 `recovered_method_count`。编译器入口继续计入 `method_count` 分母，其准确身份必须出现在唯一对应的 `type` 源码单元中。仅有类型元数据或依赖名称不能增加已恢复覆盖。原生批量 JSON 的编译器条目和类型单元包含 `source`；mobile 的 `source_units` 仅保留描述、不含 `source`，完整源码见 `sources/swift.swift`。
 
-原生 Swift 批量报告的 `source_units` 记录 `{kind, module, name, source, method_entries, method_identities}`，kind 为 `function` 或 `type`，每个 identity 为 `{entry, mangled_symbol}`。不同符号可以共享入口并保留各自 ABI 输出；每个已恢复 identity 必须且只能出现一次，未恢复 identity 不得出现。`method_entries` 必须精确等于 `method_identities` 的有序入口投影，允许重复地址；不能静默合并完全相同的重复 identity。批量 `source` 等于按顺序拼接每个单元源码再加一个换行。Mobile 在 `sources/swift.swift` 保存完整源码，在覆盖 JSON 保留单元描述。逐方法 `source` 用于查看，直接拼接无法正确重建类声明。
+原生 Swift 批量报告的 `source_units` 记录 `{kind, module, name, source, module_preamble, method_entries, method_identities}`，kind 为 `function` 或 `type`，每个 identity 为 `{entry, mangled_symbol}`。不同符号可以共享入口并保留各自 ABI 输出；每个已恢复 identity 必须且只能出现一次，未恢复 identity 不得出现。`method_entries` 必须精确等于 `method_identities` 的有序入口投影，允许重复地址；不能静默合并完全相同的重复 identity。批量 `source` 使用下述前导声明组装规则。Mobile 在 `sources/swift.swift` 保存完整源码，在覆盖 JSON 保留单元描述。逐方法 `source` 用于查看，直接拼接无法正确重建类声明。
+
+每个原生单元都独立包含完整源码：其 `source` 必须以精确的 `module_preamble` 开头。组装文件时，先按字典序拼接不同的非空前导声明，再依单元原顺序拼接去除该精确前缀后的主体，并为每个单元添加一个换行。无效前缀会被拒绝。前导声明为空或省略时沿用旧拼接规则。普通方法行也提供 `module_preamble`；组装 `member_source` 时必须把这些声明保留在文件作用域。编译完整模块请使用完整的批量源码。
 
 ## 直接原生导出与 SDK
 

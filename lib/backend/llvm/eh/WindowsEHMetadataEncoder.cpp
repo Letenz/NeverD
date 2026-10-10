@@ -163,9 +163,9 @@ llvm::MDNode *getCanonicalFunctionMetadata(llvm::LLVMContext &Context,
     std::vector<llvm::Metadata *> TryLevelStores;
     TryLevelStores.reserve(Chain.TryLevelStores.size());
     for (const RegistrationTryLevelStore &Store : Chain.TryLevelStores)
-      TryLevelStores.push_back(
-          Node({mdUInt(Context, Store.StoreVA), mdUInt(Context, Store.EndVA),
-                mdSInt(Context, Store.Level, 32)}));
+      TryLevelStores.push_back(Node(
+          {mdUInt(Context, Store.StoreVA), mdUInt(Context, Store.EndVA),
+           mdSInt(Context, Store.Level, 32), mdUInt(Context, Store.Width, 8)}));
 
     std::vector<llvm::Metadata *> Scopes;
     Scopes.reserve(Chain.Scopes.size());
@@ -174,6 +174,18 @@ llvm::MDNode *getCanonicalFunctionMetadata(llvm::LLVMContext &Context,
                              mdUInt(Context, Scope.FilterVA),
                              mdUInt(Context, Scope.HandlerVA),
                              mdUInt(Context, Scope.IsFinally, 1)}));
+
+    llvm::Metadata *RealignedFrame = Node({});
+    if (Chain.RealignedFrame) {
+      const auto &Frame = *Chain.RealignedFrame;
+      RealignedFrame =
+          Node({mdUInt(Context, Frame.BaseRegister, 8),
+                mdUInt(Context, Frame.DefinitionVA),
+                mdUInt(Context, Frame.Alignment, 32),
+                mdUInt(Context, Frame.AllocationBytes, 32),
+                mdSInt(Context, Frame.BaseOffset, 32),
+                mdSInt(Context, Frame.SavedParentFrameOffset, 32)});
+    }
 
     Registration = Node(
         {mdUInt(Context, Chain.HandlerVA), mdUInt(Context, Chain.ScopeTableVA),
@@ -187,7 +199,7 @@ llvm::MDNode *getCanonicalFunctionMetadata(llvm::LLVMContext &Context,
          mdSInt(Context, Chain.EHCookieXOROffset, 32),
          mdUInt(Context, Chain.ScopeTableMagic, 32), Node(Scopes),
          mdUInt(Context, Chain.ChainInstallVA),
-         mdUInt(Context, Chain.ChainRemoveVA)});
+         mdUInt(Context, Chain.ChainRemoveVA), RealignedFrame});
   }
 
   std::vector<llvm::Metadata *> Diagnostics;

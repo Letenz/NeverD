@@ -22,6 +22,7 @@
 
 #include "llvm/ADT/SmallPtrSet.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <optional>
@@ -300,6 +301,9 @@ struct HighStmt {
 
   /// For Return
   ExprPtr RetVal;
+  /// Exact catch RETURN evidence bound in final MedIR. It becomes a goto only
+  /// when this funclet body is attached to the validated parent continuation.
+  std::vector<va_t> CxxContinuationReturnTargets;
 
   /// For Store
   ExprPtr StoreAddr;
@@ -469,6 +473,9 @@ inline std::set<va_t> gotoTargets(const std::vector<HighStmt> &Stmts) {
   walkStmts(Stmts, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Goto)
       Targets.insert(S.GotoTarget);
+    for (const HighEHClause &Clause : S.EHClauses)
+      Targets.insert(Clause.ContinuationVAs.begin(),
+                     Clause.ContinuationVAs.end());
   });
   return Targets;
 }
@@ -582,6 +589,7 @@ struct HighFunc {
   std::vector<HighLocal> Locals;
   std::vector<HighStmt> Body;
   std::optional<ExceptionFunction> ExceptionMetadata;
+  std::set<va_t> CxxContinuationTargets;
   unsigned StructuredExceptionRegions = 0;
   unsigned UnstructuredExceptionRegions = 0;
   /// The case values of one recovered switch, in the coordinate its `switch`
@@ -616,15 +624,77 @@ void invertSkipGotos(HighFunc &Func);
 /// those bodies without a cycle guard overflows the stack on full-image
 /// HighC of MSVC catch-all probes.
 inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
-  std::map<va_t, HighFunc *> ByEntry;
-  for (HighFunc &Func : Funcs)
-    if (Func.Entry)
-      ByEntry[Func.Entry] = &Func;
+  // Always copy the original bodies. Otherwise attaching a nested catch to an
+  // earlier function can change what a later parent receives.
+  std::map<va_t, std::vector<HighStmt>> ByEntry;
+  std::map<va_t, std::set<va_t>> ContinuationsByEntry;
+  for (const HighFunc &Func : Funcs)
+    if (Func.Entry) {
+      ByEntry[Func.Entry] = Func.Body;
+      ContinuationsByEntry[Func.Entry] = Func.CxxContinuationTargets;
+    }
   for (HighFunc &Func : Funcs) {
+    // A PE32 callback uses the parent's EBP and a private runtime stack.
+    // A separately converted ordinary HighFunc carries no projection of
+    // those coordinates. Retain its native clause target until that contract
+    // is proved; bodies already recovered inside the parent remain intact.
+    if (Func.ExceptionMetadata && Func.ExceptionMetadata->Registration)
+      continue;
     std::set<va_t> Active;
+    std::set<va_t> Continuations = Func.CxxContinuationTargets;
     bool Attached = false;
     auto Attach = [&](auto &&Self, std::vector<HighStmt> &Stmts) -> void {
       for (HighStmt &Stmt : Stmts) {
+        if (!Active.empty() && Stmt.Kind == StmtKind::Return &&
+            !Stmt.CxxContinuationReturnTargets.empty() &&
+            std::all_of(Stmt.CxxContinuationReturnTargets.begin(),
+                        Stmt.CxxContinuationReturnTargets.end(),
+                        [&](va_t VA) { return Continuations.count(VA); })) {
+          const auto Targets = Stmt.CxxContinuationReturnTargets;
+          Stmt.CxxContinuationReturnTargets.clear();
+          auto Jump = [&](va_t Target) {
+            HighStmt Result;
+            Result.Kind = StmtKind::Goto;
+            Result.Addr = Stmt.Addr;
+            Result.GotoTarget = Target;
+            return Result;
+          };
+          if (Targets.size() == 1) {
+            // The original expression still executes: a projected return may
+            // have folded an effectful call into its value.
+            auto HasEffect = [&](auto &&Self, const ExprPtr &Expr) -> bool {
+              if (!Expr)
+                return false;
+              bool Result =
+                  Expr->Kind == ExprKind::Call ||
+                  Expr->Kind == ExprKind::Store ||
+                  Expr->MemoryOrdering != NdMemoryOrdering::None ||
+                  Expr->MemoryAddressSpace != NdMemoryAddressSpace::Default;
+              Expr->forEachChildExpr(
+                  [&](const ExprPtr &Child) { Result |= Self(Self, Child); });
+              return Result;
+            };
+            if (HasEffect(HasEffect, Stmt.RetVal)) {
+              HighStmt Value;
+              Value.Kind = StmtKind::Call;
+              Value.CallExpr = Stmt.RetVal;
+              Stmt.Kind = StmtKind::Block;
+              Stmt.Body = {std::move(Value), Jump(Targets.front())};
+              Stmt.RetVal.reset();
+            } else {
+              Stmt = Jump(Targets.front());
+            }
+          } else if (Stmt.RetVal) {
+            Stmt.Kind = StmtKind::Switch;
+            Stmt.SwitchExpr = Stmt.RetVal;
+            Stmt.RetVal.reset();
+            for (size_t I = 0; I + 1 < Targets.size(); ++I)
+              Stmt.Cases.push_back({Targets[I], {Jump(Targets[I])}});
+            // The exact RETURN proof enumerated the entire domain. Once all
+            // earlier values are excluded, only the last target remains.
+            Stmt.DefaultBody = {Jump(Targets.back())};
+          }
+        }
         if (Stmt.Kind == StmtKind::CxxTry) {
           if (Stmt.EHClauseBodies.size() < Stmt.EHClauses.size())
             Stmt.EHClauseBodies.resize(Stmt.EHClauses.size());
@@ -638,12 +708,17 @@ inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
                 Target = Clause.FilterOrActionVA;
               if (Target && Target != Func.Entry && !Active.count(Target)) {
                 auto It = ByEntry.find(Target);
-                if (It != ByEntry.end() && It->second != nullptr &&
-                    It->second != &Func) {
+                if (It != ByEntry.end()) {
                   Active.insert(Target);
-                  Stmt.EHClauseBodies[I] = It->second->Body;
+                  const auto SavedContinuations = Continuations;
+                  const auto &NestedContinuations =
+                      ContinuationsByEntry[Target];
+                  Continuations.insert(NestedContinuations.begin(),
+                                       NestedContinuations.end());
+                  Stmt.EHClauseBodies[I] = It->second;
                   Attached = true;
                   Self(Self, Stmt.EHClauseBodies[I]);
+                  Continuations = SavedContinuations;
                   Active.erase(Target);
                   continue;
                 }

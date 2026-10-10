@@ -7,6 +7,7 @@
 #include "DarwinDirectory.h"
 
 #include "DarwinFiles.h"
+#include "DarwinUserMemory.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -96,6 +97,8 @@ DarwinFiles::directory(Description &File, uint64_t Address, uint64_t Count,
     return Returned(InvalidArgument, true);
   if (File.Type != Kind::Directory)
     return Unsupported(diagnostic::FileDirectoryKind);
+  if (File.Iteration == DirectoryIteration::Bulk)
+    return Unsupported(diagnostic::DirectoryIterationMixed);
   std::optional<DarwinDirectoryContents> Current;
   const auto &Node = *File.Directory;
   if (Node.EnumerationPolicy) {
@@ -164,6 +167,7 @@ DarwinFiles::directory(Description &File, uint64_t Address, uint64_t Count,
       return Stored;
   }
   File.Offset = FinalOffset;
+  File.Iteration = DirectoryIteration::Entries;
   if (Current)
     File.DirectoryVersion = Node.EnumerationVersion;
   std::array<uint8_t, 8> OffsetBytes;
@@ -185,4 +189,137 @@ DarwinFiles::directory(Description &File, uint64_t Address, uint64_t Count,
   }
   return Returned(Bytes.size());
 }
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::bulkAttributes(uint32_t FD, uint64_t Input, uint64_t Address,
+                            uint64_t Size, uint64_t Options,
+                            ProcessResult &Result) {
+  auto Returned = [](uint64_t Value, bool Error = false) {
+    return std::optional<ServiceResult>({Value, Error});
+  };
+  auto Unsupported = [&](const char *Reason) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = Reason;
+    return std::optional<ServiceResult>();
+  };
+  const auto Found = Descriptors.find(FD);
+  if (Found == Descriptors.end())
+    return Returned(BadDescriptor, true);
+  auto &File = *Found->second.Open;
+  if ((File.Flags & OpenAccessMask) == OpenWriteOnly)
+    return Returned(BadDescriptor, true);
+  // Snapshot and other provider-dependent options remain outside this policy.
+  if (Options & ~uint64_t(AttributePackInvalid))
+    return Unsupported(diagnostic::FileAttributeOptions);
+  if (File.Type == Kind::File)
+    return Returned(NotDirectory, true);
+  if (File.Type != Kind::Directory)
+    return Unsupported(diagnostic::FileAttributeKind);
+  auto Imported = readAttributes(Input);
+  if (!Imported)
+    return Imported.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*Imported))
+    return Returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&*Imported))
+    return Unsupported(*Reason);
+  const auto &Request = std::get<AttributeRequest>(*Imported);
+  const uint32_t Mask = Request.Masks[0];
+  // This bulk provider ignores both 16-bit words. Ordinary attrlist retains
+  // its independent bitmapcount validation; required masks still precede EOF.
+  if (Request.Masks[1] || !(Mask & AttributeName) ||
+      !(Mask & AttributeReturned))
+    return Returned(InvalidArgument, true);
+  if (!(Mask & AttributeObjectType) || !supportedAttributeMask(Mask) ||
+      llvm::any_of(llvm::ArrayRef(Request.Masks).drop_front(2),
+                   [](uint32_t Bits) { return Bits != 0; }))
+    return Unsupported(diagnostic::FileAttributeSelection);
+  const auto &Node = *File.Directory;
+  if (!Node.EnumerationPolicy || !Node.BulkAttributes)
+    return Unsupported(diagnostic::DirectoryBulkPolicy);
+  if (File.Iteration == DirectoryIteration::Entries)
+    return Unsupported(diagnostic::DirectoryIterationMixed);
+  if ((File.Iteration == DirectoryIteration::Bulk &&
+       File.Offset != File.BulkCursor) ||
+      (File.Iteration == DirectoryIteration::None && File.Offset))
+    return Unsupported(diagnostic::DirectoryBulkPosition);
+  // A nonzero completed traversal retains EOF even after namespace changes,
+  // bypassing size/output checks. Empty offset 0 instead rechecks the view.
+  if (File.Offset && File.BulkEOF)
+    return Returned(0);
+  if (!Size || Size > INT64_MAX)
+    return Returned(InvalidArgument, true);
+  if (Node.EnumerationVersion == UINT64_MAX)
+    return Unsupported(diagnostic::DirectoryEnumerationLimit);
+  if (File.Offset && File.DirectoryVersion != Node.EnumerationVersion)
+    return Unsupported(diagnostic::DirectoryEnumerationVersion);
+  std::vector<std::string> Paths;
+  if (Node.Linked)
+    forEachDirectoryChild(Node, [&](const DirectoryEntryIdentity &Child) {
+      Paths.push_back((Node.Path == "/" ? Node.Path : Node.Path + '/') +
+                      Child.Name.str());
+    });
+  llvm::sort(Paths, [](const auto &A, const auto &B) {
+    return llvm::StringRef(A).compare(B) < 0;
+  });
+  if (File.Offset > Paths.size())
+    return Unsupported(diagnostic::DirectoryBulkPosition);
+  const uint64_t Capacity = std::min(Size, DirectoryPayloadLimit);
+  size_t Next = File.Offset;
+  std::vector<uint8_t> Bytes;
+  while (Next < Paths.size()) {
+    const auto &Path = Paths[Next];
+    Description Child{Kind::File};
+    if (auto I = Nodes.find(Path); I != Nodes.end()) {
+      Child.File = I->second;
+      Child.Metadata = I->second->metadata();
+    } else if (auto I = Links.find(Path); I != Links.end()) {
+      Child.Type = Kind::SymbolicLink;
+      Child.Link = I->second;
+      Child.Metadata = I->second->Metadata;
+    } else {
+      Child.Type = Kind::Directory;
+      Child.Directory = Directories.at(Path);
+      Child.Metadata = Child.Directory->Metadata;
+    }
+    auto Built = attributeRecord(Child, Mask);
+    if (auto *Reason = std::get_if<const char *>(&Built))
+      return Unsupported(*Reason);
+    auto Record = std::move(std::get<std::vector<uint8_t>>(Built));
+    const uint64_t Remaining = Capacity - Bytes.size();
+    if (Record.size() > Remaining) {
+      if (Bytes.empty())
+        return Returned(ResultTooLarge, true);
+      break;
+    }
+    // Complete groups start 8-byte aligned. If its rounded size does not fit,
+    // the final 4-byte-sized record is published without extra padding.
+    const uint64_t Rounded = (Record.size() + 7) & ~uint64_t(7);
+    if (Rounded <= Remaining)
+      Record.resize(Rounded, 0);
+    llvm::support::endian::write32le(Record.data(), Record.size());
+    Bytes.insert(Bytes.end(), Record.begin(), Record.end());
+    ++Next;
+    // Required NAME/type/returned selections need at least 40 bytes.
+    if (Capacity - Bytes.size() < 40)
+      break;
+  }
+  if (!Bytes.empty()) {
+    auto Prefix = userMemoryPrefix(Memory, Address, Bytes.size(), Write);
+    if (!Prefix)
+      return Prefix.takeError();
+    if (!*Prefix)
+      return Returned(ResultTooLarge, true);
+    if (*Prefix != Bytes.size())
+      return Unsupported(diagnostic::DirectoryBulkPartialOutput);
+    if (auto Error = Memory.write(Address, Bytes))
+      return std::move(Error);
+  }
+  const uint64_t Count = Next - File.Offset;
+  File.Offset = File.BulkCursor = Next;
+  File.Iteration = DirectoryIteration::Bulk;
+  File.BulkEOF = Next == Paths.size() && Next != 0;
+  File.DirectoryVersion = Node.EnumerationVersion;
+  return Returned(Count);
+}
+
 } // namespace neverd::emulation::darwin_model

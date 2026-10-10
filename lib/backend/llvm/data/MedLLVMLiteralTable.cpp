@@ -1544,6 +1544,7 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
     }
   };
   BaseProof Proof = walk(BaseVar, 0, {});
+
   // An invalid relocatable leaf can be hidden by constant arithmetic whose
   // old-image value happens to fold back into a read-only table.  The child
   // walk intentionally rejects that leaf before recording a raw table base;
@@ -1583,15 +1584,7 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
       *SawAmbiguous = true;
     if (!FailClosed)
       return;
-    if (EvidencePhi) {
-      failAmbiguousDataPointerPhi(*EvidencePhi);
-      return;
-    }
     if (!FatalDataPointerResolution) {
-      syncError() << "med_llvm_emitter: ambiguous reachable read-only table-"
-                     "base address "
-                  << BaseVar.display() << " in " << CurMedFunc->Name
-                  << "; refusing stale-address fallback\n";
       detail::failure_snapshot::capture(
           Img, CurMedFunc, SnapshotBranch, BaseVar, FatalCodePointerResolution,
           nullptr,
@@ -1605,6 +1598,15 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
            {"non_base_value_merge", SawNonBaseValueMerge},
            {"base_count", Bases.size()}});
     }
+    if (EvidencePhi) {
+      failAmbiguousDataPointerPhi(*EvidencePhi);
+      return;
+    }
+    if (!FatalDataPointerResolution)
+      syncError() << "med_llvm_emitter: ambiguous reachable read-only table-"
+                     "base address "
+                  << BaseVar.display() << " in " << CurMedFunc->Name
+                  << "; refusing stale-address fallback\n";
     FatalDataPointerResolution = true;
   };
   if (AuditIncomplete) {

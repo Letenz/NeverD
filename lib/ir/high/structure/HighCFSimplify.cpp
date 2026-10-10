@@ -63,8 +63,11 @@ class LabelStarts {
         ++Starts[S.Addr];
       if (S.Kind == StmtKind::Goto)
         Entered.insert(S.GotoTarget);
-      for (const HighEHClause &Clause : S.EHClauses)
+      for (const HighEHClause &Clause : S.EHClauses) {
         Entered.insert(Clause.HandlerVA);
+        Entered.insert(Clause.ContinuationVAs.begin(),
+                       Clause.ContinuationVAs.end());
+      }
       count(S.Body, S.Addr);
       count(S.ElseBody, 0);
       for (const auto &C : S.Cases)

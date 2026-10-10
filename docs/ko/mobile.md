@@ -58,6 +58,8 @@ neverd mobile executable -o metadata --metadata-only
 
 Swift 복원은 NeverD LLVM 포크의 `LLVMSwiftDemangle`을 사용하여 C++ 프로세스 안에서 시그니처를 분류합니다. 외부 디맹글러나 툴체인 탐색 명령을 시작하지 않으며 NeverD를 빌드하거나 실행할 때 설치된 Swift 컴파일러가 필요하지 않습니다. 포크 소스 빌드와 대응하는 LLVM 패키지가 이 구성 요소를 포함하며, NeverD는 별도의 Swift 소스 의존성을 가져오지 않습니다. 시그니처 목록은 `demangler: {"name": "llvm-swift-demangle", "execution": "builtin", "version": "6.3.3"}`을 기록합니다. 지원되는 시그니처를 네이티브 진입점과 ABI 위치에 연결한 다음 실제 `.swift` 함수, 클래스 메서드/이니셜라이저 및 고정 배치 구조체 메서드를 생성합니다. generic/resilient, async/throwing, 지원하지 않는 런타임 생성 callable 형태 및 불완전한 소스 의존성 그룹은 복원되지 않은 상태로 남습니다.
 
+복원된 x86_64 스칼라 SSE 덧셈·뺄셈·곱셈·나눗셈은 수치 비트와 MXCSR의 반올림, DAZ/FTZ 및 누적 예외 상태를 유지합니다. 이 출력을 컴파일하려면 LLVM MXCSR 포인터 내장 연산을 제공하는 x86_64 Swift 대상이 필요합니다. `member_source`를 조립할 때도 필요한 `module_preamble` 선언은 파일 범위에 유지해야 하며, 완전한 `sources/swift.swift` 출력을 사용해야 합니다. 변환 상태와 임의의 96비트 메모리·산술 연산은 아직 지원하지 않습니다. 마스크되지 않은 예외는 네이티브 Intel에서 별도로 검증해야 하며 Rosetta는 예외 마스크를 강제합니다.
+
 일반 출력에는 `sources/native.c`, 선택적인 `sources/objc.m`와 `sources/swift.swift`, 선언과 런타임 메타데이터, 메서드/시그니처 검사 범위 JSON, 로그, `artifacts/selected.macho` 및 `report.json`이 포함됩니다. 외부 Swift 툴체인 탐색이나 디맹글링 로그는 없습니다. 생성 소스는 원래 바이너리를 복원용 연결 대상으로 호출하지 않습니다. Swift의 `source_units`는 타입 선언과 메서드를 묶으며, 독립 메서드 행을 이어 붙여 클래스를 재구성해서는 안 됩니다. 바깥쪽 `status: "success"`는 출력 공개를 뜻하며 완전한 메서드 복원 범위나 의미적 동등성을 뜻하지 않습니다.
 
 `--metadata-only`는 네이티브 소스 내보내기와 시그니처 디맹글링을 모두 실행하지 않으며 소스나 메서드 검사 범위를 출력하지 않습니다. 모든 모드는 네이티브 로더의 해석된 Objective-C 메타데이터를 사용합니다. Swift 메타데이터는 범위가 제한된 네이티브 이미지 읽기를 사용하며, 지원하지 않는 fixup, 재배치 가능한 배치 또는 참조에 대해서는 부분 진단을 보존합니다. `--max-func`는 네이티브 함수 복원을 제한하며 메타데이터 전용 모드에서는 무시합니다. 네이티브 함수 본문이 없으면 일반 실행은 실패합니다. 임시로 압축 해제한 입력은 제거합니다.

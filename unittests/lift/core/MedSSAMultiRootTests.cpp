@@ -363,6 +363,302 @@ TEST(MedSEHEstablisherFrame, NormalHandlerAndJoinUseTheSameLocalSlot) {
   EXPECT_EQ(Seen, Expected);
 }
 
+LowFunc makeFixedCxxContinuationFrame(
+    const BinaryImage &Image = makeFixedSEHFrameImage()) {
+  auto Low = decodeFixedSEHFrame(Image);
+  auto &EH = *Low.ExceptionMetadata;
+  EH.SEH.reset();
+  EH.Cxx.emplace();
+  auto &Cxx = *EH.Cxx;
+  Cxx.NativeFuncInfoVA = Low.Entry + 0x1000;
+  Cxx.MaxState = 2;
+  Cxx.UnwindMap.resize(2);
+  Cxx.UnwindMap[0].ToState = -1;
+  Cxx.UnwindMap[1].ToState = -1;
+  Cxx.TryBlocks.push_back({0, 0, 1, {}});
+  CxxCatchHandler Catch;
+  Catch.HandlerVA = Low.Entry + 0x100;
+  Cxx.TryBlocks.front().Handlers.push_back(Catch);
+  Cxx.IPMap = {{Low.Entry, -1}, {Low.Entry + 0x10, 0}, {Low.Entry + 0x11, -1}};
+  for (auto &B : Low.Blocks) {
+    B.ExceptionalPreds.clear();
+    for (auto &E : B.ExceptionalSuccs) {
+      E.Kind = ExceptionalEdgeKind::CxxCatch;
+      E.BlockId = -1;
+      E.TargetVA = Catch.HandlerVA;
+      E.RegionIndex = 0;
+      E.State = 0;
+    }
+  }
+  Low.CxxContinuationEntries.push_back(
+      {Low.Entry + 0x20, Catch.HandlerVA, Catch.HandlerVA + 0x10, 7});
+  return Low;
+}
+
+TEST(MedCxxContinuationFrame, CatchResumeAndNormalPathAddressTheSameLocal) {
+  auto Low = makeFixedCxxContinuationFrame();
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "cxx-continuation-frame"));
+  unsigned Loads = 0;
+  for (const auto &B : Med.Blocks)
+    for (const auto &Op : B.Ops)
+      if (Op.Opcode == NdOp::LOAD &&
+          (Op.Addr == Low.Entry + 0x20 || Op.Addr == Low.Entry + 0x30)) {
+        EXPECT_EQ(entrySPOffset(Med, Op.Inputs[0]), -100);
+        ++Loads;
+      }
+  EXPECT_EQ(Loads, 2u);
+}
+
+TEST(MedCxxContinuationFrame, SynchronousFrameStillChecksTheThrowingPrefix) {
+  for (unsigned Variant = 0; Variant < 3; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto Img = makeFixedSEHFrameImage();
+    auto &Code = Img.Segments.front().Data;
+    size_t CallOffset = 0x10;
+    if (Variant == 2) {
+      const uint8_t Adjust[] = {0x48, 0x83, 0xec, 8};
+      std::copy(std::begin(Adjust), std::end(Adjust), Code.begin() + 0x10);
+      CallOffset += sizeof(Adjust);
+    }
+    Code[CallOffset] = 0xe8;
+    writeLE<int32_t>(Code.data() + CallOffset + 1,
+                     int32_t(0x100 - CallOffset - 5));
+    Code[CallOffset + 5] = 0xeb;
+    Code[CallOffset + 6] = uint8_t(0x30 - CallOffset - 7);
+    Img.ExceptionMetadata.Functions.front()
+        .SEH->Scopes.front()
+        .GuardedRange.End = Img.Entry + 0x3d;
+    auto Low = makeFixedCxxContinuationFrame(Img);
+    Low.ExceptionMetadata->Cxx->IsSynchronous = Variant != 1;
+    if (Low.ExceptionMetadata->Cxx->IsSynchronous)
+      for (auto &B : Low.Blocks) {
+        const auto Call =
+            llvm::find_if(B.InstructionBoundaries, [](const auto &I) {
+              return I.Control == LowInstructionControl::Call;
+            });
+        if (Call == B.InstructionBoundaries.end())
+          B.ExceptionalSuccs.clear();
+        else
+          for (auto &Edge : B.ExceptionalSuccs)
+            Edge.SourceVA = Call->Address;
+      }
+    if (Variant == 0) {
+      auto Med =
+          LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+      EXPECT_TRUE(verifyMedFunc(Med, "synchronous-cxx-frame"));
+    } else {
+      // Async EH can enter from the restoring epilogue. Sync EH excludes that
+      // suffix, but cannot excuse an SP change before a potentially throwing
+      // call.
+      EXPECT_THROW(
+          LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
+          LowToMedConversionError);
+    }
+  }
+}
+
+TEST(MedCxxContinuationFrame, AnOrdinaryRootCannotBorrowTheCatchFrame) {
+  auto Low = makeFixedCxxContinuationFrame();
+  Low.CxxContinuationEntries.clear();
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  bool Seen = false;
+  for (const auto &B : Med.Blocks)
+    for (const auto &Op : B.Ops)
+      if (Op.Opcode == NdOp::LOAD && Op.Addr == Low.Entry + 0x20) {
+        EXPECT_NE(entrySPOffset(Med, Op.Inputs[0]), -100);
+        Seen = true;
+      }
+  EXPECT_TRUE(Seen);
+}
+
+TEST(MedCxxContinuationFrame, RejectsUncertifiedParentFrame) {
+  for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Low = makeFixedCxxContinuationFrame();
+    auto &EH = *Low.ExceptionMetadata;
+    switch (Mutation) {
+    case 0:
+      EH.Cxx->HasDynamicStackAlignment = true;
+      break;
+    case 1:
+      EH.UnwindOperations.front().StackOffset += 8;
+      break;
+    case 2:
+      Low.CxxContinuationEntries.front().SourceEntry += 1;
+      break;
+    case 3:
+      EH.Cxx->UnwindMap[0].ToState = 0;
+      break;
+    }
+    EXPECT_THROW(
+        LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
+        LowToMedConversionError);
+  }
+}
+
+TEST(MedCxxContinuationFrame, RequiresAuthenticatedSynchronousCallSources) {
+  auto Low = makeFixedCxxContinuationFrame();
+  Low.ExceptionMetadata->Cxx->IsSynchronous = true;
+  // A range-level edge cannot authorize sampling arbitrary register state at
+  // a guessed call, even when its try index and handler happen to match.
+  EXPECT_THROW(LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
+               LowToMedConversionError);
+}
+
+TEST(HighCxxContinuation, AttachesOnlyCertifiedReturnsToTheirParentEntries) {
+  for (unsigned Variant = 0; Variant < 4; ++Variant)
+    for (bool ReverseOrder : {false, true}) {
+      SCOPED_TRACE(Variant);
+      SCOPED_TRACE(ReverseOrder);
+      constexpr va_t ParentEntry = 0x140001000;
+      constexpr va_t Target = ParentEntry + 0x80;
+      constexpr va_t CatchEntry = ParentEntry + 0x100;
+      HighFunc Parent, Catch;
+      Parent.Entry = ParentEntry;
+      Parent.CxxContinuationTargets = {Target, Target + 16};
+      Catch.Entry = CatchEntry;
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeConst(Target, 8);
+      if (Variant == 0)
+        Return.CxxContinuationReturnTargets = {Target};
+      if (Variant == 1)
+        Return.CxxContinuationReturnTargets = {Target, Target + 16};
+      if (Variant == 3)
+        Return.CxxContinuationReturnTargets = {Target, Target + 32};
+      Catch.Body.push_back(Return);
+      HighStmt Try;
+      Try.Kind = StmtKind::CxxTry;
+      HighEHClause Clause;
+      Clause.Kind = HighEHClauseKind::CxxCatch;
+      Clause.HandlerVA = CatchEntry;
+      Clause.ContinuationVAs = {Target, Target + 16};
+      Try.EHClauses.push_back(Clause);
+      Try.EHClauseBodies.resize(1);
+      Parent.Body.push_back(Try);
+      std::vector<HighFunc> Funcs{Parent, Catch};
+      if (ReverseOrder)
+        std::reverse(Funcs.begin(), Funcs.end());
+      attachCxxFuncletBodies(Funcs);
+      const auto &Result = Funcs[ReverseOrder ? 1 : 0];
+      const auto &Unattached = Funcs[ReverseOrder ? 0 : 1];
+      ASSERT_EQ(Unattached.Body.front().Kind, StmtKind::Return);
+      EXPECT_EQ(Unattached.Body.front().CxxContinuationReturnTargets,
+                Return.CxxContinuationReturnTargets);
+      std::set<va_t> Jumps;
+      unsigned Switches = 0;
+      walkStmts(Result.Body, [&](const HighStmt &S) {
+        if (S.Kind == StmtKind::Goto)
+          Jumps.insert(S.GotoTarget);
+        Switches += S.Kind == StmtKind::Switch;
+      });
+      const std::set<va_t> Expected = Variant == 0 ? std::set<va_t>{Target}
+                                      : Variant == 1
+                                          ? std::set<va_t>{Target, Target + 16}
+                                          : std::set<va_t>{};
+      EXPECT_EQ(Jumps, Expected);
+      EXPECT_EQ(Switches, Variant == 1 ? 1u : 0u);
+    }
+}
+
+TEST(MedCxxContinuationFrame,
+     PublicNestedCatchKeepsOneParameterAndResumeEdges) {
+#ifndef NEVERD_BINARY_CORPUS_ROOT
+  GTEST_SKIP() << "windows-eh corpus root is not configured";
+#else
+  const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                    "corpus/windows-eh/msvc/x86_64/fh3/no-gs/o0/abi-probe/"
+                    "cxx_eh_probe-msvc-x86_64-fh3-no-gs-o0.exe";
+  if (!std::filesystem::exists(Path))
+    GTEST_SKIP() << "public C++ EH corpus fixture is missing";
+  constexpr va_t Entry = 0x140001220;
+  auto Img = loadBinary(Path);
+  ASSERT_TRUE(bool(Img)) << llvm::toString(Img.takeError());
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries.insert(Entry);
+  llvm::LLVMContext Context;
+  auto Result = Pipeline().run(*Img, Context, Options);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  auto Main = std::find_if(Result.MedFuncs.begin(), Result.MedFuncs.end(),
+                           [&](const MedFunc &F) { return F.Entry == Entry; });
+  ASSERT_NE(Main, Result.MedFuncs.end());
+  EXPECT_EQ(Main->Params.size(), 1u);
+  ASSERT_EQ(Main->CxxContinuationEntries.size(), 3u);
+  attachCxxFuncletBodies(Result.HighFuncs);
+  auto High = std::find_if(Result.HighFuncs.begin(), Result.HighFuncs.end(),
+                           [&](const HighFunc &F) { return F.Entry == Entry; });
+  ASSERT_NE(High, Result.HighFuncs.end());
+  std::set<va_t> Jumps, Labels;
+  walkStmts(High->Body, [&](const HighStmt &S) {
+    Labels.insert(S.Addr);
+    if (S.Kind == StmtKind::Goto)
+      Jumps.insert(S.GotoTarget);
+  });
+  for (va_t A : {va_t(0x1400012ab), va_t(0x1400012bd), va_t(0x1400012da),
+                 va_t(0x140002847)}) {
+    EXPECT_TRUE(Jumps.count(A)) << llvm::utohexstr(A);
+    EXPECT_TRUE(Labels.count(A)) << llvm::utohexstr(A);
+  }
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  CEmitterOptions COptions;
+  COptions.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({*High}, Stream, COptions));
+  Stream.flush();
+  EXPECT_EQ(Source.find("unknown value"), std::string::npos);
+  EXPECT_EQ(Source.find("return 0x14000"), std::string::npos);
+  EXPECT_EQ(Source.find("return (uint32_t)(e_1.Value)"), std::string::npos);
+#endif
+}
+
+TEST(MedCxxContinuationFrame, ClangInteriorStateMarkersKeepThePrologueFrame) {
+#ifndef NEVERD_BINARY_CORPUS_ROOT
+  GTEST_SKIP() << "windows-eh corpus root is not configured";
+#else
+  struct Case {
+    const char *Directory;
+    const char *File;
+    va_t Entry;
+    va_t Throw;
+    size_t Parameters;
+  };
+  for (const Case &C :
+       {Case{"no-gs/o0", "cxx_eh_probe-clang-cl-x86_64-fh3-no-gs-o0.exe",
+             0x1400010e0, 0x14000113e, 1},
+        Case{"gs/o2", "cxx_eh_probe-clang-cl-x86_64-fh3-gs-o2.exe", 0x140001090,
+             0x1400010e4, 0}}) {
+    SCOPED_TRACE(C.File);
+    const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                      "corpus/windows-eh/clang-cl/x86_64/fh3" / C.Directory /
+                      "abi-probe" / C.File;
+    if (!std::filesystem::exists(Path))
+      GTEST_SKIP() << "public Clang C++ EH corpus fixture is missing";
+    auto Img = loadBinary(Path);
+    ASSERT_TRUE(bool(Img)) << llvm::toString(Img.takeError());
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries.insert(C.Entry);
+    llvm::LLVMContext Context;
+    auto Result = Pipeline().run(*Img, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    const auto Main = llvm::find_if(
+        Result.MedFuncs, [&](const auto &F) { return F.Entry == C.Entry; });
+    ASSERT_NE(Main, Result.MedFuncs.end());
+    EXPECT_EQ(Main->Params.size(), C.Parameters);
+    EXPECT_EQ(Main->CxxContinuationEntries.size(), 2u);
+    bool FoundCall = false;
+    for (const auto &B : Main->Blocks)
+      for (const auto &Edge : B.ExceptionalSuccs)
+        FoundCall |= Edge.Kind == ExceptionalEdgeKind::CxxCatch &&
+                     Edge.RegionIndex == 0 && Edge.State == 3 &&
+                     Edge.SourceVA == C.Throw;
+    EXPECT_TRUE(FoundCall);
+  }
+#endif
+}
+
 TEST(MedSEHEstablisherFrame, HandlerSharedWithTheNormalPathKeepsTheFrame) {
   // NtLockVirtualMemory: an empty __except body resumes at the code after
   // its __try, which ordinary flow reaches too, and that join reads the

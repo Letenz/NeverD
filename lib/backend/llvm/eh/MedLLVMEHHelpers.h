@@ -97,8 +97,20 @@ inline bool attachRewriteWinEHSemanticToken(
     return false;
 
   if (Token.Kind != llvm::mc_rewrite::RewriteWinEHSemanticKind::SEHScope &&
-      Token.Kind != llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCatch)
+      Token.Kind != llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCatch
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+      && Token.Kind != llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCleanup
+#endif
+  )
     return false;
+  if (Token.Kind == llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCatch &&
+      !llvm::isa<llvm::CatchPadInst>(&Pad))
+    return false;
+#ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+  if (Token.Kind == llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCleanup &&
+      (!llvm::isa<llvm::CleanupPadInst>(&Pad) || Token.Clause))
+    return false;
+#endif
 
   bool HasDigest = false;
   for (uint64_t Word : Token.Digest)

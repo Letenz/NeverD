@@ -651,6 +651,8 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
         return "(" + typeToCLLVM(CE->getType()) + ")(void*)" +
                functionIdentifier(*Fn);
       }
+      // A global denotes its address, never its initializer bytes. Arrays
+      // decay to that address; imported data already carries an address.
       if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Src);
           Global && !Global->isDeclaration() &&
           !Global->getValueType()->isArrayTy() &&
@@ -670,7 +672,26 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       return "(" + typeToCLLVM(CE->getType()) + ")" +
              valueStr(CE->getOperand(0));
     }
-    throw std::runtime_error("LLVM C constant expression is not supported");
+    if ((CE->getOpcode() == llvm::Instruction::Add ||
+         CE->getOpcode() == llvm::Instruction::Sub) &&
+        (CE->getType()->isIntegerTy(8) || CE->getType()->isIntegerTy(16) ||
+         CE->getType()->isIntegerTy(32) || CE->getType()->isIntegerTy(64))) {
+      // Symbol-relative integer addresses remain relocatable in C too. Keep
+      // each operand at the LLVM bit width and normalize the result after C's
+      // integer promotions; do not evaluate a pointer using its old image VA.
+      const std::string Type = typeToCLLVM(CE->getType());
+      const std::string Left =
+          "(" + Type + ")(" + constStr(CE->getOperand(0)) + ")";
+      const std::string Right =
+          "(" + Type + ")(" + constStr(CE->getOperand(1)) + ")";
+      return "(" + Type + ")(" + Left +
+             (CE->getOpcode() == llvm::Instruction::Add ? " + " : " - ") +
+             Right + ")";
+    }
+    std::string Detail;
+    llvm::raw_string_ostream Stream(Detail);
+    Stream << "LLVM C constant expression is not supported: " << *CE;
+    throw std::runtime_error(Stream.str());
   }
 
   if (auto *GV = llvm::dyn_cast<llvm::GlobalValue>(C)) {

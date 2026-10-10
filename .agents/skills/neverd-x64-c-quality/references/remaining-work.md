@@ -12,6 +12,31 @@ analysis and comparison output belong outside the repository.
 | Source types and member calls remain partially recovered | Use authenticated PDB/TPI type and method metadata; do not infer a virtual method name from a vtable offset alone. |
 | Release performance varies by function and debug input | Time paired fresh `--func` calls and separate load from decompile cost. Profile before changing shared analysis. Preserve byte-identical C and EH semantics. |
 | Toolset coverage varies by hosted runner | Verify each compiler's actual version and path before publishing corpus artifacts. Treat unavailable versions as explicit skips. |
+| MinGW x86 call arguments can remain unknown after function boundaries are repaired | Inspect the recovered callee ABI and each caller's actual register/stack evidence. Do not treat residual unknown arguments as evidence that an internal label is still a function. |
+| The public x64 `xcpt4` SEH analysis matrix still rejects an independent ordinary entry in a protected scope | Establish the entry's ownership and frame before widening the establisher proof. This refusal also reproduces with the historical build. |
+| Two native out-of-line catch tests match an unused forward declaration as if it were an executed call | Audit declarations separately from emitted function bodies; the historical build reproduces both failures, while the catch body already resumes after the skipped call. |
+
+## CRT and catch-continuation repairs
+
+- COFF discovery excludes debug bytes from pointer scans and records validated
+  DWARF frame extents before heuristic discovery. Named, unsized functions keep
+  their FDE-owned interiors; relocation labels do not create spurious functions.
+- Shared MedIR evaluates bounded immutable sentinel scans and LLVM retains all
+  independent roots while pruning proven dead control flow. Empty TLS tables
+  and static constructor counts no longer force unsupported indirect calls.
+  Mutable or incomplete tables still require an explicit supported contract.
+- LLVM audits nested pointer recurrences as complete graphs and bounds repeated
+  DAG analysis. Role-neutral data addresses cannot masquerade as scalar offsets;
+  flat SELECT arms can belong to separately materialized data runs.
+- FH3 catch continuations carry exact parent/return evidence into shared SSA.
+  Matching unwind and decoded stack effects establish the continuation frame;
+  synchronous x64 edges identify the throwing call and sample its register
+  state. The public MSVC nested catch retains one genuine parameter and its
+  resume jumps. Clang IP markers inside instructions use return-PC state lookup.
+- LLVMC accepts proved integer freeze projections, supported indirect vector
+  calls and relocatable constant add/subtract expressions. Global `ptrtoint`
+  preserves the address; emitted Windows analysis bodies receive their needed
+  FP helpers. These changes do not certify native regenerated C++ EH execution.
 
 ## Closed in the public SEH corpus
 

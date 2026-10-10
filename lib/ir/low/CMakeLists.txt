@@ -1,10 +1,15 @@
 add_neverd_component_library(NeverDIRLowValidation
   LowIR.cpp
+  LowNoReturn.cpp
   LowUndefinedEffects.cpp
   X87PartialRemainder.cpp
 
   LINK_COMPONENTS
   Digest
+)
+
+add_neverd_component_library(NeverDIRRegistrationState
+  RegistrationState.cpp
 )
 
 add_neverd_component_library(NeverDIRLow
@@ -21,6 +26,7 @@ add_neverd_component_library(NeverDIRLow
   FuncDetectorARM.cpp
   FuncDetectorAArch64.cpp
   IndirectTailFrame.cpp
+  RegistrationABI.cpp
   NdOpEmulator.cpp
   NdOpEmulatorExec.cpp
   NdOpEmulatorFloatConvert.cpp
@@ -60,6 +66,7 @@ add_neverd_component_library(NeverDIRLow
   LINK_COMPONENTS
   Decode
   IRLowValidation
+  IRRegistrationState
   LibC
   Loader
   Solver

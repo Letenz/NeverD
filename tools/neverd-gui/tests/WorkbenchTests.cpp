@@ -645,6 +645,190 @@ private slots:
       }
     }
   }
+  void independentAnalysisViewsRunConcurrently() {
+    QTemporaryDir directory;
+    Workbench bench;
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-slow.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QObject slowOwner, fastOwner;
+    bool slowFinished = false, fastFinished = false;
+    bench.session.read(
+        "decompile",
+        {{"address", hexAddress(Base)}, {"representation", "source"}},
+        &slowOwner, [&](const QJsonObject &) { slowFinished = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture slow decompile started"),
+        5000);
+    bench.session.read(
+        "decompile",
+        {{"address", hexAddress(Base + 16)}, {"representation", "source"}},
+        &fastOwner, [&](const QJsonObject &page) {
+          fastFinished = !page.value("text").toString().isEmpty();
+        });
+    // A pinned slow function must not serialize another analysis window.
+    QTRY_VERIFY_WITH_TIMEOUT(fastFinished, 1500);
+    QVERIFY(!slowFinished);
+    bench.session.cancelReads();
+  }
+
+  void cancellingOneAnalysisLeavesTheOtherRunning() {
+    QTemporaryDir directory;
+    Workbench bench;
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-parallel.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QObject firstOwner, secondOwner, replacementOwner;
+    bool firstFinished = false, secondFinished = false,
+         replacementFinished = false;
+    bench.session.read(
+        "decompile",
+        {{"address", hexAddress(Base)}, {"representation", "source"}},
+        &firstOwner, [&](const QJsonObject &) { firstFinished = true; });
+    bench.session.read(
+        "decompile",
+        {{"address", hexAddress(Base + 16)}, {"representation", "source"}},
+        &secondOwner, [&](const QJsonObject &) { secondFinished = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture parallel decompile " +
+                                        hexAddress(Base) + " started") &&
+            diagnostics.join('\n').contains("fixture parallel decompile " +
+                                            hexAddress(Base + 16) + " started"),
+        5000);
+    bench.session.cancelAnalysisReads(&firstOwner);
+    bench.session.read(
+        "decompile",
+        {{"address", hexAddress(Base + 32)}, {"representation", "source"}},
+        &replacementOwner,
+        [&](const QJsonObject &) { replacementFinished = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(replacementFinished, 1500);
+    QTRY_VERIFY_WITH_TIMEOUT(secondFinished, 5000);
+    QVERIFY(!firstFinished);
+  }
+
+  void analysisPagesKeepTheirReplicaWhenAnotherFunctionQueues() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(
+        writeFixture(directory, QStringLiteral("pseudocode-parallel.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QObject firstOwner, secondOwner, thirdOwner;
+    const QJsonObject first{{"address", hexAddress(Base)},
+                            {"representation", "source"}};
+    auto *firstReplica = &session.analysisQueries(first, &firstOwner);
+    int completed = 0;
+    session.read("decompile", first, &firstOwner,
+                 [&](const QJsonObject &) { ++completed; });
+    session.read(
+        "decompile",
+        {{"address", hexAddress(Base + 16)}, {"representation", "source"}},
+        &secondOwner, [&](const QJsonObject &) { ++completed; });
+    session.read(
+        "decompile",
+        {{"address", hexAddress(Base + 32)}, {"representation", "source"}},
+        &thirdOwner, [&](const QJsonObject &) { ++completed; });
+    auto next = first;
+    next["offset"] = 512;
+    QCOMPARE(&session.analysisQueries(next, &firstOwner), firstReplica);
+    session.read("decompile", next, &firstOwner, [&](const QJsonObject &page) {
+      QVERIFY(page.value("text").toString().contains("code line 699"));
+      ++completed;
+    });
+    QTRY_COMPARE_WITH_TIMEOUT(completed, 4, 8000);
+  }
+
+  void changingProjectsRetiresBothAnalysisReplicas() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    QStringList diagnostics;
+    connect(&session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    session.open(
+        writeFixture(directory, QStringLiteral("pseudocode-parallel.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QObject firstOwner, secondOwner;
+    int retired = 0;
+    const auto oldReply = [&](const QJsonObject &response) {
+      QCOMPARE(response.value("status").toString(), QStringLiteral("error"));
+      QCOMPARE(response.value("error").toObject().value("code").toString(),
+               QStringLiteral("worker_stopped"));
+      ++retired;
+    };
+    for (const auto &[address, owner] :
+         {std::pair{Base, &firstOwner}, std::pair{Base + 16, &secondOwner}}) {
+      const QJsonObject payload{{"address", hexAddress(address)},
+                                {"representation", "source"}};
+      session.analysisQueries(payload, owner)
+          .subscribe({"decompile", payload}, owner, oldReply);
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture parallel decompile " +
+                                        hexAddress(Base) + " started") &&
+            diagnostics.join('\n').contains("fixture parallel decompile " +
+                                            hexAddress(Base + 16) + " started"),
+        5000);
+    const auto nextPath =
+        writeFixture(directory, QStringLiteral("pseudocode-import.bin"));
+    session.open(nextPath);
+    QTRY_COMPARE_WITH_TIMEOUT(retired, 2, OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded() && session.filePath() == nextPath,
+                             OpenTimeoutMs);
+    int fresh = 0;
+    for (const auto &[address, owner] :
+         {std::pair{Base, &firstOwner}, std::pair{Base + 16, &secondOwner}})
+      session.read(
+          "decompile",
+          {{"address", hexAddress(address)}, {"representation", "source"}},
+          owner, [&](const QJsonObject &page) {
+            QVERIFY(page.value("text").toString().contains("function_22"));
+            ++fresh;
+          });
+    QTRY_COMPARE_WITH_TIMEOUT(fresh, 2, OpenTimeoutMs);
+    QCOMPARE(retired, 2);
+  }
+
+  void externalGraphPagesKeepTheirSnapshotAcrossQueuedFunctions() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(
+        writeFixture(directory, QStringLiteral("pseudocode-parallel.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QSignalSpy replies(&session, &Session::externalResponse);
+    session.externalQuery("summary", "cfg_summary",
+                          {{"address", hexAddress(Base)}}, {});
+    QTRY_COMPARE_WITH_TIMEOUT(replies.size(), 1, OpenTimeoutMs);
+    const auto summary = replies.front()[1].toJsonObject();
+    QCOMPARE(summary.value("status").toString(), QStringLiteral("ok"));
+    const auto layout =
+        summary.value("payload").toObject().value("layout_revision");
+    QVERIFY(!layout.toString().isEmpty());
+    for (int i = 1; i <= 3; ++i)
+      session.externalQuery(QString::number(i), "decompile",
+                            {{"address", hexAddress(Base + 16 * i)},
+                             {"representation", "source"}},
+                            {});
+    session.externalQuery("viewport", "cfg_viewport",
+                          {{"address", hexAddress(Base)},
+                           {"layout_revision", layout},
+                           {"x", 0},
+                           {"y", 0},
+                           {"width", 1000},
+                           {"height", 1000}},
+                          {});
+    QTRY_COMPARE_WITH_TIMEOUT(replies.size(), 5, OpenTimeoutMs);
+    QCOMPARE(replies.back()[0].toString(), QStringLiteral("viewport"));
+    const auto viewport = replies.back()[1].toJsonObject();
+    QCOMPARE(viewport.value("status").toString(), QStringLiteral("ok"));
+    QCOMPARE(viewport.value("payload").toObject().value("layout_revision"),
+             layout);
+  }
+
   void slowPseudocodeKeepsBrowsingUntilExplicitTab() {
     QTemporaryDir directory;
     Workbench bench;
@@ -2523,6 +2707,39 @@ private slots:
                  .value("code")
                  .toString(),
              QStringLiteral("stale_revision"));
+  }
+
+  void cancellingViewReadsPreservesAnExternalAnalysisSnapshot() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    QStringList diagnostics;
+    connect(&session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    session.open(
+        writeFixture(directory, QStringLiteral("pseudocode-parallel.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QObject view;
+    // Hold the project dispatcher busy so the replica's snapshot remains
+    // queued when Cancel is pressed, rather than relying on a timing race.
+    session.queries().subscribe(
+        {"decompile",
+         {{"address", hexAddress(Base)}, {"representation", "source"}}},
+        &view, [](const QJsonObject &) {});
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture parallel decompile " +
+                                        hexAddress(Base) + " started"),
+        OpenTimeoutMs);
+    QSignalSpy replies(&session, &Session::externalResponse);
+    session.externalQuery(
+        "external-analysis", "decompile",
+        {{"address", hexAddress(Base + 32)}, {"representation", "source"}}, {});
+    QTRY_COMPARE_WITH_TIMEOUT(session.queries().pendingReadCount(), 2, 1000);
+    session.cancelReads();
+    QTRY_COMPARE_WITH_TIMEOUT(replies.size(), 1, OpenTimeoutMs);
+    QCOMPARE(replies.front()[0].toString(),
+             QStringLiteral("external-analysis"));
+    QCOMPARE(replies.front()[1].toJsonObject().value("status").toString(),
+             QStringLiteral("ok"));
   }
 
   void saveBeforeQuitRejectsALateEdit() {

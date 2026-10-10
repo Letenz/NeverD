@@ -69,6 +69,8 @@ void dumpExceptionalEdges(const std::vector<ExceptionalEdge> &Edges,
     else
       OS << "external";
     OS << "@0x" << llvm::utohexstr(Edge.TargetVA);
+    if (Edge.SourceVA != InvalidVA)
+      OS << " from=0x" << llvm::utohexstr(Edge.SourceVA);
   }
   OS << "]";
 }

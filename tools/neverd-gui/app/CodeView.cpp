@@ -245,7 +245,7 @@ void CodeText::cancel() {
   ++serial_;
   pendingAddress_.reset();
   selectedAddress_.reset();
-  session_.analysisQueries().unsubscribeOwner(this);
+  session_.cancelAnalysisReads(this);
   if (loading_) {
     interrupted_ = true;
     loading_ = false;

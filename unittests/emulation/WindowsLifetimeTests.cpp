@@ -393,7 +393,8 @@ TEST(WindowsModuleLifetime, NativeWindowsObservesStartupAndTermination) {
       } else if (C.Output) {
         EXPECT_EQ((*Out)->getBuffer(), llvm::StringRef(C.Output));
       }
-      EXPECT_TRUE((*Err)->getBuffer().empty());
+      EXPECT_TRUE((*Err)->getBuffer().empty())
+          << llvm::toHex((*Err)->getBuffer());
     }
   }
 #endif
