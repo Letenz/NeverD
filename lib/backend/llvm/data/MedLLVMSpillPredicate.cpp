@@ -24,6 +24,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -149,6 +150,29 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
       ASize == 0 || BSize == 0)
     return false;
 
+  // Every nested range/recurrence/exact-slot walk spends the same budget.
+  // Independent budgets multiply at call boundaries and post-decrement at
+  // zero permits a sibling branch to continue with SIZE_MAX work remaining.
+  size_t RemainingProofNodes = FrameProofBudgetForTesting.value_or(8192);
+  auto charge = [&]() {
+    if (RemainingProofNodes == 0)
+      return false;
+    --RemainingProofNodes;
+    ++AddressProvenanceWork.AliasNodes;
+    return true;
+  };
+  std::map<AddressProvenanceVarKey, std::optional<med_llvm::SlotKey>> ExactMemo;
+  auto exactSlot = [&](const MedVar &Value) {
+    const auto Key = addressProvenanceVarKey(Value);
+    auto It = ExactMemo.find(Key);
+    if (It != ExactMemo.end())
+      return It->second;
+    auto Result =
+        canonicalFrameSlotKey(Value, false, nullptr, &RemainingProofNodes);
+    ExactMemo.emplace(Key, Result);
+    return Result;
+  };
+
   // Intermediate endpoint arithmetic can exceed int64_t by one pointer-width
   // modulus plus an access size.  APInt keeps these proofs portable to MSVC,
   // which has no native 128-bit integer extension, without weakening the
@@ -201,15 +225,13 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
     return static_cast<int64_t>(Result);
   };
 
-  size_t RemainingAffineNodes = 8192;
   std::function<std::optional<int64_t>(const MedVar &, const MedVar &,
                                        std::set<AddressProvenanceVarKey>)>
       affineStepTo = [&](const MedVar &Start, const MedVar &Root,
                          std::set<AddressProvenanceVarKey> Seen)
       -> std::optional<int64_t> {
-    if (RemainingAffineNodes == 0 || Seen.size() >= 64 || Start.isConst())
+    if (Seen.size() >= 64 || Start.isConst() || !charge())
       return std::nullopt;
-    --RemainingAffineNodes;
     if (sameValue(Start, Root))
       return int64_t{0};
     if (!Seen.insert(addressProvenanceVarKey(Start)).second)
@@ -332,11 +354,10 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
 
   std::map<AddressProvenanceVarKey, std::optional<UnsignedRange>> RangeMemo;
   std::set<AddressProvenanceVarKey> RangeActive;
-  size_t RemainingRangeNodes = 8192;
   std::function<std::optional<UnsignedRange>(const MedVar &)> unsignedRange =
       [&](const MedVar &Value) -> std::optional<UnsignedRange> {
     auto Mask = maskForSize(Value.Size);
-    if (!Mask || RemainingRangeNodes-- == 0)
+    if (!Mask || !charge())
       return std::nullopt;
     if (auto Constant = constantValue(Value))
       return UnsignedRange{*Constant, *Constant};
@@ -524,113 +545,134 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
   };
   struct FrameRangeProof {
     bool Valid = false;
-    bool SawCycle = false;
     std::optional<FrameOffsetRange> Range;
+    std::set<AddressProvenanceVarKey> OpenCycles;
   };
-  size_t RemainingFrameRangeNodes = 8192;
-  std::function<FrameRangeProof(const MedVar &,
-                                std::set<AddressProvenanceVarKey>)>
-      proveFrameOffsetRange =
-          [&](const MedVar &Address,
-              std::set<AddressProvenanceVarKey> Seen) -> FrameRangeProof {
-    if (Address.isConst() || RemainingFrameRangeNodes-- == 0)
+  std::set<AddressProvenanceVarKey> ActiveFrameRanges;
+  std::map<AddressProvenanceVarKey, FrameRangeProof> ProvenFrameRanges;
+  std::function<FrameRangeProof(const MedVar &)> proveFrameOffsetRange =
+      [&](const MedVar &Address) -> FrameRangeProof {
+    if (Address.isConst() || Address.Size < PointerBytes || !charge())
       return {};
-    if (auto Exact = canonicalFrameSlotKey(Address))
-      return {true, false,
-              FrameOffsetRange{Exact->first, Exact->second, Exact->second}};
     const AddressProvenanceVarKey Key = addressProvenanceVarKey(Address);
-    if (!Seen.insert(Key).second)
-      return {true, true, std::nullopt};
-    auto extend = [&](const FrameOffsetRange &Base, const UnsignedRange &Delta,
-                      bool Subtract) -> std::optional<FrameOffsetRange> {
-      const llvm::APInt Min =
-          wideSigned(Base.Min) +
-          (Subtract ? -wideUnsigned(Delta.Max) : wideUnsigned(Delta.Min));
-      const llvm::APInt Max =
-          wideSigned(Base.Max) +
-          (Subtract ? -wideUnsigned(Delta.Min) : wideUnsigned(Delta.Max));
-      if (!Min.isSignedIntN(64) || !Max.isSignedIntN(64))
-        return std::nullopt;
-      return FrameOffsetRange{Base.Root, Min.getSExtValue(),
-                              Max.getSExtValue()};
-    };
-    auto mergeProofs = [](const FrameRangeProof &Left,
-                          const FrameRangeProof &Right) -> FrameRangeProof {
-      if (!Left.Valid || !Right.Valid ||
-          (Left.Range && Right.Range && Left.Range->Root != Right.Range->Root))
-        return {};
-      std::optional<FrameOffsetRange> Range =
-          Left.Range ? Left.Range : Right.Range;
-      if (Left.Range && Right.Range)
-        Range = FrameOffsetRange{Left.Range->Root,
-                                 std::min(Left.Range->Min, Right.Range->Min),
-                                 std::max(Left.Range->Max, Right.Range->Max)};
-      return {true, Left.SawCycle || Right.SawCycle, Range};
-    };
-
-    if (const PhiNode *Phi = lookupPhi(Address)) {
-      FrameRangeProof Result;
-      bool SawFeasible = false;
-      for (const auto &[PredId, Arg] : Phi->Args) {
-        PhiEdgeFeasibility Edge = classifyPhiIncomingEdge(*Phi, PredId);
-        if (Edge == PhiEdgeFeasibility::Infeasible)
-          continue;
-        if (Edge != PhiEdgeFeasibility::ProvenFeasible)
-          return {};
-        FrameRangeProof Arm = proveFrameOffsetRange(Arg, Seen);
-        if (!Arm.Valid)
-          return {};
-        Result = SawFeasible ? mergeProofs(Result, Arm) : Arm;
-        if (!Result.Valid)
-          return {};
-        SawFeasible = true;
-      }
-      return SawFeasible ? Result : FrameRangeProof{};
-    }
-
-    const MedOp *Def = lookupDef(Address);
-    if (!Def || Def->NumInputs < 1)
-      return {};
-    if (Def->Opcode == NdOp::COPY || Def->Opcode == NdOp::INT_ZEXT ||
-        Def->Opcode == NdOp::INT_SEXT || Def->Opcode == NdOp::SUBBYTES) {
-      if (auto Forwarded = pointerPreservingInput(*Def))
-        return proveFrameOffsetRange(*Forwarded, std::move(Seen));
-      return {};
-    }
-    if ((Def->Opcode == NdOp::INT_ADD || Def->Opcode == NdOp::INT_SUB) &&
-        Def->NumInputs >= 2) {
-      auto extendProof = [&](const MedVar &BaseValue, const MedVar &DeltaValue,
-                             bool Subtract) -> FrameRangeProof {
-        FrameRangeProof Base = proveFrameOffsetRange(BaseValue, Seen);
-        auto Delta = unsignedRange(DeltaValue);
-        if (!Base.Valid || !Delta)
-          return {};
-        if (!Base.Range)
-          return Delta->Min == 0 && Delta->Max == 0 ? Base : FrameRangeProof{};
-        auto Range = extend(*Base.Range, *Delta, Subtract);
-        return Range ? FrameRangeProof{true, Base.SawCycle, Range}
-                     : FrameRangeProof{};
+    if (auto It = ProvenFrameRanges.find(Key); It != ProvenFrameRanges.end())
+      return It->second;
+    if (auto Exact = exactSlot(Address))
+      return {true,
+              FrameOffsetRange{Exact->first, Exact->second, Exact->second},
+              {}};
+    if (!ActiveFrameRanges.insert(Key).second)
+      return {true, std::nullopt, {Key}};
+    auto Cleanup = llvm::scope_exit([&] { ActiveFrameRanges.erase(Key); });
+    auto Proof = [&]() -> FrameRangeProof {
+      auto extend = [&](const FrameOffsetRange &Base,
+                        const UnsignedRange &Delta,
+                        bool Subtract) -> std::optional<FrameOffsetRange> {
+        const llvm::APInt Min =
+            wideSigned(Base.Min) +
+            (Subtract ? -wideUnsigned(Delta.Max) : wideUnsigned(Delta.Min));
+        const llvm::APInt Max =
+            wideSigned(Base.Max) +
+            (Subtract ? -wideUnsigned(Delta.Min) : wideUnsigned(Delta.Max));
+        if (!Min.isSignedIntN(64) || !Max.isSignedIntN(64))
+          return std::nullopt;
+        return FrameOffsetRange{Base.Root, Min.getSExtValue(),
+                                Max.getSExtValue()};
       };
-      if (FrameRangeProof Left = extendProof(Def->Inputs[0], Def->Inputs[1],
-                                             Def->Opcode == NdOp::INT_SUB);
-          Left.Valid)
-        return Left;
-      if (Def->Opcode == NdOp::INT_ADD)
-        return extendProof(Def->Inputs[1], Def->Inputs[0], false);
+      auto mergeProofs = [](const FrameRangeProof &Left,
+                            const FrameRangeProof &Right) -> FrameRangeProof {
+        if (!Left.Valid || !Right.Valid ||
+            (Left.Range && Right.Range &&
+             Left.Range->Root != Right.Range->Root))
+          return {};
+        std::optional<FrameOffsetRange> Range =
+            Left.Range ? Left.Range : Right.Range;
+        if (Left.Range && Right.Range)
+          Range = FrameOffsetRange{Left.Range->Root,
+                                   std::min(Left.Range->Min, Right.Range->Min),
+                                   std::max(Left.Range->Max, Right.Range->Max)};
+        auto Cycles = Left.OpenCycles;
+        Cycles.insert(Right.OpenCycles.begin(), Right.OpenCycles.end());
+        return {true, Range, std::move(Cycles)};
+      };
+
+      if (const PhiNode *Phi = lookupPhi(Address)) {
+        FrameRangeProof Result;
+        bool SawFeasible = false;
+        for (const auto &[PredId, Arg] : Phi->Args) {
+          PhiEdgeFeasibility Edge = classifyPhiIncomingEdge(*Phi, PredId);
+          if (Edge == PhiEdgeFeasibility::Infeasible)
+            continue;
+          if (Edge != PhiEdgeFeasibility::ProvenFeasible)
+            return {};
+          FrameRangeProof Arm = proveFrameOffsetRange(Arg);
+          if (!Arm.Valid)
+            return {};
+          Result = SawFeasible ? mergeProofs(Result, Arm) : Arm;
+          if (!Result.Valid)
+            return {};
+          SawFeasible = true;
+        }
+        return SawFeasible ? Result : FrameRangeProof{};
+      }
+
+      const MedOp *Def = lookupDef(Address);
+      if (!Def || Def->NumInputs < 1)
+        return {};
+      if (Def->Opcode == NdOp::COPY || Def->Opcode == NdOp::INT_ZEXT ||
+          Def->Opcode == NdOp::INT_SEXT || Def->Opcode == NdOp::SUBBYTES) {
+        if (auto Forwarded = pointerPreservingInput(*Def))
+          return proveFrameOffsetRange(*Forwarded);
+        return {};
+      }
+      if ((Def->Opcode == NdOp::INT_ADD || Def->Opcode == NdOp::INT_SUB) &&
+          Def->NumInputs >= 2) {
+        auto extendProof = [&](const MedVar &BaseValue,
+                               const MedVar &DeltaValue,
+                               bool Subtract) -> FrameRangeProof {
+          FrameRangeProof Base = proveFrameOffsetRange(BaseValue);
+          auto Delta = unsignedRange(DeltaValue);
+          if (!Base.Valid || !Delta ||
+              (!Base.OpenCycles.empty() &&
+               (Delta->Min != 0 || Delta->Max != 0)))
+            return {};
+          if (!Base.Range)
+            return Delta->Min == 0 && Delta->Max == 0 ? Base
+                                                      : FrameRangeProof{};
+          auto Range = extend(*Base.Range, *Delta, Subtract);
+          return Range ? FrameRangeProof{true, Range, Base.OpenCycles}
+                       : FrameRangeProof{};
+        };
+        if (FrameRangeProof Left = extendProof(Def->Inputs[0], Def->Inputs[1],
+                                               Def->Opcode == NdOp::INT_SUB);
+            Left.Valid)
+          return Left;
+        if (Def->Opcode == NdOp::INT_ADD)
+          return extendProof(Def->Inputs[1], Def->Inputs[0], false);
+        return {};
+      }
+      if (selectPreservesPointerValues(*Def)) {
+        FrameRangeProof True = proveFrameOffsetRange(Def->Inputs[1]);
+        FrameRangeProof False = proveFrameOffsetRange(Def->Inputs[2]);
+        return mergeProofs(True, False);
+      }
       return {};
+    }();
+    // Close only a recurrence of this exact value with a known frame range.
+    // A sibling's independent unanchored cycle cannot borrow that range.
+    // Nonzero arithmetic on open cycles was rejected above; otherwise a
+    // seeded cycle could spuriously acquire a finite interval while growing.
+    if (Proof.Valid && Proof.Range) {
+      Proof.OpenCycles.erase(Key);
+      if (Proof.OpenCycles.empty())
+        ProvenFrameRanges.emplace(Key, Proof);
     }
-    if (selectPreservesPointerValues(*Def)) {
-      FrameRangeProof True = proveFrameOffsetRange(Def->Inputs[1], Seen);
-      FrameRangeProof False =
-          proveFrameOffsetRange(Def->Inputs[2], std::move(Seen));
-      return mergeProofs(True, False);
-    }
-    return {};
+    return Proof;
   };
   auto frameOffsetRange =
       [&](const MedVar &Address) -> std::optional<FrameOffsetRange> {
-    FrameRangeProof Proof = proveFrameOffsetRange(Address, {});
-    return Proof.Valid ? Proof.Range : std::nullopt;
+    FrameRangeProof Proof = proveFrameOffsetRange(Address);
+    return Proof.Valid && Proof.OpenCycles.empty() ? Proof.Range : std::nullopt;
   };
 
   auto ARange = frameOffsetRange(A);
@@ -639,13 +681,6 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
   // A dynamic allocation and its loop count often share a small masked
   // input. Independent intervals lose that correlation. Enumerate the full
   // masked domain only after certifying the pointer/count recurrence pair.
-  size_t RemainingCorrelatedNodes = 8192;
-  auto charge = [&]() {
-    if (RemainingCorrelatedNodes == 0)
-      return false;
-    --RemainingCorrelatedNodes;
-    return true;
-  };
   auto correlatedRange =
       [&](const MedVar &Address) -> std::optional<FrameOffsetRange> {
     MedVar Pointer = Address;
@@ -848,7 +883,7 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
                           unsigned Depth) -> std::optional<FrameOffsetRange> {
             if (!charge() || Depth == 64 || Value.isConst())
               return std::nullopt;
-            if (auto Exact = canonicalFrameSlotKey(Value))
+            if (auto Exact = exactSlot(Value))
               return FrameOffsetRange{Exact->first, Exact->second,
                                       Exact->second};
             const MedOp *Def = lookupDef(Value);
@@ -904,7 +939,7 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
                                              std::max(Result->Max, Arm.Max)}
                           : Arm;
         }
-        if (Complete && Result && RemainingCorrelatedNodes != 0)
+        if (Complete && Result && RemainingProofNodes != 0)
           return Result;
       }
     }
