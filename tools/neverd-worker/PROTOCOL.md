@@ -207,7 +207,16 @@ selected page; it does not maintain a full mapping index or provide reverse
 lookup across unloaded pages. IDs include stage/function/block, operation slot,
 address and retained sequence and are stable only within the analysis revision.
 
-Native C and LLVMC pages use `mapping_status:"library_regions"` and
+Native C and LLVMC pages use `mapping_status:"instruction_anchors"` when
+surviving source statement anchors pass the canonical LowIR boundary/sequence
+check; otherwise they retain `mapping_status:"library_regions"`. Source rows
+with these anchors have `kind:"source"`, `mapping_status:"instruction_anchor"`
+and original instruction addresses. The first address belongs to the smallest
+surviving statement span intersecting the row. Headers, declarations and
+unbound or synthetic statements remain unmapped. The source map is not a
+complete set of expression dependencies. Tab uses this explicit row address;
+unmapped lines report that the GUI is showing the function entry.
+Library-only mapped rows retain `mapping_status:"library_region"`. All pages have
 `provenance_complete:false`. Their text is the ordinary, fully expanded C;
 `byte_offset` locates the page in that full UTF-8 document. Each region includes
 `id,function,scope,family,operation,display_name,linkage_name,receiver_type`,

@@ -174,6 +174,104 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void tabFromCodeUsesSelectedInstruction_data() {
+    QTest::addColumn<QString>("representation");
+    QTest::addColumn<bool>("native");
+    QTest::newRow("pseudocode") << QStringLiteral("source") << false;
+    QTest::newRow("llvm-c") << QStringLiteral("llvmc") << false;
+    QTest::newRow("low-ir") << QStringLiteral("low") << false;
+    if (!qEnvironmentVariable("NEVERD_CODE_NAV_WORKER").isEmpty() &&
+        !qEnvironmentVariable("NEVERD_CODE_NAV_FILE").isEmpty()) {
+      QTest::newRow("native-pseudocode") << QStringLiteral("source") << true;
+      QTest::newRow("native-llvm-c") << QStringLiteral("llvmc") << true;
+    }
+  }
+
+  void tabFromCodeUsesSelectedInstruction() {
+    QFETCH(QString, representation);
+    QFETCH(bool, native);
+    QTemporaryDir directory;
+    Workbench bench(native ? qEnvironmentVariable("NEVERD_CODE_NAV_WORKER")
+                           : QString::fromLocal8Bit(TEST_WORKER));
+    const auto path =
+        native
+            ? qEnvironmentVariable("NEVERD_CODE_NAV_FILE")
+            : writeFixture(directory, QStringLiteral("code-edits-mapped.bin"));
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    auto *functions = bench.functions();
+    QTRY_VERIFY(functions && functions->model().total() >= 2);
+    const auto function =
+        native ? *functions->model().addressAt(0) : Base + 0x140;
+    const auto other = native ? *functions->model().addressAt(1) : Base + 0x180;
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    bench
+        .action(representation == QLatin1String("low") ? ActionId::ViewLowIR
+                : representation == QLatin1String("llvmc")
+                    ? ActionId::ViewLLVMC
+                    : ActionId::ViewPseudocode)
+        ->trigger();
+    auto *view = bench.codeView(representation);
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 2);
+    code->setPreludeFolded(false);
+    if (native) {
+      code->setCursorLine(0);
+      QVERIFY(code->findText(QStringLiteral("return ("), true));
+    } else
+      code->setCursorLine(2);
+    const auto target = code->currentAddress();
+    QVERIFY(target.has_value());
+    QVERIFY(*target != function);
+    if (native) {
+      bool decoded = false;
+      bench.session.read(
+          "disasm", {{"address", hexAddress(*target)}, {"limit", 1}}, code,
+          [&](const QJsonObject &p) {
+            const auto rows = p.value("items").toArray();
+            decoded = !rows.isEmpty() &&
+                      addressValue(rows.first().toObject().value("address")) ==
+                          target;
+          });
+      QTRY_VERIFY(decoded);
+    } else
+      QCOMPARE(target, std::optional<Address>(function + 2));
+    for (auto *button : view->findChildren<QToolButton *>())
+      if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+        button->setChecked(true);
+    QVERIFY(view->locked());
+    // A pinned source and independently moved assembly reproduce the bug:
+    // simply changing focus leaves the cursor at the wrong function/entry.
+    assembly->navigate(other);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(other));
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    QTest::keyClick(code, Qt::Key_Tab);
+    QTRY_COMPARE(assembly->currentAddress(), target);
+    QTRY_VERIFY(!code->hasFocus());
+    QCOMPARE(code->function(), std::optional<Address>(function));
+    if (native) {
+      const auto capture = qEnvironmentVariable("NEVERD_CODE_NAV_CAPTURE_DIR");
+      if (!capture.isEmpty())
+        QVERIFY(bench.window->grab().save(capture + "/tab-" + representation +
+                                          ".png"));
+    }
+
+    // A declaration has no instruction anchor; the fallback is explicit and
+    // belongs to this pinned function, not the hidden assembly's function.
+    code->setCursorLine(0);
+    QVERIFY(!code->currentAddress());
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    QTest::keyClick(code, Qt::Key_Tab);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
+  }
+
   void pseudocodeNamesAndCommentsEditTheirSource_data() {
     QTest::addColumn<QString>("representation");
     QTest::addColumn<bool>("native");
@@ -190,6 +288,51 @@ private slots:
           << QStringLiteral("source") << true << false;
       QTest::newRow("native-llvmc") << QStringLiteral("llvmc") << true << false;
     }
+  }
+
+  void savedSourceNoteRetainsItsOwnerOnAMappedRow() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-edits-mapped.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const auto function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading());
+    // Simulate a note saved while an older engine could not map this line.
+    bench.session.editCode({{"address", hexAddress(function)},
+                            {"representation", "source"},
+                            {"kind", "comment"},
+                            {"line", 2},
+                            {"anchor", "  int32_t v1 = v0 + function_22();"},
+                            {"text", "old source note"}},
+                           bench.session.epoch());
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->allText().contains("old source note"),
+                             OpenTimeoutMs);
+    code->setPreludeFolded(false);
+    code->setCursorLine(2);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(function + 2));
+    const auto target = code->commentTarget();
+    QVERIFY(target.has_value());
+    QVERIFY(!target->contains("mapped_address"));
+    QCOMPARE(target->value("text").toString(),
+             QStringLiteral("old source note"));
+    auto edit = *target;
+    edit["address"] = hexAddress(function);
+    edit["representation"] = "source";
+    edit["kind"] = "comment";
+    edit["text"] = "updated source note";
+    bench.session.editCode(edit, bench.session.epoch());
+    QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("updated source note"),
+                             OpenTimeoutMs);
+    QVERIFY(!code->allText().contains("old source note"));
   }
 
   void pseudocodeNamesAndCommentsEditTheirSource() {

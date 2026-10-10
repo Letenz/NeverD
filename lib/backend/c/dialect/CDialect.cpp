@@ -227,7 +227,7 @@ private:
   }
 
   void body(const Stmt *S) {
-    if (S->Kind != StmtKind::Compound) {
+    if (S->Kind != csyntax::StmtKind::Compound) {
       stmt(S);
       return;
     }
@@ -246,19 +246,19 @@ private:
   void stmt(const Stmt *S) {
     leadingComments(S->Leading);
     switch (S->Kind) {
-    case StmtKind::Compound:
+    case csyntax::StmtKind::Compound:
       block("", S);
       line("}");
       break;
-    case StmtKind::Declaration:
+    case csyntax::StmtKind::Declaration:
       for (const Decl *D : S->Decls)
         declarationLine(D);
       break;
-    case StmtKind::Expression:
+    case csyntax::StmtKind::Expression:
       line(expr(S->Value).Text + ";");
       break;
-    case StmtKind::If:
-      if (S->Then->Kind != StmtKind::Compound) {
+    case csyntax::StmtKind::If:
+      if (S->Then->Kind != csyntax::StmtKind::Compound) {
         // An unbraced body stays unbraced.
         line("if (" + expr(S->Value).Text + ")");
         indent();
@@ -281,53 +281,53 @@ private:
       }
       line("}");
       break;
-    case StmtKind::While:
+    case csyntax::StmtKind::While:
       block("while (" + expr(S->Value).Text + ")", S->Then);
       line("}");
       break;
-    case StmtKind::DoWhile:
+    case csyntax::StmtKind::DoWhile:
       block("do", S->Then);
       line("} while (" + expr(S->Value).Text + ");");
       break;
-    case StmtKind::For:
+    case csyntax::StmtKind::For:
       block("for (" + (S->Value ? expr(S->Value).Text : "") + "; " +
                 (S->Else ? expr(S->Else->Value).Text : "") + "; " +
                 (S->Step ? expr(S->Step).Text : "") + ")",
             S->Then);
       line("}");
       break;
-    case StmtKind::Switch:
+    case csyntax::StmtKind::Switch:
       block("switch (" + expr(S->Value).Text + ")", S->Then);
       line("}");
       break;
-    case StmtKind::Case:
+    case csyntax::StmtKind::Case:
       line("case " + expr(S->Value).Text + ":");
       break;
-    case StmtKind::Default:
+    case csyntax::StmtKind::Default:
       line("default:");
       break;
-    case StmtKind::Break:
+    case csyntax::StmtKind::Break:
       line("break;");
       break;
-    case StmtKind::Continue:
+    case csyntax::StmtKind::Continue:
       line("continue;");
       break;
-    case StmtKind::Return:
+    case csyntax::StmtKind::Return:
       line(S->Value ? "return " + expr(S->Value).Text + ";" : "return;");
       break;
-    case StmtKind::Goto:
+    case csyntax::StmtKind::Goto:
       line("goto " + S->Text.str() + ";");
       break;
-    case StmtKind::Label:
+    case csyntax::StmtKind::Label:
       line(S->Text.str() + ":");
       break;
-    case StmtKind::Empty:
+    case csyntax::StmtKind::Empty:
       line(";");
       break;
-    case StmtKind::Comment:
+    case csyntax::StmtKind::Comment:
       line(commentText(S->TheComment));
       break;
-    case StmtKind::Try:
+    case csyntax::StmtKind::Try:
       block(S->CxxTry ? "try" : "__try", S->Then);
       for (const Handler &H : S->Handlers) {
         leadingComments(H.Leading);
@@ -348,17 +348,17 @@ private:
       }
       line("}");
       break;
-    case StmtKind::Throw:
+    case csyntax::StmtKind::Throw:
       line(S->Value ? "throw " + expr(S->Value).Text + ";" : "throw;");
       break;
-    case StmtKind::PseudoBlock:
+    case csyntax::StmtKind::PseudoBlock:
       block(S->Text, S->Then);
       line("}");
       break;
-    case StmtKind::Leave:
+    case csyntax::StmtKind::Leave:
       line("__leave;");
       break;
-    case StmtKind::Asm:
+    case csyntax::StmtKind::Asm:
       line(T.Source.slice(S->Begin, S->End).str() +
            (T.Source.slice(S->Begin, S->End).ends_with(";") ? "" : ";"));
       break;

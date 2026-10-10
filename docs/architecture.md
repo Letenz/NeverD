@@ -29,6 +29,19 @@ occurrences through the existing folded-source projection; image names and
 mapped comments continue to use engine address edits. Local presentation names
 do not establish variable, type or instruction semantics.
 
+Pseudocode navigation uses instruction anchors recorded during source emission.
+HighIR statement observations retain function, address, sequence and statement
+kind; synthetic, ambiguous and changed-kind statements supply no anchor. LLVM
+observations retain weak handles through optimization and the private C clone.
+The source recorder publishes statement spans only when its private rendering
+reproduces ordinary source byte for byte. Instruction and library recordings use
+independent renders so navigation cannot weaken library folding evidence. The
+C API checks every occurrence against the same canonical LowIR boundaries and
+sequences used by Low/Med pages. Source dialect projections preserve only spans
+that they can map completely. This supplies navigation evidence rather than
+complete expression provenance. Tab consumes the selected row's primary address;
+an unmapped row explicitly falls back to its own function entry.
+
 Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
 the fallback. Validated Itanium/MSVC names also identify C++ without an
 exception runtime. The C++ printer uses the shared symbol spelling rules for

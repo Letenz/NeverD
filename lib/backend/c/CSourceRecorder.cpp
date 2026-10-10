@@ -18,13 +18,17 @@
 
 namespace neverd {
 
-CSourceRecorder::CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary)
-    : Map(Map) {
-  Map.Regions.clear();
-  Map.Definitions.clear();
-  if (Map.Recognitions)
-    for (size_t I = 0; I < Map.Recognitions->size(); ++I)
-      Map.Regions.push_back({I, {}, false});
+CSourceRecorder::CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary,
+                                 bool InstructionsOnly)
+    : Map(Map), InstructionsOnly(InstructionsOnly) {
+  Map.Anchors.clear();
+  if (!InstructionsOnly) {
+    Map.Regions.clear();
+    Map.Definitions.clear();
+    if (Map.Recognitions)
+      for (size_t I = 0; I < Map.Recognitions->size(); ++I)
+        Map.Regions.push_back({I, {}, false});
+  }
   for (size_t Salt = 0;; ++Salt) {
     Prefix = "\x1eND:" + std::to_string(Salt) + ':';
     if (!Ordinary.contains(Prefix))
@@ -33,7 +37,7 @@ CSourceRecorder::CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary)
 }
 
 void CSourceRecorder::prepareHighSources() {
-  if (!Map.HighSources || !Map.Recognitions)
+  if (!Map.HighSources)
     return;
   using Key = std::pair<va_t, const HighExpr *>;
   std::map<Key, std::set<sigs::LibraryOccurrence>> Origins;
@@ -43,6 +47,11 @@ void CSourceRecorder::prepareHighSources() {
   std::set<Key> Ambiguous;
   size_t Work = 250000;
   for (const auto &Source : *Map.HighSources) {
+    if (InstructionsOnly && Source.Kind != HighSourceKind::Expression &&
+        Source.StatementKind)
+      HighAnchors[{Source.Function, Source.Occurrence.Address,
+                   *Source.StatementKind}]
+          .insert(Source.Occurrence);
     if (Source.Kind == HighSourceKind::Store) {
       Stores[{Source.Function, Source.Occurrence.Address}].insert(
           Source.Occurrence);
@@ -54,6 +63,8 @@ void CSourceRecorder::prepareHighSources() {
       Alive[K] = std::move(Expr);
     }
   }
+  if (InstructionsOnly || !Map.Recognitions)
+    return;
   for (size_t I = 0; I < Map.Recognitions->size(); ++I) {
     const auto &Match = (*Map.Recognitions)[I];
     if (!Match.Isolated ||
@@ -127,8 +138,6 @@ void CSourceRecorder::prepareLLVMSources(const LLVMSourceMap &Sources) {
   for (const auto &[Entry, Handle] : Sources.Functions)
     if (auto *Function = llvm::dyn_cast_or_null<llvm::Function>(Handle))
       LLVMFunctions.emplace(Function, Entry);
-  if (!Map.Recognitions)
-    return;
   std::set<const llvm::Value *> Ambiguous;
   size_t Work = 250000;
   for (const auto &Observation : Sources.Observations) {
@@ -139,6 +148,14 @@ void CSourceRecorder::prepareLLVMSources(const LLVMSourceMap &Sources) {
     auto Function = LLVMFunctions.find(Instruction->getFunction());
     if (Function == LLVMFunctions.end() ||
         Function->second != Observation.Function)
+      continue;
+    if (InstructionsOnly) {
+      auto &Anchor = LLVMAnchors[Instruction];
+      Anchor.first = Observation.Function;
+      Anchor.second.insert(Observation.Occurrence);
+      continue;
+    }
+    if (!Map.Recognitions)
       continue;
     for (size_t I = 0; I < Map.Recognitions->size(); ++I) {
       if (!Work) {
@@ -207,9 +224,10 @@ void CSourceRecorder::prepareLLVMSources(const LLVMSourceMap &Sources) {
     LLVMRegions.erase(Value);
 }
 
-size_t CSourceRecorder::event(size_t Region,
-                              std::vector<sigs::LibraryOccurrence> Coverage) {
-  Events.push_back({Region, std::move(Coverage)});
+size_t CSourceRecorder::event(std::optional<size_t> Region,
+                              std::vector<sigs::LibraryOccurrence> Coverage,
+                              std::optional<va_t> Function) {
+  Events.push_back({Region, std::move(Coverage), Function});
   return Events.size() - 1;
 }
 
@@ -222,6 +240,8 @@ std::string CSourceRecorder::end(size_t Event) const {
 }
 
 std::string CSourceRecorder::definition(std::optional<va_t> Entry) {
+  if (InstructionsOnly)
+    return {};
   DefinitionEntries.push_back(Entry);
   return Prefix + std::to_string(DefinitionEntries.size() - 1) + "D\x1f";
 }
@@ -234,6 +254,8 @@ std::string CSourceRecorder::definition(const llvm::Function &Function) {
 
 std::string CSourceRecorder::expression(va_t Function, const HighExpr &Expr,
                                         std::string Text) {
+  if (InstructionsOnly)
+    return Text;
   auto It = HighRegions.find({Function, &Expr});
   if (It == HighRegions.end())
     return Text;
@@ -242,6 +264,8 @@ std::string CSourceRecorder::expression(va_t Function, const HighExpr &Expr,
 }
 
 std::optional<size_t> CSourceRecorder::function(va_t Entry) {
+  if (InstructionsOnly)
+    return std::nullopt;
   if (Map.Recognitions)
     for (size_t I = 0; I < Map.Recognitions->size(); ++I) {
       const auto &Match = (*Map.Recognitions)[I];
@@ -261,6 +285,11 @@ CSourceRecorder::function(const llvm::Function &Function) {
 std::optional<size_t>
 CSourceRecorder::instruction(const llvm::Instruction &Value) {
   auto I = LLVMRegions.find(&Value);
+  auto Anchor = LLVMAnchors.find(&Value);
+  if (InstructionsOnly && Anchor != LLVMAnchors.end())
+    return event(std::nullopt,
+                 {Anchor->second.second.begin(), Anchor->second.second.end()},
+                 Anchor->second.first);
   return I == LLVMRegions.end() ? std::nullopt
                                 : std::optional<size_t>(event(
                                       I->second.Region, I->second.Coverage));
@@ -268,9 +297,13 @@ CSourceRecorder::instruction(const llvm::Instruction &Value) {
 
 std::optional<size_t> CSourceRecorder::statement(va_t Function,
                                                  const HighStmt &Stmt) {
+  const auto At = HighStores.find({Function, Stmt.Addr});
+  const auto Anchor = HighAnchors.find({Function, Stmt.Addr, Stmt.Kind});
+  if (InstructionsOnly && !Stmt.IsPhiCopy && Anchor != HighAnchors.end() &&
+      Anchor->second.size() == 1)
+    return event(std::nullopt, {*Anchor->second.begin()}, Function);
   if (Stmt.Kind != StmtKind::Store)
     return std::nullopt;
-  const auto At = HighStores.find({Function, Stmt.Addr});
   return At == HighStores.end()
              ? std::nullopt
              : std::optional(event(At->second.Region, At->second.Coverage));
@@ -278,13 +311,16 @@ std::optional<size_t> CSourceRecorder::statement(va_t Function,
 
 std::string CSourceRecorder::expression(const llvm::Instruction &Value,
                                         std::string Text) {
+  if (InstructionsOnly)
+    return Text;
   auto Event = instruction(Value);
   return Event ? begin(*Event) + Text + end(*Event) : Text;
 }
 
 bool CSourceRecorder::finish(llvm::StringRef Annotated,
                              llvm::StringRef Ordinary) {
-  std::vector<CSourceRegion> Candidate = Map.Regions;
+  std::vector<CSourceRegion> Candidate =
+      InstructionsOnly ? std::vector<CSourceRegion>() : Map.Regions;
   std::vector<std::set<sigs::LibraryOccurrence>> Covered(Candidate.size());
   std::string Clean;
   struct Frame {
@@ -293,6 +329,7 @@ bool CSourceRecorder::finish(llvm::StringRef Annotated,
   };
   std::vector<Frame> Stack;
   std::vector<CSourceDefinition> Definitions;
+  std::vector<CSourceAnchor> Anchors;
   while (!Annotated.empty()) {
     size_t At = Annotated.find(Prefix);
     if (At == llvm::StringRef::npos) {
@@ -323,9 +360,14 @@ bool CSourceRecorder::finish(llvm::StringRef Annotated,
       Stack.pop_back();
       if (Open.Begin != Clean.size()) {
         const auto &Target = Events[Event];
-        Candidate[Target.Region].Spans.push_back({Open.Begin, Clean.size()});
-        Covered[Target.Region].insert(Target.Coverage.begin(),
-                                      Target.Coverage.end());
+        if (Target.Region) {
+          Candidate[*Target.Region].Spans.push_back({Open.Begin, Clean.size()});
+          Covered[*Target.Region].insert(Target.Coverage.begin(),
+                                         Target.Coverage.end());
+        }
+        if (Target.Function)
+          Anchors.push_back(
+              {*Target.Function, {Open.Begin, Clean.size()}, Target.Coverage});
       }
     } else {
       return false;
@@ -365,8 +407,12 @@ bool CSourceRecorder::finish(llvm::StringRef Annotated,
   for (auto &Region : Candidate)
     if (!Region.Mapped)
       Region.Spans.clear();
-  Map.Regions = std::move(Candidate);
-  Map.Definitions = std::move(Definitions);
+  if (InstructionsOnly)
+    Map.Anchors = std::move(Anchors);
+  else {
+    Map.Regions = std::move(Candidate);
+    Map.Definitions = std::move(Definitions);
+  }
   return true;
 }
 

@@ -61,6 +61,16 @@ pinned view and a different hidden assembly location, then checks undo/redo,
 save/restart and instruction-mapped comments. Snapshot coverage also verifies
 that read-only replicas load these edits without changing durable owner files.
 
+`NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
+changed-kind, synthetic, ambiguous and mismatched-function observations.
+`SessionCAPITest.CSourcePagesRetainCanonicalReturnAnchors` and the real worker's
+native mapping test verify x64 and AArch64 high-VA source rows through small
+pages, including return instruction addresses distinct from the function entry.
+The controller's `tabFromCodeUsesSelectedInstruction` uses a pinned source view
+and independently moved assembly; its optional native rows use the same PE/PDB
+and environment variables described below. Unmapped declarations exercise the
+explicit entry fallback.
+
 ```sh
 cmake --build build-gui --target neverd-gui-tests neverd-gui-query-tests
 ctest --test-dir build-gui -R '^NeverDGui' --output-on-failure

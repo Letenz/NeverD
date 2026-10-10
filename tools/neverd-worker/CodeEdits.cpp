@@ -515,6 +515,7 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
     if (const auto note = notes.find(std::to_string(line));
         note != notes.end() && note->value("anchor", std::string()) == anchor)
       comment = note->value("text", std::string());
+    mapping["code_comment_is_source"] = !comment.empty();
     if (comment.empty()) {
       for (const auto &at : mapping.value("addresses", Json::array())) {
         const auto address = parseAddress(at.get<std::string>());

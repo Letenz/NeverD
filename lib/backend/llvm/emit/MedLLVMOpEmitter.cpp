@@ -1270,6 +1270,12 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   }
   case NdOp::RETURN:
     emitReturnOp(Op, Builder, BlockId);
+    if (SourceMap && Op.Addr != InvalidVA && Op.OriginSeq >= 0)
+      if (auto *Block = Builder.GetInsertBlock())
+        if (auto *Return = llvm::dyn_cast_or_null<llvm::ReturnInst>(
+                Block->getTerminator()))
+          SourceMap->Observations.push_back(
+              {CurMedFunc->Entry, {Op.Addr, Op.OriginSeq}, Return});
     return;
   case NdOp::NOP:
     return;
