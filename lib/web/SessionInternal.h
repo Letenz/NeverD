@@ -21,6 +21,8 @@
 #include "neverd/web/ElectronEntries.h"
 #include "neverd/web/ElectronIPC.h"
 #include "neverd/web/HTML.h"
+#include "neverd/web/PackageArchive.h"
+#include "neverd/web/PackageIntegrity.h"
 #include "neverd/web/Packages.h"
 #include "neverd/web/Session.h"
 #include "neverd/web/Source.h"
@@ -67,6 +69,9 @@ struct Session::Impl {
   std::map<std::string, ElectronEntries> ElectronEntryAnalyses;
   std::map<std::string, PackageAnalysis> PackageAnalyses;
   std::map<std::string, PackageDiff> PackageDiffs;
+  std::map<std::string, PackageArchive> PackageArchives;
+  std::map<std::string, PackageIntegrityResult> PackageIntegrity;
+  uint64_t CachedArchiveBytes = 0;
   struct HTMLResults {
     HTMLDocument Document;
     HTMLLinks Links;
@@ -95,7 +100,8 @@ struct Session::Impl {
   const char *analysisStatus() const {
     return Sources.empty() && Maps.empty() && BunExtractions.empty() &&
                    AsarExtractions.empty() && ElectronManifests.empty() &&
-                   HTMLDocuments.empty() && PackageAnalyses.empty()
+                   HTMLDocuments.empty() && PackageAnalyses.empty() &&
+                   PackageArchives.empty() && PackageIntegrity.empty()
                ? "not_analyzed"
                : "partial";
   }

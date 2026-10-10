@@ -56,6 +56,9 @@ struct API {
   WEB_API(neverd_web_bun_extract_json)
   WEB_API(neverd_web_bun_records_json)
   WEB_API(neverd_web_packages_analyze_json)
+  WEB_API(neverd_web_package_archive_extract_json)
+  WEB_API(neverd_web_package_archive_records_json)
+  WEB_API(neverd_web_package_integrity_verify_json)
   WEB_API(neverd_web_package_records_json)
   WEB_API(neverd_web_packages_compare_json)
   WEB_API(neverd_web_package_diff_records_json)
@@ -275,6 +278,48 @@ Json WebEngine::execute(const std::string &operation, const Json &p) {
     if (!query)
       throw Error("capability_unavailable", "Native handoff is unavailable");
     return result(query(native_));
+  }
+  if (operation == "web_package_archive_extract") {
+    fields(p, {"revision", "artifact_id", "format"});
+    if (!api().neverd_web_package_archive_extract_json)
+      throw Error("capability_unavailable", "Package archives are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto artifact = required(p, "artifact_id", 64);
+    const auto format = required(p, "format", 16);
+    auto value = result(api().neverd_web_package_archive_extract_json(
+        session_, revision.data(), revision.size(), artifact.data(),
+        artifact.size(), format.data(), format.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_package_integrity_verify") {
+    fields(p, {"revision", "artifact_id", "declaration_id", "package_id"});
+    if (!api().neverd_web_package_integrity_verify_json)
+      throw Error("capability_unavailable", "Package integrity is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto artifact = required(p, "artifact_id", 64);
+    const auto declaration = required(p, "declaration_id", 64);
+    const auto package = p.contains("package_id")
+                             ? required(p, "package_id", 64)
+                             : std::string();
+    auto value = result(api().neverd_web_package_integrity_verify_json(
+        session_, revision.data(), revision.size(), artifact.data(),
+        artifact.size(), declaration.data(), declaration.size(), package.data(),
+        package.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_package_archive_records") {
+    fields(p, {"revision", "archive_id", "offset", "limit"});
+    if (!api().neverd_web_package_archive_records_json)
+      throw Error("capability_unavailable", "Package archives are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto archive = required(p, "archive_id", 64);
+    return result(api().neverd_web_package_archive_records_json(
+        session_, revision.data(), revision.size(), archive.data(),
+        archive.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
   }
   if (operation == "web_packages_analyze") {
     fields(p, {"revision", "artifact_id", "input_kind"});

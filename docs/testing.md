@@ -360,6 +360,16 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebPackageArchive.*`, `WebPackageIntegrity.*` and `WebPackageDigest.*` in
+`NeverDWebArtifactTests` cover bounded tar/PAX/gzip admission, shared storage,
+strongest SRI declarations, original compressed-byte scope and independent
+SHA-384/512 vectors. `WebPackageArchiveSDK.*`, `WebPackageIntegritySDK.*` and
+`NeverDWorkerWeb` cover consumer identity, nested coordinates, cache/revision
+revocation, native storage lifetime and offline CLI/transport parity. Optional
+hash-pinned official Claude Code npm artifacts are described in the
+[archive/integrity profile](web-package-archive-profile.md). Run the owning
+web directory and `WebBlobStore.*` when changing these shared storage paths.
+
 `WebPackages.*` in `NeverDWebArtifactTests` covers npm v1/v2/v3 placement,
 hidden locks, aliases/workspaces, optional/peer rules, declaration conflicts,
 field evidence coverage, two-root diffs and metadata budgets. The optional

@@ -2,7 +2,12 @@ add_neverd_component_library(NeverDWeb
   ArtifactStore.cpp
   packages/PackageReader.cpp
   packages/PackageDiff.cpp
+  packages/PackageArchive.cpp
+  packages/PackageIntegrity.cpp
+  packages/SHA512.cpp
   SessionPackages.cpp
+  SessionPackageArchive.cpp
+  SessionPackageIntegrity.cpp
   HTML.cpp
   HTMLReferences.cpp
   HTMLLinks.cpp
@@ -40,6 +45,11 @@ add_neverd_component_library(NeverDWeb
   LLVM_COMPONENTS Support
 )
 include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebURL.cmake")
+find_package(ZLIB QUIET)
+if(ZLIB_FOUND)
+  target_link_libraries(NeverDWeb PRIVATE ZLIB::ZLIB)
+  target_compile_definitions(NeverDWeb PRIVATE NEVERD_WEB_ZLIB=1)
+endif()
 neverd_add_web_url_parser()
 target_link_libraries(NeverDWeb PRIVATE neverd_web_url)
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/LICENSES/ada/"

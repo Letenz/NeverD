@@ -1,6 +1,8 @@
 add_neverd_unittest(NeverDWebArtifactTests
   ArtifactTests.cpp
   PackageTests.cpp
+  PackageArchiveTests.cpp
+  PackageIntegrityTests.cpp
   AsarTests.cpp
   ElectronManifestTests.cpp
   HTMLTests.cpp
@@ -60,6 +62,8 @@ if(TARGET neverd_shared)
   add_neverd_unittest(NeverDWebSDKTests
     SDKTests.cpp
     PackageSDKTests.cpp
+    PackageArchiveSDKTests.cpp
+    PackageIntegritySDKTests.cpp
     AsarSDKTests.cpp
     ElectronSDKTests.cpp
     HTMLSDKTests.cpp

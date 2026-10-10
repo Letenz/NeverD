@@ -71,6 +71,30 @@ std::string Session::capabilities() {
                          {"max_cached_map_segments", 200000},
                          {"resolves_external_references", false}}};
   Operations.emplace_back("electron_manifest_analyze");
+  Operations.emplace_back("package_archive_extract");
+  Operations.emplace_back("package_archive_records");
+  Operations.emplace_back("package_integrity_verify");
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "package_integrity"},
+      {"profile", std::string(PackageIntegrityProfile)},
+      {"available", true},
+      {"algorithms", llvm::json::Array{"sha1", "sha256", "sha384", "sha512"}},
+      {"byte_domain", "selected_original_artifact"},
+      {"max_cached_verifications", 16},
+      {"authenticates_publisher", false}});
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "package_archive"},
+      {"profile", std::string(PackageArchiveProfile)},
+      {"available", packageArchiveAvailable()},
+      {"gzip_available", packageGzipAvailable()},
+      {"max_expanded_bytes", std::to_string(MaxPackageArchiveBytes)},
+      {"max_cached_expanded_bytes", std::to_string(MaxPackageArchiveBytes)},
+      {"max_file_bytes", std::to_string(MaxPackageArchiveFileBytes)},
+      {"max_members", MaxPackageArchiveMembers},
+      {"max_cached", 4},
+      {"recursive_archives", false},
+      {"follows_links", false},
+      {"executes_input", false}});
   for (const auto *Name : {"packages_analyze", "package_records",
                            "packages_compare", "package_diff_records"})
     Operations.emplace_back(Name);
@@ -359,7 +383,8 @@ std::string Session::capabilities() {
            {"max_blob_read_bytes", std::to_string(MaxBlobReadBytes)},
            {"capture_buffer_bytes", std::to_string(BlobTransferBytes)},
            {"max_session_spool_bytes",
-            std::to_string(2 * Limits::HardInputBytes)},
+            std::to_string(2 * Limits::HardInputBytes +
+                           MaxPackageArchiveBytes)},
            {"max_page_entries", 512}}}});
 }
 
@@ -432,6 +457,9 @@ std::string Session::commit(std::string_view Token) {
   State->ElectronIPCs.clear();
   State->ElectronEntryAnalyses.clear();
   State->PackageAnalyses.clear();
+  State->PackageArchives.clear();
+  State->PackageIntegrity.clear();
+  State->CachedArchiveBytes = 0;
   State->PackageDiffs.clear();
   State->HTMLDocuments.clear();
   State->CachedNodes = 0;

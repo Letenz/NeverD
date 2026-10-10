@@ -1,5 +1,4 @@
-//===- AvailabilityTests.cpp - Offline analysis availability tests
-//---------===//
+//===- AvailabilityTests.cpp - Offline analysis availability -----------===//
 //
 // NeverD Decompiler
 //
@@ -55,6 +54,9 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_TRUE(Has("package_records"));
   EXPECT_TRUE(Has("packages_compare"));
   EXPECT_TRUE(Has("package_diff_records"));
+  EXPECT_TRUE(Has("package_archive_extract"));
+  EXPECT_TRUE(Has("package_archive_records"));
+  EXPECT_TRUE(Has("package_integrity_verify"));
   bool ASARAvailable = false;
   const auto *Analysis = Object->getArray("analysis");
   ASSERT_NE(Analysis, nullptr);
@@ -111,6 +113,12 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
   neverd_session_t NativeOutput = reinterpret_cast<void *>(uintptr_t(1));
   for (const auto *Owned :
        {neverd_web_metadata_json(nullptr),
+        neverd_web_package_integrity_verify_json(nullptr, nullptr, 0, nullptr,
+                                                 0, nullptr, 0, nullptr, 0),
+        neverd_web_package_archive_extract_json(nullptr, nullptr, 0, nullptr, 0,
+                                                nullptr, 0),
+        neverd_web_package_archive_records_json(nullptr, nullptr, 0, nullptr, 0,
+                                                0, 1),
         neverd_web_packages_analyze_json(nullptr, nullptr, 0, nullptr, 0,
                                          nullptr, 0),
         neverd_web_package_records_json(nullptr, nullptr, 0, nullptr, 0,

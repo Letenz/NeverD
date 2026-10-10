@@ -288,6 +288,54 @@ const char *neverd_web_packages_analyze_json(
 #endif
 }
 
+const char *neverd_web_package_integrity_verify_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *DeclarationID, size_t DeclarationIDSize, const char *PackageID,
+    size_t PackageIDSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.verifyPackageIntegrity(
+        buffer(ExpectedRevision, RevisionSize, 20),
+        buffer(ArtifactID, ArtifactIDSize, 64),
+        buffer(DeclarationID, DeclarationIDSize, 64),
+        buffer(PackageID, PackageIDSize, 64));
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_package_archive_extract_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *Format, size_t FormatSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.extractPackageArchive(buffer(ExpectedRevision, RevisionSize, 20),
+                                   buffer(ArtifactID, ArtifactIDSize, 64),
+                                   buffer(Format, FormatSize, 16));
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_package_archive_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArchiveID, size_t ArchiveIDSize,
+    uint64_t Offset, uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.packageArchiveRecords(buffer(ExpectedRevision, RevisionSize, 20),
+                                   buffer(ArchiveID, ArchiveIDSize, 64), Offset,
+                                   Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+
 const char *neverd_web_package_records_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize,

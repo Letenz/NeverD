@@ -33,6 +33,29 @@ NEVERD_API void neverd_web_session_destroy(neverd_web_session_t Session);
 /// no untrusted source text or input name is included in ordinary diagnostics.
 NEVERD_API const char *neverd_web_capabilities_json(void);
 
+/// Verify a caller-selected captured ORIGINAL against one captured declaration.
+/// Empty PackageID selects DeclarationID as a registry JSON artifact and reads
+/// dist.integrity. Otherwise DeclarationID selects an existing npm-lock
+/// analysis and PackageID one package instance. No filename/URL association is
+/// inferred. A matching digest authenticates neither publisher nor behavior.
+NEVERD_API const char *neverd_web_package_integrity_verify_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *DeclarationID, size_t DeclarationIDSize, const char *PackageID,
+    size_t PackageIDSize);
+
+/// Explicit tar/tgz profile; captured originals only, no recursive extraction.
+NEVERD_API const char *neverd_web_package_archive_extract_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *Format, size_t FormatSize);
+/// Link entries never supply bytes. Expanded offsets are distinct from the
+/// original compressed archive. Limit is 1..512; names remain private.
+NEVERD_API const char *neverd_web_package_archive_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArchiveID, size_t ArchiveIDSize,
+    uint64_t Offset, uint64_t Limit);
+
 /// Inspect selected package.json or npm lock v1/v2/v3 metadata and exact
 /// supplied members. InputKind is "package-json" or "npm-lock". No install,
 /// registry resolution, execution, version-satisfaction or integrity

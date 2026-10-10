@@ -34,6 +34,16 @@ public:
   /// Revalidate the selected input before atomically publishing the preview.
   std::string commit(std::string_view Token);
   std::string metadata() const;
+  std::string extractPackageArchive(std::string_view ExpectedRevision,
+                                    std::string_view ArtifactID,
+                                    std::string_view Format);
+  std::string verifyPackageIntegrity(std::string_view ExpectedRevision,
+                                     std::string_view ArtifactID,
+                                     std::string_view DeclarationID,
+                                     std::string_view PackageID);
+  std::string packageArchiveRecords(std::string_view ExpectedRevision,
+                                    std::string_view ArchiveID, uint64_t Offset,
+                                    uint64_t Limit) const;
   std::string analyzePackages(std::string_view ExpectedRevision,
                               std::string_view ArtifactID,
                               std::string_view InputKind);

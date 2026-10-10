@@ -42,6 +42,12 @@ std::optional<llvm::json::Value> result(const char *Owned) {
 } // namespace
 
 int runWeb() {
+  if (!WebArguments.empty() && WebArguments[0] == "integrity")
+    return runWebIntegrity();
+  if (!WebArguments.empty() &&
+      (WebArguments[0] == "archive" || WebArguments[0] == "archive-packages" ||
+       WebArguments[0] == "archive-bun"))
+    return runWebArchive();
   if (!WebArguments.empty() &&
       (WebArguments[0] == "packages" || WebArguments[0] == "package-diff"))
     return runWebPackages();
