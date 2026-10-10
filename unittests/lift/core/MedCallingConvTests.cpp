@@ -3505,7 +3505,7 @@ TEST(MedABIPass, UnprovenIntrinsicStillSeparatesOutgoingArguments) {
   const auto &TRI = getTargetRegInfo(A);
   const auto Layout = TRI.integerArgumentLayout(BinaryFormat::ELF);
   constexpr va_t Callee = 0x2000;
-  for (unsigned Variant = 0; Variant != 4; ++Variant) {
+  for (unsigned Variant = 0; Variant != 5; ++Variant) {
     SCOPED_TRACE(Variant);
     MedFunc F;
     F.Entry = 0x1000;
@@ -3522,10 +3522,11 @@ TEST(MedABIPass, UnprovenIntrinsicStillSeparatesOutgoingArguments) {
     State.addInput(
         Variant == 2
             ? temp(203, 0, 2, A)
-            : MedVar::makeConst(
-                  static_cast<uint16_t>(Variant == 3 ? Intrinsic::None
-                                                     : Intrinsic::X86ReadMXCSR),
-                  2));
+            : MedVar::makeConst(static_cast<uint16_t>(
+                                    Variant == 3 ? Intrinsic::None
+                                                 : Intrinsic::X86ReadMXCSR) +
+                                    (Variant == 4 ? uint64_t{1} << 32 : 0),
+                                2));
     B.Ops.push_back(State);
     MedOp Call;
     Call.Opcode = NdOp::CALL;

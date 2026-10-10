@@ -114,6 +114,16 @@ std::string jsonText(llvm::json::Object Value) {
 // even inside shell quotes and also expands percent signs in guest strings.
 int runCLIRequest(llvm::StringRef Path, llvm::StringRef Profile,
                   llvm::StringRef Options, llvm::StringRef Output) {
+  // LLVM's redirects open an existing file without truncating it. Repeated
+  // invocations can produce a shorter JSON report, so remove the old suffix.
+  std::error_code OutputError;
+  {
+    llvm::raw_fd_ostream Truncate(Output, OutputError);
+  }
+  if (OutputError) {
+    ADD_FAILURE() << "cannot truncate CLI output: " << OutputError.message();
+    return -1;
+  }
   const std::string ProfileArg =
       "--" + std::string(process_cli::ProfileOption) + "=" + Profile.str();
   const std::string OptionsArg =
@@ -127,6 +137,16 @@ int runCLIRequest(llvm::StringRef Path, llvm::StringRef Profile,
       NEVERD_PROCESS_CLI, Args, std::nullopt, Redirects, 30, 0, &Error);
   EXPECT_GE(Status, 0) << Error;
   return Status;
+}
+
+void expectCLIReport(llvm::StringRef Output,
+                     const llvm::json::Value &Expected) {
+  auto Buffer = llvm::MemoryBuffer::getFile(Output);
+  ASSERT_TRUE(bool(Buffer)) << Buffer.getError().message();
+  auto Report = llvm::json::parse((*Buffer)->getBuffer());
+  ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError()) << "\n"
+                            << (*Buffer)->getBuffer().str();
+  EXPECT_EQ(*Report, Expected);
 }
 
 class ProcessPublic : public testing::Test {
@@ -223,10 +243,7 @@ TEST_F(ProcessPublic, WindowsPE64RunsThroughSDKAndCLIWithoutAnalysisState) {
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
     const int CLIStatus = runCLIRequest(Path, WindowsPE64, Options, Output);
     EXPECT_EQ(CLIStatus, process_cli::GuestFailure);
-    auto Buffer = llvm::MemoryBuffer::getFile(Output);
-    ASSERT_TRUE(bool(Buffer));
-    EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
-              Result);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Result));
   }
 #endif
 }
@@ -274,10 +291,7 @@ TEST_F(ProcessPublic, WindowsStartupDLLsUseTheSameCatalogueThroughSDKAndCLI) {
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
     const int CLIStatus = runCLIRequest(Path, WindowsPE64, Options, Output);
     EXPECT_EQ(CLIStatus, process_cli::GuestFailure);
-    auto Buffer = llvm::MemoryBuffer::getFile(Output);
-    ASSERT_TRUE(bool(Buffer));
-    EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
-              Result);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Result));
   }
 #endif
 }
@@ -326,10 +340,7 @@ TEST_F(ProcessPublic, WindowsRuntimeExportsAgreeAcrossSDKAndCLI) {
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
     const int CLIStatus = runCLIRequest(Path, WindowsPE64, Options, Output);
     EXPECT_EQ(CLIStatus, process_cli::GuestFailure);
-    auto Buffer = llvm::MemoryBuffer::getFile(Output);
-    ASSERT_TRUE(bool(Buffer));
-    EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
-              Result);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Result));
   }
 #endif
 }
@@ -371,10 +382,7 @@ TEST_F(ProcessPublic, DarwinProfilesPreserveBSDResultsAcrossSDKAndCLI) {
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
     const int CLIStatus = runCLIRequest(Path, Profile, Options, Output);
     EXPECT_EQ(CLIStatus, process_cli::GuestFailure);
-    auto Buffer = llvm::MemoryBuffer::getFile(Output);
-    ASSERT_TRUE(bool(Buffer));
-    EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
-              *Report);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
     auto Wrong = takeString(neverd_emulate_process_json(
         Session, Path.c_str(),
         File == std::string("ios-arm64") ? MacOSMachO64 : IOSMachO64,
@@ -1178,9 +1186,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   const int CLIStatus = runCLIRequest(Path, Profile, Options, Output);
   EXPECT_EQ(CLIStatus,
             Incomplete ? process_cli::Incomplete : process_cli::GuestFailure);
-  auto Buffer = llvm::MemoryBuffer::getFile(Output);
-  ASSERT_TRUE(bool(Buffer));
-  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())), *Report);
+  ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
 #endif
 }
 INSTANTIATE_TEST_SUITE_P(
@@ -1260,10 +1266,7 @@ TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
     const int CLIStatus =
         runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
     EXPECT_EQ(CLIStatus, process_cli::Success);
-    auto Buffer = llvm::MemoryBuffer::getFile(Output);
-    ASSERT_TRUE(bool(Buffer));
-    EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
-              Parsed);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
   }
 #endif
 }
@@ -1317,9 +1320,7 @@ TEST_F(ProcessPublic, AndroidFinalizersKeepGuestEffectsAcrossSDKAndCLI) {
   const int CLIStatus =
       runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
   EXPECT_EQ(CLIStatus, process_cli::Success);
-  auto Bytes = llvm::MemoryBuffer::getFile(Output);
-  ASSERT_TRUE(bool(Bytes));
-  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
+  ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
 #endif
 }
 
@@ -1363,9 +1364,7 @@ TEST_F(ProcessPublic, AndroidFormattingKeepsDynamicNamesAcrossSDKAndCLI) {
   const int CLIStatus =
       runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
   EXPECT_EQ(CLIStatus, process_cli::Success);
-  auto Bytes = llvm::MemoryBuffer::getFile(Output);
-  ASSERT_TRUE(bool(Bytes));
-  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
+  ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
 #endif
 }
 
@@ -1420,9 +1419,7 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
     const int CLIStatus =
         runCLIRequest(Path, AndroidNativeAArch64, Options, Output);
     EXPECT_EQ(CLIStatus, process_cli::Success);
-    auto Bytes = llvm::MemoryBuffer::getFile(Output);
-    ASSERT_TRUE(bool(Bytes));
-    EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Report);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
   }
 #endif
 }
@@ -1547,9 +1544,7 @@ TEST_F(ProcessPublic, AndroidInitializersReturnThroughSDKAndCLI) {
   const int CLIStatus =
       runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
   EXPECT_EQ(CLIStatus, process_cli::Success);
-  auto Buffer = llvm::MemoryBuffer::getFile(Output);
-  ASSERT_TRUE(bool(Buffer));
-  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())), Parsed);
+  ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
 #endif
 }
 
@@ -1619,10 +1614,7 @@ TEST_F(ProcessPublic, AndroidFortifiedSearchReportsMatchSDKAndCLI) {
         runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
     EXPECT_EQ(CLIStatus,
               Fails ? process_cli::Incomplete : process_cli::Success);
-    auto Buffer = llvm::MemoryBuffer::getFile(Output);
-    ASSERT_TRUE(bool(Buffer));
-    EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
-              Parsed);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
   }
 #endif
 }
@@ -1723,9 +1715,7 @@ TEST_F(ProcessPublic, RelativeSleepCompletesRawEventAndClockThroughSDKAndCLI) {
   const int CLIStatus =
       runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
   EXPECT_EQ(CLIStatus, process_cli::Success);
-  auto Bytes = llvm::MemoryBuffer::getFile(Output);
-  ASSERT_TRUE(bool(Bytes));
-  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
+  ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
 #endif
 }
 
@@ -1781,9 +1771,7 @@ TEST_F(ProcessPublic, ExplicitClockValuesAndNamesMatchSDKAndCLI) {
   const int CLIStatus =
       runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
   EXPECT_EQ(CLIStatus, process_cli::Success);
-  auto Bytes = llvm::MemoryBuffer::getFile(Output);
-  ASSERT_TRUE(bool(Bytes));
-  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
+  ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
 #endif
 }
 
@@ -1829,9 +1817,7 @@ TEST_F(ProcessPublic, AndroidMutexNamesMatchSDKAndCLI) {
   const int CLIStatus =
       runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
   EXPECT_EQ(CLIStatus, process_cli::Success);
-  auto Bytes = llvm::MemoryBuffer::getFile(Output);
-  ASSERT_TRUE(bool(Bytes));
-  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
+  ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
 #endif
 }
 
@@ -1877,9 +1863,7 @@ TEST_F(ProcessPublic, AndroidGuestThreadsMatchSDKAndCLI) {
   const int CLIStatus =
       runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
   EXPECT_EQ(CLIStatus, process_cli::Success);
-  auto Bytes = llvm::MemoryBuffer::getFile(Output);
-  ASSERT_TRUE(bool(Bytes));
-  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
+  ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
 #endif
 }
 
@@ -1932,9 +1916,7 @@ TEST_F(ProcessPublic, AndroidThreadAttributesMatchSDKAndCLI) {
   const int CLIStatus =
       runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
   EXPECT_EQ(CLIStatus, process_cli::Success);
-  auto Bytes = llvm::MemoryBuffer::getFile(Output);
-  ASSERT_TRUE(bool(Bytes));
-  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
+  ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
 #endif
 }
 
@@ -1979,9 +1961,7 @@ TEST_F(ProcessPublic, AndroidSyscallNamesMatchSDKAndCLI) {
   const int CLIStatus =
       runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
   EXPECT_EQ(CLIStatus, process_cli::Success);
-  auto Bytes = llvm::MemoryBuffer::getFile(Output);
-  ASSERT_TRUE(bool(Bytes));
-  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
+  ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
 #endif
 }
 
