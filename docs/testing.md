@@ -189,6 +189,12 @@ actual warm hits, identical cold/warm budget consumption and a fresh successful
 proof when the same address belongs to a different valid image. Truncated
 instruction streams remain unretained.
 
+The concurrent graph tests hold a builder at a real prover callback and observe
+registered waiters before releasing it. They check one construction for matching
+inputs, independent proof budgets, exception and incomplete-lift wakeups,
+different contexts, and reentrant callbacks across threads and caches. These
+overlaps are coordinated by conditions rather than assumed from timing.
+
 `X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
 machine bytes, generated LLVM, HighC and a separately generated C caller linked
 to native callees. Linux x64 hosts execute both i386 and x64, default/NoOpt
@@ -713,6 +719,12 @@ budgets at every small-fixture boundary, ordered mixed results and feasible
 masks, all query fields, proof limits and graph-independent relocation context.
 Incomplete proofs and oversized records cannot be retained; count and byte
 limits are checked independently.
+The long-predecessor guard fixture separates a shallow comparison from its
+value's CFG history. It checks 128 table slots reaching four exact case targets,
+unrelated guards and partial-register changes, while retaining the independent
+deep-syntax refusal. The cache case checks rejection beyond the expanded value
+depth, that a complete expanded-depth answer cannot satisfy a default-depth
+query, and that repeated expanded queries preserve results and work charges.
 `PipelineOutcome.ParallelCalleeFrontiersPreserveEveryRegisterSummary` compares
 serial and parallel summaries across two 40-function callee frontiers.
 

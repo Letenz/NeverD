@@ -449,6 +449,10 @@ definition and retains the lane's offset and width, so a comparison of AL or
 W0 need not expand the earlier EAX or X0 calculation. Both the comparison and
 the table index must reach that same lane through every incoming path. Partial
 writes, call clobbers, implicit extension rules and proof budgets still apply.
+Exact guard-occurrence queries use the expanded CFG value-reconstruction depth
+limit. Guard syntax collection and materialization keep their separate, smaller
+expression limit. This lets a shallow guard cross a longer predecessor graph
+without treating depth exhaustion as a completed proof or skipping replay.
 A failed optional consumer audit grants no relocation-root suppression. With
 its shared evidence budget intact, the resolver retains every root and replays
 the mandatory selector, address and target proofs under that stronger context.
@@ -1404,6 +1408,19 @@ without reading an empty slot. Cycles in the call graph, incomplete lifting,
 environment restores, tag changes, unknown intrinsics and exceptional edges
 supply no summary. Loader-authenticated imports use the existing ABI tables;
 an internal function's spelling supplies no effect.
+
+Concurrent requests for an identical x87 graph may join one construction. The
+pending inventory is separately bounded to 32 entries and 1 MiB of retained
+context payload. Each waiter resumes its own proof and pays the original work
+charges. Incomplete or failed construction wakes waiters to build independently;
+exceptions cannot strand a pending entry. Exact registered no-return prover and
+name-resolver index identities permit waiting only when their owners promise
+not to directly or indirectly wait for x87 graph construction in any cache on
+another thread.
+The pipeline registers its own immutable indexes. Unregistered callbacks and
+synchronous nested graph construction take the nonwaiting path, including
+nested requests to a different cache, so those callbacks cannot create wait
+cycles.
 
 Proven calls define their physical 80-bit result before SSA. Explicit return
 operands retain this convention after propagation replaces a register with a
