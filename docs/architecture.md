@@ -143,6 +143,10 @@ installation or follow removal. The call ABI consumer prunes only with complete
 state/lifetime/call proofs, current block identities and exact call receipts.
 For PE32 C++ catches, that analysis also owns the runtime catch-context stack,
 its nested-search minimum and exact returned continuation and SavedESP facts.
+It publishes every possible catch-search target and the exited guard count.
+Secondary search through a parent try removes the exited invocations and
+restores their captured stack snapshot. CFG construction and native call
+lowering consume that result rather than filtering by the first guard alone.
 The captured pre-dispatch SavedESP owns the catch-return writeback even when
 catch code changes the cell. That effect remains bound to the exact RETURN in
 LowIR and MedIR. Dedicated x86 HighIR and LLVM continuation lowering restore
