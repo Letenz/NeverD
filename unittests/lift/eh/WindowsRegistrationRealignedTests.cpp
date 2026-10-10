@@ -58,8 +58,14 @@ namespace {
 std::optional<uint32_t> evaluateRoot(const ExprPtr &Expr, uint32_t EntrySP) {
   if (!Expr)
     return std::nullopt;
-  if (Expr->Kind == ExprKind::Var)
-    return EntrySP;
+  if (Expr->Kind == ExprKind::Var) {
+    const auto &Var = Expr->Var;
+    if (Var.Kind == MedVar::Reg && Var.TheArch == Arch::X86 && Var.Size == 4 &&
+        Var.RegOff == getTargetRegInfo(Arch::X86).StackPointer &&
+        Var.SSAVer == 0 && Var.RenameTag < 0)
+      return EntrySP;
+    return std::nullopt;
+  }
   if (Expr->Kind == ExprKind::Const)
     return uint32_t(Expr->ConstVal);
   if (Expr->Kind != ExprKind::BinOp || Expr->Operands.size() != 2)
@@ -332,6 +338,71 @@ TEST(WindowsRegistrationRealigned, InputPE32RecoversTheCallbackContract) {
   ASSERT_EQ(High.Body.front().EHClauses.size(), 1u);
   EXPECT_EQ(High.Body.front().EHClauses[0].ContinuationVAs,
             (std::vector<va_t>{State.CxxContinuations[0].TargetVA}));
+  const auto &Resume = State.CxxContinuations[0];
+  unsigned Restores = 0;
+  walkStmts(High.Body, [&](const HighStmt &Stmt) {
+    if (Stmt.Addr != Resume.Address)
+      return;
+    EXPECT_NE(Stmt.Kind, StmtKind::Return);
+    if (Stmt.Kind == StmtKind::Store) {
+      ++Restores;
+      const auto &Layout = *EH.Registration->RealignedFrame;
+      for (uint32_t Base : {0x10000u, 0xfffffff0u})
+        for (uint32_t Residue = 0; Residue < Layout.Alignment; Residue += 4) {
+          const uint32_t SP = Base + Residue;
+          const uint32_t Frame = ((SP - 16) & -Layout.Alignment) -
+                                 Layout.AllocationBytes -
+                                 uint32_t(Layout.BaseOffset);
+          EXPECT_EQ(evaluateRoot(Stmt.StoreAddr, SP), Frame - 16);
+          EXPECT_EQ(evaluateRoot(Stmt.StoreVal, SP),
+                    Frame + uint32_t(Resume.SavedStackOffset));
+        }
+    }
+  });
+  EXPECT_EQ(Restores, 1u);
+  const auto &Body = High.Body.front().Body;
+  const auto Restore = llvm::find_if(Body, [&](const auto &Stmt) {
+    return Stmt.Kind == StmtKind::Store && Stmt.Addr == Resume.Address;
+  });
+  ASSERT_NE(Restore, Body.end());
+  ASSERT_NE(std::next(Restore), Body.end());
+  // The continuation folder may place the target directly after its unique
+  // catch. Either representation must restore SavedESP before resumption.
+  if (std::next(Restore)->Kind == StmtKind::Goto)
+    EXPECT_EQ(std::next(Restore)->GotoTarget, Resume.TargetVA);
+  else
+    EXPECT_EQ(std::next(Restore)->Addr, Resume.TargetVA);
+
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Unproved = Med;
+    auto &Proof = *Unproved.RegistrationStates;
+    if (Mutation == 0)
+      Proof.Complete = false;
+    if (Mutation == 1)
+      Proof.ChainOperationsComplete = false;
+    if (Mutation == 2)
+      Proof.CallbackStatesComplete = false;
+    if (Mutation == 3)
+      Proof.RegistrationLifetimeComplete = false;
+    if (Mutation == 4)
+      Proof.CxxContinuationsComplete = false;
+    if (Mutation == 5)
+      ++Proof.CxxContinuations[0].EndAddress;
+    if (Mutation == 6)
+      Proof.CxxContinuations[0].SavedStackOffset = -4;
+    if (Mutation == 7)
+      ++Proof.CxxContinuations[0].TargetVA;
+    if (Mutation == 8)
+      Unproved.ExceptionMetadata->Registration->RealignedFrame
+          ->SavedParentFrameOffset = -24;
+    if (Mutation == 9)
+      ++Unproved.Entry;
+    const auto Other = MedToHighConverter().convert(Unproved, Arch::X86);
+    walkStmts(Other.Body, [&](const HighStmt &Stmt) {
+      EXPECT_FALSE(Stmt.Kind == StmtKind::Store && Stmt.Addr == Resume.Address);
+    });
+  }
 
   // Source callback analysis does not grant a new native frame/ABI model.
   EXPECT_FALSE(classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF)

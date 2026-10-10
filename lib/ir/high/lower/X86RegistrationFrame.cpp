@@ -11,10 +11,16 @@
 
 namespace neverd {
 
-ExprPtr lowerX86RegistrationRoot(const MedFunc &Func, const MedOp &Op) {
-  const auto Coordinate = registrationRootFrameCoordinate(Func, Op);
-  if (!Coordinate)
-    return HighExpr::makeUndef(Op.Output.Size);
+ExprPtr x86RegistrationFrameAddress(const RegistrationFrameCoordinate &Frame,
+                                    int32_t Offset) {
+  auto Coordinate = Frame;
+  int64_t FinalOffset = int64_t(Coordinate.AlignedOffset) + Offset;
+  if (Coordinate.Alignment == 1) {
+    FinalOffset += Coordinate.EntryOffset;
+    Coordinate.EntryOffset = 0;
+  }
+  if (FinalOffset < INT32_MIN || FinalOffset > INT32_MAX)
+    return nullptr;
   MedVar EntrySP;
   EntrySP.Kind = MedVar::Reg;
   EntrySP.TheArch = Arch::X86;
@@ -28,14 +34,22 @@ ExprPtr lowerX86RegistrationRoot(const MedFunc &Func, const MedOp &Op) {
           HighExpr::makeConst(Offset < 0 ? -int64_t(Offset) : int64_t(Offset),
                               4, ConstantAddressProvenance::Scalar));
   };
-  AddOffset(Coordinate->EntryOffset);
-  if (Coordinate->Alignment != 1)
+  AddOffset(Coordinate.EntryOffset);
+  if (Coordinate.Alignment != 1)
     Value = HighExpr::makeBinop(
         NdOp::INT_AND, Value,
-        HighExpr::makeConst(uint32_t(-Coordinate->Alignment), 4,
+        HighExpr::makeConst(uint32_t(-Coordinate.Alignment), 4,
                             ConstantAddressProvenance::Scalar));
-  AddOffset(Coordinate->AlignedOffset);
+  AddOffset(int32_t(FinalOffset));
   return Value;
+}
+
+ExprPtr lowerX86RegistrationRoot(const MedFunc &Func, const MedOp &Op) {
+  const auto Coordinate = registrationRootFrameCoordinate(Func, Op);
+  if (!Coordinate)
+    return HighExpr::makeUndef(Op.Output.Size);
+  auto Address = x86RegistrationFrameAddress(*Coordinate);
+  return Address ? Address : HighExpr::makeUndef(Op.Output.Size);
 }
 
 } // namespace neverd

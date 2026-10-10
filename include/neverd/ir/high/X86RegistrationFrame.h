@@ -11,6 +11,13 @@
 
 namespace neverd {
 
+struct RegistrationFrameCoordinate;
+
+/// Project a checked source-frame offset without relying on live callback
+/// registers. Return null when the signed source displacement cannot fit.
+ExprPtr x86RegistrationFrameAddress(const RegistrationFrameCoordinate &Frame,
+                                    int32_t Offset = 0);
+
 ExprPtr lowerX86RegistrationRoot(const MedFunc &Func, const MedOp &Op);
 
 } // namespace neverd

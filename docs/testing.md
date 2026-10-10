@@ -2233,6 +2233,9 @@ expressions at every ABI-compatible alignment residue, including PE32 address
 wraparound. Missing, changed or incomplete no-return receipts cannot remove a
 normal edge to create a continuation root. Runtime COPY definitions cannot
 alias the ordinary incoming register in pointer and frame-slot proofs.
+HighIR restores SavedESP before either an explicit continuation jump or its
+folded body. Incomplete lifetime/callback proofs, changed return receipts and
+unproved frame geometry cannot synthesize that writeback.
 `replay_windows_registration_realigned.py` authenticates the captured file
 matrix and runs those identical four images on native Windows in the EH CI job.
 The first Windows fixture job captures the selected x86 MSVC release link

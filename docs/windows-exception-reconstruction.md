@@ -113,7 +113,9 @@ bound; the saved entry EBP remains protected. MedIR preserves distinct runtime
 root definitions; HighIR and LLVM express the aligned parent coordinate from
 the original entry ESP without inventing a constant stack displacement. Exact
 no-return call receipts remove ordinary fallthrough before SSA while preserving
-exceptional entries. HighIR keeps handler and continuation annotations; full
+exceptional entries. HighIR restores the captured SavedESP through that same
+aligned coordinate before transferring to a checked continuation. It keeps
+handler and continuation annotations; full
 structured callback lowering and native re-reconstruction of these realigned
 sources remain unsupported.
 An unproven continuation or conflicting return retains annotations and
