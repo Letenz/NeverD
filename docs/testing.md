@@ -50,7 +50,13 @@ The controller also starts a controlled 30-second decompile, proves uncached
 function and listing reads complete while it is running, then switches
 functions and checks cancellation without losing staged comments. A 20,000-line
 source fixture checks event-loop responsiveness and folded declarations across
-pages. `NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
+pages. Concurrent analysis cases check that a slow view cannot block another
+function, cancellation only retires its own executor, subsequent pages keep
+their dispatcher when a third function queues, external graph snapshots survive
+interleaved requests, and opening another project retires both replicas.
+Cancelling view reads must preserve a queued project snapshot needed by a
+retained external analysis request.
+`NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
 unchanged owner files, staged comments, signature replay and stale-input
 rejection. Database restore coverage keeps pseudocode closed until requested.
 
@@ -432,6 +438,12 @@ build-release/bin/NeverDARM32InterworkingTests
 ```
 
 ## Finite native dispatch
+
+`AffineFrameState.*` in `NeverDJumpTableTests` checks balanced and nonzero
+cycles, unknown roots, conflicting anchors, intermediate overflow, budget
+exhaustion, incremental graph growth and cache reset. A seeded independent
+backward path-constraint oracle checks cyclic equation results. Repeated
+diamond graphs check linear evidence growth rather than a wall-clock cutoff.
 
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
@@ -2907,7 +2919,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5054 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5416`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5056 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5418`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 

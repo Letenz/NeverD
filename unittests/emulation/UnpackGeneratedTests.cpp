@@ -867,7 +867,8 @@ TEST_P(UnpackGenerated, ReleasedAndPostEntryDynamicSlotsDoNotBlockRecovery) {
 }
 
 TEST_P(UnpackGenerated, FLSCleanupCallbacksCannotBeSilentlyDiscarded) {
-  for (unsigned Mode : {FreedFLSCallbackMode, NestedFLSCallbackMode}) {
+  for (unsigned Mode :
+       {FreedFLSCallbackMode, NestedFLSCallbackMode, RearmedFLSCallbackMode}) {
     SCOPED_TRACE(Mode);
     const auto Packed = pack(Mode);
     ASSERT_FALSE(HasFailure());
@@ -879,7 +880,7 @@ TEST_P(UnpackGenerated, FLSCleanupCallbacksCannotBeSilentlyDiscarded) {
     for (const auto &Call : Executed.NativeCalls)
       if (Call.Name == "FlsFree")
         EXPECT_EQ(Call.Result, 1u);
-    if (Mode == NestedFLSCallbackMode) {
+    if (Mode == NestedFLSCallbackMode || Mode == RearmedFLSCallbackMode) {
       struct Invocations final : ProcessObserver {
         std::vector<bool> Program;
         llvm::Expected<std::vector<ExecutionWatch>>
@@ -903,8 +904,10 @@ TEST_P(UnpackGenerated, FLSCleanupCallbacksCannotBeSilentlyDiscarded) {
                                      Options.Process, Observer);
       ASSERT_TRUE(bool(Observed)) << llvm::toString(Observed.takeError());
       EXPECT_EQ(Observed->ExitStatus, ExitStatus);
-      EXPECT_EQ(Observer.Program,
-                (std::vector<bool>{true, false, false, false, true}));
+      std::vector<bool> Expected(
+          Mode == NestedFLSCallbackMode ? 5 : FLSRearmCount + 2, false);
+      Expected.front() = Expected.back() = true;
+      EXPECT_EQ(Observer.Program, Expected);
     }
     for (bool Snapshot : {false, true}) {
       SCOPED_TRACE(Snapshot);
@@ -926,6 +929,25 @@ TEST_P(UnpackGenerated, FLSCleanupCallbacksCannotBeSilentlyDiscarded) {
       expectNativeWindows(Path, ExitStatus);
     }
   }
+}
+
+TEST_P(UnpackGenerated, RearmedFLSCleanupUsesTheProcessEventBudget) {
+  const auto Packed = pack(EndlessFLSCallbackMode);
+  ASSERT_FALSE(HasFailure());
+  Options.Process.Limits.Events = 600;
+  const auto Executed = run(Packed);
+  EXPECT_EQ(Executed.Stop, ProcessStopReason::EventLimit)
+      << Executed.Diagnostic;
+  EXPECT_EQ(Executed.Events, Options.Process.Limits.Events);
+  EXPECT_FALSE(Executed.ExitStatus);
+  EXPECT_TRUE(Executed.StandardOutput.empty());
+  EXPECT_GT(llvm::count_if(
+                Executed.NativeCalls,
+                [](const auto &Call) { return Call.Name == "FlsSetValue"; }),
+            FLSRearmCount);
+  for (const auto &Call : Executed.NativeCalls)
+    if (Call.Name == "FlsFree")
+      EXPECT_FALSE(Call.Result);
 }
 
 TEST_P(UnpackGenerated, FLSCleanupRejectsRecursiveFreeOfTheActiveSlot) {

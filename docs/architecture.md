@@ -11,14 +11,19 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
-runs source/IR and graph reads in a disposable read-only worker. The owner
+runs source/IR and graph reads in up to two disposable read-only workers. The
+replicas start lazily: independent views can load different functions in
+parallel, while each view's pages and graph transaction stay on one dispatcher.
+External clients keep one dispatcher because graph summaries and viewports can
+arrive as separate interleaved requests. The pool retains a shared total
+response-cache allowance. The owner
 exports loader choices, loaded-input identity, user edits, staged comments,
 signature inputs and string options. The replica verifies the input and
 committed edits before applying the remaining in-memory state; a mismatch
-fails explicitly. Owner revision changes invalidate the replica and its cache.
+fails explicitly. Owner revision changes invalidate every replica and its cache.
 Cancelling its final subscriber retires the process, since a synchronous C API
 analysis call cannot be interrupted safely. Replica revisions and analysis
-discovery never advance the writable project's state. Both workers use the
+discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
 
 Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
@@ -292,6 +297,17 @@ from its owned runtime slots. Eliding its target load still requires the exact
 operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
 authority from sharing that origin.
+
+The resolver's point-sensitive stack identity uses anchored affine equations.
+Cyclic predecessors share equation nodes instead of recursively expanding the
+same frame state for each query. Every incoming value must agree; unanchored
+cycles, nonzero loop deltas and overflowing intermediate offsets invalidate
+their users. The existing evidence allowance charges graph construction and
+propagation. Completed equations are immutable within a proof mode, so later
+queries solve only new dependencies. Register/memory transparent-cycle memo
+entries are reusable only until either resolver learns a concrete result;
+both share the invalidation generation because their walks recurse into each
+other. Neither cache bypasses incomplete-proof rejection.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
@@ -720,6 +736,13 @@ before writing, including arguments it only passes on to its own callees.
 For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
+
+Additional callee CFGs are admitted in deterministic breadth-first order.
+Batches retain at most eight bodies and use at most four independent decoders
+when symbol extents predict enough work; small batches stay serial. Read-only
+image indexes and the existing synchronized no-return cache may be shared.
+Summary publication and format-call collection retain the original order,
+depth and count limits. `NEVERD_THREADS=1` restricts this phase to one worker.
 
 Function starts follow the same evidence rule. An x64 `RUNTIME_FUNCTION` with
 chained unwind info continues its parent function (`BinaryImage::

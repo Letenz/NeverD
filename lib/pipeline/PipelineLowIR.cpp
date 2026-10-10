@@ -36,6 +36,7 @@
 #include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -3299,42 +3300,79 @@ void computeCallRegisterEffects(
     Depth[LF.Entry] = 0;
     Work.push_back(LF.Entry);
   }
-  Decoder ExtraDec;
-  if (!ExtraDec.init(Img.Arch, Img.Mode))
-    return;
-  ExtraDec.configureFor(Img);
-  CFGBuilder ExtraCFG;
-  ExtraCFG.setKnownFuncEntries(&FuncEntries);
-  ExtraCFG.setNoReturnTargetIndex(&NoReturnTargets);
-  ExtraCFG.setNoReturnCalleeProver(&NoReturnCallees);
-  ExtraCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
-  ExtraCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
   size_t ExtraLifts = 0;
-  // Walk callees breadth-first. A direct callee's summary needs its own
-  // callees, so the lift budget goes to shallow callees before one deep chain
-  // exhausts it and leaves a pass-through argument unsummarized.
-  for (size_t Next = 0; Next < Work.size(); ++Next) {
-    const va_t Caller = Work[Next];
-    const int CalleeDepth = Depth[Caller] + 1;
-    std::set<va_t> Callees = Effects[Caller].Callees;
-    Callees.insert(Effects[Caller].NoReturnCallees.begin(),
-                   Effects[Caller].NoReturnCallees.end());
-    for (va_t Callee : Callees) {
-      if (Effects.count(Callee) ||
-          CalleeDepth > limits::kMaxCallEffectCalleeDepth ||
-          ExtraLifts >= limits::kMaxCallEffectExtraLifts ||
-          !Img.hasExecutableCodeOwnerAt(Callee))
-        continue;
-      ++ExtraLifts;
-      LowFunc Body =
-          ExtraCFG.build(Img, ExtraDec, Callee, Img.getFunctionNameAt(Callee));
-      CollectFormattedCalls(Body, /*Converted=*/false);
-      Effects[Callee] =
-          localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads);
-      if (forwardsToGuardDispatch(Img, Body))
-        GuardForwarders.insert(Callee);
-      Depth[Callee] = CalleeDepth;
-      Work.push_back(Callee);
+  // Reserve callees one breadth-first frontier at a time in the original
+  // caller/address order. Discovery, budget admission and summary publication
+  // remain deterministic; only independent CFG builds run concurrently.
+  for (size_t Next = 0; Next < Work.size();) {
+    const size_t FrontierEnd = Work.size();
+    std::vector<std::pair<va_t, std::string>> Pending;
+    for (; Next < FrontierEnd; ++Next) {
+      const va_t Caller = Work[Next];
+      const int CalleeDepth = Depth[Caller] + 1;
+      std::set<va_t> Callees = Effects[Caller].Callees;
+      Callees.insert(Effects[Caller].NoReturnCallees.begin(),
+                     Effects[Caller].NoReturnCallees.end());
+      for (va_t Callee : Callees) {
+        if (Depth.count(Callee) ||
+            CalleeDepth > limits::kMaxCallEffectCalleeDepth ||
+            ExtraLifts >= limits::kMaxCallEffectExtraLifts ||
+            !Img.hasExecutableCodeOwnerAt(Callee))
+          continue;
+        ++ExtraLifts;
+        Depth[Callee] = CalleeDepth;
+        Pending.emplace_back(Callee, Img.getFunctionNameAt(Callee));
+      }
+    }
+    // Keep at most eight completed bodies and four active CFG builders alive.
+    // Small callees stay serial; a pair of large functions can use two cores.
+    constexpr size_t BatchSize = 8;
+    for (size_t Begin = 0; Begin < Pending.size(); Begin += BatchSize) {
+      const size_t Count = std::min(BatchSize, Pending.size() - Begin);
+      std::vector<LowFunc> Bodies(Count);
+      std::vector<uint64_t> Weights(Count, 0);
+      std::atomic<bool> Initialized{true};
+      uint64_t Bytes = 0;
+      for (size_t I = 0; I < Count; ++I) {
+        const va_t Entry = Pending[Begin + I].first;
+        const va_t End = Img.getFunctionMetadataEnd(Entry, CodeOwnerIndex);
+        if (End != InvalidVA && End > Entry)
+          Weights[I] = std::min<uint64_t>(End - Entry, 1u << 20);
+        Bytes += Weights[I];
+      }
+      parallelForEachWeighted(
+          Weights,
+          [&](auto Claim, size_t N) {
+            Decoder ExtraDec;
+            if (!ExtraDec.init(Img)) {
+              Initialized.store(false, std::memory_order_relaxed);
+              return;
+            }
+            CFGBuilder ExtraCFG;
+            ExtraCFG.setKnownFuncEntries(&FuncEntries);
+            ExtraCFG.setNoReturnTargetIndex(&NoReturnTargets);
+            ExtraCFG.setNoReturnCalleeProver(&NoReturnCallees);
+            ExtraCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
+            ExtraCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
+            for (size_t I; (I = Claim()) < N;) {
+              const auto &[Entry, Name] = Pending[Begin + I];
+              Bodies[I] = ExtraCFG.build(Img, ExtraDec, Entry, Name);
+            }
+          },
+          Bytes >= 16384 ? 2 : limits::kMinParallelIRWorkItems,
+          /*MaxThreads=*/4);
+      if (!Initialized.load(std::memory_order_relaxed))
+        return;
+      for (size_t I = 0; I < Count; ++I) {
+        const va_t Callee = Pending[Begin + I].first;
+        const LowFunc &Body = Bodies[I];
+        CollectFormattedCalls(Body, /*Converted=*/false);
+        Effects[Callee] =
+            localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads);
+        if (forwardsToGuardDispatch(Img, Body))
+          GuardForwarders.insert(Callee);
+        Work.push_back(Callee);
+      }
     }
   }
   auto Family = [](uint64_t RegOff) {
