@@ -1501,6 +1501,19 @@ unit includes its exact preamble prefix, while the complete file places each
 distinct preamble once before the ordered unit bodies. Module-wide storage
 and declaration names participate in helper allocation before emission.
 
+`ir/X86ShadowStack.h` owns RDSSP's conditional full-GPR result. Its operands
+are the old complete register and the encoded 32/64-bit read width. Disabled
+shadow stacks preserve the entire old value, including an x64 RDSSPD's high
+half; an enabled 32-bit read zero-extends SSP. Concrete emulation requires
+explicit current-CPL enablement and, when enabled, SSP. Unknown calls and
+unmodeled CET mutators invalidate that snapshot. LLVM uses typed, owned tied
+assembly; HighC and LLVMC emit assembly at the caller, without a helper CALL.
+This reads the host execution frame: enabled guest recompilation still needs
+an authenticated initial SSP and proof of original CALL/RET/tail topology.
+The separate CET-disabled interpreter provider keeps its existing NOP receipt
+and Missing sidecar; ordinary lifting does not upgrade that audit evidence.
+Swift projection remains explicitly unsupported.
+
 The experimental [interpreter recovery stage](interpreter-recovery.md)
 specializes strictly lifted LowIR before the common MedIR boundary. Its
 provider owns immutable image evidence, `SymExec` owns instruction semantics,

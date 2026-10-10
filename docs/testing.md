@@ -231,6 +231,16 @@ Native execution requires an x64 host and Clang; the in-process SSE oracle
 additionally requires GCC/Clang. Skips on other hosts are explicit.
 This suite does not establish packed FP, VEX or x87 state coverage.
 
+`NeverDX86RdSspAccuracyTests` checks every x86/x64 encoded GPR destination,
+full-width disabled preservation, enabled concrete SSP reads, flags, unknown
+state, call/mutator invalidation, malformed descriptors in both strict modes,
+Med/High shapes and owned LLVM assembly. Native x64 tests authenticate disabled
+CET inside the executing child and compare original bytes against Codegen
+default/NoOpt and HighC/LLVMC default/NoOpt at C O0/O2, including RSP and typed
+pointer returns. Enabled native guest recompilation is outside this coverage.
+The standalone LLVMC frame/value controls retain materialized dependencies of
+forwarded expressions and execute deep bit assembly with UB traps.
+
 `HighSwiftEmitter` checks typed scalar SSE transports, malformed shapes,
 definite local assignment, bounded 96-bit slices and module-wide helper names.
 Generated Swift executes at Onone/O with rounding, DAZ/FTZ, sticky status,

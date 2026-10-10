@@ -1252,7 +1252,8 @@ const HighExpr *unwrapX86IntegerView(const HighExpr *E) {
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
   return isMovs(Id) || isStos(Id) || Id == Intrinsic::Lidt ||
          Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg ||
-         Id == Intrinsic::Ldmxcsr || Id == Intrinsic::Stmxcsr;
+         Id == Intrinsic::Ldmxcsr || Id == Intrinsic::Stmxcsr ||
+         Id == Intrinsic::Pushf || Id == Intrinsic::Popf;
 }
 
 bool x86UsesImplicitRegisterAsm(Intrinsic Id) {
@@ -1522,6 +1523,9 @@ std::string renderX86TypedIntrinsicCall(
     bool GnuToolchain,
     std::function<std::string(Intrinsic, unsigned)> FPHelperName) {
   using I = Intrinsic;
+  if (Call.IntrinsicId == I::CetRdSsp)
+    llvm::report_fatal_error(
+        "RDSSP C projection requires a caller-scoped full-GPR expression");
   if (isX86FPStateIntrinsic(Call.IntrinsicId)) {
     const unsigned ResultBytes = Call.Type ? Call.Type->Size : 0;
     if (ResultBytes && Call.Type->Kind != NdTypeKind::Int)
