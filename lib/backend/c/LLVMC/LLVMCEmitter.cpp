@@ -284,6 +284,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
           if (auto Shape = classifyX86FPStateAsm(*CI);
               Shape && (isX86ScalarFPStateIntrinsic(Shape->first) ||
+                        isX86FPRoundStateIntrinsic(Shape->first) ||
                         isX86FPConversionStateIntrinsic(Shape->first))) {
             if (Opts.TheArch == Arch::X86 &&
                 isX86FPConversionStateIntrinsic(Shape->first) &&
@@ -1004,7 +1005,7 @@ static void lowerPackedVectorBitcasts(llvm::Module &Mod) {
     const unsigned ScalarBits = Scalar->getPrimitiveSizeInBits();
     const unsigned Count = Vector->getNumElements();
     const unsigned Bits = Vector->getElementType()->getPrimitiveSizeInBits();
-    if (ScalarBits > 128 || uint64_t(Count) * Bits != ScalarBits)
+    if (ScalarBits > 512 || uint64_t(Count) * Bits != ScalarBits)
       continue;
     auto *Integer = llvm::IntegerType::get(Mod.getContext(), ScalarBits);
     auto *LaneInteger = llvm::IntegerType::get(Mod.getContext(), Bits);
@@ -1111,6 +1112,10 @@ static bool isCVectorBoundarySignature(const llvm::FunctionType *Type) {
 
 static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
                                          Arch TheArch) {
+  if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
+    if (const auto Shape = classifyX86FPStateAsm(*Call);
+        Shape && isX86FPRoundStateIntrinsic(Shape->first))
+      return TheArch == Arch::X86 || TheArch == Arch::X64;
   auto IsLocalType = [](llvm::Type *Type) {
     return isCVectorType(Type) || !containsVectorType(Type);
   };

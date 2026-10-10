@@ -239,7 +239,23 @@ cmake --build build-release --target NeverDX86FPStateAccuracyTests --parallel 4
 ctest --test-dir build-release -L '^NeverDX86FPStateAccuracyTests$' --output-on-failure
 cmake --build build-release --target NeverDX86FPConversionAccuracyTests --parallel 4
 ctest --test-dir build-release -L '^NeverDX86FPConversionAccuracyTests$' --output-on-failure
+cmake --build build-release --target NeverDX86FPRoundAccuracyTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX86FPRoundAccuracyTests$' --output-on-failure
 ```
+
+`NeverDX86FPRoundAccuracyTests` compares original legacy/VEX scalar and packed
+ROUND bytes with actual SDK Codegen and HighC/LLVMC at default/NoOpt and O0/O2.
+Directed controls cover all immediate rounding selectors, ignored high bits,
+precision suppression, sticky flags, DAZ/FTZ, NaN payloads, scalar return ABI,
+upper lanes, dead numerical results and mixed invalid/inexact lane priority.
+Memory probes retain the actual instruction access for aligned, unaligned,
+protected-page and cross-page sources. Complete-source failure must not publish
+numerical output or add FP flags. Low/Med/High and owned assembly controls
+check malformed shapes, address spaces and typed numerical provenance. Software
+FS controls cover resolved alignment and i386 offset truncation; native GS
+source probes require Windows/Linux and FS probes require Linux. Native ROUND
+requires x64 SSE4.1; VEX probes additionally require AVX. These directed tests
+do not certify EVEX/SAE, unavailable-feature faults or general x87 state.
 
 ## x86 invalid encodings and instruction boundaries
 

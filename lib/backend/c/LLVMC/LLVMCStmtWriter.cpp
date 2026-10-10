@@ -3846,8 +3846,8 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       return true;
     }
     const auto BitcastInput = [&](unsigned Index) {
-      return "__builtin_bit_cast(uint" +
-             std::to_string(x86FPStateSourceBytes(Bytes) * 8) + "_t, " +
+      return "__builtin_bit_cast(" +
+             x86FPStateRawCType(x86FPStateSourceBytes(Bytes)) + ", " +
              valueStr(Call.getArgOperand(Index)) + ")";
     };
     const auto Helper = FPStateHelperNames.find(*Shape);
@@ -3859,6 +3859,21 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
                                      valueStr(Call.getArgOperand(1)) + ")";
       if (!Call.use_empty())
         OS << Name << " = " << Expression << ";\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
+    if (isX86FPRoundStateIntrinsic(Id)) {
+      const std::string Source =
+          Id == Intrinsic::X86FPRoundMemoryState
+              ? "(void*)(uintptr_t)(" + valueStr(Call.getArgOperand(0)) + ")"
+              : BitcastInput(0);
+      const std::string Expression = Helper->second + "(" + Source +
+                                     ", (void*)" +
+                                     valueStr(Call.getArgOperand(1)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
+           << ", " << Expression << ");\n";
       else
         OS << "(void)" << Expression << ";\n";
       return true;
