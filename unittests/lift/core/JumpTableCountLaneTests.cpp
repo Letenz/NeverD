@@ -3,6 +3,11 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Regressions for bit-count selector lanes and generated jump-table code.
+///
+//===----------------------------------------------------------------------===//
 
 #include "NeverDLiftFixture.h"
 
