@@ -99,6 +99,7 @@ struct DriverRequest {
 /// This profile models a single-processor x64 WDM lifecycle with cooperative
 /// or explicit instruction-driven preemptive scheduling, dispatcher waits,
 /// and DPC execution at modeled IRQLs.
+/// RDTSC/RDTSCP share the scheduler's 10 MHz clock; RDTSCP reports CPU0.
 /// All pointers describe guest addresses, never native pointers. No host OS
 /// services are forwarded. Unsupported APIs and CPU environment effects stop.
 struct DriverOptions {

@@ -677,7 +677,7 @@ invitées sont des chaînes hexadécimales afin que les consommateurs JSON ne
 perdent pas de précision sur 64 bits. L’objet `configuration` enregistre les
 limites, le nom du service, les substitutions `kernel_exports` et l’entrée
 `registry` de l’exécution. Le profil est
-`wdm-x64-scheduled-v87`. `nt_status` reste le résultat de DriverEntry, tandis
+`wdm-x64-scheduled-v88`. `nt_status` reste le résultat de DriverEntry, tandis
 que `scenario_success` décrit conjointement l’initialisation et les requêtes
 terminées. `phase`, `requests` et `unload_completed` identifient les parties du
 cycle demandé qui ont été exécutées. Chaque appel d’API et écriture CPU indique
@@ -847,3 +847,5 @@ La préemption explicite CPU0, le temps virtuel et les limites sont décrits dan
 `HAL.dll` est un fournisseur distinct dont le nom de module est insensible à la casse. Les imports statiques et `MmGetSystemRoutineAddress` partagent les identités exactes, sensibles à la casse, du noyau et de HAL ; les identités actives contradictoires sont refusées. `kernel_exports` remplace les routines HAL connues dans leur espace HAL ; les autres déclarations explicites restent des exports du noyau. Les imports HAL inconnus conservent leurs pièges différés, sans recevoir un contrat du noyau simplement parce que leur nom correspond.
 
 `KeQueryPerformanceCounter` renvoie le temps partagé de l’ordonnanceur en unités de 100 ns, à une fréquence fixe de 10 000 000 par seconde. Le pointeur de sortie facultatif est vérifié pour une écriture complète de huit octets et pour la durée de vie de l’objet. Tous les IRQL x64 valides sont admis. Le mode coopératif avance uniquement aux frontières existantes ; le mode cadencé par instructions conserve son réglage. Une lecture ne crée pas une seconde horloge et ne fait pas avancer le temps. Ce profil est déterministe, sans mesure du matériel hôte. Le programme de test compilé indépendamment vérifie l’identité statique/dynamique, la fréquence et la monotonie aux adresses préférées et relocalisées sur les moteurs CPU natifs.
+
+`RDTSC` et `RDTSCP` lisent la même horloge de 10 MHz que `KeQueryPerformanceCounter`. `RDTSCP` renvoie zéro dans ECX pour le processeur unique du modèle. EAX/EDX et, pour RDTSCP, ECX effacent leur moitié haute ; les autres registres et indicateurs sont préservés. Une lecture coopérative ne fait pas avancer le temps. Avec la planification explicite des instructions, la lecture suit la comptabilisation de sa propre instruction, indépendamment du quantum. Un débordement arrête le traitement avant la publication des registres ; budgets et arrêts des observateurs restent actifs. Le profil ne mesure pas la fréquence TSC ni l’identité du processeur hôte. Les accès MSR, RDPMC et autres requêtes CPU non modélisées restent refusés.

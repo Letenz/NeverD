@@ -672,7 +672,7 @@ einschließlich Geräteobjekten und Callback-Adressen des Treibers. Gastadressen
 sind Hexadezimalzeichenfolgen, damit JSON-Verbraucher keine 64-Bit-Präzision
 verlieren. Das Objekt `configuration` protokolliert Limits, Dienstnamen und
 `kernel_exports`-Überschreibungen sowie die `registry`-Eingabe des Laufs. Das
-Profil lautet `wdm-x64-scheduled-v87`. `nt_status` bleibt das
+Profil lautet `wdm-x64-scheduled-v88`. `nt_status` bleibt das
 DriverEntry-Ergebnis, während `scenario_success` Initialisierung und
 abgeschlossene Anforderungen gemeinsam beschreibt. `phase`, `requests` und
 `unload_completed` kennzeichnen die ausgeführten Teile des angeforderten
@@ -843,3 +843,5 @@ Explizite CPU0-Präemption, virtuelle Zeit und Grenzen beschreibt [Treiber-Sched
 `HAL.dll` ist ein eigener Importanbieter mit einem von Groß-/Kleinschreibung unabhängigen Modulnamen. Statische Imports und `MmGetSystemRoutineAddress` teilen die exakten, schreibungsabhängigen Exportidentitäten von Kernel und HAL; widersprüchliche aktive Identitäten werden abgelehnt. `kernel_exports` überschreibt bekannte HAL-Routinen im HAL-Namensraum; andere explizite Deklarationen bleiben Kernel-Exporte. Unbekannte HAL-Imports behalten verzögerte Traps und erhalten nicht allein durch ihren Namen einen Kernel-API-Vertrag.
 
 `KeQueryPerformanceCounter` liefert die gemeinsame Scheduler-Zeit in 100-ns-Einheiten bei einer festen Frequenz von 10.000.000 pro Sekunde. Der optionale Ausgabezeiger wird auf einen vollständigen Schreibzugriff über acht Bytes und die Objektlebensdauer geprüft. Jeder gültige x64-IRQL ist zulässig. Der kooperative Modus bewegt die Zeit nur an bestehenden Scheduling-Grenzen; der Instruktionszeitmodus behält seine Konfiguration. Lesen erzeugt weder eine zweite Uhr noch Zeitfortschritt. Dies ist ein deterministisches Profil, keine Messung der Host-Hardware. Die unabhängig kompilierte Laufzeit-Fixture prüft statische/dynamische Identität, Frequenz und Monotonie an bevorzugten und verschobenen Adressen auf nativen CPU-Backends.
+
+`RDTSC` und `RDTSCP` lesen dieselbe 10-MHz-Scheduleruhr wie `KeQueryPerformanceCounter`. `RDTSCP` liefert für den einzigen modellierten Prozessor null in ECX. EAX/EDX sowie bei RDTSCP ECX löschen ihre oberen 32 Bit; andere Register und Flags bleiben erhalten. Kooperative Lesezugriffe lassen die Zeit unverändert. Bei expliziter Instruktionsplanung wird die eigene zugelassene Instruktion vor dem Lesen verbucht, unabhängig von der Zeitscheibe. Ein Überlauf stoppt vor der Veröffentlichung der Registerwerte; Instruktionsbudgets und Beobachterstopps gelten weiter. Das Profil misst weder die TSC-Frequenz noch die Identität des Hostprozessors. MSR-Zugriffe, RDPMC und andere nicht modellierte CPU-Abfragen bleiben abgelehnt.

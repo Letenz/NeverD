@@ -227,13 +227,24 @@ class WDKDriverFixtureTests(unittest.TestCase):
         )
         self.assertTrue(unpack_required)
         self.assertTrue(unpack_required <= required)
+        timestamp_source = (source.parent / "DriverTimestampTests.cpp").read_text()
+        timestamp_required = {
+            f"Native/DriverTimestamp.{name}/whp_{contract}"
+            for name in re.findall(r"TEST_P\(DriverTimestamp,\s*(\w+)\)",
+                                   timestamp_source)
+            for contract in ("driver", "checked")
+        }
+        self.assertTrue(timestamp_required)
+        self.assertTrue(timestamp_required <= required)
         self.assertEqual(len(required), len(cpu_required) + 2 * len(names)
                          + len(seh_required) + len(scheduling_required)
-                         + len(wait_required) + len(unpack_required))
+                         + len(wait_required) + len(unpack_required)
+                         + len(timestamp_required))
         formula = (f"{len(cpu_required)} CPU + {2 * len(names)} WHP + "
                    f"{len(seh_required)} SEH + {len(scheduling_required)} scheduling "
                    f"+ {len(wait_required)} wait sets "
-                   f"+ {len(unpack_required)} driver UNPACK = {len(required)}")
+                   f"+ {len(unpack_required)} driver UNPACK "
+                   f"+ {len(timestamp_required)} clock reads = {len(required)}")
         definitions = (fixtures.ROOT / "scripts/EmulationDocumentation.def")
         tokens = i18n.emulation_document_tokens(definitions.read_text(encoding="utf-8"))
         self.assertIn(formula, tokens["NativeDriverCI"])

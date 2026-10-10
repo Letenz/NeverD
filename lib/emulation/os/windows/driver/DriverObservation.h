@@ -27,6 +27,9 @@ public:
   llvm::Error entered(bool EntryInvocation, ProcessStackView Stack);
   llvm::Error resuming();
   bool matches(uint64_t PC);
+  /// Consume a resumed watch only after an instruction is admitted. A time
+  /// slice or environment setup may otherwise stop before it can execute.
+  void instructionAdmitted();
   /// True resumes once at PC; false ends the observed workload.
   llvm::Expected<bool> watched(uint64_t PC);
   llvm::Error exporting(const KernelExportRegistry::Export &Export);

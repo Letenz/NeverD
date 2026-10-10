@@ -9,6 +9,22 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDUnpackDriverTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverTimestamp.ReadsOneSchedulerClockAndPreservesOtherState/"
+    "{backend}_driver")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverTimestamp.ReadsOneSchedulerClockAndPreservesOtherState/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverTimestamp.BudgetStopsBeforeUnadmittedReads/{backend}_driver")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverTimestamp.BudgetStopsBeforeUnadmittedReads/{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverTimestamp.ClockOverflowRemainsAnExplicitFailure/"
+    "{backend}_driver")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverTimestamp.ClockOverflowRemainsAnExplicitFailure/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverChecksum.AgreesWithTheIndependentLinker")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/UnpackDriver.RecoversDriverEntryImportsAndLifecycle/"

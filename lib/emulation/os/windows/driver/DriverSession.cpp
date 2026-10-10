@@ -268,6 +268,7 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       return false;
     }
     Result.Instructions = Resources.instructions();
+    Observation.instructionAdmitted();
     ++RunInstructions;
     return true;
   };
@@ -770,14 +771,25 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
     }
     return llvm::Error::success();
   };
-  auto AdvanceClock = [&]() -> llvm::Error {
+  // The same checked projection supplies instruction environment reads and
+  // the scheduler's next commit. Reading it must not consume the scheduler's
+  // instruction accounting or give the current thread a fresh time slice.
+  auto ExecutionTime = [&]() -> llvm::Expected<uint64_t> {
     if (!Options.Scheduling)
-      return llvm::Error::success();
+      return Kernel.now100ns();
     const uint64_t Count = Result.Instructions - AccountedInstructions;
     const uint64_t Unit = Options.Scheduling->InstructionTime100ns;
     if (Count > (UINT64_MAX - Kernel.now100ns()) / Unit)
       return failure(driver_scheduling::ClockOverflow);
-    const uint64_t End = Kernel.now100ns() + Count * Unit;
+    return Kernel.now100ns() + Count * Unit;
+  };
+  auto AdvanceClock = [&]() -> llvm::Error {
+    if (!Options.Scheduling)
+      return llvm::Error::success();
+    auto Time = ExecutionTime();
+    if (!Time)
+      return Time.takeError();
+    const uint64_t End = *Time;
     for (;;) {
       const auto Deadline = NextExecutionDeadline();
       const uint64_t Boundary = Deadline ? std::min(*Deadline, End) : End;
@@ -1034,6 +1046,28 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       }
       if (PendingEnvironmentRead) {
         const auto &Action = PendingEnvironmentRead->Request;
+        if (Action.Source ==
+                WindowsX64ExecutionPolicy::Action::Kind::ReadTimestamp ||
+            Action.Source == WindowsX64ExecutionPolicy::Action::Kind::
+                                 ReadTimestampAndProcessor) {
+          // The modeled TSC shares the 10 MHz scheduler clock. Account for
+          // this admitted instruction exactly once when sampling, retaining
+          // its time-slice charge for the scheduler. Cooperative reads never
+          // advance time. No host CPU state escapes.
+          auto Timestamp = ExecutionTime();
+          if (!Timestamp)
+            return Timestamp.takeError();
+          if (auto E = CPU.setReg(X64Register::AX, uint32_t(*Timestamp)))
+            return E;
+          if (auto E = CPU.setReg(X64Register::DX, *Timestamp >> 32))
+            return E;
+          if (Action.Source == WindowsX64ExecutionPolicy::Action::Kind::
+                                   ReadTimestampAndProcessor)
+            if (auto E = CPU.setReg(X64Register::CX, 0))
+              return E;
+          NextPC = PendingEnvironmentRead->NextPC;
+          continue;
+        }
         if (Action.Source ==
             WindowsX64ExecutionPolicy::Action::Kind::ReadCurrentThread) {
           if (auto E = PrepareProcessorView())

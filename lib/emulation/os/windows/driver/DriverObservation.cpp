@@ -110,13 +110,15 @@ llvm::Error DriverObservation::resuming() {
 }
 
 bool DriverObservation::matches(uint64_t PC) {
-  const auto Previous = std::exchange(ResumePC, std::nullopt);
-  if (Previous == PC)
+  if (ResumePC == PC)
     return false;
+  ResumePC.reset();
   return std::any_of(Watches.begin(), Watches.end(), [&](const auto &W) {
     return PC >= W.Address && PC - W.Address < W.Size;
   });
 }
+
+void DriverObservation::instructionAdmitted() { ResumePC.reset(); }
 
 llvm::Expected<bool> DriverObservation::watched(uint64_t PC) {
   auto Next = Observer->watched(*this, PC);

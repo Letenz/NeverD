@@ -1311,6 +1311,7 @@ set(_driver_execution_fixture_definitions
 add_neverd_unittest(NeverDNativeDriverTests
   NO_PRETTY_VALUES
   DriverNativeExecutionTests.cpp
+  DriverTimestampTests.cpp
   DriverSchedulingTests.cpp
   DriverThreadPriorityTests.cpp
   DriverMutexThreadTests.cpp
