@@ -710,8 +710,10 @@ modeled read-only except for `MDL.Next`. Process fields, unbuilt PFN access,
 hand-built MDLs and direct access through raw UserBuffer are rejected. User
 mappings follow the process-owned MDL contract below. A zero-length direct buffer has a null MDL.
 
-`IoAllocateMdl` allocates metadata for a nonempty, nonoverflowing buffer of at
-most 1 MiB; it does not probe or lock that buffer. `Irp` may be NULL or a live
+`IoAllocateMdl` allocates metadata for a nonempty, nonoverflowing buffer without
+probing or locking it. The modeled descriptor, including its PFN array, must
+fit its 16-bit size field; page offsets count toward PFN capacity. Descriptor
+storage is independent of the described buffer size. `Irp` may be NULL or a live
 modeled IRP. A primary descriptor replaces the current driver-owned chain head;
 the detached descriptors remain driver-owned. A secondary descriptor appends
 to the current chain, or becomes the head when the chain is empty. The original
@@ -993,7 +995,7 @@ and driver callback addresses. Guest addresses are hexadecimal strings so
 JSON consumers do not lose 64-bit precision.
 The `configuration` object records the run's limits, service name,
 `kernel_exports` overrides and original `registry` input.
-The profile is `wdm-x64-scheduled-v90`. `nt_status` remains the DriverEntry
+The profile is `wdm-x64-scheduled-v91`. `nt_status` remains the DriverEntry
 result, while `scenario_success` describes initialization and completed
 requests together. `phase`, `requests`, and `unload_completed` identify which
 parts of the requested lifecycle ran. Each API call and CPU write also records

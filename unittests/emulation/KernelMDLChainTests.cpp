@@ -522,6 +522,38 @@ TEST_F(KernelMDLChain, KernelPoolLocksPreserveResidencyAndRejectEarlyFree) {
   call("ExFreePoolWithTag", {Paged, 0});
 }
 
+TEST_F(KernelMDLChain, MetadataCapacityIsIndependentOfTheDescribedBuffer) {
+  constexpr uint64_t Buffer = 0x180000123;
+  constexpr uint32_t Length = 3 * profile::KernelArenaSize;
+  // Allocation describes a range without probing, mapping or copying it.
+  EXPECT_FALSE(take(Memory->canAccess(Buffer, Length, Read)));
+  const auto MDL = call("IoAllocateMdl", {Buffer, Length, 0, 0, 0});
+  ASSERT_NE(MDL, 0u);
+  const uint64_t Pages =
+      ((Buffer & (profile::PageSize - 1)) + Length + profile::PageSize - 1) /
+      profile::PageSize;
+  EXPECT_EQ(get(MDL + MDLSizeOffset, 2),
+            MDLSize + Pages * profile::PointerSize);
+  EXPECT_EQ(get(MDL + MDLByteCountOffset, 4), Length);
+  EXPECT_EQ(get(MDL + MDLByteOffsetOffset, 4), 0x123u);
+  EXPECT_FALSE(take(Memory->canAccess(Buffer, Length, Read)));
+  rejected(Model->validateGuestAccess(MDL + MDLSize, 8, false), "unbuilt");
+  call("IoFreeMdl", {MDL});
+}
+
+TEST_F(KernelMDLChain, DescriptorCapacityIncludesAnUnalignedLastPage) {
+  constexpr uint64_t Capacity = (UINT16_MAX - MDLSize) / profile::PointerSize;
+  constexpr uint64_t Length = Capacity * profile::PageSize;
+  const auto MDL = call("IoAllocateMdl", {0, Length, 0, 0, 0});
+  ASSERT_NE(MDL, 0u);
+  EXPECT_EQ(get(MDL + MDLSizeOffset, 2),
+            MDLSize + Capacity * profile::PointerSize);
+  call("IoFreeMdl", {MDL});
+  rejected(Model->call("IoAllocateMdl", {1, Length, 0, 0, 0}), "16-bit size");
+  rejected(Model->call("IoAllocateMdl", {0, Length + 1, 0, 0, 0}),
+           "16-bit size");
+}
+
 TEST_F(KernelMDLChain,
        KernelProbeFaultAndReadLockKeepDescriptorAndAccessContract) {
   const auto Paged =

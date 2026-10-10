@@ -135,6 +135,13 @@ static NTSTATUS Dispatch(DEVICE_OBJECT *Ignored, IRP *Request) {
       IoFreeMdl(Temporary); // Allocating a descriptor does not probe its bytes.
       Temporary = IoAllocateMdl((void *)0x12345678, 64, 0, 0, 0);
       IoFreeMdl(Temporary);
+      Temporary = IoAllocateMdl((void *)0x12345001, 0x300000, 0, 0, 0);
+      if (!Temporary || Temporary->ByteCount != 0x300000 ||
+          Temporary->ByteOffset != 1 ||
+          Temporary->Size != sizeof(MDL) + 769 * sizeof(U64))
+        Status = StatusInvalidParameter;
+      if (Temporary)
+        IoFreeMdl(Temporary);
       break;
     case 3:
       Other = ExAllocatePoolWithTag(1, 64, Tag);
@@ -243,7 +250,7 @@ static NTSTATUS Dispatch(DEVICE_OBJECT *Ignored, IRP *Request) {
       IoFreeMdl((MDL *)Pool);
       break;
     case 30:
-      IoAllocateMdl(Pool, 0x100001, 0, 0, 0);
+      IoAllocateMdl(Pool, 0x2000000, 0, 0, 0);
       break;
     case MdlAppendChain: {
       MDL *First = IoAllocateMdl(Pool, 16, 0, 0, Request);
