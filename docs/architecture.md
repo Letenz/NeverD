@@ -261,7 +261,12 @@ thunk separately from the CRT dispatch entry. Its shared immutable-code reader
 admits absolute operands only at exact, unique HIGHLOW relocation slots; an
 opcode relocation, conflicting storage or changed runtime import rejects the
 identity. Native source lowering consumes the checked physical call ABI,
-typed catch home, cleanup borrows and catch-return target. LLVM records the
+optional catch home, cleanup borrows and catch-return target. The shared x86
+catch projection distinguishes a proved absence of object storage from missing
+object/access proofs. LLVM lowering and COFF IR validation consume that same
+projection; an unbound catch grants no runtime initialization write. Literal
+zero object and catch-all RTTI fields must have no overlapping compiler fixup.
+LLVM records the
 exact parent and child funclet machine-code ranges when emitting indexed
 catch rows. Complete PE32 C++ receipts additionally close FuncInfo, unwind,
 try and handler tables and bind each cleanup to its generated state and range.
