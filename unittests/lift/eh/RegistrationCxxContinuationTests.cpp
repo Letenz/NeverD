@@ -32,13 +32,46 @@ void overwriteSavedStackInCatch(LowFunc &F) {
     Handler.Ops[I].Seq = I;
 }
 
-TEST(RegistrationState, CatchCannotReplaceTheRuntimeSavedStackSnapshot) {
+TEST(RegistrationState, CatchReturnRestoresTheRuntimeSavedStackSnapshot) {
   auto F = makeCxxCatchContinuation();
   overwriteSavedStackInCatch(F);
   const auto Result = analyzeRegistrationStates(F);
-  EXPECT_FALSE(Result.Complete);
-  EXPECT_FALSE(Result.CxxContinuationsComplete);
-  EXPECT_TRUE(Result.CxxContinuations.empty());
+  ASSERT_TRUE(Result.Complete);
+  ASSERT_TRUE(Result.CxxContinuationsComplete);
+  ASSERT_EQ(Result.CxxContinuations.size(), 1u);
+  EXPECT_EQ(Result.CxxContinuations.front().SavedStackOffset, -28);
+}
+
+TEST(RegistrationState, ContinuationReadsTheRestoredSavedStackCell) {
+  for (bool ScalarWrite : {false, true}) {
+    auto F = makeCxxCatchContinuation();
+    overwriteSavedStackInCatch(F);
+    if (ScalarWrite)
+      F.Blocks[5].Ops[2].Inputs[1] = NdVar::cst(7, 4);
+    F.Blocks.resize(8);
+    F.Blocks[6].Succs = {7};
+    auto &Resume = F.Blocks[7];
+    Resume.Id = 7;
+    Resume.StartAddr = 0x1907;
+    Resume.InstructionBoundaries = {{0x1907, 3}};
+    Resume.EndAddr = 0x190a;
+    Resume.Succs = {3};
+    emitOp(Resume, 0x1907, NdOp::INT_ADD, NdVar::tmp(90, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-16), 4)});
+    emitOp(Resume, 0x1907, NdOp::LOAD, NdVar::reg(x86reg::RDI, 4),
+           {NdVar::tmp(90, 4)});
+    const auto Result = analyzeRegistrationStates(F);
+    ASSERT_TRUE(Result.Complete);
+    ASSERT_TRUE(Result.CxxContinuationsComplete);
+    const auto Value =
+        std::find_if(Result.FrameValues.begin(), Result.FrameValues.end(),
+                     [&](const RegistrationFrameValue &Candidate) {
+                       return Candidate.Address == 0x1907 &&
+                              Candidate.OpSeq == Resume.Ops.back().Seq;
+                     });
+    ASSERT_NE(Value, Result.FrameValues.end());
+    EXPECT_EQ(Value->EstablishedFrameOffset, -28);
+  }
 }
 
 TEST(RegistrationState, CatchWriteCannotInventAnUnknownRuntimeSnapshot) {
@@ -157,6 +190,9 @@ TEST(RegistrationState, NestedCxxCatchResumesTheEnclosingCatchContext) {
   StateBlock(5, 0x1800, 2, 7);
   StateBlock(10, 0x1820, 1, 8);
   StateBlock(11, 0x1840, 1, 8);
+  // The inner catch resumes with the outer catch's saved stack; the outer
+  // return must still restore the parent snapshot captured before either.
+  overwriteSavedStackInCatch(F);
   auto &Protected = F.Blocks[7];
   Protected.Id = 7;
   Protected.StartAddr = 0x1810;
@@ -170,6 +206,8 @@ TEST(RegistrationState, NestedCxxCatchResumesTheEnclosingCatchContext) {
   ASSERT_EQ(Result.CxxContinuations.size(), 2u);
   EXPECT_EQ(Result.CxxContinuations[0].TargetVA, 0x1900u);
   EXPECT_EQ(Result.CxxContinuations[1].TargetVA, 0x1820u);
+  EXPECT_EQ(Result.CxxContinuations[0].SavedStackOffset, -28);
+  EXPECT_EQ(Result.CxxContinuations[1].SavedStackOffset, -44);
   EXPECT_TRUE(Result.Blocks[10].CallbackOnly);
   EXPECT_EQ(Result.Blocks[10].CxxMinimumTryLevel, 1);
   EXPECT_TRUE(Result.Blocks[9].CallbackOnly);

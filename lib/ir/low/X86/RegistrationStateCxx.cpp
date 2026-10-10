@@ -22,16 +22,12 @@ void RegistrationStateSolver::recordCatchReturn(
   const FrameValue Target =
       Op.NumInputs == 1 ? Transfer.read(Op.Inputs[0]) : FrameValue{};
   const int64_t SavedSlot = int64_t(*Chain.RegistrationOffset) - 4;
-  const auto SavedSP = SavedSlot >= INT32_MIN
-                           ? After.Frame.Cells.find(int32_t(SavedSlot))
-                           : After.Frame.Cells.end();
   const auto CapturedSP =
       After.CxxCatchStacks.size() == 1
           ? After.CxxCatchStacks.begin()->back().SavedStackOffset
           : std::nullopt;
-  // The CRT restores its pre-dispatch snapshot. Until implicit frame-memory
-  // restoration is represented in every IR, a changed SavedESP cannot gain
-  // authority merely because its last value is another exact frame pointer.
+  // The runtime owns this snapshot, independently of subsequent catch writes
+  // to SavedESP. The continuation edge restores both the cell and ESP.
   const bool Valid =
       !Chain.RealignedFrame && After.CxxCatchStacks.size() == 1 &&
       !After.Parent && !After.OtherCallback && !After.Unknown &&
@@ -41,8 +37,7 @@ void RegistrationStateSolver::recordCatchReturn(
       Block.Succs.empty() && Target.Constant && !Target.MayBeFrame &&
       EH.CodeRange.contains(*Target.Constant) &&
       *Target.Constant != Function.Entry && CapturedSP &&
-      *CapturedSP <= SavedSlot && SavedSP != After.Frame.Cells.end() &&
-      SavedSP->second.Offset == CapturedSP && Boundary != Boundaries.end() &&
+      *CapturedSP <= SavedSlot && Boundary != Boundaries.end() &&
       Boundary->second.first == Block.Id &&
       Boundary->second.second.Control == LowInstructionControl::Return &&
       Boundary->second.second.Immediate.value_or(0) == 0 &&

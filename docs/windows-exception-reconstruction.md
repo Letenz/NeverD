@@ -99,9 +99,14 @@ above the active try block, and a catch returns a continuation code pointer to
 the runtime. LowIR requires an exact decoded return and saved stack value,
 decodes the target within the same function, and replays the restored context.
 Each active catch retains the saved-stack snapshot taken before runtime
-dispatch. A catch cannot replace that snapshot by writing a different pointer
-to SavedESP; this shape remains rejected until implicit frame-memory
-restoration is represented across the IR pipeline.
+dispatch. A direct-frame catch may overwrite SavedESP: the continuation
+restores the captured pointer to that cell before restoring ESP. LowIR and
+MedIR bind this implicit writeback to the exact catch return; HighIR and native
+LLVM materialize it in the recovered source frame. The installer independently
+checks the writeback's address, value and order against fresh source analysis.
+A missing pre-dispatch snapshot still cannot be invented by a catch write.
+Realigned callback stacks and their parent-frame restoration remain outside
+this direct-frame contract.
 An unproven continuation or conflicting return retains annotations and
 withdraws native authority. These facts remain separate from the source
 FuncInfo and from the parent's scalar return value.

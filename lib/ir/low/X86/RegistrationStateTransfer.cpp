@@ -423,6 +423,9 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
   if (CatchReturn) {
     const auto Resume = Entries.find(CatchReturn->TargetVA);
     if (Resume != Entries.end()) {
+      if (!charge(After.Frame.cellCount() + After.RuntimeObject.cellCount() +
+                  2))
+        return true;
       Domain Continued = After;
       auto Stack = *Continued.CxxCatchStacks.begin();
       Stack.pop_back();
@@ -433,6 +436,10 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
       if (!Stack.empty())
         Continued.CxxCatchStacks.insert(std::move(Stack));
       Continued.RuntimeIdentity.reset();
+      const int32_t SavedSlot = *Chain.RegistrationOffset - 4;
+      Continued.Frame.store(SavedSlot, 4,
+                            FrameValue::frame(CatchReturn->SavedStackOffset));
+      Continued.RuntimeObject.store(SavedSlot, 4, {});
       Continued.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride] =
           FrameValue::frame(0);
       Continued.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =

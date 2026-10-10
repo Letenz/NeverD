@@ -84,7 +84,13 @@ continuation 保留注释，同时撤销原生重建权限。这些推导结果�
 只有 FuncInfo 解析器认证过的 callback 指针字段才会被排除出普通间接入口发现。
 同一目标的其他引用仍保留独立普通入口身份。MedIR 为仅由运行时进入的 catch 和 cleanup
 恢复父帧 EBP，将其私有 callback ESP 保留为未知值；经过检查的 continuation 则使用
-保存的父帧 ESP。栈偏移证明、HighIR 与 LLVM 共享同一坐标。非法根操作或相互冲突的
+保存的父帧 ESP。
+对于直接使用 EBP 的帧，catch 可以改写 SavedESP；运行时返回时仍会把派发前捕获的
+指针写回该单元，再恢复 ESP。LowIR 与 MedIR 将这个隐式内存效果绑定到准确的
+catch RETURN，HighIR 与原生 LLVM 显式生成写回。PE 安装器重新分析原始代码，
+核对写入地址、值和顺序。未知的派发前快照不能靠 catch 写入补造；重新对齐的
+回调栈及其父帧恢复仍未包含在这个契约中。
+栈偏移证明、HighIR 与 LLVM 共享同一坐标。非法根操作或相互冲突的
 保存栈值不能获得这些保证。
 结构化 catch 保留到已检查 continuation 的显式转移；回退注释保留 catch-object 偏移、
 parent-frame 偏移与 continuation 列表，同时让原生 handler 保持独立。

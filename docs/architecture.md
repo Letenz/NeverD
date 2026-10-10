@@ -87,6 +87,12 @@ installation or follow removal. The call ABI consumer prunes only with complete
 state/lifetime/call proofs, current block identities and exact call receipts.
 For PE32 C++ catches, that analysis also owns the runtime catch-context stack,
 its nested-search minimum and exact returned continuation and SavedESP facts.
+The captured pre-dispatch SavedESP owns the catch-return writeback even when
+catch code changes the cell. That effect remains bound to the exact RETURN in
+LowIR and MedIR. Dedicated x86 HighIR and LLVM continuation lowering restore
+the recovered source cell; the generated runtime frame has its own physical
+SavedESP. A separate COFF continuation proof replays the snapshot and checks
+the actual store immediately before catchret, including its value and address.
 CFG construction closes those targets against function and instruction
 ownership and replays the analysis; it does not turn them into independent
 ordinary entries or insert a fabricated IP-to-state map into FuncInfo.

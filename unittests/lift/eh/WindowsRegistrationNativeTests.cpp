@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "RegistrationCxxContinuationTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -158,6 +159,7 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
   auto SharedContract = validateCOFFRegistrationIR(*Parent, *Source, *Loaded);
   ASSERT_FALSE(bool(SharedContract))
       << llvm::toString(std::move(SharedContract));
+  registration_test::checkCxxContinuationEdits(*Parent, *Source, *Loaded);
   // Reparse the unchanged input for every post-emission edit. A completeness
   // marker alone cannot bind a moved source operation or runtime control edge.
   for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {

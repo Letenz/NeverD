@@ -1315,6 +1315,7 @@ add_neverd_unittest(NeverDWindowsRegistrationFrameTests
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
+  eh/RegistrationCxxContinuationTestUtils.cpp
   eh/RegistrationCallTests.cpp
 
   LINK_COMPONENTS
