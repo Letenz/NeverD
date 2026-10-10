@@ -172,4 +172,86 @@ void AnalysisService::fail(const QString &code, const QString &message) {
   finish({{"status", "error"},
           {"error", QJsonObject{{"code", code}, {"message", message}}}});
 }
+
+AnalysisPool::AnalysisPool(QueryService &owner, const QString &workerPath,
+                           QObject *parent)
+    : QObject(parent) {
+  for (auto &lane : lanes_) {
+    lane.service = std::make_unique<AnalysisService>(owner, workerPath, this);
+    // Keep the pool's total response-cache allowance at the single-replica
+    // default. Processes start lazily and each keeps its own C API session.
+    lane.service->queries().setCacheBudgetMiB(
+        QueryService::Limits{}.cacheBytes / (1024 * 1024 * lanes_.size()));
+    connect(lane.service.get(), &AnalysisService::diagnostic, this,
+            &AnalysisPool::diagnostic);
+  }
+  connect(&owner, &QueryService::contextChanged, this, [this] {
+    for (auto &lane : lanes_)
+      lane.function.reset();
+    for (const auto &binding : std::as_const(bindings_))
+      disconnect(binding.destroyed);
+    bindings_.clear();
+  });
+}
+
+QueryService &AnalysisPool::queries(const QJsonObject &payload,
+                                    QObject *owner) {
+  bool valid = false;
+  const quint64 function =
+      payload.value("address").toString().toULongLong(&valid, 16);
+  if (!valid)
+    return lanes_.front().service->queries();
+  if (const auto binding = bindings_.constFind(owner);
+      binding != bindings_.cend() && binding->function == function)
+    return lanes_[binding->lane].service->queries();
+  const auto bind = [&](size_t index) -> QueryService & {
+    auto &lane = lanes_[index];
+    lane.function = function;
+    if (owner) {
+      auto it = bindings_.find(owner);
+      if (it != bindings_.end()) {
+        it->function = function;
+        it->lane = index;
+      } else {
+        const auto destroyed =
+            connect(owner, &QObject::destroyed, this,
+                    [this, owner] { bindings_.remove(owner); });
+        bindings_.insert(owner, {function, index, destroyed});
+      }
+    }
+    return lane.service->queries();
+  };
+  for (size_t i = 0; i < lanes_.size(); ++i)
+    if (lanes_[i].function == function)
+      return bind(i);
+  // Reuse a loaded idle replica before starting another process. Only
+  // independent work that overlaps needs the second worker and its memory.
+  for (const bool ready : {true, false})
+    for (size_t i = 0; i < lanes_.size(); ++i)
+      if (lanes_[i].service->queries().pendingReadCount() == 0 &&
+          lanes_[i].service->ready() == ready)
+        return bind(i);
+  // Both workers are busy. Their existing dispatchers retain bounded queues,
+  // request deduplication and atomic summary/viewport graph transactions.
+  size_t selected = 0;
+  for (size_t i = 1; i < lanes_.size(); ++i)
+    if (lanes_[i].service->queries().pendingReadCount() <
+        lanes_[selected].service->queries().pendingReadCount())
+      selected = i;
+  return bind(selected);
+}
+
+void AnalysisPool::unsubscribeOwner(QObject *owner) {
+  if (const auto binding = bindings_.find(owner); binding != bindings_.end()) {
+    disconnect(binding->destroyed);
+    bindings_.erase(binding);
+  }
+  for (auto &lane : lanes_)
+    lane.service->queries().unsubscribeOwner(owner);
+}
+
+void AnalysisPool::cancelReads(const QSet<QObject *> &keep) {
+  for (auto &lane : lanes_)
+    lane.service->queries().cancelReads(keep);
+}
 } // namespace neverd::gui

@@ -49,7 +49,7 @@ Session::Session(QString workerPath, QObject *parent)
       workerPath_(std::move(workerPath)),
       sessionEpoch_(queries_.sessionEpoch()) {
   queries_.setCacheBudgetMiB(CacheMiB);
-  connect(&analysis_, &AnalysisService::diagnostic, this,
+  connect(&analysis_, &AnalysisPool::diagnostic, this,
           [this](const QString &text) { emit message(text, 0); });
   connect(&client_, &EngineClient::message, this, &Session::receive);
   connect(&client_, &EngineClient::diagnostic, this,
@@ -206,8 +206,9 @@ QueryService::SubscriptionId Session::read(const QString &operation,
                                            const QJsonObject &payload,
                                            QObject *owner, Reply done,
                                            Failure failed) {
-  auto &service =
-      AnalysisService::handles(operation) ? analysis_.queries() : queries_;
+  auto &service = AnalysisService::handles(operation)
+                      ? analysis_.queries(payload, owner ? owner : &reads_)
+                      : queries_;
   return service.subscribe(
       {operation, payload}, owner ? owner : &reads_,
       [this, done = std::move(done),
@@ -912,7 +913,7 @@ void Session::analyzeWholeProgram() {
 
 void Session::cancelReads() {
   // Session bookkeeping and external (MCP) callers keep their replies.
-  analysis_.queries().cancelReads({&reads_, &external_});
+  analysis_.cancelReads({&reads_, &external_});
   queries_.cancelReads({&reads_, &external_});
   emit message(tr("Queued requests cancelled; a running engine call finishes "
                   "unless the worker is restarted."),
@@ -934,8 +935,9 @@ void Session::externalQuery(const QString &id, const QString &operation,
     spec.policy = QueryService::QuerySpec::Exact;
     spec.expectedRevision = revision;
   }
-  auto &service =
-      AnalysisService::handles(operation) ? analysis_.queries() : queries_;
+  auto &service = AnalysisService::handles(operation)
+                      ? analysis_.externalQueries()
+                      : queries_;
   service.subscribe(std::move(spec), &external_,
                     [this, id](const QJsonObject &response) {
                       emit externalResponse(id, response);

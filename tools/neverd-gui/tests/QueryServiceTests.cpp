@@ -432,10 +432,13 @@ private slots:
                                            [&](const auto &) { ++firstCalls; });
     h.service.subscribe(text(), &other, [&](const auto &) { ++secondCalls; });
     QTRY_COMPARE(h.sent.size(), 1);
+    QCOMPARE(h.service.pendingReadCount(), 1);
     h.service.unsubscribe(first);
+    QCOMPARE(h.service.pendingReadCount(), 1);
     QCOMPARE(h.sent.size(), 1);
     h.reply(0);
     QTRY_COMPARE(secondCalls, 1);
+    QCOMPARE(h.service.pendingReadCount(), 0);
     QCOMPARE(firstCalls, 0);
     QCOMPARE(h.sent.size(), 1);
   }
@@ -446,8 +449,13 @@ private slots:
     const auto id = h.service.subscribe(text(), &h.owner, {});
     h.service.enqueueCommand("save", {}, &h.owner, {});
     QTRY_COMPARE(h.sent.size(), 1);
+    QCOMPARE(h.service.pendingReadCount(), 1);
     h.service.unsubscribe(id);
     h.service.unsubscribe(id);
+    // The cancelled wire request still blocks its dispatcher, but carries no
+    // useful analysis load when selecting a read replica for new work.
+    QVERIFY(h.service.hasPending());
+    QCOMPARE(h.service.pendingReadCount(), 0);
     QCOMPARE(h.sent.size(), 2);
     QCOMPARE(h.sent[1].operation, "cancel");
     QCOMPARE(h.sent[1].payload["request_id"].toString(), h.sent[0].id);
@@ -472,7 +480,9 @@ private slots:
     h.service.subscribe(text(), &h.owner, {});
     const auto queued = h.service.subscribe(text("0x2000"), &h.owner, {});
     QTRY_COMPARE(h.sent.size(), 1);
+    QCOMPARE(h.service.pendingReadCount(), 2);
     h.service.unsubscribe(queued);
+    QCOMPARE(h.service.pendingReadCount(), 1);
     QVERIFY(h.service.subscribe(text("0x3000"), &h.owner, {}));
     QCOMPARE(h.sent.size(), 1);
     h.reply(0);

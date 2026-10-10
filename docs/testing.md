@@ -50,7 +50,11 @@ The controller also starts a controlled 30-second decompile, proves uncached
 function and listing reads complete while it is running, then switches
 functions and checks cancellation without losing staged comments. A 20,000-line
 source fixture checks event-loop responsiveness and folded declarations across
-pages. `NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
+pages. Concurrent analysis cases check that a slow view cannot block another
+function, cancellation only retires its own executor, subsequent pages keep
+their dispatcher when a third function queues, external graph snapshots survive
+interleaved requests, and opening another project retires both replicas.
+`NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
 unchanged owner files, staged comments, signature replay and stale-input
 rejection. Database restore coverage keeps pseudocode closed until requested.
 
