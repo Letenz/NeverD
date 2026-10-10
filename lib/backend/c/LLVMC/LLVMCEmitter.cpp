@@ -33,6 +33,7 @@
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -282,6 +283,13 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
+          if (classifyX86ShadowStackReadAsm(*CI)) {
+            const unsigned Word = CI->getType()->getIntegerBitWidth() / 8;
+            if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
+                Word != (Opts.TheArch == Arch::X64 ? 8U : 4U))
+              llvm::report_fatal_error(
+                  "shadow stack read target/type mismatch");
+          }
           if (auto Shape = classifyX86FPStateAsm(*CI);
               Shape && (isX86ScalarFPStateIntrinsic(Shape->first) ||
                         isX86FPRoundStateIntrinsic(Shape->first) ||
@@ -299,6 +307,11 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
           }
           if (const auto *Asm =
                   llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand())) {
+            if (Asm->getAsmString().starts_with("pushf") ||
+                Asm->getAsmString() == "pushq $0\n\tpopfq" ||
+                Asm->getAsmString() == "pushl $0\n\tpopfl")
+              Headers.insert(Opts.Format == BinaryFormat::COFF ? "intrin.h"
+                                                               : "x86intrin.h");
             if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
                 (Asm->getAsmString() == "ldmxcsr ($0)" ||
                  Asm->getAsmString() == "stmxcsr ($0)"))

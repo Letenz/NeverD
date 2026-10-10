@@ -25,6 +25,11 @@ Cancelling its final subscriber retires the process, since a synchronous C API
 analysis call cannot be interrupted safely. Replica revisions and analysis
 discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
+Function preparation uses `neverd_prepare_function`, which shares the source
+route's ARM mode, exception-handler discovery and analysis-scope checks without
+emitting C. Source, IR and CFG views consume that prepared pipeline. Older
+engines retain the decompiler-based preparation fallback. A failed switch
+clears the worker's prepared-entry marker before another view can reuse it.
 
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
@@ -56,7 +61,10 @@ surrounding whitespace; it never expands to an enclosing function or joins
 partial pieces. A function shown as C after a dialect refusal loses its
 statement anchors. Library folding retains its separate region projection.
 This supplies navigation evidence rather than complete expression provenance.
-Source and assembly cursors browse independently.
+Source and assembly cursors browse independently. Graph refreshes retain the
+latest requested or selected instruction even while no layout is available.
+A new navigation cancels the preceding function-lookup callback so a late reply
+cannot replace the newer destination.
 Tab consumes the selected row's primary address, preserving a secondary address
 chosen by an assembly-to-source Tab so a round trip returns to the same
 instruction. Reverse navigation waits for the source pages and expands the
@@ -150,8 +158,45 @@ requires the actual ESI anchor, saved entry EBP, saved ESP, previous chain,
 handler and seed state. Entry-relative accesses below the saved-register area
 and runtime-relative accesses above the aligned allocation can cross coordinate
 spaces; both remain rejected without an exact projection.
-This admits bounded ordinary state propagation, not a generated C++ catch's
-parent-frame restore or native re-reconstruction; those remain unproved.
+A separate callback coordinate owns only allocated, initialized bytes below
+that invocation's return PC. Push/pop recovery must restore runtime EBP and
+balance ESP before a non-nested realigned catch can resume. Dispatch preserves
+the authenticated saved entry EBP; callback pointers lose their exact identity
+when an invocation ends or another begins. Checked callback calls borrow parent
+objects using the pre-dispatch stack snapshot, while preserving their private
+ESP. Parent administration, including the saved entry EBP, cannot be borrowed.
+MedIR's separate x86 root owner consumes these LowIR facts. It disconnects only
+exact no-return call fallthroughs before SSA, preserving exceptional edges and
+the continuation's independent runtime frame. Shared coordinate projection
+expresses the aligned establisher from entry ESP for HighIR and LLVM, while
+entry-stack proofs cannot claim a fixed displacement. Pointer-copy and slot
+proofs keep each runtime definition's identity. The MedIR callback owner binds
+private ESP definitions to the current runtime-only entry and checks the whole
+ordinary catch CFG against exact source ranges and continuation receipts.
+HighIR captures that input with an `EntryRegister` expression at the callback
+entry, rather than substituting the parent's ESP or an unknown value. Copy
+propagation cannot move the capture. Realigned catches become clause bodies
+only when all callback blocks can move together without admitting an ordinary
+entry or absorbing unprotected code. SavedESP restoration precedes the checked
+continuation. HighC spells the runtime input as an explicit EH-view intrinsic;
+it does not supply a standalone C implementation of the exception runtime.
+The explicit C view retains an embedded callback as a labelled native entry
+inside the parent, skipped by ordinary fallthrough, without assigning it a C
+function ABI. Aligned frames retain their explicit FS chain accesses because
+their byte-addressed node stores still consume the previous-head definition.
+The MedIR call owner binds each retained callee ABI to its current occurrence.
+HighIR reads that call's current ECX SSA value and uses the proved argument
+count; a private EBP spill cannot become an extra stack argument.
+Unproved or ambiguous bodies retain handler/continuation annotations.
+Native scalar-catch lowering
+projects the source coordinate only into an allocation with proved physical
+alignment. A dedicated catch-stack planner bounds private ESP uses; catch
+objects, cleanup borrows and continuation writeback share the parent projection.
+The COFF consumer independently binds the private stack to the source callback,
+checks its lifetime and allows a parent bridge only through SavedESP. Its memory
+proof tracks initialization by allocation identity and resets callback bytes at
+every catch entry. Shared mask folding requires actual alloca alignment and
+cannot infer a constant displacement for an arbitrary source entry ESP.
 The LowIR no-return path proof lives in the low validation component, so call
 ABI checks do not depend on aggregate IR or MedIR. LowIR and MedIR consume the
 same architectural intrinsic-termination definition; both follow exceptional
@@ -216,7 +261,12 @@ thunk separately from the CRT dispatch entry. Its shared immutable-code reader
 admits absolute operands only at exact, unique HIGHLOW relocation slots; an
 opcode relocation, conflicting storage or changed runtime import rejects the
 identity. Native source lowering consumes the checked physical call ABI,
-typed catch home, cleanup borrows and catch-return target. LLVM records the
+optional catch home, cleanup borrows and catch-return target. The shared x86
+catch projection distinguishes a proved absence of object storage from missing
+object/access proofs. LLVM lowering and COFF IR validation consume that same
+projection; an unbound catch grants no runtime initialization write. Literal
+zero object and catch-all RTTI fields must have no overlapping compiler fixup.
+LLVM records the
 exact parent and child funclet machine-code ranges when emitting indexed
 catch rows. Complete PE32 C++ receipts additionally close FuncInfo, unwind,
 try and handler tables and bind each cleanup to its generated state and range.
@@ -309,6 +359,70 @@ with a source-indexed execution event while LLVM owns the physical GS check.
 The public writer replays that ownership and the complete event order against
 immutable input; metadata alone cannot authorize removing a source call.
 
+Offline web analysis has a separate source-domain session in `lib/web`, exposed
+through `NeverDCAPIWeb.h`. It owns immutable artifacts, bounded private disk
+storage and range reads, source identities,
+parser/model admission, lexical binding identities, primitive-value semantics,
+conservative effect summaries, module evidence, admitted-file comparisons,
+qualified bundle source partitions, fixed-profile Bun container extraction,
+map decoding, budgets and query redaction. `SourceView` owns the bounded display
+projection and original/projected range mapping; `SessionView` owns preview,
+publication and revocation. CLI/worker adapters cannot bypass those policies.
+Views use owned parser token/comment spans and never claim semantic rewrites.
+`SourceNavigation` owns syntax containment and lexical links; `SessionAnchor`
+joins source coordinates, original storage and committed display views. Bun
+source range conversion uses the same decoder as source extraction. Compressed
+sources return containing frames instead of fabricated per-character offsets.
+`ArtifactView` owns direct-byte selection and origins for original files, Bun
+assets and available ASAR members. Encoded Bun/map source keeps its dedicated
+decoder. `Asar` owns Pickle/JSON/member/integrity validation, while `PathPolicy`
+owns its pinned native Unicode collision policy. `SessionAsar` publishes bounded
+member pages and explicit captured unpacked associations. Source, anchors,
+relative module-file comparisons and native handoff share these selections;
+unavailable members never become consumer bytes. `SourceOrigins` owns finite
+syntactic module provenance over the existing binding/module model; `ElectronSource`
+consumes it without claiming runtime API targets. `ElectronManifest` compares
+entry declarations within the selected captured namespace, and `SessionElectron`
+owns revisions, caches and metadata-only publication. The manifest consumer
+does not depend on the JS parser. `ElectronIPC` owns explicit manifest-scoped
+channel comparisons; `SessionElectronIPC` only selects cached evidence and
+publishes bounded source/channel/endpoint pages. No transport infers routing.
+`ElectronSelection` owns shared manifest/source admission for scoped consumers.
+`SourcePaths` owns finite captured-root path candidates; `ElectronEntries`
+compares them with exact available namespace members. `SessionElectronEntries`
+selects evidence, caches results and publishes redacted pages; CLI and worker
+share those rules. Relative renderer-file and source-directory roots remain
+distinct. Association does not execute targets or automatically parse HTML.
+`HTML` owns the bounded UTF-8 script/base scanner, `HTMLReferences` owns pinned
+attribute decoding, and `HTMLLinks` owns portable local URL comparison.
+Its private `HTMLFiles` index and declared-base rules are shared with
+`HTMLModules`, which binds inline module requests to explicit document/script
+contexts and captured occurrences. `ImportMap` owns bounded JSON/URL normalization
+and exact/prefix/scoped/blocking rules over the embedded C++ Ada URL parser.
+`HTMLImportMaps` owns captured declaration bases, source-order eligibility and
+the separate capture-root projection. Full serialized URLs stay private;
+decoded filesystem candidates never substitute for URL identity. Unknown browser
+activation/history and absolute key origins remain explicit boundaries.
+`SessionModules` selects this context only for derived
+inline IDs; ordinary external-file analyses keep their own profile and cache.
+`SessionHTML` owns cache/revision and private
+metadata policy. Inline scripts use `ArtifactView` slices with nested original
+storage origins and a shared inline-occurrence selector; source parser and
+anchor consumers do not reconstruct or execute browser source. HTML inventory
+remains available without the JS parser.
+`SessionNative` supplies the selected immutable native occurrence. The SDK
+bridge joins that evidence to a new independent native session;
+the web library does not depend on the native pipeline. `loadBinaryBuffer` uses
+the same ELF/COFF/Mach-O readers as file loading and refuses implicit universal
+slice selection. Snapshot-backed native sessions have no file or sidecar
+namespace; native path-dependent operations check that boundary explicitly.
+JavaScript is not
+a native ISA and does not enter LowIR. The CLI uses this C API, while the pinned
+embedded parser is private to the backend; no target code or external analyzer
+is executed. Syntax acceptance and source-map format validity do not establish
+semantic completeness or producer provenance. See [web analysis](web-analysis.md)
+and its [schema](web-artifact-schema.md) for the current capability boundary.
+
 Library feature recognition reads the shared MedIR boundary before the source
 routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;
 MedIR analyses prove typed expressions and bounded COM ownership sequences.
@@ -350,15 +464,37 @@ newly reached backedge cannot reuse an entry-only domain. A complete
 single-consumer finite proof is not
 widened or vetoed by a weaker mask search. Module-wide storage mutation checks
 still run before source publication.
+Guard identity can name a contained architectural register lane at its exact
+full-register writer. The shared reaching-value resolver names that complete
+definition and retains the lane's offset and width, so a comparison of AL or
+W0 need not expand the earlier EAX or X0 calculation. Both the comparison and
+the table index must reach that same lane through every incoming path. Partial
+writes, call clobbers, implicit extension rules and proof budgets still apply.
+A failed optional consumer audit grants no relocation-root suppression. With
+its shared evidence budget intact, the resolver retains every root and replays
+the mandatory selector, address and target proofs under that stronger context.
+Shared-budget exhaustion still rejects the whole candidate.
 For a single absolute consumer, a relocation-backed physical run may contain
 unused pointers to other functions. Validate target ownership for every
 admitted selector coordinate before graph growth; an excluded prefix slot
 neither truncates the selector proof nor becomes a local successor.
+The LLVM scalar-offset proof may retry a depth-limited recursive walk with its
+independent closed-value-graph proof. That proof still checks every initializer,
+address provenance, forbidden value and memory source, with its own 512-level
+and 8192-node limits; reaching the first limit is never itself a certificate.
 The LLVM backend accepts a sparse table's logical address origin separately
 from its owned runtime slots. Eliding its target load still requires the exact
 operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
 authority from sharing that origin.
+
+MedIR binds a switch selector to its dispatch block as well as its machine
+address. CFG products can copy one instruction into distinct SSA lifetimes;
+every path back from a dispatch must reach the same exact operand occurrence
+before any independent entry. A missing or changed occurrence cannot borrow
+another copy's value. LLVM and HighIR consume the same block-specific plan.
+Composite target-load authentication requires every dispatch copy to retain
+its recipe, including when the load precedes the branch in a separate block.
 
 The resolver's point-sensitive stack identity uses anchored affine equations.
 Cyclic predecessors share equation nodes instead of recursively expanding the
@@ -390,8 +526,14 @@ they do not reuse CFG or value proofs across changed snapshots. A builder may
 retain one successful graph with an owned instruction snapshot. Reuse requires
 exact instruction facts, LowOps, effective edges, block starts, proof roots,
 conditional roots and storage-owner inputs. Hits pay the complete original
-graph-construction charge; value queries and incomplete-proof handling still
-run. Input-size and vertex limits bound retention, and a new build clears it.
+graph-construction charge. The graph may also retain up to 64 completed query
+batches under a separate 8 MiB retained-payload allowance. Exact ordered query
+fields, proof limits, output shape, function context and both relocation
+occurrence inventories bind each result. Hits pay the complete cold value
+charge; a smaller budget runs the normal path. Incomplete proofs and batches
+using pointer-named symbolic values or merges are excluded. Image metadata is
+immutable during a build, and every new build discards this state. These caches
+do not bypass proposal validation, rollback or fixed-point stages.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
@@ -822,8 +964,10 @@ SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
 
 Additional callee CFGs are admitted in deterministic breadth-first order.
-Batches retain at most eight bodies and use at most four independent decoders
-when symbol extents predict enough work; small batches stay serial. Read-only
+Parallel batches retain at most 32 bodies and use at most four independent
+decoders when symbol extents predict enough work; serial runs retain eight
+bodies. The wider window overlaps expensive callees across former batch
+barriers without changing admission or publication order. Read-only
 image indexes and the existing synchronized no-return cache may be shared.
 Summary publication and format-call collection retain the original order,
 depth and count limits. `NEVERD_THREADS=1` restricts this phase to one worker.
@@ -1258,6 +1402,39 @@ adjacent section boundary. The shared evaluator uses the image's conservative
 relocation predicate for untagged constants; equal original VAs alone cannot
 establish equality between independently rebuilt objects.
 
+The x86 CFG builder proves local x87 call-stack effects before constructing
+TOP-state block copies. One LowIR analysis may share up to 128 immutable machine
+graphs or empty projection-refusal markers across its independent CFG builders,
+under an 8 MiB retained-payload allowance including the construction context.
+This bounds the shared cache, not active builders or their private graph
+references.
+Exact function-boundary and jump-table protection sets, no-return proof depth
+and index identities bind each graph to its construction context. Image facts
+remain unchanged while a cache is shared; publishing new code references starts
+a fresh cache before additional callees are analyzed. Cache locks cover lookup
+and publication, while graph construction runs outside the lock. Each query
+still independently bounds and pays for its complete call closure and dataflow
+work; caller-dependent answers are not shared. A completely lifted, nontruncated
+CFG with exceptional edges or a block without any successor, return or modeled
+stop may retain an empty refusal marker. It grants no effect and rejects before
+graph-work charging, exactly as the original projection did. Incomplete lifting,
+invalid boundaries or successors, and the fixed graph-size limit retain no
+marker; a caller's exhausted proof allowance also cannot create one. Every normal
+return must agree on the stack change, and a pushed result must be initialized
+without reading an empty slot. Cycles in the call graph, incomplete lifting,
+environment restores, tag changes, unknown intrinsics and exceptional edges
+supply no summary. Loader-authenticated imports use the existing ABI tables;
+an internal function's spelling supplies no effect.
+
+Proven calls define their physical 80-bit result before SSA. Explicit return
+operands retain this convention after propagation replaces a register with a
+temporary or constant. ABI forwarder and aggregate heuristics cannot override
+it. LLVM preserves `x86_fp80`; HighIR transports the raw eighty bits through
+explicit bit casts, including separately emitted callers. This proves stack
+transport, not complete x87 control-word or exception semantics. Shared import
+target tracing also rejects partial pointer writes, opaque call barriers and
+instruction temporaries borrowed from another instruction.
+
 FH3 catch-return evidence binds the source funclet, return instruction and
 owning continuation after module discovery converges. Shared SSA verifies the
 parent's unwind, decoded prologue and converted stack effects before restoring
@@ -1339,6 +1516,19 @@ unit includes its exact preamble prefix, while the complete file places each
 distinct preamble once before the ordered unit bodies. Module-wide storage
 and declaration names participate in helper allocation before emission.
 
+`ir/X86ShadowStack.h` owns RDSSP's conditional full-GPR result. Its operands
+are the old complete register and the encoded 32/64-bit read width. Disabled
+shadow stacks preserve the entire old value, including an x64 RDSSPD's high
+half; an enabled 32-bit read zero-extends SSP. Concrete emulation requires
+explicit current-CPL enablement and, when enabled, SSP. Unknown calls and
+unmodeled CET mutators invalidate that snapshot. LLVM uses typed, owned tied
+assembly; HighC and LLVMC emit assembly at the caller, without a helper CALL.
+This reads the host execution frame: enabled guest recompilation still needs
+an authenticated initial SSP and proof of original CALL/RET/tail topology.
+The separate CET-disabled interpreter provider keeps its existing NOP receipt
+and Missing sidecar; ordinary lifting does not upgrade that audit evidence.
+Swift projection remains explicitly unsupported.
+
 The experimental [interpreter recovery stage](interpreter-recovery.md)
 specializes strictly lifted LowIR before the common MedIR boundary. Its
 provider owns immutable image evidence, `SymExec` owns instruction semantics,
@@ -1393,6 +1583,8 @@ The finite-query cache accounts for serialized keys, numeric results and recency
 `modelInterpreterMachineStateX64` and the source wrapper share one generator for guest register lanes, packed flags, profile status and control flow. The model changes only state-object access into explicit register bytes and keeps status separate from guest RAX. It owns no compiler semantics or proof policy; the caller still owns the entry domain, observations, frame contract and complete refinement check.
 
 `NeverDLLVMInterpreterModel` owns the separate bounded scalar LLVM import into the same raw state ABI. `modelLLVMInterpreterMachineStateX64` retains actual status returns and emits explicit definedness guards. `llvmInterpreterMachineStateContract` supplies full observations and zero-monitor preservation; the caller owns domain, memory and complete proof. Importing LLVM does not change ordinary lifting or source publication, and does not prove a compiler.
+
+The LLVM importer turns each reached guest load/store alignment above one into a sticky definedness obligation on its actual 64-bit address. Access widths and memory effects remain unchanged; masks, comparisons and accumulation use the existing construction budgets. Omitted textual alignment uses the parsed ABI alignment; `align 1` emits no guard. This adds no entry assumption or accessible bytes. State-object accesses retain their separate eight-byte alignment contract, and atomic/volatile accesses remain unsupported.
 
 `modelLLVMScalarFunction` reuses this importer for pure `noundef` integer arguments and integer returns (`i1/i8/i16/i32/i64`). The shared model handles funnel-shift endpoints and guarded multiplication with double-width products. `checkLLVMScalarEquivalence` executes both models through `SymExec`, discovers controlling input bits, exhausts their complete combinations and keeps all other bits symbolic. Every return must agree and every executed operation must remain defined; partition, path, node and cumulative work budgets bound the query. `SymContext::constantWindow` exposes cumulative query accounting without relaxing its existing per-query ceilings. Refusal permits no rewrite. This read-only C++ query neither changes default source output nor supplies a persistent native/ABI or compiler certificate.
 
@@ -1457,6 +1649,10 @@ The importer accepts well-formed `llvm.loop.peeled.count` as an unsigned i32 opt
 The LLVM model owns validation of `initializes` parameter contracts. It reuses state-pointer projections and performs bounded byte-level must-dataflow before ordinary scalar emission; no second value evaluator is introduced.
 
 `NeverDInterpreterLLVMRefinement` owns native-to-LLVM proof composition. It rebuilds both state models and mandatory contracts, uses the authoritative profile for an entry-only flag projection, and checks both premises afresh. Clients may propose loop plans but cannot replace models, observations or receipts. Analysis models copy executable graphs and declared roots only; entry backedges are rejected before state initialization can repeat.
+
+An optional `InterpreterLLVMRefinementPreservation` request adds GPR-byte preservation to both fresh premises. Preparation owns bounded validation, overlap union and word splitting; mandatory state, definedness and frame observations remain. `NativeState` reaches only the native checker and supports `SelectedWitness`; `AllUndefinedChoices` is refused. Effective subcontracts bind the receipts, and an empty request preserves existing defaults.
+
+`InterpreterLLVMNativeCollection` exposes two false-by-default collection choices only to the fresh native premise. Retained audit boundaries must be unreachable under the selected witness; deferred branches still require complete semantics on every feasible path. The native receipt binds these choices. Source assumptions, observations and proof budgets remain unchanged.
 
 The v3 recovery C API and CLI map explicit field, refinement and solver-query budgets to the shared specializer. The adapter validates structure sizes and reserved fields before reading extensions; v1/v2 layouts and defaults remain stable. Budget increases change permitted work, not the execution contract or publication criteria.
 
@@ -3748,7 +3944,7 @@ Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
-`lib/unpack` recovers packed images in four layers. `core` owns orchestration and the format registry. `format/pe` validates the container and rebuilds observed memory, imports and metadata; `PETLS.cpp` validates replacement TLS records against the loader allocation and observed callbacks. No protector registry or static stub signature selects an entry. `dynamic` observes a guest process through `observeProcess`: `Observation.def` maps each container and instruction set to a process profile and gives each instruction set its stack pointer and instruction window. A new target is a table row and a module directory, and an input without a row is rejected by name. `ExecutionSession` owns execution watches; a `ProcessObserver` reads a stopped process and chooses the next stop, but cannot change guest state. The emulation layer knows only `defer_unmodeled`, which binds unmodeled imports to opaque entries that stop when executed. See [unpacking](unpack.md). Deferred loading permits executable callback and entry targets that earlier initializers materialize in zero-filled memory. Callback arrays and TLS allocation metadata still require validated backing; ordinary strict loading retains its file-backing checks. The OS model supplies invocation provenance and notifies observers when it prepares an invocation or restores a suspended caller. Transfer watches are rearmed at those boundaries, including when a callback and the generated entry share a page.
+`lib/unpack` recovers packed images in separate layers. `core` owns orchestration and the format registry. `format/pe` validates the container and rebuilds observed memory, imports and metadata; `PETLS.cpp` validates replacement TLS records against the loader allocation and observed callbacks. No protector registry or static stub signature selects an entry. `dynamic` observes a guest process through `observeProcess`: `Observation.def` maps each container and instruction set to a process profile and gives each instruction set its stack pointer and instruction window. A new target is a table row and a module directory, and an input without a row is rejected by name. `ExecutionSession` owns execution watches; a `ProcessObserver` reads a stopped process and chooses the next stop, but cannot change guest state. The emulation layer knows only `defer_unmodeled`, which binds unmodeled imports to opaque entries that stop when executed. See [unpacking](unpack.md). Deferred loading permits executable callback and entry targets that earlier initializers materialize in zero-filled memory. Callback arrays and TLS allocation metadata still require validated backing; ordinary strict loading retains its file-backing checks. The OS model supplies invocation provenance and notifies observers when it prepares an invocation or restores a suspended caller. Transfer watches are rearmed at those boundaries, including when a callback and the generated entry share a page.
 
 `WindowsLibraryHost.cpp` owns DLL host construction; the Windows loader owns its ordinary load/unload lifecycle. `ProcessView::inputModule()` separates the observed input from the host EXE and permits a late initial snapshot. `ProcessView::callFrame()` reads integer argument and return facts through `IntegerABI`; `dynamic/ProcessTransfer` owns matching continuation and stack evidence. `PETLS.cpp` alone decides whether that evidence completes a process-attach callback.
 
@@ -4092,6 +4288,14 @@ DarwinFiles owns common attribute import, name/stat validity and record encoding
 DarwinFiles owns retained attribute state, initial-object mutation grants, shared name import and complete-stat validity. DarwinExtendedAttributes stages value/list changes before one commit. Fixed initial reservations and runtime attribute excess use the same storage/count owner as content and namespace mutations; unlinked objects and mapping leases retain their dynamic charge until final release. JSON only imports explicit grants. Directory attribute mutation invalidates full metadata independently of membership, snapshots and enumeration versions.
 
 When a recovered DLL entry differs from its original PE entry, the writer emits a loader-notification adapter: process attach goes to the selected entry; detach and thread notifications go to the original live executable entry so outer-wrapper cleanup remains reachable. An unavailable original entry fails rebuilding. Reported `entry_rva` still identifies the selected program entry; the PE header can point to the adapter. The independent wrapped-DLL fixture checks cleanup outside the selected function on both emulated architectures and native Windows.
+
+`ProcessView::runtimeState()` transports immutable OS-owned state. `WindowsProcessState.cpp` snapshots resource identity, committed backing and lifecycle from their authoritative owners. `unpack/os/windows` validates and compiles the initializer; `format/pe/PERuntime.cpp` owns placement and merging of import, TLS and unwind metadata. Generic observation neither interprets Windows object layouts nor infers ownership from integer matches.
+
+`observeImage` selects the process or driver owner from the PE execution domain. `observeDriver` shares stopped `ProcessObserver` callbacks through `EmulationRuntime`; kernel ownership and DriverEntry ABI checks remain in the driver layer. Scheduling slices retain invocation identity. See [driver unpacking](unpack.md).
+
+`support/X86Addressing.h` owns the width-specific interpretation of absent ordinary SIB indices for both lifting and checked execution. `EIZ` is absent only with a 32-bit address, and `RIZ` only with a 64-bit address; neither is a base register or VSIB vector index. REX.X-selected R12/R12D remains a real scaled index. `X64Address` regressions compare original processor execution, access observations, cancellation and memory faults at both privilege levels, while `X86NoIndexAddress` retains the strict lifting and malformed-alias checks.
+
+Ordinary RAM `XCHG` admits unaligned 8/16/32/64-bit operands with or without an explicit LOCK prefix. The shared RAM transaction retains the original effective address, serializes publication and discards cancelled or faulted writes; the processor executes the original exchange. `X64Address` tests cover address/register overlap, partial register writes, cache-line and page crossings, observers and missing-page faults. MMIO exchanges retain their provider and natural-alignment requirements; other locked instruction families retain their existing admission rules.
 
 ## Native opaque-state preservation
 

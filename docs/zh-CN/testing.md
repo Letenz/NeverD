@@ -95,6 +95,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `NeverDLLVMInterpreterModelTests` 将独立编写的 LLVM 与完整状态 LowIR 参考实现比较，覆盖位宽、并行 PHI、switch、客体内存、独立状态码、poison 检查、内建函数值域、被拒绝的契约和四种建模预算。测试完成任意字长倒计数循环的完整证明，并拒绝被改写的状态码。独立 C 用例在 O1/O2 编译后必须满足同一观察契约。这些测试验证受支持的模型；自动不变量发现和编译器正确性仍是独立义务。 变量移位用例覆盖全部四种位宽、经掩码或分支限制的移位量、边界及越界移位量、无回绕与精确标志、严格 poison 拒绝，以及 O1/O2 编译后的 C。
 
+`LLVMGuestAlignment.*` 将加载和存储与独立字节内存参考实现比较，覆盖正确和错误的对齐域、自由高位地址、解析后的默认对齐、部分宽度、未使用或被覆盖的访问、不可达分支及恰好/少一单位的构造预算。`InterpreterLLVMRefinement.GuestAlignmentRequiresBothFreshPremises` 通过两次新鲜关系检查验证原生栈存储、匹配的入口同余条件和被改写的源码效果。
+
 `NeverDLLVMScalarEquivalenceTests` 覆盖完整循环域、零次循环、PHI 同时交换、switch、高位输入、最后分区反例、产生 poison 的额外更新、返回范围、不支持的契约，以及精确、少一单位和零预算。独立双宽与溢出参考实现覆盖各受支持字宽的漏斗移位端点和带溢出约束的乘法；独立嵌套循环 C 在 O1/O2 检查编译器输入形态。状态模型测试也检查漏斗移位端点。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` 检查累计查询计费和不变的局部上限。
 
 `LLVMScalarDecision.*` 覆盖深层精确移位/扩展约束、常量分支决策、两条循环回边、保留高数据位、末端未定义操作、不终止、已检查函数的后续修改，以及精确/少一/局部预算。`LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles` 将独立编写的单回边和双回边递推与无符号 C oracle 在 O0/O2 下比较，共 32,768 次调用。这些是标量模型检查，不代表原生 ABI 或完整二进制还原覆盖。
@@ -146,6 +148,10 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 受条件保护的倒计数测试覆盖拒绝循环体模板后的重试、任意字长输入的完整循环头证明、切点与查询预算的累计计费，以及真实入口契约违规时立即拒绝。
 
 `NeverDInterpreterLLVMRefinementTests` 检查全新的原生到 LLVM 组合证明、精确文本／函数绑定、独立预算、完整观察项及刻意扩大的源码域。修改字节、残余程序、结果、标志、状态码、栈帧写入、poison 或错误／过期循环方案，都必须拒绝组合凭据。任意字长倒计数要求两段归纳前提；独立 C 用例在 O1/O2 编译后验证真实序列化 LLVM 输入。状态模型回归拒绝隐藏入口回边，对入口集合计费且不复制附属来源信息。
+
+`InterpreterLLVMRefinement.Preservation*` 覆盖局部／重叠范围、非法请求、独立计算的准备开销、两端相同的最终破坏、跨循环的入口保存／恢复、新鲜不透明状态证据及后期拒绝。`NeverDPEFixedImageTests` 也是 API 使用方，需要重新构建。未提供请求时的结果、计数与摘要另行对照基线。
+
+`InterpreterLLVMRefinement.Collection*` 检查有限与归纳证明所需的保留／延迟策略、可达坏分支、后期源码拒绝、入口保存及全部四种原生策略身份。编译组合层遗漏传递的故障，确认每项必要选项确实到达原生检查器。
 
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
@@ -1154,7 +1160,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5058 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5420`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 11 driver UNPACK + 6 clock reads + 2 image MDLs = 5449`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1528,6 +1534,10 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 ## 有界目录批量属性
 
 bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区、low32 FD、bitmap 字、原生错误、dup 共享进度、独立 open、缓存 EOF 和零 rewind。字面值与未知模式仅用于虚拟环境。模型还覆盖完整 stat、失效、NFD/255字节名称、输入/输出别名、传输/预算失败、移动/SWAP/删除/复用及显式授权。每个平台必需63个工作负载：ARM64 为189例，Intel 为126例；本地仅验证匹配的 ARM64 HVF。native5s、guest/Python5,000,000us/quantum1024、public10s 不变。
+
+`MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` 检查原程序的模型执行、恢复、节权限，以及原程序与恢复程序在 Windows 上的原生执行，覆盖私有堆扩容和释放、内部编码指针、FLS 回调重装、递归锁、LastError 及虚拟内存的保留、提交和保护。`MaterializationRequiresKnownSupportedState` 拒绝缺失版本输入及动态 TLS；`RuntimeRestorationHasTheSameCAPIAndCLIContract` 比较精确字节和报告。Linux 构建检查及 Wine 观察不能替代原生 Windows 生命周期证据。
+
+`NeverDUnpackDriverTests` 覆盖 DriverEntry 恢复、静态／动态内核导入、遗留内核资源、入口 ABI／控制状态、畸形导出、调度、请求／卸载生命周期、C API／CLI 一致性及 PE 校验和。原生驱动清单要求对应 KVM／WHP 用例执行；Windows 还对照 ImageHlp。这不代表原生内核加载验收。见[脱壳](unpack.md)。
 
 ## 原生不透明状态检查
 

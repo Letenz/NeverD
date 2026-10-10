@@ -219,9 +219,11 @@ WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH,
       if (Catch.ParentFrameOffset != 0 ||
           (!Registration && Catch.CatchObjectOffset != 0) ||
           (Registration &&
-           (Catch.CatchObjectOffset >= 0 || !Catch.TypeDescriptorVA ||
+           (Catch.CatchObjectOffset > 0 ||
             Catch.TypeDescriptorVA > UINT32_MAX ||
-            (Catch.Adjectives != 0 && Catch.Adjectives != 8))))
+            (Catch.TypeDescriptorVA
+                 ? Catch.Adjectives != 0 && Catch.Adjectives != 8
+                 : Catch.CatchObjectOffset != 0 || Catch.Adjectives != 0x40))))
         return WindowsEHNativeSourceReason::UnsupportedCxxHandlerFrameState;
       if (Catch.HandlerVA == 0 || Catch.HandlerVA == EH.CodeRange.Begin ||
           !EH.CodeRange.contains(Catch.HandlerVA))
@@ -618,11 +620,6 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
                     WindowsEHNativeSourceReason::ConflictingLanguageModel,
                     Capability);
     const auto &Chain = *EH.Registration;
-    if (Chain.RealignedFrame)
-      return reject(
-          Model,
-          WindowsEHNativeSourceReason::UnsupportedCxxDynamicStackAlignment,
-          Capability);
     if (!EH.PersonalityVA || Chain.HandlerVA != EH.PersonalityVA ||
         !Chain.ScopeTableVA || Chain.ScopeTableVA != EH.HandlerDataVA ||
         Chain.ScopeTableVA != EH.Cxx->NativeFuncInfoVA ||

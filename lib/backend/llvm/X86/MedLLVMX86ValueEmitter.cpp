@@ -17,6 +17,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/LLVMX86StackEffects.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -535,6 +536,26 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
                                                    Intrinsic IC,
                                                    llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
+
+  if (IC == I::CetRdSsp) {
+    const auto Shape = x86ShadowStackReadMedShape(Op, TargetArch);
+    if (!x86ShadowStackReadShapeIsValid(Shape))
+      llvm::report_fatal_error("invalid x86 shadow stack read contract");
+    auto *Ty = llvm::Type::getIntNTy(*Ctx, Shape.OutputSize * 8);
+    auto *Old = getVar(Op.Inputs[1], Builder);
+    if (Old->getType()->isPointerTy())
+      Old = Builder.CreatePtrToInt(Old, Ty);
+    else if (Old->getType() != Ty)
+      llvm::report_fatal_error("shadow stack old value is not a full GPR");
+    auto *Fn = llvm::FunctionType::get(Ty, {Ty}, false);
+    auto *Asm = llvm::InlineAsm::get(
+        Fn, x86ShadowStackReadAsm(Shape.OutputSize, Shape.ReadWidth),
+        X86ShadowStackReadConstraints, true);
+    auto *Result = Builder.CreateCall(Asm, {Old}, "shadow_stack_read");
+    Result->setMetadata(X86ShadowStackReadMetadata,
+                        llvm::MDNode::get(*Ctx, {}));
+    return Result;
+  }
 
   if (isX86FPStateIntrinsic(IC)) {
     const auto Shape = x86FPStateMedShape(Op, TargetArch);

@@ -556,6 +556,33 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
   if (Op.NumInputs < 1 || !Op.Inputs[0].isConst())
     return false;
   const Intrinsic Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (Id == Intrinsic::CetRdSsp) {
+    if (!x86ShadowStackReadShapeIsValid(
+            x86ShadowStackReadLowShape(Op, Img.Arch)) ||
+        !X86CurrentPrivilegeLevel || !X86ShadowStackEnabled ||
+        X86ShadowStackPrivilegeLevel != X86CurrentPrivilegeLevel)
+      return false;
+    if (*X86ShadowStackEnabled) {
+      if (!X86ShadowStackPointer)
+        return false;
+      writeOutput(Op.Output, Op.Inputs[2].Offset == 4
+                                 ? uint32_t(*X86ShadowStackPointer)
+                                 : *X86ShadowStackPointer);
+    } else {
+      const NdVar &Old = Op.Inputs[1];
+      if (!Old.isConst() && !Registers.contains(Old.Offset))
+        return false;
+      writeOutput(Op.Output, readOperand(Old));
+    }
+    return true;
+  }
+  if (Id == Intrinsic::CetIncSsp || Id == Intrinsic::CetRstorssp ||
+      Id == Intrinsic::CetSaveprevssp || Id == Intrinsic::CetSetssbsy ||
+      Id == Intrinsic::CetClrssbsy) {
+    X86ShadowStackEnabled.reset();
+    X86ShadowStackPointer.reset();
+    return false;
+  }
   if (!MXCSRKnown &&
       (Id == Intrinsic::Stmxcsr || Id == Intrinsic::F16CConvert ||
        Id == Intrinsic::X86ApproxFloat || Id == Intrinsic::X86FPArith ||

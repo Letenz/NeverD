@@ -17,6 +17,7 @@
 #include "neverd/ir/NdOps.h"
 #include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/X86FPState.h"
+#include "neverd/ir/X86ShadowStack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/ExceptionInfo.h"
 
@@ -224,6 +225,26 @@ struct LowOp {
       Inputs[NumInputs++] = V;
   }
 };
+
+inline X86ShadowStackReadShape x86ShadowStackReadLowShape(const LowOp &Op,
+                                                          Arch TargetArch) {
+  return {.TargetArch = TargetArch,
+          .MemoryOrdering = Op.MemoryOrdering,
+          .MemoryAddressSpace = Op.MemoryAddressSpace,
+          .NumInputs = Op.NumInputs,
+          .IdIsConst = Op.NumInputs && Op.Inputs[0].isConst() &&
+                       Op.Inputs[0].Offset == unsigned(Intrinsic::CetRdSsp),
+          .IdSize = Op.NumInputs ? Op.Inputs[0].Size : 0U,
+          .OutputIsWritable = Op.Output.isReg() || Op.Output.isTemp(),
+          .OutputSize = Op.Output.Size,
+          .OldIsScalar = Op.NumInputs > 1 &&
+                         (Op.Inputs[1].isReg() || Op.Inputs[1].isTemp() ||
+                          Op.Inputs[1].isConst()),
+          .OldSize = Op.NumInputs > 1 ? Op.Inputs[1].Size : 0U,
+          .WidthIsConst = Op.NumInputs > 2 && Op.Inputs[2].isConst(),
+          .WidthSize = Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U,
+          .ReadWidth = Op.NumInputs > 2 ? Op.Inputs[2].Offset : 0U};
+}
 
 inline X86FPStateShape x86FPStateLowShape(const LowOp &Op, Arch TargetArch) {
   const bool Memory =

@@ -6,6 +6,7 @@
 
 #include "../eh/MedLLVMEHHelpers.h"
 #include "MedLLVMRegistrationCxxContinuation.h"
+#include "MedLLVMRegistrationCxxStack.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
@@ -13,8 +14,11 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
+#include "neverd/backend/llvm/X86RegistrationCatch.h"
+#include "neverd/backend/llvm/X86RegistrationLayout.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/ir/med/X86RegistrationFrame.h"
 #include "neverd/loader/ExceptionInfo.h"
 
 #include "llvm/IR/CFG.h"
@@ -62,21 +66,23 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       !States.RuntimeObjectAccessesComplete || !States.ImageReadsComplete)
     return false;
   const auto &Cxx = *EH.Cxx;
-  if (States.CxxCatchObjects.size() != 1)
-    return false;
   const auto &Try = Cxx.TryBlocks[0];
   const auto &Catch = Try.Handlers[0];
-  const auto &Object = States.CxxCatchObjects[0];
   const auto FrameBytes = FrameAlloca->getAllocationSize(Mod->getDataLayout());
-  const int64_t ObjectOffset =
-      int64_t(FrameEntrySPOffset) - 4 + Object.FrameOffset;
-  if (!FrameBytes || FrameBytes->isScalable() ||
-      FrameBytes->getFixedValue() > UINT32_MAX || Object.TryIndex ||
-      Object.CatchIndex || Object.TypeDescriptorVA != Catch.TypeDescriptorVA ||
-      Object.FrameOffset != Catch.CatchObjectOffset || !Object.ObjectSize ||
-      Object.Reference != (Catch.Adjectives == 8) || ObjectOffset < 0 ||
-      uint64_t(ObjectOffset) + (Object.Reference ? 4 : Object.ObjectSize) >
-          FrameBytes->getFixedValue())
+  const auto Coordinate =
+      EH.Registration->RealignedFrame
+          ? realignedRegistrationFrameCoordinate(EH, &States)
+          : std::optional(RegistrationFrameCoordinate{-4, 1, 0});
+  const auto Layout =
+      Coordinate && FrameBytes && !FrameBytes->isScalable()
+          ? projectX86RegistrationFrame(
+                *Coordinate, FrameBytes->getFixedValue(), FrameEntrySPOffset,
+                FrameAlloca->getAlign().value())
+          : std::nullopt;
+  if (!Layout)
+    return false;
+  const auto CatchPlan = projectX86RegistrationCatch(EH, States, *Layout);
+  if (!CatchPlan)
     return false;
 
   // Preserve an actual incoming ECX as ECX. A guessed cdecl formal would read
@@ -174,8 +180,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   };
   if (!med_llvm_eh::canMaterializeExternalFunctionDeclaration(
           *Mod, "__CxxFrameHandler3", PersonalityType) ||
-      !med_llvm_eh::canMaterializeExternalDataDeclaration(
-          *Mod, makeNdDataSymbol(Catch.TypeDescriptorVA), I8, false))
+      (Catch.TypeDescriptorVA &&
+       !med_llvm_eh::canMaterializeExternalDataDeclaration(
+           *Mod, makeNdDataSymbol(Catch.TypeDescriptorVA), I8, false)))
     return false;
   if (auto *Existing = Mod->getFunction("__CxxFrameHandler3")) {
     auto Address = rewrite_source::getOriginalVA(*Existing);
@@ -219,7 +226,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         if (!Return || !Resume || Resume->TryIndex || Resume->CatchIndex ||
             !BlocksAt.count(Resume->TargetVA) ||
             Resume->SavedStackOffset > -16 ||
-            int64_t(FrameEntrySPOffset) - 4 + Resume->SavedStackOffset < 0 ||
+            !Layout->runtimeOffset(Resume->SavedStackOffset, 0) ||
             FrameEntrySPOffset > INT32_MAX ||
             !Resumes.emplace(Return, Resume).second)
           return false;
@@ -387,6 +394,28 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
           return false;
     }
 
+  std::optional<RegistrationCxxStackPlan> Stack;
+  if (EH.Registration->RealignedFrame) {
+    const auto SourceBlock = llvm::find_if(Func.Blocks, [&](const auto &Block) {
+      return Block.StartAddr == Catch.HandlerVA;
+    });
+    if (SourceBlock == Func.Blocks.end())
+      return false;
+    std::vector<llvm::StoreInst *> Stores;
+    for (const auto &Event : Operations)
+      if (Event.Kind == 1 && CatchBlocks.count(Event.IR->getParent()))
+        Stores.push_back(llvm::cast<llvm::StoreInst>(Event.IR));
+    const std::vector<llvm::BasicBlock *> Body(CatchBlocks.begin(),
+                                               CatchBlocks.end());
+    auto Plan = prepareRegistrationCxxStack(*SourceBlock, *Handler, Body,
+                                            VarAllocs, Stores);
+    if (!Plan) {
+      llvm::consumeError(Plan.takeError());
+      return false;
+    }
+    Stack = *Plan;
+  }
+
   // Commit only after the source frame, calls, catches and resumption closure
   // are closed. The C++ runtime outlines these catch/cleanup pads; the whole
   // logical source frame remains one escaped alloca across every funclet.
@@ -413,11 +442,14 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       llvm::MDNode::get(*Ctx,
                         {med_llvm_eh::mdUInt(*Ctx, EH.CodeRange.Begin, 64),
                          med_llvm_eh::mdUInt(*Ctx, FrameEntrySPOffset, 64)}));
-  auto *Type = Mod->getNamedGlobal(makeNdDataSymbol(Catch.TypeDescriptorVA));
-  if (!Type)
-    Type = new llvm::GlobalVariable(*Mod, I8, false,
-                                    llvm::GlobalValue::ExternalLinkage, nullptr,
-                                    makeNdDataSymbol(Catch.TypeDescriptorVA));
+  llvm::Constant *Type = llvm::ConstantPointerNull::get(Ptr);
+  if (Catch.TypeDescriptorVA) {
+    Type = Mod->getNamedGlobal(makeNdDataSymbol(Catch.TypeDescriptorVA));
+    if (!Type)
+      Type = new llvm::GlobalVariable(
+          *Mod, I8, false, llvm::GlobalValue::ExternalLinkage, nullptr,
+          makeNdDataSymbol(Catch.TypeDescriptorVA));
+  }
   // Bind retained source occurrences to exact block intervals before calls
   // split the blocks and before the runtime catch entry is installed.
   auto *SideEffect =
@@ -452,19 +484,24 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   Switch->addHandler(Handler);
   llvm::IRBuilder<> H(&*Handler->getFirstInsertionPt());
   auto *Pad = H.CreateCatchPad(
-      Switch, {Type, H.getInt32(Catch.Adjectives), FrameAlloca});
-  Pad->setMetadata(
-      llvm::RewriteWinX86CxxCatchObjectAttachment,
-      llvm::MDNode::get(
-          *Ctx, {med_llvm_eh::mdUInt(*Ctx, 1, 32),
-                 med_llvm_eh::mdUInt(*Ctx, ObjectOffset, 32),
-                 med_llvm_eh::mdUInt(
-                     *Ctx, Object.Reference ? 4 : Object.ObjectSize, 32)}));
+      Switch, {Type, H.getInt32(Catch.Adjectives),
+               CatchPlan->Home ? static_cast<llvm::Value *>(FrameAlloca)
+                               : llvm::ConstantPointerNull::get(Ptr)});
+  if (const auto &Home = CatchPlan->Home)
+    Pad->setMetadata(
+        llvm::RewriteWinX86CxxCatchObjectAttachment,
+        llvm::MDNode::get(*Ctx,
+                          {med_llvm_eh::mdUInt(*Ctx, 1, 32),
+                           med_llvm_eh::mdUInt(*Ctx, Home->Offset, 32),
+                           med_llvm_eh::mdUInt(*Ctx, Home->slotSize(), 32)}));
   if (!med_llvm_eh::attachRewriteWinEHSemanticToken(*Pad, *CatchToken))
     llvm_unreachable("prevalidated C++ catch semantic token rejected");
   med_llvm_eh::emitWindowsEHProvenanceAnchor(
       H, Model, Role::RegionDispatch, EH.CodeRange.Begin, Catch.HandlerVA, 0, 0,
       Pad, Catch.TypeDescriptorVA, Catch.Adjectives);
+
+  if (Stack)
+    emitRegistrationCxxStack(*Stack, EH.CodeRange.Begin, Catch.HandlerVA);
 
   std::map<int32_t, llvm::BasicBlock *> Unwinds;
   Unwinds.emplace(Try.TryLow, Dispatch);
@@ -497,7 +534,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     rewrite_source::setOriginalVA(*Callee, Plan.Contract->Leaf.Target);
     auto *Address = B.CreateInBoundsGEP(
         I8, FrameAlloca,
-        B.getInt32(FrameEntrySPOffset - 4 + Plan.Contract->ObjectFrameOffset));
+        B.getInt32(Layout->Establisher + Plan.Contract->ObjectFrameOffset));
     auto *Call = B.CreateCall(Callee, {Address},
                               {llvm::OperandBundleDef("funclet", Cleanup)});
     Call->setCallingConv(llvm::CallingConv::X86_ThisCall);
@@ -523,7 +560,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     if (Plan.Borrow)
       Args.push_back(B.CreateInBoundsGEP(
           I8, FrameAlloca,
-          B.getInt32(FrameEntrySPOffset - 4 + *Plan.Effect->ECXFrameOffset)));
+          B.getInt32(Layout->Establisher + *Plan.Effect->ECXFrameOffset)));
     const int32_t Level =
         Plan.State->Levels.empty() ? -1 : Plan.State->Levels.front();
     auto *Unwind = Plan.State->CxxMinimumTryLevel <= Try.TryLow
@@ -579,7 +616,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     Old->eraseFromParent();
   }
   for (const auto &[Return, Resume] : Resumes)
-    emitRegistrationCxxContinuation(*Return, *FrameAlloca, FrameEntrySPOffset,
+    emitRegistrationCxxContinuation(*Return, *FrameAlloca, Layout->Establisher,
                                     *Pad, *BlocksAt.at(Resume->TargetVA),
                                     EH.CodeRange.Begin, *Resume);
   for (const auto &Access : States.ChainAccesses) {
@@ -599,7 +636,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       } else {
         Value = B.CreatePtrToInt(
             B.CreateInBoundsGEP(I8, FrameAlloca,
-                                B.getInt32(FrameEntrySPOffset - 16)),
+                                B.getInt32(Layout->Establisher - 12)),
             I32);
       }
       Load->replaceAllUsesWith(Value);

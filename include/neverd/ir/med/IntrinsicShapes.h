@@ -13,6 +13,7 @@
 #define NEVERD_IR_MED_INTRINSICSHAPES_H
 
 #include "neverd/ir/X86FPState.h"
+#include "neverd/ir/X86ShadowStack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedIR.h"
 
@@ -39,6 +40,40 @@ inline bool isMedIntrinsicScalarInput(const MedVar &Value) {
 
 inline bool isMedIntrinsicWritableScalar(const MedVar &Value) {
   return Value.Kind == MedVar::Reg || Value.Kind == MedVar::Temp;
+}
+
+inline X86ShadowStackReadShape
+x86ShadowStackReadMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
+  bool Matches = true;
+  const auto Observe = [&](const MedVar &V) {
+    if (V.TheArch == Arch::Unknown)
+      return;
+    if (TargetArch == Arch::Unknown)
+      TargetArch = V.TheArch;
+    else if (V.TheArch != TargetArch)
+      Matches = false;
+  };
+  Observe(Op.Output);
+  for (unsigned I = 1; I < Op.NumInputs && I < Op.Inputs.size(); ++I)
+    Observe(Op.Inputs[I]);
+  return {.TargetArch = TargetArch,
+          .MemoryOrdering = Op.MemoryOrdering,
+          .MemoryAddressSpace = Op.MemoryAddressSpace,
+          .NumInputs = Op.NumInputs,
+          .IdIsConst = Op.NumInputs && Op.Inputs[0].isConst() &&
+                       Op.Inputs[0].ConstVal == unsigned(Intrinsic::CetRdSsp),
+          .IdSize = Op.NumInputs ? Op.Inputs[0].Size : 0U,
+          .OutputIsWritable = isMedIntrinsicWritableScalar(Op.Output),
+          .OutputSize = Op.Output.Size,
+          .OldIsScalar =
+              Op.NumInputs > 1 && (isMedIntrinsicScalarInput(Op.Inputs[1]) ||
+                                   Op.Inputs[1].Kind == MedVar::Param),
+          .OldSize = Op.NumInputs > 1 ? Op.Inputs[1].Size : 0U,
+          .WidthIsConst = Op.NumInputs > 2 && Op.Inputs[2].isConst(),
+          .WidthSize = Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U,
+          .ReadWidth = Op.NumInputs > 2 ? Op.Inputs[2].ConstVal : 0U,
+          .HasAuxiliaryOutputs = !Op.IntrinsicOutputs.empty(),
+          .ArchitectureMatchesOperands = Matches};
 }
 
 inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
