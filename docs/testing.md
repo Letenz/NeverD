@@ -75,6 +75,12 @@ pinned view and a different hidden assembly location, then checks undo/redo,
 save/restart and instruction-mapped comments. Snapshot coverage also verifies
 that read-only replicas load these edits without changing durable owner files.
 
+`NeverDWorkerSourceCache` counts actual preparation and source-page calls across
+A-to-B-to-A navigation, including a subsequent graph or IR request. It checks
+edits, undo, replica restore, project replacement, representation separation and
+both document-count and retained-byte eviction. Timing-independent cache tests
+complement `source_revisit_bench.py`, which measures complete real source pages.
+
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
 `SourceDialect.Navigation*` checks distinct statement ranges in C++, Rust and
@@ -496,6 +502,19 @@ cycles, unknown roots, conflicting anchors, intermediate overflow, budget
 exhaustion, incremental graph growth and cache reset. A seeded independent
 backward path-constraint oracle checks cyclic equation results. Repeated
 diamond graphs check linear evidence growth rather than a wall-clock cutoff.
+
+`HighEntryStackOffsets.*` in `NeverDHighControlFlowTests` checks the shared
+affine solver's SSA adapter against independent path constraints and the prior
+recursive algorithm on its supported small domain. Coverage includes shared
+diamonds, balanced and unanchored cycles, conflicting paths, checked overflow,
+SSA ambiguity, exception entries, pointer widths and query-order-independent
+depth refusal.
+
+`ResolverGraphCache.*` in `NeverDJumpTableTests` compares hot and cold answers
+and remaining budgets at every small-fixture budget boundary. Equal-size
+instruction, edge, root and ownership changes must replace the graph; rolled
+back and temporary override payloads cannot leave borrowed pointers behind.
+Resource failure and value-analysis incompleteness remain distinct.
 
 `ResolverLaneViews.*` in the same target checks query-local register metadata
 caching across widths, high-byte registers, architectures, temporary values
@@ -3743,3 +3762,7 @@ guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
 65 mandatory workloads per platform / ARM64 195 / Intel 130
 ```
+
+## Native opaque-state checks
+
+`X86PreservedState.*` checks fresh scalar forms, exact bank aliases, strict reset behavior and stale byte/span/version refusal. `OriginalBinaryUndefinedIndependence.*Opaque*` covers branches, internal callees, exhaustive indirect targets, exact profiles and independently decoded metadata exact/one-short budgets. `BinaryLowIR*.*Opaque*` covers selected versus arbitrary undefined choices, multiple inductive sources, late rank/budget refusal, true-entry scalar preservation and a later-source byte change with identical LowIR but a changed execution digest. `NativeUndefinedIndependence.*Opaque*` and `NativeStackControl.*FreshMemoryCall*` check grouped interiors, boundaries before cuts, stale records and target evaluation before stack mutation. Rebuild affected metadata consumers, including `NeverDInterpreterLLVMRefinementTests`; report sanitizer and compiled-fault coverage separately from ordinary test results.

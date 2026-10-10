@@ -1635,3 +1635,9 @@ guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
 65 mandatory workloads per platform / ARM64 195 / Intel 130
 ```
+
+bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 보호, low32 FD, bitmap 워드, 네이티브 오류, dup 공유 진행, 독립 open, EOF와 0 rewind를 검사한다. 리터럴/미지원 모드는 가상 전용이다. 모델은 전체 stat와 무효화, NFD/255바이트 이름, 입출력 별칭, 전송/예산 실패, 이동/SWAP/삭제/재사용, 명시 권한도 검사한다. 필수 목록은 플랫폼별63개로 ARM64는189개, Intel은126개다. 로컬에서는 일치하는 ARM64 HVF만 검증했다. native5s, guest/Python5,000,000us/quantum1024, public10s는 그대로다.
+
+## 불투명 상태 검사
+
+`X86PreservedState.*`는 새 스칼라 형식, 정확한 별칭, 엄격한 초기화, 오래된 바이트/연산 구간/버전 거부를 검사한다. `OriginalBinaryUndefinedIndependence.*Opaque*`는 분기, 내부 호출, 완전한 간접 대상, 정확한 프로필, 독립 디코딩으로 계산한 메타데이터 예산의 정확/1 부족 경계를 다룬다. `BinaryLowIR*.*Opaque*`는 증인과 임의 미정의 선택, 여러 귀납 소스, 후반 순위/예산 실패, 실제 진입 스칼라 보존, LowIR이 같은 후속 소스 바이트 변경의 실행 해시 변경을 검사한다. `NativeUndefinedIndependence.*Opaque*`와 `NativeStackControl.*FreshMemoryCall*`는 그룹 내부, 절단점 전 경계, 오래된 기록, 스택 변경 전 대상 평가를 검사한다. `NeverDInterpreterLLVMRefinementTests`를 포함한 영향받는 메타데이터 사용자를 재빌드하고, sanitizer 및 컴파일한 결함 주입 결과는 일반 테스트와 별도로 보고한다.

@@ -1644,3 +1644,11 @@ guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
 65 mandatory workloads per platform / ARM64 195 / Intel 130
 ```
+
+## Preservación del estado nativo opaco
+
+El contrato C++ opcional `NativePreservedState` solicita el conjunto cerrado `LegacyIntegerOpaqueV1`: contenedores vectoriales 0–31, bits `[0,512)`; APX R16–R31, `[0,64)`; palabra de control x87, `[0,16)`; bits definidos de MXCSR, `[0,16)`. XMM/YMM son alias de los 128/256 bits bajos de cada contenedor de 64 bytes. Los componentes opcionales se cubren solo cuando existen arquitectónicamente. MXCSR tiene identidad propia. Se excluyen GPR modelados, indicadores, memoria, pila, máscaras, otros estados x87, CET y todo componente no enumerado.
+
+Una decodificación x64 estricta nueva proporciona una auditoría de formas independiente, vinculada a bytes originales, operaciones LowIR completas y versión semántica. La ausencia de escrituras o metadatos completos de salidas indefinidas no demuestra este hecho. El ejecutor comprueba cada instrucción alcanzada, interior de grupo y llamada interna antes de cortes o efectos. Los recibos físicos CALL/RET vinculan secuencias originales y expandidas; solo el propietario del perfil exacto RDSSP con CET desactivado aporta su auditoría especial. Todos los segmentos fuente, sucesores, observaciones y rangos deben completarse antes de publicar. La inspección adicional consume presupuestos existentes; evidencia obsoleta o fallo del último segmento impide cualquier certificado.
+
+La independencia finita deriva `AllUndefinedChoices`; el refinamiento finito o inductivo deriva únicamente `SelectedWitness` y rechaza solicitudes universales. Comprobar ambos testigos nombrados no amplía el alcance. Las API LowIR estáticas no autorizan preservación nativa. Omitir la solicitud conserva el comportamiento y esquema 17; solicitarla vincula esquema 18 y resumen de ejecución. Este requisito opcional no certifica una ABI ordinaria, elecciones indefinidas del CPU físico ni la salida C predeterminada.

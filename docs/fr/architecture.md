@@ -1652,3 +1652,11 @@ guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
 65 mandatory workloads per platform / ARM64 195 / Intel 130
 ```
+
+## Préservation de l’état natif opaque
+
+Le contrat C++ facultatif `NativePreservedState` demande l’ensemble fermé `LegacyIntegerOpaqueV1` : conteneurs vectoriels 0–31, bits `[0,512)` ; APX R16–R31, `[0,64)` ; mot de contrôle x87, `[0,16)` ; bits définis de MXCSR, `[0,16)`. XMM/YMM désignent les 128/256 bits bas de chaque conteneur de 64 octets. Les composants optionnels ne sont couverts que s’ils existent dans l’architecture. MXCSR possède une identité séparée. GPR modélisés, drapeaux, mémoire, pile, masques, autres états x87, CET et composants non cités sont exclus.
+
+Un nouveau décodage x64 strict fournit un audit indépendant des formes, lié aux octets originaux, aux opérations LowIR complètes et à la version sémantique. L’absence d’écriture ou des métadonnées complètes de sorties indéfinies ne suffisent pas. L’exécuteur vérifie chaque instruction atteinte, intérieur de groupe et fonction interne avant les points de coupure ou les effets. Les reçus CALL/RET physiques lient les séquences originales et développées ; seul le propriétaire du profil exact RDSSP avec CET désactivé fournit son audit spécial. Tous les segments sources, successeurs, observations et rangs doivent être vérifiés avant publication. L’inspection supplémentaire consomme les budgets existants ; une preuve périmée ou l’échec du dernier segment interdit tout certificat.
+
+L’indépendance finie produit `AllUndefinedChoices` ; le raffinement fini ou inductif produit seulement `SelectedWitness` et refuse une demande universelle. Vérifier les deux témoins nommés n’élargit pas cette portée. Les API LowIR statiques ne peuvent autoriser la préservation native. L’omission conserve le comportement et le schéma 17 ; la demande lie le schéma 18 et le résumé d’exécution. Ce prérequis facultatif ne certifie ni ABI ordinaire, ni choix indéfinis du CPU physique, ni sortie C par défaut.

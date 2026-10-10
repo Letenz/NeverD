@@ -1641,3 +1641,11 @@ guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
 65 mandatory workloads per platform / ARM64 195 / Intel 130
 ```
+
+## Conservazione dello stato nativo opaco
+
+Il contratto C++ facoltativo `NativePreservedState` richiede l’insieme chiuso `LegacyIntegerOpaqueV1`: contenitori vettoriali 0–31, bit `[0,512)`; APX R16–R31, `[0,64)`; parola di controllo x87, `[0,16)`; bit definiti MXCSR, `[0,16)`. XMM/YMM sono alias dei 128/256 bit bassi di ogni contenitore da 64 byte. I componenti opzionali sono coperti solo dove presenti nell’architettura. MXCSR ha un’identità separata. Sono esclusi GPR modellati, flag, memoria, stack, maschere, altro stato x87, CET e ogni componente non elencato.
+
+Una nuova decodifica x64 rigorosa fornisce un audit indipendente delle forme, vincolato ai byte originali, alle operazioni LowIR complete e alla versione semantica. Assenza di scritture o metadati completi delle uscite indefinite non bastano. L’esecutore controlla ogni istruzione raggiunta, interno dei gruppi e chiamata interna prima di tagli o effetti. Le ricevute CALL/RET fisiche vincolano sequenze originali ed espanse; solo il proprietario dell’esatto profilo RDSSP con CET disabilitato fornisce il relativo audit speciale. Tutti i segmenti sorgente, successori, osservazioni e ranghi devono terminare prima della pubblicazione. L’ispezione aggiuntiva usa i budget esistenti; prove obsolete o il fallimento dell’ultimo segmento non producono certificati.
+
+L’indipendenza finita deriva `AllUndefinedChoices`; il raffinamento finito e induttivo deriva solo `SelectedWitness` e rifiuta richieste universali. Verificare entrambi i testimoni nominati non amplia l’ambito. Le API LowIR statiche non autorizzano conservazione nativa. L’omissione mantiene comportamento e schema 17; la richiesta vincola schema 18 e riepilogo di esecuzione. Questo prerequisito facoltativo non certifica ABI ordinaria, scelte indefinite della CPU fisica o output C predefinito.

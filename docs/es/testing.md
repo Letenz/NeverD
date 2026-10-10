@@ -1746,3 +1746,9 @@ guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
 65 mandatory workloads per platform / ARM64 195 / Intel 130
 ```
+
+bulk-attributes verifica grupos completos, conjunto de nombres/tipos, guardas de bytes sin usar, low32 FD, palabras bitmap, errores nativos, dup, open independientes, EOF y rewind cero. Modos literal/desconocido solo virtuales. Los modelos cubren stat completo, invalidación, nombres NFD/255 bytes, alias entrada/salida, errores de transporte/presupuesto, movimientos/SWAP/eliminación/reutilización y permiso explícito. Inventario requerido:63 casos por plataforma,189 ARM64 y126 Intel. Solo ARM64 HVF coincidente se verifica localmente. native5s, guest/Python5,000,000us/quantum1024 y public10s no cambian.
+
+## Pruebas del estado opaco
+
+`X86PreservedState.*` comprueba formas escalares nuevas, alias exactos, reinicio estricto y rechazo de bytes/secuencias/versiones obsoletos. `OriginalBinaryUndefinedIndependence.*Opaque*` cubre ramas, llamadas internas, destinos indirectos exhaustivos, perfiles exactos y presupuestos de metadatos exactos/menos uno derivados de decodificación independiente. `BinaryLowIR*.*Opaque*` cubre testigos frente a elecciones indefinidas arbitrarias, múltiples fuentes inductivas, rechazo tardío de rango/presupuesto, preservación escalar desde la entrada real y cambios posteriores de bytes con LowIR idéntico pero resumen distinto. `NativeUndefinedIndependence.*Opaque*` y `NativeStackControl.*FreshMemoryCall*` comprueban interiores de grupos, límites previos al corte, recibos obsoletos y evaluación del destino antes de modificar la pila. Reconstruir consumidores afectados, incluido `NeverDInterpreterLLVMRefinementTests`; informar por separado sanitizers, fallos compilados y pruebas ordinarias.
