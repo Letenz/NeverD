@@ -1465,3 +1465,5 @@ DarwinFiles는 공통 속성 가져오기, 이름/stat 유효성과 레코드 �
 `ProcessView::runtimeState()`는 OS가 소유한 불변 상태를 전달합니다. `WindowsProcessState.cpp`는 권한 있는 소유자에서 리소스 식별, 커밋된 메모리와 수명을 캡처합니다. `unpack/os/windows`는 초기화 코드를 검증하고 컴파일하며, `format/pe/PERuntime.cpp`는 배치와 가져오기, TLS, 언와인드 메타데이터 병합을 담당합니다. 공통 관찰 계층은 Windows 객체 레이아웃을 해석하거나 정수 일치로 소유권을 추측하지 않습니다.
 
 `observeImage`는 PE 실행 도메인으로 환경을 선택합니다. `observeDriver`는 `EmulationRuntime`의 중지된 `ProcessObserver` 콜백을 공유하며 커널 소유권과 DriverEntry ABI는 드라이버 계층에서 검사합니다. [UNPACK](unpack.md).
+
+`support/X86Addressing.h`가 리프팅과 검사 실행에서 일반 SIB의 인덱스 없음 표기를 주소 폭에 따라 일관되게 해석합니다. `EIZ`는 32비트 주소에서만, `RIZ`는 64비트 주소에서만 인덱스 없음을 뜻하며 베이스 레지스터나 VSIB 벡터 인덱스가 아닙니다. REX.X로 선택한 R12/R12D는 실제 배율 인덱스로 유지됩니다. `X64Address` 회귀는 두 권한 수준에서 원래 프로세서 실행, 접근 관찰, 취소와 메모리 오류를 비교하고, `X86NoIndexAddress`는 엄격한 리프팅과 잘못된 별칭 검사를 유지합니다.

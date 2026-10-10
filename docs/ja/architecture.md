@@ -1488,3 +1488,5 @@ DarwinFiles が共通属性の読み込み、名前/stat の有効性、レコ�
 `ProcessView::runtimeState()` は OS が所有する不変状態を運びます。`WindowsProcessState.cpp` は権威ある所有者から資源の識別、コミット済み領域、寿命を捕獲します。`unpack/os/windows` が初期化コードを検証・コンパイルし、`format/pe/PERuntime.cpp` が配置とインポート、TLS、アンワインド情報の結合を担当します。共通観測層は Windows オブジェクトの配置を解釈せず、整数一致から所有権を推測しません。
 
 PE 実行ドメインから `observeImage` がプロセスまたはドライバーを選択します。`observeDriver` の停止時コールバックは `EmulationRuntime` の `ProcessObserver` を共有し、カーネル所有権と DriverEntry ABI はドライバー層が検証します。 [UNPACK](unpack.md).
+
+`support/X86Addressing.h` は、リフターと検査付き実行で通常の SIB の索引なし指定をアドレス幅ごとに一元解釈します。`EIZ` は 32 ビット、`RIZ` は 64 ビットのアドレスでのみ索引なしを意味し、基底レジスタや VSIB ベクトル索引にはなりません。REX.X が選ぶ R12/R12D は実際のスケール付き索引です。`X64Address` は両特権レベルで元のプロセッサ実行、アクセス観測、キャンセル、メモリ障害を比較し、`X86NoIndexAddress` は厳密なリフトと不正な別名の検査を保持します。

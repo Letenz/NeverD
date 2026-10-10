@@ -88,6 +88,123 @@ class X64Data : public X64DataBase,
   Parameter parameter() const override { return GetParam(); }
 };
 
+class X64Address : public X64DataBase,
+                   public testing::WithParamInterface<vector_test::Parameter> {
+  Parameter parameter() const override {
+    return {GetParam().Backend, GetParam().User
+                                    ? ExecutionContract::CheckedUserX64
+                                    : ExecutionContract::CheckedX64};
+  }
+};
+
+TEST_P(X64Address, SibIndicesPreserveAddressesAndMemoryTransactions) {
+  for (bool Narrow : {false, true}) {
+    for (bool ExtendedIndex : {false, true}) {
+      for (unsigned Scale = 0; Scale != 4; ++Scale) {
+        for (unsigned Size : {4u, 8u}) {
+          for (bool Store : {false, true}) {
+            for (bool Stop : {false, true}) {
+              SCOPED_TRACE(testing::Message()
+                           << Narrow << '/' << ExtendedIndex << '/' << Scale
+                           << '/' << Size << '/' << Store << '/' << Stop);
+              // MOV EAX/RAX, [EBX/RBX + absent-index/R12 * scale - 25],
+              // or the corresponding store. REX.X distinguishes real R12
+              // from the otherwise absent SIB index; scale is ignored only
+              // for the absent index. High halves test address-size wrapping.
+              std::vector<uint8_t> Bytes;
+              if (Narrow)
+                Bytes.push_back(0x67);
+              if (Size == 8 || ExtendedIndex)
+                Bytes.push_back(0x40 | (Size == 8 ? 8 : 0) |
+                                (ExtendedIndex ? 2 : 0));
+              Bytes.insert(Bytes.end(), {uint8_t(Store ? 0x89 : 0x8b), 0x44,
+                                         uint8_t((Scale << 6) | 0x23), 0xe7});
+              const uint64_t HighAddress =
+                  Narrow ? UINT64_C(0x123400000000) : 0;
+              const uint64_t Base = HighAddress + Data + 0x99;
+              const uint64_t Index = HighAddress + 7;
+              const uint64_t Address =
+                  Data + 0x80 + (ExtendedIndex ? (7u << Scale) : 0);
+              const uint64_t Mask = Size == 8 ? UINT64_MAX : UINT32_MAX;
+              llvm::cantFail(CPU->setReg(X64Register::BX, Base));
+              llvm::cantFail(CPU->setReg(X64Register::R12, Index));
+              llvm::cantFail(CPU->setReg(X64Register::SP, Stack));
+              llvm::cantFail(CPU->setReg(X64Register::AX, Low));
+              llvm::cantFail(CPU->writeInteger(Address, High, WordBytes));
+              unsigned Reads = 0, Writes = 0;
+              BackendHooks Hooks;
+              Hooks.Read = [&](uint64_t A, uint32_t N) {
+                EXPECT_EQ(A, Address);
+                EXPECT_EQ(N, Size);
+                ++Reads;
+                if (Stop)
+                  CPU->stop();
+              };
+              Hooks.Write = [&](uint64_t A, uint32_t N, uint64_t V) {
+                EXPECT_EQ(A, Address);
+                EXPECT_EQ(N, Size);
+                EXPECT_EQ(V, Low & Mask);
+                EXPECT_EQ(llvm::cantFail(CPU->readInteger(Address, WordBytes)),
+                          High);
+                ++Writes;
+                if (Stop)
+                  CPU->stop();
+              };
+              expectStopped(run(Bytes, std::move(Hooks)));
+              ASSERT_FALSE(HasFatalFailure());
+              EXPECT_EQ(Reads, Store ? 0u : 1u);
+              EXPECT_EQ(Writes, Store ? 1u : 0u);
+              EXPECT_EQ(llvm::cantFail(CPU->readInteger(Address, WordBytes)),
+                        Store && !Stop ? (High & ~Mask) | (Low & Mask) : High);
+              EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::AX)),
+                        Store || Stop ? Low : High & Mask);
+              EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::BX)), Base);
+              EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::R12)), Index);
+              EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::SP)), Stack);
+              EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::FLAGS)),
+                        InitialFlags);
+              EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)),
+                        Stop ? Code : Code + Bytes.size());
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST_P(X64Address, AbsentSibIndicesRetainMemoryFaultsAndEntryState) {
+  for (bool Narrow : {false, true}) {
+    for (bool Store : {false, true}) {
+      SetUp();
+      ASSERT_TRUE(CPU);
+      std::vector<uint8_t> Bytes;
+      if (Narrow)
+        Bytes.push_back(0x67);
+      // An absent SIB index with redundant scale 8 and an unmapped base.
+      Bytes.insert(Bytes.end(),
+                   {0x48, uint8_t(Store ? 0x89 : 0x8b), 0x04, 0xe3});
+      llvm::cantFail(CPU->setReg(X64Register::BX, Data + PageSize));
+      llvm::cantFail(CPU->setReg(X64Register::AX, Low));
+      const auto Exit = run(Bytes);
+      ASSERT_EQ(Exit.Kind, ExecutionExitKind::GuestFault) << Exit.Diagnostic;
+      ASSERT_TRUE(Exit.Fault);
+      EXPECT_EQ(Exit.Fault->Kind, BackendFaultKind::UnmappedMemory);
+      EXPECT_EQ(Exit.Fault->Access,
+                Store ? BackendAccessKind::Write : BackendAccessKind::Read);
+      EXPECT_EQ(Exit.Fault->Address, Data + PageSize);
+      EXPECT_EQ(Exit.Fault->Size, WordBytes);
+      EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::AX)), Low);
+      EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::FLAGS)), InitialFlags);
+      EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)), Code);
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64Address,
+                         testing::ValuesIn(vector_test::Parameters),
+                         [](const auto &Info) { return Info.param.Name; });
+
 TEST_P(X64Data, MemoryArithmeticPreviewMatchesNativeBytesAndDefinedFlags) {
   auto Check = [&](const char *Name, unsigned Size, uint64_t Before,
                    uint64_t Operand, uint64_t After, uint64_t Flags,

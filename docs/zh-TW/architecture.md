@@ -1416,3 +1416,5 @@ DarwinFiles 負責共通屬性匯入、名稱/stat 有效性與紀錄編碼；Da
 `ProcessView::runtimeState()` 傳遞不可變的 OS 自有狀態。`WindowsProcessState.cpp` 從權威所有者擷取資源識別、已提交記憶體及生命週期。`unpack/os/windows` 驗證並編譯初始化器；`format/pe/PERuntime.cpp` 負責配置與合併匯入、TLS 及展開中繼資料。通用觀察層不解讀 Windows 物件配置，也不以整數比對推測歸屬。
 
 `observeImage` 依 PE 執行域選擇處理程序或驅動環境。`observeDriver` 透過 `EmulationRuntime` 共用停止態 `ProcessObserver` 回呼；核心所有權與 DriverEntry ABI 檢查仍由驅動層負責。排程時間片保留呼叫身分。見[驅動脫殼](unpack.md)。
+
+`support/X86Addressing.h` 統一負責提升器與受檢執行器對普通 SIB 無索引標記的位寬判定：`EIZ` 僅在 32 位元位址下表示無索引，`RIZ` 僅在 64 位元位址下表示無索引；兩者均不能充當基底暫存器或 VSIB 向量索引。REX.X 選擇的 R12/R12D 仍是真實的縮放索引。`X64Address` 回歸在兩種權限級別比較原始處理器執行、記憶體存取觀察、取消與記憶體錯誤，`X86NoIndexAddress` 則保留嚴格提升與格式錯誤別名檢查。
