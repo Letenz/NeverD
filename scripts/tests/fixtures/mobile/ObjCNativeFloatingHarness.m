@@ -15,11 +15,18 @@
 #endif
 static void equalDouble(double a, double b) {
   uint64_t x, y; memcpy(&x, &a, sizeof(x)); memcpy(&y, &b, sizeof(y));
-  if (x != y && !(isnan(a) && isnan(b))) abort();
+  if (x != y && !(isnan(a) && isnan(b))) {
+    fprintf(stderr, "double bits: actual=%016llx expected=%016llx\n",
+            (unsigned long long)x, (unsigned long long)y);
+    abort();
+  }
 }
 static void equalFloat(float a, float b) {
   uint32_t x, y; memcpy(&x, &a, sizeof(x)); memcpy(&y, &b, sizeof(y));
-  if (x != y && !(isnan(a) && isnan(b))) abort();
+  if (x != y && !(isnan(a) && isnan(b))) {
+    fprintf(stderr, "float bits: actual=%08x expected=%08x\n", x, y);
+    abort();
+  }
 }
 int main(void) {
   @autoreleasepool {
@@ -43,7 +50,13 @@ int main(void) {
       equalFloat([driver floatValue:xf other:yf mode:mode output:&outf], expectedf - yf);
       equalFloat(outf, expectedf);
       NSInteger bias = (int32_t)random;
-      if ([driver compare:x other:y bias:bias] != bias + (x < y ? 1 : 0)) abort();
+      NSInteger actual = [driver compare:x other:y bias:bias];
+      NSInteger expectedCompare = bias + (x < y ? 1 : 0);
+      if (actual != expectedCompare) {
+        fprintf(stderr, "compare case %u: actual=%lld expected=%lld\n", i,
+                (long long)actual, (long long)expectedCompare);
+        abort();
+      }
     }
     [driver release];
     puts("native-floating-cases=24576\nfloating-bits=pass\nmemory-effects=pass");

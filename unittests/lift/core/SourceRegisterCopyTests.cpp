@@ -381,6 +381,16 @@ int main(void) {
   const auto Runtime = (Work / "runtime.c").string();
   const auto Executable = (Work / "source").string();
   const auto ErrorPath = (Work / "stderr").string();
+  // The generated Darwin includes resolve to this fixture's own runtime on
+  // every host; no Apple SDK or system Objective-C implementation is required.
+  std::filesystem::create_directory(Work / "objc");
+  std::ofstream(Work / "objc" / "runtime.h")
+      << "#pragma once\n#include <stdint.h>\n"
+         "typedef void *id;\ntypedef void *SEL;\n"
+         "SEL sel_registerName(const char *);\n";
+  std::ofstream(Work / "objc" / "message.h")
+      << "#pragma once\n#include <objc/runtime.h>\n"
+         "uint64_t objc_msgSend(id, SEL);\n";
   std::ofstream(Path) << Source;
   std::ofstream(Runtime) << R"C(
 #include <stdint.h>
@@ -395,9 +405,9 @@ void *sel_registerName(const char *name) { return (void *)name; }
 )C";
   for (const auto *Level : {"-O0", "-O2"}) {
     const std::string Compiler = NEVERD_TEST_CLANG;
-    const std::vector<std::string> Arguments{Compiler,  "-std=c11", Level,
-                                             "-Werror", Path,       Runtime,
-                                             "-o",      Executable};
+    const std::vector<std::string> Arguments{
+        Compiler,      "-std=c11", Level,   "-Werror", "-I",
+        Work.string(), Path,       Runtime, "-o",      Executable};
     const std::vector<llvm::StringRef> Refs(Arguments.begin(), Arguments.end());
     const std::optional<llvm::StringRef> Redirects[] = {
         std::nullopt, std::nullopt, ErrorPath};

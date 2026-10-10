@@ -23,6 +23,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <filesystem>
@@ -107,6 +108,25 @@ std::string jsonText(llvm::json::Object Value) {
   llvm::raw_string_ostream OS(Text);
   OS << llvm::json::Value(std::move(Value));
   return Text;
+}
+
+// Pass the original JSON as one argument. cmd.exe splits embedded newlines
+// even inside shell quotes and also expands percent signs in guest strings.
+int runCLIRequest(llvm::StringRef Path, llvm::StringRef Profile,
+                  llvm::StringRef Options, llvm::StringRef Output) {
+  const std::string ProfileArg =
+      "--" + std::string(process_cli::ProfileOption) + "=" + Profile.str();
+  const std::string OptionsArg =
+      "--" + std::string(process_cli::OptionsOption) + "=" + Options.str();
+  const llvm::StringRef Args[] = {NEVERD_PROCESS_CLI, process_cli::Command,
+                                  Path, ProfileArg, OptionsArg};
+  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
+                                                      llvm::StringRef("")};
+  std::string Error;
+  const int Status = llvm::sys::ExecuteAndWait(
+      NEVERD_PROCESS_CLI, Args, std::nullopt, Redirects, 30, 0, &Error);
+  EXPECT_GE(Status, 0) << Error;
+  return Status;
 }
 
 class ProcessPublic : public testing::Test {
@@ -201,14 +221,8 @@ TEST_F(ProcessPublic, WindowsPE64RunsThroughSDKAndCLIWithoutAnalysisState) {
                           true));
     ASSERT_NE(Result.getAsObject()->getObject(field::Windows), nullptr);
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
-    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
-                         process_cli::Command + " " + test::shellQuote(Path) +
-                         " --" + process_cli::ProfileOption + "=" +
-                         WindowsPE64 + " --" + process_cli::OptionsOption +
-                         "=" + test::shellQuote(Options) +
-                         test::redirectStdout(Output) + test::silenceStderr();
-    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-              process_cli::GuestFailure);
+    const int CLIStatus = runCLIRequest(Path, WindowsPE64, Options, Output);
+    EXPECT_EQ(CLIStatus, process_cli::GuestFailure);
     auto Buffer = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Buffer));
     EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
@@ -258,14 +272,8 @@ TEST_F(ProcessPublic, WindowsStartupDLLsUseTheSameCatalogueThroughSDKAndCLI) {
                           true));
     ASSERT_NE(Result.getAsObject()->getObject(field::Windows), nullptr);
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
-    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
-                         process_cli::Command + " " + test::shellQuote(Path) +
-                         " --" + process_cli::ProfileOption + "=" +
-                         WindowsPE64 + " --" + process_cli::OptionsOption +
-                         "=" + test::shellQuote(Options) +
-                         test::redirectStdout(Output) + test::silenceStderr();
-    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-              process_cli::GuestFailure);
+    const int CLIStatus = runCLIRequest(Path, WindowsPE64, Options, Output);
+    EXPECT_EQ(CLIStatus, process_cli::GuestFailure);
     auto Buffer = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Buffer));
     EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
@@ -316,14 +324,8 @@ TEST_F(ProcessPublic, WindowsRuntimeExportsAgreeAcrossSDKAndCLI) {
               llvm::toHex(export_fixture::NormalTrace, true));
     ASSERT_NE(Result.getAsObject()->getObject(field::Windows), nullptr);
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
-    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
-                         process_cli::Command + " " + test::shellQuote(Path) +
-                         " --" + process_cli::ProfileOption + "=" +
-                         WindowsPE64 + " --" + process_cli::OptionsOption +
-                         "=" + test::shellQuote(Options) +
-                         test::redirectStdout(Output) + test::silenceStderr();
-    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-              process_cli::GuestFailure);
+    const int CLIStatus = runCLIRequest(Path, WindowsPE64, Options, Output);
+    EXPECT_EQ(CLIStatus, process_cli::GuestFailure);
     auto Buffer = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Buffer));
     EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
@@ -367,14 +369,8 @@ TEST_F(ProcessPublic, DarwinProfilesPreserveBSDResultsAcrossSDKAndCLI) {
     EXPECT_EQ((*Services)[0].getAsObject()->getBoolean(field::Error), true);
     EXPECT_EQ((*Services)[1].getAsObject()->getBoolean(field::Error), false);
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
-    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
-                         process_cli::Command + " " + test::shellQuote(Path) +
-                         " --" + process_cli::ProfileOption + "=" + Profile +
-                         " --" + process_cli::OptionsOption + "=" +
-                         test::shellQuote(Options) +
-                         test::redirectStdout(Output) + test::silenceStderr();
-    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-              process_cli::GuestFailure);
+    const int CLIStatus = runCLIRequest(Path, Profile, Options, Output);
+    EXPECT_EQ(CLIStatus, process_cli::GuestFailure);
     auto Buffer = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Buffer));
     EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
@@ -1129,13 +1125,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
                 X64 ? "1234567801000059" : "12345678ffffffa7");
     }
   }
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
-                       process_cli::Command + " " + test::shellQuote(Path) +
-                       " --" + process_cli::ProfileOption + "=" + Profile +
-                       " --" + process_cli::OptionsOption + "=" +
-                       test::shellQuote(Options) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+  const int CLIStatus = runCLIRequest(Path, Profile, Options, Output);
+  EXPECT_EQ(CLIStatus,
             Incomplete ? process_cli::Incomplete : process_cli::GuestFailure);
   auto Buffer = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Buffer));
@@ -1216,13 +1207,9 @@ TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
     const std::filesystem::path Root(Directory.str().str());
     auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
     const auto Output = (Root / OutputFile).string();
-    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                         test::shellQuote(Path) +
-                         " --profile=" + AndroidNativeAArch64 +
-                         " --options=" + test::shellQuote(Request) +
-                         test::redirectStdout(Output) + test::silenceStderr();
-    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-              process_cli::Success);
+    const int CLIStatus =
+        runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+    EXPECT_EQ(CLIStatus, process_cli::Success);
     auto Buffer = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Buffer));
     EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
@@ -1277,13 +1264,9 @@ TEST_F(ProcessPublic, AndroidFinalizersKeepGuestEffectsAcrossSDKAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                       test::shellQuote(Path) +
-                       " --profile=" + AndroidNativeAArch64 +
-                       " --options=" + test::shellQuote(Request) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::Success);
+  const int CLIStatus =
+      runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+  EXPECT_EQ(CLIStatus, process_cli::Success);
   auto Bytes = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Bytes));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
@@ -1327,13 +1310,9 @@ TEST_F(ProcessPublic, AndroidFormattingKeepsDynamicNamesAcrossSDKAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                       test::shellQuote(Path) +
-                       " --profile=" + AndroidNativeAArch64 +
-                       " --options=" + test::shellQuote(Request) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::Success);
+  const int CLIStatus =
+      runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+  EXPECT_EQ(CLIStatus, process_cli::Success);
   auto Bytes = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Bytes));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
@@ -1388,13 +1367,9 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
     EXPECT_EQ(Report.getAsObject()->getString(field::Stop), "returned");
     EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
-    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                         test::shellQuote(Path) +
-                         " --profile=" + AndroidNativeAArch64 +
-                         " --options=" + test::shellQuote(Options) +
-                         test::redirectStdout(Output) + test::silenceStderr();
-    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-              process_cli::Success);
+    const int CLIStatus =
+        runCLIRequest(Path, AndroidNativeAArch64, Options, Output);
+    EXPECT_EQ(CLIStatus, process_cli::Success);
     auto Bytes = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Bytes));
     EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Report);
@@ -1468,13 +1443,9 @@ TEST_F(ProcessPublic, AndroidLocalMemoryInputMatchesSDKAndCLI) {
                 ->getString(field::Bytes),
             llvm::toHex(Mutated, true));
   const auto Output = (Root / OutputFile).string();
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                       test::shellQuote(Path) +
-                       " --profile=" + AndroidNativeAArch64 +
-                       " --options=" + test::shellQuote(Request) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::Success);
+  const int CLIStatus =
+      runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+  EXPECT_EQ(CLIStatus, process_cli::Success);
   auto Report = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Report));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Report)->getBuffer())), Parsed);
@@ -1523,13 +1494,9 @@ TEST_F(ProcessPublic, AndroidInitializersReturnThroughSDKAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                       test::shellQuote(Path) +
-                       " --profile=" + AndroidNativeAArch64 +
-                       " --options=" + test::shellQuote(Request) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::Success);
+  const int CLIStatus =
+      runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+  EXPECT_EQ(CLIStatus, process_cli::Success);
   auto Buffer = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Buffer));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())), Parsed);
@@ -1598,12 +1565,9 @@ TEST_F(ProcessPublic, AndroidFortifiedSearchReportsMatchSDKAndCLI) {
                 "04000000000000000f00000000000000dd02000000000000");
     }
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
-    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                         test::shellQuote(Path) +
-                         " --profile=" + AndroidNativeAArch64 +
-                         " --options=" + test::shellQuote(Request) +
-                         test::redirectStdout(Output) + test::silenceStderr();
-    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+    const int CLIStatus =
+        runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+    EXPECT_EQ(CLIStatus,
               Fails ? process_cli::Incomplete : process_cli::Success);
     auto Buffer = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Buffer));
@@ -1661,13 +1625,9 @@ TEST_F(ProcessPublic, AndroidTokenNamesAndMutationsMatchSDKAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                       test::shellQuote(Path) +
-                       " --profile=" + AndroidNativeAArch64 +
-                       " --options=" + test::shellQuote(Request) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::Success);
+  const int CLIStatus =
+      runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+  EXPECT_EQ(CLIStatus, process_cli::Success);
   auto Report = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Report));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Report)->getBuffer())), Parsed);
@@ -1710,13 +1670,9 @@ TEST_F(ProcessPublic, RelativeSleepCompletesRawEventAndClockThroughSDKAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                       test::shellQuote(Path) +
-                       " --profile=" + AndroidNativeAArch64 +
-                       " --options=" + test::shellQuote(Request) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::Success);
+  const int CLIStatus =
+      runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+  EXPECT_EQ(CLIStatus, process_cli::Success);
   auto Bytes = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Bytes));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
@@ -1772,13 +1728,9 @@ TEST_F(ProcessPublic, ExplicitClockValuesAndNamesMatchSDKAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                       test::shellQuote(Path) +
-                       " --profile=" + AndroidNativeAArch64 +
-                       " --options=" + test::shellQuote(Request) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::Success);
+  const int CLIStatus =
+      runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+  EXPECT_EQ(CLIStatus, process_cli::Success);
   auto Bytes = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Bytes));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
@@ -1824,13 +1776,9 @@ TEST_F(ProcessPublic, AndroidMutexNamesMatchSDKAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                       test::shellQuote(Path) +
-                       " --profile=" + AndroidNativeAArch64 +
-                       " --options=" + test::shellQuote(Request) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::Success);
+  const int CLIStatus =
+      runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+  EXPECT_EQ(CLIStatus, process_cli::Success);
   auto Bytes = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Bytes));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
@@ -1876,13 +1824,9 @@ TEST_F(ProcessPublic, AndroidGuestThreadsMatchSDKAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                       test::shellQuote(Path) +
-                       " --profile=" + AndroidNativeAArch64 +
-                       " --options=" + test::shellQuote(Request) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::Success);
+  const int CLIStatus =
+      runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+  EXPECT_EQ(CLIStatus, process_cli::Success);
   auto Bytes = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Bytes));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
@@ -1935,13 +1879,9 @@ TEST_F(ProcessPublic, AndroidThreadAttributesMatchSDKAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                       test::shellQuote(Path) +
-                       " --profile=" + AndroidNativeAArch64 +
-                       " --options=" + test::shellQuote(Request) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::Success);
+  const int CLIStatus =
+      runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+  EXPECT_EQ(CLIStatus, process_cli::Success);
   auto Bytes = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Bytes));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
@@ -1986,13 +1926,9 @@ TEST_F(ProcessPublic, AndroidSyscallNamesMatchSDKAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
-                       test::shellQuote(Path) +
-                       " --profile=" + AndroidNativeAArch64 +
-                       " --options=" + test::shellQuote(Request) +
-                       test::redirectStdout(Output) + test::silenceStderr();
-  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-            process_cli::Success);
+  const int CLIStatus =
+      runCLIRequest(Path, AndroidNativeAArch64, Request, Output);
+  EXPECT_EQ(CLIStatus, process_cli::Success);
   auto Bytes = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Bytes));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
@@ -2268,14 +2204,8 @@ TEST_F(ProcessPublic, CompilerStartupRunsThroughTheSharedSDKAndCLI) {
               Fixture.Status);
     EXPECT_EQ(Result.getAsObject()->getString(field::Stdout),
               llvm::toHex(Fixture.Message, true));
-    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
-                         process_cli::Command + " " + test::shellQuote(Path) +
-                         " --" + process_cli::ProfileOption + "=" + LinuxELF64 +
-                         " --" + process_cli::OptionsOption + "=" +
-                         test::shellQuote(Options) +
-                         test::redirectStdout(Output) + test::silenceStderr();
-    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-              process_cli::Success);
+    const int CLIStatus = runCLIRequest(Path, LinuxELF64, Options, Output);
+    EXPECT_EQ(CLIStatus, process_cli::Success);
     auto Buffer = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Buffer));
     auto Report = llvm::json::parse((*Buffer)->getBuffer());
@@ -2294,15 +2224,9 @@ TEST_F(ProcessPublic,
   for (const char *Mode : {Normal, Loop, Fault, Unknown}) {
     SCOPED_TRACE(Mode);
     const auto Options = options(Mode);
-    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
-                         process_cli::Command + " " + test::shellQuote(Path) +
-                         " --" + process_cli::ProfileOption + "=" + LinuxELF64 +
-                         " --" + process_cli::OptionsOption + "=" +
-                         test::shellQuote(Options) +
-                         test::redirectStdout(Output) + test::silenceStderr();
-    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-              Mode == Normal ? process_cli::GuestFailure
-                             : process_cli::Incomplete);
+    const int CLIStatus = runCLIRequest(Path, LinuxELF64, Options, Output);
+    EXPECT_EQ(CLIStatus, Mode == Normal ? process_cli::GuestFailure
+                                        : process_cli::Incomplete);
     auto Buffer = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Buffer));
     auto Report = llvm::json::parse((*Buffer)->getBuffer());
